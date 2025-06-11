@@ -1,0 +1,8 @@
+# .gitignore
+.vs/
+build/
+.venv/
+*.o
+*.exe
+*.pyc
+__pycache__/

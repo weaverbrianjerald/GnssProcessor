@@ -1,0 +1,26 @@
+﻿{
+  "configurations": [
+    {
+      "name": "x64-Debug",
+      "generator": "Ninja",
+      "configurationType": "Debug",
+      "inheritEnvironments": [ "msvc_x64" ],
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\${name}",
+      "cmakeCommandArgs": "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows -DPython_EXECUTABLE=C:/Python313/python.exe -DPython_ROOT_DIR=C:/Python313 -DPython_INCLUDE_DIRS=C:/Python313/include -DPython_LIBRARY_DIRS=C:/Python313/libs -DPython_LIBRARIES=C:/Python313/libs/python313.lib -DPython_FIND_STRATEGY=LOCATION -DPython_FIND_REGISTRY=NEVER",
+      "buildCommandArgs": "-v",
+      "ctestCommandArgs": ""
+    },
+    {
+      "name": "x64-Release",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "inheritEnvironments": [ "msvc_x64" ],
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\${name}",
+      "cmakeCommandArgs": "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows -DPython_EXECUTABLE=C:/Python313/python.exe -DPython_ROOT_DIR=C:/Python313 -DPython_INCLUDE_DIRS=C:/Python313/include -DPython_LIBRARY_DIRS=C:/Python313/libs -DPython_LIBRARIES=C:/Python313/libs/python313.lib -DPython_FIND_STRATEGY=LOCATION -DPython_FIND_REGISTRY=NEVER",
+      "buildCommandArgs": "-v",
+      "ctestCommandArgs": ""
+    }
+  ]
+}
