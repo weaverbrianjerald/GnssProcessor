@@ -3,10 +3,10 @@ import os
 import sys
 import traceback
 
-# Force flush output
 print("Script started", flush=True)
 try:
-    matplotlib.use('Agg')
+    #matplotlib.use('Agg')
+    matplotlib.use('QtAgg')
     import matplotlib.pyplot as plt
     print("Backend:", matplotlib.get_backend(), flush=True)
     print("Python version:", sys.version, flush=True)
@@ -19,7 +19,6 @@ try:
         f.write("Test")
     print(f"Wrote {test_file}", flush=True)
 
-    # Plot and save
     plt.plot([1, 2, 3], [4, 5, 7])
     plt.title("Test Plot")
     output_path = os.path.abspath('test_plot.png')

@@ -1,0 +1,43 @@
+{
+  "positioning_mode": "Kinematic",
+  "process_noise": {
+    "position_std": 0.1,
+    "clock_std": 1e-5,
+    "troposphere_std": 0.01,
+    "ionosphere_std": 0.02
+  },
+  "initial_variances": {
+    "position_std": 100.0,
+    "clock_std": 0.001,
+    "troposphere_std": 0.5,
+    "ionosphere_std": 2.0,
+    "ambiguity_std": 10.0
+  },
+  "file_paths": {
+    "rinex": "C:/GnssProcessorSupport/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+    "product_list": "C:/GnssProcessorSupport/products/default_products.txt"
+  },
+  "elevation_mask_deg": 10.0,
+  "signal_priorities": {
+    "GPS": [ "C1C", "C2W", "C5Q" ],
+    "Galileo": [ "C1C", "C5Q", "C7Q" ],
+    "GLONASS": [
+      {
+        "signal": "C1C",
+        "channels": [ 0, 1, 2, 3, 4, 5, 6 ]
+      },
+      {
+        "signal": "C2C",
+        "channels": [ 0, 1, 2, 3, 4, 5, 6 ]
+      }
+    ],
+    "BeiDou": [ "C2I", "C7I", "C6I" ],
+    "QZSS": [ "C1C", "C2L", "C5Q" ],
+    "SBAS": [ "C1C", "C5I" ]
+  },
+  "stochastic_model": "RandomWalk",
+  "receiver_antenna_orientation": {
+    "azimuth_deg": 0.0,
+    "elevation_deg": 90.0
+  }
+}
