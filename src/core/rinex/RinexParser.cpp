@@ -1,460 +1,431 @@
 #include "RinexParser.hpp"
+#include "ProductParser.hpp"
 #include "TimeUtils.hpp"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
 #include <spdlog/spdlog.h>
+#include "Constants.hpp"
 
 namespace GnssProcessor {
 
-    /*
-    bool GnssTime::operator==(const GnssTime& other) const {
-        return week == other.week && std::abs(tow - other.tow) < 1e-6;
-    }
-
-    bool GnssTime::operator<(const GnssTime& other) const {
-        return week < other.week || (week == other.week && tow < other.tow);
-    }
-    */
-
-    RinexParser::RinexParser(const GnssConfig& config)
-        : config_(config),
-        log_manager_(),
-        header_(),
-        observations_(),
-        receiver_antenna_type_("GENERIC"),
-        antenna_delta_hen_(Eigen::Vector3d::Zero()),
-        receiver_type_("UNKNOWN"),
-        receiver_serial_no_("UNKNOWN"),
-        marker_name_(""),
-        time_of_first_obs_(),
-        glonass_freq_slots_() {
-        log_manager_.initialize(config.getRinexFilePath().parent_path().parent_path() / "logs", LogLevel::Debug);
-        log_manager_.getLogger()->info("RinexParser initialized for file: {}", config_.getRinexFilePath().string());
+    RinexParser::RinexParser(const GnssConfig& config, LogManager& log_manager, ProductParser& product_parser)
+        : config_(config), log_manager_(log_manager), product_parser_(product_parser),
+        header_(), observations_(), receiver_serial_no_(), time_of_first_obs_(), glonass_freq_slots_() {
+        header_.version = 0.0;
+        header_.time_system = "GPS";
+        header_.interval = std::nullopt;
+        header_.approx_position = { 0.0, 0.0, 0.0 };
+        header_.antenna_delta_hen = { 0.0, 0.0, 0.0 };
+        header_.antenna_azimuth_deg = 0.0;
+        header_.antenna_elevation_deg = 0.0;
+        log_manager_.getLogger()->info("RinexParser initialized for mode: {}",
+            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
 
     bool RinexParser::parse() {
-        try {
-            std::ifstream file(config_.getRinexFilePath());
-            if (!file.is_open()) {
-                log_manager_.getLogger()->error("Failed to open RINEX file: {}", config_.getRinexFilePath().string());
+        std::filesystem::path rinex_path = config_.getObservationPath();
+        if (rinex_path.empty() || !std::filesystem::exists(rinex_path)) {
+            log_manager_.getLogger()->error("Observation RINEX file path invalid or does not exist: {}", rinex_path.string());
+            return false;
+        }
+
+        // Check if the file is a navigation file (e.g., BRDC)
+        std::string filename = rinex_path.filename().string();
+        if (filename.find("BRDC") != std::string::npos || filename.find("_MN.rnx") != std::string::npos) {
+            log_manager_.getLogger()->debug("Detected navigation RINEX file: {}, delegating to ProductParser", rinex_path.string());
+            std::vector<double> klobuchar_coeffs;
+            std::vector<SunEphemeris> sun_ephemeris;
+            bool success = product_parser_.parseKlobuchar(rinex_path, klobuchar_coeffs) &&
+                product_parser_.parseSunEphemeris(rinex_path, sun_ephemeris);
+            if (!success) {
+                log_manager_.getLogger()->error("Failed to parse navigation RINEX file: {}", rinex_path.string());
                 return false;
             }
+            log_manager_.getLogger()->info("Parsed navigation RINEX file: {}, Klobuchar coeffs: {}, Sun ephemeris: {}",
+                rinex_path.string(), klobuchar_coeffs.size(), sun_ephemeris.size());
+            return true;
+        }
 
+        std::ifstream file(rinex_path);
+        if (!file.is_open()) {
+            log_manager_.getLogger()->error("Failed to open observation RINEX file: {}", rinex_path.string());
+            return false;
+        }
+
+        try {
             observations_.clear();
-            std::string line;
-            bool in_header = true;
-            std::vector<std::string> obs_types;
-            std::map<std::string, int> sys_obs_counts;
-            marker_name_ = "UNKNOWN";
-            Eigen::Vector3d approx_position_xyz_ = Eigen::Vector3d::Zero();
+            header_ = RinexHeader(); // Reset header
             time_of_first_obs_ = GnssTime{ 0, 0.0 };
             glonass_freq_slots_.clear();
             bool is_rinex_3x = false;
-            std::string rinex_version;
+            System current_system = System::Unknown;
+            std::vector<std::string> current_obs_types;
 
-            while (std::getline(file, line) && in_header) {
-                if (line.length() < 60) continue;
-                if (line.find("END OF HEADER") != std::string::npos) {
-                    in_header = false;
-                    continue;
-                }
-                if (line.find("RINEX VERSION / TYPE") != std::string::npos) {
-                    rinex_version = line.substr(0, 9);
-                    is_rinex_3x = rinex_version.find("3.") != std::string::npos;
-                    if (!is_rinex_3x && rinex_version.find("2.") == std::string::npos) {
-                        log_manager_.getLogger()->error("Unsupported RINEX version: {}", rinex_version);
-                        file.close();
-                        return false;
+            std::string line;
+            bool in_header = true;
+            bool first_epoch = true;
+
+            while (std::getline(file, line)) {
+                // Trim trailing whitespace
+                line.erase(line.find_last_not_of(" \t") + 1);
+
+                if (in_header) {
+                    // Parse header
+                    if (line.find("END OF HEADER") != std::string::npos) {
+                        in_header = false;
+                        is_rinex_3x = header_.version >= 3.0;
+                        continue;
                     }
-                    log_manager_.getLogger()->debug("RINEX version: {}", rinex_version);
-                }
-                else if (line.find(is_rinex_3x ? "SYS / # / OBS TYPES" : "# / TYPES OF OBSERV") != std::string::npos) {
-                    if (is_rinex_3x) {
-                        std::string system = line.substr(0, 1);
-                        int num_types;
+
+                    std::string label = line.size() >= 60 ? line.substr(60) : "";
+                    if (label.find("RINEX VERSION / TYPE") != std::string::npos) {
+                        header_.version = std::stod(line.substr(0, 9));
+                        header_.time_system = line.substr(40, 3);
+                    }
+                    else if (label.find("MARKER NAME") != std::string::npos) {
+                        header_.marker_name = line.substr(0, line.size() < 60 ? line.size() : 60);
+                    }
+                    else if (label.find("MARKER NUMBER") != std::string::npos) {
+                        header_.marker_number = line.substr(0, 20);
+                    }
+                    else if (label.find("REC # / TYPE / VERS") != std::string::npos) {
+                        header_.receiver_type = line.substr(20, 20);
+                        receiver_serial_no_ = line.substr(0, 20);
+                        header_.receiver_type.erase(header_.receiver_type.find_last_not_of(" \t") + 1);
+                        receiver_serial_no_.erase(receiver_serial_no_.find_last_not_of(" \t") + 1);
+                    }
+                    else if (label.find("ANT # / TYPE") != std::string::npos) {
+                        header_.antenna_type = line.substr(20, 20);
+                        header_.antenna_type.erase(header_.antenna_type.find_last_not_of(" \t") + 1);
+                        log_manager_.getLogger()->info("Receiver antenna type: {}", header_.antenna_type);
+                    }
+                    else if (label.find("APPROX POSITION XYZ") != std::string::npos) {
+                        double x = std::stod(line.substr(0, 14));
+                        double y = std::stod(line.substr(14, 14));
+                        double z = std::stod(line.substr(28, 14));
+                        header_.approx_position = { x, y, z };
+                    }
+                    else if (label.find("ANTENNA: DELTA H/E/N") != std::string::npos) {
+                        double h = std::stod(line.substr(0, 14));
+                        double e = std::stod(line.substr(14, 14));
+                        double n = std::stod(line.substr(28, 14));
+                        header_.antenna_delta_hen = { h, e, n };
+                    }
+                    else if (label.find("ANTENNA: AZIMUTH") != std::string::npos) {
+                        header_.antenna_azimuth_deg = std::stod(line.substr(0, 14));
+                    }
+                    else if (label.find("ANTENNA: ELEVATION") != std::string::npos) {
+                        header_.antenna_elevation_deg = std::stod(line.substr(0, 14));
+                    }
+                    else if (label.find("SYS / # / OBS TYPES") != std::string::npos) {
+                        std::string sys = line.substr(0, 1);
+                        current_system = sys == "G" ? System::GPS :
+                            sys == "E" ? System::Galileo :
+                            sys == "R" ? System::GLONASS :
+                            sys == "C" ? System::BeiDou :
+                            sys == "J" ? System::QZSS :
+                            sys == "S" ? System::SBAS : System::Unknown;
+                        if (current_system == System::Unknown) {
+                            log_manager_.getLogger()->warn("Unknown system identifier '{}'", sys);
+                            continue;
+                        }
+                        int num_types = 0;
                         try {
                             num_types = std::stoi(line.substr(3, 3));
                         }
                         catch (const std::exception& e) {
-                            log_manager_.getLogger()->warn("Invalid number of obs types for system {}: {}", system, line);
+                            log_manager_.getLogger()->warn("Invalid number of observation types: {}", e.what());
                             continue;
                         }
-                        sys_obs_counts[system] = num_types;
-                        std::string types = line.substr(6, 54);
-                        std::istringstream iss(types);
+                        current_obs_types.clear();
+                        std::istringstream iss(line.substr(6, 54)); // Read up to column 60
                         std::string type;
                         while (iss >> type) {
-                            obs_types.push_back(system + type);
-                        }
-                        while (std::getline(file, line) && line.length() >= 60 && line.substr(0, 1) == " " && line.find("SYS / # / OBS TYPES") != std::string::npos) {
-                            types = line.substr(6, 54);
-                            iss.clear();
-                            iss.str(types);
-                            while (iss >> type) {
-                                obs_types.push_back(system + type);
+                            if (type.find_first_of(" \t\n") != std::string::npos) continue; // Skip whitespace
+                            if (auto valid_type = validateObsCode(type, current_system)) {
+                                current_obs_types.push_back(*valid_type);
+                            }
+                            else {
+                                log_manager_.getLogger()->warn("Including invalid observation code '{}' for system {}", type, sys);
+                                current_obs_types.push_back(type);
                             }
                         }
-                        in_header = true;
-                    }
-                    else {
-                        int num_types;
-                        try {
-                            num_types = std::stoi(line.substr(0, 6));
-                        }
-                        catch (const std::exception& e) {
-                            log_manager_.getLogger()->warn("Invalid number of obs types: {}", line);
-                            continue;
-                        }
-                        sys_obs_counts["G"] = num_types; // RINEX 2.x assumes GPS unless specified
-                        std::string types = line.substr(10, 50);
-                        std::istringstream iss(types);
-                        std::string type;
-                        while (iss >> type) {
-                            obs_types.push_back("G" + type);
-                        }
-                        while (std::getline(file, line) && line.length() >= 60 && line.substr(0, 10) == "          " && line.find("# / TYPES OF OBSERV") != std::string::npos) {
-                            types = line.substr(10, 50);
+                        // Handle multi-line observation types
+                        while (current_obs_types.size() < static_cast<size_t>(num_types) && std::getline(file, line)) {
+                            line.erase(line.find_last_not_of(" \t") + 1);
+                            // Break if a new system is encountered (system identifier in first column)
+                            if (!line.empty() && (line[0] == 'G' || line[0] == 'E' || line[0] == 'R' ||
+                                line[0] == 'C' || line[0] == 'J' || line[0] == 'S')) {
+                                file.seekg(-static_cast<std::streamoff>(line.length() + 1), std::ios::cur); // Rewind to process new system
+                                break;
+                            }
+                            // Break if a non-continuation header line is encountered (e.g., GLONASS SLOT / FRQ #)
+                            if (line.size() >= 60 && line.substr(60).find_first_not_of(" \t") != std::string::npos &&
+                                line.substr(60).find("SYS / # / OBS TYPES") == std::string::npos) {
+                                file.seekg(-static_cast<std::streamoff>(line.length() + 1), std::ios::cur); // Rewind for next header line
+                                break;
+                            }
+                            // Process continuation line
                             iss.clear();
-                            iss.str(types);
+                            iss.str(line.substr(0, line.size() < 60 ? line.size() : 60));
                             while (iss >> type) {
-                                obs_types.push_back("G" + type);
+                                if (type.find_first_of(" \t\n") != std::string::npos) continue; // Skip whitespace
+                                if (auto valid_type = validateObsCode(type, current_system)) {
+                                    current_obs_types.push_back(*valid_type);
+                                }
+                                else {
+                                    log_manager_.getLogger()->warn("Including invalid observation code '{}' for system {}", type, sys);
+                                    current_obs_types.push_back(type);
+                                }
                             }
                         }
-                        in_header = true;
-                    }
-                }
-                else if (line.find("ANT # / TYPE") != std::string::npos) {
-                    receiver_antenna_type_ = line.substr(20, 20);
-                    receiver_antenna_type_ = receiver_antenna_type_.substr(0, receiver_antenna_type_.find_last_not_of(" ") + 1);
-                    if (receiver_antenna_type_.empty()) {
-                        receiver_antenna_type_ = "GENERIC";
-                        log_manager_.getLogger()->warn("No receiver antenna type found in RINEX header, using default: GENERIC");
-                    }
-                    else {
-                        log_manager_.getLogger()->info("Receiver antenna type: {}", receiver_antenna_type_);
-                    }
-                }
-                else if (line.find("ANTENNA: DELTA H/E/N") != std::string::npos) {
-                    std::istringstream iss(line.substr(0, 42));
-                    double h, e, n;
-                    iss >> h >> e >> n;
-                    if (!iss.fail()) {
-                        antenna_delta_hen_ = Eigen::Vector3d(h, e, n);
-                        log_manager_.getLogger()->info("Antenna H/E/N offsets: ({}, {}, {}) m", h, e, n);
-                    }
-                    else {
-                        log_manager_.getLogger()->warn("Invalid ANTENNA: DELTA H/E/N: {}", line);
-                    }
-                }
-                else if (line.find("REC # / TYPE / VERS") != std::string::npos) {
-                    receiver_type_ = line.substr(20, 20);
-                    receiver_type_ = receiver_type_.substr(0, receiver_type_.find_last_not_of(" ") + 1);
-                    receiver_serial_no_ = line.substr(40, 20);
-                    receiver_serial_no_ = receiver_serial_no_.substr(0, receiver_serial_no_.find_last_not_of(" ") + 1);
-                    if (receiver_type_.empty()) {
-                        receiver_type_ = "UNKNOWN";
-                        log_manager_.getLogger()->warn("No receiver type found in RINEX header, using default: UNKNOWN");
-                    }
-                    else {
-                        log_manager_.getLogger()->info("Receiver type: {}, serial: {}", receiver_type_, receiver_serial_no_);
-                    }
-                }
-                else if (line.find("APPROX POSITION XYZ") != std::string::npos) {
-                    std::istringstream iss(line.substr(0, 42));
-                    double x, y, z;
-                    iss >> x >> y >> z;
-                    if (!iss.fail()) {
-                        approx_position_xyz_ = Eigen::Vector3d(x, y, z);
-                        log_manager_.getLogger()->info("Approximate position XYZ: ({}, {}, {}) m", x, y, z);
-                    }
-                    else {
-                        log_manager_.getLogger()->warn("Invalid APPROX POSITION XYZ: {}", line);
-                    }
-                }
-                else if (line.find("MARKER NAME") != std::string::npos) {
-                    marker_name_ = line.substr(0, 60);
-                    marker_name_ = marker_name_.substr(0, marker_name_.find_last_not_of(" ") + 1);
-                    if (marker_name_.empty()) {
-                        marker_name_ = "UNKNOWN";
-                        log_manager_.getLogger()->warn("No marker name found in RINEX header, using default: UNKNOWN");
-                    }
-                    else {
-                        log_manager_.getLogger()->info("Marker name: {}", marker_name_);
-                    }
-                }
-                else if (line.find("TIME OF FIRST OBS") != std::string::npos) {
-                    std::istringstream iss(line.substr(0, 43));
-                    int year, month, day, hour, min;
-                    double sec;
-                    //int num_sats;
-                    iss >> year >> month >> day >> hour >> min >> sec;
-                    if (!iss.fail()) {
-                        GnssTime time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                        //time_of_first_obs_ = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                        if (!time.week) { // Set first observation time
-                            time_of_first_obs_ = time;
-                            log_manager_.getLogger()->info("Time of first observation: TOW {}", time_of_first_obs_.tow);
+                        if (current_obs_types.size() != static_cast<size_t>(num_types)) {
+                            log_manager_.getLogger()->warn("Expected {} observation types for system {}, got {}", num_types, sys, current_obs_types.size());
+                        }
+                        if (!current_obs_types.empty()) {
+                            header_.obs_types[current_system] = current_obs_types;
+                            std::string obs_types_str;
+                            for (size_t i = 0; i < current_obs_types.size(); ++i) {
+                                obs_types_str += current_obs_types[i];
+                                if (i < current_obs_types.size() - 1) obs_types_str += ", ";
+                            }
+                            log_manager_.getLogger()->info("Parsed {} observation types for system {}: {}", current_obs_types.size(), sys, obs_types_str);
                         }
                     }
-                    else {
-                        log_manager_.getLogger()->warn("Invalid TIME OF FIRST OBS: {}", line);
+                    else if (label.find("INTERVAL") != std::string::npos) {
+                        header_.interval = std::stod(line.substr(0, 10));
                     }
-                }
-                else if (line.find(is_rinex_3x ? "GLONASS SLOT / FRQ #" : "GLONASS COD/PHS/BIS") != std::string::npos) {
-                    if (is_rinex_3x) {
+                    else if (label.find("TIME OF FIRST OBS") != std::string::npos) {
+                        int year = std::stoi(line.substr(0, 6));
+                        int month = std::stoi(line.substr(6, 6));
+                        int day = std::stoi(line.substr(12, 6));
+                        int hour = std::stoi(line.substr(18, 6));
+                        int minute = std::stoi(line.substr(24, 6));
+                        double second = std::stod(line.substr(30, 13));
+                        time_of_first_obs_ = TimeUtils::GnssTimeFromDate(year, month, day, hour, minute, second, header_.time_system);
+                    }
+                    else if (label.find("GLONASS SLOT / FRQ #") != std::string::npos) {
                         std::istringstream iss(line.substr(0, 60));
                         int num_slots;
                         iss >> num_slots;
-                        for (int i = 0; i < num_slots && iss; ++i) {
+                        for (int i = 0; i < num_slots; ++i) {
+                            if (iss.eof() && std::getline(file, line)) {
+                                iss.clear();
+                                iss.str(line.substr(0, 60));
+                            }
                             std::string sat;
                             int freq;
                             iss >> sat >> freq;
-                            if (!sat.empty() && !iss.fail()) {
+                            if (sat.size() >= 3 && sat[0] == 'R') {
                                 glonass_freq_slots_[sat] = freq;
-                                log_manager_.getLogger()->debug("GLONASS slot {}: frequency channel {}", sat, freq);
+                            }
+                        }
+                    }
+                }
+                else {
+                    // Parse observation data
+                    if (is_rinex_3x) {
+                        if (line.length() < 26 || line[0] != '>') continue;
+                        std::istringstream iss(line);
+                        char marker;
+                        int year, month, day, hour, min, flag;
+                        double sec;
+                        int num_sats;
+                        iss >> marker >> year >> month >> day >> hour >> min >> sec >> flag >> num_sats;
+                        if (!iss || marker != '>' || flag > 1) {
+                            log_manager_.getLogger()->debug("Skipping invalid epoch line: {}", line);
+                            for (int i = 0; i < num_sats; ++i) std::getline(file, line);
+                            continue;
+                        }
+                        GnssTime epoch_time = TimeUtils::GnssTimeFromDate(year, month, day, hour, min, sec, header_.time_system);
+                        if (first_epoch) {
+                            time_of_first_obs_ = epoch_time;
+                            first_epoch = false;
+                        }
+
+                        for (int i = 0; i < num_sats && std::getline(file, line); ++i) {
+                            if (line.length() < 3) {
+                                log_manager_.getLogger()->warn("Invalid satellite line: {}", line);
+                                continue;
+                            }
+                            std::string sat_id = line.substr(0, 3);
+                            System system = sat_id[0] == 'G' ? System::GPS :
+                                sat_id[0] == 'E' ? System::Galileo :
+                                sat_id[0] == 'R' ? System::GLONASS :
+                                sat_id[0] == 'C' ? System::BeiDou :
+                                sat_id[0] == 'J' ? System::QZSS :
+                                sat_id[0] == 'S' ? System::SBAS : System::Unknown;
+                            if (system == System::Unknown) {
+                                log_manager_.getLogger()->warn("Unknown system for satellite: {}", sat_id);
+                                continue;
+                            }
+
+                            RinexObservation obs;
+                            obs.satellite = sat_id;
+                            obs.system = system;
+                            obs.time = epoch_time;
+                            obs.receiver_id = header_.marker_name;
+
+                            auto obs_types = header_.obs_types[system];
+                            std::istringstream data_iss(line.substr(3));
+                            for (size_t j = 0; j < obs_types.size(); ++j) {
+                                std::string value_str, lli_str, snr_str;
+                                data_iss >> std::setw(14) >> value_str >> std::setw(1) >> lli_str >> std::setw(1) >> snr_str;
+                                if (value_str.empty() || value_str.find_first_not_of(" \t") == std::string::npos) {
+                                    continue;
+                                }
+                                try {
+                                    double value = std::stod(value_str);
+                                    if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
+                                        value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
+                                    }
+                                    obs.measurements[obs_types[j]] = value;
+                                    double variance = obs_types[j][0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015;
+                                    if (!snr_str.empty() && snr_str.find_first_not_of(" \t") != std::string::npos) {
+                                        double snr = std::stod(snr_str);
+                                        if (snr > 0 && snr < 60) {
+                                            variance *= (1.0 + 1.0 / std::pow(10.0, snr / 10.0));
+                                        }
+                                    }
+                                    obs.variances[obs_types[j]] = variance;
+                                    if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
+                                        obs.lli_flags[obs_types[j]] = std::stoi(lli_str);
+                                    }
+                                    else {
+                                        obs.lli_flags[obs_types[j]] = 0;
+                                    }
+                                }
+                                catch (const std::exception& e) {
+                                    log_manager_.getLogger()->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
+                                }
+                            }
+                            if (!obs.measurements.empty()) {
+                                observations_.push_back(obs);
                             }
                         }
                     }
                     else {
-                        // RINEX 2.x GLONASS frequency slots (simplified, often in BRDC)
-                        log_manager_.getLogger()->debug("GLONASS COD/PHS/BIS found, frequency slots to be sourced from BRDC");
-                        // Placeholder: Assume default channels or load from BRDC later
-                    }
-                }
-            }
-
-            // Parse observation data
-            if (is_rinex_3x) {
-                while (std::getline(file, line)) {
-                    if (line.length() < 26 || line[0] != '>') continue;
-                    std::istringstream iss(line);
-                    char marker;
-                    int year, month, day, hour, min, flag;
-                    double sec;
-                    int num_sats;
-                    iss >> marker >> year >> month >> day >> hour >> min >> sec >> flag >> num_sats;
-                    if (!iss || marker != '>' || flag > 1) {
-                        log_manager_.getLogger()->debug("Skipping invalid epoch line: {}", line);
-                        for (int i = 0; i < num_sats; ++i) std::getline(file, line);
-                        continue;
-                    }
-
-                    GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-
-                    for (int i = 0; i < num_sats && std::getline(file, line); ++i) {
-                        if (line.length() < 3) {
-                            log_manager_.getLogger()->warn("Invalid satellite line: {}", line);
+                        // RINEX 2.x parsing
+                        if (line.length() < 26) continue;
+                        std::istringstream iss(line.substr(0, 26));
+                        int year, month, day, hour, min, flag;
+                        double sec;
+                        iss >> year >> month >> day >> hour >> min >> sec >> flag;
+                        if (!iss || flag > 1) {
+                            log_manager_.getLogger()->debug("Skipping invalid epoch line: {}", line);
                             continue;
                         }
-                        std::string sat_id = line.substr(0, 3);
-                        char sys_char = sat_id[0];
-                        System system;
-                        std::string system_str;
-                        switch (sys_char) {
-                        case 'G': system = System::GPS; system_str = "GPS"; break;
-                        case 'R': system = System::GLONASS; system_str = "GLONASS"; break;
-                        case 'E': system = System::Galileo; system_str = "Galileo"; break;
-                        case 'C': system = System::BeiDou; system_str = "BeiDou"; break;
-                        case 'J': system = System::QZSS; system_str = "QZSS"; break;
-                        case 'S': system = System::SBAS; system_str = "SBAS"; break;
-                        default:
-                            log_manager_.getLogger()->warn("Unknown system for satellite: {}", sat_id);
-                            continue;
+                        year = year < 80 ? 2000 + year : 1900 + year; // RINEX 2.x 2-digit year
+                        GnssTime epoch_time = TimeUtils::GnssTimeFromDate(year, month, day, hour, min, sec, header_.time_system);
+                        if (first_epoch) {
+                            time_of_first_obs_ = epoch_time;
+                            first_epoch = false;
                         }
 
-                        RinexObservation obs;
-                        obs.satellite = sat_id;
-                        obs.system = system;
-                        obs.time = epoch_time;
-
-                        auto sys_it = sys_obs_counts.find(std::string(1, sys_char));
-                        if (sys_it == sys_obs_counts.end()) {
-                            log_manager_.getLogger()->warn("No observation types defined for system: {}", sys_char);
-                            continue;
-                        }
-                        int num_types = sys_it->second;
-                        std::vector<std::string> sys_obs_types;
-                        for (const auto& type : obs_types) {
-                            if (type[0] == sys_char) {
-                                sys_obs_types.push_back(type.substr(1));
-                            }
-                        }
-
-                        std::istringstream data_iss(line.substr(3));
-                        for (int j = 0; j < num_types; ++j) {
-                            std::string value_str, lli_str, snr_str;
-                            data_iss >> std::setw(14) >> value_str >> std::setw(1) >> lli_str >> std::setw(1) >> snr_str;
-                            if (value_str.empty() || value_str.find_first_not_of(" ") == std::string::npos) {
-                                continue;
-                            }
-                            try {
-                                double value = std::stod(value_str);
-                                std::string type = sys_obs_types[j];
-                                if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
-                                    int k = glonass_freq_slots_[sat_id];
-                                    type += "_k" + (k >= 0 ? std::to_string(k) : "m" + std::to_string(-k));
-                                }
-                                obs.measurements[type] = value;
-                                double snr = snr_str.empty() ? 50.0 : std::stod(snr_str);
-                                double variance = type[0] == 'C' ? 0.01 : 0.0001;
-                                if (snr > 0 && snr < 60) {
-                                    variance *= (1.0 + 1.0 / std::pow(10.0, snr / 10.0));
-                                }
-                                obs.variances[type] = variance;
-                                if (!lli_str.empty()) {
-                                    obs.lli_flags[type] = std::stoi(lli_str);
-                                }
-                                else {
-                                    obs.lli_flags[type] = 0;
-                                }
-                            }
-                            catch (const std::exception& e) {
-                                log_manager_.getLogger()->debug("Invalid observation value for {} {}: {}", sat_id, sys_obs_types[j], value_str);
-                            }
-                        }
-
-                        if (!obs.measurements.empty()) {
-                            observations_.push_back(obs);
-                        }
-                    }
-                }
-            }
-            else {
-                // RINEX 2.x observation parsing
-                while (std::getline(file, line)) {
-                    if (line.length() < 26) continue;
-                    std::istringstream iss(line.substr(0, 26));
-                    int year, month, day, hour, min, flag;
-                    double sec;
-                    iss >> year >> month >> day >> hour >> min >> sec >> flag;
-                    if (!iss || flag > 1) {
-                        log_manager_.getLogger()->debug("Skipping invalid epoch line: {}", line);
-                        continue;
-                    }
-                    year = year < 80 ? 2000 + year : 1900 + year; // RINEX 2.x 2-digit year
-                    GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-
-                    // Read number of satellites and satellite list
-                    std::string sat_list = line.substr(29);
-                    std::istringstream sat_iss(sat_list);
-                    int num_sats;
-                    sat_iss >> num_sats;
-                    std::vector<std::string> sat_ids;
-                    for (int i = 0; i < num_sats; ++i) {
-                        if ((i % 12 == 0 && i > 0) || sat_iss.eof()) {
-                            std::getline(file, line);
-                            sat_iss.clear();
-                            sat_iss.str(line);
-                        }
-                        std::string sat_id;
-                        sat_iss >> sat_id;
-                        if (sat_id.length() == 2) sat_id = "G" + sat_id; // RINEX 2.x omits system for GPS
-                        else if (sat_id[0] == 'R' && sat_id.length() == 2) sat_id = "R0" + sat_id[1];
-                        sat_ids.push_back(sat_id);
-                    }
-
-                    for (const auto& sat_id : sat_ids) {
-                        if (!std::getline(file, line)) {
-                            log_manager_.getLogger()->warn("Unexpected end of file while reading satellite data for {}", sat_id);
-                            break;
-                        }
-                        char sys_char = sat_id[0];
-                        System system;
-                        std::string system_str;
-                        switch (sys_char) {
-                        case 'G': system = System::GPS; system_str = "GPS"; break;
-                        case 'R': system = System::GLONASS; system_str = "GLONASS"; break;
-                        case 'E': system = System::Galileo; system_str = "Galileo"; break;
-                        case 'C': system = System::BeiDou; system_str = "BeiDou"; break;
-                        case 'J': system = System::QZSS; system_str = "QZSS"; break;
-                        case 'S': system = System::SBAS; system_str = "SBAS"; break;
-                        default:
-                            log_manager_.getLogger()->warn("Unknown system for satellite: {}", sat_id);
-                            continue;
-                        }
-
-                        RinexObservation obs;
-                        obs.satellite = sat_id;
-                        obs.system = system;
-                        obs.time = epoch_time;
-
-                        auto sys_it = sys_obs_counts.find("G"); // RINEX 2.x primarily GPS
-                        if (sys_it == sys_obs_counts.end()) {
-                            log_manager_.getLogger()->warn("No observation types defined for system: G");
-                            continue;
-                        }
-                        int num_types = sys_it->second;
-                        std::vector<std::string> sys_obs_types;
-                        for (const auto& type : obs_types) {
-                            if (type[0] == 'G') {
-                                sys_obs_types.push_back(type.substr(1));
-                            }
-                        }
-
-                        std::istringstream data_iss(line);
-                        int types_per_line = 5; // RINEX 2.x: 5 obs per line (16 chars each)
-                        for (int j = 0; j < num_types; ++j) {
-                            if (j > 0 && j % types_per_line == 0) {
+                        std::string sat_list = line.substr(29);
+                        std::istringstream sat_iss(sat_list);
+                        int num_sats;
+                        sat_iss >> num_sats;
+                        std::vector<std::string> sat_ids;
+                        for (int i = 0; i < num_sats; ++i) {
+                            if ((i % 12 == 0 && i > 0) || sat_iss.eof()) {
                                 if (!std::getline(file, line)) break;
-                                data_iss.clear();
-                                data_iss.str(line);
+                                sat_iss.clear();
+                                sat_iss.str(line);
                             }
-                            std::string value_str, lli_str, snr_str;
-                            data_iss >> std::setw(14) >> value_str >> std::setw(1) >> lli_str >> std::setw(1) >> snr_str;
-                            if (value_str.empty() || value_str.find_first_not_of(" ") == std::string::npos) {
-                                continue;
-                            }
-                            try {
-                                double value = std::stod(value_str);
-                                std::string type = sys_obs_types[j];
-                                if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
-                                    int k = glonass_freq_slots_[sat_id];
-                                    type += "_k" + (k >= 0 ? std::to_string(k) : "m" + std::to_string(-k));
-                                }
-                                obs.measurements[type] = value;
-                                double snr = snr_str.empty() ? 50.0 : std::stod(snr_str);
-                                double variance = type[0] == 'C' ? 0.01 : 0.0001;
-                                if (snr > 0 && snr < 60) {
-                                    variance *= (1.0 + 1.0 / std::pow(10.0, snr / 10.0));
-                                }
-                                obs.variances[type] = variance;
-                                if (!lli_str.empty()) {
-                                    obs.lli_flags[type] = std::stoi(lli_str);
-                                }
-                                else {
-                                    obs.lli_flags[type] = 0;
-                                }
-                            }
-                            catch (const std::exception& e) {
-                                log_manager_.getLogger()->debug("Invalid observation value for {} {}: {}", sat_id, sys_obs_types[j], value_str);
-                            }
+                            std::string sat_id;
+                            sat_iss >> sat_id;
+                            if (sat_id.length() == 2) sat_id = "G" + sat_id; // RINEX 2.x omits system for GPS
+                            else if (sat_id[0] == 'R' && sat_id.length() == 2) sat_id = "R0" + sat_id[1];
+                            sat_ids.push_back(sat_id);
                         }
 
-                        if (!obs.measurements.empty()) {
-                            observations_.push_back(obs);
+                        for (const auto& sat_id : sat_ids) {
+                            if (!std::getline(file, line)) {
+                                log_manager_.getLogger()->warn("Unexpected end of file while reading satellite data for {}", sat_id);
+                                break;
+                            }
+                            System system = sat_id[0] == 'G' ? System::GPS :
+                                sat_id[0] == 'R' ? System::GLONASS :
+                                sat_id[0] == 'E' ? System::Galileo :
+                                sat_id[0] == 'C' ? System::BeiDou :
+                                sat_id[0] == 'J' ? System::QZSS :
+                                sat_id[0] == 'S' ? System::SBAS : System::Unknown;
+                            if (system == System::Unknown) {
+                                log_manager_.getLogger()->warn("Unknown system for satellite: {}", sat_id);
+                                continue;
+                            }
+
+                            RinexObservation obs;
+                            obs.satellite = sat_id;
+                            obs.system = system;
+                            obs.time = epoch_time;
+                            obs.receiver_id = header_.marker_name;
+
+                            auto obs_types = header_.obs_types[system];
+                            std::istringstream data_iss(line);
+                            int types_per_line = 5; // RINEX 2.x: 5 obs per line
+                            for (size_t j = 0; j < obs_types.size(); ++j) {
+                                if (j > 0 && j % types_per_line == 0) {
+                                    if (!std::getline(file, line)) break;
+                                    data_iss.clear();
+                                    data_iss.str(line);
+                                }
+                                std::string value_str, lli_str, snr_str;
+                                data_iss >> std::setw(14) >> value_str >> std::setw(1) >> lli_str >> std::setw(1) >> snr_str;
+                                if (value_str.empty() || value_str.find_first_not_of(" \t") == std::string::npos) {
+                                    continue;
+                                }
+                                try {
+                                    double value = std::stod(value_str);
+                                    if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
+                                        value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
+                                    }
+                                    obs.measurements[obs_types[j]] = value;
+                                    double variance = obs_types[j][0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015;
+                                    if (!snr_str.empty() && snr_str.find_first_not_of(" \t") != std::string::npos) {
+                                        double snr = std::stod(snr_str);
+                                        if (snr > 0 && snr < 60) {
+                                            variance *= (1.0 + 1.0 / std::pow(10.0, snr / 10.0));
+                                        }
+                                    }
+                                    obs.variances[obs_types[j]] = variance;
+                                    if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
+                                        obs.lli_flags[obs_types[j]] = std::stoi(lli_str);
+                                    }
+                                    else {
+                                        obs.lli_flags[obs_types[j]] = 0;
+                                    }
+                                }
+                                catch (const std::exception& e) {
+                                    log_manager_.getLogger()->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
+                                }
+                            }
+                            if (!obs.measurements.empty()) {
+                                observations_.push_back(obs);
+                            }
                         }
                     }
                 }
             }
-
             file.close();
-            log_manager_.getLogger()->info("Parsed {} observations from RINEX file", observations_.size());
+            log_manager_.getLogger()->info("Parsed RINEX file: {}, {} observations, version: {}, time_system: {}, "
+                "marker_name: {}, marker_number: {}, antenna_type: {}, antenna_hen: ({:.3f}, {:.3f}, {:.3f}), "
+                "azimuth: {:.3f} deg, elevation: {:.3f} deg, mode: {}",
+                rinex_path.string(), observations_.size(), header_.version, header_.time_system,
+                header_.marker_name, header_.marker_number, header_.antenna_type,
+                header_.antenna_delta_hen[0], header_.antenna_delta_hen[1], header_.antenna_delta_hen[2],
+                header_.antenna_azimuth_deg, header_.antenna_elevation_deg,
+                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
             return !observations_.empty();
         }
         catch (const std::exception& e) {
-            log_manager_.getLogger()->error("Error parsing RINEX file {}: {}", config_.getRinexFilePath().string(), e.what());
+            log_manager_.getLogger()->error("Error parsing RINEX file {}: {}", product_parser_.getProductPath("RNX").string(), e.what());
+            file.close();
             return false;
         }
-    }
-
-    /*const RinexHeader& RinexParser::getHeader() const {
-        return header_;
-    }*/
-
-    const std::vector<RinexObservation>& RinexParser::getObservations() const {
-        return observations_;
     }
 
     bool RinexParser::validateMeasurementRate() const {
@@ -490,156 +461,94 @@ namespace GnssProcessor {
         return true;
     }
 
-    bool RinexParser::parseHeader(std::ifstream& stream) {
-        std::string line;
-        while (std::getline(stream, line)) {
-            if (line.find("END OF HEADER") != std::string::npos) {
-                break;
-            }
-            if (line.find("RINEX VERSION") != std::string::npos) {
-                try {
-                    header_.version = std::stod(line.substr(0, 9));
-                    spdlog::info("RINEX version: {}", header_.version);
-                    if (header_.version < 3.0 || header_.version >= 4.0) {
-                        spdlog::error("Unsupported RINEX version: {}", header_.version);
-                        throw std::runtime_error("Unsupported RINEX version");
-                    }
-                }
-                catch (const std::exception& e) {
-                    spdlog::error("Invalid RINEX version format: {}", e.what());
-                    return false;
-                }
-            }
-            if (line.find("INTERVAL") != std::string::npos) {
-                try {
-                    header_.interval = std::stod(line.substr(0, 10));
-                    spdlog::info("Measurement interval: {}s", header_.interval.value());
-                }
-                catch (const std::exception& e) {
-                    spdlog::warn("Invalid interval format: {}", e.what());
-                }
-            }
-            if (line.find("SYS / # / OBS TYPES") != std::string::npos) {
-                std::istringstream iss(line);
-                std::string sys;
-                iss >> sys;
-                System system = sys == "G" ? System::GPS :
-                    sys == "E" ? System::Galileo :
-                    sys == "R" ? System::GLONASS :
-                    sys == "C" ? System::BeiDou :
-                    sys == "J" ? System::QZSS :
-                    sys == "S" ? System::SBAS : System::Unknown;
-                if (system != System::Unknown) {
-                    int num_types;
-                    iss >> num_types;
-                    spdlog::info("System {}: {} observation types", sys, num_types);
-                    std::vector<std::string> types;
-                    types.reserve(num_types);
-                    for (int i = 0; i < num_types; ++i) {
-                        if (i % 13 == 0 && i > 0) {
-                            std::getline(stream, line); // Continuation line
-                            iss.str(line);
-                            iss.clear();
-                        }
-                        std::string type;
-                        iss >> type;
-                        if (validateObsCode(type, system)) {
-                            types.push_back(type);
-                        }
-                    }
-                    header_.obs_types[system] = types;
-                }
-            }
-            if (line.find("REC # / TYPE / VERS") != std::string::npos) {
-                header_.receiver_type = line.substr(20, 20);
-                spdlog::info("Receiver type: {}", header_.receiver_type);
-            }
-            if (line.find("ANT # / TYPE") != std::string::npos) {
-                header_.antenna_type = line.substr(20, 20);
-                spdlog::info("Antenna type: {}", header_.antenna_type);
-            }
-            if (line.find("APPROX POSITION XYZ") != std::string::npos) {
-                try {
-                    std::istringstream iss(line);
-                    iss >> header_.approx_position[0] >> header_.approx_position[1] >> header_.approx_position[2];
-                    spdlog::info("Approx position: ({}, {}, {})",
-                        header_.approx_position[0], header_.approx_position[1], header_.approx_position[2]);
-                }
-                catch (const std::exception& e) {
-                    spdlog::warn("Invalid approx position format: {}", e.what());
-                }
-            }
+    double RinexParser::rescaleGlonassMeasurement(double observed_value, const std::string & freq_type,
+        const std::string & satellite) const {
+        // Only rescale GLONASS phase (L) and code (C) measurements
+        if (freq_type[0] != 'L' && freq_type[0] != 'C') {
+            return observed_value;
         }
-        if (header_.obs_types.empty()) {
-            spdlog::error("No valid observation types found in header");
-            return false;
+
+        double actual_freq = getGlonassFrequency(freq_type, satellite);
+        double ref_freq = (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) ?
+            Constants::GLONASS_G1_BASE_FREQ :
+            (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) ?
+            Constants::GLONASS_G2_BASE_FREQ : Constants::GLONASS_G3_BASE_FREQ;
+
+        if (actual_freq <= 0.0 || ref_freq <= 0.0 || !std::isfinite(actual_freq) || !std::isfinite(ref_freq)) {
+            log_manager_.getLogger()->warn("Cannot rescale measurement for type {}, satellite {}: invalid frequencies (actual: {:.3f} MHz, ref: {:.3f} MHz)",
+                freq_type, satellite, actual_freq / 1e6, ref_freq / 1e6);
+            return observed_value;
         }
-        return true;
+
+        // Rescale: obs_new = obs_old * (f_actual / f_ref)
+        double scaled_obs = observed_value * (actual_freq / ref_freq);
+        if (!std::isfinite(scaled_obs) || std::abs(scaled_obs) > std::abs(observed_value) * 2.0) {
+            log_manager_.getLogger()->warn("Invalid rescaled measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
+                satellite, freq_type, observed_value, scaled_obs, actual_freq / 1e6, ref_freq / 1e6);
+            return observed_value;
+        }
+
+        log_manager_.getLogger()->trace("Rescaled GLONASS measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz, mode={}",
+            satellite, freq_type, observed_value, scaled_obs, actual_freq / 1e6, ref_freq / 1e6,
+            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+        return scaled_obs;
     }
 
-    bool RinexParser::parseObservations(std::ifstream& stream) {
-        std::string line;
-        while (std::getline(stream, line)) {
-            if (line[0] == '>') { // Epoch flag
-                // Parse epoch time
-                int year, month, day, hour, min;
-                double sec;
-                int flag;
-                std::istringstream iss(line.substr(1));
-                iss >> year >> month >> day >> hour >> min >> sec >> flag;
-                GnssTime time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
+    double RinexParser::getGlonassFrequency(const std::string & freq_type, const std::string & satellite) const {
+        // Validate frequency type
+        if (freq_type.find("C1") == std::string::npos && freq_type.find("L1") == std::string::npos &&
+            freq_type.find("C2") == std::string::npos && freq_type.find("L2") == std::string::npos &&
+            freq_type.find("C3") == std::string::npos && freq_type.find("L3") == std::string::npos) {
+            log_manager_.getLogger()->warn("Invalid GLONASS frequency type: {} for satellite {}", freq_type, satellite);
+            return 0.0;
+        }
 
-                // Read number of satellites
-                int num_sats;
-                iss >> num_sats;
-                spdlog::debug("Number of satellites: {}", num_sats);
-
-                // Parse observations for each satellite
-                for (int i = 0; i < num_sats; ++i) {
-                    std::getline(stream, line);
-                    RinexObservation obs;
-                    obs.time = time;
-                    obs.satellite = line.substr(0, 3);
-                    obs.system = obs.satellite[0] == 'G' ? System::GPS :
-                        obs.satellite[0] == 'E' ? System::Galileo :
-                        obs.satellite[0] == 'R' ? System::GLONASS :
-                        obs.satellite[0] == 'C' ? System::BeiDou :
-                        obs.satellite[0] == 'J' ? System::QZSS :
-                        obs.satellite[0] == 'S' ? System::SBAS : System::Unknown;
-
-                    // Parse measurements
-                    std::istringstream obs_iss(line.substr(3));
-                    auto& types = header_.obs_types[obs.system];
-                    for (const auto& type : types) {
-                        std::string value_str;
-                        std::getline(obs_iss, value_str, ' ');
-                        value_str.erase(std::remove_if(value_str.begin(), value_str.end(), isspace), value_str.end());
-                        try {
-                            if (!value_str.empty()) {
-                                double value = std::stod(value_str);
-                                obs.measurements[type] = value;
-                                spdlog::trace("Sat {}: {} = {}", obs.satellite, type, value);
-                            }
-                        }
-                        catch (const std::exception& e) {
-                            spdlog::debug("Invalid measurement for {} (type {}): {}", obs.satellite, type, e.what());
-                        }
-                    }
-                    observations_.push_back(obs);
-                }
+        int channel = 0;
+        auto slot_it = glonass_freq_slots_.find(satellite);
+        if (slot_it != glonass_freq_slots_.end()) {
+            channel = slot_it->second;
+            if (channel < -7 || channel > 6) {
+                log_manager_.getLogger()->warn("GLONASS channel {} out of valid range [-7, +6] for satellite {}, type: {}",
+                    channel, satellite, freq_type);
+                return 0.0;
             }
+            log_manager_.getLogger()->trace("Found GLONASS channel {} for satellite {}", channel, satellite);
         }
-        if (observations_.empty()) {
-            spdlog::error("No observations parsed");
-            return false;
+        else {
+            log_manager_.getLogger()->warn("No GLONASS frequency slot found for satellite {}, using channel 0", satellite);
         }
-        return true;
+
+        double freq = 0.0;
+        if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
+            freq = Constants::GLONASS_G1_BASE_FREQ + channel * Constants::GLONASS_G1_CHANNEL_OFFSET;
+        }
+        else if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
+            freq = Constants::GLONASS_G2_BASE_FREQ + channel * Constants::GLONASS_G2_CHANNEL_OFFSET;
+        }
+        else if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
+            freq = Constants::GLONASS_G3_BASE_FREQ; // CDMA, no channel offset
+        }
+
+        if (freq <= 0.0 || !std::isfinite(freq)) {
+            log_manager_.getLogger()->warn("Computed invalid GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}",
+                freq / 1e6, freq_type, satellite, channel);
+            return 0.0;
+        }
+
+        log_manager_.getLogger()->trace("Computed GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}, mode={}",
+            freq / 1e6, freq_type, satellite, channel,
+            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+        return freq;
     }
 
     std::optional<std::string> RinexParser::validateObsCode(const std::string& code, System system) const {
         // RINEX 3.x observation code format: [CLDS][1-9][A-Z]
         if (code.length() != 3 || (code[0] != 'C' && code[0] != 'L' && code[0] != 'D' && code[0] != 'S') ||
             !std::isdigit(code[1]) || !std::isupper(code[2])) {
+            log_manager_.getLogger()->debug("Invalid observation code format: {} for system {}", code,
+                system == System::GPS ? "GPS" : system == System::Galileo ? "Galileo" :
+                system == System::GLONASS ? "GLONASS" : system == System::BeiDou ? "BeiDou" :
+                system == System::QZSS ? "QZSS" : system == System::SBAS ? "SBAS" : "Unknown");
             return std::nullopt;
         }
 
@@ -679,14 +588,18 @@ namespace GnssProcessor {
                 "C3I", "C3Q", "C3X", "L3I", "L3Q", "L3X", "D3I", "D3Q", "D3X", "S3I", "S3Q", "S3X"
             }},
             {System::BeiDou, {
-                // B1: I, Q, I+Q
+                // B1I: I, Q, I+Q
                 "C2I", "C2Q", "C2X", "L2I", "L2Q", "L2X", "D2I", "D2Q", "D2X", "S2I", "S2Q", "S2X",
-                // B2: I, Q, I+Q
-                "C7I", "C7Q", "C7X", "L7I", "L7Q", "L7X", "D7I", "D7Q", "D7X", "S7I", "S7Q", "S7X",
-                // B3: I, Q, I+Q
+                // B3I: I, Q, I+Q
                 "C6I", "C6Q", "C6X", "L6I", "L6Q", "L6X", "D6I", "D6Q", "D6X", "S6I", "S6Q", "S6X",
-                // B1C: A, B, A+B
-                "C1D", "C1P", "C1X", "L1D", "L1P", "L1X", "D1D", "D1P", "D1X", "S1D", "S1P", "S1X"
+                // B1C: D, P, D+P
+                "C1D", "C1P", "C1X", "L1D", "L1P", "L1X", "D1D", "D1P", "D1X", "S1D", "S1P", "S1X",
+                // B2a: D, Z, D+Z
+                "C5D", "C5Z", "C5X", "L5D", "L5Z", "L5X", "D5D", "D5Z", "D5X", "S5D", "S5Z", "S5X",
+                // B2b: I, Q, I+Q
+                "C7I", "C7Q", "C7X", "L7I", "L7Q", "L7X", "D7I", "D7Q", "D7X", "S7I", "S7Q", "S7X",
+                // B2a+b: I, Q, I+Q
+                "C8I", "C8Q", "C8X", "L8I", "L8Q", "L8X", "D8I", "D8Q", "D8X", "S8I", "S8Q", "S8X"
             }},
             {System::QZSS, {
                 // L1: C/A, SAIF, L1C
@@ -708,14 +621,20 @@ namespace GnssProcessor {
         };
 
         auto it = valid_codes.find(system);
-        if (it == valid_codes.end()) return std::nullopt;
-        return std::find(it->second.begin(), it->second.end(), code) != it->second.end()
-            ? std::optional<std::string>{code} : std::nullopt;
+        if (it == valid_codes.end()) {
+            log_manager_.getLogger()->debug("No valid codes defined for system {}", system == System::GPS ? "GPS" :
+                system == System::Galileo ? "Galileo" : system == System::GLONASS ? "GLONASS" : system == System::BeiDou ? "BeiDou" :
+                system == System::QZSS ? "QZSS" : system == System::SBAS ? "SBAS" : "Unknown");
+            return std::nullopt;
+        }
+        if (std::find(it->second.begin(), it->second.end(), code) != it->second.end()) {
+            return std::optional<std::string>{code};
+        }
+        log_manager_.getLogger()->debug("Observation code {} not valid for system {}", code, system == System::GPS ? "GPS" :
+            system == System::Galileo ? "Galileo" : system == System::GLONASS ? "GLONASS" : system == System::BeiDou ? "BeiDou" :
+            system == System::QZSS ? "QZSS" : system == System::SBAS ? "SBAS" : "Unknown");
+        return std::nullopt;
     }
 
-    //Eigen::Vector3d RinexParser::getApproxPositionXyz() const {
-    //    return approx_position_xyz_; // Return stored approximate position
-    //}
-
-} // namespace GnssProcessor
-//#endif
+    } // namespace GnssProcessor
+    //#endif

@@ -22,6 +22,7 @@ namespace GnssProcessor {
     class TimeUtils {
     public:
         static GnssTime gregorianToGpsTime(int year, int month, int day, int hour, int minute, double second);
+        static GnssTime GnssTimeFromDate(int year, int month, int day, int hour, int minute, double second, const std::string& time_system);
         static void gpsTimeToGregorian(const GnssTime& gpsTime, int& year, int& month, int& day,
             int& hour, int& minute, double& second);
         static double gregorianToJulianDay(int year, int month, int day, int hour, int minute, double second);

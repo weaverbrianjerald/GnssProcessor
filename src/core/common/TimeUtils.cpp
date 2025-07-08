@@ -1,19 +1,9 @@
 #include "TimeUtils.hpp"
 #include <cmath>
 #include <stdexcept>
+#include <spdlog/spdlog.h>
 
 namespace GnssProcessor {
-
-    /*
-    bool GnssTime::operator==(const GnssTime& other) const {
-        return week == other.week && std::abs(tow - other.tow) < 1e-6;
-    }
-
-    bool GnssTime::operator<(const GnssTime& other) const {
-        if (week != other.week) return week < other.week;
-        return tow < other.tow;
-    }
-    */
 
     GnssTime TimeUtils::gregorianToGpsTime(int year, int month, int day, int hour, int minute, double second) {
         if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
@@ -43,6 +33,42 @@ namespace GnssProcessor {
         }
 
         return GnssTime{ week, tow };
+    }
+
+    GnssTime TimeUtils::GnssTimeFromDate(int year, int month, int day, int hour, int minute, double second,
+        const std::string& time_system) {
+        if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
+            spdlog::warn("Invalid Gregorian date for {} time system: {}-{}-{} {}:{}:{:.3f}",
+                time_system, year, month, day, hour, minute, second);
+            return GnssTime{ 0, 0.0 };
+        }
+
+        // Convert to GPS time as baseline
+        GnssTime gps_time = gregorianToGpsTime(year, month, day, hour, minute, second);
+
+        // Adjust for time system (if not GPS)
+        if (time_system == "GAL") {
+            // Galileo System Time (GST) offset from GPS time (typically small, ~10-20 ns)
+            // For simplicity, assume aligned with GPS time (no leap second offset applied)
+            // Actual offset requires leap second data or external correction
+            spdlog::trace("Converted to GST for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
+                year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
+        }
+        else if (time_system == "BDS") {
+            // BeiDou Time (BDT) is offset from GPS by 14 seconds (as of 2006-01-01)
+            gps_time.tow -= 14.0;
+            if (gps_time.tow < 0.0) {
+                gps_time.tow += SECONDS_IN_WEEK;
+                gps_time.week -= 1;
+            }
+            spdlog::trace("Converted to BDT for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
+                year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
+        }
+        else if (time_system != "GPS") {
+            spdlog::warn("Unsupported time system {}, using GPS time", time_system);
+        }
+
+        return gps_time;
     }
 
     void TimeUtils::gpsTimeToGregorian(const GnssTime& gpsTime, int& year, int& month, int& day,

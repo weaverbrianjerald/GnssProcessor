@@ -1,3 +1,4 @@
+/*
 #include "SSystem.hpp"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -119,3 +120,4 @@ void SSystem::updateFromSinex(const std::vector<SinexEstimate>& estimates) {
 
 } // namespace GnssProcessor
 //#endif
+*/

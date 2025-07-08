@@ -1,3 +1,4 @@
+/*
 #pragma once
 #include "RinexParser.hpp"
 #include "SinexParser.hpp"
@@ -69,3 +70,4 @@ private:
 
 } // namespace GnssProcessor
 //#endif // S_SYSTEM_HPP
+*/

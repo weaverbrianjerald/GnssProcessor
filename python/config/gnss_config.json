@@ -1,43 +1,37 @@
 {
   "positioning_mode": "Kinematic",
-  "process_noise": {
-    "position_std": 0.1,
-    "clock_std": 1e-5,
-    "troposphere_std": 0.01,
-    "ionosphere_std": 0.02
-  },
-  "initial_variances": {
-    "position_std": 100.0,
-    "clock_std": 0.001,
-    "troposphere_std": 0.5,
-    "ionosphere_std": 2.0,
-    "ambiguity_std": 10.0
-  },
-  "file_paths": {
-    "rinex": "C:/GnssProcessorSupport/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
-    "product_list": "C:/GnssProcessorSupport/products/default_products.txt"
-  },
-  "elevation_mask_deg": 10.0,
-  "signal_priorities": {
-    "GPS": [ "C1C", "C2W", "C5Q" ],
-    "Galileo": [ "C1C", "C5Q", "C7Q" ],
-    "GLONASS": [
-      {
-        "signal": "C1C",
-        "channels": [ 0, 1, 2, 3, 4, 5, 6 ]
-      },
-      {
-        "signal": "C2C",
-        "channels": [ 0, 1, 2, 3, 4, 5, 6 ]
-      }
-    ],
-    "BeiDou": [ "C2I", "C7I", "C6I" ],
-    "QZSS": [ "C1C", "C2L", "C5Q" ],
-    "SBAS": [ "C1C", "C5I" ]
-  },
   "stochastic_model": "RandomWalk",
+  "observation_path": "C:/GnssProcessorSupport/rinex/30S/five_epochs/GCGO_20241290000_01D_30S_5Epochs.rnx",
+  "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
+  "sinex_file_path": "",
+  "rtcm_file_path": "",
+  "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt",
+  "elevation_mask_deg": 10.0,
   "receiver_antenna_orientation": {
     "azimuth_deg": 0.0,
     "elevation_deg": 90.0
-  }
+  },
+  "process_noise": {
+    "position_std": 0.1,
+    "clock_bias_std": 100.0,
+    "troposphere_std": 0.01,
+    "ionosphere_std": 0.02
+  },
+  "initial_std": {
+    "position": 100.0,
+    "clock": 1000.0,
+    "troposphere": 0.5,
+    "ionosphere": 5.0,
+    "ambiguity": 0.1
+  },
+  "signal_priorities": {
+    "GPS": ["L1C", "C1C", "L1W", "C1W", "L2W", "C2W", "L2C", "C2C", "L5Q", "C5Q"],
+    "Galileo": ["L1C", "C1C", "L1B", "C1B", "L5Q", "C5Q", "L7Q", "C7Q"],
+    "GLONASS": ["L1C", "C1C", "L2C", "C2C", "L3C", "C3C"],
+    "BeiDou": ["L2I", "C2I", "L7I", "C7I", "L6I", "C6I"],
+    "QZSS": ["L1C", "C1C", "L2L", "C2L", "L5Q", "C5Q"],
+    "SBAS": ["L1C", "C1C", "L5I", "C5I"]
+  },
+  "processing_mode": "PPP",
+  "uncombined_enabled": false
 }

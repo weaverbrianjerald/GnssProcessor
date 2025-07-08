@@ -1,3 +1,4 @@
+/*
 #pragma once
 
 #include "TimeUtils.hpp"
@@ -13,3 +14,4 @@ namespace GnssProcessor {
 } // namespace GnssProcessor
 
 //#endif // TYPES_HPP
+*/

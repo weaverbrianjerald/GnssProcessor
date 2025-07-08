@@ -1,62 +1,72 @@
 #pragma once
+#ifndef STATEMANAGER_HPP
+#define STATEMANAGER_HPP
 
-#include "GnssConfig.hpp"
-#include "LogManager.hpp"
-#include "TimeUtils.hpp"
+#include "PppTypes.hpp"
 #include <Eigen/Dense>
 #include <map>
 #include <string>
-#include <optional>
 
 namespace GnssProcessor {
 
-    class PppModel; // Avoid including PppModel.hpp
-
     class StateManager {
     public:
-        // Constructor
-        explicit StateManager(const GnssConfig& config);
+        // Constructor: Initializes StateManager with core state size (e.g., 5 for PPP, 6 for PPP-RTK)
+        StateManager(size_t core_state_size);
 
-        // Get state vector size
-        int getStateSize() const { return state_vector_.size(); }
+        // Returns the current state epoch time
+        GnssTime getStateEpochTime() const;
 
-        // Access state vector
-        Eigen::VectorXd getStateVector() const { return state_vector_; }
+        // Sets the state epoch time
+        void setStateEpochTime(const GnssTime& time);
+
+        // Sets the state vector
         void setStateVector(const Eigen::VectorXd& state);
 
-        // Access covariance matrix
-        Eigen::MatrixXd getCovariance() const { return covariance_; }
-        void setCovariance(const Eigen::MatrixXd& cov);
+        // Sets the covariance matrix
+        void setCovariance(const Eigen::MatrixXd& covariance);
 
-        // Get process noise matrix for time step dt
+        // Returns the total state size (core + ambiguities)
+        size_t getStateSize() const;
+
+        // Returns the state vector
+        Eigen::VectorXd getStateVector() const;
+
+        // Returns the covariance matrix
+        Eigen::MatrixXd getCovariance() const;
+
+        // Returns the process noise matrix for prediction
         Eigen::MatrixXd getProcessNoiseMatrix(double dt) const;
 
-        // Manage ambiguities
-        std::map<std::string, int> getAmbiguityIndices() const { return ambiguity_indices_; }
-        std::optional<int> getAmbiguityIndex(const std::string& key) const;
-        void addAmbiguity(const std::string& key, double value);
-        void removeAmbiguity(const std::string& key);
+        // Returns the state transition matrix
+        Eigen::MatrixXd getTransitionMatrix(double dt) const;
 
-        // State parameter indices
-        int getPositionIndex() const { return 0; }
-        int getClockIndex() const { return 3; }
-        int getTropoIndex() const { return 4; }
-        int getIonoIndex() const { return 5; }
+        // Returns the index of the position state (x, y, z)
+        size_t getPositionIndex() const;
 
-        // Epoch time management
-        GnssTime getStateEpochTime() const { return state_epoch_time_; }
-        void setStateEpochTime(const GnssTime& time) { state_epoch_time_ = time; }
+        // Returns the index of the clock bias state
+        size_t getClockIndex() const;
+
+        // Returns the index of the tropospheric zenith delay state
+        size_t getTropoIndex() const;
+
+        // Returns the index of the ionospheric zenith delay state (PPP-RTK only)
+        size_t getIonoIndex() const;
+
+        // Returns the index of an ambiguity state by key, or -1 if not found
+        int getAmbiguityIndex(const std::string& key) const;
+
+        // Adds an ambiguity state and returns its index
+        size_t addAmbiguity(const std::string& key, double initial_value);
 
     private:
-        const GnssConfig& config_; // Configuration reference
-        LogManager log_manager_; // Logging support
-        Eigen::VectorXd state_vector_; // State vector [x, y, z, clock, tropo, iono, ambiguities]
-        Eigen::MatrixXd covariance_; // State covariance matrix
-        std::map<std::string, int> ambiguity_indices_; // Ambiguity key -> state index
-        int next_index_; // Next available state index for ambiguities
-        GnssTime state_epoch_time_; // Current state epoch time
+        size_t core_state_size_;                    // Core state size (e.g., 5 for PPP, 6 for PPP-RTK)
+        std::map<std::string, size_t> ambiguity_indices_; // Maps ambiguity keys to state indices
+        GnssTime state_epoch_time_;                 // Current state epoch time
+        Eigen::VectorXd state_vector_;              // Current state vector
+        Eigen::MatrixXd covariance_;                // Current covariance matrix
     };
 
 } // namespace GnssProcessor
 
-//#endif // STATEMANAGER_HPP
+#endif // STATEMANAGER_HPP

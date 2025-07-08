@@ -3,145 +3,156 @@
 
 namespace GnssProcessor {
 
-    StateManager::StateManager(const GnssConfig& config)
-        : config_(config), log_manager_(), next_index_(6), state_epoch_time_{ 0, 0.0 } {
-        log_manager_.initialize(config.getRinexFilePath().parent_path().parent_path() / "logs", LogLevel::Debug);
-        state_vector_ = Eigen::VectorXd::Zero(6);
-        covariance_ = Eigen::MatrixXd::Zero(6, 6);
-        double pos_var = config_.getInitialPosStd() * config_.getInitialPosStd();
+    StateManager::StateManager(size_t core_state_size)
+        : core_state_size_(core_state_size), state_epoch_time_{ 0, 0.0 } {
+        state_vector_ = Eigen::VectorXd::Zero(core_state_size);
+        covariance_ = Eigen::MatrixXd::Identity(core_state_size, core_state_size);
+        // Default initial standard deviations
+        double pos_var = 100.0 * 100.0;    // Position: 100 m
+        double clock_var = 1000.0 * 1000.0; // Clock: 1000 m
+        double tropo_var = 0.5 * 0.5;      // Troposphere: 0.5 m
+        double iono_var = 5.0 * 5.0;       // Ionosphere: 5 m (PPP-RTK only)
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
-        covariance_(3, 3) = config_.getInitialClockStd() * config_.getInitialClockStd();
-        covariance_(4, 4) = config_.getInitialTropoStd() * config_.getInitialTropoStd();
-        covariance_(5, 5) = config_.getInitialIonoStd() * config_.getInitialIonoStd();
-        log_manager_.getLogger()->info("StateManager initialized with positioning mode: {}, state size: 6",
-            config_.getPositioningMode() == PositioningMode::Static ? "Static" : "Kinematic");
+        covariance_(3, 3) = clock_var;
+        covariance_(4, 4) = tropo_var;
+        if (core_state_size >= 6) {
+            covariance_(5, 5) = iono_var;
+        }
+    }
+
+    GnssTime StateManager::getStateEpochTime() const {
+        return state_epoch_time_;
+    }
+
+    void StateManager::setStateEpochTime(const GnssTime& time) {
+        state_epoch_time_ = time;
     }
 
     void StateManager::setStateVector(const Eigen::VectorXd& state) {
-        if (state.size() != state_vector_.size()) {
-            log_manager_.getLogger()->error("State vector size mismatch: expected {}, got {}", state_vector_.size(), state.size());
-            throw std::invalid_argument("State vector size mismatch");
+        if (static_cast<size_t>(state.size()) != getStateSize()) {
+            throw std::invalid_argument("State vector size " + std::to_string(state.size()) +
+                " does not match expected size " + std::to_string(getStateSize()));
+        }
+        if (!state.allFinite()) {
+            throw std::invalid_argument("State vector contains non-finite values");
         }
         state_vector_ = state;
     }
 
-    void StateManager::setCovariance(const Eigen::MatrixXd& cov) {
-        if (cov.rows() != state_vector_.size() || cov.cols() != state_vector_.size()) {
-            log_manager_.getLogger()->error("Covariance matrix size mismatch: expected {}x{}, got {}x{}",
-                state_vector_.size(), state_vector_.size(), cov.rows(), cov.cols());
-            throw std::invalid_argument("Covariance matrix size mismatch");
+    void StateManager::setCovariance(const Eigen::MatrixXd& covariance) {
+        if (static_cast<size_t>(covariance.rows()) != getStateSize() ||
+            static_cast<size_t>(covariance.cols()) != getStateSize()) {
+            throw std::invalid_argument("Covariance matrix dimensions (" +
+                std::to_string(covariance.rows()) + "x" +
+                std::to_string(covariance.cols()) +
+                ") do not match state size " + std::to_string(getStateSize()));
         }
-        covariance_ = cov;
+        if (!covariance.allFinite()) {
+            throw std::invalid_argument("Covariance matrix contains non-finite values");
+        }
+        covariance_ = covariance;
+    }
+
+    size_t StateManager::getStateSize() const {
+        return core_state_size_ + ambiguity_indices_.size();
+    }
+
+    Eigen::VectorXd StateManager::getStateVector() const {
+        return state_vector_;
+    }
+
+    Eigen::MatrixXd StateManager::getCovariance() const {
+        return covariance_;
     }
 
     Eigen::MatrixXd StateManager::getProcessNoiseMatrix(double dt) const {
         if (dt <= 0.0) {
-            log_manager_.getLogger()->error("Invalid time step dt: {}", dt);
-            throw std::invalid_argument("Invalid time step");
+            throw std::invalid_argument("Invalid time step: " + std::to_string(dt));
         }
 
-        int n = state_vector_.size();
-        Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(n, n);
+        size_t state_size = getStateSize();
+        Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(state_size, state_size);
+
+        // Default process noise standard deviations
+        double pos_std = 0.1;      // Position: 0.1 m/s
+        double clock_std = 100.0;  // Clock: 100 m/s
+        double tropo_std = 0.01;   // Troposphere: 0.01 m/s
+        double iono_std = 0.02;    // Ionosphere: 0.02 m/s (PPP-RTK only)
+        double amb_std = 0.001;    // Ambiguity: 0.001 cycles/s
 
         // Position noise
-        double pos_noise = config_.getPosProcessNoiseStd() * dt;
+        double pos_noise = pos_std * dt;
         Q.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_noise * pos_noise;
 
         // Clock noise
-        double clock_noise = config_.getClockProcessNoiseStd() * dt;
+        double clock_noise = clock_std * dt;
         Q(3, 3) = clock_noise * clock_noise;
 
         // Tropospheric noise
-        double tropo_noise = config_.getTropoProcessNoiseStd() * dt;
+        double tropo_noise = tropo_std * dt;
         Q(4, 4) = tropo_noise * tropo_noise;
 
-        // Ionospheric noise
-        double iono_noise = config_.getIonoProcessNoiseStd() * dt;
-        Q(5, 5) = iono_noise * iono_noise;
+        // Ionospheric noise (PPP-RTK only)
+        if (core_state_size_ >= 6) {
+            double iono_noise = iono_std * dt;
+            Q(5, 5) = iono_noise * iono_noise;
+        }
 
-        // Ambiguity noise (if any)
-        double amb_noise = config_.getInitialAmbiguityStd() * dt;
+        // Ambiguity noise
         for (const auto& [key, idx] : ambiguity_indices_) {
+            double amb_noise = amb_std * dt;
             Q(idx, idx) = amb_noise * amb_noise;
         }
 
         return Q;
     }
 
-    std::optional<int> StateManager::getAmbiguityIndex(const std::string& key) const {
-        auto it = ambiguity_indices_.find(key);
-        if (it != ambiguity_indices_.end()) {
-            return it->second;
-        }
-        return std::nullopt;
+    Eigen::MatrixXd StateManager::getTransitionMatrix(double dt) const {
+        size_t state_size = getStateSize();
+        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(state_size, state_size);
+        return F;
     }
 
-    void StateManager::addAmbiguity(const std::string& key, double value) {
-        if (ambiguity_indices_.count(key) > 0) {
-            log_manager_.getLogger()->warn("Ambiguity key {} already exists, overwriting", key);
-            return;
-        }
-
-        // Resize state vector and covariance
-        int old_size = state_vector_.size();
-        state_vector_.conservativeResize(old_size + 1);
-        state_vector_(old_size) = value;
-
-        Eigen::MatrixXd new_cov = Eigen::MatrixXd::Zero(old_size + 1, old_size + 1);
-        new_cov.topLeftCorner(old_size, old_size) = covariance_;
-        new_cov(old_size, old_size) = config_.getInitialAmbiguityStd() * config_.getInitialAmbiguityStd();
-        covariance_ = new_cov;
-
-        // Add ambiguity index
-        ambiguity_indices_[key] = old_size;
-        next_index_ = old_size + 1;
-
-        log_manager_.getLogger()->debug("Added ambiguity {} at index {} with value {}", key, old_size, value);
+    size_t StateManager::getPositionIndex() const {
+        return 0;
     }
 
-    void StateManager::removeAmbiguity(const std::string& key) {
+    size_t StateManager::getClockIndex() const {
+        return 3;
+    }
+
+    size_t StateManager::getTropoIndex() const {
+        return 4;
+    }
+
+    size_t StateManager::getIonoIndex() const {
+        return core_state_size_ >= 6 ? 5 : std::numeric_limits<size_t>::max();
+    }
+
+    int StateManager::getAmbiguityIndex(const std::string& key) const {
         auto it = ambiguity_indices_.find(key);
-        if (it == ambiguity_indices_.end()) {
-            log_manager_.getLogger()->warn("Ambiguity key {} not found", key);
-            return;
-        }
+        return it != ambiguity_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
 
-        int idx = it->second;
-        int old_size = state_vector_.size();
+    size_t StateManager::addAmbiguity(const std::string& key, double initial_value) {
+        if (ambiguity_indices_.count(key)) {
+            return ambiguity_indices_[key];
+        }
+        size_t index = getStateSize();
+        ambiguity_indices_[key] = index;
 
-        // Remove ambiguity from state vector
-        Eigen::VectorXd new_state(old_size - 1);
-        if (idx > 0) {
-            new_state.head(idx) = state_vector_.head(idx);
-        }
-        if (idx < old_size - 1) {
-            new_state.tail(old_size - 1 - idx) = state_vector_.tail(old_size - 1 - idx);
-        }
+        // Resize state and covariance
+        Eigen::VectorXd new_state = Eigen::VectorXd::Zero(index + 1);
+        new_state.head(index) = state_vector_;
+        new_state(index) = initial_value;
         state_vector_ = new_state;
 
-        // Remove ambiguity from covariance
-        Eigen::MatrixXd new_cov(old_size - 1, old_size - 1);
-        if (idx > 0) {
-            new_cov.topLeftCorner(idx, idx) = covariance_.topLeftCorner(idx, idx);
-            new_cov.topRightCorner(idx, old_size - 1 - idx) = covariance_.topRightCorner(idx, old_size - 1 - idx);
-        }
-        if (idx < old_size - 1) {
-            new_cov.bottomLeftCorner(old_size - 1 - idx, idx) = covariance_.bottomLeftCorner(old_size - 1 - idx, idx);
-            new_cov.bottomRightCorner(old_size - 1 - idx, old_size - 1 - idx) =
-                covariance_.bottomRightCorner(old_size - 1 - idx, old_size - 1 - idx);
-        }
+        Eigen::MatrixXd new_cov = Eigen::MatrixXd::Identity(index + 1, index + 1);
+        new_cov.topLeftCorner(index, index) = covariance_;
+        new_cov(index, index) = 0.1 * 0.1; // Initial ambiguity variance (cycles^2)
         covariance_ = new_cov;
 
-        // Update ambiguity indices
-        ambiguity_indices_.erase(it);
-        for (auto& [k, v] : ambiguity_indices_) {
-            if (v > idx) {
-                --v;
-            }
-        }
-        --next_index_;
-
-        log_manager_.getLogger()->debug("Removed ambiguity {} at index {}", key, idx);
+        return index;
     }
 
 } // namespace GnssProcessor
