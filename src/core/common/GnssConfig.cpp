@@ -1,4 +1,5 @@
 #include "GnssConfig.hpp"
+//#include "RinexParser.hpp"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -20,26 +21,73 @@ namespace GnssProcessor {
             std::string mode = json.value("processing_mode", "PPP");
             processing_mode_ = (mode == "PPP-RTK") ? ProcessingMode::PPP_RTK : ProcessingMode::PPP;
 
+            // Parse signal mode
+            std::string signal_mode = json.value("signal_mode", "Dual");
+            std::string signal_mode_lower = signal_mode;
+            std::transform(signal_mode_lower.begin(), signal_mode_lower.end(), signal_mode_lower.begin(), ::tolower);
+            if (signal_mode_lower == "dual") {
+                signal_mode_ = SignalMode::Dual;
+            }
+            else if (signal_mode_lower == "triple") {
+                signal_mode_ = SignalMode::Triple;
+            }
+            else if (signal_mode_lower == "all") {
+                signal_mode_ = SignalMode::All;
+            }
+            else {
+                log_manager.getLogger("gnss_config")->warn("Invalid signal_mode '{}', defaulting to Dual", signal_mode);
+                signal_mode_ = SignalMode::Dual;
+            }
+            log_manager.getLogger("gnss_config")->info("Signal mode: {}", signal_mode);
+
             // Parse other fields
             uncombined_enabled_ = json.value("uncombined_enabled", false);
             elevation_mask_deg_ = json.value("elevation_mask_deg", 10.0);
             receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
             receiver_antenna_orientation_.elevation_deg = json["receiver_antenna_orientation"].value("elevation_deg", 90.0);
-            process_noise_.position_std = json["process_noise"].value("position_std", 0.1);
-            process_noise_.clock_bias_std = json["process_noise"].value("clock_bias_std", 100.0);
-            process_noise_.troposphere_std = json["process_noise"].value("troposphere_std", 0.01);
+            process_noise_.position_std = json["process_noise"].value("position_std", 0.0);
+            process_noise_.clock_bias_std = json["process_noise"].value("clock_bias_std", 300.0);
+            process_noise_.troposphere_std = json["process_noise"].value("troposphere_std", 0.0005);
             process_noise_.ionosphere_std = json["process_noise"].value("ionosphere_std", 0.02);
             initial_std_.position = json["initial_std"].value("position", 100.0);
-            initial_std_.clock = json["initial_std"].value("clock", 1000.0);
+            initial_std_.clock = json["initial_std"].value("clock", 300.0);
             initial_std_.troposphere = json["initial_std"].value("troposphere", 0.5);
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
-            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 0.1);
+            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 500.0);
 
             // Parse signal priorities
+            signal_priorities_.clear();
             if (json.contains("signal_priorities")) {
-                for (auto& [system, signals] : json["signal_priorities"].items()) {
+                for (const auto& [system, signals] : json["signal_priorities"].items()) {
                     signal_priorities_[system] = signals.get<std::vector<std::string>>();
                 }
+            }
+
+            // Parse active systems
+            active_systems_.clear();
+            if (json.contains("active_systems")) {
+                active_systems_ = json["active_systems"].get<std::vector<std::string>>();
+                for (const auto& system : active_systems_) {
+                    if (system != "GPS" && system != "Galileo" && system != "GLONASS" &&
+                        system != "BeiDou" && system != "QZSS" && system != "SBAS") {
+                        log_manager.getLogger()->warn("Unknown system in active_systems: {}", system);
+                    }
+                }
+            }
+            if (active_systems_.empty()) {
+                //active_systems_ = { System::GPS, System::Galileo, System::GLONASS, System::BeiDou, System::QZSS, System::SBAS };
+                active_systems_ = { "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS" };
+                log_manager.getLogger()->info("No active systems specified, using default: GPS, Galileo, GLONASS, BeiDou, QZSS, SBAS");
+            }
+            else {
+                std::string active_systems_str = active_systems_.empty() ? "none" : "";
+                for (const auto& sys : active_systems_) {
+                    active_systems_str += sys + ", ";
+                }
+                if (!active_systems_str.empty()) {
+                    active_systems_str = active_systems_str.substr(0, active_systems_str.size() - 2);
+                }
+                log_manager.getLogger()->info("Active systems: {}", active_systems_str);
             }
 
             // Parse observation and navigation paths

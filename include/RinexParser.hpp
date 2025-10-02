@@ -12,21 +12,12 @@
 #include "LogManager.hpp"
 #include "TimeUtils.hpp"
 #include "Constants.hpp"
+#include <PppTypes.hpp>
 #include <Eigen/Dense>
 
 namespace GnssProcessor {
     // Forward declaration to avoid circular dependency
     class ProductParser;
-
-    enum class System {
-        GPS,
-        Galileo,
-        GLONASS,
-        BeiDou,
-        QZSS,
-        SBAS,
-        Unknown
-    };
 
     struct RinexObservation {
         std::string satellite;           // Satellite ID (e.g., "G01")
@@ -87,6 +78,7 @@ namespace GnssProcessor {
         const std::map<std::string, int>& getGlonassFreqSlots() const { return glonass_freq_slots_; }
         double rescaleGlonassMeasurement(double observed_value, const std::string& freq_type,
             const std::string& satellite) const;
+        std::vector<GnssTime> getEpochTimes() const;
 
     private:
         const GnssConfig& config_;

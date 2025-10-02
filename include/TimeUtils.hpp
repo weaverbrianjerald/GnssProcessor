@@ -28,6 +28,7 @@ namespace GnssProcessor {
         static double gregorianToJulianDay(int year, int month, int day, int hour, int minute, double second);
         static void julianDayToGregorian(double jd, int& year, int& month, int& day,
             int& hour, int& minute, double& second);
+        static double gpsTimeToJulianDate(int week, double tow);
         static bool isValidGregorianDate(int year, int month, int day, int hour, int minute, double second);
 
     private:
