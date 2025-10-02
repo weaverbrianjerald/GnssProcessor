@@ -5,30 +5,43 @@
 #include <string>
 #include <Eigen/Dense>
 #include "TimeUtils.hpp"
-#include "RinexParser.hpp"  // for System
 
 namespace GnssProcessor {
 
+    enum class System {
+        GPS,
+        Galileo,
+        GLONASS,
+        BeiDou,
+        QZSS,
+        SBAS,
+        Unknown
+    };
+
     struct PppObservation {
-        std::string satellite;
-        System system;
-        GnssTime time;
-        std::map<std::string, double> observed;
-        std::map<std::string, double> modeled;
-        std::map<std::string, double> residuals;
-        std::map<std::string, double> variances;
-        std::map<std::string, int> lli_flags;
+        std::string satellite;                     // Satellite ID (e.g., "G01")
+        System system;                             // GNSS system (e.g., GPS)
+        GnssTime time;                            // Observation time
+        std::map<std::string, double> observed;    // Observed measurements (e.g., C1W, L1W, etc.)
+        std::map<std::string, double> modeled;     // Modeled measurements
+        std::map<std::string, double> residuals;   // Residuals (observed - modeled)
+        std::map<std::string, double> variances;   // Measurement variances
+        std::map<std::string, int> lli_flags;      // Loss of lock indicator flags
+        Eigen::Vector3d sat_pos;                  // Satellite position in ECEF (meters)
+        double elevation;                         // Elevation angle to satellite (degrees)
+        double azimuth;                           // Azimuth angle to satellite (degrees)
+        Eigen::Vector3d los;                      // Line-of-sight unit vector to satellite
+        double range;                             // Geometric range to satellite (meters)
     };
 
     struct PppState {
-        Eigen::Vector3d position;
-        double clock_bias;
-        double troposphere_zenith_delay;
-        double ionosphere_zenith_delay;
-        std::map<std::string, double> ionosphere_delays;
-        std::map<std::string, double> ambiguities;
-        Eigen::MatrixXd covariance;
-        GnssTime epoch_time;
+        Eigen::Vector3d position;                  // Receiver position in ECEF (meters)
+        double clock_bias;                        // Receiver clock bias (seconds)
+        double troposphere_zenith_delay;          // Tropospheric zenith delay (meters)
+        double ionosphere_zenith_delay;           // Ionospheric zenith delay (meters, PPP-RTK only)
+        Eigen::MatrixXd covariance;               // State covariance matrix
+        std::map<std::string, double> ambiguities; // Phase ambiguities (meters)
+        GnssTime epoch_time;                      // Current epoch time
     };
 
     struct EpochMeasurement {
@@ -39,6 +52,10 @@ namespace GnssProcessor {
         std::vector<PppObservation> observations;         // Observations for cycle-slip detection
         std::vector<std::string> satellite_ids;           // Satellite IDs (e.g., "G01") for each measurement
         std::vector<std::string> signal_types;            // Signal types (e.g., "L1C", "L1C_L2W_L5Q") for each measurement
+        Eigen::VectorXd residuals;                        // Post-fit measurement residuals, in meters
+        Eigen::MatrixXd residuals_covariance;             // Post-fit measurement residuals covariance, in abs meters^2
+        Eigen::VectorXd residuals_standardized;           // Post-fit measurement residuals (standardized), in standard deviations
+        size_t bad_residual_count;                        // Post-fit measurement residual outlier count
     };
 
     struct OrbitData {

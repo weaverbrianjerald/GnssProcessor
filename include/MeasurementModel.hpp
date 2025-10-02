@@ -25,7 +25,7 @@ namespace GnssProcessor {
 
         // Compute measurement update for Kalman filter
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
-            const Eigen::VectorXd& current_state);
+            Eigen::VectorXd& current_state);
 
         // Validate measurement update before Kalman filter processing
         bool validateMeasurementUpdate(const EpochMeasurement& measurement) const;

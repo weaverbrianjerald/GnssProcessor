@@ -15,11 +15,11 @@ namespace GnssProcessor {
     PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser, LogManager& log_manager,
         const RinexParser& rinex_parser, StateManager& state_manager)
         : config_(config), product_parser_(product_parser), log_manager_(log_manager),
-        rinex_parser_(rinex_parser), state_manager_(state_manager),
+        rinex_parser_(rinex_parser), state_manager_(state_manager), wls_logger_("wls_debug.log"),
         signal_priorities_(config.getSignalPriorities()), elevation_threshold_(config.getElevationMaskDeg()),
         multipath_histories_(), klobuchar_coeffs_(), sun_ephemeris_(), orbits_(), clocks_(), antennas_(), biases_(), erps_() {
         loadProducts();
-        log_manager_.getLogger()->info("PppModel initialized with mode: {}, uncombined_enabled: {}, elevation mask: {} degrees, {} signal priority sets",
+        log_manager_.getLogger("ppp_model")->info("PppModel initialized with mode: {}, uncombined_enabled: {}, elevation mask: {} degrees, {} signal priority sets",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
             config_.isUncombinedEnabled(), elevation_threshold_, signal_priorities_.size());
     }
@@ -32,10 +32,10 @@ namespace GnssProcessor {
                     [](const std::string& a, const std::filesystem::path& p) {
                         return a.empty() ? p.string() : a + ", " + p.string();
                     });
-                log_manager_.getLogger()->info("Loaded SP3 files: [{}]", paths_str);
+                log_manager_.getLogger("ppp_model")->info("Loaded SP3 files: [{}]", paths_str);
             }
             else {
-                log_manager_.getLogger()->error("Failed to load SP3 files: [{}]",
+                log_manager_.getLogger("ppp_model")->error("Failed to load SP3 files: [{}]",
                     std::accumulate(sp3_paths.begin(), sp3_paths.end(), std::string(),
                         [](const std::string& a, const std::filesystem::path& p) {
                             return a.empty() ? p.string() : a + ", " + p.string();
@@ -43,80 +43,82 @@ namespace GnssProcessor {
             }
         }
         else {
-            log_manager_.getLogger()->warn("No SP3 file paths provided for orbit data");
+            log_manager_.getLogger("ppp_model")->warn("No SP3 file paths provided for orbit data");
         }
 
         std::filesystem::path clk_path = product_parser_.getProductPath("CLK");
         if (!clk_path.empty()) {
             if (product_parser_.parseClk(clk_path, clocks_)) {
-                log_manager_.getLogger()->info("Loaded CLK file: {}", clk_path.string());
+                log_manager_.getLogger("ppp_model")->info("Loaded CLK file: {}", clk_path.string());
             }
             else {
-                log_manager_.getLogger()->error("Failed to load CLK file: {}", clk_path.string());
+                log_manager_.getLogger("ppp_model")->error("Failed to load CLK file: {}", clk_path.string());
             }
         }
         else {
-            log_manager_.getLogger()->warn("No CLK file path provided");
+            log_manager_.getLogger("ppp_model")->warn("No CLK file path provided");
         }
 
         std::filesystem::path atx_path = product_parser_.getProductPath("ATX");
         if (!atx_path.empty()) {
             if (product_parser_.parseAtx(atx_path, antennas_)) {
-                log_manager_.getLogger()->info("Loaded ATX file: {}", atx_path.string());
+                log_manager_.getLogger("ppp_model")->info("Loaded ATX file: {}", atx_path.string());
             }
             else {
-                log_manager_.getLogger()->error("Failed to load ATX file: {}", atx_path.string());
+                log_manager_.getLogger("ppp_model")->error("Failed to load ATX file: {}", atx_path.string());
             }
         }
         else {
-            log_manager_.getLogger()->warn("No ATX file path provided");
+            log_manager_.getLogger("ppp_model")->warn("No ATX file path provided");
         }
 
         std::filesystem::path bia_path = product_parser_.getProductPath("BIA");
         if (!bia_path.empty()) {
             if (product_parser_.parseBia(bia_path, biases_)) {
-                log_manager_.getLogger()->info("Loaded BIA file: {}", bia_path.string());
+                log_manager_.getLogger("ppp_model")->info("Loaded BIA file: {}", bia_path.string());
             }
             else {
-                log_manager_.getLogger()->error("Failed to load BIA file: {}", bia_path.string());
+                log_manager_.getLogger("ppp_model")->error("Failed to load BIA file: {}", bia_path.string());
             }
         }
         else {
-            log_manager_.getLogger()->warn("No BIA file path provided");
+            log_manager_.getLogger("ppp_model")->warn("No BIA file path provided");
         }
 
         std::filesystem::path erp_path = product_parser_.getProductPath("ERP");
         if (!erp_path.empty()) {
             if (product_parser_.parseErp(erp_path, erps_)) {
-                log_manager_.getLogger()->info("Loaded ERP file: {}", erp_path.string());
+                log_manager_.getLogger("ppp_model")->info("Loaded ERP file: {}", erp_path.string());
             }
             else {
-                log_manager_.getLogger()->error("Failed to load ERP file: {}", erp_path.string());
+                log_manager_.getLogger("ppp_model")->error("Failed to load ERP file: {}", erp_path.string());
             }
         }
         else {
-            log_manager_.getLogger()->warn("No ERP file path provided");
+            log_manager_.getLogger("ppp_model")->warn("No ERP file path provided");
         }
 
         std::filesystem::path rnx_path = product_parser_.getProductPath("RNX");
         if (!rnx_path.empty()) {
             if (product_parser_.parseKlobuchar(rnx_path, klobuchar_coeffs_)) {
-                log_manager_.getLogger()->info("Loaded Klobuchar coefficients from RNX file: {}, coeffs size: {}",
+                log_manager_.getLogger("ppp_model")->info("Loaded Klobuchar coefficients from RNX file: {}, coeffs size: {}",
                     rnx_path.string(), klobuchar_coeffs_.size());
             }
             else {
-                log_manager_.getLogger()->error("Failed to load Klobuchar coefficients from RNX file: {}", rnx_path.string());
-            }
-            if (product_parser_.parseSunEphemeris(rnx_path, sun_ephemeris_)) {
-                log_manager_.getLogger()->info("Loaded Sun ephemeris from RNX file: {}, ephemeris size: {}",
-                    rnx_path.string(), sun_ephemeris_.size());
-            }
-            else {
-                log_manager_.getLogger()->error("Failed to load Sun ephemeris from RNX file: {}", rnx_path.string());
+                log_manager_.getLogger("ppp_model")->error("Failed to load Klobuchar coefficients from RNX file: {}", rnx_path.string());
             }
         }
         else {
-            log_manager_.getLogger()->warn("No RNX file path provided for Klobuchar or Sun ephemeris");
+            log_manager_.getLogger("ppp_model")->warn("No RNX file path provided for Klobuchar or Sun ephemeris");
+        }
+
+        // Compute Sun ephemeris using epoch times from RinexParser
+        std::vector<GnssTime> epoch_times = rinex_parser_.getEpochTimes();
+        if (parseSunEphemeris(epoch_times, sun_ephemeris_)) {
+            log_manager_.getLogger("ppp_model")->info("Computed Sun ephemeris for {} observation epochs", sun_ephemeris_.size());
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->error("Failed to compute Sun ephemeris for observation epochs");
         }
     }
 
@@ -127,23 +129,23 @@ namespace GnssProcessor {
             Eigen::Vector3d init_pos = rinex_parser_.getApproxPositionXyz();
             if (init_pos.norm() > 1e3 && !init_pos.hasNaN()) {
                 state.position = init_pos;
-                log_manager_.getLogger()->info("Initialized position from RINEX: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3f}",
+                log_manager_.getLogger("ppp_model")->info("Initialized position from RINEX: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3f}",
                     init_pos.x(), init_pos.y(), init_pos.z(), init_pos.norm());
             }
             else {
                 state.position = Eigen::Vector3d::Zero();
-                log_manager_.getLogger()->warn("Invalid or zero RINEX approximate position, using default: (0, 0, 0) m");
+                log_manager_.getLogger("ppp_model")->warn("Invalid or zero RINEX approximate position, using default: (0, 0, 0) m");
             }
 
             GnssTime init_time = rinex_parser_.getTimeOfFirstObs();
             if (init_time.tow > 0.0 && init_time.week > 0) {
                 state.epoch_time = init_time;
-                log_manager_.getLogger()->info("Initialized state epoch time from RINEX: week {}, TOW {:.3f}",
+                log_manager_.getLogger("ppp_model")->info("Initialized state epoch time from RINEX: week {}, TOW {:.3f}",
                     init_time.week, init_time.tow);
             }
             else {
                 state.epoch_time = GnssTime{ 0, 0.0 };
-                log_manager_.getLogger()->warn("Invalid RINEX time of first observation, using default: TOW 0.0");
+                log_manager_.getLogger("ppp_model")->warn("Invalid RINEX time of first observation, using default: TOW 0.0");
             }
 
             state.clock_bias = 0.0;
@@ -151,12 +153,12 @@ namespace GnssProcessor {
             if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
                 if (init_pos.norm() > 1e3 && !init_pos.hasNaN() && init_time.tow > 0.0 && klobuchar_coeffs_.size() == 8) {
                     state.ionosphere_zenith_delay = computeInitialIonoDelay(init_time, init_pos);
-                    log_manager_.getLogger()->info("Initialized ionospheric zenith delay from Klobuchar: {:.3f} m",
+                    log_manager_.getLogger("ppp_model")->info("Initialized ionospheric zenith delay from Klobuchar: {:.3f} m",
                         state.ionosphere_zenith_delay);
                 }
                 else {
                     state.ionosphere_zenith_delay = 5.0;
-                    log_manager_.getLogger()->warn("Using default ionospheric zenith delay: 5.0 m (insufficient Klobuchar data)");
+                    log_manager_.getLogger("ppp_model")->warn("Using default ionospheric zenith delay: 5.0 m (insufficient Klobuchar data)");
                 }
             }
 
@@ -168,7 +170,7 @@ namespace GnssProcessor {
             double iono_std = initial_std.ionosphere;
             if (pos_std <= 0 || clock_std <= 0 || tropo_std <= 0 ||
                 (config_.getProcessingMode() == ProcessingMode::PPP_RTK && iono_std <= 0)) {
-                log_manager_.getLogger()->warn("Invalid initial standard deviations, using defaults: pos=100, clock=1000, tropo=0.5, iono=5.0");
+                log_manager_.getLogger("ppp_model")->warn("Invalid initial standard deviations, using defaults: pos=100, clock=1000, tropo=0.5, iono=5.0");
                 pos_std = 100.0;
                 clock_std = 1000.0;
                 tropo_std = 0.5;
@@ -180,55 +182,474 @@ namespace GnssProcessor {
             if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
                 state.covariance(5, 5) = iono_std * iono_std;
             }
-            log_manager_.getLogger()->debug("Initialized state covariance: pos_std={:.3f}, clock_std={:.3f}, tropo_std={:.3f}{}",
+            log_manager_.getLogger("ppp_model")->debug("Initialized state covariance: pos_std={:.3f}, clock_std={:.3f}, tropo_std={:.3f}{}",
                 pos_std, clock_std, tropo_std,
                 config_.getProcessingMode() == ProcessingMode::PPP_RTK ? ", iono_std=" + std::to_string(iono_std) : "");
         }
         else {
-            log_manager_.getLogger()->debug("State position already initialized: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3f}",
+            log_manager_.getLogger("ppp_model")->debug("State position already initialized: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3f}",
                 state.position.x(), state.position.y(), state.position.z(), state.position.norm());
         }
     }
 
-    bool PppModel::computeSatelliteGeometry(const RinexObservation& obs, const PppState& state,
-        Eigen::Vector3d& sat_pos, Eigen::Vector3d& rx_pos, double& elevation,
-        double& azimuth, Eigen::Vector3d& los, double& range, double& tropo_delay,
-        double& sat_clock, double& shapiro_delay, double& sagnac_corr,
-        double& atm_loading_corr, double& relativistic_corr) const {
-        sat_pos = getSatellitePosition(obs.satellite, obs.time);
-        if (sat_pos.norm() < 1e3 || !sat_pos.allFinite()) {
-            log_manager_.getLogger()->warn("Invalid satellite position for {} at TOW {:.3f}", obs.satellite, obs.time.tow);
-            return false;
+    std::pair<Eigen::VectorXd, Eigen::MatrixXd> PppModel::estimateStateWls(const GnssTime& epoch_time, const std::vector<PppObservation>& observations) {
+        const size_t core_size = 5; // Position (3), clock bias (1), tropospheric zenith delay (1)
+        Eigen::VectorXd init_state(core_size);
+        init_state.setZero();
+        Eigen::MatrixXd init_covariance = Eigen::MatrixXd::Identity(core_size, core_size);
+        double epoch_tow = epoch_time.tow;
+
+        if (observations.empty() || observations.size() < core_size) {
+            log_manager_.getLogger("ppp_model")->warn("No or insufficient observations for WLS estimation at TOW {:.3f}: {} available, {} required",
+                epoch_tow, observations.size(), core_size);
+            return { Eigen::VectorXd(), Eigen::MatrixXd() };
         }
 
+        // Collect ionosphere-free code combinations
+        std::vector<double> observation_vector;
+        std::vector<double> modeled_vector;
+        //std::vector<double> residuals;
+        std::vector<double> variances;
+        std::vector<double> mappings;
+        std::vector<std::string> satellite_ids;
+        std::vector<std::string> combo_types;
+        std::vector<Eigen::Vector3d> sat_positions;
+        std::vector<double> initial_ranges;
+
+        for (const auto& obs : observations) {
+            std::string system_str = MeasurementModel::getSystemString(obs.system);
+            if (system_str != "GPS") {
+                log_manager_.getLogger("ppp_model")->debug("Skipping non-GPS satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
+                continue;
+            }
+            if (obs.sat_pos.norm() == 0.0 || !obs.sat_pos.allFinite() || obs.range <= 0.0 ||
+                !std::isfinite(obs.elevation) || !std::isfinite(obs.azimuth) || obs.los.norm() == 0.0 || !obs.los.allFinite()) {
+                log_manager_.getLogger("ppp_model")->debug("Invalid geometry for satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
+                continue;
+            }
+            if (obs.elevation < elevation_threshold_) {
+                log_manager_.getLogger("ppp_model")->debug("Satellite {} below elevation mask ({} < {} deg)", obs.satellite, obs.elevation, elevation_threshold_);
+                continue;
+            }
+            for (const auto& [type, observed] : obs.observed) {
+                //if (type[0] == 'C' && type.find("_") != std::string::npos) { // Iono-free combination (e.g., C1W_C2W)
+                if (type.find("C1") != std::string::npos && type.find("C2") != std::string::npos) { // Iono-free L1/L2 code (e.g., C1W_C2W)
+                    if (!obs.modeled.count(type) || !obs.variances.count(type)) {
+                        log_manager_.getLogger("ppp_model")->debug("Missing modeled or variance data for {} {} at TOW {:.3f}",
+                            obs.satellite, type, obs.time.tow);
+                        continue;
+                    }
+                    //double residual = obs.residuals.count(type) ? obs.residuals.at(type) : observed - obs.modeled.at(type);
+                    //residuals.push_back(residual);
+                    if (!obs.observed.count(type)) continue;
+                    observation_vector.push_back(obs.observed.at(type));
+                    if (!obs.modeled.count(type)) continue;
+                    modeled_vector.push_back(obs.modeled.at(type));
+                    if (!obs.variances.count(type)) continue;
+                    variances.push_back(obs.variances.at(type));
+                    double mapping = 1.0 / (std::sin(obs.elevation * Constants::PI / 180.0) +
+                        0.00143 / (std::tan(obs.elevation * Constants::PI / 180.0) + 0.0445));
+                    mappings.push_back(mapping);
+                    satellite_ids.push_back(obs.satellite);
+                    combo_types.push_back(type);
+                    sat_positions.push_back(obs.sat_pos);
+                    initial_ranges.push_back(obs.range);
+                }
+            }
+        }
+
+        if (observation_vector.size() < core_size) {
+            log_manager_.getLogger("ppp_model")->warn("Insufficient iono-free code combinations for WLS at TOW {:.3f}: {} available, {} required",
+                epoch_tow, observation_vector.size(), core_size);
+            return { Eigen::VectorXd(), Eigen::MatrixXd() };
+        }
+
+        // Iterated WLS setup
+        Eigen::Vector3d current_pos = rinex_parser_.getApproxPositionXyz();
+        double current_clock = 0.0;
+        double current_trop_z = 2.3;
+        const int max_iter = 5;
+        const double tol = 0.1; // Convergence tolerance in meters
+        double observed_minus_computed = 0.0;
+        Eigen::MatrixXd HtWH;
+        int iter;
+        for (iter = 0; iter < max_iter; ++iter) {
+            Eigen::MatrixXd H(observation_vector.size(), core_size);
+            Eigen::VectorXd z(observation_vector.size());
+            Eigen::MatrixXd W = Eigen::MatrixXd::Zero(observation_vector.size(), observation_vector.size());
+
+            for (size_t i = 0; i < observation_vector.size(); ++i) {
+                Eigen::Vector3d delta_r = sat_positions[i] - current_pos;
+                double current_range = delta_r.norm();
+                if (current_range == 0.0) continue;
+                Eigen::Vector3d current_los = delta_r / current_range;
+                double sin_elev = current_los.dot(current_pos.normalized());
+                double elev_rad = std::asin(sin_elev);
+                double elev_deg = elev_rad * 180.0 / Constants::PI;
+                if (elev_deg < elevation_threshold_) continue; // Rare, but skip if below
+                double current_model = modeled_vector[i];
+                double observed = observation_vector[i];
+
+                //double current_mapping = 1.0 / (sin_elev + 0.00143 / (std::tan(elev_rad) + 0.0445));
+
+                // Form OC, where residuals contain observed-minus-computed without state information
+                //double geom_delta = current_range - initial_ranges[i];
+                double predicted = current_range + current_model + current_clock + mappings[i] * current_trop_z;
+                //observed_minus_computed = residuals[i] - geom_delta - ( current_clock + mappings[i] * current_trop_z );
+
+                //z(i) = residuals[i] - (geom_delta + current_clock + mappings[i] * current_trop_z );
+                observed_minus_computed = observed - predicted;
+                z(i) = observed_minus_computed;
+                //z(i) = initial_ranges[i] - computed; // observed-minus-computed
+                //z(i) = observed_minus_computed; // observed-minus-computed
+                H(i, 0) = -current_los.x();
+                H(i, 1) = -current_los.y();
+                H(i, 2) = -current_los.z();
+                H(i, 3) = 1.0; // meters
+                H(i, 4) = mappings[i];
+                W(i, i) = 1.0 / variances[i];
+            }
+
+            HtWH = H.transpose() * W * H;
+            Eigen::JacobiSVD<Eigen::MatrixXd> svd(HtWH);
+            double cond = svd.singularValues()(0) / svd.singularValues()(svd.singularValues().size() - 1);
+
+            // Log all matrices and vectors for this iteration
+            wls_logger_.logDesignMatrix(H, "WLS Design Matrix H", epoch_tow, iter + 1, satellite_ids, combo_types);
+            wls_logger_.logInnovationsVector(z, "WLS Innovations Vector z", epoch_tow, iter + 1, satellite_ids, combo_types);
+            wls_logger_.logWeightMatrix(W, "WLS Weight Matrix W", epoch_tow, iter + 1);
+            wls_logger_.logNormalMatrix(HtWH, "WLS Normal Matrix HtWH", epoch_tow, iter + 1, cond);
+
+            if (HtWH.determinant() <= 1e-6) {
+                log_manager_.getLogger("ppp_model")->warn("WLS estimation failed at TOW {:.3f}, iter {}: singular HtWH matrix, determinant={:.3e}",
+                    epoch_tow, iter, HtWH.determinant());
+                break;
+            }
+
+            Eigen::VectorXd delta = HtWH.inverse() * H.transpose() * W * z;
+            current_pos += delta.segment<3>(0);
+            current_clock += delta(3);
+            current_trop_z += delta(4);
+
+            // Log state for this iteration
+            Eigen::VectorXd current_state(core_size);
+            current_state << current_pos, current_clock, current_trop_z;
+            wls_logger_.logStateVector(current_state, "WLS Intermediate State Vector", epoch_tow, iter + 1);
+
+            double delta_norm = delta.norm();
+
+            if (delta_norm < tol) {
+                break;
+            }
+        }
+
+        init_state.segment<3>(0) = current_pos;
+        init_state(3) = current_clock;
+        init_state(4) = current_trop_z;
+        init_covariance = HtWH.inverse();
+        log_manager_.getLogger("ppp_model")->info("Iterated WLS estimation successful after {} iterations using {} iono-free code combinations at TOW {:.3f}: position=({:.3f}, {:.3f}, {:.3f}) m, "
+            "clock={:.3e} m, tropo={:.3f} m",
+            iter + 1, observation_vector.size(), epoch_tow, init_state(0), init_state(1), init_state(2),
+            init_state(3), init_state(4));
+
+        // Log final state and covariance
+        wls_logger_.logStateVector(init_state, "WLS Final State Vector", epoch_tow, iter + 1);
+        wls_logger_.logCovarianceMatrix(init_covariance, "WLS Final Covariance Matrix", epoch_tow, iter + 1);
+
+        return { init_state, init_covariance };
+    }
+
+    bool PppModel::computeSatelliteGeometry(const RinexObservation& obs, const PppState& state,
+        Eigen::Vector3d& sat_pos,         // [m] satellite ECEF position (at reception time, after rotation)
+        Eigen::Vector3d& rx_pos,          // [m] receiver ECEF position (input state)
+        double& elevation,                // [deg]
+        double& azimuth,                  // [deg]
+        Eigen::Vector3d& los,             // unit vector from receiver to satellite
+        double& range,                    // [m] geometric distance
+        double& tropo_delay,              // [m]
+        double& sat_clock,                // [s] emission-time clock bias (incl. relativistic corr)
+        double& shapiro_delay,            // [m]
+        double& sagnac_corr,              // [m]
+        double& atm_loading_corr,         // [m]
+        double& relativistic_corr,        // [s]
+        double& solid_tide) const         // [m]
+    {
+        const double c = Constants::SPEED_OF_LIGHT;
+        const double omegaE = Constants::EARTH_ANGULAR_VELOCITY; // rad/s
+
+        // --- Step 1: Validate receiver position ---
         rx_pos = state.position;
         if (rx_pos.norm() < 1e3 || !rx_pos.allFinite()) {
-            log_manager_.getLogger()->warn("Invalid receiver position for {} at TOW {:.3f}", obs.satellite, obs.time.tow);
+            log_manager_.getLogger("ppp_model")->warn("Invalid receiver position for {} at TOW {:.3f}",
+                obs.satellite, obs.time.tow);
             return false;
         }
 
-        elevation = computeElevation(rx_pos, sat_pos);
+        // Initial satellite position (approx. reception time)
+        Eigen::Vector3d sat_pos_init = getSatellitePosition(obs.satellite, obs.time);
+        if (sat_pos_init.norm() < 1e3 || !sat_pos_init.allFinite()) {
+            log_manager_.getLogger("ppp_model")->warn("Invalid initial satellite position for {} at TOW {:.3f}",
+                obs.satellite, obs.time.tow);
+            return false;
+        }
+
+        // Initial time-of-flight (TOF) guess
+        double tof = (sat_pos_init - rx_pos).norm() / c; // [s]
+        double tof_delta = 1.0;
+        constexpr int max_iter = 5;
+
+        Eigen::Vector3d sat_pos_em, sat_vel_em;
+        double sat_clock_em = 0.0;
+
+        // --- Step 2: Iterative TOF refinement ---
+        for (int iter = 0; iter < max_iter && tof_delta > 1e-8; ++iter) {
+            // Emission time = reception time - TOF
+            GnssTime emission_time = obs.time;
+            emission_time.tow -= tof;
+            if (emission_time.tow < 0) {  // week rollover
+                emission_time.tow += 604800.0;
+                emission_time.week -= 1;
+            }
+
+            // Satellite position/velocity/clock at emission time
+            sat_pos_em = getSatellitePosition(obs.satellite, emission_time);   // ECEF [m]
+            sat_vel_em = getSatelliteVelocity(obs.satellite, emission_time);   // ECEF [m/s]
+            sat_clock_em = getSatelliteClockCorrection(obs.satellite, emission_time); // [s]
+
+            if (sat_pos_em.norm() < 1e3 || !sat_pos_em.allFinite() || !std::isfinite(sat_clock_em)) {
+                log_manager_.getLogger("ppp_model")->warn("Invalid satellite data at emission time for {} at TOW {:.3f}",
+                    obs.satellite, emission_time.tow);
+                return false;
+            }
+
+            // --- Step 3: Relativistic correction (applied to satellite clock) ---
+            relativistic_corr = computeRelativisticCorrection(obs.satellite, sat_pos_em, sat_vel_em); // [s]
+            sat_clock = sat_clock_em + relativistic_corr; // [s]
+
+            // --- Step 4: Earth rotation correction (emission → reception) ---
+            double theta = omegaE * tof;
+            Eigen::Matrix3d R;
+            R << cos(theta), -sin(theta), 0,
+                sin(theta), cos(theta), 0,
+                0, 0, 1;
+            sat_pos = R * sat_pos_em; // rotated to reception time
+
+            // --- Step 5: Update TOF ---
+            double new_range = (sat_pos - rx_pos).norm(); // [m]
+            double new_tof = new_range / c;             // [s]
+            tof_delta = std::abs(new_tof - tof);
+            tof = new_tof;
+
+            log_manager_.getLogger("ppp_model")->trace(
+                "TOF iteration {} for {}: TOF={:.3e} s, range={:.3f} m, delta={:.3e} s",
+                iter, obs.satellite, tof, new_range, tof_delta);
+        }
+
+        if (tof_delta > 1e-7) {
+            log_manager_.getLogger("ppp_model")->warn("TOF iteration failed to converge for {}: delta={:.3e} s",
+                obs.satellite, tof_delta);
+            return false;
+        }
+
+        // --- Step 6: Final geometry ---
+        range = (sat_pos - rx_pos).norm(); // [m]
+        los = (sat_pos - rx_pos) / range;
+        elevation = computeElevation(rx_pos, sat_pos); // [deg]
+        azimuth = computeAzimuth(rx_pos, sat_pos);   // [deg]
+
         if (elevation < elevation_threshold_) {
-            log_manager_.getLogger()->debug("Satellite {} below elevation threshold: {:.3f} deg < {:.3f} deg",
+            log_manager_.getLogger("ppp_model")->debug(
+                "Satellite {} below elevation threshold: {:.3f} deg < {:.3f} deg",
                 obs.satellite, elevation, elevation_threshold_);
             return false;
         }
 
-        azimuth = computeAzimuth(rx_pos, sat_pos);
-        los = (sat_pos - rx_pos).normalized();
-        range = computeGeometricRange(rx_pos, sat_pos);
-        tropo_delay = getTroposphericDelay(elevation, state.troposphere_zenith_delay);
-        sat_clock = getSatelliteClockCorrection(obs.satellite, obs.time);
-        shapiro_delay = computeShapiroDelay(obs.satellite, rx_pos, sat_pos);
-        sagnac_corr = computeSagnacCorrection(rx_pos, sat_pos);
-        atm_loading_corr = computeAtmosphericLoadingCorrection(rx_pos, obs.time);
-        relativistic_corr = computeRelativisticCorrection(obs.satellite, sat_pos, getSatelliteVelocity(obs.satellite, obs.time));
+        // --- Step 7: Propagation corrections ---
+        // TODO: Replace tropospheric delay with model
+        tropo_delay = getTroposphericDelay(elevation, state.troposphere_zenith_delay); // [m]
+        shapiro_delay = computeShapiroDelay(obs.satellite, rx_pos, sat_pos);             // [m]
+        sagnac_corr = computeSagnacCorrection(rx_pos, sat_pos);                        // [m]
+        atm_loading_corr = computeAtmosphericLoadingCorrection(rx_pos, obs.time);           // [m]
 
-        log_manager_.getLogger()->trace("Satellite geometry for {} at TOW {:.3f}: range={:.3f} m, elevation={:.3f} deg, azimuth={:.3f} deg, "
-            "tropo_delay={:.3f} m, sat_clock={:.3e} s, shapiro_delay={:.3e} m, sagnac_corr={:.3f} m, "
-            "atm_loading_corr={:.3f} m, relativistic_corr={:.3e} s",
-            obs.satellite, obs.time.tow, range, elevation, azimuth, tropo_delay, sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr);
+        double mjd = TimeUtils::gpsTimeToJulianDate(obs.time.week, obs.time.tow);
+        Eigen::Vector3d sun_pos = computeSunPosition(mjd);
+        Eigen::Vector3d moon_pos = computeMoonPosition(mjd);
+        solid_tide = computeSolidEarthTide(rx_pos, sat_pos, sun_pos, moon_pos);
+
+        // --- Diagnostics ---
+        log_manager_.getLogger("ppp_model")->trace(
+            "Satellite geometry for {} at TOW {:.3f}: range={:.3f} m, elev={:.3f} deg, az={:.3f} deg, "
+            "tropo={:.3f} m, sat_clock={:.3e} s ({:.3f} m), shapiro={:.3e} m, sagnac={:.3f} m, "
+            "atm_load={:.3f} m, relativistic={:.3e} s ({:.3f} m)", "solid_tide={:.3f} m",
+            obs.satellite, obs.time.tow, range, elevation, azimuth,
+            tropo_delay, sat_clock, sat_clock * c,
+            shapiro_delay, sagnac_corr, atm_loading_corr,
+            relativistic_corr, relativistic_corr * c, solid_tide);
+
         return true;
+    }
+
+    double PppModel::computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
+        const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos) const {
+        const double h0 = 0.6078;
+        const double h2 = -0.0006;
+        const double h3 = 0.292;
+        const double l0 = 0.0847;
+        const double l2 = 0.0002;
+        const double l3 = 0.015;
+        const double MS2E = 332946.0;
+        const double MM2E = 0.01230002;
+        const double re = 6378137.0;
+
+        Eigen::Vector3d l = receiver_pos - sat_pos;
+        double l_norm = l.norm();
+        if (l_norm == 0.0) return 0.0;
+        Eigen::Vector3d los = l / l_norm;
+
+        double lat = std::atan2(receiver_pos.z(), std::sqrt(receiver_pos.x() * receiver_pos.x() + receiver_pos.y() * receiver_pos.y()));
+        double trm = 3.0 * std::sin(lat) * std::sin(lat) - 1.0;
+        double h = h0 + h2 * trm;
+        double l_coeff = l0 + l2 * trm;
+
+        double sun_dist = sun_pos.norm();
+        double moon_dist = moon_pos.norm();
+        double rec_dist = receiver_pos.norm();
+        if (sun_dist == 0.0 || moon_dist == 0.0 || rec_dist == 0.0) return 0.0;
+
+        Eigen::Vector3d sun_uni = sun_pos / sun_dist;
+        Eigen::Vector3d moon_uni = moon_pos / moon_dist;
+        Eigen::Vector3d rec_uni = receiver_pos / rec_dist;
+
+        double dotSR = sun_uni.dot(rec_uni);
+        double dotMR = moon_uni.dot(rec_uni);
+
+        Eigen::Vector3d aSun = sun_uni - dotSR * rec_uni;
+        Eigen::Vector3d aMoon = moon_uni - dotMR * rec_uni;
+
+        double DRS = std::pow(re, 4) / std::pow(sun_dist, 3);
+        double DRM = std::pow(re, 4) / std::pow(moon_dist, 3);
+        double DRM2 = std::pow(re, 5) / std::pow(moon_dist, 4);
+
+        double s1 = (3.0 * dotSR * dotSR - 1.0) / 2.0;
+        Eigen::Vector3d d2s = MS2E * DRS * ((h * rec_uni) * s1 + (3.0 * l_coeff * dotSR) * aSun);
+
+        double s2 = (3.0 * dotMR * dotMR - 1.0) / 2.0;
+        Eigen::Vector3d d2m = MM2E * DRM * ((h * rec_uni) * s2 + (3.0 * l_coeff * dotMR) * aMoon);
+
+        double s3 = (5.0 / 2.0) * std::pow(dotMR, 3) - (3.0 / 2.0) * dotMR;
+        double s4 = (15.0 / 2.0) * dotMR * dotMR - (3.0 / 2.0);
+        Eigen::Vector3d d3m = MM2E * DRM2 * ((h3 * rec_uni) * s3 + (l3 * s4) * aMoon);
+
+        double stide = (d2s + d2m + d3m).dot(los);
+
+        /*log_manager_.getLogger("ppp_model")->trace(
+            "Solid Earth tide for sat {}: stide={:.3f} m, lat={:.3f} rad, dotSR={:.3f}, dotMR={:.3f}",
+            obs.satellite, stide, lat, dotSR, dotMR);*/
+
+        return stide;
+    }
+
+    Eigen::Vector3d PppModel::computeSunPosition(double mjd) const {
+        const double AU = 149597870700.0;  // Astronomical unit (m)
+        const double d2r = Constants::PI / 180.0;
+
+        double fday = mjd - std::floor(mjd);
+        double JDN = mjd - 15019.5;
+        double v1 = std::fmod(279.696678 + 0.9856473354 * JDN, 360.0);
+        double gstr = std::fmod(279.690983 + 0.9856473354 * JDN + 360.0 * fday + 180.0, 360.0);
+        double g = std::fmod(358.475845 + 0.9856002670 * JDN, 360.0) * d2r;
+        double slong = v1 + (1.91946 - 0.004789 * JDN / 36525.0) * std::sin(g) + 0.020094 * std::sin(2.0 * g);
+        double obliq = (23.45229 - 0.0130125 * JDN / 36525.0) * d2r;
+        double slp = (slong - 0.005686) * d2r;
+        double snd = std::sin(obliq) * std::sin(slp);
+        double csd = std::sqrt(1.0 - snd * snd);
+        double sdec = std::atan2(snd, csd) * 180.0 / Constants::PI;
+        double sra = 180.0 - std::atan2(snd / csd / std::tan(obliq), -std::cos(slp) / csd) * 180.0 / Constants::PI;
+
+        Eigen::Vector3d s_pos;
+        s_pos << std::cos(sdec * d2r) * std::cos(sra * d2r) * AU,
+            std::cos(sdec * d2r)* std::sin(sra * d2r)* AU,
+            std::sin(sdec * d2r)* AU;
+
+        s_pos = rotateVector(s_pos, gstr * d2r, 3);
+
+        log_manager_.getLogger("ppp_model")->trace(
+            "Sun position at MJD {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m",
+            mjd, s_pos.x(), s_pos.y(), s_pos.z());
+
+        return s_pos;
+    }
+
+    Eigen::Vector3d PppModel::computeMoonPosition(double mjd) const {
+        const double T = (mjd - 51544.5) / 36525.0;
+        const double d2r = Constants::PI / 180.0;
+
+        double L0 = 218.31617 + 481267.88088 * T - 1.3972 * T;
+        double l = 134.96292 + 477198.86753 * T;
+        double lp = 357.52543 + 35999.04944 * T;
+        double F = 93.27283 + 483202.01873 * T;
+        double D = 297.85027 + 445267.11135 * T;
+
+        double long_terms = (22640.0 * std::sin(l * d2r) + 769.0 * std::sin(2.0 * l * d2r) -
+            4586.0 * std::sin((l - 2.0 * D) * d2r) + 2370.0 * std::sin(2.0 * D * d2r) -
+            668.0 * std::sin(lp * d2r) - 412.0 * std::sin(2.0 * F * d2r) -
+            212.0 * std::sin((2.0 * l - 2.0 * D) * d2r) - 206.0 * std::sin((l + lp - 2.0 * D) * d2r) +
+            192.0 * std::sin((l + 2.0 * D) * d2r) - 165.0 * std::sin((lp - 2.0 * D) * d2r) +
+            148.0 * std::sin((l - lp) * d2r) - 125.0 * std::sin(D * d2r) -
+            110.0 * std::sin((l + lp) * d2r) - 55.0 * std::sin((2.0 * F - 2.0 * D) * d2r)) / 3600.0;
+        double long_ = std::fmod(L0 + long_terms, 360.0);
+
+        double lat = (18520.0 * std::sin((F + long_ - L0 + (412.0 * std::sin(2.0 * F * d2r) + 541.0 * std::sin(lp * d2r)) / 3600.0) * d2r) -
+            526.0 * std::sin((F - 2.0 * D) * d2r) + 44.0 * std::sin((l + F - 2.0 * D) * d2r) -
+            31.0 * std::sin((-l + F - 2.0 * D) * d2r) - 25.0 * std::sin((-2.0 * l + F) * d2r) -
+            23.0 * std::sin((lp + F - 2.0 * D) * d2r) + 21.0 * std::sin((-l + F) * d2r) +
+            11.0 * std::sin((-lp + F - 2.0 * D) * d2r)) / 3600.0;
+        lat = std::fmod(lat, 360.0);
+
+        double dist = (385000.0 - 20905.0 * std::cos(l * d2r) - 3699.0 * std::cos((2.0 * D - l) * d2r) -
+            2956.0 * std::cos(2.0 * D * d2r) - 570.0 * std::cos(2.0 * l * d2r) +
+            246.0 * std::cos((2.0 * l - 2.0 * D) * d2r) - 205.0 * std::cos((lp - 2.0 * D) * d2r) -
+            171.0 * std::cos((l + 2.0 * D) * d2r) - 152.0 * std::cos((l + lp - 2.0 * D) * d2r)) * 1000.0;
+
+        Eigen::Vector3d m_pos;
+        m_pos << dist * std::cos(long_ * d2r) * std::cos(lat * d2r),
+            dist* std::sin(long_ * d2r)* std::cos(lat * d2r),
+            dist* std::sin(lat * d2r);
+
+        const double obl = 23.43929111 * d2r;
+        m_pos = rotateVector(m_pos, -obl, 1);
+
+        double fday = mjd - std::floor(mjd);
+        double JDN = mjd - 15019.5;
+        double gstr = std::fmod(279.690983 + 0.9856473354 * JDN + 360.0 * fday + 180.0, 360.0) * d2r;
+        m_pos = rotateVector(m_pos, gstr, 3);
+
+        log_manager_.getLogger("ppp_model")->trace(
+            "Moon position at MJD {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m",
+            mjd, m_pos.x(), m_pos.y(), m_pos.z());
+
+        return m_pos;
+    }
+
+    Eigen::Vector3d PppModel::rotateVector(const Eigen::Vector3d& vec, double angle, int axis) const {
+        Eigen::Matrix3d R;
+        double c = std::cos(angle);
+        double s = std::sin(angle);
+        if (axis == 1) {  // X-axis
+            R << 1, 0, 0,
+                0, c, -s,
+                0, s, c;
+        }
+        else if (axis == 3) {  // Z-axis
+            R << c, -s, 0,
+                s, c, 0,
+                0, 0, 1;
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("Invalid rotation axis: {}", axis);
+            return vec;
+        }
+        return R * vec;
     }
 
     double PppModel::computeShapiroDelay(const std::string& satellite, const Eigen::Vector3d& rx_pos,
@@ -242,14 +663,14 @@ namespace GnssProcessor {
         // Validate inputs
         std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
         if (!rx_pos.allFinite() || !sat_pos.allFinite()) {
-            log_manager_.getLogger()->warn("Invalid Shapiro delay inputs for {} ({}): rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
+            log_manager_.getLogger("ppp_model")->warn("Invalid Shapiro delay inputs for {} ({}): rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
                 satellite, system_str, rx_pos.x(), rx_pos.y(), rx_pos.z(), sat_pos.x(), sat_pos.y(), sat_pos.z());
             return 0.0;
         }
         double r = (sat_pos - rx_pos).norm();
         double sat_norm = sat_pos.norm();
         if (r < 1e3 || sat_norm < MIN_POSITION_NORM || sat_norm > MAX_POSITION_NORM) {
-            log_manager_.getLogger()->warn("Unrealistic Shapiro delay norms for {} ({}): range={:.3e} m, sat_norm={:.3e} m",
+            log_manager_.getLogger("ppp_model")->warn("Unrealistic Shapiro delay norms for {} ({}): range={:.3e} m, sat_norm={:.3e} m",
                 satellite, system_str, r, sat_norm);
             return 0.0;
         }
@@ -258,23 +679,21 @@ namespace GnssProcessor {
         double r_rx = rx_pos.norm();
         double delay = (2.0 * GM / C_CUBED) * std::log((r + sat_norm + r_rx) / (r + sat_norm - r_rx));
         if (!std::isfinite(delay) || std::abs(delay) > MAX_DELAY) {
-            log_manager_.getLogger()->warn("Invalid Shapiro delay for {} ({}): {:.3e} s, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
+            log_manager_.getLogger("ppp_model")->warn("Invalid Shapiro delay for {} ({}): {:.3e} s, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
                 satellite, system_str, delay, r, sat_norm, r_rx);
             return 0.0;
         }
 
         // Convert to meters
         delay *= Constants::SPEED_OF_LIGHT;
-        log_manager_.getLogger()->trace("Shapiro delay for {} ({}): {:.3e} m, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
+        log_manager_.getLogger("ppp_model")->trace("Shapiro delay for {} ({}): {:.3e} m, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
             satellite, system_str, delay, r, sat_norm, r_rx);
         return delay;
     }
 
-    bool PppModel::computeModels(const std::vector<RinexObservation>& observations,
-        PppState& state,
-        std::vector<PppObservation>& modeled_obs) {
+    bool PppModel::computeModels(const std::vector<RinexObservation>& observations, PppState& state, std::vector<PppObservation>& modeled_obs) {
         if (observations.empty()) {
-            log_manager_.getLogger()->error("No observations provided for PPP modeling");
+            log_manager_.getLogger("ppp_model")->error("No observations provided for PPP modeling");
             return false;
         }
 
@@ -293,44 +712,65 @@ namespace GnssProcessor {
             ppp_obs.variances = obs.variances;
             ppp_obs.lli_flags = obs.lli_flags;
 
+            ppp_obs.sat_pos = Eigen::Vector3d::Zero();
+            ppp_obs.elevation = 0.0;
+            ppp_obs.azimuth = 0.0;
+            ppp_obs.los = Eigen::Vector3d::Zero();
+            ppp_obs.range = 0.0;
+
             // Compute satellite geometry and corrections
             Eigen::Vector3d sat_pos, rx_pos, los;
-            double elevation, azimuth, range, tropo_delay, sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr;
+            double elevation, azimuth, range, tropo_delay, sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide;
             if (!computeSatelliteGeometry(obs, state, sat_pos, rx_pos, elevation, azimuth, los, range, tropo_delay,
-                sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr)) {
+                sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide)) {
                 continue;
             }
+
+            // Populate geometric fields in PppObservation
+            ppp_obs.sat_pos = sat_pos;
+            ppp_obs.elevation = elevation;
+            ppp_obs.azimuth = azimuth;
+            ppp_obs.los = los;
+            ppp_obs.range = range;
+
+            // Log geometric data storage
+            log_manager_.getLogger("ppp_model")->trace("Stored geometry for {} at TOW {:.3f}: sat_pos=({:.3f}, {:.3f}, {:.3f}) m, "
+                "elevation={:.3f} deg, azimuth={:.3f} deg, los=({:.3f}, {:.3f}, {:.3f}), range={:.3f} m",
+                obs.satellite, obs.time.tow,
+                sat_pos.x(), sat_pos.y(), sat_pos.z(),
+                elevation, azimuth,
+                los.x(), los.y(), los.z(), range);
 
             // Get system string
             std::string system_str = MeasurementModel::getSystemString(obs.system);
             if (system_str == "Unknown") {
-                log_manager_.getLogger()->warn("Unknown system for satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
+                log_manager_.getLogger("ppp_model")->warn("Unknown system for satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
                 continue;
             }
 
             // Select observation types
             auto obs_types = selectObservationTypes(obs.measurements, obs.system, system_str);
             if (obs_types.empty()) {
-                log_manager_.getLogger()->warn("No valid observation types for system {} for satellite {}", system_str, obs.satellite);
+                log_manager_.getLogger("ppp_model")->warn("No valid observation types for system {} for satellite {}", system_str, obs.satellite);
                 continue;
             }
 
             // Get receiver antenna type
             std::string rx_antenna_type = rinex_parser_.getReceiverAntennaType();
 
-            // Process uncombined measurements if enabled
+            // Process single-frequency measurements
             if (config_.isUncombinedEnabled()) {
                 for (const auto& type : obs_types) {
                     if (!processSingleFreqObservation(obs, state, ppp_obs, system_str, type, rx_pos, sat_pos, elevation,
                         azimuth, rx_antenna_type, range, tropo_delay, sat_clock, shapiro_delay,
-                        sagnac_corr, atm_loading_corr, relativistic_corr)) {
+                        sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide)) {
                         continue;
                     }
                 }
             }
 
-            // Process ionosphere-free combination if available
-            std::vector<std::string> selected_signals;
+            // Determine available ionosphere-free combinations
+            std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
             if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type)) {
@@ -339,7 +779,7 @@ namespace GnssProcessor {
             if (is_iono_free && !config_.isUncombinedEnabled()) {
                 if (!processIonoFreeObservation(obs, state, ppp_obs, system_str, selected_signals, comb_type, rx_pos, sat_pos,
                     elevation, azimuth, rx_antenna_type, range, tropo_delay, sat_clock,
-                    shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr)) {
+                    shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide)) {
                     continue;
                 }
             }
@@ -350,314 +790,447 @@ namespace GnssProcessor {
         }
 
         if (modeled_obs.empty()) {
-            log_manager_.getLogger()->error("No valid PPP observations modeled");
+            log_manager_.getLogger("ppp_model")->error("No valid PPP observations modeled");
             return false;
         }
-        log_manager_.getLogger()->info("Modeled {} PPP observations for mode {}", modeled_obs.size(),
+        log_manager_.getLogger("ppp_model")->info("Modeled {} PPP observations for mode {}", modeled_obs.size(),
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
         return true;
     }
 
     bool PppModel::selectSignals(const RinexObservation& obs, const std::string& system_str,
-        std::vector<std::string>& selected_signals, bool& is_iono_free,
-        std::string& comb_type) {
+        std::vector<std::pair<std::string, std::string>>& selected_signals,
+        bool& is_iono_free, std::string& comb_type) {
+        // Get signal priorities from config
         auto it = signal_priorities_.find(system_str);
-        const auto& signals = (it != signal_priorities_.end()) ? it->second : std::vector<std::string>{};
-
-        // Get available signals
-        std::vector<std::string> available_signals;
-        for (const auto& sig : signals) {
-            if (obs.measurements.count(sig)) {
-                available_signals.push_back(sig);
-            }
+        const auto& signals = it != signal_priorities_.end() ? it->second : std::vector<std::string>{};
+        if (signals.empty()) {
+            log_manager_.getLogger("ppp_model")->warn("No signal priorities for system {}, skipping satellite {}", system_str, obs.satellite);
+            return false;
         }
 
-        // Map signals to frequency bands
-        std::map<std::string, std::string> freq_band_to_signal;
+        // Define frequency band mappings per system
+        static const std::map<std::string, std::vector<std::pair<std::string, std::string>>> system_to_bands = {
+            {"GPS", {{"C1", "L1"}, {"L1", "L1"}, {"C2", "L2"}, {"L2", "L2"}, {"C5", "L5"}, {"L5", "L5"}}},
+            {"Galileo", {{"C1", "E1"}, {"L1", "E1"}, {"C5", "E5a"}, {"L5", "E5a"}, {"C7", "E5b"}, {"L7", "E5b"}, {"C6", "E6"}, {"L6", "E6"}, {"C8", "E5"}, {"L8", "E5"}}},
+            {"GLONASS", {{"C1", "G1"}, {"L1", "G1"}, {"C2", "G2"}, {"L2", "G2"}, {"C3", "G3"}, {"L3", "G3"}}},
+            {"BeiDou", {{"C1", "B1C"}, {"L1", "B1C"}, {"C2", "B1I"}, {"L2", "B1I"}, {"C7", "B2"}, {"L7", "B2"}, {"C6", "B3"}, {"L6", "B3"}}},
+            {"QZSS", {{"C1", "L1"}, {"L1", "L1"}, {"C2", "L2"}, {"L2", "L2"}, {"C5", "L5"}, {"L5", "L5"}, {"C6", "L6"}, {"L6", "L6"}}},
+            {"SBAS", {{"C1", "L1"}, {"L1", "L1"}, {"C5", "L5"}, {"L5", "L5"}}}
+        };
+
+        // Map available signals to frequency bands, respecting priority order
+        std::map<std::string, std::pair<std::string, std::string>> freq_band_to_signal; // band -> {code, phase}
         std::vector<std::string> freq_bands;
-        for (const auto& sig : available_signals) {
-            std::string band;
-            if (system_str == "GPS") {
-                if (sig.find("C1") == 0 || sig.find("L1") == 0) band = "L1";
-                else if (sig.find("C2") == 0 || sig.find("L2") == 0) band = "L2";
-                else if (sig.find("C5") == 0 || sig.find("L5") == 0) band = "L5";
-            }
-            else if (system_str == "Galileo") {
-                if (sig.find("C1") == 0 || sig.find("L1") == 0) band = "E1";
-                else if (sig.find("C5") == 0 || sig.find("L5") == 0) band = "E5a";
-                else if (sig.find("C7") == 0 || sig.find("L7") == 0) band = "E5b";
-                else if (sig.find("C6") == 0 || sig.find("L6") == 0) band = "E6";
-                else if (sig.find("C8") == 0 || sig.find("L8") == 0) band = "E5";
-            }
-            else if (system_str == "GLONASS") {
-                if (sig.find("C1") == 0 || sig.find("L1") == 0) band = "G1";
-                else if (sig.find("C2") == 0 || sig.find("L2") == 0) band = "G2";
-                else if (sig.find("C3") == 0 || sig.find("L3") == 0) band = "G3";
-            }
-            else if (system_str == "BeiDou") {
-                if (sig.find("C2") == 0 || sig.find("L2") == 0) band = "B1";
-                else if (sig.find("C7") == 0 || sig.find("L7") == 0) band = "B2";
-                else if (sig.find("C6") == 0 || sig.find("L6") == 0) band = "B3";
-                else if (sig.find("C1") == 0 || sig.find("L1") == 0) band = "B1C";
-            }
-            else if (system_str == "QZSS") {
-                if (sig.find("C1") == 0 || sig.find("L1") == 0) band = "L1";
-                else if (sig.find("C2") == 0 || sig.find("L2") == 0) band = "L2";
-                else if (sig.find("C5") == 0 || sig.find("L5") == 0) band = "L5";
-                else if (sig.find("C6") == 0 || sig.find("L6") == 0) band = "L6";
-            }
-            else if (system_str == "SBAS") {
-                if (sig.find("C1") == 0 || sig.find("L1") == 0) band = "L1";
-                else if (sig.find("C5") == 0 || sig.find("L5") == 0) band = "L5";
-            }
-            if (!band.empty() && std::find(freq_bands.begin(), freq_bands.end(), band) == freq_bands.end()) {
-                freq_bands.push_back(band);
-                // Prefer signals earlier in signal_priorities_
-                if (!freq_band_to_signal.count(band) ||
-                    std::find(signals.begin(), signals.end(), sig) < std::find(signals.begin(), signals.end(), freq_band_to_signal[band])) {
-                    freq_band_to_signal[band] = sig;
+        auto bands_it = system_to_bands.find(system_str);
+        if (bands_it == system_to_bands.end()) {
+            log_manager_.getLogger("ppp_model")->warn("No frequency band mappings for system {}, skipping satellite {}", system_str, obs.satellite);
+            return false;
+        }
+
+        // Signal band definitions for each constellation + mode
+        static const std::map<std::string, std::map<SignalMode, std::vector<std::string>>> band_map = {
+            {"GPS", {
+                {SignalMode::Dual, {"L1", "L2"}},
+                {SignalMode::Triple, {"L1", "L2", "L5"}},
+                {SignalMode::All, {"L1", "L2", "L5"}}
+            }},
+            {"Galileo", {
+                {SignalMode::Dual, {"E1", "E5a"}},
+                {SignalMode::Triple, {"E1", "E5a", "E5b"}},
+                {SignalMode::All, {"E1", "E5a", "E5b", "E6", "E5"}}
+            }},
+            {"GLONASS", {
+                {SignalMode::Dual, {"G1", "G2"}},
+                {SignalMode::Triple, {"G1", "G2", "G3"}},
+                {SignalMode::All, {"G1", "G2", "G3"}}
+            }},
+            {"BeiDou", {
+                {SignalMode::Dual, {"B1I", "B3"}},
+                {SignalMode::Triple, {"B1I", "B3", "B2"}},
+                {SignalMode::All, {"B1C", "B1I", "B2", "B3"}}
+            }},
+            {"QZSS", {
+                {SignalMode::Dual, {"L1", "L2"}},
+                {SignalMode::Triple, {"L1", "L2", "L5"}},
+                {SignalMode::All, {"L1", "L2", "L5", "L6"}}
+            }},
+            {"SBAS", {
+                {SignalMode::Dual, {"L1", "L5"}},
+                {SignalMode::Triple, {"L1", "L5"}},
+                {SignalMode::All, {"L1", "L5"}}
+            }}
+        };
+
+        // Map signals to bands, allowing multiple signals per band
+        for (const auto& sig : signals) {
+            if (!obs.measurements.count(sig)) continue;
+            for (const auto& [pattern, band] : bands_it->second) {
+                if (std::find(band_map.at(system_str).at(config_.getSignalMode()).begin(),
+                    band_map.at(system_str).at(config_.getSignalMode()).end(), band) ==
+                    band_map.at(system_str).at(config_.getSignalMode()).end()) {
+                    continue; // Skip non-target bands
+                }
+                if (sig.find(pattern) == 0) {
+                    if (freq_band_to_signal.find(band) == freq_band_to_signal.end()) {
+                        freq_band_to_signal[band] = { "", "" };
+                        freq_bands.push_back(band);
+                    }
+                    // Prefer higher-priority signals, but don't overwrite existing phase with code or vice versa
+                    if (sig[0] == 'C' && (freq_band_to_signal[band].first.empty() ||
+                        std::find(signals.begin(), signals.end(), sig) <
+                        std::find(signals.begin(), signals.end(), freq_band_to_signal[band].first))) {
+                        freq_band_to_signal[band].first = sig;
+                    }
+                    if (sig[0] == 'L' && (freq_band_to_signal[band].second.empty() ||
+                        std::find(signals.begin(), signals.end(), sig) <
+                        std::find(signals.begin(), signals.end(), freq_band_to_signal[band].second))) {
+                        freq_band_to_signal[band].second = sig;
+                    }
                 }
             }
         }
 
-        is_iono_free = freq_bands.size() >= 2;
+        // Log available bands and signals
+        std::string available_signals;
+        for (const auto& [band, sig_pair] : freq_band_to_signal) {
+            available_signals += band + ":(" + (sig_pair.first.empty() ? "none" : sig_pair.first) + "," +
+                (sig_pair.second.empty() ? "none" : sig_pair.second) + ")";
+            if (band != freq_bands.back()) available_signals += ", ";
+        }
+        log_manager_.getLogger("ppp_model")->debug("Available signals for {} {}: [{}], signal_mode={}",
+            obs.satellite, system_str, available_signals.empty() ? "none" : available_signals,
+            config_.getSignalMode() == SignalMode::Dual ? "Dual" :
+            config_.getSignalMode() == SignalMode::Triple ? "Triple" : "All");
+
+        // Determine combination type based on available bands and signal mode
+        selected_signals.clear();
+        is_iono_free = freq_bands.size() >= 2 && !config_.isUncombinedEnabled();
         comb_type = freq_bands.size() >= 3 ? "triple" : freq_bands.size() == 2 ? "dual" : "single";
+
         if (config_.isUncombinedEnabled()) {
-            // For uncombined mode, include all available signals
-            selected_signals = available_signals;
-            log_manager_.getLogger()->trace("Selected uncombined signals for {} {}: [{}], mode={}",
-                obs.satellite, system_str,
-                std::accumulate(available_signals.begin(), available_signals.end(), std::string(),
-                    [](const std::string& a, const std::string& b) {
-                        return a.empty() ? b : a + "," + b;
-                    }),
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-        }
-        else if (is_iono_free) {
-            if (comb_type == "triple") {
-                std::vector<std::string> bands = system_str == "GPS" ? std::vector<std::string>{"L1", "L2", "L5"} :
-                    system_str == "Galileo" ? std::vector<std::string>{"E1", "E5a", "E5b"} :
-                    system_str == "GLONASS" ? std::vector<std::string>{"G1", "G2", "G3"} :
-                    system_str == "BeiDou" ? std::vector<std::string>{"B1", "B2", "B3"} :
-                    system_str == "QZSS" ? std::vector<std::string>{"L1", "L2", "L5"} :
-                    std::vector<std::string>{ "L1", "L5" };
-                for (const auto& band : bands) {
-                    if (freq_band_to_signal.count(band)) {
-                        selected_signals.push_back(freq_band_to_signal[band]);
-                    }
-                }
-                if (selected_signals.size() < 3) {
-                    comb_type = "dual";
-                    selected_signals.resize(2);
+            // Uncombined mode: select all available signals
+            for (const auto& sig : signals) {
+                if (obs.measurements.count(sig)) {
+                    selected_signals.emplace_back(sig, "");
                 }
             }
-            if (comb_type == "dual") {
-                std::vector<std::string> bands = system_str == "GPS" ? std::vector<std::string>{"L1", "L2"} :
-                    system_str == "Galileo" ? std::vector<std::string>{"E1", "E5a"} :
-                    system_str == "GLONASS" ? std::vector<std::string>{"G1", "G2"} :
-                    system_str == "BeiDou" ? std::vector<std::string>{"B1", "B3"} :
-                    system_str == "QZSS" ? std::vector<std::string>{"L1", "L2"} :
-                    std::vector<std::string>{ "L1", "L5" };
-                selected_signals.clear();
-                for (const auto& band : bands) {
-                    if (freq_band_to_signal.count(band)) {
-                        selected_signals.push_back(freq_band_to_signal[band]);
-                    }
-                }
-                if (selected_signals.size() < 2) {
-                    comb_type = "single";
-                    selected_signals = available_signals.empty() ? std::vector<std::string>{} :
-                        std::vector<std::string>{ available_signals[0] };
-                }
-            }
-            if (comb_type != "single") {
-                log_manager_.getLogger()->trace("Selected iono-free signals for {} {}: [{}{}{}], comb_type={}, mode={}",
-                    obs.satellite, system_str,
-                    selected_signals[0],
-                    selected_signals.size() > 1 ? "," + selected_signals[1] : "",
-                    selected_signals.size() > 2 ? "," + selected_signals[2] : "",
-                    comb_type,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-            }
-        }
-        else {
-            if (!available_signals.empty()) {
-                selected_signals = { available_signals[0] };
-                log_manager_.getLogger()->trace("Selected single-frequency signal for {} {}: {}, mode={}",
-                    obs.satellite, system_str, selected_signals[0],
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-            }
-            else {
-                log_manager_.getLogger()->warn("No valid signals for {} {} at TOW {:.3f}", obs.satellite, system_str, obs.time.tow);
+            if (selected_signals.empty()) {
+                log_manager_.getLogger("ppp_model")->warn(
+                    "No valid signals for {} {} at TOW {:.3f}",
+                    obs.satellite, system_str, obs.time.tow
+                );
                 return false;
             }
+            comb_type = "uncombined";
         }
+        else if (is_iono_free && band_map.count(system_str)) {
+            auto target_bands = band_map.at(system_str).at(config_.getSignalMode());
+            std::vector<std::pair<std::string, std::string>> candidate_pairs;
+            for (size_t i = 0; i < target_bands.size(); ++i) {
+                for (size_t j = i + 1; j < target_bands.size(); ++j) {
+                    const auto& b1 = target_bands[i];
+                    const auto& b2 = target_bands[j];
+                    if (freq_band_to_signal.count(b1) && freq_band_to_signal.count(b2)) {
+                        const auto& s1 = freq_band_to_signal.at(b1);
+                        const auto& s2 = freq_band_to_signal.at(b2);
+                        // Code pair
+                        if (!s1.first.empty() && !s2.first.empty()) {
+                            candidate_pairs.emplace_back(s1.first, s2.first);
+                            log_manager_.getLogger("ppp_model")->trace(
+                                "Selected iono-free code pair for {} {}: {} / {}, bands: {} / {}, signal_mode={}",
+                                obs.satellite, system_str, s1.first, s2.first, b1, b2,
+                                config_.getSignalMode() == SignalMode::Dual ? "Dual" :
+                                config_.getSignalMode() == SignalMode::Triple ? "Triple" : "All"
+                            );
+                        }
+                        // Phase pair
+                        if (!s1.second.empty() && !s2.second.empty()) {
+                            candidate_pairs.emplace_back(s1.second, s2.second);
+                            log_manager_.getLogger("ppp_model")->trace(
+                                "Selected iono-free phase pair for {} {}: {} / {}, bands: {} / {}, signal_mode={}",
+                                obs.satellite, system_str, s1.second, s2.second, b1, b2,
+                                config_.getSignalMode() == SignalMode::Dual ? "Dual" :
+                                config_.getSignalMode() == SignalMode::Triple ? "Triple" : "All"
+                            );
+                        }
+                        else if (s1.second.empty() || s2.second.empty()) {
+                            log_manager_.getLogger("ppp_model")->debug(
+                                "Missing phase signal for {} {}: band {} phase={}, band {} phase={}, signal_mode={}",
+                                obs.satellite, system_str, b1, s1.second, b2, s2.second,
+                                config_.getSignalMode() == SignalMode::Dual ? "Dual" :
+                                config_.getSignalMode() == SignalMode::Triple ? "Triple" : "All"
+                            );
+                        }
+                    }
+                    else {
+                        log_manager_.getLogger("ppp_model")->debug(
+                            "Missing band signals for {} {}: band {} present={}, band {} present={}, signal_mode={}",
+                            obs.satellite, system_str, b1, freq_band_to_signal.count(b1), b2, freq_band_to_signal.count(b2),
+                            config_.getSignalMode() == SignalMode::Dual ? "Dual" :
+                            config_.getSignalMode() == SignalMode::Triple ? "Triple" : "All"
+                        );
+                    }
+                }
+            }
+            selected_signals = std::move(candidate_pairs);
+            if (selected_signals.empty()) {
+                comb_type = "single";
+                is_iono_free = false;
+            }
+        }
+
+        // Fallback to single-frequency if no iono-free combination is possible
+        if (!is_iono_free && selected_signals.empty()) {
+            for (const auto& sig : signals) {
+                if (obs.measurements.count(sig) && sig[0] == 'C') {
+                    selected_signals.emplace_back(sig, "");
+                    break;
+                }
+            }
+            for (const auto& sig : signals) {
+                if (obs.measurements.count(sig) && sig[0] == 'L') {
+                    selected_signals.emplace_back("", sig);
+                    break;
+                }
+            }
+            comb_type = "single";
+        }
+
+        if (selected_signals.empty()) {
+            log_manager_.getLogger("ppp_model")->warn("No valid signals for {} {} at TOW {:.3f}", obs.satellite, system_str, obs.time.tow);
+            return false;
+        }
+
+        // Log selected signals
+        std::string signal_list;
+        for (size_t i = 0; i < selected_signals.size(); ++i) {
+            signal_list += (selected_signals[i].first.empty() ? "" : selected_signals[i].first) +
+                (selected_signals[i].second.empty() ? "" : (selected_signals[i].first.empty() ? "" : "/") + selected_signals[i].second);
+            if (i < selected_signals.size() - 1) signal_list += ",";
+        }
+        log_manager_.getLogger("ppp_model")->trace("Selected signals for {} {}: [{}], comb_type={}, is_iono_free={}, mode={}",
+            obs.satellite, system_str, signal_list.empty() ? "none" : signal_list, comb_type, is_iono_free,
+            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+
         return true;
     }
 
     bool PppModel::processIonoFreeObservation(const RinexObservation& obs, PppState& state,
         PppObservation& ppp_obs, const std::string& system_str,
-        const std::vector<std::string>& selected_signals,
+        const std::vector<std::pair<std::string, std::string>> selected_signals,
         const std::string& comb_type, const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos, double elevation, double azimuth,
         const std::string& rx_antenna_type, double range, double tropo_delay,
         double sat_clock, double shapiro_delay, double sagnac_corr,
-        double atm_loading_corr, double relativistic_corr) {
-        // Handle ionosphere-free combination
-        double observed_value = 0.0;
-        double modeled_value = 0.0;
-        double variance_value = 0.0;
-        std::string ref_type;
+        double atm_loading_corr, double relativistic_corr, double solid_tide) {
 
-        if (comb_type == "triple") {
-            if (selected_signals.size() < 3) {
-                log_manager_.getLogger()->warn("Insufficient signals for triple-frequency combination for {}", obs.satellite);
-                return false;
-            }
-            observed_value = computeTripleIonoFreeCombination(obs.measurements, obs.system,
-                selected_signals[0], selected_signals[1], selected_signals[2]);
-            std::vector<double> modeled_freqs(3, 0.0);
-            std::vector<double> variances(3, 0.0);
-            std::vector<double> frequencies(3, 0.0);
-            for (size_t i = 0; i < 3; ++i) {
-                const auto& type = selected_signals[i];
-                double antenna_corr = getAntennaCorrection(obs.satellite, type, obs.system, rx_pos, sat_pos,
-                    elevation, azimuth, rx_antenna_type, obs.time);
-                double bias_corr = getBiasCorrection(obs.satellite, type, obs.time);
-                modeled_freqs[i] = range + state.clock_bias * Constants::SPEED_OF_LIGHT + tropo_delay -
-                    (sat_clock + relativistic_corr) * Constants::SPEED_OF_LIGHT +
-                    antenna_corr + bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr;
-                variances[i] = obs.variances.count(type) ? obs.variances.at(type) : (type[0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015);
-                frequencies[i] = getFrequency(type, obs.system, obs.satellite);
-                if (frequencies[i] <= 0.0) {
-                    log_manager_.getLogger()->warn("Invalid frequency for type {} on system {} for satellite {}",
-                        type, system_str, obs.satellite);
+        size_t num_freq = (comb_type == "triple") ? 3 : (comb_type == "dual") ? 2 : 0;
+        if (num_freq == 0) {
+            log_manager_.getLogger("ppp_model")->warn("Invalid combination type {} for {}", comb_type, obs.satellite);
+            return false;
+        }
+        // Validate number of signal pairs
+        if (selected_signals.size() > num_freq || selected_signals.size() < 2) {
+            log_manager_.getLogger("ppp_model")->warn("Invalid number of signal pairs for {} combination for {} (expected up to {}, got {})",
+                comb_type, obs.satellite, num_freq, selected_signals.size());
+            return false;
+        }
+
+        // Assign and validate code and phase signals
+        std::vector<std::string> code_signals(1), phase_signals(1);
+        bool code_pair_found = false, phase_pair_found = false;
+        for (size_t f = 0; f < selected_signals.size(); ++f) {
+            const auto& pair = selected_signals[f];
+            if (!pair.first.empty() && !pair.second.empty()) {
+                // Check if pair is code/code or phase/phase based on first signal's type
+                if (pair.first[0] == 'C' && pair.second[0] == 'C') {
+                    if (code_pair_found) {
+                        log_manager_.getLogger("ppp_model")->warn("Multiple code pairs for {} {}, expected one: {} / {}",
+                            obs.satellite, system_str, pair.first, pair.second);
+                        return false;
+                    }
+                    code_signals[0] = pair.first;
+                    code_signals.push_back(pair.second);
+                    code_pair_found = true;
+                }
+                else if (pair.first[0] == 'L' && pair.second[0] == 'L') {
+                    if (phase_pair_found) {
+                        log_manager_.getLogger("ppp_model")->warn("Multiple phase pairs for {} {}, expected one: {} / {}",
+                            obs.satellite, system_str, pair.first, pair.second);
+                        return false;
+                    }
+                    phase_signals[0] = pair.first;
+                    phase_signals.push_back(pair.second);
+                    phase_pair_found = true;
+                }
+                else {
+                    log_manager_.getLogger("ppp_model")->warn("Invalid signal type pair for {} {} in pair {}: {} / {}",
+                        obs.satellite, system_str, f + 1, pair.first, pair.second);
+                    return false;
+                }
+
+                // Validate measurements exist in obs
+                if (!obs.measurements.count(pair.first)) {
+                    log_manager_.getLogger("ppp_model")->warn("Missing measurement for signal {} for {} {} at TOW {:.3f}",
+                        pair.first, obs.satellite, system_str, obs.time.tow);
+                    return false;
+                }
+                if (!obs.measurements.count(pair.second)) {
+                    log_manager_.getLogger("ppp_model")->warn("Missing measurement for signal {} for {} {} at TOW {:.3f}",
+                        pair.second, obs.satellite, system_str, obs.time.tow);
                     return false;
                 }
             }
-            double f1_sq = frequencies[0] * frequencies[0], f2_sq = frequencies[1] * frequencies[1], f3_sq = frequencies[2] * frequencies[2];
-            double denom = f1_sq * f2_sq * (f1_sq - f2_sq) + f2_sq * f3_sq * (f2_sq - f3_sq) +
-                f3_sq * f1_sq * (f3_sq - f1_sq);
-            if (std::abs(denom) < 1e-6) {
-                log_manager_.getLogger()->warn("Near-zero denominator for triple-frequency combination for {}", obs.satellite);
+            else {
+                log_manager_.getLogger("ppp_model")->warn("Empty signal in pair {} for {} {}: first={}, second={}",
+                    f + 1, obs.satellite, system_str, pair.first, pair.second);
                 return false;
             }
-            double c1 = (f2_sq * f3_sq * (f2_sq - f3_sq)) / denom;
-            double c2 = (f3_sq * f1_sq * (f3_sq - f1_sq)) / denom;
-            double c3 = (f1_sq * f2_sq * (f1_sq - f2_sq)) / denom;
-            if (!std::isfinite(c1) || !std::isfinite(c2) || !std::isfinite(c3)) {
-                log_manager_.getLogger()->warn("Non-finite coefficients for triple-frequency combination for {}", obs.satellite);
-                return false;
-            }
-            modeled_value = c1 * modeled_freqs[0] + c2 * modeled_freqs[1] + c3 * modeled_freqs[2];
-            variance_value = c1 * c1 * variances[0] + c2 * c2 * variances[1] + c3 * c3 * variances[2];
-            ref_type = selected_signals[0] + "_" + selected_signals[1] + "_" + selected_signals[2];
+        }
 
-            // Handle iono-free ambiguity for phase measurements
-            if (selected_signals[0][0] == 'L' || selected_signals[1][0] == 'L' || selected_signals[2][0] == 'L') {
-                std::string amb_key = obs.satellite + "_" + ref_type;
-                if (!state.ambiguities.count(amb_key)) {
-                    double effective_wavelength = (c1 * getWavelength(obs.system, selected_signals[0]) +
-                        c2 * getWavelength(obs.system, selected_signals[1]) +
-                        c3 * getWavelength(obs.system, selected_signals[2])) / (c1 + c2 + c3);
-                    if (effective_wavelength <= 0.0) {
-                        log_manager_.getLogger()->warn("Invalid effective wavelength for {} {}: {:.3f}",
-                            obs.satellite, ref_type, effective_wavelength);
-                        return false;
+        // Ensure both code and phase pairs were found
+        if (!code_pair_found || !phase_pair_found) {
+            log_manager_.getLogger("ppp_model")->warn("Missing required pair for {} {}: code_pair={}, phase_pair={}",
+                obs.satellite, system_str, code_pair_found, phase_pair_found);
+            return false;
+        }
+
+        bool success = false;
+        std::vector<std::pair<std::string, std::vector<std::string>>> meas_groups = {
+            {"CODE", code_signals},
+            {"PHASE", phase_signals}
+        };
+
+        // Define pairs for combinations
+        std::vector<std::vector<size_t>> pairs;
+        if (comb_type == "dual") {
+            pairs = { {0, 1} };
+        }
+        else { // triple
+            pairs = { {0, 1}, {0, 2} }; // L1/L2 and L1/L5
+        }
+
+        for (const auto& group : meas_groups) {
+            const std::string& meas_str = group.first;
+            const auto& sel_sigs = group.second;
+            char meas_type = (meas_str == "CODE" ? 'C' : 'L');
+
+            for (const auto& pair : pairs) {
+                if (pair.size() != 2) continue;
+                size_t i1 = pair[0], i2 = pair[1];
+                if (i1 >= num_freq || i2 >= num_freq) continue;
+
+                std::string ref_type = sel_sigs[i1] + "_" + sel_sigs[i2];
+
+                std::vector<double> modeled_obs(2, 0.0);
+                std::vector<double> variances(2, 0.0);
+                std::vector<double> frequencies(2, 0.0);
+                std::vector<double> wavelengths(2, 0.0);
+                if (meas_type == 'L') {
+                    //continue; //!< TODO: continue here removes carrier phase measurements for debugging
+                    wavelengths[0] = getWavelength(obs.system, sel_sigs[i1]);
+                    wavelengths[1] = getWavelength(obs.system, sel_sigs[i2]);
+                    if (wavelengths[0] <= 0.0 || wavelengths[1] <= 0.0) {
+                        log_manager_.getLogger("ppp_model")->warn("Invalid wavelength for pair {} on system {} for satellite {}: wl1={:.3f}, wl2={:.3f} m",
+                            ref_type, system_str, obs.satellite, wavelengths[0], wavelengths[1]);
+                        continue;
                     }
-                    state.ambiguities[amb_key] = observed_value - modeled_value;
-                    state.ambiguities[amb_key] = std::round(state.ambiguities[amb_key] / effective_wavelength) * effective_wavelength;
-                    state_manager_.addAmbiguity(amb_key, state.ambiguities[amb_key]);
-                    log_manager_.getLogger()->debug("Initialized iono-free ambiguity for {}: {:.3f} cycles, effective wavelength: {:.3f} m",
-                        amb_key, state.ambiguities[amb_key] / effective_wavelength, effective_wavelength);
                 }
-                modeled_value += state.ambiguities[amb_key];
-            }
-            log_manager_.getLogger()->trace("Triple-frequency iono-free for {}: observed={:.3f} m, modeled={:.3f} m, "
-                "freqs=[{:.3f}, {:.3f}, {:.3f}] MHz, coeffs=[{:.3f}, {:.3f}, {:.3f}], mode={}",
-                obs.satellite, observed_value, modeled_value,
-                frequencies[0] / 1e6, frequencies[1] / 1e6, frequencies[2] / 1e6, c1, c2, c3,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-        }
-        else if (comb_type == "dual") {
-            if (selected_signals.size() < 2) {
-                log_manager_.getLogger()->warn("Insufficient signals for dual-frequency combination for {}", obs.satellite);
-                return false;
-            }
-            observed_value = computeIonoFreeCombination(obs.measurements, obs.system,
-                selected_signals[0], selected_signals[1]);
-            std::vector<double> modeled_freqs(2, 0.0);
-            std::vector<double> variances(2, 0.0);
-            std::vector<double> frequencies(2, 0.0);
-            for (size_t i = 0; i < 2; ++i) {
-                const auto& type = selected_signals[i];
-                double antenna_corr = getAntennaCorrection(obs.satellite, type, obs.system, rx_pos, sat_pos,
-                    elevation, azimuth, rx_antenna_type, obs.time);
-                double bias_corr = getBiasCorrection(obs.satellite, type, obs.time);
-                modeled_freqs[i] = range + state.clock_bias * Constants::SPEED_OF_LIGHT + tropo_delay -
-                    (sat_clock + relativistic_corr) * Constants::SPEED_OF_LIGHT +
-                    antenna_corr + bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr;
-                variances[i] = obs.variances.count(type) ? obs.variances.at(type) : (type[0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015);
-                frequencies[i] = getFrequency(type, obs.system, obs.satellite);
-                if (frequencies[i] <= 0.0) {
-                    log_manager_.getLogger()->warn("Invalid frequency for type {} on system {} for satellite {}",
-                        type, system_str, obs.satellite);
-                    return false;
-                }
-            }
-            double f1_sq = frequencies[0] * frequencies[0], f2_sq = frequencies[1] * frequencies[1];
-            double c1 = f1_sq / (f1_sq - f2_sq);
-            double c2 = -f2_sq / (f1_sq - f2_sq);
-            if (!std::isfinite(c1) || !std::isfinite(c2)) {
-                log_manager_.getLogger()->warn("Non-finite coefficients for dual-frequency combination for {}", obs.satellite);
-                return false;
-            }
-            modeled_value = c1 * modeled_freqs[0] + c2 * modeled_freqs[1];
-            variance_value = c1 * c1 * variances[0] + c2 * c2 * variances[1];
-            ref_type = selected_signals[0] + "_" + selected_signals[1];
 
-            // Handle iono-free ambiguity for phase measurements
-            if (selected_signals[0][0] == 'L' || selected_signals[1][0] == 'L') {
-                std::string amb_key = obs.satellite + "_" + ref_type;
-                if (!state.ambiguities.count(amb_key)) {
-                    double effective_wavelength = (c1 * getWavelength(obs.system, selected_signals[0]) +
-                        c2 * getWavelength(obs.system, selected_signals[1])) / (c1 + c2);
-                    if (effective_wavelength <= 0.0) {
-                        log_manager_.getLogger()->warn("Invalid effective wavelength for {} {}: {:.3f}",
-                            obs.satellite, ref_type, effective_wavelength);
-                        return false;
+                for (size_t j = 0; j < 2; ++j) {
+                    size_t idx = (j == 0 ? i1 : i2);
+                    const auto& type = sel_sigs[idx];
+                    double antenna_corr = getAntennaCorrection(obs.satellite, type, obs.system, rx_pos, sat_pos,
+                        elevation, azimuth, rx_antenna_type, obs.time);
+                    double bias_corr = getBiasCorrection(obs.satellite, type, obs.time);
+
+                    // Computed or modeled observation
+                    //  1) State-independent
+                    modeled_obs[j] = -(sat_clock + relativistic_corr) * Constants::SPEED_OF_LIGHT +
+                        antenna_corr + bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr + solid_tide;
+
+                    //  2) State-dependent
+                    /*modeled_obs[j] = range + state.clock_bias + state.troposphere_zenith_delay -
+                        (sat_clock + relativistic_corr) * Constants::SPEED_OF_LIGHT +
+                        antenna_corr + bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr;*/
+
+                    variances[j] = obs.variances.count(type) ? obs.variances.at(type) : (meas_type == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015);
+                    frequencies[j] = getFrequency(type, obs.system, obs.satellite);
+                    if (frequencies[j] <= 0.0) {
+                        log_manager_.getLogger("ppp_model")->warn("Invalid frequency for type {} on system {} for satellite {}",
+                            type, system_str, obs.satellite);
+                        continue;
                     }
-                    state.ambiguities[amb_key] = observed_value - modeled_value;
-                    state.ambiguities[amb_key] = std::round(state.ambiguities[amb_key] / effective_wavelength) * effective_wavelength;
-                    state_manager_.addAmbiguity(amb_key, state.ambiguities[amb_key]);
-                    log_manager_.getLogger()->debug("Initialized iono-free ambiguity for {}: {:.3f} cycles, effective wavelength: {:.3f} m",
-                        amb_key, state.ambiguities[amb_key] / effective_wavelength, effective_wavelength);
                 }
-                modeled_value += state.ambiguities[amb_key];
+
+                double observed_value = 0.0;
+                double modeled_value = 0.0;
+                double variance_value = 0.0;
+                double c1 = 0.0, c2 = 0.0;
+
+                double f1_sq = frequencies[0] * frequencies[0];
+                double f2_sq = frequencies[1] * frequencies[1];
+                c1 = f1_sq / (f1_sq - f2_sq);
+                c2 = -f2_sq / (f1_sq - f2_sq);
+                if (!std::isfinite(c1) || !std::isfinite(c2)) {
+                    log_manager_.getLogger("ppp_model")->warn("Non-finite coefficients for dual-frequency pair {} for {}", ref_type, obs.satellite);
+                    continue;
+                }
+
+                // Form linear measurement combination
+                modeled_value = c1 * modeled_obs[0] + c2 * modeled_obs[1];
+                variance_value = c1 * c1 * variances[0] + c2 * c2 * variances[1];
+
+                // Compute observed_value in meters, here it is ionosphere-free
+                for (size_t j = 0; j < 2; ++j) {
+                    double coeff = (j == 0 ? c1 : c2);
+                    double meas = obs.measurements.at(sel_sigs[j == 0 ? i1 : i2]);
+                    if (meas_type == 'L') meas *= wavelengths[j]; // Convert Carrier Phase Units: Cycles to Meters
+                    observed_value += coeff * meas;
+                }
+                if (observed_value == 0.0) {
+                    log_manager_.getLogger("ppp_model")->warn("Failed to compute dual-frequency observed value for {} ({})", ref_type, obs.satellite);
+                    continue;
+                }
+
+                // Ambiguity initialization, add to state vector
+                if (meas_type == 'L') {
+                    std::string amb_key = obs.satellite + "_" + ref_type;
+                    if (!state.ambiguities.count(amb_key)) {
+                        state.ambiguities[amb_key] = 0.0; // initial value
+                        //state.ambiguities[amb_key] = observed_value - modeled_value; // initial value
+                        state_manager_.addAmbiguity(amb_key, state.ambiguities[amb_key]); // Ambiguity in meters
+                        log_manager_.getLogger("ppp_model")->debug("Initialized iono-free ambiguity for {}: {:.3f} m",
+                            amb_key, state.ambiguities[amb_key]);
+                    }
+                    /*else {
+                        modeled_value += state.ambiguities[amb_key];
+                    }*/
+                }
+                
+
+                ppp_obs.observed[ref_type] = observed_value;
+                ppp_obs.modeled[ref_type] = modeled_value;
+                ppp_obs.residuals[ref_type] = observed_value - modeled_value;
+                ppp_obs.variances[ref_type] = variance_value;
+
+                if (meas_type == 'C') {
+                    double mp_weight = computeMultipathVarianceWeight(ppp_obs, sel_sigs[i1], elevation);
+                    ppp_obs.variances[ref_type] *= (1.0 / mp_weight);
+                    log_manager_.getLogger("ppp_model")->trace("Multipath weight for {} {}: {:.3f}, adjusted variance: {:.6f}",
+                        obs.satellite, ref_type, mp_weight, ppp_obs.variances[ref_type]);
+                }
+
+                log_manager_.getLogger("ppp_model")->trace("Iono-free {} for {} ({}): observed={:.3f} m, modeled={:.3f} m, residual={:.3f} m, variance={:.6f}, comb_type=dual(pair), mode={}",
+                    ref_type, obs.satellite, meas_str, observed_value, modeled_value, ppp_obs.residuals[ref_type],
+                    ppp_obs.variances[ref_type], config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+
+                success = true;
             }
-            log_manager_.getLogger()->trace("Dual-frequency iono-free for {}: observed={:.3f} m, modeled={:.3f} m, "
-                "freqs=[{:.3f}, {:.3f}] MHz, coeffs=[{:.3f}, {:.3f}], mode={}",
-                obs.satellite, observed_value, modeled_value,
-                frequencies[0] / 1e6, frequencies[1] / 1e6, c1, c2,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
         }
 
-        ppp_obs.modeled[ref_type] = modeled_value;
-        ppp_obs.residuals[ref_type] = observed_value - modeled_value;
-        ppp_obs.variances[ref_type] = variance_value;
-
-        // Apply multipath mitigation for code observations
-        if (ref_type[0] == 'C') {
-            double mp_weight = computeMultipathVarianceWeight(ppp_obs, selected_signals[0], elevation);
-            ppp_obs.variances[ref_type] *= (1.0 / mp_weight);
-            log_manager_.getLogger()->trace("Multipath weight for {} {}: {:.3f}, adjusted variance: {:.6f}",
-                obs.satellite, ref_type, mp_weight, ppp_obs.variances[ref_type]);
-        }
-
-        log_manager_.getLogger()->trace("Iono-free {} for {}: observed={:.3f} m, modeled={:.3f} m, residual={:.3f} m, comb_type={}, mode={}",
-            ref_type, obs.satellite, observed_value, modeled_value, ppp_obs.residuals[ref_type],
-            comb_type, config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-        return true;
+        return success;
     }
 
     bool PppModel::processSingleFreqObservation(const RinexObservation& obs, PppState& state,
@@ -666,9 +1239,9 @@ namespace GnssProcessor {
         const Eigen::Vector3d& sat_pos, double elevation, double azimuth,
         const std::string& rx_antenna_type, double range, double tropo_delay,
         double sat_clock, double shapiro_delay, double sagnac_corr,
-        double atm_loading_corr, double relativistic_corr) {
+        double atm_loading_corr, double relativistic_corr, double solid_tide) {
         if (!obs.measurements.count(type)) {
-            log_manager_.getLogger()->warn("Missing measurement for {} {} in uncombined mode", obs.satellite, type);
+            log_manager_.getLogger("ppp_model")->warn("Missing measurement for {} {} in uncombined mode", obs.satellite, type);
             return false;
         }
         double observed_value = obs.measurements.at(type);
@@ -682,47 +1255,61 @@ namespace GnssProcessor {
             double antenna_corr = getAntennaCorrection(obs.satellite, type, obs.system, rx_pos, sat_pos,
                 elevation, azimuth, rx_antenna_type, obs.time);
             double bias_corr = getBiasCorrection(obs.satellite, type, obs.time);
-            modeled_value = range + state.clock_bias * Constants::SPEED_OF_LIGHT + tropo_delay -
-                (sat_clock + relativistic_corr) * Constants::SPEED_OF_LIGHT + iono_delay +
-                antenna_corr + bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr;
+
+            double model_summation = state.clock_bias * Constants::SPEED_OF_LIGHT +
+                tropo_delay -
+                (sat_clock + relativistic_corr) * Constants::SPEED_OF_LIGHT +
+                iono_delay +
+                antenna_corr +
+                bias_corr +
+                shapiro_delay +
+                sagnac_corr +
+                atm_loading_corr;
 
             if (type[0] == 'L') {
+                double wavelength = getWavelength(obs.system, type);
+                if (wavelength <= 0.0) {
+                    log_manager_.getLogger("ppp_model")->warn("Invalid wavelength for type {} on system {} for satellite {}",
+                        type, system_str, obs.satellite);
+                    return false;
+                }
+                double observed_meters = observed_value * wavelength; // Convert cycles to meters
+                modeled_value = range + model_summation; // Modeled in meters
                 std::string amb_key = obs.satellite + "_" + type;
                 if (!state.ambiguities.count(amb_key)) {
-                    double wavelength = getWavelength(obs.system, type);
-                    if (wavelength <= 0.0) {
-                        log_manager_.getLogger()->warn("Invalid wavelength for type {} on system {} for satellite {}",
-                            type, system_str, obs.satellite);
-                        return false;
-                    }
-                    state.ambiguities[amb_key] = observed_value - modeled_value;
-                    state.ambiguities[amb_key] = std::round(state.ambiguities[amb_key] / wavelength) * wavelength;
+                    state.ambiguities[amb_key] = observed_meters - modeled_value;
+                    //state.ambiguities[amb_key] = std::round(state.ambiguities[amb_key] / wavelength) * wavelength; // comment, use float ambiguities
                     state_manager_.addAmbiguity(amb_key, state.ambiguities[amb_key]);
-                    log_manager_.getLogger()->debug("Initialized uncombined ambiguity for {}: {:.3f} cycles, wavelength: {:.3f} m",
-                        amb_key, state.ambiguities[amb_key] / wavelength, wavelength);
+                    log_manager_.getLogger("ppp_model")->debug("Initialized uncombined ambiguity for {}: {:.3f} cycles, wavelength: {:.3f} m, value: {:.3f} m",
+                        amb_key, state.ambiguities[amb_key] / wavelength, wavelength, state.ambiguities[amb_key]);
                 }
-                modeled_value += state.ambiguities[amb_key];
+                modeled_value += state.ambiguities[amb_key]; // Add ambiguity in meters
+                ppp_obs.observed[type] = observed_meters; // Store observed in meters
+            }
+            else if (type[0] == 'C') {
+                modeled_value = range + model_summation; // Code units: meters
+                ppp_obs.observed[type] = observed_value; // Already in meters
             }
 
             ppp_obs.modeled[type] = modeled_value;
-            ppp_obs.residuals[type] = observed_value - modeled_value;
+            ppp_obs.residuals[type] = ppp_obs.observed[type] - modeled_value;
             ppp_obs.variances[type] = variance_value;
 
             // Apply multipath mitigation for code observations
             if (type[0] == 'C') {
                 double mp_weight = computeMultipathVarianceWeight(ppp_obs, type, elevation);
                 ppp_obs.variances[type] *= (1.0 / mp_weight);
-                log_manager_.getLogger()->trace("Multipath weight for {} {}: {:.3f}, adjusted variance: {:.6f}",
+                log_manager_.getLogger("ppp_model")->trace("Multipath weight for {} {}: {:.3f}, adjusted variance: {:.6f}",
                     obs.satellite, type, mp_weight, ppp_obs.variances[type]);
             }
 
-            log_manager_.getLogger()->trace("Uncombined {} for {}: observed={:.3f} m, modeled={:.3f} m, residual={:.3f} m, mode={}",
-                type, obs.satellite, observed_value, modeled_value, ppp_obs.residuals[type],
+            log_manager_.getLogger("ppp_model")->trace("Uncombined {} for {}: observed={:.3f} m, modeled={:.3f} m, residual={:.3f} m, mode={}",
+                type, obs.satellite, ppp_obs.observed[type], modeled_value, ppp_obs.residuals[type],
                 config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
             return true;
         }
         catch (const std::exception& e) {
-            log_manager_.getLogger()->warn("Error processing uncombined measurement for {} {}: {}, mode={}",
+            log_manager_.getLogger("ppp_model")->warn("Error processing uncombined measurement for {} {}: {}, mode={}",
                 obs.satellite, type, e.what(),
                 config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
             return false;
@@ -730,18 +1317,18 @@ namespace GnssProcessor {
     }
 
     double PppModel::computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const {
-        return (sat_pos - rx_pos).norm();
+        return (sat_pos - rx_pos).norm(); // meters
     }
 
     double PppModel::getTroposphericDelay(double elevation, double zenith_delay) const {
         // Validate inputs
         if (elevation < 0.0 || elevation > 90.0) {
-            log_manager_.getLogger()->warn("Invalid elevation for tropospheric delay: {:.3f} deg", elevation);
-            return 0.0;
+            log_manager_.getLogger("ppp_model")->warn("Invalid elevation for tropospheric delay: {:.3f} deg", elevation);
+            return 10.0;
         }
         if (zenith_delay < 0.5 || zenith_delay > 5.0 || !std::isfinite(zenith_delay)) {
-            log_manager_.getLogger()->warn("Invalid zenith delay: {:.3f} m (expected 0.5 to 5.0 m)", zenith_delay);
-            return 0.0;
+            log_manager_.getLogger("ppp_model")->warn("Invalid zenith delay: {:.3f} m (expected 0.5 to 5.0 m)", zenith_delay);
+            return 2.3;
         }
 
         // Compute mapping function (Saastamoinen-based) with numerical stability
@@ -752,7 +1339,7 @@ namespace GnssProcessor {
         constexpr double MIN_DENOM = 0.01;
         double denom = sin_el + 0.00143 / (tan_el + 0.0445);
         if (denom < MIN_DENOM) {
-            log_manager_.getLogger()->debug("Clamped mapping function denominator at {:.3f} for elevation {:.3f} deg", MIN_DENOM, elevation);
+            log_manager_.getLogger("ppp_model")->debug("Clamped mapping function denominator at {:.3f} for elevation {:.3f} deg", MIN_DENOM, elevation);
             denom = MIN_DENOM;
         }
         double mapping = 1.0 / denom;
@@ -760,11 +1347,12 @@ namespace GnssProcessor {
 
         // Validate output
         if (!std::isfinite(delay) || delay < 0.0) {
-            log_manager_.getLogger()->warn("Non-finite or negative tropospheric delay: {:.3f} m, elevation: {:.3f} deg", delay, elevation);
-            return 0.0;
+            log_manager_.getLogger("ppp_model")->warn("Non-finite or negative tropospheric delay: {:.3f} m, elevation: {:.3f} deg", delay, elevation);
+            //return 0.0;
+            return 2.3;
         }
 
-        log_manager_.getLogger()->trace("Computed tropospheric delay: {:.3f} m, elevation: {:.3f} deg, zenith_delay: {:.3f} m, mapping: {:.3f}",
+        log_manager_.getLogger("ppp_model")->trace("Computed tropospheric delay: {:.3f} m, elevation: {:.3f} deg, zenith_delay: {:.3f} m, mapping: {:.3f}",
             delay, elevation, zenith_delay, mapping);
         return delay;
     }
@@ -777,32 +1365,32 @@ namespace GnssProcessor {
         const std::map<std::string, double>& measurements) const {
         double freq = getFrequency(freq_type, system, "");
         if (freq <= 0.0) {
-            log_manager_.getLogger()->warn("Invalid frequency for {} on system {}", freq_type, static_cast<int>(system));
+            log_manager_.getLogger("ppp_model")->warn("Invalid frequency for {} on system {}", freq_type, static_cast<int>(system));
             return 0.0;
         }
 
         std::string system_str = MeasurementModel::getSystemString(system);
         auto it = signal_priorities_.find(system_str);
         if (it == signal_priorities_.end()) {
-            log_manager_.getLogger()->warn("No signal priorities defined for system {}", system_str);
+            log_manager_.getLogger("ppp_model")->warn("No signal priorities defined for system {}", system_str);
             return 0.0;
         }
         const auto& signals = it->second;
 
         if (signals.size() >= 3 && measurements.count(signals[0]) && measurements.count(signals[1]) && measurements.count(signals[2])) {
-            log_manager_.getLogger()->trace("Triple-frequency iono-free combination available for {}: ionospheric delay=0.0 m", freq_type);
+            log_manager_.getLogger("ppp_model")->trace("Triple-frequency iono-free combination available for {}: ionospheric delay=0.0 m", freq_type);
             return 0.0; // Ionosphere-free, no delay
         }
         if (signals.size() >= 2 && measurements.count(signals[0]) && measurements.count(signals[1])) {
-            log_manager_.getLogger()->trace("Dual-frequency iono-free combination available for {}: ionospheric delay=0.0 m", freq_type);
+            log_manager_.getLogger("ppp_model")->trace("Dual-frequency iono-free combination available for {}: ionospheric delay=0.0 m", freq_type);
             return 0.0; // Ionosphere-free, no delay
         }
         if (klobuchar_coeffs_.size() != 8) {
-            log_manager_.getLogger()->warn("No Klobuchar coefficients available for {}", freq_type);
+            log_manager_.getLogger("ppp_model")->warn("No Klobuchar coefficients available for {}", freq_type);
             return 0.0;
         }
         double delay = computeKlobucharDelay(time, rx_pos, sat_pos, freq);
-        log_manager_.getLogger()->trace("Computed Klobuchar ionospheric delay for {}: {:.3f} m", freq_type, delay);
+        log_manager_.getLogger("ppp_model")->trace("Computed Klobuchar ionospheric delay for {}: {:.3f} m", freq_type, delay);
         return delay;
     }
 
@@ -855,14 +1443,14 @@ namespace GnssProcessor {
         const std::string& signal1,
         const std::string& signal2) const {
         if (!measurements.count(signal1) || !measurements.count(signal2)) {
-            log_manager_.getLogger()->warn("Missing measurements for signals {} or {} in iono-free combination", signal1, signal2);
+            log_manager_.getLogger("ppp_model")->warn("Missing measurements for signals {} or {} in iono-free combination", signal1, signal2);
             return 0.0;
         }
 
         double freq1 = getFrequency(signal1, system, "");
         double freq2 = getFrequency(signal2, system, "");
         if (freq1 <= 0.0 || freq2 <= 0.0 || std::abs(freq1 - freq2) < 1e-6) {
-            log_manager_.getLogger()->warn("Invalid or identical frequencies for {} ({:.3f} MHz) and {} ({:.3f} MHz)",
+            log_manager_.getLogger("ppp_model")->warn("Invalid or identical frequencies for {} ({:.3f} MHz) and {} ({:.3f} MHz)",
                 signal1, freq1 / 1e6, signal2, freq2 / 1e6);
             return 0.0;
         }
@@ -871,86 +1459,36 @@ namespace GnssProcessor {
         double c1 = f1_sq / (f1_sq - f2_sq);
         double c2 = -f2_sq / (f1_sq - f2_sq);
         if (!std::isfinite(c1) || !std::isfinite(c2)) {
-            log_manager_.getLogger()->warn("Non-finite coefficients for iono-free combination: c1={:.3f}, c2={:.3f}", c1, c2);
+            log_manager_.getLogger("ppp_model")->warn("Non-finite coefficients for iono-free combination: c1={:.3f}, c2={:.3f}", c1, c2);
             return 0.0;
         }
 
         double combination = c1 * measurements.at(signal1) + c2 * measurements.at(signal2);
         if (!std::isfinite(combination)) {
-            log_manager_.getLogger()->warn("Non-finite iono-free combination for signals {} and {}: {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Non-finite iono-free combination for signals {} and {}: {:.3f}",
                 signal1, signal2, combination);
             return 0.0;
         }
 
-        log_manager_.getLogger()->trace("Computed iono-free combination for signals {} and {}: value={:.3f} m, "
+        log_manager_.getLogger("ppp_model")->trace("Computed iono-free combination for signals {} and {}: value={:.3f} m, "
             "freqs=[{:.3f}, {:.3f}] MHz, coeffs=[{:.3f}, {:.3f}]",
             signal1, signal2, combination, freq1 / 1e6, freq2 / 1e6, c1, c2);
-        return combination;
-    }
-
-    double PppModel::computeTripleIonoFreeCombination(const std::map<std::string, double>& measurements,
-        System system,
-        const std::string& signal1,
-        const std::string& signal2,
-        const std::string& signal3) const {
-        if (!measurements.count(signal1) || !measurements.count(signal2) || !measurements.count(signal3)) {
-            log_manager_.getLogger()->warn("Missing measurements for signals {}, {}, or {} in triple-frequency iono-free combination",
-                signal1, signal2, signal3);
-            return 0.0;
-        }
-
-        double freq1 = getFrequency(signal1, system, "");
-        double freq2 = getFrequency(signal2, system, "");
-        double freq3 = getFrequency(signal3, system, "");
-        if (freq1 <= 0.0 || freq2 <= 0.0 || freq3 <= 0.0 ||
-            std::abs(freq1 - freq2) < 1e-6 || std::abs(freq2 - freq3) < 1e-6 || std::abs(freq1 - freq3) < 1e-6) {
-            log_manager_.getLogger()->warn("Invalid or non-distinct frequencies for {} ({:.3f} MHz), {} ({:.3f} MHz), {} ({:.3f} MHz)",
-                signal1, freq1 / 1e6, signal2, freq2 / 1e6, signal3, freq3 / 1e6);
-            return 0.0;
-        }
-
-        double f1_sq = freq1 * freq1, f2_sq = freq2 * freq2, f3_sq = freq3 * freq3;
-        double denom = f1_sq * f2_sq * (f1_sq - f2_sq) + f2_sq * f3_sq * (f2_sq - f3_sq) +
-            f3_sq * f1_sq * (f3_sq - f1_sq);
-        if (std::abs(denom) < 1e-6) {
-            log_manager_.getLogger()->warn("Near-zero denominator in triple-frequency iono-free combination: {:.3e}", denom);
-            return 0.0;
-        }
-        double c1 = (f2_sq * f3_sq * (f2_sq - f3_sq)) / denom;
-        double c2 = (f3_sq * f1_sq * (f3_sq - f1_sq)) / denom;
-        double c3 = (f1_sq * f2_sq * (f1_sq - f2_sq)) / denom;
-        if (!std::isfinite(c1) || !std::isfinite(c2) || !std::isfinite(c3)) {
-            log_manager_.getLogger()->warn("Non-finite coefficients for triple-frequency iono-free combination: c1={:.3f}, c2={:.3f}, c3={:.3f}",
-                c1, c2, c3);
-            return 0.0;
-        }
-
-        double combination = c1 * measurements.at(signal1) + c2 * measurements.at(signal2) + c3 * measurements.at(signal3);
-        if (!std::isfinite(combination)) {
-            log_manager_.getLogger()->warn("Non-finite triple-frequency iono-free combination for signals {}, {}, {}: {:.3f}",
-                signal1, signal2, signal3, combination);
-            return 0.0;
-        }
-
-        log_manager_.getLogger()->trace("Computed triple-frequency iono-free combination for signals {}, {}, {}: value={:.3f} m, "
-            "freqs=[{:.3f}, {:.3f}, {:.3f}] MHz, coeffs=[{:.3f}, {:.3f}, {:.3f}]",
-            signal1, signal2, signal3, combination, freq1 / 1e6, freq2 / 1e6, freq3 / 1e6, c1, c2, c3);
         return combination;
     }
 
     double PppModel::getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time) const {
         // Validate inputs
         if (satellite.empty()) {
-            log_manager_.getLogger()->warn("Empty satellite ID for clock correction at TOW {:.3f}", time.tow);
+            log_manager_.getLogger("ppp_model")->warn("Empty satellite ID for clock correction at TOW {:.3f}", time.tow);
             return 0.0;
         }
         if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger()->warn("Invalid time for clock correction for satellite {}: week {}, TOW {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid time for clock correction for satellite {}: week {}, TOW {:.3f}",
                 satellite, time.week, time.tow);
             return 0.0;
         }
         if (clocks_.empty()) {
-            log_manager_.getLogger()->warn("No clock data available for satellite {} at TOW {:.3f}", satellite, time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No clock data available for satellite {} at TOW {:.3f}", satellite, time.tow);
             return 0.0;
         }
 
@@ -958,22 +1496,28 @@ namespace GnssProcessor {
         double clock_corr = interpolateClock(satellite, time, clocks_);
         std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
         if (std::isfinite(clock_corr) && std::abs(clock_corr) < 1e-3) { // Max 1 ms
-            log_manager_.getLogger()->trace("Interpolated clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
+            log_manager_.getLogger("ppp_model")->trace("Interpolated clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
                 satellite, system_str, time.tow, clock_corr);
             return clock_corr;
         }
 
-        log_manager_.getLogger()->warn("Invalid clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
+        log_manager_.getLogger("ppp_model")->warn("Invalid clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
             satellite, system_str, time.tow, clock_corr);
         return 0.0;
     }
 
     double PppModel::interpolateClock(const std::string& satellite, const GnssTime& time,
         const std::vector<ClockData>& clocks) const {
-        // Collect candidates within 3600-second window
+        constexpr int order = 4; // e.g., 6th-order Lagrange interpolation (7 points)
+        constexpr double MAX_TIME_WINDOW = 7200.0; // 2-hour window
+        constexpr double MIN_TIME_DIFF = 1e-3; // Minimum time difference (s)
+        constexpr int MIN_ORDER = 2; // Minimum points for interpolation (linear)
+
+        // Collect candidates within time window
         std::vector<ClockData> candidates;
+        std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
         for (const auto& clock : clocks) {
-            if (clock.satellite == satellite && std::abs(clock.time.tow - time.tow) < 3600.0 &&
+            if (clock.satellite == satellite && std::abs(clock.time.tow - time.tow) < MAX_TIME_WINDOW &&
                 std::isfinite(clock.clock_bias)) {
                 candidates.push_back(clock);
             }
@@ -981,40 +1525,109 @@ namespace GnssProcessor {
 
         // Handle insufficient data
         if (candidates.empty()) {
+            log_manager_.getLogger("ppp_model")->warn("No clock data for {} ({}) at TOW {:.3f}", satellite, system_str, time.tow);
             return 0.0;
         }
-        if (candidates.size() == 1) {
+        if (candidates.size() < MIN_ORDER) {
+            log_manager_.getLogger("ppp_model")->debug("Insufficient clock data for {} ({}) at TOW {:.3f}: found {} points, need at least {}",
+                satellite, system_str, time.tow, candidates.size(), MIN_ORDER);
+            log_manager_.getLogger("ppp_model")->trace("Using nearest clock for {} ({}) at TOW {:.3f}: {:.3e} s",
+                satellite, system_str, candidates[0].time.tow, candidates[0].clock_bias);
             return candidates[0].clock_bias;
         }
 
-        // Sort by time proximity
+        // Log pre-sort candidates
+        log_manager_.getLogger("ppp_model")->trace("Found {} candidate CLK points for {} ({}) at TOW {:.3f} (window ±{:.0f} s)",
+            candidates.size(), satellite, system_str, time.tow, MAX_TIME_WINDOW);
+        // Log only the first and last candidate CLK points (if they exist)
+        if (!candidates.empty()) {
+            // Log first point
+            log_manager_.getLogger("ppp_model")->trace(
+                "First CLK point for {} at TOW {:.3f}: {:.3e} s",
+                satellite, candidates[0].time.tow, candidates[0].clock_bias);
+
+            // Log last point if there are at least two candidates
+            if (candidates.size() > 1) {
+                log_manager_.getLogger("ppp_model")->trace(
+                    "Last CLK point for {} at TOW {:.3f}: {:.3e} s",
+                    satellite, candidates[candidates.size() - 1].time.tow,
+                    candidates[candidates.size() - 1].clock_bias);
+            }
+        }
+
+        // Sort by time proximity to select closest points
         std::sort(candidates.begin(), candidates.end(),
             [&time](const ClockData& a, const ClockData& b) {
-                return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
+                double diff_a = std::abs(a.time.tow - time.tow);
+                double diff_b = std::abs(b.time.tow - time.tow);
+                return diff_a < diff_b || (std::abs(diff_a - diff_b) < 1e-6 && a.time.tow < b.time.tow);
             });
-        candidates.resize(2);
 
-        // Linear interpolation
+        // Adjust order if insufficient points
+        size_t effective_order = std::min(static_cast<size_t>(order), candidates.size());
+        candidates.resize(effective_order);
+        log_manager_.getLogger("ppp_model")->trace("Selected {} closest points for {} ({}) at TOW {:.3f}",
+            effective_order, satellite, system_str, time.tow);
+
+        // Sort selected points chronologically by TOW for stable interpolation
+        std::sort(candidates.begin(), candidates.end(),
+            [](const ClockData& a, const ClockData& b) {
+                return a.time.tow < b.time.tow;
+            });
+
+        // Log sorted CLK points
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            double time_diff = candidates[i].time.tow - time.tow;
+            log_manager_.getLogger("ppp_model")->trace("Sorted CLK point {} for {} ({}) at TOW {:.3f} (diff {:.1f} s): {:.3e} s",
+                i, satellite, system_str, candidates[i].time.tow, time_diff, candidates[i].clock_bias);
+        }
+
+        // Check for sufficient time separation
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            for (size_t j = i + 1; j < candidates.size(); ++j) {
+                if (std::abs(candidates[i].time.tow - candidates[j].time.tow) < MIN_TIME_DIFF) {
+                    log_manager_.getLogger("ppp_model")->warn("Time difference too small for {} ({}) at TOW {:.3f}: {:.3f} s between epochs",
+                        satellite, system_str, time.tow, std::abs(candidates[i].time.tow - candidates[j].time.tow));
+                    auto it = std::min_element(candidates.begin(), candidates.end(),
+                        [&time](const ClockData& a, const ClockData& b) {
+                            return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
+                        });
+                    log_manager_.getLogger("ppp_model")->trace("Fallback to nearest clock for {} ({}) at TOW {:.3f}: {:.3e} s",
+                        satellite, system_str, it->time.tow, it->clock_bias);
+                    return it->clock_bias;
+                }
+            }
+        }
+
+        // Lagrange interpolation
+        double clock_corr = 0.0;
         double t = time.tow;
-        double t0 = candidates[0].time.tow;
-        double t1 = candidates[1].time.tow;
-        double c0 = candidates[0].clock_bias;
-        double c1 = candidates[1].clock_bias;
-
-        if (std::abs(t1 - t0) < 1e-3) { // Avoid division by near-zero
-            log_manager_.getLogger()->debug("Time difference too small for clock interpolation for {} at TOW {:.3f}: {:.3f} s",
-                satellite, time.tow, t1 - t0);
-            return c0;
+        for (size_t i = 0; i < effective_order; ++i) {
+            double li = 1.0;
+            for (size_t j = 0; j < effective_order; ++j) {
+                if (i != j) {
+                    li *= (t - candidates[j].time.tow) / (candidates[i].time.tow - candidates[j].time.tow);
+                }
+            }
+            clock_corr += li * candidates[i].clock_bias;
         }
 
-        double frac = (t - t0) / (t1 - t0);
-        double clock_corr = c0 + frac * (c1 - c0);
-        if (!std::isfinite(clock_corr)) {
-            log_manager_.getLogger()->warn("Non-finite clock correction for {} at TOW {:.3f}: {:.3e} s",
-                satellite, time.tow, clock_corr);
-            return 0.0;
+        // Validate result
+        if (!std::isfinite(clock_corr) || std::abs(clock_corr) > 1e-3) { // Max 1 ms
+            log_manager_.getLogger("ppp_model")->warn("Invalid clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
+                satellite, system_str, time.tow, clock_corr);
+            auto it = std::min_element(candidates.begin(), candidates.end(),
+                [&time](const ClockData& a, const ClockData& b) {
+                    return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
+                });
+            log_manager_.getLogger("ppp_model")->trace("Fallback to nearest clock for {} ({}) at TOW {:.3f}: {:.3e} s",
+                satellite, system_str, it->time.tow, it->clock_bias);
+            return it->clock_bias;
         }
 
+        // Log successful interpolation
+        log_manager_.getLogger("ppp_model")->trace("Interpolated clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
+            satellite, system_str, time.tow, clock_corr);
         return clock_corr;
     }
 
@@ -1030,14 +1643,14 @@ namespace GnssProcessor {
         // Validate inputs
         std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
         if (!sat_pos.allFinite() || !sat_vel.allFinite()) {
-            log_manager_.getLogger()->warn("Invalid relativistic inputs for {} ({}): sat_pos=({:.3f}, {:.3f}, {:.3f}), sat_vel=({:.3f}, {:.3f}, {:.3f})",
+            log_manager_.getLogger("ppp_model")->warn("Invalid relativistic inputs for {} ({}): sat_pos=({:.3f}, {:.3f}, {:.3f}), sat_vel=({:.3f}, {:.3f}, {:.3f})",
                 satellite, system_str, sat_pos.x(), sat_pos.y(), sat_pos.z(), sat_vel.x(), sat_vel.y(), sat_vel.z());
             return 0.0;
         }
         double pos_norm = sat_pos.norm();
         double vel_norm = sat_vel.norm();
         if (pos_norm < MIN_POSITION_NORM || pos_norm > MAX_POSITION_NORM || vel_norm > MAX_VELOCITY_NORM) {
-            log_manager_.getLogger()->warn("Unrealistic relativistic input norms for {} ({}): pos_norm={:.3e} m, vel_norm={:.3e} m/s",
+            log_manager_.getLogger("ppp_model")->warn("Unrealistic relativistic input norms for {} ({}): pos_norm={:.3e} m, vel_norm={:.3e} m/s",
                 satellite, system_str, pos_norm, vel_norm);
             return 0.0;
         }
@@ -1051,30 +1664,30 @@ namespace GnssProcessor {
 
         double correction = special_correction + gravitational_correction;
         if (!std::isfinite(correction) || std::abs(correction) > MAX_CORRECTION) {
-            log_manager_.getLogger()->warn("Excessive relativistic correction for {} ({}): {:.3e} s, special={:.3e}, gravitational={:.3e}, r_dot_v={:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Excessive relativistic correction for {} ({}): {:.3e} s, special={:.3e}, gravitational={:.3e}, r_dot_v={:.3e}",
                 satellite, system_str, correction, special_correction, gravitational_correction, r_dot_v);
             return 0.0;
         }
 
-        log_manager_.getLogger()->trace("Relativistic correction for {} ({}): {:.3e} s (special={:.3e}, gravitational={:.3e}), r_dot_v={:.3e}",
+        log_manager_.getLogger("ppp_model")->trace("Relativistic correction for {} ({}): {:.3e} s (special={:.3e}, gravitational={:.3e}), r_dot_v={:.3e}",
             satellite, system_str, correction, special_correction, gravitational_correction, r_dot_v);
         return correction;
     }
 
     Eigen::Vector3d PppModel::getSatellitePosition(const std::string& satellite, const GnssTime& time) const {
-        constexpr int order = 4; // Interpolation order for position
+        constexpr int order = 11; // Interpolation order for position
         constexpr double MIN_POSITION_NORM = 1.8e7; // Typical GNSS orbit ~20,000 km
         constexpr double MAX_POSITION_NORM = 3.2e7;
         constexpr double MIN_TIME_DIFF = 1.0; // Minimum time difference between points (s)
-        constexpr double MAX_TIME_WINDOW = 3600.0; // Maximum time window for interpolation (s)
+        constexpr double MAX_TIME_WINDOW = 7200.0; // Maximum time window for interpolation (s)
 
         // Validate inputs
         if (satellite.empty()) {
-            log_manager_.getLogger()->warn("Empty satellite ID for position interpolation at TOW {:.3f}", time.tow);
+            log_manager_.getLogger("ppp_model")->warn("Empty satellite ID for position interpolation at TOW {:.3f}", time.tow);
             return Eigen::Vector3d::Zero();
         }
         if (orbits_.empty()) {
-            log_manager_.getLogger()->warn("No orbit data available for {} at TOW {:.3f}", satellite, time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No orbit data available for {} at TOW {:.3f}", satellite, time.tow);
             return Eigen::Vector3d::Zero();
         }
 
@@ -1091,43 +1704,102 @@ namespace GnssProcessor {
             }
         }
 
+        // Log pre-sort candidates
+        log_manager_.getLogger("ppp_model")->trace("Found {} candidate SP3 points for {} ({}) at TOW {:.3f} (window ±{:.0f} s)",
+            candidates.size(), satellite, system_str, time.tow, MAX_TIME_WINDOW);
+        // Log only the first and last candidate points (if they exist)
+        if (!candidates.empty()) {
+            // Log first point
+            log_manager_.getLogger("ppp_model")->trace(
+                "First SP3 point for {} at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) km",
+                satellite, candidates[0].time.tow,
+                candidates[0].position.x() / 1000.0, candidates[0].position.y() / 1000.0, candidates[0].position.z() / 1000.0);
+
+            // Log last point if there are at least two candidates
+            if (candidates.size() > 1) {
+                log_manager_.getLogger("ppp_model")->trace(
+                    "Last SP3 point for {} at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) km",
+                    satellite, candidates[candidates.size() - 1].time.tow,
+                    candidates[candidates.size() - 1].position.x() / 1000.0,
+                    candidates[candidates.size() - 1].position.y() / 1000.0,
+                    candidates[candidates.size() - 1].position.z() / 1000.0);
+            }
+        }
+
         // Check if sufficient data points
         if (candidates.size() < order) {
-            log_manager_.getLogger()->debug("Insufficient orbit data for {} ({}) at TOW {:.3f}: found {} points, need {}",
+            log_manager_.getLogger("ppp_model")->debug("Insufficient orbit data for {} ({}) at TOW {:.3f}: found {} points, need {}",
                 satellite, system_str, time.tow, candidates.size(), order);
             if (!candidates.empty()) {
-                auto it = std::min_element(candidates.begin(), candidates.end(),
+                std::sort(candidates.begin(), candidates.end(),
                     [&time](const OrbitData& a, const OrbitData& b) {
-                        return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
+                        double diff_a = std::abs(a.time.tow - time.tow);
+                        double diff_b = std::abs(b.time.tow - time.tow);
+                        return diff_a < diff_b || (std::abs(diff_a - diff_b) < 1e-6 && a.time.tow < b.time.tow);
                     });
-                log_manager_.getLogger()->trace("Using nearest position for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3e}",
+                auto it = candidates.begin(); // Closest after sort
+                log_manager_.getLogger("ppp_model")->trace("Using nearest position for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3e}",
                     satellite, system_str, it->time.tow, it->position.x(), it->position.y(), it->position.z(), it->position.norm());
                 last_interpolated_velocity_.erase(satellite);
                 return it->position;
             }
-            log_manager_.getLogger()->warn("No valid orbit data for {} ({}) at TOW {:.3f}", satellite, system_str, time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No valid orbit data for {} ({}) at TOW {:.3f}", satellite, system_str, time.tow);
             last_interpolated_velocity_.erase(satellite);
             return Eigen::Vector3d::Zero();
         }
 
-        // Sort candidates by time proximity
+        // Sort candidates by time proximity to select the closest points
         std::sort(candidates.begin(), candidates.end(),
+            [&time](const OrbitData& a, const OrbitData& b) {
+                double diff_a = std::abs(a.time.tow - time.tow);
+                double diff_b = std::abs(b.time.tow - time.tow);
+                return diff_a < diff_b || (std::abs(diff_a - diff_b) < 1e-6 && a.time.tow < b.time.tow);
+            });
+        candidates.resize(order);
+
+        // Find nearest point for error calculation (before chronological sort)
+        auto nearest_it = std::min_element(candidates.begin(), candidates.end(),
             [&time](const OrbitData& a, const OrbitData& b) {
                 return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
             });
-        candidates.resize(order);
+        Eigen::Vector3d nearest_pos = nearest_it->position;
+
+        // Sort the selected points chronologically by TOW for stable interpolation
+        std::sort(candidates.begin(), candidates.end(),
+            [](const OrbitData& a, const OrbitData& b) {
+                return a.time.tow < b.time.tow;
+            });
+
+        // Log sorted SP3 points
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            double time_diff = candidates[i].time.tow - time.tow;
+            log_manager_.getLogger("ppp_model")->trace("Sorted SP3 point {} for {} ({}) at TOW {:.3f} (diff {:.1f} s): ({:.3f}, {:.3f}, {:.3f}) km, ({:.3f}, {:.3f}, {:.3f}) m",
+                i, satellite, system_str, candidates[i].time.tow, time_diff,
+                candidates[i].position.x() / 1000.0, candidates[i].position.y() / 1000.0, candidates[i].position.z() / 1000.0,
+                candidates[i].position.x(), candidates[i].position.y(), candidates[i].position.z());
+        }
 
         // Check for sufficient time separation
         for (size_t i = 0; i < candidates.size(); ++i) {
             for (size_t j = i + 1; j < candidates.size(); ++j) {
                 if (std::abs(candidates[i].time.tow - candidates[j].time.tow) < MIN_TIME_DIFF) {
-                    log_manager_.getLogger()->warn("Time difference too small for {} ({}) at TOW {:.3f}: {:.3f} s between epochs",
+                    log_manager_.getLogger("ppp_model")->warn("Time difference too small for {} ({}) at TOW {:.3f}: {:.3f} s between epochs",
                         satellite, system_str, time.tow, std::abs(candidates[i].time.tow - candidates[j].time.tow));
+                    std::sort(candidates.begin(), candidates.end(),
+                        [&time](const OrbitData& a, const OrbitData& b) {
+                            double diff_a = std::abs(a.time.tow - time.tow);
+                            double diff_b = std::abs(b.time.tow - time.tow);
+                            return diff_a < diff_b || (std::abs(diff_a - diff_b) < 1e-6 && a.time.tow < b.time.tow);
+                        });
+                    auto it = candidates.begin();
+                    log_manager_.getLogger("ppp_model")->trace("Fallback to nearest position for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m",
+                        satellite, system_str, it->time.tow, it->position.x(), it->position.y(), it->position.z());
                     last_interpolated_velocity_.erase(satellite);
-                    return candidates[0].position;
+                    return it->position;
                 }
             }
         }
+
 
         // Lagrange interpolation for position
         Eigen::Vector3d interpolated_pos(0.0, 0.0, 0.0);
@@ -1145,26 +1817,37 @@ namespace GnssProcessor {
         // Validate interpolated position
         if (!interpolated_pos.allFinite() ||
             interpolated_pos.norm() < MIN_POSITION_NORM || interpolated_pos.norm() > MAX_POSITION_NORM) {
-            log_manager_.getLogger()->warn("Invalid interpolated position for {} ({}) at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm: {:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid interpolated position for {} ({}) at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm: {:.3e}",
                 satellite, system_str, time.tow, interpolated_pos.x(), interpolated_pos.y(), interpolated_pos.z(), interpolated_pos.norm());
-            auto it = std::min_element(candidates.begin(), candidates.end(),
+            std::sort(candidates.begin(), candidates.end(),
                 [&time](const OrbitData& a, const OrbitData& b) {
-                    return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
+                    double diff_a = std::abs(a.time.tow - time.tow);
+                    double diff_b = std::abs(b.time.tow - time.tow);
+                    return diff_a < diff_b || (std::abs(diff_a - diff_b) < 1e-6 && a.time.tow < b.time.tow);
                 });
+            auto it = candidates.begin();
+            log_manager_.getLogger("ppp_model")->trace("Fallback to nearest position for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m",
+                satellite, system_str, it->time.tow, it->position.x(), it->position.y(), it->position.z());
             last_interpolated_velocity_.erase(satellite);
             return it->position;
         }
 
+        // Log position error vs. nearest SP3 point
+        // TODO: Use time_diff to find nearest point
+        //Eigen::Vector3d pos_error = interpolated_pos - nearest_pos;
+        //log_manager_.getLogger("ppp_model")->trace("Position error vs. nearest SP3 for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3f}",
+        //    satellite, system_str, time.tow, pos_error.x(), pos_error.y(), pos_error.z(), pos_error.norm());
+
         // Log successful interpolation
-        log_manager_.getLogger()->trace("Interpolated position for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3e}",
+        log_manager_.getLogger("ppp_model")->trace("Interpolated position for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3e}",
             satellite, system_str, time.tow, interpolated_pos.x(), interpolated_pos.y(), interpolated_pos.z(), interpolated_pos.norm());
         return interpolated_pos;
-    }
+}
 
     double PppModel::computeElevation(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const {
         Eigen::Vector3d los = (sat_pos - rx_pos).normalized();
         double elevation = std::asin(los(2)) * 180.0 / Constants::PI;
-        log_manager_.getLogger()->trace("Computed elevation: {:.3f} degrees", elevation);
+        log_manager_.getLogger("ppp_model")->trace("Computed elevation: {:.3f} degrees", elevation);
         return elevation;
     }
 
@@ -1172,7 +1855,7 @@ namespace GnssProcessor {
         // Compute line-of-sight vector in ECEF
         Eigen::Vector3d los = sat_pos - rx_pos;
         if (los.norm() < 1e-6) {
-            log_manager_.getLogger()->warn("Invalid LOS for azimuth computation: rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
+            log_manager_.getLogger("ppp_model")->warn("Invalid LOS for azimuth computation: rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
                 rx_pos.x(), rx_pos.y(), rx_pos.z(), sat_pos.x(), sat_pos.y(), sat_pos.z());
             return 0.0;
         }
@@ -1192,19 +1875,19 @@ namespace GnssProcessor {
             azimuth += 360.0;
         }
         if (!std::isfinite(azimuth) || azimuth < 0.0 || azimuth >= 360.0) {
-            log_manager_.getLogger()->warn("Invalid azimuth: {:.3f} deg, rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
+            log_manager_.getLogger("ppp_model")->warn("Invalid azimuth: {:.3f} deg, rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
                 azimuth, rx_pos.x(), rx_pos.y(), rx_pos.z(), sat_pos.x(), sat_pos.y(), sat_pos.z());
             return 0.0;
         }
 
-        log_manager_.getLogger()->trace("Computed azimuth: {:.3f} degrees", azimuth);
+        log_manager_.getLogger("ppp_model")->trace("Computed azimuth: {:.3f} degrees", azimuth);
         return azimuth;
     }
 
     double PppModel::getWavelength(System system, const std::string& freq_type) const {
         // Validate input
         if (freq_type.empty()) {
-            log_manager_.getLogger()->warn("Empty frequency type for wavelength computation, system={}",
+            log_manager_.getLogger("ppp_model")->warn("Empty frequency type for wavelength computation, system={}",
                 MeasurementModel::getSystemString(system));
             return 0.0;
         }
@@ -1212,7 +1895,7 @@ namespace GnssProcessor {
         // Get frequency, passing empty satellite ID as specific satellite not needed here
         double freq = getFrequency(freq_type, system, "");
         if (freq <= 0.0 || !std::isfinite(freq)) {
-            log_manager_.getLogger()->warn("Invalid frequency for type {} on system {}: {:.3f} MHz",
+            log_manager_.getLogger("ppp_model")->warn("Invalid frequency for type {} on system {}: {:.3f} MHz",
                 freq_type, MeasurementModel::getSystemString(system), freq / 1e6);
             return 0.0;
         }
@@ -1220,12 +1903,12 @@ namespace GnssProcessor {
         // Compute wavelength (meters) = speed of light / frequency
         double wavelength = Constants::SPEED_OF_LIGHT / freq;
         if (!std::isfinite(wavelength) || wavelength <= 0.0) {
-            log_manager_.getLogger()->warn("Invalid wavelength for type {} on system {}: {:.3f} m",
+            log_manager_.getLogger("ppp_model")->warn("Invalid wavelength for type {} on system {}: {:.3f} m",
                 freq_type, MeasurementModel::getSystemString(system), wavelength);
             return 0.0;
         }
 
-        log_manager_.getLogger()->trace("Computed wavelength for type {} on system {}: {:.3f} m (freq={:.3f} MHz)",
+        log_manager_.getLogger("ppp_model")->trace("Computed wavelength for type {} on system {}: {:.3f} m (freq={:.3f} MHz)",
             freq_type, MeasurementModel::getSystemString(system), wavelength, freq / 1e6);
         return wavelength;
     }
@@ -1246,14 +1929,14 @@ namespace GnssProcessor {
 
         // Validate inputs
         if (!rx_pos.allFinite() || !sat_pos.allFinite() || !std::isfinite(elevation) || !std::isfinite(azimuth)) {
-            log_manager_.getLogger()->warn("Invalid inputs for antenna correction: satellite={}, freq_type={}, "
+            log_manager_.getLogger("ppp_model")->warn("Invalid inputs for antenna correction: satellite={}, freq_type={}, "
                 "rx_pos=({}, {}, {}), sat_pos=({}, {}, {}), elevation={:.3f}, azimuth={:.3f}",
                 satellite, freq_type, rx_pos.x(), rx_pos.y(), rx_pos.z(),
                 sat_pos.x(), sat_pos.y(), sat_pos.z(), elevation, azimuth);
             return 0.0;
         }
         if (elevation < 0.0 || elevation > 90.0 || azimuth < 0.0 || azimuth >= 360.0) {
-            log_manager_.getLogger()->warn("Out-of-range elevation ({:.3f}) or azimuth ({:.3f}) for satellite {}, freq_type={}",
+            log_manager_.getLogger("ppp_model")->warn("Out-of-range elevation ({:.3f}) or azimuth ({:.3f}) for satellite {}, freq_type={}",
                 elevation, azimuth, satellite, freq_type);
             return 0.0;
         }
@@ -1261,93 +1944,43 @@ namespace GnssProcessor {
         // Map frequency type to ATX frequency code
         std::string atx_freq;
         if (system == System::GPS) {
-            if (freq_type.find("C1C") == 0 || freq_type.find("L1C") == 0 || freq_type.find("C1W") == 0 || freq_type.find("L1W") == 0 ||
-                freq_type.find("C1S") == 0 || freq_type.find("L1S") == 0 || freq_type.find("C1L") == 0 || freq_type.find("L1L") == 0) {
-                atx_freq = "G01";
-            }
-            else if (freq_type.find("C2W") == 0 || freq_type.find("L2W") == 0 || freq_type.find("C2C") == 0 || freq_type.find("L2C") == 0 ||
-                freq_type.find("C2S") == 0 || freq_type.find("L2S") == 0 || freq_type.find("C2L") == 0 || freq_type.find("L2L") == 0) {
-                atx_freq = "G02";
-            }
-            else if (freq_type.find("C5Q") == 0 || freq_type.find("L5Q") == 0 || freq_type.find("C5I") == 0 || freq_type.find("L5I") == 0) {
-                atx_freq = "G05";
-            }
+            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) {atx_freq = "G01";}
+            else if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) {atx_freq = "G02";}
+            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) {atx_freq = "G05";}
         }
         else if (system == System::Galileo) {
-            if (freq_type.find("C1C") == 0 || freq_type.find("L1C") == 0 || freq_type.find("C1B") == 0 || freq_type.find("L1B") == 0) {
-                atx_freq = "E01";
-            }
-            else if (freq_type.find("C5Q") == 0 || freq_type.find("L5Q") == 0 || freq_type.find("C5I") == 0 || freq_type.find("L5I") == 0) {
-                atx_freq = "E05";
-            }
-            else if (freq_type.find("C7Q") == 0 || freq_type.find("L7Q") == 0 || freq_type.find("C7I") == 0 || freq_type.find("L7I") == 0) {
-                atx_freq = "E07";
-            }
-            else if (freq_type.find("C6C") == 0 || freq_type.find("L6C") == 0 || freq_type.find("C6B") == 0 || freq_type.find("L6B") == 0) {
-                atx_freq = "E06";
-            }
-            else if (freq_type.find("C8Q") == 0 || freq_type.find("L8Q") == 0 || freq_type.find("C8I") == 0 || freq_type.find("L8I") == 0) {
-                atx_freq = "E08";
-            }
+            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) {atx_freq = "E01";}
+            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "E05"; }
+            else if (freq_type.find("C7") == 0 || freq_type.find("L7") == 0) { atx_freq = "E07"; }
+            else if (freq_type.find("C6") == 0 || freq_type.find("L6") == 0) { atx_freq = "E06"; }
+            else if (freq_type.find("C8") == 0 || freq_type.find("L8") == 0) { atx_freq = "E08"; }
         }
         else if (system == System::GLONASS) {
-            const auto& glonass_slots = rinex_parser_.getGlonassFreqSlots();
-            auto slot_it = glonass_slots.find(satellite);
-            int channel = (slot_it != glonass_slots.end()) ? slot_it->second : 0;
-            if (channel < -7 || channel > 6) {
-                log_manager_.getLogger()->warn("Invalid GLONASS channel {} for satellite {}, freq_type={}", channel, satellite, freq_type);
-                return 0.0;
-            }
-            std::string channel_suffix = channel >= 0 ? "+" + std::to_string(channel) : std::to_string(channel);
-            if (freq_type.find("C1C") == 0 || freq_type.find("L1C") == 0 || freq_type.find("C1P") == 0 || freq_type.find("L1P") == 0) {
-                atx_freq = "R01" + channel_suffix; // e.g., R01-4 for channel -4
-            }
-            else if (freq_type.find("C2C") == 0 || freq_type.find("L2C") == 0 || freq_type.find("C2P") == 0 || freq_type.find("L2P") == 0) {
-                atx_freq = "R02" + channel_suffix; // e.g., R02-4
-            }
-            else if (freq_type.find("C3Q") == 0 || freq_type.find("L3Q") == 0 || freq_type.find("C3I") == 0 || freq_type.find("L3I") == 0) {
-                atx_freq = "R03" + channel_suffix; // e.g., R03-4
-            }
+            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) {atx_freq = "R01";}
+            else if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "R02"; }
+            else if (freq_type.find("C3") == 0 || freq_type.find("L3") == 0) { atx_freq = "R03"; }
         }
         else if (system == System::BeiDou) {
-            if (freq_type.find("C2I") == 0 || freq_type.find("L2I") == 0 || freq_type.find("C2Q") == 0 || freq_type.find("L2Q") == 0) {
-                atx_freq = "C02";
-            }
-            else if (freq_type.find("C7I") == 0 || freq_type.find("L7I") == 0 || freq_type.find("C7Q") == 0 || freq_type.find("L7Q") == 0) {
-                atx_freq = "C07";
-            }
-            else if (freq_type.find("C6I") == 0 || freq_type.find("L6I") == 0 || freq_type.find("C6Q") == 0 || freq_type.find("L6Q") == 0) {
-                atx_freq = "C06";
-            }
-            else if (freq_type.find("C1D") == 0 || freq_type.find("L1D") == 0 || freq_type.find("C1P") == 0 || freq_type.find("L1P") == 0) {
-                atx_freq = "C01";
-            }
+            if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "C02"; }
+            else if (freq_type.find("C7") == 0 || freq_type.find("L7") == 0) { atx_freq = "C07"; }
+            else if (freq_type.find("C6") == 0 || freq_type.find("L6") == 0) { atx_freq = "C06"; }
+            else if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "C01"; }
+            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "C05"; }
+            else if (freq_type.find("C8") == 0 || freq_type.find("L8") == 0) { atx_freq = "C08"; }
         }
         else if (system == System::QZSS) {
-            if (freq_type.find("C1C") == 0 || freq_type.find("L1C") == 0 || freq_type.find("C1S") == 0 || freq_type.find("L1S") == 0) {
-                atx_freq = "J01";
-            }
-            else if (freq_type.find("C2L") == 0 || freq_type.find("L2L") == 0 || freq_type.find("C2S") == 0 || freq_type.find("L2S") == 0) {
-                atx_freq = "J02";
-            }
-            else if (freq_type.find("C5Q") == 0 || freq_type.find("L5Q") == 0 || freq_type.find("C5I") == 0 || freq_type.find("L5I") == 0) {
-                atx_freq = "J05";
-            }
-            else if (freq_type.find("C6L") == 0 || freq_type.find("L6L") == 0 || freq_type.find("C6E") == 0 || freq_type.find("L6E") == 0) {
-                atx_freq = "J06";
-            }
+            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "J01"; }
+            else if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "J02"; }
+            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "J05"; }
+            else if (freq_type.find("C6") == 0 || freq_type.find("L6") == 0) { atx_freq = "J06"; }
         }
         else if (system == System::SBAS) {
-            if (freq_type.find("C1C") == 0 || freq_type.find("L1C") == 0) {
-                atx_freq = "S01";
-            }
-            else if (freq_type.find("C5I") == 0 || freq_type.find("L5I") == 0 || freq_type.find("C5Q") == 0 || freq_type.find("L5Q") == 0) {
-                atx_freq = "S05";
-            }
+            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "S01"; }
+            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "S05"; }
         }
 
         if (atx_freq.empty()) {
-            log_manager_.getLogger()->warn("No ATX frequency mapping for satellite {}, freq_type={}, system={}",
+            log_manager_.getLogger("ppp_model")->warn("No ATX frequency mapping for satellite {}, freq_type={}, system={}",
                 satellite, freq_type, static_cast<int>(system));
             return 0.0;
         }
@@ -1356,7 +1989,7 @@ namespace GnssProcessor {
         Eigen::Vector3d los = (sat_pos - rx_pos);
         double los_norm = los.norm();
         if (los_norm == 0.0) {
-            log_manager_.getLogger()->warn("Invalid LOS for satellite {}, freq_type={} at TOW {:.3f}", satellite, freq_type, time.tow);
+            log_manager_.getLogger("ppp_model")->warn("Invalid LOS for satellite {}, freq_type={} at TOW {:.3f}", satellite, freq_type, time.tow);
             return 0.0;
         }
         los /= los_norm;
@@ -1376,7 +2009,7 @@ namespace GnssProcessor {
                 correction += sat_pco_corr;
             }
             else {
-                log_manager_.getLogger()->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
+                log_manager_.getLogger("ppp_model")->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, sat_antenna_type, atx_freq, time.tow);
             }
 
@@ -1392,7 +2025,7 @@ namespace GnssProcessor {
                     correction += sat_pcv_corr;
                 }
                 else {
-                    log_manager_.getLogger()->warn("Invalid satellite PCV for {} {} atx_freq={} at TOW {:.3f}, zenith={:.3f}, azimuth={:.3f}, dazi={:.3f}, dzen={:.3f}",
+                    log_manager_.getLogger("ppp_model")->warn("Invalid satellite PCV for {} {} atx_freq={} at TOW {:.3f}, zenith={:.3f}, azimuth={:.3f}, dazi={:.3f}, dzen={:.3f}",
                         satellite, sat_antenna_type, atx_freq, time.tow, zenith, azimuth, dazi, dzen);
                 }
             }
@@ -1412,7 +2045,7 @@ namespace GnssProcessor {
                 correction -= rx_pco_corr;
             }
             else {
-                log_manager_.getLogger()->warn("Invalid receiver PCO for {} {} atx_freq={} at TOW {:.3f}",
+                log_manager_.getLogger("ppp_model")->warn("Invalid receiver PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, rx_antenna_type, atx_freq, time.tow);
             }
 
@@ -1428,7 +2061,7 @@ namespace GnssProcessor {
                     correction -= rx_pcv_corr;
                 }
                 else {
-                    log_manager_.getLogger()->warn("Invalid receiver PCV for {} {} atx_freq={} at TOW {:.3f}, zenith={:.3f}, azimuth={:.3f}, dazi={:.3f}, dzen={:.3f}",
+                    log_manager_.getLogger("ppp_model")->warn("Invalid receiver PCV for {} {} atx_freq={} at TOW {:.3f}, zenith={:.3f}, azimuth={:.3f}, dazi={:.3f}, dzen={:.3f}",
                         satellite, rx_antenna_type, atx_freq, time.tow, zenith, azimuth, dazi, dzen);
                 }
             }
@@ -1443,20 +2076,20 @@ namespace GnssProcessor {
                 correction += wind_up_corr;
             }
             else {
-                log_manager_.getLogger()->warn("Invalid phase wind-up for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
+                log_manager_.getLogger("ppp_model")->warn("Invalid phase wind-up for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
             }
         }
 
         // Log detailed correction components
         if (std::isfinite(correction) && correction != 0.0) {
-            log_manager_.getLogger()->trace("Antenna correction for {} {}: total={:.6f} m (sat_pco={:.6f}, sat_pcv={:.6f}, "
+            log_manager_.getLogger("ppp_model")->trace("Antenna correction for {} {}: total={:.6f} m (sat_pco={:.6f}, sat_pcv={:.6f}, "
                 "rx_pco={:.6f}, rx_pcv={:.6f}, wind_up={:.6f}) at TOW {:.3f}, dazi={:.3f}, dzen={:.3f}",
                 satellite, freq_type, correction, sat_pco_corr, sat_pcv_corr,
                 -rx_pco_corr, -rx_pcv_corr, wind_up_corr, time.tow,
                 sat_it != antennas_.end() ? sat_it->dazi : 5.0, sat_it != antennas_.end() ? sat_it->dzen : 5.0);
         }
         else {
-            log_manager_.getLogger()->trace("No antenna correction for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
+            log_manager_.getLogger("ppp_model")->trace("No antenna correction for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
         }
         return correction;
     }
@@ -1550,7 +2183,7 @@ namespace GnssProcessor {
         Eigen::Vector3d d_s_eff = d_s - k * (k.dot(d_s)) + k.cross(y_s);
         Eigen::Vector3d d_r_eff = d_r - k * (k.dot(d_r));
         if (d_s_eff.norm() < 1e-6 || d_r_eff.norm() < 1e-6) {
-            log_manager_.getLogger()->trace("Phase wind-up for {}: 0 m (degenerate vectors)", satellite);
+            log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: 0 m (degenerate vectors)", satellite);
             return 0.0;
         }
         d_s_eff.normalize();
@@ -1563,7 +2196,7 @@ namespace GnssProcessor {
         double sign = k.dot(cross) >= 0.0 ? 1.0 : -1.0;
         double phi = sign * std::acos(dot) * wavelength / (2.0 * Constants::PI);
 
-        log_manager_.getLogger()->trace("Phase wind-up for {}: {} m", satellite, phi);
+        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {} m", satellite, phi);
         return phi;
     }
 
@@ -1572,12 +2205,12 @@ namespace GnssProcessor {
         const GnssTime& time) const {
         // Validate inputs
         if (satellite.empty() || freq_type.empty()) {
-            log_manager_.getLogger()->warn("Invalid inputs for bias correction: satellite='{}', freq_type='{}' at TOW {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid inputs for bias correction: satellite='{}', freq_type='{}' at TOW {:.3f}",
                 satellite, freq_type, time.tow);
             return 0.0;
         }
         if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger()->warn("Invalid time for bias correction for satellite {}: week {}, TOW {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid time for bias correction for satellite {}: week {}, TOW {:.3f}",
                 satellite, time.week, time.tow);
             return 0.0;
         }
@@ -1589,13 +2222,13 @@ namespace GnssProcessor {
                     b.start_time.tow <= time.tow && time.tow <= b.end_time.tow;
             });
         if (it != biases_.end()) {
-            log_manager_.getLogger()->trace("Bias correction for {} ({}) {} at TOW {:.3f}: {:.3e} m",
+            log_manager_.getLogger("ppp_model")->trace("Bias correction for {} ({}) {} at TOW {:.3f}: {:.3e} m",
                 satellite, satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown",
                 freq_type, time.tow, it->bias);
             return it->bias;
         }
 
-        log_manager_.getLogger()->trace("No bias correction for {} ({}) {} at TOW {:.3f}",
+        log_manager_.getLogger("ppp_model")->trace("No bias correction for {} ({}) {} at TOW {:.3f}",
             satellite, satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown",
             freq_type, time.tow);
         return 0.0;
@@ -1604,17 +2237,17 @@ namespace GnssProcessor {
     Eigen::Vector3d PppModel::computePoleTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
         // Validate inputs
         if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
-            log_manager_.getLogger()->warn("Invalid receiver position for pole tide correction at TOW {:.3f}: rx_pos=({:.3f}, {:.3f}, {:.3f}), norm={:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid receiver position for pole tide correction at TOW {:.3f}: rx_pos=({:.3f}, {:.3f}, {:.3f}), norm={:.3e}",
                 time.tow, rx_pos.x(), rx_pos.y(), rx_pos.z(), rx_pos.norm());
             return Eigen::Vector3d::Zero();
         }
         if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger()->warn("Invalid time for pole tide correction: week {}, TOW {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid time for pole tide correction: week {}, TOW {:.3f}",
                 time.week, time.tow);
             return Eigen::Vector3d::Zero();
         }
         if (erps_.empty()) {
-            log_manager_.getLogger()->warn("No ERP data available for pole tide correction at TOW {:.3f}", time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No ERP data available for pole tide correction at TOW {:.3f}", time.tow);
             return Eigen::Vector3d::Zero();
         }
 
@@ -1624,7 +2257,7 @@ namespace GnssProcessor {
                 return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
             });
         if (it == erps_.end() || !std::isfinite(it->xp) || !std::isfinite(it->yp)) {
-            log_manager_.getLogger()->trace("No valid ERP data for pole tide correction at TOW {:.3f}", time.tow);
+            log_manager_.getLogger("ppp_model")->trace("No valid ERP data for pole tide correction at TOW {:.3f}", time.tow);
             return Eigen::Vector3d::Zero();
         }
 
@@ -1648,12 +2281,12 @@ namespace GnssProcessor {
         );
 
         if (!correction.allFinite() || correction.norm() > 0.1) { // Max 10 cm
-            log_manager_.getLogger()->warn("Invalid pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm={:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm={:.3e}",
                 time.tow, correction.x(), correction.y(), correction.z(), correction.norm());
             return Eigen::Vector3d::Zero();
         }
 
-        log_manager_.getLogger()->trace("Pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, xp={:.3e} rad, yp={:.3e} rad",
+        log_manager_.getLogger("ppp_model")->trace("Pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, xp={:.3e} rad, yp={:.3e} rad",
             time.tow, correction.x(), correction.y(), correction.z(), xp, yp);
         return correction;
     }
@@ -1661,12 +2294,12 @@ namespace GnssProcessor {
     Eigen::Vector3d PppModel::computeOceanTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
         // Validate inputs
         if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
-            log_manager_.getLogger()->warn("Invalid receiver position for ocean tide correction at TOW {:.3f}: rx_pos=({:.3f}, {:.3f}, {:.3f}), norm={:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid receiver position for ocean tide correction at TOW {:.3f}: rx_pos=({:.3f}, {:.3f}, {:.3f}), norm={:.3e}",
                 time.tow, rx_pos.x(), rx_pos.y(), rx_pos.z(), rx_pos.norm());
             return Eigen::Vector3d::Zero();
         }
         if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger()->warn("Invalid time for ocean tide correction: week {}, TOW {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid time for ocean tide correction: week {}, TOW {:.3f}",
                 time.week, time.tow);
             return Eigen::Vector3d::Zero();
         }
@@ -1690,12 +2323,12 @@ namespace GnssProcessor {
         );
 
         if (!correction.allFinite() || correction.norm() > 0.1) { // Max 10 cm
-            log_manager_.getLogger()->warn("Invalid ocean tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm={:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid ocean tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm={:.3e}",
                 time.tow, correction.x(), correction.y(), correction.z(), correction.norm());
             return Eigen::Vector3d::Zero();
         }
 
-        log_manager_.getLogger()->trace("Ocean tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, amplitude={:.3e} m",
+        log_manager_.getLogger("ppp_model")->trace("Ocean tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, amplitude={:.3e} m",
             time.tow, correction.x(), correction.y(), correction.z(), amplitude);
         return correction;
     }
@@ -1725,16 +2358,16 @@ namespace GnssProcessor {
         else if (system == System::GLONASS) {
             // Return reference frequency for rescaled phase observations
             if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                log_manager_.getLogger()->trace("Using GLONASS G1 reference frequency: {} MHz for type {}",
+                log_manager_.getLogger("ppp_model")->trace("Using GLONASS G1 reference frequency: {} MHz for type {}",
                     Constants::GLONASS_G1_BASE_FREQ / 1e6, freq_type);
                 return Constants::GLONASS_G1_BASE_FREQ; // 1602 MHz
             }
             if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
-                log_manager_.getLogger()->trace("Using GLONASS G2 reference frequency: {} MHz for type {}",
+                log_manager_.getLogger("ppp_model")->trace("Using GLONASS G2 reference frequency: {} MHz for type {}",
                     Constants::GLONASS_G2_BASE_FREQ / 1e6, freq_type);
                 return Constants::GLONASS_G2_BASE_FREQ; // 1246 MHz
             }
-            log_manager_.getLogger()->warn("Invalid GLONASS frequency type: {}", freq_type);
+            log_manager_.getLogger("ppp_model")->warn("Invalid GLONASS frequency type: {}", freq_type);
             return 0.0;
         }
         else if (system == System::BeiDou) {
@@ -1768,14 +2401,14 @@ namespace GnssProcessor {
             }
         }
 
-        log_manager_.getLogger()->warn("Unknown frequency for {} on system {}", freq_type, static_cast<int>(system));
+        log_manager_.getLogger("ppp_model")->warn("Unknown frequency for {} on system {}", freq_type, static_cast<int>(system));
         return 0.0;
     }
 
     double PppModel::getReferenceFrequency(const std::string& freq_type, System system) const {
         // Validate input
         if (freq_type.empty()) {
-            log_manager_.getLogger()->warn("Empty frequency type for reference frequency, system={}",
+            log_manager_.getLogger("ppp_model")->warn("Empty frequency type for reference frequency, system={}",
                 MeasurementModel::getSystemString(system));
             return 0.0;
         }
@@ -1795,7 +2428,7 @@ namespace GnssProcessor {
         // For non-GLONASS systems, return actual frequency (no rescaling needed)
         double freq = getFrequency(freq_type, system, "");
         if (freq <= 0.0) {
-            log_manager_.getLogger()->warn("Invalid reference frequency for type {} on system {}: {:.3f} MHz",
+            log_manager_.getLogger("ppp_model")->warn("Invalid reference frequency for type {} on system {}: {:.3f} MHz",
                 freq_type, MeasurementModel::getSystemString(system), freq / 1e6);
         }
         return freq;
@@ -1809,7 +2442,7 @@ namespace GnssProcessor {
 
         // Validate inputs
         if (freq_type.empty() || satellite.empty()) {
-            log_manager_.getLogger()->warn("Invalid inputs for GLONASS rescaling: freq_type='{}', satellite='{}'",
+            log_manager_.getLogger("ppp_model")->warn("Invalid inputs for GLONASS rescaling: freq_type='{}', satellite='{}'",
                 freq_type, satellite);
             return observed_data;
         }
@@ -1817,14 +2450,14 @@ namespace GnssProcessor {
         double actual_freq = getFrequency(freq_type, system, satellite);
         double ref_freq = getReferenceFrequency(freq_type, system);
         if (actual_freq <= 0.0 || ref_freq <= 0.0 || !std::isfinite(actual_freq) || !std::isfinite(ref_freq)) {
-            log_manager_.getLogger()->warn("Cannot rescale GLONASS observation for type {}, satellite {}: actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
+            log_manager_.getLogger("ppp_model")->warn("Cannot rescale GLONASS observation for type {}, satellite {}: actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
                 freq_type, satellite, actual_freq / 1e6, ref_freq / 1e6);
             return observed_data;
         }
 
         // Rescale phase: L_new = L_old * (f_actual / f_ref)
         double scaled_data = observed_data * (actual_freq / ref_freq);
-        log_manager_.getLogger()->trace("Rescaled GLONASS observation for type {}, satellite {}: from {:.3f} to {:.3f} cycles, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
+        log_manager_.getLogger("ppp_model")->trace("Rescaled GLONASS observation for type {}, satellite {}: from {:.3f} to {:.3f} cycles, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
             freq_type, satellite, observed_data, scaled_data, actual_freq / 1e6, ref_freq / 1e6);
         return scaled_data;
     }
@@ -1879,7 +2512,7 @@ namespace GnssProcessor {
 
         // Validate inputs
         if (!rx_pos.allFinite() || !sat_pos.allFinite()) {
-            log_manager_.getLogger()->warn("Invalid Sagnac inputs: rx_pos=({}, {}, {}), sat_pos=({}, {}, {})",
+            log_manager_.getLogger("ppp_model")->warn("Invalid Sagnac inputs: rx_pos=({}, {}, {}), sat_pos=({}, {}, {})",
                 rx_pos.x(), rx_pos.y(), rx_pos.z(),
                 sat_pos.x(), sat_pos.y(), sat_pos.z());
             return 0.0;
@@ -1887,7 +2520,7 @@ namespace GnssProcessor {
         double rx_norm = rx_pos.norm();
         double sat_norm = sat_pos.norm();
         if (rx_norm < MIN_RX_NORM || rx_norm > MAX_RX_NORM || sat_norm < MIN_SAT_NORM || sat_norm > MAX_SAT_NORM) {
-            log_manager_.getLogger()->warn("Unrealistic Sagnac input norms: rx_norm={:.3e} m, sat_norm={:.3e} m, "
+            log_manager_.getLogger("ppp_model")->warn("Unrealistic Sagnac input norms: rx_norm={:.3e} m, sat_norm={:.3e} m, "
                 "rx_pos=({}, {}, {}), sat_pos=({}, {}, {})",
                 rx_norm, sat_norm,
                 rx_pos.x(), rx_pos.y(), rx_pos.z(),
@@ -1899,7 +2532,7 @@ namespace GnssProcessor {
         double cross_term = sat_pos.x() * rx_pos.y() - sat_pos.y() * rx_pos.x();
         double correction = (EARTH_ANGULAR_VELOCITY / C) * cross_term;
         if (!std::isfinite(correction) || std::abs(correction) > MAX_SAGNAC_CORRECTION) {
-            log_manager_.getLogger()->warn("Excessive Sagnac correction: {:.3e} m, cross_term: {:.3e}, "
+            log_manager_.getLogger("ppp_model")->warn("Excessive Sagnac correction: {:.3e} m, cross_term: {:.3e}, "
                 "rx_pos=({}, {}, {}), sat_pos=({}, {}, {})",
                 correction, cross_term,
                 rx_pos.x(), rx_pos.y(), rx_pos.z(),
@@ -1907,7 +2540,7 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        log_manager_.getLogger()->trace("Sagnac correction: {:.3f} m, cross_term: {:.3e}, "
+        log_manager_.getLogger("ppp_model")->trace("Sagnac correction: {:.3f} m, cross_term: {:.3e}, "
             "rx_pos=({}, {}, {}), sat_pos=({}, {}, {})",
             correction, cross_term,
             rx_pos.x(), rx_pos.y(), rx_pos.z(),
@@ -1924,7 +2557,7 @@ namespace GnssProcessor {
         double t = fmod(time.tow, 86400.0); // Seconds of day
         double amplitude = 0.001; // 1 mm amplitude (typical)
         double correction = amplitude * std::cos(2.0 * Constants::PI * t / 86400.0) * std::cos(latitude * Constants::PI / 180.0);
-        log_manager_.getLogger()->trace("Atmospheric loading correction: {} m", correction);
+        log_manager_.getLogger("ppp_model")->trace("Atmospheric loading correction: {} m", correction);
         return correction;
     }
 
@@ -1935,7 +2568,7 @@ namespace GnssProcessor {
     std::string PppModel::getReceiverAntennaType() const {
         std::string antenna_type = rinex_parser_.getReceiverAntennaType();
         if (antenna_type.empty()) {
-            log_manager_.getLogger()->warn("Empty receiver antenna type returned from RINEX parser");
+            log_manager_.getLogger("ppp_model")->warn("Empty receiver antenna type returned from RINEX parser");
         }
         return antenna_type;
     }
@@ -1950,7 +2583,7 @@ namespace GnssProcessor {
         Eigen::Vector3d sun_pos = interpolateSunPosition(time);
         if (sun_pos.norm() < 1e6) { // Fallback if no ephemeris
             sun_pos = Eigen::Vector3d(1.496e11, 0.0, 0.0); // 1 AU along x-axis
-            log_manager_.getLogger()->warn("No Sun ephemeris for time TOW {0}", time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No Sun ephemeris for time TOW {0}", time.tow);
         }
         Eigen::Vector3d e = (sun_pos - sat_pos).normalized(); // Sun direction
 
@@ -1974,15 +2607,15 @@ namespace GnssProcessor {
 
         // Validate inputs
         if (satellite.empty()) {
-            log_manager_.getLogger()->warn("Empty satellite ID for velocity interpolation at TOW {:.3f}", time.tow);
+            log_manager_.getLogger("ppp_model")->warn("Empty satellite ID for velocity interpolation at TOW {:.3f}", time.tow);
             return Eigen::Vector3d::Zero();
         }
         if (orbits_.empty()) {
-            log_manager_.getLogger()->warn("No orbit data available for {} at TOW {:.3f}", satellite, time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No orbit data available for {} at TOW {:.3f}", satellite, time.tow);
             return Eigen::Vector3d::Zero();
         }
         if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger()->warn("Invalid time for velocity interpolation for {}: week {}, TOW {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid time for velocity interpolation for {}: week {}, TOW {:.3f}",
                 satellite, time.week, time.tow);
             return Eigen::Vector3d::Zero();
         }
@@ -1991,7 +2624,7 @@ namespace GnssProcessor {
         auto vel_it = last_interpolated_velocity_.find(satellite);
         if (vel_it != last_interpolated_velocity_.end() && vel_it->second.allFinite() &&
             vel_it->second.norm() <= MAX_VELOCITY_NORM) {
-            log_manager_.getLogger()->trace("Using cached velocity for {} at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m/s, norm: {:.3e}",
+            log_manager_.getLogger("ppp_model")->trace("Using cached velocity for {} at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m/s, norm: {:.3e}",
                 satellite, time.tow, vel_it->second.x(), vel_it->second.y(), vel_it->second.z(), vel_it->second.norm());
             return vel_it->second;
         }
@@ -2012,7 +2645,7 @@ namespace GnssProcessor {
 
         // Check if sufficient data
         if (candidates.size() < velocity_order) {
-            log_manager_.getLogger()->debug("Insufficient orbit data for velocity of {} ({}) at TOW {:.3f}: found {} points, need {}",
+            log_manager_.getLogger("ppp_model")->debug("Insufficient orbit data for velocity of {} ({}) at TOW {:.3f}: found {} points, need {}",
                 satellite, system_str, time.tow, candidates.size(), velocity_order);
             if (!candidates.empty()) {
                 auto it = std::min_element(candidates.begin(), candidates.end(),
@@ -2021,12 +2654,12 @@ namespace GnssProcessor {
                     });
                 if (it->velocity_valid && it->velocity.allFinite() && it->velocity.norm() <= MAX_VELOCITY_NORM) {
                     last_interpolated_velocity_[satellite] = it->velocity;
-                    log_manager_.getLogger()->trace("Using nearest velocity for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m/s, norm: {:.3e}",
+                    log_manager_.getLogger("ppp_model")->trace("Using nearest velocity for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m/s, norm: {:.3e}",
                         satellite, system_str, it->time.tow, it->velocity.x(), it->velocity.y(), it->velocity.z(), it->velocity.norm());
                     return it->velocity;
                 }
             }
-            log_manager_.getLogger()->warn("No valid velocity data for {} ({}) at TOW {:.3f}", satellite, system_str, time.tow);
+            log_manager_.getLogger("ppp_model")->warn("No valid velocity data for {} ({}) at TOW {:.3f}", satellite, system_str, time.tow);
             last_interpolated_velocity_.erase(satellite);
             return Eigen::Vector3d::Zero();
         }
@@ -2042,7 +2675,7 @@ namespace GnssProcessor {
         for (size_t i = 0; i < candidates.size(); ++i) {
             for (size_t j = i + 1; j < candidates.size(); ++j) {
                 if (std::abs(candidates[i].time.tow - candidates[j].time.tow) < MIN_TIME_DIFF) {
-                    log_manager_.getLogger()->warn("Time difference too small for {} ({}) at TOW {:.3f}: {:.3f} s between epochs",
+                    log_manager_.getLogger("ppp_model")->warn("Time difference too small for {} ({}) at TOW {:.3f}: {:.3f} s between epochs",
                         satellite, system_str, time.tow, std::abs(candidates[i].time.tow - candidates[j].time.tow));
                     last_interpolated_velocity_.erase(satellite);
                     return Eigen::Vector3d::Zero();
@@ -2092,7 +2725,7 @@ namespace GnssProcessor {
 
         // Validate interpolated velocity
         if (!velocity_computed || !interpolated_vel.allFinite() || interpolated_vel.norm() > MAX_VELOCITY_NORM) {
-            log_manager_.getLogger()->warn("Invalid interpolated velocity for {} ({}) at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m/s, norm: {:.3e}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid interpolated velocity for {} ({}) at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m/s, norm: {:.3e}",
                 satellite, system_str, time.tow, interpolated_vel.x(), interpolated_vel.y(), interpolated_vel.z(), interpolated_vel.norm());
             last_interpolated_velocity_.erase(satellite);
             return Eigen::Vector3d::Zero();
@@ -2100,7 +2733,7 @@ namespace GnssProcessor {
 
         // Cache and return
         last_interpolated_velocity_[satellite] = interpolated_vel;
-        log_manager_.getLogger()->trace("Interpolated velocity for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m/s, norm: {:.3e}",
+        log_manager_.getLogger("ppp_model")->trace("Interpolated velocity for {} ({}) at TOW {:.3f}: ({:.3f}, {:.3f}, {:.3f}) m/s, norm: {:.3e}",
             satellite, system_str, time.tow, interpolated_vel.x(), interpolated_vel.y(), interpolated_vel.z(), interpolated_vel.norm());
         return interpolated_vel;
     }
@@ -2189,11 +2822,11 @@ namespace GnssProcessor {
     double PppModel::computeMultipathVarianceWeight(const PppObservation& obs, const std::string& type, double elevation) const {
         // Validate inputs
         if (type.empty() || obs.satellite.empty()) {
-            log_manager_.getLogger()->warn("Invalid inputs for multipath weighting: type='{}', satellite='{}'", type, obs.satellite);
+            log_manager_.getLogger("ppp_model")->warn("Invalid inputs for multipath weighting: type='{}', satellite='{}'", type, obs.satellite);
             return 1.0;
         }
         if (elevation < 0.0 || elevation > 90.0 || !std::isfinite(elevation)) {
-            log_manager_.getLogger()->warn("Invalid elevation for multipath weighting for {} {}: {:.3f} deg",
+            log_manager_.getLogger("ppp_model")->warn("Invalid elevation for multipath weighting for {} {}: {:.3f} deg",
                 obs.satellite, type, elevation);
             return 1.0;
         }
@@ -2210,7 +2843,7 @@ namespace GnssProcessor {
         // Map code to corresponding phase (e.g., C1C -> L1C)
         std::string phase_type = "L" + type.substr(1);
         if (!obs.observed.count(phase_type)) {
-            log_manager_.getLogger()->debug("No phase data for {} {} (phase_type={}), using elevation weight: {:.3f}",
+            log_manager_.getLogger("ppp_model")->debug("No phase data for {} {} (phase_type={}), using elevation weight: {:.3f}",
                 obs.satellite, type, phase_type, elev_weight);
             return elev_weight;
         }
@@ -2220,13 +2853,13 @@ namespace GnssProcessor {
         double phase = obs.observed.at(phase_type);
         double wavelength = getWavelength(obs.system, phase_type);
         if (wavelength <= 0.0 || !std::isfinite(wavelength)) {
-            log_manager_.getLogger()->warn("Invalid wavelength for {} {} (phase_type={}): {:.3f} m, using elevation weight: {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Invalid wavelength for {} {} (phase_type={}): {:.3f} m, using elevation weight: {:.3f}",
                 obs.satellite, type, phase_type, wavelength, elev_weight);
             return elev_weight;
         }
         double cmc = code - wavelength * phase;
         if (!std::isfinite(cmc)) {
-            log_manager_.getLogger()->warn("Non-finite CMC for {} {}: code={:.3f}, phase={:.3f}, wavelength={:.3f}, using elevation weight: {:.3f}",
+            log_manager_.getLogger("ppp_model")->warn("Non-finite CMC for {} {}: code={:.3f}, phase={:.3f}, wavelength={:.3f}, using elevation weight: {:.3f}",
                 obs.satellite, type, code, phase, wavelength, elev_weight);
             return elev_weight;
         }
@@ -2246,7 +2879,7 @@ namespace GnssProcessor {
             for (size_t i = 1; i < history.timestamps.size(); ++i) {
                 double dt = history.timestamps[i].tow - history.timestamps[i - 1].tow;
                 if (dt <= 0.0 || dt > MultipathHistory::TIME_GAP_THRESHOLD) {
-                    log_manager_.getLogger()->debug("Invalid time gap for {} {}: dt={:.3f} s, using elevation weight: {:.3f}",
+                    log_manager_.getLogger("ppp_model")->debug("Invalid time gap for {} {}: dt={:.3f} s, using elevation weight: {:.3f}",
                         obs.satellite, type, dt, elev_weight);
                     return elev_weight;
                 }
@@ -2267,14 +2900,84 @@ namespace GnssProcessor {
             double cmc_residual = std::abs(cmc - mean);
             if (cmc_residual > MultipathHistory::MULTIPATH_CMC_THRESHOLD * std_dev) {
                 elev_weight *= 0.5; // Down-weight by 50% if multipath detected
-                log_manager_.getLogger()->trace("Multipath detected for {} {}: CMC residual={:.3f} m, threshold={:.3f} m, adjusted weight: {:.3f}",
+                log_manager_.getLogger("ppp_model")->trace("Multipath detected for {} {}: CMC residual={:.3f} m, threshold={:.3f} m, adjusted weight: {:.3f}",
                     obs.satellite, type, cmc_residual, MultipathHistory::MULTIPATH_CMC_THRESHOLD * std_dev, elev_weight);
             }
         }
 
-        log_manager_.getLogger()->trace("Multipath variance weight for {} {}: {:.3f}, elevation={:.3f} deg, CMC={:.3f} m",
+        log_manager_.getLogger("ppp_model")->trace("Multipath variance weight for {} {}: {:.3f}, elevation={:.3f} deg, CMC={:.3f} m",
             obs.satellite, type, elev_weight, elevation, cmc);
         return elev_weight;
+    }
+
+    bool PppModel::parseSunEphemeris(const std::vector<GnssTime>& epoch_times, std::vector<SunEphemeris>& sun_ephemeris) const {
+        try {
+            sun_ephemeris.clear();
+            if (epoch_times.empty()) {
+                log_manager_.getLogger("ppp_model")->error("No epoch times provided for Sun ephemeris computation");
+                return false;
+            }
+
+            // Constants for Sun position (JPL low-precision ephemeris approximation)
+            const double AU = 1.495978707e11; // Astronomical unit in meters
+            const double epsilon = 23.439281 * Constants::PI / 180.0; // Obliquity of ecliptic (radians)
+            const double T_0 = 2451545.0; // J2000 epoch (JD)
+            const double M_0 = 357.5291 * Constants::PI / 180.0; // Mean anomaly at J2000 (radians)
+            const double n = 0.98560028 * Constants::PI / 180.0 / 86400.0; // Mean motion (rad/s)
+
+            for (const auto& epoch_time : epoch_times) {
+                // Validate epoch time
+                if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800.0) {
+                    log_manager_.getLogger("ppp_model")->warn("Invalid epoch time: week {}, tow {:.3f}", epoch_time.week, epoch_time.tow);
+                    continue;
+                }
+
+                // Convert GPS time to Julian Date
+                double gps_t = TimeUtils::gpsTimeToJulianDate(epoch_time.week, epoch_time.tow);
+                double T = (gps_t - T_0) / 36525.0; // Julian centuries since J2000
+
+                // Mean anomaly
+                double M = M_0 + n * (gps_t - T_0) * 86400.0;
+                M = std::fmod(M, 2.0 * Constants::PI); // Normalize to [0, 2π]
+
+                // Approximate eccentric anomaly (simplified, low eccentricity ~0.0167)
+                double E = M; // First-order approximation
+                double cosE = std::cos(E);
+                double sinE = std::sin(E);
+
+                // Heliocentric coordinates in ecliptic plane
+                double x_helio = AU * (cosE - 0.0167);
+                double y_helio = AU * std::sqrt(1.0 - 0.0167 * 0.0167) * sinE;
+                double z_helio = 0.0; // Assume Sun in ecliptic plane
+
+                // Transform to ECEF (simplified, apply obliquity rotation)
+                double x_ecef = x_helio;
+                double y_ecef = y_helio * std::cos(epsilon);
+                double z_ecef = y_helio * std::sin(epsilon);
+
+                SunEphemeris data;
+                data.time = epoch_time;
+                data.position = Eigen::Vector3d(x_ecef, y_ecef, z_ecef);
+                if (!data.position.allFinite()) {
+                    log_manager_.getLogger("ppp_model")->warn("Non-finite Sun position at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e})",
+                        epoch_time.tow, x_ecef, y_ecef, z_ecef);
+                    continue;
+                }
+                sun_ephemeris.push_back(data);
+            }
+
+            if (sun_ephemeris.empty()) {
+                log_manager_.getLogger("ppp_model")->error("No valid Sun ephemeris entries computed");
+                return false;
+            }
+            log_manager_.getLogger("ppp_model")->info("Computed {} Sun ephemeris entries for observation epochs", sun_ephemeris.size());
+            return true;
+        }
+        catch (const std::exception& e) {
+            log_manager_.getLogger("ppp_model")->error("Exception computing Sun ephemeris: {}", e.what());
+            sun_ephemeris.clear();
+            return false;
+        }
     }
 
 } // namespace GnssProcessor

@@ -126,6 +126,16 @@ namespace GnssProcessor {
         return day <= max_day;
     }
 
+    double TimeUtils::gpsTimeToJulianDate(int week, double tow) {
+        if (week < 0 || tow < 0.0 || tow >= 604800.0) {
+            throw std::invalid_argument("Invalid GPS time: week " + std::to_string(week) + ", tow " + std::to_string(tow));
+        }
+        // GPS epoch: 1980-01-06 00:00:00 UTC (JD 2444244.5)
+        double seconds_since_gps_epoch = static_cast<double>(week) * SECONDS_IN_WEEK + tow;
+        double days_since_gps_epoch = seconds_since_gps_epoch / SECONDS_IN_DAY;
+        return GPS_EPOCH_JD + days_since_gps_epoch;
+    }
+
     int TimeUtils::daysInMonth(int year, int month) {
         switch (month) {
         case 2: return isLeapYear(year) ? 29 : 28;

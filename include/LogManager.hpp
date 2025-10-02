@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <map>
 
 namespace GnssProcessor {
 
@@ -23,20 +24,24 @@ namespace GnssProcessor {
         LogManager();
 
         // Initialize logging with specified directory and log level
-        void initialize(const std::filesystem::path& log_dir, LogLevel level);
+        bool initialize(const std::filesystem::path& log_dir, LogLevel level);
 
-        // Set log level at runtime
+        // Set log level for all loggers at runtime
         void setLogLevel(LogLevel level);
 
         // Shutdown logging and flush all sinks
         void shutdown();
 
-        // Get the default logger
-        std::shared_ptr<spdlog::logger> getLogger() const { return logger_; }
+        // Get the default logger (gnss_processor)
+        std::shared_ptr<spdlog::logger> getLogger() const { return loggers_.at("gnss_processor"); }
+
+        // Get or create a module-specific logger
+        std::shared_ptr<spdlog::logger> getLogger(const std::string& logger_name);
 
     private:
-        std::shared_ptr<spdlog::logger> logger_;
+        std::map<std::string, std::shared_ptr<spdlog::logger>> loggers_;
         std::filesystem::path log_dir_;
+        LogLevel level_;
         bool initialized_ = false;
 
         // Convert LogLevel to spdlog level
@@ -44,5 +49,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-//#endif // LOGMANAGER_HPP

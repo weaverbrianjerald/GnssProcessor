@@ -8,6 +8,7 @@
 #include "RinexParser.hpp"
 #include "StateManager.hpp"
 #include "PppTypes.hpp"
+#include "WlsLogger.hpp"
 #include <Eigen/Dense>
 #include <vector>
 #include <map>
@@ -34,10 +35,10 @@ namespace GnssProcessor {
         // Initializes the PPP state (position, clock, troposphere, ionosphere, covariance)
         void initializeState(PppState& state);
 
+        std::pair<Eigen::VectorXd, Eigen::MatrixXd> estimateStateWls(const GnssTime& epoch_time, const std::vector<PppObservation>& observations);
+
         // Computes observation models for a set of RINEX observations
-        bool computeModels(const std::vector<RinexObservation>& observations,
-            PppState& state,
-            std::vector<PppObservation>& modeled_obs);
+        bool computeModels(const std::vector<RinexObservation>& observations, PppState& state, std::vector<PppObservation>& modeled_obs);
 
         // Interpolates satellite position at a given time using SP3 data
         Eigen::Vector3d getSatellitePosition(const std::string& satellite, const GnssTime& time) const;
@@ -97,7 +98,7 @@ namespace GnssProcessor {
             Eigen::Vector3d& sat_pos, Eigen::Vector3d& rx_pos, double& elevation,
             double& azimuth, Eigen::Vector3d& los, double& range, double& tropo_delay,
             double& sat_clock, double& shapiro_delay, double& sagnac_corr,
-            double& atm_loading_corr, double& relativistic_corr) const;
+            double& atm_loading_corr, double& relativistic_corr, double& solid_tide) const;
 
         // Computes satellite clock correction (seconds) using CLK data
         double getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time) const;
@@ -110,12 +111,20 @@ namespace GnssProcessor {
         double computeShapiroDelay(const std::string& satellite, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos) const;
 
+        // Compute Sun ephemeris for observation epochs
+        bool parseSunEphemeris(const std::vector<GnssTime>& epoch_times, std::vector<SunEphemeris>& sun_ephemeris) const;
+
+        // Computes ionosphere-free combination for two signals
+        double computeIonoFreeCombination(const std::map<std::string, double>& measurements,
+            System system, const std::string& signal1, const std::string& signal2) const;
+
     private:
         const GnssConfig& config_;                         // Configuration settings
         ProductParser& product_parser_;                   // Product data parser
         LogManager& log_manager_;                         // Logger for debugging and info
         const RinexParser& rinex_parser_;                 // RINEX data parser
         StateManager& state_manager_;                     // State manager for ambiguities
+        WlsLogger wls_logger_;
         mutable std::map<std::string, MultipathHistory> multipath_histories_; // Multipath history per satellite
         const double elevation_threshold_;                // Elevation mask (degrees)
         std::vector<OrbitData> orbits_;                   // Satellite orbit data
@@ -135,19 +144,13 @@ namespace GnssProcessor {
         double computeKlobucharDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos, double frequency) const;
 
-        // Computes ionosphere-free combination for two signals
-        double computeIonoFreeCombination(const std::map<std::string, double>& measurements,
-            System system, const std::string& signal1, const std::string& signal2) const;
-
-        // Computes triple-frequency ionosphere-free combination
-        double computeTripleIonoFreeCombination(const std::map<std::string, double>& measurements,
-            System system, const std::string& signal1,
-            const std::string& signal2, const std::string& signal3) const;
-
         // Selects signals for processing based on priorities
-        bool selectSignals(const RinexObservation& obs, const std::string& system_str,
+        /*bool selectSignals(const RinexObservation& obs, const std::string& system_str,
             std::vector<std::string>& selected_signals, bool& is_iono_free,
-            std::string& comb_type);
+            std::string& comb_type);*/
+        bool selectSignals(const RinexObservation& obs, const std::string& system_str,
+            std::vector<std::pair<std::string, std::string>>& selected_signals,
+            bool& is_iono_free, std::string& comb_type);
 
         // Selects observation types based on system and priorities
         std::vector<std::string> selectObservationTypes(const std::map<std::string, double>& measurements,
@@ -160,20 +163,29 @@ namespace GnssProcessor {
             const Eigen::Vector3d& sat_pos, double elevation, double azimuth,
             const std::string& rx_antenna_type, double range, double tropo_delay,
             double sat_clock, double shapiro_delay, double sagnac_corr,
-            double atm_loading_corr, double relativistic_corr);
+            double atm_loading_corr, double relativistic_corr, double solid_tide);
 
         // Processes ionosphere-free observation
         bool processIonoFreeObservation(const RinexObservation& obs, PppState& state,
             PppObservation& ppp_obs, const std::string& system_str,
-            const std::vector<std::string>& selected_signals,
+            std::vector<std::pair<std::string, std::string>> selected_signals,
             const std::string& comb_type, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos, double elevation, double azimuth,
             const std::string& rx_antenna_type, double range, double tropo_delay,
             double sat_clock, double shapiro_delay, double sagnac_corr,
-            double atm_loading_corr, double relativistic_corr);
+            double atm_loading_corr, double relativistic_corr, double solid_tide);
 
         // Computes Sagnac correction (meters)
         double computeSagnacCorrection(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const;
+
+        // Computes Solid Earth Tide correction
+        double computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
+            const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos) const;
+
+        // Compute sun and moon position
+        Eigen::Vector3d computeSunPosition(double mjd) const;
+        Eigen::Vector3d computeMoonPosition(double mjd) const;
+        Eigen::Vector3d rotateVector(const Eigen::Vector3d& vec, double angle, int axis) const;
 
         // Computes atmospheric loading correction (meters)
         double computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;

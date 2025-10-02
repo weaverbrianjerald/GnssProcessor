@@ -29,7 +29,6 @@ namespace GnssProcessor {
         bool parseErp(const std::filesystem::path& path, std::vector<ErpData>& erps);
         //bool parseOceanTide(const std::filesystem::path& path, std::vector<OceanTideData>& tides);
         bool parseKlobuchar(const std::filesystem::path& path, std::vector<double>& klobuchar_coeffs);
-        bool parseSunEphemeris(const std::filesystem::path& path, std::vector<SunEphemeris>& sun_ephemeris);
 
     private:
         const GnssConfig& config_;

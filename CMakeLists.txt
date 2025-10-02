@@ -32,6 +32,8 @@ add_library(gnss_core STATIC
 	src/core/common/ProductManager.cpp
 	src/core/common/ProductParser.cpp
 	src/core/common/TimeUtils.cpp
+	src/core/common/KalmanFilterLogger.cpp
+	src/core/common/WlsLogger.cpp
 	src/core/corrections/GnssCorrections.cpp
 	src/core/filter/KalmanFilter.cpp
 	src/core/filter/StateManager.cpp

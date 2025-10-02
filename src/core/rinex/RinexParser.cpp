@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <spdlog/spdlog.h>
 #include "Constants.hpp"
+#include <PppTypes.hpp>
 
 namespace GnssProcessor {
 
@@ -20,37 +21,36 @@ namespace GnssProcessor {
         header_.antenna_delta_hen = { 0.0, 0.0, 0.0 };
         header_.antenna_azimuth_deg = 0.0;
         header_.antenna_elevation_deg = 0.0;
-        log_manager_.getLogger()->info("RinexParser initialized for mode: {}",
+        log_manager_.getLogger("rinex_parser")->info("RinexParser initialized for mode: {}",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
 
     bool RinexParser::parse() {
         std::filesystem::path rinex_path = config_.getObservationPath();
         if (rinex_path.empty() || !std::filesystem::exists(rinex_path)) {
-            log_manager_.getLogger()->error("Observation RINEX file path invalid or does not exist: {}", rinex_path.string());
+            log_manager_.getLogger("rinex_parser")->error("Observation RINEX file path invalid or does not exist: {}", rinex_path.string());
             return false;
         }
 
         // Check if the file is a navigation file (e.g., BRDC)
         std::string filename = rinex_path.filename().string();
         if (filename.find("BRDC") != std::string::npos || filename.find("_MN.rnx") != std::string::npos) {
-            log_manager_.getLogger()->debug("Detected navigation RINEX file: {}, delegating to ProductParser", rinex_path.string());
+            log_manager_.getLogger("rinex_parser")->debug("Detected navigation RINEX file: {}, delegating to ProductParser", rinex_path.string());
             std::vector<double> klobuchar_coeffs;
             std::vector<SunEphemeris> sun_ephemeris;
-            bool success = product_parser_.parseKlobuchar(rinex_path, klobuchar_coeffs) &&
-                product_parser_.parseSunEphemeris(rinex_path, sun_ephemeris);
+            bool success = product_parser_.parseKlobuchar(rinex_path, klobuchar_coeffs);
             if (!success) {
-                log_manager_.getLogger()->error("Failed to parse navigation RINEX file: {}", rinex_path.string());
+                log_manager_.getLogger("rinex_parser")->error("Failed to parse navigation RINEX file: {}", rinex_path.string());
                 return false;
             }
-            log_manager_.getLogger()->info("Parsed navigation RINEX file: {}, Klobuchar coeffs: {}, Sun ephemeris: {}",
+            log_manager_.getLogger("rinex_parser")->info("Parsed navigation RINEX file: {}, Klobuchar coeffs: {}, Sun ephemeris: {}",
                 rinex_path.string(), klobuchar_coeffs.size(), sun_ephemeris.size());
             return true;
         }
 
         std::ifstream file(rinex_path);
         if (!file.is_open()) {
-            log_manager_.getLogger()->error("Failed to open observation RINEX file: {}", rinex_path.string());
+            log_manager_.getLogger("rinex_parser")->error("Failed to open observation RINEX file: {}", rinex_path.string());
             return false;
         }
 
@@ -99,7 +99,7 @@ namespace GnssProcessor {
                     else if (label.find("ANT # / TYPE") != std::string::npos) {
                         header_.antenna_type = line.substr(20, 20);
                         header_.antenna_type.erase(header_.antenna_type.find_last_not_of(" \t") + 1);
-                        log_manager_.getLogger()->info("Receiver antenna type: {}", header_.antenna_type);
+                        log_manager_.getLogger("rinex_parser")->info("Receiver antenna type: {}", header_.antenna_type);
                     }
                     else if (label.find("APPROX POSITION XYZ") != std::string::npos) {
                         double x = std::stod(line.substr(0, 14));
@@ -128,7 +128,7 @@ namespace GnssProcessor {
                             sys == "J" ? System::QZSS :
                             sys == "S" ? System::SBAS : System::Unknown;
                         if (current_system == System::Unknown) {
-                            log_manager_.getLogger()->warn("Unknown system identifier '{}'", sys);
+                            log_manager_.getLogger("rinex_parser")->warn("Unknown system identifier '{}'", sys);
                             continue;
                         }
                         int num_types = 0;
@@ -136,7 +136,7 @@ namespace GnssProcessor {
                             num_types = std::stoi(line.substr(3, 3));
                         }
                         catch (const std::exception& e) {
-                            log_manager_.getLogger()->warn("Invalid number of observation types: {}", e.what());
+                            log_manager_.getLogger("rinex_parser")->warn("Invalid number of observation types: {}", e.what());
                             continue;
                         }
                         current_obs_types.clear();
@@ -148,7 +148,7 @@ namespace GnssProcessor {
                                 current_obs_types.push_back(*valid_type);
                             }
                             else {
-                                log_manager_.getLogger()->warn("Including invalid observation code '{}' for system {}", type, sys);
+                                log_manager_.getLogger("rinex_parser")->warn("Including invalid observation code '{}' for system {}", type, sys);
                                 current_obs_types.push_back(type);
                             }
                         }
@@ -176,13 +176,13 @@ namespace GnssProcessor {
                                     current_obs_types.push_back(*valid_type);
                                 }
                                 else {
-                                    log_manager_.getLogger()->warn("Including invalid observation code '{}' for system {}", type, sys);
+                                    log_manager_.getLogger("rinex_parser")->warn("Including invalid observation code '{}' for system {}", type, sys);
                                     current_obs_types.push_back(type);
                                 }
                             }
                         }
                         if (current_obs_types.size() != static_cast<size_t>(num_types)) {
-                            log_manager_.getLogger()->warn("Expected {} observation types for system {}, got {}", num_types, sys, current_obs_types.size());
+                            log_manager_.getLogger("rinex_parser")->warn("Expected {} observation types for system {}, got {}", num_types, sys, current_obs_types.size());
                         }
                         if (!current_obs_types.empty()) {
                             header_.obs_types[current_system] = current_obs_types;
@@ -191,7 +191,7 @@ namespace GnssProcessor {
                                 obs_types_str += current_obs_types[i];
                                 if (i < current_obs_types.size() - 1) obs_types_str += ", ";
                             }
-                            log_manager_.getLogger()->info("Parsed {} observation types for system {}: {}", current_obs_types.size(), sys, obs_types_str);
+                            log_manager_.getLogger("rinex_parser")->info("Parsed {} observation types for system {}: {}", current_obs_types.size(), sys, obs_types_str);
                         }
                     }
                     else if (label.find("INTERVAL") != std::string::npos) {
@@ -235,7 +235,7 @@ namespace GnssProcessor {
                         int num_sats;
                         iss >> marker >> year >> month >> day >> hour >> min >> sec >> flag >> num_sats;
                         if (!iss || marker != '>' || flag > 1) {
-                            log_manager_.getLogger()->debug("Skipping invalid epoch line: {}", line);
+                            log_manager_.getLogger("rinex_parser")->debug("Skipping invalid epoch line: {}", line);
                             for (int i = 0; i < num_sats; ++i) std::getline(file, line);
                             continue;
                         }
@@ -247,7 +247,7 @@ namespace GnssProcessor {
 
                         for (int i = 0; i < num_sats && std::getline(file, line); ++i) {
                             if (line.length() < 3) {
-                                log_manager_.getLogger()->warn("Invalid satellite line: {}", line);
+                                log_manager_.getLogger("rinex_parser")->warn("Invalid satellite line: {}", line);
                                 continue;
                             }
                             std::string sat_id = line.substr(0, 3);
@@ -258,7 +258,7 @@ namespace GnssProcessor {
                                 sat_id[0] == 'J' ? System::QZSS :
                                 sat_id[0] == 'S' ? System::SBAS : System::Unknown;
                             if (system == System::Unknown) {
-                                log_manager_.getLogger()->warn("Unknown system for satellite: {}", sat_id);
+                                log_manager_.getLogger("rinex_parser")->warn("Unknown system for satellite: {}", sat_id);
                                 continue;
                             }
 
@@ -271,10 +271,21 @@ namespace GnssProcessor {
                             auto obs_types = header_.obs_types[system];
                             std::istringstream data_iss(line.substr(3));
                             for (size_t j = 0; j < obs_types.size(); ++j) {
-                                std::string value_str, lli_str, snr_str;
-                                data_iss >> std::setw(14) >> value_str >> std::setw(1) >> lli_str >> std::setw(1) >> snr_str;
-                                if (value_str.empty() || value_str.find_first_not_of(" \t") == std::string::npos) {
-                                    continue;
+                                // Each observation field is 16 characters (14 for value, 1 for LLI, 1 for SNR)
+                                size_t start_pos = 3 + j * 16;
+                                if (start_pos + 16 > line.length()) {
+                                    continue; // Incomplete observation data
+                                }
+                                std::string field = line.substr(start_pos, 16);
+                                std::string value_str = field.substr(0, 14);
+                                std::string lli_str = field.substr(14, 1);
+                                std::string snr_str = field.substr(15, 1);
+
+                                // Trim whitespace from value_str
+                                value_str.erase(0, value_str.find_first_not_of(" \t"));
+                                value_str.erase(value_str.find_last_not_of(" \t") + 1);
+                                if (value_str.empty()) {
+                                    continue; // Empty observation
                                 }
                                 try {
                                     double value = std::stod(value_str);
@@ -282,7 +293,7 @@ namespace GnssProcessor {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
                                     }
                                     obs.measurements[obs_types[j]] = value;
-                                    double variance = obs_types[j][0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015;
+                                    double variance = obs_types[j][0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015; // code: meters; phase: meters
                                     if (!snr_str.empty() && snr_str.find_first_not_of(" \t") != std::string::npos) {
                                         double snr = std::stod(snr_str);
                                         if (snr > 0 && snr < 60) {
@@ -298,7 +309,7 @@ namespace GnssProcessor {
                                     }
                                 }
                                 catch (const std::exception& e) {
-                                    log_manager_.getLogger()->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
+                                    log_manager_.getLogger("rinex_parser")->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
                                 }
                             }
                             if (!obs.measurements.empty()) {
@@ -314,7 +325,7 @@ namespace GnssProcessor {
                         double sec;
                         iss >> year >> month >> day >> hour >> min >> sec >> flag;
                         if (!iss || flag > 1) {
-                            log_manager_.getLogger()->debug("Skipping invalid epoch line: {}", line);
+                            log_manager_.getLogger("rinex_parser")->debug("Skipping invalid epoch line: {}", line);
                             continue;
                         }
                         year = year < 80 ? 2000 + year : 1900 + year; // RINEX 2.x 2-digit year
@@ -344,7 +355,7 @@ namespace GnssProcessor {
 
                         for (const auto& sat_id : sat_ids) {
                             if (!std::getline(file, line)) {
-                                log_manager_.getLogger()->warn("Unexpected end of file while reading satellite data for {}", sat_id);
+                                log_manager_.getLogger("rinex_parser")->warn("Unexpected end of file while reading satellite data for {}", sat_id);
                                 break;
                             }
                             System system = sat_id[0] == 'G' ? System::GPS :
@@ -354,7 +365,7 @@ namespace GnssProcessor {
                                 sat_id[0] == 'J' ? System::QZSS :
                                 sat_id[0] == 'S' ? System::SBAS : System::Unknown;
                             if (system == System::Unknown) {
-                                log_manager_.getLogger()->warn("Unknown system for satellite: {}", sat_id);
+                                log_manager_.getLogger("rinex_parser")->warn("Unknown system for satellite: {}", sat_id);
                                 continue;
                             }
 
@@ -400,7 +411,7 @@ namespace GnssProcessor {
                                     }
                                 }
                                 catch (const std::exception& e) {
-                                    log_manager_.getLogger()->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
+                                    log_manager_.getLogger("rinex_parser")->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
                                 }
                             }
                             if (!obs.measurements.empty()) {
@@ -411,7 +422,7 @@ namespace GnssProcessor {
                 }
             }
             file.close();
-            log_manager_.getLogger()->info("Parsed RINEX file: {}, {} observations, version: {}, time_system: {}, "
+            log_manager_.getLogger("rinex_parser")->info("Parsed RINEX file: {}, {} observations, version: {}, time_system: {}, "
                 "marker_name: {}, marker_number: {}, antenna_type: {}, antenna_hen: ({:.3f}, {:.3f}, {:.3f}), "
                 "azimuth: {:.3f} deg, elevation: {:.3f} deg, mode: {}",
                 rinex_path.string(), observations_.size(), header_.version, header_.time_system,
@@ -422,7 +433,7 @@ namespace GnssProcessor {
             return !observations_.empty();
         }
         catch (const std::exception& e) {
-            log_manager_.getLogger()->error("Error parsing RINEX file {}: {}", product_parser_.getProductPath("RNX").string(), e.what());
+            log_manager_.getLogger("rinex_parser")->error("Error parsing RINEX file {}: {}", product_parser_.getProductPath("RNX").string(), e.what());
             file.close();
             return false;
         }
@@ -475,7 +486,7 @@ namespace GnssProcessor {
             Constants::GLONASS_G2_BASE_FREQ : Constants::GLONASS_G3_BASE_FREQ;
 
         if (actual_freq <= 0.0 || ref_freq <= 0.0 || !std::isfinite(actual_freq) || !std::isfinite(ref_freq)) {
-            log_manager_.getLogger()->warn("Cannot rescale measurement for type {}, satellite {}: invalid frequencies (actual: {:.3f} MHz, ref: {:.3f} MHz)",
+            log_manager_.getLogger("rinex_parser")->warn("Cannot rescale measurement for type {}, satellite {}: invalid frequencies (actual: {:.3f} MHz, ref: {:.3f} MHz)",
                 freq_type, satellite, actual_freq / 1e6, ref_freq / 1e6);
             return observed_value;
         }
@@ -483,12 +494,12 @@ namespace GnssProcessor {
         // Rescale: obs_new = obs_old * (f_actual / f_ref)
         double scaled_obs = observed_value * (actual_freq / ref_freq);
         if (!std::isfinite(scaled_obs) || std::abs(scaled_obs) > std::abs(observed_value) * 2.0) {
-            log_manager_.getLogger()->warn("Invalid rescaled measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
+            log_manager_.getLogger("rinex_parser")->warn("Invalid rescaled measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
                 satellite, freq_type, observed_value, scaled_obs, actual_freq / 1e6, ref_freq / 1e6);
             return observed_value;
         }
 
-        log_manager_.getLogger()->trace("Rescaled GLONASS measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz, mode={}",
+        log_manager_.getLogger("rinex_parser")->trace("Rescaled GLONASS measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz, mode={}",
             satellite, freq_type, observed_value, scaled_obs, actual_freq / 1e6, ref_freq / 1e6,
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
         return scaled_obs;
@@ -499,7 +510,7 @@ namespace GnssProcessor {
         if (freq_type.find("C1") == std::string::npos && freq_type.find("L1") == std::string::npos &&
             freq_type.find("C2") == std::string::npos && freq_type.find("L2") == std::string::npos &&
             freq_type.find("C3") == std::string::npos && freq_type.find("L3") == std::string::npos) {
-            log_manager_.getLogger()->warn("Invalid GLONASS frequency type: {} for satellite {}", freq_type, satellite);
+            log_manager_.getLogger("rinex_parser")->warn("Invalid GLONASS frequency type: {} for satellite {}", freq_type, satellite);
             return 0.0;
         }
 
@@ -508,14 +519,14 @@ namespace GnssProcessor {
         if (slot_it != glonass_freq_slots_.end()) {
             channel = slot_it->second;
             if (channel < -7 || channel > 6) {
-                log_manager_.getLogger()->warn("GLONASS channel {} out of valid range [-7, +6] for satellite {}, type: {}",
+                log_manager_.getLogger("rinex_parser")->warn("GLONASS channel {} out of valid range [-7, +6] for satellite {}, type: {}",
                     channel, satellite, freq_type);
                 return 0.0;
             }
-            log_manager_.getLogger()->trace("Found GLONASS channel {} for satellite {}", channel, satellite);
+            log_manager_.getLogger("rinex_parser")->trace("Found GLONASS channel {} for satellite {}", channel, satellite);
         }
         else {
-            log_manager_.getLogger()->warn("No GLONASS frequency slot found for satellite {}, using channel 0", satellite);
+            log_manager_.getLogger("rinex_parser")->warn("No GLONASS frequency slot found for satellite {}, using channel 0", satellite);
         }
 
         double freq = 0.0;
@@ -530,12 +541,12 @@ namespace GnssProcessor {
         }
 
         if (freq <= 0.0 || !std::isfinite(freq)) {
-            log_manager_.getLogger()->warn("Computed invalid GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}",
+            log_manager_.getLogger("rinex_parser")->warn("Computed invalid GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}",
                 freq / 1e6, freq_type, satellite, channel);
             return 0.0;
         }
 
-        log_manager_.getLogger()->trace("Computed GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}, mode={}",
+        log_manager_.getLogger("rinex_parser")->trace("Computed GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}, mode={}",
             freq / 1e6, freq_type, satellite, channel,
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
         return freq;
@@ -545,7 +556,7 @@ namespace GnssProcessor {
         // RINEX 3.x observation code format: [CLDS][1-9][A-Z]
         if (code.length() != 3 || (code[0] != 'C' && code[0] != 'L' && code[0] != 'D' && code[0] != 'S') ||
             !std::isdigit(code[1]) || !std::isupper(code[2])) {
-            log_manager_.getLogger()->debug("Invalid observation code format: {} for system {}", code,
+            log_manager_.getLogger("rinex_parser")->debug("Invalid observation code format: {} for system {}", code,
                 system == System::GPS ? "GPS" : system == System::Galileo ? "Galileo" :
                 system == System::GLONASS ? "GLONASS" : system == System::BeiDou ? "BeiDou" :
                 system == System::QZSS ? "QZSS" : system == System::SBAS ? "SBAS" : "Unknown");
@@ -597,7 +608,7 @@ namespace GnssProcessor {
                 // B2a: D, Z, D+Z
                 "C5D", "C5Z", "C5X", "L5D", "L5Z", "L5X", "D5D", "D5Z", "D5X", "S5D", "S5Z", "S5X",
                 // B2b: I, Q, I+Q
-                "C7I", "C7Q", "C7X", "L7I", "L7Q", "L7X", "D7I", "D7Q", "D7X", "S7I", "S7Q", "S7X",
+                "C7I", "C7Q", "C7X", "C7D", "C7Z", "L7I", "L7Q", "L7X", "L7D", "L7Z", "D7I", "D7Q", "D7X", "D7D", "D7Z", "S7I", "S7Q", "S7X", "S7D", "S7Z",
                 // B2a+b: I, Q, I+Q
                 "C8I", "C8Q", "C8X", "L8I", "L8Q", "L8X", "D8I", "D8Q", "D8X", "S8I", "S8Q", "S8X"
             }},
@@ -622,7 +633,7 @@ namespace GnssProcessor {
 
         auto it = valid_codes.find(system);
         if (it == valid_codes.end()) {
-            log_manager_.getLogger()->debug("No valid codes defined for system {}", system == System::GPS ? "GPS" :
+            log_manager_.getLogger("rinex_parser")->debug("No valid codes defined for system {}", system == System::GPS ? "GPS" :
                 system == System::Galileo ? "Galileo" : system == System::GLONASS ? "GLONASS" : system == System::BeiDou ? "BeiDou" :
                 system == System::QZSS ? "QZSS" : system == System::SBAS ? "SBAS" : "Unknown");
             return std::nullopt;
@@ -630,10 +641,18 @@ namespace GnssProcessor {
         if (std::find(it->second.begin(), it->second.end(), code) != it->second.end()) {
             return std::optional<std::string>{code};
         }
-        log_manager_.getLogger()->debug("Observation code {} not valid for system {}", code, system == System::GPS ? "GPS" :
+        log_manager_.getLogger("rinex_parser")->debug("Observation code {} not valid for system {}", code, system == System::GPS ? "GPS" :
             system == System::Galileo ? "Galileo" : system == System::GLONASS ? "GLONASS" : system == System::BeiDou ? "BeiDou" :
             system == System::QZSS ? "QZSS" : system == System::SBAS ? "SBAS" : "Unknown");
         return std::nullopt;
+    }
+
+    std::vector<GnssTime> RinexParser::getEpochTimes() const {
+        std::vector<GnssTime> epoch_times;
+        for (const auto& obs : observations_) {
+            epoch_times.push_back(obs.time);
+        }
+        return epoch_times;
     }
 
     } // namespace GnssProcessor
