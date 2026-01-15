@@ -5,29 +5,36 @@
   "processing_mode": "PPP",
   "uncombined_enabled": false,
   "signal_mode": "dual",
-  "observation_path": "C:/GnssProcessorSupport/rinex/30S/10_minutes/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+  "observation_path": "C:/GnssProcessorSupport/rinex/30S/1_hour/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
   "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
   "sinex_file_path": "",
   "rtcm_file_path": "",
   "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt",
   "elevation_mask_deg": 10.0,
+  "leap_seconds": 37.0,
   "receiver_antenna_orientation": {
     "azimuth_deg": 0.0,
     "elevation_deg": 90.0
   },
+  "default_measurement_noise": {
+    "code_std_m": 0.30,
+    "phase_std_m": 0.003
+  },
   "process_noise": {
     "position_std": 0.0,
-    "clock_bias_std": 300.0,
-    "troposphere_std": 0.0005,
+    "clock_bias_std": 10.0,
+    "troposphere_std": 0.00005,
     "ionosphere_std": 0.02
   },
   "initial_std": {
     "position": 100.0,
-    "clock": 300.0,
+    "clock": 500.0,
     "troposphere": 0.5,
     "ionosphere": 5.0,
-    "ambiguity": 500.0
+    "ambiguity": 1000.0
   },
+  "zhd_pressure_mbar": 1013.25,
+  "zhd_temp_kelvin": 288.15,
   "signal_priorities": {
     "GPS": [
       "C1W",

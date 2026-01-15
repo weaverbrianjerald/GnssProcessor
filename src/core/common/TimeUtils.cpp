@@ -2,6 +2,8 @@
 #include <cmath>
 #include <stdexcept>
 #include <spdlog/spdlog.h>
+#include <sstream>
+#include <iomanip>
 
 namespace GnssProcessor {
 
@@ -9,29 +11,23 @@ namespace GnssProcessor {
         if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
             throw std::invalid_argument("Invalid Gregorian date");
         }
-
         // Compute Julian Day
         double jd = gregorianToJulianDay(year, month, day, hour, minute, second);
-
         // Compute days since GPS epoch (1980-01-06 00:00:00 UTC)
         double gps_days = jd - GPS_EPOCH_JD;
-
-        // Compute GPS seconds, accounting for leap seconds (approximate, adjust if precise table available)
+        // Compute GPS seconds, accounting for leap seconds
         double gps_seconds = gps_days * SECONDS_IN_DAY;
-        // Approximate leap seconds correction (e.g., 18 seconds as of 2017)
-        constexpr double leap_seconds = 18.0; // Update based on RINEX file or external data
-        gps_seconds -= leap_seconds;
-
+        constexpr double EPOCH_LEAP_OFFSET = 19.0; // At 1980 epoch
+        double current_leap = 37.0; // Load from config/RINEX; hardcoded for Oct 2025
+        gps_seconds += (current_leap - EPOCH_LEAP_OFFSET); // GPS = UTC + (LS - 19)
         // Compute GPS week and TOW
         int week = static_cast<int>(gps_seconds / SECONDS_IN_WEEK);
         double tow = gps_seconds - week * SECONDS_IN_WEEK;
-
         // Ensure TOW is non-negative and handles sub-second precision
         if (tow < 0.0) {
             tow += SECONDS_IN_WEEK;
             week -= 1;
         }
-
         return GnssTime{ week, tow };
     }
 
@@ -65,7 +61,7 @@ namespace GnssProcessor {
                 year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
         }
         else if (time_system != "GPS") {
-            spdlog::warn("Unsupported time system {}, using GPS time", time_system);
+            spdlog::trace("Unsupported time system {}, using GPS time", time_system);
         }
 
         return gps_time;
@@ -134,6 +130,24 @@ namespace GnssProcessor {
         double seconds_since_gps_epoch = static_cast<double>(week) * SECONDS_IN_WEEK + tow;
         double days_since_gps_epoch = seconds_since_gps_epoch / SECONDS_IN_DAY;
         return GPS_EPOCH_JD + days_since_gps_epoch;
+    }
+
+    std::string TimeUtils::formatGnssTime(const GnssTime& time) {
+        std::ostringstream oss;
+        oss << "GPS week " << time.week << ", TOW " << std::fixed << std::setprecision(3) << time.tow;
+
+        int year = 0, month = 0, day = 0, hour = 0, minute = 0;
+        double second = 0.0;
+        gpsTimeToGregorian(time, year, month, day, hour, minute, second);
+
+        oss << " (" << std::setfill('0')
+            << std::setw(4) << year << "-"
+            << std::setw(2) << month << "-"
+            << std::setw(2) << day << " "
+            << std::setw(2) << hour << ":"
+            << std::setw(2) << minute << ":"
+            << std::setw(6) << std::fixed << std::setprecision(3) << second << " UTC)";
+        return oss.str();
     }
 
     int TimeUtils::daysInMonth(int year, int month) {

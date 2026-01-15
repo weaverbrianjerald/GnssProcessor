@@ -3,6 +3,16 @@
 #include <ctime>
 #include <fmt/format.h>
 
+namespace {
+    inline void writePrefix(std::ofstream& os, const std::string& wall_time, const std::string& epoch_info) {
+        os << "[" << wall_time << "]";
+        if (!epoch_info.empty()) {
+            os << " [" << epoch_info << "]";
+        }
+        os << " ";
+    }
+}
+
 namespace GnssProcessor {
 
     WlsLogger::WlsLogger(const std::string& filename) {
@@ -20,8 +30,10 @@ namespace GnssProcessor {
         }
     }
 
-    void WlsLogger::logStateVector(const Eigen::VectorXd& state, const std::string& label, double tow, int iteration) {
-        log_file_ << "[" << getTimestamp() << "] " << label << " at TOW " << std::fixed << std::setprecision(3) << tow
+    void WlsLogger::logStateVector(const Eigen::VectorXd& state, const std::string& label, double tow, int iteration,
+        const std::string& epoch_info) {
+        writePrefix(log_file_, getTimestamp(), epoch_info);
+        log_file_ << label << " at TOW " << std::fixed << std::setprecision(3) << tow
             << ", Iteration " << iteration << " (" << state.size() << "x1):\n";
         for (Eigen::Index i = 0; i < state.size(); ++i) {
             log_file_ << std::fixed << std::setprecision(6) << state(i) << "\n";
@@ -29,8 +41,10 @@ namespace GnssProcessor {
         log_file_ << "\n";
     }
 
-    void WlsLogger::logCovarianceMatrix(const Eigen::MatrixXd& covariance, const std::string& label, double tow, int iteration) {
-        log_file_ << "[" << getTimestamp() << "] " << label << " at TOW " << std::fixed << std::setprecision(3) << tow
+    void WlsLogger::logCovarianceMatrix(const Eigen::MatrixXd& covariance, const std::string& label, double tow, int iteration,
+        const std::string& epoch_info) {
+        writePrefix(log_file_, getTimestamp(), epoch_info);
+        log_file_ << label << " at TOW " << std::fixed << std::setprecision(3) << tow
             << ", Iteration " << iteration << " (" << covariance.rows() << "x" << covariance.cols() << "):\n";
         for (Eigen::Index i = 0; i < covariance.rows(); ++i) {
             for (Eigen::Index j = 0; j < covariance.cols(); ++j) {
@@ -43,8 +57,10 @@ namespace GnssProcessor {
     }
 
     void WlsLogger::logDesignMatrix(const Eigen::MatrixXd& H, const std::string& label, double tow, int iteration,
-        const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types) {
-        log_file_ << "[" << getTimestamp() << "] " << label << " at TOW " << std::fixed << std::setprecision(3) << tow
+        const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types,
+        const std::string& epoch_info) {
+        writePrefix(log_file_, getTimestamp(), epoch_info);
+        log_file_ << label << " at TOW " << std::fixed << std::setprecision(3) << tow
             << ", Iteration " << iteration << " (" << H.rows() << "x" << H.cols() << "):\n";
         for (Eigen::Index i = 0; i < H.rows(); ++i) {
             log_file_ << "Sat " << satellite_ids[i] << " (" << signal_types[i] << "): ";
@@ -58,8 +74,10 @@ namespace GnssProcessor {
     }
 
     void WlsLogger::logInnovationsVector(const Eigen::VectorXd& z, const std::string& label, double tow, int iteration,
-        const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types) {
-        log_file_ << "[" << getTimestamp() << "] " << label << " at TOW " << std::fixed << std::setprecision(3) << tow
+        const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types,
+        const std::string& epoch_info) {
+        writePrefix(log_file_, getTimestamp(), epoch_info);
+        log_file_ << label << " at TOW " << std::fixed << std::setprecision(3) << tow
             << ", Iteration " << iteration << " (" << z.size() << "x1):\n";
         for (Eigen::Index i = 0; i < z.size(); ++i) {
             log_file_ << "Sat " << satellite_ids[i] << " (" << signal_types[i] << "): "
@@ -68,8 +86,10 @@ namespace GnssProcessor {
         log_file_ << "\n";
     }
 
-    void WlsLogger::logWeightMatrix(const Eigen::MatrixXd& W, const std::string& label, double tow, int iteration) {
-        log_file_ << "[" << getTimestamp() << "] " << label << " at TOW " << std::fixed << std::setprecision(3) << tow
+    void WlsLogger::logWeightMatrix(const Eigen::MatrixXd& W, const std::string& label, double tow, int iteration,
+        const std::string& epoch_info) {
+        writePrefix(log_file_, getTimestamp(), epoch_info);
+        log_file_ << label << " at TOW " << std::fixed << std::setprecision(3) << tow
             << ", Iteration " << iteration << " (" << W.rows() << "x" << W.cols() << "):\n";
         for (Eigen::Index i = 0; i < W.rows(); ++i) {
             for (Eigen::Index j = 0; j < W.cols(); ++j) {
@@ -81,8 +101,10 @@ namespace GnssProcessor {
         log_file_ << "\n";
     }
 
-    void WlsLogger::logNormalMatrix(const Eigen::MatrixXd& HtWH, const std::string& label, double tow, int iteration, double condition_number) {
-        log_file_ << "[" << getTimestamp() << "] " << label << " at TOW " << std::fixed << std::setprecision(3) << tow
+    void WlsLogger::logNormalMatrix(const Eigen::MatrixXd& HtWH, const std::string& label, double tow, int iteration,
+        double condition_number, const std::string& epoch_info) {
+        writePrefix(log_file_, getTimestamp(), epoch_info);
+        log_file_ << label << " at TOW " << std::fixed << std::setprecision(3) << tow
             << ", Iteration " << iteration << " (" << HtWH.rows() << "x" << HtWH.cols() << "), Condition Number: "
             << std::scientific << std::setprecision(3) << condition_number << ":\n";
         for (Eigen::Index i = 0; i < HtWH.rows(); ++i) {

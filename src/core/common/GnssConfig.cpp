@@ -45,15 +45,28 @@ namespace GnssProcessor {
             elevation_mask_deg_ = json.value("elevation_mask_deg", 10.0);
             receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
             receiver_antenna_orientation_.elevation_deg = json["receiver_antenna_orientation"].value("elevation_deg", 90.0);
-            process_noise_.position_std = json["process_noise"].value("position_std", 0.0);
-            process_noise_.clock_bias_std = json["process_noise"].value("clock_bias_std", 300.0);
-            process_noise_.troposphere_std = json["process_noise"].value("troposphere_std", 0.0005);
-            process_noise_.ionosphere_std = json["process_noise"].value("ionosphere_std", 0.02);
+            process_noise_.position = json["process_noise"].value("position_std", 0.0);
+            process_noise_.clock = json["process_noise"].value("clock_bias_std", 5.0);
+            process_noise_.troposphere = json["process_noise"].value("troposphere_std", 0.00005);
+            process_noise_.ionosphere = json["process_noise"].value("ionosphere_std", 0.02);
             initial_std_.position = json["initial_std"].value("position", 100.0);
-            initial_std_.clock = json["initial_std"].value("clock", 300.0);
+            initial_std_.clock = json["initial_std"].value("clock", 100.0);
             initial_std_.troposphere = json["initial_std"].value("troposphere", 0.5);
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
-            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 500.0);
+            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 300.0);
+
+            // Default measurement noise (fallback)
+            if (json.contains("default_measurement_noise")) {
+                const auto& j = json["default_measurement_noise"];
+                default_meas_noise_.code_std_m = j.value("code_std_m", 1.0);
+                default_meas_noise_.phase_std_m = j.value("phase_std_m", 0.01);
+            } else {
+                default_meas_noise_.code_std_m = 1.0;
+                default_meas_noise_.phase_std_m = 0.01;
+            }
+            log_manager.getLogger("gnss_config")->info(
+                "Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m",
+                default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m);
 
             // Parse signal priorities
             signal_priorities_.clear();
@@ -119,11 +132,19 @@ namespace GnssProcessor {
                 log_manager.getLogger()->warn("Invalid or missing product list path: {}", product_list_path_.string());
             }
 
+            // Troposphere
+            zhd_pressure_mbar = json.value("zhd_pressure_mbar", 1013.25);
+            zhd_temp_kelvin = json.value("zhd_temp_kelvin", 288.15);
+            log_manager.getLogger("gnss_config")->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
+
+            // Leap seconds
+            leap_seconds_ = json.value("leap_seconds", 37.0);  // Oct 2025 value
+
             log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
-                "observation_path={}, navigation_path={}, {} products",
+                "observation_path={}, navigation_path={}, {} products, leap_seconds={}",
                 processing_mode_ == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
                 uncombined_enabled_, elevation_mask_deg_, observation_path_.string(),
-                navigation_path_.string(), product_paths_.size());
+                navigation_path_.string(), product_paths_.size(),leap_seconds_);
             return true;
         }
         catch (const std::exception& e) {

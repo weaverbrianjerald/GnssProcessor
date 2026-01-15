@@ -1,5 +1,15 @@
 #include "KalmanFilterLogger.hpp"
 
+namespace {
+    inline void writePrefix(std::ofstream& os, const std::string& wall_time, const std::string& epoch_info) {
+        os << "[" << wall_time << "]";
+        if (!epoch_info.empty()) {
+            os << " [" << epoch_info << "]";
+        }
+        os << " ";
+    }
+}
+
 KalmanFilterLogger::KalmanFilterLogger(const std::string& filename) {
     log_file_.open(filename, std::ios::out | std::ios::trunc);
     if (!log_file_.is_open()) {
@@ -15,8 +25,10 @@ KalmanFilterLogger::~KalmanFilterLogger() {
     }
 }
 
-void KalmanFilterLogger::logStateVector(const Eigen::VectorXd& x, const std::string& label) {
-    log_file_ << "[" << getTimestamp() << "] " << label << " (" << x.size() << "x1):\n";
+void KalmanFilterLogger::logStateVector(const Eigen::VectorXd& x, const std::string& label,
+    const std::string& epoch_info) {
+    writePrefix(log_file_, getTimestamp(), epoch_info);
+    log_file_ << label << " (" << x.size() << "x1):\n";
     log_file_ << std::fixed << std::setprecision(6);
     for (int i = 0; i < x.size(); ++i) {
         log_file_ << x(i) << "\n";
@@ -24,8 +36,10 @@ void KalmanFilterLogger::logStateVector(const Eigen::VectorXd& x, const std::str
     log_file_ << "\n";
 }
 
-void KalmanFilterLogger::logCovarianceMatrix(const Eigen::MatrixXd& P, const std::string& label) {
-    log_file_ << "[" << getTimestamp() << "] " << label << " (" << P.rows() << "x" << P.cols() << "):\n";
+void KalmanFilterLogger::logCovarianceMatrix(const Eigen::MatrixXd& P, const std::string& label,
+    const std::string& epoch_info) {
+    writePrefix(log_file_, getTimestamp(), epoch_info);
+    log_file_ << label << " (" << P.rows() << "x" << P.cols() << "):\n";
     log_file_ << std::fixed << std::setprecision(6);
     for (int i = 0; i < P.rows(); ++i) {
         for (int j = 0; j < P.cols(); ++j) {
@@ -36,12 +50,15 @@ void KalmanFilterLogger::logCovarianceMatrix(const Eigen::MatrixXd& P, const std
     log_file_ << "\n";
 }
 
-void KalmanFilterLogger::logKalmanGain(const Eigen::MatrixXd& K, const std::string& label) {
-    logMatrix(K, label); // Reuse generic matrix logging
+void KalmanFilterLogger::logKalmanGain(const Eigen::MatrixXd& K, const std::string& label,
+    const std::string& epoch_info) {
+    logMatrix(K, label, epoch_info); // Reuse generic matrix logging
 }
 
-void KalmanFilterLogger::logMatrix(const Eigen::MatrixXd& matrix, const std::string& label) {
-    log_file_ << "[" << getTimestamp() << "] " << label << " (" << matrix.rows() << "x" << matrix.cols() << "):\n";
+void KalmanFilterLogger::logMatrix(const Eigen::MatrixXd& matrix, const std::string& label,
+    const std::string& epoch_info) {
+    writePrefix(log_file_, getTimestamp(), epoch_info);
+    log_file_ << label << " (" << matrix.rows() << "x" << matrix.cols() << "):\n";
     log_file_ << std::fixed << std::setprecision(6);
     for (int i = 0; i < matrix.rows(); ++i) {
         for (int j = 0; j < matrix.cols(); ++j) {
@@ -52,8 +69,10 @@ void KalmanFilterLogger::logMatrix(const Eigen::MatrixXd& matrix, const std::str
     log_file_ << "\n";
 }
 
-void KalmanFilterLogger::logVector(const Eigen::VectorXd& vector, const std::string& label) {
-    log_file_ << "[" << getTimestamp() << "] " << label << " (" << vector.size() << "x1):\n";
+void KalmanFilterLogger::logVector(const Eigen::VectorXd& vector, const std::string& label,
+    const std::string& epoch_info) {
+    writePrefix(log_file_, getTimestamp(), epoch_info);
+    log_file_ << label << " (" << vector.size() << "x1):\n";
     log_file_ << std::fixed << std::setprecision(6);
     for (int i = 0; i < vector.size(); ++i) {
         log_file_ << vector(i) << "\n";

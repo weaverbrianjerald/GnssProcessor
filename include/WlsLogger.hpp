@@ -13,12 +13,20 @@ namespace GnssProcessor {
         WlsLogger(const std::string& filename);
         ~WlsLogger();
 
-        void logStateVector(const Eigen::VectorXd& state, const std::string& label, double tow, int iteration);
-        void logCovarianceMatrix(const Eigen::MatrixXd& covariance, const std::string& label, double tow, int iteration);
-        void logDesignMatrix(const Eigen::MatrixXd& H, const std::string& label, double tow, int iteration, const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types);
-        void logInnovationsVector(const Eigen::VectorXd& z, const std::string& label, double tow, int iteration, const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types);
-        void logWeightMatrix(const Eigen::MatrixXd& W, const std::string& label, double tow, int iteration);
-        void logNormalMatrix(const Eigen::MatrixXd& HtWH, const std::string& label, double tow, int iteration, double condition_number);
+        void logStateVector(const Eigen::VectorXd& state, const std::string& label, double tow, int iteration,
+            const std::string& epoch_info = {});
+        void logCovarianceMatrix(const Eigen::MatrixXd& covariance, const std::string& label, double tow, int iteration,
+            const std::string& epoch_info = {});
+        void logDesignMatrix(const Eigen::MatrixXd& H, const std::string& label, double tow, int iteration,
+            const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types,
+            const std::string& epoch_info = {});
+        void logInnovationsVector(const Eigen::VectorXd& z, const std::string& label, double tow, int iteration,
+            const std::vector<std::string>& satellite_ids, const std::vector<std::string>& signal_types,
+            const std::string& epoch_info = {});
+        void logWeightMatrix(const Eigen::MatrixXd& W, const std::string& label, double tow, int iteration,
+            const std::string& epoch_info = {});
+        void logNormalMatrix(const Eigen::MatrixXd& HtWH, const std::string& label, double tow, int iteration,
+            double condition_number, const std::string& epoch_info = {});
 
     private:
         std::ofstream log_file_;

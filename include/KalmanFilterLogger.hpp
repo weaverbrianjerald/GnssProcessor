@@ -13,19 +13,24 @@ public:
     ~KalmanFilterLogger();
 
     // Log state vector
-    void logStateVector(const Eigen::VectorXd& x, const std::string& label = "State Vector");
+    void logStateVector(const Eigen::VectorXd& x, const std::string& label = "State Vector",
+        const std::string& epoch_info = {});
 
     // Log covariance matrix
-    void logCovarianceMatrix(const Eigen::MatrixXd& P, const std::string& label = "Covariance Matrix");
+    void logCovarianceMatrix(const Eigen::MatrixXd& P, const std::string& label = "Covariance Matrix",
+        const std::string& epoch_info = {});
 
     // Log Kalman gain matrix
-    void logKalmanGain(const Eigen::MatrixXd& K, const std::string& label = "Kalman Gain");
+    void logKalmanGain(const Eigen::MatrixXd& K, const std::string& label = "Kalman Gain",
+        const std::string& epoch_info = {});
 
     // Log generic matrix
-    void logMatrix(const Eigen::MatrixXd& matrix, const std::string& label);
+    void logMatrix(const Eigen::MatrixXd& matrix, const std::string& label,
+        const std::string& epoch_info = {});
 
     // Log generic vector
-    void logVector(const Eigen::VectorXd& vector, const std::string& label);
+    void logVector(const Eigen::VectorXd& vector, const std::string& label,
+        const std::string& epoch_info = {});
 
 private:
     std::ofstream log_file_;

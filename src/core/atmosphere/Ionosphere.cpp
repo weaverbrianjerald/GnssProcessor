@@ -1,0 +1,184 @@
+#include "Ionosphere.hpp"
+#include "Constants.hpp"
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+
+namespace GnssProcessor {
+
+    Ionosphere::Ionosphere(const GnssConfig& config, LogManager& log_mgr, ProductParser& parser, const RinexParser& rinex)
+        : config_(config), log_manager_(log_mgr), model_geometry_(config, parser, rinex, log_mgr), klobuchar_coeffs_{} {
+        loadKlobucharCoeffs();
+        log_manager_.getLogger("ionosphere")->info("Ionosphere model initialized: Klobuchar coeffs loaded ({} values), mode={}",
+            klobuchar_coeffs_.size(), config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+    }
+
+    void Ionosphere::loadKlobucharCoeffs() {
+        klobuchar_coeffs_.clear();
+
+        // Get RINEX/BRDC path from configuration
+        std::filesystem::path rnx_path = config_.getProductPath("RNX");
+        if (rnx_path.empty() || !std::filesystem::exists(rnx_path)) {
+            log_manager_.getLogger("ionosphere")->warn("No RNX/BRDC product path configured or file does not exist for Klobuchar coefficients");
+            return;
+        }
+
+        std::ifstream file(rnx_path);
+        if (!file.is_open()) {
+            log_manager_.getLogger("ionosphere")->error("Failed to open RNX/BRDC file for Klobuchar coefficients: {}", rnx_path.string());
+            return;
+        }
+
+        std::string line;
+        bool in_header = true;
+        size_t line_count = 0;
+
+        while (std::getline(file, line)) {
+            ++line_count;
+            if (in_header && line.find("END OF HEADER") != std::string::npos) {
+                in_header = false;
+                continue;
+            }
+            if (in_header && line.find("IONOSPHERIC CORR") != std::string::npos) {
+                std::istringstream iss(line);
+                std::string type;
+                iss >> type;
+                if (type == "GPSA" || type == "GAL") { // alpha
+                    double a0, a1, a2, a3;
+                    if (iss >> a0 >> a1 >> a2 >> a3) {
+                        if (std::isfinite(a0) && std::isfinite(a1) && std::isfinite(a2) && std::isfinite(a3)) {
+                            klobuchar_coeffs_.push_back(a0);
+                            klobuchar_coeffs_.push_back(a1);
+                            klobuchar_coeffs_.push_back(a2);
+                            klobuchar_coeffs_.push_back(a3);
+                        }
+                        else {
+                            log_manager_.getLogger("ionosphere")->warn("Non-finite Klobuchar alpha coefficients at line {}: {}", line_count, line);
+                        }
+                    }
+                    else {
+                        log_manager_.getLogger("ionosphere")->warn("Invalid Klobuchar alpha coefficients at line {}: {}", line_count, line);
+                    }
+                }
+                else if (type == "GPSB") { // beta
+                    double b0, b1, b2, b3;
+                    if (iss >> b0 >> b1 >> b2 >> b3) {
+                        if (std::isfinite(b0) && std::isfinite(b1) && std::isfinite(b2) && std::isfinite(b3)) {
+                            klobuchar_coeffs_.push_back(b0);
+                            klobuchar_coeffs_.push_back(b1);
+                            klobuchar_coeffs_.push_back(b2);
+                            klobuchar_coeffs_.push_back(b3);
+                        }
+                        else {
+                            log_manager_.getLogger("ionosphere")->warn("Non-finite Klobuchar beta coefficients at line {}: {}", line_count, line);
+                        }
+                    }
+                    else {
+                        log_manager_.getLogger("ionosphere")->warn("Invalid Klobuchar beta coefficients at line {}: {}", line_count, line);
+                    }
+                }
+            }
+        }
+
+        file.close();
+
+        if (klobuchar_coeffs_.size() != 8) {
+            log_manager_.getLogger("ionosphere")->warn("Incomplete Klobuchar coefficients from {}: expected 8, got {}. Clearing coefficients and using defaults.",
+                rnx_path.string(), klobuchar_coeffs_.size());
+            klobuchar_coeffs_.clear();
+        }
+        else {
+            log_manager_.getLogger("ionosphere")->info("Loaded Klobuchar coefficients from {}: alpha=[{:.3e}, {:.3e}, {:.3e}, {:.3e}], beta=[{:.3e}, {:.3e}, {:.3e}, {:.3e}]",
+                rnx_path.string(),
+                klobuchar_coeffs_[0], klobuchar_coeffs_[1], klobuchar_coeffs_[2], klobuchar_coeffs_[3],
+                klobuchar_coeffs_[4], klobuchar_coeffs_[5], klobuchar_coeffs_[6], klobuchar_coeffs_[7]);
+        }
+    }
+
+    double Ionosphere::computeKlobucharDelay(const GnssTime& time,
+        const Eigen::Vector3d& rx_pos,
+        const Eigen::Vector3d& sat_pos,
+        double frequency) const {
+        double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
+        double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
+
+        double t = fmod(time.tow, 86400.0);
+        double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
+        double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
+
+        Topocentric topo = model_geometry_.computeTopocentric(rx_pos, sat_pos);
+        double el = topo.elevation_deg;
+        double az = topo.azimuth_deg;
+        if (az < 0.0) az += 360.0;
+
+        double psi = 0.0137 / (el / 180.0 + 0.11) - 0.022;
+        double phi_i = phi / 180.0 + psi * std::cos(az * Constants::PI / 180.0);
+        if (phi_i > 0.416) phi_i = 0.416;
+        if (phi_i < -0.416) phi_i = -0.416;
+        double lambda_i = lambda / 180.0 + psi * std::sin(az * Constants::PI / 180.0) / std::cos(phi_i * Constants::PI);
+        double phi_m = phi_i + 0.064 * std::cos((lambda_i - 1.617) * Constants::PI);
+
+        double t_i = 43200.0 * lambda_i + t;
+        t_i = fmod(t_i, 86400.0);
+        if (t_i < 0) t_i += 86400.0;
+
+        double F = 1.0 + 16.0 * std::pow((0.53 - el / 180.0), 3);
+        double AMP = a0 + a1 * phi_m + a2 * std::pow(phi_m, 2) + a3 * std::pow(phi_m, 3);
+        if (AMP < 0) AMP = 0;
+        double PER = b0 + b1 * phi_m + b2 * std::pow(phi_m, 2) + b3 * std::pow(phi_m, 3);
+        if (PER < 72000) PER = 72000;
+        double X = 2.0 * Constants::PI * (t_i - 50400.0) / PER;
+        double delay;
+        if (std::abs(X) < 1.57) {
+            delay = F * (5e-9 + AMP * (1 - X * X / 2 + X * X * X * X / 24));
+        }
+        else {
+            delay = F * 5e-9;
+        }
+
+        double f_L1 = Constants::GPS_L1_FREQ;
+        delay *= (f_L1 * f_L1) / (frequency * frequency);
+        return delay * Constants::SPEED_OF_LIGHT;
+    }
+
+    double Ionosphere::computeInitialIonoDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos) const {
+        if (klobuchar_coeffs_.size() != 8) {
+            return 5.0; // Default fallback
+        }
+
+        // Klobuchar model for zenith delay at receiver position
+        double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
+        double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
+
+        double t = fmod(time.tow, 86400.0);
+        double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
+        double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
+
+        double phi_i = phi / 180.0; // Normalized latitude
+        double lambda_i = lambda / 180.0; // Normalized longitude
+        double phi_m = phi_i + 0.064 * std::cos((lambda_i - 1.617) * Constants::PI);
+
+        double t_i = 43200.0 * lambda_i + t;
+        t_i = fmod(t_i, 86400.0);
+        if (t_i < 0) t_i += 86400.0;
+
+        double AMP = a0 + a1 * phi_m + a2 * std::pow(phi_m, 2) + a3 * std::pow(phi_m, 3);
+        if (AMP < 0) AMP = 0;
+        double PER = b0 + b1 * phi_m + b2 * std::pow(phi_m, 2) + b3 * std::pow(phi_m, 3);
+        if (PER < 72000) PER = 72000;
+        double X = 2.0 * Constants::PI * (t_i - 50400.0) / PER;
+
+        double delay;
+        if (std::abs(X) < 1.57) {
+            delay = 5e-9 + AMP * (1 - X * X / 2 + X * X * X * X / 24);
+        }
+        else {
+            delay = 5e-9;
+        }
+
+        // Convert to meters (zenith delay at L1 frequency)
+        delay *= Constants::SPEED_OF_LIGHT;
+        return delay;
+    }
+
+}

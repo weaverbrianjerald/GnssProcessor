@@ -6,12 +6,29 @@
 #include <netcdf.h>
 #include <algorithm>
 #include <iomanip>
+#include <regex>
 
 namespace GnssProcessor {
 
+    namespace {
+        std::string sanitizeAntennaType(const std::string& in) {
+            std::string out;
+            out.reserve(in.size());
+            for (char c : in) {
+                if (!std::isspace(static_cast<unsigned char>(c))) out.push_back(c);
+            }
+            return out;
+        }
+    }
+
     ProductParser::ProductParser(const GnssConfig& config, LogManager& log_manager)
-        : config_(config), log_manager_(log_manager) {
+        : config_(config), log_manager_(log_manager), rinex_parser_(nullptr), planetary_(log_manager) {
         log_manager_.getLogger("product_parser")->info("ProductParser initialized.");
+    }
+
+    void ProductParser::setRinexParser(RinexParser& rinex) {
+        rinex_parser_ = &rinex;
+        log_manager_.getLogger("product_parser")->trace("RinexParser set for ProductParser");
     }
 
     std::vector<std::filesystem::path> ProductParser::getOrbitPaths() const {
@@ -38,8 +55,8 @@ namespace GnssProcessor {
     bool ProductParser::parseSp3(const std::vector<std::filesystem::path>& sp3_paths, std::vector<OrbitData>& orbits) {
         try {
             orbits.clear();
-            std::map<std::string, std::map<double, OrbitData>> orbit_map; // satellite -> TOW -> OrbitData
-            constexpr double MIN_TIME_DIFF = 1.0; // Minimum time difference in seconds
+            std::map<std::string, std::map<double, OrbitData>> orbit_map;
+            constexpr double MIN_TIME_DIFF = 1.0;
             size_t total_entries = 0;
 
             for (const auto& sp3_path : sp3_paths) {
@@ -51,29 +68,20 @@ namespace GnssProcessor {
 
                 std::string line;
                 bool in_header = true;
-                int epoch_interval = 300; // Default from provided SP3 header
+                int epoch_interval = 300;
                 std::vector<std::string> satellite_ids;
                 size_t line_count = 0;
 
-                // Parse header
                 while (std::getline(file, line) && in_header) {
                     ++line_count;
                     if (line.empty()) continue;
                     if (line[0] == '#') {
-                        // Version and type
                         if (line.size() >= 12 && (line[1] == 'c' || line[1] == 'd')) {
-                            std::string file_type = line.substr(9, 3);
-                            // First line of SP3: #dP2024  5  8  0  0  0.00000000     289 d+D   IGS20 FIT AIUB
-                            /*if (file_type != "ORB") {
-                                log_manager_.getLogger("product_parser")->warn("SP3 file type is {}, expected ORB at line {} in {}",
-                                    file_type, line_count, sp3_path.string());
-                            }*/
                             log_manager_.getLogger("product_parser")->debug("Parsing SP3 header at line {}: {} in {}",
                                 line_count, line, sp3_path.string());
                         }
                     }
                     else if (line.substr(0, 2) == "##") {
-                        // Read epoch interval
                         std::istringstream iss(line);
                         std::string hash;
                         double week, tow, interval;
@@ -94,7 +102,6 @@ namespace GnssProcessor {
                         }
                     }
                     else if (line.substr(0, 2) == "+ ") {
-                        // Number of satellites
                         int num_sats = 0;
                         try {
                             num_sats = std::stoi(line.substr(3, 3));
@@ -110,18 +117,11 @@ namespace GnssProcessor {
                             for (size_t i = 3; i < header_line.length() && i < 60; i += 3) {
                                 std::string sat_id = header_line.substr(i, 3);
                                 sat_id.erase(std::remove_if(sat_id.begin(), sat_id.end(), ::isspace), sat_id.end());
-                                if (sat_id.length() == 3 && sat_id[0] != ' ' &&
+                                if (sat_id.length() == 3 &&
                                     (sat_id[0] == 'G' || sat_id[0] == 'R' || sat_id[0] == 'E' ||
                                         sat_id[0] == 'C' || sat_id[0] == 'J' || sat_id[0] == 'S') &&
                                     std::isdigit(sat_id[1]) && std::isdigit(sat_id[2])) {
                                     satellite_ids.push_back(sat_id);
-                                }
-                                else if (!sat_id.empty() && sat_id != "   ") {
-                                    // Example:
-                                    // ++         5  5  8  5  5  5  5  5  5  7  5  5  5  5  5  5  5
-                                    // TODO: Store orbit quality indicators, from base 2 logarithmic values
-                                    //log_manager_.getLogger("product_parser")->warn("Invalid SP3 satellite ID at position {}: {} at line {} in {}",
-                                    //    i, sat_id, line_count, sp3_path.string());
                                 }
                             }
                             if (!std::getline(file, header_line)) {
@@ -145,7 +145,7 @@ namespace GnssProcessor {
                             log_manager_.getLogger("product_parser")->warn("Mismatch in satellite count: expected {}, found {} at line {} in {}",
                                 num_sats, satellite_ids.size(), line_count, sp3_path.string());
                         }
-                        if (header_line[0] == '*') {
+                        if (!header_line.empty() && header_line[0] == '*') {
                             in_header = false;
                             line = header_line;
                         }
@@ -154,16 +154,15 @@ namespace GnssProcessor {
                     else if (line.substr(0, 2) == "%f" || line.substr(0, 2) == "/*") {
                         continue;
                     }
-                    else if (line[0] == '*') {
+                    else if (!line.empty() && line[0] == '*') {
                         in_header = false;
                     }
                 }
 
-                // Parse body
                 while (std::getline(file, line)) {
                     ++line_count;
                     if (line.empty()) continue;
-                    if (line[0] == '*') { // Epoch line
+                    if (line[0] == '*') {
                         std::istringstream iss(line);
                         std::string star;
                         int year, month, day, hour, min;
@@ -180,10 +179,9 @@ namespace GnssProcessor {
                             continue;
                         }
 
-                        // Read position and velocity records
                         while (std::getline(file, line) && line[0] != '*' && !line.empty() && line[0] != 'E') {
                             ++line_count;
-                            if (line[0] == 'P') { // Position record
+                            if (line[0] == 'P') {
                                 OrbitData data;
                                 data.satellite = line.substr(1, 3);
                                 if (std::find(satellite_ids.begin(), satellite_ids.end(), data.satellite) == satellite_ids.end()) {
@@ -207,10 +205,9 @@ namespace GnssProcessor {
                                     data.position_valid = false;
                                 }
                                 else {
-                                    data.position = Eigen::Vector3d(x * 1000.0, y * 1000.0, z * 1000.0); // km to m
+                                    data.position = Eigen::Vector3d(x * 1000.0, y * 1000.0, z * 1000.0);
                                 }
 
-                                // Check for duplicate epoch
                                 auto& sat_orbits = orbit_map[data.satellite];
                                 bool insert = true;
                                 for (const auto& [existing_tow, existing_data] : sat_orbits) {
@@ -226,7 +223,7 @@ namespace GnssProcessor {
                                     ++total_entries;
                                 }
                             }
-                            else if (line[0] == 'V') { // Velocity record
+                            else if (line[0] == 'V') {
                                 std::string sat_id = line.substr(1, 3);
                                 auto& sat_orbits = orbit_map[sat_id];
                                 auto it = sat_orbits.find(epoch_time.tow);
@@ -240,7 +237,7 @@ namespace GnssProcessor {
                                             sat_id, line_count, sp3_path.string(), vx, vy, vz);
                                     }
                                     else {
-                                        it->second.velocity = Eigen::Vector3d(vx * 0.1, vy * 0.1, vz * 0.1); // dm/s to m/s
+                                        it->second.velocity = Eigen::Vector3d(vx * 0.1, vy * 0.1, vz * 0.1);
                                         it->second.velocity_valid = true;
                                     }
                                 }
@@ -253,10 +250,9 @@ namespace GnssProcessor {
                 }
                 file.close();
                 log_manager_.getLogger("product_parser")->info("Parsed {} orbit entries from {}", total_entries, sp3_path.string());
-                total_entries = 0; // Reset for next file
+                total_entries = 0;
             }
 
-            // Flatten map to orbits vector
             orbits.clear();
             for (const auto& [sat, tow_map] : orbit_map) {
                 for (const auto& [tow, data] : tow_map) {
@@ -289,9 +285,8 @@ namespace GnssProcessor {
             std::string line;
             size_t line_count = 0;
             bool in_header = true;
-            double epoch_interval = 0.0; // Seconds, from header
+            double epoch_interval = 0.0;
 
-            // Parse header
             while (std::getline(file, line) && in_header) {
                 ++line_count;
                 if (line.empty()) continue;
@@ -311,11 +306,10 @@ namespace GnssProcessor {
                 }
             }
 
-            // Parse body
             while (std::getline(file, line)) {
                 ++line_count;
                 if (line.empty()) continue;
-                if (line.find("AS ") == 0) { // Analysis Center Satellite clock record
+                if (line.find("AS ") == 0) {
                     std::istringstream iss(line);
                     std::string type, sat;
                     int year, month, day, hour, min, num;
@@ -325,13 +319,11 @@ namespace GnssProcessor {
                         continue;
                     }
 
-                    // Validate satellite ID (e.g., G01, R01)
                     if (sat.size() != 3 || (sat[0] != 'G' && sat[0] != 'R' && sat[0] != 'E' && sat[0] != 'C' && sat[0] != 'J' && sat[0] != 'S')) {
                         log_manager_.getLogger("product_parser")->warn("Invalid satellite ID {} at line {}", sat, line_count);
                         continue;
                     }
 
-                    // Convert epoch to GPS time
                     GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
                     if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800) {
                         log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {}: week {}, tow {}",
@@ -342,12 +334,11 @@ namespace GnssProcessor {
                     ClockData data;
                     data.satellite = sat;
                     data.time = epoch_time;
-                    data.start_time = epoch_time; // Assume single epoch for simplicity
-                    data.end_time = GnssTime{ epoch_time.week, epoch_time.tow + epoch_interval }; // Use interval if available
-                    data.clock_bias = clock_bias; // Seconds
+                    data.start_time = epoch_time;
+                    data.end_time = GnssTime{ epoch_time.week, epoch_time.tow + epoch_interval };
+                    data.clock_bias = clock_bias;
                     clocks.push_back(data);
                 }
-                // Ignore other record types (e.g., AR for receiver clocks) for now
             }
 
             if (clocks.empty()) {
@@ -373,151 +364,396 @@ namespace GnssProcessor {
 
             antennas.clear();
             std::string line;
-            AntennaData current_antenna;
-            bool in_antenna_block = false;
-            bool in_pcv_block = false;
+            AntennaData current;
+            bool in_antenna = false;
+            bool in_freq = false;
             std::string current_freq;
-            std::vector<double> current_pcv_row;
             size_t line_count = 0;
+
+            auto trim = [](std::string& s) {
+                s.erase(0, s.find_first_not_of(" \t\r\n"));
+                s.erase(s.find_last_not_of(" \t\r\n") + 1);
+                };
+
+            // Removes whitespace only (keeps underscore if present)
+            auto sanitize = [](const std::string& s) {
+                std::string out;
+                out.reserve(s.size());
+                for (char c : s) if (!std::isspace(static_cast<unsigned char>(c))) out.push_back(c);
+                return out;
+                };
+
+            auto parse_valid_line = [&](const std::string& src) -> GnssTime {
+                if (src.find("VALID FROM") != std::string::npos || src.find("VALID UNTIL") != std::string::npos) {
+                    std::istringstream iss(src.substr(0, 50));
+                    int year, month, day, hour, minute;
+                    double second;
+                    if (iss >> year >> month >> day >> hour >> minute >> second) {
+                        if (year >= 1980 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
+                            hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0.0 && second < 61.0) {
+                            try { return TimeUtils::gregorianToGpsTime(year, month, day, hour, minute, second); }
+                            catch (...) { return GnssTime{ 0,0.0 }; }
+                        }
+                    }
+                }
+                // Textual fallback (rare)
+                std::regex rgx(R"(VALID\s+(FROM|UNTIL)\s+(\d{1,2})-([A-Za-z]{3})-(\d{2,4})\s+(\d{2}):(\d{2})(?::(\d{2}))?)");
+                std::smatch m;
+                if (std::regex_search(src, m, rgx)) {
+                    std::map<std::string, int> month_map{
+                        {"JAN",1},{"FEB",2},{"MAR",3},{"APR",4},{"MAY",5},{"JUN",6},
+                        {"JUL",7},{"AUG",8},{"SEP",9},{"OCT",10},{"NOV",11},{"DEC",12}
+                    };
+                    int day = std::stoi(m[2].str());
+                    std::string mon_str = m[3].str();
+                    for (char& c : mon_str) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                    int month = month_map.count(mon_str) ? month_map[mon_str] : 0;
+                    int year = std::stoi(m[4].str());
+                    if (m[4].length() == 2) year += (year < 80) ? 2000 : 1900;
+                    int hour = std::stoi(m[5].str());
+                    int minute = std::stoi(m[6].str());
+                    int second = m[7].matched ? std::stoi(m[7].str()) : 0;
+                    if (month > 0) {
+                        try { return TimeUtils::gregorianToGpsTime(year, month, day, hour, minute, double(second)); }
+                        catch (...) { return GnssTime{ 0,0.0 }; }
+                    }
+                }
+                return GnssTime{ 0,0.0 };
+                };
+
+            std::regex freqCodeRegex(R"(([GREJCIS]\d{2}))", std::regex_constants::icase);
+
+            // Per-frequency PCV accumulators:
+            // - NOAZI: values over zenith
+            // - AZ rows: each row begins with azimuth (deg) followed by values over zenith
+            std::vector<double> current_noazi;
+            std::vector<std::pair<double, std::vector<double>>> current_az_rows;
+
+            auto reset_freq_accumulators = [&]() {
+                current_noazi.clear();
+                current_az_rows.clear();
+                };
+
+            auto finalize_frequency = [&]() {
+                if (current_freq.empty()) return;
+
+                // If we have azimuth rows, build [zenith][azimuth]
+                if (!current_az_rows.empty()) {
+                    const size_t az_count = current_az_rows.size();
+                    const size_t zen_count = current_az_rows.front().second.size();
+                    if (az_count == 0 || zen_count == 0) {
+                        current.pcv[current_freq].clear();
+                        reset_freq_accumulators();
+                        return;
+                    }
+
+                    // Ensure consistent zenith count
+                    for (const auto& [azi, vals] : current_az_rows) {
+                        if (vals.size() != zen_count) {
+                            log_manager_.getLogger("product_parser")->warn(
+                                "Inconsistent PCV row length for {} {}: expected {}, got {} (az={:.1f})",
+                                current.type, current_freq, zen_count, vals.size(), azi);
+                        }
+                    }
+
+                    std::vector<std::vector<double>> pcv_matrix(zen_count, std::vector<double>(az_count, 0.0));
+                    for (size_t a = 0; a < az_count; ++a) {
+                        const auto& vals = current_az_rows[a].second;
+                        const size_t n = std::min(vals.size(), zen_count);
+                        for (size_t z = 0; z < n; ++z) {
+                            pcv_matrix[z][a] = vals[z];
+                        }
+                    }
+
+                    current.pcv[current_freq] = std::move(pcv_matrix);
+                    log_manager_.getLogger("product_parser")->trace(
+                        "Finalized AZI PCV for {} {}: zen={}, az={}", current.type, current_freq, zen_count, az_count);
+                }
+                // Else NOAZI-only: store as [zenith][1]
+                else if (!current_noazi.empty()) {
+                    std::vector<std::vector<double>> pcv_matrix;
+                    pcv_matrix.reserve(current_noazi.size());
+                    for (double v : current_noazi) {
+                        pcv_matrix.push_back({ v });
+                    }
+                    current.pcv[current_freq] = std::move(pcv_matrix);
+                    log_manager_.getLogger("product_parser")->trace(
+                        "Finalized NOAZI PCV for {} {}: zen_samples={}", current.type, current_freq, current_noazi.size());
+                }
+                else {
+                    log_manager_.getLogger("product_parser")->debug("No PCV data for {} {}", current.type, current_freq);
+                }
+
+                reset_freq_accumulators();
+                current_freq.clear();
+                };
 
             while (std::getline(file, line)) {
                 ++line_count;
-                if (line.length() < 60) continue; // Skip short or comment lines
+                if (line.empty()) continue;
 
                 if (line.find("START OF ANTENNA") != std::string::npos) {
-                    in_antenna_block = true;
-                    current_antenna = AntennaData();
-                    in_pcv_block = false;
+                    in_antenna = true;
+                    in_freq = false;
+                    current = AntennaData();
                     current_freq.clear();
-                    current_pcv_row.clear();
-                    log_manager_.getLogger("product_parser")->trace("Started parsing new antenna at line {}", line_count);
+                    reset_freq_accumulators();
+                    continue;
                 }
-                else if (line.find("END OF ANTENNA") != std::string::npos && in_antenna_block) {
-                    if (!current_antenna.type.empty()) {
-                        antennas.push_back(current_antenna);
-                        log_manager_.getLogger("product_parser")->trace("Completed parsing antenna: {}", current_antenna.type);
+
+                if (line.find("END OF ANTENNA") != std::string::npos) {
+                    if (in_freq) {
+                        finalize_frequency();
+                    }
+                    if (in_antenna && !current.type.empty()) {
+                        antennas.push_back(current);
+                        log_manager_.getLogger("product_parser")->trace(
+                            "Stored antenna {} (valid_from week={}, tow={:.3f}, valid_until week={}, tow={:.3f})",
+                            current.type,
+                            current.valid_from.week, current.valid_from.tow,
+                            current.valid_until.week, current.valid_until.tow);
+                    }
+                    in_antenna = false;
+                    in_freq = false;
+                    continue;
+                }
+
+                if (!in_antenna) continue;
+
+                // TYPE / SERIAL NO
+                if (line.find("TYPE / SERIAL NO") != std::string::npos) {
+                    std::string left = line.substr(0, line.find("TYPE / SERIAL NO"));
+                    trim(left);
+                    std::istringstream tss(left);
+                    std::vector<std::string> toks;
+                    std::string tok;
+                    while (tss >> tok) toks.push_back(tok);
+
+                    std::string prn_token, svn_token, block_token;
+                    for (size_t i = 0; i < toks.size(); ++i) {
+                        const std::string& t = toks[i];
+                        if (t.size() == 3 &&
+                            (t[0] == 'G' || t[0] == 'R' || t[0] == 'E' || t[0] == 'C' || t[0] == 'J' || t[0] == 'S') &&
+                            std::isdigit(t[1]) && std::isdigit(t[2])) {
+                            prn_token = t;
+                        }
+                        if (t.size() == 4 &&
+                            (t[0] == 'G' || t[0] == 'R' || t[0] == 'E' || t[0] == 'C' || t[0] == 'J' || t[0] == 'S') &&
+                            std::isdigit(t[1]) && std::isdigit(t[2]) && std::isdigit(t[3])) {
+                            svn_token = t;
+                        }
+                        if (t == "BLOCK" && i + 1 < toks.size()) {
+                            block_token = "BLOCK_" + toks[i + 1];
+                        }
+                    }
+
+                    // These are fixed-width fields in the ATX format.
+                    std::string field1 = line.substr(0, 20);
+                    std::string field2 = (line.size() >= 40) ? line.substr(20, 20) : "";
+                    trim(field1);
+                    trim(field2);
+
+                    // IMPORTANT: receiver antenna like "JAVRINGANT_DM   SCIS" often lives entirely in field1
+                    // (field2 is empty). Normalize it to "MODEL_SERIAL" if possible.
+                    if (!prn_token.empty()) {
+                        // Satellite antenna: PRN + block + SVN, using field1 as block/model fallback.
+                        std::string block_norm = sanitize(block_token.empty() ? field1 : block_token);
+                        std::string svn_norm = sanitize(svn_token);
+                        if (!svn_norm.empty())
+                            current.type = prn_token + "_" + block_norm + "_" + svn_norm;
+                        else
+                            current.type = prn_token + "_" + block_norm;
                     }
                     else {
-                        log_manager_.getLogger("product_parser")->warn("Discarded antenna with empty type at line {}", line_count);
+                        // Receiver antenna
+                        std::string model = field1;
+                        std::string serial = field2;
+
+                        if (serial.empty()) {
+                            // Try to split field1 into "model serial"
+                            std::istringstream iss(field1);
+                            std::vector<std::string> parts;
+                            std::string p;
+                            while (iss >> p) parts.push_back(p);
+
+                            if (parts.size() >= 2) {
+                                model = parts.front();
+                                serial = parts.back();
+                            }
+                        }
+
+                        model = sanitize(model);
+                        serial = sanitize(serial);
+                        current.type = serial.empty() ? model : (model + "_" + serial);
                     }
-                    in_antenna_block = false;
-                    in_pcv_block = false;
+
+                    log_manager_.getLogger("product_parser")->trace("Parsed antenna type '{}'", current.type);
+                    continue;
                 }
-                else if (in_antenna_block) {
-                    if (line.find("TYPE / SERIAL NO") != std::string::npos) {
-                        std::string type = line.substr(0, 20);
-                        type.erase(std::remove_if(type.begin(), type.end(), ::isspace), type.end());
-                        std::string serial_no = line.substr(20, 20);
-                        serial_no.erase(std::remove_if(serial_no.begin(), serial_no.end(), ::isspace), serial_no.end());
-                        if (!type.empty()) {
-                            current_antenna.type = type;
-                            if (!serial_no.empty()) {
-                                current_antenna.type += "_" + serial_no;
-                            }
-                            log_manager_.getLogger("product_parser")->trace("Parsing antenna: {} at line {}", current_antenna.type, line_count);
-                        }
-                        else {
-                            log_manager_.getLogger("product_parser")->warn("Empty antenna type at line {}", line_count);
-                        }
+
+                // VALID FROM / VALID UNTIL
+                if (line.find("VALID FROM") != std::string::npos) {
+                    current.valid_from = parse_valid_line(line);
+                    if (current.valid_from.week == 0)
+                        log_manager_.getLogger("product_parser")->warn("Failed to parse VALID FROM at line {}", line_count);
+                    continue;
+                }
+                if (line.find("VALID UNTIL") != std::string::npos) {
+                    current.valid_until = parse_valid_line(line);
+                    if (current.valid_until.week == 0)
+                        log_manager_.getLogger("product_parser")->warn("Failed to parse VALID UNTIL at line {}", line_count);
+                    continue;
+                }
+
+                // DAZI
+                if (line.find("DAZI") != std::string::npos) {
+                    std::istringstream iss(line);
+                    double dazi;
+                    if (iss >> dazi && std::isfinite(dazi)) {
+                        current.dazi = dazi;
                     }
-                    else if (line.find("START OF FREQ") != std::string::npos) {
-                        current_freq = line.substr(3, 5);
-                        current_freq.erase(std::remove_if(current_freq.begin(), current_freq.end(), ::isspace), current_freq.end());
-                        if (current_freq.empty()) {
-                            log_manager_.getLogger("product_parser")->warn("Invalid frequency code at line {}", line_count);
-                            in_pcv_block = false;
-                            continue;
-                        }
-                        in_pcv_block = true;
-                        current_antenna.pcv[current_freq] = std::vector<std::vector<double>>();
-                        std::getline(file, line); // Read PCO line
-                        ++line_count;
-                        if (line.length() >= 30) {
-                            std::istringstream iss(line);
-                            double x, y, z;
-                            iss >> x >> y >> z;
-                            if (!iss.fail() && std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
-                                std::abs(x) < 10000.0 && std::abs(y) < 10000.0 && std::abs(z) < 10000.0) { // Max 10 m
-                                current_antenna.pco[current_freq] = Eigen::Vector3d(x, y, z); // mm
-                                log_manager_.getLogger("product_parser")->trace("PCO for {} {}: ({:.3f}, {:.3f}, {:.3f}) mm at line {}",
-                                    current_antenna.type, current_freq, x, y, z, line_count);
-                            }
-                            else {
-                                log_manager_.getLogger("product_parser")->warn("Invalid PCO for {} {} at line {}: x={}, y={}, z={}",
-                                    current_antenna.type, current_freq, line_count, x, y, z);
-                            }
-                        }
-                        else {
-                            log_manager_.getLogger("product_parser")->warn("Invalid PCO line length for {} {} at line {}",
-                                current_antenna.type, current_freq, line_count);
-                        }
+                    continue;
+                }
+
+                // ZEN1 / ZEN2 / DZEN
+                if (line.find("ZEN1 / ZEN2 / DZEN") != std::string::npos) {
+                    std::istringstream iss(line);
+                    double zen1, zen2, dzen;
+                    if (iss >> zen1 >> zen2 >> dzen &&
+                        std::isfinite(zen1) && std::isfinite(zen2) && std::isfinite(dzen)) {
+                        current.dzen = dzen;
                     }
-                    else if (line.find("END OF FREQ") != std::string::npos) {
-                        in_pcv_block = false;
-                        current_freq.clear();
+                    continue;
+                }
+
+                // START OF FREQUENCY
+                if (line.find("START OF FREQUENCY") != std::string::npos) {
+                    if (in_freq) {
+                        finalize_frequency();
                     }
-                    else if (line.find("DAZI") != std::string::npos) {
-                        std::istringstream iss(line.substr(0, 10));
-                        double dazi;
-                        if (iss >> dazi && std::isfinite(dazi) && dazi >= 0.0 && dazi <= 360.0) {
-                            current_antenna.dazi = dazi;
-                            log_manager_.getLogger("product_parser")->trace("Parsed DAZI for {}: {:.3f} degrees at line {}",
-                                current_antenna.type, dazi, line_count);
-                        }
-                        else {
-                            log_manager_.getLogger("product_parser")->warn("Invalid DAZI at line {}: parsed value={}", line_count, line.substr(0, 10));
-                        }
+                    in_freq = true;
+                    reset_freq_accumulators();
+
+                    std::smatch m;
+                    if (std::regex_search(line, m, freqCodeRegex)) {
+                        current_freq = sanitize(m.str());
                     }
-                    else if (line.find("ZEN1 / ZEN2 / DZEN") != std::string::npos) {
-                        std::istringstream iss(line.substr(0, 30));
-                        double zen1, zen2, dzen;
-                        if (iss >> zen1 >> zen2 >> dzen && std::isfinite(zen1) && std::isfinite(zen2) && std::isfinite(dzen) &&
-                            zen1 >= 0.0 && zen2 >= zen1 && zen2 <= 180.0 && dzen > 0.0 && dzen <= 90.0) {
-                            current_antenna.dzen = dzen;
-                            log_manager_.getLogger("product_parser")->trace("Parsed ZEN1/ZEN2/DZEN for {}: {:.3f}/{:.3f}/{:.3f} degrees at line {}",
-                                current_antenna.type, zen1, zen2, dzen, line_count);
-                        }
-                        else {
-                            log_manager_.getLogger("product_parser")->warn("Invalid ZEN1/ZEN2/DZEN at line {}: parsed values={}", line_count, line.substr(0, 30));
-                        }
+                    if (current_freq.empty()) {
+                        log_manager_.getLogger("product_parser")->warn("Could not detect frequency code at line {}", line_count);
+                        in_freq = false;
+                        continue;
                     }
-                    else if (in_pcv_block && !line.empty() && line[0] != ' ') {
-                        // Parse PCV table row (zenith angle)
-                        std::istringstream iss(line.substr(8));
-                        current_pcv_row.clear();
-                        double value;
-                        while (iss >> value) {
-                            if (std::isfinite(value) && std::abs(value) < 100.0) { // Max 100 mm
-                                current_pcv_row.push_back(value); // mm
-                            }
-                            else {
-                                log_manager_.getLogger("product_parser")->warn("Invalid PCV value {:.3f} for {} {} at line {}",
-                                    value, current_antenna.type, current_freq, line_count);
-                            }
+                    current.pcv[current_freq] = {};
+                    continue;
+                }
+
+                // END OF FREQUENCY
+                if (line.find("END OF FREQUENCY") != std::string::npos) {
+                    if (in_freq) {
+                        finalize_frequency();
+                    }
+                    in_freq = false;
+                    continue;
+                }
+
+                if (!in_freq || current_freq.empty()) continue;
+
+                // PCO
+                if (line.find("NORTH / EAST / UP") != std::string::npos) {
+                    std::string numeric_part = line.substr(0, line.find("NORTH"));
+                    std::istringstream iss(numeric_part);
+                    double n, e, u;
+                    if (iss >> n >> e >> u &&
+                        std::isfinite(n) && std::isfinite(e) && std::isfinite(u)) {
+                        current.pco[current_freq] = Eigen::Vector3d(n, e, u);
+                        log_manager_.getLogger("product_parser")->trace("PCO {} {}: N/E/U=({:.2f},{:.2f},{:.2f}) mm",
+                            current.type, current_freq, n, e, u);
+                    }
+                    else {
+                        log_manager_.getLogger("product_parser")->warn("Invalid PCO line for {} {} at {}", current.type, current_freq, line_count);
+                    }
+                    continue;
+                }
+
+                // Ignore COMMENT metadata lines (including PCV set mapping table)
+                if (line.find("COMMENT") != std::string::npos) {
+                    continue;
+                }
+
+                std::string work = line;
+                trim(work);
+                if (work.empty()) continue;
+
+                std::istringstream iss(work);
+                std::vector<std::string> tokens;
+                std::string t;
+                while (iss >> t) tokens.push_back(t);
+                if (tokens.empty()) continue;
+
+                // NOAZI: values over zenith
+                if (tokens[0] == "NOAZI") {
+                    for (size_t i = 1; i < tokens.size(); ++i) {
+                        try {
+                            double v = std::stod(tokens[i]);
+                            if (std::isfinite(v)) current_noazi.push_back(v);
                         }
-                        if (!current_pcv_row.empty()) {
-                            current_antenna.pcv[current_freq].push_back(current_pcv_row);
-                            log_manager_.getLogger("product_parser")->trace("Parsed PCV row for {} {} at line {}: {} values",
-                                current_antenna.type, current_freq, line_count, current_pcv_row.size());
+                        catch (...) {}
+                    }
+                    continue;
+                }
+
+                // Azimuth row: first token is azimuth (deg), followed by values over zenith
+                bool first_is_number = false;
+                double first_val = 0.0;
+                try {
+                    first_val = std::stod(tokens[0]);
+                    first_is_number = true;
+                }
+                catch (...) {
+                    first_is_number = false;
+                }
+
+                if (first_is_number) {
+                    std::vector<double> vals;
+                    vals.reserve(tokens.size() - 1);
+                    for (size_t i = 1; i < tokens.size(); ++i) {
+                        try {
+                            double v = std::stod(tokens[i]);
+                            if (std::isfinite(v)) vals.push_back(v);
                         }
-                        else {
-                            log_manager_.getLogger("product_parser")->warn("Empty or invalid PCV row for {} {} at line {}",
-                                current_antenna.type, current_freq, line_count);
-                        }
+                        catch (...) {}
+                    }
+                    if (!vals.empty()) {
+                        current_az_rows.emplace_back(first_val, std::move(vals));
                     }
                 }
+            }
+
+            // File ended mid-antenna or mid-frequency
+            if (in_freq) {
+                finalize_frequency();
             }
 
             file.close();
+
             if (antennas.empty()) {
-                log_manager_.getLogger("product_parser")->error("No valid antenna data parsed from {}", atx_path.string());
+                log_manager_.getLogger("product_parser")->error("No antenna entries parsed from {}", atx_path.string());
                 return false;
             }
+
+            for (const auto& a : antennas) {
+                for (const auto& kv : a.pco) {
+                    if (!a.pcv.count(kv.first) || a.pcv.at(kv.first).empty()) {
+                        log_manager_.getLogger("product_parser")->debug("Antenna {} freq {} has PCO but no PCV", a.type, kv.first);
+                    }
+                }
+            }
+
             log_manager_.getLogger("product_parser")->info("Parsed {} antenna entries from {}", antennas.size(), atx_path.string());
             return true;
         }
         catch (const std::exception& e) {
-            log_manager_.getLogger("product_parser")->error("Error parsing ATX file {}: {}", atx_path.string(), e.what());
+            log_manager_.getLogger("product_parser")->error("ATX parse error {}: {}", atx_path.string(), e.what());
             return false;
         }
     }
@@ -534,9 +770,7 @@ namespace GnssProcessor {
             std::string line;
             size_t line_count = 0;
             bool in_solution_block = false;
-            std::map<std::string, std::pair<size_t, size_t>> field_ranges; // Field name -> (start, length)
 
-            // Helper function to convert YYYY:DOY:SSSSS to GnssTime
             auto parse_bias_time = [](const std::string& time_str) -> GnssTime {
                 if (time_str.length() < 14 || time_str[4] != ':' || time_str[8] != ':') {
                     return GnssTime{ 0, 0.0 };
@@ -549,7 +783,6 @@ namespace GnssProcessor {
                         return GnssTime{ 0, 0.0 };
                     }
 
-                    // Convert DOY to Gregorian date
                     int month = 1, day = doy;
                     bool is_leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
                     int days_in_month[] = { 31, is_leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
@@ -557,22 +790,19 @@ namespace GnssProcessor {
                         day -= days_in_month[month - 1];
                         ++month;
                         if (month > 12) {
-                            return GnssTime{ 0, 0.0 }; // Invalid DOY
+                            return GnssTime{ 0, 0.0 };
                         }
                     }
 
-                    // Convert seconds to hour, minute, second
                     int hour = static_cast<int>(seconds / 3600.0);
                     seconds -= hour * 3600.0;
                     int minute = static_cast<int>(seconds / 60.0);
                     seconds -= minute * 60.0;
 
-                    // Validate Gregorian date
                     if (!TimeUtils::isValidGregorianDate(year, month, day, hour, minute, seconds)) {
                         return GnssTime{ 0, 0.0 };
                     }
 
-                    // Convert to GnssTime
                     GnssTime gps_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, minute, seconds);
                     return gps_time;
                 }
@@ -583,11 +813,10 @@ namespace GnssProcessor {
 
             while (std::getline(file, line)) {
                 ++line_count;
-                // Trim leading and trailing whitespace
                 line.erase(0, line.find_first_not_of(" \t\r\n"));
                 line.erase(line.find_last_not_of(" \t\r\n") + 1);
                 if (line.empty() || line[0] == '*') {
-                    continue; // Skip comments and empty lines
+                    continue;
                 }
 
                 if (line.find("+BIAS/SOLUTION") != std::string::npos) {
@@ -601,20 +830,9 @@ namespace GnssProcessor {
                     break;
                 }
 
-                // Parse OSB entries
                 if (in_solution_block && line.length() >= 4 && line.substr(0, 4) == "OSB ") {
-                    // TODO: Change below if phase bias header is different from code bias header (not common)
-                    /*
-                    if (line[0] == '*') {
-                        // Phase biases given near end of file beginning with line:
-                        // *BIAS SVN_ PRN STATION__ OBS1 OBS2 BIAS_START____ BIAS_END______ UNIT __ESTIMATED_VALUE____ _STD_DEV___ __ESTIMATED_SLOPE____ _STD_DEV___
-                        continue; // Skip phase bias header line
-                    }
-                    */
-                    //log_manager_.getLogger("product_parser")->debug("Processing OSB line at line {}: {}", line_count, line); // DEBUGGING
                     BiasData data;
 
-                    // Extract fixed-width fields
                     std::string type = line.length() >= 4 ? line.substr(0, 4) : "";
                     std::string svn = line.length() >= 9 ? line.substr(5, 4) : "";
                     std::string prn = line.length() >= 13 ? line.substr(10, 3) : "";
@@ -625,9 +843,8 @@ namespace GnssProcessor {
                     std::string end = line.length() >= 63 ? line.substr(49, 14) : "";
                     std::string unit = line.length() >= 68 ? line.substr(64, 4) : "";
                     std::string bias_str = line.length() >= 90 ? line.substr(69, 21) : "";
-                    std::string std_dev_str = line.length() >= 102 ? line.substr(91, 13) : ""; // TODO: check
+                    std::string std_dev_str = line.length() >= 102 ? line.substr(91, 13) : "";
 
-                    // Trim fields
                     type.erase(type.find_last_not_of(" \t") + 1);
                     svn.erase(svn.find_last_not_of(" \t") + 1);
                     prn.erase(prn.find_last_not_of(" \t") + 1);
@@ -641,21 +858,19 @@ namespace GnssProcessor {
                     std_dev_str.erase(std_dev_str.find_last_not_of(" \t") + 1);
 
                     if (!station.empty()) {
-                        continue; // TODO: deal with station biases, skip for now
+                        continue;
                     }
 
-                    // Validate mandatory fields
-                    if (type != "OSB" || prn.length() != 3 || obs1.empty() || start.empty() || end.empty() || unit.empty() || bias_str.empty() ) {
+                    if (type != "OSB" || prn.length() != 3 || obs1.empty() || start.empty() || end.empty() || unit.empty() || bias_str.empty()) {
                         log_manager_.getLogger("product_parser")->warn("Invalid OSB line at line {}: {}", line_count, line);
                         continue;
                     }
 
-                    // Convert bias and std_dev
                     double bias, std_dev = 0;
                     try {
                         bias = std::stod(bias_str);
                         if (!std_dev_str.empty()) {
-                            std_dev = std::stod(std_dev_str); // store if available
+                            std_dev = std::stod(std_dev_str);
                         }
                     }
                     catch (const std::exception&) {
@@ -667,10 +882,8 @@ namespace GnssProcessor {
                         continue;
                     }
 
-                    // Use OBS2 if present, otherwise OBS1
                     std::string signal = obs2.empty() ? obs1 : obs2;
 
-                    // Validate satellite PRN (e.g., G01, R01)
                     if (prn.length() == 3 && (prn[0] == 'G' || prn[0] == 'R' || prn[0] == 'E' ||
                         prn[0] == 'C' || prn[0] == 'J' || prn[0] == 'S') &&
                         std::isdigit(prn[1]) && std::isdigit(prn[2])) {
@@ -681,7 +894,6 @@ namespace GnssProcessor {
                         continue;
                     }
 
-                    // Validate observation code (e.g., C1C, C1W)
                     if (signal.length() == 3 && (signal[0] == 'C' || signal[0] == 'L' || signal[0] == 'D' || signal[0] == 'S') &&
                         std::isdigit(signal[1]) && std::isupper(signal[2])) {
                         data.signal = signal;
@@ -691,35 +903,26 @@ namespace GnssProcessor {
                         continue;
                     }
 
-                    // Validate unit (expecting ns)
                     if (unit != "ns") {
                         log_manager_.getLogger("product_parser")->warn("Unexpected unit {} at line {}, expected ns: {}", unit, line_count, line);
                         continue;
                     }
 
-                    // Parse time
-                    data.bias = bias * Constants::SPEED_OF_LIGHT * 1e-9; // Convert ns to seconds to meters
-                    data.std_dev = std_dev * Constants::SPEED_OF_LIGHT * 1e-9; // Convert ns to seconds to meters
+                    data.bias = bias * Constants::SPEED_OF_LIGHT * 1e-9;
+                    data.std_dev = std_dev * Constants::SPEED_OF_LIGHT * 1e-9;
                     data.start_time = parse_bias_time(start);
                     data.end_time = parse_bias_time(end);
 
                     if (data.start_time.week <= 0 || data.end_time.week <= 0 ||
                         data.start_time.tow < 0.0 || data.end_time.tow < 0.0) {
-                        log_manager_.getLogger("product_parser")->warn("Invalid time range for satellite {} signal {} at line {}: start={}, end={}",
+                        log_manager_.getLogger("product_parser")->warn("Invalid time range for satellite {} signal {} at line {}: start={}, end=",
                             data.satellite, data.signal, line_count, start, end);
                         continue;
                     }
 
                     biases.push_back(data);
-                    /* DEBUGGING
-                    log_manager_.getLogger("product_parser")->trace("Parsed OSB for satellite {} signal {}: bias={:.6e} s, std_dev={:.6e} s, "
-                        "start={}:{:.3f}, end={}:{:.3f} at line {}",
-                        data.satellite, data.signal, data.bias, data.std_dev,
-                        data.start_time.week, data.start_time.tow, data.end_time.week, data.end_time.tow, line_count);
-                    */
                 }
                 else if (in_solution_block) {
-                    // Likely phase bias header
                     log_manager_.getLogger("product_parser")->debug("Non-OSB line in BIAS/SOLUTION block at line {}: {}", line_count, line);
                 }
             }
@@ -770,63 +973,6 @@ namespace GnssProcessor {
         }
     }
 
-    /*
-    bool ProductParser::parseOceanTide(const std::filesystem::path& nc_path, std::vector<OceanTideData>& tides) {
-        try {
-            netCDF::NcFile nc_file(nc_path.string(), netCDF::NcFile::read);
-            tides.clear();
-
-            // Get dimensions
-            auto time_dim = nc_file.getDim("time");
-            if (time_dim.isNull()) {
-                log_manager_.getLogger("product_parser")->error("No 'time' dimension in NetCDF file: {}", nc_path.string());
-                return false;
-            }
-            size_t num_times = time_dim.getSize();
-
-            // Get variables
-            auto time_var = nc_file.getVar("time");
-            auto disp_x_var = nc_file.getVar("displacement_x");
-            auto disp_y_var = nc_file.getVar("displacement_y");
-            auto disp_z_var = nc_file.getVar("displacement_z");
-            if (time_var.isNull() || disp_x_var.isNull() || disp_y_var.isNull() || disp_z_var.isNull()) {
-                log_manager_.getLogger("product_parser")->error("Missing required variables in NetCDF file: {}", nc_path.string());
-                return false;
-            }
-
-            // Read data
-            std::vector<double> times(num_times);
-            std::vector<double> disp_x(num_times), disp_y(num_times), disp_z(num_times);
-            time_var.getVar(times.data());
-            disp_x_var.getVar(disp_x.data());
-            disp_y_var.getVar(disp_y.data());
-            disp_z_var.getVar(disp_z.data());
-
-            // Populate tides
-            for (size_t i = 0; i < num_times; ++i) {
-                OceanTideData data;
-                // Assume times are in seconds since GPS epoch; convert to GnssTime
-                int week = static_cast<int>(times[i] / (7 * 86400));
-                double tow = times[i] - week * (7 * 86400);
-                data.time = GnssTime{ week, tow };
-                data.displacement = Eigen::Vector3d(disp_x[i], disp_y[i], disp_z[i]);
-                tides.push_back(data);
-            }
-
-            log_manager_.getLogger("product_parser")->info("Parsed {} ocean tide entries from {}", tides.size(), nc_path.string());
-            return true;
-        }
-        catch (const netCDF::NcException& e) {
-            log_manager_.getLogger("product_parser")->error("Error parsing ocean tide file {}: {}", nc_path.string(), e.what());
-            return false;
-        }
-        catch (const std::exception& e) {
-            log_manager_.getLogger("product_parser")->error("Unexpected error parsing ocean tide file {}: {}", nc_path.string(), e.what());
-            return false;
-        }
-    }
-    */
-
     bool ProductParser::parseKlobuchar(const std::filesystem::path& brdc_path, std::vector<double>& klobuchar_coeffs) {
         try {
             std::ifstream file(brdc_path);
@@ -842,17 +988,15 @@ namespace GnssProcessor {
 
             while (std::getline(file, line)) {
                 ++line_count;
-                // Check for end of header
                 if (in_header && line.find("END OF HEADER") != std::string::npos) {
                     in_header = false;
                     continue;
                 }
-                // Look for IONOSPHERIC CORR in header
                 if (in_header && line.find("IONOSPHERIC CORR") != std::string::npos) {
                     std::istringstream iss(line);
                     std::string type;
                     iss >> type;
-                    if (type == "GPSA" || type == "GAL") { // GPS or Galileo Klobuchar coefficients
+                    if (type == "GPSA" || type == "GAL") {
                         double a0, a1, a2, a3;
                         if (iss >> a0 >> a1 >> a2 >> a3) {
                             if (std::isfinite(a0) && std::isfinite(a1) && std::isfinite(a2) && std::isfinite(a3)) {
@@ -878,7 +1022,7 @@ namespace GnssProcessor {
                                 klobuchar_coeffs.push_back(b2);
                                 klobuchar_coeffs.push_back(b3);
                             }
-                            else {
+                           else {
                                 log_manager_.getLogger("product_parser")->warn("Non-finite Klobuchar beta coefficients at line {}: {}", line_count, line);
                             }
                         }
@@ -891,7 +1035,8 @@ namespace GnssProcessor {
 
             file.close();
             if (klobuchar_coeffs.size() != 8) {
-                log_manager_.getLogger("product_parser")->error("Incomplete Klobuchar coefficients from {}: expected 8, got {}", brdc_path.string(), klobuchar_coeffs.size());
+                log_manager_.getLogger("product_parser")->error("Incomplete Klobuchar coefficients from {}: expected 8, got {}",
+                    brdc_path.string(), klobuchar_coeffs.size());
                 klobuchar_coeffs.clear();
                 return false;
             }
@@ -904,6 +1049,103 @@ namespace GnssProcessor {
             log_manager_.getLogger("product_parser")->error("Exception parsing Klobuchar coefficients from {}: {}", brdc_path.string(), e.what());
             klobuchar_coeffs.clear();
             return false;
+        }
+    }
+
+    void ProductParser::loadProducts() {
+        auto sp3_paths = getOrbitPaths();
+        if (!sp3_paths.empty()) {
+            if (parseSp3(sp3_paths, orbits_)) {
+                std::string paths_str = std::accumulate(sp3_paths.begin(), sp3_paths.end(), std::string(),
+                    [](const std::string& a, const std::filesystem::path& p) {
+                        return a.empty() ? p.string() : a + ", " + p.string();
+                    });
+                log_manager_.getLogger("ppp_model")->info("Loaded SP3 files: [{}]", paths_str);
+            }
+            else {
+                log_manager_.getLogger("ppp_model")->error("Failed to load SP3 files: [{}]",
+                    std::accumulate(sp3_paths.begin(), sp3_paths.end(), std::string(),
+                        [](const std::string& a, const std::filesystem::path& p) {
+                            return a.empty() ? p.string() : a + ", " + p.string();
+                        }));
+            }
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("No SP3 file paths provided for orbit data");
+        }
+
+        std::filesystem::path clk_path = getProductPath("CLK");
+        if (!clk_path.empty()) {
+            if (parseClk(clk_path, clocks_)) {
+                log_manager_.getLogger("ppp_model")->info("Loaded CLK file: {}", clk_path.string());
+            }
+            else {
+                log_manager_.getLogger("ppp_model")->error("Failed to load CLK file: {}", clk_path.string());
+            }
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("No CLK file path provided");
+        }
+
+        std::filesystem::path atx_path = getProductPath("ATX");
+        if (!atx_path.empty()) {
+            if (parseAtx(atx_path, antennas_)) {
+                log_manager_.getLogger("ppp_model")->info("Loaded ATX file: {}", atx_path.string());
+            }
+            else {
+                log_manager_.getLogger("ppp_model")->error("Failed to load ATX file: {}", atx_path.string());
+            }
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("No ATX file path provided");
+        }
+
+        std::filesystem::path bia_path = getProductPath("BIA");
+        if (!bia_path.empty()) {
+            if (parseBia(bia_path, biases_)) {
+                log_manager_.getLogger("ppp_model")->info("Loaded BIA file: {}", bia_path.string());
+            }
+            else {
+                log_manager_.getLogger("ppp_model")->error("Failed to load BIA file: {}", bia_path.string());
+            }
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("No BIA file path provided");
+        }
+
+        std::filesystem::path erp_path = getProductPath("ERP");
+        if (!erp_path.empty()) {
+            if (parseErp(erp_path, erps_)) {
+                log_manager_.getLogger("ppp_model")->info("Loaded ERP file: {}", erp_path.string());
+            }
+            else {
+                log_manager_.getLogger("ppp_model")->error("Failed to load ERP file: {}", erp_path.string());
+            }
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("No ERP file path provided");
+        }
+
+        std::filesystem::path rnx_path = getProductPath("RNX");
+        if (!rnx_path.empty()) {
+            if (parseKlobuchar(rnx_path, klobuchar_coeffs_)) {
+                log_manager_.getLogger("ppp_model")->info("Loaded Klobuchar coefficients from RNX file: {}, coeffs size: {}",
+                    rnx_path.string(), klobuchar_coeffs_.size());
+            }
+            else {
+                log_manager_.getLogger("ppp_model")->error("Failed to load Klobuchar coefficients from RNX file: {}", rnx_path.string());
+            }
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->warn("No RNX file path provided for Klobuchar or Sun ephemeris");
+        }
+
+        std::vector<GnssTime> epoch_times = rinex_parser_->getEpochTimes();
+        if (planetary_.parseSunEphemeris(epoch_times, sun_ephemeris_)) {
+            log_manager_.getLogger("ppp_model")->info("Computed Sun ephemeris for {} observation epochs", sun_ephemeris_.size());
+        }
+        else {
+            log_manager_.getLogger("ppp_model")->error("Failed to compute Sun ephemeris for observation epochs");
         }
     }
 

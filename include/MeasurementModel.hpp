@@ -18,26 +18,24 @@ namespace GnssProcessor {
     class MeasurementModel {
     public:
         // Constructor
-        MeasurementModel(const StateManager& state_manager,
+        MeasurementModel(StateManager& state_manager,
             const PppModel& ppp_model,
             const GnssConfig& config,
             LogManager& log_manager);
 
-        // Compute measurement update for Kalman filter
+        // Compute measurement update for Kalman filter (read-only w.r.t state)
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
-            Eigen::VectorXd& current_state);
+            const Eigen::VectorXd& current_state);
 
         // Validate measurement update before Kalman filter processing
         bool validateMeasurementUpdate(const EpochMeasurement& measurement) const;
 
-        // Convert System enum to string
-        static std::string getSystemString(System system);
-
     private:
-        const StateManager& state_manager_;
+        StateManager& state_manager_;
         const PppModel& ppp_model_;
         const GnssConfig& config_;
         LogManager& log_manager_;
+        PppUtils ppp_utils_;
     };
 
 } // namespace GnssProcessor

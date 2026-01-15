@@ -17,20 +17,23 @@ namespace GnssProcessor {
 
     class KalmanFilter {
     public:
+        enum class UpdateResult {
+            Applied,                 // update applied without forced measurement rebuild
+            NeedsMeasurementRebuild, // ambiguity reset / R change / full reset happened
+            Skipped                  // invalid measurement / no-op
+        };
+
         KalmanFilter(StateManager& state_manager, const GnssConfig& config, LogManager& log_manager, const PppModel& ppp_model);
         ~KalmanFilter();
+
         // Predict state for time step dt
         void predict(double dt);
 
         // Update state with measurement
-        void KalmanFilter::update(EpochMeasurement& measurement);
+        UpdateResult update(EpochMeasurement& measurement);
 
         // Residual check for potential outliers
-        bool validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
-
-        // Get current state and covariance
-        Eigen::VectorXd residuals_;
-        Eigen::VectorXd residuals_covariance;
+        std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 
     private:
         StateManager& state_manager_;
@@ -38,9 +41,6 @@ namespace GnssProcessor {
         LogManager& log_manager_;
         const PppModel& ppp_model_;
         MeasurementModel measurement_model_;
-        //Eigen::VectorXd& x_; // Reference to StateManager::state_vector_
-        //Eigen::MatrixXd& P_; // Reference to StateManager::covariance_
-        Eigen::MatrixXd predicted_covariance_;
         Eigen::MatrixXd R_;
         KalmanFilterLogger logger_;
     };

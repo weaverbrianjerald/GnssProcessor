@@ -3,16 +3,19 @@
 #define STATEMANAGER_HPP
 
 #include "PppTypes.hpp"
+#include "GnssConfig.hpp"
 #include <Eigen/Dense>
 #include <map>
 #include <string>
 
 namespace GnssProcessor {
 
+    class LogManager; // forward-declare
+
     class StateManager {
     public:
         // Constructor: Initializes StateManager with core state size (e.g., 5 for PPP, 6 for PPP-RTK)
-        StateManager(size_t core_state_size);
+        StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config);
 
         // Returns the current state epoch time
         GnssTime getStateEpochTime() const;
@@ -26,26 +29,14 @@ namespace GnssProcessor {
         // Sets the covariance matrix
         void setCovariance(const Eigen::MatrixXd& covariance);
 
-        // Sets the previous state vector
-        //void setStateVectorPrevious(const Eigen::VectorXd& state);
-
-        // Sets the previous covariance matrix
-        //void setCovariancePrevious(const Eigen::MatrixXd& covariance);
-
         // Returns the total state size (core + ambiguities)
         size_t getStateSize() const;
 
         // Returns the state vector
         Eigen::VectorXd getStateVector() const;
 
-        // Returns the state vector
-        //Eigen::VectorXd getStateVectorPrevious() const;
-
         // Returns the covariance matrix
         Eigen::MatrixXd getCovariance() const;
-
-        // Returns the previous covariance matrix
-        //Eigen::MatrixXd getCovariancePrevious() const;
 
         // Returns the process noise matrix for prediction
         Eigen::MatrixXd getProcessNoiseMatrix(double dt) const;
@@ -73,7 +64,25 @@ namespace GnssProcessor {
         // Adds an ambiguity state and returns its index
         size_t addAmbiguity(const std::string& key, double initial_value);
 
+        // NEW: Reset (or create then reset) a float ambiguity state in meters.
+        // - Sets value=0
+        // - Zeros cross-covariances
+        // - Sets diagonal variance = std_m^2
+        // Returns true if reset was applied.
+        bool resetAmbiguity(const std::string& key, double std_m);
+
         void updatePppStateFromVector(const Eigen::VectorXd& current_state, PppState& ppp_state, const StateManager& state_manager) const;
+
+        //void syncStateVectorToPppState(PppState& ppp_state) const;
+        void syncPppStateToStateVector(const PppState& ppp_state);
+
+        // Persistent per-measurement variance scaling (e.g., for code noise inflation)
+        void setMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double scale);
+        double getMeasurementVarianceScale(const std::string& sat, const std::string& signal_type) const;
+        void clearMeasurementVarianceScales();
+
+        // Convenience: inflate (multiply) the current scale by a factor
+        void inflateMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double factor);
 
     private:
         size_t core_state_size_;                    // Core state size (e.g., 5 for PPP, 6 for PPP-RTK)
@@ -81,8 +90,9 @@ namespace GnssProcessor {
         GnssTime state_epoch_time_;                 // Current state epoch time
         Eigen::VectorXd state_vector_;              // Current state vector
         Eigen::MatrixXd covariance_;                // Current covariance matrix
-        Eigen::VectorXd state_vector_prev_;         // Previous state vector
-        Eigen::MatrixXd covariance_prev_;           // Previous covariance matrix
+        LogManager& log_manager_;                   // Logger manager
+        const GnssConfig& config_;
+        std::map<std::string, double> meas_var_scale_; // key: "G01_C1C" or "G01_C1C_C2W", value: multiplier >= 1.0
     };
 
 } // namespace GnssProcessor
