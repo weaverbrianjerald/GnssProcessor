@@ -23,6 +23,8 @@ namespace GnssProcessor {
         header_.antenna_elevation_deg = 0.0;
         log_manager_.getLogger("rinex_parser")->info("RinexParser initialized for mode: {}",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+        // Register this RinexParser with the ProductParser so ProductParser can access epoch times later
+        product_parser.setRinexParser(*this);
     }
 
     bool RinexParser::parse() {
@@ -293,13 +295,13 @@ namespace GnssProcessor {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
                                     }
                                     obs.measurements[obs_types[j]] = value;
-                                    double variance = obs_types[j][0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015; // code: meters; phase: meters
-                                    if (!snr_str.empty() && snr_str.find_first_not_of(" \t") != std::string::npos) {
-                                        double snr = std::stod(snr_str);
-                                        if (snr > 0 && snr < 60) {
-                                            variance *= (1.0 + 1.0 / std::pow(10.0, snr / 10.0));
-                                        }
-                                    }
+
+                                    const auto& n = config_.getDefaultMeasurementNoise();
+                                    const double default_code_var = n.code_std_m * n.code_std_m;
+                                    const double default_phase_var = n.phase_std_m * n.phase_std_m;
+
+                                    double variance = (obs_types[j][0] == 'C') ? default_code_var : default_phase_var;
+
                                     obs.variances[obs_types[j]] = variance;
                                     if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
                                         obs.lli_flags[obs_types[j]] = std::stoi(lli_str);
@@ -395,13 +397,13 @@ namespace GnssProcessor {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
                                     }
                                     obs.measurements[obs_types[j]] = value;
-                                    double variance = obs_types[j][0] == 'C' ? 0.3 * 0.3 : 0.0015 * 0.0015;
-                                    if (!snr_str.empty() && snr_str.find_first_not_of(" \t") != std::string::npos) {
-                                        double snr = std::stod(snr_str);
-                                        if (snr > 0 && snr < 60) {
-                                            variance *= (1.0 + 1.0 / std::pow(10.0, snr / 10.0));
-                                        }
-                                    }
+
+                                    const auto& n = config_.getDefaultMeasurementNoise();
+                                    const double default_code_var = n.code_std_m * n.code_std_m;
+                                    const double default_phase_var = n.phase_std_m * n.phase_std_m;
+
+                                    double variance = (obs_types[j][0] == 'C') ? default_code_var : default_phase_var;
+
                                     obs.variances[obs_types[j]] = variance;
                                     if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
                                         obs.lli_flags[obs_types[j]] = std::stoi(lli_str);

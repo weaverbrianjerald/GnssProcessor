@@ -1,4 +1,5 @@
 #include "StateManager.hpp"
+#include "LogManager.hpp"
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -26,23 +27,25 @@ struct fmt::formatter<Eigen::VectorXd> {
 
 namespace GnssProcessor {
 
-    StateManager::StateManager(size_t core_state_size)
-        : core_state_size_(core_state_size), state_epoch_time_{ 0, 0.0 } {
+    StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
+        : core_state_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config) {
         state_vector_ = Eigen::VectorXd::Zero(core_state_size);
         covariance_ = Eigen::MatrixXd::Identity(core_state_size, core_state_size);
         // Default initial standard deviations
-        double pos_var = 100.0 * 100.0;    // Position: 100 m
-        double clock_var = 10.0 * 10.0; // Clock: 10 m
-        double tropo_var = 0.5 * 0.5;      // Troposphere: 0.5 m
-        double iono_var = 5.0 * 5.0;       // Ionosphere: 5 m (PPP-RTK only)
+        const auto& init = config_.getInitialStd();
+        double pos_var = init.position * init.position;
+        double clock_var = init.clock * init.clock;
+        double tropo_var = init.troposphere * init.troposphere;
+        double iono_var = init.ionosphere * init.ionosphere;
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
         covariance_(3, 3) = clock_var;
         covariance_(4, 4) = tropo_var;
         if (core_state_size >= 6) {
             covariance_(5, 5) = iono_var;
         }
-        // Log initialization
-        spdlog::get("state_manager")->info("StateManager initialized with core state size: {}", core_state_size);
+        // Log initialization using LogManager-provided logger
+        auto logger = log_manager_.getLogger("state_manager");
+        logger->info("StateManager initialized with core state size: {}", core_state_size);
     }
 
     GnssTime StateManager::getStateEpochTime() const {
@@ -51,11 +54,12 @@ namespace GnssProcessor {
 
     void StateManager::setStateEpochTime(const GnssTime& time) {
         state_epoch_time_ = time;
-        spdlog::get("state_manager")->trace("Set state epoch time: week={}, TOW={:.3f}", time.week, time.tow);
+        auto logger = log_manager_.getLogger("state_manager");
+        logger->trace("Set state epoch time: week={}, TOW={:.3f}", time.week, time.tow);
     }
 
     void StateManager::setStateVector(const Eigen::VectorXd& state) {
-        auto logger = spdlog::get("state_manager");
+        auto logger = log_manager_.getLogger("state_manager");
         if (static_cast<size_t>(state.size()) != getStateSize()) {
             logger->error("State vector size {} does not match expected size {}", state.size(), getStateSize());
             throw std::invalid_argument("State vector size " + std::to_string(state.size()) +
@@ -69,25 +73,8 @@ namespace GnssProcessor {
             state, getStateSize(), ambiguity_indices_.size());
     }
 
-    /*
-    void StateManager::setStateVectorPrevious(const Eigen::VectorXd& state) {
-        auto logger = spdlog::get("state_manager");
-        if (static_cast<size_t>(state.size()) != getStateSize()) {
-            logger->error("State vector size {} does not match expected size {}", state.size(), getStateSize());
-            throw std::invalid_argument("State vector size " + std::to_string(state.size()) +
-                " does not match expected size " + std::to_string(getStateSize()));
-        }
-        if (!state.allFinite()) {
-            logger->error("State vector contains non-finite values: {}", state);
-        }
-        state_vector_prev_ = state;
-        logger->trace("Set state vector: size={}, values={}, expected_size={}, ambiguities={}", state.size(),
-            state, getStateSize(), ambiguity_indices_.size());
-    }
-    */
-
     void StateManager::setCovariance(const Eigen::MatrixXd& covariance) {
-        auto logger = spdlog::get("state_manager");
+        auto logger = log_manager_.getLogger("state_manager");
         if (static_cast<size_t>(covariance.rows()) != getStateSize() ||
             static_cast<size_t>(covariance.cols()) != getStateSize()) {
             logger->error("Covariance matrix dimensions ({}x{}) do not match state size {}",
@@ -106,28 +93,6 @@ namespace GnssProcessor {
             getStateSize(), ambiguity_indices_.size());
     }
 
-    /*
-    void StateManager::setCovariancePrevious(const Eigen::MatrixXd& covariance) {
-        auto logger = spdlog::get("state_manager");
-        if (static_cast<size_t>(covariance.rows()) != getStateSize() ||
-            static_cast<size_t>(covariance.cols()) != getStateSize()) {
-            logger->error("Covariance matrix dimensions ({}x{}) do not match state size {}",
-                covariance.rows(), covariance.cols(), getStateSize());
-            throw std::invalid_argument("Covariance matrix dimensions (" +
-                std::to_string(covariance.rows()) + "x" +
-                std::to_string(covariance.cols()) +
-                ") do not match state size " + std::to_string(getStateSize()));
-        }
-        if (!covariance.allFinite()) {
-            logger->error("Covariance matrix contains non-finite values");
-            throw std::invalid_argument("Covariance matrix contains non-finite values");
-        }
-        covariance_prev_ = covariance;
-        logger->trace("Set covariance matrix: size={}x{}, expected_size={}, ambiguities={}", covariance.rows(), covariance.cols(),
-            getStateSize(), ambiguity_indices_.size());
-    }
-    */
-
     size_t StateManager::getStateSize() const {
         return core_state_size_ + ambiguity_indices_.size();
     }
@@ -136,24 +101,12 @@ namespace GnssProcessor {
         return state_vector_;
     }
 
-    /*
-    Eigen::VectorXd StateManager::getStateVectorPrevious() const {
-        return state_vector_prev_;
-    }
-    */
-
     Eigen::MatrixXd StateManager::getCovariance() const {
         return covariance_;
     }
 
-    /*
-    Eigen::MatrixXd StateManager::getCovariancePrevious() const {
-        return covariance_prev_;
-    }
-    */
-
     Eigen::MatrixXd StateManager::getProcessNoiseMatrix(double dt) const {
-        auto logger = spdlog::get("state_manager");
+        auto logger = log_manager_.getLogger("state_manager");
         if (dt <= 0.0) {
             logger->error("Invalid time step: {}", dt);
             throw std::invalid_argument("Invalid time step: " + std::to_string(dt));
@@ -163,36 +116,42 @@ namespace GnssProcessor {
         Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(state_size, state_size);
 
         // Default process noise standard deviations
-        double pos_std = 0.0;      // Position
-        double clock_std = 300.0;  // Clock
-        double tropo_std = 0.0005;   // Troposphere
-        double iono_std = 0.02;    // Ionosphere
-        double amb_std = 0.0;    // Ambiguity
+        const auto& init = config_.getProcessNoise();
+        double pos_std = init.position;
+        double clock_std = init.clock;
+        double tropo_std = init.troposphere;
+        double iono_std = init.ionosphere;
+        double amb_std = init.ambiguity;
+
+        size_t posIdx = getPositionIndex();
+        size_t clockIdx = getClockIndex();
+        size_t tropoIdx = getTropoIndex();
 
         // Position noise
-        double pos_noise = pos_std * dt;
-        Q.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_noise * pos_noise;
+        double pos_var = (pos_std * dt) * (pos_std * dt);
+        Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
 
         // Clock noise
-        double clock_noise = clock_std * dt;
-        Q(3, 3) = clock_noise * clock_noise;
+        double clock_var = (clock_std * dt) * (clock_std * dt);
+        Q(clockIdx, clockIdx) = clock_var;
 
-        // Tropospheric noise
-        double tropo_noise = tropo_std * dt;
-        Q(4, 4) = tropo_noise * tropo_noise;
+        // Tropospheric noise (variance)
+        double tropo_var = (tropo_std * dt) * (tropo_std * dt);
+        Q(tropoIdx, tropoIdx) = tropo_var;
 
         // Ionospheric noise (PPP-RTK only)
         if (core_state_size_ >= 6) {
-            double iono_noise = iono_std * dt;
-            Q(5, 5) = iono_noise * iono_noise;
+            size_t ionoIdx = getIonoIndex();
+            double iono_var = (iono_std * dt) * (iono_std * dt);
+            Q(ionoIdx, ionoIdx) = iono_var;
         }
 
         // Ambiguities might not yet be included
         if (state_size > core_state_size_) {
-            // Ambiguity noise
+            // Ambiguity noise (variance)
             for (const auto& [key, idx] : ambiguity_indices_) {
-                double amb_noise = amb_std * dt;
-                Q(idx, idx) = amb_noise * amb_noise;
+                double amb_var = (amb_std * dt) * (amb_std * dt);
+                Q(idx, idx) = amb_var;
             }
         }
 
@@ -203,7 +162,8 @@ namespace GnssProcessor {
     Eigen::MatrixXd StateManager::getTransitionMatrix(double dt) const {
         size_t state_size = getStateSize();
         Eigen::MatrixXd F = Eigen::MatrixXd::Identity(state_size, state_size); // simple, without dynamics
-        spdlog::get("state_manager")->trace("Computed transition matrix: size={}x{}, dt={:.3f} s", F.rows(), F.cols(), dt);
+        auto logger = log_manager_.getLogger("state_manager");
+        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s", F.rows(), F.cols(), dt);
         return F;
     }
 
@@ -233,7 +193,7 @@ namespace GnssProcessor {
     }
 
     size_t StateManager::addAmbiguity(const std::string& key, double initial_value) {
-        auto logger = spdlog::get("state_manager");
+        auto logger = log_manager_.getLogger("state_manager");
         if (ambiguity_indices_.count(key)) {
             logger->trace("Ambiguity {} already exists at index {}", key, ambiguity_indices_[key]);
             return ambiguity_indices_[key];
@@ -253,7 +213,7 @@ namespace GnssProcessor {
             new_cov.topLeftCorner(index, index) = covariance_;
         }
         new_state(index) = initial_value;
-        new_cov(index, index) = 300.0; // Initial ambiguity variance (meters^2)
+        new_cov(index, index) = config_.getAmbiguityStd(); // Initial ambiguity variance (meters^2)
 
         state_vector_ = new_state;
         covariance_ = new_cov;
@@ -270,7 +230,7 @@ namespace GnssProcessor {
         ppp_state.clock_bias = current_state(state_manager.getClockIndex());
 
         // Troposphere zenith delay
-        ppp_state.troposphere_zenith_delay = current_state(state_manager.getTropoIndex());
+        ppp_state.troposphere_zwd = current_state(state_manager.getTropoIndex());
 
         // Ionosphere zenith delay only if using PPP-RTK
         if (core_state_size_ >= 6) {
@@ -286,5 +246,115 @@ namespace GnssProcessor {
         }
     }
 
+    void StateManager::syncPppStateToStateVector(const PppState& ppp_state)
+    {
+        Eigen::VectorXd sv = state_vector_;
+        sv.segment<3>(getPositionIndex()) = ppp_state.position;
+        sv(getClockIndex()) = ppp_state.clock_bias;
+        sv(getTropoIndex()) = ppp_state.troposphere_zwd;
+        if (core_state_size_ >= 6) {
+            sv(getIonoIndex()) = ppp_state.ionosphere_zenith_delay;
+        }
+        setStateVector(sv);
+    }
+
+    bool StateManager::resetAmbiguity(const std::string& key, double std_m) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        if (key.empty()) {
+            logger->warn("resetAmbiguity called with empty key");
+            return false;
+        }
+        if (!(std::isfinite(std_m) && std_m > 0.0)) {
+            logger->warn("resetAmbiguity called with invalid std_m for key {}: {}", key, std_m);
+            return false;
+        }
+
+        int idx_i = getAmbiguityIndex(key);
+        if (idx_i < 0) {
+            addAmbiguity(key, 0.0);
+            idx_i = getAmbiguityIndex(key);
+        }
+        if (idx_i < 0) {
+            logger->error("Failed to add ambiguity for key {}", key);
+            return false;
+        }
+
+        const size_t idx = static_cast<size_t>(idx_i);
+
+        if (idx >= static_cast<size_t>(state_vector_.size()) ||
+            idx >= static_cast<size_t>(covariance_.rows()) ||
+            idx >= static_cast<size_t>(covariance_.cols())) {
+            logger->error("resetAmbiguity index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
+                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return false;
+        }
+
+        state_vector_(static_cast<Eigen::Index>(idx)) = 0.0;
+
+        // Zero cross-covariances first, then restore diagonal (avoid wiping it to 0).
+        covariance_.row(static_cast<Eigen::Index>(idx)).setZero();
+        covariance_.col(static_cast<Eigen::Index>(idx)).setZero();
+        covariance_(static_cast<Eigen::Index>(idx), static_cast<Eigen::Index>(idx)) = std_m * std_m;
+
+        logger->info("Reset ambiguity {} at index {}: value=0.0 m, std={:.3f} m (var={:.3e})",
+            key, idx, std_m, std_m * std_m);
+
+        return true;
+    }
+
+    static std::string makeMeasKey(const std::string& sat, const std::string& sig) {
+        return sat + "_" + sig;
+    }
+
+    void StateManager::setMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double scale) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat.empty() || signal_type.empty()) {
+            logger->warn("setMeasurementVarianceScale called with empty sat/signal");
+            return;
+        }
+        if (!(std::isfinite(scale) && scale > 0.0)) {
+            logger->warn("setMeasurementVarianceScale called with invalid scale for {} {}: {}", sat, signal_type, scale);
+            return;
+        }
+
+        const std::string key = makeMeasKey(sat, signal_type);
+        meas_var_scale_[key] = scale;
+
+        logger->info("Set measurement variance scale: {} -> {:.3f}", key, scale);
+    }
+
+    double StateManager::getMeasurementVarianceScale(const std::string& sat, const std::string& signal_type) const {
+        if (sat.empty() || signal_type.empty()) return 1.0;
+
+        const std::string key = makeMeasKey(sat, signal_type);
+        auto it = meas_var_scale_.find(key);
+        return (it != meas_var_scale_.end() && std::isfinite(it->second) && it->second > 0.0) ? it->second : 1.0;
+    }
+
+    void StateManager::inflateMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double factor) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat.empty() || signal_type.empty()) {
+            logger->warn("inflateMeasurementVarianceScale called with empty sat/signal");
+            return;
+        }
+        if (!(std::isfinite(factor) && factor > 0.0)) {
+            logger->warn("inflateMeasurementVarianceScale called with invalid factor for {} {}: {}", sat, signal_type, factor);
+            return;
+        }
+
+        const double current = getMeasurementVarianceScale(sat, signal_type);
+        const double next = current * factor;
+        setMeasurementVarianceScale(sat, signal_type, next);
+
+        logger->info("Inflated measurement variance scale: {}_{}: {:.3f} -> {:.3f}",
+            sat, signal_type, current, next);
+    }
+
+    void StateManager::clearMeasurementVarianceScales() {
+        auto logger = log_manager_.getLogger("state_manager");
+        meas_var_scale_.clear();
+        logger->info("Cleared measurement variance scales");
+    }
 
 } // namespace GnssProcessor

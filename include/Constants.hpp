@@ -9,7 +9,7 @@ namespace GnssProcessor {
 		// Fundamental physical constants
 		constexpr double SPEED_OF_LIGHT = 299792458.0;       // Speed of light in vacuum (m/s)
 		constexpr double PI = 3.14159265358979323846;        // Mathematical constant pi
-		constexpr double GRAVITATIONAL_CONSTANT = 3.986005e14; // Gravitational constant * Earth mass (m³/s²)
+		constexpr double GRAVITATIONAL_CONSTANT = 3.986005e14; // Gravitational constant * Earth mass (m^3/s^2)
 		constexpr double EARTH_MASS = 5.9722e24;             // Earth mass (kg)
 		constexpr double EARTH_ANGULAR_VELOCITY = 7.2921151467e-5; // Earth's angular velocity (rad/s)
 

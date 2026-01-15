@@ -1,48 +1,55 @@
-#pragma once
+﻿#ifndef CYCLE_SLIP_DETECTOR_HPP
+#define CYCLE_SLIP_DETECTOR_HPP
 
+#include "PppTypes.hpp"
+#include "GnssConfig.hpp"
+#include "StateManager.hpp"
 #include "LogManager.hpp"
+#include "PppModel.hpp"
 #include "Constants.hpp"
-#include "RinexParser.hpp" // For SSystemObservation, System
 #include <map>
-#include <string>
 #include <vector>
+#include <string>
+#include <cmath>
+#include <sstream>
 
 namespace GnssProcessor {
 
-    struct CycleSlipResult {
-        std::string satellite; // Satellite ID (e.g., "G01")
-        GnssTime time;         // Time of cycle slip
-        std::string obs_type;  // Observation type (e.g., "L1C")
-        double cycle_jump{ 0.0 };// Estimated cycle jump (cycles)
-        bool repaired{ false };  // Whether slip was repaired
-    };
-
     class CycleSlipDetector {
-    public:
-        // Constructor
-        CycleSlipDetector(double gf_threshold, double doppler_threshold, LogManager& log_manager);
-
-        // Detect and repair cycle slips
-        std::vector<CycleSlipResult> detectAndRepair(std::vector<RinexObservation>& observations);
-
     private:
-        double gf_threshold_;      // Geometry-free threshold (meters)
-        double doppler_threshold_; // Doppler-based repair threshold (cycles)
-        LogManager& log_manager_;  // Logger reference
+        LogManager& log_manager_;
+        const GnssConfig& config_;
+        PppModel& ppp_model_;
+        double mw_threshold_cycles_;  // Threshold for ΔMW in WL cycles
+        double gf_threshold_meters_;  // Threshold for Δ²GF in meters
+        double c_;  // Speed of light
 
-        // Compute geometry-free combination (L1 - L2)
-        double computeGeometryFree(const RinexObservation& obs, const std::string& l1_type,
-            const std::string& l2_type) const;
+        // History buffers: key (sat_MW or sat_GF) -> vector of values (meters, last 5 epochs max)
+        std::map<std::string, std::vector<double>> mw_history_;
+        std::map<std::string, std::vector<double>> gf_history_;
 
-        // Estimate cycle jump using Doppler
-        double estimateCycleJump(const RinexObservation& curr, const RinexObservation& prev,
-            const std::string& obs_type, double dt) const;
+        std::string getSystemFromSatellite(const std::string& satellite) const;
+        std::string getSatFromKey(const std::string& key) const;
+        double getFrequency(const std::string& system, const std::string& satellite, const std::string& signal) const;
+        bool findIonoFreeLabels(const PppObservation& obs, std::string& phase_if_key, std::string& code_if_key) const;
+        bool extractSignalsFromLabel(const std::string& label, std::string& sig1, std::string& sig2) const;
+        bool hasRequiredRawData(const PppObservation& obs, const std::string& sig_p1, const std::string& sig_p2,
+            const std::string& sig_c1, const std::string& sig_c2) const;
+        double computeMW(const PppObservation& obs, double f1, double f2,
+            const std::string& sig_p1, const std::string& sig_p2,
+            const std::string& sig_c1, const std::string& sig_c2);
+        double computeGF(const PppObservation& obs, const std::string& sig_p1, const std::string& sig_p2);
+        bool detectSlipMW(const std::string& key, double current_mw, double lambda);
+        bool detectSlipGF(const std::string& key, double current_gf);
+        void resetAmbiguities(const std::string& satellite, const std::string& sig_p1, const std::string& sig_p2,
+            StateManager& state_manager);  // Placeholder for repair
 
-        // Check if observation has valid phase types
-        bool hasValidPhaseTypes(const RinexObservation& obs, const std::string& l1_type,
-            const std::string& l2_type) const;
+    public:
+        CycleSlipDetector(const GnssConfig& config, LogManager& log_manager, PppModel& ppp_model);
+        ~CycleSlipDetector() = default;
+        void detectAndReset(std::vector<PppObservation>& observations, StateManager& state_manager);
     };
 
 } // namespace GnssProcessor
 
-//#endif // CYCLESLIPDETECTOR_HPP
+#endif // CYCLE_SLIP_DETECTOR_HPP

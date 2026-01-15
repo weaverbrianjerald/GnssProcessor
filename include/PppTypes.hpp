@@ -5,6 +5,8 @@
 #include <string>
 #include <Eigen/Dense>
 #include "TimeUtils.hpp"
+#include "Constants.hpp"
+#include "LogManager.hpp"
 
 namespace GnssProcessor {
 
@@ -19,94 +21,109 @@ namespace GnssProcessor {
     };
 
     struct PppObservation {
-        std::string satellite;                     // Satellite ID (e.g., "G01")
-        System system;                             // GNSS system (e.g., GPS)
-        GnssTime time;                            // Observation time
-        std::map<std::string, double> observed;    // Observed measurements (e.g., C1W, L1W, etc.)
-        std::map<std::string, double> modeled;     // Modeled measurements
-        std::map<std::string, double> residuals;   // Residuals (observed - modeled)
-        std::map<std::string, double> variances;   // Measurement variances
-        std::map<std::string, int> lli_flags;      // Loss of lock indicator flags
-        Eigen::Vector3d sat_pos;                  // Satellite position in ECEF (meters)
-        double elevation;                         // Elevation angle to satellite (degrees)
-        double azimuth;                           // Azimuth angle to satellite (degrees)
-        Eigen::Vector3d los;                      // Line-of-sight unit vector to satellite
-        double range;                             // Geometric range to satellite (meters)
+        std::string satellite;
+        System system;
+        GnssTime time;
+        std::map<std::string, double> observed;
+        std::map<std::string, double> modeled;
+        std::map<std::string, double> residuals;
+        std::map<std::string, double> variances;
+        std::map<std::string, int> lli_flags;
+        Eigen::Vector3d sat_pos;
+        double elevation;
+        double azimuth;
+        Eigen::Vector3d los;
+        double range;
+        double mf_w;
+        double mf_d;
     };
 
     struct PppState {
-        Eigen::Vector3d position;                  // Receiver position in ECEF (meters)
-        double clock_bias;                        // Receiver clock bias (seconds)
-        double troposphere_zenith_delay;          // Tropospheric zenith delay (meters)
-        double ionosphere_zenith_delay;           // Ionospheric zenith delay (meters, PPP-RTK only)
-        Eigen::MatrixXd covariance;               // State covariance matrix
-        std::map<std::string, double> ambiguities; // Phase ambiguities (meters)
-        GnssTime epoch_time;                      // Current epoch time
+        Eigen::Vector3d position;
+        double clock_bias;
+        double troposphere_zwd;
+        double ionosphere_zenith_delay;
+        Eigen::MatrixXd covariance;
+        std::map<std::string, double> ambiguities;
+        GnssTime epoch_time;
     };
 
     struct EpochMeasurement {
-        Eigen::VectorXd innovations;                      // Measurement innovations (z - h(x)), in meters
-        Eigen::MatrixXd H;                                // Measurement Jacobian (partial derivatives)
-        Eigen::VectorXd R_v;                              // Measurement covariance diagonal (m^2)
-        GnssTime time;                                    // Epoch time
-        std::vector<PppObservation> observations;         // Observations for cycle-slip detection
-        std::vector<std::string> satellite_ids;           // Satellite IDs (e.g., "G01") for each measurement
-        std::vector<std::string> signal_types;            // Signal types (e.g., "L1C", "L1C_L2W_L5Q") for each measurement
-        Eigen::VectorXd residuals;                        // Post-fit measurement residuals, in meters
-        Eigen::MatrixXd residuals_covariance;             // Post-fit measurement residuals covariance, in abs meters^2
-        Eigen::VectorXd residuals_standardized;           // Post-fit measurement residuals (standardized), in standard deviations
-        size_t bad_residual_count;                        // Post-fit measurement residual outlier count
+        Eigen::VectorXd innovations;
+        Eigen::MatrixXd H;
+        Eigen::VectorXd R_v;
+        GnssTime time;
+        std::vector<PppObservation> observations;
+        std::vector<std::string> satellite_ids;
+        std::vector<std::string> signal_types;
+        Eigen::VectorXd residuals;
+        Eigen::MatrixXd residuals_covariance;
+        Eigen::VectorXd residuals_standardized;
+        size_t bad_residual_count;
     };
 
     struct OrbitData {
-        std::string satellite;         // Satellite identifier (e.g., G01)
-        GnssTime time;                // Epoch time
-        Eigen::Vector3d position;     // Position in ECEF (meters)
-        Eigen::Vector3d velocity;     // Velocity in ECEF (m/s)
-        bool position_valid{ false }; // Flag indicating valid position
-        bool velocity_valid{ false }; // Flag indicating valid velocity
+        std::string satellite;
+        GnssTime time;
+        Eigen::Vector3d position;
+        Eigen::Vector3d velocity;
+        bool position_valid{ false };
+        bool velocity_valid{ false };
     };
 
     struct ClockData {
-        std::string satellite;        // Satellite identifier (e.g., G01)
-        GnssTime time;                // Epoch time
-        GnssTime start_time;          // Validity start time
-        GnssTime end_time;            // Validity end time
-        double clock_bias{ 0.0 };     // Clock correction (seconds)
+        std::string satellite;
+        GnssTime time;
+        GnssTime start_time;
+        GnssTime end_time;
+        double clock_bias{ 0.0 };
     };
 
     struct AntennaData {
-        std::string type;             // Antenna type (e.g., satellite or receiver model)
-        std::map<std::string, Eigen::Vector3d> pco; // Phase Center Offset (mm) per frequency
-        std::map<std::string, std::vector<std::vector<double>>> pcv; // Phase Center Variation (mm) per frequency
-        double dazi{ 0.0 };            // Azimuth increment (degrees)
-        double dzen{ 0.0 };            // Zenith increment (degrees)
+        std::string type;
+        std::map<std::string, Eigen::Vector3d> pco;
+        std::map<std::string, std::vector<std::vector<double>>> pcv;
+        double dazi{ 0.0 };
+        double dzen{ 0.0 };
+        GnssTime valid_from;
+        GnssTime valid_until;
     };
 
     struct BiasData {
-        std::string satellite;        // Satellite identifier (e.g., G01)
-        std::string signal;           // Signal type (e.g., C1C)
-        double bias{ 0.0 };           // Bias correction (seconds)
-        double std_dev;               // Standard deviation (seconds)
-        GnssTime start_time;          // Validity start time
-        GnssTime end_time;            // Validity end time
+        std::string satellite;
+        std::string signal;
+        double bias{ 0.0 };
+        double std_dev;
+        GnssTime start_time;
+        GnssTime end_time;
     };
 
     struct ErpData {
-        GnssTime time;                   // Observation time
-        double xp{ 0.0 };                  // Pole coordinate x (arcsec)
-        double yp{ 0.0 };                  // Pole coordinate y (arcsec)
-        double ut1_utc{ 0.0 };             // UT1-UTC difference (seconds)
+        GnssTime time;
+        double xp{ 0.0 };
+        double yp{ 0.0 };
+        double ut1_utc{ 0.0 };
     };
 
     struct OceanTideData {
-        GnssTime time;                // Epoch time
-        Eigen::Vector3d displacement; // Displacement in ECEF (meters)
+        GnssTime time;
+        Eigen::Vector3d displacement;
     };
 
     struct SunEphemeris {
         GnssTime time;
-        Eigen::Vector3d position; // Sun position in ECEF (meters)
+        Eigen::Vector3d position;
+    };
+
+    class PppUtils{
+    public:
+        explicit PppUtils(LogManager& log_mgr);
+        double getFrequency(const std::string& freq_type, System system, const std::string& satellite) const;
+        double getWavelength(System system, const std::string& freq_type) const;
+        double getReferenceFrequency(const std::string& freq_type, System system) const;
+        static std::string getSystemString(System system);
+    private:
+        LogManager& log_manager_;
     };
 
 }

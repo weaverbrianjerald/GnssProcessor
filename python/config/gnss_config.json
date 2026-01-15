@@ -5,12 +5,13 @@
   "processing_mode": "PPP",
   "uncombined_enabled": false,
   "signal_mode": "dual",
-  "observation_path": "C:/GnssProcessorSupport/rinex/30S/10_minutes/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+  "observation_path": "C:/GnssProcessorSupport/rinex/30S/1_hour/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
   "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
   "sinex_file_path": "",
   "rtcm_file_path": "",
   "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt",
   "elevation_mask_deg": 10.0,
+  "leap_seconds": 37.0,
   "receiver_antenna_orientation": {
     "azimuth_deg": 0.0,
     "elevation_deg": 90.0
@@ -28,6 +29,8 @@
     "ionosphere": 5.0,
     "ambiguity": 500.0
   },
+  "zhd_pressure_mbar": 1013.25,
+  "zhd_temp_kelvin": 288.15,
   "signal_priorities": {
     "GPS": [
       "C1W",
