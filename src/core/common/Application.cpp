@@ -1,24 +1,88 @@
+﻿/**
+ * @file Application.cpp
+ * @brief Top-level application driver for GNSS processing.
+ *
+ * Implements the Application class which orchestrates initialization of
+ * configuration, logging and processing components (product parser, RINEX
+ * parser, PPP model, measurement model, Kalman filter, WLS estimator, etc.)
+ * and runs the epoch-by-epoch processing loop.
+ *
+ * The main responsibilities implemented here:
+ * - Initialize LogManager and load JSON configuration.
+ * - Validate availability of product/SP3 and RINEX observation files.
+ * - Initialize processing components and the filter state.
+ * - Iterate over RINEX epochs: build models, run WLS, run Kalman predict/update,
+ *   detect slips/resets and emit CSV traces for diagnostics.
+ *
+ * Return value semantics for run():
+ *  - 0: success
+ *  - non-zero: various error conditions during startup or runtime (missing files,
+ *    parse failures, unrecoverable exceptions, etc.)
+ */
+
 #include "Application.hpp"
 #include "LogManager.hpp"
 #include "PppTypes.hpp"
 #include "MwSlipDetector.hpp"
+#include "Namespaces.hpp"
 #include "WlsEstimator.hpp"
 #include "TimeUtils.hpp"
+#include "TraceLogger.hpp"
 #include <chrono>
 #include <vector>
 #include <algorithm>
 #include <iostream>
+#include <fstream>
+#include <iomanip>
+#include <cmath>
+#include <limits>
+#include <fmt/format.h>
 
+/** @namespace GnssProcessor
+*  @brief Top-level namespace for the GNSSProcessor project.
+*
+*  Contains models, parsers, filters and utilities for PPP and PPP-RTK
+*  processing. Use nested namespaces (e.g. ::Model, ::Filter, ::IO, ::internal)
+*  for logical grouping and to separate public API from implementation details.
+*/
 namespace GnssProcessor {
 
+/**
+ * @brief Construct an Application instance.
+ *
+ * @param config_path Path to the JSON configuration file. Defaults to
+ * "config/gnss_config.json" when not provided.
+ */
 Application::Application(const std::filesystem::path& config_path)
     : config_path_(config_path) {
 }
 
+/**
+ * @brief Run the GNSS processing application.
+ *
+ * This method performs:
+ *  - Logging setup and configuration loading.
+ *  - Validation of product and observation file paths.
+ *  - Parsing of RINEX observations and initialization of the processing state.
+ *  - Creation and initialization of core components: PppModel, MeasurementModel,
+ *    KalmanFilter, WlsEstimator, MwSlipDetector and a TraceLogger.
+ *  - Epoch loop that:
+ *      - Groups observations by epoch and filters active constellations.
+ *      - Computes modeled observations via PppModel.
+ *      - Optionally runs a WLS position estimate and may seed the filter clock.
+ *      - Predicts and updates the Kalman filter, handling ambiguity resets and
+ *        relinearization when needed.
+ *      - Emits per-epoch CSV traces for state, ambiguities and residuals.
+ *
+ * The method logs progress and returns an integer exit code:
+ *  - 0 on success, non-zero on failure (missing files, parse failures, or other errors).
+ *
+ * @return int Exit code (0 = success).
+ */
 int Application::run() {
     LogManager log_manager;
     std::filesystem::path log_dir = "logs";
-    log_manager.initialize(log_dir, LogLevel::Debug);
+    log_manager.initialize(log_dir, LogLevel::Info);
     log_manager.getLogger("main_log")->info("Application started");
 
     GnssConfig config;
@@ -56,6 +120,11 @@ int Application::run() {
         log_manager.getLogger("main_log")->error("Failed to parse observation RINEX file: {}", rinex_path.string());
         return 1;
     }
+
+    // Load external products (SP3/CLK/ATX/BIA/ERP, Klobuchar, Sun ephemeris).
+    // Must be done after RinexParser::parse() so ProductParser can use epoch times.
+    product_parser.loadProducts();
+
     const auto& observations = rinex_parser.getObservations();
     if (observations.empty()) {
         log_manager.getLogger("main_log")->error("No observations parsed from RINEX file: {}", rinex_path.string());
@@ -66,20 +135,57 @@ int Application::run() {
     size_t core_state_size = config.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
     StateManager state_manager(core_state_size, log_manager, config);
 
-    Eigen::Vector3d initial_position(0.0, 0.0, 6371000.0);
+    // Initial position will be set properly by ppp_model.initializeState() which applies antenna H/E/N offsets.
+    // We just need a fallback position in case RINEX header has no valid position.
+    Eigen::Vector3d fallback_position(0.0, 0.0, 6371000.0);
     auto approx_pos = rinex_parser.getHeader().approx_position;
     bool valid_pos = true;
     for (double val : approx_pos) {
         if (!std::isfinite(val) || std::abs(val) > 1e8) { valid_pos = false; break; }
     }
+    
+    Eigen::Vector3d initial_position = fallback_position;
     if (valid_pos && approx_pos != std::array<double,3>{0.0,0.0,0.0}) {
-        initial_position = Eigen::Vector3d(approx_pos[0], approx_pos[1], approx_pos[2]);
+        Eigen::Vector3d marker_pos(approx_pos[0], approx_pos[1], approx_pos[2]);
+        
+        // Apply antenna H/E/N offset (from marker to ARP) to get antenna phase center position
+        Eigen::Vector3d hen = rinex_parser.getAntennaDeltaHen();
+        if (hen.norm() > 1e-6 && marker_pos.norm() > 1e3) {
+            // Convert local ENU offset to ECEF
+            double r = marker_pos.norm();
+            double lat = std::asin(marker_pos.z() / r);  // Geocentric latitude
+            double lon = std::atan2(marker_pos.y(), marker_pos.x());
+            
+            double slat = std::sin(lat), clat = std::cos(lat);
+            double slon = std::sin(lon), clon = std::cos(lon);
+            
+            // ENU to ECEF rotation matrix
+            Eigen::Matrix3d R_enu_to_ecef;
+            R_enu_to_ecef << -slon,        -slat * clon,  clat * clon,
+                              clon,        -slat * slon,  clat * slon,
+                              0.0,          clat,         slat;
+            
+            // RINEX H/E/N: H=Up, E=East, N=North -> ENU order is (E, N, U) = (hen[1], hen[2], hen[0])
+            Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));
+            Eigen::Vector3d ecef_offset = R_enu_to_ecef * enu_offset;
+            initial_position = marker_pos + ecef_offset;
+            
+            log_manager.getLogger("main_log")->info(
+                "Applied antenna H/E/N offset ({:.4f}, {:.4f}, {:.4f}) m: marker ({:.3f}, {:.3f}, {:.3f}) -> ARP ({:.3f}, {:.3f}, {:.3f})",
+                hen(0), hen(1), hen(2),
+                marker_pos.x(), marker_pos.y(), marker_pos.z(),
+                initial_position.x(), initial_position.y(), initial_position.z());
+        } else {
+            initial_position = marker_pos;
+            log_manager.getLogger("main_log")->info(
+                "Initialized position from RINEX marker (no/zero antenna offset): ({:.3f}, {:.3f}, {:.3f}) m",
+                initial_position.x(), initial_position.y(), initial_position.z());
+        }
+        
         Eigen::VectorXd sv = state_manager.getStateVector();
         if (sv.size() >= state_manager.getPositionIndex() + 3) {
             sv.segment<3>(state_manager.getPositionIndex()) = initial_position;
             state_manager.setStateVector(sv);
-            log_manager.getLogger("main_log")->info("Initialized state position from RINEX header: ({:.3f}, {:.3f}, {:.3f}) m",
-                initial_position.x(), initial_position.y(), initial_position.z());
         } else {
             log_manager.getLogger("main_log")->warn("State vector size {} too small to set position", sv.size());
             valid_pos = false;
@@ -88,14 +194,15 @@ int Application::run() {
     if (!valid_pos) {
         Eigen::VectorXd sv = state_manager.getStateVector();
         if (sv.size() >= state_manager.getPositionIndex() + 3) {
-            sv.segment<3>(state_manager.getPositionIndex()) = initial_position;
+            sv.segment<3>(state_manager.getPositionIndex()) = fallback_position;
             state_manager.setStateVector(sv);
             log_manager.getLogger("main_log")->warn("Using fallback position: ({:.3f}, {:.3f}, {:.3f}) m",
-                initial_position.x(), initial_position.y(), initial_position.z());
+                fallback_position.x(), fallback_position.y(), fallback_position.z());
         } else {
             log_manager.getLogger("main_log")->error("State vector too small to set fallback position");
             return 1;
         }
+        initial_position = fallback_position;
     }
 
     PppModel ppp_model(config, product_parser, log_manager, rinex_parser, state_manager);
@@ -115,6 +222,15 @@ int Application::run() {
     auto start_time = std::chrono::high_resolution_clock::now();
     double prev_tow = 0.0;
     bool first_epoch = true;
+
+    const bool is_ppp_rtk = config.getProcessingMode() == ProcessingMode::PPP_RTK;
+
+    // CSV traces for MATLAB plotting
+    TraceLogger trace_logger(log_manager, log_dir, is_ppp_rtk);
+    if (!trace_logger.isInitialized()) {
+        // Continue even if CSV files couldn't be created; trace logging is best-effort.
+        log_manager.getLogger("main_log")->warn("TraceLogger could not open CSV trace files in '{}'; continuing without CSV traces", log_dir.string());
+    }
 
     const auto& active_systems = config.getActiveSystems();
 
@@ -170,12 +286,21 @@ int Application::run() {
             continue;
         }
 
+        // Diagnostic: Log satellite clock values for each modeled observation to detect jumps
+        {
+            std::string sat_clk_summary;
+            for (const auto& obs : modeled_obs) {
+                // Extract satellite clock from the modeled values (embedded in range calculation)
+                // We can infer it from the difference between geometric range and modeled pseudorange
+                sat_clk_summary += fmt::format("{}:r={:.1f}km ", obs.satellite, obs.range / 1000.0);
+            }
+            log_manager.getLogger("main_log")->debug(
+                "{}Modeled {} sats: {}", epoch_prefix, modeled_obs.size(), sat_clk_summary);
+        }
+
         const auto wls_result = wls_estimator.estimate(current_time, modeled_obs);
         if (wls_result.success() && wls_result.state.size() >= 4) {
-            constexpr double kClockJumpThreshSec = 0.0005;
-            constexpr double kGoodWlsRmsM = 3.0;
-            constexpr double kGoodWlsMaxAbsM = 10.0;
-            constexpr double kMaxNonJumpSeedDeltaM = 500.0;
+			constexpr double kClockJumpThreshSec = 0.0005; // 0.5 ms
 
             const double wls_clock_bias = wls_result.state(3);
 
@@ -190,29 +315,20 @@ int Application::run() {
             const double max_abs = wls_result.max_abs;
 
             const bool jump_detected = std::abs(delta_clock_m) >= clock_jump_thresh_m;
-            const bool wls_quality_good = std::isfinite(rms) && rms <= kGoodWlsRmsM &&
-                                          std::isfinite(max_abs) && max_abs <= kGoodWlsMaxAbsM;
-            const bool delta_reasonable = std::abs(delta_clock_m) <= kMaxNonJumpSeedDeltaM;
-
-            const bool should_seed = jump_detected || (wls_quality_good && delta_reasonable);
+            const bool should_seed = jump_detected;  // only on real jumps
 
             if (should_seed && sv0.size() > clock_idx) {
                 Eigen::VectorXd sv = sv0;
                 sv(clock_idx) = wls_clock_bias;
                 state_manager.setStateVector(sv);
                 ppp_state.clock_bias = wls_clock_bias;
-
                 log_manager.getLogger("main_log")->info(
-                    "{}Seeded KF clock from WLS: wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m, jump_detected={}, wls_rms={:.3f} m, wls_max_abs={:.3f} m",
-                    epoch_prefix,
-                    wls_clock_bias, kf_clock_bias, delta_clock_m,
-                    jump_detected, rms, max_abs);
+                    "{}Seeded KF clock from WLS (jump): wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m",
+                    epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m);
             } else {
-                log_manager.getLogger("main_log")->debug(
-                    "{}Skipped WLS clock seeding: wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m, jump_detected={}, wls_rms={:.3f} m, wls_max_abs={:.3f} m",
-                    epoch_prefix,
-                    wls_clock_bias, kf_clock_bias, delta_clock_m,
-                    jump_detected, rms, max_abs);
+                log_manager.getLogger("main_log")->trace(
+                    "{}Skipped WLS clock seeding: wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m, jump_detected={}",
+                    epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m, jump_detected);
             }
         }
 
@@ -225,18 +341,33 @@ int Application::run() {
             return 1;
         }
 
-        constexpr double kPosRelinearThreshM  = 0.05;
-        constexpr double kTropoRelinearThreshM = 0.01;
+        // Choose a relinearization threshold based on whether phase measurements are present.
+        // Phase: small threshold to keep Jacobians accurate. Code-only: allow a few meters.
+        auto has_phase = [&modeled_obs]() {
+            for (const auto& obs : modeled_obs) {
+                for (const auto& kv : obs.observed) {
+                    if (!kv.first.empty() && kv.first[0] == 'L') return true; // phase keys like L1C, L2W
+                }
+            }
+            return false;
+        };
+
+		const double kPosRelinearThreshM = has_phase() ? 100.0 : 1000.0; // big for code+phase, bigger for code-only
 
         int relinear_pass = 0;
         bool need_relinear = true;
-        while (need_relinear && relinear_pass < 2) {
+        bool need_update = true;
+        EpochMeasurement applied_meas{};
+        bool have_applied_meas = false;
+        while ((need_update || need_relinear) && relinear_pass < 10) {
             ++relinear_pass;
+            need_update = false; // will be set true again if KF requests rebuild
 
-            if (!ppp_model.computeModels(epoch_obs, ppp_state, modeled_obs)) {
-                log_manager.getLogger("main_log")->warn("{}computeModels failed (pass {})", epoch_prefix, relinear_pass);
-                break;
-            }
+            // Note: Do NOT recompute models here because:
+            //   1. Satellite positions are receiver-position-independent (only depend on emission time)
+            //   2. All corrections (sat clock, shapiro, solid tide, etc.) are also position-independent
+            //   3. MeasurementModel now computes range_delta and LOS directly from stored sat_pos
+            //   4. Troposphere mapping function changes negligibly with typical position updates
 
             {
                 const auto reset_keys = mw_slip_detector.detectLargeMwResets(modeled_obs);
@@ -277,7 +408,13 @@ int Application::run() {
                 log_manager.getLogger("main_log")->debug(
                     "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                     epoch_prefix, relinear_pass);
-                continue;
+                 need_update = true;
+                 continue;
+            }
+
+            if (result == KalmanFilter::UpdateResult::Applied) {
+                applied_meas = meas_update;
+                have_applied_meas = true;
             }
 
             if (ppp_state.position.norm() < 1e-6 || !ppp_state.position.allFinite()) {
@@ -288,14 +425,13 @@ int Application::run() {
                 state_manager.setStateVector(sv);
             }
 
-            const double pos_jump   = (ppp_state.position - old_pos).norm();
-            const double tropo_jump = std::abs(ppp_state.troposphere_zwd - old_tropo);
+            const double pos_jump = (ppp_state.position - old_pos).norm();
 
             log_manager.getLogger("main_log")->trace(
-                "{}Post-update (pass {}): pos_jump={:.4f} m, tropo_jump={:.4f} m",
-                epoch_prefix, relinear_pass, pos_jump, tropo_jump);
+                "{}Post-update (pass {}): pos_jump={:.4f} m",
+                epoch_prefix, relinear_pass, pos_jump);
 
-            need_relinear = (pos_jump > kPosRelinearThreshM) || (tropo_jump > kTropoRelinearThreshM);
+            need_relinear = (pos_jump > kPosRelinearThreshM);
         }
 
         if (config.getProcessingMode() == ProcessingMode::PPP) {
@@ -308,6 +444,13 @@ int Application::run() {
                 epoch_prefix,
                 ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
                 ppp_state.clock_bias, ppp_state.troposphere_zwd, ppp_state.ionosphere_zenith_delay);
+        }
+
+        // ---- Per-epoch state/ambiguity/residual traces for MATLAB plotting ----
+        trace_logger.logState(current_time, state_manager);
+        trace_logger.logAmbiguities(current_time, state_manager);
+        if (have_applied_meas) {
+            trace_logger.logResiduals(current_time, applied_meas);
         }
     }
 

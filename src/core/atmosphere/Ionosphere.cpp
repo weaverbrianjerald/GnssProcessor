@@ -6,6 +6,26 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @file Ionosphere.cpp
+     * @brief Ionospheric helper implementation: Klobuchar coefficient loading and ionospheric/tropospheric estimators.
+     *
+     * Implements loading of Klobuchar coefficients from RINEX/BRDC products and
+     * provides Klobuchar single-frequency delay computation and a simple
+     * initial zenith ionospheric delay estimate used for PPP initialization.
+     */
+
+    /**
+     * @brief Construct an Ionosphere helper.
+     *
+     * Initializes geometry/model helpers and attempts to load Klobuchar
+     * coefficients via configured product paths.
+     *
+     * @param config Read-only reference to configuration.
+     * @param log_mgr Reference to LogManager for logging.
+     * @param parser ProductParser used to locate/parse auxiliary products.
+     * @param rinex RinexParser reference used by geometry/parser helpers.
+     */
     Ionosphere::Ionosphere(const GnssConfig& config, LogManager& log_mgr, ProductParser& parser, const RinexParser& rinex)
         : config_(config), log_manager_(log_mgr), model_geometry_(config, parser, rinex, log_mgr), klobuchar_coeffs_{} {
         loadKlobucharCoeffs();
@@ -13,6 +33,15 @@ namespace GnssProcessor {
             klobuchar_coeffs_.size(), config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
 
+    /**
+     * @brief Load Klobuchar coefficients from configured RINEX/BRDC product.
+     *
+     * Searches for the RNX product configured in `config_`, opens the file,
+     * scans the RINEX header for Klobuchar alpha (GPSA/GAL) and beta (GPSB)
+     * lines and stores eight coefficients (alpha[4], beta[4]) in
+     * `klobuchar_coeffs_`. If parsing fails or the file doesn't exist, the
+     * coefficient vector is left empty and warnings are logged.
+     */
     void Ionosphere::loadKlobucharCoeffs() {
         klobuchar_coeffs_.clear();
 
@@ -95,6 +124,19 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Compute Klobuchar ionospheric delay for a single observation.
+     *
+     * Implements the standard Klobuchar model to estimate ionospheric delay
+     * for a single-frequency observation. The implementation expects
+     * `klobuchar_coeffs_` to contain 8 values (alpha[4], beta[4]).
+     *
+     * @param time GNSS epoch (GPS week/tow).
+     * @param rx_pos Receiver ECEF position in meters.
+     * @param sat_pos Satellite ECEF position in meters.
+     * @param frequency Signal frequency in Hz (used for frequency scaling).
+     * @return Estimated ionospheric delay in meters.
+     */
     double Ionosphere::computeKlobucharDelay(const GnssTime& time,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
@@ -106,7 +148,7 @@ namespace GnssProcessor {
         double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
         double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
-        Topocentric topo = model_geometry_.computeTopocentric(rx_pos, sat_pos);
+        GnssProcessor::Model::Topocentric topo = model_geometry_.computeTopocentric(rx_pos, sat_pos);
         double el = topo.elevation_deg;
         double az = topo.azimuth_deg;
         if (az < 0.0) az += 360.0;
@@ -141,6 +183,17 @@ namespace GnssProcessor {
         return delay * Constants::SPEED_OF_LIGHT;
     }
 
+    /**
+     * @brief Compute a coarse initial ionospheric zenith delay for PPP initialization.
+     *
+     * When Klobuchar coefficients are available this routine applies the
+     * Klobuchar model to produce a zenith delay (meters). If coefficients
+     * are missing a conservative default (5 meters) is returned.
+     *
+     * @param time GNSS epoch (GPS week/tow).
+     * @param rx_pos Receiver ECEF position in meters.
+     * @return Estimated zenith ionospheric delay in meters.
+     */
     double Ionosphere::computeInitialIonoDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos) const {
         if (klobuchar_coeffs_.size() != 8) {
             return 5.0; // Default fallback

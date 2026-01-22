@@ -5,10 +5,149 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <fmt/format.h>
 
 namespace GnssProcessor {
 
-    // Minimal constructor
+    // Anonymous namespace for file-local utilities
+    namespace {
+
+        /**
+         * @brief Convert a GNSS time (GPS week + time-of-week) to continuous seconds.
+         *
+         * Computes seconds since the GPS epoch by combining the integer GPS week and
+         * the time-of-week (TOW):
+         *   continuous_seconds = week * 604800.0 + tow
+         *
+         * @param t GNSS time containing .week (GPS week number) and .tow (seconds into week).
+         * @return Continuous GPS seconds (double, in seconds since GPS epoch).
+         *
+         * @note This routine assumes `t.week` contains the full GPS week count (not
+         *       a wrapped 10-bit week number). It does not perform leap-second
+         *       adjustments — it only provides the simple week+TOW linear conversion.
+         */
+        inline double continuousGpsSeconds(const GnssTime& t) {
+            return static_cast<double>(t.week) * 604800.0 + t.tow;
+        }
+
+        /**
+         * @brief Compute barycentric Lagrange interpolation weights for a set of nodes.
+         *
+         * Produces barycentric weights w_j proportional to
+         *   1 / prod_{k != j} (x_j - x_k)
+         * which are used by the barycentric Lagrange formula to evaluate the
+         * interpolation polynomial stably:
+         *   p(x_q) = (sum_j (w_j/(x_q - x_j))*y_j) / (sum_j (w_j/(x_q - x_j)))
+         *
+         * This implementation computes the product in log-space to reduce overflow
+         * / underflow when the product of differences is very large or very small.
+         * If two abscissae are numerically identical (|x_j - x_k| < 1e-9), the
+         * corresponding weight is left as zero and the caller should avoid duplicate
+         * nodes. For a single node the routine returns {1.0}.
+         *
+         * @param x Vector of node abscissae (x_0 .. x_{n-1}). Values should be distinct.
+         * @return Vector of barycentric weights of same length as `x`. Returns empty
+         *         vector if `x` is empty.
+         *
+         * @note Complexity: O(n^2). The function attempts to preserve sign information
+         *       while computing magnitude in log-space and clamps extremely large/small
+         *       results to avoid floating-point overflow/NaN (implementation thresholds).
+         * @thread_safety Safe to call concurrently with independent inputs (no static data).
+         */
+        std::vector<double> barycentricWeights(const std::vector<double>& x) {
+            size_t n = x.size();
+            if (n == 0) return {};
+            if (n == 1) return { 1.0 };
+
+            std::vector<double> w(n, 0.0);
+
+            for (size_t j = 0; j < n; ++j) {
+                double log_abs_prod = 0.0;
+                int sign = 1;
+                bool valid = true;
+
+                for (size_t k = 0; k < n; ++k) {
+                    if (k != j) {
+                        double diff = x[j] - x[k];
+                        if (std::abs(diff) < 1e-9) {
+                            valid = false;
+                            break;
+                        }
+                        log_abs_prod += std::log(std::abs(diff));
+                        if (diff < 0) sign = -sign;
+                    }
+                }
+
+                if (valid) {
+                    if (log_abs_prod > 700.0) {
+                        w[j] = 0.0;
+                    } else if (log_abs_prod < -700.0) {
+                        w[j] = sign * 1e300;
+                    } else {
+                        w[j] = sign * std::exp(-log_abs_prod);
+                    }
+                }
+            }
+            return w;
+        }
+
+        /**
+         * @brief Evaluate the barycentric Lagrange interpolant at a query point.
+         *
+         * Uses precomputed barycentric weights to evaluate the interpolation polynomial
+         * in a numerically stable O(n) fashion:
+         *   p(x_q) = (sum_j (w_j/(x_q - x_j)) * y_j) / (sum_j (w_j/(x_q - x_j)))
+         *
+         * If the query abscissa `xq` coincides (within tolerance) with a node `x[j]`,
+         * the corresponding `y[j]` is returned directly to avoid division by zero.
+         *
+         * @param x  Vector of node abscissae (x_0 .. x_{n-1}). Must have same length as `w` and `y`.
+         * @param w  Vector of barycentric weights computed for `x` (see barycentricWeights()).
+         * @param y  Vector of node ordinates (y_0 .. y_{n-1}).
+         * @param xq Query abscissa where the polynomial is evaluated.
+         * @return   Interpolated value p(xq). If the denominator is (nearly) zero the
+         *           function returns 0.0 as a safe fallback.
+         *
+         * @note The function treats an exact node match when |xq - x[j]| < 1e-12 and
+         *       returns y[j] to preserve node values exactly.
+         * @note Complexity: O(n). The caller is responsible for ensuring `x`, `w`, and
+         *       `y` are consistent (same length and corresponding entries).
+         * @thread_safety Safe to call concurrently with independent inputs (no static data).
+         */
+        double barycentricEval(const std::vector<double>& x,
+            const std::vector<double>& w,
+            const std::vector<double>& y,
+            double xq) {
+            double num = 0.0;
+            double den = 0.0;
+            for (size_t j = 0; j < x.size(); ++j) {
+                double diff = xq - x[j];
+                if (std::abs(diff) < 1e-12) {
+                    return y[j]; // Exact node
+                }
+                double term = w[j] / diff;
+                num += term * y[j];
+                den += term;
+            }
+            return (den == 0.0) ? 0.0 : (num / den);
+        }
+    }
+
+    /**
+     * @brief Minimal constructor — create GnssCorrections with only logging.
+     *
+     * Constructs a GnssCorrections object that holds a reference to the provided
+     * LogManager for diagnostic output. No product data (clocks, ERPs, biases,
+     * orbits) are populated by this constructor; internal containers are empty
+     * and optional external pointers (config_, rinex_parser_) are set to nullptr.
+     *
+     * Use this constructor when product files are not available at creation time.
+     * Callers may populate time-dependent product containers later via
+     * setClocksAndErps(...) or use the full constructor when product context is
+     * available.
+     *
+     * @param log_mgr Reference to the LogManager used for logging and diagnostics.
+     */
     GnssCorrections::GnssCorrections(LogManager& log_mgr)
         : log_manager_(log_mgr),
         clocks_(), erps_(), biases_(), orbits_(),
@@ -16,7 +155,22 @@ namespace GnssProcessor {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (minimal)");
     }
 
-    // Constructor with clocks and ERPs
+    /**
+     * @brief Construct GnssCorrections with preloaded satellite clocks and ERPs.
+     *
+     * Initializes the GnssCorrections object with provided satellite clock samples
+     * and Earth rotation parameter (ERP) entries. The supplied vectors are copied
+     * into the object's internal containers. Optional data (biases, orbits) remain
+     * empty and external pointers (config_, rinex_parser_) are set to nullptr.
+     *
+     * Typical use: call this constructor from product/geometry parsers that already
+     * have parsed CLK and ERP products and want to immediately use correction
+     * routines that depend on those products.
+     *
+     * @param log_mgr Reference to the LogManager used for logging and diagnostics.
+     * @param clocks Vector of parsed satellite clock samples (@ref ClockData). May be empty.
+     * @param erps Vector of parsed Earth rotation parameter samples (@ref ErpData). May be empty.
+     */
     GnssCorrections::GnssCorrections(LogManager& log_mgr,
         const std::vector<ClockData>& clocks,
         const std::vector<ErpData>& erps)
@@ -27,7 +181,30 @@ namespace GnssProcessor {
             clocks_.size(), erps_.size());
     }
 
-    // Full constructor with optional config, biases and rinex parser
+    /**
+     * @brief Full constructor with configuration, product data and RINEX access.
+     *
+     * Constructs a fully-initialized GnssCorrections instance by copying time-dependent
+     * product containers (clocks, erps, biases) into internal storage and retaining
+     * non-owning pointers to external helpers for configuration and RINEX access.
+     *
+     * The constructor:
+     * - Copies `clocks`, `erps` and `biases` into the object's internal vectors.
+     * - Stores a pointer to `config` (non-owning) in `config_` for runtime options.
+     * - Stores a pointer to `rinex` (non-owning) in `rinex_parser_` to access
+     *   receiver/antenna metadata when needed.
+     *
+     * Important: `config` and `rinex` are stored as non-owning pointers. The caller
+     * must ensure these referenced objects remain valid for the lifetime of this
+     * GnssCorrections instance.
+     *
+     * @param log_mgr Reference to the LogManager used for logging and diagnostics.
+     * @param config Reference to processing configuration (stored as non-owning pointer).
+     * @param clocks Vector of parsed satellite clock samples (copied into the object).
+     * @param erps Vector of parsed Earth rotation parameters (copied into the object).
+     * @param biases Vector of parsed bias entries (copied into the object).
+     * @param rinex Reference to a RinexParser providing receiver/antenna metadata (stored as non-owning pointer).
+     */
     GnssCorrections::GnssCorrections(LogManager& log_mgr,
         const GnssConfig& config,
         const std::vector<ClockData>& clocks,
@@ -41,6 +218,25 @@ namespace GnssProcessor {
             clocks_.size(), erps_.size(), biases_.size());
     }
 
+    /**
+     * @brief Get satellite clock correction in seconds using available clock products.
+     *
+     * Validates inputs, attempts to interpolate a clock value from stored CLK samples
+     * and applies basic sanity checks before returning the result. This routine
+     * provides a best-effort correction for the requested satellite/epoch and will
+     * return 0.0 if inputs are invalid, no clock data is available, or the
+     * interpolated value is non-finite or outside expected limits.
+     *
+     * @param satellite Satellite identifier string (e.g., "G01", "E11").
+     * @param time Epoch for which the clock correction is requested (GnssTime: week + tow).
+     * @return Clock correction in seconds. Returns 0.0 on invalid input, missing data,
+     *         interpolation failure or excessively large/non-finite clock values.
+     *
+     * @note The function delegates interpolation to interpolateClock(...) and logs
+     *       diagnostic messages. Typical acceptable clock magnitudes are constrained
+     *       to about ±1e-3 seconds (1 ms) and tighter checks are applied to the
+     *       interpolated result before it is returned.
+     */
     double GnssCorrections::getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time) const {
         // Validate inputs
         if (satellite.empty()) {
@@ -71,81 +267,246 @@ namespace GnssProcessor {
         return 0.0;
     }
 
+    /**
+     * @brief Interpolate satellite clock bias at a requested epoch using CLK samples.
+     *
+     * Performs a robust clock interpolation for `satellite` at `time` using entries
+     * in `clocks`. The routine:
+     *  - converts GnssTime to continuous seconds (GPS week + TOW),
+     *  - selects candidate clock samples for the satellite within a search window,
+     *  - sorts samples chronologically and selects a centered interpolation window,
+     *  - uses a 4-point barycentric Lagrange interpolant (cubic) when possible,
+     *  - falls back to linear interpolation for 2 points or to nearest-sample behavior
+     *    when only one valid node is available,
+     *  - reduces to a 2-point linear extrapolation when the query lies outside the
+     *    node span to avoid high-order extrapolation oscillation.
+     *
+     * The implementation applies sanity checks (finite values, outlier clock bias
+     * rejection, node spacing tolerance) and returns 0.0 for invalid inputs or when
+     * a safe interpolant cannot be produced.
+     *
+     * @param satellite Satellite identifier string (e.g., "G01", "E11"). Must be non-empty.
+     * @param time      Query epoch (GnssTime: week + tow) at which the clock is requested.
+     * @param clocks    Container of available ClockData samples (may be unsorted).
+     * @return Interpolated clock bias in seconds. Returns 0.0 on invalid input, no valid
+     *         nodes, or when interpolation produces a non-finite / unsafe result.
+     *
+     * @details
+     * - Typical CLK epoch spacing is ~30 s; cubic interpolation is used to reduce
+     *   interpolation error at sub-epoch query times. For extrapolation the routine
+     *   prefers linear behaviour to limit oscillation.
+     * - Duplicate or nearly-equal node times (|Δt| < 1e-9 s) are treated as invalid
+     *   for barycentric weight computation and such nodes are effectively skipped.
+     * - Time conversion uses continuousGpsSeconds() (week*604800 + tow) and no
+     *   leap-second adjustment is performed here.
+     *
+     * @note Complexity: O(m + n log n) where m is number of `clocks` scanned and n
+     *       is the number of candidate nodes retained for interpolation (n ≤ 4 in normal use).
+     * @note The function logs diagnostic information via the LogManager and assumes
+     *       the calling object owns a valid logger.
+     * @see barycentricWeights(), barycentricEval()
+     */
     double GnssCorrections::interpolateClock(const std::string& satellite, const GnssTime& time,
         const std::vector<ClockData>& clocks) const {
-        // Robust piecewise-linear interpolation using the two bracketing epochs.
-        // Avoids polynomial oscillations and is stable near gaps / boundaries.
-        constexpr double MAX_WINDOW = 7200.0; // seconds (reject far-away candidates)
+        // Clock interpolation using 4-point Lagrange polynomial (cubic) for accuracy.
+        //
+        // CLK files typically have 30-second epochs. RINEX observations can be at any rate.
+        // The query time is the signal emission time (reception_time - TOF - sat_clock),
+        // which generally does NOT align with CLK epochs. This method interpolates to the
+        // exact emission time.
+        //
+        // Accuracy note: Satellite clocks have short-term stability of ~1e-12 to 1e-14,
+        // so linear interpolation over 30s introduces ~1e-12 * 30s ≈ 30 ps error.
+        // Cubic interpolation reduces this further.
+        constexpr size_t INTERP_POINTS = 4;       // 4-point cubic Lagrange
+        constexpr double MAX_WINDOW = 7200.0;     // maximum window to search for nodes (2 hours)
+        constexpr double MAX_SPAN_CHECK = 3600.0; // if nodes span > 1hr, reduce to linear
+        constexpr double CLK_INTERVAL = 30.0;     // Typical CLK epoch interval (30 seconds)
 
-        auto fullSeconds = [](const GnssTime& t) {
-            return static_cast<double>(t.week) * 604800.0 + t.tow;
-            };
-
-        if (satellite.empty() || clocks.empty()) {
+        if (satellite.empty()) {
+            log_manager_.getLogger("corrections")->debug("Clock interp: empty satellite ID");
+            return 0.0;
+        }
+        if (clocks.empty()) {
+            log_manager_.getLogger("corrections")->debug("Clock interp for {}: no clock data available", satellite);
             return 0.0;
         }
 
-        const double tq = fullSeconds(time);
+        const double t_query = continuousGpsSeconds(time);
 
-        const ClockData* before = nullptr; // latest tc <= tq
-        const ClockData* after = nullptr;  // earliest tc >= tq
-        double best_before_dt = std::numeric_limits<double>::infinity();
-        double best_after_dt = std::numeric_limits<double>::infinity();
+        // 1. Collect candidates
+        std::vector<const ClockData*> nodes;
+        nodes.reserve(32);
 
+        // Sanity limits for clock bias values (typical GNSS clocks are within +/- 1ms)
+        constexpr double MAX_CLOCK_BIAS = 1e-3; // 1 ms
+
+        // Count total entries for this satellite (diagnostic)
+        size_t total_sat_entries = 0;
+        size_t rejected_entries = 0;
+
+        // Note: Optimization opportunity - if clocks are sorted, use binary search.
+        // Assuming unsorted or mixed, we scan linearly.
         for (const auto& c : clocks) {
             if (c.satellite != satellite) continue;
-            if (!std::isfinite(c.clock_bias)) continue;
-
-            const double tc = fullSeconds(c.time);
-            const double dt = tc - tq;
-
-            if (std::abs(dt) > MAX_WINDOW) continue;
-
-            if (std::abs(dt) < 1e-12) {
-                // Exact hit
-                return c.clock_bias;
+            ++total_sat_entries;
+            if (!std::isfinite(c.clock_bias)) {
+                ++rejected_entries;
+                continue;
+            }
+            // Reject outlier clock values that could corrupt interpolation
+            if (std::abs(c.clock_bias) > MAX_CLOCK_BIAS) {
+                ++rejected_entries;
+                continue;
             }
 
-            if (dt < 0.0) {
-                const double d = -dt;
-                if (d < best_before_dt) {
-                    best_before_dt = d;
-                    before = &c;
-                }
-            }
-            else {
-                const double d = dt;
-                if (d < best_after_dt) {
-                    best_after_dt = d;
-                    after = &c;
-                }
+            double tc = continuousGpsSeconds(c.time);
+            if (std::abs(tc - t_query) < MAX_WINDOW) {
+                nodes.push_back(&c);
             }
         }
 
-        if (!before && !after) {
+        if (nodes.empty()) {
+            log_manager_.getLogger("corrections")->warn(
+                "Clock interp for {} at tow={:.3f}: no valid nodes found (total_entries={}, rejected={}, in_window=0)",
+                satellite, time.tow, total_sat_entries, rejected_entries);
             return 0.0;
         }
 
-        // Nearest-neighbor fallback if we can't bracket.
-        if (before && !after) return before->clock_bias;
-        if (!before && after) return after->clock_bias;
+        // 2. Sort chronologically first to identify bracketing
+        std::sort(nodes.begin(), nodes.end(), [](const ClockData* a, const ClockData* b) {
+            return continuousGpsSeconds(a->time) < continuousGpsSeconds(b->time);
+        });
 
-        const double t0 = fullSeconds(before->time);
-        const double t1 = fullSeconds(after->time);
-        const double y0 = before->clock_bias;
-        const double y1 = after->clock_bias;
-
-        const double denom = t1 - t0;
-        if (!std::isfinite(denom) || std::abs(denom) < 1e-9) {
-            return std::isfinite(y0) ? y0 : 0.0;
+        // 3. Find the best window that brackets the query time
+        // We want points both before and after t_query for interpolation (not extrapolation)
+        size_t bracket_idx = 0;
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            if (continuousGpsSeconds(nodes[i]->time) > t_query) {
+                bracket_idx = i;
+                break;
+            }
+            bracket_idx = i + 1; // If all nodes are before query, use last
         }
 
-        const double w = (tq - t0) / denom;
-        const double clk = y0 + w * (y1 - y0);
+        // Select INTERP_POINTS centered around the bracket point
+        std::vector<const ClockData*> selected;
+        selected.reserve(INTERP_POINTS);
 
-        return std::isfinite(clk) ? clk : (std::isfinite(y0) ? y0 : 0.0);
+        // Try to get equal points before and after the query time
+        size_t half = INTERP_POINTS / 2;
+        size_t start_idx = 0;
+        if (bracket_idx >= half) {
+            start_idx = bracket_idx - half;
+        }
+        if (start_idx + INTERP_POINTS > nodes.size()) {
+            start_idx = (nodes.size() > INTERP_POINTS) ? nodes.size() - INTERP_POINTS : 0;
+        }
+
+        size_t end_idx = std::min(start_idx + INTERP_POINTS, nodes.size());
+        for (size_t i = start_idx; i < end_idx; ++i) {
+            selected.push_back(nodes[i]);
+        }
+
+        // Check if we're extrapolating (query outside the selected window)
+        bool extrapolating = false;
+        if (!selected.empty()) {
+            double t_first = continuousGpsSeconds(selected.front()->time);
+            double t_last = continuousGpsSeconds(selected.back()->time);
+            if (t_query < t_first || t_query > t_last) {
+                extrapolating = true;
+                // For extrapolation, prefer linear (2 points) to avoid oscillation
+                if (selected.size() > 2) {
+                    // Keep only the 2 closest points
+                    std::sort(selected.begin(), selected.end(), [t_query](const ClockData* a, const ClockData* b) {
+                        return std::abs(continuousGpsSeconds(a->time) - t_query) <
+                               std::abs(continuousGpsSeconds(b->time) - t_query);
+                    });
+                    selected.resize(2);
+                    std::sort(selected.begin(), selected.end(), [](const ClockData* a, const ClockData* b) {
+                        return continuousGpsSeconds(a->time) < continuousGpsSeconds(b->time);
+                    });
+                }
+                log_manager_.getLogger("geometry")->debug(
+                    "Clock extrapolation for {} at tow={:.3f}: query outside CLK window, using {} pts",
+                    satellite, time.tow, selected.size());
+            }
+        }
+
+        nodes = std::move(selected);
+
+        const size_t n = nodes.size();
+        if (n == 0) return 0.0;
+        if (n == 1) return nodes[0]->clock_bias;
+
+        std::vector<double> x(n);
+        std::vector<double> y(n);
+        for (size_t i = 0; i < n; ++i) {
+            x[i] = continuousGpsSeconds(nodes[i]->time);
+            y[i] = nodes[i]->clock_bias;
+        }
+
+        // Linear fallback
+        if (n == 2) {
+            double dt = x[1] - x[0];
+            if (std::abs(dt) < 1e-9) return y[0];
+            double result = y[0] + (t_query - x[0]) * (y[1] - y[0]) / dt;
+            log_manager_.getLogger("geometry")->debug(
+                "Clock interp (linear) for {} at tow={:.3f}: used {} pts, span=[{:.3f}, {:.3f}]s, "
+                "clk_vals=[{:.3e}, {:.3e}]s, result={:.3e} s ({:.3f} m)",
+                satellite, time.tow, n, 
+                nodes.front()->time.tow, nodes.back()->time.tow,
+                y[0], y[1], result, result * 299792458.0);
+            return result;
+        }
+
+        // Lagrange interpolation
+        std::vector<double> w = barycentricWeights(x);
+        double result = barycentricEval(x, w, y, t_query);
+        
+        // Diagnostic logging for clock interpolation
+        std::string clk_vals_str;
+        for (size_t i = 0; i < n && i < 6; ++i) {
+            clk_vals_str += fmt::format("{:.3e}", y[i]);
+            if (i < n - 1 && i < 5) clk_vals_str += ", ";
+        }
+        if (n > 6) clk_vals_str += "...";
+        
+        log_manager_.getLogger("geometry")->debug(
+            "Clock interp for {} at tow={:.3f}: used {} pts, span=[{:.3f}, {:.3f}]s (dt={:.1f}s), "
+            "clk_vals=[{}]s, result={:.3e} s ({:.3f} m), extrap={}",
+            satellite, time.tow, n, 
+            nodes.front()->time.tow, nodes.back()->time.tow,
+            x.back() - x.front(),
+            clk_vals_str, result, result * 299792458.0,
+            (time.tow < nodes.front()->time.tow || time.tow > nodes.back()->time.tow) ? "YES" : "no");
+        
+        return result;
     }
 
+    /**
+     * @brief Compute the relativistic satellite clock correction (seconds).
+     *
+     * Computes the classical relativistic correction used in GNSS clock modelling:
+     *   dtr = -2 * (r · v) / c^2
+     * where r and v are the satellite ECEF position (meters) and velocity (meters/second)
+     * at transmit time, and c is the speed of light. The result is returned in seconds.
+     *
+     * @param satellite Satellite identifier (e.g., "G01"). Used only for logging/diagnostics.
+     * @param sat_pos   Satellite ECEF position vector in meters.
+     * @param sat_vel   Satellite ECEF velocity vector in meters per second.
+     * @return Relativistic clock correction in seconds. Returns 0.0 if inputs are invalid,
+     *         non-finite, or produce an implausibly large correction (sanity-checked).
+     *
+     * @remarks
+     * - The function expects `sat_pos` in meters and `sat_vel` in meters/second (ECEF).
+     * - Typical magnitudes are on the order of tens of nanoseconds; callers should
+     *   convert to meters (range equivalent) by multiplying by the speed of light when needed.
+     * - This routine does not apply additional Schwarzschild-style terms; those are
+     *   not part of per-epoch PPP clock corrections here.
+     * - Logging is emitted for invalid or out-of-range inputs.
+     * @see Constants::SPEED_OF_LIGHT
+     */
     double GnssCorrections::computeRelativisticCorrection(const std::string& satellite, const Eigen::Vector3d& sat_pos,
         const Eigen::Vector3d& sat_vel) const {
         // GNSS relativistic correction used in PPP is the well-known term:
@@ -198,13 +559,43 @@ namespace GnssProcessor {
         return correction;
     }
 
+    /**
+     * @brief Compute the Shapiro (relativistic path) delay in meters.
+     *
+     * Computes the additional path length caused by spacetime curvature (primarily
+     * due to Earth's gravitational potential) using the standard Shapiro formula:
+     *   rpath = (2 * GM / c^2) * ln((r_sat + r_rec + r_sr) / (r_sat + r_rec - r_sr))
+     * where:
+     *  - GM is the Earth's gravitational constant (m^3/s^2),
+     *  - c is the speed of light (m/s),
+     *  - r_sat = |sat_pos|, r_rec = |rx_pos|, r_sr = |sat_pos - rx_pos|.
+     *
+     * @param satellite Satellite identifier string (e.g., "G01"). Used for logging.
+     * @param rx_pos    Receiver ECEF position vector (meters).
+     * @param sat_pos   Satellite ECEF position vector (meters).
+     * @return Shapiro delay in meters. Returns 0.0 for invalid/non-finite inputs,
+     *         unrealistic geometry (e.g., too-small range), or when the computed
+     *         delay is non-finite or exceeds safe bounds.
+     *
+     * @note The routine uses @c Constants::GRAVITATIONAL_CONSTANT and
+     *       @c Constants::SPEED_OF_LIGHT. Inputs are expected in meters (ECEF).
+     * @note This implementation performs input validation and clamps/returns 0.0
+     *       on suspicious values (see surrounding implementation for thresholds).
+     * @see https://gssc.esa.int/navipedia/index.php/Relativistic_Path_Range_Effect
+     */
     double GnssCorrections::computeShapiroDelay(const std::string& satellite, const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos) const {
-        constexpr double GM = Constants::GRAVITATIONAL_CONSTANT; // GM = G * M_Earth (m^3/s^2)
-        constexpr double C_CUBED = Constants::SPEED_OF_LIGHT * Constants::SPEED_OF_LIGHT * Constants::SPEED_OF_LIGHT;
+        // Relativistic path range effect (Shapiro delay)
+        // Reference: https://gssc.esa.int/navipedia/index.php/Relativistic_Path_Range_Effect
+        // Formula: rpath = (2*mu/c²) * ln((rsat + rrec + rrs) / (rsat + rrec - rrs))
+        // Output: delay in meters
+        
+        constexpr double GM = Constants::GRAVITATIONAL_CONSTANT; // GM = 3.986005e14 m³/s² (WGS-84)
+        constexpr double C = Constants::SPEED_OF_LIGHT;          // c = 299792458 m/s
+        constexpr double C_SQUARED = C * C;
         constexpr double MIN_POSITION_NORM = 1.8e7; // approx. 20,000 km
         constexpr double MAX_POSITION_NORM = 3.2e7; // approx. 32,000 km
-        constexpr double MAX_DELAY = 1e-4; // Max 0.1 ms
+        constexpr double MAX_DELAY = 0.03;          // Max ~30 mm (typical is ~2 cm)
 
         // Validate inputs
         std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
@@ -213,30 +604,50 @@ namespace GnssProcessor {
                 satellite, system_str, rx_pos.x(), rx_pos.y(), rx_pos.z(), sat_pos.x(), sat_pos.y(), sat_pos.z());
             return 0.0;
         }
-        double r = (sat_pos - rx_pos).norm();
-        double sat_norm = sat_pos.norm();
-        if (r < 1e3 || sat_norm < MIN_POSITION_NORM || sat_norm > MAX_POSITION_NORM) {
+        
+        const double rsat = sat_pos.norm();           // Satellite position norm
+        const double rrec = rx_pos.norm();            // Receiver position norm
+        const double rrs = (sat_pos - rx_pos).norm(); // Range (satellite to receiver)
+        
+        if (rrs < 1e3 || rsat < MIN_POSITION_NORM || rsat > MAX_POSITION_NORM) {
             log_manager_.getLogger("ppp_model")->warn("Unrealistic Shapiro delay norms for {} ({}): range={:.3e} m, sat_norm={:.3e} m",
-                satellite, system_str, r, sat_norm);
+                satellite, system_str, rrs, rsat);
             return 0.0;
         }
 
-        // Compute Shapiro delay: (2GM/c^3) * ln((r + r_s + r_r)/(r + r_s - r_r))
-        double r_rx = rx_pos.norm();
-        double delay = (2.0 * GM / C_CUBED) * std::log((r + sat_norm + r_rx) / (r + sat_norm - r_rx));
+        // Compute Shapiro delay in meters (matches MATLAB reference exactly)
+        // rpath = (2*mu/c²) * ln((rsat + rrec + rrs) / (rsat + rrec - rrs))
+        const double delay = (2.0 * GM / C_SQUARED) * std::log((rsat + rrec + rrs) / (rsat + rrec - rrs));
+        
         if (!std::isfinite(delay) || std::abs(delay) > MAX_DELAY) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid Shapiro delay for {} ({}): {:.3e} s, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
-                satellite, system_str, delay, r, sat_norm, r_rx);
+            log_manager_.getLogger("ppp_model")->warn("Invalid Shapiro delay for {} ({}): {:.3e} m, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
+                satellite, system_str, delay, rrs, rsat, rrec);
             return 0.0;
         }
 
-        // Convert to meters
-        delay *= Constants::SPEED_OF_LIGHT;
-        log_manager_.getLogger("ppp_model")->trace("Shapiro delay for {} ({}): {:.3e} m, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
-            satellite, system_str, delay, r, sat_norm, r_rx);
+        log_manager_.getLogger("ppp_model")->trace("Shapiro delay for {} ({}): {:.6f} m, range={:.3e} m, sat_norm={:.3e} m, rx_norm={:.3e} m",
+            satellite, system_str, delay, rrs, rsat, rrec);
         return delay;
     }
 
+    /**
+     * @brief Compute the Sagnac correction (meters) due to Earth's rotation.
+     *
+     * Computes the path-length correction caused by the rotation of the Earth
+     * during signal propagation using the standard Sagnac approximation:
+     *   correction = (ω_E / c) * (x_s * y_r - y_s * x_r)
+     *
+     * where ω_E is Earth's angular velocity and c is the speed of light. Inputs
+     * are expected as ECEF position vectors in meters.
+     *
+     * @param rx_pos Receiver ECEF position vector (meters).
+     * @param sat_pos Satellite ECEF position vector (meters).
+     * @return Sagnac correction in meters. Returns 0.0 for invalid/non-finite inputs
+     *         or when input norms are outside conservative expected ranges.
+     *
+     * @note Uses @c Constants::SPEED_OF_LIGHT. The implementation applies input
+     *       validation and logs warnings for unrealistic norms.
+     */
     double GnssCorrections::computeSagnacCorrection(const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos) const {
         // Sagnac effect: Correction for Earth's rotation during signal propagation
@@ -280,6 +691,35 @@ namespace GnssProcessor {
         return correction;
     }
 
+    /**
+     * @brief Compute pole tide displacement (ECEF) for a receiver position at an epoch.
+     *
+     * Computes the pole tide station displacement in ECEF coordinates using a
+     * simplified IERS-style model and Earth rotation parameter (ERP) entries
+     * available in the object's ERP container. The implementation:
+     *  - selects the ERP sample closest in time to `time`,
+     *  - converts polar motion parameters xp/yp (assumed in arcseconds) to radians,
+     *  - computes radial, north and east displacements using simplified coefficients,
+     *  - converts the radial/north/east displacement to ECEF and returns it.
+     *
+     * This is a small, station-level displacement (typically millimetres or less)
+     * to account for polar motion-driven Earth deformations.
+     *
+     * @param rx_pos Receiver ECEF position vector (meters). Must be finite and > 1e3 m.
+     * @param time   Epoch for which the pole tide correction is required (GnssTime: week + tow).
+     * @return ECEF displacement vector in meters to be applied to station coordinates.
+     *         Returns a zero vector on invalid inputs, missing/invalid ERP data, or
+     *         if the computed correction is non-finite or exceeds conservative limits.
+     *
+     * @note The routine expects ERP xp/yp values in arcseconds and converts them to
+     *       radians using the factor 4.848136811e-6. The simplified coefficients
+     *       (radial: -0.033, north: -0.009, east: -0.009) follow common lightweight
+     *       pole-tide approximations (IERS-like conventions).
+     * @note The function performs input validation and clamps results (caller may
+     *       inspect logs for diagnostic messages). Output norm is checked (max 0.1 m).
+     * @thread_safety Safe to call concurrently with independent inputs (no static state).
+     * @see ErpData, GnssTime
+     */
     Eigen::Vector3d GnssCorrections::computePoleTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
         // Validate inputs
         if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
@@ -337,6 +777,39 @@ namespace GnssProcessor {
         return correction;
     }
 
+    /**
+     * @brief Compute a simplified ocean-tide loading displacement (ECEF).
+     *
+     * Provides a lightweight, placeholder ocean tide correction using a simple
+     * sinusoidal M2-like constituent. The routine computes a small station
+     * displacement (radial, north, east) based on approximate geodetic latitude
+     * and time-of-day, then converts that displacement into ECEF coordinates.
+     *
+     * This implementation is intentionally simple and intended for testing or
+     * where full ocean-loading models are not available. For production/precise
+     * results use a full ocean-loading model (tidal constituents + load Love
+     * numbers, or external gridded loading data).
+     *
+     * @param rx_pos Receiver ECEF position vector (meters). Must be finite and non-degenerate.
+     * @param time   Epoch for which the ocean tide is evaluated (`GnssTime`: week + tow).
+     * @return ECEF displacement vector (`Eigen::Vector3d`) in meters. Returns
+     *         `Eigen::Vector3d::Zero()` on invalid inputs or if the computed
+     *         correction is non-finite or exceeds conservative limits.
+     *
+     * @details
+     * - The routine computes geodetic latitude as `asin(z / |r|)` (approximate).
+     * - A single sinusoidal constituent is used:
+     *     amplitude * cos(2π * t / period) scaled by latitude for the radial/north
+     *   displacement (no east component in this simplified model).
+     * - Default amplitude used here is 0.01 m (1 cm) and `period` corresponds to
+     *   the M2 principal lunar tidal constituent (≈ 12.4206 hours).
+     *
+     * @note This is a simplified placeholder. Replace with a proper ocean-loading
+     *       model (e.g., FES, GOT, or IERS-conformant loading grids) for accurate
+     *       station displacements. Output norm is checked (max 0.1 m) and the
+     *       function logs/warns on suspicious inputs.
+     * @thread_safety Safe to call concurrently with independent inputs (no static state).
+     */
     Eigen::Vector3d GnssCorrections::computeOceanTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
         // Validate inputs
         if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
@@ -379,6 +852,40 @@ namespace GnssProcessor {
         return correction;
     }
 
+    /**
+     * @brief Compute solid Earth tide radial displacement along the receiver->satellite line-of-sight.
+     *
+     * Implements a simplified IERS-2010 style solid Earth tide model (degree 2 + degree 3
+     * terms) and returns the displacement projected onto the receiver->satellite line-of-sight.
+     * The implementation:
+     *  - converts receiver ECEF to an approximate geodetic latitude (iterative, stable),
+     *  - computes degree-2 and degree-3 tidal contributions from the Sun and Moon using
+     *    nominal Love numbers and mass ratios,
+     *  - projects the total displacement onto the receiver->satellite line-of-sight and
+     *    returns that scalar displacement in meters.
+     *
+     * @param receiver_pos Receiver ECEF position vector (meters).
+     * @param sat_pos      Satellite ECEF position vector (meters).
+     * @param sun_pos      Sun ECEF position vector (meters).
+     * @param moon_pos     Moon ECEF position vector (meters).
+     * @return Radial displacement in meters to apply to the geometric range (projection of
+     *         tidal displacement onto the line-of-sight). Returns 0.0 for invalid or
+     *         non-finite inputs or when intermediate values are outside safe bounds.
+     *
+     * @details
+     * - Uses nominal Love numbers (h2,l2,h3,l3) and simplified latitude-dependent
+     *   corrections. Degree-3 contribution is included (moon-dominated in simplified form).
+     * - Geodetic latitude is derived from ECEF with a short iterative scheme to ensure
+     *   numerical stability near the poles.
+     * - The routine performs input validation and logs diagnostics; it is intended for
+     *   use in per-satellite, per-epoch correction routines where lightweight tide
+     *   corrections are acceptable.
+     *
+     * @note The returned value is the displacement along the line-of-sight (meters),
+     *       not a full ECEF displacement vector.
+     * @thread_safety Safe to call concurrently with independent inputs (no static state).
+     * @see computePoleTideCorrection(), computeOceanTideCorrection()
+     */
     double GnssCorrections::computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
         const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos) const {
         // IERS 2010: Solid Earth tide (degree 2 + degree 3 terms).
@@ -503,6 +1010,36 @@ namespace GnssProcessor {
         return stide;
     }
 
+    /**
+     * @brief Estimate atmospheric loading radial displacement at a receiver position.
+     *
+     * Provides a simplified, lightweight estimate of the vertical (radial) station
+     * displacement due to atmospheric mass loading. The implementation uses a
+     * small sinusoidal model (diurnal) scaled by latitude as a placeholder when
+     * full atmospheric-loading grids or models are unavailable.
+     *
+     * @param rx_pos Receiver ECEF position vector (meters). Must be finite and non-degenerate.
+     * @param time   Epoch at which the loading is evaluated (GnssTime: week + tow).
+     * @return Estimated radial displacement in meters due to atmospheric loading.
+     *         Returns 0.0 for invalid inputs. Typical magnitude returned by this
+     *         placeholder is on the order of millimetres (default amplitude = 1 mm).
+     *
+     * @details
+     * - This routine computes an approximate geodetic latitude from the ECEF
+     *   position and evaluates a single diurnal sinusoid:
+     *     correction = amplitude * cos(2π * t_day / 86400) * cos(latitude)
+     *   where `amplitude` defaults to 0.001 m (1 mm).
+     * - The result is a scalar radial displacement (meters). The implementation
+     *   intentionally does not attempt to model frequency-dependent loading or
+     *   use load Love numbers / ocean-tide coupling — use a proper loading model
+     *   for production/precise applications.
+     *
+     * @note This function is a placeholder to allow downstream code to compile/run
+     *       in absence of external atmospheric-loading data. Replace with a
+     *       gridded or model-based implementation (e.g., IERS-compliant) for
+     *       accurate geodetic positioning.
+     * @thread_safety Safe to call concurrently with independent inputs (no static state).
+     */
     double GnssCorrections::computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos,
         const GnssTime& time) const {
         // Placeholder: Simplified atmospheric loading correction
@@ -516,6 +1053,30 @@ namespace GnssProcessor {
         return correction;
     }
 
+    /**
+     * @brief Retrieve a bias correction for a satellite/signal at a given epoch.
+     *
+     * Searches the internal bias table for an entry that applies to the requested
+     * `satellite` and `freq_type` and whose validity interval contains `time`.
+     * If a matching entry is found the stored `BiasData::bias` value is returned.
+     * If inputs are invalid, no matching entry exists, or the found entry contains
+     * non-finite values the function returns 0.0.
+     *
+     * @param satellite Satellite identifier or receiver id (e.g. "G01" or station id).
+     * @param freq_type Signal/frequency label (e.g. "L1", "C1") for which the bias applies.
+     * @param time      Epoch at which the bias is requested (GnssTime: week + tow).
+     * @return Bias value (same units as stored in BiasData::bias, typically meters).
+     *         Returns 0.0 when inputs are invalid or no applicable bias is found.
+     *
+     * @note The search compares the bias validity interval (@c BiasData::start_time / @c BiasData::end_time)
+     *       against the supplied `time` (see implementation for exact comparison semantics).
+     *       Callers must ensure that the provided `time` and stored bias intervals are
+     *       comparable (same time reference/representation).
+     * @note Behaviour when multiple bias entries overlap is implementation-defined
+     *       (the current implementation returns the first matching entry found).
+     *
+     * @see BiasData, GnssTime
+     */
     double GnssCorrections::getBiasCorrection(const std::string& satellite,
         const std::string& freq_type,
         const GnssTime& time) const {
@@ -531,11 +1092,17 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        // Find bias data
+        // Convert query time to continuous GPS seconds for robust interval comparison
+        const double t_query = continuousGpsSeconds(time);
+
+        // Find bias data: use continuous time (week + tow) for interval comparisons
         auto it = std::find_if(biases_.begin(), biases_.end(),
-            [&satellite, &freq_type, &time](const BiasData& b) {
-                return b.satellite == satellite && b.signal == freq_type &&
-                    b.start_time.tow <= time.tow && time.tow <= b.end_time.tow;
+            [&satellite, &freq_type, t_query](const BiasData& b) {
+                if (b.satellite != satellite) return false;
+                if (b.signal != freq_type) return false;
+                double t_start = continuousGpsSeconds(b.start_time);
+                double t_end = continuousGpsSeconds(b.end_time);
+                return (t_start <= t_query && t_query <= t_end);
             });
         if (it != biases_.end()) {
             log_manager_.getLogger("ppp_model")->trace("Bias correction for {} ({}) {} at TOW {:.3f}: {:.3e} m",
@@ -544,12 +1111,51 @@ namespace GnssProcessor {
             return it->bias;
         }
 
+        // Helpful diagnostic if biases exist globally but none matched — aids debugging
+        if (!biases_.empty()) {
+            // log at debug to avoid spam; change level as needed when investigating
+            log_manager_.getLogger("ppp_model")->debug("No matching bias entry found for {} {} at continuous_time={:.3f}. Known bias entries={}",
+                satellite, freq_type, t_query, biases_.size());
+        }
+
         log_manager_.getLogger("ppp_model")->trace("No bias correction for {} ({}) {} at TOW {:.3f}",
             satellite, satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown",
             freq_type, time.tow);
         return 0.0;
     }
 
+    /**
+     * @brief Compute the phase wind-up correction for carrier-phase measurements.
+     *
+     * Computes the phase wind-up induced path-length offset (meters) due to the
+     * relative rotation/orientation of the satellite and receiver antennas.
+     * The algorithm:
+     *  - forms the line-of-sight unit vector from receiver to satellite,
+     *  - determines satellite attitude (using cached orbit velocity if available,
+     *    otherwise a simple yaw-steering fallback),
+     *  - determines receiver antenna dipole from configuration or RINEX header,
+     *  - builds effective dipole vectors for satellite and receiver and computes
+     *    the relative rotation angle between them,
+     *  - converts the rotation (radians) to a distance using the carrier wavelength:
+     *      phi = sign * acos(dot(d_s_eff, d_r_eff)) * wavelength / (2*pi)
+     *
+     * @param satellite Satellite identifier string (e.g., "G01") used for logging/diagnostics.
+     * @param system    GNSS system enum corresponding to the satellite (may affect lookups).
+     * @param rx_pos    Receiver ECEF position vector (meters).
+     * @param sat_pos   Satellite ECEF position vector (meters).
+     * @param wavelength Carrier wavelength in meters (used to convert phase angle to meters).
+     * @param time      Epoch for any time-dependent inputs (GnssTime: week + tow).
+     * @return Phase wind-up correction in meters. Returns 0.0 for degenerate geometry,
+     *         invalid inputs, or when computed vectors are nearly singular.
+     *
+     * @note The routine may use optional data provided at construction:
+     *       - `orbits_` (to obtain satellite velocity for attitude estimation),
+     *       - `config_` (to obtain receiver antenna orientation),
+     *       - `rinex_parser_` (to obtain antenna H/E/N offsets).
+     * @note The returned value is intended to be added to the carrier-range (meters).
+     * @thread_safety Safe to call concurrently with independent inputs (no static state).
+     * @see GnssConfig::getReceiverAntennaOrientation(), RinexParser::getAntennaDeltaHen()
+     */
     double GnssCorrections::computePhaseWindUp(const std::string& satellite,
         System system,
         const Eigen::Vector3d& rx_pos,
@@ -635,6 +1241,28 @@ namespace GnssProcessor {
         return phi;
     }
 
+    /**
+     * @brief Replace internal satellite clock and ERP product containers.
+     *
+     * Copies the provided satellite clock samples and Earth rotation parameter (ERP)
+     * samples into the object's internal storage, replacing any previously stored
+     * product data. This is intended to refresh or update time-dependent products
+     * at runtime without reconstructing the `GnssCorrections` object.
+     *
+     * The method performs a deep copy of the provided vectors (caller retains
+     * ownership). After updating the internal containers a diagnostic trace log
+     * entry is emitted describing the new container sizes.
+     *
+     * @param clocks Vector of parsed satellite clock samples (@c ClockData). May be empty.
+     * @param erps   Vector of parsed Earth rotation parameter samples (@c ErpData). May be empty.
+     *
+     * @note Thread-safety: This setter is not synchronized internally. If other
+     *       threads may concurrently read the product containers (e.g. calling
+     *       interpolation/correction routines), callers must ensure appropriate
+     *       external synchronization (mutex) to avoid data races.
+     * @note Typical use: called after parsing product files (CLK/ERP) to make the
+     *       data available to interpolation and correction routines in this class.
+     */
     void GnssCorrections::setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps) {
         clocks_ = clocks;
         erps_ = erps;

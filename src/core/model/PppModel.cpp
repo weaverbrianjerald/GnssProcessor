@@ -1,4 +1,17 @@
-﻿#include "GnssConfig.hpp"
+﻿/*!
+ * \file PppModel.cpp
+ * \brief Implementation of PppModel: PPP/PPP-RTK observation modelling and corrections.
+ *
+ * This file implements the PppModel methods responsible for initializing PPP state,
+ * computing satellite/receiver geometry, applying corrections (orbits, clocks, tides,
+ * troposphere, ionosphere, antenna) and forming ionosphere-free combinations used by
+ * downstream measurement/estimation components.
+ *
+ * Logging is performed via the provided LogManager instance and the model relies on
+ * ProductParser, RinexParser and StateManager for external data and state bookkeeping.
+ */
+
+#include "GnssConfig.hpp"
 #include "PppModel.hpp"
 #include "PppTypes.hpp"
 #include "RinexParser.hpp"
@@ -13,6 +26,18 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a PppModel instance.
+     *
+     * Initializes internal helpers (geometry, ionosphere, antenna, corrections) and
+     * captures references to configuration, product parser, rinex parser and state manager.
+     *
+     * @param config Read-only configuration object.
+     * @param product_parser Product parser providing external products (SP3/CLK/...).
+     * @param log_manager Logging manager used for informational and diagnostic output.
+     * @param rinex_parser RINEX parser providing observation metadata and receiver info.
+     * @param state_manager StateManager used for ambiguity bookkeeping and state access.
+     */
     PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser, LogManager& log_manager,
         const RinexParser& rinex_parser, StateManager& state_manager)
         : config_(config), product_parser_(product_parser), log_manager_(log_manager),
@@ -20,22 +45,69 @@ namespace GnssProcessor {
         ppp_utils_(log_manager), ionosphere_(config, log_manager, product_parser, rinex_parser),
         geometry_(config, product_parser, rinex_parser, log_manager),
         antenna_(config, product_parser, log_manager, rinex_parser),
-        gnss_corrections_(log_manager), signal_priorities_(config.getSignalPriorities()) {
+        gnss_corrections_(log_manager, config, product_parser.getClocks(), product_parser.getErps(), product_parser.getBiases(), rinex_parser),
+        signal_priorities_(config.getSignalPriorities()) {
         log_manager_.getLogger("ppp_model")->info("PppModel initialized: mode={}, uncombined={}, elev_mask={}°, {} signal sets",
             config.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
             config.isUncombinedEnabled(), config.getElevationMaskDeg(), config.getSignalPriorities().size());
         klobuchar_coeffs_ = product_parser_.getKlobucharCoeffs();
     }
 
+    /**
+     * @brief Initialize a PppState with sensible defaults from RINEX and configuration.
+     *
+     * Populates position (optionally applying receiver antenna H/E/N offset from RINEX),
+     * epoch time, clock bias, troposphere ZWD and (for PPP-RTK) a starting ionospheric zenith delay.
+     * If an existing state looks valid it is left unchanged.
+     *
+     * @param state Output PppState to initialize (modified in-place).
+     */
     void PppModel::initializeState(PppState& state) {
         size_t core_size = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
         if (state.position.norm() == 0.0 || state.position.norm() > 1e9 || state.position.hasNaN() ||
             state.covariance.rows() != static_cast<long>(core_size)) {
-            Eigen::Vector3d init_pos = rinex_parser_.getApproxPositionXyz();
-            if (init_pos.norm() > 1e3 && !init_pos.hasNaN()) {
-                state.position = init_pos;
-                log_manager_.getLogger("ppp_model")->info("Initialized position from RINEX: ({:.3f}, {:.3f}, {:.3f}) m, norm: {:.3f}",
-                    init_pos.x(), init_pos.y(), init_pos.z(), init_pos.norm());
+            Eigen::Vector3d marker_pos = rinex_parser_.getApproxPositionXyz();
+            if (marker_pos.norm() > 1e3 && !marker_pos.hasNaN()) {
+                // Apply antenna H/E/N offset to get antenna phase center position.
+                // RINEX APPROX POSITION XYZ is the marker position.
+                // ANTENNA: DELTA H/E/N gives the offset from marker to ARP in local (Up, East, North) frame.
+                // Note: H = Up, E = East, N = North (not Height/East/North as sometimes misread)
+                Eigen::Vector3d hen = rinex_parser_.getAntennaDeltaHen();
+                
+                if (hen.norm() > 1e-6) {
+                    // Convert local ENU offset to ECEF
+                    // First, compute the local ENU-to-ECEF rotation matrix at the marker position
+                    double r = marker_pos.norm();
+                    double lat = std::asin(marker_pos.z() / r);  // Geocentric latitude (approximate)
+                    double lon = std::atan2(marker_pos.y(), marker_pos.x());
+                    
+                    double slat = std::sin(lat), clat = std::cos(lat);
+                    double slon = std::sin(lon), clon = std::cos(lon);
+                    
+                    // ENU to ECEF rotation matrix (columns are E, N, U unit vectors in ECEF)
+                    Eigen::Matrix3d R_enu_to_ecef;
+                    R_enu_to_ecef << -slon,        -slat * clon,  clat * clon,
+                                      clon,        -slat * slon,  clat * slon,
+                                      0.0,          clat,         slat;
+                    
+                    // RINEX stores H/E/N (Height=Up, East, North), so reorder to ENU
+                    Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));  // E, N, U from H, E, N
+                    
+                    // Convert to ECEF and add to marker position
+                    Eigen::Vector3d ecef_offset = R_enu_to_ecef * enu_offset;
+                    state.position = marker_pos + ecef_offset;
+                    
+                    log_manager_.getLogger("ppp_model")->info(
+                        "Applied antenna H/E/N offset ({:.4f}, {:.4f}, {:.4f}) m to marker position, "
+                        "ARP ECEF: ({:.3f}, {:.3f}, {:.3f}) m",
+                        hen(0), hen(1), hen(2),
+                        state.position.x(), state.position.y(), state.position.z());
+                } else {
+                    state.position = marker_pos;
+                    log_manager_.getLogger("ppp_model")->info(
+                        "Initialized position from RINEX marker (no antenna offset): ({:.3f}, {:.3f}, {:.3f}) m",
+                        marker_pos.x(), marker_pos.y(), marker_pos.z());
+                }
             }
             else {
                 state.position = Eigen::Vector3d::Zero();
@@ -54,10 +126,14 @@ namespace GnssProcessor {
             }
 
             state.clock_bias = 0.0;
-            state.troposphere_zwd = 0.0;
+            // Initialize ZWD to a climatological a priori value.
+            // Typical ZWD at sea level ranges from ~0.05 m (dry/cold) to ~0.35 m (humid/tropical).
+            // A reasonable mid-latitude default is ~0.1 m. The filter will refine this estimate.
+            state.troposphere_zwd = 0.1;
+            log_manager_.getLogger("ppp_model")->info("Initialized troposphere ZWD to climatological default: {:.3f} m", state.troposphere_zwd);
             if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
-                if (init_pos.norm() > 1e3 && !init_pos.hasNaN() && init_time.tow > 0.0 && klobuchar_coeffs_.size() == 8) {
-                    state.ionosphere_zenith_delay = ionosphere_.computeInitialIonoDelay(init_time, init_pos);
+                if (state.position.norm() > 1e3 && !state.position.hasNaN() && init_time.tow > 0.0 && klobuchar_coeffs_.size() == 8) {
+                    state.ionosphere_zenith_delay = ionosphere_.computeInitialIonoDelay(init_time, state.position);
                     log_manager_.getLogger("ppp_model")->info("Initialized ionospheric zenith delay from Klobuchar: {:.3f} m",
                         state.ionosphere_zenith_delay);
                 }
@@ -73,6 +149,18 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Compute modeled PPP observations for a set of RINEX observations.
+     *
+     * For each input observation this routine computes satellite geometry and applies
+     * corrections, selects usable signals and builds ionosphere-free (or uncombined)
+     * modeled observables. Outputs are appended to \p modeled_obs.
+     *
+     * @param observations Vector of RinexObservation records for the epoch.
+     * @param state Current PppState used for modelling (read-only).
+     * @param modeled_obs Output vector filled with PppObservation entries for processed observations.
+     * @return true if at least one observation was successfully modeled, false otherwise.
+     */
     bool PppModel::computeModels(const std::vector<RinexObservation>& observations, PppState& state, std::vector<PppObservation>& modeled_obs) {
         if (observations.empty()) {
             log_manager_.getLogger("ppp_model")->error("No observations provided for PPP modeling");
@@ -101,8 +189,9 @@ namespace GnssProcessor {
 
             Eigen::Vector3d sat_pos, rx_pos, los;
             double elevation, azimuth, range, tropo_zhd, sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide, mf_w, mf_d;
+            Eigen::Vector3d sat_vel;
             if (!geometry_.computeSatelliteGeometry(obs, state, sat_pos, rx_pos, elevation, azimuth, los, range, tropo_zhd,
-                sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide, mf_w, mf_d)) {
+                sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide, mf_w, mf_d, sat_vel)) {
                 continue;
             }
 
@@ -147,7 +236,7 @@ namespace GnssProcessor {
             }
             if (is_iono_free && !config_.isUncombinedEnabled()) {
                 if (!processIonoFreeObservation(obs, state, ppp_obs, system_str, selected_signals, comb_type, rx_pos, sat_pos,
-                    elevation, azimuth, rx_antenna_type, range, tropo_zhd, sat_clock,
+                    sat_vel, elevation, azimuth, rx_antenna_type, range, tropo_zhd, sat_clock,
                     shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide)) {
                     continue;
                 }
@@ -167,6 +256,19 @@ namespace GnssProcessor {
         return true;
     }
 
+    /**
+     * @brief Selects candidate signal pairs for processing for a single observation.
+     *
+     * Uses configured signal priority lists and band mappings to choose code/phase
+     * pairs suitable for ionosphere-free combinations or single/uncombined processing.
+     *
+     * @param obs Input RinexObservation record.
+     * @param system_str Human-readable GNSS system string (e.g., "GPS").
+     * @param selected_signals Output vector populated with (signal1, signal2) pairs. For single/uncombined selections one member may be empty.
+     * @param is_iono_free Output flag set to true when an iono-free combination (dual or triple) is available.
+     * @param comb_type Output string describing the combination type ("single","dual","triple","uncombined").
+     * @return true if useful signals were selected; false otherwise.
+     */
     bool PppModel::selectSignals(const RinexObservation& obs, const std::string& system_str,
         std::vector<std::pair<std::string, std::string>>& selected_signals,
         bool& is_iono_free, std::string& comb_type) {
@@ -321,7 +423,60 @@ namespace GnssProcessor {
                     }
                 }
             }
-            selected_signals = std::move(candidate_pairs);
+			// selected_signals = std::move(candidate_pairs); // keep for future, as this results in combinations like L1W_L2W and L1X_L2X being selected together
+            // choose best candidate pair according to configured priority (lower index = higher priority)
+            if (!candidate_pairs.empty()) {
+                // Separate candidate pairs into code and phase candidates
+                std::vector<std::pair<std::string, std::string>> code_candidates;
+                std::vector<std::pair<std::string, std::string>> phase_candidates;
+                for (const auto& p : candidate_pairs) {
+                    if (!p.first.empty() && p.first[0] == 'C') {
+                        code_candidates.push_back(p);
+                    }
+                    else if (!p.first.empty() && p.first[0] == 'L') {
+                        phase_candidates.push_back(p);
+                    }
+                }
+
+                // Select best code pair
+                if (!code_candidates.empty()) {
+                    auto best_code = code_candidates.front();
+                    int best_code_score = std::numeric_limits<int>::max();
+                    for (const auto& p : code_candidates) {
+                        auto it1 = std::find(signals.begin(), signals.end(), p.first);
+                        auto it2 = std::find(signals.begin(), signals.end(), p.second);
+                        int idx1 = (it1 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it1));
+                        int idx2 = (it2 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it2));
+                        int score = idx1 + idx2;
+                        if (score < best_code_score) {
+                            best_code_score = score;
+                            best_code = p;
+                        }
+                    }
+                    selected_signals.push_back(best_code);
+                }
+
+                // Select best phase pair
+                if (!phase_candidates.empty()) {
+                    auto best_phase = phase_candidates.front();
+                    int best_phase_score = std::numeric_limits<int>::max();
+                    for (const auto& p : phase_candidates) {
+                        auto it1 = std::find(signals.begin(), signals.end(), p.first);
+                        auto it2 = std::find(signals.begin(), signals.end(), p.second);
+                        int idx1 = (it1 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it1));
+                        int idx2 = (it2 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it2));
+                        int score = idx1 + idx2;
+                        if (score < best_phase_score) {
+                            best_phase_score = score;
+                            best_phase = p;
+                        }
+                    }
+                    selected_signals.push_back(best_phase);
+                }
+            }
+            else {
+                selected_signals.clear();
+            }
             if (selected_signals.empty()) {
                 comb_type = "single";
                 is_iono_free = false;
@@ -362,11 +517,40 @@ namespace GnssProcessor {
         return true;
     }
 
+    /**
+     * @brief Process ionosphere-free or combined observation pairs and populate a PppObservation.
+     *
+     * Builds ionosphere-free combinations (code and/or phase) from selected signal pairs,
+     * computes modeled values, variances and writes them into ppp_obs.modeled / observed / variances.
+     *
+     * @param obs Input RinexObservation record.
+     * @param state Current PPP state used for geometry and corrections.
+     * @param ppp_obs Output PppObservation structure to populate.
+     * @param system_str GNSS system string (e.g., "GPS").
+     * @param selected_signals Vector of (signal1, signal2) pairs chosen for processing.
+     * @param comb_type Combination type string ("single","dual","triple","uncombined").
+     * @param rx_pos Receiver ECEF position.
+     * @param sat_pos Satellite ECEF position.
+     * @param sat_vel Satellite ECEF velocity.
+     * @param elevation Satellite elevation in degrees.
+     * @param azimuth Satellite azimuth in degrees.
+     * @param rx_antenna_type Receiver antenna type string for corrections.
+     * @param range Geometric range (meters).
+     * @param tropo_zhd Zenith hydrostatic delay (meters).
+     * @param sat_clock Satellite clock (seconds or converted to meters in code).
+     * @param shapiro_delay Shapiro delay (meters).
+     * @param sagnac_corr Sagnac correction (meters).
+     * @param atm_loading_corr Atmospheric loading correction (meters).
+     * @param relativistic_corr Relativistic correction (meters).
+     * @param solid_tide Solid Earth tide correction (meters).
+     * @return true if at least one combined observable was successfully formed; false otherwise.
+     */
     bool PppModel::processIonoFreeObservation(const RinexObservation& obs, PppState& state,
         PppObservation& ppp_obs, const std::string& system_str,
         const std::vector<std::pair<std::string, std::string>> selected_signals,
         const std::string& comb_type, const Eigen::Vector3d& rx_pos,
-        const Eigen::Vector3d& sat_pos, double elevation, double azimuth,
+        const Eigen::Vector3d& sat_pos, const Eigen::Vector3d& sat_vel,
+        double elevation, double azimuth,
         const std::string& rx_antenna_type, double range, double tropo_zhd,
         double sat_clock, double shapiro_delay, double sagnac_corr,
         double atm_loading_corr, double relativistic_corr, double solid_tide) {
@@ -432,7 +616,7 @@ namespace GnssProcessor {
             const std::string ref_type = sig_pair.first + "_" + sig_pair.second;
 
             if (meas_type == 'L') {
-                return false; // phase disabled
+                //return false; // phase disabled
             }
 
             std::vector<double> modeled_obs(2, 0.0);
@@ -455,13 +639,22 @@ namespace GnssProcessor {
                 const std::string& type = (j == 0 ? sig_pair.first : sig_pair.second);
 
                 const double antenna_corr = antenna_.getAntennaCorrection(
-                    obs.satellite, type, obs.system, rx_pos, sat_pos,
+                    obs.satellite, type, obs.system, rx_pos, sat_pos, sat_vel,
                     elevation, azimuth, rx_antenna_type, obs.time);
 
                 const double bias_corr = gnss_corrections_.getBiasCorrection(obs.satellite, type, obs.time);
 
+                // Pseudorange observation equation:
+                //   P_obs = ρ + c*(dt_rx - dt_sat) + T_slant + antenna + shapiro - solid_tide + ...
+                //
+                // Sign conventions:
+                //   - sat_clock > 0 means satellite clock is fast → pseudorange appears shorter → subtract
+                //   - solid_tide > 0 means receiver moved toward satellite → range decreased → subtract
+                //   - shapiro > 0 is a path delay → range increased → add
+                //   - antenna_corr is already signed correctly (add to modeled)
+                //   - bias_corr is subtracted (biases make observations appear longer)
                 modeled_obs[j] = range - (sat_clock * Constants::SPEED_OF_LIGHT) + slant_dry_delay +
-                    antenna_corr - bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr + solid_tide;
+                    antenna_corr - bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr - solid_tide;
 
                 const auto& n = config_.getDefaultMeasurementNoise();
                 const double default_code_var = n.code_std_m * n.code_std_m;
@@ -538,9 +731,35 @@ namespace GnssProcessor {
             success = process_pair(p, 'L') || success;
         }
 
+        // Remove all raw RINEX measurements from ppp_obs.observed to prevent confusion
+        // downstream. Only the combined iono-free keys (e.g., "C1W_C2W") should remain.
+        // Raw measurements are identified by not containing '_' in their key.
+        for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
+            if (it->first.find('_') == std::string::npos) {
+                it = ppp_obs.observed.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
         return success;
     }
 
+    /**
+     * @brief Compute slant ionospheric delay for a single measurement path.
+     *
+     * When dual- or triple-frequency iono-free combinations are available the
+     * ionospheric delay is effectively removed and this function returns 0.0.
+     * Otherwise Klobuchar or the internal ionosphere model is used when available.
+     *
+     * @param time GNSS time of the observation.
+     * @param rx_pos Receiver ECEF position (meters).
+     * @param sat_pos Satellite ECEF position (meters).
+     * @param freq_type Signal/frequency type string (e.g. "L1").
+     * @param system GNSS system enum.
+     * @param measurements Map of measurement values by key (used to detect available bands).
+     * @return Estimated slant ionospheric delay in meters, or 0.0 if iono-free combination applies or unavailable.
+     */
     double PppModel::computeIonosphericDelay(const GnssTime& time,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
@@ -578,6 +797,17 @@ namespace GnssProcessor {
         return delay;
     }
 
+    /**
+     * @brief Compute the standard ionosphere-free linear combination of two signals.
+     *
+     * Uses frequency-dependent coefficients to form the LC combination from two measurements.
+     *
+     * @param measurements Map of measurement key -> value (meters).
+     * @param system GNSS system enum.
+     * @param signal1 First signal key in measurements.
+     * @param signal2 Second signal key in measurements.
+     * @return Combined ionosphere-free observable in meters, or 0.0 on error.
+     */
     double PppModel::computeIonoFreeCombination(const std::map<std::string, double>& measurements,
         System system,
         const std::string& signal1,
@@ -616,6 +846,18 @@ namespace GnssProcessor {
         return combination;
     }
 
+    /**
+     * @brief Rescale GLONASS observation cycles to a reference frequency.
+     *
+     * GLONASS uses frequency-division multiple access; measured cycles must often
+     * be scaled to a reference frequency to be comparable across satellites.
+     *
+     * @param observed_data Measured quantity in cycles or meters (depending on caller).
+     * @param freq_type Frequency/signal type string.
+     * @param system GNSS system enum.
+     * @param satellite Satellite identifier string (e.g., "R01").
+     * @return Rescaled observation value; returns input if inputs are invalid or system is not GLONASS.
+     */
     double PppModel::rescaleGlonassObservation(double observed_data, const std::string& freq_type,
         System system, const std::string& satellite) const {
         if (system != System::GLONASS) {
@@ -642,6 +884,17 @@ namespace GnssProcessor {
         return scaled_data;
     }
 
+    /**
+     * @brief Select a list of observation keys available in the provided measurements.
+     *
+     * This helper consults the configured signal priorities and returns a prioritized
+     * list of measurement keys (including GLONASS channel-specific keys when applicable).
+     *
+     * @param measurements Map of measurement key -> value.
+     * @param system GNSS system enum.
+     * @param system_str System string used to lookup priorities.
+     * @return Vector of selected measurement keys in priority order (may be empty).
+     */
     std::vector<std::string> PppModel::selectObservationTypes(const std::map<std::string, double>& measurements,
         System system,
         const std::string& system_str) const {
@@ -674,6 +927,10 @@ namespace GnssProcessor {
         return selected_types;
     }
 
+    /**
+     * @brief Accessor for the RinexParser used by this model.
+     * @return Const reference to the configured RinexParser.
+     */
     const RinexParser& PppModel::getRinexParser() const {
         return rinex_parser_;
     }

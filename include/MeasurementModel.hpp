@@ -15,27 +15,86 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @file MeasurementModel.hpp
+     * @brief Builds measurement vectors, design matrices and covariance used by the Kalman filter.
+     *
+     * The MeasurementModel is responsible for converting a set of PPP observations
+     * (code and phase) together with the current PPP state into an @c EpochMeasurement
+     * suitable for Kalman filter processing. It queries the high-level @c PppModel for
+     * corrected modeled values and diagnostics, applies observation selection and masking,
+     * assembles the innovation vector, design matrix H and measurement noise R, and provides
+     * validation helpers for outlier and quality checks.
+     *
+     * Typical responsibilities:
+     *  - Filter observations by elevation, signal priorities and configuration.
+     *  - Compute per-observation modeled values and residuals using @c PppModel.
+     *  - Assemble innovations, H matrix and measurement covariance for the Kalman filter.
+     *  - Provide validation and basic reweighting / persistent variance scaling via @c StateManager.
+     */
     class MeasurementModel {
     public:
-        // Constructor
+        /**
+         * @brief Construct a MeasurementModel.
+         *
+         * The model stores references to a live @c StateManager and @c LogManager,
+         * and a const reference to the configured @c PppModel and @c GnssConfig.
+         * The constructor should initialize any helpers (e.g. @c PppUtils) using the
+         * provided @c LogManager.
+         *
+         * @param state_manager Reference to the Kalman filter state manager (owned externally).
+         * @param ppp_model     Const reference to the PPP model that computes corrections and modeled observables.
+         * @param config        Const reference to processing configuration.
+         * @param log_manager   Reference to the logging manager used for diagnostics.
+         */
         MeasurementModel(StateManager& state_manager,
             const PppModel& ppp_model,
             const GnssConfig& config,
             LogManager& log_manager);
 
-        // Compute measurement update for Kalman filter (read-only w.r.t state)
+        /**
+         * @brief Compute the measurement update for a single epoch.
+         *
+         * This routine is read-only with respect to the Kalman state (it does not modify
+         * the @c StateManager). It consumes the provided list of parsed @c PppObservation
+         * and the current state vector, queries the @c PppModel for modeled values,
+         * and assembles an @c EpochMeasurement containing:
+         *  - innovations (observed - modeled)
+         *  - design matrix H
+         *  - measurement noise vector R_v (per-measurement variance)
+         *  - diagnostic fields (satellite ids, signal types, residuals, covariance, etc.)
+         *
+         * The produced @c EpochMeasurement is intended for immediate validation and use
+         * by the Kalman filter update step.
+         *
+         * @param observations   Vector of parsed and pre-filtered observations for the epoch.
+         * @param current_state  Current Kalman state (state vector) used to compute geometry-dependent terms.
+         * @return An @c EpochMeasurement populated with innovations, H, R_v and ancillary diagnostics.
+         */
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
             const Eigen::VectorXd& current_state);
 
-        // Validate measurement update before Kalman filter processing
+        /**
+         * @brief Validate an @c EpochMeasurement before Kalman processing.
+         *
+         * Performs quality checks on the assembled measurement such as:
+         *  - Sufficient number of valid measurements after masking.
+         *  - Percentage of bad residuals below configured threshold.
+         *  - Residuals within acceptable bounds (using configured residual threshold).
+         *
+         * If validation fails, callers may skip the update or trigger reweighting/persistent scaling.
+         *
+         * @param measurement The epoch measurement to validate.
+         * @return True if the measurement passes validation and is suitable for a Kalman update; false otherwise.
+         */
         bool validateMeasurementUpdate(const EpochMeasurement& measurement) const;
 
     private:
-        StateManager& state_manager_;
-        const PppModel& ppp_model_;
-        const GnssConfig& config_;
-        LogManager& log_manager_;
-        PppUtils ppp_utils_;
+        StateManager& state_manager_;    ///< Reference to the state manager (non-owning).
+        const PppModel& ppp_model_;      ///< Reference to the PPP modeling component (non-owning).
+        const GnssConfig& config_;       ///< Processing configuration (read-only).
+        LogManager& log_manager_;        ///< Reference to the logging manager (non-owning).
+        PppUtils ppp_utils_;             ///< Utility helpers (frequency/wavelength helpers) initialized with the logger.
     };
 
 } // namespace GnssProcessor

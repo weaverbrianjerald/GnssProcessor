@@ -1,3 +1,13 @@
+/**
+ * @file Troposphere.cpp
+ * @brief Implementation of troposphere utilities: mapping functions and ZHD.
+ *
+ * Implements:
+ *  - Conversion ECEF -> geodetic LLH (minimal WGS84 Bowring-style iteration).
+ *  - Standard-atmosphere pressure model used to estimate station pressure from height.
+ *  - Troposphere class methods: constructor, mapping functions and Saastamoinen ZHD.
+ */
+
 #include "GnssConfig.hpp"
 #include "Troposphere.hpp"
 #include "Constants.hpp"
@@ -8,14 +18,31 @@
 namespace GnssProcessor {
 
     namespace {
+        /**
+         * @brief Geodetic latitude/longitude/height container.
+         *
+         * Units:
+         *  - lat_rad: latitude in radians
+         *  - lon_rad: longitude in radians
+         *  - h_m:     height above ellipsoid in meters
+         */
         struct LlhRadM {
             double lat_rad = 0.0;
             double lon_rad = 0.0;
             double h_m = 0.0;
         };
 
-        // Minimal WGS84 ECEF -> geodetic LLH (radians, meters), Bowring-style iteration.
-        // Assumes ECEF in meters.
+        /**
+         * @brief Convert minimal WGS84 ECEF to geodetic LLH.
+         *
+         * Performs a Bowring-style iterative solution to compute geodetic
+         * latitude (radians) and height (meters) from an ECEF vector (meters).
+         * Longitude is computed via atan2(y, x). The routine is intended to be
+         * compact and sufficiently accurate for troposphere computations.
+         *
+         * @param ecef ECEF coordinates in meters (X, Y, Z).
+         * @return LlhRadM with latitude (rad), longitude (rad), and height (m).
+         */
         LlhRadM ecefToLlhWgs84(const Eigen::Vector3d& ecef) {
             constexpr double a = 6378137.0;                  // semi-major axis [m]
             constexpr double f = 1.0 / 298.257223563;        // flattening
@@ -64,8 +91,24 @@ namespace GnssProcessor {
             return out;
         }
 
-        // Standard atmosphere pressure model (troposphere lapse-rate approximation).
-        // Interprets P0/T0 as sea-level defaults.
+        /**
+         * @brief Standard atmosphere pressure model (troposphere lapse-rate).
+         *
+         * Computes pressure at height h_m from sea-level pressure/temperature
+         * using the tropospheric lapse-rate approximation:
+         *   P = P0 * (1 - L*h/T0)^(g/(R*L))
+         *
+         * The function clamps intermediate values to reasonable ranges to avoid
+         * numerical issues. Inputs are expected as:
+         *  - P0_mbar: sea-level pressure in millibar
+         *  - T0_K:    sea-level temperature in Kelvin
+         *  - h_m:     height above sea-level in meters
+         *
+         * @param P0_mbar Sea-level pressure in mbar.
+         * @param T0_K Sea-level temperature in Kelvin.
+         * @param h_m Height above sea-level in meters.
+         * @return Pressure at height h_m in mbar (clamped to [100, 1100]).
+         */
         double pressureFromHeightStdAtm(double P0_mbar, double T0_K, double h_m) {
             // P = P0 * (1 - L*h/T0)^(g/(R*L))
             constexpr double g = 9.80665;  // m/s^2
@@ -87,12 +130,32 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Construct a Troposphere helper.
+     *
+     * The constructor logs initialization details using the provided LogManager.
+     *
+     * @param config Reference to the GnssConfig (read-only).
+     * @param log_mgr Reference to the LogManager instance.
+     */
     Troposphere::Troposphere(const GnssConfig& config, LogManager& log_mgr)
         : config_(config), log_manager_(log_mgr) {
         log_manager_.getLogger("troposphere")->info("Troposphere model initialized: mode={}, elev_mask={}°",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK", config_.getElevationMaskDeg());
     }
 
+    /**
+     * @brief Compute tropospheric mapping functions.
+     *
+     * Computes simple empirical hydrostatic (dry) and wet mapping functions
+     * as a function of elevation angle (degrees). If elevation is outside
+     * [0, 90] degrees, the function logs a warning and returns default 1.0
+     * mappings.
+     *
+     * @param elevation Elevation angle in degrees.
+     * @param[out] mf_d Output hydrostatic (dry) mapping function (unitless).
+     * @param[out] mf_w Output wet mapping function (unitless).
+     */
     void Troposphere::getTroposphereMapping(double elevation, double& mf_d, double& mf_w) const {
         if (elevation < 0.0 || elevation > 90.0) {
             log_manager_.getLogger("ppp_model")->warn("Invalid elevation for mapping: {:.3f} deg", elevation);
@@ -118,6 +181,21 @@ namespace GnssProcessor {
         log_manager_.getLogger("ppp_model")->trace("Mappings: elevation={:.3f} deg, mf_d={:.3f}, mf_w={:.3f}", elevation, mf_d, mf_w);
     }
 
+    /**
+     * @brief Compute Saastamoinen zenith hydrostatic delay (ZHD) in meters.
+     *
+     * Converts the receiver ECEF position to geodetic latitude and height,
+     * estimates station pressure from height using the standard atmosphere
+     * model (sea-level P/T read from config), and computes the Saastamoinen
+     * hydrostatic ZHD:
+     *
+     *   ZHD = (0.0022768 * P) / f(lat, h)
+     *
+     * where f(lat,h) applies a latitude and height correction.
+     *
+     * @param receiver_pos Receiver ECEF position in meters.
+     * @return Zenith hydrostatic delay (ZHD) in meters.
+     */
     double Troposphere::computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos) const {
         // WGS84 LLH (geodetic)
         const LlhRadM llh = ecefToLlhWgs84(receiver_pos);

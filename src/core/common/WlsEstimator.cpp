@@ -1,3 +1,19 @@
+/**
+ * @file WlsEstimator.cpp
+ * @brief Weighted least-squares (WLS) epoch estimator implementation.
+ *
+ * Implements the WlsEstimator which forms the design and weight matrices from
+ * epoch observations, iteratively solves the normal equations for receiver
+ * position, clock and troposphere, and returns a WlsResult containing the
+ * estimated state, covariance and quality metrics.
+ *
+ * The implementation:
+ * - filters observations by system, geometry and elevation mask,
+ * - forms iono-free code combinations (as provided in PppObservation),
+ * - assembles H, W and innovation vectors, then iterates to convergence,
+ * - computes RMS and max-absolute residuals and logs diagnostic matrices via WlsLogger.
+ */
+
 #include "WlsEstimator.hpp"
 #include "PppTypes.hpp"
 #include "TimeUtils.hpp"
@@ -6,12 +22,42 @@
 
 namespace GnssProcessor {
 
+/**
+ * @brief Construct a WlsEstimator.
+ *
+ * The estimator stores references to the provided configuration and state
+ * manager and uses the provided LogManager for logging. A WlsLogger is
+ * constructed for detailed WLS debug traces.
+ *
+ * @param config Reference to global GNSS processing configuration.
+ * @param state_manager Reference to the StateManager used for state access/updates.
+ * @param log_manager Reference to the LogManager for logging.
+ */
 WlsEstimator::WlsEstimator(const GnssConfig& config, StateManager& state_manager, LogManager& log_manager)
     : config_(config),
       state_manager_(state_manager),
       log_manager_(log_manager),
       wls_logger_("wls_debug.log") {}
 
+/**
+ * @brief Perform WLS estimation for a single epoch.
+ *
+ * This method:
+ * - Validates input observation count.
+ * - Filters observations by system (GPS only in this implementation), geometry and elevation mask.
+ * - Extracts iono-free code combinations and associated modeled values, variances and mapping coefficients.
+ * - Iteratively forms H, W and z and solves the normal equations for the core state:
+ *   position (3), receiver clock and troposphere wet delay (total 5 states).
+ * - Computes the final covariance (inverse of H^T W H), RMS and maximum absolute residual.
+ * - Logs diagnostic matrices/vectors and the final state via WlsLogger and LogManager.
+ *
+ * The algorithm uses a fixed maximum number of iterations and a position-convergence
+ * tolerance to stop the iterative refinement.
+ *
+ * @param epoch_time Epoch time at which to run the WLS (used for logging/traces).
+ * @param observations Vector of per-satellite PppObservation used in the WLS.
+ * @return WlsResult Result object containing the state vector, covariance and quality metrics.
+ */
 WlsResult WlsEstimator::estimate(const GnssTime& epoch_time, const std::vector<PppObservation>& observations) {
     WlsResult result;
 

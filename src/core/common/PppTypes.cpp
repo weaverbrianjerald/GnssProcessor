@@ -1,11 +1,34 @@
+/**
+ * @file PppTypes.cpp
+ * @brief Implementations of PPP utility helpers declared in PppTypes.hpp.
+ *
+ * This file contains implementations for frequency/wavelength lookups and
+ * system string conversion used throughout the PPP processing code.
+ */
+
 #include "PppTypes.hpp"
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a new PppUtils instance.
+     *
+     * Stores a reference to the application's LogManager for internal logging.
+     *
+     * @param log_mgr Reference to LogManager used by this utility.
+     */
     PppUtils::PppUtils(LogManager& log_mgr) : log_manager_(log_mgr) {
         log_manager_.getLogger("ppp_utils")->debug("PppUtils initialized");
     }
     
+    /**
+     * @brief Convert a System enum value to a human-readable string.
+     *
+     * The returned string is suitable for log messages and textual output.
+     *
+     * @param system System enum value.
+     * @return std::string Human-readable name (e.g. "GPS", "Galileo", "Unknown").
+     */
     std::string PppUtils::getSystemString(System system) {
         switch (system) {
         case System::GPS: return "GPS";
@@ -18,6 +41,20 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Get the carrier frequency (Hz) for a given observable type and system.
+     *
+     * This routine maps common observable labels (e.g. "C1", "L1", "C5") together
+     * with the GNSS system to the nominal carrier frequency in Hz. GLONASS uses
+     * system-dependent base/reference frequencies and therefore returns the
+     * GLONASS center/reference frequency rather than a satellite-specific
+     * channel offset (rescaling is handled elsewhere when needed).
+     *
+     * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
+     * @param system GNSS system enumeration value.
+     * @param satellite Satellite identifier (unused for most systems; may be used for satellite-specific handling).
+     * @return double Frequency in Hz on success, 0.0 on unknown/unsupported input.
+     */
     double PppUtils::getFrequency(const std::string& freq_type, System system, const std::string& satellite) const {
         if (system == System::GPS) {
             if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
@@ -91,6 +128,17 @@ namespace GnssProcessor {
         return 0.0;
     }
 
+    /**
+     * @brief Get a reference (nominal) frequency for a given observable type and system.
+     *
+     * For GLONASS this returns the system's center/reference frequency (G1/G2/G3).
+     * For other systems it forwards to getFrequency() to return the nominal
+     * carrier frequency. Warnings are logged when inputs are invalid or unknown.
+     *
+     * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
+     * @param system GNSS system enumeration value.
+     * @return double Reference frequency in Hz, or 0.0 if unknown/invalid.
+     */
     double PppUtils::getReferenceFrequency(const std::string& freq_type, System system) const {
         // Validate input
         if (freq_type.empty()) {
@@ -120,6 +168,16 @@ namespace GnssProcessor {
         return freq;
     }
 
+    /**
+     * @brief Compute the wavelength (meters) for a given system and observable type.
+     *
+     * Wavelength is computed as SPEED_OF_LIGHT / frequency. Input validation is
+     * performed and warnings are logged on invalid inputs or computation errors.
+     *
+     * @param system GNSS system enumeration value.
+     * @param freq_type Observable or signal identifier (e.g. "L1", "C5").
+     * @return double Wavelength in meters on success, 0.0 on invalid input.
+     */
     double PppUtils::getWavelength(System system, const std::string& freq_type) const {
         // Validate input
         if (freq_type.empty()) {

@@ -1,3 +1,11 @@
+/*!
+ * \file GnssConfig.cpp
+ * \brief Implementation of GnssConfig JSON loading and product path lookup.
+ *
+ * Adds JSON-based configuration parsing and helpers used by the GNSS processor.
+ * Doxygen-style comments document runtime behaviour, defaults, and logging.
+ */
+
 #include "GnssConfig.hpp"
 //#include "RinexParser.hpp"
 #include <fstream>
@@ -6,6 +14,41 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Load configuration values from a JSON file into this GnssConfig instance.
+     *
+     * The method opens and parses the JSON file at \p path, then populates
+     * internal configuration members such as processing and signal modes,
+     * measurement / process noise defaults, antenna orientation, file paths,
+     * product list entries, active GNSS systems, troposphere defaults and
+     * leap seconds. The function uses \p log_manager to emit informative,
+     * warning and error messages during parsing and when falling back to
+     * defaults.
+     *
+     * Supported JSON keys (examples):
+     *  - "processing_mode": "PPP" or "PPP-RTK"
+     *  - "signal_mode": "Dual", "Triple", "All" (case-insensitive)
+     *  - "uncombined_enabled": bool
+     *  - "elevation_mask_deg": number
+     *  - "receiver_antenna_orientation": { "azimuth_deg": number, "elevation_deg": number }
+     *  - "process_noise": { "position_std": number, "clock_bias_std": number, "troposphere_std": number, "ionosphere_std": number }
+     *  - "initial_std": { "position": number, "clock": number, "troposphere": number, "ionosphere": number, "ambiguity": number }
+     *  - "default_measurement_noise": { "code_std_m": number, "phase_std_m": number }
+     *  - "signal_priorities": object mapping GNSS system -> array of signal strings
+     *  - "active_systems": array of strings (e.g. ["GPS", "Galileo", ...])
+     *  - "observation_path", "navigation_path", "product_list_path"
+     *  - "zhd_pressure_mbar", "zhd_temp_kelvin"
+     *  - "leap_seconds"
+     *
+     * If certain keys or files are missing, sensible defaults are applied and a
+     * warning is logged. For example, missing active systems will result in a
+     * default set of {"GPS","Galileo","GLONASS","BeiDou","QZSS","SBAS"}.
+     *
+     * @param path Filesystem path to the JSON configuration file.
+     * @param log_manager Reference to a LogManager used for logging messages.
+     * @return true if configuration loaded and parsed successfully; false on
+     *         file open error or parsing exception.
+     */
     bool GnssConfig::loadFromJson(const std::filesystem::path& path, LogManager& log_manager) {
         try {
             std::ifstream file(path);
@@ -46,14 +89,14 @@ namespace GnssProcessor {
             receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
             receiver_antenna_orientation_.elevation_deg = json["receiver_antenna_orientation"].value("elevation_deg", 90.0);
             process_noise_.position = json["process_noise"].value("position_std", 0.0);
-            process_noise_.clock = json["process_noise"].value("clock_bias_std", 5.0);
+            process_noise_.clock = json["process_noise"].value("clock_bias_std", 1000.0);
             process_noise_.troposphere = json["process_noise"].value("troposphere_std", 0.00005);
             process_noise_.ionosphere = json["process_noise"].value("ionosphere_std", 0.02);
             initial_std_.position = json["initial_std"].value("position", 100.0);
-            initial_std_.clock = json["initial_std"].value("clock", 100.0);
+            initial_std_.clock = json["initial_std"].value("clock", 1000.0);
             initial_std_.troposphere = json["initial_std"].value("troposphere", 0.5);
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
-            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 300.0);
+            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 1000.0);
 
             // Default measurement noise (fallback)
             if (json.contains("default_measurement_noise")) {
@@ -153,6 +196,26 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Retrieve a product file path matching the requested product \p type.
+     *
+     * The function searches the previously-loaded product list (\c product_paths_)
+     * for a file with an extension matching common product types. The search is
+     * case-sensitive with respect to the requested \p type. If \p type equals
+     * "RNX", the method returns the configured navigation RINEX path.
+     *
+     * Recognized mappings:
+     *  - "SP3" -> file extension ".SP3"
+     *  - "CLK" -> file extension ".CLK"
+     *  - "ATX" -> file extension ".atx"
+     *  - "BIA" -> file extension ".BIA"
+     *  - "ERP" -> file extension ".ERP"
+     *  - "NC"  -> file extension ".nc"
+     *  - "RNX" -> returns navigation_path_
+     *
+     * @param type Product type string (e.g. "SP3", "CLK", "RNX").
+     * @return filesystem::path to the first matching product; empty path if not found.
+     */
     std::filesystem::path GnssConfig::getProductPath(const std::string& type) const {
         for (const auto& path : product_paths_) {
             std::string ext = path.extension().string();

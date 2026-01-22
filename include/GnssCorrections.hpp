@@ -1,6 +1,22 @@
 #ifndef GNSS_CORRECTIONS_HPP
 #define GNSS_CORRECTIONS_HPP
 
+/**
+ * @file GnssCorrections.hpp
+ * @brief Satellite and geodetic correction utilities used by GNSS processing.
+ *
+ * This header declares the GnssCorrections class which encapsulates common
+ * corrections applied to GNSS measurements and navigation products:
+ * - Satellite clock interpolation and relativistic corrections
+ * - Sagnac and Shapiro path delays
+ * - Tide and loading corrections (solid earth, pole tide, ocean, atmospheric)
+ * - Bias retrieval and phase wind-up calculation
+ *
+ * The class is constructed with optional product data (clocks, ERPs, biases,
+ * orbits) and may reference configuration and RINEX parser objects for
+ * behaviour that depends on runtime settings or observation metadata.
+ */
+
 #include "LogManager.hpp"
 #include "TimeUtils.hpp"
 #include "PppTypes.hpp"
@@ -14,18 +30,55 @@ namespace GnssProcessor {
     class GnssConfig;
     class RinexParser;
 
+    /**
+     * @class GnssCorrections
+     * @brief Compute and provide GNSS-related corrections for measurements.
+     *
+     * GnssCorrections provides a central place to compute corrections that are
+     * frequently required when forming GNSS measurement models (e.g. for PPP).
+     * Implementations typically depend on externally parsed product files such
+     * as CLK (satellite clocks), ERP (Earth rotation parameters), orbit
+     * products, and optional bias files. A LogManager reference is required
+     * for diagnostic logging.
+     */
     class GnssCorrections {
 
     public:
-        // Minimal constructor (no product data) - used where only logging is available
+        /**
+         * @brief Minimal constructor without product data.
+         * @param log_mgr Reference to the LogManager used for logging.
+         *
+         * Use this constructor when product files are not available but logging
+         * is still required.
+         */
         explicit GnssCorrections(LogManager& log_mgr);
 
-        // Constructor with clocks and ERPs (used by Geometry/ProductParser)
+        /**
+         * @brief Construct with clocks and ERPs.
+         * @param log_mgr Reference to the LogManager used for logging.
+         * @param clocks Vector of satellite clock samples (ClockData).
+         * @param erps Vector of Earth rotation parameter samples (ErpData).
+         *
+         * Commonly used by product/geometry parsers which already have clocks
+         * and ERP loaded at construction time.
+         */
         GnssCorrections(LogManager& log_mgr,
             const std::vector<ClockData>& clocks,
             const std::vector<ErpData>& erps);
 
-        // Full constructor (optional biases and access to config/rinex)
+        /**
+         * @brief Full constructor with optional biases and RINEX access.
+         * @param log_mgr Reference to the LogManager used for logging.
+         * @param config Reference to the processing configuration (may be used
+         *               to control correction options).
+         * @param clocks Vector of satellite clock samples (ClockData).
+         * @param erps Vector of Earth rotation parameter samples (ErpData).
+         * @param biases Vector of bias entries (BiasData).
+         * @param rinex Reference to a RinexParser for receiver/observation metadata.
+         *
+         * Use when full product context is available and some corrections
+         * depend on configuration or RINEX header information.
+         */
         GnssCorrections(LogManager& log_mgr,
             const GnssConfig& config,
             const std::vector<ClockData>& clocks,
@@ -33,58 +86,163 @@ namespace GnssProcessor {
             const std::vector<BiasData>& biases,
             const RinexParser& rinex);
 
-        // Update clocks/erps after construction (avoids reassigning whole object)
+        /**
+         * @brief Update clocks and ERPs after construction.
+         * @param clocks Vector of satellite clock samples (ClockData).
+         * @param erps Vector of Earth rotation parameter samples (ErpData).
+         *
+         * Allows replacing or refreshing time-dependent product containers
+         * without recreating the GnssCorrections object.
+         */
         void setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps);
 
-        // Computes satellite clock correction (seconds) using CLK data
+        /**
+         * @brief Get satellite clock correction in seconds.
+         * @param satellite Satellite identifier string (e.g. "G01", "E11").
+         * @param time Epoch at which the correction is requested.
+         * @return Clock correction in seconds (bias + interpolation).
+         *
+         * This routine uses available CLK data to provide a best-effort clock
+         * correction for the requested satellite and epoch.
+         */
         double getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time) const;
 
-        // Interpolates clock correction from CLK data
+        /**
+         * @brief Interpolate clock values from clock samples.
+         * @param satellite Satellite identifier string.
+         * @param time Epoch for interpolation.
+         * @param clocks Container of ClockData from which to interpolate.
+         * @return Interpolated clock value in seconds.
+         *
+         * Performs interpolation (or nearest-sample retrieval) using the
+         * provided clock samples. Exact interpolation method (linear, spline)
+         * is implementation-defined.
+         */
         double interpolateClock(const std::string& satellite, const GnssTime& time,
             const std::vector<ClockData>& clocks) const;
 
-        // Computes relativistic clock correction (seconds) for a satellite
+        /**
+         * @brief Compute relativistic clock correction due to satellite orbit.
+         * @param satellite Satellite identifier string.
+         * @param sat_pos Satellite ECEF position (meters).
+         * @param sat_vel Satellite ECEF velocity (meters/second).
+         * @return Relativistic correction in seconds.
+         *
+         * Accounts for the classical relativistic effect from the satellite's
+         * orbital motion and eccentricity as used in GNSS clock modelling.
+         */
         double computeRelativisticCorrection(const std::string& satellite, const Eigen::Vector3d& sat_pos,
             const Eigen::Vector3d& sat_vel) const;
 
-        // Computes Shapiro (relativistic path) delay (meters) for a satellite
+        /**
+         * @brief Compute the Shapiro (relativistic path) delay.
+         * @param satellite Satellite identifier string (unused in pure geometric form).
+         * @param rx_pos Receiver ECEF position (meters).
+         * @param sat_pos Satellite ECEF position (meters).
+         * @return Shapiro delay in meters.
+         *
+         * The Shapiro delay is the additional path length caused by the
+         * curvature of spacetime near massive bodies (primarily the Sun).
+         */
         double computeShapiroDelay(const std::string& satellite, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos) const;
 
-        // Computes Sagnac correction (meters)
+        /**
+         * @brief Compute Sagnac correction (rotation of the Earth).
+         * @param rx_pos Receiver ECEF position (meters).
+         * @param sat_pos Satellite ECEF position (meters).
+         * @return Sagnac correction in meters.
+         *
+         * Accounts for signal path difference caused by Earth's rotation
+         * between transmit and receive events.
+         */
         double computeSagnacCorrection(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const;
 
-        // Computes pole tide correction (meters) in ECEF coordinates
+        /**
+         * @brief Compute pole tide correction in ECEF coordinates.
+         * @param rx_pos Receiver ECEF position (meters).
+         * @param time Epoch for ERP/pole values.
+         * @return ECEF displacement vector (meters) due to pole tide.
+         *
+         * Applies pole tide displacement to station coordinates using ERP data.
+         */
         Eigen::Vector3d computePoleTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
-        // Computes Solid Earth Tide correction
+        /**
+         * @brief Compute solid Earth tide correction (radial displacement).
+         * @param receiver_pos Receiver ECEF position (meters).
+         * @param sat_pos Satellite ECEF position (meters).
+         * @param sun_pos Sun ECEF position (meters).
+         * @param moon_pos Moon ECEF position (meters).
+         * @return Radial displacement in meters to apply to the geometric range.
+         *
+         * Implements the solid Earth tide correction (Love numbers, tidal
+         * constituents) to the measured ranges.
+         */
         double computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
             const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos) const;
 
-        // Computes ocean tide correction (meters) in ECEF coordinates
+        /**
+         * @brief Compute ocean tide correction (ECEF displacement).
+         * @param rx_pos Receiver ECEF position (meters).
+         * @param time Epoch for tide constituents.
+         * @return ECEF displacement vector (meters) caused by ocean loading/tides.
+         *
+         * Ocean tide correction is often modeled as frequency-dependent loading
+         * using ocean tide models and load Love numbers.
+         */
         Eigen::Vector3d computeOceanTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
-        // Computes atmospheric loading correction (meters)
+        /**
+         * @brief Compute atmospheric loading correction (radial displacement).
+         * @param rx_pos Receiver ECEF position (meters).
+         * @param time Epoch when the loading is evaluated.
+         * @return Radial displacement in meters due to atmospheric loading.
+         *
+         * Uses configured or climatological pressure/atmospheric parameters to
+         * estimate station displacement from atmospheric mass loading.
+         */
         double computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
-        // Returns bias correction (meters) for a signal type at a given time
+        /**
+         * @brief Get bias correction for a given satellite/signal at an epoch.
+         * @param satellite Satellite identifier or receiver id string.
+         * @param freq_type Frequency or signal type string (e.g. "L1", "C1").
+         * @param time Epoch for which the bias applies.
+         * @return Bias correction in meters (or zero if no matching bias).
+         *
+         * Searches internal bias table for an applicable entry and returns the
+         * bias value; behaviour on overlapping entries is implementation-defined.
+         */
         double getBiasCorrection(const std::string& satellite, const std::string& freq_type,
             const GnssTime& time) const;
 
-        // Computes phase wind-up correction (meters) for carrier phase measurements
+        /**
+         * @brief Compute phase wind-up correction for carrier-phase.
+         * @param satellite Satellite identifier string.
+         * @param system Satellite system enum (System).
+         * @param rx_pos Receiver ECEF position (meters).
+         * @param sat_pos Satellite ECEF position (meters).
+         * @param wavelength Carrier wavelength in meters.
+         * @param time Epoch for any time-dependent quantities.
+         * @return Phase wind-up correction in meters (to add to carrier range).
+         *
+         * Computes the phase bias caused by relative antenna orientation
+         * (receiver vs satellite) and returns the equivalent length offset.
+         */
         double computePhaseWindUp(const std::string& satellite, System system, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos, double wavelength, const GnssTime& time) const;
 
     private:
-        LogManager& log_manager_;                         // Logger for debugging and info
-        std::vector<ClockData> clocks_;                   // Satellite clock data
-        std::vector<ErpData> erps_;                       // Earth rotation parameters
-        std::vector<BiasData> biases_;                    // Bias correction data
-        std::vector<OrbitData> orbits_;                   // Satellite orbit data
+        LogManager& log_manager_;                         ///< Logger for debugging and info
+        std::vector<ClockData> clocks_;                   ///< Satellite clock data samples
+        std::vector<ErpData> erps_;                       ///< Earth rotation parameters
+        std::vector<BiasData> biases_;                    ///< Bias correction entries
+        std::vector<OrbitData> orbits_;                   ///< Satellite orbit/ephemeris data
 
         // Optional external references (nullable pointers)
-        const GnssConfig* config_;                        // Configuration settings (may be nullptr)
-        const RinexParser* rinex_parser_;                 // RINEX data parser (may be nullptr)
+        const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)
+        const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
     };
 
 }

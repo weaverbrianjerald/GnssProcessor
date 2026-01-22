@@ -11,6 +11,23 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a RinexParser.
+     *
+     * @param config Reference to the global GNSS processing configuration.
+     * @param log_manager Reference to a LogManager used for logging parser events.
+     * @param product_parser Reference to a ProductParser used to access auxiliary products.
+     *
+     * @details
+     * - Initializes internal header/state members to sensible defaults.
+     * - Emits an initialization log entry including the selected processing mode.
+     * - Registers this RinexParser instance with @p product_parser via
+     *   `product_parser.setRinexParser(*this)` so the ProductParser can query
+     *   epoch times and other parsed information later.
+     *
+     * Note: the constructor does not parse any files. Call `parse()` to read the
+     * configured RINEX observation file.
+     */
     RinexParser::RinexParser(const GnssConfig& config, LogManager& log_manager, ProductParser& product_parser)
         : config_(config), log_manager_(log_manager), product_parser_(product_parser),
         header_(), observations_(), receiver_serial_no_(), time_of_first_obs_(), glonass_freq_slots_() {
@@ -27,6 +44,29 @@ namespace GnssProcessor {
         product_parser.setRinexParser(*this);
     }
 
+    /**
+     * @brief Parse the configured RINEX file (observation or navigation).
+     *
+     * This routine reads the file at `config_.getObservationPath()` and:
+     * - Validates the file path and returns false (logs error) if missing or not present.
+     * - Detects navigation RINEX files (filename contains "BRDC" or "_MN.rnx")
+     *   and delegates parsing to `product_parser_.parseKlobuchar(...)`. Returns
+     *   true on successful delegation.
+     * - Parses RINEX header and observation epochs for both RINEX 3.x (">" epoch lines)
+     *   and RINEX 2.x formats:
+     *     - Populates `header_` fields (version, time system, obs types per system,
+     *       approximate ECEF position, antenna offsets/azimuth/elevation, interval,
+     *       marker/receiver/antenna metadata).
+     *     - Fills `glonass_freq_slots_` from "GLONASS SLOT / FRQ #" header lines.
+     *     - Builds `observations_` vector of `RinexObservation`, sets `time_of_first_obs_`.
+     *     - Rescales GLONASS measurements via `rescaleGlonassMeasurement(...)` when slot info exists.
+     *     - Assigns measurement variances using `config_.getDefaultMeasurementNoise()` and stores LLI flags.
+     * - Logs progress, warnings and errors via `log_manager_`.
+     * - Catches and logs exceptions; closes the file and returns false on failure.
+     *
+     * @return true if parsing succeeded (observations were parsed or nav delegation succeeded),
+     *         false on any error or when no observations were produced.
+     */
     bool RinexParser::parse() {
         std::filesystem::path rinex_path = config_.getObservationPath();
         if (rinex_path.empty() || !std::filesystem::exists(rinex_path)) {
@@ -441,6 +481,28 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Validate measurement rate and epoch intervals parsed from the RINEX file.
+     *
+     * Checks the header-declared measurement interval (if present) and validates
+     * consecutive epoch intervals computed from `observations_`.
+     *
+     * Behavior:
+     * - Returns true immediately when `observations_` is empty.
+     * - If `header_.interval` is present, verifies it lies in [0.01, 300.0] seconds;
+     *   logs an error if outside that range and a warning when it differs from the
+     *   expected 30.0 s test value.
+     * - Iterates consecutive observations (skips identical epoch times), computes
+     *   delta-t using the difference of TOW values, and accounts for GPS week
+     *   rollover by adding 604800.0 s when dt < 0.0.
+     * - Ensures each epoch interval dt is within [0.01, 300.0] s; logs errors on
+     *   invalid intervals and warnings when dt deviates from 30.0 s.
+     *
+     * @note Uses spdlog for logging messages.
+     *
+     * @return true if the header interval (if present) and all epoch intervals are
+     *         within allowed ranges; false if any invalid interval is detected.
+     */
     bool RinexParser::validateMeasurementRate() const {
         if (observations_.empty()) return true;
 
@@ -474,6 +536,27 @@ namespace GnssProcessor {
         return true;
     }
 
+    /**
+     * @brief Rescale a GLONASS observation to a reference frequency.
+     *
+     * Rescales GLONASS code or phase measurements to a canonical reference
+     * frequency to compensate for frequency-channel-dependent offsets.  The
+     * function:
+     * - Only processes observation types whose first character is `'L'` (phase)
+     *   or `'C'` (code). Other types are returned unchanged.
+     * - Obtains the satellite's actual frequency via `getGlonassFrequency(...)`.
+     * - Selects the reference frequency based on the frequency label (L1/C1,
+     *   L2/C2 or L3/C3).
+     * - Computes `scaled = observed_value * (actual_freq / ref_freq)`.
+     * - Performs sanity checks on the computed frequency and scaled value and
+     *   returns the original value if checks fail (warnings are logged).
+     *
+     * @param[in] observed_value Observed measurement value (units preserved — e.g. meters).
+     * @param[in] freq_type      Observation frequency/type string (e.g., "L1C", "C2P").
+     * @param[in] satellite      Satellite identifier (e.g., "R01").
+     * @return Rescaled measurement (same units as @p observed_value) or the
+     *         original value if rescaling is not applicable or fails validation.
+     */
     double RinexParser::rescaleGlonassMeasurement(double observed_value, const std::string & freq_type,
         const std::string & satellite) const {
         // Only rescale GLONASS phase (L) and code (C) measurements
@@ -507,6 +590,23 @@ namespace GnssProcessor {
         return scaled_obs;
     }
 
+    /**
+     * @brief Compute GLONASS carrier frequency for a given observation type and satellite.
+     *
+     * Validates the provided frequency/type label (must reference L1/C1, L2/C2 or L3/C3),
+     * looks up the satellite's GLONASS FDMA channel from `glonass_freq_slots_` (uses
+     * channel 0 when no slot entry exists), and computes the actual carrier frequency:
+     * - G1 frequency = GLONASS_G1_BASE_FREQ + channel * GLONASS_G1_CHANNEL_OFFSET
+     * - G2 frequency = GLONASS_G2_BASE_FREQ + channel * GLONASS_G2_CHANNEL_OFFSET
+     * - G3 frequency = GLONASS_G3_BASE_FREQ (CDMA, no channel offset)
+     *
+     * The function logs warnings for invalid frequency labels, out-of-range channels,
+     * and non-finite/invalid computed frequencies. It returns 0.0 on error.
+     *
+     * @param[in] freq_type Observation frequency/type string (e.g., "L1C", "C2P").
+     * @param[in] satellite Satellite identifier string (e.g., "R01").
+     * @return Frequency in Hz if valid, otherwise 0.0.
+     */
     double RinexParser::getGlonassFrequency(const std::string & freq_type, const std::string & satellite) const {
         // Validate frequency type
         if (freq_type.find("C1") == std::string::npos && freq_type.find("L1") == std::string::npos &&
@@ -554,6 +654,29 @@ namespace GnssProcessor {
         return freq;
     }
 
+    /**
+     * @brief Validate a RINEX 3.x observation code for a specific GNSS system.
+     *
+     * Validates the syntactic format of a RINEX 3.x observation code and verifies
+     * it is allowed for the provided GNSS system. The expected syntactic pattern
+     * is one of the observation-type letters {C,L,D,S}, followed by a digit and
+     * an uppercase letter (e.g. "C1C", "L2P").
+     *
+     * Behavior:
+     * - Performs a lightweight syntactic check: length == 3, first char in {C,L,D,S},
+     *   second char is a digit, third char is an uppercase letter.
+     * - Looks up the provided GNSS system in an internal table of valid codes and
+     *   confirms membership. If the system has no table or the code is not listed,
+     *   the code is considered invalid.
+     * - Logs diagnostic messages at debug level for invalid formats, unknown systems,
+     *   or unsupported codes.
+     *
+     * @param[in] code   Observation code string to validate (e.g., "C1C").
+     * @param[in] system GNSS system enum indicating which system's valid set to check.
+     * @return std::optional<std::string> containing the (normalized) observation code
+     *         on success, or std::nullopt if the code is syntactically invalid or not
+     *         permitted for the given system.
+     */
     std::optional<std::string> RinexParser::validateObsCode(const std::string& code, System system) const {
         // RINEX 3.x observation code format: [CLDS][1-9][A-Z]
         if (code.length() != 3 || (code[0] != 'C' && code[0] != 'L' && code[0] != 'D' && code[0] != 'S') ||
@@ -649,6 +772,23 @@ namespace GnssProcessor {
         return std::nullopt;
     }
 
+    /**
+     * @brief Return epoch times extracted from parsed observations.
+     *
+     * Extracts the `time` field from each stored `RinexObservation` and returns
+     * them in the same order as `observations_`. Note that the vector may contain
+     * duplicate times because `observations_` stores one entry per satellite per
+     * epoch (i.e., multiple observations sharing the same epoch produce repeated
+     * times).
+     *
+     * This method does not modify internal state.
+     *
+     * @return std::vector<GnssTime> Vector of epoch times (GPS week + TOW) in the
+     *         same iteration order as `observations_`.
+     *
+     * @note For a unique, sorted list of epoch times call `getEpochTimes()` and
+     *       post-process the result (e.g., sort + erase unique).
+     */
     std::vector<GnssTime> RinexParser::getEpochTimes() const {
         std::vector<GnssTime> epoch_times;
         for (const auto& obs : observations_) {

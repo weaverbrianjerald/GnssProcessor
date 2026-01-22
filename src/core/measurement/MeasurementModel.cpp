@@ -1,3 +1,15 @@
+/**
+ * @file MeasurementModel.cpp
+ * @brief Implements measurement vector, design matrix and covariance assembly for PPP Kalman updates.
+ *
+ * The implementation converts a set of PPP observations and the current Kalman state
+ * into an EpochMeasurement suitable for Kalman filter processing. Responsibilities:
+ *  - Ensure ambiguity states exist for phase iono-free combinations.
+ *  - Compute LOS-based Jacobian rows using the current receiver position.
+ *  - Assemble innovations, H matrix and per-measurement variances R_v.
+ *  - Perform basic validation and logging for invalid/low-quality data.
+ */
+
 #include "PppModel.hpp"
 #include "PppTypes.hpp"
 #include "MeasurementModel.hpp"
@@ -8,6 +20,17 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a MeasurementModel.
+     *
+     * Stores references to the provided managers and utilities. Emits an informational
+     * log with configured signal priorities and processing mode.
+     *
+     * @param state_manager Non-owning reference to the StateManager for state access and ambiguity bookkeeping.
+     * @param ppp_model Const reference to the PppModel used to obtain modeled observables.
+     * @param config Const reference to the global GnssConfig providing processing parameters.
+     * @param log_manager Non-owning reference to the LogManager used for logging.
+     */
     MeasurementModel::MeasurementModel(StateManager& state_manager, const PppModel& ppp_model,
         const GnssConfig& config, LogManager& log_manager)
         : state_manager_(state_manager), ppp_model_(ppp_model), config_(config), ppp_utils_(log_manager), log_manager_(log_manager) {
@@ -16,6 +39,31 @@ namespace GnssProcessor {
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
 
+    /**
+     * @brief Build an epoch measurement update from parsed PPP observations.
+     *
+     * This method is read-only with respect to the Kalman state except for ensuring
+     * ambiguity entries exist in the StateManager when required (it will call
+     * StateManager::addAmbiguity). The routine:
+     *  - Pre-pass observations to create ambiguity states for ionosphere-free phase combos.
+     *  - Validate geometry/observations and apply elevation mask and other filters.
+     *  - Compute line-of-sight (LOS) using the current receiver position from the state.
+     *  - Assemble the innovation vector (observed - predicted), Jacobian H and per-measurement variances R_v.
+     *
+     * Notes:
+     *  - Only GPS measurements with ionosphere-free dual-frequency combinations are processed.
+     *  - Ambiguities are expected to be stored in the StateManager keyed as "<sat>_<ref_type>".
+     *
+     * @param observations Vector of PPP observations for the epoch (may be empty).
+     * @param current_state Current Kalman state vector (read-only); the implementation will also retrieve the authoritative state vector
+     *                      from StateManager where needed (post ambiguity additions).
+     * @return Populated EpochMeasurement containing innovations, H, R_v and ancillary vectors. On error or no usable observations,
+     *         an EpochMeasurement with empty or partially filled fields is returned; callers should call validateMeasurementUpdate()
+     *         before using the result for a Kalman update.
+     *
+     * @throws std::exception Propagates only if an unexpected runtime error occurs during assembly. Individual observation errors are caught
+     *                       and logged; failing observations are skipped.
+     */
     EpochMeasurement MeasurementModel::computeMeasurementUpdate(const std::vector<PppObservation>& observations,
         const Eigen::VectorXd& current_state) {
         EpochMeasurement update;
@@ -69,6 +117,15 @@ namespace GnssProcessor {
             return update;
         }
 
+        /*!
+         * @brief Predicate to determine whether a given observation/ref_type pair is usable.
+         *
+         * Criteria:
+         *  - GPS system only.
+         *  - Non-empty ref_type beginning with 'C' or 'L'.
+         *  - Ionosphere-free dual-frequency combination (contains '_').
+         *  - Must have observed, variance and modeled entries for the ref_type.
+         */
         auto isUsableMeas = [&](const PppObservation& obs, const std::string& ref_type) -> bool {
             if (obs.system != System::GPS) return false;
             if (ref_type.empty()) return false;
@@ -127,69 +184,97 @@ namespace GnssProcessor {
         for (const auto& obs : observations) {
             if (obs.system != System::GPS) continue;
 
-            // Recompute geometry at current linearization point (state position)
-            Eigen::Vector3d delta_r = obs.sat_pos - current_pos;
-            double range_computed = delta_r.norm();
-            if (range_computed < 1e-6 || !std::isfinite(range_computed)) {
+            // Use the geometry that was computed in computeModels() and stored in the observation.
+            // The satellite position (obs.sat_pos) is already in reception-time ECEF frame.
+            // We only need to recompute the LOS vector for the current state position (for Jacobian).
+            //
+            // Note: We do NOT call computeSatelliteGeometry() again here because:
+            //   1. It's computationally expensive (iterative TOF refinement)
+            //   2. The satellite position and all corrections are position-independent
+            //   3. We only need the LOS direction, which we can compute directly
+
+            // Validate stored geometry
+            if (obs.sat_pos.norm() < 1e6 || !obs.sat_pos.allFinite()) {
                 log_manager_.getLogger("measurement_model")->warn(
-                    "{}Invalid computed range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, range_computed,
+                    "{}Invalid stored satellite position for {} at TOW {:.3f}, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
-            Eigen::Vector3d los_current = delta_r / range_computed;
 
-            // Range used when obs.modeled was formed in computeModels()
-            const double range_ref = obs.range;
-            if (range_ref < 1e-6 || !std::isfinite(range_ref)) {
+            if (obs.range < 1e6 || !std::isfinite(obs.range)) {
                 log_manager_.getLogger("measurement_model")->warn(
-                    "{}Invalid reference range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, range_ref,
+                    "{}Invalid stored range for {} at TOW {:.3f}: {:.3f} m, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.range,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
 
-            const double range_delta = range_computed - range_ref;
-
-            double elev_deg = obs.elevation;
-            if (!std::isfinite(elev_deg)) {
-                log_manager_.getLogger("measurement_model")->debug(
-                    "{}Invalid elevation for {} at TOW {:.3f}: {} deg, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, elev_deg,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-                continue;
-            }
-            if (elev_deg < config_.getElevationMaskDeg()) {
+            if (obs.elevation < config_.getElevationMaskDeg()) {
                 log_manager_.getLogger("measurement_model")->debug(
                     "{}Satellite {} below elevation mask at TOW {:.3f}, elevation={:.3f} deg, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, elev_deg,
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.elevation,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
 
-            double mapping_current = obs.mf_w;
+            // Compute LOS vector from current state position to satellite
+            const Eigen::Vector3d delta = obs.sat_pos - current_pos;
+            const double range_current = delta.norm();
+            if (range_current < 1e6) {
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Invalid current range for {} at TOW {:.3f}: {:.3f} m, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, range_current,
+                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                continue;
+            }
+            const Eigen::Vector3d los_current = delta / range_current;
+
+            // Range delta: difference between current and reference range
+            // This accounts for the linearization from reference position to current state
+            const double range_ref = obs.range;
+            const double range_delta = range_current - range_ref;
+
+            // Use the stored wet mapping function from computeModels()
+            // (elevation-dependent, but elevation change from position delta is negligible)
+            const double mapping_wet = obs.mf_w;
+            if (mapping_wet <= 0.0 || !std::isfinite(mapping_wet)) {
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Invalid wet mapping function for {} at TOW {:.3f}: {:.3f}, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, mapping_wet,
+                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                continue;
+            }
 
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (!isUsableMeas(obs, ref_type)) continue;
 
                 try {
+                    // Build Jacobian row
                     Eigen::VectorXd jacobian = Eigen::VectorXd::Zero(state_size);
                     jacobian.segment<3>(state_manager_.getPositionIndex()) = -los_current;
                     jacobian(state_manager_.getClockIndex()) = 1.0;
-                    jacobian(state_manager_.getTropoIndex()) = mapping_current;
+                    jacobian(state_manager_.getTropoIndex()) = mapping_wet;
 
+                    // The modeled value from processIonoFreeObservation includes:
+                    //   range - sat_clock*c + tropo_zhd*mf_d + antenna + shapiro + solid_tide + ...
+                    // 
+                    // It does NOT include receiver clock (that's in the state).
+                    // It DOES include a reference troposphere (slant_dry_delay = tropo_zhd * mf_d).
+                    //
+                    // Our state estimates: [position, receiver_clock, ZWD, ...]
+                    // 
+                    // Predicted = modeled + range_delta + receiver_clock + (ZWD * mf_w)
+                    
                     const double modeled = obs.modeled.at(ref_type);
-                    const double clk = x(state_manager_.getClockIndex());
-                    const double tropo_term = mapping_current * x(state_manager_.getTropoIndex());
+                    const double rx_clk = x(state_manager_.getClockIndex());
+                    const double zwd = x(state_manager_.getTropoIndex());
+                    const double tropo_wet_term = mapping_wet * zwd;
 
-                    // Adjust modeled (which was built using range_ref) to current range_computed
-                    double predicted = (modeled + range_delta) + clk + tropo_term;
+                    // Predicted observable at current state
+                    double predicted = modeled + range_delta + rx_clk + tropo_wet_term;
 
-                    // Ambiguity handling (read-only): always apply state ambiguity, do not modify it here
+                    // Ambiguity handling for phase measurements
                     if (ref_type[0] == 'L') {
                         const std::string amb_key = obs.satellite + "_" + ref_type;
                         int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
@@ -200,8 +285,10 @@ namespace GnssProcessor {
                         predicted += x(amb_idx);
                     }
 
-                    update.innovations(row) = obs.observed.at(ref_type) - predicted;
+                    // Innovation = observed - predicted
+                    update.innovations(row) = observed - predicted;
 
+                    // Measurement variance with elevation-dependent scaling
                     const double base_var = obs.variances.at(ref_type);
                     const double scale = state_manager_.getMeasurementVarianceScale(obs.satellite, ref_type);
                     update.R_v(row) = base_var * scale;
@@ -214,6 +301,11 @@ namespace GnssProcessor {
                         update.innovations(row) = 0.0;
                         update.R_v(row) = 1e6;
                     }
+
+                    log_manager_.getLogger("measurement_model")->trace(
+                        "{}Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}, range_delta={:.3f}",
+                        epoch_prefix, obs.satellite, ref_type,
+                        observed, modeled, predicted, update.innovations(row), range_delta);
 
                     row++;
                 }
@@ -247,6 +339,18 @@ namespace GnssProcessor {
         return update;
     }
 
+    /**
+     * @brief Validate an assembled EpochMeasurement before using it for a Kalman update.
+     *
+     * Checks for:
+     *  - Dimension consistency between innovations, R_v, H and ancillary vectors.
+     *  - Finite and positive variances.
+     *  - Finite innovations and finite Jacobian rows.
+     *  - Logs warnings for large residuals (but does not automatically reject them unless they break validity).
+     *
+     * @param measurement EpochMeasurement to validate.
+     * @return True if the measurement passes structural and basic numerical checks; false otherwise.
+     */
     bool MeasurementModel::validateMeasurementUpdate(const EpochMeasurement& measurement) const {
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix = "[" + epoch_tag + "] ";

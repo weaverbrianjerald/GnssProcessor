@@ -38,6 +38,7 @@ add_library(gnss_core STATIC
     src/core/common/WlsLogger.cpp
 	src/core/common/WlsEstimator.cpp
     src/core/common/PppTypes.cpp
+	src/core/common/TraceLogger.cpp
     src/core/corrections/GnssCorrections.cpp
     src/core/filter/KalmanFilter.cpp
     src/core/filter/StateManager.cpp
@@ -102,3 +103,23 @@ endif()
 target_link_options(gnss_processor PRIVATE /MANIFEST:NO)
 target_link_options(gnss_tests PRIVATE /MANIFEST:NO)
 target_link_options(gnss_processor_module PRIVATE /MANIFEST:NO)
+
+# Doxygen
+find_package(Doxygen)
+if(DOXYGEN_FOUND)
+    set(DOXYGEN_PROJECT_NAME "GNSS Processor")
+    set(DOXYGEN_PROJECT_BRIEF "A GNSS processing application for PPP and PPP-RTK.")
+    set(DOXYGEN_GENERATE_HTML YES)
+    set(DOXYGEN_GENERATE_LATEX NO)
+    set(DOXYGEN_HTML_EXTRA_STYLESHEET
+        "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome.css"
+        "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome-sidebar-only.css"
+    )
+    doxygen_add_docs(docs
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+        COMMENT "Generate HTML documentation"
+    )
+else()
+    message(WARNING "Doxygen not found. Documentation will not be generated.")
+endif()
