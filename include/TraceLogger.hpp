@@ -111,8 +111,6 @@ public:
                 double kf_clock_bias_m,
                 double delta_clock_m,
                 bool jump_detected,
-                bool wls_quality_good,
-                bool delta_reasonable,
                 bool should_seed) const;
 
 private:
@@ -125,6 +123,7 @@ private:
     mutable std::ofstream ambiguity_trace_; /**< Output stream for ambiguity trace file. */
     mutable std::ofstream residual_trace_;  /**< Output stream for residual trace file. */
     mutable std::ofstream wls_trace_;       /**< Output stream for WLS trace file. */
+    mutable bool state_header_written_{false}; /**< True after dynamic state header columns have been written. */
 };
 
 } // namespace GnssProcessor

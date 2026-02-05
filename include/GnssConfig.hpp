@@ -35,6 +35,28 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Enumeration for satellite velocity interpolation.
+     *
+     * Specifies the type of interpolation used for satellite velocity computation.
+     */
+    enum class SatelliteInterpolationMode {
+        Lagrange,///< Lagrange analytical derivative.
+        Finite,  ///< Finite central difference.
+        Hermite, ///< Monotone Hermite slopes.
+        Spline   ///< Cubic spline.
+    };
+
+    /**
+     * @brief Enumeration for satellite clock interpolation.
+     *
+     * Specifies the type of interpolation used for satellite clock computation.
+     */
+    enum class SatelliteClockInterpolationMode {
+        Linear,   ///< Linear interpolation.
+        Lagrange  ///< Lagrange interpolation.
+    };
+
+    /**
      * @brief Struct representing receiver antenna orientation.
      *
      * Contains azimuth and elevation angles for antenna orientation.
@@ -50,11 +72,12 @@ namespace GnssProcessor {
      * Defines standard deviations for process noise in the Kalman filter.
      */
     struct ProcessNoise {
-        double position{ 0.0 };         ///< Position process noise standard deviation (m²/s).
-        double clock{ 5.0 };            ///< Clock bias process noise standard deviation (m²/s).
-        double troposphere{ 0.00005 };  ///< Tropospheric zenith delay process noise standard deviation (m²/s).
-        double ionosphere{ 0.02 };      ///< Ionospheric zenith delay process noise standard deviation (m²/s).
-        double ambiguity{ 0.0 };        ///< Carrier phase ambiguity process noise standard deviation (m²/s).
+        double position{ 0.0 };             ///< Position process noise standard deviation (m²/s).
+        double clock{ 1e4 };                ///< Clock bias process noise standard deviation (m²/s).
+        double troposphere{ 1e-7 };         ///< Tropospheric zenith delay process noise standard deviation (m²/s).
+        double ionosphere{ 0.20 };          ///< Ionospheric zenith delay process noise standard deviation (m²/s).
+        double ambiguity{ 0.0 };            ///< Carrier phase ambiguity process noise standard deviation (m²/s).
+        double system_time_offset{ 1e-6 };  ///< Inter-system time bias process noise standard deviation (m²/s).
     };
 
     /**
@@ -68,6 +91,7 @@ namespace GnssProcessor {
         double troposphere{ 0.5 };      ///< Initial tropospheric zenith delay standard deviation (m).
         double ionosphere{ 5.0 };       ///< Initial ionospheric zenith delay standard deviation (m).
         double ambiguity{ 300.0 };      ///< Initial ambiguity standard deviation (m).
+        double system_time_offset{ 100.0 }; ///< Initial inter-system time bias standard deviation (m).
     };
 
     /**
@@ -129,6 +153,18 @@ namespace GnssProcessor {
          * @return Current signal mode (Dual, Triple, or All).
          */
         SignalMode getSignalMode() const { return signal_mode_; }
+
+        /**
+         * @brief Gets the satellite position and velocity interpolation mode.
+         * @return Current satellite position and velocity interpolation mode (lagrange, finite, hermite, or spline).
+         */
+        SatelliteInterpolationMode getSatelliteInterpolationMode() const { return satellite_interpolation_mode_; }
+
+        /**
+         * @brief Gets the satellite clock interpolation mode.
+         * @return Current satellite clock interpolation mode (linear, lagrange).
+         */
+        SatelliteClockInterpolationMode getSatelliteClockInterpolationMode() const { return satellite_clock_interpolation_mode_; }
 
         /**
          * @brief Checks if uncombined processing is enabled.
@@ -237,11 +273,13 @@ namespace GnssProcessor {
          * @brief Gets the number of leap seconds.
          * @return Leap seconds value.
          */
-        double getLeapSeconds() const { return leap_seconds_; }
+        double getLeapSeconds() const { return leap_seconds_tai_; }
 
     private:
         ProcessingMode processing_mode_{ ProcessingMode::PPP }; ///< Processing mode (PPP or PPP-RTK).
         SignalMode signal_mode_{ SignalMode::Dual };            ///< Signal mode (Dual, Triple, All).
+        SatelliteInterpolationMode satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }; ///< Satellite PV mode (Lagrange, Finite, Hermite, Spline).
+        SatelliteClockInterpolationMode satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }; ///< Satellite T mode (Linear, Lagrange).
         bool uncombined_enabled_{ false };                      ///< Enable uncombined processing.
         double elevation_mask_deg_{ 10.0 };                    ///< Elevation mask in degrees.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
@@ -258,7 +296,7 @@ namespace GnssProcessor {
         double zhd_pressure_mbar = 1013.25;  ///< Zenith hydrostatic delay pressure (mbar).
         double zhd_temp_kelvin = 288.15;     ///< Zenith hydrostatic delay temperature (Kelvin).
 
-        double leap_seconds_ = 37.0;  ///< Number of leap seconds (default as of Oct 20, 2025).
+        double leap_seconds_tai_ = 37.0;  ///< Number of leap seconds (TAI-UTC=37) since 2017-01-01.
 
         double residual_threshold_{ 6.0 };   ///< Residual threshold for outlier detection.
         double bad_meas_percent_{ 0.5 };     ///< Percentage of bad measurements allowed.

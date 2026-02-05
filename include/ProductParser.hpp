@@ -159,6 +159,42 @@ namespace GnssProcessor {
          */
         const std::vector<double>& getKlobucharCoeffs() const { return klobuchar_coeffs_; }
 
+
+        /**
+        * @brief Move orbits out of parser. Parser's orbits_ will be empty after call.
+        */
+        std::vector<OrbitData> moveOrbits() { return std::move(orbits_); }
+
+        /**
+         * @brief Move clocks out of parser. Parser's clocks_ will be empty after call.
+         */
+        std::vector<ClockData> moveClocks() { return std::move(clocks_); }
+
+        /**
+         * @brief Move antennas out of parser. Parser's antennas_ will be empty after call.
+         */
+        std::vector<AntennaData> moveAntennas() { return std::move(antennas_); }
+
+        /**
+         * @brief Move biases out of parser. Parser's biases_ will be empty after call.
+         */
+        std::vector<BiasData> moveBiases() { return std::move(biases_); }
+
+        /**
+         * @brief Move ERPs out of parser. Parser's erps_ will be empty after call.
+         */
+        std::vector<ErpData> moveErps() { return std::move(erps_); }
+
+        /**
+         * @brief Move Klobuchar coefficients out of parser.
+         */
+        std::vector<double> moveKlobucharCoeffs() { return std::move(klobuchar_coeffs_); }
+
+        /**
+         * @brief Move Sun ephemeris out of parser.
+         */
+        std::vector<SunEphemeris> moveSunEphemeris() { return std::move(sun_ephemeris_); }
+
         /**
          * @brief Default destructor.
          */

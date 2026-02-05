@@ -37,7 +37,21 @@ WlsEstimator::WlsEstimator(const GnssConfig& config, StateManager& state_manager
     : config_(config),
       state_manager_(state_manager),
       log_manager_(log_manager),
-      wls_logger_("wls_debug.log") {}
+      wls_logger_(nullptr) {
+    // Only enable the WLS trace file when the main logger is at debug level.
+    // If the LogManager hasn't created the "main_log" logger yet, getLogger will create a module logger;
+    // that's acceptable since we only query its level.
+    try {
+        if (auto main_logger = log_manager_.getLogger("main_log")) {
+            if (main_logger->level() == spdlog::level::debug) {
+                wls_logger_ = std::make_unique<WlsLogger>("wls_debug.log");
+            }
+        }
+    }
+    catch (...) {
+        // Fail silently: logging is best-effort; if logger access fails, keep wls_logger_ null.
+    }
+}
 
 /**
  * @brief Perform WLS estimation for a single epoch.
@@ -169,10 +183,10 @@ WlsResult WlsEstimator::estimate(const GnssTime& epoch_time, const std::vector<P
         const double cond = svd.singularValues()(0) /
             svd.singularValues()(svd.singularValues().size() - 1);
 
-        wls_logger_.logDesignMatrix(H, "WLS Design Matrix H", epoch_tow, iter + 1, satellite_ids, combo_types, epoch_tag);
-        wls_logger_.logInnovationsVector(z, "WLS Innovations Vector z", epoch_tow, iter + 1, satellite_ids, combo_types, epoch_tag);
-        wls_logger_.logWeightMatrix(W, "WLS Weight Matrix W", epoch_tow, iter + 1, epoch_tag);
-        wls_logger_.logNormalMatrix(HtWH, "WLS Normal Matrix HtWH", epoch_tow, iter + 1, cond, epoch_tag);
+        if (wls_logger_) wls_logger_->logDesignMatrix(H, "WLS Design Matrix H", epoch_tow, iter + 1, satellite_ids, combo_types, epoch_tag);
+        if (wls_logger_) wls_logger_->logInnovationsVector(z, "WLS Innovations Vector z", epoch_tow, iter + 1, satellite_ids, combo_types, epoch_tag);
+        if (wls_logger_) wls_logger_->logWeightMatrix(W, "WLS Weight Matrix W", epoch_tow, iter + 1, epoch_tag);
+        if (wls_logger_) wls_logger_->logNormalMatrix(HtWH, "WLS Normal Matrix HtWH", epoch_tow, iter + 1, cond, epoch_tag);
 
         if (HtWH.determinant() <= 1e-6) {
             log_manager_.getLogger("ppp_model")->warn(
@@ -186,7 +200,7 @@ WlsResult WlsEstimator::estimate(const GnssTime& epoch_time, const std::vector<P
 
         Eigen::VectorXd current_state(kCoreSize);
         current_state << current_pos, current_clock, current_trop_z;
-        wls_logger_.logStateVector(current_state, "WLS Intermediate State Vector", epoch_tow, iter + 1, epoch_tag);
+        if (wls_logger_) wls_logger_->logStateVector(current_state, "WLS Intermediate State Vector", epoch_tow, iter + 1, epoch_tag);
 
         if (delta.segment<3>(0).norm() < kTol) {
             break;
@@ -223,8 +237,8 @@ WlsResult WlsEstimator::estimate(const GnssTime& epoch_time, const std::vector<P
         init_state(0), init_state(1), init_state(2),
         init_state(3), init_state(4), rms, max_abs);
 
-    wls_logger_.logStateVector(init_state, "WLS Final State Vector", epoch_tow, iter + 1, epoch_tag);
-    wls_logger_.logCovarianceMatrix(init_covariance, "WLS Final Covariance Matrix", epoch_tow, iter + 1, epoch_tag);
+    if (wls_logger_) wls_logger_->logStateVector(init_state, "WLS Final State Vector", epoch_tow, iter + 1, epoch_tag);
+    if (wls_logger_) wls_logger_->logCovarianceMatrix(init_covariance, "WLS Final Covariance Matrix", epoch_tow, iter + 1, epoch_tag);
 
     result.state = std::move(init_state);
     result.covariance = std::move(init_covariance);

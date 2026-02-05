@@ -31,7 +31,7 @@ namespace GnssProcessor {
      *  - "uncombined_enabled": bool
      *  - "elevation_mask_deg": number
      *  - "receiver_antenna_orientation": { "azimuth_deg": number, "elevation_deg": number }
-     *  - "process_noise": { "position_std": number, "clock_bias_std": number, "troposphere_std": number, "ionosphere_std": number }
+     *  - "process_noise": { "position_q": number, "clock_bias_q": number, "troposphere_q": number, "ionosphere_q": number }
      *  - "initial_std": { "position": number, "clock": number, "troposphere": number, "ionosphere": number, "ambiguity": number }
      *  - "default_measurement_noise": { "code_std_m": number, "phase_std_m": number }
      *  - "signal_priorities": object mapping GNSS system -> array of signal strings
@@ -83,29 +83,72 @@ namespace GnssProcessor {
             }
             log_manager.getLogger("gnss_config")->info("Signal mode: {}", signal_mode);
 
+            // Parse satellite position and velocity interpolation mode
+            std::string sv_mode = json.value("satellite_interpolation_mode", "Lagrange");
+            std::string sv_mode_lower = sv_mode;
+            std::transform(sv_mode.begin(), sv_mode.end(), sv_mode.begin(), ::tolower);
+            if (sv_mode == "lagrange") {
+                satellite_interpolation_mode_ = SatelliteInterpolationMode::Lagrange;
+            }
+            else if (sv_mode == "finite") {
+                satellite_interpolation_mode_ = SatelliteInterpolationMode::Finite;
+            }
+            else if (sv_mode == "hermite") {
+                satellite_interpolation_mode_ = SatelliteInterpolationMode::Hermite;
+            }
+            else if (sv_mode == "spline") {
+                satellite_interpolation_mode_ = SatelliteInterpolationMode::Spline;
+            }
+            else {
+                log_manager.getLogger("gnss_config")->warn("Invalid satellite_interpolation_mode '{}', defaulting to Lagrange", sv_mode);
+                satellite_interpolation_mode_ = SatelliteInterpolationMode::Lagrange;
+            }
+            log_manager.getLogger("gnss_config")->info("Satellite Pos Vel interpolation mode: {}", sv_mode);
+
+            // Parse satellite clock interpolation mode
+            std::string sv_clock_mode = json.value("satellite_clock_interpolation_mode", "Linear");
+            std::string sv_clock_mode_lower = sv_clock_mode;
+            std::transform(sv_clock_mode.begin(), sv_clock_mode.end(), sv_clock_mode.begin(), ::tolower);
+            if (sv_clock_mode == "linear") {
+                satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
+            }
+            else if (sv_clock_mode == "finite") {
+                satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Lagrange;
+            }
+            else {
+                log_manager.getLogger("gnss_config")->warn("Invalid satellite_interpolation_mode '{}', defaulting to Lagrange", sv_clock_mode);
+                satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
+            }
+            log_manager.getLogger("gnss_config")->info("Satellite Clock interpolation mode: {}", sv_clock_mode);
+
             // Parse other fields
             uncombined_enabled_ = json.value("uncombined_enabled", false);
             elevation_mask_deg_ = json.value("elevation_mask_deg", 10.0);
+
             receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
             receiver_antenna_orientation_.elevation_deg = json["receiver_antenna_orientation"].value("elevation_deg", 90.0);
-            process_noise_.position = json["process_noise"].value("position_std", 0.0);
-            process_noise_.clock = json["process_noise"].value("clock_bias_std", 1000.0);
-            process_noise_.troposphere = json["process_noise"].value("troposphere_std", 0.00005);
-            process_noise_.ionosphere = json["process_noise"].value("ionosphere_std", 0.02);
+
+            process_noise_.position = json["process_noise"].value("position_q", 0.0);
+            process_noise_.clock = json["process_noise"].value("clock_bias_q", 1e5);
+            process_noise_.troposphere = json["process_noise"].value("troposphere_q", 1e-9);
+            process_noise_.ionosphere = json["process_noise"].value("ionosphere_q", 0.20);
+            process_noise_.system_time_offset = json["process_noise"].value("system_time_offset_q", 1e-6);
+
             initial_std_.position = json["initial_std"].value("position", 100.0);
-            initial_std_.clock = json["initial_std"].value("clock", 1000.0);
+            initial_std_.clock = json["initial_std"].value("clock", 1e5);
             initial_std_.troposphere = json["initial_std"].value("troposphere", 0.5);
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
             initial_std_.ambiguity = json["initial_std"].value("ambiguity", 1000.0);
+            initial_std_.system_time_offset = json["initial_std"].value("system_time_offset", 100.0);
 
             // Default measurement noise (fallback)
             if (json.contains("default_measurement_noise")) {
                 const auto& j = json["default_measurement_noise"];
-                default_meas_noise_.code_std_m = j.value("code_std_m", 1.0);
-                default_meas_noise_.phase_std_m = j.value("phase_std_m", 0.01);
+				default_meas_noise_.code_std_m = j.value("code_std_m", 0.30);       // all code  (C1W, C2W, C2X, etc)
+                default_meas_noise_.phase_std_m = j.value("phase_std_m", 0.003);    // all phase (L1W, L2W, L2X, etc)
             } else {
-                default_meas_noise_.code_std_m = 1.0;
-                default_meas_noise_.phase_std_m = 0.01;
+                default_meas_noise_.code_std_m = 0.30;
+                default_meas_noise_.phase_std_m = 0.003;
             }
             log_manager.getLogger("gnss_config")->info(
                 "Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m",
@@ -181,13 +224,13 @@ namespace GnssProcessor {
             log_manager.getLogger("gnss_config")->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
 
             // Leap seconds
-            leap_seconds_ = json.value("leap_seconds", 37.0);  // Oct 2025 value
+            leap_seconds_tai_ = json.value("leap_seconds_tai", 37.0);  // Oct 2025 TAI-UTC value
 
             log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
                 "observation_path={}, navigation_path={}, {} products, leap_seconds={}",
                 processing_mode_ == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
                 uncombined_enabled_, elevation_mask_deg_, observation_path_.string(),
-                navigation_path_.string(), product_paths_.size(),leap_seconds_);
+                navigation_path_.string(), product_paths_.size(), leap_seconds_tai_);
             return true;
         }
         catch (const std::exception& e) {

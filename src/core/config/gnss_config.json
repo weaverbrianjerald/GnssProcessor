@@ -1,17 +1,21 @@
 {
-  "active_systems": [ "GPS" ],
-  "positioning_mode": "Kinematic",
+  "active_systems": [
+    "GPS","Galileo","GLONASS","BeiDou"
+  ],
+  "positioning_mode": "Static",
   "stochastic_model": "RandomWalk",
   "processing_mode": "PPP",
   "uncombined_enabled": false,
   "signal_mode": "dual",
-  "observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+  "satellite_interpolation_mode": "lagrange",
+  "satellite_clock_interpolation_mode": "linear",
+  "observation_path": "C:/GnssProcessorSupport/rinex/30S/2_hour/AMC400USA_R_20241290000_01D_30S_MO.rnx",
   "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
   "sinex_file_path": "",
   "rtcm_file_path": "",
   "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt",
-  "elevation_mask_deg": 10.0,
-  "leap_seconds": 37.0,
+  "elevation_mask_deg": 7.5,
+  "leap_seconds_tai": 37.0,
   "receiver_antenna_orientation": {
     "azimuth_deg": 0.0,
     "elevation_deg": 90.0
@@ -21,17 +25,19 @@
     "phase_std_m": 0.002
   },
   "process_noise": {
-    "position_std": 0.0,
-    "clock_bias_std": 1000.0,
-    "troposphere_std": 3e-7,
-    "ionosphere_std": 0.02
+    "position_q": 1e3,
+    "clock_bias_q": 1e4,
+    "troposphere_q": 3e-12,
+    "ionosphere_q": 0.02,
+    "system_time_offset_q": 3e-9
   },
   "initial_std": {
-    "position": 100.0,
-    "clock": 500.0,
-    "troposphere": 0.05,
+    "position": 1e2,
+    "clock": 3e3,
+    "troposphere": 0.5,
     "ionosphere": 5.0,
-    "ambiguity": 1000.0
+    "ambiguity": 3e3,
+    "system_time_offset": 3e3
   },
   "zhd_pressure_mbar": 1013.25,
   "zhd_temp_kelvin": 288.15,

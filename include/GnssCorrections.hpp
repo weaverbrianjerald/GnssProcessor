@@ -20,6 +20,7 @@
 #include "LogManager.hpp"
 #include "TimeUtils.hpp"
 #include "PppTypes.hpp"
+#include <unordered_map>
 #include <vector>
 #include <Eigen/Dense>
 #include <string>
@@ -243,6 +244,9 @@ namespace GnssProcessor {
         // Optional external references (nullable pointers)
         const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
+
+        std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;
+        void buildClockIndex();
     };
 
 }

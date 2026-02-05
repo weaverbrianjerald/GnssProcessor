@@ -50,29 +50,70 @@ namespace GnssProcessor {
      * states are seeded from \p config.getInitialStd(). The LogManager is used for
      * informational tracing.
      *
-     * @param core_state_size Number of core states (e.g., 5 for PPP, 6 for PPP-RTK).
+     * For multi-GNSS processing, inter-system time biases are added for each active
+     * system except GPS (which serves as the reference). The core_state_size is
+     * extended to include these additional states.
+     *
+     * @param core_state_size Number of base core states (e.g., 5 for PPP, 6 for PPP-RTK).
      * @param log_manager Reference to LogManager used for diagnostic logging.
      * @param config Read-only configuration providing default initial standard deviations.
      */
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
-        : core_state_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config) {
-        state_vector_ = Eigen::VectorXd::Zero(core_state_size);
-        covariance_ = Eigen::MatrixXd::Identity(core_state_size, core_state_size);
+        : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config) {
+        
+        // Determine which systems need inter-system time bias states
+        // GPS is the reference system, so we add time offset states for all other active systems
+        const auto& active_systems = config_.getActiveSystems();
+        systems_with_time_offsets_.clear();
+        system_time_offset_indices_.clear();
+        
+        size_t time_offset_idx = base_core_size_;
+        for (const auto& sys : active_systems) {
+            if (sys != "GPS") {
+                systems_with_time_offsets_.push_back(sys);
+                system_time_offset_indices_[sys] = time_offset_idx;
+                ++time_offset_idx;
+            }
+        }
+        
+        // Total core state size includes base states plus inter-system time offsets
+        core_state_size_ = base_core_size_ + systems_with_time_offsets_.size();
+        
+        state_vector_ = Eigen::VectorXd::Zero(core_state_size_);
+        covariance_ = Eigen::MatrixXd::Identity(core_state_size_, core_state_size_);
+        
         // Default initial standard deviations
         const auto& init = config_.getInitialStd();
         double pos_var = init.position * init.position;
         double clock_var = init.clock * init.clock;
         double tropo_var = init.troposphere * init.troposphere;
         double iono_var = init.ionosphere * init.ionosphere;
+        double time_offset_var = init.system_time_offset * init.system_time_offset;
+        
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
         covariance_(3, 3) = clock_var;
         covariance_(4, 4) = tropo_var;
-        if (core_state_size >= 6) {
+        if (base_core_size_ >= 6) {
             covariance_(5, 5) = iono_var;
         }
+        
+        // Initialize inter-system time offset covariances
+        for (const auto& [sys_name, idx] : system_time_offset_indices_) {
+            covariance_(idx, idx) = time_offset_var;
+        }
+        
         // Log initialization using LogManager-provided logger
         auto logger = log_manager_.getLogger("state_manager");
-        logger->info("StateManager initialized with core state size: {}", core_state_size);
+        logger->info("StateManager initialized with core state size: {} (base={}, time_offsets={})",
+            core_state_size_, base_core_size_, systems_with_time_offsets_.size());
+        
+        if (!systems_with_time_offsets_.empty()) {
+            std::string offset_systems;
+            for (const auto& sys : systems_with_time_offsets_) {
+                offset_systems += sys + " ";
+            }
+            logger->info("Inter-system time offsets enabled for: {}", offset_systems);
+        }
     }
 
     /**
@@ -178,9 +219,11 @@ namespace GnssProcessor {
      *
      * The implementation uses spectral densities stored in the configuration
      * (units: m^2/s) and multiplies by dt to obtain variances (m^2).
-     * Core-state entries (position, clock, troposphere, optional ionosphere)
-     * and any ambiguity diagonal entries are populated. Ambiguity process noise
-     * is typically zero (or near-zero) for constant ambiguity modeling.
+     * Core-state entries (position, clock, troposphere, optional ionosphere,
+     * inter-system time offsets) and any ambiguity diagonal entries are populated.
+     * Ambiguity process noise is typically zero (or near-zero) for constant
+     * ambiguity modeling. Inter-system time offsets use a very small process
+     * noise to model the slow drift of inter-system biases.
      *
      * @param dt Time interval in seconds for which Q is requested (must be > 0).
      * @return Q matrix sized (state_size x state_size).
@@ -217,10 +260,16 @@ namespace GnssProcessor {
         Q(tropoIdx, tropoIdx) = tropo_var;
 
         // Ionospheric noise (PPP-RTK only)
-        if (core_state_size_ >= 6) {
+        if (base_core_size_ >= 6) {
             size_t ionoIdx = getIonoIndex();
             double iono_var = pn.ionosphere * dt;
             Q(ionoIdx, ionoIdx) = iono_var;
+        }
+
+        // Inter-system time offset noise (very small for slow drift)
+        double time_offset_var = pn.system_time_offset * dt;
+        for (const auto& [sys_name, idx] : system_time_offset_indices_) {
+            Q(idx, idx) = time_offset_var;
         }
 
         // Ambiguity process noise (should be 0 for constant ambiguities)
@@ -231,8 +280,8 @@ namespace GnssProcessor {
             }
         }
 
-        logger->trace("Computed process noise matrix: size={}x{}, dt={:.3f} s, clock_var={:.3e}", 
-            Q.rows(), Q.cols(), dt, clock_var);
+        logger->trace("Computed process noise matrix: size={}x{}, dt={:.3f} s, clock_var={:.3e}, time_offset_var={:.3e}", 
+            Q.rows(), Q.cols(), dt, clock_var, time_offset_var);
         return Q;
     }
 
@@ -280,13 +329,42 @@ namespace GnssProcessor {
     /**
      * @brief Index of the ionospheric zenith delay state (if present).
      *
-     * If PPP-RTK mode is enabled (core_state_size_ >= 6) returns the ionosphere index;
+     * If PPP-RTK mode is enabled (base_core_size_ >= 6) returns the ionosphere index;
      * otherwise returns std::numeric_limits<size_t>::max() to indicate absence.
      *
      * @return Iono state index or max() when iono state is not present.
      */
     size_t StateManager::getIonoIndex() const {
-        return core_state_size_ >= 6 ? 5 : std::numeric_limits<size_t>::max();
+        return base_core_size_ >= 6 ? 5 : std::numeric_limits<size_t>::max();
+    }
+
+    /**
+     * @brief Get the index of the inter-system time bias for a given system.
+     *
+     * @param system_name Name of the GNSS system (e.g., "Galileo", "GLONASS", "BeiDou").
+     * @return Index of the system time bias state, or std::numeric_limits<size_t>::max() if not present.
+     */
+    size_t StateManager::getSystemTimeOffsetIndex(const std::string& system_name) const {
+        auto it = system_time_offset_indices_.find(system_name);
+        return it != system_time_offset_indices_.end() ? it->second : std::numeric_limits<size_t>::max();
+    }
+
+    /**
+     * @brief Get the number of inter-system time bias states.
+     *
+     * @return Number of inter-system time bias states.
+     */
+    size_t StateManager::getNumSystemTimeOffsets() const {
+        return systems_with_time_offsets_.size();
+    }
+
+    /**
+     * @brief Get the list of systems that have time offset states.
+     *
+     * @return Vector of system names with time offset states.
+     */
+    const std::vector<std::string>& StateManager::getSystemsWithTimeOffsets() const {
+        return systems_with_time_offsets_;
     }
 
     /**
@@ -354,8 +432,8 @@ namespace GnssProcessor {
     /**
      * @brief Populate a PppState from a raw state vector.
      *
-     * Copies core-state entries (position, clock, troposphere, optional ionosphere)
-     * and any tracked ambiguities into the provided \p ppp_state.
+     * Copies core-state entries (position, clock, troposphere, optional ionosphere,
+     * inter-system time offsets) and any tracked ambiguities into the provided \p ppp_state.
      *
      * @param current_state State vector to read values from.
      * @param ppp_state Output structure that will receive core states and ambiguities.
@@ -372,8 +450,17 @@ namespace GnssProcessor {
         ppp_state.troposphere_zwd = current_state(state_manager.getTropoIndex());
 
         // Ionosphere zenith delay only if using PPP-RTK
-        if (core_state_size_ >= 6) {
+        if (base_core_size_ >= 6) {
             ppp_state.ionosphere_zenith_delay = current_state(state_manager.getIonoIndex());
+        }
+
+        // Inter-system time offsets
+        ppp_state.system_time_offsets.clear();
+        for (const auto& sys : systems_with_time_offsets_) {
+            size_t idx = getSystemTimeOffsetIndex(sys);
+            if (idx < static_cast<size_t>(current_state.size())) {
+                ppp_state.system_time_offsets[sys] = current_state(idx);
+            }
         }
 
         // Ambiguities
@@ -388,8 +475,9 @@ namespace GnssProcessor {
     /**
      * @brief Synchronize values from a PppState into the internal state vector.
      *
-     * Copies core-state values from \p ppp_state into the internal state vector and
-     * calls setStateVector, which validates sizes and finiteness.
+     * Copies core-state values (position, clock, tropo, iono, inter-system time offsets)
+     * from \p ppp_state into the internal state vector and calls setStateVector,
+     * which validates sizes and finiteness.
      *
      * @param ppp_state Source PppState containing values to sync.
      */
@@ -399,9 +487,18 @@ namespace GnssProcessor {
         sv.segment<3>(getPositionIndex()) = ppp_state.position;
         sv(getClockIndex()) = ppp_state.clock_bias;
         sv(getTropoIndex()) = ppp_state.troposphere_zwd;
-        if (core_state_size_ >= 6) {
+        if (base_core_size_ >= 6) {
             sv(getIonoIndex()) = ppp_state.ionosphere_zenith_delay;
         }
+        
+        // Sync inter-system time offsets
+        for (const auto& [sys, value] : ppp_state.system_time_offsets) {
+            size_t idx = getSystemTimeOffsetIndex(sys);
+            if (idx < static_cast<size_t>(sv.size())) {
+                sv(idx) = value;
+            }
+        }
+        
         setStateVector(sv);
     }
 
@@ -553,6 +650,105 @@ namespace GnssProcessor {
         auto logger = log_manager_.getLogger("state_manager");
         meas_var_scale_.clear();
         logger->info("Cleared measurement variance scales");
+    }
+
+    /**
+     * @brief Remove a tracked ambiguity from the state vector and covariance.
+     *
+     * Safely removes the ambiguity row/column and shifts subsequent ambiguity indices down.
+     * Returns false when the key is not found or when attempting to remove a core-state index.
+     */
+    bool StateManager::removeAmbiguity(const std::string& key) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (key.empty()) {
+            logger->warn("removeAmbiguity called with empty key");
+            return false;
+        }
+        auto it = ambiguity_indices_.find(key);
+        if (it == ambiguity_indices_.end()) {
+            logger->trace("removeAmbiguity: key {} not found", key);
+            return false;
+        }
+
+        const size_t rem_idx = it->second;
+        const size_t state_size = getStateSize();
+        if (rem_idx < core_state_size_ || state_size <= core_state_size_) {
+            logger->warn("removeAmbiguity: attempting to remove invalid index {} (core_state_size={}, state_size={}) for key {}",
+                rem_idx, core_state_size_, state_size, key);
+            return false;
+        }
+
+        // Erase mapping first
+        ambiguity_indices_.erase(it);
+
+        const size_t new_size = state_size - 1;
+        Eigen::VectorXd new_state = Eigen::VectorXd::Zero(new_size);
+        Eigen::MatrixXd new_cov = Eigen::MatrixXd::Zero(new_size, new_size);
+
+        // Copy head portion before removed index (may include core states)
+        if (rem_idx > 0) {
+            new_state.head(static_cast<int>(rem_idx)) = state_vector_.head(static_cast<int>(rem_idx));
+            new_cov.topLeftCorner(static_cast<int>(rem_idx), static_cast<int>(rem_idx)) =
+                covariance_.topLeftCorner(static_cast<int>(rem_idx), static_cast<int>(rem_idx));
+        }
+
+        // Copy tail portion after removed index, shifted left by one
+        if (rem_idx + 1 < state_size) {
+            const size_t tail = state_size - rem_idx - 1;
+            new_state.tail(static_cast<int>(tail)) = state_vector_.segment(static_cast<int>(rem_idx + 1), static_cast<int>(tail));
+            new_cov.topRightCorner(static_cast<int>(rem_idx), static_cast<int>(tail)).setZero();
+            new_cov.bottomLeftCorner(static_cast<int>(tail), static_cast<int>(rem_idx)).setZero();
+
+            new_cov.block(static_cast<int>(rem_idx), static_cast<int>(rem_idx),
+                static_cast<int>(tail), static_cast<int>(tail)) =
+                covariance_.block(static_cast<int>(rem_idx + 1), static_cast<int>(rem_idx + 1),
+                    static_cast<int>(tail), static_cast<int>(tail));
+            // Copy cross terms between head and tail
+            if (rem_idx > 0) {
+                new_cov.topRightCorner(static_cast<int>(rem_idx), static_cast<int>(tail)) =
+                    covariance_.topRightCorner(static_cast<int>(rem_idx), static_cast<int>(tail));
+                new_cov.bottomLeftCorner(static_cast<int>(tail), static_cast<int>(rem_idx)) =
+                    covariance_.bottomLeftCorner(static_cast<int>(tail), static_cast<int>(rem_idx));
+            }
+        }
+
+        state_vector_ = std::move(new_state);
+        covariance_ = std::move(new_cov);
+
+        // Update indices for remaining ambiguities (decrement indices > rem_idx)
+        for (auto& kv : ambiguity_indices_) {
+            if (kv.second > rem_idx) --kv.second;
+        }
+
+        logger->info("Removed ambiguity {} at former index {}. New state size={}", key, rem_idx, getStateSize());
+        return true;
+    }
+
+    void StateManager::pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (ambiguity_indices_.empty()) {
+            logger->trace("pruneAmbiguitiesExcept: no ambiguities to prune");
+            return;
+        }
+
+        // Collect keys to remove
+        std::vector<std::string> to_remove;
+        to_remove.reserve(ambiguity_indices_.size());
+        for (const auto& kv : ambiguity_indices_) {
+            if (keep_keys.find(kv.first) == keep_keys.end()) to_remove.push_back(kv.first);
+        }
+
+        if (to_remove.empty()) {
+            logger->trace("pruneAmbiguitiesExcept: nothing to remove (keep_keys size={})", keep_keys.size());
+            return;
+        }
+
+        logger->info("Pruning {} ambiguities (keeping {} keys)", to_remove.size(), keep_keys.size());
+        // Remove in reverse-order by index to avoid repeated shifting costs is not necessary
+        // because removeAmbiguity updates indices correctly. Remove in the order collected.
+        for (const auto& key : to_remove) {
+            removeAmbiguity(key);
+        }
     }
 
 } // namespace GnssProcessor

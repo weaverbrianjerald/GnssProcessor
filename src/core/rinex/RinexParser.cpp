@@ -331,9 +331,11 @@ namespace GnssProcessor {
                                 }
                                 try {
                                     double value = std::stod(value_str);
+                                    /*
                                     if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
                                     }
+                                    */
                                     obs.measurements[obs_types[j]] = value;
 
                                     const auto& n = config_.getDefaultMeasurementNoise();
@@ -433,9 +435,11 @@ namespace GnssProcessor {
                                 }
                                 try {
                                     double value = std::stod(value_str);
+                                    /*
                                     if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
                                     }
+                                    */
                                     obs.measurements[obs_types[j]] = value;
 
                                     const auto& n = config_.getDefaultMeasurementNoise();
@@ -523,7 +527,7 @@ namespace GnssProcessor {
             if (observations_[i].time == observations_[i - 1].time) continue;
             double dt = observations_[i].time.tow - observations_[i - 1].time.tow;
             if (dt < 0.0) {
-                dt += 604800.0; // Handle week rollover
+                dt += TimeUtils::SECONDS_IN_WEEK; // Handle week rollover
             }
             if (dt < 0.01 || dt > 300.0) {
                 spdlog::error("Epoch interval {}s is outside allowed range [0.01s, 300s]", dt);
@@ -534,124 +538,6 @@ namespace GnssProcessor {
             }
         }
         return true;
-    }
-
-    /**
-     * @brief Rescale a GLONASS observation to a reference frequency.
-     *
-     * Rescales GLONASS code or phase measurements to a canonical reference
-     * frequency to compensate for frequency-channel-dependent offsets.  The
-     * function:
-     * - Only processes observation types whose first character is `'L'` (phase)
-     *   or `'C'` (code). Other types are returned unchanged.
-     * - Obtains the satellite's actual frequency via `getGlonassFrequency(...)`.
-     * - Selects the reference frequency based on the frequency label (L1/C1,
-     *   L2/C2 or L3/C3).
-     * - Computes `scaled = observed_value * (actual_freq / ref_freq)`.
-     * - Performs sanity checks on the computed frequency and scaled value and
-     *   returns the original value if checks fail (warnings are logged).
-     *
-     * @param[in] observed_value Observed measurement value (units preserved — e.g. meters).
-     * @param[in] freq_type      Observation frequency/type string (e.g., "L1C", "C2P").
-     * @param[in] satellite      Satellite identifier (e.g., "R01").
-     * @return Rescaled measurement (same units as @p observed_value) or the
-     *         original value if rescaling is not applicable or fails validation.
-     */
-    double RinexParser::rescaleGlonassMeasurement(double observed_value, const std::string & freq_type,
-        const std::string & satellite) const {
-        // Only rescale GLONASS phase (L) and code (C) measurements
-        if (freq_type[0] != 'L' && freq_type[0] != 'C') {
-            return observed_value;
-        }
-
-        double actual_freq = getGlonassFrequency(freq_type, satellite);
-        double ref_freq = (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) ?
-            Constants::GLONASS_G1_BASE_FREQ :
-            (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) ?
-            Constants::GLONASS_G2_BASE_FREQ : Constants::GLONASS_G3_BASE_FREQ;
-
-        if (actual_freq <= 0.0 || ref_freq <= 0.0 || !std::isfinite(actual_freq) || !std::isfinite(ref_freq)) {
-            log_manager_.getLogger("rinex_parser")->warn("Cannot rescale measurement for type {}, satellite {}: invalid frequencies (actual: {:.3f} MHz, ref: {:.3f} MHz)",
-                freq_type, satellite, actual_freq / 1e6, ref_freq / 1e6);
-            return observed_value;
-        }
-
-        // Rescale: obs_new = obs_old * (f_actual / f_ref)
-        double scaled_obs = observed_value * (actual_freq / ref_freq);
-        if (!std::isfinite(scaled_obs) || std::abs(scaled_obs) > std::abs(observed_value) * 2.0) {
-            log_manager_.getLogger("rinex_parser")->warn("Invalid rescaled measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz",
-                satellite, freq_type, observed_value, scaled_obs, actual_freq / 1e6, ref_freq / 1e6);
-            return observed_value;
-        }
-
-        log_manager_.getLogger("rinex_parser")->trace("Rescaled GLONASS measurement for {} {}: original={:.3f}, scaled={:.3f}, actual_freq={:.3f} MHz, ref_freq={:.3f} MHz, mode={}",
-            satellite, freq_type, observed_value, scaled_obs, actual_freq / 1e6, ref_freq / 1e6,
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-        return scaled_obs;
-    }
-
-    /**
-     * @brief Compute GLONASS carrier frequency for a given observation type and satellite.
-     *
-     * Validates the provided frequency/type label (must reference L1/C1, L2/C2 or L3/C3),
-     * looks up the satellite's GLONASS FDMA channel from `glonass_freq_slots_` (uses
-     * channel 0 when no slot entry exists), and computes the actual carrier frequency:
-     * - G1 frequency = GLONASS_G1_BASE_FREQ + channel * GLONASS_G1_CHANNEL_OFFSET
-     * - G2 frequency = GLONASS_G2_BASE_FREQ + channel * GLONASS_G2_CHANNEL_OFFSET
-     * - G3 frequency = GLONASS_G3_BASE_FREQ (CDMA, no channel offset)
-     *
-     * The function logs warnings for invalid frequency labels, out-of-range channels,
-     * and non-finite/invalid computed frequencies. It returns 0.0 on error.
-     *
-     * @param[in] freq_type Observation frequency/type string (e.g., "L1C", "C2P").
-     * @param[in] satellite Satellite identifier string (e.g., "R01").
-     * @return Frequency in Hz if valid, otherwise 0.0.
-     */
-    double RinexParser::getGlonassFrequency(const std::string & freq_type, const std::string & satellite) const {
-        // Validate frequency type
-        if (freq_type.find("C1") == std::string::npos && freq_type.find("L1") == std::string::npos &&
-            freq_type.find("C2") == std::string::npos && freq_type.find("L2") == std::string::npos &&
-            freq_type.find("C3") == std::string::npos && freq_type.find("L3") == std::string::npos) {
-            log_manager_.getLogger("rinex_parser")->warn("Invalid GLONASS frequency type: {} for satellite {}", freq_type, satellite);
-            return 0.0;
-        }
-
-        int channel = 0;
-        auto slot_it = glonass_freq_slots_.find(satellite);
-        if (slot_it != glonass_freq_slots_.end()) {
-            channel = slot_it->second;
-            if (channel < -7 || channel > 6) {
-                log_manager_.getLogger("rinex_parser")->warn("GLONASS channel {} out of valid range [-7, +6] for satellite {}, type: {}",
-                    channel, satellite, freq_type);
-                return 0.0;
-            }
-            log_manager_.getLogger("rinex_parser")->trace("Found GLONASS channel {} for satellite {}", channel, satellite);
-        }
-        else {
-            log_manager_.getLogger("rinex_parser")->warn("No GLONASS frequency slot found for satellite {}, using channel 0", satellite);
-        }
-
-        double freq = 0.0;
-        if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-            freq = Constants::GLONASS_G1_BASE_FREQ + channel * Constants::GLONASS_G1_CHANNEL_OFFSET;
-        }
-        else if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
-            freq = Constants::GLONASS_G2_BASE_FREQ + channel * Constants::GLONASS_G2_CHANNEL_OFFSET;
-        }
-        else if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
-            freq = Constants::GLONASS_G3_BASE_FREQ; // CDMA, no channel offset
-        }
-
-        if (freq <= 0.0 || !std::isfinite(freq)) {
-            log_manager_.getLogger("rinex_parser")->warn("Computed invalid GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}",
-                freq / 1e6, freq_type, satellite, channel);
-            return 0.0;
-        }
-
-        log_manager_.getLogger("rinex_parser")->trace("Computed GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}, mode={}",
-            freq / 1e6, freq_type, satellite, channel,
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-        return freq;
     }
 
     /**

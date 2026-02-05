@@ -88,7 +88,8 @@ private:
     const GnssConfig& config_;      /**< Reference to configuration parameters. */
     StateManager& state_manager_;   /**< Reference to the StateManager for state queries/updates. */
     LogManager& log_manager_;       /**< Reference to LogManager for logging. */
-    WlsLogger wls_logger_;          /**< Local logger used to produce WLS traces (file-managed). */
+    //WlsLogger wls_logger_;          /**< Local logger used to produce WLS traces (file-managed). */
+    std::unique_ptr<WlsLogger> wls_logger_; /**< Optional WLS logger: created only when debug logging is enabled. */
 };
 
 } // namespace GnssProcessor

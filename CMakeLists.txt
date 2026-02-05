@@ -24,6 +24,13 @@ find_package(netCDF REQUIRED)
 
 include_directories(${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 
+# Ensure optimized builds also emit debug info/PDBs for profiling
+# Put near the top of your top-level CMakeLists.txt
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /O2 /Zi")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Zi")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
+
 # Core library
 add_library(gnss_core STATIC
     src/core/atmosphere/Troposphere.cpp
@@ -33,6 +40,7 @@ add_library(gnss_core STATIC
     src/core/common/LogManager.cpp
     src/core/common/ProductManager.cpp
     src/core/common/ProductParser.cpp
+    src/core/common/ProductCache.cpp
     src/core/common/TimeUtils.cpp
     src/core/common/KalmanFilterLogger.cpp
     src/core/common/WlsLogger.cpp
@@ -54,23 +62,23 @@ add_library(gnss_core STATIC
     src/core/model/Planetary.cpp
     src/core/common/Application.cpp
 	src/core/common/MwSlipDetector.cpp
-)
+ "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf)
 
 # Main executable (link against gnss_core only)
-add_executable(gnss_processor src/main.cpp)
+add_executable(gnss_processor src/main.cpp "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_link_libraries(gnss_processor PRIVATE gnss_core pybind11::pybind11)
 
 # Unit tests
 enable_testing()
-add_executable(gnss_tests tests/test_main.cpp)
+add_executable(gnss_tests tests/test_main.cpp "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
 
 # Python bindings module (only bindings source; link core)
 add_library(gnss_processor_module MODULE
     src/bindings/rinex_binding.cpp
-)
+ "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_processor_module PRIVATE ${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 target_link_directories(gnss_processor_module PRIVATE ${Python_LIBRARY_DIRS})
 target_link_libraries(gnss_processor_module PRIVATE gnss_core pybind11::embed pybind11::module ${Python_LIBRARIES})

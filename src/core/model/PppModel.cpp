@@ -20,6 +20,7 @@
 #include "Constants.hpp"
 #include "MeasurementModel.hpp"
 #include "TimeUtils.hpp"
+#include "ProductCache.hpp"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -38,19 +39,36 @@ namespace GnssProcessor {
      * @param rinex_parser RINEX parser providing observation metadata and receiver info.
      * @param state_manager StateManager used for ambiguity bookkeeping and state access.
      */
-    PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser, LogManager& log_manager,
-        const RinexParser& rinex_parser, StateManager& state_manager)
-        : config_(config), product_parser_(product_parser), log_manager_(log_manager),
-        rinex_parser_(rinex_parser), state_manager_(state_manager),
-        ppp_utils_(log_manager), ionosphere_(config, log_manager, product_parser, rinex_parser),
-        geometry_(config, product_parser, rinex_parser, log_manager),
+    PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser,
+        LogManager& log_manager, const RinexParser& rinex_parser,
+        StateManager& state_manager)
+        : config_(config),
+        product_parser_(product_parser),
+        log_manager_(log_manager),
+        rinex_parser_(rinex_parser),
+        state_manager_(state_manager),
+        ppp_utils_(log_manager),
+        // Pass cache reference to geometry
+        geometry_(config, ProductCache::getInstance(), rinex_parser, log_manager),
+        // GnssCorrections uses cache references
+        gnss_corrections_(log_manager, config,
+            ProductCache::getInstance().getClocks(),
+            ProductCache::getInstance().getErps(),
+            ProductCache::getInstance().getBiases(),
+            rinex_parser),
+        ionosphere_(config, log_manager, product_parser, rinex_parser),
         antenna_(config, product_parser, log_manager, rinex_parser),
-        gnss_corrections_(log_manager, config, product_parser.getClocks(), product_parser.getErps(), product_parser.getBiases(), rinex_parser),
-        signal_priorities_(config.getSignalPriorities()) {
-        log_manager_.getLogger("ppp_model")->info("PppModel initialized: mode={}, uncombined={}, elev_mask={}°, {} signal sets",
+        signal_priorities_(config.getSignalPriorities()),
+        // Initialize reference from cache
+        klobuchar_coeffs_(ProductCache::getInstance().getKlobucharCoeffs())
+    {
+        // Connect GLONASS frequency slots from RINEX parser to PppUtils
+        ppp_utils_.setGlonassSlots(rinex_parser_.getGlonassFreqSlots());
+        log_manager_.getLogger("ppp_model")->info(
+            "PppModel initialized: mode={}, elev_mask={}°, klobuchar_coeffs={}",
             config.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
-            config.isUncombinedEnabled(), config.getElevationMaskDeg(), config.getSignalPriorities().size());
-        klobuchar_coeffs_ = product_parser_.getKlobucharCoeffs();
+            config.getElevationMaskDeg(),
+            klobuchar_coeffs_.size());
     }
 
     /**
@@ -187,11 +205,18 @@ namespace GnssProcessor {
             ppp_obs.mf_w = 0.0;
             ppp_obs.mf_d = 0.0;
 
-            Eigen::Vector3d sat_pos, rx_pos, los;
+            // Range corrections
             double elevation, azimuth, range, tropo_zhd, sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide, mf_w, mf_d;
-            Eigen::Vector3d sat_vel;
-            if (!geometry_.computeSatelliteGeometry(obs, state, sat_pos, rx_pos, elevation, azimuth, los, range, tropo_zhd,
-                sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide, mf_w, mf_d, sat_vel)) {
+
+            // Satellite PVT
+            Eigen::Vector3d sat_pos, sat_vel, rx_pos, los;
+            bool geom_ok = geometry_.computeSatelliteGeometry(obs, state, sat_pos, rx_pos, elevation, azimuth, los, range, tropo_zhd,
+                sat_clock, shapiro_delay, sagnac_corr, atm_loading_corr, relativistic_corr, solid_tide, mf_w, mf_d, sat_vel);
+
+			// TODO: separate rangeCorrections from computeSatelliteGeometry
+
+            if (!geom_ok) {
+                log_manager_.getLogger("ppp_model")->debug( "Geometry failed for {} at TOW {:.3f}", obs.satellite, obs.time.tow);
                 continue;
             }
 
@@ -205,10 +230,7 @@ namespace GnssProcessor {
 
             log_manager_.getLogger("ppp_model")->trace("Stored geometry for {} at TOW {:.3f}: sat_pos=({:.3f}, {:.3f}, {:.3f}) m, "
                 "elevation={:.3f} deg, azimuth={:.3f} deg, los=({:.3f}, {:.3f}, {:.3f}), range={:.3f} m",
-                obs.satellite, obs.time.tow,
-                sat_pos.x(), sat_pos.y(), sat_pos.z(),
-                elevation, azimuth,
-                los.x(), los.y(), los.z(), range);
+                obs.satellite, obs.time.tow, sat_pos.x(), sat_pos.y(), sat_pos.z(), elevation, azimuth, los.x(), los.y(), los.z(), range);
 
             std::string system_str = PppUtils::getSystemString(obs.system);
             if (system_str == "Unknown") {
@@ -224,16 +246,17 @@ namespace GnssProcessor {
 
             std::string rx_antenna_type = rinex_parser_.getReceiverAntennaType();
 
-            if (config_.isUncombinedEnabled()) {
-                // Uncombined path not yet implemented
-            }
-
             std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
             if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type)) {
                 continue;
             }
+
+            if (config_.isUncombinedEnabled()) {
+                // Uncombined path not yet implemented
+            }
+
             if (is_iono_free && !config_.isUncombinedEnabled()) {
                 if (!processIonoFreeObservation(obs, state, ppp_obs, system_str, selected_signals, comb_type, rx_pos, sat_pos,
                     sat_vel, elevation, azimuth, rx_antenna_type, range, tropo_zhd, sat_clock,
@@ -625,8 +648,8 @@ namespace GnssProcessor {
             std::vector<double> wavelengths(2, 0.0);
 
             if (meas_type == 'L') {
-                wavelengths[0] = ppp_utils_.getWavelength(obs.system, sig_pair.first);
-                wavelengths[1] = ppp_utils_.getWavelength(obs.system, sig_pair.second);
+                wavelengths[0] = ppp_utils_.getWavelength(obs.system, sig_pair.first, obs.satellite);
+                wavelengths[1] = ppp_utils_.getWavelength(obs.system, sig_pair.second, obs.satellite);
                 if (wavelengths[0] <= 0.0 || wavelengths[1] <= 0.0) {
                     log_manager_.getLogger("ppp_model")->warn(
                         "Invalid wavelength for pair {} on system {} for satellite {}: wl1={:.3f}, wl2={:.3f} m",
@@ -644,17 +667,16 @@ namespace GnssProcessor {
 
                 const double bias_corr = gnss_corrections_.getBiasCorrection(obs.satellite, type, obs.time);
 
-                // Pseudorange observation equation:
-                //   P_obs = ρ + c*(dt_rx - dt_sat) + T_slant + antenna + shapiro - solid_tide + ...
-                //
-                // Sign conventions:
-                //   - sat_clock > 0 means satellite clock is fast → pseudorange appears shorter → subtract
-                //   - solid_tide > 0 means receiver moved toward satellite → range decreased → subtract
-                //   - shapiro > 0 is a path delay → range increased → add
-                //   - antenna_corr is already signed correctly (add to modeled)
-                //   - bias_corr is subtracted (biases make observations appear longer)
-                modeled_obs[j] = range - (sat_clock * Constants::SPEED_OF_LIGHT) + slant_dry_delay +
-                    antenna_corr - bias_corr + shapiro_delay + sagnac_corr + atm_loading_corr - solid_tide;
+                modeled_obs[j] = range
+                    - (sat_clock * Constants::SPEED_OF_LIGHT)
+                    //- relativistic_corr * Constants::SPEED_OF_LIGHT
+                    + slant_dry_delay
+                    + antenna_corr
+                    - bias_corr
+                    + shapiro_delay
+                    + sagnac_corr
+                    + atm_loading_corr
+                    - solid_tide;
 
                 const auto& n = config_.getDefaultMeasurementNoise();
                 const double default_code_var = n.code_std_m * n.code_std_m;
@@ -665,29 +687,25 @@ namespace GnssProcessor {
 
                 frequencies[j] = ppp_utils_.getFrequency(type, obs.system, obs.satellite);
                 if (frequencies[j] <= 0.0) {
-                    log_manager_.getLogger("ppp_model")->warn(
-                        "Invalid frequency for type {} on system {} for satellite {}",
-                        type, system_str, obs.satellite);
+                    log_manager_.getLogger("ppp_model")->warn( "Invalid frequency for type {} on system {} for satellite {}", type, system_str, obs.satellite);
                     return false;
                 }
             }
+
+            // TODO: replace the following with formIonoFreeMeasurements(obs, obs.system, selected_signals, ... );
 
             const double f1_sq = frequencies[0] * frequencies[0];
             const double f2_sq = frequencies[1] * frequencies[1];
             const double denom = (f1_sq - f2_sq);
             if (!std::isfinite(denom) || std::abs(denom) < 1e-12) {
-                log_manager_.getLogger("ppp_model")->warn(
-                    "Invalid denominator for iono-free pair {} for {}",
-                    ref_type, obs.satellite);
+                log_manager_.getLogger("ppp_model")->warn( "Invalid denominator for iono-free pair {} for {}", ref_type, obs.satellite);
                 return false;
             }
 
             const double c1 = f1_sq / denom;
             const double c2 = -f2_sq / denom;
             if (!std::isfinite(c1) || !std::isfinite(c2)) {
-                log_manager_.getLogger("ppp_model")->warn(
-                    "Non-finite coefficients for dual-frequency pair {} for {}",
-                    ref_type, obs.satellite);
+                log_manager_.getLogger("ppp_model")->warn( "Non-finite coefficients for dual-frequency pair {} for {}", ref_type, obs.satellite);
                 return false;
             }
 
@@ -743,6 +761,101 @@ namespace GnssProcessor {
         }
 
         return success;
+    }
+
+    bool PppModel::formIonoFreeMeasurements(const RinexObservation& obs, System system,
+        const std::vector<std::pair<std::string, std::string>>& selected_signals,
+        std::map<std::string, double>& out_observed,
+        std::map<std::string, double>& out_variances) const {
+
+        out_observed.clear();
+        out_variances.clear();
+
+        const auto& n = config_.getDefaultMeasurementNoise();
+        const double default_code_var = n.code_std_m * n.code_std_m;
+        const double default_phase_var = n.phase_std_m * n.phase_std_m;
+
+        for (const auto& pair : selected_signals) {
+            if (pair.first.empty() || pair.second.empty()) {
+                log_manager_.getLogger("ppp_model")->trace("Skipping pair with empty member: {}/{}", pair.first, pair.second);
+                continue;
+            }
+            // must be same measurement family (both code or both phase) for LC formation here
+            if (pair.first[0] != pair.second[0]) {
+                log_manager_.getLogger("ppp_model")->warn("Mixed-signal pair unsupported for IF formation: {} / {}", pair.first, pair.second);
+                continue;
+            }
+            if (!obs.measurements.count(pair.first) || !obs.measurements.count(pair.second)) {
+                log_manager_.getLogger("ppp_model")->trace("Missing measurement(s) for pair {} / {} on {}", pair.first, pair.second, obs.satellite);
+                continue;
+            }
+
+            // read raw measurements and variances (convert phase cycles to meters here)
+            double meas_vals[2] = { 0.0, 0.0 };
+            double var_vals[2] = { 0.0, 0.0 };
+            bool is_phase = (pair.first[0] == 'L');
+
+            for (size_t j = 0; j < 2; ++j) {
+                const std::string& type = (j == 0 ? pair.first : pair.second);
+                double meas = obs.measurements.at(type);
+                if (is_phase) {
+                    double wl = ppp_utils_.getWavelength(obs.system, type);
+                    if (wl <= 0.0) {
+                        log_manager_.getLogger("ppp_model")->warn("Invalid wavelength for phase type {} on {}", type, obs.satellite);
+                        meas_vals[0] = meas_vals[1] = 0.0;
+                        break;
+                    }
+                    meas *= wl; // cycles -> meters
+                    var_vals[j] = obs.variances.count(type) ? obs.variances.at(type) : default_phase_var;
+                }
+                else {
+                    var_vals[j] = obs.variances.count(type) ? obs.variances.at(type) : default_code_var;
+                }
+                meas_vals[j] = meas;
+            }
+
+            if (meas_vals[0] == 0.0 && meas_vals[1] == 0.0) {
+                continue;
+            }
+
+            // compute frequency-dependent IF coefficients
+            double f1 = ppp_utils_.getFrequency(pair.first, system, obs.satellite);
+            double f2 = ppp_utils_.getFrequency(pair.second, system, obs.satellite);
+            if (f1 <= 0.0 || f2 <= 0.0 || std::abs(f1 - f2) < 1e-9) {
+                log_manager_.getLogger("ppp_model")->warn("Invalid frequencies for IF formation: {} ({:.3f} MHz), {} ({:.3f} MHz)",
+                    pair.first, f1 / 1e6, pair.second, f2 / 1e6);
+                continue;
+            }
+
+            const double f1_sq = f1 * f1;
+            const double f2_sq = f2 * f2;
+            const double denom = (f1_sq - f2_sq);
+            if (!std::isfinite(denom) || std::abs(denom) < 1e-12) {
+                log_manager_.getLogger("ppp_model")->warn("Denominator too small for IF coefficients for pair {}_{} on {}", pair.first, pair.second, obs.satellite);
+                continue;
+            }
+            const double c1 = f1_sq / denom;
+            const double c2 = -f2_sq / denom;
+            if (!std::isfinite(c1) || !std::isfinite(c2)) {
+                log_manager_.getLogger("ppp_model")->warn("Non-finite IF coefficients for pair {}_{} on {}", pair.first, pair.second, obs.satellite);
+                continue;
+            }
+
+            const std::string ref = pair.first + "_" + pair.second;
+            const double observed_comb = c1 * meas_vals[0] + c2 * meas_vals[1];
+            const double var_comb = c1 * c1 * var_vals[0] + c2 * c2 * var_vals[1];
+
+            if (!std::isfinite(observed_comb) || !std::isfinite(var_comb)) {
+                log_manager_.getLogger("ppp_model")->warn("Non-finite IF result for {} on {}", ref, obs.satellite);
+                continue;
+            }
+
+            out_observed[ref] = observed_comb;
+            out_variances[ref] = var_comb; // pre elevation mapping (mapping done later)
+            log_manager_.getLogger("ppp_model")->trace("Formed IF {} for {}: observed={:.3f} m, var={:.6f}", ref, obs.satellite, observed_comb, var_comb);
+        }
+
+        return !out_observed.empty();
     }
 
     /**

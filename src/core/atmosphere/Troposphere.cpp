@@ -11,6 +11,7 @@
 #include "GnssConfig.hpp"
 #include "Troposphere.hpp"
 #include "Constants.hpp"
+#include "Coordinates.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -31,65 +32,6 @@ namespace GnssProcessor {
             double lon_rad = 0.0;
             double h_m = 0.0;
         };
-
-        /**
-         * @brief Convert minimal WGS84 ECEF to geodetic LLH.
-         *
-         * Performs a Bowring-style iterative solution to compute geodetic
-         * latitude (radians) and height (meters) from an ECEF vector (meters).
-         * Longitude is computed via atan2(y, x). The routine is intended to be
-         * compact and sufficiently accurate for troposphere computations.
-         *
-         * @param ecef ECEF coordinates in meters (X, Y, Z).
-         * @return LlhRadM with latitude (rad), longitude (rad), and height (m).
-         */
-        LlhRadM ecefToLlhWgs84(const Eigen::Vector3d& ecef) {
-            constexpr double a = 6378137.0;                  // semi-major axis [m]
-            constexpr double f = 1.0 / 298.257223563;        // flattening
-            constexpr double e2 = f * (2.0 - f);             // first eccentricity squared
-
-            const double x = ecef.x();
-            const double y = ecef.y();
-            const double z = ecef.z();
-
-            LlhRadM out{};
-            const double p = std::sqrt(x * x + y * y);
-            out.lon_rad = std::atan2(y, x);
-
-            if (p < 1e-6) {
-                // Near pole: longitude undefined, set to 0
-                out.lat_rad = (z >= 0.0) ? Constants::PI / 2.0 : -Constants::PI / 2.0;
-                const double sin_lat = std::sin(out.lat_rad);
-                const double N = a / std::sqrt(1.0 - e2 * sin_lat * sin_lat);
-                out.h_m = std::abs(z) - N * (1.0 - e2);
-                return out;
-            }
-
-            // Initial guess
-            double lat = std::atan2(z, p * (1.0 - e2));
-            double h = 0.0;
-
-            // Iterate a few times (converges very quickly)
-            for (int i = 0; i < 6; ++i) {
-                const double sin_lat = std::sin(lat);
-                const double N = a / std::sqrt(1.0 - e2 * sin_lat * sin_lat);
-                h = p / std::cos(lat) - N;
-
-                const double denom = p * (1.0 - e2 * (N / (N + h)));
-                if (std::abs(denom) < 1e-12) break;
-
-                const double lat_next = std::atan2(z, denom);
-                if (std::abs(lat_next - lat) < 1e-12) {
-                    lat = lat_next;
-                    break;
-                }
-                lat = lat_next;
-            }
-
-            out.lat_rad = lat;
-            out.h_m = h;
-            return out;
-        }
 
         /**
          * @brief Standard atmosphere pressure model (troposphere lapse-rate).
@@ -198,7 +140,7 @@ namespace GnssProcessor {
      */
     double Troposphere::computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos) const {
         // WGS84 LLH (geodetic)
-        const LlhRadM llh = ecefToLlhWgs84(receiver_pos);
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(receiver_pos);
         const double lat_rad = llh.lat_rad;
         const double h_m = llh.h_m;
 

@@ -16,6 +16,7 @@
 
 #include "RinexParser.hpp"
 #include "ProductParser.hpp"
+#include "ProductCache.hpp"
 #include "RtcmParser.hpp"
 
 #include "KalmanFilter.hpp"
@@ -67,6 +68,7 @@ namespace Atmosphere {
 namespace IO {
     using ::GnssProcessor::RinexParser;
     using ::GnssProcessor::ProductParser;
+    using ::GnssProcessor::ProductCache;
     using ::GnssProcessor::RtcmParser;
 }
 

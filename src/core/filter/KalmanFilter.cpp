@@ -66,11 +66,12 @@ namespace GnssProcessor {
         }
 
         // Get total state size (core states + initial ambiguities)
-        size_t core_size = config.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+        size_t core_size = state_manager_.getStateSize() - state_manager_.getAmbiguities().size();
         size_t state_size = state_manager_.getStateSize();
-        if (state_size < core_size) {
+        size_t base_core_size = config.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+        if (state_size < base_core_size) {
             log_manager_.getLogger("kalman_filter")->error("Invalid state size from StateManager: {}, minimum {} required for mode {}",
-                state_size, core_size,
+                state_size, base_core_size,
                 config.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
             throw std::invalid_argument("Invalid state size");
         }
@@ -81,11 +82,12 @@ namespace GnssProcessor {
 
         // Set initial variances for core states from config
         const auto& initial_std = config_.getInitialStd();
-        double pos_std = initial_std.position > 0 ? initial_std.position : 100.0;
-        double clock_std = initial_std.clock > 0 ? initial_std.clock : 100.0;
+        double pos_std = initial_std.position > 0 ? initial_std.position : 1000.0;
+        double clock_std = initial_std.clock > 0 ? initial_std.clock : 1e6;
         double tropo_std = initial_std.troposphere > 0 ? initial_std.troposphere : 0.5;
         double iono_std = initial_std.ionosphere > 0 ? initial_std.ionosphere : 5.0;
-        double amb_std = initial_std.ambiguity > 0 ? initial_std.ambiguity : 10.0;
+        double amb_std = initial_std.ambiguity > 0 ? initial_std.ambiguity : 1e4;
+        double time_offset_std = initial_std.system_time_offset > 0 ? initial_std.system_time_offset : 100.0;
 
         size_t pos_idx = state_manager_.getPositionIndex();
         size_t clock_idx = state_manager_.getClockIndex();
@@ -106,16 +108,26 @@ namespace GnssProcessor {
             P(tropo_idx, tropo_idx) = tropo_std * tropo_std;
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK && iono_idx < state_size && is_unset(P(iono_idx, iono_idx)))
             P(iono_idx, iono_idx) = iono_std * iono_std;
-
-        // Set initial variances for ambiguities (if any)
-        if (state_size > core_size) {
-            P.bottomRightCorner(state_size - core_size, state_size - core_size).diagonal().setConstant(amb_std * amb_std);
-            log_manager_.getLogger("kalman_filter")->info("Initialized {} ambiguity states with variance: {:.6f} meters^2",
-                state_size - core_size, amb_std * amb_std);
+        
+        // Initialize inter-system time offset covariances if unset
+        for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
+            size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
+            if (idx < state_size && is_unset(P(idx, idx))) {
+                P(idx, idx) = time_offset_std * time_offset_std;
+            }
         }
 
-        log_manager_.getLogger("kalman_filter")->info("KalmanFilter initialized with state size: {}, mode: {}, P ({}x{}), x ({})",
-            state_size, config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
+        // Set initial variances for ambiguities (if any)
+        size_t num_ambiguities = state_manager_.getAmbiguities().size();
+        if (num_ambiguities > 0) {
+            P.bottomRightCorner(num_ambiguities, num_ambiguities).diagonal().setConstant(amb_std * amb_std);
+            log_manager_.getLogger("kalman_filter")->info("Initialized {} ambiguity states with variance: {:.6f} meters^2",
+                num_ambiguities, amb_std * amb_std);
+        }
+
+        log_manager_.getLogger("kalman_filter")->info("KalmanFilter initialized with state size: {} (core={}, time_offsets={}, ambiguities={}), mode: {}, P ({}x{}), x ({})",
+            state_size, core_size, state_manager_.getNumSystemTimeOffsets(), num_ambiguities,
+            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
             P.rows(), P.cols(), x.size());
 
         // Persist to StateManager
@@ -184,6 +196,7 @@ namespace GnssProcessor {
         if (logger_) logger_->logMatrix(Q, "Process Noise Matrix Q");
 
         // Predict state
+		// TODO: simple dynamics, eliminate F. Just add process noise to P for random walk.
         x = F * x;
         P = F * P * F.transpose() + Q;
         log_manager_.getLogger("kalman_filter")->trace("Predicted state for dt={:.3f} s: x size={}, P size={}x{}",
@@ -266,13 +279,19 @@ namespace GnssProcessor {
         klogger->trace("{}S matrix condition number: {:.3e}", epoch_prefix, cond);
 
         Eigen::MatrixXd S_inv;
+        /*
         if (S.determinant() < 1e-6 || cond > 1e10) {
             klogger->warn("{}Ill-conditioned S matrix, using pseudo-inverse, determinant={:.3e}, condition={:.3e}",
                 epoch_prefix, S.determinant(), cond);
-            S_inv = Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd>(S).pseudoInverse();
+            S_inv = Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd>(S).pseudoInverse(); // assumes: nothing (works for singular)
         } else {
             S_inv = S.inverse();
         }
+        */
+        //S_inv = S.inverse(); // assumes: square + nonsingular
+        S_inv = S.llt().solve(Eigen::MatrixXd::Identity(S.rows(), S.cols())); // assumes: symmetric + positive definite
+
+        // TODO: evaluate S.ldlt().solve(...)
 
         // Kalman gain
         Eigen::MatrixXd K = P * Ht * S_inv;
@@ -569,14 +588,24 @@ namespace GnssProcessor {
                 static_cast<size_t>(bad_meas_percent * num_obs));
 
             P.setZero();
-            const size_t core_size = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+            const size_t base_core_size = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+            const size_t num_time_offsets = state_manager_.getNumSystemTimeOffsets();
+            const size_t core_size = base_core_size + num_time_offsets;
 
-            P.diagonal().head(core_size) << 10000.0, 10000.0, 10000.0,
+            P.diagonal().head(base_core_size) << 10000.0, 10000.0, 10000.0,
                 90000.0,
                 0.25;
 
-            if (core_size == 6) {
+            if (base_core_size == 6) {
                 P(5, 5) = 25.0;
+            }
+            
+            // Reset time offset covariances
+            for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
+                size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
+                if (idx < static_cast<size_t>(P.rows())) {
+                    P(idx, idx) = 10000.0; // reset to large variance
+                }
             }
 
             const size_t state_size = static_cast<size_t>(P.rows());

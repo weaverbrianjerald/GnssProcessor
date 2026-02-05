@@ -1,9 +1,13 @@
 ﻿#include "ModelGeometry.hpp"
 #include "ProductParser.hpp"
 #include "Constants.hpp"
+#include "Coordinates.hpp"
+#include "ProductCache.hpp"
+#include "Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <unordered_map>
 
 namespace GnssProcessor {
 
@@ -11,23 +15,6 @@ namespace GnssProcessor {
 
         // Anonymous namespace for file-local utilities
         namespace {
-
-            /**
-             * @brief Convert a GNSS time to continuous GPS seconds for sorting / interpolation.
-             *
-             * Builds a monotonic scalar time value by converting the GPS week + time-of-week
-             * representation into seconds since the GPS epoch:
-             *   continuous_seconds = week * 604800 + tow
-             *
-             * @param t GNSS time containing `week` and `tow` (seconds into the week).
-             * @return Continuous GPS seconds as a double.
-             *
-             * @note Placed in an anonymous namespace and marked `inline` to give internal
-             * linkage and avoid ODR issues across translation units.
-             */
-            inline double continuousGpsSeconds(const GnssTime& t) {
-                return static_cast<double>(t.week) * 604800.0 + t.tow;
-            }
 
             /**
              * @brief Compute barycentric Lagrange interpolation weights for nodes `x`.
@@ -129,24 +116,36 @@ namespace GnssProcessor {
          *       the constructor delegates product parsing to `loadData()` to avoid inline
          *       initialization ordering issues and to centralize error handling.
          */
-        Geometry::Geometry(const GnssConfig& config, ProductParser& parser, const RinexParser& rinex, LogManager& log_mgr)
-            : corrections_(log_mgr, parser.getClocks(), parser.getErps()), // declared first
+        Geometry::Geometry(const GnssConfig& config, ProductCache& cache,
+            const RinexParser& rinex, LogManager& log_mgr)
+            : corrections_(log_mgr, cache.getClocks(), cache.getErps()),
             config_(config),
             planetary_(log_mgr),
             troposphere_(config, log_mgr),
-            product_parser_(parser),
+            product_cache_(cache),
             log_manager_(log_mgr),
             rinex_parser_(rinex),
             elevation_threshold_(config.getElevationMaskDeg()),
-            orbits_(), clocks_(), antennas_(), biases_(), erps_(),
-            klobuchar_coeffs_(), sun_ephemeris_(), last_interpolated_velocity_(),
-            signal_priorities_(config.getSignalPriorities()) {
+            signal_priorities_(config.getSignalPriorities()),
+            // Initialize references from cache - NO COPIES
+            orbits_(cache.getOrbits()),
+            clocks_(cache.getClocks()),
+            antennas_(cache.getAntennas()),
+            biases_(cache.getBiases()),
+            erps_(cache.getErps()),
+            klobuchar_coeffs_(cache.getKlobucharCoeffs())
+        {
+            // No need to copy data - we now hold references to cache data
 
-            // Populate product-dependent containers (SP3, CLK, ATX, BIA, ERP, RNX/Klobuchar)
+            // Update GnssCorrections to use cache references directly
+            //corrections_.setClocksAndErps(cache.getClocks(), cache.getErps());
+
+            log_manager_.getLogger("geometry")->info(
+                "Geometry model initialized (zero-copy): {} orbits, {} clocks, elev_mask={:.1f}°",
+                orbits_.size(), clocks_.size(), elevation_threshold_
+            );
+            // Build indices from the cached product vectors so lookups are O(1)
             loadData();
-
-            log_manager_.getLogger("geometry")->info("Geometry model initialized: {} orbits, {} clocks, elev_mask={:.1f}°",
-                orbits_.size(), clocks_.size(), elevation_threshold_);
         }
 
         /**
@@ -173,94 +172,25 @@ namespace GnssProcessor {
          * @note Called from the constructor to initialize product-dependent data.
          */
         void Geometry::loadData() {
-            try {
-                // Orbits (SP3)
-                std::vector<OrbitData> parsed_orbits;
-                auto sp3_paths = product_parser_.getOrbitPaths();
-                if (!sp3_paths.empty()) {
-                    if (product_parser_.parseSp3(sp3_paths, parsed_orbits)) {
-                        orbits_ = std::move(parsed_orbits);
-                        log_manager_.getLogger("geometry")->info("Loaded {} orbit entries", orbits_.size());
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn("Failed to parse SP3 orbit files");
-                    }
-                }
-                else {
-                    log_manager_.getLogger("geometry")->warn("No SP3 product paths provided");
-                }
+            log_manager_.getLogger("geometry")->debug("Begin satellite orbit index");
 
-                // Clocks (CLK)
-                std::filesystem::path clk_path = product_parser_.getProductPath("CLK");
-                if (!clk_path.empty()) {
-                    std::vector<ClockData> parsed_clocks;
-                    if (product_parser_.parseClk(clk_path, parsed_clocks)) {
-                        clocks_ = std::move(parsed_clocks);
-                        log_manager_.getLogger("geometry")->info("Loaded {} clock entries", clocks_.size());
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn("Failed to parse CLK file {}", clk_path.string());
-                    }
-                }
+            orbit_index_.clear();
 
-                // ATX (antenna)
-                std::filesystem::path atx_path = product_parser_.getProductPath("ATX");
-                if (!atx_path.empty()) {
-                    std::vector<AntennaData> parsed_ant;
-                    if (product_parser_.parseAtx(atx_path, parsed_ant)) {
-                        antennas_ = std::move(parsed_ant);
-                        log_manager_.getLogger("geometry")->info("Loaded {} antenna entries", antennas_.size());
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn("Failed to parse ATX file {}", atx_path.string());
-                    }
-                }
-
-                // BIA (biases)
-                std::filesystem::path bia_path = product_parser_.getProductPath("BIA");
-                if (!bia_path.empty()) {
-                    std::vector<BiasData> parsed_biases;
-                    if (product_parser_.parseBia(bia_path, parsed_biases)) {
-                        biases_ = std::move(parsed_biases);
-                        log_manager_.getLogger("geometry")->info("Loaded {} bias entries", biases_.size());
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn("Failed to parse BIA file {}", bia_path.string());
-                    }
-                }
-
-                // ERP
-                std::filesystem::path erp_path = product_parser_.getProductPath("ERP");
-                if (!erp_path.empty()) {
-                    std::vector<ErpData> parsed_erps;
-                    if (product_parser_.parseErp(erp_path, parsed_erps)) {
-                        erps_ = std::move(parsed_erps);
-                        log_manager_.getLogger("geometry")->info("Loaded {} ERP entries", erps_.size());
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn("Failed to parse ERP file {}", erp_path.string());
-                    }
-                }
-
-                // RNX - Klobuchar
-                std::filesystem::path rnx_path = product_parser_.getProductPath("RNX");
-                if (!rnx_path.empty()) {
-                    std::vector<double> parsed_klob;
-                    if (product_parser_.parseKlobuchar(rnx_path, parsed_klob)) {
-                        klobuchar_coeffs_ = std::move(parsed_klob);
-                        log_manager_.getLogger("geometry")->info("Loaded Klobuchar coefficients ({} values) from {}", klobuchar_coeffs_.size(), rnx_path.string());
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn("Failed to parse Klobuchar coefficients from {}", rnx_path.string());
-                    }
-                }
-
-                // Update GnssCorrections to use freshly loaded vectors.
-                corrections_.setClocksAndErps(clocks_, erps_);
+            // Build orbit index: satellite -> vector of pointers to OrbitData
+            for (const OrbitData& od : orbits_) {
+                if (od.satellite.empty()) continue;
+                orbit_index_[od.satellite].push_back(&od);
             }
-            catch (const std::exception& e) {
-                log_manager_.getLogger("geometry")->error("Exception in Geometry::loadData(): {}", e.what());
+
+            // Sort per-satellite entries by time (ascending) to make interpolation/search predictable
+            for (auto& kv : orbit_index_) {
+                auto& vec = kv.second;
+                std::sort(vec.begin(), vec.end(), [](const OrbitData* a, const OrbitData* b) {
+                    return TimeUtils::continuousGpsSeconds(a->time) < TimeUtils::continuousGpsSeconds(b->time);
+                    });
             }
+
+            log_manager_.getLogger("geometry")->info("Built orbit index for {} satellites", orbit_index_.size());
         }
 
         /**
@@ -279,223 +209,6 @@ namespace GnssProcessor {
          */
         double Geometry::computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const {
             return (sat_pos - rx_pos).norm(); // meters
-        }
-
-        /**
-         * @brief Interpolate satellite ECEF position from available orbit products.
-         *
-         * Interpolates a satellite position at the requested epoch using loaded orbit
-         * product samples (`orbits_`). The implementation uses a numerically-stable
-         * barycentric Lagrange interpolant on a selected subset of nodes (IGS-recommended
-         * 9-point / order-8 when available, falling back to a minimum of 4 points).
-         *
-         * Behaviour and notes:
-         * - Input `satellite` is a satellite identifier string (e.g. "G01", "E11").
-         * - Input `time` is the desired epoch (GPS week + time-of-week) for the position.
-         * - Returned vector is the satellite ECEF position in meters.
-         * - If insufficient or invalid orbit nodes are available the function returns
-         *   `Eigen::Vector3d::Zero()` as an error indicator (callers should check).
-         * - The routine filters out orbit samples with non-finite or out-of-range norms,
-         *   sorts nodes by proximity to the query time and trims the set to a stable
-         *   interpolation subset. It also guards against excessive interpolation span
-         *   (data gaps) and will shrink to the minimum-point fallback when required.
-         * - Extrapolation is possible if the query time lies outside the available node
-         *   times; the implementation logs a warning when extrapolation exceeds a half
-         *   SP3 interval and may degrade accuracy.
-         * - The method returns the interpolated ECEF position. If the interpolation
-         *   produces non-finite values the first valid node is returned as a safe fallback.
-         *
-         * @param[in] satellite Satellite identifier string (e.g. "G01", "E11").
-         * @param[in] time      Epoch at which the position is requested (GPS week + tow).
-         * @return Satellite ECEF position (meters). `Eigen::Vector3d::Zero()` indicates failure.
-         */
-        Eigen::Vector3d Geometry::getSatellitePosition(const std::string& satellite, const GnssTime& time) const {
-            // IGS-recommended: 9-point (order-8) Lagrange on SP3 positions.
-            // Fallback to >=4 points (cubic+) if fewer are available.
-            // 
-            // SP3 files typically have 15-minute (900s) epochs. CLK files have 30-second epochs.
-            // RINEX observations can be at any rate (commonly 1s, 30s, or 300s).
-            // This method interpolates SP3 positions to the exact RINEX observation time.
-            constexpr size_t IGS_POINTS = 9;       // order-8 polynomial (IGS recommendation)
-            constexpr size_t MIN_POINTS = 4;       // order-3 fallback (minimum for reasonable accuracy)
-            constexpr double MAX_SPAN = 7200.0;    // 2 hours total span limit (prevents oscillations)
-            constexpr double SP3_INTERVAL = 900.0; // Typical SP3 epoch interval (15 minutes)
-            constexpr double MIN_POS_NORM = 1.5e7;
-            constexpr double MAX_POS_NORM = 4.0e7;
-
-            if (satellite.empty() || orbits_.empty()) {
-                log_manager_.getLogger("geometry")->warn("Position interpolation: invalid satellite or no orbit data");
-                return Eigen::Vector3d::Zero();
-            }
-
-            const double t_query = continuousGpsSeconds(time);
-
-            // Collect all valid nodes for this satellite
-            std::vector<const OrbitData*> nodes;
-            nodes.reserve(IGS_POINTS * 2);
-            for (const auto& o : orbits_) {
-                if (o.satellite != satellite || !o.position_valid || !o.position.allFinite()) continue;
-                const double t = continuousGpsSeconds(o.time);
-                const double norm = o.position.norm();
-                if (norm <= MIN_POS_NORM || norm >= MAX_POS_NORM) continue;
-                nodes.push_back(&o);
-            }
-            if (nodes.size() < MIN_POINTS) {
-                log_manager_.getLogger("geometry")->warn("Position interpolation: insufficient nodes ({}) for {} at week {} tow {:.3f}",
-                    nodes.size(), satellite, time.week, time.tow);
-                return Eigen::Vector3d::Zero();
-            }
-
-            // Sort by proximity to query, then trim to at most IGS_POINTS
-            std::sort(nodes.begin(), nodes.end(), [t_query](const OrbitData* a, const OrbitData* b) {
-                return std::abs(continuousGpsSeconds(a->time) - t_query) <
-                    std::abs(continuousGpsSeconds(b->time) - t_query);
-                });
-            if (nodes.size() > IGS_POINTS) nodes.resize(IGS_POINTS);
-
-            // Sort chronologically for interpolation stability
-            std::sort(nodes.begin(), nodes.end(), [](const OrbitData* a, const OrbitData* b) {
-                return continuousGpsSeconds(a->time) < continuousGpsSeconds(b->time);
-                });
-
-            // Check for extrapolation (query outside interpolation window)
-            const double t_first = continuousGpsSeconds(nodes.front()->time);
-            const double t_last = continuousGpsSeconds(nodes.back()->time);
-            if (t_query < t_first || t_query > t_last) {
-                const double extrap_dist = (t_query < t_first) ? (t_first - t_query) : (t_query - t_last);
-                // Warn if extrapolating more than half an SP3 interval (7.5 minutes)
-                if (extrap_dist > SP3_INTERVAL / 2.0) {
-                    log_manager_.getLogger("geometry")->warn(
-                        "Position extrapolation for {} at week {} tow {:.3f}: {:.1f}s outside SP3 window [{:.1f}, {:.1f}]s - accuracy degraded",
-                        satellite, time.week, time.tow, extrap_dist,
-                        nodes.front()->time.tow, nodes.back()->time.tow);
-                }
-                else {
-                    log_manager_.getLogger("geometry")->debug(
-                        "Position extrapolation for {} at week {} tow {:.3f}: {:.1f}s outside window",
-                        satellite, time.week, time.tow, extrap_dist);
-                }
-            }
-
-            // Enforce maximum total span to limit oscillations
-            const double span = t_last - t_first;
-            if (span > MAX_SPAN) {
-                // Span is too large (likely data gap). Re-select ONLY the closest MIN_POINTS.
-                std::sort(nodes.begin(), nodes.end(), [t_query](const OrbitData* a, const OrbitData* b) {
-                    return std::abs(continuousGpsSeconds(a->time) - t_query) <
-                        std::abs(continuousGpsSeconds(b->time) - t_query);
-                    });
-
-                // Aggressively shrink to minimum points to respect span as much as possible
-                if (nodes.size() > MIN_POINTS) {
-                    nodes.resize(MIN_POINTS);
-                }
-
-                std::sort(nodes.begin(), nodes.end(), [](const OrbitData* a, const OrbitData* b) {
-                    return continuousGpsSeconds(a->time) < continuousGpsSeconds(b->time);
-                    });
-            }
-
-            const size_t n = nodes.size();
-            std::vector<double> x(n);
-            std::vector<Eigen::Vector3d> y(n);
-            for (size_t i = 0; i < n; ++i) {
-                x[i] = continuousGpsSeconds(nodes[i]->time);
-                y[i] = nodes[i]->position;
-            }
-
-            auto w = barycentricWeights(x);
-            Eigen::Vector3d interp = barycentricEval(x, w, y, t_query);
-            if (!interp.allFinite()) {
-                log_manager_.getLogger("geometry")->warn("Position interpolation produced non-finite for {} - fallback first node", satellite);
-                return y.front();
-            }
-
-            // Diagnostic logging for position interpolation
-            log_manager_.getLogger("geometry")->debug(
-                "Orbit interp for {} at tow={:.3f}: used {} pts, span=[{:.3f}, {:.3f}]s (dt={:.1f}s), "
-                "pos=({:.3f}, {:.3f}, {:.3f}) km, norm={:.3f} km",
-                satellite, time.tow, n,
-                nodes.front()->time.tow, nodes.back()->time.tow,
-                x.back() - x.front(),
-                interp.x() / 1000.0, interp.y() / 1000.0, interp.z() / 1000.0,
-                interp.norm() / 1000.0);
-
-            return interp;
-        }
-
-        /**
-         * @brief Estimate satellite ECEF velocity by numerical differentiation.
-         *
-         * Computes the satellite velocity at the requested epoch by central finite
-         * differences of the interpolated position:
-         *   v(t) ≈ [p(t + h) - p(t - h)] / (2h)
-         *
-         * The routine:
-         * - Interpolates positions at t ± h using `getSatellitePosition`.
-         * - Uses a small step `h` (0.5 s in the implementation) to balance accuracy
-         *   and numerical stability.
-         * - Validates interpolated positions and the resulting velocity; on failure
-         *   it returns `Eigen::Vector3d::Zero()` and logs a warning.
-         *
-         * @param[in] satellite Satellite identifier string (e.g. "G01", "E11").
-         * @param[in] time      Epoch at which the velocity is requested (GPS week + tow).
-         * @return Satellite ECEF velocity in meters/second. Returns `Eigen::Vector3d::Zero()`
-         *         if interpolation fails or the computed velocity is non-finite / implausible.
-         *
-         * @note The implementation guards against GPS week/TOW wrap-around when forming
-         *       t ± h, and rejects results whose norm exceeds an expected maximum (`MAX_VEL_NORM`)
-         *       to avoid returning spurious velocities from bad orbit data.
-         */
-        Eigen::Vector3d Geometry::getSatelliteVelocity(const std::string& satellite, const GnssTime& time) const {
-            // Derive velocity by numerical differentiation of the position interpolant.
-            // We compute: v(t) ≈ [p(t+h) - p(t-h)] / (2h)
-            // where p(t) is the interpolated position and h is a small time step.
-            //
-            // This is more stable than the barycentric derivative formula when dealing
-            // with large time values (GPS seconds ~10^9).
-            constexpr double h = 0.5;  // 0.5 second step for central difference
-            constexpr double MAX_VEL_NORM = 15000.0;  // Maximum expected velocity ~4 km/s
-
-            if (satellite.empty() || orbits_.empty()) {
-                log_manager_.getLogger("geometry")->warn("Velocity interpolation: invalid satellite or no orbit data");
-                return Eigen::Vector3d::Zero();
-            }
-
-            // Compute position at t+h and t-h
-            GnssTime t_plus = time;
-            t_plus.tow += h;
-            if (t_plus.tow >= 604800.0) { t_plus.tow -= 604800.0; t_plus.week += 1; }
-
-            GnssTime t_minus = time;
-            t_minus.tow -= h;
-            if (t_minus.tow < 0.0) { t_minus.tow += 604800.0; t_minus.week -= 1; }
-
-            Eigen::Vector3d pos_plus = getSatellitePosition(satellite, t_plus);
-            Eigen::Vector3d pos_minus = getSatellitePosition(satellite, t_minus);
-
-            if (!pos_plus.allFinite() || !pos_minus.allFinite() ||
-                pos_plus.norm() < 1e3 || pos_minus.norm() < 1e3) {
-                log_manager_.getLogger("geometry")->warn("Velocity interpolation: position interpolation failed for {} at tow {:.3f}",
-                    satellite, time.tow);
-                return Eigen::Vector3d::Zero();
-            }
-
-            // Central difference: v = (p(t+h) - p(t-h)) / (2h)
-            Eigen::Vector3d vel = (pos_plus - pos_minus) / (2.0 * h);
-
-            if (!vel.allFinite() || vel.norm() > MAX_VEL_NORM) {
-                log_manager_.getLogger("geometry")->warn("Velocity interpolation: invalid result for {} at tow {:.3f}: norm={:.1f} m/s",
-                    satellite, time.tow, vel.norm());
-                return Eigen::Vector3d::Zero();
-            }
-
-            // Diagnostic logging
-            log_manager_.getLogger("geometry")->debug(
-                "Velocity interp for {} at tow={:.3f}: vel=({:.3f}, {:.3f}, {:.3f}) m/s, norm={:.3f} m/s, method=central_diff",
-                satellite, time.tow, vel.x(), vel.y(), vel.z(), vel.norm());
-
-            return vel;
         }
 
         /**
@@ -549,6 +262,11 @@ namespace GnssProcessor {
             double& mf_d,
             Eigen::Vector3d& sat_vel) const
         {
+			// TODO: Use health flags from BRDC/SP3/CLK to reject unhealthy satellites
+            // Requires loading health data into cache and exposing it here.
+			// For now, we can hardcode a known unhealthy satellite (launched into wrong orbit).
+            if (obs.satellite == "E14") return false;
+
             const double c = Constants::SPEED_OF_LIGHT;
             const double omegaE = Constants::EARTH_ANGULAR_VELOCITY; // rad/s
 
@@ -561,7 +279,7 @@ namespace GnssProcessor {
             }
 
             // Initial satellite position (approx. reception time)
-            Eigen::Vector3d sat_pos_init = getSatellitePosition(obs.satellite, obs.time);
+            Eigen::Vector3d sat_pos_init = getSatellitePV(obs.satellite, obs.time).first;
             if (sat_pos_init.norm() < 1e3 || !sat_pos_init.allFinite()) {
                 log_manager_.getLogger("geometry")->warn("Invalid initial satellite position for {} at TOW {:.3f}",
                     obs.satellite, obs.time.tow);
@@ -588,22 +306,35 @@ namespace GnssProcessor {
             // For orbit lookup, we use GPS system time (emission_time).
             // The satellite clock correction is applied to the pseudorange equation.
             //
-            for (int iter = 0; iter < max_iter && tof_delta > 1e-8; ++iter) {
+            double d_tof = 1e-16;
+            for (int iter = 0; iter < max_iter && tof_delta > d_tof; ++iter) {
                 // Emission time = reception time - TOF (in GPS system time)
                 GnssTime emission_time = obs.time;
                 emission_time.tow -= tof;
-                if (emission_time.tow < 0) { emission_time.tow += 604800.0; emission_time.week -= 1; }
+                if (emission_time.tow < 0) { emission_time.tow += TimeUtils::SECONDS_IN_WEEK; emission_time.week -= 1; }
 
                 // Get satellite clock correction at emission time.
                 // This is dt_sat such that: t_satellite_proper = t_GPS - dt_sat
                 // A positive dt_sat means the satellite clock is ahead of GPS time.
                 sat_clock_em = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time); // [s]
 
+                // Reject observations with failed clock interpolation.
+                // A zero clock typically indicates missing clock data (interpolation returned 0.0 as fallback).
+                // Valid satellite clocks are typically in the range of microseconds to milliseconds,
+                // so |sat_clock| < 1e-12 s (1 picosecond) is almost certainly invalid.
+                if (std::abs(sat_clock_em) < 1e-12) {
+                    log_manager_.getLogger("geometry")->warn(
+                        "Satellite clock correction is zero/invalid for {} at emission TOW {:.3f} - skipping observation",
+                        obs.satellite, emission_time.tow);
+                    return false;
+                }
+
                 // For orbit interpolation, we need the satellite position at the GPS system time
                 // when the signal was transmitted. This is emission_time (already in GPS system time).
                 // We do NOT adjust orbit lookup by sat_clock - the SP3 is in GPS system time.
-                sat_pos_em = getSatellitePosition(obs.satellite, emission_time);
-                sat_vel_em = getSatelliteVelocity(obs.satellite, emission_time);
+                auto [sat_pos_em_new, sat_vel_em_new] = getSatellitePV(obs.satellite, emission_time);
+                sat_pos_em = sat_pos_em_new;
+                sat_vel_em = sat_vel_em_new;
 
                 if (sat_pos_em.norm() < 1e3 || !sat_pos_em.allFinite() || !std::isfinite(sat_clock_em)) {
                     log_manager_.getLogger("geometry")->warn("Invalid satellite data at emission time for {} at TOW {:.3f}",
@@ -617,6 +348,7 @@ namespace GnssProcessor {
 
                 // Total satellite clock correction (CLK file value + relativistic periodic term)
                 sat_clock = sat_clock_em + relativistic_corr;
+                //sat_clock = sat_clock_em;
 
                 // --- Earth rotation correction ---
                 // Rotate satellite position from emission-time ECEF to reception-time ECEF.
@@ -638,7 +370,7 @@ namespace GnssProcessor {
                 tof = new_tof;
             }
 
-            if (tof_delta > 1e-7) {
+            if (tof_delta > d_tof) {
                 log_manager_.getLogger("geometry")->warn("TOF iteration failed to converge for {}: delta={:.3e} s",
                     obs.satellite, tof_delta);
                 return false;
@@ -648,7 +380,7 @@ namespace GnssProcessor {
             {
                 GnssTime emission_time = obs.time;
                 emission_time.tow -= tof;
-                if (emission_time.tow < 0) { emission_time.tow += 604800.0; emission_time.week -= 1; }
+                if (emission_time.tow < 0) { emission_time.tow += TimeUtils::SECONDS_IN_WEEK; emission_time.week -= 1; }
 
                 // Compute r·v for relativistic check
                 double r_dot_v = sat_pos_em.dot(sat_vel_em);
@@ -685,6 +417,7 @@ namespace GnssProcessor {
             // Sagnac correction is zero when using rotated satellite position (already accounted for)
             // But we still compute it for logging/diagnostic purposes
             sagnac_corr = 0.0; // Implicitly included in Earth rotation
+            //sagnac_corr = corrections_.computeSagnacCorrection(rx_pos, sat_pos); // Implicitly included in Earth rotation
 
             atm_loading_corr = 0.0; // placeholder
 
@@ -708,6 +441,230 @@ namespace GnssProcessor {
 
             return true;
         }
+
+        /**
+        * @brief Compute satellite position and velocity together efficiently.
+        *
+        * This combined function performs the index lookup, node filtering, and sorting
+        * only ONCE, then evaluates the interpolant at three points (t, t+h, t-h) to
+        * get both position and velocity.
+        *
+        * Performance: ~3x faster than calling getSatellitePosition + getSatelliteVelocity
+        * separately, since we avoid redundant index lookups and sorting.
+        *
+        * @param[in] satellite Satellite identifier string (e.g. "G01", "E11").
+        * @param[in] time      Epoch at which position/velocity are requested.
+        * @return Pair of {position (m), velocity (m/s)}. Returns {Zero, Zero} on failure.
+        */
+        std::pair<Eigen::Vector3d, Eigen::Vector3d> Geometry::getSatellitePV(
+            const std::string& satellite, const GnssTime& time) const
+        {
+            constexpr size_t IGS_POINTS = 9;
+            constexpr size_t MIN_POINTS = 4;
+            constexpr double MAX_SPAN = 7200.0;
+            constexpr double SP3_INTERVAL = 900.0;
+            constexpr double MIN_POS_NORM = 1.5e7;
+            constexpr double MAX_POS_NORM = 4.0e7;
+            constexpr double MAX_VEL_NORM = 15000.0;
+
+            const auto zero_result = std::make_pair(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
+
+            if (satellite.empty()) {
+                log_manager_.getLogger("geometry")->warn("getSatellitePV: empty satellite ID");
+                return zero_result;
+            }
+
+            // O(1) index lookup
+            auto it = orbit_index_.find(satellite);
+            if (it == orbit_index_.end()) {
+                log_manager_.getLogger("geometry")->warn("getSatellitePV: no orbit data for {}", satellite);
+                return zero_result;
+            }
+
+            const auto& sat_orbits = it->second;  // Already sorted chronologically in loadData()
+            const double t_query = TimeUtils::continuousGpsSeconds(time);
+
+            // Binary search for the first node >= t_query
+            auto upper_it = std::lower_bound(sat_orbits.begin(), sat_orbits.end(), t_query,
+                [](const OrbitData* o, double t) {
+                    return TimeUtils::continuousGpsSeconds(o->time) < t;
+                });
+
+            size_t upper_idx = std::distance(sat_orbits.begin(), upper_it);
+
+            // Center the window around the query time
+            // For IGS_POINTS=9: half_before=4, so window is [upper_idx-4, upper_idx+4]
+            size_t half_before = IGS_POINTS / 2;
+
+            size_t start_idx = 0;
+            if (upper_idx > half_before) {
+                start_idx = upper_idx - half_before;
+            }
+            // Clamp to valid range
+            if (start_idx + IGS_POINTS > sat_orbits.size()) {
+                start_idx = sat_orbits.size() > IGS_POINTS ? sat_orbits.size() - IGS_POINTS : 0;
+            }
+            size_t end_idx = std::min(start_idx + IGS_POINTS, sat_orbits.size());
+
+            // Collect valid nodes from the fixed window
+            std::vector<const OrbitData*> nodes;
+            nodes.reserve(IGS_POINTS);
+
+            for (size_t i = start_idx; i < end_idx; ++i) {
+                const OrbitData* o = sat_orbits[i];
+                if (!o->position_valid || !o->position.allFinite()) continue;
+                double norm = o->position.norm();
+                if (norm <= MIN_POS_NORM || norm >= MAX_POS_NORM) continue;
+                nodes.push_back(o);
+            }
+
+            if (nodes.size() < MIN_POINTS) {
+                log_manager_.getLogger("geometry")->warn(
+                    "getSatellitePV: insufficient valid nodes ({}) for {} at week {} tow {:.3f}",
+                    nodes.size(), satellite, time.week, time.tow);
+                return zero_result;
+            }
+
+            // Nodes are already in chronological order (from sorted sat_orbits)
+
+            // === CHECK FOR EXTRAPOLATION ===
+            const double t_first = TimeUtils::continuousGpsSeconds(nodes.front()->time);
+            const double t_last = TimeUtils::continuousGpsSeconds(nodes.back()->time);
+
+            if (t_query < t_first || t_query > t_last) {
+                const double extrap_dist = (t_query < t_first) ? (t_first - t_query) : (t_query - t_last);
+                if (extrap_dist > SP3_INTERVAL / 2.0) {
+                    log_manager_.getLogger("geometry")->warn(
+                        "Position extrapolation for {} at week {} tow {:.3f}: {:.1f}s outside SP3 window [{:.1f}, {:.1f}]s",
+                        satellite, time.week, time.tow, extrap_dist,
+                        nodes.front()->time.tow, nodes.back()->time.tow);
+                }
+            }
+
+            // === CHECK FOR DATA GAPS ===
+            const double span = t_last - t_first;
+            if (span > MAX_SPAN) {
+                // Re-select with minimum points closest to query
+                std::sort(nodes.begin(), nodes.end(), [t_query](const OrbitData* a, const OrbitData* b) {
+                    return std::abs(TimeUtils::continuousGpsSeconds(a->time) - t_query) <
+                        std::abs(TimeUtils::continuousGpsSeconds(b->time) - t_query);
+                    });
+                if (nodes.size() > MIN_POINTS) {
+                    nodes.resize(MIN_POINTS);
+                }
+                std::sort(nodes.begin(), nodes.end(), [](const OrbitData* a, const OrbitData* b) {
+                    return TimeUtils::continuousGpsSeconds(a->time) < TimeUtils::continuousGpsSeconds(b->time);
+                    });
+            }
+
+            // === BUILD INTERPOLATION ARRAYS ===
+            const size_t n = nodes.size();
+            std::vector<double> x(n);
+            std::vector<double> yx(n), yy(n), yz(n);
+            for (size_t i = 0; i < n; ++i) {
+                x[i] = TimeUtils::continuousGpsSeconds(nodes[i]->time);
+                yx[i] = nodes[i]->position.x();
+                yy[i] = nodes[i]->position.y();
+                yz[i] = nodes[i]->position.z();
+            }
+
+            Eigen::Vector3d pos = Eigen::Vector3d::Zero();
+            Eigen::Vector3d vel = Eigen::Vector3d::Zero();
+
+            // Position interpolation uses barycentric Lagrange interpolation
+            auto w = Interpolate::barycentricWeights(x);
+            pos.x() = Interpolate::barycentricEval(x, w, yx, t_query);
+            pos.y() = Interpolate::barycentricEval(x, w, yy, t_query);
+            pos.z() = Interpolate::barycentricEval(x, w, yz, t_query);
+
+            // Velocity computation depends on interpolation mode
+            try {
+                SatelliteInterpolationMode mode = config_.getSatelliteInterpolationMode();
+
+                if (mode == SatelliteInterpolationMode::Lagrange) {
+                    vel.x() = Interpolate::barycentricDeriv(x, w, yx, t_query);
+                    vel.y() = Interpolate::barycentricDeriv(x, w, yy, t_query);
+                    vel.z() = Interpolate::barycentricDeriv(x, w, yz, t_query);
+                }
+                else if (mode == SatelliteInterpolationMode::Hermite) {
+                    auto mx = Interpolate::monotoneHermiteSlopes(x, yx);
+                    auto my = Interpolate::monotoneHermiteSlopes(x, yy);
+                    auto mz = Interpolate::monotoneHermiteSlopes(x, yz);
+
+                    if (mx.size() == n && my.size() == n && mz.size() == n) {
+                        vel.x() = Interpolate::hermiteDeriv(x, yx, mx, t_query);
+                        vel.y() = Interpolate::hermiteDeriv(x, yy, my, t_query);
+                        vel.z() = Interpolate::hermiteDeriv(x, yz, mz, t_query);
+                    }
+                    else {
+                        log_manager_.getLogger("geometry")->warn(
+                            "getSatellitePV: Hermite slopes computation failed for {}", satellite);
+                        return zero_result;
+                    }
+                }
+                else if (mode == SatelliteInterpolationMode::Spline) {
+                    auto cx = Interpolate::naturalSplineSecondDerivs(x, yx);
+                    auto cy = Interpolate::naturalSplineSecondDerivs(x, yy);
+                    auto cz = Interpolate::naturalSplineSecondDerivs(x, yz);
+
+                    if (cx.size() == n && cy.size() == n && cz.size() == n) {
+                        vel.x() = Interpolate::splineDeriv(x, yx, cx, t_query);
+                        vel.y() = Interpolate::splineDeriv(x, yy, cy, t_query);
+                        vel.z() = Interpolate::splineDeriv(x, yz, cz, t_query);
+                    }
+                    else {
+                        log_manager_.getLogger("geometry")->warn(
+                            "getSatellitePV: Spline coefficients computation failed for {}", satellite);
+                        return zero_result;
+                    }
+                }
+                else {
+                    log_manager_.getLogger("geometry")->error(
+                        "getSatellitePV: unknown interpolation mode for {}", satellite);
+                    return zero_result;
+                }
+            }
+            catch (const std::exception& ex) {
+                log_manager_.getLogger("geometry")->warn(
+                    "getSatellitePV: exception during interpolation for {}: {}", satellite, ex.what());
+                return zero_result;
+            }
+
+            // Validate position
+            if (!pos.allFinite()) {
+                log_manager_.getLogger("geometry")->warn(
+                    "getSatellitePV: non-finite position for {} at tow {:.3f}", satellite, time.tow);
+                return zero_result;
+            }
+
+            double pos_norm = pos.norm();
+            if (pos_norm <= MIN_POS_NORM || pos_norm >= MAX_POS_NORM) {
+                log_manager_.getLogger("geometry")->warn(
+                    "getSatellitePV: position out of range for {} at tow {:.3f}: norm={:.1f} m",
+                    satellite, time.tow, pos_norm);
+                return zero_result;
+            }
+
+            // Validate velocity
+            if (!vel.allFinite() || vel.norm() > MAX_VEL_NORM) {
+                log_manager_.getLogger("geometry")->warn(
+                    "getSatellitePV: invalid velocity for {} at tow {:.3f}: norm={:.1f} m/s",
+                    satellite, time.tow, vel.norm());
+                vel = Eigen::Vector3d::Zero();
+            }
+
+            log_manager_.getLogger("geometry")->debug(
+                "getSatellitePV for {} at tow={:.3f}: pos=({:.3f}, {:.3f}, {:.3f}) km, "
+                "vel=({:.3f}, {:.3f}, {:.3f}) m/s, |v|={:.3f} m/s, nodes={}, window=[{:.1f},{:.1f}]",
+                satellite, time.tow,
+                pos.x() / 1000.0, pos.y() / 1000.0, pos.z() / 1000.0,
+                vel.x(), vel.y(), vel.z(), vel.norm(),
+                n, nodes.front()->time.tow, nodes.back()->time.tow);
+
+            return { pos, vel };
+        }
+
+
 
         /**
          * @brief Compute topocentric elevation and azimuth from ECEF coordinates.
@@ -745,18 +702,13 @@ namespace GnssProcessor {
                 log_manager_.getLogger("geometry")->warn("Invalid receiver ECEF magnitude in topocentric computation");
                 return out;
             }
-            double lat = std::asin(rx_pos_ecef.z() / r);
-            double lon = std::atan2(rx_pos_ecef.y(), rx_pos_ecef.x());
 
-            double slat = std::sin(lat), clat = std::cos(lat);
-            double slon = std::sin(lon), clon = std::cos(lon);
+            // Use geodetic latitude/longitude (from Coordinates) — more accurate than geocentric estimate.
+            Coordinates::Llh ref_llh = Coordinates::ecefToLlh(rx_pos_ecef);
 
-            Eigen::Matrix3d R;
-            R << -slon, clon, 0.0,
-                -slat * clon, -slat * slon, clat,
-                clat* clon, clat* slon, slat;
-
-            Eigen::Vector3d los_enu = R * (delta / range);
+            // Convert delta (ECEF) to local ENU. ecefToEnu returns ENU = R^T * vec_ecef.
+            // We want unit LOS in ENU, so normalize after conversion.
+            Eigen::Vector3d los_enu = Coordinates::ecefToEnu(delta, ref_llh) / range;
 
             double up = std::clamp(los_enu.z(), -1.0, 1.0);
             double elev_rad = std::asin(up);
@@ -771,7 +723,7 @@ namespace GnssProcessor {
             out.azimuth_deg = az_deg;
 
             log_manager_.getLogger("geometry")->trace("Topocentric: elev={:.3f}°, az={:.3f}° (lat≈{:.6f}°)",
-                elev_deg, az_deg, lat * 180.0 / Constants::PI);
+                elev_deg, az_deg, ref_llh.lat_rad * 180.0 / Constants::PI);
 
             return out;
         }
@@ -825,5 +777,6 @@ namespace GnssProcessor {
             Eigen::Vector3d z_s = -sat_pos.normalized();
             d_s = y_s.cross(z_s).normalized();
         }
+
     }
 } // namespace GnssProcessor

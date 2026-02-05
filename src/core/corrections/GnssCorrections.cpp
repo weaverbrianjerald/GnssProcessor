@@ -1,7 +1,9 @@
 ﻿#include "GnssCorrections.hpp"
+#include "Coordinates.hpp"
 #include "Constants.hpp"
-#include "GnssConfig.hpp"    // required for accessing ReceiverAntennaOrientation in .cpp
-#include "RinexParser.hpp"   // required to call RinexParser methods if provided
+#include "GnssConfig.hpp"
+#include "RinexParser.hpp"
+#include "Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -11,24 +13,6 @@ namespace GnssProcessor {
 
     // Anonymous namespace for file-local utilities
     namespace {
-
-        /**
-         * @brief Convert a GNSS time (GPS week + time-of-week) to continuous seconds.
-         *
-         * Computes seconds since the GPS epoch by combining the integer GPS week and
-         * the time-of-week (TOW):
-         *   continuous_seconds = week * 604800.0 + tow
-         *
-         * @param t GNSS time containing .week (GPS week number) and .tow (seconds into week).
-         * @return Continuous GPS seconds (double, in seconds since GPS epoch).
-         *
-         * @note This routine assumes `t.week` contains the full GPS week count (not
-         *       a wrapped 10-bit week number). It does not perform leap-second
-         *       adjustments — it only provides the simple week+TOW linear conversion.
-         */
-        inline double continuousGpsSeconds(const GnssTime& t) {
-            return static_cast<double>(t.week) * 604800.0 + t.tow;
-        }
 
         /**
          * @brief Compute barycentric Lagrange interpolation weights for a set of nodes.
@@ -153,6 +137,7 @@ namespace GnssProcessor {
         clocks_(), erps_(), biases_(), orbits_(),
         config_(nullptr), rinex_parser_(nullptr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (minimal)");
+        buildClockIndex();
     }
 
     /**
@@ -179,6 +164,7 @@ namespace GnssProcessor {
         config_(nullptr), rinex_parser_(nullptr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed with clocks and ERPs: {} clocks, {} erps",
             clocks_.size(), erps_.size());
+        buildClockIndex();
     }
 
     /**
@@ -216,6 +202,7 @@ namespace GnssProcessor {
         config_(&config), rinex_parser_(&rinex) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (full) with {} clocks, {} erps, {} biases",
             clocks_.size(), erps_.size(), biases_.size());
+        buildClockIndex();
     }
 
     /**
@@ -255,7 +242,8 @@ namespace GnssProcessor {
 
         // Interpolate clock correction
         double clock_corr = interpolateClock(satellite, time, clocks_);
-        std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
+        //std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
+        std::string system_str = PppUtils::getSystemString(satellite);
         if (std::isfinite(clock_corr) && std::abs(clock_corr) < 1e-3) { // Max 1 ms
             log_manager_.getLogger("ppp_model")->trace("Interpolated clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
                 satellite, system_str, time.tow, clock_corr);
@@ -265,6 +253,27 @@ namespace GnssProcessor {
         log_manager_.getLogger("ppp_model")->warn("Invalid clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
             satellite, system_str, time.tow, clock_corr);
         return 0.0;
+    }
+
+    void GnssCorrections::buildClockIndex() {
+        clock_index_.clear();
+        clock_index_.reserve(100);  // Typical number of satellites
+
+        for (const auto& c : clocks_) {
+            clock_index_[c.satellite].push_back(&c);
+        }
+
+        // Sort each satellite's clocks chronologically
+        for (auto& [sat, vec] : clock_index_) {
+            std::sort(vec.begin(), vec.end(),
+                [](const ClockData* a, const ClockData* b) {
+                    return (a->time.week * TimeUtils::SECONDS_IN_WEEK + a->time.tow) <
+                        (b->time.week * TimeUtils::SECONDS_IN_WEEK + b->time.tow);
+                });
+        }
+
+        log_manager_.getLogger("corrections")->debug(
+            "Built clock index: {} satellites indexed", clock_index_.size());
     }
 
     /**
@@ -306,135 +315,98 @@ namespace GnssProcessor {
      *       the calling object owns a valid logger.
      * @see barycentricWeights(), barycentricEval()
      */
-    double GnssCorrections::interpolateClock(const std::string& satellite, const GnssTime& time,
-        const std::vector<ClockData>& clocks) const {
-        // Clock interpolation using 4-point Lagrange polynomial (cubic) for accuracy.
-        //
-        // CLK files typically have 30-second epochs. RINEX observations can be at any rate.
-        // The query time is the signal emission time (reception_time - TOF - sat_clock),
-        // which generally does NOT align with CLK epochs. This method interpolates to the
-        // exact emission time.
-        //
-        // Accuracy note: Satellite clocks have short-term stability of ~1e-12 to 1e-14,
-        // so linear interpolation over 30s introduces ~1e-12 * 30s ≈ 30 ps error.
-        // Cubic interpolation reduces this further.
-        constexpr size_t INTERP_POINTS = 4;       // 4-point cubic Lagrange
-        constexpr double MAX_WINDOW = 7200.0;     // maximum window to search for nodes (2 hours)
-        constexpr double MAX_SPAN_CHECK = 3600.0; // if nodes span > 1hr, reduce to linear
-        constexpr double CLK_INTERVAL = 30.0;     // Typical CLK epoch interval (30 seconds)
+    double GnssCorrections::interpolateClock(const std::string& satellite,
+        const GnssTime& time,
+        const std::vector<ClockData>& clocks) const
+    {
+        // Interpolation parameters
+        //const SatelliteClockInterpolationMode mode = config_.getSatelliteClockInterpolationMode();
+        const SatelliteClockInterpolationMode mode = config_ ? config_->getSatelliteClockInterpolationMode() : SatelliteClockInterpolationMode::Linear;
+        const size_t INTERP_POINTS = (mode == SatelliteClockInterpolationMode::Linear) ? 2 : 4;
+
+        constexpr double MAX_WINDOW = 7200.0;     // Maximum window to search for nodes (2 hours)
+        constexpr double MAX_CLOCK_BIAS = 1e-3;   // 1 ms sanity limit
 
         if (satellite.empty()) {
             log_manager_.getLogger("corrections")->debug("Clock interp: empty satellite ID");
             return 0.0;
         }
-        if (clocks.empty()) {
-            log_manager_.getLogger("corrections")->debug("Clock interp for {}: no clock data available", satellite);
+
+        // O(1) satellite lookup
+        auto it = clock_index_.find(satellite);
+        if (it == clock_index_.end() || it->second.empty()) {
+            log_manager_.getLogger("corrections")->debug(
+                "Clock interp for {}: no clock data in index", satellite);
             return 0.0;
         }
 
-        const double t_query = continuousGpsSeconds(time);
+        const auto& sat_clocks = it->second;  // Already sorted chronologically
+        const double t_query = TimeUtils::continuousGpsSeconds(time);
 
-        // 1. Collect candidates
+        // Binary search for first clock >= t_query  
+        auto upper_it = std::lower_bound(sat_clocks.begin(), sat_clocks.end(), t_query,
+            [](const ClockData* c, double t) {
+                return TimeUtils::continuousGpsSeconds(c->time) < t;
+            });
+
+        size_t upper_idx = std::distance(sat_clocks.begin(), upper_it);
+
+        // Use a stable centered window
+        size_t half_before = INTERP_POINTS / 2;
+        size_t start_idx = (upper_idx > half_before) ? (upper_idx - half_before) : 0;
+
+        if (start_idx + INTERP_POINTS > sat_clocks.size()) {
+            start_idx = (sat_clocks.size() > INTERP_POINTS) ? sat_clocks.size() - INTERP_POINTS : 0;
+        }
+        size_t end_idx = std::min(start_idx + INTERP_POINTS, sat_clocks.size());
+
+        // Collect and validate nodes
         std::vector<const ClockData*> nodes;
-        nodes.reserve(32);
+        nodes.reserve(INTERP_POINTS);
 
-        // Sanity limits for clock bias values (typical GNSS clocks are within +/- 1ms)
-        constexpr double MAX_CLOCK_BIAS = 1e-3; // 1 ms
+        for (size_t i = start_idx; i < end_idx; ++i) {
+            const ClockData* c = sat_clocks[i];
+            if (!std::isfinite(c->clock_bias)) continue;
+            if (std::abs(c->clock_bias) > MAX_CLOCK_BIAS) continue;
 
-        // Count total entries for this satellite (diagnostic)
-        size_t total_sat_entries = 0;
-        size_t rejected_entries = 0;
-
-        // Note: Optimization opportunity - if clocks are sorted, use binary search.
-        // Assuming unsorted or mixed, we scan linearly.
-        for (const auto& c : clocks) {
-            if (c.satellite != satellite) continue;
-            ++total_sat_entries;
-            if (!std::isfinite(c.clock_bias)) {
-                ++rejected_entries;
-                continue;
-            }
-            // Reject outlier clock values that could corrupt interpolation
-            if (std::abs(c.clock_bias) > MAX_CLOCK_BIAS) {
-                ++rejected_entries;
-                continue;
-            }
-
-            double tc = continuousGpsSeconds(c.time);
+            double tc = TimeUtils::continuousGpsSeconds(c->time);
             if (std::abs(tc - t_query) < MAX_WINDOW) {
-                nodes.push_back(&c);
+                nodes.push_back(c);
             }
         }
 
         if (nodes.empty()) {
             log_manager_.getLogger("corrections")->warn(
-                "Clock interp for {} at tow={:.3f}: no valid nodes found (total_entries={}, rejected={}, in_window=0)",
-                satellite, time.tow, total_sat_entries, rejected_entries);
+                "Clock interp for {} at tow={:.3f}: no valid nodes in window",
+                satellite, time.tow);
             return 0.0;
         }
 
-        // 2. Sort chronologically first to identify bracketing
-        std::sort(nodes.begin(), nodes.end(), [](const ClockData* a, const ClockData* b) {
-            return continuousGpsSeconds(a->time) < continuousGpsSeconds(b->time);
-        });
-
-        // 3. Find the best window that brackets the query time
-        // We want points both before and after t_query for interpolation (not extrapolation)
-        size_t bracket_idx = 0;
-        for (size_t i = 0; i < nodes.size(); ++i) {
-            if (continuousGpsSeconds(nodes[i]->time) > t_query) {
-                bracket_idx = i;
-                break;
-            }
-            bracket_idx = i + 1; // If all nodes are before query, use last
-        }
-
-        // Select INTERP_POINTS centered around the bracket point
-        std::vector<const ClockData*> selected;
-        selected.reserve(INTERP_POINTS);
-
-        // Try to get equal points before and after the query time
-        size_t half = INTERP_POINTS / 2;
-        size_t start_idx = 0;
-        if (bracket_idx >= half) {
-            start_idx = bracket_idx - half;
-        }
-        if (start_idx + INTERP_POINTS > nodes.size()) {
-            start_idx = (nodes.size() > INTERP_POINTS) ? nodes.size() - INTERP_POINTS : 0;
-        }
-
-        size_t end_idx = std::min(start_idx + INTERP_POINTS, nodes.size());
-        for (size_t i = start_idx; i < end_idx; ++i) {
-            selected.push_back(nodes[i]);
-        }
-
-        // Check if we're extrapolating (query outside the selected window)
+        // Handle extrapolation: always use linear to avoid oscillation
         bool extrapolating = false;
-        if (!selected.empty()) {
-            double t_first = continuousGpsSeconds(selected.front()->time);
-            double t_last = continuousGpsSeconds(selected.back()->time);
+        if (nodes.size() >= 2) {
+            double t_first = TimeUtils::continuousGpsSeconds(nodes.front()->time);
+            double t_last = TimeUtils::continuousGpsSeconds(nodes.back()->time);
             if (t_query < t_first || t_query > t_last) {
                 extrapolating = true;
-                // For extrapolation, prefer linear (2 points) to avoid oscillation
-                if (selected.size() > 2) {
-                    // Keep only the 2 closest points
-                    std::sort(selected.begin(), selected.end(), [t_query](const ClockData* a, const ClockData* b) {
-                        return std::abs(continuousGpsSeconds(a->time) - t_query) <
-                               std::abs(continuousGpsSeconds(b->time) - t_query);
-                    });
-                    selected.resize(2);
-                    std::sort(selected.begin(), selected.end(), [](const ClockData* a, const ClockData* b) {
-                        return continuousGpsSeconds(a->time) < continuousGpsSeconds(b->time);
-                    });
+                // For extrapolation, always use 2 closest points (linear)
+                if (nodes.size() > 2) {
+                    std::sort(nodes.begin(), nodes.end(), [t_query](const ClockData* a, const ClockData* b) {
+                        return std::abs(TimeUtils::continuousGpsSeconds(a->time) - t_query) <
+                            std::abs(TimeUtils::continuousGpsSeconds(b->time) - t_query);
+                        });
+                    nodes.resize(2);
+                    std::sort(nodes.begin(), nodes.end(), [](const ClockData* a, const ClockData* b) {
+                        return TimeUtils::continuousGpsSeconds(a->time) < TimeUtils::continuousGpsSeconds(b->time);
+                        });
                 }
-                log_manager_.getLogger("geometry")->debug(
-                    "Clock extrapolation for {} at tow={:.3f}: query outside CLK window, using {} pts",
-                    satellite, time.tow, selected.size());
+                log_manager_.getLogger("corrections")->debug(
+                    "Clock extrapolation for {} at tow={:.3f}: using linear with {} pts",
+                    satellite, time.tow, nodes.size());
             }
         }
 
-        nodes = std::move(selected);
-
+        // Build interpolation arrays
         const size_t n = nodes.size();
         if (n == 0) return 0.0;
         if (n == 1) return nodes[0]->clock_bias;
@@ -442,47 +414,41 @@ namespace GnssProcessor {
         std::vector<double> x(n);
         std::vector<double> y(n);
         for (size_t i = 0; i < n; ++i) {
-            x[i] = continuousGpsSeconds(nodes[i]->time);
+            x[i] = TimeUtils::continuousGpsSeconds(nodes[i]->time);
             y[i] = nodes[i]->clock_bias;
         }
 
-        // Linear fallback
-        if (n == 2) {
-            double dt = x[1] - x[0];
-            if (std::abs(dt) < 1e-9) return y[0];
-            double result = y[0] + (t_query - x[0]) * (y[1] - y[0]) / dt;
-            log_manager_.getLogger("geometry")->debug(
-                "Clock interp (linear) for {} at tow={:.3f}: used {} pts, span=[{:.3f}, {:.3f}]s, "
-                "clk_vals=[{:.3e}, {:.3e}]s, result={:.3e} s ({:.3f} m)",
-                satellite, time.tow, n, 
-                nodes.front()->time.tow, nodes.back()->time.tow,
-                y[0], y[1], result, result * 299792458.0);
-            return result;
+        // Perform interpolation based on mode and available points
+        double result = 0.0;
+
+        if (n == 2 || mode == SatelliteClockInterpolationMode::Linear) {
+            // Linear interpolation
+            result = Interpolate::linearInterp(x, y, t_query);
+
+            log_manager_.getLogger("corrections")->debug(
+                "Clock interp (linear) for {} at tow={:.3f}: {} pts, span={:.1f}s, "
+                "result={:.3e}s ({:.3f}m), extrap={}",
+                satellite, time.tow, n, x.back() - x.front(),
+                result, result * Constants::SPEED_OF_LIGHT,
+                extrapolating ? "YES" : "no");
+        }
+        else {
+            // Lagrange interpolation for 3+ points
+            std::vector<double> w = Interpolate::barycentricWeights(x);
+            result = Interpolate::barycentricEval(x, w, y, t_query);
+
+            log_manager_.getLogger("corrections")->debug(
+                "Clock interp (lagrange) for {} at tow={:.3f}: {} pts, span={:.1f}s, "
+                "result={:.3e}s ({:.3f}m), extrap={}",
+                satellite, time.tow, n, x.back() - x.front(),
+                result, result * Constants::SPEED_OF_LIGHT,
+                extrapolating ? "YES" : "no");
         }
 
-        // Lagrange interpolation
-        std::vector<double> w = barycentricWeights(x);
-        double result = barycentricEval(x, w, y, t_query);
-        
-        // Diagnostic logging for clock interpolation
-        std::string clk_vals_str;
-        for (size_t i = 0; i < n && i < 6; ++i) {
-            clk_vals_str += fmt::format("{:.3e}", y[i]);
-            if (i < n - 1 && i < 5) clk_vals_str += ", ";
-        }
-        if (n > 6) clk_vals_str += "...";
-        
-        log_manager_.getLogger("geometry")->debug(
-            "Clock interp for {} at tow={:.3f}: used {} pts, span=[{:.3f}, {:.3f}]s (dt={:.1f}s), "
-            "clk_vals=[{}]s, result={:.3e} s ({:.3f} m), extrap={}",
-            satellite, time.tow, n, 
-            nodes.front()->time.tow, nodes.back()->time.tow,
-            x.back() - x.front(),
-            clk_vals_str, result, result * 299792458.0,
-            (time.tow < nodes.front()->time.tow || time.tow > nodes.back()->time.tow) ? "YES" : "no");
-        
         return result;
     }
+
+
 
     /**
      * @brief Compute the relativistic satellite clock correction (seconds).
@@ -501,7 +467,7 @@ namespace GnssProcessor {
      * @remarks
      * - The function expects `sat_pos` in meters and `sat_vel` in meters/second (ECEF).
      * - Typical magnitudes are on the order of tens of nanoseconds; callers should
-     *   convert to meters (range equivalent) by multiplying by the speed of light when needed.
+     *   convert to meters (range equivalent) by multiplying with the speed of light when needed.
      * - This routine does not apply additional Schwarzschild-style terms; those are
      *   not part of per-epoch PPP clock corrections here.
      * - Logging is emitted for invalid or out-of-range inputs.
@@ -524,7 +490,7 @@ namespace GnssProcessor {
         constexpr double MAX_POSITION_NORM = 3.2e7;    // ~32,000 km
         constexpr double MAX_VELOCITY_NORM = 1.5e4;    // ~15 km/s
 
-        std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
+        std::string system_str = PppUtils::getSystemString(satellite);
 
         if (!sat_pos.allFinite() || !sat_vel.allFinite()) {
             log_manager_.getLogger("ppp_model")->warn(
@@ -598,7 +564,7 @@ namespace GnssProcessor {
         constexpr double MAX_DELAY = 0.03;          // Max ~30 mm (typical is ~2 cm)
 
         // Validate inputs
-        std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
+        std::string system_str = PppUtils::getSystemString(satellite);
         if (!rx_pos.allFinite() || !sat_pos.allFinite()) {
             log_manager_.getLogger("ppp_model")->warn("Invalid Shapiro delay inputs for {} ({}): rx_pos=({:.3f}, {:.3f}, {:.3f}), sat_pos=({:.3f}, {:.3f}, {:.3f})",
                 satellite, system_str, rx_pos.x(), rx_pos.y(), rx_pos.z(), sat_pos.x(), sat_pos.y(), sat_pos.z());
@@ -826,7 +792,7 @@ namespace GnssProcessor {
         // Placeholder: Simplified ocean tide correction (requires external tidal model data)
         // Using a basic sinusoidal model based on position and time
         double phi = std::asin(rx_pos.z() / rx_pos.norm()); // Geodetic latitude (radians)
-        double t = std::fmod(time.tow, 86400.0); // Seconds of day
+        double t = std::fmod(time.tow, TimeUtils::SECONDS_IN_DAY); // Seconds of day
         double amplitude = 0.01; // Typical ocean tide amplitude: 1 cm
         double period = 12.4206 * 3600.0; // M2 tidal constituent period (s)
         double radial = amplitude * std::cos(2.0 * Constants::PI * t / period) * std::cos(phi);
@@ -836,8 +802,8 @@ namespace GnssProcessor {
         // Convert to ECEF coordinates
         double lambda = std::atan2(rx_pos.y(), rx_pos.x());
         Eigen::Vector3d correction(
-            (radial * std::cos(phi) * std::cos(lambda) - north * std::sin(phi) * std::cos(lambda)),
-            (radial * std::cos(phi) * std::sin(lambda) - north * std::sin(phi) * std::sin(lambda)),
+            (radial * std::cos(phi) * std::cos(lambda) - north * std::sin(phi) * std::cos(lambda) - east * std::sin(lambda)),
+            (radial * std::cos(phi) * std::sin(lambda) - north * std::sin(phi) * std::sin(lambda) + east * std::cos(lambda)),
             (radial * std::sin(phi) + north * std::cos(phi))
         );
 
@@ -907,9 +873,7 @@ namespace GnssProcessor {
         constexpr double MM2E = 0.01230002;
 
         // WGS-84 ellipsoid
-        constexpr double a = 6378137.0;                 // semi-major [m]
-        constexpr double f = 1.0 / 298.257223563;       // flattening
-        constexpr double e2 = f * (2.0 - f);            // first eccentricity squared
+        const double a = Constants::Ellipsoid::WGS84::a; // semi-major axis
 
         if (!receiver_pos.allFinite() || !sat_pos.allFinite() || !sun_pos.allFinite() || !moon_pos.allFinite()) {
             log_manager_.getLogger("ppp_model")->warn("Solid Earth tide: non-finite inputs");
@@ -924,27 +888,10 @@ namespace GnssProcessor {
         const double r = receiver_pos.norm();
         if (!(r > 0.0)) return 0.0;
 
-        // --- Geodetic latitude from ECEF (iterative, stable) ---
-        const double x = receiver_pos.x();
-        const double y = receiver_pos.y();
-        const double z = receiver_pos.z();
-        const double p = std::sqrt(x * x + y * y);
-
-        if (!(p > 0.0)) return 0.0;
-
-        double lat = std::atan2(z, p * (1.0 - e2)); // initial guess
-        for (int i = 0; i < 5; ++i) {
-            const double sin_lat = std::sin(lat);
-            const double N = a / std::sqrt(1.0 - e2 * sin_lat * sin_lat);
-            // height not strictly required; improves convergence
-            const double h = p / std::cos(lat) - N;
-            const double lat_next = std::atan2(z, p * (1.0 - e2 * N / (N + h)));
-            if (std::abs(lat_next - lat) < 1e-13) {
-                lat = lat_next;
-                break;
-            }
-            lat = lat_next;
-        }
+        // Geodetic lat/lon/height using centralized Coordinates
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(receiver_pos);
+        const double lat = llh.lat_rad;
+        const double lambda = llh.lon_rad;
 
         const double sin_lat = std::sin(lat);
         const double cos_lat = std::cos(lat);
@@ -1046,9 +993,9 @@ namespace GnssProcessor {
         // Model: Small sinusoidal variation based on time and position latitude
         // Note: Full implementation requires external loading models (e.g., IERS grids)
         double latitude = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Approx. latitude (degrees)
-        double t = fmod(time.tow, 86400.0); // Seconds of day
+        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY); // Seconds of day
         double amplitude = 0.001; // 1 mm amplitude (typical)
-        double correction = amplitude * std::cos(2.0 * Constants::PI * t / 86400.0) * std::cos(latitude * Constants::PI / 180.0);
+        double correction = amplitude * std::cos(2.0 * Constants::PI * t / TimeUtils::SECONDS_IN_DAY) * std::cos(latitude * Constants::PI / 180.0);
         log_manager_.getLogger("ppp_model")->trace("Atmospheric loading correction: {} m", correction);
         return correction;
     }
@@ -1093,20 +1040,20 @@ namespace GnssProcessor {
         }
 
         // Convert query time to continuous GPS seconds for robust interval comparison
-        const double t_query = continuousGpsSeconds(time);
+        const double t_query = TimeUtils::continuousGpsSeconds(time);
 
         // Find bias data: use continuous time (week + tow) for interval comparisons
         auto it = std::find_if(biases_.begin(), biases_.end(),
             [&satellite, &freq_type, t_query](const BiasData& b) {
                 if (b.satellite != satellite) return false;
                 if (b.signal != freq_type) return false;
-                double t_start = continuousGpsSeconds(b.start_time);
-                double t_end = continuousGpsSeconds(b.end_time);
+                double t_start = TimeUtils::continuousGpsSeconds(b.start_time);
+                double t_end = TimeUtils::continuousGpsSeconds(b.end_time);
                 return (t_start <= t_query && t_query <= t_end);
             });
         if (it != biases_.end()) {
             log_manager_.getLogger("ppp_model")->trace("Bias correction for {} ({}) {} at TOW {:.3f}: {:.3e} m",
-                satellite, satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown",
+                satellite, PppUtils::getSystemString(satellite),
                 freq_type, time.tow, it->bias);
             return it->bias;
         }
@@ -1119,7 +1066,7 @@ namespace GnssProcessor {
         }
 
         log_manager_.getLogger("ppp_model")->trace("No bias correction for {} ({}) {} at TOW {:.3f}",
-            satellite, satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown",
+            satellite, PppUtils::getSystemString(satellite),
             freq_type, time.tow);
         return 0.0;
     }
@@ -1164,18 +1111,21 @@ namespace GnssProcessor {
         const GnssTime& time) const {
 
         // Phase wind-up correction for carrier phase
-        Eigen::Vector3d los = (sat_pos - rx_pos);
-        double los_norm = los.norm();
-        if (los_norm == 0.0) {
+        // LOS unit vector from SATELLITE to RECEIVER (matching MATLAB convention)
+        Eigen::Vector3d k = (rx_pos - sat_pos);
+        double k_norm = k.norm();
+        if (k_norm == 0.0) {
             log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate LOS", satellite);
             return 0.0;
         }
-        los /= los_norm;
-        Eigen::Vector3d k = los;
+        k /= k_norm;
 
-        // Satellite antenna orientation: attempt to use any cached orbit velocity if available (or zero)
-        Eigen::Vector3d d_s(0.0, 0.0, 1.0), y_s(0.0, 1.0, 0.0);
-        Eigen::Vector3d sat_vel(0.0, 0.0, 0.0);
+        // Satellite body frame (yaw-steering model)
+        // z_s points from satellite toward Earth center
+        Eigen::Vector3d z_s = -sat_pos.normalized();
+        
+        // Get satellite velocity for attitude
+        Eigen::Vector3d sat_vel = Eigen::Vector3d::Zero();
         if (!orbits_.empty()) {
             auto orbit_it = std::find_if(orbits_.begin(), orbits_.end(),
                 [&satellite](const OrbitData& o) { return o.satellite == satellite; });
@@ -1184,61 +1134,71 @@ namespace GnssProcessor {
             }
         }
 
-        // Try to compute satellite attitude using a simple yaw-steering fallback if RINEX/planetary not available.
-        // If the caller supplied rinex/config via constructor, they can provide better inputs; otherwise use simple fallback.
-        // Basic fallback: z_s = -sat_pos.normalized(), y_s = sat_vel.cross(sun_dir) normalized (if sat_vel non-zero)
-        Eigen::Vector3d sun_dir(1.0, 0.0, 0.0);
-        if (config_ && rinex_parser_) {
-            // No direct access to planetary ephemeris here; keep fallback if not available.
-        }
-        Eigen::Vector3d z_s = -sat_pos.normalized();
-        if (sat_vel.norm() > 1e-8) {
-            Eigen::Vector3d y_tmp = sat_vel.normalized().cross(sun_dir);
-            if (y_tmp.norm() > 1e-8) {
-                y_s = y_tmp.normalized();
-            }
-        }
-        d_s = y_s.cross(z_s).normalized();
+        // Sun direction (fallback to +X if not available)
+        Eigen::Vector3d e_sun = Eigen::Vector3d(1.0, 0.0, 0.0);
+        // TODO: Use planetary_.interpolateSunPosition(time) if available
 
-        // Receiver antenna orientation: use config if available, otherwise default
-        double az_deg = 0.0, el_deg = 90.0;
-        if (config_) {
-            const auto& orient = config_->getReceiverAntennaOrientation();
-            az_deg = orient.azimuth_deg;
-            el_deg = orient.elevation_deg;
+        // y_s = cross(z_s, e_sun) following RTKLIB/MATLAB convention
+        Eigen::Vector3d y_s = z_s.cross(e_sun);
+        if (y_s.norm() < 1e-8) {
+            y_s = sat_vel.norm() > 1e-8 ? sat_vel.normalized().cross(z_s) : Eigen::Vector3d(0, 1, 0);
         }
-        double az = az_deg * Constants::PI / 180.0;
-        double el = el_deg * Constants::PI / 180.0;
-        Eigen::Vector3d d_r(std::cos(el) * std::sin(az), std::cos(el) * std::cos(az), std::sin(el));
+        y_s.normalize();
+    
+        // x_s completes right-handed frame
+        Eigen::Vector3d x_s = y_s.cross(z_s);
+        x_s.normalize();
 
-        // Override with RINEX antenna offsets if available
-        if (rinex_parser_) {
-            Eigen::Vector3d hen = rinex_parser_->getAntennaDeltaHen();
-            if (hen.norm() > 1e-6) {
-                // Approximate orientation from H/E/N (assuming H is vertical)
-                d_r = Eigen::Vector3d(hen.y(), hen.x(), hen.z()).normalized();
-            }
-        }
-
-        // Effective dipole vectors
-        Eigen::Vector3d d_s_eff = d_s - k * (k.dot(d_s)) + k.cross(y_s);
-        Eigen::Vector3d d_r_eff = d_r - k * (k.dot(d_r));
-        if (d_s_eff.norm() < 1e-6 || d_r_eff.norm() < 1e-6) {
-            log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: 0 m (degenerate vectors)", satellite);
+        // Receiver local frame (ENU-like)
+        // Compute geodetic lat/lon for receiver
+        double rx_norm = rx_pos.norm();
+        if (rx_norm < 1e3) {
             return 0.0;
         }
-        d_s_eff.normalize();
-        d_r_eff.normalize();
+        double phi = std::asin(rx_pos.z() / rx_norm);  // latitude
+        double lam = std::atan2(rx_pos.y(), rx_pos.x()); // longitude
 
-        Eigen::Vector3d cross = d_s_eff.cross(d_r_eff);
-        double dot = d_s_eff.dot(d_r_eff);
-        if (dot > 1.0) dot = 1.0;
-        if (dot < -1.0) dot = -1.0;
-        double sign = k.dot(cross) >= 0.0 ? 1.0 : -1.0;
-        double phi = sign * std::acos(dot) * wavelength / (2.0 * Constants::PI);
+        // Receiver dipole directions (north and west in ECEF)
+        Eigen::Vector3d x_r(-std::sin(phi) * std::cos(lam), 
+                        -std::sin(phi) * std::sin(lam), 
+                         std::cos(phi));  // North
+        Eigen::Vector3d y_r( std::sin(lam), 
+                        -std::cos(lam), 
+                         0.0);            // West
 
-        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {} m", satellite, phi);
-        return phi;
+        // Effective dipoles (MATLAB convention)
+        // Ds = xs - k*(k·xs) - cross(k, ys)   <- satellite
+        // Dr = xr - k*(k·xr) + cross(k, yr)   <- receiver
+        Eigen::Vector3d Ds = x_s - k * (k.dot(x_s)) - k.cross(y_s);
+        Eigen::Vector3d Dr = x_r - k * (k.dot(x_r)) + k.cross(y_r);
+
+        double Ds_norm = Ds.norm();
+        double Dr_norm = Dr.norm();
+        if (Ds_norm < 1e-10 || Dr_norm < 1e-10) {
+            log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate dipole", satellite);
+            return 0.0;
+        }
+
+        // Compute angle between effective dipoles
+        double alpha = Ds.dot(Dr) / (Ds_norm * Dr_norm);
+        alpha = std::clamp(alpha, -1.0, 1.0);  // Numerical safety
+
+        double windUp_c = std::acos(alpha);  // radians
+
+        // Determine sign using cross product
+        if (k.dot(Ds.cross(Dr)) < 0.0) {
+            windUp_c = -windUp_c;
+        }
+
+        // TODO: Add phase unwrapping with previous epoch storage
+        // windUp_c = 2*PI * round((windUp_p - windUp_c) / (2*PI)) + windUp_c;
+
+        // Convert radians to meters
+        double phi_m = windUp_c * wavelength / (2.0 * Constants::PI);
+
+        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad)", 
+            satellite, phi_m, windUp_c);
+        return phi_m;
     }
 
     /**
@@ -1266,6 +1226,7 @@ namespace GnssProcessor {
     void GnssCorrections::setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps) {
         clocks_ = clocks;
         erps_ = erps;
+        buildClockIndex();
         log_manager_.getLogger("corrections")->trace("GnssCorrections updated: {} clocks, {} erps", clocks_.size(), erps_.size());
     }
 

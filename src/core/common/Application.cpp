@@ -28,6 +28,8 @@
 #include "WlsEstimator.hpp"
 #include "TimeUtils.hpp"
 #include "TraceLogger.hpp"
+#include "ProductCache.hpp"
+#include "Coordinates.hpp"
 #include <chrono>
 #include <vector>
 #include <algorithm>
@@ -96,19 +98,11 @@ int Application::run() {
     }
     log_manager.getLogger("main_log")->info("Configuration loaded from {}", config_path_.string());
 
+    // Initialize product parser
     ProductParser product_parser(config, log_manager);
-    std::vector<std::filesystem::path> sp3_paths = product_parser.getOrbitPaths();
-    if (sp3_paths.empty()) {
-        log_manager.getLogger("main_log")->error("No SP3 file paths specified in configuration");
-        return 1;
-    }
-    for (const auto& path : sp3_paths) {
-        if (!std::filesystem::exists(path)) {
-            log_manager.getLogger("main_log")->error("SP3 file not found: {}", path.string());
-            return 1;
-        }
-    }
-    log_manager.getLogger("main_log")->info("Found {} SP3 files", sp3_paths.size());
+
+    // NOTE: do NOT call product_parser.loadProducts() here. Products depend on RINEX epoch info.
+    // Pre-population of cache will happen after RinexParser parses and product_parser.loadProducts() is invoked.
 
     RinexParser rinex_parser(config, log_manager, product_parser);
     std::filesystem::path rinex_path = config.getObservationPath();
@@ -125,6 +119,19 @@ int Application::run() {
     // Must be done after RinexParser::parse() so ProductParser can use epoch times.
     product_parser.loadProducts();
 
+    // Pre-populate the cache (load once from the parser)
+    {
+        auto& cache = ProductCache::getInstance();
+        if (!cache.loadProducts(product_parser, log_manager)) {
+            log_manager.getLogger("main_log")->error("Failed to initialize product cache");
+            return 1;
+        }
+        log_manager.getLogger("main_log")->info(
+            "Product cache initialized: {} orbits, {} clocks loaded",
+            cache.getOrbitCount(), cache.getClockCount()
+        );
+    }
+
     const auto& observations = rinex_parser.getObservations();
     if (observations.empty()) {
         log_manager.getLogger("main_log")->error("No observations parsed from RINEX file: {}", rinex_path.string());
@@ -137,7 +144,7 @@ int Application::run() {
 
     // Initial position will be set properly by ppp_model.initializeState() which applies antenna H/E/N offsets.
     // We just need a fallback position in case RINEX header has no valid position.
-    Eigen::Vector3d fallback_position(0.0, 0.0, 6371000.0);
+    Eigen::Vector3d fallback_position(0.0, 0.0, Constants::EARTH_RADIUS);
     auto approx_pos = rinex_parser.getHeader().approx_position;
     bool valid_pos = true;
     for (double val : approx_pos) {
@@ -151,23 +158,11 @@ int Application::run() {
         // Apply antenna H/E/N offset (from marker to ARP) to get antenna phase center position
         Eigen::Vector3d hen = rinex_parser.getAntennaDeltaHen();
         if (hen.norm() > 1e-6 && marker_pos.norm() > 1e3) {
-            // Convert local ENU offset to ECEF
-            double r = marker_pos.norm();
-            double lat = std::asin(marker_pos.z() / r);  // Geocentric latitude
-            double lon = std::atan2(marker_pos.y(), marker_pos.x());
-            
-            double slat = std::sin(lat), clat = std::cos(lat);
-            double slon = std::sin(lon), clon = std::cos(lon);
-            
-            // ENU to ECEF rotation matrix
-            Eigen::Matrix3d R_enu_to_ecef;
-            R_enu_to_ecef << -slon,        -slat * clon,  clat * clon,
-                              clon,        -slat * slon,  clat * slon,
-                              0.0,          clat,         slat;
-            
+            // Convert ENU offset to ECEF
+            Coordinates::Llh ref_llh = Coordinates::ecefToLlh(marker_pos);
             // RINEX H/E/N: H=Up, E=East, N=North -> ENU order is (E, N, U) = (hen[1], hen[2], hen[0])
             Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));
-            Eigen::Vector3d ecef_offset = R_enu_to_ecef * enu_offset;
+            Eigen::Vector3d ecef_offset = Coordinates::enuToEcef(enu_offset, ref_llh);
             initial_position = marker_pos + ecef_offset;
             
             log_manager.getLogger("main_log")->info(
@@ -260,12 +255,15 @@ int Application::run() {
         state_manager.setStateEpochTime(current_time);
 
         double dt;
+        bool gap_detected = false;
         if (first_epoch) {
             dt = rinex_parser.getHeader().interval.value_or(30.0);
-            first_epoch = false;
+			//first_epoch = false; // wait until after WLS seeding to clear first_epoch flag
+			log_manager.getLogger("main_log")->info("{}First epoch, assuming dt = {}s", epoch_prefix, dt);
         } else {
             dt = current_time.tow - prev_tow;
             double expected_interval = rinex_parser.getHeader().interval.value_or(30.0);
+            gap_detected = dt > expected_interval * 2.0; // heuristic: >2x indicates a gap
             if (std::abs(dt - expected_interval) > 1e-3) {
                 log_manager.getLogger("main_log")->warn("{}Unexpected time step {}s (expected {}s)",
                     epoch_prefix, dt, expected_interval);
@@ -299,8 +297,8 @@ int Application::run() {
         }
 
         const auto wls_result = wls_estimator.estimate(current_time, modeled_obs);
-        if (wls_result.success() && wls_result.state.size() >= 4) {
-			constexpr double kClockJumpThreshSec = 0.0005; // 0.5 ms
+        if (wls_result.success() && wls_result.state.size() >= 4){
+			constexpr double kClockJumpThreshSec = 0.00005; // 0.5 ms
 
             const double wls_clock_bias = wls_result.state(3);
 
@@ -315,7 +313,7 @@ int Application::run() {
             const double max_abs = wls_result.max_abs;
 
             const bool jump_detected = std::abs(delta_clock_m) >= clock_jump_thresh_m;
-            const bool should_seed = jump_detected;  // only on real jumps
+			const bool should_seed = jump_detected || gap_detected || first_epoch; // seed kalman clock from wls clock on jump, gap, or first epoch
 
             if (should_seed && sv0.size() > clock_idx) {
                 Eigen::VectorXd sv = sv0;
@@ -325,10 +323,39 @@ int Application::run() {
                 log_manager.getLogger("main_log")->info(
                     "{}Seeded KF clock from WLS (jump): wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m",
                     epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m);
+				// Always seed at first epoch
+                if (first_epoch) {
+                    first_epoch = false; // clear first_epoch flag after first seeding
+				}
             } else {
                 log_manager.getLogger("main_log")->trace(
                     "{}Skipped WLS clock seeding: wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m, jump_detected={}",
                     epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m, jump_detected);
+            }
+
+            // Only write expensive WLS trace when overall logging level is Debug.
+            // Use the main logger's spdlog level to decide.
+            if (auto main_logger = log_manager.getLogger("main_log")) {
+                if (main_logger->level() == spdlog::level::debug) {
+                    // Convert current GPS time to UTC-referenced GnssTime for consistent CSV traces (same as other traces).
+                    double gps_secs = TimeUtils::continuousGpsSeconds(current_time);
+                    double utc_secs = gps_secs - TimeUtils::LEAP_SECONDS;
+                    int utc_week = static_cast<int>(std::floor(utc_secs / TimeUtils::SECONDS_IN_WEEK));
+                    double utc_tow = utc_secs - static_cast<double>(utc_week) * TimeUtils::SECONDS_IN_WEEK;
+                    if (utc_tow < 0.0) { utc_tow += TimeUtils::SECONDS_IN_WEEK; --utc_week; }
+                    GnssTime utc_time{ utc_week, utc_tow };
+
+                    trace_logger.logWls(utc_time,
+                        wls_result,
+                        wls_clock_bias,
+                        kf_clock_bias,
+                        delta_clock_m,
+                        jump_detected,
+                        should_seed);
+                }
+                else {
+                    main_logger->trace("{}WLS trace skipped (log level != Debug)", epoch_prefix);
+                }
             }
         }
 
@@ -447,10 +474,28 @@ int Application::run() {
         }
 
         // ---- Per-epoch state/ambiguity/residual traces for MATLAB plotting ----
-        trace_logger.logState(current_time, state_manager);
-        trace_logger.logAmbiguities(current_time, state_manager);
-        if (have_applied_meas) {
-            trace_logger.logResiduals(current_time, applied_meas);
+        // Convert GPS GnssTime `current_time` to an UTC-referenced GnssTime for CSV traces.
+        // Use TimeUtils to build continuous GPS seconds and use configured leap-seconds.
+        {
+            // GPS seconds since GPS epoch
+            double gps_secs = TimeUtils::continuousGpsSeconds(current_time);
+
+            // Use configured leap-seconds (kept in GnssConfig) to convert GPS -> UTC
+            double utc_secs = gps_secs - TimeUtils::LEAP_SECONDS;
+
+            // Build UTC GnssTime (week + tow). Keep tow in [0, 604800).
+            int utc_week = static_cast<int>(std::floor(utc_secs / TimeUtils::SECONDS_IN_WEEK));
+            double utc_tow = utc_secs - static_cast<double>(utc_week) * TimeUtils::SECONDS_IN_WEEK;
+            if (utc_tow < 0.0) { utc_tow += TimeUtils::SECONDS_IN_WEEK; --utc_week; }
+
+            GnssTime utc_time{ utc_week, utc_tow };
+
+            // Use UTC time for CSV traces
+            trace_logger.logState(utc_time, state_manager);
+            trace_logger.logAmbiguities(utc_time, state_manager);
+            if (have_applied_meas) {
+                trace_logger.logResiduals(utc_time, applied_meas);
+            }
         }
     }
 

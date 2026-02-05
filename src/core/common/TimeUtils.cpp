@@ -36,11 +36,7 @@ namespace GnssProcessor {
         // Convert to seconds (still in UTC scale)
         double utc_seconds_since_epoch = gps_days * SECONDS_IN_DAY;
         
-        // GPS time = UTC + leap_seconds
-        // As of 2017-01-01, there are 18 leap seconds between UTC and GPS
-        // (This should ideally be looked up based on the date, not hardcoded)
-        constexpr double LEAP_SECONDS = 18.0;  // Valid from 2017-01-01 onwards
-        
+		// Convert UTC to GPS time by adding leap seconds
         double gps_seconds = utc_seconds_since_epoch + LEAP_SECONDS;
         
         // Compute GPS week and TOW
@@ -122,8 +118,15 @@ namespace GnssProcessor {
      */
     void TimeUtils::gpsTimeToGregorian(const GnssTime& gpsTime, int& year, int& month, int& day,
         int& hour, int& minute, double& second) {
-        int64_t gps_seconds = gpsTime.week * SECONDS_IN_WEEK + static_cast<int64_t>(gpsTime.tow);
-        double jd = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
+        // Use double arithmetic because tow can have fractional seconds.
+        double gps_seconds = static_cast<double>(gpsTime.week) * static_cast<double>(SECONDS_IN_WEEK) + gpsTime.tow;
+
+        // Subtract leap seconds to convert GPS -> UTC (inverse of gregorianToGpsTime).
+        // NOTE: this currently uses a hardcoded leap-second value matching gregorianToGpsTime.
+        // For correctness across eras, replace with a proper leap-second lookup based on the epoch date.
+        double utc_seconds_since_epoch = gps_seconds - LEAP_SECONDS;
+
+        double jd = GPS_EPOCH_JD + utc_seconds_since_epoch / static_cast<double>(SECONDS_IN_DAY);
         julianDayToGregorian(jd, year, month, day, hour, minute, second);
     }
 
@@ -225,7 +228,7 @@ namespace GnssProcessor {
      * @throws std::invalid_argument If week or tow are invalid.
      */
     double TimeUtils::gpsTimeToJulianDate(int week, double tow) {
-        if (week < 0 || tow < 0.0 || tow >= 604800.0) {
+        if (week < 0 || tow < 0.0 || tow >= TimeUtils::SECONDS_IN_WEEK) {
             throw std::invalid_argument("Invalid GPS time: week " + std::to_string(week) + ", tow " + std::to_string(tow));
         }
         // GPS epoch: 1980-01-06 00:00:00 UTC (JD 2444244.5)
@@ -287,6 +290,10 @@ namespace GnssProcessor {
      */
     bool TimeUtils::isLeapYear(int year) {
         return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    }
+
+    double TimeUtils::continuousGpsSeconds(const GnssTime& t) {
+        return static_cast<double>(t.week) * TimeUtils::SECONDS_IN_WEEK + t.tow;
     }
 
 } // namespace GnssProcessor

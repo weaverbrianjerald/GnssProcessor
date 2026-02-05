@@ -1,4 +1,5 @@
 #include "Antenna.hpp"
+#include "ProductCache.hpp"
 #include <Eigen/Dense>
 
 namespace GnssProcessor {
@@ -20,17 +21,21 @@ namespace GnssProcessor {
      * @param log_mgr Log manager used for warnings/errors and tracing.
      * @param rinex_parser Reference to the RINEX parser for receiver metadata.
      */
-    Antenna::Antenna(const GnssConfig& config, ProductParser& product_parser, LogManager& log_mgr, const RinexParser& rinex_parser)
+    Antenna::Antenna(const GnssConfig& config, ProductParser& product_parser,
+        LogManager& log_mgr, const RinexParser& rinex_parser)
         : log_manager_(log_mgr),
         config_(config),
         gnss_corrections_(log_mgr),
-        antennas_(),
         rinex_parser_(rinex_parser),
         product_parser_(product_parser),
         ppp_utils_(log_mgr),
-        planetary_(log_mgr) {
-        loadAntennaData();
-        log_manager_.getLogger("antenna_model")->info("Antenna init: {} types, rx={}",
+        planetary_(log_mgr),
+        // Initialize reference from cache - NO COPY
+        antennas_(ProductCache::getInstance().getAntennas())
+    {
+        // No need to call loadAntennaData() - we already have reference
+        log_manager_.getLogger("antenna_model")->info(
+            "Antenna init (zero-copy): {} types, rx={}",
             antennas_.size(), getReceiverAntennaType());
     }
 
@@ -74,7 +79,7 @@ namespace GnssProcessor {
 
         double correction = 0.0;
         bool is_phase = freq_type[0] == 'L';
-        double wavelength = is_phase ? ppp_utils_.getWavelength(system, freq_type) : 0.0;
+        double wavelength = is_phase ? ppp_utils_.getWavelength(system, freq_type, satellite) : 0.0;
 
         if (!rx_pos.allFinite() || !sat_pos.allFinite() || !sat_vel.allFinite() || !std::isfinite(elevation) || !std::isfinite(azimuth)) {
             log_manager_.getLogger("antenna")->warn("Invalid inputs for antenna correction: satellite={}, freq_type={}, "
@@ -218,7 +223,8 @@ namespace GnssProcessor {
             Eigen::Vector3d pco_sat = sat_entry->pco.at(atx_freq) * 1e-3; // in sat frame
             if (pco_sat.allFinite()) {
                 sat_pco_corr = pco_sat.dot(sat2rx_sat);
-                correction += sat_pco_corr;
+                //correction += sat_pco_corr;
+                correction -= sat_pco_corr;
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, sat_entry->type, atx_freq, time.tow);
@@ -234,7 +240,7 @@ namespace GnssProcessor {
                 double pcv = interpolatePcv(pcv_table, zenith, az_sat, dazi, dzen) * 1e-3;
                 if (std::isfinite(pcv)) {
                     sat_pcv_corr = pcv;
-                    correction += sat_pcv_corr;
+                    correction -= sat_pcv_corr;
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid satellite PCV for {} {} atx_freq={} at TOW {:.3f}",
                         satellite, sat_entry->type, atx_freq, time.tow);
@@ -311,7 +317,7 @@ namespace GnssProcessor {
             Eigen::Vector3d pco = rx_entry->pco.at(atx_freq) * 1e-3;
             if (pco.allFinite()) {
                 rx_pco_corr = pco.dot(los_rx2sat);
-                correction -= rx_pco_corr;
+                correction += rx_pco_corr;
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid receiver PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, rx_type_sanitized, atx_freq, time.tow);
@@ -325,7 +331,7 @@ namespace GnssProcessor {
                 double pcv = interpolatePcv(pcv_table, zenith, azimuth, dazi, dzen) * 1e-3;
                 if (std::isfinite(pcv)) {
                     rx_pcv_corr = pcv;
-                    correction -= rx_pcv_corr;
+                    correction += rx_pcv_corr;
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid receiver PCV for {} {} atx_freq={} at TOW {:.3f}",
                         satellite, rx_type_sanitized, atx_freq, time.tow);
@@ -338,7 +344,7 @@ namespace GnssProcessor {
             double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time);
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
-                correction += wind_up_corr;
+                correction -= wind_up_corr;
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid phase wind-up for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
             }
@@ -386,26 +392,10 @@ namespace GnssProcessor {
      * exceptions are logged but do not throw.
      */
     void Antenna::loadAntennaData() {
-        try {
-            std::filesystem::path atx_path = product_parser_.getProductPath("ATX");
-            if (atx_path.empty()) {
-                log_manager_.getLogger("antenna_model")->warn("No ATX product path provided, skipping antenna load");
-                return;
-            }
-            std::vector<AntennaData> parsed_antennas;
-            if (!product_parser_.parseAtx(atx_path, parsed_antennas)) {
-                log_manager_.getLogger("antenna_model")->warn("Failed to parse ATX file: {}", atx_path.string());
-                return;
-            }
-            antennas_ = std::move(parsed_antennas);
-            log_manager_.getLogger("antenna_model")->info("Loaded {} antenna entries from {}", antennas_.size(), atx_path.string());
-        }
-        catch (const std::exception& e) {
-            log_manager_.getLogger("antenna_model")->error("Exception loading antenna data: {}", e.what());
-        }
-        catch (...) {
-            log_manager_.getLogger("antenna_model")->error("Unknown exception loading antenna data");
-        }
+        // Data accessed via reference to ProductCache - nothing to load
+        log_manager_.getLogger("antenna_model")->debug(
+            "Using cached antenna reference (zero-copy): {} entries",
+            antennas_.size());
     }
 
     /**

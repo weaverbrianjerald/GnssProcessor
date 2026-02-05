@@ -44,6 +44,38 @@ namespace GnssProcessor {
         /** @brief Earth's angular velocity (rad/s). Used for ECEF/ECI transformations. */
         constexpr double EARTH_ANGULAR_VELOCITY = 7.2921151467e-5; // Earth's angular velocity (rad/s)
 
+        /** @brief Earth's radius (meters). Used for fallback approx. position. */
+        constexpr double EARTH_RADIUS = 6371230.0; // Earth's radius (meters)
+
+        // ---------------------------------------------------------------------
+        // Reference ellipsoids
+        // ---------------------------------------------------------------------
+        /**
+         * @namespace Ellipsoid
+         * @brief Reference ellipsoid parameters.
+         *
+         * Contains commonly used ellipsoid definitions. Values are provided so
+         * that geometry and troposphere code can use consistent WGS84 parameters.
+         *
+         * Example usage:
+         *   GnssProcessor::Constants::Ellipsoid::WGS84::a
+         */
+        namespace Ellipsoid {
+
+            namespace WGS84 {
+                /** @brief Semi-major axis [m] */
+                constexpr double a = 6378137.0;                  // semi-major axis [m]
+
+                /** @brief Flattening (unitless) */
+                constexpr double f = 1.0 / 298.257223563;        // flattening
+
+                /** @brief First eccentricity squared (e^2) */
+                constexpr double e2 = f * (2.0 - f);             // first eccentricity squared
+            }
+
+            // Additional named ellipsoids can be added here in future, e.g. GRS80, Airy, etc.
+        }
+
         // ---------------------------------------------------------------------
         // GPS (Global Positioning System) - frequencies (Hz) and wavelengths (m)
         // ---------------------------------------------------------------------

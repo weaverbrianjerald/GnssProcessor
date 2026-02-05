@@ -61,11 +61,12 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
         catch (...) {}
     }
 
-    // Write headers only to the streams that are open
+    // Write base header to state trace file but do NOT terminate with newline.
+    // Dynamic time-offset columns are appended on the first call to logState().
     if (state_trace_.is_open()) {
         state_trace_ << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m,clock_m,clock_std_m,tropo_m,tropo_std_m";
         if (is_ppp_rtk_) state_trace_ << ",iono_m,iono_std_m";
-        state_trace_ << "\n";
+        // Do NOT write newline here - dynamic time-offset columns will be appended in logState()
     }
 
     if (ambiguity_trace_.is_open()) {
@@ -78,7 +79,7 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
 
     if (wls_trace_.is_open()) {
         wls_trace_ << "week,tow_s,iterations,obs_count,x_m,y_m,z_m,clock_m,tropo_m,rms_m,max_abs_m,"
-                   << "wls_clock_m,kf_clock_m,delta_clock_m,jump_detected,wls_quality_good,delta_reasonable,should_seed\n";
+                   << "wls_clock_m,kf_clock_m,delta_clock_m,jump_detected,should_seed\n";
     }
 
     // Consider the logger initialized if at least one file is writable.
@@ -95,16 +96,27 @@ bool TraceLogger::isInitialized() const {
 }
 
 void TraceLogger::logState(const GnssTime& time, const StateManager& state_manager) const {
-    if (!state_trace_.is_open()) return;
+if (!state_trace_.is_open()) return;
 
-    const Eigen::MatrixXd cov = state_manager.getCovariance();
-    auto std_at = [&cov](size_t idx) -> double {
-        if (idx < static_cast<size_t>(cov.rows()) && idx < static_cast<size_t>(cov.cols())) {
-            const double var = cov(static_cast<Eigen::Index>(idx), static_cast<Eigen::Index>(idx));
-            return std::sqrt(std::max(0.0, var));
-        }
-        return std::numeric_limits<double>::quiet_NaN();
-    };
+// On first call, complete the header line with dynamic time-offset columns
+if (!state_header_written_) {
+    const auto& time_offset_systems = state_manager.getSystemsWithTimeOffsets();
+    for (const auto& sys : time_offset_systems) {
+        state_trace_ << "," << sys << "_m," << sys << "_std_m";
+    }
+    state_trace_ << "\n";
+    state_trace_.flush();
+    state_header_written_ = true;
+}
+
+const Eigen::MatrixXd cov = state_manager.getCovariance();
+auto std_at = [&cov](size_t idx) -> double {
+    if (idx < static_cast<size_t>(cov.rows()) && idx < static_cast<size_t>(cov.cols())) {
+        const double var = cov(static_cast<Eigen::Index>(idx), static_cast<Eigen::Index>(idx));
+        return std::sqrt(std::max(0.0, var));
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+};
 
     const Eigen::VectorXd sv = state_manager.getStateVector();
     const size_t pos_idx = state_manager.getPositionIndex();
@@ -142,6 +154,20 @@ void TraceLogger::logState(const GnssTime& time, const StateManager& state_manag
                      << sv(static_cast<Eigen::Index>(iono_idx)) << ","
                      << std_at(iono_idx);
     }
+    
+    // Write inter-system time offset values (one pair of columns per system)
+    const auto& time_offset_systems = state_manager.getSystemsWithTimeOffsets();
+    for (const auto& sys : time_offset_systems) {
+        size_t idx = state_manager.getSystemTimeOffsetIndex(sys);
+        if (idx < static_cast<size_t>(sv.size())) {
+            state_trace_ << "," << std::setprecision(6) << sv(static_cast<Eigen::Index>(idx))
+                         << "," << std::setprecision(6) << std_at(idx);
+        } else {
+            // Keep CSV column alignment when index is invalid
+            state_trace_ << ",,";
+        }
+    }
+    
     state_trace_ << "\n";
 }
 
@@ -212,8 +238,6 @@ void TraceLogger::logWls(const GnssTime& time,
                          double kf_clock_bias_m,
                          double delta_clock_m,
                          bool jump_detected,
-                         bool wls_quality_good,
-                         bool delta_reasonable,
                          bool should_seed) const {
     if (!wls_trace_.is_open() || !wls.success() || wls.state.size() < 5) return;
 
@@ -226,8 +250,6 @@ void TraceLogger::logWls(const GnssTime& time,
     wls_trace_ << wls.rms << "," << wls.max_abs << ",";
     wls_trace_ << wls_clock_bias_m << "," << kf_clock_bias_m << "," << delta_clock_m << ",";
     wls_trace_ << (jump_detected ? 1 : 0) << ","
-               << (wls_quality_good ? 1 : 0) << ","
-               << (delta_reasonable ? 1 : 0) << ","
                << (should_seed ? 1 : 0) << "\n";
 }
 

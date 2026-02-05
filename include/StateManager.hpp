@@ -21,6 +21,7 @@
 #include <Eigen/Dense>
 #include <map>
 #include <string>
+#include <set>
 
 namespace GnssProcessor {
 
@@ -139,6 +140,36 @@ namespace GnssProcessor {
         size_t getIonoIndex() const;
 
         /**
+         * @brief Get the index of the inter-system time bias for a given system.
+         *
+         * Inter-system time biases are estimated relative to the reference system (GPS).
+         * This returns the state index for the specified system's time offset.
+         *
+         * @param system_name Name of the GNSS system (e.g., "Galileo", "GLONASS", "BeiDou").
+         * @return Index of the system time bias state, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getSystemTimeOffsetIndex(const std::string& system_name) const;
+
+        /**
+         * @brief Get the number of inter-system time bias states.
+         *
+         * This is equal to the number of active GNSS systems minus one (GPS is the reference).
+         *
+         * @return Number of inter-system time bias states.
+         */
+        size_t getNumSystemTimeOffsets() const;
+
+        /**
+         * @brief Get the list of systems that have time offset states.
+         *
+         * Returns the system names (excluding GPS, which is the reference) that have
+         * inter-system time bias states in the filter.
+         *
+         * @return Vector of system names with time offset states.
+         */
+        const std::vector<std::string>& getSystemsWithTimeOffsets() const;
+
+        /**
          * @brief Lookup the ambiguity state index by key.
          *
          * Keys typically combine satellite identifier and signal (e.g. "G01_L1").
@@ -246,8 +277,31 @@ namespace GnssProcessor {
          */
         void inflateMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double factor);
 
+        /**
+         * @brief Remove an ambiguity state by key.
+         *
+         * The ambiguity state and its associated covariance are removed from the filter.
+         *
+         * @param key Ambiguity key to remove.
+         * @return true if the ambiguity was found and removed, false if not present.
+         */
+        bool removeAmbiguity(const std::string& key);
+
+        /**
+         * @brief Remove all ambiguity states except those listed in keep_keys.
+         *
+         * Convenience to prune stale ambiguities when the caller knows exactly which
+         * ambiguity keys must remain (e.g. from the current epoch measurement set).
+         *
+         * @param keep_keys Set of ambiguity keys to keep.
+         */
+        void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys);
+
     private:
         size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6).
+        size_t base_core_size_;                     //!< Base core size without inter-system time offsets (5 for PPP, 6 for PPP-RTK).
+        std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
+        std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
         GnssTime state_epoch_time_;                 //!< Epoch time associated with the stored state.
         Eigen::VectorXd state_vector_;              //!< Filter state vector (core + ambiguities).

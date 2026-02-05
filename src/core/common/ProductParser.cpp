@@ -283,7 +283,7 @@ namespace GnssProcessor {
                             continue;
                         }
                         GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                        if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800) {
+                        if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                             log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {} in {}: week {}, tow {}",
                                 line_count, sp3_path.string(), epoch_time.week, epoch_time.tow);
                             continue;
@@ -466,7 +466,7 @@ namespace GnssProcessor {
                     }
 
                     GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                    if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800) {
+                    if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                         log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {}: week {}, tow {}",
                             line_count, epoch_time.week, epoch_time.tow);
                         continue;
@@ -996,7 +996,7 @@ namespace GnssProcessor {
                     int year = std::stoi(time_str.substr(0, 4));
                     int doy = std::stoi(time_str.substr(5, 3));
                     double seconds = std::stod(time_str.substr(9));
-                    if (year < 1980 || doy < 1 || doy > 366 || seconds < 0.0 || seconds >= 86400.0) {
+                    if (year < 1980 || doy < 1 || doy > 366 || seconds < 0.0 || seconds >= TimeUtils::SECONDS_IN_DAY) {
                         return GnssTime{ 0, 0.0 };
                     }
 
@@ -1201,7 +1201,7 @@ namespace GnssProcessor {
                 double mjd, xp, yp, ut1_utc;
                 iss >> mjd >> xp >> yp >> ut1_utc;
                 ErpData data;
-                data.time = GnssTime{ 0, (mjd - 51544.5) * 86400.0 };
+                data.time = GnssTime{ 0, (mjd - 51544.5) * TimeUtils::SECONDS_IN_DAY };
                 data.xp = xp;
                 data.yp = yp;
                 data.ut1_utc = ut1_utc;

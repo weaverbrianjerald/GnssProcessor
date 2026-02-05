@@ -1,5 +1,6 @@
 #include "Ionosphere.hpp"
 #include "Constants.hpp"
+#include "ProductCache.hpp"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -27,8 +28,15 @@ namespace GnssProcessor {
      * @param rinex RinexParser reference used by geometry/parser helpers.
      */
     Ionosphere::Ionosphere(const GnssConfig& config, LogManager& log_mgr, ProductParser& parser, const RinexParser& rinex)
-        : config_(config), log_manager_(log_mgr), model_geometry_(config, parser, rinex, log_mgr), klobuchar_coeffs_{} {
-        loadKlobucharCoeffs();
+        : log_manager_(log_mgr), config_(config),
+        model_geometry_(config, ProductCache::getInstance(), rinex, log_mgr), klobuchar_coeffs_{} {
+        // Prefer cached Klobuchar coefficients; fall back to parsing RNX if cache empty.
+        auto& cache = ProductCache::getInstance();
+        klobuchar_coeffs_ = cache.getKlobucharCoeffs();
+        if (klobuchar_coeffs_.empty()) {
+            loadKlobucharCoeffs();
+        }
+
         log_manager_.getLogger("ionosphere")->info("Ionosphere model initialized: Klobuchar coeffs loaded ({} values), mode={}",
             klobuchar_coeffs_.size(), config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
@@ -144,7 +152,7 @@ namespace GnssProcessor {
         double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
-        double t = fmod(time.tow, 86400.0);
+        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
         double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
         double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
@@ -161,8 +169,8 @@ namespace GnssProcessor {
         double phi_m = phi_i + 0.064 * std::cos((lambda_i - 1.617) * Constants::PI);
 
         double t_i = 43200.0 * lambda_i + t;
-        t_i = fmod(t_i, 86400.0);
-        if (t_i < 0) t_i += 86400.0;
+        t_i = fmod(t_i, TimeUtils::SECONDS_IN_DAY);
+        if (t_i < 0) t_i += TimeUtils::SECONDS_IN_DAY;
 
         double F = 1.0 + 16.0 * std::pow((0.53 - el / 180.0), 3);
         double AMP = a0 + a1 * phi_m + a2 * std::pow(phi_m, 2) + a3 * std::pow(phi_m, 3);
@@ -203,7 +211,7 @@ namespace GnssProcessor {
         double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
-        double t = fmod(time.tow, 86400.0);
+        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
         double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
         double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
@@ -212,8 +220,8 @@ namespace GnssProcessor {
         double phi_m = phi_i + 0.064 * std::cos((lambda_i - 1.617) * Constants::PI);
 
         double t_i = 43200.0 * lambda_i + t;
-        t_i = fmod(t_i, 86400.0);
-        if (t_i < 0) t_i += 86400.0;
+        t_i = fmod(t_i, TimeUtils::SECONDS_IN_DAY);
+        if (t_i < 0) t_i += TimeUtils::SECONDS_IN_DAY;
 
         double AMP = a0 + a1 * phi_m + a2 * std::pow(phi_m, 2) + a3 * std::pow(phi_m, 3);
         if (AMP < 0) AMP = 0;

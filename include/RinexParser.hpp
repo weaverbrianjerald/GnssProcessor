@@ -165,14 +165,34 @@ namespace GnssProcessor {
          * @param satellite Satellite identifier string (e.g., "R01").
          * @return Rescaled measurement value (same units as input).
          */
+        /*
         double rescaleGlonassMeasurement(double observed_value, const std::string& freq_type,
             const std::string& satellite) const;
+        */
 
         /**
          * @brief Return list of epoch times parsed from observations.
          * @return Vector of @c GnssTime values corresponding to observation epochs.
          */
         std::vector<GnssTime> getEpochTimes() const;
+
+        /**
+         * @brief Default GLONASS frequency channel assignments.
+         * Use as fallback when RINEX header lacks GLONASS SLOT/FRQ records.
+         * Note: These may change over time as satellites are replaced.
+         */
+        /*
+        const std::unordered_map<std::string, int> DEFAULT_GLONASS_CHANNELS = {
+            {"R01",  1}, {"R02", -4}, {"R03",  5}, {"R04",  6},
+            {"R05",  1}, {"R06", -4}, {"R07",  5}, {"R08",  6},
+            {"R09", -2}, {"R10", -7}, {"R11",  0}, {"R12", -1},
+            {"R13", -2}, {"R14", -7}, {"R15",  0}, {"R16", -1},
+            {"R17",  4}, {"R18", -3}, {"R19",  3}, {"R20",  2},
+            {"R21",  4}, {"R22", -3}, {"R23",  3}, {"R24",  2},
+        };
+        */
+
+        std::map<std::string, int> glonass_freq_slots_; /**< GLONASS satellite -> frequency slot mapping. */
 
     private:
         const GnssConfig& config_;       /**< Configuration reference (not owned). */
@@ -183,7 +203,6 @@ namespace GnssProcessor {
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
         std::string receiver_serial_no_; /**< Receiver serial number parsed from header (if any). */
         GnssTime time_of_first_obs_;     /**< Time of first observation epoch parsed. */
-        std::map<std::string, int> glonass_freq_slots_; /**< GLONASS satellite -> frequency slot mapping. */
 
         /**
          * @brief Validate a RINEX 3.x observation code.

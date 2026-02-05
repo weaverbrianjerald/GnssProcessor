@@ -10,6 +10,8 @@
  * `src/core/model/ModelGeometry.cpp`.
  */
 
+#pragma once
+
 #ifndef PPP_MODEL_GEOMETRY_HPP
 #define PPP_MODEL_GEOMETRY_HPP
 
@@ -18,6 +20,7 @@
 #include "Constants.hpp"
 #include "LogManager.hpp"
 #include "GnssConfig.hpp"
+#include "ProductCache.hpp"
 #include "RinexParser.hpp"
 #include "GnssCorrections.hpp"
 #include "Planetary.hpp"
@@ -25,6 +28,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <unordered_map>
 
 namespace GnssProcessor {
 
@@ -63,14 +67,14 @@ namespace GnssProcessor {
         /**
          * @brief Construct a Geometry helper.
          * @param config Read-only processing configuration.
-         * @param parser Parser/loader for external products (SP3, CLK, ERP, etc.).
+         * @param cache ProductCache singleton (or application cache) providing parsed products.
          * @param rinex Reference to parsed RINEX observation/header metadata.
          * @param log_mgr Logger used for diagnostic messages.
          *
          * Construction defers heavy loading to `loadData()` implemented in the
          * translation unit to avoid inline-initialization ordering issues.
          */
-        Geometry(const GnssConfig& config, ProductParser& parser, const RinexParser& rinex, LogManager& log_mgr);
+        Geometry(const GnssConfig& config, ProductCache& cache, const RinexParser& rinex, LogManager& log_mgr);
 
         /** @brief Default virtual destructor. */
         ~Geometry() = default;
@@ -111,12 +115,6 @@ namespace GnssProcessor {
             double& atm_loading_corr, double& relativistic_corr, double& solid_tide,
             double& mf_w, double& mf_d, Eigen::Vector3d& sat_vel) const;
 
-        /**
-         * @brief Compute topocentric elevation/azimuth for a receiver and satellite.
-         * @param rx_pos_ecef Receiver ECEF position (meters).
-         * @param sat_pos_ecef Satellite ECEF position (meters).
-         * @return Topocentric angles (elevation/azimuth) in degrees.
-         */
         Topocentric computeTopocentric(const Eigen::Vector3d& rx_pos_ecef, const Eigen::Vector3d& sat_pos_ecef) const;
 
         /**
@@ -129,7 +127,8 @@ namespace GnssProcessor {
          * position is interpolated from `orbits_`, otherwise an empty/zero
          * vector may be returned (caller must check validity).
          */
-        Eigen::Vector3d getSatellitePosition(const std::string& satellite, const GnssTime& time) const;
+        std::pair<Eigen::Vector3d, Eigen::Vector3d> getSatellitePV(
+            const std::string& satellite, const GnssTime& time) const;
 
         /**
          * @brief Compute satellite antenna attitude vectors.
@@ -155,20 +154,14 @@ namespace GnssProcessor {
          */
         double computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const;
 
-        /**
-         * @brief Get interpolated satellite velocity from available orbit products.
-         * @param satellite Satellite identifier string (e.g. "G01", "E11").
-         * @param time Epoch at which the velocity is requested.
-         * @return Satellite ECEF velocity in meters/second.
-         */
-        Eigen::Vector3d getSatelliteVelocity(const std::string& satellite, const GnssTime& time) const;
+        std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
 
     private:
         GnssCorrections corrections_;                     /**< GNSS correction models. */
         const GnssConfig& config_;                        /**< Processing configuration. */
         Planetary planetary_;                             /**< Planetary (sun and moon) models. */
         Troposphere troposphere_;                         /**< Troposphere model instance. */
-        ProductParser& product_parser_;                   /**< Product data parser. */
+        ProductCache& product_cache_;                     /**< Product cache reference (replaces ProductParser). */
         LogManager& log_manager_;                         /**< Logger for diagnostics. */
         const RinexParser& rinex_parser_;                 /**< RINEX data parser (header/metadata). */
         const double elevation_threshold_;                /**< Elevation mask in degrees. */
@@ -179,7 +172,6 @@ namespace GnssProcessor {
         std::vector<ErpData> erps_;                       /**< Earth rotation parameter samples. */
         std::vector<double> klobuchar_coeffs_;            /**< Klobuchar ionospheric coefficients. */
         std::vector<SunEphemeris> sun_ephemeris_;         /**< Sun ephemeris samples. */
-        mutable std::map<std::string, Eigen::Vector3d> last_interpolated_velocity_; /**< Cached satellite velocities. */
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priorities per GNSS system. */
 
         /** @brief Load product and auxiliary data into internal containers. */

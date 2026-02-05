@@ -236,6 +236,27 @@ namespace GnssProcessor {
             const std::string& rx_antenna_type, double range, double tropo_delay,
             double sat_clock, double shapiro_delay, double sagnac_corr,
             double atm_loading_corr, double relativistic_corr, double solid_tide);
+
+        /**
+         * @brief Form ionosphere-free combined measurements (observed + variance).
+         *
+         * Extracts and forms LC (iono-free) combinations from the provided raw
+         * RINEX measurements according to the supplied selected signal pairs.
+         * The function converts carrier-phase cycles to meters when required and
+         * computes the combination variance (pre elevation/mapping scaling).
+         *
+         * @param obs Input RINEX observation record.
+         * @param system GNSS system enum for frequency lookup.
+         * @param selected_signals Vector of (sig1, sig2) pairs to form combinations from.
+         * @param out_observed Output map filled with combined observed values (key = "SIG1_SIG2").
+         * @param out_variances Output map filled with combined variances (same keys as out_observed).
+         * @return true if at least one combined measurement was formed; false otherwise.
+         */
+        bool formIonoFreeMeasurements(const RinexObservation& obs, System system,
+            const std::vector<std::pair<std::string, std::string>>& selected_signals,
+            std::map<std::string, double>& out_observed,
+            std::map<std::string, double>& out_variances) const;
+
     };
 
 } // namespace GnssProcessor

@@ -1,8 +1,9 @@
-// PppTypes.hpp
+﻿// PppTypes.hpp
 #pragma once
 
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <Eigen/Dense>
 #include "TimeUtils.hpp"
 #include "Constants.hpp"
@@ -57,6 +58,7 @@ namespace GnssProcessor {
         double clock_bias;                           /**< Receiver clock bias (meters) */
         double troposphere_zwd;                      /**< Zenith wet delay (meters) */
         double ionosphere_zenith_delay;              /**< Ionospheric zenith delay (meters), if modeled as a single parameter */
+        std::map<std::string, double> system_time_offsets; /**< Inter-system time biases (meters) keyed by system name */
         Eigen::MatrixXd covariance;                  /**< State covariance matrix */
         std::map<std::string, double> ambiguities;   /**< Carrier-phase ambiguity estimates keyed by satellite-signal */
         GnssTime epoch_time;                         /**< Epoch associated with this state */
@@ -164,6 +166,9 @@ namespace GnssProcessor {
      * @brief Utility functions used by PPP processing modules.
      *
      * Wraps frequency/wavelength lookups and system string conversions.
+     * For GLONASS, actual satellite-specific frequencies are computed using
+     * the frequency channel number (FDMA). Call setGlonassSlots() to provide
+     * the satellite-to-channel mapping before processing GLONASS observations.
      */
     class PppUtils{
     public:
@@ -174,28 +179,68 @@ namespace GnssProcessor {
         explicit PppUtils(LogManager& log_mgr);
 
         /**
-         * @brief Get the frequency (Hz) for a given frequency type and satellite system.
+         * @brief Set GLONASS frequency slot (channel) assignments.
+         *
+         * Must be called before processing GLONASS observations to enable
+         * satellite-specific frequency computation.
+         *
+         * @param slots Map of satellite ID (e.g., "R01") to frequency channel number (k ∈ [-7, +6]).
+         */
+        void setGlonassSlots(const std::map<std::string, int>& slots);
+
+        /**
+         * @brief Get the GLONASS frequency channel for a satellite.
+         * @param satellite Satellite identifier (e.g., "R01").
+         * @return Channel number if found, 0 otherwise.
+         */
+        int getGlonassChannel(const std::string& satellite) const;
+
+        /**
+         * @brief Get the actual frequency (Hz) for a given frequency type and satellite.
+         *
+         * For GLONASS, this returns the satellite-specific frequency computed from
+         * the base frequency and channel offset. For other systems, returns the
+         * nominal carrier frequency.
          *
          * @param freq_type A string identifying the frequency (e.g. "L1", "L2", "E1").
          * @param system The GNSS system enum for the satellite.
-         * @param satellite Satellite identifier string (may be used for system-specific offsets).
-         * @return Frequency in Hz.
+         * @param satellite Satellite identifier string (required for GLONASS).
+         * @return Frequency in Hz, or 0.0 on error.
          */
         double getFrequency(const std::string& freq_type, System system, const std::string& satellite) const;
 
         /**
-         * @brief Get the wavelength (meters) for a given system and frequency type.
+         * @brief Get the wavelength (meters) for a given system, frequency type, and satellite.
+         *
+         * For GLONASS, computes satellite-specific wavelength using actual frequency.
+         *
          * @param system The GNSS system enum.
          * @param freq_type Frequency identifier string.
-         * @return Wavelength in meters.
+         * @param satellite Satellite identifier (required for GLONASS).
+         * @return Wavelength in meters, or 0.0 on error.
+         */
+        double getWavelength(System system, const std::string& freq_type, const std::string& satellite) const;
+
+        /**
+         * @brief Get the wavelength (meters) for a given system and frequency type.
+         *
+         * For non-GLONASS systems only. For GLONASS, use the overload with satellite ID.
+         *
+         * @param system The GNSS system enum.
+         * @param freq_type Frequency identifier string.
+         * @return Wavelength in meters, or 0.0 on error.
          */
         double getWavelength(System system, const std::string& freq_type) const;
 
         /**
          * @brief Get a nominal reference frequency (Hz) for a frequency type and system.
          *
-         * This is useful for forming linear combinations and reference conversions
-         * when multiple frequencies are present for a signal type.
+         * For GLONASS, returns the base/center frequency (channel k=0).
+         * Use this for logging, records, or when satellite-specific frequency is not needed.
+         *
+         * @param freq_type Frequency identifier string.
+         * @param system The GNSS system enum.
+         * @return Reference frequency in Hz, or 0.0 on error.
          */
         double getReferenceFrequency(const std::string& freq_type, System system) const;
 
@@ -205,8 +250,24 @@ namespace GnssProcessor {
          * @return std::string Human-readable system name (e.g. "GPS", "Galileo").
          */
         static std::string getSystemString(System system);
+
+        /**
+        * @brief Convert a satellite identifier to its system string representation.
+        * @param satellite Satellite identifier (e.g., "G01", "E11", "R05").
+        * @return std::string Human-readable system name (e.g. "GPS", "Galileo").
+        */
+        static std::string getSystemString(const std::string& satellite);
+
     private:
         LogManager& log_manager_;                     /**< Reference to LogManager used for logging inside utilities */
+        std::map<std::string, int> glonass_slots_;    /**< GLONASS satellite -> frequency channel mapping */
+
+        /**
+         * @brief Default GLONASS frequency channel assignments.
+         *
+         * Used as fallback when no slot data is provided via setGlonassSlots().
+         */
+        static const std::unordered_map<std::string, int> DEFAULT_GLONASS_CHANNELS;
     };
 
 }

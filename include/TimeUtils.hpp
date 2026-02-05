@@ -161,13 +161,31 @@ namespace GnssProcessor {
         static double gpsMjdToTTMjd(double mjd_gps, const std::string& time_system, double leap_seconds) {
             double dt = offsetToTT(time_system, leap_seconds);
             //double seconds_in_day = mjd_gps * 86400.0 + dt;  // Add offset to seconds-of-day
-            return mjd_gps + (dt / 86400.0);     // Convert back to fractional MJD
+            return mjd_gps + (dt / TimeUtils::SECONDS_IN_DAY);     // Convert back to fractional MJD
         }
 
-    private:
+        /**
+         * @brief Convert a GNSS time to continuous GPS seconds for sorting / interpolation.
+         *
+         * Builds a monotonic scalar time value by converting the GPS week + time-of-week
+         * representation into seconds since the GPS epoch:
+         *   continuous_seconds = week * 604800 + tow
+         *
+         * @param t GNSS time containing `week` and `tow` (seconds into the week).
+         * @return Continuous GPS seconds as a double.
+         */
+        static double continuousGpsSeconds(const GnssTime& t);
+
         static constexpr double GPS_EPOCH_JD = 2444244.5; ///< Julian Day for GPS epoch (January 6, 1980).
         static constexpr int64_t SECONDS_IN_WEEK = 604800; ///< Seconds in a GPS week.
         static constexpr int64_t SECONDS_IN_DAY = 86400; ///< Seconds in a day.
+
+        // GPS time = UTC + leap_seconds
+        // As of 2017-01-01, there are 18 leap seconds between UTC and GPS
+        // (This should ideally be looked up based on the date, not hardcoded)
+        static constexpr double LEAP_SECONDS = 18.0; ///< Valid until updated by IERS Bulletin C
+
+    private:
 
         /**
          * @brief Gets the number of days in a given month.

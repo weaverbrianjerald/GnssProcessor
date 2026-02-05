@@ -32,8 +32,6 @@ kf_clk  = T.kf_clock_m;
 dclk    = T.delta_clock_m;
 
 jump = logical(T.jump_detected);
-qgood = logical(T.wls_quality_good);
-reasonable = logical(T.delta_reasonable);
 seed = logical(T.should_seed);
 
 %% ============================================================
@@ -161,21 +159,13 @@ grid on;
 
 figure('Name','WLS Flags','Color','w');
 
-subplot(4,1,1); hold on;
+subplot(2,1,1); hold on;
 stem(t, jump, 'r', 'filled');
 ylabel('Jump');
 title('WLS Boolean Flags');
 grid on;
 
-subplot(4,1,2); hold on;
-stem(t, qgood, 'g', 'filled');
-ylabel('Quality');
-
-subplot(4,1,3); hold on;
-stem(t, reasonable, 'b', 'filled');
-ylabel('Reasonable');
-
-subplot(4,1,4); hold on;
+subplot(2,1,2); hold on;
 stem(t, seed, 'k', 'filled');
 ylabel('Seed');
 xlabel('UTC Time');

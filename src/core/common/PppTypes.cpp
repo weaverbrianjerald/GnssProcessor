@@ -11,6 +11,21 @@
 namespace GnssProcessor {
 
     /**
+     * @brief Default GLONASS frequency channel assignments.
+     *
+     * Used as fallback when RINEX header lacks GLONASS SLOT/FRQ records.
+     * Note: These may change over time as satellites are replaced.
+     */
+    const std::unordered_map<std::string, int> PppUtils::DEFAULT_GLONASS_CHANNELS = {
+        {"R01",  1}, {"R02", -4}, {"R03",  5}, {"R04",  6},
+        {"R05",  1}, {"R06", -4}, {"R07",  5}, {"R08",  6},
+        {"R09", -2}, {"R10", -7}, {"R11",  0}, {"R12", -1},
+        {"R13", -2}, {"R14", -7}, {"R15",  0}, {"R16", -1},
+        {"R17",  4}, {"R18", -3}, {"R19",  3}, {"R20",  2},
+        {"R21",  4}, {"R22", -3}, {"R23",  3}, {"R24",  2},
+    };
+
+    /**
      * @brief Construct a new PppUtils instance.
      *
      * Stores a reference to the application's LogManager for internal logging.
@@ -20,7 +35,45 @@ namespace GnssProcessor {
     PppUtils::PppUtils(LogManager& log_mgr) : log_manager_(log_mgr) {
         log_manager_.getLogger("ppp_utils")->debug("PppUtils initialized");
     }
-    
+
+    /**
+     * @brief Set GLONASS frequency slot (channel) assignments.
+     *
+     * @param slots Map of satellite ID to frequency channel number.
+     */
+    void PppUtils::setGlonassSlots(const std::map<std::string, int>& slots) {
+        glonass_slots_ = slots;
+        log_manager_.getLogger("ppp_utils")->debug("Set {} GLONASS frequency slots", slots.size());
+    }
+
+    /**
+     * @brief Get the GLONASS frequency channel for a satellite.
+     *
+     * Looks up in user-provided slots first, then falls back to defaults.
+     *
+     * @param satellite Satellite identifier (e.g., "R01").
+     * @return Channel number if found, 0 otherwise.
+     */
+    int PppUtils::getGlonassChannel(const std::string& satellite) const {
+        // Check user-provided slots first
+        auto it = glonass_slots_.find(satellite);
+        if (it != glonass_slots_.end()) {
+            return it->second;
+        }
+
+        // Fall back to default channels
+        auto def_it = DEFAULT_GLONASS_CHANNELS.find(satellite);
+        if (def_it != DEFAULT_GLONASS_CHANNELS.end()) {
+            log_manager_.getLogger("ppp_utils")->trace("Using default GLONASS channel {} for satellite {}",
+                def_it->second, satellite);
+            return def_it->second;
+        }
+
+        log_manager_.getLogger("ppp_utils")->warn("No GLONASS frequency slot found for satellite {}, using channel -999 to trigger skip",
+            satellite);
+		return -999; // triggers warning in frequency computation, to skip this satellite
+    }
+
     /**
      * @brief Convert a System enum value to a human-readable string.
      *
@@ -42,17 +95,40 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Get the carrier frequency (Hz) for a given observable type and system.
+     * @brief Convert a satellite identifier to a human-readable system string.
      *
-     * This routine maps common observable labels (e.g. "C1", "L1", "C5") together
-     * with the GNSS system to the nominal carrier frequency in Hz. GLONASS uses
-     * system-dependent base/reference frequencies and therefore returns the
-     * GLONASS center/reference frequency rather than a satellite-specific
-     * channel offset (rescaling is handled elsewhere when needed).
+     * Extracts the system from the first character of the satellite ID
+     * (e.g., "G01" -> "GPS", "E11" -> "Galileo").
+     *
+     * @param satellite Satellite identifier string (e.g., "G01", "E11", "R05").
+     * @return std::string Human-readable system name, or "Unknown" if unrecognized.
+     */
+    std::string PppUtils::getSystemString(const std::string& satellite) {
+        if (satellite.empty()) return "Unknown";
+        switch (satellite[0]) {
+        case 'G': return "GPS";
+        case 'E': return "Galileo";
+        case 'R': return "GLONASS";
+        case 'C': return "BeiDou";
+        case 'J': return "QZSS";
+        case 'S': return "SBAS";
+        default:  return "Unknown";
+        }
+    }
+
+    /**
+     * @brief Get the actual carrier frequency (Hz) for a given observable type and system.
+     *
+     * For GLONASS, computes the satellite-specific frequency using FDMA:
+     *   G1 = 1602.0 MHz + k * 0.5625 MHz
+     *   G2 = 1246.0 MHz + k * 0.4375 MHz
+     *   G3 = 1202.025 MHz (CDMA, no channel offset)
+     *
+     * For other systems, returns the nominal carrier frequency.
      *
      * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
      * @param system GNSS system enumeration value.
-     * @param satellite Satellite identifier (unused for most systems; may be used for satellite-specific handling).
+     * @param satellite Satellite identifier (required for GLONASS FDMA frequencies).
      * @return double Frequency in Hz on success, 0.0 on unknown/unsupported input.
      */
     double PppUtils::getFrequency(const std::string& freq_type, System system, const std::string& satellite) const {
@@ -79,19 +155,45 @@ namespace GnssProcessor {
             }
         }
         else if (system == System::GLONASS) {
-            // Return reference frequency for rescaled phase observations
+            // Compute actual satellite-specific GLONASS frequency using FDMA
+            int channel = getGlonassChannel(satellite);
+
+            // Validate channel range
+            if (channel < -7 || channel > 6) {
+                log_manager_.getLogger("ppp_utils")->warn("GLONASS channel {} out of valid range [-7, +6] for satellite {}, type: {}",
+                    channel, satellite, freq_type);
+                return 0.0;
+            }
+
+            double freq = 0.0;
             if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                log_manager_.getLogger("ppp_utils")->trace("Using GLONASS G1 reference frequency: {} MHz for type {}",
-                    Constants::GLONASS_G1_BASE_FREQ / 1e6, freq_type);
-                return Constants::GLONASS_G1_BASE_FREQ; // 1602 MHz
+                freq = Constants::GLONASS_G1_BASE_FREQ + channel * Constants::GLONASS_G1_CHANNEL_OFFSET;
+                log_manager_.getLogger("ppp_utils")->trace("GLONASS G1 frequency for {} (channel {}): {:.3f} MHz",
+                    satellite, channel, freq / 1e6);
             }
-            if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
-                log_manager_.getLogger("ppp_utils")->trace("Using GLONASS G2 reference frequency: {} MHz for type {}",
-                    Constants::GLONASS_G2_BASE_FREQ / 1e6, freq_type);
-                return Constants::GLONASS_G2_BASE_FREQ; // 1246 MHz
+            else if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
+                freq = Constants::GLONASS_G2_BASE_FREQ + channel * Constants::GLONASS_G2_CHANNEL_OFFSET;
+                log_manager_.getLogger("ppp_utils")->trace("GLONASS G2 frequency for {} (channel {}): {:.3f} MHz",
+                    satellite, channel, freq / 1e6);
             }
-            log_manager_.getLogger("ppp_utils")->warn("Invalid GLONASS frequency type: {}", freq_type);
-            return 0.0;
+            else if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
+                freq = Constants::GLONASS_G3_BASE_FREQ; // CDMA, no channel offset
+                log_manager_.getLogger("ppp_utils")->trace("GLONASS G3 frequency for {} (CDMA): {:.3f} MHz",
+                    satellite, freq / 1e6);
+            }
+            else {
+                log_manager_.getLogger("ppp_utils")->warn("Invalid GLONASS frequency type: {} for satellite {}",
+                    freq_type, satellite);
+                return 0.0;
+            }
+
+            if (freq <= 0.0 || !std::isfinite(freq)) {
+                log_manager_.getLogger("ppp_utils")->warn("Computed invalid GLONASS frequency: {:.3f} MHz for type {}, satellite {}, channel {}",
+                    freq / 1e6, freq_type, satellite, channel);
+                return 0.0;
+            }
+
+            return freq;
         }
         else if (system == System::BeiDou) {
             if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
@@ -131,9 +233,9 @@ namespace GnssProcessor {
     /**
      * @brief Get a reference (nominal) frequency for a given observable type and system.
      *
-     * For GLONASS this returns the system's center/reference frequency (G1/G2/G3).
-     * For other systems it forwards to getFrequency() to return the nominal
-     * carrier frequency. Warnings are logged when inputs are invalid or unknown.
+     * For GLONASS this returns the system's center/reference frequency (G1/G2/G3 at k=0).
+     * Use this for logging, records, or when satellite-specific frequency is not needed.
+     * For other systems it forwards to getFrequency() to return the nominal carrier frequency.
      *
      * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
      * @param system GNSS system enumeration value.
@@ -148,6 +250,7 @@ namespace GnssProcessor {
         }
 
         if (system == System::GLONASS) {
+            // Return base/center frequency (channel k=0) for logging/reference purposes
             if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
                 return Constants::GLONASS_G1_BASE_FREQ; // Center frequency: 1602 MHz
             }
@@ -157,9 +260,11 @@ namespace GnssProcessor {
             if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
                 return Constants::GLONASS_G3_BASE_FREQ; // Center frequency: 1202.025 MHz
             }
+            log_manager_.getLogger("ppp_utils")->warn("Invalid GLONASS frequency type for reference: {}", freq_type);
+            return 0.0;
         }
 
-        // For non-GLONASS systems, return actual frequency (no rescaling needed)
+        // For non-GLONASS systems, return actual frequency (same as reference)
         double freq = getFrequency(freq_type, system, "");
         if (freq <= 0.0) {
             log_manager_.getLogger("ppp_utils")->warn("Invalid reference frequency for type {} on system {}: {:.3f} MHz",
@@ -169,16 +274,17 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Compute the wavelength (meters) for a given system and observable type.
+     * @brief Compute the wavelength (meters) for a given system, frequency type, and satellite.
      *
-     * Wavelength is computed as SPEED_OF_LIGHT / frequency. Input validation is
-     * performed and warnings are logged on invalid inputs or computation errors.
+     * For GLONASS, computes satellite-specific wavelength using actual FDMA frequency.
+     * Wavelength is computed as SPEED_OF_LIGHT / frequency.
      *
      * @param system GNSS system enumeration value.
      * @param freq_type Observable or signal identifier (e.g. "L1", "C5").
+     * @param satellite Satellite identifier (required for GLONASS).
      * @return double Wavelength in meters on success, 0.0 on invalid input.
      */
-    double PppUtils::getWavelength(System system, const std::string& freq_type) const {
+    double PppUtils::getWavelength(System system, const std::string& freq_type, const std::string& satellite) const {
         // Validate input
         if (freq_type.empty()) {
             log_manager_.getLogger("ppp_utils")->warn("Empty frequency type for wavelength computation, system={}",
@@ -186,25 +292,41 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        // Get frequency, passing empty satellite ID as specific satellite not needed here
-        double freq = getFrequency(freq_type, system, "");
+        // Get actual frequency (satellite-specific for GLONASS)
+        double freq = getFrequency(freq_type, system, satellite);
         if (freq <= 0.0 || !std::isfinite(freq)) {
-            log_manager_.getLogger("ppp_utils")->warn("Invalid frequency for type {} on system {}: {:.3f} MHz",
-                freq_type, getSystemString(system), freq / 1e6);
+            log_manager_.getLogger("ppp_utils")->warn("Invalid frequency for type {} on system {}, satellite {}: {:.3f} MHz",
+                freq_type, getSystemString(system), satellite, freq / 1e6);
             return 0.0;
         }
 
         // Compute wavelength (meters) = speed of light / frequency
+		// TODO: Use CONSTANTS::WAVELENGTH_xx if available
         double wavelength = Constants::SPEED_OF_LIGHT / freq;
         if (!std::isfinite(wavelength) || wavelength <= 0.0) {
-            log_manager_.getLogger("ppp_utils")->warn("Invalid wavelength for type {} on system {}: {:.3f} m",
-                freq_type, getSystemString(system), wavelength);
+            log_manager_.getLogger("ppp_utils")->warn("Invalid wavelength for type {} on system {}, satellite {}: {:.3f} m",
+                freq_type, getSystemString(system), satellite, wavelength);
             return 0.0;
         }
 
-        log_manager_.getLogger("ppp_utils")->trace("Computed wavelength for type {} on system {}: {:.3f} m (freq={:.3f} MHz)",
-            freq_type, getSystemString(system), wavelength, freq / 1e6);
+        log_manager_.getLogger("ppp_utils")->trace("Computed wavelength for type {} on system {}, satellite {}: {:.3f} m (freq={:.3f} MHz)",
+            freq_type, getSystemString(system), satellite, wavelength, freq / 1e6);
         return wavelength;
     }
 
+    /**
+     * @brief Compute the wavelength (meters) for a given system and frequency type.
+     *
+     * For non-GLONASS systems. For GLONASS, use the overload with satellite ID.
+     *
+     * @param system GNSS system enumeration value.
+     * @param freq_type Observable or signal identifier (e.g. "L1", "C5").
+     * @return double Wavelength in meters on success, 0.0 on invalid input.
+     */
+    double PppUtils::getWavelength(System system, const std::string& freq_type) const {
+        if (system == System::GLONASS) {
+            log_manager_.getLogger("ppp_utils")->warn("getWavelength called for GLONASS without satellite ID; using reference frequency");
+        }
+        return getWavelength(system, freq_type, "");
+    }
 }

@@ -152,7 +152,7 @@ namespace GnssProcessor {
         std::vector<SunEphemeris> candidates;
         for (const auto& data : sun_ephemeris_) {
             double time_diff = std::abs(data.time.tow - time.tow);
-            if (time_diff < 86400.0) { // Within 1 day
+            if (time_diff < TimeUtils::SECONDS_IN_DAY) { // Within 1 day
                 candidates.push_back(data);
             }
         }
@@ -244,11 +244,11 @@ namespace GnssProcessor {
             const double epsilon = 23.439281 * Constants::PI / 180.0; // Obliquity of ecliptic (radians)
             const double T_0 = 2451545.0; // J2000 epoch (JD)
             const double M_0 = 357.5291 * Constants::PI / 180.0; // Mean anomaly at J2000 (radians)
-            const double n = 0.98560028 * Constants::PI / 180.0 / 86400.0; // Mean motion (rad/s)
+            const double n = 0.98560028 * Constants::PI / 180.0 / TimeUtils::SECONDS_IN_DAY; // Mean motion (rad/s)
 
             for (const auto& epoch_time : epoch_times) {
                 // Validate epoch time
-                if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800.0) {
+                if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                     log_manager_.getLogger("ppp_model")->warn("Invalid epoch time: week {}, tow {:.3f}", epoch_time.week, epoch_time.tow);
                     continue;
                 }
@@ -258,7 +258,7 @@ namespace GnssProcessor {
                 double T = (gps_t - T_0) / 36525.0; // Julian centuries since J2000
 
                 // Mean anomaly
-                double M = M_0 + n * (gps_t - T_0) * 86400.0;
+                double M = M_0 + n * (gps_t - T_0) * TimeUtils::SECONDS_IN_DAY;
                 M = std::fmod(M, 2.0 * Constants::PI); // Normalize to [0, 2pi]
 
                 // Approximate eccentric anomaly (simplified, low eccentricity approx. 0.0167)

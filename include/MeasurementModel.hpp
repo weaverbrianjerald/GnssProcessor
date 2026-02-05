@@ -95,6 +95,17 @@ namespace GnssProcessor {
         const GnssConfig& config_;       ///< Processing configuration (read-only).
         LogManager& log_manager_;        ///< Reference to the logging manager (non-owning).
         PppUtils ppp_utils_;             ///< Utility helpers (frequency/wavelength helpers) initialized with the logger.
+
+        bool isb_initialized_ = false;  ///< Flag to track if ISB has been initialized
+
+        /**
+         * @brief Initialize inter-system biases from first-epoch code observations.
+         *
+         * Computes approximate ISB by comparing mean code residuals between GPS and
+         * other constellations. Only called once at the first epoch.
+         */
+        void initializeInterSystemBiases(const std::vector<PppObservation>& observations,
+                                          const std::string& epoch_prefix);
     };
 
 } // namespace GnssProcessor
