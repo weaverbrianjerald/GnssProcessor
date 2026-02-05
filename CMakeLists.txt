@@ -24,6 +24,13 @@ find_package(netCDF REQUIRED)
 
 include_directories(${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 
+# Ensure optimized builds also emit debug info/PDBs for profiling
+# Put near the top of your top-level CMakeLists.txt
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /O2 /Zi")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Zi")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
+
 # Core library
 add_library(gnss_core STATIC
     src/core/atmosphere/Troposphere.cpp
@@ -33,11 +40,13 @@ add_library(gnss_core STATIC
     src/core/common/LogManager.cpp
     src/core/common/ProductManager.cpp
     src/core/common/ProductParser.cpp
+    src/core/common/ProductCache.cpp
     src/core/common/TimeUtils.cpp
     src/core/common/KalmanFilterLogger.cpp
     src/core/common/WlsLogger.cpp
 	src/core/common/WlsEstimator.cpp
     src/core/common/PppTypes.cpp
+	src/core/common/TraceLogger.cpp
     src/core/corrections/GnssCorrections.cpp
     src/core/filter/KalmanFilter.cpp
     src/core/filter/StateManager.cpp
@@ -53,23 +62,23 @@ add_library(gnss_core STATIC
     src/core/model/Planetary.cpp
     src/core/common/Application.cpp
 	src/core/common/MwSlipDetector.cpp
-)
+ "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf)
 
 # Main executable (link against gnss_core only)
-add_executable(gnss_processor src/main.cpp)
+add_executable(gnss_processor src/main.cpp "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_link_libraries(gnss_processor PRIVATE gnss_core pybind11::pybind11)
 
 # Unit tests
 enable_testing()
-add_executable(gnss_tests tests/test_main.cpp)
+add_executable(gnss_tests tests/test_main.cpp "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
 
 # Python bindings module (only bindings source; link core)
 add_library(gnss_processor_module MODULE
     src/bindings/rinex_binding.cpp
-)
+ "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_processor_module PRIVATE ${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 target_link_directories(gnss_processor_module PRIVATE ${Python_LIBRARY_DIRS})
 target_link_libraries(gnss_processor_module PRIVATE gnss_core pybind11::embed pybind11::module ${Python_LIBRARIES})
@@ -102,3 +111,23 @@ endif()
 target_link_options(gnss_processor PRIVATE /MANIFEST:NO)
 target_link_options(gnss_tests PRIVATE /MANIFEST:NO)
 target_link_options(gnss_processor_module PRIVATE /MANIFEST:NO)
+
+# Doxygen
+find_package(Doxygen)
+if(DOXYGEN_FOUND)
+    set(DOXYGEN_PROJECT_NAME "GNSS Processor")
+    set(DOXYGEN_PROJECT_BRIEF "A GNSS processing application for PPP and PPP-RTK.")
+    set(DOXYGEN_GENERATE_HTML YES)
+    set(DOXYGEN_GENERATE_LATEX NO)
+    set(DOXYGEN_HTML_EXTRA_STYLESHEET
+        "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome.css"
+        "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome-sidebar-only.css"
+    )
+    doxygen_add_docs(docs
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+        COMMENT "Generate HTML documentation"
+    )
+else()
+    message(WARNING "Doxygen not found. Documentation will not be generated.")
+endif()

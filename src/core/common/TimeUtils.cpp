@@ -7,30 +7,66 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Converts Gregorian date and time to GPS time.
+     *
+     * This function takes a Gregorian date and time and converts it to GPS week and time of week (TOW).
+     * It accounts for leap seconds (hardcoded to 18 as of 2017-01-01).
+     *
+     * @param year Year (e.g., 2023).
+     * @param month Month (1-12).
+     * @param day Day of month (1-31).
+     * @param hour Hour (0-23).
+     * @param minute Minute (0-59).
+     * @param second Second (0-59.999...).
+     * @return GnssTime struct with GPS week and TOW.
+     * @throws std::invalid_argument If the input date is invalid.
+     */
     GnssTime TimeUtils::gregorianToGpsTime(int year, int month, int day, int hour, int minute, double second) {
         if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
             throw std::invalid_argument("Invalid Gregorian date");
         }
-        // Compute Julian Day
+        
+        // Compute Julian Day (this is in UTC)
         double jd = gregorianToJulianDay(year, month, day, hour, minute, second);
+        
         // Compute days since GPS epoch (1980-01-06 00:00:00 UTC)
         double gps_days = jd - GPS_EPOCH_JD;
-        // Compute GPS seconds, accounting for leap seconds
-        double gps_seconds = gps_days * SECONDS_IN_DAY;
-        constexpr double EPOCH_LEAP_OFFSET = 19.0; // At 1980 epoch
-        double current_leap = 37.0; // Load from config/RINEX; hardcoded for Oct 2025
-        gps_seconds += (current_leap - EPOCH_LEAP_OFFSET); // GPS = UTC + (LS - 19)
+        
+        // Convert to seconds (still in UTC scale)
+        double utc_seconds_since_epoch = gps_days * SECONDS_IN_DAY;
+        
+		// Convert UTC to GPS time by adding leap seconds
+        double gps_seconds = utc_seconds_since_epoch + LEAP_SECONDS;
+        
         // Compute GPS week and TOW
         int week = static_cast<int>(gps_seconds / SECONDS_IN_WEEK);
         double tow = gps_seconds - week * SECONDS_IN_WEEK;
-        // Ensure TOW is non-negative and handles sub-second precision
+        
+        // Ensure TOW is non-negative
         if (tow < 0.0) {
             tow += SECONDS_IN_WEEK;
             week -= 1;
         }
+        
         return GnssTime{ week, tow };
     }
 
+    /**
+     * @brief Converts date and time to GNSS time for a specified time system.
+     *
+     * This function converts a Gregorian date to GNSS time, adjusting for the specified time system
+     * (e.g., GPS, GAL, BDS). It uses GPS as the baseline and applies offsets for other systems.
+     *
+     * @param year Year (e.g., 2023).
+     * @param month Month (1-12).
+     * @param day Day of month (1-31).
+     * @param hour Hour (0-23).
+     * @param minute Minute (0-59).
+     * @param second Second (0-59.999...).
+     * @param time_system Time system string (e.g., "GPS", "GAL", "BDS").
+     * @return GnssTime struct adjusted for the specified system. Returns {0, 0.0} on invalid date.
+     */
     GnssTime TimeUtils::GnssTimeFromDate(int year, int month, int day, int hour, int minute, double second,
         const std::string& time_system) {
         if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
@@ -67,13 +103,46 @@ namespace GnssProcessor {
         return gps_time;
     }
 
+    /**
+     * @brief Converts GPS time to Gregorian date and time.
+     *
+     * This function converts a GnssTime (GPS week and TOW) back to Gregorian date and time.
+     *
+     * @param gpsTime The GPS time to convert.
+     * @param year Output: Year.
+     * @param month Output: Month (1-12).
+     * @param day Output: Day of month (1-31).
+     * @param hour Output: Hour (0-23).
+     * @param minute Output: Minute (0-59).
+     * @param second Output: Second (0-59.999...).
+     */
     void TimeUtils::gpsTimeToGregorian(const GnssTime& gpsTime, int& year, int& month, int& day,
         int& hour, int& minute, double& second) {
-        int64_t gps_seconds = gpsTime.week * SECONDS_IN_WEEK + static_cast<int64_t>(gpsTime.tow);
-        double jd = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
+        // Use double arithmetic because tow can have fractional seconds.
+        double gps_seconds = static_cast<double>(gpsTime.week) * static_cast<double>(SECONDS_IN_WEEK) + gpsTime.tow;
+
+        // Subtract leap seconds to convert GPS -> UTC (inverse of gregorianToGpsTime).
+        // NOTE: this currently uses a hardcoded leap-second value matching gregorianToGpsTime.
+        // For correctness across eras, replace with a proper leap-second lookup based on the epoch date.
+        double utc_seconds_since_epoch = gps_seconds - LEAP_SECONDS;
+
+        double jd = GPS_EPOCH_JD + utc_seconds_since_epoch / static_cast<double>(SECONDS_IN_DAY);
         julianDayToGregorian(jd, year, month, day, hour, minute, second);
     }
 
+    /**
+     * @brief Converts Gregorian date and time to Julian Day.
+     *
+     * This function computes the Julian Day number for a given Gregorian date and time.
+     *
+     * @param year Year.
+     * @param month Month (1-12).
+     * @param day Day of month (1-31).
+     * @param hour Hour (0-23).
+     * @param minute Minute (0-59).
+     * @param second Second (0-59.999...).
+     * @return Julian Day as a double.
+     */
     double TimeUtils::gregorianToJulianDay(int year, int month, int day, int hour, int minute, double second) {
         if (month <= 2) {
             year -= 1;
@@ -86,6 +155,19 @@ namespace GnssProcessor {
         return jd;
     }
 
+    /**
+     * @brief Converts Julian Day to Gregorian date and time.
+     *
+     * This function converts a Julian Day number back to Gregorian date and time.
+     *
+     * @param jd Julian Day.
+     * @param year Output: Year.
+     * @param month Output: Month (1-12).
+     * @param day Output: Day of month (1-31).
+     * @param hour Output: Hour (0-23).
+     * @param minute Output: Minute (0-59).
+     * @param second Output: Second (0-59.999...).
+     */
     void TimeUtils::julianDayToGregorian(double jd, int& year, int& month, int& day,
         int& hour, int& minute, double& second) {
         jd += 0.5;
@@ -113,6 +195,19 @@ namespace GnssProcessor {
         second = seconds - minute * 60;
     }
 
+    /**
+     * @brief Validates a Gregorian date and time.
+     *
+     * This function checks if the provided Gregorian date and time are valid.
+     *
+     * @param year Year.
+     * @param month Month (1-12).
+     * @param day Day of month (1-31).
+     * @param hour Hour (0-23).
+     * @param minute Minute (0-59).
+     * @param second Second (0-59.999...).
+     * @return True if valid, false otherwise.
+     */
     bool TimeUtils::isValidGregorianDate(int year, int month, int day, int hour, int minute, double second) {
         if (year < 1980 || month < 1 || month > 12 || day < 1 || hour < 0 || hour > 23 ||
             minute < 0 || minute > 59 || second < 0 || second >= 60) {
@@ -122,8 +217,18 @@ namespace GnssProcessor {
         return day <= max_day;
     }
 
+    /**
+     * @brief Converts GPS week and TOW to Julian Date.
+     *
+     * This function converts GPS time (week and TOW) to Julian Date.
+     *
+     * @param week GPS week.
+     * @param tow Time of week in seconds.
+     * @return Julian Date as a double.
+     * @throws std::invalid_argument If week or tow are invalid.
+     */
     double TimeUtils::gpsTimeToJulianDate(int week, double tow) {
-        if (week < 0 || tow < 0.0 || tow >= 604800.0) {
+        if (week < 0 || tow < 0.0 || tow >= TimeUtils::SECONDS_IN_WEEK) {
             throw std::invalid_argument("Invalid GPS time: week " + std::to_string(week) + ", tow " + std::to_string(tow));
         }
         // GPS epoch: 1980-01-06 00:00:00 UTC (JD 2444244.5)
@@ -132,6 +237,14 @@ namespace GnssProcessor {
         return GPS_EPOCH_JD + days_since_gps_epoch;
     }
 
+    /**
+     * @brief Formats GNSS time as a human-readable string.
+     *
+     * This function formats a GnssTime into a string including GPS week/TOW and UTC calendar time.
+     *
+     * @param time The GNSS time to format.
+     * @return Formatted string (e.g., "GPS week 1234, TOW 12345.67 (2023-10-01 12:34:56.789 UTC)").
+     */
     std::string TimeUtils::formatGnssTime(const GnssTime& time) {
         std::ostringstream oss;
         oss << "GPS week " << time.week << ", TOW " << std::fixed << std::setprecision(3) << time.tow;
@@ -150,6 +263,15 @@ namespace GnssProcessor {
         return oss.str();
     }
 
+    /**
+     * @brief Gets the number of days in a given month.
+     *
+     * This helper function returns the number of days in the specified month and year.
+     *
+     * @param year Year.
+     * @param month Month (1-12).
+     * @return Number of days in the month.
+     */
     int TimeUtils::daysInMonth(int year, int month) {
         switch (month) {
         case 2: return isLeapYear(year) ? 29 : 28;
@@ -158,8 +280,20 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Checks if a year is a leap year.
+     *
+     * This helper function determines if the given year is a leap year.
+     *
+     * @param year Year.
+     * @return True if leap year, false otherwise.
+     */
     bool TimeUtils::isLeapYear(int year) {
         return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    }
+
+    double TimeUtils::continuousGpsSeconds(const GnssTime& t) {
+        return static_cast<double>(t.week) * TimeUtils::SECONDS_IN_WEEK + t.tow;
     }
 
 } // namespace GnssProcessor

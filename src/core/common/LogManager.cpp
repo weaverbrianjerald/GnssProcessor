@@ -3,8 +3,35 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @file src/core/common/LogManager.cpp
+     * @brief Implementation of LogManager: wrapper around spdlog for application-wide logging.
+     *
+     * Provides initialization of a default rotating file + console logger, creation of
+     * module-specific loggers, runtime log level changes, and graceful shutdown/flush.
+     */
+
+    /**
+     * @brief Default constructor.
+     *
+     * Constructs a LogManager with a default LogLevel of Info. No spdlog resources are created
+     * until initialize() is called.
+     */
     LogManager::LogManager() : level_(LogLevel::Info), initialized_(false) {}
 
+    /**
+     * @brief Initialize the logging subsystem.
+     *
+     * Creates the log directory if necessary, removes existing .log files in the directory,
+     * and registers a default logger named "gnss_processor" which writes to a rotating file
+     * and the console. If initialization fails for file sinks, falls back to a console-only
+     * logger and returns false.
+     *
+     * @param log_dir Filesystem path to the directory where log files will be created.
+     * @param level Initial logging level to apply to the created logger(s).
+     * @return true on successful initialization of file + console logger; false if only
+     *         console logging could be established due to an spdlog error.
+     */
     bool LogManager::initialize(const std::filesystem::path& log_dir, LogLevel level) {
         if (initialized_) {
             loggers_["gnss_processor"]->warn("LogManager already initialized, re-initializing");
@@ -51,6 +78,13 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Set the current log level for all managed loggers.
+     *
+     * If LogManager has not been initialized this call is a no-op.
+     *
+     * @param level New LogLevel to apply.
+     */
     void LogManager::setLogLevel(LogLevel level) {
         if (!initialized_) {
             return;
@@ -62,6 +96,12 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Shutdown logging subsystem.
+     *
+     * Flushes all registered loggers, drops all spdlog loggers/sinks, clears internal
+     * state and marks the manager as uninitialized so it may be safely reinitialized.
+     */
     void LogManager::shutdown() {
         if (initialized_) {
             loggers_["gnss_processor"]->info("Shutting down LogManager");
@@ -74,6 +114,18 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Retrieve or create a module-specific logger.
+     *
+     * If the manager is not initialized, returns a console-only logger with the requested
+     * name and issues an error-level message indicating the manager wasn't initialized.
+     * When initialized, attempts to create a rotating-file + console logger using the same
+     * rotation policy as the default logger. On failure to create a file sink, the default
+     * `gnss_processor` logger is returned.
+     *
+     * @param logger_name Name of the logger to retrieve/create.
+     * @return Shared pointer to the requested spdlog::logger.
+     */
     std::shared_ptr<spdlog::logger> LogManager::getLogger(const std::string& logger_name) {
         if (!initialized_) {
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -103,6 +155,12 @@ namespace GnssProcessor {
         return loggers_[logger_name];
     }
 
+    /**
+     * @brief Convert project LogLevel to spdlog's level enum.
+     *
+     * @param level LogLevel value to convert.
+     * @return Equivalent spdlog::level::level_enum value.
+     */
     spdlog::level::level_enum LogManager::toSpdlogLevel(LogLevel level) const {
         switch (level) {
         case LogLevel::Trace: return spdlog::level::trace;

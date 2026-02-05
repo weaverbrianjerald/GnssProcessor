@@ -6,4 +6,4 @@ build/
 *.exe
 *.pyc
 __pycache__/
-point/
+reference_software/

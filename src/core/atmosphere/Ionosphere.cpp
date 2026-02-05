@@ -1,18 +1,55 @@
 #include "Ionosphere.hpp"
 #include "Constants.hpp"
+#include "ProductCache.hpp"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
 
 namespace GnssProcessor {
 
+    /**
+     * @file Ionosphere.cpp
+     * @brief Ionospheric helper implementation: Klobuchar coefficient loading and ionospheric/tropospheric estimators.
+     *
+     * Implements loading of Klobuchar coefficients from RINEX/BRDC products and
+     * provides Klobuchar single-frequency delay computation and a simple
+     * initial zenith ionospheric delay estimate used for PPP initialization.
+     */
+
+    /**
+     * @brief Construct an Ionosphere helper.
+     *
+     * Initializes geometry/model helpers and attempts to load Klobuchar
+     * coefficients via configured product paths.
+     *
+     * @param config Read-only reference to configuration.
+     * @param log_mgr Reference to LogManager for logging.
+     * @param parser ProductParser used to locate/parse auxiliary products.
+     * @param rinex RinexParser reference used by geometry/parser helpers.
+     */
     Ionosphere::Ionosphere(const GnssConfig& config, LogManager& log_mgr, ProductParser& parser, const RinexParser& rinex)
-        : config_(config), log_manager_(log_mgr), model_geometry_(config, parser, rinex, log_mgr), klobuchar_coeffs_{} {
-        loadKlobucharCoeffs();
+        : log_manager_(log_mgr), config_(config),
+        model_geometry_(config, ProductCache::getInstance(), rinex, log_mgr), klobuchar_coeffs_{} {
+        // Prefer cached Klobuchar coefficients; fall back to parsing RNX if cache empty.
+        auto& cache = ProductCache::getInstance();
+        klobuchar_coeffs_ = cache.getKlobucharCoeffs();
+        if (klobuchar_coeffs_.empty()) {
+            loadKlobucharCoeffs();
+        }
+
         log_manager_.getLogger("ionosphere")->info("Ionosphere model initialized: Klobuchar coeffs loaded ({} values), mode={}",
             klobuchar_coeffs_.size(), config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
 
+    /**
+     * @brief Load Klobuchar coefficients from configured RINEX/BRDC product.
+     *
+     * Searches for the RNX product configured in `config_`, opens the file,
+     * scans the RINEX header for Klobuchar alpha (GPSA/GAL) and beta (GPSB)
+     * lines and stores eight coefficients (alpha[4], beta[4]) in
+     * `klobuchar_coeffs_`. If parsing fails or the file doesn't exist, the
+     * coefficient vector is left empty and warnings are logged.
+     */
     void Ionosphere::loadKlobucharCoeffs() {
         klobuchar_coeffs_.clear();
 
@@ -95,6 +132,19 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Compute Klobuchar ionospheric delay for a single observation.
+     *
+     * Implements the standard Klobuchar model to estimate ionospheric delay
+     * for a single-frequency observation. The implementation expects
+     * `klobuchar_coeffs_` to contain 8 values (alpha[4], beta[4]).
+     *
+     * @param time GNSS epoch (GPS week/tow).
+     * @param rx_pos Receiver ECEF position in meters.
+     * @param sat_pos Satellite ECEF position in meters.
+     * @param frequency Signal frequency in Hz (used for frequency scaling).
+     * @return Estimated ionospheric delay in meters.
+     */
     double Ionosphere::computeKlobucharDelay(const GnssTime& time,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
@@ -102,11 +152,11 @@ namespace GnssProcessor {
         double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
-        double t = fmod(time.tow, 86400.0);
+        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
         double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
         double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
-        Topocentric topo = model_geometry_.computeTopocentric(rx_pos, sat_pos);
+        GnssProcessor::Model::Topocentric topo = model_geometry_.computeTopocentric(rx_pos, sat_pos);
         double el = topo.elevation_deg;
         double az = topo.azimuth_deg;
         if (az < 0.0) az += 360.0;
@@ -119,8 +169,8 @@ namespace GnssProcessor {
         double phi_m = phi_i + 0.064 * std::cos((lambda_i - 1.617) * Constants::PI);
 
         double t_i = 43200.0 * lambda_i + t;
-        t_i = fmod(t_i, 86400.0);
-        if (t_i < 0) t_i += 86400.0;
+        t_i = fmod(t_i, TimeUtils::SECONDS_IN_DAY);
+        if (t_i < 0) t_i += TimeUtils::SECONDS_IN_DAY;
 
         double F = 1.0 + 16.0 * std::pow((0.53 - el / 180.0), 3);
         double AMP = a0 + a1 * phi_m + a2 * std::pow(phi_m, 2) + a3 * std::pow(phi_m, 3);
@@ -141,6 +191,17 @@ namespace GnssProcessor {
         return delay * Constants::SPEED_OF_LIGHT;
     }
 
+    /**
+     * @brief Compute a coarse initial ionospheric zenith delay for PPP initialization.
+     *
+     * When Klobuchar coefficients are available this routine applies the
+     * Klobuchar model to produce a zenith delay (meters). If coefficients
+     * are missing a conservative default (5 meters) is returned.
+     *
+     * @param time GNSS epoch (GPS week/tow).
+     * @param rx_pos Receiver ECEF position in meters.
+     * @return Estimated zenith ionospheric delay in meters.
+     */
     double Ionosphere::computeInitialIonoDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos) const {
         if (klobuchar_coeffs_.size() != 8) {
             return 5.0; // Default fallback
@@ -150,7 +211,7 @@ namespace GnssProcessor {
         double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
-        double t = fmod(time.tow, 86400.0);
+        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
         double phi = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Geodetic latitude (degrees)
         double lambda = std::atan2(rx_pos.y(), rx_pos.x()) * 180.0 / Constants::PI; // Geodetic longitude (degrees)
 
@@ -159,8 +220,8 @@ namespace GnssProcessor {
         double phi_m = phi_i + 0.064 * std::cos((lambda_i - 1.617) * Constants::PI);
 
         double t_i = 43200.0 * lambda_i + t;
-        t_i = fmod(t_i, 86400.0);
-        if (t_i < 0) t_i += 86400.0;
+        t_i = fmod(t_i, TimeUtils::SECONDS_IN_DAY);
+        if (t_i < 0) t_i += TimeUtils::SECONDS_IN_DAY;
 
         double AMP = a0 + a1 * phi_m + a2 * std::pow(phi_m, 2) + a3 * std::pow(phi_m, 3);
         if (AMP < 0) AMP = 0;

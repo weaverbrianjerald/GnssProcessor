@@ -1,14 +1,46 @@
+/**
+ * @file Planetary.cpp
+ * @brief Implementation of planetary utilities: Sun & Moon positions and ephemeris handling.
+ *
+ * Provides low-precision approximations for Sun and Moon positions, simple
+ * rotation utilities, interpolation of stored Sun ephemeris, and building a
+ * Sun ephemeris for a set of observation epochs.
+ *
+ * All returned position vectors are ECEF-like Cartesian vectors in meters.
+ */
+
 #include "Constants.hpp"
 #include "Planetary.hpp"
 #include "PppTypes.hpp"
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a Planetary helper.
+     *
+     * Currently this constructor initializes an empty in-memory Sun ephemeris
+     * table (stub for loading a DE430/PM table or other source).
+     *
+     * @param log_mgr Reference to the LogManager used for logging.
+     */
     Planetary::Planetary(LogManager& log_mgr) : log_manager_(log_mgr), sun_ephemeris_{} {
         // Stub: Load from DE430/PM or config (O(N); skip if runtime)
         log_manager_.getLogger("planetary_model")->info("Planetary model initialized: {} sun ephemeris entries", sun_ephemeris_.size());
     }
 
+    /**
+     * @brief Compute approximate Sun position for a given epoch.
+     *
+     * Uses a low-precision algorithm to compute the Sun position for the given
+     * Modified Julian Date (MJD). The returned vector is rotated to an
+     * Earth-fixed frame before being returned (ECEF-like), in meters.
+     *
+     * @param mjd Modified Julian Date (days).
+     * @return Sun position vector (meters), ECEF-like coordinates.
+     *
+     * @note This implementation is intended for modeling/corrections where
+     *       high-precision planetary ephemerides are not required.
+     */
     Eigen::Vector3d Planetary::computeSunPosition(double mjd) const {
         const double AU = 149597870700.0;  // Astronomical unit (m)
         const double d2r = Constants::PI / 180.0;
@@ -40,6 +72,16 @@ namespace GnssProcessor {
         return s_pos;
     }
 
+    /**
+     * @brief Compute approximate Moon position for a given epoch.
+     *
+     * Uses a low-precision series expansion to compute the Moon position and
+     * transforms it to an Earth-fixed (ECEF-like) frame. Distances are in
+     * meters and angles are handled in radians internally.
+     *
+     * @param mjd Modified Julian Date (days).
+     * @return Moon position vector (meters), ECEF-like coordinates.
+     */
     Eigen::Vector3d Planetary::computeMoonPosition(double mjd) const {
         const double T = (mjd - 51544.5) / 36525.0;
         const double d2r = Constants::PI / 180.0;
@@ -91,6 +133,16 @@ namespace GnssProcessor {
         return m_pos;
     }
 
+    /**
+     * @brief Interpolate Sun position from stored ephemeris entries.
+     *
+     * Performs a simple linear interpolation between the two closest
+     * SunEphemeris entries (within +/- 1 day) to the requested GNSS time.
+     * If no suitable entries are found the function returns a zero vector.
+     *
+     * @param time GNSS epoch (week/tow) at which to interpolate the Sun position.
+     * @return Interpolated Sun position vector (meters). Returns (0,0,0) when no data are available.
+     */
     Eigen::Vector3d Planetary::interpolateSunPosition(const GnssTime& time) const {
         if (sun_ephemeris_.empty()) {
             return Eigen::Vector3d(0.0, 0.0, 0.0);
@@ -100,7 +152,7 @@ namespace GnssProcessor {
         std::vector<SunEphemeris> candidates;
         for (const auto& data : sun_ephemeris_) {
             double time_diff = std::abs(data.time.tow - time.tow);
-            if (time_diff < 86400.0) { // Within 1 day
+            if (time_diff < TimeUtils::SECONDS_IN_DAY) { // Within 1 day
                 candidates.push_back(data);
             }
         }
@@ -132,6 +184,19 @@ namespace GnssProcessor {
         return p0 + frac * (p1 - p0);
     }
 
+    /**
+     * @brief Rotate a 3D vector about a principal axis.
+     *
+     * The function constructs a rotation matrix for the requested axis and
+     * applies it to `vec`.
+     *
+     * @param vec Input vector to rotate.
+     * @param angle Rotation angle in radians.
+     * @param axis Axis identifier: use 1 for X-axis rotation, 3 for Z-axis rotation.
+     *             Other values are treated as invalid (a warning is logged and the
+     *             original vector is returned).
+     * @return Rotated vector (meters).
+     */
     Eigen::Vector3d Planetary::rotateVector(const Eigen::Vector3d& vec, double angle, int axis) const {
         Eigen::Matrix3d R;
         double c = std::cos(angle);
@@ -153,6 +218,19 @@ namespace GnssProcessor {
         return R * vec;
     }
 
+    /**
+     * @brief Build Sun ephemeris entries for a list of observation epochs.
+     *
+     * For each valid GNSS epoch in `epoch_times`, computes a simple, low-precision
+     * Sun position and appends a `SunEphemeris` entry to the output vector.
+     *
+     * @param epoch_times Vector of GNSS epochs (week/tow) for which ephemeris is needed.
+     * @param[out] sun_ephemeris Output vector that will be filled with computed SunEphemeris entries.
+     * @return true on success (at least one valid entry computed), false on failure or if no valid entries generated.
+     *
+     * @note The routine handles invalid epoch times by logging warnings and skipping them.
+     *       Exceptions are caught and logged; on exception the output vector is cleared and the function returns false.
+     */
     bool Planetary::parseSunEphemeris(const std::vector<GnssTime>& epoch_times, std::vector<SunEphemeris>& sun_ephemeris) const {
         try {
             sun_ephemeris.clear();
@@ -166,11 +244,11 @@ namespace GnssProcessor {
             const double epsilon = 23.439281 * Constants::PI / 180.0; // Obliquity of ecliptic (radians)
             const double T_0 = 2451545.0; // J2000 epoch (JD)
             const double M_0 = 357.5291 * Constants::PI / 180.0; // Mean anomaly at J2000 (radians)
-            const double n = 0.98560028 * Constants::PI / 180.0 / 86400.0; // Mean motion (rad/s)
+            const double n = 0.98560028 * Constants::PI / 180.0 / TimeUtils::SECONDS_IN_DAY; // Mean motion (rad/s)
 
             for (const auto& epoch_time : epoch_times) {
                 // Validate epoch time
-                if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800.0) {
+                if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                     log_manager_.getLogger("ppp_model")->warn("Invalid epoch time: week {}, tow {:.3f}", epoch_time.week, epoch_time.tow);
                     continue;
                 }
@@ -180,7 +258,7 @@ namespace GnssProcessor {
                 double T = (gps_t - T_0) / 36525.0; // Julian centuries since J2000
 
                 // Mean anomaly
-                double M = M_0 + n * (gps_t - T_0) * 86400.0;
+                double M = M_0 + n * (gps_t - T_0) * TimeUtils::SECONDS_IN_DAY;
                 M = std::fmod(M, 2.0 * Constants::PI); // Normalize to [0, 2pi]
 
                 // Approximate eccentric anomaly (simplified, low eccentricity approx. 0.0167)

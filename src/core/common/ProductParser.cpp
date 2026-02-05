@@ -11,6 +11,20 @@
 namespace GnssProcessor {
 
     namespace {
+        /**
+         * @brief Remove all whitespace characters from an antenna type string.
+         *
+         * Utility used to normalize antenna model/type identifiers by stripping any
+         * characters for which `std::isspace` returns true (spaces, tabs, newlines,
+         * etc.). The function reserves the input size up-front to avoid repeated
+         * reallocations.
+         *
+         * @param[in] in Input string that may contain whitespace.
+         * @return A newly allocated std::string with all whitespace removed.
+         *
+         * @note Characters are cast to `unsigned char` before calling `std::isspace`
+         *       to avoid undefined behavior for signed `char` values.
+         */
         std::string sanitizeAntennaType(const std::string& in) {
             std::string out;
             out.reserve(in.size());
@@ -21,16 +35,63 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Construct a ProductParser for loading and parsing GNSS product files.
+     *
+     * Initializes a ProductParser using the provided configuration and log manager.
+     * The instance will use `config` to locate auxiliary product files (SP3, CLK,
+     * ATX, BIA, ERP, RNX) and `log_manager` for structured logging. A non-owning
+     * pointer to a `RinexParser` may be supplied later with `setRinexParser`.
+     *
+     * @param[in] config Reference to the GnssConfig containing product paths and options.
+     * @param[in] log_manager Reference to the LogManager used for logging.
+     *
+     * Side effects:
+     * - Stores non-owning references to the passed-in config and log manager.
+     * - Initializes the planetary model with the same LogManager.
+     * - Emits an informational log message indicating initialization.
+     */
     ProductParser::ProductParser(const GnssConfig& config, LogManager& log_manager)
         : config_(config), log_manager_(log_manager), rinex_parser_(nullptr), planetary_(log_manager) {
         log_manager_.getLogger("product_parser")->info("ProductParser initialized.");
     }
 
+    /**
+     * @brief Attach an existing RinexParser to the ProductParser.
+     *
+     * Supplies a reference to an externally-managed `RinexParser` instance so the
+     * `ProductParser` can query RINEX-derived data (e.g. epoch times) without
+     * creating a circular construction dependency.
+     *
+     * Ownership and lifetime:
+     * - This stores a non-owning pointer to the provided `RinexParser`.
+     * - The caller must ensure the referenced `RinexParser` remains valid for the
+     *   lifetime of this `ProductParser` or until another parser is set.
+     *
+     * Side effects:
+     * - Sets the internal `rinex_parser_` pointer.
+     * - Emits a trace-level log message indicating the parser has been set.
+     *
+     * @param[in] rinex Reference to an existing, externally-managed `RinexParser`.
+     */
     void ProductParser::setRinexParser(RinexParser& rinex) {
         rinex_parser_ = &rinex;
         log_manager_.getLogger("product_parser")->trace("RinexParser set for ProductParser");
     }
 
+    /**
+     * @brief Retrieve configured SP3 orbit product file paths.
+     *
+     * Scans the list returned by `GnssConfig::getProductPaths()` and collects
+     * entries whose extension equals ".SP3" and that exist on disk. Only paths
+     * that both match the extension and exist are returned.
+     *
+     * Side effects:
+     * - Emits an informational log message with the number of SP3 paths found
+     *   via the `product_parser` logger.
+     *
+     * @return A vector of existing filesystem paths to SP3 orbit product files.
+     */
     std::vector<std::filesystem::path> ProductParser::getOrbitPaths() const {
         std::vector<std::filesystem::path> paths;
         for (const auto& path : config_.getProductPaths()) {
@@ -42,6 +103,22 @@ namespace GnssProcessor {
         return paths;
     }
 
+    /**
+     * @brief Get product file path for a specific product type.
+     *
+     * Queries the configured `GnssConfig` for a product file associated with the
+     * provided type and verifies the file exists on disk. If the configured path
+     * exists it is returned; otherwise an empty `std::filesystem::path` is
+     * returned and a warning is logged.
+     *
+     * @param[in] type Product type identifier (e.g., "SP3", "CLK", "ATX", "BIA", "ERP", "RNX").
+     * @return Filesystem path to the requested product if it exists; an empty path
+     *         when no path is configured or the file does not exist.
+     *
+     * Side effects:
+     * - Logs a trace message when a valid path is retrieved.
+     * - Logs a warning when the configured path is missing or does not exist.
+     */
     std::filesystem::path ProductParser::getProductPath(const std::string& type) const {
         auto path = config_.getProductPath(type);
         if (!path.empty() && std::filesystem::exists(path)) {
@@ -52,6 +129,39 @@ namespace GnssProcessor {
         return std::filesystem::path();
     }
 
+    /**
+     * @brief Parse SP3 orbit product files into internal orbit entries.
+     *
+     * Reads one or more SP3 files and extracts satellite position (P-record)
+     * and velocity (V-record) entries. The parser:
+     * - Reads and validates the SP3 header (epoch interval, satellite list).
+     * - Parses epochs indicated by lines beginning with `*` and associated
+     *   satellite records (`P` for position, `V` for velocity).
+     * - Converts SP3 positions from kilometers to meters and velocities from
+     *   0.1 km/s units to m/s.
+     * - Discards invalid numeric records and duplicate epochs (defined by
+     *   a minimum time difference).
+     * - Merges results from multiple SP3 files into the output vector.
+     *
+     * Side effects:
+     * - Writes structured log messages via the configured `LogManager`.
+     * - Clears and fills the provided output vector `orbits`.
+     *
+     * @param[in] sp3_paths Vector of filesystem paths to SP3 files to parse.
+     * @param[out] orbits Vector that will be cleared and populated with parsed
+     *                    `OrbitData` entries on success.
+     * @return `true` if at least one valid orbit entry was parsed and returned
+     *         in `orbits`; `false` on failure (I/O error, no valid data, or
+     *         exception). Detailed errors/warnings are logged via `LogManager`.
+     *
+     * @note The parser expects SP3 position coordinates in kilometers and
+     *       applies a multiplier of 1000.0. Velocity `V` records are scaled by
+     *       0.1 (converted from 0.1 km/s to m/s). Duplicate epochs (within
+     *       `MIN_TIME_DIFF` seconds) are skipped.
+     *
+     * @throws No exceptions propagate: all `std::exception` derived errors are
+     *         caught, logged, and lead to a `false` return value.
+     */
     bool ProductParser::parseSp3(const std::vector<std::filesystem::path>& sp3_paths, std::vector<OrbitData>& orbits) {
         try {
             orbits.clear();
@@ -173,7 +283,7 @@ namespace GnssProcessor {
                             continue;
                         }
                         GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                        if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800) {
+                        if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                             log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {} in {}: week {}, tow {}",
                                 line_count, sp3_path.string(), epoch_time.week, epoch_time.tow);
                             continue;
@@ -273,6 +383,37 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Parse satellite clock (CLK) product file into ClockData entries.
+     *
+     * Reads the specified CLK file, parses an optional epoch INTERVAL from the
+     * header and then extracts AS records. Each valid AS record produces one
+     * populated ::ClockData entry appended to the provided output vector.
+     *
+     * Behavior:
+     * - The output container `clocks` is cleared on entry and filled on success.
+     * - The function recognizes AS records beginning with "AS" and expecting the
+     *   following token order: record-type, satellite (3-char PRN), year, month,
+     *   day, hour, minute, second, sample/num, clock_bias.
+     * - Gregorian date/time fields are converted to GPS time via
+     *   `TimeUtils::gregorianToGpsTime`. Records with invalid GPS times or
+     *   malformed numeric fields are skipped and logged.
+     * - `ClockData::start_time` is set to the parsed epoch. `ClockData::end_time`
+     *   is set to `start_time` + epoch_interval when an INTERVAL is parsed from
+     *   the header; otherwise the end time uses the default interval (0 if none).
+     * - Clock bias is taken directly from the record and stored in
+     *   `ClockData::clock_bias`.
+     *
+     * Side effects:
+     * - Writes warnings/errors/traces via the configured `LogManager`.
+     * - Catches and logs all `std::exception` derived exceptions and returns false.
+     *
+     * @param[in]  clk_path Filesystem path to the CLK file.
+     * @param[out] clocks   Vector that will be cleared and populated with parsed
+     *                      `ClockData` entries on success.
+     * @return `true` if at least one valid clock entry was parsed and placed into
+     *         `clocks`; `false` on I/O error, parsing failure, or exception.
+     */
     bool ProductParser::parseClk(const std::filesystem::path& clk_path, std::vector<ClockData>& clocks) {
         try {
             std::ifstream file(clk_path);
@@ -325,7 +466,7 @@ namespace GnssProcessor {
                     }
 
                     GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                    if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= 604800) {
+                    if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                         log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {}: week {}, tow {}",
                             line_count, epoch_time.week, epoch_time.tow);
                         continue;
@@ -354,6 +495,34 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Parse antenna correction (ATX) file into AntennaData entries.
+     *
+     * Parses ATX antenna blocks delimited by "START OF ANTENNA" / "END OF ANTENNA".
+     * Extracted information includes:
+     *  - TYPE / SERIAL NO: handles satellite entries (PRN and SVN) and receiver models.
+     *  - VALID FROM / VALID UNTIL: converted to ::GnssTime via TimeUtils.
+     *  - PCO (NORTH / EAST / UP): stored in millimeters in AntennaData::pco.
+     *  - PCV data: supports NOAZI (zenith-only) and azimuth-row tables; stored in
+     *    AntennaData::pcv as a matrix organized [zenith_index][azimuth_index].
+     *  - DAZI, ZEN1/ZN2/DZEN: parsed where present.
+     *  - Frequency codes (e.g., "G01", "E05") are detected and used as keys for per-frequency data.
+     *
+     * Behavior:
+     *  - The output container `antennas` is cleared on entry and populated on success.
+     *  - Frequency-specific accumulators are finalized when "END OF FREQUENCY" or
+     *    a new "START OF FREQUENCY" / "END OF ANTENNA" is encountered.
+     *  - Inconsistent PCV row lengths are logged; invalid numeric fields are skipped.
+     *
+     * @param[in]  path      Filesystem path to the ATX file.
+     * @param[out] antennas  Vector that will be cleared and populated with parsed AntennaData entries.
+     * @return `true` if at least one antenna entry was successfully parsed; `false` on I/O error,
+     *         parse failure, or exception. Detailed issues are logged via the configured LogManager.
+     *
+     * @note NOAZI-only PCV is stored as a single-column matrix (one column == azimuth dimension = 1).
+     * @note PCO values in ATX are expected in millimeters and are stored without unit conversion.
+     * @note All exceptions derived from std::exception are caught, logged, and result in a `false` return.
+     */
     bool ProductParser::parseAtx(const std::filesystem::path& atx_path, std::vector<AntennaData>& antennas) {
         try {
             std::ifstream file(atx_path);
@@ -522,50 +691,66 @@ namespace GnssProcessor {
 
                 // TYPE / SERIAL NO
                 if (line.find("TYPE / SERIAL NO") != std::string::npos) {
-                    std::string left = line.substr(0, line.find("TYPE / SERIAL NO"));
-                    trim(left);
-                    std::istringstream tss(left);
-                    std::vector<std::string> toks;
-                    std::string tok;
-                    while (tss >> tok) toks.push_back(tok);
-
-                    std::string prn_token, svn_token, block_token;
-                    for (size_t i = 0; i < toks.size(); ++i) {
-                        const std::string& t = toks[i];
-                        if (t.size() == 3 &&
-                            (t[0] == 'G' || t[0] == 'R' || t[0] == 'E' || t[0] == 'C' || t[0] == 'J' || t[0] == 'S') &&
-                            std::isdigit(t[1]) && std::isdigit(t[2])) {
-                            prn_token = t;
-                        }
-                        if (t.size() == 4 &&
-                            (t[0] == 'G' || t[0] == 'R' || t[0] == 'E' || t[0] == 'C' || t[0] == 'J' || t[0] == 'S') &&
-                            std::isdigit(t[1]) && std::isdigit(t[2]) && std::isdigit(t[3])) {
-                            svn_token = t;
-                        }
-                        if (t == "BLOCK" && i + 1 < toks.size()) {
-                            block_token = "BLOCK_" + toks[i + 1];
-                        }
-                    }
-
-                    // These are fixed-width fields in the ATX format.
+                    // ATX format uses FIXED-WIDTH fields (not space-separated tokens):
+                    //   Columns 1-20:  Antenna type (for satellites: block type like "BLOCK IIIA")
+                    //   Columns 21-40: Serial number (for satellites: PRN + SVN like "G04" + space + "G074")
+                    //
+                    // Example satellite antenna line:
+                    //   "BLOCK IIIA          G04                 G074      2018-109A TYPE / SERIAL NO"
+                    //    |<--- field1 --->| |<---- field2 ----->|
+                    //    Cols 1-20          Cols 21-40
+                    //
+                    // In field2 for satellites:
+                    //   - PRN is exactly 3 chars (e.g., "G04")
+                    //   - SVN is exactly 4 chars (e.g., "G074") - NOT a PRN!
+                    //
+                    // IMPORTANT: Do NOT match "G074" as PRN! It's an SVN (Space Vehicle Number).
+                    
+                    // Extract fixed-width fields
                     std::string field1 = line.substr(0, 20);
                     std::string field2 = (line.size() >= 40) ? line.substr(20, 20) : "";
                     trim(field1);
                     trim(field2);
+                    
+                    // Parse field2 to find PRN (3-char) and SVN (4-char) separately
+                    std::string prn_token, svn_token;
+                    std::istringstream tss(field2);
+                    std::string tok;
+                    while (tss >> tok) {
+                        // PRN: exactly 3 characters - system letter + 2 digits
+                        if (tok.size() == 3 &&
+                            (tok[0] == 'G' || tok[0] == 'R' || tok[0] == 'E' || 
+                             tok[0] == 'C' || tok[0] == 'J' || tok[0] == 'S') &&
+                            std::isdigit(tok[1]) && std::isdigit(tok[2])) {
+                            prn_token = tok;
+                        }
+                        // SVN: exactly 4 characters - system letter + 3 digits
+                        // Note: "G074" is an SVN, not a PRN!
+                        else if (tok.size() == 4 &&
+                            (tok[0] == 'G' || tok[0] == 'R' || tok[0] == 'E' || 
+                             tok[0] == 'C' || tok[0] == 'J' || tok[0] == 'S') &&
+                            std::isdigit(tok[1]) && std::isdigit(tok[2]) && std::isdigit(tok[3])) {
+                            svn_token = tok;
+                        }
+                    }
 
-                    // IMPORTANT: receiver antenna like "JAVRINGANT_DM   SCIS" often lives entirely in field1
-                    // (field2 is empty). Normalize it to "MODEL_SERIAL" if possible.
                     if (!prn_token.empty()) {
-                        // Satellite antenna: PRN + block + SVN, using field1 as block/model fallback.
-                        std::string block_norm = sanitize(block_token.empty() ? field1 : block_token);
+                        // Satellite antenna: use PRN as primary identifier
+                        std::string block_norm = sanitize(field1);
                         std::string svn_norm = sanitize(svn_token);
+                        
+                        // Format: "PRN_BLOCK_SVN" or "PRN_BLOCK" if no SVN
                         if (!svn_norm.empty())
                             current.type = prn_token + "_" + block_norm + "_" + svn_norm;
                         else
                             current.type = prn_token + "_" + block_norm;
+                        
+                        log_manager_.getLogger("product_parser")->debug(
+                            "Parsed satellite antenna: PRN={}, Block={}, SVN={} -> type='{}'",
+                            prn_token, field1, svn_token, current.type);
                     }
                     else {
-                        // Receiver antenna
+                        // Receiver antenna - use original approach
                         std::string model = field1;
                         std::string serial = field2;
 
@@ -758,6 +943,38 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Parse bias (BIA) product file into BiasData entries.
+     *
+     * Parses a BIA file and extracts OSB records contained inside the
+     * `+BIAS/SOLUTION` ... `-BIAS/SOLUTION` block. For each valid OSB record
+     * a `BiasData` entry is created and appended to the output vector.
+     *
+     * Behavior and validation:
+     * - The output container `biases` is cleared on entry and populated on success.
+     * - Only lines starting with the fixed-width OSB record format are considered.
+     * - Satellite PRN fields are validated (3-char, supported system letter + 2 digits).
+     * - Observation code is taken from `OBS1`/`OBS2` and validated; unexpected codes
+     *   are skipped and logged.
+     * - Bias values are expected in nanoseconds (`ns`) and are converted to meters:
+     *   `bias_m = bias_ns * Constants::SPEED_OF_LIGHT * 1e-9`. Standard deviation is
+     *   converted the same way when present.
+     * - Start/end times are parsed via an internal `parse_bias_time` helper which
+     *   expects the BIA time string form `YYYY:DDD:SSSS.SS` (year, day-of-year,
+     *   seconds-of-day) and converts to `GnssTime` using `TimeUtils::gregorianToGpsTime`.
+     *   Records with invalid time ranges are skipped.
+     *
+     * Side effects:
+     * - Logs warnings/errors via the configured `LogManager` for malformed lines,
+     *   invalid numeric values, unexpected units, or time parsing failures.
+     * - Catches and logs all `std::exception` derived exceptions and returns `false`.
+     *
+     * @param[in]  bia_path Filesystem path to the BIA file.
+     * @param[out] biases   Vector that will be cleared and populated with parsed
+     *                      `BiasData` entries (bias in meters, std_dev in meters).
+     * @return `true` if at least one valid bias entry was parsed and placed into
+     *         `biases`; `false` on I/O error, parse failure, or exception.
+     */
     bool ProductParser::parseBia(const std::filesystem::path& bia_path, std::vector<BiasData>& biases) {
         try {
             std::ifstream file(bia_path);
@@ -779,7 +996,7 @@ namespace GnssProcessor {
                     int year = std::stoi(time_str.substr(0, 4));
                     int doy = std::stoi(time_str.substr(5, 3));
                     double seconds = std::stod(time_str.substr(9));
-                    if (year < 1980 || doy < 1 || doy > 366 || seconds < 0.0 || seconds >= 86400.0) {
+                    if (year < 1980 || doy < 1 || doy > 366 || seconds < 0.0 || seconds >= TimeUtils::SECONDS_IN_DAY) {
                         return GnssTime{ 0, 0.0 };
                     }
 
@@ -919,7 +1136,9 @@ namespace GnssProcessor {
                             data.satellite, data.signal, line_count, start, end);
                         continue;
                     }
-
+                    log_manager_.getLogger("product_parser")->trace(
+                        "Parsed BIA OSB line {} -> svn='{}', prn='{}', signal='{}', bias_ns={:.6f}, bias_m={:.9f}, start='{}', end='{}'",
+                        line_count, svn, prn, signal, bias, data.bias, start, end);
                     biases.push_back(data);
                 }
                 else if (in_solution_block) {
@@ -941,6 +1160,31 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Parse Earth Rotation Parameter (ERP) file into ErpData entries.
+     *
+     * Reads a simple whitespace-separated ERP table and extracts rows containing:
+     *   MJD xp yp ut1_utc
+     * For each row an ::ErpData entry is created:
+     *  - `ErpData::time` is populated using the MJD value converted to seconds
+     *    relative to MJD 51544.5 and stored in the GnssTime.tow field (week left as 0).
+     *  - `ErpData::xp`, `ErpData::yp`, and `ErpData::ut1_utc` are set directly
+     *    from the parsed columns.
+     *
+     * Behavior:
+     * - The output container `erps` is cleared on entry and appended to for each
+     *   parsed row that contains at least four numeric columns.
+     * - Lines containing the text "MJD" are skipped (header detection).
+     *
+     * Side effects:
+     * - Logs progress and errors via the configured LogManager.
+     * - Catches and logs all std::exception derived exceptions and returns false.
+     *
+     * @param[in]  erp_path Filesystem path to the ERP file.
+     * @param[out] erps     Vector that will be cleared and populated with parsed ErpData entries.
+     * @return `true` if one or more ERP entries were parsed and appended to `erps`;
+     *         `false` on I/O error, parse failure, or exception.
+     */
     bool ProductParser::parseErp(const std::filesystem::path& erp_path, std::vector<ErpData>& erps) {
         try {
             std::ifstream file(erp_path);
@@ -957,7 +1201,7 @@ namespace GnssProcessor {
                 double mjd, xp, yp, ut1_utc;
                 iss >> mjd >> xp >> yp >> ut1_utc;
                 ErpData data;
-                data.time = GnssTime{ 0, (mjd - 51544.5) * 86400.0 };
+                data.time = GnssTime{ 0, (mjd - 51544.5) * TimeUtils::SECONDS_IN_DAY };
                 data.xp = xp;
                 data.yp = yp;
                 data.ut1_utc = ut1_utc;
@@ -973,6 +1217,32 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Parse Klobuchar ionospheric coefficients from a BRDC/RINEX file.
+     *
+     * Scans the input broadcast/navigation file header for ionospheric correction
+     * records and extracts the GPS Klobuchar alpha (A0..A3) and beta (B0..B3)
+     * coefficients. Collected coefficients are appended to `klobuchar_coeffs` in
+     * the order: [A0, A1, A2, A3, B0, B1, B2, B3].
+     *
+     * Behavior:
+     * - The output vector `klobuchar_coeffs` is cleared on entry.
+     * - The parser inspects header lines containing "IONOSPHERIC CORR" and accepts
+     *   types such as "GPSA"/"GAL" (alpha) and "GPSB" (beta) as provided by the
+     *   file. Non-finite or missing numeric values are treated as parse failures.
+     *
+     * Side effects:
+     * - Logs informational, warning, and error messages via the configured LogManager.
+     * - Catches and logs all `std::exception` derived exceptions; on error the
+     *   output vector is cleared and the function returns false.
+     *
+     * @param[in]  brdc_path           Filesystem path to the broadcast/navigation file.
+     * @param[out] klobuchar_coeffs    Vector that will be cleared and populated with
+     *                                8 Klobuchar coefficients on success.
+     * @return `true` if exactly 8 coefficients (4 alpha + 4 beta) were parsed and
+     *         stored in `klobuchar_coeffs`; `false` on I/O error, parse failure,
+     *         incomplete coefficients, or exception.
+     */
     bool ProductParser::parseKlobuchar(const std::filesystem::path& brdc_path, std::vector<double>& klobuchar_coeffs) {
         try {
             std::ifstream file(brdc_path);
@@ -1052,6 +1322,42 @@ namespace GnssProcessor {
         }
     }
 
+    /**
+     * @brief Load configured external products and compute Sun ephemeris.
+     *
+     * Queries `GnssConfig` for product file paths and attempts to load the common
+     * auxiliary products used by the processing pipeline:
+     *  - Orbit products (SP3) via `getOrbitPaths()` + `parseSp3` => `orbits_`
+     *  - Satellite clocks (CLK) via `getProductPath("CLK")` + `parseClk` => `clocks_`
+     *  - Antenna models (ATX) via `getProductPath("ATX")` + `parseAtx` => `antennas_`
+     *  - Differential biases (BIA) via `getProductPath("BIA")` + `parseBia` => `biases_`
+     *  - Earth rotation parameters (ERP) via `getProductPath("ERP")` + `parseErp` => `erps_`
+     *  - Klobuchar ionospheric coefficients (from RNX/BRDC) via `getProductPath("RNX")` +
+     *    `parseKlobuchar` => `klobuchar_coeffs_`
+     *
+     * After loading products the method obtains observation epoch times from the
+     * associated `RinexParser` (`rinex_parser_->getEpochTimes()`) and requests the
+     * planetary model to compute Sun ephemeris (`planetary_.parseSunEphemeris`),
+     * storing results in `sun_ephemeris_`.
+     *
+     * Side effects:
+     *  - Populates member containers: `orbits_`, `clocks_`, `antennas_`, `biases_`,
+     *    `erps_`, `klobuchar_coeffs_`, and `sun_ephemeris_`.
+     *  - Emits informational, warning and error messages via `LogManager` (loggers
+     *    such as `"ppp_model"` and `"product_parser"`).
+     *
+     * Requirements and error handling:
+     *  - `rinex_parser_` MUST be set (call `setRinexParser`) before invoking this
+     *    method; the implementation calls `rinex_parser_->getEpochTimes()` without
+     *    a null check.
+     *  - Individual parser functions (`parseSp3`, `parseClk`, etc.) perform their
+     *    own validation, logging, and exception handling and return `bool` to
+     *    indicate success; `loadProducts` logs failures but does not throw.
+     *
+     * @note This function returns `void`. Failures to load specific products are
+     *       logged; callers should inspect the populated member containers (or
+     *       application logs) to determine load success.
+     */
     void ProductParser::loadProducts() {
         auto sp3_paths = getOrbitPaths();
         if (!sp3_paths.empty()) {

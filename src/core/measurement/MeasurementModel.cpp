@@ -1,3 +1,15 @@
+﻿/**
+ * @file MeasurementModel.cpp
+ * @brief Implements measurement vector, design matrix and covariance assembly for PPP Kalman updates.
+ *
+ * The implementation converts a set of PPP observations and the current Kalman state
+ * into an EpochMeasurement suitable for Kalman filter processing. Responsibilities:
+ *  - Ensure ambiguity states exist for phase iono-free combinations.
+ *  - Compute LOS-based Jacobian rows using the current receiver position.
+ *  - Assemble innovations, H matrix and per-measurement variances R_v.
+ *  - Perform basic validation and logging for invalid/low-quality data.
+ */
+
 #include "PppModel.hpp"
 #include "PppTypes.hpp"
 #include "MeasurementModel.hpp"
@@ -5,9 +17,21 @@
 #include "TimeUtils.hpp"
 #include <stdexcept>
 #include <algorithm>
+#include <set>
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a MeasurementModel.
+     *
+     * Stores references to the provided managers and utilities. Emits an informational
+     * log with configured signal priorities and processing mode.
+     *
+     * @param state_manager Non-owning reference to the StateManager for state access and ambiguity bookkeeping.
+     * @param ppp_model Const reference to the PppModel used to obtain modeled observables.
+     * @param config Const reference to the global GnssConfig providing processing parameters.
+     * @param log_manager Non-owning reference to the LogManager used for logging.
+     */
     MeasurementModel::MeasurementModel(StateManager& state_manager, const PppModel& ppp_model,
         const GnssConfig& config, LogManager& log_manager)
         : state_manager_(state_manager), ppp_model_(ppp_model), config_(config), ppp_utils_(log_manager), log_manager_(log_manager) {
@@ -16,6 +40,31 @@ namespace GnssProcessor {
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
     }
 
+    /**
+     * @brief Build an epoch measurement update from parsed PPP observations.
+     *
+     * This method is read-only with respect to the Kalman state except for ensuring
+     * ambiguity entries exist in the StateManager when required (it will call
+     * StateManager::addAmbiguity). The routine:
+     *  - Pre-pass observations to create ambiguity states for ionosphere-free phase combos.
+     *  - Validate geometry/observations and apply elevation mask and other filters.
+     *  - Compute line-of-sight (LOS) using the current receiver position from the state.
+     *  - Assemble the innovation vector (observed - predicted), Jacobian H and per-measurement variances R_v.
+     *
+     * Notes:
+     *  - Only GPS measurements with ionosphere-free dual-frequency combinations are processed.
+     *  - Ambiguities are expected to be stored in the StateManager keyed as "<sat>_<ref_type>".
+     *
+     * @param observations Vector of PPP observations for the epoch (may be empty).
+     * @param current_state Current Kalman state vector (read-only); the implementation will also retrieve the authoritative state vector
+     *                      from StateManager where needed (post ambiguity additions).
+     * @return Populated EpochMeasurement containing innovations, H, R_v and ancillary vectors. On error or no usable observations,
+     *         an EpochMeasurement with empty or partially filled fields is returned; callers should call validateMeasurementUpdate()
+     *         before using the result for a Kalman update.
+     *
+     * @throws std::exception Propagates only if an unexpected runtime error occurs during assembly. Individual observation errors are caught
+     *                       and logged; failing observations are skipped.
+     */
     EpochMeasurement MeasurementModel::computeMeasurementUpdate(const std::vector<PppObservation>& observations,
         const Eigen::VectorXd& current_state) {
         EpochMeasurement update;
@@ -31,31 +80,57 @@ namespace GnssProcessor {
             return update;
         }
 
+        // === First-epoch ISB initialization ===
+        // If this is the first epoch and we have non-GPS systems, estimate initial ISB
+        // from code observations to avoid massive innovations that would be flagged as outliers.
+        if (!isb_initialized_) {
+            initializeInterSystemBiases(observations, epoch_prefix);
+            isb_initialized_ = true;
+        }
+
         // Pre-pass to ensure phase ambiguities exist
-        // We only create ambiguities for phase measurements that we *might* use.
+        std::set<std::string> required_ambiguities;
         for (const auto& obs : observations) {
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (ref_type.empty() || ref_type[0] != 'L') continue;
-
-                // Iono-free only (dual-freq combo key like L1C_L2W)
                 const bool is_iono_free = (ref_type.find("_") != std::string::npos);
                 if (!is_iono_free) continue;
-
-                // Must have full modeled triple to be usable
-                if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) {
-                    continue;
-                }
+                if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) continue;
 
                 const std::string amb_key = obs.satellite + "_" + ref_type;
-                if (state_manager_.getAmbiguityIndex(amb_key) < 0) {
-                    // Float ambiguity starts at 0 in meters; variance comes from config in StateManager
-                    state_manager_.addAmbiguity(amb_key, 0.0);
+                required_ambiguities.insert(amb_key);
 
+                if (state_manager_.getAmbiguityIndex(amb_key) < 0) {
+
+                    // Get current state vector (fresh copy)
+                    const Eigen::VectorXd x_now = state_manager_.getStateVector();
+                    const double rx_clock = x_now(state_manager_.getClockIndex());
+                    const double zwd = x_now(state_manager_.getTropoIndex());
+
+                    // Try to compute an approximate mapping_wet from the stored obs if available
+                    const double mapping_wet = obs.mf_w; // measurement_model later uses this same value
+                    double seed_value = 0.0;
+                    try {
+                        // observed_if_meters and modeled_if_meters exist (we're in iono-free phase pre-pass)
+                        const double observed_if_m = obs.observed.at(ref_type); // meters (phase * wl)
+                        const double modeled_if_m = obs.modeled.at(ref_type);  // modeled value in meters
+
+                        // approximate ambiguity = obs - modeled - clock - zwd * mapping_wet
+                        seed_value = observed_if_m - modeled_if_m - rx_clock - (mapping_wet * zwd);
+                    }
+                    catch (...) {
+                        seed_value = 0.0;
+                    }
+                    state_manager_.addAmbiguity(amb_key, seed_value);
                     log_manager_.getLogger("measurement_model")->debug(
-                        "{}Added missing ambiguity state for {} (key={})", epoch_prefix, obs.satellite, amb_key);
+                        "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m", epoch_prefix, obs.satellite, amb_key, seed_value);
                 }
             }
         }
+
+        // Remove ambiguities that are not needed by this epoch (prune stale ones).
+        // This keeps the state vector compact and avoids unbounded growth of unused ambiguity states.
+        state_manager_.pruneAmbiguitiesExcept(required_ambiguities);
 
         // After potential resizing, always use the up-to-date state vector size.
         const Eigen::VectorXd x = state_manager_.getStateVector();
@@ -69,8 +144,15 @@ namespace GnssProcessor {
             return update;
         }
 
+        /*!
+         * @brief Predicate to determine whether a given observation/ref_type pair is usable.
+         *
+         * Criteria:
+         *  - Non-empty ref_type beginning with 'C' or 'L'.
+         *  - Ionosphere-free dual-frequency combination (contains '_').
+         *  - Must have observed, variance and modeled entries for the ref_type.
+         */
         auto isUsableMeas = [&](const PppObservation& obs, const std::string& ref_type) -> bool {
-            if (obs.system != System::GPS) return false;
             if (ref_type.empty()) return false;
 
             // Only code/phase combos
@@ -87,7 +169,7 @@ namespace GnssProcessor {
             return true;
         };
 
-        // Count only the measurements we will actually process (GPS + iono-free dual-freq combos)
+        // Count only the measurements we will actually process (iono-free dual-freq combos)
         size_t num_obs = 0;
         for (const auto& obs : observations) {
             for (const auto& [ref_type, observed] : obs.observed) {
@@ -125,71 +207,117 @@ namespace GnssProcessor {
 
         size_t row = 0;
         for (const auto& obs : observations) {
-            if (obs.system != System::GPS) continue;
+            // Use the geometry that was computed in computeModels() and stored in the observation.
+            // The satellite position (obs.sat_pos) is already in reception-time ECEF frame.
+            // We only need to recompute the LOS vector for the current state position (for Jacobian).
+            //
+            // Note: We do NOT call computeSatelliteGeometry() again here because:
+            //   1. It's computationally expensive (iterative TOF refinement)
+            //   2. The satellite position and all corrections are position-independent
+            //   3. We only need the LOS direction, which we can compute directly
 
-            // Recompute geometry at current linearization point (state position)
-            Eigen::Vector3d delta_r = obs.sat_pos - current_pos;
-            double range_computed = delta_r.norm();
-            if (range_computed < 1e-6 || !std::isfinite(range_computed)) {
+            // Validate stored geometry
+            if (obs.sat_pos.norm() < 1e6 || !obs.sat_pos.allFinite()) {
                 log_manager_.getLogger("measurement_model")->warn(
-                    "{}Invalid computed range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, range_computed,
+                    "{}Invalid stored satellite position for {} at TOW {:.3f}, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
-            Eigen::Vector3d los_current = delta_r / range_computed;
 
-            // Range used when obs.modeled was formed in computeModels()
-            const double range_ref = obs.range;
-            if (range_ref < 1e-6 || !std::isfinite(range_ref)) {
+            if (obs.range < 1e6 || !std::isfinite(obs.range)) {
                 log_manager_.getLogger("measurement_model")->warn(
-                    "{}Invalid reference range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, range_ref,
+                    "{}Invalid stored range for {} at TOW {:.3f}: {:.3f} m, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.range,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
 
-            const double range_delta = range_computed - range_ref;
-
-            double elev_deg = obs.elevation;
-            if (!std::isfinite(elev_deg)) {
-                log_manager_.getLogger("measurement_model")->debug(
-                    "{}Invalid elevation for {} at TOW {:.3f}: {} deg, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, elev_deg,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-                continue;
-            }
-            if (elev_deg < config_.getElevationMaskDeg()) {
+            if (obs.elevation < config_.getElevationMaskDeg()) {
                 log_manager_.getLogger("measurement_model")->debug(
                     "{}Satellite {} below elevation mask at TOW {:.3f}, elevation={:.3f} deg, mode={}",
-                    epoch_prefix,
-                    obs.satellite, obs.time.tow, elev_deg,
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.elevation,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
 
-            double mapping_current = obs.mf_w;
+            // Compute LOS vector from current state position to satellite
+            const Eigen::Vector3d delta = obs.sat_pos - current_pos;
+            const double range_current = delta.norm();
+            if (range_current < 1e6) {
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Invalid current range for {} at TOW {:.3f}: {:.3f} m, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, range_current,
+                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                continue;
+            }
+            const Eigen::Vector3d los_current = delta / range_current;
+
+            // Range delta: difference between current and reference range
+            // This accounts for the linearization from reference position to current state
+            const double range_ref = obs.range;
+            const double range_delta = range_current - range_ref;
+
+            // Use the stored wet mapping function from computeModels()
+            // (elevation-dependent, but elevation change from position delta is negligible)
+            const double mapping_wet = obs.mf_w;
+            if (mapping_wet <= 0.0 || !std::isfinite(mapping_wet)) {
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Invalid wet mapping function for {} at TOW {:.3f}: {:.3f}, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, mapping_wet,
+                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                continue;
+            }
 
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (!isUsableMeas(obs, ref_type)) continue;
 
                 try {
+                    // Build Jacobian row
                     Eigen::VectorXd jacobian = Eigen::VectorXd::Zero(state_size);
                     jacobian.segment<3>(state_manager_.getPositionIndex()) = -los_current;
                     jacobian(state_manager_.getClockIndex()) = 1.0;
-                    jacobian(state_manager_.getTropoIndex()) = mapping_current;
+                    jacobian(state_manager_.getTropoIndex()) = mapping_wet;
 
+                    // Add inter-system time offset for non-GPS systems
+                    // The time offset is added to the predicted observable for non-GPS systems
+                    std::string system_name;
+                    switch (obs.system) {
+                        case System::GPS: system_name = ""; break;  // GPS is reference - no ISB
+                        case System::Galileo: system_name = "Galileo"; break;
+                        case System::GLONASS: system_name = "GLONASS"; break;
+                        case System::BeiDou: system_name = "BeiDou"; break;
+                        case System::QZSS: system_name = "QZSS"; break;
+                        case System::SBAS: system_name = "SBAS"; break;
+                        default: system_name = ""; break;
+                    }
+                    
+                    size_t time_offset_idx = state_manager_.getSystemTimeOffsetIndex(system_name);
+                    double time_offset_value = 0.0;
+                    if (!system_name.empty() && time_offset_idx < state_size) {
+                        jacobian(time_offset_idx) = 1.0;
+                        time_offset_value = x(time_offset_idx);
+                    }
+
+                    // The modeled value from processIonoFreeObservation includes:
+                    //   range - sat_clock*c + tropo_zhd*mf_d + antenna + shapiro + solid_tide + ...
+                    // 
+                    // It does NOT include receiver clock (that's in the state).
+                    // It DOES include a reference troposphere (slant_dry_delay = tropo_zhd * mf_d).
+                    //
+                    // Our state estimates: [position, receiver_clock, ZWD, ..., time_offsets, ambiguities]
+                    // 
+                    // Predicted = modeled + range_delta + receiver_clock + (ZWD * mf_w) + time_offset
+                    
                     const double modeled = obs.modeled.at(ref_type);
-                    const double clk = x(state_manager_.getClockIndex());
-                    const double tropo_term = mapping_current * x(state_manager_.getTropoIndex());
+                    const double rx_clk = x(state_manager_.getClockIndex());
+                    const double zwd = x(state_manager_.getTropoIndex());
+                    const double tropo_wet_term = mapping_wet * zwd;
 
-                    // Adjust modeled (which was built using range_ref) to current range_computed
-                    double predicted = (modeled + range_delta) + clk + tropo_term;
+                    // Predicted observable at current state (includes time offset for non-GPS)
+                    double predicted = modeled + range_delta + rx_clk + tropo_wet_term + time_offset_value;
 
-                    // Ambiguity handling (read-only): always apply state ambiguity, do not modify it here
+                    // Ambiguity handling for phase measurements
                     if (ref_type[0] == 'L') {
                         const std::string amb_key = obs.satellite + "_" + ref_type;
                         int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
@@ -200,8 +328,10 @@ namespace GnssProcessor {
                         predicted += x(amb_idx);
                     }
 
-                    update.innovations(row) = obs.observed.at(ref_type) - predicted;
+                    // Innovation = observed - predicted
+                    update.innovations(row) = observed - predicted;
 
+                    // Measurement variance with elevation-dependent scaling
                     const double base_var = obs.variances.at(ref_type);
                     const double scale = state_manager_.getMeasurementVarianceScale(obs.satellite, ref_type);
                     update.R_v(row) = base_var * scale;
@@ -214,6 +344,11 @@ namespace GnssProcessor {
                         update.innovations(row) = 0.0;
                         update.R_v(row) = 1e6;
                     }
+
+                    log_manager_.getLogger("measurement_model")->trace(
+                        "{}Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}, range_delta={:.3f}",
+                        epoch_prefix, obs.satellite, ref_type,
+                        observed, modeled, predicted, update.innovations(row), range_delta);
 
                     row++;
                 }
@@ -247,6 +382,18 @@ namespace GnssProcessor {
         return update;
     }
 
+    /**
+     * @brief Validate an assembled EpochMeasurement before using it for a Kalman update.
+     *
+     * Checks for:
+     *  - Dimension consistency between innovations, R_v, H and ancillary vectors.
+     *  - Finite and positive variances.
+     *  - Finite innovations and finite Jacobian rows.
+     *  - Logs warnings for large residuals (but does not automatically reject them unless they break validity).
+     *
+     * @param measurement EpochMeasurement to validate.
+     * @return True if the measurement passes structural and basic numerical checks; false otherwise.
+     */
     bool MeasurementModel::validateMeasurementUpdate(const EpochMeasurement& measurement) const {
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix = "[" + epoch_tag + "] ";
@@ -307,6 +454,99 @@ namespace GnssProcessor {
             measurement.innovations.size(),
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
         return true;
+    }
+
+    void MeasurementModel::initializeInterSystemBiases(const std::vector<PppObservation>& observations,
+        const std::string& epoch_prefix) {
+        // Collect code residuals (observed - modeled) per system
+        // GPS residuals include receiver clock; other systems include clock + ISB
+        // ISB ≈ median(non-GPS residuals) - median(GPS residuals)
+
+        std::map<std::string, std::vector<double>> system_residuals;
+
+        const Eigen::VectorXd x = state_manager_.getStateVector();
+        const double rx_clk = x(state_manager_.getClockIndex());
+        const double zwd = x(state_manager_.getTropoIndex());
+
+        for (const auto& obs : observations) {
+            if (obs.elevation < config_.getElevationMaskDeg()) continue;
+
+            // Find a code iono-free observation
+            for (const auto& [ref_type, observed] : obs.observed) {
+                if (ref_type.empty() || ref_type[0] != 'C') continue;
+                if (ref_type.find('_') == std::string::npos) continue;  // Must be iono-free
+                if (!obs.modeled.count(ref_type)) continue;
+
+                const double modeled = obs.modeled.at(ref_type);
+                const double tropo_wet = obs.mf_w * zwd;
+
+                // Residual without ISB: observed - (modeled + clock + tropo_wet)
+                const double residual = observed - modeled - rx_clk - tropo_wet;
+
+                std::string sys_name;
+                switch (obs.system) {
+                case System::GPS: sys_name = "GPS"; break;
+                case System::Galileo: sys_name = "Galileo"; break;
+                case System::GLONASS: sys_name = "GLONASS"; break;
+                case System::BeiDou: sys_name = "BeiDou"; break;
+                case System::QZSS: sys_name = "QZSS"; break;
+                case System::SBAS: sys_name = "SBAS"; break;
+                default: continue;
+                }
+
+                system_residuals[sys_name].push_back(residual);
+                break;  // One code obs per satellite is enough
+            }
+        }
+
+        // Helper lambda to compute median
+        auto computeMedian = [](std::vector<double>& values) -> double {
+            if (values.empty()) return 0.0;
+            size_t n = values.size();
+            size_t mid = n / 2;
+            std::nth_element(values.begin(), values.begin() + mid, values.end());
+            if (n % 2 == 0) {
+                // Even count: average of two middle elements
+                double upper = values[mid];
+                std::nth_element(values.begin(), values.begin() + mid - 1, values.end());
+                double lower = values[mid - 1];
+                return (lower + upper) / 2.0;
+            }
+            return values[mid];
+            };
+
+        // Compute GPS median residual as reference
+        if (system_residuals.find("GPS") == system_residuals.end() ||
+            system_residuals["GPS"].empty()) {
+            log_manager_.getLogger("measurement_model")->warn(
+                "{}Cannot initialize ISB: no GPS code observations", epoch_prefix);
+            return;
+        }
+
+        double gps_median = computeMedian(system_residuals["GPS"]);
+
+        // Initialize ISB for each non-GPS system
+        Eigen::VectorXd x_updated = state_manager_.getStateVector();
+
+        for (auto& [sys_name, residuals] : system_residuals) {
+            if (sys_name == "GPS" || residuals.empty()) continue;
+
+            size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(sys_name);
+            if (isb_idx >= static_cast<size_t>(x_updated.size())) continue;
+
+            double sys_median = computeMedian(residuals);
+
+            // ISB = median(sys residuals) - median(GPS residuals)
+            const double isb_estimate = sys_median - gps_median;
+            x_updated(isb_idx) = isb_estimate;
+
+            log_manager_.getLogger("measurement_model")->info(
+                "{}Initialized {} ISB: {:.3f} m ({:.3e} s) from {} code obs (GPS ref: {} obs)",
+                epoch_prefix, sys_name, isb_estimate, isb_estimate / Constants::SPEED_OF_LIGHT,
+                residuals.size(), system_residuals["GPS"].size());
+        }
+
+        state_manager_.setStateVector(x_updated);
     }
 
 } // namespace GnssProcessor

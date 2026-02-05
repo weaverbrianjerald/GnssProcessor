@@ -1,3 +1,14 @@
+/**
+ * @file SinexParser.cpp
+ * @brief SINEX 2.02 file parser implementation.
+ *
+ * This translation unit implements the `SinexParser` declared in `SinexParser.hpp`.
+ * The parser reads SITE/ID, SOLUTION/EPOCHS and SOLUTION/ESTIMATE blocks and
+ * produces vectors of `SinexSite`, `SinexEpoch` and `SinexEstimate` entries.
+ *
+ * Logging is performed via spdlog for diagnostics and progress reporting.
+ */
+
 #include "SinexParser.hpp"
 #include <fstream>
 #include <sstream>
@@ -7,10 +18,24 @@
 
 namespace GnssProcessor {
 
+    /**
+     * @brief Construct a new SinexParser.
+     * @param file_path Path to the SINEX file to parse.
+     *
+     * The constructor sets a default SINEX version string used for light validation.
+     */
     SinexParser::SinexParser(const std::filesystem::path& file_path)
         : file_path_(file_path), version_("2.02") {
     }
 
+    /**
+     * @brief Parse the SINEX file provided at construction.
+     * @return True on successful parsing of at least one expected block (sites, epochs or estimates).
+     *
+     * This method opens the file, validates the header via `parseHeader` and then parses
+     * the individual data blocks via `parseDataBlocks`. It logs progress and errors using spdlog.
+     * If the file cannot be opened a `std::runtime_error` is thrown.
+     */
     bool SinexParser::parse() {
         spdlog::info("Parsing SINEX file: {}", file_path_.string());
         std::ifstream stream(file_path_);
@@ -36,18 +61,38 @@ namespace GnssProcessor {
         return true;
     }
 
+    /**
+     * @brief Retrieve parsed SITE/ID records.
+     * @return const reference to the vector of parsed `SinexSite` objects.
+     */
     const std::vector<SinexSite>& SinexParser::getSites() const {
         return sites_;
     }
 
+    /**
+     * @brief Retrieve parsed SOLUTION/EPOCHS records.
+     * @return const reference to the vector of parsed `SinexEpoch` objects.
+     */
     const std::vector<SinexEpoch>& SinexParser::getEpochs() const {
         return epochs_;
     }
 
+    /**
+     * @brief Retrieve parsed SOLUTION/ESTIMATE records.
+     * @return const reference to the vector of parsed `SinexEstimate` objects.
+     */
     const std::vector<SinexEstimate>& SinexParser::getEstimates() const {
         return estimates_;
     }
 
+    /**
+     * @brief Parse the SINEX header and extract the version string.
+     * @param stream Open input stream positioned at the start of the file.
+     * @return True if the header appears valid and the version was extracted; false otherwise.
+     *
+     * The expected header begins with the token "%=SNX". The version substring is taken
+     * from a fixed offset in the header line (implementation follows common SINEX formatting).
+     */
     bool SinexParser::parseHeader(std::ifstream& stream) {
         std::string line;
         if (!std::getline(stream, line)) {
@@ -76,6 +121,16 @@ namespace GnssProcessor {
         return true;
     }
 
+    /**
+     * @brief Parse the data blocks of the SINEX file.
+     * @param stream Input file stream positioned after the header.
+     * @return True if at least one expected block (SITE/ID, SOLUTION/EPOCHS, SOLUTION/ESTIMATE)
+     *         produced results; false otherwise.
+     *
+     * The method reads the file line-by-line, keeps track of the current block (entered with '+'
+     * and exited with '-') and parses lines in known blocks into the corresponding structures.
+     * Lines beginning with '*' are treated as comments and skipped.
+     */
     bool SinexParser::parseDataBlocks(std::ifstream& stream) {
         std::string line;
         std::string current_block;
@@ -144,6 +199,16 @@ namespace GnssProcessor {
         return !sites_.empty() || !epochs_.empty() || !estimates_.empty();
     }
 
+    /**
+     * @brief Parse a SINEX time string of the form "YY:DOY:SSSSS" into a GnssTime.
+     * @param time_str Time string in SINEX format (example: "24:129:00000").
+     * @return Corresponding `GnssTime` (GPS week and seconds-of-week). Returns GnssTime{0,0.0}
+     *         on parse error.
+     *
+     * The function accepts two-digit years and expands them to the 2000s (e.g., "24" -> 2024).
+     * Day-of-year (DOY) is converted to a Gregorian date and combined with seconds-of-day to
+     * compute the GPS week and time-of-week using `TimeUtils::gregorianToGpsTime`.
+     */
     GnssTime SinexParser::parseSinexTime(const std::string& time_str) const {
         // SINEX time format: YY:DOY:SSSSS (e.g., "24:129:00000")
         static const std::regex time_regex(R"((\d{2}):(\d{3}):(\d{5}))");
