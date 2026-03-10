@@ -1,4 +1,4 @@
-clear all; clc; close all;
+clear all; clc; %close all;
 
 fname = 'C:\GnssProcessor\build\x64-Release\logs\ambiguity_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\ambiguity_trace.csv';
@@ -132,7 +132,7 @@ for col = 1:nSys
             globalIdx = k;
         end
         err = double(T_sys.std_m(idx_key));
-        vals = double(T_sys.value_m(idx_key));
+        vals = [NaN; abs(diff(double(T_sys.value_m(idx_key)),1))];
         times = T_sys.utc(idx_key);
 
         % Scatter markers and draw vertical error bars only (no connecting lines)
@@ -140,11 +140,11 @@ for col = 1:nSys
         s = markerList{mod(k-1,numel(markerList))+1};
         scatter(times, vals, 36, 'Marker', s, 'MarkerEdgeColor', c, 'MarkerFaceColor', 'none');
         % Draw vertical errorbars without markers or connecting lines
-        if ~isempty(times)
-            % Use errorbar with no marker to draw vertical bars only
-            he = errorbar(times, vals, err, 'LineStyle', 'none', 'Color', c, 'CapSize', 8);
-            set(he, 'Marker', 'none');
-        end
+        % if ~isempty(times)
+        %     % Use errorbar with no marker to draw vertical bars only
+        %     he = errorbar(times, vals, err, 'LineStyle', 'none', 'Color', c, 'CapSize', 8);
+        %     set(he, 'Marker', 'none');
+        % end
         % Provide display name for legend
         % Create an invisible line object to show in legend (avoids duplicate entries)
         plt_temp_lng = plot(times(1), 0, 'Marker', s, 'LineStyle', 'none', 'Color', c, 'DisplayName', thisKey);

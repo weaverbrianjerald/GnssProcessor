@@ -100,30 +100,28 @@ namespace GnssProcessor {
                 const std::string amb_key = obs.satellite + "_" + ref_type;
                 required_ambiguities.insert(amb_key);
 
-                if (state_manager_.getAmbiguityIndex(amb_key) < 0) {
+                const int existing_amb_idx = state_manager_.getAmbiguityIndex(amb_key);
+                // Seed new ambiguities, and re-seed existing ones that were reset to 0
+                // (e.g. by MW slip detector or KF outlier handling).
+                const bool needs_seed = (existing_amb_idx < 0) ||
+                    (existing_amb_idx >= 0 && state_manager_.getStateVector()(existing_amb_idx) == 0.0);
 
-                    // Get current state vector (fresh copy)
+                if (needs_seed) {
                     const Eigen::VectorXd x_now = state_manager_.getStateVector();
-                    const double rx_clock = x_now(state_manager_.getClockIndex());
-                    const double zwd = x_now(state_manager_.getTropoIndex());
+                    const double seed_value = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
 
-                    // Try to compute an approximate mapping_wet from the stored obs if available
-                    const double mapping_wet = obs.mf_w; // measurement_model later uses this same value
-                    double seed_value = 0.0;
-                    try {
-                        // observed_if_meters and modeled_if_meters exist (we're in iono-free phase pre-pass)
-                        const double observed_if_m = obs.observed.at(ref_type); // meters (phase * wl)
-                        const double modeled_if_m = obs.modeled.at(ref_type);  // modeled value in meters
-
-                        // approximate ambiguity = obs - modeled - clock - zwd * mapping_wet
-                        seed_value = observed_if_m - modeled_if_m - rx_clock - (mapping_wet * zwd);
+                    if (existing_amb_idx < 0) {
+                        state_manager_.addAmbiguity(amb_key, seed_value);
+                        log_manager_.getLogger("measurement_model")->debug(
+                            "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m", epoch_prefix, obs.satellite, amb_key, seed_value);
+                    } else {
+                        // Re-seed an existing ambiguity that was reset to 0 (e.g. by MW slip detector)
+                        Eigen::VectorXd x_reseed = x_now;
+                        x_reseed(existing_amb_idx) = seed_value;
+                        state_manager_.setStateVector(x_reseed);
+                        log_manager_.getLogger("measurement_model")->debug(
+                            "{}Re-seeded reset ambiguity for {} (key={}), seed={:.3f} m", epoch_prefix, obs.satellite, amb_key, seed_value);
                     }
-                    catch (...) {
-                        seed_value = 0.0;
-                    }
-                    state_manager_.addAmbiguity(amb_key, seed_value);
-                    log_manager_.getLogger("measurement_model")->debug(
-                        "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m", epoch_prefix, obs.satellite, amb_key, seed_value);
                 }
             }
         }
@@ -203,18 +201,11 @@ namespace GnssProcessor {
         update.satellite_ids.reserve(num_obs);
         update.signal_types.reserve(num_obs);
 
-        Eigen::Vector3d current_pos = x.segment<3>(state_manager_.getPositionIndex());
-
         size_t row = 0;
         for (const auto& obs : observations) {
             // Use the geometry that was computed in computeModels() and stored in the observation.
-            // The satellite position (obs.sat_pos) is already in reception-time ECEF frame.
-            // We only need to recompute the LOS vector for the current state position (for Jacobian).
-            //
-            // Note: We do NOT call computeSatelliteGeometry() again here because:
-            //   1. It's computationally expensive (iterative TOF refinement)
-            //   2. The satellite position and all corrections are position-independent
-            //   3. We only need the LOS direction, which we can compute directly
+            // The satellite position, LOS, range, and all corrections are pre-computed and stored
+            // in the PppObservation; we use them directly for the Jacobian and innovation assembly.
 
             // Validate stored geometry
             if (obs.sat_pos.norm() < 1e6 || !obs.sat_pos.allFinite()) {
@@ -241,22 +232,18 @@ namespace GnssProcessor {
                 continue;
             }
 
-            // Compute LOS vector from current state position to satellite
-            const Eigen::Vector3d delta = obs.sat_pos - current_pos;
-            const double range_current = delta.norm();
-            if (range_current < 1e6) {
+            // Use the stored LOS unit vector from computeModels().
+            // The LOS was computed at the linearization position (obs.rx_pos_linearization).
+            // When the current state position differs, the range correction term
+            // (-LOS · pos_delta) accounts for the first-order geometric range change.
+            if (obs.los.norm() < 0.5 || !obs.los.allFinite()) {
                 log_manager_.getLogger("measurement_model")->warn(
-                    "{}Invalid current range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                    epoch_prefix, obs.satellite, obs.time.tow, range_current,
+                    "{}Invalid stored LOS for {} at TOW {:.3f}, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow,
                     config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
                 continue;
             }
-            const Eigen::Vector3d los_current = delta / range_current;
-
-            // Range delta: difference between current and reference range
-            // This accounts for the linearization from reference position to current state
-            const double range_ref = obs.range;
-            const double range_delta = range_current - range_ref;
+            const Eigen::Vector3d los_current = obs.los;
 
             // Use the stored wet mapping function from computeModels()
             // (elevation-dependent, but elevation change from position delta is negligible)
@@ -278,6 +265,27 @@ namespace GnssProcessor {
                     jacobian.segment<3>(state_manager_.getPositionIndex()) = -los_current;
                     jacobian(state_manager_.getClockIndex()) = 1.0;
                     jacobian(state_manager_.getTropoIndex()) = mapping_wet;
+
+                    // Tropospheric gradient contribution (Chen & Herring, 1997)
+                    // dm_grad = mf_grad * (Gn * cos(az) + Ge * sin(az))
+                    // mf_grad = 1 / (sin(el) * tan(el) + 0.0032)
+                    double tropo_grad_term = 0.0;
+                    if (state_manager_.hasTropoGradients()) {
+                        const double el_rad = obs.elevation * Constants::PI / 180.0;
+                        const double az_rad = obs.azimuth * Constants::PI / 180.0;
+                        const double sin_el = std::sin(el_rad);
+                        const double tan_el = std::tan(el_rad);
+                        const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
+                        const double cos_az = std::cos(az_rad);
+                        const double sin_az = std::sin(az_rad);
+
+                        jacobian(state_manager_.getTropoGradientNorthIndex()) = mf_grad * cos_az;
+                        jacobian(state_manager_.getTropoGradientEastIndex()) = mf_grad * sin_az;
+
+                        const double gn = x(state_manager_.getTropoGradientNorthIndex());
+                        const double ge = x(state_manager_.getTropoGradientEastIndex());
+                        tropo_grad_term = mf_grad * (gn * cos_az + ge * sin_az);
+                    }
 
                     // Add inter-system time offset for non-GPS systems
                     // The time offset is added to the predicted observable for non-GPS systems
@@ -305,17 +313,34 @@ namespace GnssProcessor {
                     // It does NOT include receiver clock (that's in the state).
                     // It DOES include a reference troposphere (slant_dry_delay = tropo_zhd * mf_d).
                     //
+                    // The modeled value was computed at the linearization position
+                    // (obs.rx_pos_linearization). When the current state position differs
+                    // from the linearization point, we must apply a first-order range
+                    // correction so the innovation is consistent with the EKF formulation:
+                    //   predicted = h(x0) + H_pos * (x - x0) + clock + tropo + ...
+                    // where H_pos = -LOS.  The range correction accounts for the
+                    // geometric range change due to the position delta.
+                    //
                     // Our state estimates: [position, receiver_clock, ZWD, ..., time_offsets, ambiguities]
                     // 
-                    // Predicted = modeled + range_delta + receiver_clock + (ZWD * mf_w) + time_offset
+                    // Predicted = modeled + range_correction + receiver_clock + (ZWD * mf_w) + time_offset
                     
                     const double modeled = obs.modeled.at(ref_type);
                     const double rx_clk = x(state_manager_.getClockIndex());
                     const double zwd = x(state_manager_.getTropoIndex());
                     const double tropo_wet_term = mapping_wet * zwd;
 
+                    // Range correction for position delta from linearization point.
+                    // modeled was computed with range = |sat_pos - rx_pos_linearization|.
+                    // The current state position may differ, so correct the modeled
+                    // range by the first-order term: delta_range = -LOS · (pos_current - pos_linearization).
+                    // This is equivalent to the WLS approach: range_delta = |sat - pos_current| - |sat - pos_lin|.
+                    const Eigen::Vector3d pos_current = x.segment<3>(state_manager_.getPositionIndex());
+                    const Eigen::Vector3d pos_delta = pos_current - obs.rx_pos_linearization;
+                    const double range_correction = -los_current.dot(pos_delta);
+
                     // Predicted observable at current state (includes time offset for non-GPS)
-                    double predicted = modeled + range_delta + rx_clk + tropo_wet_term + time_offset_value;
+                    double predicted = modeled + range_correction + rx_clk + tropo_wet_term + tropo_grad_term + time_offset_value;
 
                     // Ambiguity handling for phase measurements
                     if (ref_type[0] == 'L') {
@@ -332,9 +357,7 @@ namespace GnssProcessor {
                     update.innovations(row) = observed - predicted;
 
                     // Measurement variance with elevation-dependent scaling
-                    const double base_var = obs.variances.at(ref_type);
-                    const double scale = state_manager_.getMeasurementVarianceScale(obs.satellite, ref_type);
-                    update.R_v(row) = base_var * scale;
+					update.R_v(row) = obs.variances.at(ref_type); // From PppModel, already includes elevation scaling
 
                     update.H.row(row) = jacobian;
                     update.satellite_ids.push_back(obs.satellite);
@@ -346,9 +369,9 @@ namespace GnssProcessor {
                     }
 
                     log_manager_.getLogger("measurement_model")->trace(
-                        "{}Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}, range_delta={:.3f}",
+                        "{}Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}",
                         epoch_prefix, obs.satellite, ref_type,
-                        observed, modeled, predicted, update.innovations(row), range_delta);
+                        observed, modeled, predicted, update.innovations(row));
 
                     row++;
                 }

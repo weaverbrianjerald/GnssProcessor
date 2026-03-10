@@ -100,7 +100,11 @@ if (!state_trace_.is_open()) return;
 
 // On first call, complete the header line with dynamic time-offset columns
 if (!state_header_written_) {
-    const auto& time_offset_systems = state_manager.getSystemsWithTimeOffsets();
+// Append gradient columns if enabled
+if (state_manager.hasTropoGradients()) {
+    state_trace_ << ",gn_m,gn_std_m,ge_m,ge_std_m";
+}
+const auto& time_offset_systems = state_manager.getSystemsWithTimeOffsets();
     for (const auto& sys : time_offset_systems) {
         state_trace_ << "," << sys << "_m," << sys << "_std_m";
     }
@@ -153,6 +157,14 @@ auto std_at = [&cov](size_t idx) -> double {
         state_trace_ << ","
                      << sv(static_cast<Eigen::Index>(iono_idx)) << ","
                      << std_at(iono_idx);
+    }
+
+    // Tropospheric gradient states (Gn, Ge)
+    if (state_manager.hasTropoGradients()) {
+        const size_t gn_idx = state_manager.getTropoGradientNorthIndex();
+        const size_t ge_idx = state_manager.getTropoGradientEastIndex();
+        state_trace_ << "," << sv(static_cast<Eigen::Index>(gn_idx)) << "," << std_at(gn_idx)
+                     << "," << sv(static_cast<Eigen::Index>(ge_idx)) << "," << std_at(ge_idx);
     }
     
     // Write inter-system time offset values (one pair of columns per system)

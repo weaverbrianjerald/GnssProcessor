@@ -9,6 +9,7 @@
 
 #include "StateManager.hpp"
 #include "LogManager.hpp"
+#include "Constants.hpp"
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -59,8 +60,18 @@ namespace GnssProcessor {
      * @param config Read-only configuration providing default initial standard deviations.
      */
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
-        : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config) {
+        : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config),
+          gradient_north_idx_(std::numeric_limits<size_t>::max()),
+          gradient_east_idx_(std::numeric_limits<size_t>::max()) {
         
+        // If tropo gradients are enabled, insert Gn and Ge right after the last
+        // base core state (after ZWD for PPP, after iono for PPP-RTK).
+        if (config_.estimateTropoGradients()) {
+            gradient_north_idx_ = base_core_size_;
+            gradient_east_idx_ = base_core_size_ + 1;
+            base_core_size_ += 2;
+        }
+
         // Determine which systems need inter-system time bias states
         // GPS is the reference system, so we add time offset states for all other active systems
         const auto& active_systems = config_.getActiveSystems();
@@ -93,8 +104,15 @@ namespace GnssProcessor {
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
         covariance_(3, 3) = clock_var;
         covariance_(4, 4) = tropo_var;
-        if (base_core_size_ >= 6) {
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             covariance_(5, 5) = iono_var;
+        }
+        
+        // Initialize gradient covariances if enabled
+        if (config_.estimateTropoGradients()) {
+            double grad_var = init.tropo_gradient * init.tropo_gradient;
+            covariance_(gradient_north_idx_, gradient_north_idx_) = grad_var;
+            covariance_(gradient_east_idx_, gradient_east_idx_) = grad_var;
         }
         
         // Initialize inter-system time offset covariances
@@ -104,8 +122,8 @@ namespace GnssProcessor {
         
         // Log initialization using LogManager-provided logger
         auto logger = log_manager_.getLogger("state_manager");
-        logger->info("StateManager initialized with core state size: {} (base={}, time_offsets={})",
-            core_state_size_, base_core_size_, systems_with_time_offsets_.size());
+        logger->info("StateManager initialized with core state size: {} (base={}, gradients={}, time_offsets={})",
+            core_state_size_, base_core_size_, config_.estimateTropoGradients() ? 2 : 0, systems_with_time_offsets_.size());
         
         if (!systems_with_time_offsets_.empty()) {
             std::string offset_systems;
@@ -259,8 +277,15 @@ namespace GnssProcessor {
         double tropo_var = pn.troposphere * dt;
         Q(tropoIdx, tropoIdx) = tropo_var;
 
+        // Tropospheric gradient noise (Gn, Ge)
+        if (config_.estimateTropoGradients()) {
+            double grad_var = pn.tropo_gradient * dt;
+            Q(gradient_north_idx_, gradient_north_idx_) = grad_var;
+            Q(gradient_east_idx_, gradient_east_idx_) = grad_var;
+        }
+
         // Ionospheric noise (PPP-RTK only)
-        if (base_core_size_ >= 6) {
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             size_t ionoIdx = getIonoIndex();
             double iono_var = pn.ionosphere * dt;
             Q(ionoIdx, ionoIdx) = iono_var;
@@ -329,13 +354,27 @@ namespace GnssProcessor {
     /**
      * @brief Index of the ionospheric zenith delay state (if present).
      *
-     * If PPP-RTK mode is enabled (base_core_size_ >= 6) returns the ionosphere index;
+     * If PPP-RTK mode is enabled returns the ionosphere index (always 5);
      * otherwise returns std::numeric_limits<size_t>::max() to indicate absence.
      *
      * @return Iono state index or max() when iono state is not present.
      */
     size_t StateManager::getIonoIndex() const {
-        return base_core_size_ >= 6 ? 5 : std::numeric_limits<size_t>::max();
+        // Iono is always at index 5 when base PPP-RTK mode is active (before gradients were inserted).
+        // But gradients are inserted after iono, so iono stays at 5.
+        return (config_.getProcessingMode() == ProcessingMode::PPP_RTK) ? 5 : std::numeric_limits<size_t>::max();
+    }
+
+    size_t StateManager::getTropoGradientNorthIndex() const {
+        return gradient_north_idx_;
+    }
+
+    size_t StateManager::getTropoGradientEastIndex() const {
+        return gradient_east_idx_;
+    }
+
+    bool StateManager::hasTropoGradients() const {
+        return gradient_north_idx_ != std::numeric_limits<size_t>::max();
     }
 
     /**
@@ -449,8 +488,14 @@ namespace GnssProcessor {
         // Troposphere zenith delay
         ppp_state.troposphere_zwd = current_state(state_manager.getTropoIndex());
 
+        // Troposphere gradients
+        if (state_manager.hasTropoGradients()) {
+            ppp_state.tropo_gradient_north = current_state(state_manager.getTropoGradientNorthIndex());
+            ppp_state.tropo_gradient_east = current_state(state_manager.getTropoGradientEastIndex());
+        }
+
         // Ionosphere zenith delay only if using PPP-RTK
-        if (base_core_size_ >= 6) {
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             ppp_state.ionosphere_zenith_delay = current_state(state_manager.getIonoIndex());
         }
 
@@ -487,7 +532,11 @@ namespace GnssProcessor {
         sv.segment<3>(getPositionIndex()) = ppp_state.position;
         sv(getClockIndex()) = ppp_state.clock_bias;
         sv(getTropoIndex()) = ppp_state.troposphere_zwd;
-        if (base_core_size_ >= 6) {
+        if (hasTropoGradients()) {
+            sv(getTropoGradientNorthIndex()) = ppp_state.tropo_gradient_north;
+            sv(getTropoGradientEastIndex()) = ppp_state.tropo_gradient_east;
+        }
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             sv(getIonoIndex()) = ppp_state.ionosphere_zenith_delay;
         }
         
@@ -561,98 +610,6 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Helper to build the persistent measurement key from satellite and signal.
-     * @param sat Satellite identifier (e.g. "G01").
-     * @param sig Signal type (e.g. "C1C" or "L1").
-     * @return Concatenated key "sat_sig".
-     */
-    static std::string makeMeasKey(const std::string& sat, const std::string& sig) {
-        return sat + "_" + sig;
-    }
-
-    /**
-     * @brief Persistently set a measurement variance scaling factor for a satellite/signal.
-     *
-     * The scale should be > 0. The stored scale is later used to inflate measurement variances
-     * for persistent outlier handling (e.g., increasing code noise for a misbehaving observable).
-     *
-     * @param sat Satellite identifier string.
-     * @param signal_type Signal type string.
-     * @param scale Multiplier to persist (must be > 0).
-     */
-    void StateManager::setMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double scale) {
-        auto logger = log_manager_.getLogger("state_manager");
-        if (sat.empty() || signal_type.empty()) {
-            logger->warn("setMeasurementVarianceScale called with empty sat/signal");
-            return;
-        }
-        if (!(std::isfinite(scale) && scale > 0.0)) {
-            logger->warn("setMeasurementVarianceScale called with invalid scale for {} {}: {}", sat, signal_type, scale);
-            return;
-        }
-
-        const std::string key = makeMeasKey(sat, signal_type);
-        meas_var_scale_[key] = scale;
-
-        logger->info("Set measurement variance scale: {} -> {:.3f}", key, scale);
-    }
-
-    /**
-     * @brief Retrieve the persistent measurement variance scale for a satellite/signal.
-     * @param sat Satellite identifier.
-     * @param signal_type Signal type string.
-     * @return Stored multiplier if present and valid; otherwise returns 1.0 (no scaling).
-     */
-    double StateManager::getMeasurementVarianceScale(const std::string& sat, const std::string& signal_type) const {
-        if (sat.empty() || signal_type.empty()) return 1.0;
-
-        const std::string key = makeMeasKey(sat, signal_type);
-        auto it = meas_var_scale_.find(key);
-        return (it != meas_var_scale_.end() && std::isfinite(it->second) && it->second > 0.0) ? it->second : 1.0;
-    }
-
-    /**
-     * @brief Multiply the stored measurement variance scale by \p factor.
-     *
-     * Convenience wrapper that reads the current scale (default 1.0), multiplies
-     * by \p factor and stores the new value. Intended for persistent inflation
-     * after repeated outliers.
-     *
-     * @param sat Satellite identifier.
-     * @param signal_type Signal type string.
-     * @param factor Multiplicative factor (must be > 0).
-     */
-    void StateManager::inflateMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double factor) {
-        auto logger = log_manager_.getLogger("state_manager");
-        if (sat.empty() || signal_type.empty()) {
-            logger->warn("inflateMeasurementVarianceScale called with empty sat/signal");
-            return;
-        }
-        if (!(std::isfinite(factor) && factor > 0.0)) {
-            logger->warn("inflateMeasurementVarianceScale called with invalid factor for {} {}: {}", sat, signal_type, factor);
-            return;
-        }
-
-        const double current = getMeasurementVarianceScale(sat, signal_type);
-        const double next = current * factor;
-        setMeasurementVarianceScale(sat, signal_type, next);
-
-        logger->info("Inflated measurement variance scale: {}_{}: {:.3f} -> {:.3f}",
-            sat, signal_type, current, next);
-    }
-
-    /**
-     * @brief Clear all persisted measurement variance scales.
-     *
-     * Clears the internal map and logs the action.
-     */
-    void StateManager::clearMeasurementVarianceScales() {
-        auto logger = log_manager_.getLogger("state_manager");
-        meas_var_scale_.clear();
-        logger->info("Cleared measurement variance scales");
-    }
-
-    /**
      * @brief Remove a tracked ambiguity from the state vector and covariance.
      *
      * Safely removes the ambiguity row/column and shifts subsequent ambiguity indices down.
@@ -722,6 +679,57 @@ namespace GnssProcessor {
 
         logger->info("Removed ambiguity {} at former index {}. New state size={}", key, rem_idx, getStateSize());
         return true;
+    }
+
+    double StateManager::computeAmbiguitySeed(const PppObservation& obs,
+                                               const std::string& ref_type,
+                                               const Eigen::VectorXd& x) const {
+        try {
+            if (!obs.observed.count(ref_type) || !obs.modeled.count(ref_type))
+                return 0.0;
+
+            const double observed_m = obs.observed.at(ref_type);
+            const double modeled_m  = obs.modeled.at(ref_type);
+            const double rx_clock   = x(getClockIndex());
+            const double zwd        = x(getTropoIndex());
+            const double tropo_wet  = obs.mf_w * zwd;
+
+            // Inter-system time offset for non-GPS satellites
+            double isb = 0.0;
+            {
+                std::string system_name;
+                switch (obs.system) {
+                    case System::GPS:     system_name = ""; break;
+                    case System::Galileo: system_name = "Galileo"; break;
+                    case System::GLONASS: system_name = "GLONASS"; break;
+                    case System::BeiDou:  system_name = "BeiDou"; break;
+                    case System::QZSS:    system_name = "QZSS"; break;
+                    case System::SBAS:    system_name = "SBAS"; break;
+                    default:              system_name = ""; break;
+                }
+                size_t isb_idx = getSystemTimeOffsetIndex(system_name);
+                if (isb_idx < static_cast<size_t>(x.size())) {
+                    isb = x(static_cast<Eigen::Index>(isb_idx));
+                }
+            }
+
+            // Tropospheric gradient contribution
+            double tropo_grad = 0.0;
+            if (hasTropoGradients()) {
+                const double el_rad = obs.elevation * Constants::PI / 180.0;
+                const double az_rad = obs.azimuth * Constants::PI / 180.0;
+                const double sin_el = std::sin(el_rad);
+                const double tan_el = std::tan(el_rad);
+                const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
+                const double gn = x(static_cast<Eigen::Index>(getTropoGradientNorthIndex()));
+                const double ge = x(static_cast<Eigen::Index>(getTropoGradientEastIndex()));
+                tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
+            }
+
+            return observed_m - modeled_m - rx_clock - tropo_wet - isb - tropo_grad;
+        } catch (...) {
+            return 0.0;
+        }
     }
 
     void StateManager::pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys) {

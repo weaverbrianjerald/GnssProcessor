@@ -154,6 +154,50 @@ namespace GnssProcessor {
          */
         double computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const;
 
+        /**
+         * @brief Reset phase wind-up state for a specific satellite.
+         * @param satellite Satellite identifier string (e.g. "G01").
+         *
+         * Call this when a cycle slip or ambiguity reset is detected for the
+         * satellite to ensure phase wind-up continuity is not falsely maintained
+         * across the discontinuity.
+         */
+        void resetPhaseWindUp(const std::string& satellite);
+
+        /**
+         * @brief Reset phase wind-up state for all satellites.
+         *
+         * Call this on a complete filter reset or at the start of a new session
+         * to clear all accumulated phase wind-up history.
+         */
+        void resetAllPhaseWindUp();
+
+        /**
+         * @brief Get mutable reference to the corrections object.
+         * @return Reference to the internal GnssCorrections instance.
+         *
+         * Allows external components to access correction methods directly,
+         * including phase wind-up reset functionality.
+         */
+        GnssCorrections& getCorrections() { return corrections_; }
+
+        /**
+         * @brief Get const reference to the corrections object.
+         * @return Const reference to the internal GnssCorrections instance.
+         */
+        const GnssCorrections& getCorrections() const { return corrections_; }
+
+        /**
+         * @brief Get the cached precise Sun position (ECEF, meters).
+         *
+         * Returns the most recently computed rigorous Sun position from the
+         * IAU 1976/1980 precession/nutation model. The cache is populated by
+         * computeSatelliteGeometry() and computeSatelliteAttitude().
+         *
+         * @return Cached Sun ECEF position (meters). May be zero if no epoch has been processed yet.
+         */
+        const Eigen::Vector3d& getCachedSunPosition() const { return cached_sun_pos_; }
+
         std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
 
     private:
@@ -176,6 +220,14 @@ namespace GnssProcessor {
 
         /** @brief Load product and auxiliary data into internal containers. */
         void loadData();
+
+        // Per-epoch cache for Sun/Moon ECEF positions.
+        // The rigorous IAU 1976/1980 nutation model is epoch-dependent only
+        // (not satellite-dependent), so caching avoids redundant 106-term
+        // series evaluations across satellites within the same epoch.
+        mutable GnssTime cached_sun_moon_epoch_{0, -1.0};  /**< Epoch of cached Sun/Moon. */
+        mutable Eigen::Vector3d cached_sun_pos_{Eigen::Vector3d::Zero()};   /**< Cached Sun ECEF (m). */
+        mutable Eigen::Vector3d cached_moon_pos_{Eigen::Vector3d::Zero()};  /**< Cached Moon ECEF (m). */
     };
 
     } // namespace Model

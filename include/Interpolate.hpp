@@ -192,6 +192,11 @@ namespace GnssProcessor {
          * Produces per-node derivatives `m` that preserve monotonicity of the
          * input data when used with a cubic-Hermite interpolant.
          *
+         * @warning This function forces slopes to zero at local extrema to preserve
+         *          monotonicity. It is **not suitable** for oscillating data such as
+         *          satellite ECEF coordinates. Use `catmullRomSlopes()` instead for
+         *          general-purpose cubic Hermite interpolation of non-monotone data.
+         *
          * - If `x.size() != y.size()` or `x.size() < 2` an empty vector is returned.
          *
          * @param[in] x Node abscissae (strictly increasing).
@@ -199,6 +204,26 @@ namespace GnssProcessor {
          * @return Vector `m` of length `x.size()` with monotone-preserving slopes.
          */
         static std::vector<double> monotoneHermiteSlopes(const std::vector<double>& x,
+            const std::vector<double>& y);
+
+        /**
+         * @brief Compute Catmull-Rom node slopes for cubic Hermite interpolation.
+         *
+         * Produces per-node derivatives using the standard Catmull-Rom formula:
+         *   m[i] = (y[i+1] - y[i-1]) / (x[i+1] - x[i-1])
+         * with one-sided differences at the endpoints.
+         *
+         * Unlike `monotoneHermiteSlopes()`, this function does **not** clamp slopes
+         * at local extrema and is therefore suitable for oscillating data such as
+         * satellite ECEF coordinates.
+         *
+         * - If `x.size() != y.size()` or `x.size() < 2` an empty vector is returned.
+         *
+         * @param[in] x Node abscissae (strictly increasing).
+         * @param[in] y Node ordinates.
+         * @return Vector `m` of length `x.size()` with Catmull-Rom slopes.
+         */
+        static std::vector<double> catmullRomSlopes(const std::vector<double>& x,
             const std::vector<double>& y);
 
         /**

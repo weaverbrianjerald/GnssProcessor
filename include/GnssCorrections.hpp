@@ -20,6 +20,8 @@
 #include "LogManager.hpp"
 #include "TimeUtils.hpp"
 #include "PppTypes.hpp"
+#include "OceanTideModel.hpp"
+#include <array>
 #include <unordered_map>
 #include <vector>
 #include <Eigen/Dense>
@@ -170,18 +172,24 @@ namespace GnssProcessor {
         Eigen::Vector3d computePoleTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
         /**
-         * @brief Compute solid Earth tide correction (radial displacement).
+         * @brief Compute solid Earth tide correction (LOS displacement).
          * @param receiver_pos Receiver ECEF position (meters).
          * @param sat_pos Satellite ECEF position (meters).
          * @param sun_pos Sun ECEF position (meters).
          * @param moon_pos Moon ECEF position (meters).
-         * @return Radial displacement in meters to apply to the geometric range.
+         * @param time Epoch for Step 2 frequency-dependent corrections (GnssTime: week + tow).
+         * @return LOS displacement in meters to apply to the geometric range.
          *
-         * Implements the solid Earth tide correction (Love numbers, tidal
-         * constituents) to the measured ranges.
+         * Implements the IERS 2010 solid Earth tide displacement model
+         * (Section 7.1.1, Steps 1+2) producing **conventional tide-free**
+         * coordinates. This is consistent with IGS products (SP3/CLK/ITRF),
+         * IERS 2010 Conventions, and RTKLIB. Step 2 includes long-period (m=0),
+         * diurnal (m=1), and semi-diurnal (m=2) corrections from Tables 7.3a/b,
+         * with the permanent tide handled by the 055.555 zero-frequency constituent.
          */
         double computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
-            const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos) const;
+            const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos,
+            const GnssTime& time) const;
 
         /**
          * @brief Compute ocean tide correction (ECEF displacement).
@@ -226,13 +234,61 @@ namespace GnssProcessor {
          * @param sat_pos Satellite ECEF position (meters).
          * @param wavelength Carrier wavelength in meters.
          * @param time Epoch for any time-dependent quantities.
+         * @param sun_pos Sun ECEF position (meters). When provided (non-zero), the
+         *        satellite attitude is computed using the proper yaw-steering model
+         *        (Sun direction + nadir). When zero, falls back to velocity-based attitude.
+         * @param sat_vel Satellite ECEF velocity (meters/second). Used as fallback
+         *        for attitude when sun_pos is not available or during eclipse/noon turn.
          * @return Phase wind-up correction in meters (to add to carrier range).
          *
          * Computes the phase bias caused by relative antenna orientation
          * (receiver vs satellite) and returns the equivalent length offset.
          */
         double computePhaseWindUp(const std::string& satellite, System system, const Eigen::Vector3d& rx_pos,
-            const Eigen::Vector3d& sat_pos, double wavelength, const GnssTime& time) const;
+            const Eigen::Vector3d& sat_pos, double wavelength, const GnssTime& time,
+            const Eigen::Vector3d& sun_pos = Eigen::Vector3d::Zero(),
+            const Eigen::Vector3d& sat_vel = Eigen::Vector3d::Zero()) const;
+
+        /**
+         * @brief Reset phase wind-up state for a specific satellite.
+         * @param satellite Satellite identifier string (e.g. "G01").
+         *
+         * Call this when a cycle slip or ambiguity reset is detected for the
+         * satellite to ensure phase wind-up continuity is not falsely maintained
+         * across the discontinuity.
+         */
+        void resetPhaseWindUp(const std::string& satellite);
+
+        /**
+         * @brief Reset phase wind-up state for all satellites.
+         *
+         * Call this on a complete filter reset or at the start of a new session
+         * to clear all accumulated phase wind-up history.
+         */
+        void resetAllPhaseWindUp();
+
+        /**
+         * @brief Set station-specific ocean tidal loading coefficients.
+         * @param coeffs OTL station coefficients (11 constituents).
+         *
+         * When set, computeOceanTideCorrection() uses the full 11-constituent
+         * model instead of the approximate fallback.
+         */
+        void setOceanTideCoefficients(const OtlStationCoefficients& coeffs);
+
+        /**
+         * @brief Load OTL coefficients from a BLQ file for a station.
+         * @param blq_path Path to the BLQ file.
+         * @param station_name Station name to search for.
+         * @return True if coefficients were found and loaded.
+         */
+        bool loadOceanTideFromBLQ(const std::string& blq_path, const std::string& station_name);
+
+        /**
+         * @brief Check whether station-specific OTL coefficients are available.
+         * @return True if OTL coefficients have been loaded.
+         */
+        bool hasOceanTideCoefficients() const;
 
     private:
         LogManager& log_manager_;                         ///< Logger for debugging and info
@@ -247,6 +303,39 @@ namespace GnssProcessor {
 
         std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;
         void buildClockIndex();
+
+        // Phase wind-up state per satellite (for continuity between epochs)
+        mutable std::unordered_map<std::string, double> prev_windup_;
+
+        OceanTideModel ocean_tide_model_;  ///< Ocean tidal loading model
+
+        /**
+         * @brief Compute Delaunay fundamental arguments and GMST for solid Earth tide Step 2.
+         *
+         * Returns [l, l', F, D, Omega, GMST] in radians, using the IERS 2010
+         * polynomial expressions (same formulation as OceanTideModel).
+         *
+         * @param t_centuries Julian centuries of TT from J2000.0.
+         * @return Array of 6 fundamental arguments in radians.
+         */
+        static std::array<double, 6> computeFundamentalArguments(double t_centuries);
+
+        /**
+         * @brief Compute IERS 2010 Step 2 frequency-dependent solid Earth tide corrections.
+         *
+         * Evaluates the per-constituent displacement corrections from IERS 2010
+         * Tables 7.3a (diurnal) and 7.3b (semi-diurnal) in the local
+         * (radial, south, east) frame and returns the ECEF displacement vector.
+         *
+         * @param fund_args Delaunay arguments + GMST [l, l', F, D, Omega, GMST] (radians).
+         * @param lat Geodetic latitude (radians).
+         * @param lon Geodetic longitude (radians).
+         * @param u   Unit vector from geocenter to station (ECEF).
+         * @return ECEF displacement vector (meters).
+         */
+        static Eigen::Vector3d computeStep2Corrections(const std::array<double, 6>& fund_args,
+            double lat, double lon, const Eigen::Vector3d& u);
+
     };
 
 }

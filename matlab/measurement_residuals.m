@@ -4,7 +4,7 @@
 %           Categorized by system (GPS, Galileo, etc.) and type (code/phase)
 %  ============================================================
 
-clear all; clc; close all;
+clear all; clc; %close all;
 
 %% --- Load CSV file ---
 fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
@@ -73,52 +73,88 @@ for row = 1:nTypes
     measType = measTypeList{row};
     for col = 1:nSys
         sysName = systemsPresent{col};
-        
+
         nexttile;
         hold on;
-        
+
         % Filter data for this system and measurement type
         idx_sys_type = T.system == sysName & T.meas_type == measType;
         T_sub = T(idx_sys_type, :);
-        
+
         if isempty(T_sub)
             text(0.5, 0.5, 'No Data', 'HorizontalAlignment', 'center', ...
                 'Units', 'normalized', 'FontSize', 12);
             title(sprintf('%s - %s', sysName, measType));
+            hold off;
             continue;
         end
-        
-        % Get satellites in this subset
+
         satsInSubset = categories(removecats(T_sub.satellite));
-        
+
         for k = 1:numel(satsInSubset)
             sat = satsInSubset{k};
-            idx_sat = T_sub.satellite == sat;
-            
-            % Find global satellite index for consistent coloring
-            globalIdx = find(strcmp(satList, sat));
+            idx_sat = (T_sub.satellite == sat);
+
+            globalIdx = find(strcmp(satList, sat), 1);
             if isempty(globalIdx), globalIdx = k; end
-            
-            plot(T_sub.utc(idx_sat), T_sub.residual_m(idx_sat), ...
-                'LineStyle', 'none', ...
-                'Marker', markerList{mod(globalIdx-1, numel(markerList))+1}, ...
-                'MarkerSize', 5, ...
-                'Color', colors(globalIdx,:), ...
-                'DisplayName', sat);
+            if globalIdx > size(colors,1), globalIdx = mod(globalIdx-1, size(colors,1)) + 1; end
+
+            x = T_sub.utc(idx_sat);
+            y = T_sub.residual_m(idx_sat);
+
+            % Sort by time (IMPORTANT)
+            [x, ord] = sort(x);
+            y = y(ord);
+
+            n = numel(x);
+            if n < 2
+                % Just plot the single point/short series
+                plot(x, y, '-', 'Color', colors(globalIdx,:), 'DisplayName', sat);
+                continue;
+            end
+
+            dt = diff(x);
+            dt_median = median(dt);
+
+            % Better break rule (pick one):
+            % isBreak = dt > dt_median;        % your original (often too aggressive)
+            isBreak = dt > 5*dt_median;        % more typical
+
+            breakIdx = find(isBreak);          % indices in dt (1..n-1)
+            startIdx = 1;
+
+            % Plot segments
+            if ~isempty(breakIdx)
+                for kk = 1:numel(breakIdx)
+                    endIdx = breakIdx(kk);
+
+                    if endIdx >= startIdx
+                        plot(x(startIdx:endIdx), y(startIdx:endIdx), ...
+                            'LineStyle','-', 'Marker','none', ...
+                            'Color',colors(globalIdx,:), ...
+                            'DisplayName', sat); % optional
+                    end
+                    startIdx = endIdx + 1;
+                end
+            end
+
+            if startIdx <= n
+                plot(x(startIdx:n), y(startIdx:n), ...
+                    'LineStyle','-', 'Marker','none', ...
+                    'Color',colors(globalIdx,:), ...
+                    'DisplayName', sat); % optional
+            end
         end
-        
+
         xlabel('UTC Time');
         ylabel('Residual (m)');
         title(sprintf('%s - %s', sysName, measType));
         grid on;
-        
-        % Only show legend for first column
-        if col == 1
-            legend('Location', 'bestoutside', 'FontSize', 7);
-        end
-        
+
         hold off;
+
     end
+
 end
 
 %% --- Tiledlayout: Standardized Residuals by System and Type ---
@@ -196,40 +232,3 @@ for i = 1:nSys
         end
     end
 end
-
-%% --- Legacy plots (all data combined) ---
-
-% Residuals by satellite (all types)
-figure('Name','Residuals by Satellite (All)','Color','w'); hold on;
-for i = 1:N
-    idx = T.satellite == satList{i};
-    plot(T.utc(idx), T.residual_m(idx), ...
-        'LineStyle','none', ...
-        'Marker', markerList{mod(i-1, numel(markerList))+1}, ...
-        'MarkerSize', 7, ...
-        'Color', colors(i,:), ...
-        'DisplayName', char(satList{i}));
-end
-xlabel('UTC Time');
-ylabel('Residual (m)');
-title('PPP Measurement Residuals by Satellite');
-grid on;
-legend('Location','bestoutside');
-
-% Histogram of residuals (separate for code and phase)
-figure('Name','Residual Histograms','Color','w');
-tiledlayout(1, 2, 'TileSpacing', 'compact');
-
-nexttile;
-histogram(T.residual_m(T.meas_type == 'Code'), 30);
-xlabel('Residual (m)');
-ylabel('Count');
-title('Code Residuals');
-grid on;
-
-nexttile;
-histogram(T.residual_m(T.meas_type == 'Phase'), 30);
-xlabel('Residual (m)');
-ylabel('Count');
-title('Phase Residuals');
-grid on;

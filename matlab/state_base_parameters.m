@@ -4,7 +4,7 @@
 %           + ENU conversion + position error magnitude
 %  ============================================================
 
-clear all; clc; close all;
+clear all; clc; %close all;
 
 %% --- Load CSV file ---
 fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
@@ -17,6 +17,7 @@ gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 T.utc = gpsEpoch + seconds(gpsSeconds);
 
 %% --- Extract variables ---
+% Core
 t = T.utc;
 
 x  = T.x_m;     y  = T.y_m;     z  = T.z_m;
@@ -28,8 +29,33 @@ clks = T.clock_std_m;
 trop  = T.tropo_m;
 trops = T.tropo_std_m;
 
+% Extras
+%%% Galileo clock
+try
+    galClk = T.("Galileo_m");
+    galClk_std = T.("Galileo_std_m");
+catch
+    galClk = []; galClk_std = [];
+end
+
+%%% Tropo grad north
+try
+    gradN = T.("gn_m");
+    gradN_std = T.("gn_std_m");
+catch
+    gradN = []; gradN_std = [];
+end
+
+%%% Tropo grad east
+try
+    gradE = T.("ge_m");
+    gradE_std = T.("ge_std_m");
+catch
+    gradE = []; gradE_std = [];
+end
+
 %% ============================================================
-%  ENHANCEMENT 1: ENU Conversion
+%  ENU Conversion
 % ============================================================
 
 % Reference point for ENU
@@ -47,7 +73,7 @@ wgs84_h   = llh(3);
 [E,N,U] = ecef2enu(x, y, z, wgs84_lat, wgs84_lon, wgs84_h,referenceEllipsoid('wgs84'),"degrees");
 
 %% ============================================================
-%  ENHANCEMENT 2: Position Error Magnitude
+%  Position Error Magnitude
 % ============================================================
 
 pos_err = sqrt(E.^2 + N.^2 + U.^2);
@@ -56,30 +82,30 @@ pos_err = sqrt(E.^2 + N.^2 + U.^2);
 %  Position Components with ±1σ
 % ============================================================
 
-figure('Name','Position Components','Color','w');
-
-subplot(3,1,1); hold on;
-plot(t, x, 'b', 'LineWidth', 1.2);
-plot(t, x + xs, '--r');
-plot(t, x - xs, '--r');
-ylabel('X (m)');
-title('Position Components with 1σ Uncertainty');
-grid on;
-
-subplot(3,1,2); hold on;
-plot(t, y, 'b', 'LineWidth', 1.2);
-plot(t, y + ys, '--r');
-plot(t, y - ys, '--r');
-ylabel('Y (m)');
-grid on;
-
-subplot(3,1,3); hold on;
-plot(t, z, 'b', 'LineWidth', 1.2);
-plot(t, z + zs, '--r');
-plot(t, z - zs, '--r');
-ylabel('Z (m)');
-xlabel('UTC Time');
-grid on;
+% figure('Name','Position Components','Color','w');
+% 
+% subplot(3,1,1); hold on;
+% plot(t, x, 'b', 'LineWidth', 1.2);
+% plot(t, x + xs, '--r');
+% plot(t, x - xs, '--r');
+% ylabel('X (m)');
+% title('Position Components with 1σ Uncertainty');
+% grid on;
+% 
+% subplot(3,1,2); hold on;
+% plot(t, y, 'b', 'LineWidth', 1.2);
+% plot(t, y + ys, '--r');
+% plot(t, y - ys, '--r');
+% ylabel('Y (m)');
+% grid on;
+% 
+% subplot(3,1,3); hold on;
+% plot(t, z, 'b', 'LineWidth', 1.2);
+% plot(t, z + zs, '--r');
+% plot(t, z - zs, '--r');
+% ylabel('Z (m)');
+% xlabel('UTC Time');
+% grid on;
 
 %% ============================================================
 %  ENU Components
@@ -118,8 +144,8 @@ grid on;
 %% ============================================================
 %  Clock Bias with ±1σ
 % ============================================================
-
-figure('Name','Clock Bias','Color','w'); hold on;
+% GPS
+figure('Name','GPS Clock Bias','Color','w'); hold on;
 plot(t, clk, 'k', 'LineWidth', 1.2);
 plot(t, clk + clks, '--r');
 plot(t, clk - clks, '--r');
@@ -127,6 +153,18 @@ xlabel('UTC Time');
 ylabel('Clock Bias (m)');
 title('Receiver Clock Bias with 1σ Uncertainty');
 grid on;
+
+% Galileo
+if ~isempty(galClk)
+    figure('Name','GAL Clock Bias','Color','w'); hold on;
+    plot(t, galClk, 'k', 'LineWidth', 1.2);
+    plot(t, galClk + galClk_std, '--r');
+    plot(t, galClk - galClk_std, '--r');
+    xlabel('UTC Time');
+    ylabel('Clock Bias (m)');
+    title('Galileo Clock Bias with 1σ Uncertainty');
+    grid on;
+end
 
 %% ============================================================
 %  Troposphere Estimate with ±1σ
@@ -140,6 +178,28 @@ xlabel('UTC Time');
 ylabel('Tropo Delay (m)');
 title('Tropospheric Zenith Delay with 1σ Uncertainty');
 grid on;
+
+% North gradient
+if ~isempty(gradN) && ~isempty(gradE)
+    figure('Name','Tropo gradient','Color','w');
+    title('Tropospheric azimuthal gradients');
+    tiledlayout(2,1);
+    nexttile;
+    plot(t, gradN, 'g', 'LineWidth', 1.2); hold on;
+    plot(t, gradN + gradN_std, '--r');
+    plot(t, gradN - gradN_std, '--r');
+    xlabel('UTC Time');
+    ylabel('North (m)');
+    grid on; box on;
+
+    nexttile;
+    plot(t, gradE, 'b', 'LineWidth', 1.2); hold on;
+    plot(t, gradE + gradE_std, '--r');
+    plot(t, gradE - gradE_std, '--r');
+    xlabel('UTC Time');
+    ylabel('East (m)');
+    grid on; box on;
+end
 
 %% ============================================================
 %  Optional: 3D Trajectory

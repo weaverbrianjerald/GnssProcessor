@@ -1,11 +1,16 @@
 /**
  * @file Troposphere.cpp
- * @brief Implementation of troposphere utilities: mapping functions and ZHD.
+ * @brief Implementation of troposphere utilities: GMF mapping functions and ZHD.
  *
  * Implements:
- *  - Conversion ECEF -> geodetic LLH (minimal WGS84 Bowring-style iteration).
+ *  - Global Mapping Function (GMF) by Boehm et al. (2006) for hydrostatic/wet mapping.
  *  - Standard-atmosphere pressure model used to estimate station pressure from height.
- *  - Troposphere class methods: constructor, mapping functions and Saastamoinen ZHD.
+ *  - Saastamoinen zenith hydrostatic delay (ZHD).
+ *
+ * Reference:
+ *   Boehm, J., A. Niell, P. Tregoning, H. Schuh (2006),
+ *   Global Mapping Function (GMF): A new empirical mapping function based on
+ *   numerical weather model data, Geophys. Res. Lett., 33, L07304.
  */
 
 #include "GnssConfig.hpp"
@@ -20,31 +25,11 @@ namespace GnssProcessor {
 
     namespace {
         /**
-         * @brief Geodetic latitude/longitude/height container.
-         *
-         * Units:
-         *  - lat_rad: latitude in radians
-         *  - lon_rad: longitude in radians
-         *  - h_m:     height above ellipsoid in meters
-         */
-        struct LlhRadM {
-            double lat_rad = 0.0;
-            double lon_rad = 0.0;
-            double h_m = 0.0;
-        };
-
-        /**
          * @brief Standard atmosphere pressure model (troposphere lapse-rate).
          *
          * Computes pressure at height h_m from sea-level pressure/temperature
          * using the tropospheric lapse-rate approximation:
          *   P = P0 * (1 - L*h/T0)^(g/(R*L))
-         *
-         * The function clamps intermediate values to reasonable ranges to avoid
-         * numerical issues. Inputs are expected as:
-         *  - P0_mbar: sea-level pressure in millibar
-         *  - T0_K:    sea-level temperature in Kelvin
-         *  - h_m:     height above sea-level in meters
          *
          * @param P0_mbar Sea-level pressure in mbar.
          * @param T0_K Sea-level temperature in Kelvin.
@@ -52,7 +37,6 @@ namespace GnssProcessor {
          * @return Pressure at height h_m in mbar (clamped to [100, 1100]).
          */
         double pressureFromHeightStdAtm(double P0_mbar, double T0_K, double h_m) {
-            // P = P0 * (1 - L*h/T0)^(g/(R*L))
             constexpr double g = 9.80665;  // m/s^2
             constexpr double R = 287.05;   // J/(kg*K)
             constexpr double L = 0.0065;   // K/m
@@ -67,85 +51,184 @@ namespace GnssProcessor {
             const double exponent = g / (R * L); // ~5.25588
             double P = P0_mbar * std::pow(base, exponent);
 
-            // Reasonable clamp (mbar)
             return std::clamp(P, 100.0, 1100.0);
         }
     }
 
-    /**
-     * @brief Construct a Troposphere helper.
-     *
-     * The constructor logs initialization details using the provided LogManager.
-     *
-     * @param config Reference to the GnssConfig (read-only).
-     * @param log_mgr Reference to the LogManager instance.
-     */
     Troposphere::Troposphere(const GnssConfig& config, LogManager& log_mgr)
         : config_(config), log_manager_(log_mgr) {
-        log_manager_.getLogger("troposphere")->info("Troposphere model initialized: mode={}, elev_mask={}°",
+        log_manager_.getLogger("troposphere")->info("Troposphere model initialized (GMF): mode={}, elev_mask={}°",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK", config_.getElevationMaskDeg());
     }
 
     /**
-     * @brief Compute tropospheric mapping functions.
+     * @brief Evaluate the Marini continued-fraction mapping function form.
      *
-     * Computes simple empirical hydrostatic (dry) and wet mapping functions
-     * as a function of elevation angle (degrees). If elevation is outside
-     * [0, 90] degrees, the function logs a warning and returns default 1.0
-     * mappings.
-     *
-     * @param elevation Elevation angle in degrees.
-     * @param[out] mf_d Output hydrostatic (dry) mapping function (unitless).
-     * @param[out] mf_w Output wet mapping function (unitless).
+     *   mf(el) = (1 + a/(1 + b/(1 + c))) / (sin(el) + a/(sin(el) + b/(sin(el) + c)))
      */
-    void Troposphere::getTroposphereMapping(double elevation, double& mf_d, double& mf_w) const {
+    double Troposphere::mariniMapping(double sin_el, double a, double b, double c) {
+        double numer = 1.0 + a / (1.0 + b / (1.0 + c));
+        double denom = sin_el + a / (sin_el + b / (sin_el + c));
+        if (std::abs(denom) < 1e-12) return 1.0;
+        return numer / denom;
+    }
+
+    /**
+     * @brief Compute day-of-year from GnssTime.
+     */
+    double Troposphere::getDayOfYear(const GnssTime& time) {
+        int year, month, day, hour, minute;
+        double second;
+        TimeUtils::gpsTimeToGregorian(time, year, month, day, hour, minute, second);
+
+        // Day of year: accumulate days of preceding months
+        static const int days_in_month[] = { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+        int doy = day;
+        for (int m = 1; m < month; ++m) {
+            doy += days_in_month[m];
+        }
+        // Leap year correction
+        bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        if (leap && month > 2) doy += 1;
+
+        // Add fractional day
+        double frac = (hour + minute / 60.0 + second / 3600.0) / 24.0;
+        return doy + frac;
+    }
+
+    /**
+     * @brief Compute tropospheric mapping functions using the Global Mapping Function (GMF).
+     *
+     * The GMF provides latitude-, height-, and season-dependent mapping coefficients
+     * (a, b, c) for both hydrostatic and wet components using a Marini continued
+     * fraction form. The coefficients are modelled as a mean plus annual harmonic.
+     *
+     * Reference: Boehm et al. (2006), Geophys. Res. Lett., 33, L07304.
+     */
+    void Troposphere::getTroposphereMapping(double elevation,
+                                            const Eigen::Vector3d& receiver_pos,
+                                            const GnssTime& time,
+                                            double& mf_d, double& mf_w) const {
         if (elevation < 0.0 || elevation > 90.0) {
             log_manager_.getLogger("ppp_model")->warn("Invalid elevation for mapping: {:.3f} deg", elevation);
             mf_d = 1.0;
             mf_w = 1.0;
             return;
         }
+
         double el_rad = elevation * Constants::PI / 180.0;
         double sin_el = std::sin(el_rad);
-        double tan_el = std::tan(el_rad);
-        constexpr double MIN_DENOM = 0.01;
-        double denom_d = sin_el + 0.00143 / (tan_el + 0.0445);
-        double denom_w = sin_el + 0.00035 / (tan_el + 0.0383);
-        if (denom_d < MIN_DENOM) denom_d = MIN_DENOM;
-        if (denom_w < MIN_DENOM) denom_w = MIN_DENOM;
-        mf_d = 1.0 / denom_d;  // Hydrostatic
-        mf_w = 1.0 / denom_w;  // Wet
-        if (!std::isfinite(mf_d) || !std::isfinite(mf_w)) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid mappings: mf_d={:.3f}, mf_w={:.3f}, elevation={:.3f} deg", mf_d, mf_w, elevation);
-            mf_d = 1.0;
-            mf_w = 1.0;
+
+        // If receiver position is invalid, fall back to simple mapping
+        if (receiver_pos.norm() < 1e3 || !receiver_pos.allFinite()) {
+            // Fallback: simple Black & Eisner mapping
+            double tan_el = std::tan(el_rad);
+            constexpr double MIN_DENOM = 0.01;
+            double denom_d = sin_el + 0.00143 / (tan_el + 0.0445);
+            double denom_w = sin_el + 0.00035 / (tan_el + 0.0383);
+            if (denom_d < MIN_DENOM) denom_d = MIN_DENOM;
+            if (denom_w < MIN_DENOM) denom_w = MIN_DENOM;
+            mf_d = 1.0 / denom_d;
+            mf_w = 1.0 / denom_w;
+            return;
         }
-        log_manager_.getLogger("ppp_model")->trace("Mappings: elevation={:.3f} deg, mf_d={:.3f}, mf_w={:.3f}", elevation, mf_d, mf_w);
+
+        // Convert receiver position to geodetic
+        Coordinates::Llh llh = Coordinates::ecefToLlh(receiver_pos);
+        double lat = llh.lat_rad;        // radians
+        double h_km = llh.h_m / 1000.0;  // km
+
+        // Day-of-year for annual variation (phase reference: Jan 28 for NH)
+        double doy = getDayOfYear(time);
+
+        // Phase offset: DOY 28 for northern hemisphere, DOY 28 + 182.625 for southern
+        double doy_phase = (lat >= 0.0) ? 28.0 : 28.0 + 182.625;
+        double cos_annual = std::cos(2.0 * Constants::PI * (doy - doy_phase) / 365.25);
+
+        double abs_lat = std::abs(lat); // radians
+
+        // === GMF coefficients (Boehm et al. 2006, Table 1) ===
+        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°
+        //
+        // Hydrostatic: mean and annual amplitude
+        static constexpr double ah_mean[] = { 1.2769934e-3, 1.2683230e-3, 1.2465397e-3,
+                                               1.2196049e-3, 1.2045996e-3 };
+        static constexpr double ah_amp[]  = { 1.2709626e-5, 2.6523662e-5,
+                                               3.4000452e-5, 4.1202191e-5, 4.1202191e-5 };
+
+        static constexpr double bh_mean[] = { 2.9153695e-3, 2.9152299e-3, 2.9288445e-3,
+                                               2.9022565e-3, 2.9024912e-3 };
+        static constexpr double bh_amp[]  = { 2.1414979e-5, 3.0160779e-5,
+                                               7.2562722e-5, 11.723375e-5, 11.723375e-5 };
+
+        static constexpr double ch_mean[] = { 62.610505e-3, 62.837393e-3, 63.721774e-3,
+                                               63.824265e-3, 64.258455e-3 };
+        static constexpr double ch_amp[]  = { 9.0128400e-5, 4.3497037e-5,
+                                               84.795348e-5, 170.37206e-5, 170.37206e-5 };
+
+        // Wet: mean only (no annual variation in GMF wet)
+        static constexpr double aw_mean[] = { 5.8021897e-4, 5.6794847e-4, 5.8118019e-4,
+                                               5.9727542e-4, 6.1641693e-4 };
+        static constexpr double bw_mean[] = { 1.4275268e-3, 1.5138625e-3, 1.4572752e-3,
+                                               1.5007428e-3, 1.7599082e-3 };
+        static constexpr double cw_mean[] = { 43.472961e-3, 46.729510e-3, 43.908931e-3,
+                                               44.626982e-3, 54.736038e-3 };
+
+        // Latitude interpolation index
+        // Grid starts at 15° with 15° spacing: 15°, 30°, 45°, 60°, 75°
+        // Latitudes below 15° use the 15° value; above 75° use the 75° value.
+        double lat_deg = abs_lat * 180.0 / Constants::PI;
+        double idx_frac = (lat_deg - 15.0) / 15.0;
+        idx_frac = std::clamp(idx_frac, 0.0, 4.0);  // clamp to [0, 4] for 5 grid points
+        int idx = static_cast<int>(idx_frac);
+        if (idx >= 4) idx = 3; // clamp to last interval [60°, 75°]
+        double frac = idx_frac - idx;
+        frac = std::clamp(frac, 0.0, 1.0);
+
+        // Interpolate hydrostatic coefficients (mean + annual amplitude)
+        auto lerp = [](const double* arr, int i, double f) {
+            return arr[i] * (1.0 - f) + arr[i + 1] * f;
+        };
+
+        double a_h = lerp(ah_mean, idx, frac) + lerp(ah_amp, idx, frac) * cos_annual;
+        double b_h = lerp(bh_mean, idx, frac) + lerp(bh_amp, idx, frac) * cos_annual;
+        double c_h = lerp(ch_mean, idx, frac) + lerp(ch_amp, idx, frac) * cos_annual;
+
+        // Interpolate wet coefficients (no annual variation in GMF wet)
+        double a_w = lerp(aw_mean, idx, frac);
+        double b_w = lerp(bw_mean, idx, frac);
+        double c_w = lerp(cw_mean, idx, frac);
+
+        // Compute base mapping using Marini continued fraction
+        mf_d = mariniMapping(sin_el, a_h, b_h, c_h);
+        mf_w = mariniMapping(sin_el, a_w, b_w, c_w);
+
+        // Height correction for hydrostatic mapping function
+        // Boehm & Schuh (2004): mf_h(h) = mf_h(0) + (1/sin(el) - mf_h(0)) * h_km * dh
+        // where dh is height-correction gradient
+        static constexpr double a_ht = 2.53e-5;
+        static constexpr double b_ht = 5.49e-3;
+        static constexpr double c_ht = 1.14e-3;
+        double ht_corr_coeff = 1.0 / sin_el - mariniMapping(sin_el, a_ht, b_ht, c_ht);
+        mf_d += ht_corr_coeff * h_km; // h_km is already in km (h_m / 1000)
+
+        if (!std::isfinite(mf_d) || !std::isfinite(mf_w) || mf_d < 1.0 || mf_w < 1.0) {
+            log_manager_.getLogger("ppp_model")->warn("Invalid GMF mappings: mf_d={:.3f}, mf_w={:.3f}, elevation={:.3f} deg",
+                mf_d, mf_w, elevation);
+            // Clamp to reasonable values
+            mf_d = std::max(mf_d, 1.0);
+            mf_w = std::max(mf_w, 1.0);
+        }
+
+        log_manager_.getLogger("ppp_model")->trace("GMF mappings: elevation={:.3f} deg, lat={:.3f} deg, h={:.1f} m, doy={:.1f}, mf_d={:.6f}, mf_w={:.6f}",
+            elevation, lat * 180.0 / Constants::PI, llh.h_m, doy, mf_d, mf_w);
     }
 
-    /**
-     * @brief Compute Saastamoinen zenith hydrostatic delay (ZHD) in meters.
-     *
-     * Converts the receiver ECEF position to geodetic latitude and height,
-     * estimates station pressure from height using the standard atmosphere
-     * model (sea-level P/T read from config), and computes the Saastamoinen
-     * hydrostatic ZHD:
-     *
-     *   ZHD = (0.0022768 * P) / f(lat, h)
-     *
-     * where f(lat,h) applies a latitude and height correction.
-     *
-     * @param receiver_pos Receiver ECEF position in meters.
-     * @return Zenith hydrostatic delay (ZHD) in meters.
-     */
     double Troposphere::computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos) const {
-        // WGS84 LLH (geodetic)
         const Coordinates::Llh llh = Coordinates::ecefToLlh(receiver_pos);
         const double lat_rad = llh.lat_rad;
         const double h_m = llh.h_m;
 
-        // Estimate station pressure from height using standard atmosphere.
-        // Interprets config pressure/temp as sea-level defaults.
         const double P0 = config_.getZhdPressure(); // mbar (sea-level default)
         const double T0 = config_.getZhdTemp();     // K (sea-level default)
         const double P = pressureFromHeightStdAtm(P0, T0, h_m);

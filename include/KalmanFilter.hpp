@@ -111,6 +111,25 @@ namespace GnssProcessor {
          */
         std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 
+        /**
+         * @brief Get the list of satellites that had ambiguities reset during the last update.
+         *
+         * After a call to update() that returns NeedsMeasurementRebuild, this method
+         * returns the list of satellite IDs (e.g., "G01", "E11") that had their
+         * ambiguities reset. The caller can use this to reset phase wind-up state
+         * for those satellites.
+         *
+         * @return Vector of satellite ID strings that were reset.
+         */
+        const std::vector<std::string>& getLastResetSatellites() const { return last_reset_satellites_; }
+
+        /**
+         * @brief Check if a complete filter reset occurred during the last update.
+         *
+         * @return true if a complete filter reset was applied, false otherwise.
+         */
+        bool wasCompleteReset() const { return was_complete_reset_; }
+
     private:
         StateManager& state_manager_;         //!< Reference to external state manager for state storage and access.
         const GnssConfig& config_;            //!< Reference to GNSS configuration (read-only).
@@ -119,6 +138,9 @@ namespace GnssProcessor {
         MeasurementModel measurement_model_; //!< Local measurement model helper.
         Eigen::MatrixXd R_;                   //!< Current measurement noise covariance matrix.
         std::unique_ptr<KalmanFilterLogger> logger_;  //!< Optional file logger for Kalman internals (created only in Trace mode).
+        
+        std::vector<std::string> last_reset_satellites_;  //!< Satellites with ambiguity resets from last update.
+        bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
     };
 
 } // namespace GnssProcessor

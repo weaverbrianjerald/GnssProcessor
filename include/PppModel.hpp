@@ -145,6 +145,29 @@ namespace GnssProcessor {
         const Model::Geometry& getGeometry() const { return geometry_; }
 
         /**
+         * @brief Get mutable access to the internal geometry helper.
+         * @return Reference to the Geometry instance, allowing modifications such as resetting phase wind-up state.
+         */
+        Model::Geometry& getGeometry() { return geometry_; }
+
+        /**
+         * @brief Reset phase wind-up state for a specific satellite.
+         * @param satellite Satellite identifier string (e.g. "G01").
+         *
+         * Convenience method that delegates to the internal Geometry/GnssCorrections.
+         * Call this when a cycle slip or ambiguity reset is detected.
+         */
+        void resetPhaseWindUp(const std::string& satellite) { antenna_.resetPhaseWindUp(satellite); }
+
+        /**
+         * @brief Reset phase wind-up state for all satellites.
+         *
+         * Convenience method that delegates to the internal Geometry/GnssCorrections.
+         * Call this on a complete filter reset.
+         */
+        void resetAllPhaseWindUp() { antenna_.resetAllPhaseWindUp(); }
+
+        /**
          * @brief Default destructor.
          */
         ~PppModel() = default;

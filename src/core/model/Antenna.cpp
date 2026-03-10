@@ -1,4 +1,5 @@
-#include "Antenna.hpp"
+﻿#include "Antenna.hpp"
+#include "Coordinates.hpp"
 #include "ProductCache.hpp"
 #include <Eigen/Dense>
 
@@ -54,6 +55,13 @@ namespace GnssProcessor {
      * - Matches antenna models by satellite identifier and by receiver type (with simple normalization).
      * - Safely handles missing data and logs warnings/traces for diagnostics.
      *
+     * Sign convention (correction added to modeled range, matching MATLAB reference):
+     *   Satellite PCO: APC closer to receiver than CoM → shortens range → subtract
+     *   Satellite PCV: sat_apc returns (pco - pcv), caller negates → net +pcv
+     *   Receiver  PCO: APC offset from ARP (mostly up) → project onto LOS → add
+     *   Receiver  PCV: rec_apc adds pcv to dot(pco,los) → add
+     *   total correction = -sat_pco + sat_pcv + rx_pco + rx_pcv + wind_up
+     *
      * @param satellite Satellite identifier string (e.g. "G01", "R05").
      * @param freq_type Frequency label used by processing (e.g. "L1", "C1").
      * @param system GNSS system enum for the satellite.
@@ -75,7 +83,8 @@ namespace GnssProcessor {
         double elevation,
         double azimuth,
         const std::string& rx_antenna_type,
-        const GnssTime& time) const {
+        const GnssTime& time,
+        const Eigen::Vector3d& sun_pos_hint) const {
 
         double correction = 0.0;
         bool is_phase = freq_type[0] == 'L';
@@ -139,43 +148,64 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        // LOS from receiver to satellite (ECEF)
-        Eigen::Vector3d los_rx2sat = (sat_pos - rx_pos);
-        double los_norm = los_rx2sat.norm();
-        if (los_norm == 0.0) {
+        // LOS from satellite to receiver (ECEF) - matches reference: l = r_xyz - s_xyz
+        Eigen::Vector3d los_sat2rx = (rx_pos - sat_pos);
+        double los_norm = los_sat2rx.norm();
+        if (los_norm < 1e-3) {
             log_manager_.getLogger("antenna")->warn("Invalid LOS for satellite {}, freq_type={} at TOW {:.3f}", satellite, freq_type, time.tow);
             return 0.0;
         }
-        los_rx2sat /= los_norm;
+        Eigen::Vector3d los = los_sat2rx / los_norm;  // Unit vector from sat to receiver
 
-        // Satellite attitude (yaw-steering: vel + Sun)
-        Eigen::Vector3d sun_pos = planetary_.interpolateSunPosition(time);
+        // Satellite attitude (yaw-steering) - IGS/ANTEX body frame convention
+        // Use the precise cached Sun position if provided by the caller (from the rigorous
+        // IAU 1976/1980 precession/nutation model computed in Geometry). Fall back to the
+        // rigorous model with empty ERPs only when no cached position is available.
+        Eigen::Vector3d sun_pos = sun_pos_hint;
         if (sun_pos.norm() < 1e6) {
-            sun_pos = Eigen::Vector3d(1.496e11, 0.0, 0.0); // fallback 1 AU
-            log_manager_.getLogger("antenna")->trace("Antenna: missing Sun ephemeris at TOW {:.3f}, using fallback", time.tow);
+            Eigen::Vector3d moon_dummy;
+            const std::vector<ErpData> empty_erps;
+            planetary_.computeSunMoonPosition(time, empty_erps, sun_pos, moon_dummy);
         }
+        if (sun_pos.norm() < 1e6) {
+            log_manager_.getLogger("antenna")->warn("Antenna: invalid Sun position at TOW {:.3f}, norm={:.3e}", time.tow, sun_pos.norm());
+            // Even with a bad Sun position, attempt to continue with velocity-based fallback
+        }
+        
+        // IGS/ANTEX satellite body frame convention:
+        //   Z-axis (k_s) = toward Earth (nadir / boresight)
+        //   X-axis (i_s) = toward Sun (in the sat-Sun-Earth plane)
+        //   Y-axis (j_s) = completes right-handed frame (cross-track, along solar panel axis)
+        //
+        // ATX satellite PCO is defined in this frame (Z toward Earth).
+        // ATX satellite PCV is indexed by nadir angle = angle from boresight (+Z) to LOS.
+        Eigen::Vector3d k_s = -sat_pos.normalized();  // +Z axis: toward Earth (nadir/boresight)
+        
+        // Sun direction from satellite
         Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
-        Eigen::Vector3d z_s = -sat_pos.normalized(); // to Earth
-        Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::Zero();
-        Eigen::Vector3d y_s = vhat.cross(e_sun);
-        if (y_s.norm() < 1e-8) {
-            y_s = z_s.cross(e_sun); // fallback
+        
+        // Y-axis = cross(boresight, sun_direction) = along solar panel axis
+        Eigen::Vector3d j_s = k_s.cross(e_sun);
+        if (j_s.norm() < 1e-8) {
+            // Fallback for eclipse/noon turn
+            Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::UnitY();
+            j_s = k_s.cross(vhat);
         }
-        y_s.normalize();
-        Eigen::Vector3d x_s = y_s.cross(z_s);
-        if (x_s.norm() < 1e-8) {
-            x_s = Eigen::Vector3d(1, 0, 0); // final fallback
+        j_s.normalize();
+        
+        // X-axis = cross(Y, Z) to complete right-handed frame
+        Eigen::Vector3d i_s = j_s.cross(k_s);
+        if (i_s.norm() < 1e-8) {
+            i_s = Eigen::Vector3d::UnitX();
         }
-        x_s.normalize();
+        i_s.normalize();
 
-        Eigen::Matrix3d ecef_to_sat;
-        ecef_to_sat.row(0) = x_s.transpose();
-        ecef_to_sat.row(1) = y_s.transpose();
-        ecef_to_sat.row(2) = z_s.transpose();
-
-        // Vector from satellite to receiver in sat frame
-        Eigen::Vector3d sat2rx_ecef = -los_rx2sat; // from sat to rx
-        Eigen::Vector3d sat2rx_sat = ecef_to_sat * sat2rx_ecef;
+        // Satellite frame rotation matrix: sf = [i; j; k] (rows are basis vectors)
+        // sf * vec_ecef -> vec_body; sf^T * vec_body -> vec_ecef
+        Eigen::Matrix3d sat_frame;
+        sat_frame.row(0) = i_s.transpose();
+        sat_frame.row(1) = j_s.transpose();
+        sat_frame.row(2) = k_s.transpose();
 
         // Satellite antenna selection with validity interval
         const AntennaData* sat_entry = nullptr;
@@ -218,29 +248,53 @@ namespace GnssProcessor {
                 satellite, time.week, time.tow);
         }
 
+        // === Satellite ===
+        // The modeled range is computed from CoM to receiver marker. Antenna corrections
+        // adjust for the offset between CoM and APC (PCO) and the direction-dependent
+        // phase variation (PCV).
+        //
+        // MATLAB reference: sdt = -(sat_apc(...)) where sat_apc = pco - pcv
+        //   => net satellite correction = -pco + pcv
+        //   correction -= pco_ecef · los   (subtract PCO)
+        //   correction += pcv              (add PCV)
         double sat_pco_corr = 0.0, sat_pcv_corr = 0.0;
         if (sat_entry && sat_entry->pco.count(atx_freq)) {
-            Eigen::Vector3d pco_sat = sat_entry->pco.at(atx_freq) * 1e-3; // in sat frame
-            if (pco_sat.allFinite()) {
-                sat_pco_corr = pco_sat.dot(sat2rx_sat);
-                //correction += sat_pco_corr;
+            // === PCO ===
+            Eigen::Vector3d pco_body = sat_entry->pco.at(atx_freq) * 1e-3; // mm -> m, in satellite body frame
+            if (pco_body.allFinite()) {
+                // Since sat_frame is orthonormal: sat_frame.transpose() * pco_body transforms body->ECEF
+                Eigen::Vector3d pco_ecef = sat_frame.transpose() * pco_body;
+                sat_pco_corr = pco_ecef.dot(los);
+                // Satellite APC is closer to receiver than CoM, shortening the range
                 correction -= sat_pco_corr;
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, sat_entry->type, atx_freq, time.tow);
             }
 
+            // === PCV ===
             if (sat_entry->pcv.count(atx_freq) && !sat_entry->pcv.at(atx_freq).empty()) {
                 const auto& pcv_table = sat_entry->pcv.at(atx_freq);
-                double zenith = std::acos(std::clamp(sat2rx_sat.z(), -1.0, 1.0)) * 180.0 / Constants::PI;
-                double az_sat = std::atan2(sat2rx_sat.y(), sat2rx_sat.x()) * 180.0 / Constants::PI;
+
+                // Nadir angle: angle between boresight (+Z = k_s, toward Earth) and LOS (sat->rx)
+                // For visible satellites this is typically 0-14 degrees, matching ATX PCV table range.
+                double cos_nadir = k_s.dot(los);
+                double nadir = std::acos(std::clamp(cos_nadir, -1.0, 1.0)) * 180.0 / Constants::PI;
+                
+                // For azimuth-dependent PCV, compute azimuth in satellite body frame
+                Eigen::Vector3d los_body = sat_frame * los;
+                double az_sat = std::atan2(los_body.y(), los_body.x()) * 180.0 / Constants::PI;
                 if (az_sat < 0.0) az_sat += 360.0;
+                
                 double dazi = sat_entry->dazi > 0.0 ? sat_entry->dazi : 5.0;
-                double dzen = sat_entry->dzen > 0.0 ? sat_entry->dzen : 5.0;
-                double pcv = interpolatePcv(pcv_table, zenith, az_sat, dazi, dzen) * 1e-3;
+                double dzen = sat_entry->dzen > 0.0 ? sat_entry->dzen : 1.0;
+                double zen1 = sat_entry->zen1;
+                double pcv = interpolatePcv(pcv_table, nadir - zen1, az_sat, dazi, dzen) * 1e-3;
                 if (std::isfinite(pcv)) {
                     sat_pcv_corr = pcv;
-                    correction -= sat_pcv_corr;
+                    // MATLAB reference: sat_apc returns (pco - pcv), caller negates
+                    // => net PCV contribution is +pcv
+                    correction += sat_pcv_corr;
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid satellite PCV for {} {} atx_freq={} at TOW {:.3f}",
                         satellite, sat_entry->type, atx_freq, time.tow);
@@ -313,24 +367,54 @@ namespace GnssProcessor {
             }
         }
 
+        // === Receiver ===
+        // MATLAB reference: rec_apc = dot(pco_ecef, los) + pcv/1000
+        //   => PCO projected onto LOS is added, PCV is added
+        //   correction += pco_ecef · los   (add PCO)
+        //   correction += pcv              (add PCV)
         if (rx_entry && rx_entry->pco.count(atx_freq)) {
-            Eigen::Vector3d pco = rx_entry->pco.at(atx_freq) * 1e-3;
-            if (pco.allFinite()) {
-                rx_pco_corr = pco.dot(los_rx2sat);
-                correction += rx_pco_corr;
-            } else {
+            // === PCO ===
+            // ATX receiver PCO is stored as North/East/Up (NEU) in mm
+            Eigen::Vector3d pco_neu = rx_entry->pco.at(atx_freq) * 1e-3;  // Convert mm to m
+
+            if (pco_neu.allFinite()) {
+                // Transform PCO from local NEU to ECEF using centralized coordinate rotation
+                double rx_norm = rx_pos.norm();
+                if (rx_norm > 1e3) {
+                    Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
+                    
+                    // Get ENU→ECEF rotation matrix
+                    Eigen::Matrix3d ori = Coordinates::enuToEcefMatrix(rx_llh.lat_rad, rx_llh.lon_rad);
+                    
+                    // ATX receiver PCO is stored as North/East/Up (NEU); reorder to ENU
+                    Eigen::Vector3d pco_enu(pco_neu(1), pco_neu(0), pco_neu(2));
+                    
+                    // Transform ENU to ECEF
+                    Eigen::Vector3d pco_ecef = ori * pco_enu;
+                    
+                    // Project onto satellite-to-receiver LOS
+                    rx_pco_corr = pco_ecef.dot(los);
+                    
+                    // Receiver PCO adds to modeled range
+                    correction += rx_pco_corr;
+                }
+            }
+            else {
                 log_manager_.getLogger("antenna")->warn("Invalid receiver PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, rx_type_sanitized, atx_freq, time.tow);
             }
 
+            // === PCV ===
             if (rx_entry->pcv.count(atx_freq) && !rx_entry->pcv.at(atx_freq).empty()) {
                 const auto& pcv_table = rx_entry->pcv.at(atx_freq);
                 double zenith = 90.0 - elevation;
                 double dazi = rx_entry->dazi > 0.0 ? rx_entry->dazi : 5.0;
                 double dzen = rx_entry->dzen > 0.0 ? rx_entry->dzen : 5.0;
-                double pcv = interpolatePcv(pcv_table, zenith, azimuth, dazi, dzen) * 1e-3;
+                double zen1 = rx_entry->zen1;
+                double pcv = interpolatePcv(pcv_table, zenith - zen1, azimuth, dazi, dzen) * 1e-3;
                 if (std::isfinite(pcv)) {
                     rx_pcv_corr = pcv;
+                    // MATLAB reference: rec_apc adds pcv/1000 to dot(pco,los)
                     correction += rx_pcv_corr;
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid receiver PCV for {} {} atx_freq={} at TOW {:.3f}",
@@ -341,10 +425,10 @@ namespace GnssProcessor {
 
         double wind_up_corr = 0.0;
         if (is_phase && wavelength > 0.0) {
-            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time);
+            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel);
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
-                correction -= wind_up_corr;
+                correction += wind_up_corr;
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid phase wind-up for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
             }
@@ -354,7 +438,7 @@ namespace GnssProcessor {
             log_manager_.getLogger("antenna")->trace("Antenna correction for {} {}: total={:.6f} m (sat_pco={:.6f}, sat_pcv={:.6f}, "
                 "rx_pco={:.6f}, rx_pcv={:.6f}, wind_up={:.6f}) at TOW {:.3f}, dazi={:.3f}, dzen={:.3f}",
                 satellite, freq_type, correction, sat_pco_corr, sat_pcv_corr,
-                -rx_pco_corr, -rx_pcv_corr, wind_up_corr, time.tow,
+                rx_pco_corr, rx_pcv_corr, wind_up_corr, time.tow,
                 sat_entry ? sat_entry->dazi : 5.0, sat_entry ? sat_entry->dzen : 5.0);
         } else {
             log_manager_.getLogger("antenna")->trace("No antenna correction for {} {} at TOW {:.3f}", satellite, freq_type, time.tow);
@@ -412,14 +496,26 @@ namespace GnssProcessor {
      * @param dzen Zenith spacing in degrees between PCV rows.
      * @return Interpolated PCV value in same units as table (meters if table was in meters; caller scales).
      */
+    void Antenna::resetPhaseWindUp(const std::string& satellite) {
+        gnss_corrections_.resetPhaseWindUp(satellite);
+    }
+
+    void Antenna::resetAllPhaseWindUp() {
+        gnss_corrections_.resetAllPhaseWindUp();
+    }
+
     double Antenna::interpolatePcv(const std::vector<std::vector<double>>& pcv_table,
                                    double zenith,
                                    double azimuth,
                                    double dazi,
                                    double dzen) const {
         if (pcv_table.empty() || pcv_table[0].empty()) return 0.0;
+        if (dzen <= 0.0) return 0.0;
         size_t cols = pcv_table[0].size();
         bool az_indep = (cols == 1);
+
+        // Clamp zenith to non-negative (zen1 offset already subtracted by caller)
+        if (zenith < 0.0) zenith = 0.0;
 
         size_t zen_idx = static_cast<size_t>(zenith / dzen);
         double zen_frac = (zenith - zen_idx * dzen) / dzen;

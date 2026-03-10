@@ -67,17 +67,45 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Struct for process noise parameters.
+     * @brief Struct for process noise spectral densities (variance rates).
      *
-     * Defines standard deviations for process noise in the Kalman filter.
+     * Each field is a spectral density in m*m/s. The Kalman filter multiplies
+     * by dt (seconds) to obtain the variance (m*m) added per prediction step:
+     *   variance_per_epoch = q * dt
      */
     struct ProcessNoise {
-        double position{ 0.0 };             ///< Position process noise standard deviation (m²/s).
-        double clock{ 1e4 };                ///< Clock bias process noise standard deviation (m²/s).
-        double troposphere{ 1e-7 };         ///< Tropospheric zenith delay process noise standard deviation (m²/s).
-        double ionosphere{ 0.20 };          ///< Ionospheric zenith delay process noise standard deviation (m²/s).
-        double ambiguity{ 0.0 };            ///< Carrier phase ambiguity process noise standard deviation (m²/s).
-        double system_time_offset{ 1e-6 };  ///< Inter-system time bias process noise standard deviation (m²/s).
+        /// Position (m*m/s). Zero for static positioning; use ~100 for kinematic.
+        double position{ 0.0 };
+
+        /// Receiver clock (m*m/s). 1e8 models the clock as white noise,
+        /// making it effectively unconstrained each epoch. This is standard
+        /// PPP practice for GNSS receivers without atomic clocks.
+        /// At 30 s: sqrt(1e8 * 30) ~ 54 km, i.e. no constraint.
+        double clock{ 1e8 };
+
+        /// Troposphere ZWD (m*m/s). 1e-8 yields ~0.5 mm/sqrt(hr),
+        /// consistent with mid-latitude IGS analysis center defaults
+        /// (Boehm et al.). Allows the ZWD to track weather-driven changes
+        /// over multi-hour arcs without over-constraining the estimate.
+        double troposphere{ 1e-8 };
+
+        /// Ionosphere zenith delay (m*m/s). Only active in PPP-RTK
+        /// uncombined mode. 0.02 is within the typical 0.01-0.1 range.
+        double ionosphere{ 0.02 };
+
+        /// Carrier phase ambiguity (m*m/s). Zero for constant-ambiguity
+        /// float model (standard).
+        double ambiguity{ 0.0 };
+
+        /// Inter-system time bias (m*m/s). ISBs are very stable short-term;
+        /// 1e-7 allows ~0.17 mm/sqrt(30 s) drift, sufficient for
+        /// GPS-Galileo/GLONASS/BeiDou time offset evolution.
+        double system_time_offset{ 1e-7 };
+
+        /// Troposphere horizontal gradient (m*m/s). North and East gradients
+        /// use the same spectral density. 5e-12 yields ~0.01 mm/sqrt(hr),
+        /// appropriate for slow azimuthal asymmetry evolution.
+        double tropo_gradient{ 5e-12 };
     };
 
     /**
@@ -92,6 +120,7 @@ namespace GnssProcessor {
         double ionosphere{ 5.0 };       ///< Initial ionospheric zenith delay standard deviation (m).
         double ambiguity{ 300.0 };      ///< Initial ambiguity standard deviation (m).
         double system_time_offset{ 100.0 }; ///< Initial inter-system time bias standard deviation (m).
+        double tropo_gradient{ 0.001 };     ///< Initial tropo gradient standard deviation (m).
     };
 
     /**
@@ -270,16 +299,42 @@ namespace GnssProcessor {
         double getCodeNoiseAmplify() const { return code_noise_amplify_; }
 
         /**
+         * @brief Gets the ocean loading BLQ file path.
+         * @return Path to the BLQ file (empty if not configured).
+         */
+        std::filesystem::path getOtlBlqPath() const { return otl_blq_path_; }
+
+        /**
          * @brief Gets the number of leap seconds.
          * @return Leap seconds value.
          */
         double getLeapSeconds() const { return leap_seconds_tai_; }
 
+        /**
+         * @brief Check if tropospheric azimuthal gradient estimation is enabled.
+         * @return True if gradient states (Gn, Ge) are estimated.
+         */
+        bool estimateTropoGradients() const { return estimate_tropo_gradients_; }
+
+        /**
+         * @brief Check if geometry relinearization is enabled.
+         *
+         * When true, the epoch loop will re-run computeModels() once after the
+         * first Kalman update to recompute satellite geometry (orbits, clocks,
+         * LOS, corrections) at the updated receiver position, then perform a
+         * second measurement update.  This eliminates the first-order
+         * linearization error inherent in a single-pass EKF update and can
+         * improve convergence during early epochs or after large position jumps.
+         *
+         * @return True if one geometry relinearization pass is enabled.
+         */
+        bool relinearizeGeometry() const { return relinearize_geometry_; }
+
     private:
         ProcessingMode processing_mode_{ ProcessingMode::PPP }; ///< Processing mode (PPP or PPP-RTK).
         SignalMode signal_mode_{ SignalMode::Dual };            ///< Signal mode (Dual, Triple, All).
-        SatelliteInterpolationMode satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }; ///< Satellite PV mode (Lagrange, Finite, Hermite, Spline).
-        SatelliteClockInterpolationMode satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }; ///< Satellite T mode (Linear, Lagrange).
+        SatelliteInterpolationMode satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }; ///< Satellite position/velocity interpolation mode (Lagrange, Finite, Hermite, Spline).
+        SatelliteClockInterpolationMode satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }; ///< Satellite clock interpolation mode (Linear, Lagrange).
         bool uncombined_enabled_{ false };                      ///< Enable uncombined processing.
         double elevation_mask_deg_{ 10.0 };                    ///< Elevation mask in degrees.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
@@ -298,10 +353,15 @@ namespace GnssProcessor {
 
         double leap_seconds_tai_ = 37.0;  ///< Number of leap seconds (TAI-UTC=37) since 2017-01-01.
 
-        double residual_threshold_{ 6.0 };   ///< Residual threshold for outlier detection.
-        double bad_meas_percent_{ 0.5 };     ///< Percentage of bad measurements allowed.
-        double ambiguity_std_{ 1000.0 };     ///< Ambiguity standard deviation.
-        double code_noise_amplify_{ 1000.0 }; ///< Code noise amplification factor.
+        double residual_threshold_{ 6.0 };      ///< Residual threshold for outlier detection.
+        double bad_meas_percent_{ 0.5 };        ///< Percentage of bad measurements allowed.
+        double ambiguity_std_{ 1e3 };           ///< Ambiguity standard deviation.
+        double code_noise_amplify_{ 1e4 };      ///< Code noise amplification factor.
+
+        std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
+
+        bool estimate_tropo_gradients_{ false };   ///< Estimate troposphere horizontal gradients (Gn, Ge).
+        bool relinearize_geometry_{ false };            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
     };
 
 } // namespace GnssProcessor

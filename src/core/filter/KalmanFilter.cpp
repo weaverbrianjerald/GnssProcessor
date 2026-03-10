@@ -69,6 +69,7 @@ namespace GnssProcessor {
         size_t core_size = state_manager_.getStateSize() - state_manager_.getAmbiguities().size();
         size_t state_size = state_manager_.getStateSize();
         size_t base_core_size = config.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+        if (config.estimateTropoGradients()) base_core_size += 2;
         if (state_size < base_core_size) {
             log_manager_.getLogger("kalman_filter")->error("Invalid state size from StateManager: {}, minimum {} required for mode {}",
                 state_size, base_core_size,
@@ -108,6 +109,17 @@ namespace GnssProcessor {
             P(tropo_idx, tropo_idx) = tropo_std * tropo_std;
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK && iono_idx < state_size && is_unset(P(iono_idx, iono_idx)))
             P(iono_idx, iono_idx) = iono_std * iono_std;
+
+        // Initialize gradient covariances if enabled
+        if (config_.estimateTropoGradients()) {
+            double grad_std = initial_std.tropo_gradient > 0 ? initial_std.tropo_gradient : 0.001;
+            size_t gn_idx = state_manager_.getTropoGradientNorthIndex();
+            size_t ge_idx = state_manager_.getTropoGradientEastIndex();
+            if (gn_idx < state_size && is_unset(P(gn_idx, gn_idx)))
+                P(gn_idx, gn_idx) = grad_std * grad_std;
+            if (ge_idx < state_size && is_unset(P(ge_idx, ge_idx)))
+                P(ge_idx, ge_idx) = grad_std * grad_std;
+        }
         
         // Initialize inter-system time offset covariances if unset
         for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
@@ -243,6 +255,10 @@ namespace GnssProcessor {
         const std::string epoch_prefix = "[" + epoch_tag + "] ";
         const std::string epoch_label = " @ " + epoch_tag;
 
+        // Clear reset tracking from previous update
+        last_reset_satellites_.clear();
+        was_complete_reset_ = false;
+
         if (measurement.innovations.size() == 0 || measurement.H.rows() == 0 || measurement.R_v.size() == 0) {
             klogger->warn("{}Invalid measurement update: innovations ({}), H ({}x{}), R_v ({})",
                 epoch_prefix,
@@ -339,6 +355,9 @@ namespace GnssProcessor {
         bool is_residual_outlier = false;
         bool is_complete_reset = false;
         std::tie(is_residual_outlier, is_complete_reset) = validatePostFitResiduals(measurement, x_prev, P_prev);
+
+        // Store reset status for caller to handle phase wind-up resets
+        was_complete_reset_ = is_complete_reset;
 
         if (is_residual_outlier) {
             state_manager_.setStateVector(x_prev);
@@ -524,41 +543,48 @@ namespace GnssProcessor {
 
                 if (amb_idx >= 0) {
                     const double prev_amb = x(amb_idx);
-                    x(amb_idx) = 0.0;
+
+                    // Re-seed the ambiguity from the observation so the next pass
+                    // does not see a huge innovation.  Use the pre-update core
+                    // states (clock, tropo) that are in x (the pre-update copy).
+                    double seed_value = 0.0;
+                    {
+                        const auto& ref_type_str = measurement.signal_types[max_idx];
+                        for (const auto& obs : measurement.observations) {
+                            if (obs.satellite != measurement.satellite_ids[max_idx]) continue;
+                            seed_value = state_manager_.computeAmbiguitySeed(obs, ref_type_str, x);
+                            break;
+                        }
+                    }
+
+                    x(amb_idx) = seed_value;
 
                     P.row(amb_idx).setZero();
                     P.col(amb_idx).setZero();
                     P(amb_idx, amb_idx) = amb_std * amb_std;
 
                     klogger->info(
-                        "{}Reinitialized ambiguity for {} {} (index {}): prev={:.6f} m -> 0.0 m, std={:.3f} m",
+                        "{}Reinitialized ambiguity for {} {} (index {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m",
                         epoch_prefix,
-                        measurement.satellite_ids[max_idx], measurement.signal_types[max_idx], amb_idx, prev_amb, amb_std);
+                        measurement.satellite_ids[max_idx], measurement.signal_types[max_idx], amb_idx, prev_amb, seed_value, amb_std);
+                    
+                    // Track reset satellite for phase wind-up reset by caller
+                    last_reset_satellites_.push_back(measurement.satellite_ids[max_idx]);
                 } else {
                     klogger->warn("{}Phase outlier but ambiguity key not found: {}", epoch_prefix, amb_key);
                 }
             } else {
                 const double base_var = measurement.R_v(static_cast<Eigen::Index>(max_idx));
-                double factor = 1.0;
 
-                if (std::isfinite(base_var) && base_var > 0.0) {
-                    factor = code_noise_amplify / base_var;
-                }
-                if (!std::isfinite(factor) || factor < 1.0) factor = 1.0;
-
-                state_manager_.inflateMeasurementVarianceScale(
-                    measurement.satellite_ids[max_idx],
-                    measurement.signal_types[max_idx],
-                    factor);
+                measurement.R_v(static_cast<Eigen::Index>(max_idx)) = code_noise_amplify; // TODO: Check if need to reconstruct full R-matrix?
 
                 klogger->info(
-                    "{}Code outlier action: inflated persistent variance scale for {} {}: base_var={:.3f} m^2, target_var={:.3f} m^2, factor={:.3f}",
+                    "{}Code outlier action: assigned variance {} {}: base_var={:.3f} m^2, target_var={:.3f} m^2",
                     epoch_prefix,
                     measurement.satellite_ids[max_idx],
                     measurement.signal_types[max_idx],
                     base_var,
-                    code_noise_amplify,
-                    factor);
+                    code_noise_amplify);
             }
 
             is_outlier_found = true;
@@ -588,23 +614,36 @@ namespace GnssProcessor {
                 static_cast<size_t>(bad_meas_percent * num_obs));
 
             P.setZero();
-            const size_t base_core_size = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+            const size_t base_core_size = [&]() {
+                size_t s = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+                if (config_.estimateTropoGradients()) s += 2;
+                return s;
+            }();
             const size_t num_time_offsets = state_manager_.getNumSystemTimeOffsets();
             const size_t core_size = base_core_size + num_time_offsets;
 
-            P.diagonal().head(base_core_size) << 10000.0, 10000.0, 10000.0,
+            // Reset core-state covariance diagonals
+            // Positions (3), clock (1), tropo ZWD (1)
+            P.diagonal().head(5) << 10000.0, 10000.0, 10000.0,
                 90000.0,
                 0.25;
 
-            if (base_core_size == 6) {
+            // Iono (PPP-RTK)
+            if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
                 P(5, 5) = 25.0;
+            }
+
+            // Gradient states
+            if (config_.estimateTropoGradients()) {
+                P(state_manager_.getTropoGradientNorthIndex(), state_manager_.getTropoGradientNorthIndex()) = 1e-6;
+                P(state_manager_.getTropoGradientEastIndex(), state_manager_.getTropoGradientEastIndex()) = 1e-6;
             }
             
             // Reset time offset covariances
             for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
                 size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
                 if (idx < static_cast<size_t>(P.rows())) {
-                    P(idx, idx) = 10000.0; // reset to large variance
+					P(idx, idx) = 10000.0; // reset to large variance, TODO: assign from config
                 }
             }
 

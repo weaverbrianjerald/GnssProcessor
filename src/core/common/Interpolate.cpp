@@ -10,39 +10,96 @@ namespace GnssProcessor {
         if (n == 0) return {};
         if (n == 1) return { 1.0 };
 
+        // Transform nodes to small indices to keep products well-conditioned.
+        //
+        // Reference implementations (e.g. IGS/JPL) use integer-stride indices
+        // {1,2,...,n} instead of raw times {0,900,...,7200}. With raw 900 s SP3
+        // spacing the product of 8 differences reaches ~1.7e26, giving weights
+        // ~5.8e-27; with unit-stride indices the product is at most 9! = 362880,
+        // giving weights ~2.8e-6 — well within double precision.
+        //
+        // We shift to center around zero (to avoid cancellation for large
+        // absolute values like GPS seconds ~1.36e8), then divide by the minimum
+        // node spacing to produce near-unit-stride indices. The resulting
+        // weights differ from the "true" weights by a common factor of
+        // s^(n-1) which cancels exactly in the barycentric N/D ratio used by
+        // barycentricEval — so the interpolated values are unchanged.
+        // barycentricDeriv replicates this normalization and applies the
+        // chain-rule correction dp/dx = dp/ds / min_spacing.
+        //
+        // IMPORTANT: this normalization is internal to weight computation only.
+        // Callers pass the original (un-normalized) x to barycentricEval/Deriv.
+        // In barycentricEval the common scaling factor cancels in the N/D ratio.
+        // In barycentricDeriv the same normalization is replicated and the
+        // chain-rule correction (divide by min_spacing) is applied.
+        double x_center = 0.5 * (x.front() + x.back());
+
+        // Find minimum spacing for scale normalization
+        double min_spacing = std::numeric_limits<double>::max();
+        for (size_t i = 1; i < n; ++i) {
+            double sp = std::abs(x[i] - x[i - 1]);
+            if (sp > 1e-15) {
+                min_spacing = std::min(min_spacing, sp);
+            }
+        }
+        if (min_spacing <= 1e-15 || min_spacing == std::numeric_limits<double>::max()) {
+            min_spacing = 1.0; // fallback: no scaling
+        }
+
+        std::vector<double> xs(n);
+        for (size_t i = 0; i < n; ++i) {
+            xs[i] = (x[i] - x_center) / min_spacing;
+        }
+
         std::vector<double> w(n, 0.0);
+
+        // Compute raw log-weights and normalize in log-space so max|w| == 1.
+        std::vector<double> log_abs_w(n, 0.0);
+        std::vector<int> signs(n, 1);
+        std::vector<bool> valid(n, true);
 
         for (size_t j = 0; j < n; ++j) {
             double log_abs_prod = 0.0;
             int sign = 1;
-            bool valid = true;
 
             for (size_t k = 0; k < n; ++k) {
                 if (k == j) continue;
-                double diff = x[j] - x[k];
-                if (std::abs(diff) < 1e-12) { // nearly-equal nodes => invalid weight
-                    valid = false;
+                double diff = xs[j] - xs[k];
+                if (std::abs(diff) < 1e-12) {
+                    valid[j] = false;
                     break;
                 }
                 log_abs_prod += std::log(std::abs(diff));
                 if (diff < 0.0) sign = -sign;
             }
 
-            if (!valid) {
+            if (valid[j]) {
+                log_abs_w[j] = -log_abs_prod;
+                signs[j] = sign;
+            }
+        }
+
+        // Normalize: subtract max log-weight so largest |w| == 1.
+        double max_log = -std::numeric_limits<double>::infinity();
+        for (size_t j = 0; j < n; ++j) {
+            if (valid[j]) {
+                max_log = std::max(max_log, log_abs_w[j]);
+            }
+        }
+
+        for (size_t j = 0; j < n; ++j) {
+            if (!valid[j]) {
                 w[j] = 0.0;
                 continue;
             }
 
-            // Guard against overflow/underflow using log-space thresholds
-            // exp(700) ~ 1e304, exp(-700) ~ 1e-304
-            if (log_abs_prod > 700.0) {
+            double shifted = log_abs_w[j] - max_log;
+
+            if (shifted < -700.0) {
                 w[j] = 0.0;
             }
-            else if (log_abs_prod < -700.0) {
-                w[j] = sign * 1e300;
-            }
             else {
-                w[j] = sign * std::exp(-log_abs_prod);
+                w[j] = signs[j] * std::exp(shifted);
             }
         }
 
@@ -57,10 +114,17 @@ namespace GnssProcessor {
         if (n == 0) return 0.0;
         if (w.size() != n || y.size() != n) return 0.0;
 
+        // Apply the same centering used by barycentricWeights so that
+        // w[j] / (xq_s - x_s[j]) keeps all terms at consistent magnitudes.
+        // The shift cancels in the N/D ratio, so the result is identical
+        // mathematically, but avoids mixing O(1) weights with O(900) diffs.
+        double x_center = 0.5 * (x.front() + x.back());
+        double xq_s = xq - x_center;
+
         double num = 0.0;
         double den = 0.0;
         for (size_t j = 0; j < n; ++j) {
-            double diff = xq - x[j];
+            double diff = xq_s - (x[j] - x_center);
             if (std::abs(diff) < 1e-12) {
                 return y[j]; // exact node match
             }
@@ -92,11 +156,20 @@ namespace GnssProcessor {
      * At a node x = x_k, a special L'Hôpital-based formula is used:
      *   p'(x_k) = sum_{j != k} (w_j / w_k) * (y_k - y_j) / (x_k - x_j)
      *
-     * @param x Node x-coordinates.
+     * Centering and spacing normalization are applied to differences to
+     * minimize floating-point cancellation when node values are large
+     * (e.g. GPS seconds ~1.36e8) and to keep term magnitudes consistent
+     * with the precomputed weights. The result is converted back to
+     * the original x-scale via the chain rule: dp/dx = dp/ds / spacing.
+     *
+     * This matches the integer-index approach used by IGS/JPL reference
+     * software and MATLAB implementations.
+     *
+     * @param x Node x-coordinates (original, un-normalized).
      * @param w Precomputed barycentric weights from barycentricWeights().
      * @param y Node y-values (function values at nodes).
-     * @param xq Query point.
-     * @return Derivative p'(xq).
+     * @param xq Query point (original, un-normalized).
+     * @return Derivative p'(xq) with respect to original x.
      */
     double Interpolate::barycentricDeriv(const std::vector<double>& x,
         const std::vector<double>& w,
@@ -107,35 +180,69 @@ namespace GnssProcessor {
         if (w.size() != n || y.size() != n) return 0.0;
         if (n == 1) return 0.0;  // Constant interpolant has zero derivative
 
+        // Apply the SAME centering + spacing normalization used by barycentricWeights
+        // so that w[j] and 1/(xq_s - x_s[j]) are at consistent O(1) magnitudes.
+        //
+        // Without spacing normalization, the differences (xq - x[j]) are O(300..3000)
+        // for 5-min SP3 with 11 nodes, while weights computed from unit-stride indices
+        // are O(1). This magnitude mismatch degrades precision in the derivative's
+        // quotient-rule formula, especially for the 1/(xq-xj)^2 terms.
+        //
+        // By normalizing to s = (x - x_center) / min_spacing we get near-integer
+        // differences that match the weight magnitudes. The derivative in normalized
+        // coordinates dp/ds must then be converted back via the chain rule:
+        //   dp/dx = dp/ds * ds/dx = dp/ds * (1 / min_spacing)
+        //
+        // This matches the integer-index approach used by IGS/JPL reference software
+        // and MATLAB implementations.
+        double x_center = 0.5 * (x.front() + x.back());
+
+        double min_spacing = std::numeric_limits<double>::max();
+        for (size_t i = 1; i < n; ++i) {
+            double sp = std::abs(x[i] - x[i - 1]);
+            if (sp > 1e-15) {
+                min_spacing = std::min(min_spacing, sp);
+            }
+        }
+        if (min_spacing <= 1e-15 || min_spacing == std::numeric_limits<double>::max()) {
+            min_spacing = 1.0;
+        }
+
+        double xq_s = (xq - x_center) / min_spacing;
+
         // Check if xq is at or very close to a node
         for (size_t k = 0; k < n; ++k) {
-            double diff_k = xq - x[k];
+            double xk_s = (x[k] - x_center) / min_spacing;
+            double diff_k = xq_s - xk_s;
             if (std::abs(diff_k) < 1e-12) {
-                // At node x_k: use the special formula derived via L'Hôpital's rule
+                // At node x_k: use the special formula derived via L'Hopital's rule
                 // p'(x_k) = sum_{j != k} (w_j / w_k) * (y_k - y_j) / (x_k - x_j)
+                // The w_j/w_k ratio cancels the common spacing^(n-1) factor, so the
+                // only remaining scaling is in the 1/(x_k - x_j) denominator.
                 if (std::abs(w[k]) < 1e-300) {
                     return 0.0;  // Degenerate weight
                 }
                 double deriv = 0.0;
                 for (size_t j = 0; j < n; ++j) {
                     if (j == k) continue;
-                    double dx = x[k] - x[j];
+                    double dx = xk_s - (x[j] - x_center) / min_spacing;
                     if (std::abs(dx) < 1e-12) continue;  // Skip coincident nodes
                     deriv += (w[j] / w[k]) * (y[k] - y[j]) / dx;
                 }
-                return deriv;
+                // Chain rule: dp/dx = dp/ds / min_spacing
+                return deriv / min_spacing;
             }
         }
 
         // General case: xq is not at a node
         // Compute N, D, N', D' simultaneously for efficiency
-        double N = 0.0;   // sum_j w_j * y_j / (xq - x_j)
-        double D = 0.0;   // sum_j w_j / (xq - x_j)
-        double Np = 0.0;  // -sum_j w_j * y_j / (xq - x_j)^2
-        double Dp = 0.0;  // -sum_j w_j / (xq - x_j)^2
+        double N = 0.0;   // sum_j w_j * y_j / (xq_s - x_s[j])
+        double D = 0.0;   // sum_j w_j / (xq_s - x_s[j])
+        double Np = 0.0;  // -sum_j w_j * y_j / (xq_s - x_s[j])^2
+        double Dp = 0.0;  // -sum_j w_j / (xq_s - x_s[j])^2
 
         for (size_t j = 0; j < n; ++j) {
-            double diff = xq - x[j];
+            double diff = xq_s - (x[j] - x_center) / min_spacing;
             double diff_sq = diff * diff;
             double wj_over_diff = w[j] / diff;
             double wj_over_diff_sq = w[j] / diff_sq;
@@ -150,9 +257,10 @@ namespace GnssProcessor {
             return 0.0;  // Degenerate denominator
         }
 
-        // Quotient rule: p'(x) = (N' * D - N * D') / D^2
-        double deriv = (Np * D - N * Dp) / (D * D);
-        return deriv;
+        // Quotient rule: p'(s) = (N' * D - N * D') / D^2
+        // Chain rule: dp/dx = dp/ds / min_spacing
+        double deriv_ds = (Np * D - N * Dp) / (D * D);
+        return deriv_ds / min_spacing;
     }
 
     double Interpolate::linearInterp(const std::vector<double>& x,
@@ -406,6 +514,38 @@ namespace GnssProcessor {
                 m[i] = 0.0;
                 m[i + 1] = 0.0;
             }
+        }
+
+        return m;
+    }
+
+
+    // Compute Catmull-Rom (non-monotone) slopes for cubic Hermite interpolation
+    std::vector<double> Interpolate::catmullRomSlopes(const std::vector<double>& x,
+        const std::vector<double>& y) {
+        const size_t n = x.size();
+        if (n < 2 || y.size() != n) return {};
+
+        std::vector<double> m(n, 0.0);
+
+        // Interior points: centered difference  m[i] = (y[i+1] - y[i-1]) / (x[i+1] - x[i-1])
+        for (size_t i = 1; i + 1 < n; ++i) {
+            double dx = x[i + 1] - x[i - 1];
+            if (std::abs(dx) < 1e-15) {
+                m[i] = 0.0;
+            } else {
+                m[i] = (y[i + 1] - y[i - 1]) / dx;
+            }
+        }
+
+        // Endpoints: one-sided (secant) slopes
+        {
+            double dx = x[1] - x[0];
+            m[0] = (std::abs(dx) > 1e-15) ? (y[1] - y[0]) / dx : 0.0;
+        }
+        {
+            double dx = x[n - 1] - x[n - 2];
+            m[n - 1] = (std::abs(dx) > 1e-15) ? (y[n - 1] - y[n - 2]) / dx : 0.0;
         }
 
         return m;

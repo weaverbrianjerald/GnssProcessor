@@ -7,65 +7,103 @@
 
 namespace GnssProcessor {
 
+    // -----------------------------------------------------------------------
+    // Leap second table (GPS - UTC offsets)
+    //
+    // Each entry is { GPS_JD_of_insertion, GPS_UTC_offset_after }.
+    // GPS epoch is 1980-01-06 00:00:00 UTC with 0 leap seconds.
+    // At that instant TAI - UTC = 19 s, and GPS = TAI - 19 = UTC.
+    //
+    // GPS_JD = UTC_JD + (GPS-UTC)/86400, but since leap seconds are
+    // inserted at UTC midnight the GPS JD values below are computed as
+    // UTC_JD_midnight + previous_GPS_UTC_offset / 86400 for consistency.
+    //
+    // Source: IERS Bulletin C / USNO.
+    // -----------------------------------------------------------------------
+    struct LeapSecondEntry {
+        double gps_jd;       // GPS JD at which this offset becomes valid
+        double gps_utc;      // GPS - UTC after this insertion (seconds)
+    };
+
+    // Table of leap second insertions since GPS epoch (1980-01-06).
+    // Before GPS epoch, GPS-UTC = 0 by definition.
+    static constexpr LeapSecondEntry LEAP_TABLE[] = {
+        // GPS epoch: 1980-01-06.  GPS-UTC = 0 at start.
+        { 2444244.5,  0.0 },   // 1980-01-06: GPS epoch, GPS = UTC
+        { 2444786.5,  1.0 },   // 1981-07-01
+        { 2445151.5,  2.0 },   // 1982-07-01
+        { 2445516.5,  3.0 },   // 1983-07-01
+        { 2446247.5,  4.0 },   // 1985-07-01
+        { 2447161.5,  5.0 },   // 1988-01-01
+        { 2447892.5,  6.0 },   // 1990-01-01
+        { 2448257.5,  7.0 },   // 1991-01-01
+        { 2448804.5,  8.0 },   // 1992-07-01
+        { 2449169.5,  9.0 },   // 1993-07-01
+        { 2449534.5, 10.0 },   // 1994-07-01
+        { 2450083.5, 11.0 },   // 1996-01-01
+        { 2450630.5, 12.0 },   // 1997-07-01
+        { 2451179.5, 13.0 },   // 1999-01-01
+        { 2453736.5, 14.0 },   // 2006-01-01
+        { 2454832.5, 15.0 },   // 2009-01-01
+        { 2455927.5, 16.0 },   // 2012-07-01
+        { 2457204.5, 17.0 },   // 2015-07-01
+        { 2457754.5, 18.0 },   // 2017-01-01
+    };
+    static constexpr size_t LEAP_TABLE_SIZE = sizeof(LEAP_TABLE) / sizeof(LEAP_TABLE[0]);
+
+    double TimeUtils::leapSecondsGpsUtc(double gps_jd) {
+        // Walk backwards through the table to find the applicable offset
+        for (size_t i = LEAP_TABLE_SIZE; i > 0; --i) {
+            if (gps_jd >= LEAP_TABLE[i - 1].gps_jd) {
+                return LEAP_TABLE[i - 1].gps_utc;
+            }
+        }
+        return 0.0; // Before GPS epoch
+    }
+
+    double TimeUtils::leapSecondsTaiUtc(double gps_jd) {
+        return leapSecondsGpsUtc(gps_jd) + TAI_GPS_OFFSET;
+    }
+
     /**
-     * @brief Converts Gregorian date and time to GPS time.
+     * @brief Converts Gregorian date and time (UTC) to GPS time.
      *
-     * This function takes a Gregorian date and time and converts it to GPS week and time of week (TOW).
-     * It accounts for leap seconds (hardcoded to 18 as of 2017-01-01).
-     *
-     * @param year Year (e.g., 2023).
-     * @param month Month (1-12).
-     * @param day Day of month (1-31).
-     * @param hour Hour (0-23).
-     * @param minute Minute (0-59).
-     * @param second Second (0-59.999...).
-     * @return GnssTime struct with GPS week and TOW.
-     * @throws std::invalid_argument If the input date is invalid.
+     * Uses the leap second table to determine the correct GPS-UTC offset
+     * for the given date, rather than a single hardcoded value.
      */
     GnssTime TimeUtils::gregorianToGpsTime(int year, int month, int day, int hour, int minute, double second) {
         if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
             throw std::invalid_argument("Invalid Gregorian date");
         }
-        
-        // Compute Julian Day (this is in UTC)
-        double jd = gregorianToJulianDay(year, month, day, hour, minute, second);
-        
-        // Compute days since GPS epoch (1980-01-06 00:00:00 UTC)
-        double gps_days = jd - GPS_EPOCH_JD;
-        
-        // Convert to seconds (still in UTC scale)
-        double utc_seconds_since_epoch = gps_days * SECONDS_IN_DAY;
-        
-		// Convert UTC to GPS time by adding leap seconds
-        double gps_seconds = utc_seconds_since_epoch + LEAP_SECONDS;
-        
+
+        // Compute Julian Day (this is on the UTC time scale)
+        double jd_utc = gregorianToJulianDay(year, month, day, hour, minute, second);
+
+        // Compute UTC seconds since GPS epoch
+        double utc_seconds_since_epoch = (jd_utc - GPS_EPOCH_JD) * SECONDS_IN_DAY;
+
+        // Approximate GPS JD to look up leap seconds (iterate once for precision)
+        double approx_gps_jd = jd_utc; // First approximation
+        double ls = leapSecondsGpsUtc(approx_gps_jd);
+
+        // Convert UTC to GPS time by adding leap seconds
+        double gps_seconds = utc_seconds_since_epoch + ls;
+
         // Compute GPS week and TOW
         int week = static_cast<int>(gps_seconds / SECONDS_IN_WEEK);
-        double tow = gps_seconds - week * SECONDS_IN_WEEK;
-        
+        double tow = gps_seconds - static_cast<double>(week) * SECONDS_IN_WEEK;
+
         // Ensure TOW is non-negative
         if (tow < 0.0) {
             tow += SECONDS_IN_WEEK;
             week -= 1;
         }
-        
+
         return GnssTime{ week, tow };
     }
 
     /**
      * @brief Converts date and time to GNSS time for a specified time system.
-     *
-     * This function converts a Gregorian date to GNSS time, adjusting for the specified time system
-     * (e.g., GPS, GAL, BDS). It uses GPS as the baseline and applies offsets for other systems.
-     *
-     * @param year Year (e.g., 2023).
-     * @param month Month (1-12).
-     * @param day Day of month (1-31).
-     * @param hour Hour (0-23).
-     * @param minute Minute (0-59).
-     * @param second Second (0-59.999...).
-     * @param time_system Time system string (e.g., "GPS", "GAL", "BDS").
-     * @return GnssTime struct adjusted for the specified system. Returns {0, 0.0} on invalid date.
      */
     GnssTime TimeUtils::GnssTimeFromDate(int year, int month, int day, int hour, int minute, double second,
         const std::string& time_system) {
@@ -80,14 +118,13 @@ namespace GnssProcessor {
 
         // Adjust for time system (if not GPS)
         if (time_system == "GAL") {
-            // Galileo System Time (GST) offset from GPS time (typically small, ~10-20 ns)
-            // For simplicity, assume aligned with GPS time (no leap second offset applied)
-            // Actual offset requires leap second data or external correction
+            // Galileo System Time (GST) is steered to GPS time at the ns level.
+            // No adjustment needed for our precision requirements.
             spdlog::trace("Converted to GST for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
                 year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
         }
         else if (time_system == "BDS") {
-            // BeiDou Time (BDT) is offset from GPS by 14 seconds (as of 2006-01-01)
+            // BeiDou Time (BDT) = GPS - 14 seconds (BDT epoch is 2006-01-01 00:00:00 UTC)
             gps_time.tow -= 14.0;
             if (gps_time.tow < 0.0) {
                 gps_time.tow += SECONDS_IN_WEEK;
@@ -95,6 +132,13 @@ namespace GnssProcessor {
             }
             spdlog::trace("Converted to BDT for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
                 year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
+        }
+        else if (time_system == "GLO") {
+            // GLONASS time = UTC + 3 hours (Moscow time), but RINEX timestamps
+            // are typically already in UTC. No adjustment applied here; the caller
+            // is expected to provide UTC-referenced inputs.
+            spdlog::trace("GLONASS time system: assuming UTC input for {}-{}-{} {}:{}:{:.3f}",
+                year, month, day, hour, minute, second);
         }
         else if (time_system != "GPS") {
             spdlog::trace("Unsupported time system {}, using GPS time", time_system);
@@ -104,113 +148,84 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Converts GPS time to Gregorian date and time.
+     * @brief Converts GPS time to Gregorian date and time (UTC).
      *
-     * This function converts a GnssTime (GPS week and TOW) back to Gregorian date and time.
-     *
-     * @param gpsTime The GPS time to convert.
-     * @param year Output: Year.
-     * @param month Output: Month (1-12).
-     * @param day Output: Day of month (1-31).
-     * @param hour Output: Hour (0-23).
-     * @param minute Output: Minute (0-59).
-     * @param second Output: Second (0-59.999...).
+     * Uses the leap second table to correctly convert GPS seconds back to UTC.
      */
     void TimeUtils::gpsTimeToGregorian(const GnssTime& gpsTime, int& year, int& month, int& day,
         int& hour, int& minute, double& second) {
-        // Use double arithmetic because tow can have fractional seconds.
         double gps_seconds = static_cast<double>(gpsTime.week) * static_cast<double>(SECONDS_IN_WEEK) + gpsTime.tow;
 
-        // Subtract leap seconds to convert GPS -> UTC (inverse of gregorianToGpsTime).
-        // NOTE: this currently uses a hardcoded leap-second value matching gregorianToGpsTime.
-        // For correctness across eras, replace with a proper leap-second lookup based on the epoch date.
-        double utc_seconds_since_epoch = gps_seconds - LEAP_SECONDS;
+        // Compute GPS JD for leap second lookup
+        double gps_jd = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
+        double ls = leapSecondsGpsUtc(gps_jd);
 
-        double jd = GPS_EPOCH_JD + utc_seconds_since_epoch / static_cast<double>(SECONDS_IN_DAY);
-        julianDayToGregorian(jd, year, month, day, hour, minute, second);
+        // Subtract leap seconds to convert GPS -> UTC
+        double utc_seconds_since_epoch = gps_seconds - ls;
+
+        double jd_utc = GPS_EPOCH_JD + utc_seconds_since_epoch / static_cast<double>(SECONDS_IN_DAY);
+        julianDayToGregorian(jd_utc, year, month, day, hour, minute, second);
     }
 
     /**
      * @brief Converts Gregorian date and time to Julian Day.
      *
-     * This function computes the Julian Day number for a given Gregorian date and time.
-     *
-     * @param year Year.
-     * @param month Month (1-12).
-     * @param day Day of month (1-31).
-     * @param hour Hour (0-23).
-     * @param minute Minute (0-59).
-     * @param second Second (0-59.999...).
-     * @return Julian Day as a double.
+     * Standard algorithm valid for all Gregorian calendar dates.
+     * The returned JD is on whatever time scale the input represents
+     * (typically UTC for calendar dates).
      */
     double TimeUtils::gregorianToJulianDay(int year, int month, int day, int hour, int minute, double second) {
-        if (month <= 2) {
-            year -= 1;
-            month += 12;
+        // Adjust year/month for the algorithm (Jan/Feb are months 13/14 of previous year)
+        int y = year;
+        int m = month;
+        if (m <= 2) {
+            y -= 1;
+            m += 12;
         }
-        int a = year / 100;
+        int a = y / 100;
         int b = 2 - a + a / 4;
-        double jd = std::floor(365.25 * (year + 4716)) + std::floor(30.6001 * (month + 1)) + day + b - 1524.5;
-        jd += (hour * 3600.0 + minute * 60.0 + second) / SECONDS_IN_DAY;
+        double jd = std::floor(365.25 * (y + 4716)) + std::floor(30.6001 * (m + 1)) + day + b - 1524.5;
+        jd += (hour * 3600.0 + minute * 60.0 + second) / static_cast<double>(SECONDS_IN_DAY);
         return jd;
     }
 
     /**
      * @brief Converts Julian Day to Gregorian date and time.
-     *
-     * This function converts a Julian Day number back to Gregorian date and time.
-     *
-     * @param jd Julian Day.
-     * @param year Output: Year.
-     * @param month Output: Month (1-12).
-     * @param day Output: Day of month (1-31).
-     * @param hour Output: Hour (0-23).
-     * @param minute Output: Minute (0-59).
-     * @param second Output: Second (0-59.999...).
      */
     void TimeUtils::julianDayToGregorian(double jd, int& year, int& month, int& day,
         int& hour, int& minute, double& second) {
-        jd += 0.5;
-        int z = std::floor(jd);
-        double f = jd - z;
+        // Shift by 0.5 to align with calendar day boundaries
+        double jd_shifted = jd + 0.5;
+        int z = static_cast<int>(std::floor(jd_shifted));
+        double f = jd_shifted - z;
 
         int a = z;
         if (z >= 2299161) {
-            int alpha = std::floor((z - 1867216.25) / 36524.25);
-            a = z + 1 + alpha - std::floor(alpha / 4);
+            int alpha = static_cast<int>(std::floor((z - 1867216.25) / 36524.25));
+            a = z + 1 + alpha - static_cast<int>(std::floor(alpha / 4.0));
         }
-        int b = a + 1524;
-        int c = std::floor((b - 122.1) / 365.25);
-        int d = std::floor(365.25 * c);
-        int e = std::floor((b - d) / 30.6001);
+        int bb = a + 1524;
+        int c = static_cast<int>(std::floor((bb - 122.1) / 365.25));
+        int d = static_cast<int>(std::floor(365.25 * c));
+        int e = static_cast<int>(std::floor((bb - d) / 30.6001));
 
-        day = b - d - std::floor(30.6001 * e);
+        day = bb - d - static_cast<int>(std::floor(30.6001 * e));
         month = e < 14 ? e - 1 : e - 13;
         year = month > 2 ? c - 4716 : c - 4715;
 
-        double seconds = f * SECONDS_IN_DAY;
-        hour = seconds / 3600;
-        seconds -= hour * 3600;
-        minute = seconds / 60;
-        second = seconds - minute * 60;
+        double seconds = f * static_cast<double>(SECONDS_IN_DAY);
+        hour = static_cast<int>(seconds / 3600.0);
+        seconds -= hour * 3600.0;
+        minute = static_cast<int>(seconds / 60.0);
+        second = seconds - minute * 60.0;
+
+        // Clamp tiny negative remainders from floating-point arithmetic
+        if (second < 0.0) second = 0.0;
     }
 
-    /**
-     * @brief Validates a Gregorian date and time.
-     *
-     * This function checks if the provided Gregorian date and time are valid.
-     *
-     * @param year Year.
-     * @param month Month (1-12).
-     * @param day Day of month (1-31).
-     * @param hour Hour (0-23).
-     * @param minute Minute (0-59).
-     * @param second Second (0-59.999...).
-     * @return True if valid, false otherwise.
-     */
     bool TimeUtils::isValidGregorianDate(int year, int month, int day, int hour, int minute, double second) {
         if (year < 1980 || month < 1 || month > 12 || day < 1 || hour < 0 || hour > 23 ||
-            minute < 0 || minute > 59 || second < 0 || second >= 60) {
+            minute < 0 || minute > 59 || second < 0.0 || second >= 60.0) {
             return false;
         }
         int max_day = daysInMonth(year, month);
@@ -218,33 +233,73 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Converts GPS week and TOW to Julian Date.
+     * @brief Converts GPS week and TOW to Julian Date (GPS time scale).
      *
-     * This function converts GPS time (week and TOW) to Julian Date.
-     *
-     * @param week GPS week.
-     * @param tow Time of week in seconds.
-     * @return Julian Date as a double.
-     * @throws std::invalid_argument If week or tow are invalid.
+     * The returned JD is on the GPS time scale. GPS seconds are added directly
+     * to the GPS epoch JD. Since GPS time is continuous (no leap seconds),
+     * the result differs from a UTC JD by GPS-UTC leap seconds / 86400.
      */
     double TimeUtils::gpsTimeToJulianDate(int week, double tow) {
-        if (week < 0 || tow < 0.0 || tow >= TimeUtils::SECONDS_IN_WEEK) {
+        if (week < 0 || tow < 0.0 || tow >= static_cast<double>(SECONDS_IN_WEEK)) {
             throw std::invalid_argument("Invalid GPS time: week " + std::to_string(week) + ", tow " + std::to_string(tow));
         }
-        // GPS epoch: 1980-01-06 00:00:00 UTC (JD 2444244.5)
         double seconds_since_gps_epoch = static_cast<double>(week) * SECONDS_IN_WEEK + tow;
-        double days_since_gps_epoch = seconds_since_gps_epoch / SECONDS_IN_DAY;
+        double days_since_gps_epoch = seconds_since_gps_epoch / static_cast<double>(SECONDS_IN_DAY);
         return GPS_EPOCH_JD + days_since_gps_epoch;
     }
 
-    /**
-     * @brief Formats GNSS time as a human-readable string.
-     *
-     * This function formats a GnssTime into a string including GPS week/TOW and UTC calendar time.
-     *
-     * @param time The GNSS time to format.
-     * @return Formatted string (e.g., "GPS week 1234, TOW 12345.67 (2023-10-01 12:34:56.789 UTC)").
-     */
+    double TimeUtils::gpsTimeToMjd(const GnssTime& time) {
+        double jd = gpsTimeToJulianDate(time.week, time.tow);
+        return jd - MJD_OFFSET;
+    }
+
+    double TimeUtils::gpsTimeToUtcMjd(const GnssTime& time) {
+        double gps_jd = gpsTimeToJulianDate(time.week, time.tow);
+        double utc_jd = gpsJdToUtcJd(gps_jd);
+        return utc_jd - MJD_OFFSET;
+    }
+
+    double TimeUtils::gpsTimeToJulianDate(const GnssTime& time) {
+        return gpsTimeToJulianDate(time.week, time.tow);
+    }
+
+    double TimeUtils::gpsJdToUtcJd(double gps_jd) {
+        double ls = leapSecondsGpsUtc(gps_jd);
+        return gps_jd - ls / static_cast<double>(SECONDS_IN_DAY);
+    }
+
+    double TimeUtils::gpsJdToTtJd(double gps_jd) {
+        return gps_jd + TT_GPS_OFFSET / static_cast<double>(SECONDS_IN_DAY);
+    }
+
+    double TimeUtils::gpsTimeToTtCenturies(const GnssTime& time) {
+        double gps_jd = gpsTimeToJulianDate(time.week, time.tow);
+        double tt_jd = gpsJdToTtJd(gps_jd);
+        return jdToJ2000Centuries(tt_jd);
+    }
+
+    double TimeUtils::jdToJ2000Centuries(double jd) {
+        return (jd - J2000_JD) / DAYS_PER_JULIAN_CENTURY;
+    }
+
+    double TimeUtils::mjdToDecimalYear(double mjd) {
+        return 2000.0 + (mjd - J2000_MJD) / 365.25;
+    }
+
+    bool TimeUtils::dayOfYearToDate(int year, int doy, int& month, int& day) {
+        if (doy < 1) return false;
+        int max_doy = isLeapYear(year) ? 366 : 365;
+        if (doy > max_doy) return false;
+
+        month = 1;
+        day = doy;
+        while (day > daysInMonth(year, month)) {
+            day -= daysInMonth(year, month);
+            ++month;
+        }
+        return true;
+    }
+
     std::string TimeUtils::formatGnssTime(const GnssTime& time) {
         std::ostringstream oss;
         oss << "GPS week " << time.week << ", TOW " << std::fixed << std::setprecision(3) << time.tow;
@@ -263,15 +318,6 @@ namespace GnssProcessor {
         return oss.str();
     }
 
-    /**
-     * @brief Gets the number of days in a given month.
-     *
-     * This helper function returns the number of days in the specified month and year.
-     *
-     * @param year Year.
-     * @param month Month (1-12).
-     * @return Number of days in the month.
-     */
     int TimeUtils::daysInMonth(int year, int month) {
         switch (month) {
         case 2: return isLeapYear(year) ? 29 : 28;
@@ -280,20 +326,12 @@ namespace GnssProcessor {
         }
     }
 
-    /**
-     * @brief Checks if a year is a leap year.
-     *
-     * This helper function determines if the given year is a leap year.
-     *
-     * @param year Year.
-     * @return True if leap year, false otherwise.
-     */
     bool TimeUtils::isLeapYear(int year) {
         return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
     }
 
     double TimeUtils::continuousGpsSeconds(const GnssTime& t) {
-        return static_cast<double>(t.week) * TimeUtils::SECONDS_IN_WEEK + t.tow;
+        return static_cast<double>(t.week) * static_cast<double>(SECONDS_IN_WEEK) + t.tow;
     }
 
 } // namespace GnssProcessor

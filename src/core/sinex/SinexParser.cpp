@@ -224,14 +224,10 @@ namespace GnssProcessor {
             int seconds = std::stoi(match[3].str()); // Seconds of day
 
             // Convert DOY to Gregorian date
-            int month = 1, day = doy;
-            int days_in_month[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-            if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
-                days_in_month[1] = 29; // Leap year
-            }
-            while (day > days_in_month[month - 1]) {
-                day -= days_in_month[month - 1];
-                month++;
+            int month = 0, day = 0;
+            if (!TimeUtils::dayOfYearToDate(year, doy, month, day)) {
+                spdlog::error("Invalid DOY {} for year {} in SINEX time {}", doy, year, time_str);
+                return GnssTime{ 0, 0.0 };
             }
 
             int hour = seconds / 3600;

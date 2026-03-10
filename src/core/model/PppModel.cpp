@@ -18,6 +18,7 @@
 #include "StateManager.hpp"
 #include "ProductParser.hpp"
 #include "Constants.hpp"
+#include "Coordinates.hpp"
 #include "MeasurementModel.hpp"
 #include "TimeUtils.hpp"
 #include "ProductCache.hpp"
@@ -88,39 +89,36 @@ namespace GnssProcessor {
             if (marker_pos.norm() > 1e3 && !marker_pos.hasNaN()) {
                 // Apply antenna H/E/N offset to get antenna phase center position.
                 // RINEX APPROX POSITION XYZ is the marker position.
-                // ANTENNA: DELTA H/E/N gives the offset from marker to ARP in local (Up, East, North) frame.
-                // Note: H = Up, E = East, N = North (not Height/East/North as sometimes misread)
+                // ANTENNA: DELTA H/E/N gives the offset from marker to ARP in local frame.
+                // Note: H = Up, E = East, N = North
                 Eigen::Vector3d hen = rinex_parser_.getAntennaDeltaHen();
-                
+
                 if (hen.norm() > 1e-6) {
-                    // Convert local ENU offset to ECEF
-                    // First, compute the local ENU-to-ECEF rotation matrix at the marker position
-                    double r = marker_pos.norm();
-                    double lat = std::asin(marker_pos.z() / r);  // Geocentric latitude (approximate)
-                    double lon = std::atan2(marker_pos.y(), marker_pos.x());
-                    
-                    double slat = std::sin(lat), clat = std::cos(lat);
-                    double slon = std::sin(lon), clon = std::cos(lon);
-                    
-                    // ENU to ECEF rotation matrix (columns are E, N, U unit vectors in ECEF)
-                    Eigen::Matrix3d R_enu_to_ecef;
-                    R_enu_to_ecef << -slon,        -slat * clon,  clat * clon,
-                                      clon,        -slat * slon,  clat * slon,
-                                      0.0,          clat,         slat;
-                    
-                    // RINEX stores H/E/N (Height=Up, East, North), so reorder to ENU
-                    Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));  // E, N, U from H, E, N
-                    
+                    // Use centralized Coordinates for proper geodetic conversion
+                    Coordinates::Llh marker_llh = Coordinates::ecefToLlh(marker_pos);
+
+                    // Get ENU→ECEF rotation matrix (columns are E, N, U in ECEF)
+                    Eigen::Matrix3d R_enu_to_ecef = Coordinates::enuToEcefMatrix(
+                        marker_llh.lat_rad, marker_llh.lon_rad);
+
+                    // RINEX stores H/E/N (Height=Up, East, North), reorder to ENU
+                    // hen = (H, E, N) = (Up, East, North)
+                    // enu = (East, North, Up) = (hen[1], hen[2], hen[0])
+                    Eigen::Vector3d enu_offset(hen(1), hen(2), hen(0));
+
                     // Convert to ECEF and add to marker position
                     Eigen::Vector3d ecef_offset = R_enu_to_ecef * enu_offset;
                     state.position = marker_pos + ecef_offset;
-                    
+
                     log_manager_.getLogger("ppp_model")->info(
                         "Applied antenna H/E/N offset ({:.4f}, {:.4f}, {:.4f}) m to marker position, "
-                        "ARP ECEF: ({:.3f}, {:.3f}, {:.3f}) m",
+                        "ARP ECEF: ({:.3f}, {:.3f}, {:.3f}) m, lat={:.6f}°, lon={:.6f}°",
                         hen(0), hen(1), hen(2),
-                        state.position.x(), state.position.y(), state.position.z());
-                } else {
+                        state.position.x(), state.position.y(), state.position.z(),
+                        marker_llh.lat_rad * 180.0 / Constants::PI,
+                        marker_llh.lon_rad * 180.0 / Constants::PI);
+                }
+                else {
                     state.position = marker_pos;
                     log_manager_.getLogger("ppp_model")->info(
                         "Initialized position from RINEX marker (no antenna offset): ({:.3f}, {:.3f}, {:.3f}) m",
@@ -198,6 +196,7 @@ namespace GnssProcessor {
             ppp_obs.lli_flags = obs.lli_flags;
 
             ppp_obs.sat_pos = Eigen::Vector3d::Zero();
+            ppp_obs.rx_pos_linearization = Eigen::Vector3d::Zero();
             ppp_obs.elevation = 0.0;
             ppp_obs.azimuth = 0.0;
             ppp_obs.los = Eigen::Vector3d::Zero();
@@ -221,6 +220,7 @@ namespace GnssProcessor {
             }
 
             ppp_obs.sat_pos = sat_pos;
+            ppp_obs.rx_pos_linearization = rx_pos;
             ppp_obs.elevation = elevation;
             ppp_obs.azimuth = azimuth;
             ppp_obs.los = los;
@@ -564,7 +564,10 @@ namespace GnssProcessor {
      * @param shapiro_delay Shapiro delay (meters).
      * @param sagnac_corr Sagnac correction (meters).
      * @param atm_loading_corr Atmospheric loading correction (meters).
-     * @param relativistic_corr Relativistic correction (meters).
+     * @param relativistic_corr Relativistic periodic correction -2(r·v)/c² (seconds). Must be
+     *        subtracted from the modeled observable (converted to meters via multiplication
+     *        by SPEED_OF_LIGHT) to account for the eccentricity-dependent clock variation
+     *        that is not captured by the interpolated CLK product values.
      * @param solid_tide Solid Earth tide correction (meters).
      * @return true if at least one combined observable was successfully formed; false otherwise.
      */
@@ -592,6 +595,12 @@ namespace GnssProcessor {
         }
 
         const double slant_dry_delay = tropo_zhd * ppp_obs.mf_d;
+
+        // Compute pole tide correction once (station-level, signal-independent).
+        // The ECEF displacement is projected onto the satellite->receiver LOS (-los)
+        // to match the sign convention used by solid Earth tide and OTL corrections.
+        const Eigen::Vector3d pole_tide_ecef = gnss_corrections_.computePoleTideCorrection(rx_pos, obs.time);
+        const double pole_tide_corr = pole_tide_ecef.dot(-ppp_obs.los);
 
         std::vector<std::pair<std::string, std::string>> code_pairs;
         std::vector<std::pair<std::string, std::string>> phase_pairs;
@@ -663,20 +672,21 @@ namespace GnssProcessor {
 
                 const double antenna_corr = antenna_.getAntennaCorrection(
                     obs.satellite, type, obs.system, rx_pos, sat_pos, sat_vel,
-                    elevation, azimuth, rx_antenna_type, obs.time);
+                    elevation, azimuth, rx_antenna_type, obs.time,
+                    geometry_.getCachedSunPosition());
 
                 const double bias_corr = gnss_corrections_.getBiasCorrection(obs.satellite, type, obs.time);
 
                 modeled_obs[j] = range
                     - (sat_clock * Constants::SPEED_OF_LIGHT)
-                    //- relativistic_corr * Constants::SPEED_OF_LIGHT
+                    - (relativistic_corr * Constants::SPEED_OF_LIGHT)
                     + slant_dry_delay
                     + antenna_corr
-                    - bias_corr
+                    + bias_corr
                     + shapiro_delay
-                    + sagnac_corr
                     + atm_loading_corr
-                    - solid_tide;
+                    + solid_tide
+                    + pole_tide_corr;
 
                 const auto& n = config_.getDefaultMeasurementNoise();
                 const double default_code_var = n.code_std_m * n.code_std_m;
@@ -754,6 +764,7 @@ namespace GnssProcessor {
         // Raw measurements are identified by not containing '_' in their key.
         for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
             if (it->first.find('_') == std::string::npos) {
+                ppp_obs.raw_observed[it->first] = it->second;
                 it = ppp_obs.observed.erase(it);
             } else {
                 ++it;
@@ -1049,4 +1060,4 @@ namespace GnssProcessor {
     }
 
 } // namespace GnssProcessor
-//#endif
+//#endif//#endif

@@ -35,13 +35,15 @@ namespace GnssProcessor {
         System system;                               /**< Constellation/System for the satellite */
         GnssTime time;                               /**< Epoch time of the observation */
         std::map<std::string, double> observed;      /**< Raw observed measurement values keyed by observable name (e.g. "C1", "L1") */
+        std::map<std::string, double> raw_observed;  /**< Original RINEX observables (L1C, C1W, etc.) for MW detection */
         std::map<std::string, double> modeled;       /**< Modeled values for the same observables */
         std::map<std::string, double> residuals;     /**< Residuals = observed - modeled */
         std::map<std::string, double> variances;     /**< Variance (or sigma^2) for each observable */
         std::map<std::string, int> lli_flags;        /**< Loss-of-lock indicators keyed by observable name */
         Eigen::Vector3d sat_pos;                     /**< Satellite ECEF position (meters) */
-        double elevation;                            /**< Elevation angle (radians) */
-        double azimuth;                              /**< Azimuth angle (radians) */
+        Eigen::Vector3d rx_pos_linearization;        /**< Receiver ECEF position used as the linearization point (meters) */
+        double elevation;                            /**< Elevation angle (degrees) */
+        double azimuth;                              /**< Azimuth angle (degrees) */
         Eigen::Vector3d los;                         /**< Line-of-sight unit vector from receiver to satellite */
         double range;                                /**< Geometric range (meters) */
         double mf_w;                                 /**< Wide-lane combination frequency value (Hz) or coefficient */
@@ -57,6 +59,8 @@ namespace GnssProcessor {
         Eigen::Vector3d position;                    /**< Receiver ECEF position (meters) */
         double clock_bias;                           /**< Receiver clock bias (meters) */
         double troposphere_zwd;                      /**< Zenith wet delay (meters) */
+        double tropo_gradient_north{ 0.0 };          /**< Tropospheric north gradient (meters) */
+        double tropo_gradient_east{ 0.0 };           /**< Tropospheric east gradient (meters) */
         double ionosphere_zenith_delay;              /**< Ionospheric zenith delay (meters), if modeled as a single parameter */
         std::map<std::string, double> system_time_offsets; /**< Inter-system time biases (meters) keyed by system name */
         Eigen::MatrixXd covariance;                  /**< State covariance matrix */
@@ -120,6 +124,7 @@ namespace GnssProcessor {
         std::map<std::string, std::vector<std::vector<double>>> pcv; /**< Phase center variation grid for each frequency */
         double dazi{ 0.0 };                          /**< Azimuth spacing for PCV grid (degrees) or metadata */
         double dzen{ 0.0 };                          /**< Zenith spacing for PCV grid (degrees) or metadata */
+        double zen1{ 0.0 };                          /**< Start zenith/nadir angle for PCV grid (degrees) */
         GnssTime valid_from;                         /**< Start validity for antenna model */
         GnssTime valid_until;                        /**< End validity for antenna model */
     };

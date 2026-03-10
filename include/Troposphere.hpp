@@ -11,18 +11,19 @@
 
 #include "LogManager.hpp"
 #include "GnssConfig.hpp"
+#include "TimeUtils.hpp"
 #include <Eigen/Dense>
 
 namespace GnssProcessor {
 
     /**
      * @class Troposphere
-     * @brief Simple troposphere helper for mapping functions and ZHD computation.
+     * @brief Troposphere helper for mapping functions and ZHD computation.
      *
-     * This class implements lightweight tropospheric utilities used by the
-     * processing pipeline: conversion of elevation to hydrostatic and wet
-     * mapping functions and estimation of the Saastamoinen zenith hydrostatic
-     * delay given a receiver position in ECEF coordinates.
+     * This class implements tropospheric utilities used by the processing
+     * pipeline: the Global Mapping Function (GMF) for hydrostatic and wet
+     * mapping, and estimation of the Saastamoinen zenith hydrostatic delay
+     * given a receiver position in ECEF coordinates.
      */
     class Troposphere {
     public:
@@ -34,19 +35,22 @@ namespace GnssProcessor {
         Troposphere(const GnssConfig& config, LogManager& log_mgr);
 
         /**
-         * @brief Compute tropospheric mapping functions.
+         * @brief Compute tropospheric mapping functions using the Global Mapping Function (GMF).
          *
          * Computes the hydrostatic (dry) and wet mapping functions for a given
-         * elevation angle using simple empirical formulas. Elevation is expected
-         * in degrees.
+         * elevation angle using the GMF model (Boehm et al. 2006), which accounts
+         * for latitude, height and day-of-year. Falls back to simple empirical
+         * mappings if receiver position is unavailable.
          *
-         * @param elevation Elevation angle in degrees (0..90). Values outside
-         *                  this range will produce default mappings of 1.0 and
-         *                  a warning will be logged.
+         * @param elevation Elevation angle in degrees (0..90).
+         * @param receiver_pos Receiver ECEF position (meters) for GMF computation.
+         * @param time GNSS epoch used to derive day-of-year.
          * @param[out] mf_d Output hydrostatic (dry) mapping function (unitless).
          * @param[out] mf_w Output wet mapping function (unitless).
          */
-        void getTroposphereMapping(double elevation, double& mf_d, double& mf_w) const;
+        void getTroposphereMapping(double elevation, const Eigen::Vector3d& receiver_pos,
+                                   const GnssTime& time,
+                                   double& mf_d, double& mf_w) const;
         
         /**
          * @brief Compute Saastamoinen zenith hydrostatic delay (ZHD).
@@ -62,6 +66,27 @@ namespace GnssProcessor {
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
         const GnssConfig& config_;                        /**< Configuration settings (read-only). */
+
+        /**
+         * @brief Evaluate the continued-fraction mapping function form.
+         *
+         * Computes 1/mf using the Marini (1972) continued fraction:
+         *   mf(el) = (1 + a/(1 + b/(1 + c))) / (sin(el) + a/(sin(el) + b/(sin(el) + c)))
+         *
+         * @param sin_el Sine of elevation angle.
+         * @param a First coefficient.
+         * @param b Second coefficient.
+         * @param c Third coefficient.
+         * @return Mapping function value (unitless, >= 1).
+         */
+        static double mariniMapping(double sin_el, double a, double b, double c);
+
+        /**
+         * @brief Compute day-of-year from a GnssTime epoch.
+         * @param time GNSS time.
+         * @return Day-of-year as a fractional double (1.0 = Jan 1 00:00).
+         */
+        static double getDayOfYear(const GnssTime& time);
     };
 
 }

@@ -112,7 +112,7 @@ namespace GnssProcessor {
             if (sv_clock_mode == "linear") {
                 satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
             }
-            else if (sv_clock_mode == "finite") {
+            else if (sv_clock_mode == "lagrange") {
                 satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Lagrange;
             }
             else {
@@ -128,11 +128,21 @@ namespace GnssProcessor {
             receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
             receiver_antenna_orientation_.elevation_deg = json["receiver_antenna_orientation"].value("elevation_deg", 90.0);
 
-            process_noise_.position = json["process_noise"].value("position_q", 0.0);
-            process_noise_.clock = json["process_noise"].value("clock_bias_q", 1e5);
-            process_noise_.troposphere = json["process_noise"].value("troposphere_q", 1e-9);
-            process_noise_.ionosphere = json["process_noise"].value("ionosphere_q", 0.20);
-            process_noise_.system_time_offset = json["process_noise"].value("system_time_offset_q", 1e-6);
+            // Process noise spectral densities (m²/s): variance_per_epoch = q * dt
+            process_noise_.position = json["process_noise"].value("position_q", 0.0);       // 0 for static
+            process_noise_.clock = json["process_noise"].value("clock_bias_q", 1e8);        // white-noise clock
+            process_noise_.troposphere = json["process_noise"].value("troposphere_q", 1e-8); // ~0.5 mm/?hr (IGS default)
+            process_noise_.ionosphere = json["process_noise"].value("ionosphere_q", 0.02);   // PPP-RTK only
+            process_noise_.system_time_offset = json["process_noise"].value("system_time_offset_q", 1e-7); // stable ISB drift
+            process_noise_.tropo_gradient = json["process_noise"].value("tropo_gradient_q", 5e-12); // ~0.01 mm/sqrt(hr)
+
+            // Troposphere gradient estimation toggle
+            estimate_tropo_gradients_ = json.value("estimate_tropo_gradients", false);
+            log_manager.getLogger("gnss_config")->info("Troposphere gradient estimation: {}", estimate_tropo_gradients_ ? "enabled" : "disabled");
+
+            // Geometry relinearization toggle
+            relinearize_geometry_ = json.value("relinearize_geometry", false);
+            log_manager.getLogger("gnss_config")->info("Geometry relinearization: {}", relinearize_geometry_ ? "enabled" : "disabled");
 
             initial_std_.position = json["initial_std"].value("position", 100.0);
             initial_std_.clock = json["initial_std"].value("clock", 1e5);
@@ -140,6 +150,7 @@ namespace GnssProcessor {
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
             initial_std_.ambiguity = json["initial_std"].value("ambiguity", 1000.0);
             initial_std_.system_time_offset = json["initial_std"].value("system_time_offset", 100.0);
+            initial_std_.tropo_gradient = json["initial_std"].value("tropo_gradient", 0.001);
 
             // Default measurement noise (fallback)
             if (json.contains("default_measurement_noise")) {
@@ -225,6 +236,18 @@ namespace GnssProcessor {
 
             // Leap seconds
             leap_seconds_tai_ = json.value("leap_seconds_tai", 37.0);  // Oct 2025 TAI-UTC value
+
+            // Ocean tidal loading BLQ file path (optional)
+            std::string otl_path_str = json.value("otl_blq_path", "");
+            if (!otl_path_str.empty()) {
+                otl_blq_path_ = otl_path_str;
+                if (std::filesystem::exists(otl_blq_path_)) {
+                    log_manager.getLogger("gnss_config")->info("OTL BLQ file: {}", otl_blq_path_.string());
+                } else {
+                    log_manager.getLogger("gnss_config")->warn("OTL BLQ file not found: {}", otl_blq_path_.string());
+                    otl_blq_path_.clear();
+                }
+            }
 
             log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
                 "observation_path={}, navigation_path={}, {} products, leap_seconds={}",

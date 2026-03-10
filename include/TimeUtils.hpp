@@ -107,12 +107,139 @@ namespace GnssProcessor {
             int& hour, int& minute, double& second);
 
         /**
-         * @brief Converts GPS week and TOW to Julian Date.
+         * @brief Converts GPS week and TOW to Julian Date (GPS time scale).
+         *
+         * The returned JD is on the GPS time scale (not UTC). To obtain a UTC JD
+         * subtract the appropriate leap second offset:
+         *   JD_UTC = JD_GPS - leapSeconds(JD_GPS) / 86400.0
+         *
          * @param week GPS week.
          * @param tow Time of week in seconds.
-         * @return Julian Date as a double.
+         * @return Julian Date as a double (GPS time scale).
          */
         static double gpsTimeToJulianDate(int week, double tow);
+
+        /**
+         * @brief Converts GPS time to Modified Julian Date (GPS time scale).
+         *
+         * MJD = JD - 2400000.5. The result is on the GPS time scale.
+         *
+         * @param time GNSS epoch (GPS week + TOW).
+         * @return Modified Julian Date (days, GPS time scale).
+         */
+        static double gpsTimeToMjd(const GnssTime& time);
+
+        /**
+         * @brief Converts GPS time to Modified Julian Date (UTC time scale).
+         *
+         * Subtracts the GPS-UTC leap second offset from the GPS MJD to
+         * produce an MJD on the UTC time scale. Uses the leap second table.
+         *
+         * @param time GNSS epoch (GPS week + TOW).
+         * @return Modified Julian Date (days, UTC time scale).
+         */
+        static double gpsTimeToUtcMjd(const GnssTime& time);
+
+        /**
+         * @brief Converts GPS time to Julian Date on the GPS time scale.
+         *
+         * Convenience overload that accepts a GnssTime struct. Delegates to
+         * gpsTimeToJulianDate(int week, double tow).
+         *
+         * @param time GNSS epoch (GPS week + TOW).
+         * @return Julian Date (days, GPS time scale).
+         */
+        static double gpsTimeToJulianDate(const GnssTime& time);
+
+        /**
+         * @brief Converts a GPS-scale Julian Date to a UTC-scale Julian Date.
+         *
+         * Subtracts the GPS-UTC leap second offset (looked up from the internal
+         * leap second table) from the GPS JD.
+         *
+         * @param gps_jd Julian Date on the GPS time scale.
+         * @return Julian Date on the UTC time scale.
+         */
+        static double gpsJdToUtcJd(double gps_jd);
+
+        /**
+         * @brief Converts a GPS-scale Julian Date to a TT-scale Julian Date.
+         *
+         * TT = GPS + 51.184 s (constant).
+         *
+         * @param gps_jd Julian Date on the GPS time scale.
+         * @return Julian Date on the TT (Terrestrial Time) time scale.
+         */
+        static double gpsJdToTtJd(double gps_jd);
+
+        /**
+         * @brief Converts GPS time to TT Julian centuries from J2000.0.
+         *
+         * Computes the number of Julian centuries of Terrestrial Time (TT)
+         * elapsed since J2000.0 (2000-01-01 12:00:00 TT). This is the
+         * standard time argument for precession, nutation and astronomical
+         * series.
+         *
+         * @param time GNSS epoch (GPS week + TOW).
+         * @return Julian centuries of TT from J2000.0.
+         */
+        static double gpsTimeToTtCenturies(const GnssTime& time);
+
+        /**
+         * @brief Converts a Julian Date to Julian centuries from J2000.0.
+         *
+         * T = (JD ? 2451545.0) / 36525.0
+         *
+         * @param jd Julian Date (on any time scale — caller is responsible
+         *           for ensuring the correct scale for the intended use).
+         * @return Julian centuries from J2000.0.
+         */
+        static double jdToJ2000Centuries(double jd);
+
+        /**
+         * @brief Converts an MJD to a decimal year.
+         *
+         * Uses the J2000.0 MJD (51544.5) as the pivot:
+         *   decimal_year = 2000.0 + (mjd ? 51544.5) / 365.25
+         *
+         * Useful for mean-pole and other slow-varying models.
+         *
+         * @param mjd Modified Julian Date (on any time scale).
+         * @return Decimal year.
+         */
+        static double mjdToDecimalYear(double mjd);
+
+        /**
+         * @brief Converts day-of-year to month and day.
+         *
+         * @param year  Calendar year (used for leap-year determination).
+         * @param doy   Day of year (1-based, 1–365 or 1–366 for leap years).
+         * @param month Output: month (1–12).
+         * @param day   Output: day of month (1–31).
+         * @return True if conversion succeeded; false if doy is out of range.
+         */
+        static bool dayOfYearToDate(int year, int doy, int& month, int& day);
+
+        /**
+         * @brief Look up the number of leap seconds (GPS - UTC) for a given GPS JD.
+         *
+         * Uses a built-in table of leap second insertions. The returned value
+         * is the number of seconds by which GPS time leads UTC at the given epoch.
+         *
+         * @param gps_jd Julian Date on the GPS time scale.
+         * @return GPS-UTC offset in seconds (integer-valued as double).
+         */
+        static double leapSecondsGpsUtc(double gps_jd);
+
+        /**
+         * @brief Look up the number of leap seconds (TAI - UTC) for a given GPS JD.
+         *
+         * TAI - UTC = (GPS - UTC) + 19, since GPS = TAI - 19.
+         *
+         * @param gps_jd Julian Date on the GPS time scale.
+         * @return TAI-UTC offset in seconds.
+         */
+        static double leapSecondsTaiUtc(double gps_jd);
 
         /**
          * @brief Validates a Gregorian date and time.
@@ -137,31 +264,41 @@ namespace GnssProcessor {
 
         /**
          * @brief Computes the offset from a time system to Terrestrial Time (TT).
-         * @param time_system Time system string (e.g., "GPS").
-         * @param leap_seconds Current leap seconds.
-         * @return Offset in seconds to TT.
+         *
+         * TT = TAI + 32.184 s. GPS = TAI - 19 s, so TT - GPS = 51.184 s (constant).
+         * For UTC-based systems: TT - UTC = TAI_UTC_offset + 32.184 s.
+         *
+         * @param time_system Time system string (e.g., "GPS", "GAL", "UTC").
+         * @param tai_utc_offset Current TAI-UTC leap second offset (e.g. 37.0).
+         * @return Offset in seconds to add to the given time system to get TT.
          */
-        static double offsetToTT(const std::string& time_system, double leap_seconds) {
-            constexpr double TT_TAI_OFFSET = 32.184;
-            constexpr double GPS_TAI_OFFSET = -19.0;  // GPS lags TAI by 19s
-            if (time_system == "GPS" || time_system.empty()) {
-                return TT_TAI_OFFSET - GPS_TAI_OFFSET;  // 51.184s
+        static double offsetToTT(const std::string& time_system, double tai_utc_offset) {
+            constexpr double TT_TAI_OFFSET = 32.184;     // TT - TAI = 32.184 s (constant)
+            constexpr double GPS_TAI_OFFSET = 19.0;       // TAI - GPS = 19 s (GPS = TAI - 19)
+
+            if (time_system == "GPS" || time_system == "GAL" || time_system.empty()) {
+                // GPS and Galileo System Time are steered to within ns of each other
+                // TT - GPS = (TT - TAI) + (TAI - GPS) = 32.184 + 19.0 = 51.184 s
+                return TT_TAI_OFFSET + GPS_TAI_OFFSET;   // 51.184 s
             }
-            // Assume UTC for others (e.g., GAL GST is approximately equal to UTC, BDS BDT = UTC +14s but adjust if needed)
-            return TT_TAI_OFFSET + leap_seconds;  // e.g., 32.184 + 37 = 69.184s
+            if (time_system == "BDS") {
+                // BDT = GPS - 14 s, so TT - BDT = 51.184 + 14.0 = 65.184 s
+                return TT_TAI_OFFSET + GPS_TAI_OFFSET + 14.0;
+            }
+            // UTC or unknown: TT - UTC = (TT - TAI) + (TAI - UTC)
+            return TT_TAI_OFFSET + tai_utc_offset;
         }
 
         /**
          * @brief Converts GPS Modified Julian Date (MJD) to TT MJD.
          * @param mjd_gps GPS MJD.
          * @param time_system Time system string.
-         * @param leap_seconds Current leap seconds.
+         * @param tai_utc_offset Current TAI-UTC leap seconds (e.g. 37.0).
          * @return TT MJD.
          */
-        static double gpsMjdToTTMjd(double mjd_gps, const std::string& time_system, double leap_seconds) {
-            double dt = offsetToTT(time_system, leap_seconds);
-            //double seconds_in_day = mjd_gps * 86400.0 + dt;  // Add offset to seconds-of-day
-            return mjd_gps + (dt / TimeUtils::SECONDS_IN_DAY);     // Convert back to fractional MJD
+        static double gpsMjdToTTMjd(double mjd_gps, const std::string& time_system, double tai_utc_offset) {
+            double dt = offsetToTT(time_system, tai_utc_offset);
+            return mjd_gps + (dt / static_cast<double>(SECONDS_IN_DAY));
         }
 
         /**
@@ -176,14 +313,26 @@ namespace GnssProcessor {
          */
         static double continuousGpsSeconds(const GnssTime& t);
 
-        static constexpr double GPS_EPOCH_JD = 2444244.5; ///< Julian Day for GPS epoch (January 6, 1980).
-        static constexpr int64_t SECONDS_IN_WEEK = 604800; ///< Seconds in a GPS week.
-        static constexpr int64_t SECONDS_IN_DAY = 86400; ///< Seconds in a day.
+        // -----------------------------------------------------------------------
+        // Time system constants
+        // -----------------------------------------------------------------------
 
-        // GPS time = UTC + leap_seconds
-        // As of 2017-01-01, there are 18 leap seconds between UTC and GPS
-        // (This should ideally be looked up based on the date, not hardcoded)
-        static constexpr double LEAP_SECONDS = 18.0; ///< Valid until updated by IERS Bulletin C
+        static constexpr double GPS_EPOCH_JD = 2444244.5;     ///< Julian Day of GPS epoch (1980-01-06 00:00:00 UTC).
+        static constexpr double MJD_OFFSET = 2400000.5;       ///< JD - MJD offset.
+        static constexpr double GPS_EPOCH_MJD = 44244.0;      ///< MJD of GPS epoch (GPS_EPOCH_JD - MJD_OFFSET).
+        static constexpr double J2000_JD = 2451545.0;         ///< Julian Day of J2000.0 epoch (2000-01-01 12:00:00 TT).
+        static constexpr double J2000_MJD = 51544.5;          ///< MJD of J2000.0 epoch.
+        static constexpr double TT_TAI_OFFSET = 32.184;       ///< TT - TAI offset in seconds (constant).
+        static constexpr double TAI_GPS_OFFSET = 19.0;        ///< TAI - GPS offset in seconds (TAI = GPS + 19).
+        static constexpr double TT_GPS_OFFSET = 51.184;       ///< TT - GPS offset in seconds (constant, 32.184 + 19).
+
+        static constexpr int64_t SECONDS_IN_WEEK = 604800;    ///< Seconds in a GPS week.
+        static constexpr int64_t SECONDS_IN_DAY = 86400;      ///< Seconds in a day.
+        static constexpr double DAYS_PER_JULIAN_CENTURY = 36525.0; ///< Days in a Julian century.
+
+        /// @brief Current-era GPS-UTC leap second count. Use leapSecondsGpsUtc() for
+        ///        epoch-dependent lookups. This value (18) is valid from 2017-01-01 onwards.
+        static constexpr double LEAP_SECONDS = 18.0;
 
     private:
 
@@ -204,5 +353,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-//#endif // TIMEUTILS_HPP

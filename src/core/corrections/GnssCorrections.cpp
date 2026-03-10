@@ -11,112 +11,6 @@
 
 namespace GnssProcessor {
 
-    // Anonymous namespace for file-local utilities
-    namespace {
-
-        /**
-         * @brief Compute barycentric Lagrange interpolation weights for a set of nodes.
-         *
-         * Produces barycentric weights w_j proportional to
-         *   1 / prod_{k != j} (x_j - x_k)
-         * which are used by the barycentric Lagrange formula to evaluate the
-         * interpolation polynomial stably:
-         *   p(x_q) = (sum_j (w_j/(x_q - x_j))*y_j) / (sum_j (w_j/(x_q - x_j)))
-         *
-         * This implementation computes the product in log-space to reduce overflow
-         * / underflow when the product of differences is very large or very small.
-         * If two abscissae are numerically identical (|x_j - x_k| < 1e-9), the
-         * corresponding weight is left as zero and the caller should avoid duplicate
-         * nodes. For a single node the routine returns {1.0}.
-         *
-         * @param x Vector of node abscissae (x_0 .. x_{n-1}). Values should be distinct.
-         * @return Vector of barycentric weights of same length as `x`. Returns empty
-         *         vector if `x` is empty.
-         *
-         * @note Complexity: O(n^2). The function attempts to preserve sign information
-         *       while computing magnitude in log-space and clamps extremely large/small
-         *       results to avoid floating-point overflow/NaN (implementation thresholds).
-         * @thread_safety Safe to call concurrently with independent inputs (no static data).
-         */
-        std::vector<double> barycentricWeights(const std::vector<double>& x) {
-            size_t n = x.size();
-            if (n == 0) return {};
-            if (n == 1) return { 1.0 };
-
-            std::vector<double> w(n, 0.0);
-
-            for (size_t j = 0; j < n; ++j) {
-                double log_abs_prod = 0.0;
-                int sign = 1;
-                bool valid = true;
-
-                for (size_t k = 0; k < n; ++k) {
-                    if (k != j) {
-                        double diff = x[j] - x[k];
-                        if (std::abs(diff) < 1e-9) {
-                            valid = false;
-                            break;
-                        }
-                        log_abs_prod += std::log(std::abs(diff));
-                        if (diff < 0) sign = -sign;
-                    }
-                }
-
-                if (valid) {
-                    if (log_abs_prod > 700.0) {
-                        w[j] = 0.0;
-                    } else if (log_abs_prod < -700.0) {
-                        w[j] = sign * 1e300;
-                    } else {
-                        w[j] = sign * std::exp(-log_abs_prod);
-                    }
-                }
-            }
-            return w;
-        }
-
-        /**
-         * @brief Evaluate the barycentric Lagrange interpolant at a query point.
-         *
-         * Uses precomputed barycentric weights to evaluate the interpolation polynomial
-         * in a numerically stable O(n) fashion:
-         *   p(x_q) = (sum_j (w_j/(x_q - x_j)) * y_j) / (sum_j (w_j/(x_q - x_j)))
-         *
-         * If the query abscissa `xq` coincides (within tolerance) with a node `x[j]`,
-         * the corresponding `y[j]` is returned directly to avoid division by zero.
-         *
-         * @param x  Vector of node abscissae (x_0 .. x_{n-1}). Must have same length as `w` and `y`.
-         * @param w  Vector of barycentric weights computed for `x` (see barycentricWeights()).
-         * @param y  Vector of node ordinates (y_0 .. y_{n-1}).
-         * @param xq Query abscissa where the polynomial is evaluated.
-         * @return   Interpolated value p(xq). If the denominator is (nearly) zero the
-         *           function returns 0.0 as a safe fallback.
-         *
-         * @note The function treats an exact node match when |xq - x[j]| < 1e-12 and
-         *       returns y[j] to preserve node values exactly.
-         * @note Complexity: O(n). The caller is responsible for ensuring `x`, `w`, and
-         *       `y` are consistent (same length and corresponding entries).
-         * @thread_safety Safe to call concurrently with independent inputs (no static data).
-         */
-        double barycentricEval(const std::vector<double>& x,
-            const std::vector<double>& w,
-            const std::vector<double>& y,
-            double xq) {
-            double num = 0.0;
-            double den = 0.0;
-            for (size_t j = 0; j < x.size(); ++j) {
-                double diff = xq - x[j];
-                if (std::abs(diff) < 1e-12) {
-                    return y[j]; // Exact node
-                }
-                double term = w[j] / diff;
-                num += term * y[j];
-                den += term;
-            }
-            return (den == 0.0) ? 0.0 : (num / den);
-        }
-    }
-
     /**
      * @brief Minimal constructor — create GnssCorrections with only logging.
      *
@@ -135,7 +29,8 @@ namespace GnssProcessor {
     GnssCorrections::GnssCorrections(LogManager& log_mgr)
         : log_manager_(log_mgr),
         clocks_(), erps_(), biases_(), orbits_(),
-        config_(nullptr), rinex_parser_(nullptr) {
+        config_(nullptr), rinex_parser_(nullptr),
+        ocean_tide_model_(log_mgr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (minimal)");
         buildClockIndex();
     }
@@ -161,7 +56,8 @@ namespace GnssProcessor {
         const std::vector<ErpData>& erps)
         : log_manager_(log_mgr),
         clocks_(clocks), erps_(erps), biases_(), orbits_(),
-        config_(nullptr), rinex_parser_(nullptr) {
+        config_(nullptr), rinex_parser_(nullptr),
+        ocean_tide_model_(log_mgr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed with clocks and ERPs: {} clocks, {} erps",
             clocks_.size(), erps_.size());
         buildClockIndex();
@@ -199,7 +95,8 @@ namespace GnssProcessor {
         const RinexParser& rinex)
         : log_manager_(log_mgr),
         clocks_(clocks), erps_(erps), biases_(biases), orbits_(),
-        config_(&config), rinex_parser_(&rinex) {
+        config_(&config), rinex_parser_(&rinex),
+        ocean_tide_model_(log_mgr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (full) with {} clocks, {} erps, {} biases",
             clocks_.size(), erps_.size(), biases_.size());
         buildClockIndex();
@@ -225,7 +122,7 @@ namespace GnssProcessor {
      *       interpolated result before it is returned.
      */
     double GnssCorrections::getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time) const {
-        // Validate inputs
+        // Validating inputs
         if (satellite.empty()) {
             log_manager_.getLogger("ppp_model")->warn("Empty satellite ID for clock correction at TOW {:.3f}", time.tow);
             return 0.0;
@@ -319,20 +216,17 @@ namespace GnssProcessor {
         const GnssTime& time,
         const std::vector<ClockData>& clocks) const
     {
-        // Interpolation parameters
-        //const SatelliteClockInterpolationMode mode = config_.getSatelliteClockInterpolationMode();
         const SatelliteClockInterpolationMode mode = config_ ? config_->getSatelliteClockInterpolationMode() : SatelliteClockInterpolationMode::Linear;
-        const size_t INTERP_POINTS = (mode == SatelliteClockInterpolationMode::Linear) ? 2 : 4;
+        const size_t INTERP_POINTS = (mode == SatelliteClockInterpolationMode::Linear) ? 2 : 9;
 
-        constexpr double MAX_WINDOW = 7200.0;     // Maximum window to search for nodes (2 hours)
-        constexpr double MAX_CLOCK_BIAS = 1e-3;   // 1 ms sanity limit
+        constexpr double MAX_WINDOW = 3600.0;
+        constexpr double MAX_CLOCK_BIAS = 1e9;
 
         if (satellite.empty()) {
             log_manager_.getLogger("corrections")->debug("Clock interp: empty satellite ID");
             return 0.0;
         }
 
-        // O(1) satellite lookup
         auto it = clock_index_.find(satellite);
         if (it == clock_index_.end() || it->second.empty()) {
             log_manager_.getLogger("corrections")->debug(
@@ -340,21 +234,43 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        const auto& sat_clocks = it->second;  // Already sorted chronologically
+        const auto& sat_clocks = it->second;
         const double t_query = TimeUtils::continuousGpsSeconds(time);
 
-        // Binary search for first clock >= t_query  
+        // Find the nearest node to t_query (not just the first node >= t_query).
+        // Using the nearest node as the center anchor ensures the interpolation
+        // window only shifts when the query crosses the MIDPOINT between two
+        // consecutive CLK epochs. This eliminates the sawtooth discontinuity
+        // that occurs with lower_bound-based centering, where the window jumps
+        // by one node every CLK interval (producing cm-level interpolation
+        // discontinuities at each CLK epoch boundary).
         auto upper_it = std::lower_bound(sat_clocks.begin(), sat_clocks.end(), t_query,
             [](const ClockData* c, double t) {
                 return TimeUtils::continuousGpsSeconds(c->time) < t;
             });
 
-        size_t upper_idx = std::distance(sat_clocks.begin(), upper_it);
+        // Determine the index of the nearest node to t_query
+        size_t nearest_idx = 0;
+        if (upper_it == sat_clocks.end()) {
+            nearest_idx = sat_clocks.size() - 1;
+        }
+        else if (upper_it == sat_clocks.begin()) {
+            nearest_idx = 0;
+        }
+        else {
+            size_t hi = std::distance(sat_clocks.begin(), upper_it);
+            size_t lo = hi - 1;
+            double t_lo = TimeUtils::continuousGpsSeconds(sat_clocks[lo]->time);
+            double t_hi = TimeUtils::continuousGpsSeconds(sat_clocks[hi]->time);
+            nearest_idx = (t_query - t_lo <= t_hi - t_query) ? lo : hi;
+        }
 
-        // Use a stable centered window
+        // Center the window on the nearest node
         size_t half_before = INTERP_POINTS / 2;
-        size_t start_idx = (upper_idx > half_before) ? (upper_idx - half_before) : 0;
-
+        size_t start_idx = 0;
+        if (nearest_idx > half_before) {
+            start_idx = nearest_idx - half_before;
+        }
         if (start_idx + INTERP_POINTS > sat_clocks.size()) {
             start_idx = (sat_clocks.size() > INTERP_POINTS) ? sat_clocks.size() - INTERP_POINTS : 0;
         }
@@ -389,7 +305,6 @@ namespace GnssProcessor {
             double t_last = TimeUtils::continuousGpsSeconds(nodes.back()->time);
             if (t_query < t_first || t_query > t_last) {
                 extrapolating = true;
-                // For extrapolation, always use 2 closest points (linear)
                 if (nodes.size() > 2) {
                     std::sort(nodes.begin(), nodes.end(), [t_query](const ClockData* a, const ClockData* b) {
                         return std::abs(TimeUtils::continuousGpsSeconds(a->time) - t_query) <
@@ -422,7 +337,6 @@ namespace GnssProcessor {
         double result = 0.0;
 
         if (n == 2 || mode == SatelliteClockInterpolationMode::Linear) {
-            // Linear interpolation
             result = Interpolate::linearInterp(x, y, t_query);
 
             log_manager_.getLogger("corrections")->debug(
@@ -433,7 +347,6 @@ namespace GnssProcessor {
                 extrapolating ? "YES" : "no");
         }
         else {
-            // Lagrange interpolation for 3+ points
             std::vector<double> w = Interpolate::barycentricWeights(x);
             result = Interpolate::barycentricEval(x, w, y, t_query);
 
@@ -664,7 +577,8 @@ namespace GnssProcessor {
      * simplified IERS-style model and Earth rotation parameter (ERP) entries
      * available in the object's ERP container. The implementation:
      *  - selects the ERP sample closest in time to `time`,
-     *  - converts polar motion parameters xp/yp (assumed in arcseconds) to radians,
+     *  - converts polar motion parameters xp/yp (stored in arcseconds) to radians,
+     *  - subtracts the IERS 2010 mean pole to obtain m1/m2 (radians),
      *  - computes radial, north and east displacements using simplified coefficients,
      *  - converts the radial/north/east displacement to ECEF and returns it.
      *
@@ -677,12 +591,13 @@ namespace GnssProcessor {
      *         Returns a zero vector on invalid inputs, missing/invalid ERP data, or
      *         if the computed correction is non-finite or exceeds conservative limits.
      *
-     * @note The routine expects ERP xp/yp values in arcseconds and converts them to
-     *       radians using the factor 4.848136811e-6. The simplified coefficients
-     *       (radial: -0.033, north: -0.009, east: -0.009) follow common lightweight
-     *       pole-tide approximations (IERS-like conventions).
-     * @note The function performs input validation and clamps results (caller may
-     *       inspect logs for diagnostic messages). Output norm is checked (max 0.1 m).
+     * @note The routine expects ERP xp/yp values in arcseconds (converted at parse
+     *       time from the native ERP file units). The mean pole is computed in
+     *       milliarcseconds per the IERS 2010 linear model. The simplified
+     *       coefficients (radial: -0.033, north: -0.009, east: -0.009) follow
+     *       IERS 2010 conventions (Section 7.1.4, Eq. 7.26).
+     * @note Output norm is checked (max 0.05 m = 50 mm, which is extremely
+     *       conservative — realistic pole tide displacements are < ~25 mm).
      * @thread_safety Safe to call concurrently with independent inputs (no static state).
      * @see ErpData, GnssTime
      */
@@ -703,27 +618,45 @@ namespace GnssProcessor {
             return Eigen::Vector3d::Zero();
         }
 
-        // Find closest ERP data
+        // Find closest ERP data (use continuous GPS seconds to handle week boundaries)
+        const double t_query = TimeUtils::continuousGpsSeconds(time);
         auto it = std::min_element(erps_.begin(), erps_.end(),
-            [&time](const ErpData& a, const ErpData& b) {
-                return std::abs(a.time.tow - time.tow) < std::abs(b.time.tow - time.tow);
+            [t_query](const ErpData& a, const ErpData& b) {
+                return std::abs(TimeUtils::continuousGpsSeconds(a.time) - t_query) <
+                    std::abs(TimeUtils::continuousGpsSeconds(b.time) - t_query);
             });
         if (it == erps_.end() || !std::isfinite(it->xp) || !std::isfinite(it->yp)) {
             log_manager_.getLogger("ppp_model")->trace("No valid ERP data for pole tide correction at TOW {:.3f}", time.tow);
             return Eigen::Vector3d::Zero();
         }
 
-        // Compute pole tide correction (simplified model, IERS 2010 conventions)
-        double phi = std::asin(rx_pos.z() / rx_pos.norm()); // Geodetic latitude (radians)
-        double lambda = std::atan2(rx_pos.y(), rx_pos.x()); // Geodetic longitude (radians)
-        double xp = it->xp * 4.848136811e-6; // Convert arcsec to radians
-        double yp = it->yp * 4.848136811e-6; // Convert arcsec to radians
+        // Use proper geodetic latitude from centralized Coordinates (not geocentric asin(z/r))
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(rx_pos);
+        double phi = llh.lat_rad;     // Geodetic latitude (radians)
+        double lambda = llh.lon_rad;  // Geodetic longitude (radians)
+
+        // IERS 2010 mean pole (linear model, epoch 2000.0)
+        // Reference: IERS Conventions (2010), Section 7.1.4
+        // xp_mean = 55.974 + 1.8243 * (t - 2000.0) mas
+        // yp_mean = 346.346 + 1.7896 * (t - 2000.0) mas
+        const double mjd = TimeUtils::gpsTimeToMjd(time);
+        const double decimal_year = TimeUtils::mjdToDecimalYear(mjd);
+
+        const double xp_mean_mas = 55.974 + 1.8243 * (decimal_year - 2000.0);   // milliarcseconds
+        const double yp_mean_mas = 346.346 + 1.7896 * (decimal_year - 2000.0);  // milliarcseconds
+
+        // Convert ERP values (arcseconds) and mean pole (milliarcseconds) to radians
+        constexpr double AS2RAD = 4.848136811e-6;   // arcsecond to radians
+        constexpr double MAS2RAD = AS2RAD * 1e-3;   // milliarcsecond to radians
+
+        double m1 = (it->xp * AS2RAD) - (xp_mean_mas * MAS2RAD);  // xp - xp_mean (radians)
+        double m2 = -(it->yp * AS2RAD) + (yp_mean_mas * MAS2RAD); // -(yp - yp_mean) (radians, IERS sign convention)
 
         // Pole tide displacement in radial, north, east directions (meters)
-        double R = rx_pos.norm();
-        double radial = -0.033 * std::sin(2.0 * phi) * (xp * std::cos(lambda) + yp * std::sin(lambda));
-        double north = -0.009 * std::cos(2.0 * phi) * (xp * std::sin(lambda) - yp * std::cos(lambda));
-        double east = -0.009 * std::sin(phi) * (xp * std::cos(lambda) + yp * std::sin(lambda));
+        // IERS 2010, Eq. 7.26 (simplified, using nominal Love/Shida numbers)
+        double radial = -0.033 * std::sin(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
+        double north = -0.009 * std::cos(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
+        double east = 0.009 * std::cos(phi) * (m1 * std::sin(lambda) - m2 * std::cos(lambda));
 
         // Convert to ECEF coordinates
         Eigen::Vector3d correction(
@@ -732,14 +665,14 @@ namespace GnssProcessor {
             (radial * std::sin(phi) + north * std::cos(phi))
         );
 
-        if (!correction.allFinite() || correction.norm() > 0.1) { // Max 10 cm
+        if (!correction.allFinite() || correction.norm() > 0.05) { // Max 50 mm (conservative limit)
             log_manager_.getLogger("ppp_model")->warn("Invalid pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm={:.3e}",
                 time.tow, correction.x(), correction.y(), correction.z(), correction.norm());
             return Eigen::Vector3d::Zero();
         }
 
-        log_manager_.getLogger("ppp_model")->trace("Pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, xp={:.3e} rad, yp={:.3e} rad",
-            time.tow, correction.x(), correction.y(), correction.z(), xp, yp);
+        log_manager_.getLogger("ppp_model")->trace("Pole tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, m1={:.3e} rad, m2={:.3e} rad",
+            time.tow, correction.x(), correction.y(), correction.z(), m1, m2);
         return correction;
     }
 
@@ -777,92 +710,115 @@ namespace GnssProcessor {
      * @thread_safety Safe to call concurrently with independent inputs (no static state).
      */
     Eigen::Vector3d GnssCorrections::computeOceanTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
-        // Validate inputs
-        if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid receiver position for ocean tide correction at TOW {:.3f}: rx_pos=({:.3f}, {:.3f}, {:.3f}), norm={:.3e}",
-                time.tow, rx_pos.x(), rx_pos.y(), rx_pos.z(), rx_pos.norm());
-            return Eigen::Vector3d::Zero();
+        return ocean_tide_model_.computeDisplacement(rx_pos, time);
+    }
+
+    void GnssCorrections::setOceanTideCoefficients(const OtlStationCoefficients& coeffs) {
+        ocean_tide_model_.setStationCoefficients(coeffs);
+    }
+
+    bool GnssCorrections::loadOceanTideFromBLQ(const std::string& blq_path, const std::string& station_name) {
+        OtlStationCoefficients coeffs;
+        if (ocean_tide_model_.parseBLQ(blq_path, station_name, coeffs)) {
+            ocean_tide_model_.setStationCoefficients(coeffs);
+            return true;
         }
-        if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid time for ocean tide correction: week {}, TOW {:.3f}",
-                time.week, time.tow);
-            return Eigen::Vector3d::Zero();
-        }
+        return false;
+    }
 
-        // Placeholder: Simplified ocean tide correction (requires external tidal model data)
-        // Using a basic sinusoidal model based on position and time
-        double phi = std::asin(rx_pos.z() / rx_pos.norm()); // Geodetic latitude (radians)
-        double t = std::fmod(time.tow, TimeUtils::SECONDS_IN_DAY); // Seconds of day
-        double amplitude = 0.01; // Typical ocean tide amplitude: 1 cm
-        double period = 12.4206 * 3600.0; // M2 tidal constituent period (s)
-        double radial = amplitude * std::cos(2.0 * Constants::PI * t / period) * std::cos(phi);
-        double north = amplitude * std::sin(2.0 * Constants::PI * t / period) * std::sin(phi);
-        double east = 0.0; // Simplified, no east component
+    bool GnssCorrections::hasOceanTideCoefficients() const {
+        return ocean_tide_model_.hasStationCoefficients();
+    }
 
-        // Convert to ECEF coordinates
-        double lambda = std::atan2(rx_pos.y(), rx_pos.x());
-        Eigen::Vector3d correction(
-            (radial * std::cos(phi) * std::cos(lambda) - north * std::sin(phi) * std::cos(lambda) - east * std::sin(lambda)),
-            (radial * std::cos(phi) * std::sin(lambda) - north * std::sin(phi) * std::sin(lambda) + east * std::cos(lambda)),
-            (radial * std::sin(phi) + north * std::cos(phi))
-        );
-
-        if (!correction.allFinite() || correction.norm() > 0.1) { // Max 10 cm
-            log_manager_.getLogger("ppp_model")->warn("Invalid ocean tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, norm={:.3e}",
-                time.tow, correction.x(), correction.y(), correction.z(), correction.norm());
-            return Eigen::Vector3d::Zero();
-        }
-
-        log_manager_.getLogger("ppp_model")->trace("Ocean tide correction at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e}) m, amplitude={:.3e} m",
-            time.tow, correction.x(), correction.y(), correction.z(), amplitude);
+    /**
+     * @brief Estimate atmospheric loading radial displacement at a receiver position.
+     */
+    double GnssCorrections::computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos,
+        const GnssTime& time) const {
+        double latitude = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI;
+        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
+        double amplitude = 0.001;
+        double correction = amplitude * std::cos(2.0 * Constants::PI * t / TimeUtils::SECONDS_IN_DAY) * std::cos(latitude * Constants::PI / 180.0);
+        log_manager_.getLogger("ppp_model")->trace("Atmospheric loading correction: {} m", correction);
         return correction;
     }
 
     /**
-     * @brief Compute solid Earth tide radial displacement along the receiver->satellite line-of-sight.
+     * @brief Retrieve a bias correction for a satellite/signal at a given epoch.
+     */
+    double GnssCorrections::getBiasCorrection(const std::string& satellite,
+        const std::string& freq_type,
+        const GnssTime& time) const {
+        if (satellite.empty() || freq_type.empty()) {
+            log_manager_.getLogger("ppp_model")->warn("Invalid inputs for bias correction: satellite='{}', freq_type='{}' at TOW {:.3f}",
+                satellite, freq_type, time.tow);
+            return 0.0;
+        }
+        if (time.tow < 0.0 || time.week < 0) {
+            log_manager_.getLogger("ppp_model")->warn("Invalid time for bias correction for satellite {}: week {}, TOW {:.3f}",
+                satellite, time.week, time.tow);
+            return 0.0;
+        }
+
+        const double t_query = TimeUtils::continuousGpsSeconds(time);
+
+        auto it = std::find_if(biases_.begin(), biases_.end(),
+            [&satellite, &freq_type, t_query](const BiasData& b) {
+                if (b.satellite != satellite) return false;
+                if (b.signal != freq_type) return false;
+                double t_start = TimeUtils::continuousGpsSeconds(b.start_time);
+                double t_end = TimeUtils::continuousGpsSeconds(b.end_time);
+                return (t_start <= t_query && t_query <= t_end);
+            });
+        if (it != biases_.end()) {
+            log_manager_.getLogger("ppp_model")->trace("Bias correction for {} ({}) {} at TOW {:.3f}: {:.3e} m",
+                satellite, PppUtils::getSystemString(satellite),
+                freq_type, time.tow, it->bias);
+            return it->bias;
+        }
+
+        if (!biases_.empty()) {
+            log_manager_.getLogger("ppp_model")->debug("No matching bias entry found for {} {} at continuous_time={:.3f}. Known bias entries={}",
+                satellite, freq_type, t_query, biases_.size());
+        }
+
+        log_manager_.getLogger("ppp_model")->trace("No bias correction for {} ({}) {} at TOW {:.3f}",
+            satellite, PppUtils::getSystemString(satellite),
+            freq_type, time.tow);
+        return 0.0;
+    }
+
+    /**
+     * @brief Compute solid Earth tide displacement along the receiver->satellite line-of-sight.
      *
-     * Implements a simplified IERS-2010 style solid Earth tide model (degree 2 + degree 3
-     * terms) and returns the displacement projected onto the receiver->satellite line-of-sight.
-     * The implementation:
-     *  - converts receiver ECEF to an approximate geodetic latitude (iterative, stable),
-     *  - computes degree-2 and degree-3 tidal contributions from the Sun and Moon using
-     *    nominal Love numbers and mass ratios,
-     *  - projects the total displacement onto the receiver->satellite line-of-sight and
-     *    returns that scalar displacement in meters.
+     * Implements the IERS 2010 solid Earth tide model (Conventions Section 7.1.1):
+     *   Step 1: degree 2 + degree 3 with nominal Love numbers and body positions
+     *   Step 2: frequency-dependent corrections from Tables 7.3a (long-period + diurnal)
+     *           and 7.3b (semi-diurnal)
+     *
+     * Tide system: This function produces the **conventional tide-free** displacement,
+     * consistent with IGS (SP3/CLK products, ITRF coordinates), IERS 2010 Conventions,
+     * and RTKLIB. The permanent (zero-frequency) tide deformation is included in the
+     * Step 2 long-period (m=0) corrections via the 055.555 constituent, so the full
+     * output removes the permanent tide from the station coordinates — matching the
+     * conventional tide-free system used by all standard GNSS processing software.
+     *
+     * Returns the displacement projected onto the receiver->satellite LOS in meters.
      *
      * @param receiver_pos Receiver ECEF position vector (meters).
      * @param sat_pos      Satellite ECEF position vector (meters).
      * @param sun_pos      Sun ECEF position vector (meters).
      * @param moon_pos     Moon ECEF position vector (meters).
-     * @return Radial displacement in meters to apply to the geometric range (projection of
-     *         tidal displacement onto the line-of-sight). Returns 0.0 for invalid or
-     *         non-finite inputs or when intermediate values are outside safe bounds.
+     * @param time         Epoch for Step 2 Doodson argument computation (GnssTime: week + tow).
+     * @return LOS displacement in meters. Returns 0.0 for invalid inputs.
      *
-     * @details
-     * - Uses nominal Love numbers (h2,l2,h3,l3) and simplified latitude-dependent
-     *   corrections. Degree-3 contribution is included (moon-dominated in simplified form).
-     * - Geodetic latitude is derived from ECEF with a short iterative scheme to ensure
-     *   numerical stability near the poles.
-     * - The routine performs input validation and logs diagnostics; it is intended for
-     *   use in per-satellite, per-epoch correction routines where lightweight tide
-     *   corrections are acceptable.
-     *
-     * @note The returned value is the displacement along the line-of-sight (meters),
-     *       not a full ECEF displacement vector.
-     * @thread_safety Safe to call concurrently with independent inputs (no static state).
-     * @see computePoleTideCorrection(), computeOceanTideCorrection()
+     * @see IERS Conventions (2010), Section 7.1.1, Tables 7.3a and 7.3b
+     * @see RTKLIB tidedisp() for equivalent implementation
      */
     double GnssCorrections::computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
-        const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos) const {
-        // IERS 2010: Solid Earth tide (degree 2 + degree 3 terms).
-        //
-        // This implementation uses:
-        //  1) WGS-84 geodetic latitude (not geocentric latitude derived from ECEF norm)
-        //  2) The standard IERS 2010 approach (zero-frequency free-space Love numbers: h2,l2 and h3,l3)
-        //
-        // Output is the displacement projection onto the receiver->satellite line-of-sight [m].
-
-        // IERS 2010 nominal Love numbers (latitude-dependent corrections omitted here; still a big improvement)
+        const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos,
+        const GnssTime& time) const {
+        // IERS 2010 nominal Love numbers
         constexpr double h2 = 0.6078;
         constexpr double l2 = 0.0847;
         constexpr double h3 = 0.292;
@@ -873,14 +829,15 @@ namespace GnssProcessor {
         constexpr double MM2E = 0.01230002;
 
         // WGS-84 ellipsoid
-        const double a = Constants::Ellipsoid::WGS84::a; // semi-major axis
+        const double a = Constants::Ellipsoid::WGS84::a;
 
         if (!receiver_pos.allFinite() || !sat_pos.allFinite() || !sun_pos.allFinite() || !moon_pos.allFinite()) {
             log_manager_.getLogger("ppp_model")->warn("Solid Earth tide: non-finite inputs");
             return 0.0;
         }
 
-        const Eigen::Vector3d rho = sat_pos - receiver_pos;
+        // LOS from satellite toward receiver (sat->rx), matching the MATLAB convention.
+        const Eigen::Vector3d rho = receiver_pos - sat_pos;
         const double rho_norm = rho.norm();
         if (!(rho_norm > 0.0)) return 0.0;
         const Eigen::Vector3d los = rho / rho_norm;
@@ -915,160 +872,402 @@ namespace GnssProcessor {
             const double cos_psi = ub.dot(u);
 
             if (deg == 2) {
-                // Degree-2 terms: P2 = (3 cos^2 - 1)/2
                 const double P2 = (3.0 * cos_psi * cos_psi - 1.0) / 2.0;
-
-                // Tangential direction component
                 const Eigen::Vector3d t = ub - cos_psi * u;
-
-                // Scale factor: (Re^4 / d^3) * (M_body/M_earth)
                 const double scale = mass_ratio * std::pow(a, 4) / std::pow(d, 3);
-
-                // IERS 2010: displacement = h2 * u * P2 + 3*l2*cosψ*t
                 return scale * ((h2_eff * u) * P2 + (3.0 * l2_eff * cos_psi) * t);
             }
             else {
-                // Degree-3 terms: P3 = (5 cos^3 - 3 cos)/2, dP3/dψ -> (5/2 cos^2 - 3/2)
                 const double P3 = (5.0 * cos_psi * cos_psi * cos_psi - 3.0 * cos_psi) / 2.0;
-                const double dP3 = (5.0 / 2.0) * cos_psi * cos_psi - (3.0 / 2.0);
-
+                const double dP3 = (15.0 / 2.0) * cos_psi * cos_psi - (3.0 / 2.0);
                 const Eigen::Vector3d t = ub - cos_psi * u;
-
-                // Scale factor: (Re^5 / d^4) * (M_body/M_earth)
                 const double scale = mass_ratio * std::pow(a, 5) / std::pow(d, 4);
-
-                // IERS 2010: displacement = h3*u*P3 + l3*dP3*t
                 return scale * ((h3 * u) * P3 + (l3 * dP3) * t);
             }
         };
 
+        // Step 1: degree-2 Sun + Moon, degree-3 Moon
         const Eigen::Vector3d d2s = tideBody(sun_pos, MS2E, 2);
         const Eigen::Vector3d d2m = tideBody(moon_pos, MM2E, 2);
-        const Eigen::Vector3d d3m = tideBody(moon_pos, MM2E, 3); // IERS: degree-3 usually moon-only in simplified PPP implementations
+        const Eigen::Vector3d d3m = tideBody(moon_pos, MM2E, 3);
 
-        const Eigen::Vector3d disp = d2s + d2m + d3m;
+        Eigen::Vector3d disp = d2s + d2m + d3m;
+
+        // =====================================================================
+        // IERS 2010 Step 2: Frequency-dependent corrections
+        // =====================================================================
+        // Compute proper Delaunay/Doodson arguments from the epoch and evaluate
+        // per-constituent corrections from Tables 7.3a (diurnal) and 7.3b
+        // (semi-diurnal). Each constituent has its own tidal argument and
+        // tabulated Love number correction (delta_h, delta_l), avoiding the
+        // incorrect approach of lumping all corrections into a single sinusoid.
+        {
+            const double t_centuries = TimeUtils::gpsTimeToTtCenturies(time);
+
+            auto fund_args = computeFundamentalArguments(t_centuries);
+            Eigen::Vector3d step2 = computeStep2Corrections(fund_args, lat, lambda, u);
+
+            if (step2.allFinite()) {
+                disp += step2;
+            }
+        }
 
         const double stide = disp.dot(los);
         if (!std::isfinite(stide)) return 0.0;
 
-        // Keep logging lightweight; this is per-sat per-epoch
         log_manager_.getLogger("ppp_model")->trace("Solid Earth tide: {:.4f} m (lat_geod={:.6f} deg)", stide, lat * 180.0 / Constants::PI);
 
         return stide;
     }
 
-    /**
-     * @brief Estimate atmospheric loading radial displacement at a receiver position.
-     *
-     * Provides a simplified, lightweight estimate of the vertical (radial) station
-     * displacement due to atmospheric mass loading. The implementation uses a
-     * small sinusoidal model (diurnal) scaled by latitude as a placeholder when
-     * full atmospheric-loading grids or models are unavailable.
-     *
-     * @param rx_pos Receiver ECEF position vector (meters). Must be finite and non-degenerate.
-     * @param time   Epoch at which the loading is evaluated (GnssTime: week + tow).
-     * @return Estimated radial displacement in meters due to atmospheric loading.
-     *         Returns 0.0 for invalid inputs. Typical magnitude returned by this
-     *         placeholder is on the order of millimetres (default amplitude = 1 mm).
-     *
-     * @details
-     * - This routine computes an approximate geodetic latitude from the ECEF
-     *   position and evaluates a single diurnal sinusoid:
-     *     correction = amplitude * cos(2π * t_day / 86400) * cos(latitude)
-     *   where `amplitude` defaults to 0.001 m (1 mm).
-     * - The result is a scalar radial displacement (meters). The implementation
-     *   intentionally does not attempt to model frequency-dependent loading or
-     *   use load Love numbers / ocean-tide coupling — use a proper loading model
-     *   for production/precise applications.
-     *
-     * @note This function is a placeholder to allow downstream code to compile/run
-     *       in absence of external atmospheric-loading data. Replace with a
-     *       gridded or model-based implementation (e.g., IERS-compliant) for
-     *       accurate geodetic positioning.
-     * @thread_safety Safe to call concurrently with independent inputs (no static state).
-     */
-    double GnssCorrections::computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos,
-        const GnssTime& time) const {
-        // Placeholder: Simplified atmospheric loading correction
-        // Model: Small sinusoidal variation based on time and position latitude
-        // Note: Full implementation requires external loading models (e.g., IERS grids)
-        double latitude = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI; // Approx. latitude (degrees)
-        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY); // Seconds of day
-        double amplitude = 0.001; // 1 mm amplitude (typical)
-        double correction = amplitude * std::cos(2.0 * Constants::PI * t / TimeUtils::SECONDS_IN_DAY) * std::cos(latitude * Constants::PI / 180.0);
-        log_manager_.getLogger("ppp_model")->trace("Atmospheric loading correction: {} m", correction);
-        return correction;
+    // =========================================================================
+    // IERS 2010 Step 2 helpers: Delaunay arguments and constituent tables
+    // =========================================================================
+
+    std::array<double, 6> GnssCorrections::computeFundamentalArguments(double t_centuries) {
+        constexpr double AS2R = Constants::PI / 180.0 / 3600.0; // arcsecond to radian
+
+        const double T = t_centuries;
+        const double T2 = T * T;
+        const double T3 = T2 * T;
+        const double T4 = T3 * T;
+
+        // l: Mean anomaly of the Moon (IERS 2010, Eq. 5.43)
+        double l = std::fmod(
+            485868.249036 + 1717915923.2178 * T + 31.8792 * T2
+            + 0.051635 * T3 - 0.00024470 * T4, 1296000.0) * AS2R;
+
+        // l': Mean anomaly of the Sun (IERS 2010, Eq. 5.44)
+        double lp = std::fmod(
+            1287104.79305 + 129596581.0481 * T - 0.5532 * T2
+            + 0.000136 * T3 - 0.00001149 * T4, 1296000.0) * AS2R;
+
+        // F: Mean argument of latitude of the Moon (IERS 2010, Eq. 5.45)
+        double F = std::fmod(
+            335779.526232 + 1739527262.8478 * T - 12.7512 * T2
+            - 0.001037 * T3 + 0.00000417 * T4, 1296000.0) * AS2R;
+
+        // D: Mean elongation of Moon from Sun (IERS 2010, Eq. 5.46)
+        double D = std::fmod(
+            1072260.70369 + 1602961601.2090 * T - 6.3706 * T2
+            + 0.006593 * T3 - 0.00003169 * T4, 1296000.0) * AS2R;
+
+        // Omega: Longitude of ascending node of Moon (IERS 2010, Eq. 5.47)
+        double Omega = std::fmod(
+            450160.398036 - 6962890.5431 * T + 7.4722 * T2
+            + 0.007702 * T3 - 0.00005939 * T4, 1296000.0) * AS2R;
+
+        // GMST (IERS 2010, Eq. 5.32 / Capitaine et al. 2003)
+        // GMST = ERA + polynomial equation of the equinoxes approximation
+        // The standard GMST polynomial requires UT1 centuries, not TT centuries.
+        // We approximate JD_UT1 from the TT centuries by subtracting the TT-GPS
+        // offset (51.184 s), which is accurate to ~1 s (the GPS-UT1 difference).
+        // Using TT directly would introduce ~69 s of error (~17" in GMST).
+        double JD_UT1_approx = TimeUtils::J2000_JD + (T * TimeUtils::DAYS_PER_JULIAN_CENTURY)
+                             - TimeUtils::TT_GPS_OFFSET / static_cast<double>(TimeUtils::SECONDS_IN_DAY);
+        double T_UT1 = (JD_UT1_approx - TimeUtils::J2000_JD) / TimeUtils::DAYS_PER_JULIAN_CENTURY;
+        double T_UT1_2 = T_UT1 * T_UT1;
+        double T_UT1_3 = T_UT1_2 * T_UT1;
+        double gmst_sec = std::fmod(
+            67310.54841
+            + (3155760000.0 + 8640184.812866) * T_UT1  // 876600*3600 + 8640184.812866
+            + 0.093104 * T_UT1_2
+            - 6.2e-6 * T_UT1_3, 86400.0);
+        // Convert seconds to radians: 2*pi radians = 86400 seconds of sidereal time
+        double gmst = gmst_sec * (2.0 * Constants::PI / 86400.0);
+
+        return { l, lp, F, D, Omega, gmst };
     }
 
-    /**
-     * @brief Retrieve a bias correction for a satellite/signal at a given epoch.
-     *
-     * Searches the internal bias table for an entry that applies to the requested
-     * `satellite` and `freq_type` and whose validity interval contains `time`.
-     * If a matching entry is found the stored `BiasData::bias` value is returned.
-     * If inputs are invalid, no matching entry exists, or the found entry contains
-     * non-finite values the function returns 0.0.
-     *
-     * @param satellite Satellite identifier or receiver id (e.g. "G01" or station id).
-     * @param freq_type Signal/frequency label (e.g. "L1", "C1") for which the bias applies.
-     * @param time      Epoch at which the bias is requested (GnssTime: week + tow).
-     * @return Bias value (same units as stored in BiasData::bias, typically meters).
-     *         Returns 0.0 when inputs are invalid or no applicable bias is found.
-     *
-     * @note The search compares the bias validity interval (@c BiasData::start_time / @c BiasData::end_time)
-     *       against the supplied `time` (see implementation for exact comparison semantics).
-     *       Callers must ensure that the provided `time` and stored bias intervals are
-     *       comparable (same time reference/representation).
-     * @note Behaviour when multiple bias entries overlap is implementation-defined
-     *       (the current implementation returns the first matching entry found).
-     *
-     * @see BiasData, GnssTime
-     */
-    double GnssCorrections::getBiasCorrection(const std::string& satellite,
-        const std::string& freq_type,
-        const GnssTime& time) const {
-        // Validate inputs
-        if (satellite.empty() || freq_type.empty()) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid inputs for bias correction: satellite='{}', freq_type='{}' at TOW {:.3f}",
-                satellite, freq_type, time.tow);
-            return 0.0;
-        }
-        if (time.tow < 0.0 || time.week < 0) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid time for bias correction for satellite {}: week {}, TOW {:.3f}",
-                satellite, time.week, time.tow);
-            return 0.0;
+    Eigen::Vector3d GnssCorrections::computeStep2Corrections(
+        const std::array<double, 6>& fund_args,
+        double lat, double lon, const Eigen::Vector3d& u)
+    {
+        // IERS 2010 Technical Note 36, Section 7.1.1, Tables 7.3a and 7.3b
+        //
+        // Each constituent has Doodson multipliers [tau, s, h, p, N', ps] that form
+        // the tidal argument theta_f from the fundamental arguments, plus
+        // in-phase and out-of-phase Love number corrections (delta_h, delta_l), avoiding the
+        // incorrect approach of lumping all corrections into a single sinusoid.
+        //
+        // The displacement corrections are (IERS 2010, Eq. 7.12):
+        //
+        // Diurnal (m=1):
+        //   dr   = sqrt(3)*sin(theta)*[ dR_f_ip*cos(theta_f) + dR_f_op*sin(theta_f) ]
+        //   dn   = sqrt(3)*cos(theta)*[ dT_f_ip*cos(theta_f) + dT_f_op*sin(theta_f) ] * 3*sin(lat)*cos(lat)/(cos(2*lat)... )
+        //   de   = -sqrt(3)*[dT_f_ip*sin(theta_f) - dT_f_op*cos(theta_f)]
+        //
+        // Actually, the IERS convention uses geocentric co-latitude theta = pi/2 - phi_c.
+        // For simplicity and consistency with the rest of this codebase (which uses
+        // geodetic latitude), we use geodetic latitude and the standard displacement
+        // formulas from IERS 2010 Section 7.1.1s.
+        //
+        // The IERS 2010 displacement formulas for degree 2 Step 2 corrections are:
+        //
+        //   For m=0 (long-period, zonal):
+        //     dr = (dRf_ip*cos(theta_f) + dRf_op*sin(theta_f)) * (3*sin^2(phi) - 1)/2
+        //     dn = (dTf_ip*cos(theta_f) + dTf_op*sin(theta_f)) * sin(2*phi)/2
+        //     de = 0
+        //
+        //   For m=1 (diurnal, tesseral):
+        //     dr = (dRf_ip*cos(theta_f) + dRf_op*sin(theta_f)) * sin(2*phi)
+        //     dn = (dTf_ip*cos(theta_f) + dTf_op*sin(theta_f)) * cos(2*phi)
+        //     de = -(dTf_ip*sin(theta_f) - dTf_op*cos(theta_f)) * sin(phi)
+        //
+        //   For m=2 (semi-diurnal, sectorial):
+        //     dr = (dRf_ip*cos(theta_f) + dRf_op*sin(theta_f)) * cos^2(phi)
+        //     dn = -(dTf_ip*cos(theta_f) + dTf_op*sin(theta_f)) * sin(2*phi)/2
+        //     de = -(dTf_ip*sin(theta_f) - dTf_op*cos(theta_f)) * cos(phi)
+        //
+        // where theta_f is the tidal argument from Doodson multipliers and
+        // phi is the station latitude. The corrections dRf_ip, dRf_op, dTf_ip,
+        // dTf_op are tabulated in IERS 2010 Tables 7.3a (diurnal) and 7.3b (semi-diurnal).
+
+        const double l     = fund_args[0];
+        const double lp    = fund_args[1];
+        const double F     = fund_args[2];
+        const double D     = fund_args[3];
+        const double Omega = fund_args[4];
+        const double gmst  = fund_args[5];
+
+        const double sin_lat = std::sin(lat);
+        const double cos_lat = std::cos(lat);
+        const double sin_2lat = 2.0 * sin_lat * cos_lat;
+        const double cos_2lat = cos_lat * cos_lat - sin_lat * sin_lat;
+
+        // Doodson variables from Delaunay arguments:
+        // tau = GMST + pi - s (lunar hour angle at Greenwich)
+        // s   = F + Omega     (mean longitude of Moon)
+        // h   = s - D         (mean longitude of Sun)
+        // p   = s - l         (longitude of lunar perigee)
+        // N'  = -Omega        (negative of lunar node longitude)
+        // ps  = h + l'        (longitude of solar perigee, rarely needed)
+        const double s_dood  = F + Omega;
+        const double h_dood  = s_dood - D;
+        const double p_dood  = s_dood - l;
+        const double Np_dood = -Omega;
+        const double ps_dood = h_dood + lp;
+        const double tau     = gmst + Constants::PI - s_dood;
+
+        // Helper lambda to compute tidal argument from Doodson multipliers
+        // Argument = n1*tau + n2*s + n3*h + n4*p + n5*N' + n6*ps
+        auto tidalArg = [&](int n1, int n2, int n3, int n4, int n5, int n6) -> double {
+            return n1 * tau + n2 * s_dood + n3 * h_dood + n4 * p_dood + n5 * Np_dood + n6 * ps_dood;
+        };
+
+        // =====================================================================
+        // IERS 2010 Table 7.3a: Long-period band (m=0, zonal) corrections
+        // =====================================================================
+        // These are the degree-2 zonal (long-period) frequency-dependent
+        // corrections from IERS 2010 Table 7.3a. The m=0 band includes the
+        // permanent tide constituent (055.555) which makes the total output
+        // consistent with the conventional tide-free system used by IGS/ITRF.
+        //
+        // Columns: Doodson [tau, s, h, p, N', ps], dR_ip, dR_op, dT_ip, dT_op
+        // Units: millimeters (converted to meters below)
+        //
+        // IERS 2010 Eq. 7.12 for m=0 (long-period/zonal):
+        //   dr = (dRf_ip*cos(theta_f) + dRf_op*sin(theta_f)) * (3*sin^2(phi) - 1)/2
+        //   dn = (dTf_ip*cos(theta_f) + dTf_op*sin(theta_f)) * sin(2*phi)/2
+        //   de = 0
+        struct LongPeriodEntry {
+            int n[6];       // Doodson multipliers [tau, s, h, p, N', ps]
+            double dR_ip;   // In-phase radial correction [mm]
+            double dR_op;   // Out-of-phase radial correction [mm]
+            double dT_ip;   // In-phase transverse correction [mm]
+            double dT_op;   // Out-of-phase transverse correction [mm]
+        };
+
+        // IERS 2010 Table 7.3a long-period constituents (all entries from TN36)
+        // Doodson multipliers [tau, s, h, p, N', ps] decoded from standard Doodson numbers
+        static constexpr LongPeriodEntry LONGPERIOD_TABLE[] = {
+            // Doodson:  tau  s  h  p  N' ps    dR_ip  dR_op  dT_ip  dT_op
+            {{  0,  0,  0,  0,  0,  0 },   0.47,  0.23,   0.16,  0.07 },  // (zero-freq / permanent) (055.555)
+            {{  0,  0,  0,  1,  0,  0 },  -0.20, -0.12,  -0.07, -0.05 },  // Mm  (055.655)
+            {{  0,  0,  0,  2,  0,  0 },  -0.11, -0.08,  -0.04, -0.03 },  //     (055.755)
+            {{  0,  0,  2, -2,  0,  0 },  -0.13, -0.11,  -0.05, -0.04 },  //     (057.455)
+            {{  0,  0,  2,  0,  0,  0 },  -4.89,  0.00,  -1.68,  0.00 },  // Ssa (057.555) — DOMINANT
+            {{  0,  0,  2,  0,  0, -1 },   0.14,  0.00,   0.05,  0.00 },  //     (057.554)
+            {{  0,  1, -2,  1,  0,  0 },   0.09,  0.06,   0.03,  0.02 },  //     (063.655)
+            {{  0,  1,  0, -1, -1,  0 },   0.10,  0.02,   0.03,  0.01 },  //     (065.445)
+            {{  0,  1,  0, -1,  0,  0 },   0.66,  0.12,   0.23,  0.04 },  // Mf  (065.455)
+            {{  0,  1,  0, -1,  1,  0 },   0.05,  0.01,   0.02,  0.00 },  //     (065.465)
+            {{  0,  1,  0,  1,  0,  0 },  -0.14, -0.02,  -0.05, -0.01 },  //     (065.655)
+            {{  0,  1,  0,  1,  1,  0 },  -0.05,  0.00,  -0.02,  0.00 },  //     (065.665)
+            {{  0,  2, -2,  0,  0,  0 },  -0.06, -0.03,  -0.02, -0.01 },  //     (073.555)
+            {{  0,  2,  0,  0,  0,  0 },  -0.06, -0.03,  -0.02, -0.01 },  //     (075.555)
+            {{  0,  2,  0,  0,  1,  0 },  -0.04, -0.02,  -0.01, -0.01 },  //     (075.565)
+        };
+        static constexpr size_t N_LONGPERIOD = sizeof(LONGPERIOD_TABLE) / sizeof(LONGPERIOD_TABLE[0]);
+
+        // =====================================================================
+        // IERS 2010 Table 7.3a: Diurnal band (m=1) corrections
+        // =====================================================================
+        // Columns: Doodson [tau, s, h, p, N', ps], dR_ip, dR_op, dT_ip, dT_op
+        // Units: millimeters (converted to meters below)
+        struct DiurnalEntry {
+            int n[6];       // Doodson multipliers [tau, s, h, p, N', ps]
+            double dR_ip;   // In-phase radial correction [mm]
+            double dR_op;   // Out-of-phase radial correction [mm]
+            double dT_ip;   // In-phase transverse correction [mm]
+            double dT_op;   // Out-of-phase transverse correction [mm]
+        };
+
+        // IERS 2010 Table 7.3a diurnal constituents (all entries from TN36)
+        // Doodson multipliers [tau, s, h, p, N', ps] decoded from standard Doodson numbers
+        static constexpr DiurnalEntry DIURNAL_TABLE[] = {
+            // Doodson:  tau  s  h  p  N' ps    dR_ip  dR_op  dT_ip  dT_op
+            {{  1, -3,  2,  0,  0,  0 },  -0.05,  0.00,  -0.01,  0.00 },  //    (125.755)
+            {{  1, -2,  2,  0,  0,  0 },  -0.06,  0.00,  -0.01,  0.00 },  //    (127.555)
+            {{  1, -2,  0,  1, -1,  0 },  -0.11,  0.01,  -0.02,  0.01 },  //    (135.645)
+            {{  1, -2,  0,  1,  0,  0 },  -0.72,  0.06,  -0.13,  0.04 },  // Q1 (135.655)
+            {{  1, -2,  0,  1,  1,  0 },  -0.03,  0.00,  -0.01,  0.00 },  //    (135.665)
+            {{  1, -2,  2, -1,  0,  0 },  -0.05,  0.00,  -0.01,  0.00 },  // rho1 (137.455)
+            {{  1, -1,  0,  0, -1,  0 },   0.05,  0.00,   0.01,  0.00 },  //    (145.545)
+            {{  1, -1,  0,  0,  0,  0 },   0.10, -0.05,   0.02, -0.03 },  // O1 (145.555)
+            {{  1, -1,  0,  2,  0,  0 },  -0.05,  0.00,  -0.01,  0.00 },  //    (145.755)
+            {{  1, -1,  2,  0,  0,  0 },   0.07,  0.00,   0.01,  0.00 },  //    (147.555)
+            {{  1,  0,  0, -1,  0,  0 },  -1.31, -0.07,  -0.24,  0.03 },  // M1 (155.455)
+            {{  1,  0,  0,  0,  0,  0 },  -0.05,  0.00,  -0.01,  0.00 },  //    (155.555)
+            {{  1,  0,  0,  1,  0,  0 },   0.25,  0.00,   0.05,  0.00 },  //    (155.655)
+            {{  1,  0,  0,  1,  1,  0 },   0.04,  0.00,   0.01,  0.00 },  //    (155.665)
+            {{  1,  0,  2, -1,  0,  0 },   0.07,  0.00,   0.01,  0.00 },  // chi1 (157.455)
+            {{  1,  1, -3,  0,  0,  1 },  -0.72, -0.33,  -0.13, -0.19 },  // pi1 (162.556)
+            {{  1,  1, -2,  0,  0,  0 }, -13.20,  0.00,  -2.42,  0.00 },  // P1 (163.555)
+            {{  1,  1, -2,  0,  0,  1 },  -0.05,  0.00,  -0.01,  0.00 },  //    (163.556)
+            {{  1,  1, -1,  0,  0, -1 },  -0.10,  0.05,  -0.02,  0.03 },  //    (164.554)
+            {{  1,  1, -1,  0,  0,  1 },  -0.05,  0.00,  -0.01,  0.00 },  //    (164.556)
+            {{  1,  1,  0, -2, -1,  0 },   0.04, -0.02,   0.01, -0.01 },  //    (165.345)
+            {{  1,  1,  0,  0,  0,  0 },   0.10, -0.05,   0.02, -0.03 },  // K1 (165.555)
+            {{  1,  1,  0,  2,  0,  0 },  -0.07,  0.04,  -0.01,  0.02 },  //    (165.755)
+        };
+        static constexpr size_t N_DIURNAL = sizeof(DIURNAL_TABLE) / sizeof(DIURNAL_TABLE[0]);
+
+        // =====================================================================
+        // IERS 2010 Table 7.3b: Semi-diurnal band (m=2) corrections
+        // =====================================================================
+        struct SemidiurnalEntry {
+            int n[6];       // Doodson multipliers
+            double dR_ip;   // In-phase radial [mm]
+            double dR_op;   // Out-of-phase radial [mm]
+            double dT_ip;   // In-phase transverse [mm]
+            double dT_op;   // Out-of-phase transverse [mm]
+        };
+
+        // IERS 2010 Table 7.3b semi-diurnal constituents
+        // Doodson multipliers [tau, s, h, p, N', ps] decoded from standard Doodson numbers
+        static constexpr SemidiurnalEntry SEMIDIURNAL_TABLE[] = {
+            // Doodson:  tau  s  h  p  N' ps    dR_ip  dR_op  dT_ip  dT_op
+            {{  2, -1,  0,  1,  0,  0 },  -0.02,  0.00,   0.00,  0.00 },  // N2 (245.655)
+            {{  2, -1,  2, -1,  0,  0 },   0.00,  0.00,   0.00,  0.00 },  //    (247.455)
+            {{  2,  0,  0,  0,  0,  0 },  -0.31, -0.07,  -0.04, -0.01 },  // M2 (255.555)
+            {{  2,  2, -2,  0,  0,  0 },  -0.08,  0.00,  -0.01,  0.01 },  // S2 (273.555)
+            {{  2,  2,  0,  0,  0,  0 },  -0.17,  0.00,  -0.02,  0.01 },  // K2 (275.555)
+        };
+        static constexpr size_t N_SEMIDIURNAL = sizeof(SEMIDIURNAL_TABLE) / sizeof(SEMIDIURNAL_TABLE[0]);
+
+        // Accumulate displacement in local (radial, north, east) frame
+        double dr = 0.0;
+        double dn = 0.0;
+        double de = 0.0;
+
+        // Precompute latitude factors for m=0 (long-period)
+        const double sin2_lat = sin_lat * sin_lat;
+        const double lp_radial_factor = (3.0 * sin2_lat - 1.0) / 2.0;  // (3sin²φ - 1)/2
+        const double lp_north_factor  = sin_2lat / 2.0;                 // sin(2φ)/2
+
+        // --- Long-period (m=0, zonal) contributions ---
+        // IERS 2010 Eq. 7.12 for m=0: no longitude dependence (no m*lambda added),
+        // no east component. The 055.555 (zero-frequency) constituent provides the
+        // permanent tide correction that defines the conventional tide-free system.
+        for (size_t i = 0; i < N_LONGPERIOD; ++i) {
+            const auto& e = LONGPERIOD_TABLE[i];
+            double theta_f = tidalArg(e.n[0], e.n[1], e.n[2], e.n[3], e.n[4], e.n[5]);
+            // m=0: no longitude term added
+
+            double cos_tf = std::cos(theta_f);
+            double sin_tf = std::sin(theta_f);
+
+            // Convert mm -> m
+            double dRf_ip = e.dR_ip * 1e-3;
+            double dRf_op = e.dR_op * 1e-3;
+            double dTf_ip = e.dT_ip * 1e-3;
+            double dTf_op = e.dT_op * 1e-3;
+
+            double R_term = dRf_ip * cos_tf + dRf_op * sin_tf;
+            double T_term_cos = dTf_ip * cos_tf + dTf_op * sin_tf;
+
+            dr += R_term * lp_radial_factor;
+            dn += T_term_cos * lp_north_factor;
+            // de += 0 for m=0 (no east component)
         }
 
-        // Convert query time to continuous GPS seconds for robust interval comparison
-        const double t_query = TimeUtils::continuousGpsSeconds(time);
+        // --- Diurnal (m=1) contributions ---
+        for (size_t i = 0; i < N_DIURNAL; ++i) {
+            const auto& e = DIURNAL_TABLE[i];
+            double theta_f = tidalArg(e.n[0], e.n[1], e.n[2], e.n[3], e.n[4], e.n[5]);
+            theta_f += lon;  // Add m*lambda for diurnal (m=1)
 
-        // Find bias data: use continuous time (week + tow) for interval comparisons
-        auto it = std::find_if(biases_.begin(), biases_.end(),
-            [&satellite, &freq_type, t_query](const BiasData& b) {
-                if (b.satellite != satellite) return false;
-                if (b.signal != freq_type) return false;
-                double t_start = TimeUtils::continuousGpsSeconds(b.start_time);
-                double t_end = TimeUtils::continuousGpsSeconds(b.end_time);
-                return (t_start <= t_query && t_query <= t_end);
-            });
-        if (it != biases_.end()) {
-            log_manager_.getLogger("ppp_model")->trace("Bias correction for {} ({}) {} at TOW {:.3f}: {:.3e} m",
-                satellite, PppUtils::getSystemString(satellite),
-                freq_type, time.tow, it->bias);
-            return it->bias;
+            double cos_tf = std::cos(theta_f);
+            double sin_tf = std::sin(theta_f);
+
+            // Convert mm -> m
+            double dRf_ip = e.dR_ip * 1e-3;
+            double dRf_op = e.dR_op * 1e-3;
+            double dTf_ip = e.dT_ip * 1e-3;
+            double dTf_op = e.dT_op * 1e-3;
+
+            // IERS 2010 Eq. 7.12 for m=1 (diurnal):
+            //   dr = (dRf_ip*cos + dRf_op*sin) * sin(2*phi)
+            //   dn = (dTf_ip*cos + dTf_op*sin) * cos(2*phi)
+            //   de = -(dTf_ip*sin - dTf_op*cos) * sin(phi)
+            double R_term = dRf_ip * cos_tf + dRf_op * sin_tf;
+            double T_term_cos = dTf_ip * cos_tf + dTf_op * sin_tf;
+            double T_term_sin = dTf_ip * sin_tf - dTf_op * cos_tf;
+
+            dr += R_term * sin_2lat;
+            dn += T_term_cos * cos_2lat;
+            de -= T_term_sin * sin_lat;
         }
 
-        // Helpful diagnostic if biases exist globally but none matched — aids debugging
-        if (!biases_.empty()) {
-            // log at debug to avoid spam; change level as needed when investigating
-            log_manager_.getLogger("ppp_model")->debug("No matching bias entry found for {} {} at continuous_time={:.3f}. Known bias entries={}",
-                satellite, freq_type, t_query, biases_.size());
+        // --- Semi-diurnal (m=2) contributions ---
+        for (size_t i = 0; i < N_SEMIDIURNAL; ++i) {
+            const auto& e = SEMIDIURNAL_TABLE[i];
+            double theta_f = tidalArg(e.n[0], e.n[1], e.n[2], e.n[3], e.n[4], e.n[5]);
+            theta_f += 2.0 * lon;  // Add m*lambda for semi-diurnal (m=2)
+
+            double cos_tf = std::cos(theta_f);
+            double sin_tf = std::sin(theta_f);
+
+            double dRf_ip = e.dR_ip * 1e-3;
+            double dRf_op = e.dR_op * 1e-3;
+            double dTf_ip = e.dT_ip * 1e-3;
+            double dTf_op = e.dT_op * 1e-3;
+
+            // IERS 2010 Eq. 7.12 for m=2 (semi-diurnal):
+            //   dr = (dRf_ip*cos + dRf_op*sin) * cos^2(phi)
+            //   dn = (dTf_ip*cos + dTf_op*sin) * sin(2*phi)/2
+            //   de = -(dTf_ip*sin - dTf_op*cos) * cos(phi)
+            double R_term = dRf_ip * cos_tf + dRf_op * sin_tf;
+            double T_term_cos = dTf_ip * cos_tf + dTf_op * sin_tf;
+            double T_term_sin = dTf_ip * sin_tf - dTf_op * cos_tf;
+
+            dr += R_term * cos_lat * cos_lat;
+            dn -= T_term_cos * sin_2lat / 2.0;
+            de -= T_term_sin * cos_lat;
         }
 
-        log_manager_.getLogger("ppp_model")->trace("No bias correction for {} ({}) {} at TOW {:.3f}",
-            satellite, PppUtils::getSystemString(satellite),
-            freq_type, time.tow);
-        return 0.0;
+        // Convert from local (radial, north, east) to ECEF
+        // Radial: u (unit geocentric vector)
+        // North: (-sin(lat)*cos(lon), -sin(lat)*sin(lon), cos(lat))
+        // East:  (-sin(lon), cos(lon), 0)
+        double cos_lon = std::cos(lon);
+        double sin_lon = std::sin(lon);
+
+        Eigen::Vector3d e_north(-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat);
+        Eigen::Vector3d e_east(-sin_lon, cos_lon, 0.0);
+
+        return dr * u + dn * e_north + de * e_east;
     }
 
     /**
@@ -1092,6 +1291,8 @@ namespace GnssProcessor {
      * @param sat_pos   Satellite ECEF position vector (meters).
      * @param wavelength Carrier wavelength in meters (used to convert phase angle to meters).
      * @param time      Epoch for any time-dependent inputs (GnssTime: week + tow).
+     * @param sun_pos   Sun ECEF position vector (meters). Used for satellite attitude estimation.
+     * @param sat_vel   Satellite ECEF velocity vector (meters/second). Used for attitude if available.
      * @return Phase wind-up correction in meters. Returns 0.0 for degenerate geometry,
      *         invalid inputs, or when computed vectors are nearly singular.
      *
@@ -1108,68 +1309,94 @@ namespace GnssProcessor {
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
         double wavelength,
-        const GnssTime& time) const {
+        const GnssTime& time,
+        const Eigen::Vector3d& sun_pos,
+        const Eigen::Vector3d& sat_vel) const {
 
         // Phase wind-up correction for carrier phase
-        // LOS unit vector from SATELLITE to RECEIVER (matching MATLAB convention)
-        Eigen::Vector3d k = (rx_pos - sat_pos);
-        double k_norm = k.norm();
-        if (k_norm == 0.0) {
+        // Wu et al. (1993) convention:
+        //   k  = unit vector from satellite to receiver (sat->rx)
+        //   Ds = x_s - k*(k·x_s) + cross(k, y_s)   (satellite effective dipole)
+        //   Dr = x_r - k*(k·x_r) + cross(k, y_r)   (receiver effective dipole)
+        //   x_r = North, y_r = East
+        //   sign: if dot(k, cross(Ds, Dr)) < 0 → windUp = -windUp
+
+        Eigen::Vector3d k_raw = rx_pos - sat_pos;
+        double k_raw_norm = k_raw.norm();
+        if (k_raw_norm < 1e-3) {
             log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate LOS", satellite);
             return 0.0;
         }
-        k /= k_norm;
+        Eigen::Vector3d k = k_raw / k_raw_norm;  // unit vector sat->rx
 
-        // Satellite body frame (yaw-steering model)
-        // z_s points from satellite toward Earth center
-        Eigen::Vector3d z_s = -sat_pos.normalized();
-        
-        // Get satellite velocity for attitude
-        Eigen::Vector3d sat_vel = Eigen::Vector3d::Zero();
-        if (!orbits_.empty()) {
-            auto orbit_it = std::find_if(orbits_.begin(), orbits_.end(),
-                [&satellite](const OrbitData& o) { return o.satellite == satellite; });
-            if (orbit_it != orbits_.end() && orbit_it->velocity_valid) {
-                sat_vel = orbit_it->velocity;
+        // Satellite body frame using yaw-steering model
+        //   ez = -sat_pos/|sat_pos|  (toward Earth / nadir / boresight)
+        //   e  = (sun - sat)/|sun - sat|  (Sun direction from satellite)
+        //   ey = cross(ez, e)  (cross-track / solar panel axis)
+        //   ex = cross(ey, ez) (completes right-handed frame)
+        Eigen::Vector3d ez = -sat_pos.normalized();
+
+        Eigen::Vector3d x_s, y_s;
+
+        if (sun_pos.norm() > 1e6) {
+            Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
+
+            Eigen::Vector3d ey = ez.cross(e_sun);
+            if (ey.norm() < 1e-8) {
+                // Eclipse/noon turn fallback: use velocity if available
+                Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::UnitY();
+                ey = ez.cross(vhat);
             }
+            ey.normalize();
+
+            Eigen::Vector3d ex = ey.cross(ez);
+            if (ex.norm() < 1e-8) {
+                ex = Eigen::Vector3d::UnitX();
+            }
+            ex.normalize();
+
+            x_s = ex;
+            y_s = ey;
+        } else {
+            // Fallback: velocity-based attitude
+            Eigen::Vector3d z_s = -ez; // nadir
+            Eigen::Vector3d vel = sat_vel;
+            if (vel.norm() < 1e-8 && !orbits_.empty()) {
+                auto orbit_it = std::find_if(orbits_.begin(), orbits_.end(),
+                    [&satellite](const OrbitData& o) { return o.satellite == satellite; });
+                if (orbit_it != orbits_.end() && orbit_it->velocity_valid) {
+                    vel = orbit_it->velocity;
+                }
+            }
+
+            y_s = vel.norm() > 1e-8 ? vel.normalized().cross(z_s) : Eigen::Vector3d::Zero();
+            if (y_s.norm() < 1e-8) {
+                y_s = Eigen::Vector3d(0, 1, 0);
+            }
+            y_s.normalize();
+
+            x_s = y_s.cross(z_s);
+            if (x_s.norm() < 1e-8) {
+                x_s = Eigen::Vector3d::UnitX();
+            }
+            x_s.normalize();
         }
 
-        // Sun direction (fallback to +X if not available)
-        Eigen::Vector3d e_sun = Eigen::Vector3d(1.0, 0.0, 0.0);
-        // TODO: Use planetary_.interpolateSunPosition(time) if available
-
-        // y_s = cross(z_s, e_sun) following RTKLIB/MATLAB convention
-        Eigen::Vector3d y_s = z_s.cross(e_sun);
-        if (y_s.norm() < 1e-8) {
-            y_s = sat_vel.norm() > 1e-8 ? sat_vel.normalized().cross(z_s) : Eigen::Vector3d(0, 1, 0);
-        }
-        y_s.normalize();
-    
-        // x_s completes right-handed frame
-        Eigen::Vector3d x_s = y_s.cross(z_s);
-        x_s.normalize();
-
-        // Receiver local frame (ENU-like)
-        // Compute geodetic lat/lon for receiver
+        // Receiver local frame (North and East)
         double rx_norm = rx_pos.norm();
         if (rx_norm < 1e3) {
             return 0.0;
         }
-        double phi = std::asin(rx_pos.z() / rx_norm);  // latitude
-        double lam = std::atan2(rx_pos.y(), rx_pos.x()); // longitude
+        Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
+        double phi = rx_llh.lat_rad;
+        double lam = rx_llh.lon_rad;
 
-        // Receiver dipole directions (north and west in ECEF)
-        Eigen::Vector3d x_r(-std::sin(phi) * std::cos(lam), 
-                        -std::sin(phi) * std::sin(lam), 
-                         std::cos(phi));  // North
-        Eigen::Vector3d y_r( std::sin(lam), 
-                        -std::cos(lam), 
-                         0.0);            // West
+        Eigen::Vector3d x_r(-std::sin(phi) * std::cos(lam), -std::sin(phi) * std::sin(lam), std::cos(phi)); // North
+        Eigen::Vector3d y_r(-std::sin(lam), std::cos(lam), 0.0); // East
 
-        // Effective dipoles (MATLAB convention)
-        // Ds = xs - k*(k·xs) - cross(k, ys)   <- satellite
-        // Dr = xr - k*(k·xr) + cross(k, yr)   <- receiver
-        Eigen::Vector3d Ds = x_s - k * (k.dot(x_s)) - k.cross(y_s);
+        // Effective dipoles (Wu et al. 1993, Eq. 6-7)
+        //   D = x - k*(k·x) + cross(k, y)
+        Eigen::Vector3d Ds = x_s - k * (k.dot(x_s)) + k.cross(y_s);
         Eigen::Vector3d Dr = x_r - k * (k.dot(x_r)) + k.cross(y_r);
 
         double Ds_norm = Ds.norm();
@@ -1180,23 +1407,30 @@ namespace GnssProcessor {
         }
 
         // Compute angle between effective dipoles
-        double alpha = Ds.dot(Dr) / (Ds_norm * Dr_norm);
-        alpha = std::clamp(alpha, -1.0, 1.0);  // Numerical safety
+        double cos_alpha = Ds.dot(Dr) / (Ds_norm * Dr_norm);
+        cos_alpha = std::clamp(cos_alpha, -1.0, 1.0);
 
-        double windUp_c = std::acos(alpha);  // radians
+        double windUp_c = std::acos(cos_alpha);  // radians [0, pi]
 
-        // Determine sign using cross product
+        // Determine sign (Wu et al. 1993, Eq. 8)
         if (k.dot(Ds.cross(Dr)) < 0.0) {
             windUp_c = -windUp_c;
         }
 
-        // TODO: Add phase unwrapping with previous epoch storage
-        // windUp_c = 2*PI * round((windUp_p - windUp_c) / (2*PI)) + windUp_c;
+        // Maintain continuity with previous epoch to avoid 2π jumps
+        auto it = prev_windup_.find(satellite);
+        if (it != prev_windup_.end()) {
+            double prev = it->second;
+            double diff = windUp_c - prev;
+            double cycles = std::round(diff / (2.0 * Constants::PI));
+            windUp_c = prev + (diff - cycles * 2.0 * Constants::PI);
+        }
+        prev_windup_[satellite] = windUp_c;
 
         // Convert radians to meters
         double phi_m = windUp_c * wavelength / (2.0 * Constants::PI);
 
-        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad)", 
+        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad)",
             satellite, phi_m, windUp_c);
         return phi_m;
     }
@@ -1228,6 +1462,46 @@ namespace GnssProcessor {
         erps_ = erps;
         buildClockIndex();
         log_manager_.getLogger("corrections")->trace("GnssCorrections updated: {} clocks, {} erps", clocks_.size(), erps_.size());
+    }
+
+    /**
+     * @brief Reset phase wind-up state for a specific satellite.
+     *
+     * Clears the stored previous wind-up angle for the specified satellite,
+     * forcing the next wind-up computation to start fresh without attempting
+     * phase unwrapping relative to a previous value.
+     *
+     * Call this when a cycle slip or ambiguity reset is detected for the
+     * satellite to ensure phase wind-up continuity is not falsely maintained
+     * across the discontinuity.
+     *
+     * @param satellite Satellite identifier string (e.g. "G01").
+     */
+    void GnssCorrections::resetPhaseWindUp(const std::string& satellite) {
+        auto it = prev_windup_.find(satellite);
+        if (it != prev_windup_.end()) {
+            log_manager_.getLogger("corrections")->debug(
+                "Reset phase wind-up for {}: previous value was {:.3f} rad",
+                satellite, it->second);
+            prev_windup_.erase(it);
+        }
+    }
+
+    /**
+     * @brief Reset phase wind-up state for all satellites.
+     *
+     * Clears the stored previous wind-up angles for all satellites,
+     * forcing all subsequent wind-up computations to start fresh.
+     *
+     * Call this on a complete filter reset or at the start of a new session
+     * to clear all accumulated phase wind-up history.
+     */
+    void GnssCorrections::resetAllPhaseWindUp() {
+        if (!prev_windup_.empty()) {
+            log_manager_.getLogger("corrections")->debug(
+                "Reset phase wind-up for all {} satellites", prev_windup_.size());
+            prev_windup_.clear();
+        }
     }
 
 } // namespace GnssProcessor

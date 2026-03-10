@@ -140,6 +140,24 @@ namespace GnssProcessor {
         size_t getIonoIndex() const;
 
         /**
+         * @brief Index of the tropospheric north gradient state.
+         * @return Index of Gn state, or std::numeric_limits<size_t>::max() if gradients disabled.
+         */
+        size_t getTropoGradientNorthIndex() const;
+
+        /**
+         * @brief Index of the tropospheric east gradient state.
+         * @return Index of Ge state, or std::numeric_limits<size_t>::max() if gradients disabled.
+         */
+        size_t getTropoGradientEastIndex() const;
+
+        /**
+         * @brief Check if troposphere gradient estimation is active.
+         * @return True if gradient states exist in the state vector.
+         */
+        bool hasTropoGradients() const;
+
+        /**
          * @brief Get the index of the inter-system time bias for a given system.
          *
          * Inter-system time biases are estimated relative to the reference system (GPS).
@@ -214,6 +232,27 @@ namespace GnssProcessor {
         bool resetAmbiguity(const std::string& key, double std_m);
 
         /**
+         * @brief Compute an approximate ambiguity seed value from an observation.
+         *
+         * The seed is computed as:
+         *   seed = observed - modeled - rx_clock - (mf_w * zwd) - isb - tropo_grad
+         *
+         * where rx_clock, zwd, inter-system time offset (isb) and tropospheric
+         * gradient contribution are read from the supplied state vector at the
+         * standard core-state indices.  This centralizes the formula used when
+         * creating new ambiguities and when re-seeding ambiguities that were
+         * reset to zero (e.g. after cycle-slip or outlier detection).
+         *
+         * @param obs        The PppObservation containing observed/modeled values and wet mapping factor.
+         * @param ref_type   The iono-free key into obs.observed / obs.modeled (e.g. "L1C_L2W").
+         * @param x          State vector from which rx clock, ZWD, ISB and gradients are read.
+         * @return Approximate ambiguity value in meters, or 0.0 on failure.
+         */
+        double computeAmbiguitySeed(const PppObservation& obs,
+                                    const std::string& ref_type,
+                                    const Eigen::VectorXd& x) const;
+
+        /**
          * @brief Update a PppState object from a raw state-vector representation.
          *
          * Copies relevant core states and ambiguities into the provided \p ppp_state.
@@ -237,47 +276,6 @@ namespace GnssProcessor {
         void syncPppStateToStateVector(const PppState& ppp_state);
 
         /**
-         * @brief Set a persistent per-measurement variance scale.
-         *
-         * Scales are stored using a key derived from satellite and signal type and
-         * applied by measurement processing to increase measurement variance (>=1.0).
-         *
-         * @param sat Satellite identifier (e.g. "G01").
-         * @param signal_type Signal type string (e.g. "C1C", "L1").
-         * @param scale Multiplier to persist (must be >= 1.0).
-         */
-        void setMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double scale);
-
-        /**
-         * @brief Get the persistent measurement variance scale for a satellite/signal.
-         *
-         * If no explicit scale exists, returns 1.0.
-         *
-         * @param sat Satellite identifier.
-         * @param signal_type Signal type string.
-         * @return Multiplier currently stored for the given key.
-         */
-        double getMeasurementVarianceScale(const std::string& sat, const std::string& signal_type) const;
-
-        /**
-         * @brief Clear all persisted measurement variance scales.
-         */
-        void clearMeasurementVarianceScales();
-
-        /**
-         * @brief Multiply the current persistent scale by \p factor.
-         *
-         * Convenience that updates an existing scale or creates a new one equal to \p factor
-         * (if none existed). Used to inflate measurement variance persistently after repeated
-         * code outliers.
-         *
-         * @param sat Satellite identifier.
-         * @param signal_type Signal type string.
-         * @param factor Multiplicative factor to apply to the stored scale (factor >= 1.0 recommended).
-         */
-        void inflateMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double factor);
-
-        /**
          * @brief Remove an ambiguity state by key.
          *
          * The ambiguity state and its associated covariance are removed from the filter.
@@ -298,8 +296,10 @@ namespace GnssProcessor {
         void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys);
 
     private:
-        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6).
-        size_t base_core_size_;                     //!< Base core size without inter-system time offsets (5 for PPP, 6 for PPP-RTK).
+        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients).
+        size_t base_core_size_;                     //!< Base core size without inter-system time offsets.
+        size_t gradient_north_idx_;                 //!< Index of tropo north gradient (max if disabled).
+        size_t gradient_east_idx_;                  //!< Index of tropo east gradient (max if disabled).
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.

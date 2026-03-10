@@ -207,6 +207,9 @@ int Application::run() {
 
     MwSlipDetector mw_slip_detector(config, log_manager);
 
+    // Enable MWWL tracing for cycle slip visualization
+    mw_slip_detector.enableTracing(log_dir);
+
     log_manager.getLogger("main_log")->info("Processing components initialized, mode={}",
         config.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
 
@@ -381,35 +384,40 @@ int Application::run() {
 
 		const double kPosRelinearThreshM = has_phase() ? 100.0 : 1000.0; // big for code+phase, bigger for code-only
 
+        // Detect MW/LLI cycle slips once per epoch, before the relinearization loop.
+        // Running this inside the loop would cause duplicate MWWL trace entries and
+        // zero-delta MW values on subsequent passes (since last_mw_m_ is already updated).
+        {
+            const auto reset_keys = mw_slip_detector.detectLargeMwResets(modeled_obs);
+            if (!reset_keys.empty()) {
+                const double reset_std_m = config.getAmbiguityStd();
+                for (const auto& key : reset_keys) {
+                    state_manager.resetAmbiguity(key, reset_std_m);
+                    
+                    // Extract satellite ID from ambiguity key (format: "G01_L1C_L2W" -> "G01")
+                    // and reset phase wind-up state to avoid 2π discontinuities
+                    size_t underscore_pos = key.find('_');
+                    if (underscore_pos != std::string::npos && underscore_pos >= 2) {
+                        std::string sat_id = key.substr(0, underscore_pos);
+                        ppp_model.resetPhaseWindUp(sat_id);
+                        log_manager.getLogger("main_log")->debug("{}Reset phase wind-up for {} (cycle slip detected)", epoch_prefix, sat_id);
+                    }
+                }
+                log_manager.getLogger("main_log")->warn("{}Applied {} MW/LLI ambiguity resets", epoch_prefix, reset_keys.size());
+
+                state_manager.updatePppStateFromVector(state_manager.getStateVector(), ppp_state, state_manager);
+            }
+        }
+
         int relinear_pass = 0;
         bool need_relinear = true;
         bool need_update = true;
         EpochMeasurement applied_meas{};
         bool have_applied_meas = false;
+        size_t carry_bad_residual_count = 0;
         while ((need_update || need_relinear) && relinear_pass < 10) {
             ++relinear_pass;
             need_update = false; // will be set true again if KF requests rebuild
-
-            // Note: Do NOT recompute models here because:
-            //   1. Satellite positions are receiver-position-independent (only depend on emission time)
-            //   2. All corrections (sat clock, shapiro, solid tide, etc.) are also position-independent
-            //   3. MeasurementModel now computes range_delta and LOS directly from stored sat_pos
-            //   4. Troposphere mapping function changes negligibly with typical position updates
-
-            {
-                const auto reset_keys = mw_slip_detector.detectLargeMwResets(modeled_obs);
-                if (!reset_keys.empty()) {
-                    const double reset_std_m = config.getAmbiguityStd();
-                    for (const auto& key : reset_keys) {
-                        state_manager.resetAmbiguity(key, reset_std_m);
-                    }
-                    log_manager.getLogger("main_log")->warn(
-                        "{}Applied {} MW/LLI ambiguity resets (iter {})",
-                        epoch_prefix, reset_keys.size(), relinear_pass);
-
-                    state_manager.updatePppStateFromVector(state_manager.getStateVector(), ppp_state, state_manager);
-                }
-            }
 
             EpochMeasurement meas_update = meas_model.computeMeasurementUpdate(modeled_obs, state_manager.getStateVector());
             if (meas_update.innovations.size() == 0 || !meas_model.validateMeasurementUpdate(meas_update)) {
@@ -417,6 +425,10 @@ int Application::run() {
                     epoch_prefix, relinear_pass);
                 break;
             }
+
+            // Carry forward the bad-residual count from previous rebuild passes
+            // so the full-reset safety net can accumulate across passes.
+            meas_update.bad_residual_count = carry_bad_residual_count;
 
             const Eigen::Vector3d old_pos = ppp_state.position;
             const double old_tropo = ppp_state.troposphere_zwd;
@@ -432,9 +444,28 @@ int Application::run() {
             }
 
             if (result == KalmanFilter::UpdateResult::NeedsMeasurementRebuild) {
+                // Preserve the bad-residual count for the next rebuild pass
+                carry_bad_residual_count = meas_update.bad_residual_count;
+
                 log_manager.getLogger("main_log")->debug(
                     "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                     epoch_prefix, relinear_pass);
+                
+                // Reset phase wind-up for satellites that had ambiguities reset
+                if (kalman_filter.wasCompleteReset()) {
+                    // Complete filter reset: clear all phase wind-up state
+                    ppp_model.resetAllPhaseWindUp();
+                    log_manager.getLogger("main_log")->info(
+                        "{}Reset all phase wind-up state (complete filter reset)", epoch_prefix);
+                } else {
+                    // Individual ambiguity resets: clear specific satellites
+                    for (const auto& sat_id : kalman_filter.getLastResetSatellites()) {
+                        ppp_model.resetPhaseWindUp(sat_id);
+                        log_manager.getLogger("main_log")->debug(
+                            "{}Reset phase wind-up for {} (KF ambiguity reset)", epoch_prefix, sat_id);
+                    }
+                }
+                
                  need_update = true;
                  continue;
             }
@@ -459,6 +490,41 @@ int Application::run() {
                 epoch_prefix, relinear_pass, pos_jump);
 
             need_relinear = (pos_jump > kPosRelinearThreshM);
+        }
+
+        // --- Geometry relinearization pass ---
+        // When enabled, re-run computeModels() at the updated position so that
+        // satellite geometry (orbits, clocks, LOS, corrections) is recomputed
+        // at the post-update linearization point.  Then perform one additional
+        // KF measurement update using the fresh geometry.
+        if (config.relinearizeGeometry() && have_applied_meas) {
+            try {
+                state_manager.updatePppStateFromVector(state_manager.getStateVector(), ppp_state, state_manager);
+            } catch (const std::exception& e) {
+                log_manager.getLogger("main_log")->error("{}Relinearize: failed to sync ppp_state: {}", epoch_prefix, e.what());
+            }
+
+            std::vector<PppObservation> relinear_obs;
+            if (ppp_model.computeModels(epoch_obs, ppp_state, relinear_obs) && !relinear_obs.empty()) {
+                EpochMeasurement relinear_meas = meas_model.computeMeasurementUpdate(relinear_obs, state_manager.getStateVector());
+                if (relinear_meas.innovations.size() > 0 && meas_model.validateMeasurementUpdate(relinear_meas)) {
+                    auto relinear_result = kalman_filter.update(relinear_meas);
+                    if (relinear_result == KalmanFilter::UpdateResult::Applied) {
+                        applied_meas = relinear_meas;
+                        try {
+                            state_manager.updatePppStateFromVector(state_manager.getStateVector(), ppp_state, state_manager);
+                        } catch (const std::exception& e) {
+                            log_manager.getLogger("main_log")->error("{}Relinearize: failed to sync after update: {}", epoch_prefix, e.what());
+                        }
+                        log_manager.getLogger("main_log")->debug("{}Geometry relinearization applied", epoch_prefix);
+                    } else {
+                        log_manager.getLogger("main_log")->debug("{}Geometry relinearization update not applied (result={})",
+                            epoch_prefix, static_cast<int>(relinear_result));
+                    }
+                }
+            } else {
+                log_manager.getLogger("main_log")->debug("{}Geometry relinearization: computeModels failed or empty", epoch_prefix);
+            }
         }
 
         if (config.getProcessingMode() == ProcessingMode::PPP) {

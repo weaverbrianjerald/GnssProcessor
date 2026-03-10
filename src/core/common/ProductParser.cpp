@@ -165,7 +165,7 @@ namespace GnssProcessor {
     bool ProductParser::parseSp3(const std::vector<std::filesystem::path>& sp3_paths, std::vector<OrbitData>& orbits) {
         try {
             orbits.clear();
-            std::map<std::string, std::map<double, OrbitData>> orbit_map;
+            std::map<std::string, std::map<GnssTime, OrbitData>> orbit_map;
             constexpr double MIN_TIME_DIFF = 1.0;
             size_t total_entries = 0;
 
@@ -269,8 +269,13 @@ namespace GnssProcessor {
                     }
                 }
 
-                while (std::getline(file, line)) {
-                    ++line_count;
+                // Parse data records (P/V lines grouped by epoch)
+                // Use a flag to handle the line that terminated the inner loop
+                // without re-reading (which would skip an epoch).
+                bool have_line = !in_header && !line.empty();
+                while (have_line || std::getline(file, line)) {
+                    if (!have_line) ++line_count;
+                    have_line = false;
                     if (line.empty()) continue;
                     if (line[0] == '*') {
                         std::istringstream iss(line);
@@ -289,8 +294,14 @@ namespace GnssProcessor {
                             continue;
                         }
 
-                        while (std::getline(file, line) && line[0] != '*' && !line.empty() && line[0] != 'E') {
+                        while (std::getline(file, line)) {
                             ++line_count;
+                            if (line.empty() || line[0] == '*' || line[0] == 'E') {
+                                // This line belongs to the next epoch or is the EOF marker;
+                                // set the flag so the outer loop reprocesses it.
+                                have_line = true;
+                                break;
+                            }
                             if (line[0] == 'P') {
                                 OrbitData data;
                                 data.satellite = line.substr(1, 3);
@@ -320,23 +331,24 @@ namespace GnssProcessor {
 
                                 auto& sat_orbits = orbit_map[data.satellite];
                                 bool insert = true;
-                                for (const auto& [existing_tow, existing_data] : sat_orbits) {
-                                    if (std::abs(epoch_time.tow - existing_tow) < MIN_TIME_DIFF) {
+                                for (const auto& [existing_time, existing_data] : sat_orbits) {
+                                    double dt = std::abs(TimeUtils::continuousGpsSeconds(epoch_time) - TimeUtils::continuousGpsSeconds(existing_time));
+                                    if (dt < MIN_TIME_DIFF) {
                                         insert = false;
-                                        log_manager_.getLogger("product_parser")->warn("Duplicate epoch for {} at TOW {:.3f} in {}, skipping",
-                                            data.satellite, epoch_time.tow, sp3_path.string());
+                                        log_manager_.getLogger("product_parser")->warn("Duplicate epoch for {} at week {} TOW {:.3f} in {}, skipping",
+                                            data.satellite, epoch_time.week, epoch_time.tow, sp3_path.string());
                                         break;
                                     }
                                 }
                                 if (insert && data.position_valid) {
-                                    sat_orbits[epoch_time.tow] = data;
+                                    sat_orbits[epoch_time] = data;
                                     ++total_entries;
                                 }
                             }
                             else if (line[0] == 'V') {
                                 std::string sat_id = line.substr(1, 3);
                                 auto& sat_orbits = orbit_map[sat_id];
-                                auto it = sat_orbits.find(epoch_time.tow);
+                                auto it = sat_orbits.find(epoch_time);
                                 if (it != sat_orbits.end()) {
                                     std::istringstream iss(line.substr(4));
                                     double vx, vy, vz, clock_rate;
@@ -358,14 +370,15 @@ namespace GnssProcessor {
                         break;
                     }
                 }
+
                 file.close();
                 log_manager_.getLogger("product_parser")->info("Parsed {} orbit entries from {}", total_entries, sp3_path.string());
                 total_entries = 0;
             }
 
             orbits.clear();
-            for (const auto& [sat, tow_map] : orbit_map) {
-                for (const auto& [tow, data] : tow_map) {
+            for (const auto& [sat, time_map] : orbit_map) {
+                for (const auto& [time, data] : time_map) {
                     orbits.push_back(data);
                 }
             }
@@ -437,8 +450,9 @@ namespace GnssProcessor {
                 }
                 if (line.find("INTERVAL") != std::string::npos) {
                     std::istringstream iss(line);
-                    std::string dummy;
-                    if (iss >> dummy >> epoch_interval) {
+                    double interval_val;
+                    if (iss >> interval_val) {
+                        epoch_interval = interval_val;
                         log_manager_.getLogger("product_parser")->debug("CLK epoch interval: {} seconds at line {}", epoch_interval, line_count);
                     }
                     else {
@@ -703,34 +717,48 @@ namespace GnssProcessor {
                     // In field2 for satellites:
                     //   - PRN is exactly 3 chars (e.g., "G04")
                     //   - SVN is exactly 4 chars (e.g., "G074") - NOT a PRN!
-                    //
-                    // IMPORTANT: Do NOT match "G074" as PRN! It's an SVN (Space Vehicle Number).
                     
                     // Extract fixed-width fields
+                    // ATX TYPE / SERIAL NO format (1-indexed columns):
+                    //   Cols 1-20:  Antenna type (for satellites: block type)
+                    //   Cols 21-40: Serial/PRN field (for satellites: PRN e.g. "G01")
+                    //   Cols 41-60: SVN + COSPAR (for satellites: SVN e.g. "G063" + COSPAR)
                     std::string field1 = line.substr(0, 20);
                     std::string field2 = (line.size() >= 40) ? line.substr(20, 20) : "";
+                    std::string field3 = (line.size() >= 60) ? line.substr(40, 20) : "";
                     trim(field1);
                     trim(field2);
+                    trim(field3);
                     
-                    // Parse field2 to find PRN (3-char) and SVN (4-char) separately
+                    // Parse field2 and field3 to find PRN (3-char) and SVN (4-char) separately
                     std::string prn_token, svn_token;
-                    std::istringstream tss(field2);
-                    std::string tok;
-                    while (tss >> tok) {
-                        // PRN: exactly 3 characters - system letter + 2 digits
-                        if (tok.size() == 3 &&
-                            (tok[0] == 'G' || tok[0] == 'R' || tok[0] == 'E' || 
-                             tok[0] == 'C' || tok[0] == 'J' || tok[0] == 'S') &&
-                            std::isdigit(tok[1]) && std::isdigit(tok[2])) {
-                            prn_token = tok;
+                    
+                    // Search field2 for PRN (3-char: system letter + 2 digits)
+                    {
+                        std::istringstream tss(field2);
+                        std::string tok;
+                        while (tss >> tok) {
+                            if (tok.size() == 3 &&
+                                (tok[0] == 'G' || tok[0] == 'R' || tok[0] == 'E' || 
+                                 tok[0] == 'C' || tok[0] == 'J' || tok[0] == 'S') &&
+                                std::isdigit(tok[1]) && std::isdigit(tok[2])) {
+                                prn_token = tok;
+                            }
                         }
-                        // SVN: exactly 4 characters - system letter + 3 digits
-                        // Note: "G074" is an SVN, not a PRN!
-                        else if (tok.size() == 4 &&
-                            (tok[0] == 'G' || tok[0] == 'R' || tok[0] == 'E' || 
-                             tok[0] == 'C' || tok[0] == 'J' || tok[0] == 'S') &&
-                            std::isdigit(tok[1]) && std::isdigit(tok[2]) && std::isdigit(tok[3])) {
-                            svn_token = tok;
+                    }
+                    
+                    // Search field3 for SVN (4-char: system letter + 3 digits)
+                    if (!field3.empty()) {
+                        std::istringstream tss(field3);
+                        std::string tok;
+                        while (tss >> tok) {
+                            if (tok.size() == 4 &&
+                                (tok[0] == 'G' || tok[0] == 'R' || tok[0] == 'E' || 
+                                 tok[0] == 'C' || tok[0] == 'J' || tok[0] == 'S') &&
+                                std::isdigit(tok[1]) && std::isdigit(tok[2]) && std::isdigit(tok[3])) {
+                                svn_token = tok;
+                                break;
+                            }
                         }
                     }
 
@@ -806,6 +834,7 @@ namespace GnssProcessor {
                     double zen1, zen2, dzen;
                     if (iss >> zen1 >> zen2 >> dzen &&
                         std::isfinite(zen1) && std::isfinite(zen2) && std::isfinite(dzen)) {
+                        current.zen1 = zen1;
                         current.dzen = dzen;
                     }
                     continue;
@@ -1197,14 +1226,25 @@ namespace GnssProcessor {
             std::string line;
             while (std::getline(file, line)) {
                 if (line.find("MJD") != std::string::npos) continue;
+                // Skip comment and header lines (lines starting with non-numeric content)
+                if (line.empty() || line.find_first_of("0123456789") == std::string::npos) continue;
                 std::istringstream iss(line);
                 double mjd, xp, yp, ut1_utc;
-                iss >> mjd >> xp >> yp >> ut1_utc;
+                if (!(iss >> mjd >> xp >> yp >> ut1_utc)) continue;
                 ErpData data;
-                data.time = GnssTime{ 0, (mjd - 51544.5) * TimeUtils::SECONDS_IN_DAY };
-                data.xp = xp;
-                data.yp = yp;
-                data.ut1_utc = ut1_utc;
+                // Convert MJD to GPS week/tow for consistent time representation.
+                // GPS epoch is MJD 44244.0 (January 6, 1980).
+                double days_since_gps_epoch = mjd - TimeUtils::GPS_EPOCH_MJD;
+                double total_seconds = days_since_gps_epoch * TimeUtils::SECONDS_IN_DAY;
+                int week = static_cast<int>(total_seconds / TimeUtils::SECONDS_IN_WEEK);
+                double tow = total_seconds - week * static_cast<double>(TimeUtils::SECONDS_IN_WEEK);
+                data.time = GnssTime{ week, tow };
+                // IGS/CODE ERP files store xp/yp in 10^-6 arcseconds (E-6").
+                // Convert to arcseconds for downstream use.
+                data.xp = xp * 1e-6;
+                data.yp = yp * 1e-6;
+                // UT1-UTC is stored in 10^-7 seconds (E-7S). Convert to seconds.
+                data.ut1_utc = ut1_utc * 1e-7;
                 erps.push_back(data);
             }
             file.close();

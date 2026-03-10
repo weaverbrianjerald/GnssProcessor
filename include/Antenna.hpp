@@ -75,7 +75,8 @@ namespace GnssProcessor {
 		double getAntennaCorrection(const std::string& satellite, const std::string& freq_type, System system,
 			const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos, const Eigen::Vector3d& sat_vel,
 			double elevation, double azimuth, const std::string& rx_antenna_type,
-			const GnssTime& time) const;
+			const GnssTime& time,
+			const Eigen::Vector3d& sun_pos_hint = Eigen::Vector3d::Zero()) const;
 
 		/**
 		 * @brief Get receiver antenna type from the RINEX header.
@@ -87,6 +88,23 @@ namespace GnssProcessor {
 		 * @return Receiver antenna type string (e.g. "TRMxxxxx") or empty string if unknown.
 		 */
 		std::string getReceiverAntennaType() const;
+
+		/**
+		 * @brief Reset phase wind-up state for a specific satellite.
+		 * @param satellite Satellite identifier string (e.g. "G01").
+		 *
+		 * Delegates to the internal GnssCorrections instance that owns the
+		 * wind-up state used by getAntennaCorrection().
+		 */
+		void resetPhaseWindUp(const std::string& satellite);
+
+		/**
+		 * @brief Reset phase wind-up state for all satellites.
+		 *
+		 * Delegates to the internal GnssCorrections instance that owns the
+		 * wind-up state used by getAntennaCorrection().
+		 */
+		void resetAllPhaseWindUp();
 	private:
 		/** @brief Logger for informational and diagnostic messages. */
 		LogManager& log_manager_;
@@ -94,8 +112,8 @@ namespace GnssProcessor {
 		const GnssConfig& config_;
 		/** @brief GNSS corrections helper (clocks, ERP, relativistic, etc.). */
 		GnssCorrections gnss_corrections_;
-		/** @brief Loaded antenna models and PCV/PCO data. */
-		std::vector<AntennaData> antennas_;
+		/** @brief Reference to cached antenna models and PCV/PCO data (zero-copy from ProductCache). */
+		const std::vector<AntennaData>& antennas_;
 		/** @brief Reference to RINEX parser (for receiver antenna metadata). */
 		const RinexParser& rinex_parser_;
 		/** @brief Product parser used to find auxiliary files (ATX, etc.). */
