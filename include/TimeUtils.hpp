@@ -56,6 +56,24 @@ namespace GnssProcessor {
         static GnssTime gregorianToGpsTime(int year, int month, int day, int hour, int minute, double second);
 
         /**
+         * @brief Converts Gregorian date and time already on the GPS time scale
+         *        to GPS week and TOW — without applying any leap-second correction.
+         *
+         * Use this for timestamps that are already expressed in GPS time (e.g.
+         * SP3 / CLK product epochs).  For UTC timestamps use gregorianToGpsTime()
+         * which adds the appropriate leap-second offset.
+         *
+         * @param year Year (e.g., 2023).
+         * @param month Month (1-12).
+         * @param day Day of month (1-31).
+         * @param hour Hour (0-23).
+         * @param minute Minute (0-59).
+         * @param second Second (0-59.999...).
+         * @return GnssTime struct with GPS week and TOW.
+         */
+        static GnssTime gregorianGpsToGpsTime(int year, int month, int day, int hour, int minute, double second);
+
+        /**
          * @brief Converts date and time to GNSS time for a specified time system.
          * @param year Year (e.g., 2023).
          * @param month Month (1-12).

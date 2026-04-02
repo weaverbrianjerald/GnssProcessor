@@ -128,6 +128,23 @@ namespace GnssProcessor {
         size_t getClockIndex() const;
 
         /**
+         * @brief Index of the receiver phase clock offset state within the state vector.
+         *
+         * When separate phase clock estimation is enabled, phase measurements use
+         * (code_clock + phase_clock_offset). This returns the index of the phase
+         * clock offset state.
+         *
+         * @return Index of the phase clock offset state, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getPhaseClockIndex() const;
+
+        /**
+         * @brief Check if separate phase clock estimation is active.
+         * @return True if a phase clock offset state exists in the state vector.
+         */
+        bool hasPhaseClock() const;
+
+        /**
          * @brief Index of the tropospheric zenith wet delay (ZWD) state.
          * @return Index of the troposphere state.
          */
@@ -296,8 +313,9 @@ namespace GnssProcessor {
         void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys);
 
     private:
-        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients).
+        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients, +1 if phase clock).
         size_t base_core_size_;                     //!< Base core size without inter-system time offsets.
+        size_t phase_clock_idx_;                    //!< Index of phase clock offset (max if disabled).
         size_t gradient_north_idx_;                 //!< Index of tropo north gradient (max if disabled).
         size_t gradient_east_idx_;                  //!< Index of tropo east gradient (max if disabled).
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).

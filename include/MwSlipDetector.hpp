@@ -58,10 +58,16 @@ namespace GnssProcessor {
         std::vector<std::string> detectLargeMwResets(const std::vector<PppObservation>& observations);
 
         /**
-         * @brief Set the threshold (in wide-lane cycles) used to flag a large MW reset.
-         * @param cycles Threshold in cycles (default previously 10.0).
+         * @brief Clear MW arc history for a specific satellite.
+         *
+         * Call this when an ambiguity is reset by an external mechanism (e.g.,
+         * KF outlier handler) so the MW detector starts a fresh arc on the
+         * next epoch. Without this call, stale pre-reset MW values would
+         * contaminate the running statistics and mask subsequent slips.
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
          */
-        void setLargeThresholdCycles(double cycles) { large_mw_threshold_cycles_ = cycles; }
+        void resetSatellite(const std::string& satellite);
 
         /**
          * @brief Enable CSV tracing for MWWL diagnostics.
@@ -90,45 +96,50 @@ namespace GnssProcessor {
          * @brief Per-satellite running statistics for the MW time series.
          *
          * Maintains a recursively updated mean and Welford variance estimate,
-         * plus a rolling window of recent MW values used to compute the
-         * Median Absolute Deviation (MAD) for robust outlier detection.
+         * plus a rolling window of recent epoch-to-epoch MW differences used
+         * to compute the Median Absolute Deviation (MAD) for robust outlier
+         * detection. Using differences instead of raw values ensures the MAD
+         * measures the actual noise level rather than spread around the
+         * (arbitrary) ambiguity-dominated mean.
          */
         struct MwArcStats {
-            double mean{ 0.0 };        /**< Running (Hatch) mean of MW values (meters). */
-            double M2{ 0.0 };          /**< Welford accumulator for variance (m^2). */
-            size_t count{ 0 };         /**< Number of MW samples accumulated. */
-            std::deque<double> window; /**< Rolling window of recent MW values (meters). */
+            double mean{ 0.0 };            /**< Running (Hatch) mean of MW values (meters). */
+            double M2{ 0.0 };              /**< Welford accumulator for variance (m^2). */
+            size_t count{ 0 };             /**< Number of MW samples accumulated. */
+            double prev_mw{ 0.0 };         /**< Previous epoch MW value for differencing (meters). */
+            std::deque<double> diff_window; /**< Rolling window of epoch-to-epoch MW differences (meters). */
         };
 
         /** Per-satellite MW arc statistics keyed by satellite identifier. */
         std::map<std::string, MwArcStats> mw_stats_;
 
         /** Maximum number of recent MW values kept per satellite for MAD computation. */
-        static constexpr size_t kMwWindowSize = 20;
+        static constexpr size_t kMwWindowSize = 30;
 
         /** Multiplier applied to the MAD-derived sigma for the adaptive threshold. */
-        static constexpr double kMadSigmaMultiplier = 4.0;
+        static constexpr double kMadSigmaMultiplier = 12.0;
 
         /**
          * @brief Minimum number of epochs before the adaptive (MAD-based)
-         *        threshold is used.  Until this count is reached the fixed
-         *        large_mw_threshold_cycles_ is applied instead.
-         */
+         *        threshold is used.  Until this count is reached slip
+         *        detection is deferred (no fixed fallback threshold). */
         static constexpr size_t kMinEpochsForAdaptive = 5;
 
         /** Minimum slip threshold expressed in wide-lane cycles.
-         *  Prevents false alarms during early convergence. */
-        static constexpr double kMinThresholdCycles = 0.5;
-
-        /** Large slip threshold expressed in wide-lane cycles (default 10.0).
-         *  Used as fallback before adaptive statistics are available. */
-        double large_mw_threshold_cycles_ = 10.0;
+         *  Prevents the adaptive threshold from becoming too tight when
+         *  MW noise is very low. A floor of 2.5 WL cycles ensures only
+         *  large catastrophic slips (tens of cycles) are caught here;
+         *  smaller 1-2 cycle slips are left to the post-fit standardized
+         *  measurement residual check which is more sensitive. */
+        static constexpr double kMinThresholdCycles = 2.5;
 
         /**
          * @brief Compute the MAD-based adaptive threshold for a satellite arc.
          *
-         * Returns the threshold in meters.  If the arc does not yet have
-         * enough history the method returns the fallback fixed threshold.
+         * Uses the rolling window of epoch-to-epoch MW differences to compute
+         * the MAD, then scales it to a Gaussian-equivalent sigma and applies
+         * a multiplier.  If the arc does not yet have enough history the
+         * method returns NaN to signal that slip detection should be skipped.
          *
          * @param stats  Current arc statistics for the satellite.
          * @param lambda_wl Wide-lane wavelength (meters).
@@ -193,14 +204,23 @@ namespace GnssProcessor {
          * observables (meters). The result is geometry-free and ionosphere-free,
          * proportional to the wide-lane ambiguity plus noise.
          *
+         * Code signals are provided explicitly (from the iono-free code
+         * combination) rather than derived from the phase labels, to ensure
+         * matched tracking modes on each frequency and avoid inter-signal
+         * code biases that would introduce periodic trends.
+         *
          * @param obs Observation containing raw phase/code values and metadata.
-         * @param sig1 First signal identifier (e.g. "L1C").
-         * @param sig2 Second signal identifier (e.g. "L2W").
+         * @param sig1 First phase signal identifier (e.g. "L1C").
+         * @param sig2 Second phase signal identifier (e.g. "L2W").
+         * @param code1 First code signal identifier (e.g. "C1W").
+         * @param code2 Second code signal identifier (e.g. "C2W").
          * @return double MW value in meters. Returns NaN on invalid input.
          */
         double computeMwMeters(const PppObservation& obs,
             const std::string& sig1,
-            const std::string& sig2) const;
+            const std::string& sig2,
+            const std::string& code1,
+            const std::string& code2) const;
 
         /**
          * @brief Check whether the observation reports any loss-of-phase-lock indicators.

@@ -103,6 +103,32 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief Converts Gregorian date and time already on the GPS time scale to
+     *        GPS week and TOW — no leap-second correction applied.
+     */
+    GnssTime TimeUtils::gregorianGpsToGpsTime(int year, int month, int day, int hour, int minute, double second) {
+        if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
+            throw std::invalid_argument("Invalid Gregorian date");
+        }
+
+        // The input is already on the GPS time scale, so the Julian Day
+        // computed here is a GPS JD.  Convert directly to GPS seconds
+        // since the GPS epoch without any leap-second adjustment.
+        double jd_gps = gregorianToJulianDay(year, month, day, hour, minute, second);
+        double gps_seconds = (jd_gps - GPS_EPOCH_JD) * SECONDS_IN_DAY;
+
+        int week = static_cast<int>(gps_seconds / SECONDS_IN_WEEK);
+        double tow = gps_seconds - static_cast<double>(week) * SECONDS_IN_WEEK;
+
+        if (tow < 0.0) {
+            tow += SECONDS_IN_WEEK;
+            week -= 1;
+        }
+
+        return GnssTime{ week, tow };
+    }
+
+    /**
      * @brief Converts date and time to GNSS time for a specified time system.
      */
     GnssTime TimeUtils::GnssTimeFromDate(int year, int month, int day, int hour, int minute, double second,
@@ -113,38 +139,45 @@ namespace GnssProcessor {
             return GnssTime{ 0, 0.0 };
         }
 
-        // Convert to GPS time as baseline
-        GnssTime gps_time = gregorianToGpsTime(year, month, day, hour, minute, second);
-
-        // Adjust for time system (if not GPS)
-        if (time_system == "GAL") {
-            // Galileo System Time (GST) is steered to GPS time at the ns level.
-            // No adjustment needed for our precision requirements.
-            spdlog::trace("Converted to GST for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
+        // GPS and GAL timestamps are already on the GPS time scale —
+        // convert directly without adding leap seconds.
+        // GLO timestamps are UTC-based and need leap-second correction.
+        // BDS timestamps are on BDT = GPS - 14 s.
+        if (time_system == "GPS" || time_system == "GAL" || time_system.empty()) {
+            GnssTime gps_time = gregorianGpsToGpsTime(year, month, day, hour, minute, second);
+            spdlog::trace("Converted {} time for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
+                time_system.empty() ? "GPS" : time_system,
                 year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
+            return gps_time;
         }
         else if (time_system == "BDS") {
-            // BeiDou Time (BDT) = GPS - 14 seconds (BDT epoch is 2006-01-01 00:00:00 UTC)
-            gps_time.tow -= 14.0;
-            if (gps_time.tow < 0.0) {
-                gps_time.tow += SECONDS_IN_WEEK;
-                gps_time.week -= 1;
+            // BDT timestamps are on BDT scale = GPS - 14 s.
+            // Convert as GPS-scale then add 14 s to get GPS time.
+            GnssTime gps_time = gregorianGpsToGpsTime(year, month, day, hour, minute, second);
+            gps_time.tow += 14.0;
+            if (gps_time.tow >= SECONDS_IN_WEEK) {
+                gps_time.tow -= SECONDS_IN_WEEK;
+                gps_time.week += 1;
             }
-            spdlog::trace("Converted to BDT for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
+            spdlog::trace("Converted BDT for {}-{}-{} {}:{}:{:.3f}, week: {}, tow: {:.3f}",
                 year, month, day, hour, minute, second, gps_time.week, gps_time.tow);
+            return gps_time;
         }
         else if (time_system == "GLO") {
             // GLONASS time = UTC + 3 hours (Moscow time), but RINEX timestamps
-            // are typically already in UTC. No adjustment applied here; the caller
-            // is expected to provide UTC-referenced inputs.
+            // are typically already in UTC. Use gregorianToGpsTime which adds
+            // leap seconds to convert UTC -> GPS.
+            GnssTime gps_time = gregorianToGpsTime(year, month, day, hour, minute, second);
             spdlog::trace("GLONASS time system: assuming UTC input for {}-{}-{} {}:{}:{:.3f}",
                 year, month, day, hour, minute, second);
+            return gps_time;
         }
-        else if (time_system != "GPS") {
-            spdlog::trace("Unsupported time system {}, using GPS time", time_system);
+        else {
+            // Unknown time system — assume GPS scale
+            GnssTime gps_time = gregorianGpsToGpsTime(year, month, day, hour, minute, second);
+            spdlog::trace("Unsupported time system {}, assuming GPS time scale", time_system);
+            return gps_time;
         }
-
-        return gps_time;
     }
 
     /**

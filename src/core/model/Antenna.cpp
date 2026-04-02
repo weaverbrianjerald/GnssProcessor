@@ -2,6 +2,7 @@
 #include "Coordinates.hpp"
 #include "ProductCache.hpp"
 #include <Eigen/Dense>
+#include <cstdio>
 
 namespace GnssProcessor {
 
@@ -38,6 +39,9 @@ namespace GnssProcessor {
         log_manager_.getLogger("antenna_model")->info(
             "Antenna init (zero-copy): {} types, rx={}",
             antennas_.size(), getReceiverAntennaType());
+
+        // Dump every loaded antenna model at trace level for ATX comparison
+        dumpAntennaModels();
     }
 
     /**
@@ -55,7 +59,7 @@ namespace GnssProcessor {
      * - Matches antenna models by satellite identifier and by receiver type (with simple normalization).
      * - Safely handles missing data and logs warnings/traces for diagnostics.
      *
-     * Sign convention (correction added to modeled range, matching MATLAB reference):
+     * Sign convention:
      *   Satellite PCO: APC closer to receiver than CoM → shortens range → subtract
      *   Satellite PCV: sat_apc returns (pco - pcv), caller negates → net +pcv
      *   Receiver  PCO: APC offset from ARP (mostly up) → project onto LOS → add
@@ -177,28 +181,69 @@ namespace GnssProcessor {
         //   X-axis (i_s) = toward Sun (in the sat-Sun-Earth plane)
         //   Y-axis (j_s) = completes right-handed frame (cross-track, along solar panel axis)
         //
+        // Exception: BeiDou-2 GEO satellites (PRN C01-C05, C59, C60) use orbit-normal
+        // (ON) mode permanently. In ON mode the Y-axis is along the orbit normal
+        // (cross(r, v)), X-axis is approximately along-track, and Z-axis is nadir.
+        //
         // ATX satellite PCO is defined in this frame (Z toward Earth).
         // ATX satellite PCV is indexed by nadir angle = angle from boresight (+Z) to LOS.
         Eigen::Vector3d k_s = -sat_pos.normalized();  // +Z axis: toward Earth (nadir/boresight)
-        
-        // Sun direction from satellite
-        Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
-        
-        // Y-axis = cross(boresight, sun_direction) = along solar panel axis
-        Eigen::Vector3d j_s = k_s.cross(e_sun);
-        if (j_s.norm() < 1e-8) {
-            // Fallback for eclipse/noon turn
-            Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::UnitY();
-            j_s = k_s.cross(vhat);
+        Eigen::Vector3d i_s, j_s;
+
+        // Detect BeiDou-2 GEO satellites for orbit-normal attitude
+        bool use_orbit_normal = false;
+        if (system == System::BeiDou && satellite.size() >= 2) {
+            int prn = 0;
+            try { prn = std::stoi(satellite.substr(1)); } catch (...) {}
+            if ((prn >= 1 && prn <= 5) || prn == 59 || prn == 60) {
+                use_orbit_normal = true;
+            }
         }
-        j_s.normalize();
-        
-        // X-axis = cross(Y, Z) to complete right-handed frame
-        Eigen::Vector3d i_s = j_s.cross(k_s);
-        if (i_s.norm() < 1e-8) {
-            i_s = Eigen::Vector3d::UnitX();
+
+        if (use_orbit_normal) {
+            // Orbit-normal (ON) mode for BeiDou-2 GEO:
+            //   Y-axis = orbit normal = normalize(cross(position, velocity))
+            //   X-axis = cross(Y, Z) — approximately along-track
+            //   Z-axis = nadir (already computed as k_s)
+            Eigen::Vector3d orbit_normal = sat_pos.cross(sat_vel);
+            if (orbit_normal.norm() < 1e-8) {
+                orbit_normal = Eigen::Vector3d::UnitY();
+                log_manager_.getLogger("antenna")->warn(
+                    "BeiDou GEO {}: degenerate orbit normal, using fallback", satellite);
+            }
+            j_s = orbit_normal.normalized();
+
+            i_s = j_s.cross(k_s);
+            if (i_s.norm() < 1e-8) {
+                i_s = Eigen::Vector3d::UnitX();
+            }
+            i_s.normalize();
+
+            // Re-orthogonalize Y to ensure a clean right-handed frame
+            j_s = k_s.cross(i_s);
+            j_s.normalize();
+
+            log_manager_.getLogger("antenna")->trace(
+                "BeiDou GEO {} using orbit-normal attitude", satellite);
         }
-        i_s.normalize();
+        else {
+            // Standard yaw-steering model (GPS, Galileo, GLONASS, BeiDou-3 MEO, etc.)
+            Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
+
+            j_s = k_s.cross(e_sun);
+            if (j_s.norm() < 1e-8) {
+                // Fallback for eclipse/noon turn
+                Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::UnitY();
+                j_s = k_s.cross(vhat);
+            }
+            j_s.normalize();
+
+            i_s = j_s.cross(k_s);
+            if (i_s.norm() < 1e-8) {
+                i_s = Eigen::Vector3d::UnitX();
+            }
+            i_s.normalize();
+        }
 
         // Satellite frame rotation matrix: sf = [i; j; k] (rows are basis vectors)
         // sf * vec_ecef -> vec_body; sf^T * vec_body -> vec_ecef
@@ -252,11 +297,6 @@ namespace GnssProcessor {
         // The modeled range is computed from CoM to receiver marker. Antenna corrections
         // adjust for the offset between CoM and APC (PCO) and the direction-dependent
         // phase variation (PCV).
-        //
-        // MATLAB reference: sdt = -(sat_apc(...)) where sat_apc = pco - pcv
-        //   => net satellite correction = -pco + pcv
-        //   correction -= pco_ecef · los   (subtract PCO)
-        //   correction += pcv              (add PCV)
         double sat_pco_corr = 0.0, sat_pcv_corr = 0.0;
         if (sat_entry && sat_entry->pco.count(atx_freq)) {
             // === PCO ===
@@ -267,6 +307,15 @@ namespace GnssProcessor {
                 sat_pco_corr = pco_ecef.dot(los);
                 // Satellite APC is closer to receiver than CoM, shortening the range
                 correction -= sat_pco_corr;
+
+                log_manager_.getLogger("antenna")->trace(
+                    "SAT PCO {} {} freq={}: body_mm=({:.4f},{:.4f},{:.4f}) body_m=({:.6f},{:.6f},{:.6f}) "
+                    "ecef_m=({:.6f},{:.6f},{:.6f}) dot(pco_ecef,los)={:.6f} m",
+                    satellite, sat_entry->type, atx_freq,
+                    sat_entry->pco.at(atx_freq).x(), sat_entry->pco.at(atx_freq).y(), sat_entry->pco.at(atx_freq).z(),
+                    pco_body.x(), pco_body.y(), pco_body.z(),
+                    pco_ecef.x(), pco_ecef.y(), pco_ecef.z(),
+                    sat_pco_corr);
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, sat_entry->type, atx_freq, time.tow);
@@ -289,12 +338,20 @@ namespace GnssProcessor {
                 double dazi = sat_entry->dazi > 0.0 ? sat_entry->dazi : 5.0;
                 double dzen = sat_entry->dzen > 0.0 ? sat_entry->dzen : 1.0;
                 double zen1 = sat_entry->zen1;
-                double pcv = interpolatePcv(pcv_table, nadir - zen1, az_sat, dazi, dzen) * 1e-3;
+                double pcv_raw = interpolatePcv(pcv_table, nadir - zen1, az_sat, dazi, dzen);
+                double pcv = pcv_raw * 1e-3;
                 if (std::isfinite(pcv)) {
                     sat_pcv_corr = pcv;
-                    // MATLAB reference: sat_apc returns (pco - pcv), caller negates
-                    // => net PCV contribution is +pcv
                     correction += sat_pcv_corr;
+
+                    log_manager_.getLogger("antenna")->trace(
+                        "SAT PCV {} {} freq={}: nadir={:.4f} deg, az_body={:.4f} deg, "
+                        "zen1={:.1f}, dzen={:.1f}, dazi={:.1f}, grid={}x{}, "
+                        "interp_arg={:.4f}, pcv_raw_mm={:.4f}, pcv_m={:.6f}",
+                        satellite, sat_entry->type, atx_freq,
+                        nadir, az_sat, zen1, dzen, dazi,
+                        pcv_table.size(), pcv_table[0].size(),
+                        nadir - zen1, pcv_raw, pcv);
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid satellite PCV for {} {} atx_freq={} at TOW {:.3f}",
                         satellite, sat_entry->type, atx_freq, time.tow);
@@ -368,10 +425,6 @@ namespace GnssProcessor {
         }
 
         // === Receiver ===
-        // MATLAB reference: rec_apc = dot(pco_ecef, los) + pcv/1000
-        //   => PCO projected onto LOS is added, PCV is added
-        //   correction += pco_ecef · los   (add PCO)
-        //   correction += pcv              (add PCV)
         if (rx_entry && rx_entry->pco.count(atx_freq)) {
             // === PCO ===
             // ATX receiver PCO is stored as North/East/Up (NEU) in mm
@@ -397,6 +450,16 @@ namespace GnssProcessor {
                     
                     // Receiver PCO adds to modeled range
                     correction += rx_pco_corr;
+
+                    log_manager_.getLogger("antenna")->trace(
+                        "RX PCO {} freq={} type='{}': neu_mm=({:.4f},{:.4f},{:.4f}) neu_m=({:.6f},{:.6f},{:.6f}) "
+                        "enu_m=({:.6f},{:.6f},{:.6f}) ecef_m=({:.6f},{:.6f},{:.6f}) dot(pco_ecef,los)={:.6f} m",
+                        satellite, atx_freq, rx_entry->type,
+                        rx_entry->pco.at(atx_freq).x(), rx_entry->pco.at(atx_freq).y(), rx_entry->pco.at(atx_freq).z(),
+                        pco_neu.x(), pco_neu.y(), pco_neu.z(),
+                        pco_enu.x(), pco_enu.y(), pco_enu.z(),
+                        pco_ecef.x(), pco_ecef.y(), pco_ecef.z(),
+                        rx_pco_corr);
                 }
             }
             else {
@@ -411,16 +474,36 @@ namespace GnssProcessor {
                 double dazi = rx_entry->dazi > 0.0 ? rx_entry->dazi : 5.0;
                 double dzen = rx_entry->dzen > 0.0 ? rx_entry->dzen : 5.0;
                 double zen1 = rx_entry->zen1;
-                double pcv = interpolatePcv(pcv_table, zenith - zen1, azimuth, dazi, dzen) * 1e-3;
+                double pcv_raw = interpolatePcv(pcv_table, zenith - zen1, azimuth, dazi, dzen);
+                double pcv = pcv_raw * 1e-3;
                 if (std::isfinite(pcv)) {
                     rx_pcv_corr = pcv;
-                    // MATLAB reference: rec_apc adds pcv/1000 to dot(pco,los)
                     correction += rx_pcv_corr;
+
+                    log_manager_.getLogger("antenna")->trace(
+                        "RX PCV {} freq={} type='{}': elev={:.4f} zen={:.4f} az={:.4f} "
+                        "zen1={:.1f} dzen={:.1f} dazi={:.1f} grid={}x{} "
+                        "interp_arg={:.4f} pcv_raw_mm={:.4f} pcv_m={:.6f}",
+                        satellite, atx_freq, rx_entry->type,
+                        elevation, zenith, azimuth,
+                        zen1, dzen, dazi,
+                        pcv_table.size(), pcv_table[0].size(),
+                        zenith - zen1, pcv_raw, pcv);
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid receiver PCV for {} {} atx_freq={} at TOW {:.3f}",
                         satellite, rx_type_sanitized, atx_freq, time.tow);
                 }
             }
+        }
+        else if (!rx_entry) {
+            log_manager_.getLogger("antenna")->trace(
+                "RX no antenna model match for '{}' (normalized='{}'), satellite={} freq={}",
+                rx_type_sanitized, rx_type_underscore, satellite, atx_freq);
+        }
+        else {
+            log_manager_.getLogger("antenna")->trace(
+                "RX antenna '{}' has no PCO for freq={}, satellite={}",
+                rx_entry->type, atx_freq, satellite);
         }
 
         double wind_up_corr = 0.0;
@@ -482,6 +565,127 @@ namespace GnssProcessor {
             antennas_.size());
     }
 
+    void Antenna::dumpAntennaModels() const {
+        auto logger = log_manager_.getLogger("antenna_model");
+
+        // Only dump the receiver antenna model that matches the RINEX header.
+        // Satellite antenna entries are already traced per-observation in
+        // getAntennaCorrection(), so dumping all of them here would produce
+        // thousands of lines for no benefit.
+        std::string rx_type = getReceiverAntennaType();
+        if (rx_type.empty()) {
+            logger->trace("=== ANTENNA MODEL DUMP: no receiver antenna type from RINEX ===");
+            return;
+        }
+
+        // Build the underscore-normalized variant used for matching
+        std::string rx_raw = rinex_parser_.getReceiverAntennaType();
+        std::string rx_type_underscore;
+        rx_type_underscore.reserve(rx_raw.size());
+        for (char c : rx_raw) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
+                    rx_type_underscore.push_back('_');
+            } else {
+                rx_type_underscore.push_back(c);
+            }
+        }
+        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
+            rx_type_underscore.pop_back();
+
+        // Find the matching entry (same logic as getAntennaCorrection)
+        const AntennaData* rx_entry = nullptr;
+        size_t rx_index = 0;
+
+        for (size_t i = 0; i < antennas_.size(); ++i) {
+            const auto& a = antennas_[i];
+            if (a.type == rx_type || a.type == rx_type_underscore) {
+                rx_entry = &a;
+                rx_index = i;
+                break;
+            }
+        }
+        if (!rx_entry) {
+            for (size_t i = 0; i < antennas_.size(); ++i) {
+                const auto& a = antennas_[i];
+                if ((!rx_type.empty() && a.type.find(rx_type) != std::string::npos) ||
+                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
+                    rx_entry = &a;
+                    rx_index = i;
+                    break;
+                }
+            }
+        }
+
+        if (!rx_entry) {
+            logger->trace("=== ANTENNA MODEL DUMP: no ATX match for rx='{}' (normalized='{}') ===",
+                rx_type, rx_type_underscore);
+            return;
+        }
+
+        logger->trace("=== BEGIN RECEIVER ANTENNA MODEL DUMP (rx='{}', matched='{}', index={}) ===",
+            rx_type, rx_entry->type, rx_index);
+
+        const auto& a = *rx_entry;
+
+        logger->trace(
+            "ANT type='{}' valid_from={:d}:{:.0f} valid_until={:d}:{:.0f} "
+            "dazi={:.2f} dzen={:.2f} zen1={:.2f}",
+            a.type,
+            a.valid_from.week, a.valid_from.tow,
+            a.valid_until.week, a.valid_until.tow,
+            a.dazi, a.dzen, a.zen1);
+
+        // PCO per frequency
+        for (const auto& [freq, pco] : a.pco) {
+            logger->trace(
+                "ANT PCO freq={}: N={:.4f} E={:.4f} U={:.4f} mm",
+                freq, pco.x(), pco.y(), pco.z());
+        }
+
+        // PCV per frequency
+        for (const auto& [freq, table] : a.pcv) {
+            if (table.empty()) {
+                logger->trace("ANT PCV freq={}: (empty)", freq);
+                continue;
+            }
+
+            size_t n_rows = table.size();
+            size_t n_cols = table[0].size();
+            bool az_indep = (n_cols == 1);
+
+            logger->trace(
+                "ANT PCV freq={}: {}x{} ({})",
+                freq, n_rows, n_cols,
+                az_indep ? "NOAZI" : "AZI-dependent");
+
+            // Dump each zenith ring row
+            for (size_t r = 0; r < n_rows; ++r) {
+                double zen_angle = a.zen1 + r * a.dzen;
+                if (az_indep) {
+                    logger->trace(
+                        "ANT PCV freq={} zen={:.1f}: {:.4f}",
+                        freq, zen_angle, table[r][0]);
+                }
+                else {
+                    std::string vals;
+                    vals.reserve(n_cols * 10);
+                    for (size_t c = 0; c < n_cols; ++c) {
+                        if (c > 0) vals += ',';
+                        char buf[16];
+                        std::snprintf(buf, sizeof(buf), "%.4f", table[r][c]);
+                        vals += buf;
+                    }
+                    logger->trace(
+                        "ANT PCV freq={} zen={:.1f}: [{}]",
+                        freq, zen_angle, vals);
+                }
+            }
+        }
+
+        logger->trace("=== END RECEIVER ANTENNA MODEL DUMP ===");
+    }
+
     /**
      * @brief Interpolate a PCV grid.
      *
@@ -525,9 +729,19 @@ namespace GnssProcessor {
         }
 
         if (az_indep) {
-            double pcv = pcv_table[zen_idx][0];
+            double pcv_lo = pcv_table[zen_idx][0];
+            double pcv_hi = pcv_lo;
             if (zen_idx + 1 < pcv_table.size())
-                pcv += zen_frac * (pcv_table[zen_idx + 1][0] - pcv_table[zen_idx][0]);
+                pcv_hi = pcv_table[zen_idx + 1][0];
+            double pcv = pcv_lo + zen_frac * (pcv_hi - pcv_lo);
+
+            log_manager_.getLogger("antenna")->trace(
+                "interpolatePcv(NOAZ): zen_in={:.4f} zen_idx={} zen_frac={:.6f} "
+                "pcv[{}]={:.4f} pcv[{}]={:.4f} => interp={:.4f}",
+                zenith, zen_idx, zen_frac,
+                zen_idx, pcv_lo,
+                zen_idx + 1, pcv_hi,
+                pcv);
             return pcv;
         }
 
@@ -541,8 +755,8 @@ namespace GnssProcessor {
 
         double pcv00 = pcv_table[zen_idx][az_idx];
         double pcv01 = pcv_table[zen_idx][az_next];
-        double pcv10 = pcv_table[zen_idx][az_idx];
-        double pcv11 = pcv_table[zen_idx][az_next];
+        double pcv10 = pcv_table[zen_idx + 1][az_idx];
+        double pcv11 = pcv_table[zen_idx + 1][az_next];
         if (zen_idx + 1 < pcv_table.size()) {
             pcv10 = pcv_table[zen_idx + 1][az_idx];
             pcv11 = pcv_table[zen_idx + 1][az_next];
@@ -553,6 +767,14 @@ namespace GnssProcessor {
             pcv10 * zen_frac * (1 - az_frac) +
             pcv01 * (1 - zen_frac) * az_frac +
             pcv11 * zen_frac * az_frac;
+
+        log_manager_.getLogger("antenna")->trace(
+            "interpolatePcv(2D): zen_in={:.4f} az_in={:.4f} zen_idx={} az_idx={} az_next={} "
+            "zen_frac={:.6f} az_frac={:.6f} "
+            "pcv00={:.4f} pcv01={:.4f} pcv10={:.4f} pcv11={:.4f} => interp={:.4f}",
+            zenith, azimuth, zen_idx, az_idx, az_next,
+            zen_frac, az_frac,
+            pcv00, pcv01, pcv10, pcv11, pcv);
         return pcv;
     }
 

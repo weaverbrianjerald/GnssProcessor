@@ -85,8 +85,18 @@ namespace GnssProcessor {
         size_t core_size = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
         if (state.position.norm() == 0.0 || state.position.norm() > 1e9 || state.position.hasNaN() ||
             state.covariance.rows() != static_cast<long>(core_size)) {
-            Eigen::Vector3d marker_pos = rinex_parser_.getApproxPositionXyz();
-            if (marker_pos.norm() > 1e3 && !marker_pos.hasNaN()) {
+            // If a user-supplied reference position is configured, use it directly
+            // (bypasses RINEX APPROX POSITION and antenna offset). This is intended
+            // for fixed-station residual analysis with zero position process noise.
+            if (config_.hasReferencePosition()) {
+                const auto& rp = config_.getReferencePositionEcef();
+                state.position = Eigen::Vector3d(rp[0], rp[1], rp[2]);
+                log_manager_.getLogger("ppp_model")->info(
+                    "Using user-supplied reference position: ({:.4f}, {:.4f}, {:.4f}) m",
+                    state.position.x(), state.position.y(), state.position.z());
+            }
+            else if (Eigen::Vector3d marker_pos = rinex_parser_.getApproxPositionXyz();
+                     marker_pos.norm() > 1e3 && !marker_pos.hasNaN()) {
                 // Apply antenna H/E/N offset to get antenna phase center position.
                 // RINEX APPROX POSITION XYZ is the marker position.
                 // ANTENNA: DELTA H/E/N gives the offset from marker to ARP in local frame.
@@ -125,7 +135,7 @@ namespace GnssProcessor {
                         marker_pos.x(), marker_pos.y(), marker_pos.z());
                 }
             }
-            else {
+            else if (!config_.hasReferencePosition()) {
                 state.position = Eigen::Vector3d::Zero();
                 log_manager_.getLogger("ppp_model")->warn("Invalid or zero RINEX approximate position, using default: (0, 0, 0) m");
             }

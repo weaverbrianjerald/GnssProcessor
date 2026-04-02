@@ -440,8 +440,6 @@ namespace GnssProcessor {
             atm_loading_corr = 0.0; // placeholder
 
             // Ocean tidal loading correction
-            // Compute ECEF displacement and project onto satellite->receiver LOS
-            // to match the MATLAB reference convention (los = r_xyz - s_xyz)
             Eigen::Vector3d otl_ecef = corrections_.computeOceanTideCorrection(rx_pos, obs.time);
             double otl_corr = otl_ecef.dot(-los);
 
@@ -460,8 +458,8 @@ namespace GnssProcessor {
             }
             const Eigen::Vector3d& sun_pos  = cached_sun_pos_;
             const Eigen::Vector3d& moon_pos = cached_moon_pos_;
-            //solid_tide = corrections_.computeSolidEarthTide(rx_pos, sat_pos, sun_pos, moon_pos, obs.time) + otl_corr;
-			solid_tide = corrections_.computeSolidEarthTide(rx_pos, sat_pos, sun_pos, moon_pos, obs.time); // debug: exclude OTL from solid tide for now to isolate the effect
+            //solid_tide = corrections_.computeSolidEarthTide(rx_pos, sat_pos, sun_pos, moon_pos, obs.time) + otl_corr; // disable OTL while debugging IGS station AMC4
+            solid_tide = corrections_.computeSolidEarthTide(rx_pos, sat_pos, sun_pos, moon_pos, obs.time);
 
             // Output emission-time velocity (for relativistic correction, phase wind-up, etc.)
             sat_vel = sat_vel_em;
@@ -522,7 +520,7 @@ namespace GnssProcessor {
             // assuming a fixed 900 s (15 min) or 300 s (5 min) spacing. Use the
             // median of the first few consecutive-node spacings for robustness
             // against occasional gaps.
-            double sp3_interval = 900.0; // fallback
+            double sp3_interval = 300.0; // fallback = 5-minutes
             if (sat_orbits.size() >= 2) {
                 std::vector<double> spacings;
                 spacings.reserve(std::min<size_t>(sat_orbits.size() - 1, 10));
@@ -536,7 +534,7 @@ namespace GnssProcessor {
                     sp3_interval = spacings[spacings.size() / 2]; // median
                 }
             }
-            const double MAX_SPAN = sp3_interval * 15; // maximum acceptable interpolation window span
+            const double MAX_SPAN = sp3_interval * (IGS_POINTS - 1) + 1.0; // no gaps allowed (11 contiguous nodes = 10 intervals)
 
             // Find the nearest node to t_query (not just the first node >= t_query).
             // Using the nearest node as the center anchor ensures the interpolation
@@ -894,4 +892,4 @@ namespace GnssProcessor {
         }
 
     }
-} // namespace GnssProcessor
+} // namespace GnssProcessor} // namespace GnssProcessor

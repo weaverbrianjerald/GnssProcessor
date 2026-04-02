@@ -66,7 +66,8 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
     if (state_trace_.is_open()) {
         state_trace_ << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m,clock_m,clock_std_m,tropo_m,tropo_std_m";
         if (is_ppp_rtk_) state_trace_ << ",iono_m,iono_std_m";
-        // Do NOT write newline here - dynamic time-offset columns will be appended in logState()
+        // Phase clock and gradient columns are appended dynamically in logState()
+        // Do NOT write newline here - dynamic columns will be appended in logState()
     }
 
     if (ambiguity_trace_.is_open()) {
@@ -100,6 +101,10 @@ if (!state_trace_.is_open()) return;
 
 // On first call, complete the header line with dynamic time-offset columns
 if (!state_header_written_) {
+// Append phase clock column if enabled
+if (state_manager.hasPhaseClock()) {
+    state_trace_ << ",phase_clock_m,phase_clock_std_m";
+}
 // Append gradient columns if enabled
 if (state_manager.hasTropoGradients()) {
     state_trace_ << ",gn_m,gn_std_m,ge_m,ge_std_m";
@@ -157,6 +162,14 @@ auto std_at = [&cov](size_t idx) -> double {
         state_trace_ << ","
                      << sv(static_cast<Eigen::Index>(iono_idx)) << ","
                      << std_at(iono_idx);
+    }
+
+    // Phase clock offset state
+    if (state_manager.hasPhaseClock()) {
+        const size_t pc_idx = state_manager.getPhaseClockIndex();
+        state_trace_ << ","
+                     << sv(static_cast<Eigen::Index>(pc_idx)) << ","
+                     << std_at(pc_idx);
     }
 
     // Tropospheric gradient states (Gn, Ge)

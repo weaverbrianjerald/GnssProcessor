@@ -105,6 +105,20 @@ namespace GnssProcessor {
 		 * wind-up state used by getAntennaCorrection().
 		 */
 		void resetAllPhaseWindUp();
+
+		/**
+		 * @brief Dump the receiver antenna model to trace log for ATX comparison.
+		 *
+		 * Looks up the receiver antenna type from the RINEX header, finds the
+		 * matching AntennaData entry, and logs its type, validity interval,
+		 * grid parameters (dazi, dzen, zen1), PCO vectors per frequency, and
+		 * PCV table values. The output is written at trace level to the
+		 * "antenna_model" logger so it can be compared side-by-side with the
+		 * source .ATX file. Only the single receiver entry is dumped;
+		 * satellite models are already traced per-observation in
+		 * getAntennaCorrection().
+		 */
+		void dumpAntennaModels() const;
 	private:
 		/** @brief Logger for informational and diagnostic messages. */
 		LogManager& log_manager_;

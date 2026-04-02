@@ -63,6 +63,7 @@ add_library(gnss_core STATIC
     src/core/model/Planetary.cpp
     src/core/common/Application.cpp
 	src/core/common/MwSlipDetector.cpp
+	src/core/common/IfPhaseSlipDetector.cpp
  "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf)

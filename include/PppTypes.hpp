@@ -61,6 +61,7 @@ namespace GnssProcessor {
         double troposphere_zwd;                      /**< Zenith wet delay (meters) */
         double tropo_gradient_north{ 0.0 };          /**< Tropospheric north gradient (meters) */
         double tropo_gradient_east{ 0.0 };           /**< Tropospheric east gradient (meters) */
+        double phase_clock_offset{ 0.0 };            /**< Receiver phase clock offset from code clock (meters) */
         double ionosphere_zenith_delay;              /**< Ionospheric zenith delay (meters), if modeled as a single parameter */
         std::map<std::string, double> system_time_offsets; /**< Inter-system time biases (meters) keyed by system name */
         Eigen::MatrixXd covariance;                  /**< State covariance matrix */

@@ -104,6 +104,25 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief Retrieve configured CLK clock product file paths.
+     *
+     * Scans the list returned by `GnssConfig::getProductPaths()` and collects
+     * entries whose extension equals ".CLK" and that exist on disk.
+     *
+     * @return A vector of existing filesystem paths to CLK clock product files.
+     */
+    std::vector<std::filesystem::path> ProductParser::getClockPaths() const {
+        std::vector<std::filesystem::path> paths;
+        for (const auto& path : config_.getProductPaths()) {
+            if (path.extension() == ".CLK" && std::filesystem::exists(path)) {
+                paths.push_back(path);
+            }
+        }
+        log_manager_.getLogger("product_parser")->info("Retrieved {} CLK file paths", paths.size());
+        return paths;
+    }
+
+    /**
      * @brief Get product file path for a specific product type.
      *
      * Queries the configured `GnssConfig` for a product file associated with the
@@ -287,7 +306,9 @@ namespace GnssProcessor {
                                 line_count, sp3_path.string(), line);
                             continue;
                         }
-                        GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
+                        // SP3 epochs are on the GPS time scale — convert directly
+                        // without adding UTC leap seconds.
+                        GnssTime epoch_time = TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, min, sec);
                         if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
                             log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {} in {}: week {}, tow {}",
                                 line_count, sp3_path.string(), epoch_time.week, epoch_time.tow);
@@ -408,8 +429,9 @@ namespace GnssProcessor {
      * - The function recognizes AS records beginning with "AS" and expecting the
      *   following token order: record-type, satellite (3-char PRN), year, month,
      *   day, hour, minute, second, sample/num, clock_bias.
-     * - Gregorian date/time fields are converted to GPS time via
-     *   `TimeUtils::gregorianToGpsTime`. Records with invalid GPS times or
+     * - Gregorian date/time fields (already on the GPS time scale) are converted
+     *   to GPS week/TOW via `TimeUtils::gregorianGpsToGpsTime`. Records with
+     *   invalid GPS times or
      *   malformed numeric fields are skipped and logged.
      * - `ClockData::start_time` is set to the parsed epoch. `ClockData::end_time`
      *   is set to `start_time` + epoch_interval when an INTERVAL is parsed from
@@ -427,84 +449,122 @@ namespace GnssProcessor {
      * @return `true` if at least one valid clock entry was parsed and placed into
      *         `clocks`; `false` on I/O error, parsing failure, or exception.
      */
-    bool ProductParser::parseClk(const std::filesystem::path& clk_path, std::vector<ClockData>& clocks) {
+    bool ProductParser::parseClk(const std::vector<std::filesystem::path>& clk_paths, std::vector<ClockData>& clocks) {
         try {
-            std::ifstream file(clk_path);
-            if (!file.is_open()) {
-                log_manager_.getLogger("product_parser")->error("Failed to open CLK file: {}", clk_path.string());
-                return false;
-            }
-
             clocks.clear();
-            std::string line;
-            size_t line_count = 0;
-            bool in_header = true;
-            double epoch_interval = 0.0;
 
-            while (std::getline(file, line) && in_header) {
-                ++line_count;
-                if (line.empty()) continue;
-                if (line.find("END OF HEADER") != std::string::npos) {
-                    in_header = false;
+            // Use a map keyed by (satellite, continuous_gps_seconds) to merge
+            // across files and reject duplicates (same satellite within 1 s).
+            constexpr double MIN_TIME_DIFF = 1.0;
+            std::map<std::string, std::map<double, ClockData>> clock_map;
+            size_t total_entries = 0;
+
+            for (const auto& clk_path : clk_paths) {
+                std::ifstream file(clk_path);
+                if (!file.is_open()) {
+                    log_manager_.getLogger("product_parser")->error("Failed to open CLK file: {}", clk_path.string());
                     continue;
                 }
-                if (line.find("INTERVAL") != std::string::npos) {
-                    std::istringstream iss(line);
-                    double interval_val;
-                    if (iss >> interval_val) {
-                        epoch_interval = interval_val;
-                        log_manager_.getLogger("product_parser")->debug("CLK epoch interval: {} seconds at line {}", epoch_interval, line_count);
+
+                std::string line;
+                size_t line_count = 0;
+                bool in_header = true;
+                double epoch_interval = 0.0;
+
+                while (std::getline(file, line) && in_header) {
+                    ++line_count;
+                    if (line.empty()) continue;
+                    if (line.find("END OF HEADER") != std::string::npos) {
+                        in_header = false;
+                        continue;
                     }
-                    else {
-                        log_manager_.getLogger("product_parser")->warn("Invalid INTERVAL line {}: {}", line_count, line);
+                    if (line.find("INTERVAL") != std::string::npos) {
+                        std::istringstream iss(line);
+                        double interval_val;
+                        if (iss >> interval_val) {
+                            epoch_interval = interval_val;
+                            log_manager_.getLogger("product_parser")->debug("CLK epoch interval: {} seconds at line {} in {}", epoch_interval, line_count, clk_path.string());
+                        }
+                        else {
+                            log_manager_.getLogger("product_parser")->warn("Invalid INTERVAL line {} in {}: {}", line_count, clk_path.string(), line);
+                        }
                     }
                 }
+
+                size_t file_entries = 0;
+                while (std::getline(file, line)) {
+                    ++line_count;
+                    if (line.empty()) continue;
+                    if (line.find("AS ") == 0) {
+                        std::istringstream iss(line);
+                        std::string type, sat;
+                        int year, month, day, hour, min, num;
+                        double sec, clock_bias;
+                        if (!(iss >> type >> sat >> year >> month >> day >> hour >> min >> sec >> num >> clock_bias)) {
+                            log_manager_.getLogger("product_parser")->warn("Invalid AS record at line {} in {}: {}", line_count, clk_path.string(), line);
+                            continue;
+                        }
+
+                        if (sat.size() != 3 || (sat[0] != 'G' && sat[0] != 'R' && sat[0] != 'E' && sat[0] != 'C' && sat[0] != 'J' && sat[0] != 'S')) {
+                            log_manager_.getLogger("product_parser")->warn("Invalid satellite ID {} at line {} in {}", sat, line_count, clk_path.string());
+                            continue;
+                        }
+
+                        // CLK epochs are on the GPS time scale — convert directly
+                        // without adding UTC leap seconds.
+                        GnssTime epoch_time = TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, min, sec);
+                        if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
+                            log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {} in {}: week {}, tow {}",
+                                line_count, clk_path.string(), epoch_time.week, epoch_time.tow);
+                            continue;
+                        }
+
+                        const double t_cont = TimeUtils::continuousGpsSeconds(epoch_time);
+
+                        // Check for duplicate (same satellite, time within MIN_TIME_DIFF)
+                        auto& sat_clocks = clock_map[sat];
+                        bool duplicate = false;
+                        auto lb = sat_clocks.lower_bound(t_cont - MIN_TIME_DIFF);
+                        if (lb != sat_clocks.end() && std::abs(lb->first - t_cont) < MIN_TIME_DIFF) {
+                            duplicate = true;
+                        }
+
+                        if (!duplicate) {
+                            ClockData data;
+                            data.satellite = sat;
+                            data.time = epoch_time;
+                            data.start_time = epoch_time;
+                            data.end_time = GnssTime{ epoch_time.week, epoch_time.tow + epoch_interval };
+                            data.clock_bias = clock_bias;
+                            sat_clocks[t_cont] = data;
+                            ++file_entries;
+                        }
+                    }
+                }
+
+                file.close();
+                total_entries += file_entries;
+                log_manager_.getLogger("product_parser")->info("Parsed {} clock entries from {}", file_entries, clk_path.string());
             }
 
-            while (std::getline(file, line)) {
-                ++line_count;
-                if (line.empty()) continue;
-                if (line.find("AS ") == 0) {
-                    std::istringstream iss(line);
-                    std::string type, sat;
-                    int year, month, day, hour, min, num;
-                    double sec, clock_bias;
-                    if (!(iss >> type >> sat >> year >> month >> day >> hour >> min >> sec >> num >> clock_bias)) {
-                        log_manager_.getLogger("product_parser")->warn("Invalid AS record at line {}: {}", line_count, line);
-                        continue;
-                    }
-
-                    if (sat.size() != 3 || (sat[0] != 'G' && sat[0] != 'R' && sat[0] != 'E' && sat[0] != 'C' && sat[0] != 'J' && sat[0] != 'S')) {
-                        log_manager_.getLogger("product_parser")->warn("Invalid satellite ID {} at line {}", sat, line_count);
-                        continue;
-                    }
-
-                    GnssTime epoch_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, min, sec);
-                    if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
-                        log_manager_.getLogger("product_parser")->warn("Invalid GPS time at line {}: week {}, tow {}",
-                            line_count, epoch_time.week, epoch_time.tow);
-                        continue;
-                    }
-
-                    ClockData data;
-                    data.satellite = sat;
-                    data.time = epoch_time;
-                    data.start_time = epoch_time;
-                    data.end_time = GnssTime{ epoch_time.week, epoch_time.tow + epoch_interval };
-                    data.clock_bias = clock_bias;
+            // Flatten map into output vector
+            clocks.clear();
+            clocks.reserve(total_entries);
+            for (const auto& [sat, time_map] : clock_map) {
+                for (const auto& [t, data] : time_map) {
                     clocks.push_back(data);
                 }
             }
 
             if (clocks.empty()) {
-                log_manager_.getLogger("product_parser")->warn("No valid clock data parsed from {}", clk_path.string());
+                log_manager_.getLogger("product_parser")->error("No valid clock data parsed from provided CLK files");
                 return false;
             }
-            log_manager_.getLogger("product_parser")->info("Parsed {} clock entries from {}", clocks.size(), clk_path.string());
+            log_manager_.getLogger("product_parser")->info("Merged {} clock entries from {} CLK files", clocks.size(), clk_paths.size());
             return true;
         }
         catch (const std::exception& e) {
-            log_manager_.getLogger("product_parser")->error("Error parsing CLK file {}: {}", clk_path.string(), e.what());
+            log_manager_.getLogger("product_parser")->error("Error parsing CLK files: {}", e.what());
             return false;
         }
     }
@@ -574,7 +634,7 @@ namespace GnssProcessor {
                     if (iss >> year >> month >> day >> hour >> minute >> second) {
                         if (year >= 1980 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
                             hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0.0 && second < 61.0) {
-                            try { return TimeUtils::gregorianToGpsTime(year, month, day, hour, minute, second); }
+                            try { return TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, minute, second); }
                             catch (...) { return GnssTime{ 0,0.0 }; }
                         }
                     }
@@ -597,7 +657,7 @@ namespace GnssProcessor {
                     int minute = std::stoi(m[6].str());
                     int second = m[7].matched ? std::stoi(m[7].str()) : 0;
                     if (month > 0) {
-                        try { return TimeUtils::gregorianToGpsTime(year, month, day, hour, minute, double(second)); }
+                        try { return TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, minute, double(second)); }
                         catch (...) { return GnssTime{ 0,0.0 }; }
                     }
                 }
@@ -990,7 +1050,7 @@ namespace GnssProcessor {
      *   converted the same way when present.
      * - Start/end times are parsed via an internal `parse_bias_time` helper which
      *   expects the BIA time string form `YYYY:DDD:SSSS.SS` (year, day-of-year,
-     *   seconds-of-day) and converts to `GnssTime` using `TimeUtils::gregorianToGpsTime`.
+     *   seconds-of-day) and converts to `GnssTime` using `TimeUtils::gregorianGpsToGpsTime`.
      *   Records with invalid time ranges are skipped.
      *
      * Side effects:
@@ -1049,7 +1109,7 @@ namespace GnssProcessor {
                         return GnssTime{ 0, 0.0 };
                     }
 
-                    GnssTime gps_time = TimeUtils::gregorianToGpsTime(year, month, day, hour, minute, seconds);
+                    GnssTime gps_time = TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, minute, seconds);
                     return gps_time;
                 }
                 catch (const std::exception&) {
@@ -1368,7 +1428,7 @@ namespace GnssProcessor {
      * Queries `GnssConfig` for product file paths and attempts to load the common
      * auxiliary products used by the processing pipeline:
      *  - Orbit products (SP3) via `getOrbitPaths()` + `parseSp3` => `orbits_`
-     *  - Satellite clocks (CLK) via `getProductPath("CLK")` + `parseClk` => `clocks_`
+     *  - Satellite clocks (CLK) via `getClockPaths()` + `parseClk` => `clocks_`
      *  - Antenna models (ATX) via `getProductPath("ATX")` + `parseAtx` => `antennas_`
      *  - Differential biases (BIA) via `getProductPath("BIA")` + `parseBia` => `biases_`
      *  - Earth rotation parameters (ERP) via `getProductPath("ERP")` + `parseErp` => `erps_`
@@ -1420,17 +1480,25 @@ namespace GnssProcessor {
             log_manager_.getLogger("ppp_model")->warn("No SP3 file paths provided for orbit data");
         }
 
-        std::filesystem::path clk_path = getProductPath("CLK");
-        if (!clk_path.empty()) {
-            if (parseClk(clk_path, clocks_)) {
-                log_manager_.getLogger("ppp_model")->info("Loaded CLK file: {}", clk_path.string());
+        std::vector<std::filesystem::path> clk_paths = getClockPaths();
+        if (!clk_paths.empty()) {
+            if (parseClk(clk_paths, clocks_)) {
+                std::string paths_str = std::accumulate(clk_paths.begin(), clk_paths.end(), std::string(),
+                    [](const std::string& a, const std::filesystem::path& p) {
+                        return a.empty() ? p.string() : a + ", " + p.string();
+                    });
+                log_manager_.getLogger("ppp_model")->info("Loaded CLK files: [{}]", paths_str);
             }
             else {
-                log_manager_.getLogger("ppp_model")->error("Failed to load CLK file: {}", clk_path.string());
+                log_manager_.getLogger("ppp_model")->error("Failed to load CLK files: [{}]",
+                    std::accumulate(clk_paths.begin(), clk_paths.end(), std::string(),
+                        [](const std::string& a, const std::filesystem::path& p) {
+                            return a.empty() ? p.string() : a + ", " + p.string();
+                        }));
             }
         }
         else {
-            log_manager_.getLogger("ppp_model")->warn("No CLK file path provided");
+            log_manager_.getLogger("ppp_model")->warn("No CLK file paths provided");
         }
 
         std::filesystem::path atx_path = getProductPath("ATX");

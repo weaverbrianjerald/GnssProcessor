@@ -61,11 +61,19 @@ namespace GnssProcessor {
      */
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
         : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config),
+          phase_clock_idx_(std::numeric_limits<size_t>::max()),
           gradient_north_idx_(std::numeric_limits<size_t>::max()),
           gradient_east_idx_(std::numeric_limits<size_t>::max()) {
         
+        // If separate phase clock estimation is enabled, insert phase clock offset
+        // right after the base core states (after ZWD for PPP, after iono for PPP-RTK).
+        if (config_.estimatePhaseClock()) {
+            phase_clock_idx_ = base_core_size_;
+            base_core_size_ += 1;
+        }
+
         // If tropo gradients are enabled, insert Gn and Ge right after the last
-        // base core state (after ZWD for PPP, after iono for PPP-RTK).
+        // base core state (after phase clock if present, or after ZWD/iono).
         if (config_.estimateTropoGradients()) {
             gradient_north_idx_ = base_core_size_;
             gradient_east_idx_ = base_core_size_ + 1;
@@ -108,6 +116,12 @@ namespace GnssProcessor {
             covariance_(5, 5) = iono_var;
         }
         
+        // Initialize phase clock offset covariance if enabled
+        if (config_.estimatePhaseClock()) {
+            double phase_clock_var = init.phase_clock * init.phase_clock;
+            covariance_(phase_clock_idx_, phase_clock_idx_) = phase_clock_var;
+        }
+
         // Initialize gradient covariances if enabled
         if (config_.estimateTropoGradients()) {
             double grad_var = init.tropo_gradient * init.tropo_gradient;
@@ -122,8 +136,9 @@ namespace GnssProcessor {
         
         // Log initialization using LogManager-provided logger
         auto logger = log_manager_.getLogger("state_manager");
-        logger->info("StateManager initialized with core state size: {} (base={}, gradients={}, time_offsets={})",
-            core_state_size_, base_core_size_, config_.estimateTropoGradients() ? 2 : 0, systems_with_time_offsets_.size());
+        logger->info("StateManager initialized with core state size: {} (base={}, phase_clock={}, gradients={}, time_offsets={})",
+            core_state_size_, base_core_size_, config_.estimatePhaseClock() ? 1 : 0,
+            config_.estimateTropoGradients() ? 2 : 0, systems_with_time_offsets_.size());
         
         if (!systems_with_time_offsets_.empty()) {
             std::string offset_systems;
@@ -236,7 +251,7 @@ namespace GnssProcessor {
      * @brief Build the process-noise matrix Q for a prediction interval dt.
      *
      * The implementation uses spectral densities stored in the configuration
-     * (units: m^2/s) and multiplies by dt to obtain variances (m^2).
+     * (units: m^2/s) and multiplies to dt to obtain variances (m^2).
      * Core-state entries (position, clock, troposphere, optional ionosphere,
      * inter-system time offsets) and any ambiguity diagonal entries are populated.
      * Ambiguity process noise is typically zero (or near-zero) for constant
@@ -272,6 +287,13 @@ namespace GnssProcessor {
         // Clock noise - typically very large spectral density for white noise clock
         double clock_var = pn.clock * dt;
         Q(clockIdx, clockIdx) = clock_var;
+
+        // Phase clock offset noise (when enabled)
+        if (config_.estimatePhaseClock()) {
+            size_t phaseClockIdx = getPhaseClockIndex();
+            double phase_clock_var = pn.phase_clock * dt;
+            Q(phaseClockIdx, phaseClockIdx) = phase_clock_var;
+        }
 
         // Tropospheric noise
         double tropo_var = pn.troposphere * dt;
@@ -341,6 +363,22 @@ namespace GnssProcessor {
      */
     size_t StateManager::getClockIndex() const {
         return 3;
+    }
+
+    /**
+     * @brief Index of the receiver phase clock offset state within the state vector.
+     * @return Zero-based index for phase clock offset, or max() when not present.
+     */
+    size_t StateManager::getPhaseClockIndex() const {
+        return phase_clock_idx_;
+    }
+
+    /**
+     * @brief Check if separate phase clock estimation is active.
+     * @return True if a phase clock offset state exists in the state vector.
+     */
+    bool StateManager::hasPhaseClock() const {
+        return phase_clock_idx_ != std::numeric_limits<size_t>::max();
     }
 
     /**
@@ -488,7 +526,12 @@ namespace GnssProcessor {
         // Troposphere zenith delay
         ppp_state.troposphere_zwd = current_state(state_manager.getTropoIndex());
 
-        // Troposphere gradients
+        // Phase clock offset
+        if (state_manager.hasPhaseClock()) {
+            ppp_state.phase_clock_offset = current_state(state_manager.getPhaseClockIndex());
+        }
+
+        // Tropospheric gradients
         if (state_manager.hasTropoGradients()) {
             ppp_state.tropo_gradient_north = current_state(state_manager.getTropoGradientNorthIndex());
             ppp_state.tropo_gradient_east = current_state(state_manager.getTropoGradientEastIndex());
@@ -532,6 +575,9 @@ namespace GnssProcessor {
         sv.segment<3>(getPositionIndex()) = ppp_state.position;
         sv(getClockIndex()) = ppp_state.clock_bias;
         sv(getTropoIndex()) = ppp_state.troposphere_zwd;
+        if (hasPhaseClock()) {
+            sv(getPhaseClockIndex()) = ppp_state.phase_clock_offset;
+        }
         if (hasTropoGradients()) {
             sv(getTropoGradientNorthIndex()) = ppp_state.tropo_gradient_north;
             sv(getTropoGradientEastIndex()) = ppp_state.tropo_gradient_east;
@@ -694,6 +740,12 @@ namespace GnssProcessor {
             const double zwd        = x(getTropoIndex());
             const double tropo_wet  = obs.mf_w * zwd;
 
+            // Phase clock offset (when enabled, phase measurements include this)
+            double phase_clk = 0.0;
+            if (hasPhaseClock()) {
+                phase_clk = x(getPhaseClockIndex());
+            }
+
             // Inter-system time offset for non-GPS satellites
             double isb = 0.0;
             {
@@ -726,7 +778,7 @@ namespace GnssProcessor {
                 tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
             }
 
-            return observed_m - modeled_m - rx_clock - tropo_wet - isb - tropo_grad;
+            return observed_m - modeled_m - rx_clock - phase_clk - tropo_wet - isb - tropo_grad;
         } catch (...) {
             return 0.0;
         }

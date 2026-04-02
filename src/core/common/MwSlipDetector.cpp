@@ -3,9 +3,12 @@
  * @brief Implementation of MwSlipDetector for detecting large wide-lane (MW) resets/slips.
  *
  * The MwSlipDetector computes an MW-like metric from ionosphere-free phase/code
- * combinations and maintains a short per-satellite history. When the change in
- * the MW-like metric between epochs exceeds a configured threshold (expressed
- * in wide-lane cycles) the detector flags the corresponding ambiguity key for reset.
+ * combinations and maintains a short per-satellite history. When the deviation
+ * of the current MW from the running mean exceeds an adaptive threshold derived
+ * from the Median Absolute Deviation (MAD) of recent epoch-to-epoch differences
+ * the detector flags the corresponding ambiguity key for reset. No fixed
+ * threshold is used; detection is deferred until enough epochs have been
+ * collected to compute meaningful statistics.
  *
  * The detector also flags immediate resets when loss-of-lock indicators (LLI)
  * are observed on phase observables.
@@ -35,7 +38,8 @@ namespace GnssProcessor {
           log_manager_(log_manager),
           ppp_utils_(log_manager) {
         auto logger = log_manager_.getLogger("mw_slip_detector");
-        logger->info("MwSlipDetector initialized (large MW only): thresh={:.2f} WL cycles", large_mw_threshold_cycles_);
+        logger->info("MwSlipDetector initialized (adaptive MAD-based, k={:.1f}, min_epochs={})",
+                     kMadSigmaMultiplier, kMinEpochsForAdaptive);
     }
 
     /**
@@ -239,26 +243,29 @@ namespace GnssProcessor {
      * Computes the full MW combination:
      *   MW = (f1·L1 - f2·L2)/(f1-f2) - (f1·P1 + f2·P2)/(f1+f2)
      *
-     * where L1, L2 are phase observables (meters) and P1, P2 are code
-     * observables (meters). The result is geometry-free and ionosphere-free,
-     * proportional to the wide-lane ambiguity plus noise.
+     * Code signals are provided explicitly (from the iono-free code combination)
+     * rather than derived from phase labels, to ensure matched tracking modes
+     * on each frequency.
      *
      * @param obs Observation containing raw phase/code values and metadata.
-     * @param sig1 First signal identifier (e.g. "L1C").
-     * @param sig2 Second signal identifier (e.g. "L2W").
+     * @param sig1 First phase signal identifier (e.g. "L1C").
+     * @param sig2 Second phase signal identifier (e.g. "L2W").
+     * @param code1 First code signal identifier (e.g. "C1W").
+     * @param code2 Second code signal identifier (e.g. "C2W").
      * @return double MW value in meters, or quiet_NaN if missing/invalid.
      */
     double MwSlipDetector::computeMwMeters(const PppObservation& obs,
         const std::string& sig1,
-        const std::string& sig2) const {
+        const std::string& sig2,
+        const std::string& code1,
+        const std::string& code2) const {
 
-        // Build observable keys: phase uses "L..." prefix, code uses "C..." prefix
         if (sig1.empty() || sig2.empty() || sig1[0] != 'L' || sig2[0] != 'L') {
             return std::numeric_limits<double>::quiet_NaN();
         }
-
-        const std::string code1 = "C" + sig1.substr(1);  // e.g., "L1C" -> "C1C"
-        const std::string code2 = "C" + sig2.substr(1);  // e.g., "L2W" -> "C2W"
+        if (code1.empty() || code2.empty() || code1[0] != 'C' || code2[0] != 'C') {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
 
         auto itL1 = obs.raw_observed.find(sig1);
         auto itL2 = obs.raw_observed.find(sig2);
@@ -344,16 +351,16 @@ namespace GnssProcessor {
      * @return double Adaptive threshold in meters.
      */
     double MwSlipDetector::computeAdaptiveThreshold(const MwArcStats& stats, double lambda_wl) const {
-        if (stats.count < kMinEpochsForAdaptive || stats.window.size() < kMinEpochsForAdaptive) {
-            return large_mw_threshold_cycles_ * lambda_wl;
+        if (stats.count < kMinEpochsForAdaptive || stats.diff_window.size() < kMinEpochsForAdaptive) {
+            return std::numeric_limits<double>::quiet_NaN();
         }
 
-        // Compute median of the window values
-        std::vector<double> sorted(stats.window.begin(), stats.window.end());
+        // Compute median of the epoch-to-epoch MW differences
+        std::vector<double> sorted(stats.diff_window.begin(), stats.diff_window.end());
         std::sort(sorted.begin(), sorted.end());
         const size_t n = sorted.size();
         const double median = (n % 2 == 0) ? 0.5 * (sorted[n / 2 - 1] + sorted[n / 2])
-                                           : sorted[n / 2];
+			: sorted[n / 2]; // should be zero-centered if no slips are present, or just exclude the current epoch from the window
 
         // Compute MAD = median(|x_i - median|)
         std::vector<double> abs_devs(n);
@@ -382,8 +389,8 @@ namespace GnssProcessor {
      * - Compares the deviation of the current MW from the running mean
      *   against an adaptive threshold derived from the MAD of the
      *   satellite's MW history window.  Before enough history has
-     *   accumulated (< kMinEpochsForAdaptive epochs) the fixed
-     *   large_mw_threshold_cycles_ is used as a fallback.
+     *   accumulated (< kMinEpochsForAdaptive epochs) slip detection
+     *   is deferred and the epoch is used only to build statistics.
      * - Schedules an ambiguity reset when a slip is detected or
      *   when LLI indicates loss-of-lock.
      * - On a clean epoch, updates the running mean (Hatch filter),
@@ -416,9 +423,12 @@ namespace GnssProcessor {
             std::string phase_if_key, code_if_key;
             if (!findIonoFreeLabels(obs, phase_if_key, code_if_key)) continue;
 
-            // Split the IF phase label into its component signals to compute WL wavelength
-            std::string s1, s2;
+            // Split BOTH the phase and code IF labels into component signals
+            // to ensure matched tracking modes in the MW combination.
+            std::string s1, s2;   // phase signals (e.g., "L1C", "L2W")
+            std::string c1, c2;   // code signals  (e.g., "C1W", "C2W")
             if (!splitIfLabel(phase_if_key, s1, s2)) continue;
+            if (!splitIfLabel(code_if_key, c1, c2)) continue;
 
             // Check for LLI-based reset
             const bool has_lli = hasAnyPhaseLockLoss(obs);
@@ -430,13 +440,14 @@ namespace GnssProcessor {
                 // Write trace record for LLI event
                 if (mwwl_trace_.is_open()) {
                     const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
-                    const double mw_m = computeMwMeters(obs, s1, s2);
-                    const double thresh_m = large_mw_threshold_cycles_ * lambda_wl;
+                    const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
                     writeTraceRecord(obs, s1, s2, mw_m,
                                      std::numeric_limits<double>::quiet_NaN(),
                                      std::numeric_limits<double>::quiet_NaN(),
                                      std::numeric_limits<double>::quiet_NaN(),
-                                     0, lambda_wl, thresh_m, false, true);
+                                     0, lambda_wl,
+                                     std::numeric_limits<double>::quiet_NaN(),
+                                     false, true);
                 }
 
                 mw_stats_.erase(obs.satellite);
@@ -446,7 +457,7 @@ namespace GnssProcessor {
             const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
             if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
 
-            const double mw_m = computeMwMeters(obs, s1, s2);
+            const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
             if (!std::isfinite(mw_m)) continue;
 
             auto& stats = mw_stats_[obs.satellite];
@@ -456,30 +467,34 @@ namespace GnssProcessor {
                 stats.mean  = mw_m;
                 stats.M2    = 0.0;
                 stats.count = 1;
-                stats.window.clear();
-                stats.window.push_back(mw_m);
+                stats.prev_mw = mw_m;
+                stats.diff_window.clear();
 
-                const double fallback_thresh = large_mw_threshold_cycles_ * lambda_wl;
                 if (mwwl_trace_.is_open()) {
                     writeTraceRecord(obs, s1, s2, mw_m,
                                      mw_m, 0.0,
                                      std::numeric_limits<double>::quiet_NaN(),
                                      stats.count,
-                                     lambda_wl, fallback_thresh, false, false);
+                                     lambda_wl,
+                                     std::numeric_limits<double>::quiet_NaN(),
+                                     false, false);
                 }
                 continue;
             }
 
-            // Deviation of current MW from running mean
+            // Epoch-to-epoch MW difference (used for adaptive threshold)
+            const double mw_diff = mw_m - stats.prev_mw;
+
+            // Deviation of current MW from running mean (used for slip detection)
             const double dev = mw_m - stats.mean;
 
-            // Compute adaptive threshold from MAD of the rolling window
+            // Compute adaptive threshold from MAD of the epoch-to-epoch differences
             const double thresh_m = computeAdaptiveThreshold(stats, lambda_wl);
 
             // Compute MAD-derived sigma for logging/tracing
             double sigma_mad = std::numeric_limits<double>::quiet_NaN();
-            if (stats.window.size() >= kMinEpochsForAdaptive) {
-                std::vector<double> sorted(stats.window.begin(), stats.window.end());
+            if (stats.diff_window.size() >= kMinEpochsForAdaptive) {
+                std::vector<double> sorted(stats.diff_window.begin(), stats.diff_window.end());
                 std::sort(sorted.begin(), sorted.end());
                 const size_t wn = sorted.size();
                 const double median = (wn % 2 == 0) ? 0.5 * (sorted[wn / 2 - 1] + sorted[wn / 2])
@@ -492,7 +507,7 @@ namespace GnssProcessor {
                 sigma_mad = mad * 1.4826;
             }
 
-            const bool is_slip = std::abs(dev) > thresh_m;
+            const bool is_slip = std::isfinite(thresh_m) && std::abs(dev) > thresh_m;
 
             // Write trace record for every observation
             if (mwwl_trace_.is_open()) {
@@ -526,15 +541,28 @@ namespace GnssProcessor {
                 const double delta2 = mw_m - stats.mean;
                 stats.M2 += delta * delta2;
 
-                // Maintain rolling window
-                stats.window.push_back(mw_m);
-                if (stats.window.size() > kMwWindowSize) {
-                    stats.window.pop_front();
+                // Maintain rolling window of epoch-to-epoch differences
+                stats.diff_window.push_back(mw_diff);
+                if (stats.diff_window.size() > kMwWindowSize) {
+                    stats.diff_window.pop_front();
                 }
+
+                // Update previous MW for next epoch differencing
+                stats.prev_mw = mw_m;
             }
         }
 
         return reset_keys;
+    }
+
+    void MwSlipDetector::resetSatellite(const std::string& satellite) {
+        auto it = mw_stats_.find(satellite);
+        if (it != mw_stats_.end()) {
+            log_manager_.getLogger("mw_slip_detector")->debug(
+                "Cleared MW arc history for {} (external reset, arc_n={})",
+                satellite, it->second.count);
+            mw_stats_.erase(it);
+        }
     }
 
 } // namespace GnssProcessor

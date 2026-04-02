@@ -85,7 +85,6 @@ namespace GnssProcessor {
 
             // Parse satellite position and velocity interpolation mode
             std::string sv_mode = json.value("satellite_interpolation_mode", "Lagrange");
-            std::string sv_mode_lower = sv_mode;
             std::transform(sv_mode.begin(), sv_mode.end(), sv_mode.begin(), ::tolower);
             if (sv_mode == "lagrange") {
                 satellite_interpolation_mode_ = SatelliteInterpolationMode::Lagrange;
@@ -107,7 +106,6 @@ namespace GnssProcessor {
 
             // Parse satellite clock interpolation mode
             std::string sv_clock_mode = json.value("satellite_clock_interpolation_mode", "Linear");
-            std::string sv_clock_mode_lower = sv_clock_mode;
             std::transform(sv_clock_mode.begin(), sv_clock_mode.end(), sv_clock_mode.begin(), ::tolower);
             if (sv_clock_mode == "linear") {
                 satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
@@ -116,7 +114,7 @@ namespace GnssProcessor {
                 satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Lagrange;
             }
             else {
-                log_manager.getLogger("gnss_config")->warn("Invalid satellite_interpolation_mode '{}', defaulting to Lagrange", sv_clock_mode);
+                log_manager.getLogger("gnss_config")->warn("Invalid satellite_interpolation_mode '{}', defaulting to Linear", sv_clock_mode);
                 satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
             }
             log_manager.getLogger("gnss_config")->info("Satellite Clock interpolation mode: {}", sv_clock_mode);
@@ -130,11 +128,12 @@ namespace GnssProcessor {
 
             // Process noise spectral densities (m²/s): variance_per_epoch = q * dt
             process_noise_.position = json["process_noise"].value("position_q", 0.0);       // 0 for static
-            process_noise_.clock = json["process_noise"].value("clock_bias_q", 1e8);        // white-noise clock
+            process_noise_.clock = json["process_noise"].value("clock_bias_q", 1e4);        // white-noise clock
             process_noise_.troposphere = json["process_noise"].value("troposphere_q", 1e-8); // ~0.5 mm/?hr (IGS default)
             process_noise_.ionosphere = json["process_noise"].value("ionosphere_q", 0.02);   // PPP-RTK only
             process_noise_.system_time_offset = json["process_noise"].value("system_time_offset_q", 1e-7); // stable ISB drift
             process_noise_.tropo_gradient = json["process_noise"].value("tropo_gradient_q", 5e-12); // ~0.01 mm/sqrt(hr)
+            process_noise_.phase_clock = json["process_noise"].value("phase_clock_q", 1e4); // white-noise phase clock offset
 
             // Troposphere gradient estimation toggle
             estimate_tropo_gradients_ = json.value("estimate_tropo_gradients", false);
@@ -144,32 +143,79 @@ namespace GnssProcessor {
             relinearize_geometry_ = json.value("relinearize_geometry", false);
             log_manager.getLogger("gnss_config")->info("Geometry relinearization: {}", relinearize_geometry_ ? "enabled" : "disabled");
 
-            initial_std_.position = json["initial_std"].value("position", 100.0);
-            initial_std_.clock = json["initial_std"].value("clock", 1e5);
+            // Separate phase clock estimation toggle
+            estimate_phase_clock_ = json.value("estimate_phase_clock", false);
+            log_manager.getLogger("gnss_config")->info("Phase clock estimation: {}", estimate_phase_clock_ ? "enabled" : "disabled");
+
+            // IF phase slip detector toggle
+            enable_if_slip_detector_ = json.value("enable_if_slip_detector", true);
+            log_manager.getLogger("gnss_config")->info("IF phase slip detector: {}", enable_if_slip_detector_ ? "enabled" : "disabled");
+
+            initial_std_.position = json["initial_std"].value("position", 1e2);
+            initial_std_.clock = json["initial_std"].value("clock", 1e3);
             initial_std_.troposphere = json["initial_std"].value("troposphere", 0.5);
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
-            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 1000.0);
-            initial_std_.system_time_offset = json["initial_std"].value("system_time_offset", 100.0);
-            initial_std_.tropo_gradient = json["initial_std"].value("tropo_gradient", 0.001);
+            initial_std_.ambiguity = json["initial_std"].value("ambiguity", 1e3);
+            initial_std_.system_time_offset = json["initial_std"].value("system_time_offset", 1e3);
+            initial_std_.tropo_gradient = json["initial_std"].value("tropo_gradient", 1e-3);
+            initial_std_.phase_clock = json["initial_std"].value("phase_clock", 1e3);
 
             // Default measurement noise (fallback)
             if (json.contains("default_measurement_noise")) {
                 const auto& j = json["default_measurement_noise"];
-				default_meas_noise_.code_std_m = j.value("code_std_m", 0.30);       // all code  (C1W, C2W, C2X, etc)
-                default_meas_noise_.phase_std_m = j.value("phase_std_m", 0.003);    // all phase (L1W, L2W, L2X, etc)
+				default_meas_noise_.code_std_m = j.value("code_std_m", 0.600);       // all code  (C1W, C2W, C2X, etc)
+                default_meas_noise_.phase_std_m = j.value("phase_std_m", 0.002);    // all phase (L1W, L2W, L2X, etc)
             } else {
-                default_meas_noise_.code_std_m = 0.30;
-                default_meas_noise_.phase_std_m = 0.003;
+                default_meas_noise_.code_std_m = 0.600;
+                default_meas_noise_.phase_std_m = 0.002;
             }
             log_manager.getLogger("gnss_config")->info(
                 "Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m",
                 default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m);
 
             // Parse signal priorities
+            //
+            // Supports two formats:
+            //   1. Compact attribute-priority string, e.g. "WCSLXPYMIQ"
+            //      Expanded into full 3-char RINEX obs codes using per-system
+            //      band definitions and the four observation types (C, L, D, S).
+            //   2. Legacy explicit array, e.g. ["C1W","L1W",…]
+            //
+            static const std::map<std::string, std::vector<char>> system_bands = {
+                {"GPS",     {'1','2','5'}},
+                {"Galileo", {'1','5','7','6','8'}},
+                {"GLONASS", {'1','2','3'}},
+                {"BeiDou",  {'1','2','5','6','7','8'}},
+                {"QZSS",    {'1','2','5','6'}},
+                {"SBAS",    {'1','5'}}
+            };
+            static const char obs_types[] = {'C','L','D','S'};
+
             signal_priorities_.clear();
             if (json.contains("signal_priorities")) {
-                for (const auto& [system, signals] : json["signal_priorities"].items()) {
-                    signal_priorities_[system] = signals.get<std::vector<std::string>>();
+                for (const auto& [system, value] : json["signal_priorities"].items()) {
+                    if (value.is_string()) {
+                        // Compact format: expand attribute string into full codes
+                        std::string attrs = value.get<std::string>();
+                        auto bands_it = system_bands.find(system);
+                        if (bands_it == system_bands.end()) {
+                            log_manager.getLogger("gnss_config")->warn(
+                                "No band definition for system '{}', skipping signal priorities", system);
+                            continue;
+                        }
+                        std::vector<std::string> expanded;
+                        for (char band : bands_it->second) {
+                            for (char ot : obs_types) {
+                                for (char attr : attrs) {
+                                    expanded.push_back(std::string{ot, band, attr});
+                                }
+                            }
+                        }
+                        signal_priorities_[system] = std::move(expanded);
+                    } else if (value.is_array()) {
+                        // Legacy format: explicit list of 3-char codes
+                        signal_priorities_[system] = value.get<std::vector<std::string>>();
+                    }
                 }
             }
 
@@ -246,6 +292,23 @@ namespace GnssProcessor {
                 } else {
                     log_manager.getLogger("gnss_config")->warn("OTL BLQ file not found: {}", otl_blq_path_.string());
                     otl_blq_path_.clear();
+                }
+            }
+
+            // Optional user-supplied reference position (ECEF, meters)
+            if (json.contains("reference_position_ecef")) {
+                const auto& rp = json["reference_position_ecef"];
+                if (rp.is_object() && rp.contains("x") && rp.contains("y") && rp.contains("z")) {
+                    reference_position_ecef_[0] = rp.value("x", 0.0);
+                    reference_position_ecef_[1] = rp.value("y", 0.0);
+                    reference_position_ecef_[2] = rp.value("z", 0.0);
+                    has_reference_position_ = true;
+                    log_manager.getLogger("gnss_config")->info(
+                        "Reference position ECEF: ({:.4f}, {:.4f}, {:.4f}) m",
+                        reference_position_ecef_[0], reference_position_ecef_[1], reference_position_ecef_[2]);
+                } else {
+                    log_manager.getLogger("gnss_config")->warn(
+                        "reference_position_ecef present but missing x/y/z fields — ignored");
                 }
             }
 

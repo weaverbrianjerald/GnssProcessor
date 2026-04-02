@@ -71,11 +71,11 @@ namespace GnssProcessor {
      * @brief Compute ocean tidal loading station displacement.
      *
      * The model evaluates:
-     *   ?r_k(t) = ?_j A_{k,j} · cos(?_j·t + ?_j(t) + u_j(t) - ?_{k,j})
+     *   dr_k(t) = sum_j A_{k,j} · cos(omega_j·t + chi_j(t) + u_j(t) - phi_{k,j})
      *
-     * where k ? {up, west, south}, j indexes the 11 constituents, ?_j is the
-     * tidal angular frequency, ?_j(t) is the astronomical argument, u_j(t) is
-     * the nodal correction angle, A_{k,j} is the station amplitude, and ?_{k,j}
+     * where k in {up, west, south}, j indexes the 11 constituents, omega_j is the
+     * tidal angular frequency, chi_j(t) is the astronomical argument, u_j(t) is
+     * the nodal correction angle, A_{k,j} is the station amplitude, and phi_{k,j}
      * is the Greenwich phase lag.
      *
      * The result is converted from a local (Up, West, South) frame to ECEF.

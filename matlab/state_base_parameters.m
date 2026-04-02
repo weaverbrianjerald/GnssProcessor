@@ -14,7 +14,7 @@ T = readtable(fname);
 %% --- Convert GPS week + TOW to UTC datetime ---
 gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
 gpsSeconds = T.week * 7 * 86400 + T.tow_s;
-T.utc = gpsEpoch + seconds(gpsSeconds);
+T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
 
 %% --- Extract variables ---
 % Core
@@ -52,6 +52,14 @@ try
     gradE_std = T.("ge_std_m");
 catch
     gradE = []; gradE_std = [];
+end
+
+%%% Phase clock
+try
+    phasClk = T.("phase_clock_m");
+    phasClk_std = T.("phase_clock_std_m");
+catch
+    phasClk = []; phasClk_std = [];
 end
 
 %% ============================================================
@@ -163,6 +171,18 @@ if ~isempty(galClk)
     xlabel('UTC Time');
     ylabel('Clock Bias (m)');
     title('Galileo Clock Bias with 1σ Uncertainty');
+    grid on;
+end
+
+% Phase clock
+if ~isempty(phasClk)
+    figure('Name','Phase Clock Bias','Color','w'); hold on;
+    plot(t, phasClk, 'k', 'LineWidth', 1.2);
+    plot(t, phasClk + phasClk_std, '--r');
+    plot(t, phasClk - phasClk_std, '--r');
+    xlabel('UTC Time');
+    ylabel('Phase Clock Bias (m)');
+    title('Phase Clock Bias with 1σ Uncertainty');
     grid on;
 end
 

@@ -324,13 +324,21 @@ namespace GnssProcessor {
          * @brief Compute IERS 2010 Step 2 frequency-dependent solid Earth tide corrections.
          *
          * Evaluates the per-constituent displacement corrections from IERS 2010
-         * Tables 7.3a (diurnal) and 7.3b (semi-diurnal) in the local
-         * (radial, south, east) frame and returns the ECEF displacement vector.
+         * Tables 7.3a (diurnal) and 7.3b (semi-diurnal) in the geocentric
+         * spherical (radial, north, east) frame and returns the ECEF displacement vector.
+         *
+         * Geocentric latitude is derived internally from the unit vector @p u
+         * so that the latitude factors and local-frame basis vectors are
+         * consistent with the geocentric radial direction required by the
+         * IERS 2010 spherical harmonic formulas (Eq. 7.12).
          *
          * @param fund_args Delaunay arguments + GMST [l, l', F, D, Omega, GMST] (radians).
-         * @param lat Geodetic latitude (radians).
-         * @param lon Geodetic longitude (radians).
-         * @param u   Unit vector from geocenter to station (ECEF).
+         * @param lat Geodetic latitude (radians). Retained for API compatibility;
+         *            geocentric latitude is derived from @p u internally.
+         * @param lon Geodetic longitude (radians). Identical to geocentric longitude;
+         *            used in the tidal argument (m·?) for diurnal/semi-diurnal bands.
+         * @param u   Unit vector from geocenter to station (ECEF). Used to derive
+         *            geocentric latitude and as the radial basis vector.
          * @return ECEF displacement vector (meters).
          */
         static Eigen::Vector3d computeStep2Corrections(const std::array<double, 6>& fund_args,

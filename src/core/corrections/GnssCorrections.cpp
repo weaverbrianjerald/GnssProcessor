@@ -139,9 +139,8 @@ namespace GnssProcessor {
 
         // Interpolate clock correction
         double clock_corr = interpolateClock(satellite, time, clocks_);
-        //std::string system_str = satellite.substr(0, 1) == "G" ? "GPS" : satellite.substr(0, 1) == "E" ? "Galileo" : "Unknown";
         std::string system_str = PppUtils::getSystemString(satellite);
-        if (std::isfinite(clock_corr) && std::abs(clock_corr) < 1e-3) { // Max 1 ms
+		if (std::isfinite(clock_corr) && std::abs(clock_corr) < 1e-1) {
             log_manager_.getLogger("ppp_model")->trace("Interpolated clock correction for {} ({}) at TOW {:.3f}: {:.3e} s",
                 satellite, system_str, time.tow, clock_corr);
             return clock_corr;
@@ -154,7 +153,9 @@ namespace GnssProcessor {
 
     void GnssCorrections::buildClockIndex() {
         clock_index_.clear();
-        clock_index_.reserve(100);  // Typical number of satellites
+
+        // Typical number of satellites: 32 GPS + 24 GLONASS + 30 Galileo + 30 BeiDou + others = ~120-150, reserve more for future constellations
+		clock_index_.reserve(300);
 
         for (const auto& c : clocks_) {
             clock_index_[c.satellite].push_back(&c);
@@ -217,10 +218,10 @@ namespace GnssProcessor {
         const std::vector<ClockData>& clocks) const
     {
         const SatelliteClockInterpolationMode mode = config_ ? config_->getSatelliteClockInterpolationMode() : SatelliteClockInterpolationMode::Linear;
-        const size_t INTERP_POINTS = (mode == SatelliteClockInterpolationMode::Linear) ? 2 : 9;
 
-        constexpr double MAX_WINDOW = 3600.0;
+        constexpr double MAX_WINDOW     = 3600.0;
         constexpr double MAX_CLOCK_BIAS = 1e9;
+        constexpr size_t LAGRANGE_POINTS = 9;
 
         if (satellite.empty()) {
             log_manager_.getLogger("corrections")->debug("Clock interp: empty satellite ID");
@@ -235,29 +236,116 @@ namespace GnssProcessor {
         }
 
         const auto& sat_clocks = it->second;
-        const double t_query = TimeUtils::continuousGpsSeconds(time);
+        const double t_query   = TimeUtils::continuousGpsSeconds(time);
 
-        // Find the nearest node to t_query (not just the first node >= t_query).
-        // Using the nearest node as the center anchor ensures the interpolation
-        // window only shifts when the query crosses the MIDPOINT between two
-        // consecutive CLK epochs. This eliminates the sawtooth discontinuity
-        // that occurs with lower_bound-based centering, where the window jumps
-        // by one node every CLK interval (producing cm-level interpolation
-        // discontinuities at each CLK epoch boundary).
+        // Shared node validation predicate
+        auto valid_node = [&](const ClockData* c) -> bool {
+            return std::isfinite(c->clock_bias)
+                && std::abs(c->clock_bias) < MAX_CLOCK_BIAS
+                && std::abs(TimeUtils::continuousGpsSeconds(c->time) - t_query) < MAX_WINDOW;
+        };
+
+        // ---------------------------------------------------------------
+        // LINEAR MODE: always use exactly the bracketing pair (lo, hi).
+        //
+        // The centered-window approach used for Lagrange is wrong here:
+        // with half_before = INTERP_POINTS/2 = 1 the window anchors on
+        // the *nearest* node, which may place both selected nodes on the
+        // same side of t_query when the query is close to an epoch.
+        // Linear interpolation requires one node strictly before and one
+        // strictly after t_query, so we bypass centering entirely and use
+        // lower_bound to locate the bracketing pair directly.
+        // ---------------------------------------------------------------
+        if (mode == SatelliteClockInterpolationMode::Linear) {
+            auto upper_it = std::lower_bound(sat_clocks.begin(), sat_clocks.end(), t_query,
+                [](const ClockData* c, double t) {
+                    return TimeUtils::continuousGpsSeconds(c->time) < t;
+                });
+
+            // Exact epoch match — no interpolation needed
+            if (upper_it != sat_clocks.end()) {
+                double t_node = TimeUtils::continuousGpsSeconds((*upper_it)->time);
+                if (std::abs(t_node - t_query) < 1e-6 && valid_node(*upper_it)) {
+                    return (*upper_it)->clock_bias;
+                }
+            }
+
+            // Need one node on each side; fall back to nearest single node at the boundaries
+            if (upper_it == sat_clocks.begin() || upper_it == sat_clocks.end()) {
+                const ClockData* nearest = (upper_it == sat_clocks.end())
+                    ? sat_clocks.back() : sat_clocks.front();
+                if (valid_node(nearest)) {
+                    log_manager_.getLogger("corrections")->debug(
+                        "Clock interp (linear nearest) for {} at tow={:.3f}: boundary, result={:.3e}s",
+                        satellite, time.tow, nearest->clock_bias);
+                    return nearest->clock_bias;
+                }
+                return 0.0;
+            }
+
+            const ClockData* c_lo = *(upper_it - 1);
+            const ClockData* c_hi = *upper_it;
+
+            if (!valid_node(c_lo) || !valid_node(c_hi)) {
+                log_manager_.getLogger("corrections")->warn(
+                    "Clock interp (linear): invalid bracketing nodes for {} at tow={:.3f}", satellite, time.tow);
+                return 0.0;
+            }
+
+            const double x0 = TimeUtils::continuousGpsSeconds(c_lo->time);
+            const double x1 = TimeUtils::continuousGpsSeconds(c_hi->time);
+            const double dt = x1 - x0;
+
+            if (dt < 1e-9) {
+                log_manager_.getLogger("corrections")->warn(
+                    "Clock interp (linear): degenerate bracket dt={:.3e}s for {} at tow={:.3f}",
+                    dt, satellite, time.tow);
+                return c_lo->clock_bias;
+            }
+
+            // Reject interpolation across clock gaps — stochastic drift makes
+            // linear interpolation unreliable beyond ~2 nominal CLK epochs (30 s).
+            constexpr double MAX_BRACKET_GAP = 65.0; // ~2x nominal 30s CLK interval + tolerance
+            if (dt > MAX_BRACKET_GAP) {
+                log_manager_.getLogger("corrections")->warn(
+                    "Clock interp (linear): bracket gap {:.1f}s exceeds {:.1f}s for {} at tow={:.3f} — rejecting",
+                    dt, MAX_BRACKET_GAP, satellite, time.tow);
+                return 0.0;
+            }
+
+            const double result = c_lo->clock_bias
+                + (c_hi->clock_bias - c_lo->clock_bias) * (t_query - x0) / dt;
+
+            log_manager_.getLogger("corrections")->debug(
+                "Clock interp (linear) for {} at tow={:.3f}: bracket=[{:.3f},{:.3f}]s span={:.1f}s "
+                "result={:.3e}s ({:.3f}m)",
+                satellite, time.tow, x0, x1, dt, result, result * Constants::SPEED_OF_LIGHT);
+
+            return result;
+        }
+
+        // ---------------------------------------------------------------
+        // LAGRANGE MODE: centered window of LAGRANGE_POINTS nodes.
+        //
+        // The centered-window approach is correct for polynomial interpolation:
+        // anchor on the nearest node so the window shifts only at the midpoint
+        // between epochs, eliminating sawtooth discontinuities. Extrapolation
+        // always falls back to the linear bracket to avoid oscillation.
+        //
+        // Note: Lagrange is NOT recommended for standard 30s IGS CLK files —
+        // use Linear instead. Retain this path for high-rate (1 Hz) products.
+        // ---------------------------------------------------------------
         auto upper_it = std::lower_bound(sat_clocks.begin(), sat_clocks.end(), t_query,
             [](const ClockData* c, double t) {
                 return TimeUtils::continuousGpsSeconds(c->time) < t;
             });
 
-        // Determine the index of the nearest node to t_query
         size_t nearest_idx = 0;
         if (upper_it == sat_clocks.end()) {
             nearest_idx = sat_clocks.size() - 1;
-        }
-        else if (upper_it == sat_clocks.begin()) {
+        } else if (upper_it == sat_clocks.begin()) {
             nearest_idx = 0;
-        }
-        else {
+        } else {
             size_t hi = std::distance(sat_clocks.begin(), upper_it);
             size_t lo = hi - 1;
             double t_lo = TimeUtils::continuousGpsSeconds(sat_clocks[lo]->time);
@@ -265,98 +353,62 @@ namespace GnssProcessor {
             nearest_idx = (t_query - t_lo <= t_hi - t_query) ? lo : hi;
         }
 
-        // Center the window on the nearest node
-        size_t half_before = INTERP_POINTS / 2;
-        size_t start_idx = 0;
-        if (nearest_idx > half_before) {
-            start_idx = nearest_idx - half_before;
+        const size_t half_before = LAGRANGE_POINTS / 2;
+        size_t start_idx = (nearest_idx > half_before) ? nearest_idx - half_before : 0;
+        if (start_idx + LAGRANGE_POINTS > sat_clocks.size()) {
+            start_idx = (sat_clocks.size() > LAGRANGE_POINTS) ? sat_clocks.size() - LAGRANGE_POINTS : 0;
         }
-        if (start_idx + INTERP_POINTS > sat_clocks.size()) {
-            start_idx = (sat_clocks.size() > INTERP_POINTS) ? sat_clocks.size() - INTERP_POINTS : 0;
-        }
-        size_t end_idx = std::min(start_idx + INTERP_POINTS, sat_clocks.size());
+        const size_t end_idx = std::min(start_idx + LAGRANGE_POINTS, sat_clocks.size());
 
-        // Collect and validate nodes
         std::vector<const ClockData*> nodes;
-        nodes.reserve(INTERP_POINTS);
-
+        nodes.reserve(LAGRANGE_POINTS);
         for (size_t i = start_idx; i < end_idx; ++i) {
-            const ClockData* c = sat_clocks[i];
-            if (!std::isfinite(c->clock_bias)) continue;
-            if (std::abs(c->clock_bias) > MAX_CLOCK_BIAS) continue;
-
-            double tc = TimeUtils::continuousGpsSeconds(c->time);
-            if (std::abs(tc - t_query) < MAX_WINDOW) {
-                nodes.push_back(c);
-            }
+            if (valid_node(sat_clocks[i])) nodes.push_back(sat_clocks[i]);
         }
 
         if (nodes.empty()) {
             log_manager_.getLogger("corrections")->warn(
-                "Clock interp for {} at tow={:.3f}: no valid nodes in window",
-                satellite, time.tow);
+                "Clock interp (lagrange) for {} at tow={:.3f}: no valid nodes", satellite, time.tow);
             return 0.0;
         }
+        if (nodes.size() == 1) return nodes[0]->clock_bias;
 
-        // Handle extrapolation: always use linear to avoid oscillation
-        bool extrapolating = false;
-        if (nodes.size() >= 2) {
-            double t_first = TimeUtils::continuousGpsSeconds(nodes.front()->time);
-            double t_last = TimeUtils::continuousGpsSeconds(nodes.back()->time);
-            if (t_query < t_first || t_query > t_last) {
-                extrapolating = true;
-                if (nodes.size() > 2) {
-                    std::sort(nodes.begin(), nodes.end(), [t_query](const ClockData* a, const ClockData* b) {
-                        return std::abs(TimeUtils::continuousGpsSeconds(a->time) - t_query) <
-                            std::abs(TimeUtils::continuousGpsSeconds(b->time) - t_query);
-                        });
-                    nodes.resize(2);
-                    std::sort(nodes.begin(), nodes.end(), [](const ClockData* a, const ClockData* b) {
-                        return TimeUtils::continuousGpsSeconds(a->time) < TimeUtils::continuousGpsSeconds(b->time);
-                        });
-                }
-                log_manager_.getLogger("corrections")->debug(
-                    "Clock extrapolation for {} at tow={:.3f}: using linear with {} pts",
-                    satellite, time.tow, nodes.size());
-            }
+        // Extrapolation guard: fall back to linear bracket to avoid oscillation
+        const double t_first = TimeUtils::continuousGpsSeconds(nodes.front()->time);
+        const double t_last  = TimeUtils::continuousGpsSeconds(nodes.back()->time);
+        if (t_query < t_first || t_query > t_last) {
+            // Pick the two nodes closest to t_query
+            std::sort(nodes.begin(), nodes.end(), [t_query](const ClockData* a, const ClockData* b) {
+                return std::abs(TimeUtils::continuousGpsSeconds(a->time) - t_query) <
+                       std::abs(TimeUtils::continuousGpsSeconds(b->time) - t_query);
+            });
+            const double x0 = TimeUtils::continuousGpsSeconds(nodes[0]->time);
+            const double x1 = TimeUtils::continuousGpsSeconds(nodes[1]->time);
+            const double dt = x1 - x0;
+            const double result = (std::abs(dt) > 1e-9)
+                ? nodes[0]->clock_bias + (nodes[1]->clock_bias - nodes[0]->clock_bias) * (t_query - x0) / dt
+                : nodes[0]->clock_bias;
+            log_manager_.getLogger("corrections")->debug(
+                "Clock interp (lagrange→linear extrap) for {} at tow={:.3f}: result={:.3e}s ({:.3f}m)",
+                satellite, time.tow, result, result * Constants::SPEED_OF_LIGHT);
+            return result;
         }
 
-        // Build interpolation arrays
         const size_t n = nodes.size();
-        if (n == 0) return 0.0;
-        if (n == 1) return nodes[0]->clock_bias;
-
-        std::vector<double> x(n);
-        std::vector<double> y(n);
+        std::vector<double> x(n), y(n);
         for (size_t i = 0; i < n; ++i) {
             x[i] = TimeUtils::continuousGpsSeconds(nodes[i]->time);
             y[i] = nodes[i]->clock_bias;
         }
 
-        // Perform interpolation based on mode and available points
-        double result = 0.0;
+        std::vector<double> w = Interpolate::barycentricWeights(x);
+        const double result   = Interpolate::barycentricEval(x, w, y, t_query);
 
-        if (n == 2 || mode == SatelliteClockInterpolationMode::Linear) {
-            result = Interpolate::linearInterp(x, y, t_query);
-
-            log_manager_.getLogger("corrections")->debug(
-                "Clock interp (linear) for {} at tow={:.3f}: {} pts, span={:.1f}s, "
-                "result={:.3e}s ({:.3f}m), extrap={}",
-                satellite, time.tow, n, x.back() - x.front(),
-                result, result * Constants::SPEED_OF_LIGHT,
-                extrapolating ? "YES" : "no");
-        }
-        else {
-            std::vector<double> w = Interpolate::barycentricWeights(x);
-            result = Interpolate::barycentricEval(x, w, y, t_query);
-
-            log_manager_.getLogger("corrections")->debug(
-                "Clock interp (lagrange) for {} at tow={:.3f}: {} pts, span={:.1f}s, "
-                "result={:.3e}s ({:.3f}m), extrap={}",
-                satellite, time.tow, n, x.back() - x.front(),
-                result, result * Constants::SPEED_OF_LIGHT,
-                extrapolating ? "YES" : "no");
-        }
+        log_manager_.getLogger("corrections")->debug(
+            "Clock interp (lagrange) for {} at tow={:.3f}: {} pts, span={:.1f}s, "
+            "result={:.3e}s ({:.3f}m)",
+            satellite, time.tow, n, x.back() - x.front(),
+            result, result * Constants::SPEED_OF_LIGHT);
 
         return result;
     }
@@ -418,7 +470,7 @@ namespace GnssProcessor {
             log_manager_.getLogger("ppp_model")->warn(
                 "Unrealistic relativistic input norms for {} ({}): pos_norm={:.3e} m, vel_norm={:.3e} m/s",
                 satellite, system_str, pos_norm, vel_norm);
-            return 0.0;
+			//return 0.0; //Beidou IGSO/MEO satellites can have higher velocity norms, so we won't reject based on velocity alone
         }
 
         const double r_dot_v = sat_pos.dot(sat_vel);
@@ -491,11 +543,10 @@ namespace GnssProcessor {
         if (rrs < 1e3 || rsat < MIN_POSITION_NORM || rsat > MAX_POSITION_NORM) {
             log_manager_.getLogger("ppp_model")->warn("Unrealistic Shapiro delay norms for {} ({}): range={:.3e} m, sat_norm={:.3e} m",
                 satellite, system_str, rrs, rsat);
-            return 0.0;
+			//return 0.0; // Beidou IGSO/MEO satellites can have ranges slightly below 1e3 m in extreme cases, so we won't reject based on range alone
         }
 
-        // Compute Shapiro delay in meters (matches MATLAB reference exactly)
-        // rpath = (2*mu/c²) * ln((rsat + rrec + rrs) / (rsat + rrec - rrs))
+        // rpath = (2*mu/c^2) * ln((rsat + rrec + rrs) / (rsat + rrec - rrs))
         const double delay = (2.0 * GM / C_SQUARED) * std::log((rsat + rrec + rrs) / (rsat + rrec - rrs));
         
         if (!std::isfinite(delay) || std::abs(delay) > MAX_DELAY) {
@@ -735,7 +786,8 @@ namespace GnssProcessor {
      */
     double GnssCorrections::computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos,
         const GnssTime& time) const {
-        double latitude = std::asin(rx_pos.z() / rx_pos.norm()) * 180.0 / Constants::PI;
+        Coordinates::Llh ref_llh = Coordinates::ecefToLlh(rx_pos);
+        double latitude = ref_llh.lat_rad * 180.0 / Constants::PI;
         double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
         double amplitude = 0.001;
         double correction = amplitude * std::cos(2.0 * Constants::PI * t / TimeUtils::SECONDS_IN_DAY) * std::cos(latitude * Constants::PI / 180.0);
@@ -836,7 +888,7 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        // LOS from satellite toward receiver (sat->rx), matching the MATLAB convention.
+        // LOS from satellite toward receiver (sat->rx)
         const Eigen::Vector3d rho = receiver_pos - sat_pos;
         const double rho_norm = rho.norm();
         if (!(rho_norm > 0.0)) return 0.0;
@@ -886,7 +938,7 @@ namespace GnssProcessor {
             }
         };
 
-        // Step 1: degree-2 Sun + Moon, degree-3 Moon
+        // Step 1: degree 2 + degree 3 with nominal Love numbers and body positions
         const Eigen::Vector3d d2s = tideBody(sun_pos, MS2E, 2);
         const Eigen::Vector3d d2m = tideBody(moon_pos, MM2E, 2);
         const Eigen::Vector3d d3m = tideBody(moon_pos, MM2E, 3);
@@ -981,7 +1033,7 @@ namespace GnssProcessor {
 
     Eigen::Vector3d GnssCorrections::computeStep2Corrections(
         const std::array<double, 6>& fund_args,
-        double lat, double lon, const Eigen::Vector3d& u)
+        double /*lat*/, double lon, const Eigen::Vector3d& u)
     {
         // IERS 2010 Technical Note 36, Section 7.1.1, Tables 7.3a and 7.3b
         //
@@ -990,17 +1042,11 @@ namespace GnssProcessor {
         // in-phase and out-of-phase Love number corrections (delta_h, delta_l), avoiding the
         // incorrect approach of lumping all corrections into a single sinusoid.
         //
-        // The displacement corrections are (IERS 2010, Eq. 7.12):
-        //
-        // Diurnal (m=1):
-        //   dr   = sqrt(3)*sin(theta)*[ dR_f_ip*cos(theta_f) + dR_f_op*sin(theta_f) ]
-        //   dn   = sqrt(3)*cos(theta)*[ dT_f_ip*cos(theta_f) + dT_f_op*sin(theta_f) ] * 3*sin(lat)*cos(lat)/(cos(2*lat)... )
-        //   de   = -sqrt(3)*[dT_f_ip*sin(theta_f) - dT_f_op*cos(theta_f)]
-        //
-        // Actually, the IERS convention uses geocentric co-latitude theta = pi/2 - phi_c.
-        // For simplicity and consistency with the rest of this codebase (which uses
-        // geodetic latitude), we use geodetic latitude and the standard displacement
-        // formulas from IERS 2010 Section 7.1.1s.
+        // The displacement corrections use IERS 2010, Eq. 7.12 with geocentric
+        // latitude phi_c derived from the unit radial vector `u`:
+        //   sin(phi_c) = u.z,  cos(phi_c) = sqrt(u.x^2 + u.y^2)
+        // so that the latitude factors and the local-frame basis vectors
+        // (radial, north, east) are all in the geocentric spherical frame.
         //
         // The IERS 2010 displacement formulas for degree 2 Step 2 corrections are:
         //
@@ -1030,8 +1076,15 @@ namespace GnssProcessor {
         const double Omega = fund_args[4];
         const double gmst  = fund_args[5];
 
-        const double sin_lat = std::sin(lat);
-        const double cos_lat = std::cos(lat);
+        // IERS 2010 Step 2 formulas (Eq. 7.12) are defined in geocentric
+        // (spherical) coordinates. Derive geocentric latitude from the unit
+        // radial vector `u` so that the latitude factors and the local-frame
+        // unit vectors (radial, north, east) are mutually consistent.
+        // Longitude is identical in geodetic and geocentric conventions.
+        const double sin_lat_gc = u.z();  // geocentric: sin(phi_c) = z / r
+        const double cos_lat_gc = std::sqrt(u.x() * u.x() + u.y() * u.y());
+        const double sin_lat = sin_lat_gc;
+        const double cos_lat = cos_lat_gc;
         const double sin_2lat = 2.0 * sin_lat * cos_lat;
         const double cos_2lat = cos_lat * cos_lat - sin_lat * sin_lat;
 
@@ -1124,7 +1177,7 @@ namespace GnssProcessor {
             {{  1, -2,  0,  1,  1,  0 },  -0.03,  0.00,  -0.01,  0.00 },  //    (135.665)
             {{  1, -2,  2, -1,  0,  0 },  -0.05,  0.00,  -0.01,  0.00 },  // rho1 (137.455)
             {{  1, -1,  0,  0, -1,  0 },   0.05,  0.00,   0.01,  0.00 },  //    (145.545)
-            {{  1, -1,  0,  0,  0,  0 },   0.10, -0.05,   0.02, -0.03 },  // O1 (145.555)
+            {{  1, -1, 0,  0,  0,  0 },   0.10, -0.05,   0.02, -0.03 },  // O1 (145.555)
             {{  1, -1,  0,  2,  0,  0 },  -0.05,  0.00,  -0.01,  0.00 },  //    (145.755)
             {{  1, -1,  2,  0,  0,  0 },   0.07,  0.00,   0.01,  0.00 },  //    (147.555)
             {{  1,  0,  0, -1,  0,  0 },  -1.31, -0.07,  -0.24,  0.03 },  // M1 (155.455)
@@ -1257,14 +1310,17 @@ namespace GnssProcessor {
             de -= T_term_sin * cos_lat;
         }
 
-        // Convert from local (radial, north, east) to ECEF
-        // Radial: u (unit geocentric vector)
-        // North: (-sin(lat)*cos(lon), -sin(lat)*sin(lon), cos(lat))
-        // East:  (-sin(lon), cos(lon), 0)
+        // Convert from local (radial, north, east) to ECEF.
+        // All three basis vectors must use geocentric latitude to be
+        // consistent with the geocentric radial direction `u` and the
+        // geocentric latitude factors used in the displacement formulas.
+        //   Radial: u (unit geocentric vector — already geocentric)
+        //   North:  (-sin(phi_c)*cos(lon), -sin(phi_c)*sin(lon), cos(phi_c))
+        //   East:   (-sin(lon), cos(lon), 0)
         double cos_lon = std::cos(lon);
         double sin_lon = std::sin(lon);
 
-        Eigen::Vector3d e_north(-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat);
+        Eigen::Vector3d e_north(-sin_lat_gc * cos_lon, -sin_lat_gc * sin_lon, cos_lat_gc);
         Eigen::Vector3d e_east(-sin_lon, cos_lon, 0.0);
 
         return dr * u + dn * e_north + de * e_east;
@@ -1329,16 +1385,46 @@ namespace GnssProcessor {
         }
         Eigen::Vector3d k = k_raw / k_raw_norm;  // unit vector sat->rx
 
-        // Satellite body frame using yaw-steering model
+        // Satellite body frame:
         //   ez = -sat_pos/|sat_pos|  (toward Earth / nadir / boresight)
-        //   e  = (sun - sat)/|sun - sat|  (Sun direction from satellite)
-        //   ey = cross(ez, e)  (cross-track / solar panel axis)
-        //   ex = cross(ey, ez) (completes right-handed frame)
+        //   ey = cross-track / solar panel axis
+        //   ex = completes right-handed frame (toward Sun side)
+        //
+        // BeiDou-2 GEO satellites (PRN C01-C05, C59, C60) use orbit-normal (ON)
+        // mode permanently: Y-axis = orbit normal, X-axis ~ along-track.
         Eigen::Vector3d ez = -sat_pos.normalized();
 
         Eigen::Vector3d x_s, y_s;
 
-        if (sun_pos.norm() > 1e6) {
+        bool use_orbit_normal = false;
+        if (system == System::BeiDou && satellite.size() >= 2) {
+            int prn = 0;
+            try { prn = std::stoi(satellite.substr(1)); } catch (...) {}
+            if ((prn >= 1 && prn <= 5) || prn == 59 || prn == 60) {
+                use_orbit_normal = true;
+            }
+        }
+
+        if (use_orbit_normal) {
+            // Orbit-normal (ON) mode for BeiDou-2 GEO
+            Eigen::Vector3d orbit_normal = sat_pos.cross(sat_vel);
+            if (orbit_normal.norm() < 1e-8) {
+                orbit_normal = Eigen::Vector3d::UnitY();
+            }
+            y_s = orbit_normal.normalized();
+
+            x_s = y_s.cross(ez);
+            if (x_s.norm() < 1e-8) {
+                x_s = Eigen::Vector3d::UnitX();
+            }
+            x_s.normalize();
+
+            // Re-orthogonalize Y
+            y_s = ez.cross(x_s);
+            y_s.normalize();
+        }
+        else if (sun_pos.norm() > 1e6) {
+            // Standard yaw-steering model
             Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
 
             Eigen::Vector3d ey = ez.cross(e_sun);
@@ -1417,15 +1503,11 @@ namespace GnssProcessor {
             windUp_c = -windUp_c;
         }
 
-        // Maintain continuity with previous epoch to avoid 2π jumps
-        auto it = prev_windup_.find(satellite);
-        if (it != prev_windup_.end()) {
-            double prev = it->second;
-            double diff = windUp_c - prev;
-            double cycles = std::round(diff / (2.0 * Constants::PI));
-            windUp_c = prev + (diff - cycles * 2.0 * Constants::PI);
-        }
-        prev_windup_[satellite] = windUp_c;
+        // No inter-epoch accumulation: compute wind-up fresh each epoch.
+        // The float ambiguity in the Kalman filter absorbs any integer-cycle
+        // component. Accumulating prev_windup_ caused regularly-spaced spikes
+        // in the IF phase slip detector because the unwrapping drift introduced
+        // discrete jumps into the modeled range between-epoch differences.
 
         // Convert radians to meters
         double phi_m = windUp_c * wavelength / (2.0 * Constants::PI);

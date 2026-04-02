@@ -24,6 +24,7 @@
 #include "LogManager.hpp"
 #include "PppTypes.hpp"
 #include "MwSlipDetector.hpp"
+#include "IfPhaseSlipDetector.hpp"
 #include "Namespaces.hpp"
 #include "WlsEstimator.hpp"
 #include "TimeUtils.hpp"
@@ -206,9 +207,14 @@ int Application::run() {
     WlsEstimator wls_estimator(config, state_manager, log_manager);
 
     MwSlipDetector mw_slip_detector(config, log_manager);
+    IfPhaseSlipDetector if_slip_detector(config, log_manager);
+    const bool if_slip_enabled = config.enableIfSlipDetector();
 
     // Enable MWWL tracing for cycle slip visualization
     mw_slip_detector.enableTracing(log_dir);
+    if (if_slip_enabled) {
+        if_slip_detector.enableTracing(log_dir);
+    }
 
     log_manager.getLogger("main_log")->info("Processing components initialized, mode={}",
         config.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
@@ -231,6 +237,12 @@ int Application::run() {
     }
 
     const auto& active_systems = config.getActiveSystems();
+
+    // Post-update 3D position sigma from the previous epoch.
+    // The IF slip detector uses this to gate detection during pre-convergence.
+    // Initialised to a large value so the first epoch is always gated (no
+    // previous posterior covariance is available).
+    double prev_pos_sigma_3d = std::numeric_limits<double>::max();
 
     for (size_t epoch_idx = 0; epoch_idx < observations.size(); ) {
         GnssTime current_time = observations[epoch_idx].time;
@@ -400,10 +412,39 @@ int Application::run() {
                     if (underscore_pos != std::string::npos && underscore_pos >= 2) {
                         std::string sat_id = key.substr(0, underscore_pos);
                         ppp_model.resetPhaseWindUp(sat_id);
-                        log_manager.getLogger("main_log")->debug("{}Reset phase wind-up for {} (cycle slip detected)", epoch_prefix, sat_id);
+                        if_slip_detector.resetSatellite(sat_id);
+                        log_manager.getLogger("main_log")->debug("{}Reset phase wind-up for {} (MW cycle slip detected)", epoch_prefix, sat_id);
                     }
                 }
                 log_manager.getLogger("main_log")->warn("{}Applied {} MW/LLI ambiguity resets", epoch_prefix, reset_keys.size());
+
+                state_manager.updatePppStateFromVector(state_manager.getStateVector(), ppp_state, state_manager);
+            }
+        }
+
+        // Detect IF phase cycle slips (between-satellite, between-epoch double differences).
+        // Catches small slips (1-2 cycles) that the MW detector misses due to code noise.
+        // Uses the post-update position sigma from the *previous* epoch to gate
+        // detection.  Reading the predicted (pre-update) covariance of the
+        // current epoch would include inflated process noise and the initial
+        // large uncertainty, causing the detector to stay gated far longer than
+        // necessary.
+        if (if_slip_enabled) {
+            const auto if_reset_keys = if_slip_detector.detect(modeled_obs, prev_pos_sigma_3d);
+            if (!if_reset_keys.empty()) {
+                const double reset_std_m = config.getAmbiguityStd();
+                for (const auto& key : if_reset_keys) {
+                    state_manager.resetAmbiguity(key, reset_std_m);
+                    
+                    size_t underscore_pos = key.find('_');
+                    if (underscore_pos != std::string::npos && underscore_pos >= 2) {
+                        std::string sat_id = key.substr(0, underscore_pos);
+                        ppp_model.resetPhaseWindUp(sat_id);
+                        mw_slip_detector.resetSatellite(sat_id);
+                        log_manager.getLogger("main_log")->debug("{}Reset phase wind-up for {} (IF phase slip detected)", epoch_prefix, sat_id);
+                    }
+                }
+                log_manager.getLogger("main_log")->warn("{}Applied {} IF phase ambiguity resets", epoch_prefix, if_reset_keys.size());
 
                 state_manager.updatePppStateFromVector(state_manager.getStateVector(), ppp_state, state_manager);
             }
@@ -451,18 +492,21 @@ int Application::run() {
                     "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                     epoch_prefix, relinear_pass);
                 
-                // Reset phase wind-up for satellites that had ambiguities reset
+                // Reset phase wind-up and MW arc history for satellites that had ambiguities reset
                 if (kalman_filter.wasCompleteReset()) {
                     // Complete filter reset: clear all phase wind-up state
                     ppp_model.resetAllPhaseWindUp();
+                    if_slip_detector.resetAll();
                     log_manager.getLogger("main_log")->info(
                         "{}Reset all phase wind-up state (complete filter reset)", epoch_prefix);
                 } else {
                     // Individual ambiguity resets: clear specific satellites
                     for (const auto& sat_id : kalman_filter.getLastResetSatellites()) {
                         ppp_model.resetPhaseWindUp(sat_id);
+                        mw_slip_detector.resetSatellite(sat_id);
+                        if_slip_detector.resetSatellite(sat_id);
                         log_manager.getLogger("main_log")->debug(
-                            "{}Reset phase wind-up for {} (KF ambiguity reset)", epoch_prefix, sat_id);
+                            "{}Reset phase wind-up, MW and IF history for {} (KF ambiguity reset)", epoch_prefix, sat_id);
                     }
                 }
                 
@@ -527,16 +571,49 @@ int Application::run() {
             }
         }
 
+        // Store the post-update 3D position sigma for the IF slip detector on
+        // the next epoch.  This uses the posterior (converged) covariance which
+        // accurately reflects how well the position is known, unlike the
+        // predicted covariance which is inflated by process noise.
+        {
+            const Eigen::MatrixXd P = state_manager.getCovariance();
+            const size_t pi = state_manager.getPositionIndex();
+            if (P.rows() > static_cast<Eigen::Index>(pi + 2) &&
+                P.cols() > static_cast<Eigen::Index>(pi + 2)) {
+                const double var_x = P(pi, pi);
+                const double var_y = P(pi + 1, pi + 1);
+                const double var_z = P(pi + 2, pi + 2);
+                if (std::isfinite(var_x) && std::isfinite(var_y) && std::isfinite(var_z) &&
+                    var_x >= 0.0 && var_y >= 0.0 && var_z >= 0.0) {
+                    prev_pos_sigma_3d = std::sqrt(var_x + var_y + var_z);
+                }
+            }
+        }
+
         if (config.getProcessingMode() == ProcessingMode::PPP) {
-            log_manager.getLogger("main_log")->info("{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m, mode=PPP",
-                epoch_prefix,
-                ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
-                ppp_state.clock_bias, ppp_state.troposphere_zwd);
+            if (config.estimatePhaseClock()) {
+                log_manager.getLogger("main_log")->info("{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m, mode=PPP",
+                    epoch_prefix,
+                    ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
+                    ppp_state.clock_bias, ppp_state.phase_clock_offset, ppp_state.troposphere_zwd);
+            } else {
+                log_manager.getLogger("main_log")->info("{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m, mode=PPP",
+                    epoch_prefix,
+                    ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
+                    ppp_state.clock_bias, ppp_state.troposphere_zwd);
+            }
         } else {
-            log_manager.getLogger("main_log")->info("{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m, Iono {:.3f} m, mode=PPP-RTK",
-                epoch_prefix,
-                ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
-                ppp_state.clock_bias, ppp_state.troposphere_zwd, ppp_state.ionosphere_zenith_delay);
+            if (config.estimatePhaseClock()) {
+                log_manager.getLogger("main_log")->info("{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m, Iono {:.3f} m, mode=PPP-RTK",
+                    epoch_prefix,
+                    ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
+                    ppp_state.clock_bias, ppp_state.phase_clock_offset, ppp_state.troposphere_zwd, ppp_state.ionosphere_zenith_delay);
+            } else {
+                log_manager.getLogger("main_log")->info("{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m, Iono {:.3f} m, mode=PPP-RTK",
+                    epoch_prefix,
+                    ppp_state.position.x(), ppp_state.position.y(), ppp_state.position.z(),
+                    ppp_state.clock_bias, ppp_state.troposphere_zwd, ppp_state.ionosphere_zenith_delay);
+            }
         }
 
         // ---- Per-epoch state/ambiguity/residual traces for MATLAB plotting ----

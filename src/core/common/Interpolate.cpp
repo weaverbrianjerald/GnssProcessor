@@ -162,8 +162,7 @@ namespace GnssProcessor {
      * with the precomputed weights. The result is converted back to
      * the original x-scale via the chain rule: dp/dx = dp/ds / spacing.
      *
-     * This matches the integer-index approach used by IGS/JPL reference
-     * software and MATLAB implementations.
+     * This matches the integer-index approach used by IGS/JPL.
      *
      * @param x Node x-coordinates (original, un-normalized).
      * @param w Precomputed barycentric weights from barycentricWeights().
@@ -193,8 +192,7 @@ namespace GnssProcessor {
         // coordinates dp/ds must then be converted back via the chain rule:
         //   dp/dx = dp/ds * ds/dx = dp/ds * (1 / min_spacing)
         //
-        // This matches the integer-index approach used by IGS/JPL reference software
-        // and MATLAB implementations.
+        // This matches the integer-index approach used by IGS/JPL reference software.
         double x_center = 0.5 * (x.front() + x.back());
 
         double min_spacing = std::numeric_limits<double>::max();

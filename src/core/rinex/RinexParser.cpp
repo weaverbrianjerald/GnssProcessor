@@ -124,7 +124,6 @@ namespace GnssProcessor {
                     std::string label = line.size() >= 60 ? line.substr(60) : "";
                     if (label.find("RINEX VERSION / TYPE") != std::string::npos) {
                         header_.version = std::stod(line.substr(0, 9));
-                        header_.time_system = line.substr(40, 3);
                     }
                     else if (label.find("MARKER NAME") != std::string::npos) {
                         header_.marker_name = line.substr(0, line.size() < 60 ? line.size() : 60);
@@ -240,6 +239,15 @@ namespace GnssProcessor {
                         header_.interval = std::stod(line.substr(0, 10));
                     }
                     else if (label.find("TIME OF FIRST OBS") != std::string::npos) {
+                        // RINEX 3: time system is at columns 49-51 of this record
+                        if (line.size() >= 51) {
+                            std::string ts = line.substr(48, 3);
+                            ts.erase(ts.find_last_not_of(" \t") + 1);
+                            ts.erase(0, ts.find_first_not_of(" \t"));
+                            if (!ts.empty()) {
+                                header_.time_system = ts;
+                            }
+                        }
                         int year = std::stoi(line.substr(0, 6));
                         int month = std::stoi(line.substr(6, 6));
                         int day = std::stoi(line.substr(12, 6));

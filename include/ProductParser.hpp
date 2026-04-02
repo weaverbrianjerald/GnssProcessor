@@ -61,6 +61,12 @@ namespace GnssProcessor {
         std::vector<std::filesystem::path> getOrbitPaths() const;
 
         /**
+         * @brief Get list of clock product file paths defined in configuration.
+         * @return Vector of filesystem paths to clock (CLK) products.
+         */
+        std::vector<std::filesystem::path> getClockPaths() const;
+
+        /**
          * @brief Get product file path for a specific product type.
          * @param type Product type string (e.g., "SP3", "CLK", "ATX").
          * @return Path to product file for the requested type. If not present, may be empty.
@@ -76,12 +82,17 @@ namespace GnssProcessor {
         bool parseSp3(const std::vector<std::filesystem::path>& sp3_paths, std::vector<OrbitData>& orbits);
 
         /**
-         * @brief Parse satellite clock (CLK) file.
-         * @param path Path to the CLK file.
+         * @brief Parse satellite clock (CLK) files into ClockData entries.
+         *
+         * Reads one or more CLK files and merges the results, discarding duplicate
+         * epochs (same satellite and time within 1 s).  This supports multi-day
+         * processing where clock products span day boundaries.
+         *
+         * @param clk_paths Paths to CLK files to parse.
          * @param clocks Output vector populated with parsed @ref ClockData entries.
          * @return True on success, false on failure.
          */
-        bool parseClk(const std::filesystem::path& path, std::vector<ClockData>& clocks);
+        bool parseClk(const std::vector<std::filesystem::path>& clk_paths, std::vector<ClockData>& clocks);
 
         /**
          * @brief Parse antenna (ATX) file.

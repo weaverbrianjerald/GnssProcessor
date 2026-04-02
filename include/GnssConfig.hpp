@@ -3,7 +3,7 @@
 #define GNSSCONFIG_HPP
 
 #include "LogManager.hpp"
-//#include "RinexParser.hpp" // TODO: Access System
+#include <array>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -81,7 +81,8 @@ namespace GnssProcessor {
         /// making it effectively unconstrained each epoch. This is standard
         /// PPP practice for GNSS receivers without atomic clocks.
         /// At 30 s: sqrt(1e8 * 30) ~ 54 km, i.e. no constraint.
-        double clock{ 1e8 };
+        /// However, clock is initialized by WLS at each epoch.
+        double clock{ 1e4 };
 
         /// Troposphere ZWD (m*m/s). 1e-8 yields ~0.5 mm/sqrt(hr),
         /// consistent with mid-latitude IGS analysis center defaults
@@ -106,6 +107,11 @@ namespace GnssProcessor {
         /// use the same spectral density. 5e-12 yields ~0.01 mm/sqrt(hr),
         /// appropriate for slow azimuthal asymmetry evolution.
         double tropo_gradient{ 5e-12 };
+
+        /// Phase clock offset (m*m/s). Typically white noise like the code clock,
+        /// but can be smaller if the receiver hardware is stable. 1e4 treats it
+        /// as unconstrained each epoch (same as code clock default).
+        double phase_clock{ 1e4 };
     };
 
     /**
@@ -114,13 +120,14 @@ namespace GnssProcessor {
      * Specifies initial uncertainties for state variables.
      */
     struct InitialStd {
-        double position{ 100.0 };       ///< Initial position standard deviation (m).
-        double clock{ 100.0 };          ///< Initial clock bias standard deviation (m).
+        double position{ 1e2 };       ///< Initial position standard deviation (m).
+        double clock{ 1e3 };          ///< Initial clock bias standard deviation (m).
         double troposphere{ 0.5 };      ///< Initial tropospheric zenith delay standard deviation (m).
         double ionosphere{ 5.0 };       ///< Initial ionospheric zenith delay standard deviation (m).
-        double ambiguity{ 300.0 };      ///< Initial ambiguity standard deviation (m).
-        double system_time_offset{ 100.0 }; ///< Initial inter-system time bias standard deviation (m).
-        double tropo_gradient{ 0.001 };     ///< Initial tropo gradient standard deviation (m).
+        double ambiguity{ 1e3 };      ///< Initial ambiguity standard deviation (m).
+        double system_time_offset{ 1e2 }; ///< Initial inter-system time bias standard deviation (m).
+        double tropo_gradient{ 1e-3 };     ///< Initial tropo gradient standard deviation (m).
+        double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
     };
 
     /**
@@ -330,6 +337,46 @@ namespace GnssProcessor {
          */
         bool relinearizeGeometry() const { return relinearize_geometry_; }
 
+        /**
+         * @brief Check if separate phase clock estimation is enabled.
+         *
+         * When true, a separate receiver phase clock offset state is estimated
+         * in addition to the code clock. Phase measurements use
+         * (code_clock + phase_clock_offset) while code measurements use
+         * code_clock only. This implements the "common clocks" separation model.
+         *
+         * @return True if phase clock offset estimation is enabled.
+         */
+        bool estimatePhaseClock() const { return estimate_phase_clock_; }
+
+        /**
+         * @brief Check if the IF phase slip detector is enabled.
+         *
+         * When true, the between-satellite, between-epoch IF phase OMC
+         * double-difference detector runs each epoch to catch small cycle
+         * slips (1-2 IF cycles) that the MW detector misses.
+         *
+         * @return True if the IF phase slip detector is enabled.
+         */
+        bool enableIfSlipDetector() const { return enable_if_slip_detector_; }
+
+        /**
+         * @brief Check if a user-supplied reference position is configured.
+         * @return True if reference_position_ecef was specified in the JSON config.
+         */
+        bool hasReferencePosition() const { return has_reference_position_; }
+
+        /**
+         * @brief Get the user-supplied reference ECEF position.
+         *
+         * When hasReferencePosition() is true this returns the XYZ coordinates
+         * (meters, ITRF/IGS14) specified in the config file. Use this to fix
+         * the receiver position for residual analysis.
+         *
+         * @return Reference position as {X, Y, Z} in meters.
+         */
+        const std::array<double, 3>& getReferencePositionEcef() const { return reference_position_ecef_; }
+
     private:
         ProcessingMode processing_mode_{ ProcessingMode::PPP }; ///< Processing mode (PPP or PPP-RTK).
         SignalMode signal_mode_{ SignalMode::Dual };            ///< Signal mode (Dual, Triple, All).
@@ -362,6 +409,11 @@ namespace GnssProcessor {
 
         bool estimate_tropo_gradients_{ false };   ///< Estimate troposphere horizontal gradients (Gn, Ge).
         bool relinearize_geometry_{ false };            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
+        bool estimate_phase_clock_{ false };            ///< Estimate separate phase clock offset.
+        bool enable_if_slip_detector_{ true };             ///< Enable the IF phase slip detector.
+
+        bool has_reference_position_{ false };                          ///< True if user supplied a reference ECEF position.
+        std::array<double, 3> reference_position_ecef_{ 0.0, 0.0, 0.0 }; ///< User-supplied reference position ECEF (m).
     };
 
 } // namespace GnssProcessor

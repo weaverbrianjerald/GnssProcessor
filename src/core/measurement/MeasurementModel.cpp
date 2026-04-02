@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * @file MeasurementModel.cpp
  * @brief Implements measurement vector, design matrix and covariance assembly for PPP Kalman updates.
  *
@@ -86,6 +86,14 @@ namespace GnssProcessor {
         if (!isb_initialized_) {
             initializeInterSystemBiases(observations, epoch_prefix);
             isb_initialized_ = true;
+        }
+
+        // === First-epoch phase clock offset initialization ===
+        // Seed the phase clock from the code-phase residual difference so the filter
+        // does not start at 0.0 and have to absorb the full code-phase bias.
+        if (!phase_clock_initialized_ && config_.estimatePhaseClock()) {
+            initializePhaseClockOffset(observations, epoch_prefix);
+            phase_clock_initialized_ = true;
         }
 
         // Pre-pass to ensure phase ambiguities exist
@@ -235,7 +243,7 @@ namespace GnssProcessor {
             // Use the stored LOS unit vector from computeModels().
             // The LOS was computed at the linearization position (obs.rx_pos_linearization).
             // When the current state position differs, the range correction term
-            // (-LOS Â· pos_delta) accounts for the first-order geometric range change.
+            // (-LOS · pos_delta) accounts for the first-order geometric range change.
             if (obs.los.norm() < 0.5 || !obs.los.allFinite()) {
                 log_manager_.getLogger("measurement_model")->warn(
                     "{}Invalid stored LOS for {} at TOW {:.3f}, mode={}",
@@ -265,6 +273,15 @@ namespace GnssProcessor {
                     jacobian.segment<3>(state_manager_.getPositionIndex()) = -los_current;
                     jacobian(state_manager_.getClockIndex()) = 1.0;
                     jacobian(state_manager_.getTropoIndex()) = mapping_wet;
+
+                    // Phase clock offset: phase measurements include the phase clock offset
+                    // in addition to the code clock. The Jacobian entry is 1.0 for phase.
+                    const bool is_phase = (!ref_type.empty() && ref_type[0] == 'L');
+                    double phase_clk_value = 0.0;
+                    if (is_phase && state_manager_.hasPhaseClock()) {
+                        jacobian(state_manager_.getPhaseClockIndex()) = 1.0;
+                        phase_clk_value = x(state_manager_.getPhaseClockIndex());
+                    }
 
                     // Tropospheric gradient contribution (Chen & Herring, 1997)
                     // dm_grad = mf_grad * (Gn * cos(az) + Ge * sin(az))
@@ -333,17 +350,17 @@ namespace GnssProcessor {
                     // Range correction for position delta from linearization point.
                     // modeled was computed with range = |sat_pos - rx_pos_linearization|.
                     // The current state position may differ, so correct the modeled
-                    // range by the first-order term: delta_range = -LOS Â· (pos_current - pos_linearization).
+                    // range by the first-order term: delta_range = -LOS · (pos_current - pos_linearization).
                     // This is equivalent to the WLS approach: range_delta = |sat - pos_current| - |sat - pos_lin|.
                     const Eigen::Vector3d pos_current = x.segment<3>(state_manager_.getPositionIndex());
                     const Eigen::Vector3d pos_delta = pos_current - obs.rx_pos_linearization;
                     const double range_correction = -los_current.dot(pos_delta);
 
                     // Predicted observable at current state (includes time offset for non-GPS)
-                    double predicted = modeled + range_correction + rx_clk + tropo_wet_term + tropo_grad_term + time_offset_value;
+                    double predicted = modeled + range_correction + rx_clk + phase_clk_value + tropo_wet_term + tropo_grad_term + time_offset_value;
 
                     // Ambiguity handling for phase measurements
-                    if (ref_type[0] == 'L') {
+                    if (is_phase) {
                         const std::string amb_key = obs.satellite + "_" + ref_type;
                         int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
                         if (amb_idx < 0) {
@@ -483,7 +500,7 @@ namespace GnssProcessor {
         const std::string& epoch_prefix) {
         // Collect code residuals (observed - modeled) per system
         // GPS residuals include receiver clock; other systems include clock + ISB
-        // ISB â‰ˆ median(non-GPS residuals) - median(GPS residuals)
+        // ISB ˜ median(non-GPS residuals) - median(GPS residuals)
 
         std::map<std::string, std::vector<double>> system_residuals;
 
@@ -570,6 +587,150 @@ namespace GnssProcessor {
         }
 
         state_manager_.setStateVector(x_updated);
+    }
+
+    void MeasurementModel::initializePhaseClockOffset(const std::vector<PppObservation>& observations,
+        const std::string& epoch_prefix) {
+        // Compute the mean difference between code and phase iono-free residuals.
+        // For each satellite that has both a code (C*_C*) and phase (L*_L*) iono-free
+        // combination, compute:
+        //   code_residual  = C_observed - C_modeled - rx_clk - mf_w*zwd - isb - tropo_grad
+        //   phase_residual = L_observed - L_modeled - rx_clk - mf_w*zwd - isb - tropo_grad
+        //
+        // The difference (code_residual - phase_residual) removes common terms and
+        // captures the receiver code-phase bias plus the (unknown) ambiguity.  Since
+        // ambiguities are seeded later to absorb the remaining difference, the mean
+        // of these differences across all satellites provides a robust estimate of
+        // the receiver-wide code-phase bias, which is exactly what the phase clock
+        // offset state should absorb.
+
+        const Eigen::VectorXd x = state_manager_.getStateVector();
+        const double rx_clk = x(state_manager_.getClockIndex());
+        const double zwd = x(state_manager_.getTropoIndex());
+
+        std::vector<double> code_phase_diffs;
+
+        for (const auto& obs : observations) {
+            if (obs.elevation < config_.getElevationMaskDeg()) continue;
+
+            // Determine ISB for this satellite
+            double isb = 0.0;
+            {
+                std::string system_name;
+                switch (obs.system) {
+                    case System::GPS:     system_name = ""; break;
+                    case System::Galileo: system_name = "Galileo"; break;
+                    case System::GLONASS: system_name = "GLONASS"; break;
+                    case System::BeiDou:  system_name = "BeiDou"; break;
+                    case System::QZSS:    system_name = "QZSS"; break;
+                    case System::SBAS:    system_name = "SBAS"; break;
+                    default:              system_name = ""; break;
+                }
+                size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(system_name);
+                if (isb_idx < static_cast<size_t>(x.size())) {
+                    isb = x(static_cast<Eigen::Index>(isb_idx));
+                }
+            }
+
+            // Tropospheric gradient contribution
+            double tropo_grad = 0.0;
+            if (state_manager_.hasTropoGradients()) {
+                const double el_rad = obs.elevation * Constants::PI / 180.0;
+                const double az_rad = obs.azimuth * Constants::PI / 180.0;
+                const double sin_el = std::sin(el_rad);
+                const double tan_el = std::tan(el_rad);
+                const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
+                const double gn = x(static_cast<Eigen::Index>(state_manager_.getTropoGradientNorthIndex()));
+                const double ge = x(static_cast<Eigen::Index>(state_manager_.getTropoGradientEastIndex()));
+                tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
+            }
+
+            const double tropo_wet = obs.mf_w * zwd;
+
+            // Find a code iono-free and phase iono-free pair for this satellite
+            double code_residual = 0.0;
+            double phase_residual = 0.0;
+            bool have_code = false;
+            bool have_phase = false;
+
+            for (const auto& [ref_type, observed] : obs.observed) {
+                if (ref_type.empty()) continue;
+                if (ref_type.find('_') == std::string::npos) continue;  // must be iono-free
+                if (!obs.modeled.count(ref_type)) continue;
+
+                const double modeled = obs.modeled.at(ref_type);
+                // residual = observed - modeled - rx_clk - tropo_wet - isb - tropo_grad
+                const double residual = observed - modeled - rx_clk - tropo_wet - isb - tropo_grad;
+
+                if (ref_type[0] == 'C' && !have_code) {
+                    code_residual = residual;
+                    have_code = true;
+                } else if (ref_type[0] == 'L' && !have_phase) {
+                    phase_residual = residual;
+                    have_phase = true;
+                }
+            }
+
+            if (have_code && have_phase) {
+                // The difference captures: (code_bias - phase_bias) + ambiguity
+                // Across satellites, ambiguities vary but the receiver code-phase bias is common.
+                // The mean difference is dominated by the common code-phase bias.
+                code_phase_diffs.push_back(code_residual - phase_residual);
+            }
+        }
+
+        if (code_phase_diffs.empty()) {
+            log_manager_.getLogger("measurement_model")->warn(
+                "{}Cannot initialize phase clock offset: no satellite has both code and phase iono-free observations",
+                epoch_prefix);
+            return;
+        }
+
+        // Use median for robustness against outlier satellites
+        auto computeMedian = [](std::vector<double>& values) -> double {
+            if (values.empty()) return 0.0;
+            size_t n = values.size();
+            size_t mid = n / 2;
+            std::nth_element(values.begin(), values.begin() + mid, values.end());
+            if (n % 2 == 0) {
+                double upper = values[mid];
+                std::nth_element(values.begin(), values.begin() + mid - 1, values.end());
+                double lower = values[mid - 1];
+                return (lower + upper) / 2.0;
+            }
+            return values[mid];
+        };
+
+        const double phase_clock_seed = computeMedian(code_phase_diffs);
+
+        Eigen::VectorXd x_updated = state_manager_.getStateVector();
+        x_updated(state_manager_.getPhaseClockIndex()) = phase_clock_seed;
+        state_manager_.setStateVector(x_updated);
+
+        // Tighten the phase clock covariance to reflect the seed accuracy.
+        // The median of N code-phase pairs has accuracy ~ code_std / sqrt(N).
+        // Use code_std as a conservative floor so the filter trusts the seed
+        // without over-constraining it.
+        {
+            const double code_std = config_.getDefaultMeasurementNoise().code_std_m;
+            const double seed_std = code_std / std::sqrt(static_cast<double>(code_phase_diffs.size()));
+            const double clamped_std = std::max(seed_std, code_std);
+            const size_t pc_idx = state_manager_.getPhaseClockIndex();
+
+            Eigen::MatrixXd P = state_manager_.getCovariance();
+            P.row(pc_idx).setZero();
+            P.col(pc_idx).setZero();
+            P(pc_idx, pc_idx) = clamped_std * clamped_std;
+            state_manager_.setCovariance(P);
+
+            log_manager_.getLogger("measurement_model")->info(
+                "{}Set phase clock covariance: std={:.3f} m (seed_std={:.3f} m from {} pairs)",
+                epoch_prefix, clamped_std, seed_std, code_phase_diffs.size());
+        }
+
+        log_manager_.getLogger("measurement_model")->info(
+            "{}Initialized phase clock offset: {:.3f} m from {} code-phase pairs",
+            epoch_prefix, phase_clock_seed, code_phase_diffs.size());
     }
 
 } // namespace GnssProcessor

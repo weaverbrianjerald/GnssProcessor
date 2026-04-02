@@ -81,14 +81,19 @@ namespace GnssProcessor {
         Eigen::VectorXd x = state_manager_.getStateVector();
         Eigen::MatrixXd P = state_manager_.getCovariance();
 
-        // Set initial variances for core states from config
+        // Set initial variances for core states from config.
+        // StateManager already seeds P from config_.getInitialStd() in its
+        // constructor. Here we only override entries that are truly
+        // uninitialized (non-finite or negative), NOT zero — because zero is a
+        // deliberate user choice meaning "fix this state" (e.g. known reference
+        // position with zero position uncertainty).
         const auto& initial_std = config_.getInitialStd();
-        double pos_std = initial_std.position > 0 ? initial_std.position : 1000.0;
-        double clock_std = initial_std.clock > 0 ? initial_std.clock : 1e6;
-        double tropo_std = initial_std.troposphere > 0 ? initial_std.troposphere : 0.5;
-        double iono_std = initial_std.ionosphere > 0 ? initial_std.ionosphere : 5.0;
-        double amb_std = initial_std.ambiguity > 0 ? initial_std.ambiguity : 1e4;
-        double time_offset_std = initial_std.system_time_offset > 0 ? initial_std.system_time_offset : 100.0;
+        double pos_std = initial_std.position >= 0 ? initial_std.position : 1000.0;
+        double clock_std = initial_std.clock >= 0 ? initial_std.clock : 1e6;
+        double tropo_std = initial_std.troposphere >= 0 ? initial_std.troposphere : 0.5;
+        double iono_std = initial_std.ionosphere >= 0 ? initial_std.ionosphere : 5.0;
+        double amb_std = initial_std.ambiguity >= 0 ? initial_std.ambiguity : 1e4;
+        double time_offset_std = initial_std.system_time_offset >= 0 ? initial_std.system_time_offset : 100.0;
 
         size_t pos_idx = state_manager_.getPositionIndex();
         size_t clock_idx = state_manager_.getClockIndex();
@@ -96,8 +101,9 @@ namespace GnssProcessor {
         size_t iono_idx = state_manager_.getIonoIndex();
 
         auto is_unset = [](double v) {
-            // treat zero or non-finite as unset
-            return !(std::isfinite(v) && v > 0.0);
+            // Only non-finite or negative values are considered uninitialized.
+            // Zero is a valid user-specified variance (fixed state).
+            return !std::isfinite(v) || v < 0.0;
         };
 
         // Only override diagonal entries if they are unset/invalid (allow StateManager seeding to persist)
@@ -110,9 +116,17 @@ namespace GnssProcessor {
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK && iono_idx < state_size && is_unset(P(iono_idx, iono_idx)))
             P(iono_idx, iono_idx) = iono_std * iono_std;
 
+        // Initialize phase clock offset covariance if enabled
+        if (config_.estimatePhaseClock()) {
+            double phase_clock_std = initial_std.phase_clock >= 0 ? initial_std.phase_clock : 1e3;
+            size_t pc_idx = state_manager_.getPhaseClockIndex();
+            if (pc_idx < state_size && is_unset(P(pc_idx, pc_idx)))
+                P(pc_idx, pc_idx) = phase_clock_std * phase_clock_std;
+        }
+
         // Initialize gradient covariances if enabled
         if (config_.estimateTropoGradients()) {
-            double grad_std = initial_std.tropo_gradient > 0 ? initial_std.tropo_gradient : 0.001;
+            double grad_std = initial_std.tropo_gradient >= 0 ? initial_std.tropo_gradient : 0.001;
             size_t gn_idx = state_manager_.getTropoGradientNorthIndex();
             size_t ge_idx = state_manager_.getTropoGradientEastIndex();
             if (gn_idx < state_size && is_unset(P(gn_idx, gn_idx)))

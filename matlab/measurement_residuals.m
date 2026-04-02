@@ -4,7 +4,7 @@
 %           Categorized by system (GPS, Galileo, etc.) and type (code/phase)
 %  ============================================================
 
-clear all; clc; %close all;
+clear all; %clc; %close all;
 
 %% --- Load CSV file ---
 fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
@@ -37,15 +37,16 @@ N = numel(satList);
 %% --- Convert GPS week + TOW to UTC datetime ---
 gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
 gpsSeconds = T.week*7*86400 + T.tow_s;
-T.utc = gpsEpoch + seconds(gpsSeconds);
+T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
 
 %% --- Define markers and colors ---
 markerList = {'o','s','d','^','v','>','<','p','h','x','+'};
 
 try
-    colors = distinguishable_colors(N);
+    addpath(genpath('C:\temp\gnss-qc\matlab\visualization'));
+    colors = distinguishable_colors(200);
 catch
-    colors = lines(N);
+    colors = lines(200);
 end
 
 %% --- Get unique systems and measurement types ---
@@ -57,7 +58,7 @@ measTypeList = {'Code', 'Phase'};
 systemsPresent = {};
 for i = 1:numel(systemList)
     if any(T.system == systemList{i})
-        systemsPresent{end+1} = systemList{i}; %#ok<SAGROW>
+        systemsPresent{end+1} = systemList{i};
     end
 end
 nSys = numel(systemsPresent);
@@ -95,6 +96,8 @@ for row = 1:nTypes
             sat = satsInSubset{k};
             idx_sat = (T_sub.satellite == sat);
 
+            colorRow = str2double(sat(2:3));
+
             globalIdx = find(strcmp(satList, sat), 1);
             if isempty(globalIdx), globalIdx = k; end
             if globalIdx > size(colors,1), globalIdx = mod(globalIdx-1, size(colors,1)) + 1; end
@@ -109,7 +112,7 @@ for row = 1:nTypes
             n = numel(x);
             if n < 2
                 % Just plot the single point/short series
-                plot(x, y, '-', 'Color', colors(globalIdx,:), 'DisplayName', sat);
+                plot(x, y, '-', 'Color', colors(colorRow,:), 'DisplayName', sat);
                 continue;
             end
 
@@ -131,7 +134,7 @@ for row = 1:nTypes
                     if endIdx >= startIdx
                         plot(x(startIdx:endIdx), y(startIdx:endIdx), ...
                             'LineStyle','-', 'Marker','none', ...
-                            'Color',colors(globalIdx,:), ...
+                            'Color',colors(colorRow,:), ...
                             'DisplayName', sat); % optional
                     end
                     startIdx = endIdx + 1;
@@ -141,7 +144,7 @@ for row = 1:nTypes
             if startIdx <= n
                 plot(x(startIdx:n), y(startIdx:n), ...
                     'LineStyle','-', 'Marker','none', ...
-                    'Color',colors(globalIdx,:), ...
+                    'Color',colors(colorRow,:), ...
                     'DisplayName', sat); % optional
             end
         end

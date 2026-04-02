@@ -97,6 +97,7 @@ namespace GnssProcessor {
         PppUtils ppp_utils_;             ///< Utility helpers (frequency/wavelength helpers) initialized with the logger.
 
         bool isb_initialized_ = false;  ///< Flag to track if ISB has been initialized
+        bool phase_clock_initialized_ = false; ///< Flag to track if phase clock offset has been seeded
 
         /**
          * @brief Initialize inter-system biases from first-epoch code observations.
@@ -106,6 +107,19 @@ namespace GnssProcessor {
          */
         void initializeInterSystemBiases(const std::vector<PppObservation>& observations,
                                           const std::string& epoch_prefix);
+
+        /**
+         * @brief Seed the phase clock offset from the code-phase residual difference.
+         *
+         * Computes the mean difference between code and phase iono-free residuals
+         * at the first epoch. This difference captures the receiver's code-phase
+         * bias (hardware delay mismatch) and is used to constrain the phase clock
+         * state so the filter does not have to converge from zero.
+         *
+         * Only called once at the first epoch when phase clock estimation is enabled.
+         */
+        void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
+                                         const std::string& epoch_prefix);
     };
 
 } // namespace GnssProcessor
