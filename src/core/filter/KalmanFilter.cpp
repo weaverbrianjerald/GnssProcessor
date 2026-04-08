@@ -3,10 +3,11 @@
  * \brief Kalman filter implementation for PPP/PPP-RTK state estimation.
  *
  * Implements prediction and measurement update logic used by the GNSS processor.
- * The Kalman filter interacts with a StateManager for state/covariance storage,
- * a GnssConfig for runtime parameters, and a PppModel/MeasurementModel for
- * measurement modelling. Detailed logging is performed via \c LogManager and
- * \c KalmanFilterLogger.
+ * The implementation is decomposed into focused helpers:
+ *  - seedCovarianceDiagonals()  — initial P seeding (constructor helper).
+ *  - handlePhaseOutlier()       — ambiguity reset for phase residual outliers.
+ *  - handleCodeOutlier()        — measurement exclusion for code residual outliers.
+ *  - resetFilterCovariance()    — complete filter reset when too many outliers accumulate.
  */
 
 #include "KalmanFilter.hpp"
@@ -23,173 +24,145 @@
 
 namespace GnssProcessor {
 
-    /**
-     * @brief Construct a KalmanFilter instance.
-     *
-     * Initializes local measurement helper and Kalman logger, validates the
-     * state size obtained from \c StateManager against the processing mode,
-     * and seeds the covariance diagonal entries for core states and ambiguities
-     * using values from \c GnssConfig if the corresponding diagonal entries
-     * are unset/invalid. Persists the initialized covariance back to the
-     * \c StateManager and emits initial state/covariance logs.
-     *
-     * @param state_manager Reference to the StateManager that owns the filter state.
-     * @param config Read-only reference to configuration parameters (GnssConfig).
-     * @param log_manager Reference to LogManager for emitting diagnostic messages.
-     * @param ppp_model Read-only reference to the PPP model used by the measurement model.
-     *
-     * @throws std::invalid_argument if the state size from \c state_manager is smaller
-     *         than the minimum required for the configured processing mode.
-     */
+    // ===================================================================
+    // File-scope helpers
+    // ===================================================================
+
+    namespace {
+
+    const char* modeLabel(const GnssConfig& cfg) {
+        return cfg.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK";
+    }
+
+    /// Predicate: value is non-finite or negative → needs initialization.
+    /// Zero is a valid user-specified variance (fixed state).
+    bool isUnsetVariance(double v) {
+        return !std::isfinite(v) || v < 0.0;
+    }
+
+    /// Split a possibly-BSSD satellite ID ("G01-G05") into primary and reference.
+    std::pair<std::string, std::string> splitBssdSatId(const std::string& sat_id) {
+        const size_t dash = sat_id.find('-');
+        if (dash != std::string::npos && dash > 0 && dash + 1 < sat_id.size())
+            return { sat_id.substr(0, dash), sat_id.substr(dash + 1) };
+        return { sat_id, "" };
+    }
+
+    } // anonymous namespace
+
+    // ===================================================================
+    // Construction helpers
+    // ===================================================================
+
+    void KalmanFilter::seedCovarianceDiagonals(Eigen::MatrixXd& P, size_t state_size) const {
+        const auto& initial_std = config_.getInitialStd();
+        const double pos_std   = initial_std.position >= 0            ? initial_std.position            : 1000.0;
+        const double clock_std = initial_std.clock >= 0               ? initial_std.clock               : 1e6;
+        const double tropo_std = initial_std.troposphere >= 0         ? initial_std.troposphere         : 0.5;
+        const double amb_std   = initial_std.ambiguity >= 0           ? initial_std.ambiguity           : 1e4;
+        const double isb_std   = initial_std.system_time_offset >= 0  ? initial_std.system_time_offset  : 100.0;
+
+        const size_t pos_idx   = state_manager_.getPositionIndex();
+        const size_t clock_idx = state_manager_.getClockIndex();
+        const size_t tropo_idx = state_manager_.getTropoIndex();
+
+        if (isUnsetVariance(P(pos_idx, pos_idx)))
+            P.block(pos_idx, pos_idx, 3, 3) = Eigen::Matrix3d::Identity() * pos_std * pos_std;
+        if (isUnsetVariance(P(clock_idx, clock_idx)))
+            P(clock_idx, clock_idx) = clock_std * clock_std;
+        if (isUnsetVariance(P(tropo_idx, tropo_idx)))
+            P(tropo_idx, tropo_idx) = tropo_std * tropo_std;
+
+        if (config_.estimatePhaseClock()) {
+            const double pc_std = initial_std.phase_clock >= 0 ? initial_std.phase_clock : 1e3;
+            const size_t pc_idx = state_manager_.getPhaseClockIndex();
+            if (pc_idx < state_size && isUnsetVariance(P(pc_idx, pc_idx)))
+                P(pc_idx, pc_idx) = pc_std * pc_std;
+        }
+
+        if (config_.estimateTropoGradients()) {
+            const double grad_std = initial_std.tropo_gradient >= 0 ? initial_std.tropo_gradient : 0.001;
+            const size_t gn_idx = state_manager_.getTropoGradientNorthIndex();
+            const size_t ge_idx = state_manager_.getTropoGradientEastIndex();
+            if (gn_idx < state_size && isUnsetVariance(P(gn_idx, gn_idx)))
+                P(gn_idx, gn_idx) = grad_std * grad_std;
+            if (ge_idx < state_size && isUnsetVariance(P(ge_idx, ge_idx)))
+                P(ge_idx, ge_idx) = grad_std * grad_std;
+        }
+
+        for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
+            const size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
+            if (idx < state_size && isUnsetVariance(P(idx, idx)))
+                P(idx, idx) = isb_std * isb_std;
+        }
+
+        const size_t num_amb = state_manager_.getAmbiguities().size();
+        if (num_amb > 0) {
+            P.bottomRightCorner(num_amb, num_amb).diagonal().setConstant(amb_std * amb_std);
+            log_manager_.getLogger("kalman_filter")->info(
+                "Initialized {} ambiguity states with variance: {:.6f} m^2", num_amb, amb_std * amb_std);
+        }
+    }
+
+    // ===================================================================
+    // Constructor / Destructor
+    // ===================================================================
+
     KalmanFilter::KalmanFilter(StateManager& state_manager, const GnssConfig& config,
         LogManager& log_manager, const PppModel& ppp_model)
         : state_manager_(state_manager), config_(config), log_manager_(log_manager),
         ppp_model_(ppp_model), measurement_model_(state_manager, ppp_model, config, log_manager) {
 
-        // Create kalman_debug.log only when runtime logging level is Trace.
-        // Check the module logger "kalman_filter" (will be created by LogManager if necessary)
+        // Optional file logger (trace mode only)
         try {
             auto kalman_logger = log_manager_.getLogger("kalman_filter");
             if (kalman_logger && kalman_logger->level() == spdlog::level::trace) {
                 try {
                     logger_ = std::make_unique<KalmanFilterLogger>("kalman_debug.log");
                     kalman_logger->info("Kalman debug file enabled: kalman_debug.log");
-                }
-                catch (const std::exception& e) {
+                } catch (const std::exception& e) {
                     kalman_logger->warn("Failed to open kalman debug file: {}", e.what());
                     logger_.reset();
                 }
             }
-        }
-        catch (...) {
-            // If LogManager throws or getLogger fails, silently continue without file logger.
+        } catch (...) {
+            // Silently continue without file logger.
         }
 
-        // Get total state size (core states + initial ambiguities)
-        size_t core_size = state_manager_.getStateSize() - state_manager_.getAmbiguities().size();
-        size_t state_size = state_manager_.getStateSize();
-        size_t base_core_size = config.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
+        const size_t state_size = state_manager_.getStateSize();
+        size_t base_core_size = 5;
         if (config.estimateTropoGradients()) base_core_size += 2;
         if (state_size < base_core_size) {
-            log_manager_.getLogger("kalman_filter")->error("Invalid state size from StateManager: {}, minimum {} required for mode {}",
-                state_size, base_core_size,
-                config.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+            log_manager_.getLogger("kalman_filter")->error(
+                "Invalid state size from StateManager: {}, minimum {} required for mode {}",
+                state_size, base_core_size, modeLabel(config));
             throw std::invalid_argument("Invalid state size");
         }
 
-        // Initialize state vector and matrices from StateManager (local temporaries only)
         Eigen::VectorXd x = state_manager_.getStateVector();
         Eigen::MatrixXd P = state_manager_.getCovariance();
 
-        // Set initial variances for core states from config.
-        // StateManager already seeds P from config_.getInitialStd() in its
-        // constructor. Here we only override entries that are truly
-        // uninitialized (non-finite or negative), NOT zero — because zero is a
-        // deliberate user choice meaning "fix this state" (e.g. known reference
-        // position with zero position uncertainty).
-        const auto& initial_std = config_.getInitialStd();
-        double pos_std = initial_std.position >= 0 ? initial_std.position : 1000.0;
-        double clock_std = initial_std.clock >= 0 ? initial_std.clock : 1e6;
-        double tropo_std = initial_std.troposphere >= 0 ? initial_std.troposphere : 0.5;
-        double iono_std = initial_std.ionosphere >= 0 ? initial_std.ionosphere : 5.0;
-        double amb_std = initial_std.ambiguity >= 0 ? initial_std.ambiguity : 1e4;
-        double time_offset_std = initial_std.system_time_offset >= 0 ? initial_std.system_time_offset : 100.0;
+        seedCovarianceDiagonals(P, state_size);
 
-        size_t pos_idx = state_manager_.getPositionIndex();
-        size_t clock_idx = state_manager_.getClockIndex();
-        size_t tropo_idx = state_manager_.getTropoIndex();
-        size_t iono_idx = state_manager_.getIonoIndex();
+        const size_t num_amb = state_manager_.getAmbiguities().size();
+        const size_t core_size = state_size - num_amb - state_manager_.getIonosphereStates().size();
+        log_manager_.getLogger("kalman_filter")->info(
+            "KalmanFilter initialized with state size: {} (core={}, time_offsets={}, ambiguities={}), mode: {}, P ({}x{}), x ({})",
+            state_size, core_size, state_manager_.getNumSystemTimeOffsets(), num_amb,
+            modeLabel(config_), P.rows(), P.cols(), x.size());
 
-        auto is_unset = [](double v) {
-            // Only non-finite or negative values are considered uninitialized.
-            // Zero is a valid user-specified variance (fixed state).
-            return !std::isfinite(v) || v < 0.0;
-        };
-
-        // Only override diagonal entries if they are unset/invalid (allow StateManager seeding to persist)
-        if (is_unset(P(pos_idx, pos_idx)))
-            P.block(pos_idx, pos_idx, 3, 3) = Eigen::Matrix3d::Identity() * pos_std * pos_std;
-        if (is_unset(P(clock_idx, clock_idx)))
-            P(clock_idx, clock_idx) = clock_std * clock_std;
-        if (is_unset(P(tropo_idx, tropo_idx)))
-            P(tropo_idx, tropo_idx) = tropo_std * tropo_std;
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK && iono_idx < state_size && is_unset(P(iono_idx, iono_idx)))
-            P(iono_idx, iono_idx) = iono_std * iono_std;
-
-        // Initialize phase clock offset covariance if enabled
-        if (config_.estimatePhaseClock()) {
-            double phase_clock_std = initial_std.phase_clock >= 0 ? initial_std.phase_clock : 1e3;
-            size_t pc_idx = state_manager_.getPhaseClockIndex();
-            if (pc_idx < state_size && is_unset(P(pc_idx, pc_idx)))
-                P(pc_idx, pc_idx) = phase_clock_std * phase_clock_std;
-        }
-
-        // Initialize gradient covariances if enabled
-        if (config_.estimateTropoGradients()) {
-            double grad_std = initial_std.tropo_gradient >= 0 ? initial_std.tropo_gradient : 0.001;
-            size_t gn_idx = state_manager_.getTropoGradientNorthIndex();
-            size_t ge_idx = state_manager_.getTropoGradientEastIndex();
-            if (gn_idx < state_size && is_unset(P(gn_idx, gn_idx)))
-                P(gn_idx, gn_idx) = grad_std * grad_std;
-            if (ge_idx < state_size && is_unset(P(ge_idx, ge_idx)))
-                P(ge_idx, ge_idx) = grad_std * grad_std;
-        }
-        
-        // Initialize inter-system time offset covariances if unset
-        for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
-            size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
-            if (idx < state_size && is_unset(P(idx, idx))) {
-                P(idx, idx) = time_offset_std * time_offset_std;
-            }
-        }
-
-        // Set initial variances for ambiguities (if any)
-        size_t num_ambiguities = state_manager_.getAmbiguities().size();
-        if (num_ambiguities > 0) {
-            P.bottomRightCorner(num_ambiguities, num_ambiguities).diagonal().setConstant(amb_std * amb_std);
-            log_manager_.getLogger("kalman_filter")->info("Initialized {} ambiguity states with variance: {:.6f} meters^2",
-                num_ambiguities, amb_std * amb_std);
-        }
-
-        log_manager_.getLogger("kalman_filter")->info("KalmanFilter initialized with state size: {} (core={}, time_offsets={}, ambiguities={}), mode: {}, P ({}x{}), x ({})",
-            state_size, core_size, state_manager_.getNumSystemTimeOffsets(), num_ambiguities,
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
-            P.rows(), P.cols(), x.size());
-
-        // Persist to StateManager
         state_manager_.setCovariance(P);
 
-        // Log initial state/covariance
         if (logger_) logger_->logStateVector(x, "Initial State Vector");
         if (logger_) logger_->logCovarianceMatrix(P, "Initial Covariance Matrix");
     }
 
-    /**
-     * @brief Default destructor.
-     *
-     * Cleans up resources owned by the KalmanFilter object. Logging and other
-     * RAII-managed resources are released automatically.
-     */
     KalmanFilter::~KalmanFilter() = default;
 
-    /**
-     * @brief Predict the filter state forward by a time increment.
-     *
-     * This method:
-     *  - Retrieves the current state vector and covariance from \c StateManager.
-     *  - Obtains the process noise matrix Q and the state transition matrix F for the given time step.
-     *  - Computes the predicted state (x <- F * x) and Joseph-form covariance update
-     *    (P <- F * P * F^T + Q).
-     *  - Persists the predicted state and covariance back into \c StateManager.
-     *
-     * The method logs matrix contents using \c KalmanFilterLogger for debugging.
-     *
-     * @param dt Time step in seconds to advance the filter.
-     *
-     * @throws std::runtime_error if the filter has not been properly initialized (empty state/covariance).
-     * @throws std::invalid_argument if the Q or F matrices returned by \c StateManager
-     *         do not match the expected state dimension.
-     */
+    // ===================================================================
+    // Prediction
+    // ===================================================================
+
     void KalmanFilter::predict(double dt) {
         Eigen::VectorXd x = state_manager_.getStateVector();
         Eigen::MatrixXd P = state_manager_.getCovariance();
@@ -225,6 +198,29 @@ namespace GnssProcessor {
 		// TODO: simple dynamics, eliminate F. Just add process noise to P for random walk.
         x = F * x;
         P = F * P * F.transpose() + Q;
+
+        // When BSSD is active, the clock, phase-clock and ISB states are
+        // not observed (H columns are zero).  Zero their cross-covariances
+        // so stale correlations don't leak into the SD solution.  The
+        // diagonal (variance) is left as-is — it is already frozen because
+        // the process noise for these states is suppressed.
+        if (config_.enableBetweenSatelliteSd()) {
+            const auto freeze_state = [&](size_t idx) {
+                if (idx < static_cast<size_t>(P.rows())) {
+                    const auto i = static_cast<Eigen::Index>(idx);
+                    const double var = P(i, i);
+                    P.row(i).setZero();
+                    P.col(i).setZero();
+                    P(i, i) = var;
+                }
+            };
+            freeze_state(state_manager_.getClockIndex());
+            if (state_manager_.hasPhaseClock())
+                freeze_state(state_manager_.getPhaseClockIndex());
+            for (const auto& sys : state_manager_.getSystemsWithTimeOffsets())
+                freeze_state(state_manager_.getSystemTimeOffsetIndex(sys));
+        }
+
         log_manager_.getLogger("kalman_filter")->trace("Predicted state for dt={:.3f} s: x size={}, P size={}x{}",
             dt, x.size(), P.rows(), P.cols());
 
@@ -237,42 +233,19 @@ namespace GnssProcessor {
         if (logger_) logger_->logCovarianceMatrix(P, "Predicted Covariance Matrix");
     }
 
-    /**
-     * @brief Apply a measurement update (Kalman gain) for an epoch of observations.
-     *
-     * The update performs the following steps:
-     *  - Validates the provided measurement vectors/matrices.
-     *  - Builds the measurement-noise matrix R from \c measurement.R_v.
-     *  - Computes the innovation covariance S = H P H^T + R and inverts S
-     *    (using pseudo-inverse if S is ill-conditioned).
-     *  - Computes the Kalman gain K = P H^T S^{-1}.
-     *  - Applies the state correction x <- x + K * innovations and updates the
-     *    covariance using the Joseph form to improve numerical stability.
-     *  - Computes post-fit residuals, residual covariance and standardized residuals.
-     *  - Calls \c validatePostFitResiduals which may modify the previous-state
-     *    copies (x_prev, P_prev) to implement ambiguity resets or full resets.
-     *  - If an outlier action was taken, reverts the state/covariance to the
-     *    saved pre-update copies and returns \c UpdateResult::NeedsMeasurementRebuild.
-     *  - Otherwise commits the updated state/covariance and sets the state epoch time.
-     *
-     * The method logs matrices and diagnostic summaries using \c KalmanFilterLogger and \c LogManager.
-     *
-     * @param measurement EpochMeasurement describing innovations, H, R_v and metadata.
-     *                    The function writes back computed residuals and covariances into this object.
-     * @return UpdateResult indicating whether the update was applied, skipped, or requires measurement rebuild.
-     *
-     * @throws std::invalid_argument if measurement matrix dimensions mismatch with the state.
-     */
+    // ===================================================================
+    // Measurement update
+    // ===================================================================
+
     KalmanFilter::UpdateResult KalmanFilter::update(EpochMeasurement& measurement) {
         auto klogger = log_manager_.getLogger("kalman_filter");
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix = "[" + epoch_tag + "] ";
-        const std::string epoch_label = " @ " + epoch_tag;
 
-        // Clear reset tracking from previous update
         last_reset_satellites_.clear();
         was_complete_reset_ = false;
 
+        // --- Input validation ---
         if (measurement.innovations.size() == 0 || measurement.H.rows() == 0 || measurement.R_v.size() == 0) {
             klogger->warn("{}Invalid measurement update: innovations ({}), H ({}x{}), R_v ({})",
                 epoch_prefix,
@@ -287,13 +260,14 @@ namespace GnssProcessor {
             throw std::invalid_argument("H dimensions mismatch");
         }
 
-        // Build diagonal R
-        R_ = Eigen::MatrixXd::Zero(measurement.innovations.size(), measurement.innovations.size());
-        for (Eigen::Index i = 0; i < measurement.innovations.size(); ++i) {
-            R_(i, i) = measurement.R_v(i);
+        // --- Build R ---
+        if (measurement.R_full.rows() == measurement.innovations.size() &&
+            measurement.R_full.cols() == measurement.innovations.size()) {
+            R_ = measurement.R_full;
+        } else {
+            R_ = measurement.R_v.asDiagonal();
         }
 
-        // Pull current state
         Eigen::VectorXd x = state_manager_.getStateVector();
         Eigen::MatrixXd P = state_manager_.getCovariance();
 
@@ -301,127 +275,94 @@ namespace GnssProcessor {
         if (logger_) logger_->logMatrix(measurement.H, "Measurement Matrix H", epoch_tag);
         if (logger_) logger_->logMatrix(R_, "Measurement Noise Matrix R", epoch_tag);
 
-        // Kalman gain
-        Eigen::MatrixXd Ht = measurement.H.transpose();
-        Eigen::MatrixXd S = measurement.H * P * Ht + R_;
+        // --- Innovation covariance & Kalman gain ---
+        const Eigen::MatrixXd Ht = measurement.H.transpose();
+        const Eigen::MatrixXd S = measurement.H * P * Ht + R_;
+
         Eigen::JacobiSVD<Eigen::MatrixXd> svd(S);
-        double cond = svd.singularValues()(0) / svd.singularValues()(svd.singularValues().size() - 1);
+        const double cond = svd.singularValues()(0)
+            / svd.singularValues()(svd.singularValues().size() - 1);
         klogger->trace("{}S matrix condition number: {:.3e}", epoch_prefix, cond);
 
         Eigen::MatrixXd S_inv;
-        /*
-        if (S.determinant() < 1e-6 || cond > 1e10) {
-            klogger->warn("{}Ill-conditioned S matrix, using pseudo-inverse, determinant={:.3e}, condition={:.3e}",
-                epoch_prefix, S.determinant(), cond);
-            S_inv = Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd>(S).pseudoInverse(); // assumes: nothing (works for singular)
+        Eigen::LDLT<Eigen::MatrixXd> ldlt(S);
+        if (ldlt.info() == Eigen::Success) {
+            S_inv = ldlt.solve(Eigen::MatrixXd::Identity(S.rows(), S.cols()));
         } else {
-            S_inv = S.inverse();
+            klogger->warn("{}LDLT failed for S matrix (condition={:.3e}), falling back to pseudo-inverse",
+                epoch_prefix, cond);
+            S_inv = Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd>(S).pseudoInverse();
         }
-        */
-        //S_inv = S.inverse(); // assumes: square + nonsingular
-        S_inv = S.llt().solve(Eigen::MatrixXd::Identity(S.rows(), S.cols())); // assumes: symmetric + positive definite
 
-        // TODO: evaluate S.ldlt().solve(...)
-
-        // Kalman gain
-        Eigen::MatrixXd K = P * Ht * S_inv;
+        const Eigen::MatrixXd K = P * Ht * S_inv;
         if (logger_) logger_->logKalmanGain(K, "Kalman Gain Matrix K", epoch_tag);
 
-        // Save pre-update copy for outlier handling (and *allow* validatePostFitResiduals to modify these)
+        // --- Save pre-update copy ---
         Eigen::VectorXd x_prev = x;
         Eigen::MatrixXd P_prev = P;
 
-        // Update
-        Eigen::VectorXd dx = K * measurement.innovations;
+        // --- State correction ---
+        const Eigen::VectorXd dx = K * measurement.innovations;
         x = x + dx;
-
         klogger->debug("{}Kalman update dx.norm={:.3e}", epoch_prefix, dx.norm());
 
-        // Joseph covariance update
-        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(state_size, state_size);
-        Eigen::MatrixXd KH = K * measurement.H;
-        Eigen::MatrixXd I_minus_KH = I - KH;
+        // --- Joseph covariance update ---
+        const Eigen::MatrixXd I_minus_KH = Eigen::MatrixXd::Identity(state_size, state_size)
+            - K * measurement.H;
         P = I_minus_KH * P * I_minus_KH.transpose() + K * R_ * K.transpose();
+        P = 0.5 * (P + P.transpose());
 
-        // Post-fit residuals: r = v - H*dx = (I - H K) v
+        // --- Post-fit residuals ---
         measurement.residuals = measurement.innovations - measurement.H * dx;
-
-        // Post-fit residual covariance: Sr = (I - H K) * S * (I - H K)^T
-        // Use measurement-space identity (m x m) because S is m x m.
-        const Eigen::Index m = measurement.H.rows();
-        Eigen::MatrixXd Im = Eigen::MatrixXd::Identity(m, m); // m x m
-        Eigen::MatrixXd HK = measurement.H * K;               // m x m
-        Eigen::MatrixXd W = Im - HK;                          // m x m
-        Eigen::MatrixXd Sr = W * S * W.transpose();           // m x m
+        const Eigen::MatrixXd Sr = R_ - measurement.H * P * Ht;
         measurement.residuals_covariance = Sr;
 
-        // Standardized post-fit residuals (sigma units) for QC/outlier checks
         Eigen::VectorXd sres(measurement.residuals.size());
         for (Eigen::Index i = 0; i < sres.size(); ++i) {
             const double sii = (i < Sr.rows() && i < Sr.cols()) ? Sr(i, i) : std::numeric_limits<double>::quiet_NaN();
             const double denom = std::sqrt(std::max(sii, 1e-12));
             const double val = measurement.residuals(i);
-            sres(i) = std::isfinite(val) && std::isfinite(denom) && denom > 0.0 ? (val / denom) : 0.0;
+            sres(i) = (std::isfinite(val) && std::isfinite(denom) && denom > 0.0) ? (val / denom) : 0.0;
         }
         measurement.residuals_standardized = sres;
 
-        // Outlier handling: may modify x_prev/P_prev (ambiguity reset/R inflation/full reset)
-        bool is_residual_outlier = false;
-        bool is_complete_reset = false;
-        std::tie(is_residual_outlier, is_complete_reset) = validatePostFitResiduals(measurement, x_prev, P_prev);
+        // --- Outlier handling ---
+        auto [is_outlier, is_reset] = validatePostFitResiduals(measurement, x_prev, P_prev);
+        was_complete_reset_ = is_reset;
 
-        // Store reset status for caller to handle phase wind-up resets
-        was_complete_reset_ = is_complete_reset;
-
-        if (is_residual_outlier) {
+        if (is_outlier) {
             state_manager_.setStateVector(x_prev);
             state_manager_.setCovariance(P_prev);
 
-            if (is_complete_reset) {
-                klogger->info("{}Complete filter reset requested by residual check", epoch_prefix);
-            } else {
-                klogger->info("{}Outlier handled (ambiguity reset/R change). Measurement rebuild required.", epoch_prefix);
-            }
+            klogger->info("{}{}. Measurement rebuild required.",
+                epoch_prefix,
+                is_reset ? "Complete filter reset requested by residual check"
+                         : "Outlier handled (ambiguity reset/R change)");
 
             if (logger_) logger_->logStateVector(x_prev, "State After Outlier Handling", epoch_tag);
             if (logger_) logger_->logCovarianceMatrix(P_prev, "Covariance After Outlier Handling", epoch_tag);
 
-			return UpdateResult::NeedsMeasurementRebuild; // cancel the update and reconstruct measurements for fresh innovations
+            return UpdateResult::NeedsMeasurementRebuild;
         }
 
-        // Accept update
+        // --- Commit ---
         state_manager_.setStateVector(x);
         state_manager_.setCovariance(P);
         state_manager_.setStateEpochTime(measurement.time);
 
-        // Constraint: ZWD should not go negative (physically impossible)
-        // If it does, it indicates the ZHD model is over-predicting.
-        // We clamp to a small positive value and log a warning.
-		// Not needed because it is easy to evaluate the ZWD state from log files.
-		// This might also mask a deeper issue, so use with caution.
-        /*
-        const size_t tropo_idx = state_manager_.getTropoIndex();
-        if (tropo_idx < static_cast<size_t>(x.size()) && x(tropo_idx) < 0.0) {
-            klogger->warn(
-                "{}ZWD went negative ({:.4f} m) - clamping to 0.01 m.",
-                epoch_prefix, x(tropo_idx));
-            x(tropo_idx) = 0.01;  // Small positive value
-            state_manager_.setStateVector(x);
-        }
-        */
-        
-
-        // Log per-satellite residual summary for diagnostics
+        // Per-satellite residual summary
         {
-            const size_t n_res = std::min({ static_cast<size_t>(measurement.residuals.size()), 
-                                            measurement.satellite_ids.size(), 
+            const size_t n_res = std::min({ static_cast<size_t>(measurement.residuals.size()),
+                                            measurement.satellite_ids.size(),
                                             measurement.signal_types.size() });
             std::string res_summary;
             for (size_t i = 0; i < n_res; ++i) {
-                double res_i = measurement.residuals(static_cast<Eigen::Index>(i));
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%s:%+.2fm ", 
-                         measurement.satellite_ids[i].c_str(), res_i);
+                const double r = measurement.residuals(static_cast<Eigen::Index>(i));
+                res_summary += measurement.satellite_ids[i];
+                res_summary += ':';
+                // Use spdlog-compatible formatting style via a small buffer
+                char buf[24];
+                std::snprintf(buf, sizeof(buf), "%+.2fm ", r);
                 res_summary += buf;
             }
             klogger->debug("{}Post-fit residuals: {}", epoch_prefix, res_summary);
@@ -433,50 +374,175 @@ namespace GnssProcessor {
         return UpdateResult::Applied;
     }
 
-    /**
-     * @brief Validate post-fit residuals and apply corrective actions when necessary.
-     *
-     * This routine inspects standardized post-fit residuals stored in \c measurement
-     * and decides whether an outlier action is required:
-     *  - For a large phase residual (signal types starting with 'L') it attempts an ambiguity reset:
-     *    the ambiguity state is zeroed and its covariance reinitialized in the provided \p P/x.
-     *  - For a large code residual it inflates a persistent measurement variance scale using
-     *    \c StateManager::inflateMeasurementVarianceScale.
-     *  - If too many bad observations are accumulated (per configuration \c bad_meas_percent),
-     *    a complete filter reset is performed by zeroing \p P and reinitializing the core-state diagonal.
-     *
-     * The method logs diagnostic messages and returns a pair indicating whether an outlier
-     * was found and whether a complete reset was applied.
-     *
-     * IMPORTANT: The \p x and \p P parameters are pre-update copies of the state and covariance.
-     * They may be modified by this method to reflect ambiguity resets or the complete-reset
-     * covariance. The caller is expected to use these modified copies if an outlier action
-     * is requested (the caller will revert the StateManager to these values).
-     *
-     * @param measurement EpochMeasurement containing residuals, residual covariance and metadata.
-     *                    The method may update \c measurement.bad_residual_count.
-     * @param x Pre-update state vector copy; may be modified to reflect ambiguity reset.
-     * @param P Pre-update covariance matrix copy; may be modified to reflect ambiguity reset or full reset.
-     * @return std::pair<bool,bool> where
-     *         - first == true if any outlier action was taken,
-     *         - second == true if a complete filter reset was applied.
-     */
-    std::pair<bool, bool> KalmanFilter::validatePostFitResiduals(EpochMeasurement& measurement, Eigen::VectorXd& x, Eigen::MatrixXd& P) {
+    // ===================================================================
+    // Outlier handling helpers
+    // ===================================================================
+
+    void KalmanFilter::handlePhaseOutlier(const EpochMeasurement& measurement,
+        const std::string& outlier_sat, const std::string& outlier_sig,
+        Eigen::VectorXd& x, Eigen::MatrixXd& P,
+        const std::string& epoch_prefix) {
+
+        auto klogger = log_manager_.getLogger("kalman_filter");
+        const double amb_std = config_.getAmbiguityStd();
+        const auto [primary_sat, ref_sat] = splitBssdSatId(outlier_sat);
+
+        // Helper: reset a single ambiguity and track the satellite
+        auto resetOneAmbiguity = [&](const std::string& sat, const std::string& label) {
+            const std::string amb_key = sat + "_" + outlier_sig;
+            const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
+
+            klogger->info("{}Phase outlier action ({}): ambiguity reset for key={}, amb_idx={}",
+                epoch_prefix, label, amb_key, amb_idx);
+
+            if (amb_idx < 0) {
+                klogger->warn("{}Phase outlier but ambiguity key not found: {}", epoch_prefix, amb_key);
+                return;
+            }
+
+            const double prev_amb = x(amb_idx);
+            double seed_value = 0.0;
+            for (const auto& obs : measurement.observations) {
+                if (obs.satellite != sat) continue;
+                seed_value = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
+                break;
+            }
+
+            x(amb_idx) = seed_value;
+            P.row(amb_idx).setZero();
+            P.col(amb_idx).setZero();
+            P(amb_idx, amb_idx) = amb_std * amb_std;
+
+            klogger->info("{}Reinitialized ambiguity for {} {} (idx {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m",
+                epoch_prefix, sat, outlier_sig, amb_idx, prev_amb, seed_value, amb_std);
+
+            last_reset_satellites_.push_back(sat);
+        };
+
+        resetOneAmbiguity(primary_sat, "primary");
+
+        // BSSD: also reset the reference satellite's ambiguity
+        if (!ref_sat.empty())
+            resetOneAmbiguity(ref_sat, "BSSD-ref");
+    }
+
+    void KalmanFilter::handleCodeOutlier(EpochMeasurement& measurement,
+        const std::string& outlier_sat, const std::string& outlier_sig,
+        size_t max_idx, const std::string& epoch_prefix) {
+
+        auto klogger = log_manager_.getLogger("kalman_filter");
+        const auto [primary_sat, ref_sat] = splitBssdSatId(outlier_sat);
+
+        const std::string excl_key = primary_sat + "_" + outlier_sig;
+        measurement.excluded_measurements.insert(excl_key);
+
+        klogger->info("{}Code outlier action: excluding measurement {} {} (key={})",
+            epoch_prefix, outlier_sat, outlier_sig, excl_key);
+
+        // Remove the offending row from all measurement vectors/matrices
+        const auto idx = static_cast<Eigen::Index>(max_idx);
+        const Eigen::Index n = measurement.innovations.size();
+
+        if (n > 1) {
+            const Eigen::Index remaining = n - idx - 1;
+            if (remaining > 0) {
+                measurement.innovations.segment(idx, remaining) = measurement.innovations.segment(idx + 1, remaining);
+                measurement.R_v.segment(idx, remaining) = measurement.R_v.segment(idx + 1, remaining);
+                measurement.H.middleRows(idx, remaining) = measurement.H.middleRows(idx + 1, remaining);
+                measurement.residuals.segment(idx, remaining) = measurement.residuals.segment(idx + 1, remaining);
+                measurement.residuals_standardized.segment(idx, remaining) = measurement.residuals_standardized.segment(idx + 1, remaining);
+                for (Eigen::Index r = idx; r < n - 1; ++r)
+                    for (Eigen::Index c = idx; c < n - 1; ++c)
+                        measurement.residuals_covariance(r, c) = measurement.residuals_covariance(r + 1, c + 1);
+            }
+            measurement.innovations.conservativeResize(n - 1);
+            measurement.R_v.conservativeResize(n - 1);
+            measurement.H.conservativeResize(n - 1, measurement.H.cols());
+            measurement.residuals.conservativeResize(n - 1);
+            measurement.residuals_standardized.conservativeResize(n - 1);
+            measurement.residuals_covariance.conservativeResize(n - 1, n - 1);
+        } else {
+            measurement.innovations.resize(0);
+            measurement.R_v.resize(0);
+            measurement.H.resize(0, measurement.H.cols());
+            measurement.residuals.resize(0);
+            measurement.residuals_standardized.resize(0);
+            measurement.residuals_covariance.resize(0, 0);
+        }
+        measurement.satellite_ids.erase(measurement.satellite_ids.begin() + static_cast<ptrdiff_t>(max_idx));
+        measurement.signal_types.erase(measurement.signal_types.begin() + static_cast<ptrdiff_t>(max_idx));
+    }
+
+    void KalmanFilter::resetFilterCovariance(Eigen::MatrixXd& P, const std::string& epoch_prefix) {
+        auto klogger = log_manager_.getLogger("kalman_filter");
+        const auto& initial_std = config_.getInitialStd();
+        const double amb_std = config_.getAmbiguityStd();
+
+        P.setZero();
+
+        // Core states: position (3), clock (1), tropo ZWD (1)
+        const double pos_var   = initial_std.position >= 0 ? initial_std.position * initial_std.position : 10000.0;
+        const double clk_var   = initial_std.clock >= 0    ? initial_std.clock * initial_std.clock       : 90000.0;
+        const double tropo_var = initial_std.troposphere >= 0 ? initial_std.troposphere * initial_std.troposphere : 0.25;
+        P(0, 0) = pos_var;
+        P(1, 1) = pos_var;
+        P(2, 2) = pos_var;
+        P(3, 3) = clk_var;
+        P(4, 4) = tropo_var;
+
+        // Tropospheric gradients
+        if (config_.estimateTropoGradients()) {
+            const double grad_var = initial_std.tropo_gradient >= 0
+                ? initial_std.tropo_gradient * initial_std.tropo_gradient : 1e-6;
+            P(state_manager_.getTropoGradientNorthIndex(), state_manager_.getTropoGradientNorthIndex()) = grad_var;
+            P(state_manager_.getTropoGradientEastIndex(), state_manager_.getTropoGradientEastIndex()) = grad_var;
+        }
+
+        // Inter-system time offsets
+        const double isb_var = initial_std.system_time_offset >= 0
+            ? initial_std.system_time_offset * initial_std.system_time_offset : 10000.0;
+        for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
+            const size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
+            if (idx < static_cast<size_t>(P.rows()))
+                P(idx, idx) = isb_var;
+        }
+
+        // Per-satellite ionosphere states (PPP-RTK)
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+            const double iono_var = initial_std.ionosphere * initial_std.ionosphere;
+            for (const auto& [sat, idx] : state_manager_.getIonosphereStates()) {
+                if (idx < static_cast<size_t>(P.rows()))
+                    P(idx, idx) = iono_var;
+            }
+        }
+
+        // Ambiguities
+        for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
+            if (idx < static_cast<size_t>(P.rows()))
+                P(idx, idx) = amb_std * amb_std;
+        }
+
+        klogger->warn("{}Complete reset applied: state_size={}, ambiguity_std={:.3f} m",
+            epoch_prefix, static_cast<size_t>(P.rows()), amb_std);
+    }
+
+    // ===================================================================
+    // Post-fit residual validation
+    // ===================================================================
+
+    std::pair<bool, bool> KalmanFilter::validatePostFitResiduals(
+        EpochMeasurement& measurement, Eigen::VectorXd& x, Eigen::MatrixXd& P) {
+
         auto klogger = log_manager_.getLogger("kalman_filter");
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix = "[" + epoch_tag + "] ";
 
         const double threshold = config_.getResidualThreshold();
         const double bad_meas_percent = config_.getBadMeasPercent();
-        const double amb_std = config_.getAmbiguityStd();        // meters
-        const double code_noise_amplify = config_.getCodeNoiseAmplify(); // m^2
 
-        bool is_outlier_found = false;
-        bool is_complete_reset = false;
-
-        Eigen::VectorXd res = measurement.residuals;
-        Eigen::MatrixXd vres = measurement.residuals_covariance;
-        Eigen::VectorXd sres = measurement.residuals_standardized;
+        const Eigen::VectorXd& res  = measurement.residuals;
+        const Eigen::MatrixXd& vres = measurement.residuals_covariance;
+        const Eigen::VectorXd& sres = measurement.residuals_standardized;
 
         const size_t num_obs = static_cast<size_t>(res.size());
         if (num_obs == 0) {
@@ -486,197 +552,90 @@ namespace GnssProcessor {
 
         const size_t meta_n = std::min({ num_obs, measurement.satellite_ids.size(), measurement.signal_types.size() });
 
-        klogger->debug(
-            "{}Post-fit residual check: n_obs={}, threshold={:.3f}, bad_count={}, bad_percent={:.3f}",
+        // --- Per-measurement diagnostic log ---
+        klogger->debug("{}Post-fit residual check: n_obs={}, threshold={:.3f}, bad_count={}, bad_percent={:.3f}",
             epoch_prefix, num_obs, threshold, measurement.bad_residual_count, bad_meas_percent);
 
         for (size_t i = 0; i < meta_n; ++i) {
+            const auto ei = static_cast<Eigen::Index>(i);
             const double var_i = (i < static_cast<size_t>(vres.rows()) && i < static_cast<size_t>(vres.cols()))
-                ? vres(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(i))
-                : std::numeric_limits<double>::quiet_NaN();
+                ? vres(ei, ei) : std::numeric_limits<double>::quiet_NaN();
             const double sigma_i = std::sqrt(std::max(var_i, 0.0));
-            const double s_i = sres(static_cast<Eigen::Index>(i));
+            const double s_i = sres(ei);
             const double s_abs = std::abs(s_i);
-            const bool is_out = std::isfinite(s_abs) && (s_abs > threshold);
-
             klogger->debug(
                 "{}  res[{:02d}] {} {}: v={:+.4f} m, sigma={:.4f} m, s={:+.3f}, |s|={:.3f}, outlier={}",
-                epoch_prefix,
-                static_cast<int>(i),
-                measurement.satellite_ids[i],
-                measurement.signal_types[i],
-                res(static_cast<Eigen::Index>(i)),
-                sigma_i,
-                s_i,
-                s_abs,
-                is_out ? "YES" : "no");
+                epoch_prefix, static_cast<int>(i),
+                measurement.satellite_ids[i], measurement.signal_types[i],
+                res(ei), sigma_i, s_i, s_abs,
+                (std::isfinite(s_abs) && s_abs > threshold) ? "YES" : "no");
         }
 
         if (meta_n != num_obs) {
-            klogger->warn(
-                "{}Residual metadata size mismatch: res={}, sat_ids={}, sig_types={}. Logged {} entries.",
-                epoch_prefix,
-                num_obs, measurement.satellite_ids.size(), measurement.signal_types.size(), meta_n);
+            klogger->warn("{}Residual metadata size mismatch: res={}, sat_ids={}, sig_types={}. Logged {} entries.",
+                epoch_prefix, num_obs, measurement.satellite_ids.size(), measurement.signal_types.size(), meta_n);
         }
 
-        Eigen::VectorXd sres_abs = sres.cwiseAbs();
+        // --- Find worst residual ---
+        const Eigen::VectorXd sres_abs = sres.cwiseAbs();
         size_t max_idx = 0;
         const double max_sres = sres_abs.maxCoeff(&max_idx);
 
-        size_t num_phase = 0;
-        for (size_t i = 0; i < num_obs; ++i) {
-            if (!measurement.signal_types[i].empty() && measurement.signal_types[i][0] == 'L') ++num_phase;
-        }
-
         size_t num_over = 0;
-        for (Eigen::Index i = 0; i < sres.size(); ++i) {
-            const double s_abs = std::abs(sres(i));
-            if (std::isfinite(s_abs) && s_abs > threshold) ++num_over;
-        }
+        for (Eigen::Index i = 0; i < sres.size(); ++i)
+            if (std::isfinite(std::abs(sres(i))) && std::abs(sres(i)) > threshold)
+                ++num_over;
 
-        klogger->debug(
-            "{}Residual summary: max|sres|={:.3f} at idx={}, over_threshold={}/{}, num_phase={}",
-            epoch_prefix,
-            max_sres, max_idx, num_over, num_obs, num_phase);
+        klogger->debug("{}Residual summary: max|sres|={:.3f} at idx={}, over_threshold={}/{}",
+            epoch_prefix, max_sres, max_idx, num_over, num_obs);
+
+        // --- Dispatch outlier handling ---
+        bool is_outlier_found = false;
+        bool is_complete_reset = false;
 
         if (max_sres > threshold) {
-            const double sigma_max = std::sqrt(std::max(vres(static_cast<Eigen::Index>(max_idx), static_cast<Eigen::Index>(max_idx)), 0.0));
+            const std::string outlier_sat = measurement.satellite_ids[max_idx];
+            const std::string outlier_sig = measurement.signal_types[max_idx];
+            const double sigma_max = std::sqrt(std::max(
+                vres(static_cast<Eigen::Index>(max_idx), static_cast<Eigen::Index>(max_idx)), 0.0));
 
             klogger->warn(
-                "{}Maximum standardized residual (magnitude) for {} {}: |s|={:.3f} (s={:+.3f}, residual {:.3f} m, sigma {:.3f} m, idx {})",
-                epoch_prefix,
-                measurement.satellite_ids[max_idx], measurement.signal_types[max_idx],
-                max_sres, sres(static_cast<Eigen::Index>(max_idx)), res(static_cast<Eigen::Index>(max_idx)), sigma_max, max_idx);
+                "{}Max standardized residual for {} {}: |s|={:.3f} (s={:+.3f}, residual {:.3f} m, sigma {:.3f} m, idx {})",
+                epoch_prefix, outlier_sat, outlier_sig,
+                max_sres, sres(static_cast<Eigen::Index>(max_idx)),
+                res(static_cast<Eigen::Index>(max_idx)), sigma_max, max_idx);
 
-            if (!measurement.signal_types[max_idx].empty() && measurement.signal_types[max_idx][0] == 'L') {
-                const std::string amb_key = measurement.satellite_ids[max_idx] + "_" + measurement.signal_types[max_idx];
-                const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
-
-                klogger->info(
-                    "{}Phase outlier action: ambiguity reset requested for key={}, amb_idx={}", epoch_prefix, amb_key, amb_idx);
-
-                if (amb_idx >= 0) {
-                    const double prev_amb = x(amb_idx);
-
-                    // Re-seed the ambiguity from the observation so the next pass
-                    // does not see a huge innovation.  Use the pre-update core
-                    // states (clock, tropo) that are in x (the pre-update copy).
-                    double seed_value = 0.0;
-                    {
-                        const auto& ref_type_str = measurement.signal_types[max_idx];
-                        for (const auto& obs : measurement.observations) {
-                            if (obs.satellite != measurement.satellite_ids[max_idx]) continue;
-                            seed_value = state_manager_.computeAmbiguitySeed(obs, ref_type_str, x);
-                            break;
-                        }
-                    }
-
-                    x(amb_idx) = seed_value;
-
-                    P.row(amb_idx).setZero();
-                    P.col(amb_idx).setZero();
-                    P(amb_idx, amb_idx) = amb_std * amb_std;
-
-                    klogger->info(
-                        "{}Reinitialized ambiguity for {} {} (index {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m",
-                        epoch_prefix,
-                        measurement.satellite_ids[max_idx], measurement.signal_types[max_idx], amb_idx, prev_amb, seed_value, amb_std);
-                    
-                    // Track reset satellite for phase wind-up reset by caller
-                    last_reset_satellites_.push_back(measurement.satellite_ids[max_idx]);
-                } else {
-                    klogger->warn("{}Phase outlier but ambiguity key not found: {}", epoch_prefix, amb_key);
-                }
+            if (!outlier_sig.empty() && outlier_sig[0] == 'L') {
+                handlePhaseOutlier(measurement, outlier_sat, outlier_sig, x, P, epoch_prefix);
             } else {
-                const double base_var = measurement.R_v(static_cast<Eigen::Index>(max_idx));
-
-                measurement.R_v(static_cast<Eigen::Index>(max_idx)) = code_noise_amplify; // TODO: Check if need to reconstruct full R-matrix?
-
-                klogger->info(
-                    "{}Code outlier action: assigned variance {} {}: base_var={:.3f} m^2, target_var={:.3f} m^2",
-                    epoch_prefix,
-                    measurement.satellite_ids[max_idx],
-                    measurement.signal_types[max_idx],
-                    base_var,
-                    code_noise_amplify);
+                handleCodeOutlier(measurement, outlier_sat, outlier_sig, max_idx, epoch_prefix);
             }
 
             is_outlier_found = true;
             measurement.bad_residual_count++;
 
-            klogger->warn(
-                "{}Outlier flagged: idx={}, sat={}, sig={}, max_sres={:.3f} > threshold={:.3f}; bad_residual_count={}",
-                epoch_prefix,
-                max_idx,
-                measurement.satellite_ids[max_idx],
-                measurement.signal_types[max_idx],
-                max_sres,
-                threshold,
-                measurement.bad_residual_count);
+            klogger->warn("{}Outlier flagged: idx={}, sat={}, sig={}, max_sres={:.3f} > threshold={:.3f}; bad_residual_count={}",
+                epoch_prefix, max_idx, outlier_sat, outlier_sig,
+                max_sres, threshold, measurement.bad_residual_count);
         } else {
-            klogger->debug(
-                "{}No outliers: max_sres={:.3f} <= threshold={:.3f}", epoch_prefix, max_sres, threshold);
+            klogger->debug("{}No outliers: max_sres={:.3f} <= threshold={:.3f}",
+                epoch_prefix, max_sres, threshold);
         }
 
+        // --- Complete reset if too many outliers accumulated ---
         if (measurement.bad_residual_count > static_cast<size_t>(bad_meas_percent * num_obs)) {
-            klogger->warn(
-                "{}Resetting filter: too many outliers ({}/{}), limit={:.3f}*n={}",
-                epoch_prefix,
-                measurement.bad_residual_count,
-                num_obs,
-                bad_meas_percent,
-                static_cast<size_t>(bad_meas_percent * num_obs));
+            klogger->warn("{}Resetting filter: too many outliers ({}/{}), limit={:.3f}*n={}",
+                epoch_prefix, measurement.bad_residual_count, num_obs,
+                bad_meas_percent, static_cast<size_t>(bad_meas_percent * num_obs));
 
-            P.setZero();
-            const size_t base_core_size = [&]() {
-                size_t s = config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6;
-                if (config_.estimateTropoGradients()) s += 2;
-                return s;
-            }();
-            const size_t num_time_offsets = state_manager_.getNumSystemTimeOffsets();
-            const size_t core_size = base_core_size + num_time_offsets;
-
-            // Reset core-state covariance diagonals
-            // Positions (3), clock (1), tropo ZWD (1)
-            P.diagonal().head(5) << 10000.0, 10000.0, 10000.0,
-                90000.0,
-                0.25;
-
-            // Iono (PPP-RTK)
-            if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
-                P(5, 5) = 25.0;
-            }
-
-            // Gradient states
-            if (config_.estimateTropoGradients()) {
-                P(state_manager_.getTropoGradientNorthIndex(), state_manager_.getTropoGradientNorthIndex()) = 1e-6;
-                P(state_manager_.getTropoGradientEastIndex(), state_manager_.getTropoGradientEastIndex()) = 1e-6;
-            }
-            
-            // Reset time offset covariances
-            for (const auto& sys : state_manager_.getSystemsWithTimeOffsets()) {
-                size_t idx = state_manager_.getSystemTimeOffsetIndex(sys);
-                if (idx < static_cast<size_t>(P.rows())) {
-					P(idx, idx) = 10000.0; // reset to large variance, TODO: assign from config
-                }
-            }
-
-            const size_t state_size = static_cast<size_t>(P.rows());
-            if (state_size > core_size) {
-                P.diagonal().tail(state_size - core_size).setConstant(amb_std * amb_std);
-            }
+            resetFilterCovariance(P, epoch_prefix);
 
             is_outlier_found = true;
             is_complete_reset = true;
             measurement.bad_residual_count = 0;
-
-            klogger->warn(
-                "{}Complete reset applied: P core_size={}, state_size={}, ambiguity_std={:.3f} m",
-                epoch_prefix, core_size, state_size, amb_std);
         }
 
-        klogger->debug(
-            "{}Post-fit residual check result: outlier_found={}, complete_reset={}",
+        klogger->debug("{}Post-fit residual check result: outlier_found={}, complete_reset={}",
             epoch_prefix,
             is_outlier_found ? "true" : "false",
             is_complete_reset ? "true" : "false");

@@ -1,3 +1,5 @@
+#pragma
+
 /**
  * @file Troposphere.hpp
  * @brief Troposphere model and utility functions for tropospheric delays.
@@ -5,9 +7,6 @@
  * Provides routines to compute tropospheric mapping functions and the
  * Saastamoinen zenith hydrostatic delay (ZHD) used by the GNSS processor.
  */
-
-#ifndef TROPOSPHERE_HPP
-#define TROPOSPHERE_HPP
 
 #include "LogManager.hpp"
 #include "GnssConfig.hpp"
@@ -90,5 +89,3 @@ namespace GnssProcessor {
     };
 
 }
-
-#endif // TROPOSPHERE_HPP

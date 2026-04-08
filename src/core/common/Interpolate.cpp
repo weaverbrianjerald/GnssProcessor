@@ -630,4 +630,67 @@ namespace GnssProcessor {
         return deriv;
     }
 
+    void Interpolate::nevilleInterpDeriv(const std::vector<double>& x,
+        const std::vector<double>& y,
+        double xq,
+        double& val,
+        double& deriv) {
+        const size_t n = x.size();
+        val = 0.0;
+        deriv = 0.0;
+        if (n == 0 || y.size() != n) return;
+        if (n == 1) { val = y[0]; return; }
+
+        // Center the x-values around xq to avoid catastrophic cancellation.
+        //
+        // When x-values are raw GPS continuous seconds (~1.36e8), computing
+        // (xq - x[i]) subtracts two large numbers to get a small difference,
+        // losing ~8 digits of precision. By shifting s[i] = x[i] - xq, all
+        // differences become O(node_spacing) and the subtraction is exact to
+        // full double precision.
+        //
+        // The polynomial value is translation-invariant: p(xq) evaluated at
+        // nodes {x[i]} equals p(0) evaluated at nodes {x[i] - xq}.
+        // The derivative is also invariant: dp/dx = dp/ds since s = x - xq
+        // is a unit-Jacobian shift.
+        std::vector<double> s(n);
+        for (size_t i = 0; i < n; ++i) {
+            s[i] = x[i] - xq;
+        }
+        const double sq = 0.0; // xq in shifted coordinates
+
+        // P[i] holds the current tableau column for value interpolation.
+        // D[i] holds the current tableau column for derivative interpolation.
+        // Neville recurrence for value:
+        //   P_{i,j} = ((sq - s[i+j]) * P_{i,j-1} - (sq - s[i]) * P_{i+1,j-1})
+        //             / (s[i] - s[i+j])
+        // Derivative recurrence (differentiate the above w.r.t. sq):
+        //   D_{i,j} = ((sq - s[i+j]) * D_{i,j-1} + P_{i,j-1}
+        //             - (sq - s[i]) * D_{i+1,j-1} - P_{i+1,j-1})
+        //             / (s[i] - s[i+j])
+        std::vector<double> P(y.begin(), y.end());
+        std::vector<double> D(n, 0.0); // derivative of degree-0 polynomial = 0
+
+        for (size_t j = 1; j < n; ++j) {
+            for (size_t i = 0; i + j < n; ++i) {
+                double denom = s[i] - s[i + j];
+                if (std::abs(denom) < 1e-30) {
+                    P[i] = 0.0;
+                    D[i] = 0.0;
+                    continue;
+                }
+                double di_left  = sq - s[i + j];  // == -s[i+j]
+                double di_right = sq - s[i];       // == -s[i]
+                double new_D = (di_left * D[i] + P[i]
+                              - di_right * D[i + 1] - P[i + 1]) / denom;
+                double new_P = (di_left * P[i] - di_right * P[i + 1]) / denom;
+                P[i] = new_P;
+                D[i] = new_D;
+            }
+        }
+
+        val = P[0];
+        deriv = D[0];
+    }
+
 } // namespace GnssProcessor

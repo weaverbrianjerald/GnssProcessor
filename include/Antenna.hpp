@@ -1,5 +1,4 @@
-#ifndef ANTENNA_HPP
-#define ANTENNA_HPP
+#pragma once
 
 #include "LogManager.hpp"
 #include "PppTypes.hpp"
@@ -166,5 +165,3 @@ namespace GnssProcessor {
 	};
 
 }
-
-#endif

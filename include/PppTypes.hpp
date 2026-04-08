@@ -2,6 +2,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <Eigen/Dense>
@@ -63,6 +64,7 @@ namespace GnssProcessor {
         double tropo_gradient_east{ 0.0 };           /**< Tropospheric east gradient (meters) */
         double phase_clock_offset{ 0.0 };            /**< Receiver phase clock offset from code clock (meters) */
         double ionosphere_zenith_delay;              /**< Ionospheric zenith delay (meters), if modeled as a single parameter */
+        std::map<std::string, double> slant_ionosphere; /**< Per-satellite slant ionosphere delays (meters), keyed by satellite ID (e.g. "G01") */
         std::map<std::string, double> system_time_offsets; /**< Inter-system time biases (meters) keyed by system name */
         Eigen::MatrixXd covariance;                  /**< State covariance matrix */
         std::map<std::string, double> ambiguities;   /**< Carrier-phase ambiguity estimates keyed by satellite-signal */
@@ -79,6 +81,7 @@ namespace GnssProcessor {
         Eigen::VectorXd innovations;                 /**< Innovation vector (observed - predicted) */
         Eigen::MatrixXd H;                           /**< Design matrix (partial derivatives of observations w.r.t states) */
         Eigen::VectorXd R_v;                         /**< Diagonal of measurement noise variances (or packed vector form) */
+        Eigen::MatrixXd R_full;                      /**< Full measurement noise covariance (set by BSSD; empty when unused) */
         GnssTime time;                               /**< Epoch time for these measurements */
         std::vector<PppObservation> observations;    /**< Per-satellite observations at this epoch */
         std::vector<std::string> satellite_ids;      /**< Satellite identifiers ordered to match vectors/matrices */
@@ -87,6 +90,7 @@ namespace GnssProcessor {
         Eigen::MatrixXd residuals_covariance;        /**< Covariance of residuals */
         Eigen::VectorXd residuals_standardized;      /**< Standardized (normalized) residuals for outlier detection */
         size_t bad_residual_count;                   /**< Count of residuals flagged as bad/outliers */
+        std::set<std::string> excluded_measurements; /**< Set of "satellite_signaltype" keys excluded as code outliers (persists across rebuild passes) */
     };
 
     /**

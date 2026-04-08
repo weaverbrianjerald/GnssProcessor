@@ -34,6 +34,7 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
 
     const auto state_path = log_dir / "state_trace.csv";
     const auto amb_path = log_dir / "ambiguity_trace.csv";
+    const auto iono_path = log_dir / "ionosphere_trace.csv";
     const auto residual_path = log_dir / "measurement_residuals.csv";
     const auto wls_path = log_dir / "wls_trace.csv";
 
@@ -46,6 +47,12 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
     ambiguity_trace_.open(amb_path, std::ios::out | std::ios::trunc);
     if (!ambiguity_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open ambiguity trace file '{}'", amb_path.string()); }
+        catch (...) {}
+    }
+
+    ionosphere_trace_.open(iono_path, std::ios::out | std::ios::trunc);
+    if (!ionosphere_trace_.is_open()) {
+        try { log_manager_.getLogger("main_log")->warn("Could not open ionosphere trace file '{}'", iono_path.string()); }
         catch (...) {}
     }
 
@@ -65,13 +72,17 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
     // Dynamic time-offset columns are appended on the first call to logState().
     if (state_trace_.is_open()) {
         state_trace_ << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m,clock_m,clock_std_m,tropo_m,tropo_std_m";
-        if (is_ppp_rtk_) state_trace_ << ",iono_m,iono_std_m";
+        if (is_ppp_rtk_) state_trace_ << ",iono_mean_m,iono_count";
         // Phase clock and gradient columns are appended dynamically in logState()
         // Do NOT write newline here - dynamic columns will be appended in logState()
     }
 
     if (ambiguity_trace_.is_open()) {
         ambiguity_trace_ << "week,tow_s,key,value_m,std_m\n";
+    }
+
+    if (ionosphere_trace_.is_open()) {
+        ionosphere_trace_ << "week,tow_s,satellite,iono_m,std_m,elevation_deg\n";
     }
 
     if (residual_trace_.is_open()) {
@@ -84,7 +95,7 @@ TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& l
     }
 
     // Consider the logger initialized if at least one file is writable.
-    initialized_ = state_trace_.is_open() || ambiguity_trace_.is_open() || residual_trace_.is_open() || wls_trace_.is_open();
+    initialized_ = state_trace_.is_open() || ambiguity_trace_.is_open() || ionosphere_trace_.is_open() || residual_trace_.is_open() || wls_trace_.is_open();
 
     if (!initialized_) {
         try { log_manager_.getLogger("main_log")->error("TraceLogger failed to open any trace files in '{}'", log_dir.string()); }
@@ -134,9 +145,9 @@ auto std_at = [&cov](size_t idx) -> double {
     const bool has_pos = sv.size() >= pos_idx + 3;
     const bool has_clk = clk_idx < static_cast<size_t>(sv.size());
     const bool has_trop = trop_idx < static_cast<size_t>(sv.size());
-    const bool has_iono = is_ppp_rtk_ && state_manager.getIonoIndex() < static_cast<size_t>(sv.size());
+    const bool has_iono = is_ppp_rtk_ && !state_manager.getIonosphereStates().empty();
 
-    if (!(has_pos && has_clk && has_trop && (!is_ppp_rtk_ || has_iono))) {
+    if (!(has_pos && has_clk && has_trop)) {
         try { log_manager_.getLogger("main_log")->warn(
             "[{} {:.3f}] Skipped state trace row: state size {} insufficient (pos_idx={}, clk_idx={}, trop_idx={})",
             time.week, time.tow, sv.size(), pos_idx, clk_idx, trop_idx); }
@@ -158,10 +169,18 @@ auto std_at = [&cov](size_t idx) -> double {
     state_trace_ << sv(static_cast<Eigen::Index>(trop_idx)) << ","
                  << std_at(trop_idx);
     if (is_ppp_rtk_) {
-        const size_t iono_idx = state_manager.getIonoIndex();
+        // Log the number of per-satellite iono states and mean value
+        const auto& iono_states = state_manager.getIonosphereStates();
+        double iono_mean = 0.0;
+        for (const auto& [sat, idx] : iono_states) {
+            if (idx < static_cast<size_t>(sv.size())) {
+                iono_mean += sv(static_cast<Eigen::Index>(idx));
+            }
+        }
+        if (!iono_states.empty()) iono_mean /= static_cast<double>(iono_states.size());
         state_trace_ << ","
-                     << sv(static_cast<Eigen::Index>(iono_idx)) << ","
-                     << std_at(iono_idx);
+                     << iono_mean << ","
+                     << static_cast<int>(iono_states.size());
     }
 
     // Phase clock offset state
@@ -212,6 +231,7 @@ void TraceLogger::logAmbiguities(const GnssTime& time, const StateManager& state
     if (amb_map.empty()) return;
 
     const Eigen::VectorXd sv = state_manager.getStateVector();
+
     for (const auto& [key, idx] : amb_map) {
         if (idx >= static_cast<size_t>(sv.size())) continue;
         const double val = sv(static_cast<Eigen::Index>(idx));
@@ -220,6 +240,40 @@ void TraceLogger::logAmbiguities(const GnssTime& time, const StateManager& state
                          << time.week << "," << time.tow << ",";
         ambiguity_trace_ << key << ",";
         ambiguity_trace_ << std::setprecision(6) << val << "," << std << "\n";
+    }
+}
+
+void TraceLogger::logIonosphere(const GnssTime& time, const StateManager& state_manager) const {
+    if (!ionosphere_trace_.is_open()) return;
+
+    const auto& iono_map = state_manager.getIonosphereStates();
+    if (iono_map.empty()) return;
+
+    const Eigen::VectorXd sv = state_manager.getStateVector();
+    const Eigen::MatrixXd cov = state_manager.getCovariance();
+    const auto& elev_map = state_manager.getIonosphereElevations();
+
+    auto std_at = [&cov](size_t idx) -> double {
+        if (idx < static_cast<size_t>(cov.rows()) && idx < static_cast<size_t>(cov.cols())) {
+            const double var = cov(static_cast<Eigen::Index>(idx), static_cast<Eigen::Index>(idx));
+            return std::sqrt(std::max(0.0, var));
+        }
+        return std::numeric_limits<double>::quiet_NaN();
+    };
+
+    for (const auto& [sat, idx] : iono_map) {
+        if (idx >= static_cast<size_t>(sv.size())) continue;
+        const double val = sv(static_cast<Eigen::Index>(idx));
+        const double std = std_at(idx);
+        double elev = 0.0;
+        auto el_it = elev_map.find(sat);
+        if (el_it != elev_map.end()) elev = el_it->second;
+
+        ionosphere_trace_ << std::fixed << std::setprecision(3)
+                          << time.week << "," << time.tow << ","
+                          << sat << ","
+                          << std::setprecision(6) << val << "," << std << ","
+                          << std::setprecision(2) << elev << "\n";
     }
 }
 

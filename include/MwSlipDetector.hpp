@@ -1,6 +1,4 @@
 #pragma once
-#ifndef MW_SLIP_DETECTOR_HPP
-#define MW_SLIP_DETECTOR_HPP
 
 /**
  * @file MwSlipDetector.hpp
@@ -223,15 +221,41 @@ namespace GnssProcessor {
             const std::string& code2) const;
 
         /**
-         * @brief Check whether the observation reports any loss-of-phase-lock indicators.
+         * @brief A dual-frequency pair extracted from uncombined observations.
          *
-         * Returns true when any of the observables in @p obs have non-zero LLI
-         * flags indicating potential cycle slips or loss of lock.
+         * Groups the phase and code signal identifiers for two frequencies
+         * so that an MW combination can be formed.
+         */
+        struct UncombinedPair {
+            std::string phase1;  /**< Phase signal on freq 1 (e.g. "L1C"). */
+            std::string phase2;  /**< Phase signal on freq 2 (e.g. "L2W"). */
+            std::string code1;   /**< Code  signal on freq 1 (e.g. "C1W"). */
+            std::string code2;   /**< Code  signal on freq 2 (e.g. "C2W"). */
+        };
+
+        /**
+         * @brief Collect viable dual-frequency MW pairs from uncombined observations.
          *
-         * @param obs Observation to inspect.
-         * @return true If any phase loss-of-lock indicators are present.
-         * @return false Otherwise.
-        */
+         * Groups individual code and phase signals by RINEX band number (the
+         * digit after the C/L prefix, e.g. "1" from "L1C"), then forms all
+         * possible dual-frequency pairs that have both a code and a phase
+         * observable on each band.
+         *
+         * @param obs Observation whose @c observed map contains individual signals.
+         * @return std::vector<UncombinedPair> Viable MW pairs (may be empty).
+         */
+        std::vector<UncombinedPair> collectUncombinedPairs(const PppObservation& obs) const;
+
+        /**
+          * @brief Check whether the observation reports any loss-of-phase-lock indicators.
+          *
+          * Returns true when any of the observables in @p obs have non-zero LLI
+          * flags indicating potential cycle slips or loss of lock.
+          *
+          * @param obs Observation to inspect.
+          * @return true If any phase loss-of-lock indicators are present.
+          * @return false Otherwise.
+         */
         bool hasAnyPhaseLockLoss(const PppObservation& obs) const;
 
         /**
@@ -267,5 +291,3 @@ namespace GnssProcessor {
         };
 
 } // namespace GnssProcessor
-
-#endif // MW_SLIP_DETECTOR_HPP

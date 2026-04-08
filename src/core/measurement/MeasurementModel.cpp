@@ -1,13 +1,18 @@
 /**
+/**
  * @file MeasurementModel.cpp
  * @brief Implements measurement vector, design matrix and covariance assembly for PPP Kalman updates.
  *
  * The implementation converts a set of PPP observations and the current Kalman state
- * into an EpochMeasurement suitable for Kalman filter processing. Responsibilities:
- *  - Ensure ambiguity states exist for phase iono-free combinations.
- *  - Compute LOS-based Jacobian rows using the current receiver position.
- *  - Assemble innovations, H matrix and per-measurement variances R_v.
- *  - Perform basic validation and logging for invalid/low-quality data.
+ * into an EpochMeasurement suitable for Kalman filter processing.
+ *
+ * The code is organized into focused helpers:
+ *  - systemToIsbName()        — System enum ? ISB name (eliminates duplicate switch blocks).
+ *  - computeRawResidual()     — observed ? modeled ? clk ? tropo ? ISB ? grad (shared formula).
+ *  - ensureRequiredStates()   — ambiguity / iono / code-bias creation and pruning pre-pass.
+ *  - isUsableMeasurement()    — per-measurement filtering predicate.
+ *  - buildJacobianRow()       — single-row Jacobian and predicted-observable assembly.
+ *  - computeMeasurementUpdate — top-level orchestrator (kept short).
  */
 
 #include "PppModel.hpp"
@@ -21,187 +26,404 @@
 
 namespace GnssProcessor {
 
-    /**
-     * @brief Construct a MeasurementModel.
-     *
-     * Stores references to the provided managers and utilities. Emits an informational
-     * log with configured signal priorities and processing mode.
-     *
-     * @param state_manager Non-owning reference to the StateManager for state access and ambiguity bookkeeping.
-     * @param ppp_model Const reference to the PppModel used to obtain modeled observables.
-     * @param config Const reference to the global GnssConfig providing processing parameters.
-     * @param log_manager Non-owning reference to the LogManager used for logging.
-     */
+    // ===================================================================
+    // Helpers (file-scope)
+    // ===================================================================
+
+    namespace {
+
+    /// Human-readable mode label used in log messages.
+    const char* modeLabel(const GnssConfig& cfg) {
+        return cfg.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK";
+    }
+
+    /// Compute median of a mutable vector (reorders elements in-place).
+    double computeMedian(std::vector<double>& values) {
+        if (values.empty()) return 0.0;
+        const size_t n = values.size();
+        const size_t mid = n / 2;
+        std::nth_element(values.begin(), values.begin() + mid, values.end());
+        if (n % 2 == 0) {
+            double upper = values[mid];
+            std::nth_element(values.begin(), values.begin() + mid - 1, values.end());
+            return (values[mid - 1] + upper) / 2.0;
+        }
+        return values[mid];
+    }
+
+    } // anonymous namespace
+
+    // ===================================================================
+    // Construction
+    // ===================================================================
+
     MeasurementModel::MeasurementModel(StateManager& state_manager, const PppModel& ppp_model,
         const GnssConfig& config, LogManager& log_manager)
         : state_manager_(state_manager), ppp_model_(ppp_model), config_(config), ppp_utils_(log_manager), log_manager_(log_manager) {
         log_manager_.getLogger("measurement_model")->info("MeasurementModel initialized with {} signal priority sets, mode={}",
-            config_.getSignalPriorities().size(),
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+            config_.getSignalPriorities().size(), modeLabel(config_));
     }
 
-    /**
-     * @brief Build an epoch measurement update from parsed PPP observations.
-     *
-     * This method is read-only with respect to the Kalman state except for ensuring
-     * ambiguity entries exist in the StateManager when required (it will call
-     * StateManager::addAmbiguity). The routine:
-     *  - Pre-pass observations to create ambiguity states for ionosphere-free phase combos.
-     *  - Validate geometry/observations and apply elevation mask and other filters.
-     *  - Compute line-of-sight (LOS) using the current receiver position from the state.
-     *  - Assemble the innovation vector (observed - predicted), Jacobian H and per-measurement variances R_v.
-     *
-     * Notes:
-     *  - Only GPS measurements with ionosphere-free dual-frequency combinations are processed.
-     *  - Ambiguities are expected to be stored in the StateManager keyed as "<sat>_<ref_type>".
-     *
-     * @param observations Vector of PPP observations for the epoch (may be empty).
-     * @param current_state Current Kalman state vector (read-only); the implementation will also retrieve the authoritative state vector
-     *                      from StateManager where needed (post ambiguity additions).
-     * @return Populated EpochMeasurement containing innovations, H, R_v and ancillary vectors. On error or no usable observations,
-     *         an EpochMeasurement with empty or partially filled fields is returned; callers should call validateMeasurementUpdate()
-     *         before using the result for a Kalman update.
-     *
-     * @throws std::exception Propagates only if an unexpected runtime error occurs during assembly. Individual observation errors are caught
-     *                       and logged; failing observations are skipped.
-     */
-    EpochMeasurement MeasurementModel::computeMeasurementUpdate(const std::vector<PppObservation>& observations,
-        const Eigen::VectorXd& current_state) {
-        EpochMeasurement update;
-        update.time = observations.empty() ? GnssTime{ 0, 0.0 } : observations[0].time;
-        update.observations = observations;
-        const std::string epoch_tag = TimeUtils::formatGnssTime(update.time);
-        const std::string epoch_prefix = "[" + epoch_tag + "] ";
+    // ===================================================================
+    // Utility helpers
+    // ===================================================================
 
-        if (observations.empty()) {
-            log_manager_.getLogger("measurement_model")->error("{}No observations provided for measurement update, mode={}",
-                epoch_prefix,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-            return update;
+    std::string MeasurementModel::systemToIsbName(System system) {
+        switch (system) {
+        case System::GPS:     return "";
+        case System::Galileo: return "Galileo";
+        case System::GLONASS: return "GLONASS";
+        case System::BeiDou:  return "BeiDou";
+        case System::QZSS:    return "QZSS";
+        case System::SBAS:    return "SBAS";
+        default:              return "";
+        }
+    }
+
+    double MeasurementModel::computeRawResidual(const PppObservation& obs,
+        const std::string& ref_type,
+        const Eigen::VectorXd& x) const {
+        const double observed = obs.observed.at(ref_type);
+        const double modeled  = obs.modeled.at(ref_type);
+        const double rx_clk   = x(state_manager_.getClockIndex());
+        const double zwd      = x(state_manager_.getTropoIndex());
+        const double tropo_wet = obs.mf_w * zwd;
+
+        // ISB contribution
+        double isb = 0.0;
+        const std::string sys_name = systemToIsbName(obs.system);
+        if (!sys_name.empty()) {
+            const size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(sys_name);
+            if (isb_idx < static_cast<size_t>(x.size()))
+                isb = x(static_cast<Eigen::Index>(isb_idx));
         }
 
-        // === First-epoch ISB initialization ===
-        // If this is the first epoch and we have non-GPS systems, estimate initial ISB
-        // from code observations to avoid massive innovations that would be flagged as outliers.
-        if (!isb_initialized_) {
-            initializeInterSystemBiases(observations, epoch_prefix);
-            isb_initialized_ = true;
+        // Tropospheric gradient contribution
+        double tropo_grad = 0.0;
+        if (state_manager_.hasTropoGradients()) {
+            const double el_rad = obs.elevation * Constants::PI / 180.0;
+            const double az_rad = obs.azimuth * Constants::PI / 180.0;
+            const double sin_el = std::sin(el_rad);
+            const double tan_el = std::tan(el_rad);
+            const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
+            const double gn = x(static_cast<Eigen::Index>(state_manager_.getTropoGradientNorthIndex()));
+            const double ge = x(static_cast<Eigen::Index>(state_manager_.getTropoGradientEastIndex()));
+            tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
         }
 
-        // === First-epoch phase clock offset initialization ===
-        // Seed the phase clock from the code-phase residual difference so the filter
-        // does not start at 0.0 and have to absorb the full code-phase bias.
-        if (!phase_clock_initialized_ && config_.estimatePhaseClock()) {
-            initializePhaseClockOffset(observations, epoch_prefix);
-            phase_clock_initialized_ = true;
-        }
+        return observed - modeled - rx_clk - tropo_wet - isb - tropo_grad;
+    }
 
-        // Pre-pass to ensure phase ambiguities exist
+    // ===================================================================
+    // State pre-pass
+    // ===================================================================
+
+    void MeasurementModel::ensureRequiredStates(const std::vector<PppObservation>& observations,
+        const std::string& epoch_prefix) {
+        const bool is_uncombined = config_.isUncombinedEnabled();
+
         std::set<std::string> required_ambiguities;
+        std::set<std::string> required_iono_sats;
+
         for (const auto& obs : observations) {
             for (const auto& [ref_type, observed] : obs.observed) {
-                if (ref_type.empty() || ref_type[0] != 'L') continue;
-                const bool is_iono_free = (ref_type.find("_") != std::string::npos);
-                if (!is_iono_free) continue;
+                if (ref_type.empty()) continue;
                 if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) continue;
+
+                if (is_uncombined && (ref_type[0] == 'C' || ref_type[0] == 'L'))
+                    required_iono_sats.insert(obs.satellite);
+
+                if (ref_type[0] != 'L') continue;
+
+                const bool is_iono_free = (ref_type.find('_') != std::string::npos);
+                if (!is_uncombined && !is_iono_free) continue;
 
                 const std::string amb_key = obs.satellite + "_" + ref_type;
                 required_ambiguities.insert(amb_key);
 
-                const int existing_amb_idx = state_manager_.getAmbiguityIndex(amb_key);
-                // Seed new ambiguities, and re-seed existing ones that were reset to 0
-                // (e.g. by MW slip detector or KF outlier handling).
-                const bool needs_seed = (existing_amb_idx < 0) ||
-                    (existing_amb_idx >= 0 && state_manager_.getStateVector()(existing_amb_idx) == 0.0);
+                const int existing_idx = state_manager_.getAmbiguityIndex(amb_key);
+                const bool needs_seed = (existing_idx < 0) ||
+                    (existing_idx >= 0 && state_manager_.getStateVector()(existing_idx) == 0.0);
 
                 if (needs_seed) {
                     const Eigen::VectorXd x_now = state_manager_.getStateVector();
-                    const double seed_value = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
+                    const double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
 
-                    if (existing_amb_idx < 0) {
-                        state_manager_.addAmbiguity(amb_key, seed_value);
+                    if (existing_idx < 0) {
+                        state_manager_.addAmbiguity(amb_key, seed);
                         log_manager_.getLogger("measurement_model")->debug(
-                            "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m", epoch_prefix, obs.satellite, amb_key, seed_value);
+                            "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m",
+                            epoch_prefix, obs.satellite, amb_key, seed);
                     } else {
-                        // Re-seed an existing ambiguity that was reset to 0 (e.g. by MW slip detector)
                         Eigen::VectorXd x_reseed = x_now;
-                        x_reseed(existing_amb_idx) = seed_value;
+                        x_reseed(existing_idx) = seed;
                         state_manager_.setStateVector(x_reseed);
                         log_manager_.getLogger("measurement_model")->debug(
-                            "{}Re-seeded reset ambiguity for {} (key={}), seed={:.3f} m", epoch_prefix, obs.satellite, amb_key, seed_value);
+                            "{}Re-seeded reset ambiguity for {} (key={}), seed={:.3f} m",
+                            epoch_prefix, obs.satellite, amb_key, seed);
                     }
                 }
             }
         }
 
-        // Remove ambiguities that are not needed by this epoch (prune stale ones).
-        // This keeps the state vector compact and avoids unbounded growth of unused ambiguity states.
         state_manager_.pruneAmbiguitiesExcept(required_ambiguities);
 
-        // After potential resizing, always use the up-to-date state vector size.
-        const Eigen::VectorXd x = state_manager_.getStateVector();
+        if (!is_uncombined) return;
 
-        if (x.size() < (config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6)) {
-            log_manager_.getLogger("measurement_model")->error("{}Invalid state vector size: {}, expected at least {}, mode={}",
-                epoch_prefix,
-                x.size(),
-                config_.getProcessingMode() == ProcessingMode::PPP ? 5 : 6,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-            return update;
+        // Ionosphere states
+        for (const auto& sat : required_iono_sats) {
+            if (state_manager_.getIonosphereIndex(sat) < 0) {
+                state_manager_.addIonosphereState(sat, 0.0);
+                log_manager_.getLogger("measurement_model")->debug(
+                    "{}Added ionosphere state for satellite {}", epoch_prefix, sat);
+            }
+        }
+        state_manager_.pruneIonosphereStatesExcept(required_iono_sats);
+
+        for (const auto& obs : observations) {
+            if (required_iono_sats.count(obs.satellite) && obs.elevation > 0.0)
+                state_manager_.setIonosphereElevation(obs.satellite, obs.elevation);
         }
 
-        /*!
-         * @brief Predicate to determine whether a given observation/ref_type pair is usable.
-         *
-         * Criteria:
-         *  - Non-empty ref_type beginning with 'C' or 'L'.
-         *  - Ionosphere-free dual-frequency combination (contains '_').
-         *  - Must have observed, variance and modeled entries for the ref_type.
-         */
-        auto isUsableMeas = [&](const PppObservation& obs, const std::string& ref_type) -> bool {
-            if (ref_type.empty()) return false;
-
-            // Only code/phase combos
-            const char mt = ref_type[0];
-            if (mt != 'C' && mt != 'L') return false;
-
-            // Only iono-free combinations here (dual-freq C*_C* and L*_L*)
-            const bool is_iono_free = (ref_type.find('_') != std::string::npos);
-            if (!is_iono_free) return false;
-
-            // Must have full modeled triple
-            if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) return false;
-
-            return true;
-        };
-
-        // Count only the measurements we will actually process (iono-free dual-freq combos)
-        size_t num_obs = 0;
+        // Code bias (IFB) states for non-reference bands
+        std::set<std::string> required_code_biases;
         for (const auto& obs : observations) {
+            const std::string sys = PppUtils::getSystemString(obs.satellite);
             for (const auto& [ref_type, observed] : obs.observed) {
-                if (isUsableMeas(obs, ref_type)) {
-                    ++num_obs;
+                if (ref_type.empty() || ref_type[0] != 'C' || ref_type.size() < 2) continue;
+                if (ref_type[1] == '1') continue;
+                const std::string cb_key = sys + "_" + ref_type;
+                required_code_biases.insert(cb_key);
+                if (state_manager_.getCodeBiasIndex(cb_key) < 0) {
+                    state_manager_.addCodeBiasState(cb_key, 0.0);
+                    log_manager_.getLogger("measurement_model")->debug(
+                        "{}Added code bias state for {}", epoch_prefix, cb_key);
+                }
+            }
+        }
+        state_manager_.pruneCodeBiasStatesExcept(required_code_biases);
+    }
+
+    // ===================================================================
+    // Measurement filtering
+    // ===================================================================
+
+    bool MeasurementModel::isUsableMeasurement(const PppObservation& obs,
+        const std::string& ref_type,
+        const std::set<std::string>& excluded,
+        const std::string& epoch_prefix) const {
+        if (ref_type.empty()) return false;
+
+        const char mt = ref_type[0];
+        if (mt != 'C' && mt != 'L') return false;
+
+        const bool is_uncombined = config_.isUncombinedEnabled();
+        const bool has_underscore = (ref_type.find('_') != std::string::npos);
+
+        if (is_uncombined) {
+            if (has_underscore) return false;
+        } else {
+            if (!has_underscore) return false;
+        }
+
+        if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type))
+            return false;
+
+        const std::string excl_key = obs.satellite + "_" + ref_type;
+        if (excluded.count(excl_key)) {
+            log_manager_.getLogger("measurement_model")->debug(
+                "{}Excluding previously rejected measurement: {}", epoch_prefix, excl_key);
+            return false;
+        }
+
+        return true;
+    }
+
+    // ===================================================================
+    // Jacobian + innovation assembly
+    // ===================================================================
+
+    bool MeasurementModel::buildJacobianRow(const PppObservation& obs,
+        const std::string& ref_type,
+        const Eigen::VectorXd& x,
+        size_t state_size,
+        Eigen::VectorXd& jacobian,
+        double& predicted) const {
+
+        const bool is_phase = (!ref_type.empty() && ref_type[0] == 'L');
+        const bool is_uncombined = config_.isUncombinedEnabled();
+        const double mapping_wet = obs.mf_w;
+
+        jacobian = Eigen::VectorXd::Zero(state_size);
+
+        // Position partial: -LOS
+        jacobian.segment<3>(state_manager_.getPositionIndex()) = -obs.los;
+
+        // Troposphere wet delay
+        jacobian(state_manager_.getTropoIndex()) = mapping_wet;
+
+        // Receiver clock (common to code and phase)
+        jacobian(state_manager_.getClockIndex()) = 1.0;
+        const double rx_clk = x(state_manager_.getClockIndex());
+
+        // Phase clock offset (additive delta for phase only)
+        double phase_clk_value = 0.0;
+        if (is_phase && state_manager_.hasPhaseClock()) {
+            jacobian(state_manager_.getPhaseClockIndex()) = 1.0;
+            phase_clk_value = x(state_manager_.getPhaseClockIndex());
+        }
+
+        // Tropospheric gradients (Chen & Herring, 1997)
+        double tropo_grad_term = 0.0;
+        if (state_manager_.hasTropoGradients()) {
+            const double el_rad = obs.elevation * Constants::PI / 180.0;
+            const double az_rad = obs.azimuth * Constants::PI / 180.0;
+            const double sin_el = std::sin(el_rad);
+            const double tan_el = std::tan(el_rad);
+            const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
+            const double cos_az = std::cos(az_rad);
+            const double sin_az = std::sin(az_rad);
+
+            jacobian(state_manager_.getTropoGradientNorthIndex()) = mf_grad * cos_az;
+            jacobian(state_manager_.getTropoGradientEastIndex())  = mf_grad * sin_az;
+
+            tropo_grad_term = mf_grad * (x(state_manager_.getTropoGradientNorthIndex()) * cos_az
+                                        + x(state_manager_.getTropoGradientEastIndex()) * sin_az);
+        }
+
+        // Inter-system time offset
+        const std::string sys_name = systemToIsbName(obs.system);
+        double time_offset_value = 0.0;
+        if (!sys_name.empty()) {
+            const size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(sys_name);
+            if (isb_idx < state_size) {
+                jacobian(isb_idx) = 1.0;
+                time_offset_value = x(isb_idx);
+            }
+        }
+
+        // Per-satellite ionosphere (PPP-RTK uncombined)
+        double iono_term = 0.0;
+        if (is_uncombined) {
+            const int iono_idx = state_manager_.getIonosphereIndex(obs.satellite);
+            if (iono_idx >= 0 && iono_idx < static_cast<int>(state_size)) {
+                const double freq = ppp_utils_.getFrequency(ref_type, obs.system, obs.satellite);
+                if (freq > 0.0) {
+                    const double f_ref = Constants::GPS_L1_FREQ;
+                    const double alpha = (f_ref * f_ref) / (freq * freq);
+                    const double iono_coeff = (is_phase ? -1.0 : 1.0) * alpha;
+                    jacobian(iono_idx) = iono_coeff;
+                    iono_term = iono_coeff * x(iono_idx);
                 }
             }
         }
 
-        if (num_obs == 0) {
-            log_manager_.getLogger("measurement_model")->error("{}No valid observations found in residuals, mode={}",
-                epoch_prefix,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+        // Receiver code bias / IFB (PPP-RTK uncombined, non-reference code bands)
+        double code_bias_term = 0.0;
+        if (is_uncombined && !is_phase && ref_type.size() >= 2 && ref_type[1] != '1') {
+            const std::string sys = PppUtils::getSystemString(obs.satellite);
+            const std::string cb_key = sys + "_" + ref_type;
+            const int cb_idx = state_manager_.getCodeBiasIndex(cb_key);
+            if (cb_idx >= 0 && cb_idx < static_cast<int>(state_size)) {
+                const double freq_j = ppp_utils_.getFrequency(ref_type, obs.system, obs.satellite);
+                const double freq_1 = ppp_utils_.getFrequency("C1", obs.system, obs.satellite);
+                if (freq_j > 0.0 && freq_1 > 0.0) {
+                    const double f_iono = Constants::GPS_L1_FREQ;
+                    const double mu_j = (f_iono * f_iono) / (freq_j * freq_j);
+                    const double mu_1 = (f_iono * f_iono) / (freq_1 * freq_1);
+                    const double ifb_coeff = -mu_j / (mu_1 - mu_j);
+                    jacobian(cb_idx) = ifb_coeff;
+                    code_bias_term = ifb_coeff * x(cb_idx);
+                }
+            }
+        }
+
+        // Assemble predicted observable
+        const double modeled = obs.modeled.at(ref_type);
+        const double zwd = x(state_manager_.getTropoIndex());
+        const double tropo_wet_term = mapping_wet * zwd;
+
+        const Eigen::Vector3d pos_current = x.segment<3>(state_manager_.getPositionIndex());
+        const double range_correction = -obs.los.dot(pos_current - obs.rx_pos_linearization);
+
+        predicted = modeled + range_correction + rx_clk + phase_clk_value
+            + tropo_wet_term + tropo_grad_term + time_offset_value
+            + iono_term + code_bias_term;
+
+        // Ambiguity (phase only)
+        if (is_phase) {
+            const std::string amb_key = obs.satellite + "_" + ref_type;
+            const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
+            if (amb_idx < 0) return false;
+            jacobian(amb_idx) = 1.0;
+            predicted += x(amb_idx);
+        }
+
+        return true;
+    }
+
+    // ===================================================================
+    // computeMeasurementUpdate — top-level orchestrator
+    // ===================================================================
+
+    EpochMeasurement MeasurementModel::computeMeasurementUpdate(const std::vector<PppObservation>& observations,
+        const Eigen::VectorXd& current_state,
+        const std::set<std::string>& excluded_measurements) {
+        EpochMeasurement update;
+        update.time = observations.empty() ? GnssTime{ 0, 0.0 } : observations[0].time;
+        update.observations = observations;
+        update.excluded_measurements = excluded_measurements;
+        const std::string epoch_tag = TimeUtils::formatGnssTime(update.time);
+        const std::string epoch_prefix = "[" + epoch_tag + "] ";
+
+        if (observations.empty()) {
+            log_manager_.getLogger("measurement_model")->error("{}No observations provided for measurement update, mode={}",
+                epoch_prefix, modeLabel(config_));
             return update;
         }
 
-        // Initialize measurement vectors and matrices using current StateManager size
+        // --- First-epoch initialization ---
+        if (!isb_initialized_) {
+            initializeInterSystemBiases(observations, epoch_prefix);
+            isb_initialized_ = true;
+        }
+        if (!phase_clock_initialized_ && config_.estimatePhaseClock()) {
+            initializePhaseClockOffset(observations, epoch_prefix);
+            phase_clock_initialized_ = true;
+        }
+
+        // --- State pre-pass (create/seed/prune ambiguities, iono, code biases) ---
+        ensureRequiredStates(observations, epoch_prefix);
+
+        // --- Validate state vector ---
+        const Eigen::VectorXd x = state_manager_.getStateVector();
+        if (x.size() < 5) {
+            log_manager_.getLogger("measurement_model")->error("{}Invalid state vector size: {}, expected at least 5, mode={}",
+                epoch_prefix, x.size(), modeLabel(config_));
+            return update;
+        }
+
         const size_t state_size = state_manager_.getStateSize();
         if (static_cast<size_t>(x.size()) != state_size) {
             log_manager_.getLogger("measurement_model")->error("{}State vector size {} does not match StateManager size {}, mode={}",
-                epoch_prefix,
-                x.size(), state_size,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                epoch_prefix, x.size(), state_size, modeLabel(config_));
             return update;
         }
 
+        // --- Count usable measurements ---
+        size_t num_obs = 0;
+        for (const auto& obs : observations)
+            for (const auto& [ref_type, observed] : obs.observed)
+                if (isUsableMeasurement(obs, ref_type, excluded_measurements, epoch_prefix))
+                    ++num_obs;
+
+        if (num_obs == 0) {
+            log_manager_.getLogger("measurement_model")->error("{}No valid observations found in residuals, mode={}",
+                epoch_prefix, modeLabel(config_));
+            return update;
+        }
+
+        // --- Allocate output ---
         update.innovations.resize(num_obs);
         update.R_v.resize(num_obs);
         update.H.resize(num_obs, state_size);
@@ -209,173 +431,52 @@ namespace GnssProcessor {
         update.satellite_ids.reserve(num_obs);
         update.signal_types.reserve(num_obs);
 
+        // --- Assemble rows ---
         size_t row = 0;
         for (const auto& obs : observations) {
-            // Use the geometry that was computed in computeModels() and stored in the observation.
-            // The satellite position, LOS, range, and all corrections are pre-computed and stored
-            // in the PppObservation; we use them directly for the Jacobian and innovation assembly.
-
             // Validate stored geometry
-            if (obs.sat_pos.norm() < 1e6 || !obs.sat_pos.allFinite()) {
+            if (obs.sat_pos.norm() < 1.9e7 || !obs.sat_pos.allFinite()) {
                 log_manager_.getLogger("measurement_model")->warn(
-                    "{}Invalid stored satellite position for {} at TOW {:.3f}, mode={}",
-                    epoch_prefix, obs.satellite, obs.time.tow,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    "{}Invalid stored satellite position for {} at TOW {:.3f}: norm={:.3e} m, mode={}",
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.sat_pos.norm(), modeLabel(config_));
                 continue;
             }
-
-            if (obs.range < 1e6 || !std::isfinite(obs.range)) {
+            if (obs.range < 1.9e7 || !std::isfinite(obs.range)) {
                 log_manager_.getLogger("measurement_model")->warn(
                     "{}Invalid stored range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                    epoch_prefix, obs.satellite, obs.time.tow, obs.range,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.range, modeLabel(config_));
                 continue;
             }
-
             if (obs.elevation < config_.getElevationMaskDeg()) {
                 log_manager_.getLogger("measurement_model")->debug(
                     "{}Satellite {} below elevation mask at TOW {:.3f}, elevation={:.3f} deg, mode={}",
-                    epoch_prefix, obs.satellite, obs.time.tow, obs.elevation,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.elevation, modeLabel(config_));
                 continue;
             }
-
-            // Use the stored LOS unit vector from computeModels().
-            // The LOS was computed at the linearization position (obs.rx_pos_linearization).
-            // When the current state position differs, the range correction term
-            // (-LOS · pos_delta) accounts for the first-order geometric range change.
             if (obs.los.norm() < 0.5 || !obs.los.allFinite()) {
                 log_manager_.getLogger("measurement_model")->warn(
                     "{}Invalid stored LOS for {} at TOW {:.3f}, mode={}",
-                    epoch_prefix, obs.satellite, obs.time.tow,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    epoch_prefix, obs.satellite, obs.time.tow, modeLabel(config_));
                 continue;
             }
-            const Eigen::Vector3d los_current = obs.los;
-
-            // Use the stored wet mapping function from computeModels()
-            // (elevation-dependent, but elevation change from position delta is negligible)
-            const double mapping_wet = obs.mf_w;
-            if (mapping_wet <= 0.0 || !std::isfinite(mapping_wet)) {
+            if (obs.mf_w <= 0.0 || !std::isfinite(obs.mf_w)) {
                 log_manager_.getLogger("measurement_model")->warn(
                     "{}Invalid wet mapping function for {} at TOW {:.3f}: {:.3f}, mode={}",
-                    epoch_prefix, obs.satellite, obs.time.tow, mapping_wet,
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    epoch_prefix, obs.satellite, obs.time.tow, obs.mf_w, modeLabel(config_));
                 continue;
             }
 
             for (const auto& [ref_type, observed] : obs.observed) {
-                if (!isUsableMeas(obs, ref_type)) continue;
+                if (!isUsableMeasurement(obs, ref_type, excluded_measurements, epoch_prefix)) continue;
 
                 try {
-                    // Build Jacobian row
-                    Eigen::VectorXd jacobian = Eigen::VectorXd::Zero(state_size);
-                    jacobian.segment<3>(state_manager_.getPositionIndex()) = -los_current;
-                    jacobian(state_manager_.getClockIndex()) = 1.0;
-                    jacobian(state_manager_.getTropoIndex()) = mapping_wet;
+                    Eigen::VectorXd jacobian;
+                    double predicted = 0.0;
+                    if (!buildJacobianRow(obs, ref_type, x, state_size, jacobian, predicted))
+                        continue;
 
-                    // Phase clock offset: phase measurements include the phase clock offset
-                    // in addition to the code clock. The Jacobian entry is 1.0 for phase.
-                    const bool is_phase = (!ref_type.empty() && ref_type[0] == 'L');
-                    double phase_clk_value = 0.0;
-                    if (is_phase && state_manager_.hasPhaseClock()) {
-                        jacobian(state_manager_.getPhaseClockIndex()) = 1.0;
-                        phase_clk_value = x(state_manager_.getPhaseClockIndex());
-                    }
-
-                    // Tropospheric gradient contribution (Chen & Herring, 1997)
-                    // dm_grad = mf_grad * (Gn * cos(az) + Ge * sin(az))
-                    // mf_grad = 1 / (sin(el) * tan(el) + 0.0032)
-                    double tropo_grad_term = 0.0;
-                    if (state_manager_.hasTropoGradients()) {
-                        const double el_rad = obs.elevation * Constants::PI / 180.0;
-                        const double az_rad = obs.azimuth * Constants::PI / 180.0;
-                        const double sin_el = std::sin(el_rad);
-                        const double tan_el = std::tan(el_rad);
-                        const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
-                        const double cos_az = std::cos(az_rad);
-                        const double sin_az = std::sin(az_rad);
-
-                        jacobian(state_manager_.getTropoGradientNorthIndex()) = mf_grad * cos_az;
-                        jacobian(state_manager_.getTropoGradientEastIndex()) = mf_grad * sin_az;
-
-                        const double gn = x(state_manager_.getTropoGradientNorthIndex());
-                        const double ge = x(state_manager_.getTropoGradientEastIndex());
-                        tropo_grad_term = mf_grad * (gn * cos_az + ge * sin_az);
-                    }
-
-                    // Add inter-system time offset for non-GPS systems
-                    // The time offset is added to the predicted observable for non-GPS systems
-                    std::string system_name;
-                    switch (obs.system) {
-                        case System::GPS: system_name = ""; break;  // GPS is reference - no ISB
-                        case System::Galileo: system_name = "Galileo"; break;
-                        case System::GLONASS: system_name = "GLONASS"; break;
-                        case System::BeiDou: system_name = "BeiDou"; break;
-                        case System::QZSS: system_name = "QZSS"; break;
-                        case System::SBAS: system_name = "SBAS"; break;
-                        default: system_name = ""; break;
-                    }
-                    
-                    size_t time_offset_idx = state_manager_.getSystemTimeOffsetIndex(system_name);
-                    double time_offset_value = 0.0;
-                    if (!system_name.empty() && time_offset_idx < state_size) {
-                        jacobian(time_offset_idx) = 1.0;
-                        time_offset_value = x(time_offset_idx);
-                    }
-
-                    // The modeled value from processIonoFreeObservation includes:
-                    //   range - sat_clock*c + tropo_zhd*mf_d + antenna + shapiro + solid_tide + ...
-                    // 
-                    // It does NOT include receiver clock (that's in the state).
-                    // It DOES include a reference troposphere (slant_dry_delay = tropo_zhd * mf_d).
-                    //
-                    // The modeled value was computed at the linearization position
-                    // (obs.rx_pos_linearization). When the current state position differs
-                    // from the linearization point, we must apply a first-order range
-                    // correction so the innovation is consistent with the EKF formulation:
-                    //   predicted = h(x0) + H_pos * (x - x0) + clock + tropo + ...
-                    // where H_pos = -LOS.  The range correction accounts for the
-                    // geometric range change due to the position delta.
-                    //
-                    // Our state estimates: [position, receiver_clock, ZWD, ..., time_offsets, ambiguities]
-                    // 
-                    // Predicted = modeled + range_correction + receiver_clock + (ZWD * mf_w) + time_offset
-                    
-                    const double modeled = obs.modeled.at(ref_type);
-                    const double rx_clk = x(state_manager_.getClockIndex());
-                    const double zwd = x(state_manager_.getTropoIndex());
-                    const double tropo_wet_term = mapping_wet * zwd;
-
-                    // Range correction for position delta from linearization point.
-                    // modeled was computed with range = |sat_pos - rx_pos_linearization|.
-                    // The current state position may differ, so correct the modeled
-                    // range by the first-order term: delta_range = -LOS · (pos_current - pos_linearization).
-                    // This is equivalent to the WLS approach: range_delta = |sat - pos_current| - |sat - pos_lin|.
-                    const Eigen::Vector3d pos_current = x.segment<3>(state_manager_.getPositionIndex());
-                    const Eigen::Vector3d pos_delta = pos_current - obs.rx_pos_linearization;
-                    const double range_correction = -los_current.dot(pos_delta);
-
-                    // Predicted observable at current state (includes time offset for non-GPS)
-                    double predicted = modeled + range_correction + rx_clk + phase_clk_value + tropo_wet_term + tropo_grad_term + time_offset_value;
-
-                    // Ambiguity handling for phase measurements
-                    if (is_phase) {
-                        const std::string amb_key = obs.satellite + "_" + ref_type;
-                        int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
-                        if (amb_idx < 0) {
-                            continue;
-                        }
-                        jacobian(amb_idx) = 1.0;
-                        predicted += x(amb_idx);
-                    }
-
-                    // Innovation = observed - predicted
                     update.innovations(row) = observed - predicted;
-
-                    // Measurement variance with elevation-dependent scaling
-					update.R_v(row) = obs.variances.at(ref_type); // From PppModel, already includes elevation scaling
-
+                    update.R_v(row) = obs.variances.at(ref_type);
                     update.H.row(row) = jacobian;
                     update.satellite_ids.push_back(obs.satellite);
                     update.signal_types.push_back(ref_type);
@@ -388,7 +489,7 @@ namespace GnssProcessor {
                     log_manager_.getLogger("measurement_model")->trace(
                         "{}Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}",
                         epoch_prefix, obs.satellite, ref_type,
-                        observed, modeled, predicted, update.innovations(row));
+                        observed, obs.modeled.at(ref_type), predicted, update.innovations(row));
 
                     row++;
                 }
@@ -398,42 +499,36 @@ namespace GnssProcessor {
             }
         }
 
+        // --- Finalize ---
         if (row == 0) {
             log_manager_.getLogger("measurement_model")->error("{}No valid measurement updates computed, mode={}",
-                epoch_prefix,
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                epoch_prefix, modeLabel(config_));
             return update;
         }
         if (row < num_obs) {
             log_manager_.getLogger("measurement_model")->warn("{}Processed {} observations out of {} expected, mode={}",
-                epoch_prefix,
-                row, num_obs, config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                epoch_prefix, row, num_obs, modeLabel(config_));
             update.innovations.conservativeResize(row);
             update.R_v.conservativeResize(row);
             update.H.conservativeResize(row, Eigen::NoChange);
             update.satellite_ids.resize(row);
             update.signal_types.resize(row);
         }
-        update.bad_residual_count = 0;// initialize each new epoch with assumed inlier condition for all measurements
+        update.bad_residual_count = 0;
         log_manager_.getLogger("measurement_model")->info("{}Computed measurement update: {} valid innovations, H ({}x{}), mode={}",
-            epoch_prefix,
-            row, update.H.rows(), update.H.cols(),
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+            epoch_prefix, row, update.H.rows(), update.H.cols(), modeLabel(config_));
+
+        if (config_.enableBetweenSatelliteSd()) {
+            applyBetweenSatelliteSingleDifference(update, epoch_prefix);
+        }
+
         return update;
     }
 
-    /**
-     * @brief Validate an assembled EpochMeasurement before using it for a Kalman update.
-     *
-     * Checks for:
-     *  - Dimension consistency between innovations, R_v, H and ancillary vectors.
-     *  - Finite and positive variances.
-     *  - Finite innovations and finite Jacobian rows.
-     *  - Logs warnings for large residuals (but does not automatically reject them unless they break validity).
-     *
-     * @param measurement EpochMeasurement to validate.
-     * @return True if the measurement passes structural and basic numerical checks; false otherwise.
-     */
+    // ===================================================================
+    // Validation
+    // ===================================================================
+
     bool MeasurementModel::validateMeasurementUpdate(const EpochMeasurement& measurement) const {
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
         const std::string epoch_prefix = "[" + epoch_tag + "] ";
@@ -443,119 +538,93 @@ namespace GnssProcessor {
             measurement.H.cols() != state_manager_.getStateSize() ||
             measurement.innovations.size() != measurement.satellite_ids.size() ||
             measurement.innovations.size() != measurement.signal_types.size()) {
-            log_manager_.getLogger("measurement_model")->error("{}Measurement update dimension mismatch: innovations={}, R_v={}, H={}x{}, "
+            log_manager_.getLogger("measurement_model")->error(
+                "{}Measurement update dimension mismatch: innovations={}, R_v={}, H={}x{}, "
                 "sat_ids={}, signal_types={}, state={}, mode={}",
                 epoch_prefix,
                 measurement.innovations.size(), measurement.R_v.size(),
                 measurement.H.rows(), measurement.H.cols(),
                 measurement.satellite_ids.size(), measurement.signal_types.size(),
-                state_manager_.getStateSize(),
-                config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                state_manager_.getStateSize(), modeLabel(config_));
             return false;
         }
 
         for (size_t i = 0; i < measurement.innovations.size(); ++i) {
             if (!std::isfinite(measurement.innovations(i)) || !std::isfinite(measurement.R_v(i))) {
-                log_manager_.getLogger("measurement_model")->warn("{}Invalid measurement values for {} {}: innovation={:.3f}, variance={:.3f}, mode={}",
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Invalid measurement values for {} {}: innovation={:.3f}, variance={:.3f}, mode={}",
                     epoch_prefix,
                     measurement.satellite_ids[i], measurement.signal_types[i],
-                    measurement.innovations(i), measurement.R_v(i),
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    measurement.innovations(i), measurement.R_v(i), modeLabel(config_));
                 return false;
             }
             if (measurement.R_v(i) <= 0.0) {
-                log_manager_.getLogger("measurement_model")->warn("{}Non-positive variance for {} {}: variance={:.3f}, mode={}",
-                    epoch_prefix,
-                    measurement.satellite_ids[i], measurement.signal_types[i], measurement.R_v(i),
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-                return false;
-            }
-            if (std::abs(measurement.innovations(i)) > 100.0) { // Threshold for large residuals
-                log_manager_.getLogger("measurement_model")->warn("{}Large innovation for {} {}: innovation={:.3f} m, mode={}",
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Non-positive variance for {} {}: variance={:.3f}, mode={}",
                     epoch_prefix,
                     measurement.satellite_ids[i], measurement.signal_types[i],
-                    measurement.innovations(i),
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    measurement.R_v(i), modeLabel(config_));
+                return false;
+            }
+            if (std::abs(measurement.innovations(i)) > 100.0) {
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Large innovation for {} {}: innovation={:.3f} m, mode={}",
+                    epoch_prefix,
+                    measurement.satellite_ids[i], measurement.signal_types[i],
+                    measurement.innovations(i), modeLabel(config_));
             }
         }
 
         for (int i = 0; i < measurement.H.rows(); ++i) {
             if (!measurement.H.row(i).allFinite()) {
-                log_manager_.getLogger("measurement_model")->warn("{}Non-finite Jacobian row for {} {}, mode={}",
+                log_manager_.getLogger("measurement_model")->warn(
+                    "{}Non-finite Jacobian row for {} {}, mode={}",
                     epoch_prefix,
-                    measurement.satellite_ids[i], measurement.signal_types[i],
-                    config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+                    measurement.satellite_ids[i], measurement.signal_types[i], modeLabel(config_));
                 return false;
             }
         }
 
-        log_manager_.getLogger("measurement_model")->trace("{}Validated measurement update: {} measurements, mode={",
-            epoch_prefix,
-            measurement.innovations.size(),
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
+        log_manager_.getLogger("measurement_model")->trace(
+            "{}Validated measurement update: {} measurements, mode={}",
+            epoch_prefix, measurement.innovations.size(), modeLabel(config_));
         return true;
     }
 
+    // ===================================================================
+    // First-epoch initializers
+    // ===================================================================
+
     void MeasurementModel::initializeInterSystemBiases(const std::vector<PppObservation>& observations,
         const std::string& epoch_prefix) {
-        // Collect code residuals (observed - modeled) per system
-        // GPS residuals include receiver clock; other systems include clock + ISB
-        // ISB ˜ median(non-GPS residuals) - median(GPS residuals)
+        // Collect code residuals per system.
+        // GPS residuals include receiver clock; other systems include clock + ISB.
+        // ISB ? median(non-GPS residuals) ? median(GPS residuals).
 
         std::map<std::string, std::vector<double>> system_residuals;
-
         const Eigen::VectorXd x = state_manager_.getStateVector();
-        const double rx_clk = x(state_manager_.getClockIndex());
-        const double zwd = x(state_manager_.getTropoIndex());
 
         for (const auto& obs : observations) {
             if (obs.elevation < config_.getElevationMaskDeg()) continue;
 
-            // Find a code iono-free observation
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (ref_type.empty() || ref_type[0] != 'C') continue;
-                if (ref_type.find('_') == std::string::npos) continue;  // Must be iono-free
+                const bool has_underscore = (ref_type.find('_') != std::string::npos);
+                if (config_.isUncombinedEnabled()) {
+                    if (has_underscore) continue;
+                } else {
+                    if (!has_underscore) continue;
+                }
                 if (!obs.modeled.count(ref_type)) continue;
 
-                const double modeled = obs.modeled.at(ref_type);
-                const double tropo_wet = obs.mf_w * zwd;
-
-                // Residual without ISB: observed - (modeled + clock + tropo_wet)
-                const double residual = observed - modeled - rx_clk - tropo_wet;
-
-                std::string sys_name;
-                switch (obs.system) {
-                case System::GPS: sys_name = "GPS"; break;
-                case System::Galileo: sys_name = "Galileo"; break;
-                case System::GLONASS: sys_name = "GLONASS"; break;
-                case System::BeiDou: sys_name = "BeiDou"; break;
-                case System::QZSS: sys_name = "QZSS"; break;
-                case System::SBAS: sys_name = "SBAS"; break;
-                default: continue;
-                }
-
-                system_residuals[sys_name].push_back(residual);
-                break;  // One code obs per satellite is enough
+                const double residual = computeRawResidual(obs, ref_type, x);
+                const std::string sys_name = systemToIsbName(obs.system);
+                const std::string key = sys_name.empty() ? "GPS" : sys_name;
+                system_residuals[key].push_back(residual);
+                break;  // one code obs per satellite
             }
         }
 
-        // Helper lambda to compute median
-        auto computeMedian = [](std::vector<double>& values) -> double {
-            if (values.empty()) return 0.0;
-            size_t n = values.size();
-            size_t mid = n / 2;
-            std::nth_element(values.begin(), values.begin() + mid, values.end());
-            if (n % 2 == 0) {
-                // Even count: average of two middle elements
-                double upper = values[mid];
-                std::nth_element(values.begin(), values.begin() + mid - 1, values.end());
-                double lower = values[mid - 1];
-                return (lower + upper) / 2.0;
-            }
-            return values[mid];
-            };
-
-        // Compute GPS median residual as reference
         if (system_residuals.find("GPS") == system_residuals.end() ||
             system_residuals["GPS"].empty()) {
             log_manager_.getLogger("measurement_model")->warn(
@@ -564,20 +633,15 @@ namespace GnssProcessor {
         }
 
         double gps_median = computeMedian(system_residuals["GPS"]);
-
-        // Initialize ISB for each non-GPS system
         Eigen::VectorXd x_updated = state_manager_.getStateVector();
 
         for (auto& [sys_name, residuals] : system_residuals) {
             if (sys_name == "GPS" || residuals.empty()) continue;
 
-            size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(sys_name);
+            const size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(sys_name);
             if (isb_idx >= static_cast<size_t>(x_updated.size())) continue;
 
-            double sys_median = computeMedian(residuals);
-
-            // ISB = median(sys residuals) - median(GPS residuals)
-            const double isb_estimate = sys_median - gps_median;
+            const double isb_estimate = computeMedian(residuals) - gps_median;
             x_updated(isb_idx) = isb_estimate;
 
             log_manager_.getLogger("measurement_model")->info(
@@ -591,115 +655,45 @@ namespace GnssProcessor {
 
     void MeasurementModel::initializePhaseClockOffset(const std::vector<PppObservation>& observations,
         const std::string& epoch_prefix) {
-        // Compute the mean difference between code and phase iono-free residuals.
-        // For each satellite that has both a code (C*_C*) and phase (L*_L*) iono-free
-        // combination, compute:
-        //   code_residual  = C_observed - C_modeled - rx_clk - mf_w*zwd - isb - tropo_grad
-        //   phase_residual = L_observed - L_modeled - rx_clk - mf_w*zwd - isb - tropo_grad
-        //
-        // The difference (code_residual - phase_residual) removes common terms and
-        // captures the receiver code-phase bias plus the (unknown) ambiguity.  Since
-        // ambiguities are seeded later to absorb the remaining difference, the mean
-        // of these differences across all satellites provides a robust estimate of
-        // the receiver-wide code-phase bias, which is exactly what the phase clock
-        // offset state should absorb.
+        // Compute the median code?phase residual difference across satellites.
+        // This captures the receiver-wide code-phase bias used to seed the
+        // phase clock state so the filter does not start from zero.
 
         const Eigen::VectorXd x = state_manager_.getStateVector();
-        const double rx_clk = x(state_manager_.getClockIndex());
-        const double zwd = x(state_manager_.getTropoIndex());
-
         std::vector<double> code_phase_diffs;
 
         for (const auto& obs : observations) {
             if (obs.elevation < config_.getElevationMaskDeg()) continue;
 
-            // Determine ISB for this satellite
-            double isb = 0.0;
-            {
-                std::string system_name;
-                switch (obs.system) {
-                    case System::GPS:     system_name = ""; break;
-                    case System::Galileo: system_name = "Galileo"; break;
-                    case System::GLONASS: system_name = "GLONASS"; break;
-                    case System::BeiDou:  system_name = "BeiDou"; break;
-                    case System::QZSS:    system_name = "QZSS"; break;
-                    case System::SBAS:    system_name = "SBAS"; break;
-                    default:              system_name = ""; break;
-                }
-                size_t isb_idx = state_manager_.getSystemTimeOffsetIndex(system_name);
-                if (isb_idx < static_cast<size_t>(x.size())) {
-                    isb = x(static_cast<Eigen::Index>(isb_idx));
-                }
-            }
-
-            // Tropospheric gradient contribution
-            double tropo_grad = 0.0;
-            if (state_manager_.hasTropoGradients()) {
-                const double el_rad = obs.elevation * Constants::PI / 180.0;
-                const double az_rad = obs.azimuth * Constants::PI / 180.0;
-                const double sin_el = std::sin(el_rad);
-                const double tan_el = std::tan(el_rad);
-                const double mf_grad = 1.0 / (sin_el * tan_el + 0.0032);
-                const double gn = x(static_cast<Eigen::Index>(state_manager_.getTropoGradientNorthIndex()));
-                const double ge = x(static_cast<Eigen::Index>(state_manager_.getTropoGradientEastIndex()));
-                tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
-            }
-
-            const double tropo_wet = obs.mf_w * zwd;
-
-            // Find a code iono-free and phase iono-free pair for this satellite
-            double code_residual = 0.0;
-            double phase_residual = 0.0;
-            bool have_code = false;
-            bool have_phase = false;
+            double code_residual = 0.0, phase_residual = 0.0;
+            bool have_code = false, have_phase = false;
 
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (ref_type.empty()) continue;
-                if (ref_type.find('_') == std::string::npos) continue;  // must be iono-free
+                const bool has_underscore = (ref_type.find('_') != std::string::npos);
+                if (config_.isUncombinedEnabled()) {
+                    if (has_underscore) continue;
+                } else {
+                    if (!has_underscore) continue;
+                }
                 if (!obs.modeled.count(ref_type)) continue;
 
-                const double modeled = obs.modeled.at(ref_type);
-                // residual = observed - modeled - rx_clk - tropo_wet - isb - tropo_grad
-                const double residual = observed - modeled - rx_clk - tropo_wet - isb - tropo_grad;
+                const double residual = computeRawResidual(obs, ref_type, x);
 
-                if (ref_type[0] == 'C' && !have_code) {
-                    code_residual = residual;
-                    have_code = true;
-                } else if (ref_type[0] == 'L' && !have_phase) {
-                    phase_residual = residual;
-                    have_phase = true;
-                }
+                if (ref_type[0] == 'C' && !have_code)  { code_residual  = residual; have_code  = true; }
+                if (ref_type[0] == 'L' && !have_phase) { phase_residual = residual; have_phase = true; }
             }
 
-            if (have_code && have_phase) {
-                // The difference captures: (code_bias - phase_bias) + ambiguity
-                // Across satellites, ambiguities vary but the receiver code-phase bias is common.
-                // The mean difference is dominated by the common code-phase bias.
+            if (have_code && have_phase)
                 code_phase_diffs.push_back(code_residual - phase_residual);
-            }
         }
 
         if (code_phase_diffs.empty()) {
             log_manager_.getLogger("measurement_model")->warn(
-                "{}Cannot initialize phase clock offset: no satellite has both code and phase iono-free observations",
+                "{}Cannot initialize phase clock offset: no satellite has both code and phase observations",
                 epoch_prefix);
             return;
         }
-
-        // Use median for robustness against outlier satellites
-        auto computeMedian = [](std::vector<double>& values) -> double {
-            if (values.empty()) return 0.0;
-            size_t n = values.size();
-            size_t mid = n / 2;
-            std::nth_element(values.begin(), values.begin() + mid, values.end());
-            if (n % 2 == 0) {
-                double upper = values[mid];
-                std::nth_element(values.begin(), values.begin() + mid - 1, values.end());
-                double lower = values[mid - 1];
-                return (lower + upper) / 2.0;
-            }
-            return values[mid];
-        };
 
         const double phase_clock_seed = computeMedian(code_phase_diffs);
 
@@ -708,9 +702,6 @@ namespace GnssProcessor {
         state_manager_.setStateVector(x_updated);
 
         // Tighten the phase clock covariance to reflect the seed accuracy.
-        // The median of N code-phase pairs has accuracy ~ code_std / sqrt(N).
-        // Use code_std as a conservative floor so the filter trusts the seed
-        // without over-constraining it.
         {
             const double code_std = config_.getDefaultMeasurementNoise().code_std_m;
             const double seed_std = code_std / std::sqrt(static_cast<double>(code_phase_diffs.size()));
@@ -731,6 +722,209 @@ namespace GnssProcessor {
         log_manager_.getLogger("measurement_model")->info(
             "{}Initialized phase clock offset: {:.3f} m from {} code-phase pairs",
             epoch_prefix, phase_clock_seed, code_phase_diffs.size());
+    }
+
+    // ===================================================================
+    // Between-satellite single difference
+    // ===================================================================
+
+    /**
+     * @brief Apply between-satellite single-difference (BSSD) S-transformation.
+     *
+     * Modern BSSD (Odijk et al. 2016, Khodabandeh & Teunissen 2015):
+     *
+     * 1. For each (constellation, signal_type) group with >= 2 members,
+     *    select the highest-elevation satellite as pivot.
+     * 2. Build a differencing operator D that subtracts the pivot row from
+     *    every non-pivot row.  Pivot rows are consumed (removed).
+     * 3. Apply D to z, H, and R:  z_sd = D*z,  H_sd = D*H,  R_sd = D*R*D^T.
+     * 4. Explicitly zero the clock, phase-clock and ISB columns in H_sd
+     *    (algebraically zero after differencing; explicit zeroing for safety).
+     * 5. For phase SD rows, reparameterize ambiguities:
+     *    - The SD row's H has +1 on amb(i) and -1 on amb(ref).
+     *    - Zero the amb(ref) column: the reference ambiguity is absorbed into
+     *      the eliminated clock.  The SD ambiguity N_sd(i) = N(i) - N(ref)
+     *      is now what the state N(i) represents in the SD system.
+     * 6. Freeze reference ambiguities and clock states by zeroing their H
+     *    columns.  They receive no update from the SD observations but remain
+     *    in the state vector (maintained by the WLS seeder and process noise).
+     *
+     * @param update         EpochMeasurement to transform (modified in place).
+     * @param epoch_prefix   Log prefix string for diagnostic messages.
+     */
+    void MeasurementModel::applyBetweenSatelliteSingleDifference(
+        EpochMeasurement& update,
+        const std::string& epoch_prefix)
+    {
+        const Eigen::Index n = update.innovations.size();
+        if (n < 2) return;
+
+        // ---- Step 1: Classify rows -----------------------------------------
+        struct RowInfo {
+            Eigen::Index row;
+            std::string satellite;
+            std::string signal_type;
+            std::string constellation;
+            double elevation;
+        };
+        std::vector<RowInfo> rows(static_cast<size_t>(n));
+        std::map<std::string, double> sat_elev;
+        for (const auto& obs : update.observations)
+            sat_elev[obs.satellite] = obs.elevation;
+
+        for (Eigen::Index i = 0; i < n; ++i) {
+            auto& ri = rows[static_cast<size_t>(i)];
+            ri.row = i;
+            ri.satellite   = update.satellite_ids[static_cast<size_t>(i)];
+            ri.signal_type = update.signal_types[static_cast<size_t>(i)];
+            ri.constellation = PppUtils::getSystemString(ri.satellite);
+            auto it = sat_elev.find(ri.satellite);
+            ri.elevation = (it != sat_elev.end()) ? it->second : 0.0;
+        }
+
+        // ---- Step 2: Pivot selection per (constellation, signal_type) -------
+        std::map<std::string, Eigen::Index> pivot_map;
+        std::map<std::string, double>       pivot_el;
+        for (const auto& ri : rows) {
+            const std::string gk = ri.constellation + "|" + ri.signal_type;
+            auto it = pivot_el.find(gk);
+            if (it == pivot_el.end() || ri.elevation > it->second) {
+                pivot_map[gk] = ri.row;
+                pivot_el[gk]  = ri.elevation;
+            }
+        }
+
+        // ---- Step 3: Partition into SD / singleton -------------------------
+        std::map<std::string, int> grp_cnt;
+        for (const auto& ri : rows)
+            ++grp_cnt[ri.constellation + "|" + ri.signal_type];
+
+        struct SdEntry { Eigen::Index row; std::string gk; };
+        std::vector<SdEntry>       sd_entries;
+        std::vector<Eigen::Index>  pass_rows;  // singletons kept undifferenced
+
+        for (const auto& ri : rows) {
+            const std::string gk = ri.constellation + "|" + ri.signal_type;
+            if (grp_cnt[gk] <= 1) {
+                pass_rows.push_back(ri.row);
+            } else if (pivot_map[gk] != ri.row) {
+                sd_entries.push_back({ri.row, gk});
+            }
+            // pivot rows in multi-member groups are consumed
+        }
+
+        const size_t n_sd   = sd_entries.size();
+        const size_t n_pass = pass_rows.size();
+        if (n_sd == 0) {
+            log_manager_.getLogger("measurement_model")->debug(
+                "{}BSSD: all groups are singletons", epoch_prefix);
+            return;
+        }
+
+        // ---- Step 4: Build differencing operator D -------------------------
+        // D is (n_sd + n_pass) x n.
+        const Eigen::Index m = static_cast<Eigen::Index>(n_sd + n_pass);
+        Eigen::MatrixXd D = Eigen::MatrixXd::Zero(m, n);
+
+        Eigen::Index o = 0;
+        for (size_t k = 0; k < n_sd; ++k, ++o) {
+            D(o, sd_entries[k].row)            =  1.0;
+            D(o, pivot_map[sd_entries[k].gk])  = -1.0;
+        }
+        for (size_t k = 0; k < n_pass; ++k, ++o) {
+            D(o, pass_rows[k]) = 1.0;
+        }
+
+        // ---- Step 5: Transform z, H, R -------------------------------------
+        Eigen::MatrixXd R_undiff = Eigen::MatrixXd::Zero(n, n);
+        for (Eigen::Index i = 0; i < n; ++i)
+            R_undiff(i, i) = update.R_v(i);
+
+        Eigen::VectorXd new_z = D * update.innovations;
+        Eigen::MatrixXd new_H = D * update.H;
+        Eigen::MatrixXd new_R = D * R_undiff * D.transpose();
+
+        // ---- Step 6: Zero clock / phase-clock / ISB columns ----------------
+        // After differencing within a constellation these are algebraically 0.
+        // Explicit zeroing ensures no floating-point residue leaks through.
+        const auto zero_col = [&](size_t idx) {
+            if (idx < static_cast<size_t>(new_H.cols()))
+                new_H.col(static_cast<Eigen::Index>(idx)).setZero();
+        };
+        zero_col(state_manager_.getClockIndex());
+        if (state_manager_.hasPhaseClock())
+            zero_col(state_manager_.getPhaseClockIndex());
+        for (const auto& sys : state_manager_.getSystemsWithTimeOffsets())
+            zero_col(state_manager_.getSystemTimeOffsetIndex(sys));
+
+        // ---- Step 7: Reparameterize phase ambiguities ----------------------
+        // For each SD phase row the H-matrix currently has:
+        //   H(amb_i) = +1,  H(amb_ref) = -1
+        // The SD ambiguity is N_sd(i) = N(i) - N(ref).  We keep N(i) in the
+        // state vector to represent N_sd(i) and zero the amb_ref column so the
+        // reference ambiguity is frozen (absorbed into the eliminated clock).
+        //
+        // We collect all reference ambiguity indices so we can zero their
+        // columns once (a reference may serve multiple SD rows of the same type).
+        std::set<Eigen::Index> ref_amb_cols;
+        for (size_t k = 0; k < n_sd; ++k) {
+            const auto& entry = sd_entries[k];
+            const Eigen::Index i_row = entry.row;
+            const Eigen::Index r_row = pivot_map[entry.gk];
+            const std::string& sig = update.signal_types[static_cast<size_t>(i_row)];
+            if (sig.empty() || sig[0] != 'L') continue; // only phase
+
+            const std::string ref_sat = update.satellite_ids[static_cast<size_t>(r_row)];
+            const std::string ref_amb_key = ref_sat + "_" + sig;
+            const int ref_amb_idx = state_manager_.getAmbiguityIndex(ref_amb_key);
+            if (ref_amb_idx >= 0)
+                ref_amb_cols.insert(static_cast<Eigen::Index>(ref_amb_idx));
+        }
+        for (const Eigen::Index col : ref_amb_cols)
+            new_H.col(col).setZero();
+
+        // ---- Step 8: Build metadata ----------------------------------------
+        std::vector<std::string> new_sat_ids;
+        std::vector<std::string> new_sig_types;
+        new_sat_ids.reserve(static_cast<size_t>(m));
+        new_sig_types.reserve(static_cast<size_t>(m));
+
+        for (size_t k = 0; k < n_sd; ++k) {
+            const Eigen::Index i = sd_entries[k].row;
+            const Eigen::Index r = pivot_map[sd_entries[k].gk];
+            new_sat_ids.push_back(
+                update.satellite_ids[static_cast<size_t>(i)] + "-" +
+                update.satellite_ids[static_cast<size_t>(r)]);
+            new_sig_types.push_back(update.signal_types[static_cast<size_t>(i)]);
+        }
+        for (size_t k = 0; k < n_pass; ++k) {
+            const Eigen::Index i = pass_rows[k];
+            new_sat_ids.push_back(update.satellite_ids[static_cast<size_t>(i)]);
+            new_sig_types.push_back(update.signal_types[static_cast<size_t>(i)]);
+        }
+
+        // ---- Step 9: Pivot summary -----------------------------------------
+        std::string pivot_summary;
+        for (const auto& [gk, pr] : pivot_map) {
+            if (grp_cnt[gk] > 1) {
+                pivot_summary += gk + "=" +
+                    update.satellite_ids[static_cast<size_t>(pr)] + " ";
+            }
+        }
+
+        // ---- Step 10: Replace update contents ------------------------------
+        update.innovations   = new_z;
+        update.H             = new_H;
+        update.R_full        = new_R;
+        update.R_v           = new_R.diagonal();
+        update.satellite_ids = std::move(new_sat_ids);
+        update.signal_types  = std::move(new_sig_types);
+
+        log_manager_.getLogger("measurement_model")->info(
+            "{}BSSD: {} undiff -> {} SD + {} pass = {} total (pivots consumed). "
+            "Zeroed {} ref-amb cols. Pivots: {}",
+            epoch_prefix, n, n_sd, n_pass, m,
+            ref_amb_cols.size(), pivot_summary);
     }
 
 } // namespace GnssProcessor

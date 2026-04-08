@@ -1,6 +1,5 @@
 #pragma once
-#ifndef MEASUREMENTMODEL_HPP
-#define MEASUREMENTMODEL_HPP
+
 
 #include "StateManager.hpp"
 #include "PppModel.hpp"
@@ -12,6 +11,7 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <string>
+#include <set>
 
 namespace GnssProcessor {
 
@@ -26,11 +26,11 @@ namespace GnssProcessor {
      * assembles the innovation vector, design matrix H and measurement noise R, and provides
      * validation helpers for outlier and quality checks.
      *
-     * Typical responsibilities:
-     *  - Filter observations by elevation, signal priorities and configuration.
-     *  - Compute per-observation modeled values and residuals using @c PppModel.
-     *  - Assemble innovations, H matrix and measurement covariance for the Kalman filter.
-     *  - Provide validation and basic reweighting / persistent variance scaling via @c StateManager.
+     * The implementation is decomposed into focused helpers:
+     *  - State pre-pass:  ensureRequiredStates()
+     *  - Filtering:       isUsableMeasurement()
+     *  - Jacobian:        buildJacobianRow()
+     *  - Initialization:  initializeInterSystemBiases(), initializePhaseClockOffset()
      */
     class MeasurementModel {
     public:
@@ -54,38 +54,13 @@ namespace GnssProcessor {
 
         /**
          * @brief Compute the measurement update for a single epoch.
-         *
-         * This routine is read-only with respect to the Kalman state (it does not modify
-         * the @c StateManager). It consumes the provided list of parsed @c PppObservation
-         * and the current state vector, queries the @c PppModel for modeled values,
-         * and assembles an @c EpochMeasurement containing:
-         *  - innovations (observed - modeled)
-         *  - design matrix H
-         *  - measurement noise vector R_v (per-measurement variance)
-         *  - diagnostic fields (satellite ids, signal types, residuals, covariance, etc.)
-         *
-         * The produced @c EpochMeasurement is intended for immediate validation and use
-         * by the Kalman filter update step.
-         *
-         * @param observations   Vector of parsed and pre-filtered observations for the epoch.
-         * @param current_state  Current Kalman state (state vector) used to compute geometry-dependent terms.
-         * @return An @c EpochMeasurement populated with innovations, H, R_v and ancillary diagnostics.
          */
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
-            const Eigen::VectorXd& current_state);
+            const Eigen::VectorXd& current_state,
+            const std::set<std::string>& excluded_measurements = {});
 
         /**
          * @brief Validate an @c EpochMeasurement before Kalman processing.
-         *
-         * Performs quality checks on the assembled measurement such as:
-         *  - Sufficient number of valid measurements after masking.
-         *  - Percentage of bad residuals below configured threshold.
-         *  - Residuals within acceptable bounds (using configured residual threshold).
-         *
-         * If validation fails, callers may skip the update or trigger reweighting/persistent scaling.
-         *
-         * @param measurement The epoch measurement to validate.
-         * @return True if the measurement passes validation and is suitable for a Kalman update; false otherwise.
          */
         bool validateMeasurementUpdate(const EpochMeasurement& measurement) const;
 
@@ -99,29 +74,112 @@ namespace GnssProcessor {
         bool isb_initialized_ = false;  ///< Flag to track if ISB has been initialized
         bool phase_clock_initialized_ = false; ///< Flag to track if phase clock offset has been seeded
 
+        // -------------------------------------------------------------------
+        // Utility helpers
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Map a System enum to its constellation name for ISB lookup.
+         *
+         * Returns an empty string for GPS (reference system) and "Unknown"
+         * for unrecognized values.
+         */
+        static std::string systemToIsbName(System system);
+
+        /**
+         * @brief Compute a "raw" residual for an observation/ref_type pair.
+         *
+         * residual = observed - modeled - rx_clk - mf_w*zwd - isb - tropo_grad
+         *
+         * Used by initializeInterSystemBiases() and initializePhaseClockOffset()
+         * to avoid duplicating the residual formula.
+         */
+        double computeRawResidual(const PppObservation& obs,
+            const std::string& ref_type,
+            const Eigen::VectorXd& x) const;
+
+        // -------------------------------------------------------------------
+        // State pre-pass
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Ensure that all ambiguity, ionosphere, and code-bias states
+         *        required by the current epoch exist in the StateManager.
+         *
+         * Also prunes stale states that are no longer needed.
+         *
+         * @param observations Epoch observations.
+         * @param epoch_prefix Log prefix string.
+         */
+        void ensureRequiredStates(const std::vector<PppObservation>& observations,
+            const std::string& epoch_prefix);
+
+        // -------------------------------------------------------------------
+        // Measurement filtering
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Determine whether a given observation/ref_type pair is usable.
+         *
+         * Checks signal type (C/L), combination mode (iono-free vs uncombined),
+         * availability of modeled data, and exclusion list.
+         */
+        bool isUsableMeasurement(const PppObservation& obs,
+            const std::string& ref_type,
+            const std::set<std::string>& excluded,
+            const std::string& epoch_prefix) const;
+
+        // -------------------------------------------------------------------
+        // Jacobian + innovation assembly
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Build one Jacobian row and compute the predicted observable.
+         *
+         * Fills in the position, clock, phase-clock, tropo, tropo-gradient,
+         * ISB, ionosphere, code-bias, and ambiguity entries for a single
+         * measurement row.
+         *
+         * @param obs          Observation record.
+         * @param ref_type     Signal key (e.g. "C1W_C2W" or "L1C").
+         * @param x            Current state vector.
+         * @param state_size   Total state size.
+         * @param[out] jacobian  Populated Jacobian row (sized to state_size).
+         * @param[out] predicted Predicted observable value at the current state.
+         * @return true if the row was successfully built; false to skip this measurement.
+         */
+        bool buildJacobianRow(const PppObservation& obs,
+            const std::string& ref_type,
+            const Eigen::VectorXd& x,
+            size_t state_size,
+            Eigen::VectorXd& jacobian,
+            double& predicted) const;
+
+        // -------------------------------------------------------------------
+        // First-epoch initializers
+        // -------------------------------------------------------------------
+
         /**
          * @brief Initialize inter-system biases from first-epoch code observations.
-         *
-         * Computes approximate ISB by comparing mean code residuals between GPS and
-         * other constellations. Only called once at the first epoch.
          */
         void initializeInterSystemBiases(const std::vector<PppObservation>& observations,
                                           const std::string& epoch_prefix);
 
         /**
          * @brief Seed the phase clock offset from the code-phase residual difference.
-         *
-         * Computes the mean difference between code and phase iono-free residuals
-         * at the first epoch. This difference captures the receiver's code-phase
-         * bias (hardware delay mismatch) and is used to constrain the phase clock
-         * state so the filter does not have to converge from zero.
-         *
-         * Only called once at the first epoch when phase clock estimation is enabled.
          */
         void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
                                          const std::string& epoch_prefix);
+
+        // -------------------------------------------------------------------
+        // Between-satellite single difference
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Apply between-satellite single-difference (BSSD) S-transformation.
+         */
+        void applyBetweenSatelliteSingleDifference(EpochMeasurement& update,
+                                                    const std::string& epoch_prefix);
     };
 
 } // namespace GnssProcessor
-
-#endif // MEASUREMENTMODEL_HPP

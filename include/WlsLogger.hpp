@@ -1,5 +1,4 @@
-#ifndef WLS_LOGGER_HPP
-#define WLS_LOGGER_HPP
+#pragma once
 
 #include <Eigen/Dense>
 #include <fstream>
@@ -127,5 +126,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-#endif // WLS_LOGGER_HPP

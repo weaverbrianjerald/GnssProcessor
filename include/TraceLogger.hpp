@@ -77,6 +77,17 @@ public:
     void logAmbiguities(const GnssTime& time, const StateManager& state_manager) const;
 
     /**
+     * @brief Write per-satellite ionosphere state estimates to the ionosphere trace file.
+     *
+     * Each row contains satellite ID, slant iono delay estimate, standard deviation
+     * and last-known elevation angle — suitable for offline analysis and plotting.
+     *
+     * @param time Epoch time for the ionosphere snapshot.
+     * @param state_manager StateManager that owns per-satellite iono states and elevations.
+     */
+    void logIonosphere(const GnssTime& time, const StateManager& state_manager) const;
+
+    /**
      * @brief Write observation residuals and diagnostics for an epoch.
      *
      * Residuals, standardized residuals, per-observation variances and other
@@ -122,6 +133,7 @@ private:
     mutable std::ofstream state_trace_;     /**< Output stream for state trace file. */
     mutable std::ofstream ambiguity_trace_; /**< Output stream for ambiguity trace file. */
     mutable std::ofstream residual_trace_;  /**< Output stream for residual trace file. */
+    mutable std::ofstream ionosphere_trace_; /**< Output stream for ionosphere trace file. */
     mutable std::ofstream wls_trace_;       /**< Output stream for WLS trace file. */
     mutable bool state_header_written_{false}; /**< True after dynamic state header columns have been written. */
 };

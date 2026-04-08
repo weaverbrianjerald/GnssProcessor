@@ -1,3 +1,5 @@
+#pragma once
+
 /**
  * @file ModelGeometry.hpp
  * @brief Satellite/receiver geometry helper and GNSS geometric corrections.
@@ -9,11 +11,6 @@
  * This header contains only declarations; implementation details live in
  * `src/core/model/ModelGeometry.cpp`.
  */
-
-#pragma once
-
-#ifndef PPP_MODEL_GEOMETRY_HPP
-#define PPP_MODEL_GEOMETRY_HPP
 
 #include <Eigen/Dense>
 #include "PppTypes.hpp"
@@ -221,6 +218,48 @@ namespace GnssProcessor {
         /** @brief Load product and auxiliary data into internal containers. */
         void loadData();
 
+        /**
+         * @brief Ensure the Sun/Moon cache is current for the given epoch.
+         *
+         * Evaluates the rigorous IAU 1976/1980 model only when the epoch has
+         * changed (tolerance 1 ms). Called by computeSatelliteGeometry() and
+         * computeSatelliteAttitude() to avoid redundant evaluations.
+         */
+        void ensureSunMoonCached(const GnssTime& time) const;
+
+        /**
+         * @brief Extract the best available code pseudorange from an observation.
+         *
+         * If dual-frequency code measurements exist, forms an ionosphere-free
+         * combination; otherwise falls back to a single code pseudorange.
+         *
+         * @param obs RINEX observation containing raw measurements.
+         * @param[out] pseudorange Extracted (or IF-combined) pseudorange in meters.
+         * @return True if a valid pseudorange was obtained.
+         */
+        bool extractPseudorange(const RinexObservation& obs, double& pseudorange) const;
+
+        /**
+         * @brief Compute satellite state at signal transmission time.
+         *
+         * Performs the single-pass emission-time computation: seeds TOF from
+         * the pseudorange, applies the satellite clock, and evaluates orbit
+         * and clock at the corrected emission epoch.
+         *
+         * @param obs          RINEX observation (satellite ID + reception time).
+         * @param rx_pos       Receiver ECEF position (meters).
+         * @param pseudorange  Code pseudorange used as TOF seed (meters).
+         * @param[out] sat_pos_em Satellite ECEF position at emission time (meters).
+         * @param[out] sat_vel_em Satellite ECEF velocity at emission time (m/s).
+         * @param[out] sat_clock  Satellite clock correction at emission time (seconds).
+         * @param[out] emission_time  GPS time of signal transmission.
+         * @return True on success; false if orbit/clock data are unavailable or invalid.
+         */
+        bool computeEmissionState(const RinexObservation& obs,
+            const Eigen::Vector3d& rx_pos, double pseudorange,
+            Eigen::Vector3d& sat_pos_em, Eigen::Vector3d& sat_vel_em,
+            double& sat_clock, GnssTime& emission_time) const;
+
         // Per-epoch cache for Sun/Moon ECEF positions.
         // The rigorous IAU 1976/1980 nutation model is epoch-dependent only
         // (not satellite-dependent), so caching avoids redundant 106-term
@@ -233,5 +272,3 @@ namespace GnssProcessor {
     } // namespace Model
 
 } // namespace GnssProcessor
-
-#endif  // PPP_MODEL_GEOMETRY_HPP

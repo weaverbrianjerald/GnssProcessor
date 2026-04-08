@@ -338,6 +338,53 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief Collect viable dual-frequency MW pairs from uncombined observations.
+     *
+     * Groups individual code and phase signals in the observation's `observed`
+     * map by RINEX band number (the digit after the C/L prefix, e.g. '1' from
+     * "L1C", '5' from "C5Q").  Produces all two-band combinations where both
+     * a code and a phase signal exist on each band.
+     *
+     * @param obs Observation whose @c observed map contains individual signals.
+     * @return Vector of UncombinedPair structs (may be empty).
+     */
+    std::vector<MwSlipDetector::UncombinedPair>
+    MwSlipDetector::collectUncombinedPairs(const PppObservation& obs) const {
+        // Group signals by band number.  Per band keep at most one code and one phase key.
+        struct BandSignals { std::string code; std::string phase; };
+        std::map<char, BandSignals> bands;
+
+        for (const auto& [key, val] : obs.observed) {
+            if (key.size() < 2) continue;
+            const char prefix = key[0];
+            if (prefix != 'C' && prefix != 'L') continue;
+            // Skip IF combination keys (contain '_')
+            if (key.find('_') != std::string::npos) continue;
+            const char band = key[1]; // RINEX band digit
+            if (band < '1' || band > '9') continue;
+
+            auto& bs = bands[band];
+            if (prefix == 'C' && bs.code.empty())  bs.code  = key;
+            if (prefix == 'L' && bs.phase.empty()) bs.phase = key;
+        }
+
+        // Build all two-band pairs that have both code and phase on each band.
+        std::vector<UncombinedPair> pairs;
+        std::vector<char> band_ids;
+        for (const auto& [b, bs] : bands) {
+            if (!bs.code.empty() && !bs.phase.empty()) band_ids.push_back(b);
+        }
+        for (size_t i = 0; i < band_ids.size(); ++i) {
+            for (size_t j = i + 1; j < band_ids.size(); ++j) {
+                const auto& b1 = bands[band_ids[i]];
+                const auto& b2 = bands[band_ids[j]];
+                pairs.push_back({b1.phase, b2.phase, b1.code, b2.code});
+            }
+        }
+        return pairs;
+    }
+
+    /**
      * @brief Compute the MAD-based adaptive threshold for a satellite arc.
      *
      * The Median Absolute Deviation (MAD) of the values in the rolling window
@@ -420,135 +467,244 @@ namespace GnssProcessor {
             if (obs.satellite.empty()) continue;
             if (!std::isfinite(obs.elevation) || obs.elevation < config_.getElevationMaskDeg()) continue;
 
-            std::string phase_if_key, code_if_key;
-            if (!findIonoFreeLabels(obs, phase_if_key, code_if_key)) continue;
-
-            // Split BOTH the phase and code IF labels into component signals
-            // to ensure matched tracking modes in the MW combination.
-            std::string s1, s2;   // phase signals (e.g., "L1C", "L2W")
-            std::string c1, c2;   // code signals  (e.g., "C1W", "C2W")
-            if (!splitIfLabel(phase_if_key, s1, s2)) continue;
-            if (!splitIfLabel(code_if_key, c1, c2)) continue;
-
-            // Check for LLI-based reset
+            // Check for LLI-based reset (applies to both modes)
             const bool has_lli = hasAnyPhaseLockLoss(obs);
-            if (has_lli) {
-                const std::string amb_key = obs.satellite + "_" + phase_if_key;
-                reset_keys.push_back(amb_key);
-                logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
 
-                // Write trace record for LLI event
-                if (mwwl_trace_.is_open()) {
-                    const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
-                    const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
-                    writeTraceRecord(obs, s1, s2, mw_m,
-                                     std::numeric_limits<double>::quiet_NaN(),
-                                     std::numeric_limits<double>::quiet_NaN(),
-                                     std::numeric_limits<double>::quiet_NaN(),
-                                     0, lambda_wl,
-                                     std::numeric_limits<double>::quiet_NaN(),
-                                     false, true);
+            // Try to find iono-free labels (works in combined/PPP mode)
+            std::string phase_if_key, code_if_key;
+            const bool has_if = findIonoFreeLabels(obs, phase_if_key, code_if_key);
+
+            if (has_if) {
+                // ---- Combined (PPP) path: single IF pair per satellite ----
+                std::string s1, s2, c1, c2;
+                if (!splitIfLabel(phase_if_key, s1, s2)) continue;
+                if (!splitIfLabel(code_if_key, c1, c2)) continue;
+
+                if (has_lli) {
+                    const std::string amb_key = obs.satellite + "_" + phase_if_key;
+                    reset_keys.push_back(amb_key);
+                    logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
+
+                    if (mwwl_trace_.is_open()) {
+                        const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
+                        const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
+                        writeTraceRecord(obs, s1, s2, mw_m,
+                                         std::numeric_limits<double>::quiet_NaN(),
+                                         std::numeric_limits<double>::quiet_NaN(),
+                                         std::numeric_limits<double>::quiet_NaN(),
+                                         0, lambda_wl,
+                                         std::numeric_limits<double>::quiet_NaN(),
+                                         false, true);
+                    }
+
+                    mw_stats_.erase(obs.satellite);
+                    continue;
                 }
 
-                mw_stats_.erase(obs.satellite);
-                continue;
-            }
+                const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
+                if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
 
-            const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
-            if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
+                const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
+                if (!std::isfinite(mw_m)) continue;
 
-            const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
-            if (!std::isfinite(mw_m)) continue;
+                auto& stats = mw_stats_[obs.satellite];
 
-            auto& stats = mw_stats_[obs.satellite];
+                if (stats.count == 0) {
+                    stats.mean  = mw_m;
+                    stats.M2    = 0.0;
+                    stats.count = 1;
+                    stats.prev_mw = mw_m;
+                    stats.diff_window.clear();
 
-            if (stats.count == 0) {
-                // First observation for this satellite arc - initialize statistics
-                stats.mean  = mw_m;
-                stats.M2    = 0.0;
-                stats.count = 1;
-                stats.prev_mw = mw_m;
-                stats.diff_window.clear();
+                    if (mwwl_trace_.is_open()) {
+                        writeTraceRecord(obs, s1, s2, mw_m,
+                                         mw_m, 0.0,
+                                         std::numeric_limits<double>::quiet_NaN(),
+                                         stats.count,
+                                         lambda_wl,
+                                         std::numeric_limits<double>::quiet_NaN(),
+                                         false, false);
+                    }
+                    continue;
+                }
+
+                const double mw_diff = mw_m - stats.prev_mw;
+                const double dev = mw_m - stats.mean;
+                const double thresh_m = computeAdaptiveThreshold(stats, lambda_wl);
+
+                double sigma_mad = std::numeric_limits<double>::quiet_NaN();
+                if (stats.diff_window.size() >= kMinEpochsForAdaptive) {
+                    std::vector<double> sorted(stats.diff_window.begin(), stats.diff_window.end());
+                    std::sort(sorted.begin(), sorted.end());
+                    const size_t wn = sorted.size();
+                    const double median = (wn % 2 == 0) ? 0.5 * (sorted[wn / 2 - 1] + sorted[wn / 2])
+                                                        : sorted[wn / 2];
+                    std::vector<double> abs_devs(wn);
+                    for (size_t j = 0; j < wn; ++j) abs_devs[j] = std::abs(sorted[j] - median);
+                    std::sort(abs_devs.begin(), abs_devs.end());
+                    const double mad = (wn % 2 == 0) ? 0.5 * (abs_devs[wn / 2 - 1] + abs_devs[wn / 2])
+                                                     : abs_devs[wn / 2];
+                    sigma_mad = mad * 1.4826;
+                }
+
+                const bool is_slip = std::isfinite(thresh_m) && std::abs(dev) > thresh_m;
 
                 if (mwwl_trace_.is_open()) {
                     writeTraceRecord(obs, s1, s2, mw_m,
-                                     mw_m, 0.0,
-                                     std::numeric_limits<double>::quiet_NaN(),
+                                     stats.mean, dev, sigma_mad,
                                      stats.count,
-                                     lambda_wl,
-                                     std::numeric_limits<double>::quiet_NaN(),
-                                     false, false);
+                                     lambda_wl, thresh_m, is_slip, false);
                 }
-                continue;
-            }
 
-            // Epoch-to-epoch MW difference (used for adaptive threshold)
-            const double mw_diff = mw_m - stats.prev_mw;
+                if (is_slip) {
+                    const std::string amb_key = obs.satellite + "_" + phase_if_key;
+                    reset_keys.push_back(amb_key);
 
-            // Deviation of current MW from running mean (used for slip detection)
-            const double dev = mw_m - stats.mean;
+                    const double dev_cycles = std::abs(dev) / lambda_wl;
+                    const double thresh_cycles = thresh_m / lambda_wl;
 
-            // Compute adaptive threshold from MAD of the epoch-to-epoch differences
-            const double thresh_m = computeAdaptiveThreshold(stats, lambda_wl);
+                    logger->warn(
+                        "MW slip detected for {} ({}): |dev|={:.3f} m ({:.1f} WL) > thresh={:.3f} m ({:.1f} WL), "
+                        "mean={:.3f} m, sigma={:.4f} m, arc_n={}, lambda_wl={:.3f} m; reset {}",
+                        obs.satellite, PppUtils::getSystemString(obs.system),
+                        std::abs(dev), dev_cycles, thresh_m, thresh_cycles,
+                        stats.mean, std::isfinite(sigma_mad) ? sigma_mad : -1.0,
+                        stats.count, lambda_wl, amb_key);
 
-            // Compute MAD-derived sigma for logging/tracing
-            double sigma_mad = std::numeric_limits<double>::quiet_NaN();
-            if (stats.diff_window.size() >= kMinEpochsForAdaptive) {
-                std::vector<double> sorted(stats.diff_window.begin(), stats.diff_window.end());
-                std::sort(sorted.begin(), sorted.end());
-                const size_t wn = sorted.size();
-                const double median = (wn % 2 == 0) ? 0.5 * (sorted[wn / 2 - 1] + sorted[wn / 2])
-                                                    : sorted[wn / 2];
-                std::vector<double> abs_devs(wn);
-                for (size_t j = 0; j < wn; ++j) abs_devs[j] = std::abs(sorted[j] - median);
-                std::sort(abs_devs.begin(), abs_devs.end());
-                const double mad = (wn % 2 == 0) ? 0.5 * (abs_devs[wn / 2 - 1] + abs_devs[wn / 2])
-                                                 : abs_devs[wn / 2];
-                sigma_mad = mad * 1.4826;
-            }
+                    mw_stats_.erase(obs.satellite);
+                } else {
+                    stats.count++;
+                    const double delta  = mw_m - stats.mean;
+                    stats.mean += delta / static_cast<double>(stats.count);
+                    const double delta2 = mw_m - stats.mean;
+                    stats.M2 += delta * delta2;
 
-            const bool is_slip = std::isfinite(thresh_m) && std::abs(dev) > thresh_m;
-
-            // Write trace record for every observation
-            if (mwwl_trace_.is_open()) {
-                writeTraceRecord(obs, s1, s2, mw_m,
-                                 stats.mean, dev, sigma_mad,
-                                 stats.count,
-                                 lambda_wl, thresh_m, is_slip, false);
-            }
-
-            if (is_slip) {
-                const std::string amb_key = obs.satellite + "_" + phase_if_key;
-                reset_keys.push_back(amb_key);
-
-                const double dev_cycles = std::abs(dev) / lambda_wl;
-                const double thresh_cycles = thresh_m / lambda_wl;
-
-                logger->warn(
-                    "MW slip detected for {} ({}): |dev|={:.3f} m ({:.1f} WL) > thresh={:.3f} m ({:.1f} WL), "
-                    "mean={:.3f} m, sigma={:.4f} m, arc_n={}, lambda_wl={:.3f} m; reset {}",
-                    obs.satellite, PppUtils::getSystemString(obs.system),
-                    std::abs(dev), dev_cycles, thresh_m, thresh_cycles,
-                    stats.mean, std::isfinite(sigma_mad) ? sigma_mad : -1.0,
-                    stats.count, lambda_wl, amb_key);
-
-                mw_stats_.erase(obs.satellite);
+                    stats.diff_window.push_back(mw_diff);
+                    if (stats.diff_window.size() > kMwWindowSize) {
+                        stats.diff_window.pop_front();
+                    }
+                    stats.prev_mw = mw_m;
+                }
             } else {
-                // Update running statistics (Hatch / Welford)
-                stats.count++;
-                const double delta  = mw_m - stats.mean;
-                stats.mean += delta / static_cast<double>(stats.count);
-                const double delta2 = mw_m - stats.mean;
-                stats.M2 += delta * delta2;
+                // ---- Uncombined (PPP-RTK) path: form MW from individual signals ----
+                const auto uc_pairs = collectUncombinedPairs(obs);
+                if (uc_pairs.empty()) continue;
 
-                // Maintain rolling window of epoch-to-epoch differences
-                stats.diff_window.push_back(mw_diff);
-                if (stats.diff_window.size() > kMwWindowSize) {
-                    stats.diff_window.pop_front();
+                if (has_lli) {
+                    // Reset ALL individual phase ambiguities for this satellite.
+                    for (const auto& [key, val] : obs.observed) {
+                        if (!key.empty() && key[0] == 'L' && key.find('_') == std::string::npos) {
+                            const std::string amb_key = obs.satellite + "_" + key;
+                            reset_keys.push_back(amb_key);
+                        }
+                    }
+                    logger->warn("LLI lock loss detected (uncombined): scheduling all phase ambiguity resets for {}", obs.satellite);
+
+                    // Erase all MW stats keyed under this satellite
+                    for (auto it = mw_stats_.begin(); it != mw_stats_.end(); ) {
+                        if (it->first.rfind(obs.satellite, 0) == 0) {
+                            it = mw_stats_.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                    continue;
                 }
 
-                // Update previous MW for next epoch differencing
-                stats.prev_mw = mw_m;
+                // Process each dual-frequency MW pair independently.
+                for (const auto& pair : uc_pairs) {
+                    const double lambda_wl = computeWideLaneWavelengthMeters(obs, pair.phase1, pair.phase2);
+                    if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
+
+                    const double mw_m = computeMwMeters(obs, pair.phase1, pair.phase2, pair.code1, pair.code2);
+                    if (!std::isfinite(mw_m)) continue;
+
+                    // Composite stats key: "G01_L1C_L2W"
+                    const std::string stats_key = obs.satellite + "_" + pair.phase1 + "_" + pair.phase2;
+
+                    auto& stats = mw_stats_[stats_key];
+
+                    if (stats.count == 0) {
+                        stats.mean  = mw_m;
+                        stats.M2    = 0.0;
+                        stats.count = 1;
+                        stats.prev_mw = mw_m;
+                        stats.diff_window.clear();
+
+                        if (mwwl_trace_.is_open()) {
+                            writeTraceRecord(obs, pair.phase1, pair.phase2, mw_m,
+                                             mw_m, 0.0,
+                                             std::numeric_limits<double>::quiet_NaN(),
+                                             stats.count,
+                                             lambda_wl,
+                                             std::numeric_limits<double>::quiet_NaN(),
+                                             false, false);
+                        }
+                        continue;
+                    }
+
+                    const double mw_diff = mw_m - stats.prev_mw;
+                    const double dev = mw_m - stats.mean;
+                    const double thresh_m = computeAdaptiveThreshold(stats, lambda_wl);
+
+                    double sigma_mad = std::numeric_limits<double>::quiet_NaN();
+                    if (stats.diff_window.size() >= kMinEpochsForAdaptive) {
+                        std::vector<double> sorted(stats.diff_window.begin(), stats.diff_window.end());
+                        std::sort(sorted.begin(), sorted.end());
+                        const size_t wn = sorted.size();
+                        const double median = (wn % 2 == 0) ? 0.5 * (sorted[wn / 2 - 1] + sorted[wn / 2])
+                                                            : sorted[wn / 2];
+                        std::vector<double> abs_devs(wn);
+                        for (size_t j = 0; j < wn; ++j) abs_devs[j] = std::abs(sorted[j] - median);
+                        std::sort(abs_devs.begin(), abs_devs.end());
+                        const double mad = (wn % 2 == 0) ? 0.5 * (abs_devs[wn / 2 - 1] + abs_devs[wn / 2])
+                                                         : abs_devs[wn / 2];
+                        sigma_mad = mad * 1.4826;
+                    }
+
+                    const bool is_slip = std::isfinite(thresh_m) && std::abs(dev) > thresh_m;
+
+                    if (mwwl_trace_.is_open()) {
+                        writeTraceRecord(obs, pair.phase1, pair.phase2, mw_m,
+                                         stats.mean, dev, sigma_mad,
+                                         stats.count,
+                                         lambda_wl, thresh_m, is_slip, false);
+                    }
+
+                    if (is_slip) {
+                        // Reset both individual phase ambiguities that form this WL pair.
+                        const std::string amb_key1 = obs.satellite + "_" + pair.phase1;
+                        const std::string amb_key2 = obs.satellite + "_" + pair.phase2;
+                        reset_keys.push_back(amb_key1);
+                        reset_keys.push_back(amb_key2);
+
+                        const double dev_cycles = std::abs(dev) / lambda_wl;
+                        const double thresh_cycles = thresh_m / lambda_wl;
+
+                        logger->warn(
+                            "MW slip detected (uncombined) for {} ({}) pair {}/{}: |dev|={:.3f} m ({:.1f} WL) > thresh={:.3f} m ({:.1f} WL), "
+                            "mean={:.3f} m, sigma={:.4f} m, arc_n={}, lambda_wl={:.3f} m; reset {}, {}",
+                            obs.satellite, PppUtils::getSystemString(obs.system),
+                            pair.phase1, pair.phase2,
+                            std::abs(dev), dev_cycles, thresh_m, thresh_cycles,
+                            stats.mean, std::isfinite(sigma_mad) ? sigma_mad : -1.0,
+                            stats.count, lambda_wl, amb_key1, amb_key2);
+
+                        mw_stats_.erase(stats_key);
+                    } else {
+                        stats.count++;
+                        const double delta  = mw_m - stats.mean;
+                        stats.mean += delta / static_cast<double>(stats.count);
+                        const double delta2 = mw_m - stats.mean;
+                        stats.M2 += delta * delta2;
+
+                        stats.diff_window.push_back(mw_diff);
+                        if (stats.diff_window.size() > kMwWindowSize) {
+                            stats.diff_window.pop_front();
+                        }
+                        stats.prev_mw = mw_m;
+                    }
+                }
             }
         }
 
@@ -556,12 +712,28 @@ namespace GnssProcessor {
     }
 
     void MwSlipDetector::resetSatellite(const std::string& satellite) {
+        // In PPP mode the key is just the satellite ID (e.g. "G01").
+        // In PPP-RTK uncombined mode keys are composite ("G01_L1C_L2W").
+        // Erase the exact key first, then erase any composite keys that
+        // start with the satellite prefix.
         auto it = mw_stats_.find(satellite);
         if (it != mw_stats_.end()) {
             log_manager_.getLogger("mw_slip_detector")->debug(
                 "Cleared MW arc history for {} (external reset, arc_n={})",
                 satellite, it->second.count);
             mw_stats_.erase(it);
+        }
+        // Also erase composite keys for uncombined mode
+        const std::string prefix = satellite + "_";
+        for (auto cit = mw_stats_.begin(); cit != mw_stats_.end(); ) {
+            if (cit->first.rfind(prefix, 0) == 0) {
+                log_manager_.getLogger("mw_slip_detector")->debug(
+                    "Cleared MW arc history for {} (external reset, arc_n={})",
+                    cit->first, cit->second.count);
+                cit = mw_stats_.erase(cit);
+            } else {
+                ++cit;
+            }
         }
     }
 

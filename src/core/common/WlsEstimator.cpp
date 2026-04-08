@@ -112,7 +112,13 @@ WlsResult WlsEstimator::estimate(const GnssTime& epoch_time, const std::vector<P
         }
 
         for (const auto& [type, observed] : obs.observed) {
-            if (type.find("C1") != std::string::npos && type.find("C2") != std::string::npos) {
+            // Accept iono-free code combinations (C1*_C2*) in combined mode,
+            // or individual code measurements (C1*, C2*) in uncombined mode
+            const bool is_code = (!type.empty() && type[0] == 'C');
+            const bool is_iono_free = (type.find("C1") != std::string::npos && type.find("C2") != std::string::npos);
+            const bool is_individual_code = (is_code && type.find('_') == std::string::npos);
+            if (!is_iono_free && !is_individual_code) continue;
+            if (is_iono_free || is_individual_code) {
                 if (!obs.modeled.count(type) || !obs.variances.count(type)) {
                     log_manager_.getLogger("ppp_model")->debug(
                         "Missing modeled or variance data for {} {} at TOW {:.3f}", obs.satellite, type, obs.time.tow);
@@ -127,6 +133,7 @@ WlsResult WlsEstimator::estimate(const GnssTime& epoch_time, const std::vector<P
                 sat_positions.push_back(obs.sat_pos);
                 initial_ranges.push_back(obs.range);
                 elevations.push_back(obs.elevation);
+                if (is_individual_code) break; // one code obs per satellite for WLS
             }
         }
     }

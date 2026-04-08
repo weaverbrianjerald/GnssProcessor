@@ -1,5 +1,4 @@
-﻿#ifndef CYCLE_SLIP_DETECTOR_HPP
-#define CYCLE_SLIP_DETECTOR_HPP
+﻿#pragma once
 
 #include "PppTypes.hpp"
 #include "GnssConfig.hpp"
@@ -51,5 +50,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-#endif // CYCLE_SLIP_DETECTOR_HPP

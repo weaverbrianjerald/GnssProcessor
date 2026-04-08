@@ -27,7 +27,9 @@ namespace {
         }
         os << " ";
     }
-}
+} // anonymous namespace
+
+namespace GnssProcessor {
 
 KalmanFilterLogger::KalmanFilterLogger(const std::string& filename) {
     log_file_.open(filename, std::ios::out | std::ios::trunc);
@@ -164,3 +166,5 @@ std::string KalmanFilterLogger::getTimestamp() const {
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
     return std::string(buf);
 }
+
+} // namespace GnssProcessor

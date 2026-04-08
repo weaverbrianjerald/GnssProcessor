@@ -1,6 +1,4 @@
 #pragma once
-#ifndef WLSESTIMATOR_HPP
-#define WLSESTIMATOR_HPP
 
 /**
  * @file WlsEstimator.hpp
@@ -93,5 +91,3 @@ private:
 };
 
 } // namespace GnssProcessor
-
-#endif // WLSESTIMATOR_HPP

@@ -141,6 +141,66 @@ namespace GnssProcessor {
         
         std::vector<std::string> last_reset_satellites_;  //!< Satellites with ambiguity resets from last update.
         bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
+
+        // -------------------------------------------------------------------
+        // Construction helpers
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Seed covariance diagonal entries for core states that are uninitialized.
+         *
+         * Only overrides entries that are non-finite or negative — zero is treated as
+         * a deliberate "fixed state" choice.
+         */
+        void seedCovarianceDiagonals(Eigen::MatrixXd& P, size_t state_size) const;
+
+        // -------------------------------------------------------------------
+        // Outlier handling helpers (decomposed from validatePostFitResiduals)
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Handle a phase outlier by resetting the offending ambiguity state(s).
+         *
+         * For BSSD, both the primary and reference satellite ambiguities are reset.
+         *
+         * @param measurement  Epoch measurement (for observation lookup).
+         * @param outlier_sat  Combined satellite ID (may contain '-' for BSSD).
+         * @param outlier_sig  Signal type of the outlier.
+         * @param x            Pre-update state vector (modified in place).
+         * @param P            Pre-update covariance (modified in place).
+         * @param epoch_prefix Log prefix.
+         */
+        void handlePhaseOutlier(const EpochMeasurement& measurement,
+            const std::string& outlier_sat, const std::string& outlier_sig,
+            Eigen::VectorXd& x, Eigen::MatrixXd& P,
+            const std::string& epoch_prefix);
+
+        /**
+         * @brief Handle a code outlier by excluding the measurement row.
+         *
+         * Adds the offending satellite+signal key to the exclusion set and
+         * physically removes the row from all measurement vectors/matrices.
+         *
+         * @param measurement  Epoch measurement (modified in place).
+         * @param outlier_sat  Combined satellite ID (may contain '-' for BSSD).
+         * @param outlier_sig  Signal type.
+         * @param max_idx      Row index of the outlier in the measurement vectors.
+         * @param epoch_prefix Log prefix.
+         */
+        void handleCodeOutlier(EpochMeasurement& measurement,
+            const std::string& outlier_sat, const std::string& outlier_sig,
+            size_t max_idx, const std::string& epoch_prefix);
+
+        /**
+         * @brief Perform a complete filter reset (covariance re-initialization).
+         *
+         * Zeros P and re-seeds core-state, ISB, iono, and ambiguity diagonal
+         * entries to large-variance defaults.
+         *
+         * @param P            Covariance (zeroed and re-seeded in place).
+         * @param epoch_prefix Log prefix.
+         */
+        void resetFilterCovariance(Eigen::MatrixXd& P, const std::string& epoch_prefix);
     };
 
 } // namespace GnssProcessor

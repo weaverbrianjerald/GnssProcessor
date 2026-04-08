@@ -121,6 +121,13 @@ namespace GnssProcessor {
 
             // Parse other fields
             uncombined_enabled_ = json.value("uncombined_enabled", false);
+
+            // PPP-RTK always uses uncombined processing
+            if (processing_mode_ == ProcessingMode::PPP_RTK) {
+                uncombined_enabled_ = true;
+                log_manager.getLogger("gnss_config")->info("PPP-RTK mode: forcing uncombined_enabled=true");
+            }
+
             elevation_mask_deg_ = json.value("elevation_mask_deg", 10.0);
 
             receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
@@ -130,10 +137,11 @@ namespace GnssProcessor {
             process_noise_.position = json["process_noise"].value("position_q", 0.0);       // 0 for static
             process_noise_.clock = json["process_noise"].value("clock_bias_q", 1e4);        // white-noise clock
             process_noise_.troposphere = json["process_noise"].value("troposphere_q", 1e-8); // ~0.5 mm/?hr (IGS default)
-            process_noise_.ionosphere = json["process_noise"].value("ionosphere_q", 0.02);   // PPP-RTK only
+            process_noise_.ionosphere = json["process_noise"].value("ionosphere_q", 0.10);   // PPP-RTK only
             process_noise_.system_time_offset = json["process_noise"].value("system_time_offset_q", 1e-7); // stable ISB drift
+            process_noise_.code_bias = json["process_noise"].value("code_bias_q", 1e-4); // receiver IFB drift
             process_noise_.tropo_gradient = json["process_noise"].value("tropo_gradient_q", 5e-12); // ~0.01 mm/sqrt(hr)
-            process_noise_.phase_clock = json["process_noise"].value("phase_clock_q", 1e4); // white-noise phase clock offset
+            process_noise_.phase_clock = json["process_noise"].value("phase_clock_q", 1e-9); // stable code-phase hardware bias delta
 
             // Troposphere gradient estimation toggle
             estimate_tropo_gradients_ = json.value("estimate_tropo_gradients", false);
@@ -145,11 +153,32 @@ namespace GnssProcessor {
 
             // Separate phase clock estimation toggle
             estimate_phase_clock_ = json.value("estimate_phase_clock", false);
+
+            // Uncombined PPP-RTK requires a separate phase clock to decouple
+            // the receiver code-phase hardware delay from the ionosphere state.
+            // Without it, the single receiver clock serves both code and phase,
+            // and the code-phase bias is absorbed by the iono state (making it
+            // negative) and ambiguities (creating residual patterns).
+            if (uncombined_enabled_ && !estimate_phase_clock_) {
+                estimate_phase_clock_ = true;
+                log_manager.getLogger("gnss_config")->info(
+                    "Uncombined mode: forcing estimate_phase_clock=true "
+                    "(required to separate code/phase receiver hardware delays)");
+            }
+
             log_manager.getLogger("gnss_config")->info("Phase clock estimation: {}", estimate_phase_clock_ ? "enabled" : "disabled");
 
             // IF phase slip detector toggle
             enable_if_slip_detector_ = json.value("enable_if_slip_detector", true);
             log_manager.getLogger("gnss_config")->info("IF phase slip detector: {}", enable_if_slip_detector_ ? "enabled" : "disabled");
+
+            // Accumulated (unwrapped) phase wind-up toggle
+            accumulate_phase_windup_ = json.value("accumulate_phase_windup", false);
+            log_manager.getLogger("gnss_config")->info("Accumulated phase wind-up: {}", accumulate_phase_windup_ ? "enabled" : "disabled");
+
+            // Between-satellite single-difference toggle
+            enable_between_satellite_sd_ = json.value("enable_between_satellite_sd", false);
+            log_manager.getLogger("gnss_config")->info("Between-satellite single differencing: {}", enable_between_satellite_sd_ ? "enabled" : "disabled");
 
             initial_std_.position = json["initial_std"].value("position", 1e2);
             initial_std_.clock = json["initial_std"].value("clock", 1e3);
@@ -157,6 +186,7 @@ namespace GnssProcessor {
             initial_std_.ionosphere = json["initial_std"].value("ionosphere", 5.0);
             initial_std_.ambiguity = json["initial_std"].value("ambiguity", 1e3);
             initial_std_.system_time_offset = json["initial_std"].value("system_time_offset", 1e3);
+            initial_std_.code_bias = json["initial_std"].value("code_bias", 10.0);
             initial_std_.tropo_gradient = json["initial_std"].value("tropo_gradient", 1e-3);
             initial_std_.phase_clock = json["initial_std"].value("phase_clock", 1e3);
 
@@ -184,7 +214,7 @@ namespace GnssProcessor {
             static const std::map<std::string, std::vector<char>> system_bands = {
                 {"GPS",     {'1','2','5'}},
                 {"Galileo", {'1','5','7','6','8'}},
-                {"GLONASS", {'1','2','3'}},
+                {"GLONASS", {'1','2','3','4','6'}},
                 {"BeiDou",  {'1','2','5','6','7','8'}},
                 {"QZSS",    {'1','2','5','6'}},
                 {"SBAS",    {'1','5'}}
@@ -311,6 +341,41 @@ namespace GnssProcessor {
                         "reference_position_ecef present but missing x/y/z fields — ignored");
                 }
             }
+
+            // Model correction enable/disable flags
+            if (json.contains("model_corrections")) {
+                const auto& mc = json["model_corrections"];
+                model_corrections_.enable_troposphere              = mc.value("enable_troposphere", true);
+                model_corrections_.enable_relativistic_correction = mc.value("enable_relativistic_correction", true);
+                model_corrections_.enable_shapiro_delay           = mc.value("enable_shapiro_delay", true);
+                model_corrections_.enable_solid_earth_tide        = mc.value("enable_solid_earth_tide", true);
+                model_corrections_.enable_ocean_tide_loading      = mc.value("enable_ocean_tide_loading", true);
+                model_corrections_.enable_pole_tide               = mc.value("enable_pole_tide", true);
+                model_corrections_.enable_atmospheric_loading     = mc.value("enable_atmospheric_loading", true);
+                model_corrections_.enable_satellite_pco           = mc.value("enable_satellite_pco", true);
+                model_corrections_.enable_satellite_pcv           = mc.value("enable_satellite_pcv", true);
+                model_corrections_.enable_receiver_pco            = mc.value("enable_receiver_pco", true);
+                model_corrections_.enable_receiver_pcv            = mc.value("enable_receiver_pcv", true);
+                model_corrections_.enable_phase_windup            = mc.value("enable_phase_windup", true);
+                model_corrections_.enable_code_phase_bias        = mc.value("enable_code_phase_bias", true);
+            }
+            log_manager.getLogger("gnss_config")->info(
+                "Model corrections: tropo={}, relativistic={}, shapiro={}, solid_earth_tide={}, "
+                "ocean_tide={}, pole_tide={}, atm_loading={}, sat_pco={}, sat_pcv={}, "
+                "rx_pco={}, rx_pcv={}, phase_windup={}, code_phase_bias={}",
+                model_corrections_.enable_troposphere ? "on" : "off",
+                model_corrections_.enable_relativistic_correction ? "on" : "off",
+                model_corrections_.enable_shapiro_delay ? "on" : "off",
+                model_corrections_.enable_solid_earth_tide ? "on" : "off",
+                model_corrections_.enable_ocean_tide_loading ? "on" : "off",
+                model_corrections_.enable_pole_tide ? "on" : "off",
+                model_corrections_.enable_atmospheric_loading ? "on" : "off",
+                model_corrections_.enable_satellite_pco ? "on" : "off",
+                model_corrections_.enable_satellite_pcv ? "on" : "off",
+                model_corrections_.enable_receiver_pco ? "on" : "off",
+                model_corrections_.enable_receiver_pcv ? "on" : "off",
+                model_corrections_.enable_phase_windup ? "on" : "off",
+                model_corrections_.enable_code_phase_bias ? "on" : "off");
 
             log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
                 "observation_path={}, navigation_path={}, {} products, leap_seconds={}",

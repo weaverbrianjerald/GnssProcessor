@@ -300,6 +300,7 @@ namespace GnssProcessor {
         double sat_pco_corr = 0.0, sat_pcv_corr = 0.0;
         if (sat_entry && sat_entry->pco.count(atx_freq)) {
             // === PCO ===
+            if (config_.getModelCorrections().enable_satellite_pco) {
             Eigen::Vector3d pco_body = sat_entry->pco.at(atx_freq) * 1e-3; // mm -> m, in satellite body frame
             if (pco_body.allFinite()) {
                 // Since sat_frame is orthonormal: sat_frame.transpose() * pco_body transforms body->ECEF
@@ -320,9 +321,11 @@ namespace GnssProcessor {
                 log_manager_.getLogger("antenna")->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, sat_entry->type, atx_freq, time.tow);
             }
+            } // enable_satellite_pco
 
             // === PCV ===
-            if (sat_entry->pcv.count(atx_freq) && !sat_entry->pcv.at(atx_freq).empty()) {
+            if (config_.getModelCorrections().enable_satellite_pcv &&
+                sat_entry->pcv.count(atx_freq) && !sat_entry->pcv.at(atx_freq).empty()) {
                 const auto& pcv_table = sat_entry->pcv.at(atx_freq);
 
                 // Nadir angle: angle between boresight (+Z = k_s, toward Earth) and LOS (sat->rx)
@@ -427,6 +430,7 @@ namespace GnssProcessor {
         // === Receiver ===
         if (rx_entry && rx_entry->pco.count(atx_freq)) {
             // === PCO ===
+            if (config_.getModelCorrections().enable_receiver_pco) {
             // ATX receiver PCO is stored as North/East/Up (NEU) in mm
             Eigen::Vector3d pco_neu = rx_entry->pco.at(atx_freq) * 1e-3;  // Convert mm to m
 
@@ -466,9 +470,11 @@ namespace GnssProcessor {
                 log_manager_.getLogger("antenna")->warn("Invalid receiver PCO for {} {} atx_freq={} at TOW {:.3f}",
                     satellite, rx_type_sanitized, atx_freq, time.tow);
             }
+            } // enable_receiver_pco
 
             // === PCV ===
-            if (rx_entry->pcv.count(atx_freq) && !rx_entry->pcv.at(atx_freq).empty()) {
+            if (config_.getModelCorrections().enable_receiver_pcv &&
+                rx_entry->pcv.count(atx_freq) && !rx_entry->pcv.at(atx_freq).empty()) {
                 const auto& pcv_table = rx_entry->pcv.at(atx_freq);
                 double zenith = 90.0 - elevation;
                 double dazi = rx_entry->dazi > 0.0 ? rx_entry->dazi : 5.0;
@@ -507,8 +513,8 @@ namespace GnssProcessor {
         }
 
         double wind_up_corr = 0.0;
-        if (is_phase && wavelength > 0.0) {
-            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel);
+        if (config_.getModelCorrections().enable_phase_windup && is_phase && wavelength > 0.0) {
+            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp());
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
                 correction += wind_up_corr;

@@ -153,9 +153,32 @@ namespace GnssProcessor {
             if (freq_type.find("C7") != std::string::npos || freq_type.find("L7") != std::string::npos) {
                 return Constants::GAL_E5B_FREQ;
             }
+            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
+                return Constants::GAL_E6_FREQ;
+            }
+            if (freq_type.find("C8") != std::string::npos || freq_type.find("L8") != std::string::npos) {
+                return Constants::GAL_E5_FREQ;
+            }
         }
         else if (system == System::GLONASS) {
-            // Compute actual satellite-specific GLONASS frequency using FDMA
+            // CDMA signals (bands 3, 4, 6) have fixed frequencies — no channel offset
+            if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
+                log_manager_.getLogger("ppp_utils")->trace("GLONASS G3 frequency for {} (CDMA): {:.3f} MHz",
+                    satellite, Constants::GLONASS_G3_BASE_FREQ / 1e6);
+                return Constants::GLONASS_G3_BASE_FREQ;
+            }
+            if (freq_type.find("C4") != std::string::npos || freq_type.find("L4") != std::string::npos) {
+                log_manager_.getLogger("ppp_utils")->trace("GLONASS G1a frequency for {} (CDMA): {:.3f} MHz",
+                    satellite, Constants::GLONASS_G1A_FREQ / 1e6);
+                return Constants::GLONASS_G1A_FREQ;
+            }
+            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
+                log_manager_.getLogger("ppp_utils")->trace("GLONASS G2a frequency for {} (CDMA): {:.3f} MHz",
+                    satellite, Constants::GLONASS_G2A_FREQ / 1e6);
+                return Constants::GLONASS_G2A_FREQ;
+            }
+
+            // FDMA signals (bands 1, 2) require satellite-specific channel
             int channel = getGlonassChannel(satellite);
 
             // Validate channel range
@@ -176,11 +199,6 @@ namespace GnssProcessor {
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G2 frequency for {} (channel {}): {:.3f} MHz",
                     satellite, channel, freq / 1e6);
             }
-            else if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
-                freq = Constants::GLONASS_G3_BASE_FREQ; // CDMA, no channel offset
-                log_manager_.getLogger("ppp_utils")->trace("GLONASS G3 frequency for {} (CDMA): {:.3f} MHz",
-                    satellite, freq / 1e6);
-            }
             else {
                 log_manager_.getLogger("ppp_utils")->warn("Invalid GLONASS frequency type: {} for satellite {}",
                     freq_type, satellite);
@@ -196,11 +214,20 @@ namespace GnssProcessor {
             return freq;
         }
         else if (system == System::BeiDou) {
+            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
+                return Constants::BDS_B1C_FREQ;
+            }
             if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
                 return Constants::BDS_B1_FREQ;
             }
+            if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
+                return Constants::BDS_B2A_FREQ;
+            }
             if (freq_type.find("C7") != std::string::npos || freq_type.find("L7") != std::string::npos) {
                 return Constants::BDS_B2_FREQ;
+            }
+            if (freq_type.find("C8") != std::string::npos || freq_type.find("L8") != std::string::npos) {
+                return Constants::BDS_B2AB_FREQ;
             }
             if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
                 return Constants::BDS_B3_FREQ;
@@ -215,6 +242,9 @@ namespace GnssProcessor {
             }
             if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
                 return Constants::QZSS_L5_FREQ;
+            }
+            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
+                return Constants::QZSS_L6_FREQ;
             }
         }
         else if (system == System::SBAS) {
@@ -259,6 +289,12 @@ namespace GnssProcessor {
             }
             if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
                 return Constants::GLONASS_G3_BASE_FREQ; // Center frequency: 1202.025 MHz
+            }
+            if (freq_type.find("C4") != std::string::npos || freq_type.find("L4") != std::string::npos) {
+                return Constants::GLONASS_G1A_FREQ; // G1a CDMA: 1600.995 MHz
+            }
+            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
+                return Constants::GLONASS_G2A_FREQ; // G2a CDMA: 1248.06 MHz
             }
             log_manager_.getLogger("ppp_utils")->warn("Invalid GLONASS frequency type for reference: {}", freq_type);
             return 0.0;

@@ -1,6 +1,4 @@
 #pragma once
-#ifndef RINEXPARSER_HPP
-#define RINEXPARSER_HPP
 
 #include <array>
 #include <filesystem>
@@ -222,5 +220,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-#endif // RINEXPARSER_HPP

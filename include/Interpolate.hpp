@@ -258,6 +258,37 @@ namespace GnssProcessor {
             const std::vector<double>& y,
             const std::vector<double>& m,
             double xq);
+
+        /**
+         * @brief Neville's algorithm: polynomial interpolation with simultaneous derivative.
+         *
+         * Evaluates the unique polynomial of degree (n-1) passing through the n
+         * data points (x[i], y[i]) and its first derivative at the query point xq.
+         * Uses the classical Neville tableau with an Aitken-like derivative extension.
+         *
+         * The algorithm builds the interpolation incrementally from nearest to
+         * farthest node, so the node ordering supplied by the caller determines
+         * the convergence pattern. For best numerical behaviour, sort nodes by
+         * increasing distance from xq before calling.
+         *
+         * Unlike windowed barycentric Lagrange, Neville's algorithm produces a
+         * **unique** polynomial for any given set of nodes — there is no window
+         * boundary that could shift and cause sawtooth-like discontinuities.
+         *
+         * @param[in]  x   Node abscissae (must have same size as y; need not be sorted).
+         * @param[in]  y   Node ordinates.
+         * @param[in]  xq  Query abscissa.
+         * @param[out] val Interpolated value p(xq).
+         * @param[out] deriv Interpolated derivative p'(xq).
+         *
+         * @note Complexity: O(n^2) in both time and auxiliary space.
+         * @note If x is empty, val and deriv are set to 0.0.
+         */
+        static void nevilleInterpDeriv(const std::vector<double>& x,
+            const std::vector<double>& y,
+            double xq,
+            double& val,
+            double& deriv);
     };
 
 } // namespace GnssProcessor

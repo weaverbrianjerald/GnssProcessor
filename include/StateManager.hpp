@@ -1,6 +1,4 @@
 #pragma once
-#ifndef STATEMANAGER_HPP
-#define STATEMANAGER_HPP
 
 /**
  * @file StateManager.hpp
@@ -153,8 +151,64 @@ namespace GnssProcessor {
         /**
          * @brief Index of the ionospheric zenith delay state (PPP-RTK only).
          * @return Index of the ionosphere state, or an index >= state size if not present.
+         * @deprecated Use getIonosphereIndex(satellite) for per-satellite iono states.
          */
         size_t getIonoIndex() const;
+
+        /**
+         * @brief Lookup the per-satellite ionosphere state index by satellite ID.
+         *
+         * In PPP-RTK uncombined mode each satellite has its own slant ionosphere
+         * state managed dynamically (like ambiguities). Keys are satellite IDs
+         * (e.g. "G01").
+         *
+         * @param satellite Satellite identifier.
+         * @return Zero-based index of the ionosphere state, or -1 if not present.
+         */
+        int getIonosphereIndex(const std::string& satellite) const;
+
+        /**
+         * @brief Get reference to the internal per-satellite ionosphere index map.
+         * @return Map from satellite ID to state index.
+         */
+        const std::map<std::string, size_t>& getIonosphereStates() const;
+
+        /**
+         * @brief Add a new per-satellite ionosphere state and return its index.
+         *
+         * The ionosphere state is appended to the state vector and covariance.
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @param initial_value Initial slant ionosphere delay in meters.
+         * @return Index assigned to the newly-created ionosphere state.
+         */
+        size_t addIonosphereState(const std::string& satellite, double initial_value);
+
+        /**
+         * @brief Remove all per-satellite ionosphere states except those listed in keep_keys.
+         *
+         * Convenience to prune stale iono states for satellites no longer visible.
+         *
+         * @param keep_keys Set of satellite IDs to keep.
+         */
+        void pruneIonosphereStatesExcept(const std::set<std::string>& keep_keys);
+
+        /**
+         * @brief Store the last-known elevation (degrees) for a per-satellite iono state.
+         *
+         * Used by the process noise model to apply elevation-dependent spectral
+         * density scaling: q_slant = q_zenith / sin²(el).
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @param elevation_deg Elevation in degrees.
+         */
+        void setIonosphereElevation(const std::string& satellite, double elevation_deg);
+
+        /**
+         * @brief Get the stored per-satellite ionosphere elevation map.
+         * @return Map from satellite ID to last-known elevation in degrees.
+         */
+        const std::map<std::string, double>& getIonosphereElevations() const;
 
         /**
          * @brief Index of the tropospheric north gradient state.
@@ -293,6 +347,45 @@ namespace GnssProcessor {
         void syncPppStateToStateVector(const PppState& ppp_state);
 
         /**
+         * @brief Lookup a receiver code bias (IFB) state index by key.
+         *
+         * Keys have the format "system_signal" (e.g. "GPS_C2W", "Galileo_C5Q").
+         * Only non-reference code signals have a code bias state; the reference
+         * signal's hardware delay is absorbed by the receiver clock / ISB.
+         *
+         * @param key Code bias key.
+         * @return Zero-based state index, or -1 if not present.
+         */
+        int getCodeBiasIndex(const std::string& key) const;
+
+        /**
+         * @brief Add a new receiver code bias state and return its index.
+         *
+         * The state is appended to the state vector and covariance with the
+         * configured initial variance.
+         *
+         * @param key Unique code bias key (e.g. "GPS_C2W").
+         * @param initial_value Initial bias value in meters (typically 0.0).
+         * @return Index assigned to the newly-created code bias state.
+         */
+        size_t addCodeBiasState(const std::string& key, double initial_value);
+
+        /**
+         * @brief Remove all code bias states except those listed in keep_keys.
+         *
+         * Prunes stale code bias states for signals no longer observed.
+         *
+         * @param keep_keys Set of code bias keys to keep.
+         */
+        void pruneCodeBiasStatesExcept(const std::set<std::string>& keep_keys);
+
+        /**
+         * @brief Get reference to the internal code bias index map.
+         * @return Map from code bias key to state index.
+         */
+        const std::map<std::string, size_t>& getCodeBiasStates() const;
+
+        /**
          * @brief Remove an ambiguity state by key.
          *
          * The ambiguity state and its associated covariance are removed from the filter.
@@ -321,14 +414,40 @@ namespace GnssProcessor {
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
+        std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).
+        std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
+        std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
         GnssTime state_epoch_time_;                 //!< Epoch time associated with the stored state.
         Eigen::VectorXd state_vector_;              //!< Filter state vector (core + ambiguities).
         Eigen::MatrixXd covariance_;                //!< State covariance matrix.
         LogManager& log_manager_;                   //!< Reference to logging manager.
         const GnssConfig& config_;                  //!< Read-only configuration reference.
         std::map<std::string, double> meas_var_scale_; //!< Per-measurement variance scale map (key -> multiplier).
+
+        // -------------------------------------------------------------------
+        // Internal state vector / covariance manipulation helpers
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Append one state to the end of the state vector and covariance.
+         *
+         * Resizes both, copies existing data, sets the new value and diagonal variance.
+         *
+         * @param initial_value Value for the new state element.
+         * @param initial_variance Diagonal covariance entry for the new state.
+         * @return Index of the newly appended state.
+         */
+        size_t appendState(double initial_value, double initial_variance);
+
+        /**
+         * @brief Remove a single row/column from the state vector and covariance.
+         *
+         * After removal, all entries in ambiguity_indices_, code_bias_indices_ and
+         * ionosphere_indices_ with index > rem_idx are decremented by one.
+         *
+         * @param rem_idx Zero-based index to remove (must be >= core_state_size_).
+         */
+        void removeStateAtIndex(size_t rem_idx);
     };
 
 } // namespace GnssProcessor
-
-#endif // STATEMANAGER_HPP

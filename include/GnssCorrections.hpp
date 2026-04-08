@@ -1,5 +1,4 @@
-#ifndef GNSS_CORRECTIONS_HPP
-#define GNSS_CORRECTIONS_HPP
+#pragma once
 
 /**
  * @file GnssCorrections.hpp
@@ -247,7 +246,8 @@ namespace GnssProcessor {
         double computePhaseWindUp(const std::string& satellite, System system, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos, double wavelength, const GnssTime& time,
             const Eigen::Vector3d& sun_pos = Eigen::Vector3d::Zero(),
-            const Eigen::Vector3d& sat_vel = Eigen::Vector3d::Zero()) const;
+            const Eigen::Vector3d& sat_vel = Eigen::Vector3d::Zero(),
+            bool accumulate = false) const;
 
         /**
          * @brief Reset phase wind-up state for a specific satellite.
@@ -347,4 +347,3 @@ namespace GnssProcessor {
     };
 
 }
-#endif

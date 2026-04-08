@@ -1,5 +1,4 @@
-#ifndef IONOSPHERE_HPP
-#define IONOSPHERE_HPP
+#pragma once
 
 #include "LogManager.hpp"
 #include "GnssConfig.hpp"
@@ -99,5 +98,3 @@ namespace GnssProcessor {
 	};
 
 }
-
-#endif

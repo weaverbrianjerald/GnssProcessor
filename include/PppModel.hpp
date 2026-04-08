@@ -1,6 +1,5 @@
 #pragma once
-#ifndef PPPMODEL_HPP
-#define PPPMODEL_HPP
+
 
 /**
  * @file PppModel.hpp
@@ -29,6 +28,41 @@
 #include <deque>
 
 namespace GnssProcessor {
+
+    // -----------------------------------------------------------------------
+    // Satellite geometry result bundle
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Groups all output values produced by a single call to
+     *        Model::Geometry::computeSatelliteGeometry().
+     *
+     * Avoids passing 15+ individual references/values through the processing
+     * pipeline and makes the interface between computeModels() and the
+     * observation-processing helpers self-documenting.
+     */
+    struct SatGeometry {
+        Eigen::Vector3d sat_pos  = Eigen::Vector3d::Zero();
+        Eigen::Vector3d sat_vel  = Eigen::Vector3d::Zero();
+        Eigen::Vector3d rx_pos   = Eigen::Vector3d::Zero();
+        Eigen::Vector3d los      = Eigen::Vector3d::Zero();
+        double elevation         = 0.0;
+        double azimuth           = 0.0;
+        double range             = 0.0;
+        double tropo_zhd         = 0.0;
+        double sat_clock         = 0.0;
+        double shapiro_delay     = 0.0;
+        double sagnac_corr       = 0.0;
+        double atm_loading_corr  = 0.0;
+        double relativistic_corr = 0.0;
+        double solid_tide        = 0.0;
+        double mf_w              = 0.0;
+        double mf_d              = 0.0;
+    };
+
+    // -----------------------------------------------------------------------
+    // PppModel
+    // -----------------------------------------------------------------------
 
     /**
      * @class PppModel
@@ -188,100 +222,141 @@ namespace GnssProcessor {
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priority lists (by system). */
         std::vector<double> klobuchar_coeffs_;  /**< Klobuchar coefficients (if available) */
 
+        // -------------------------------------------------------------------
+        // Signal selection helpers (decomposed from selectSignals)
+        // -------------------------------------------------------------------
+
         /**
-         * @brief Select best signals to use for this observation record.
+         * @brief Top-level signal selection: chooses observation pairs or singles.
          *
-         * Based on configured signal priorities and the observation contents,
-         * this routine selects pairs or single signals to attempt processing.
-         *
-         * @param obs Input RINEX observation record.
-         * @param system_str String name of the GNSS system (e.g., "GPS").
-         * @param selected_signals Output vector of selected signals. Each element is
-         *        a pair: (primary_signal, secondary_signal) where secondary may be empty for single-signal processing.
-         * @param is_iono_free Output flag set to true when the selected pair represents an iono-free combination.
-         * @param comb_type Output string describing the combination type (e.g., "LC" for iono-free).
-         * @return true if at least one useful signal selection was made, false otherwise.
+         * Delegates to buildFrequencyBandMap(), selectUncombinedSignals(),
+         * selectIonoFreePairs() and selectSingleSignalFallback() as needed.
          */
         bool selectSignals(const RinexObservation& obs, const std::string& system_str,
             std::vector<std::pair<std::string, std::string>>& selected_signals,
             bool& is_iono_free, std::string& comb_type);
 
         /**
+         * @brief Map available RINEX measurements to frequency bands.
+         *
+         * For each configured signal priority that is present in \p measurements,
+         * records the best code and best phase signal per frequency band.
+         *
+         * @param measurements Available measurements.
+         * @param system_str   GNSS system name (e.g. "GPS").
+         * @param signals      Priority-ordered signal list for the system.
+         * @param[out] freq_band_to_signal  Map from band name to (best_code, best_phase).
+         * @param[out] freq_bands           Frequency bands in discovery order.
+         * @return true if at least one band was populated.
+         */
+        bool buildFrequencyBandMap(const std::map<std::string, double>& measurements,
+            const std::string& system_str,
+            const std::vector<std::string>& signals,
+            std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
+            std::vector<std::string>& freq_bands) const;
+
+        /**
+         * @brief Select individual code/phase signals per band (PPP-RTK uncombined).
+         */
+        bool selectUncombinedSignals(const RinexObservation& obs, const std::string& system_str,
+            const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
+            const std::vector<std::string>& freq_bands,
+            std::vector<std::pair<std::string, std::string>>& selected_signals) const;
+
+        /**
+         * @brief Select best iono-free code+phase pairs from available bands.
+         */
+        bool selectIonoFreePairs(const RinexObservation& obs, const std::string& system_str,
+            const std::vector<std::string>& signals,
+            const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
+            const std::vector<std::string>& freq_bands,
+            std::vector<std::pair<std::string, std::string>>& selected_signals) const;
+
+        /**
+         * @brief Fall back to best available single code + single phase signal.
+         */
+        void selectSingleSignalFallback(const RinexObservation& obs,
+            const std::vector<std::string>& signals,
+            std::vector<std::pair<std::string, std::string>>& selected_signals) const;
+
+        /**
          * @brief Determine which observation types (keys) to process from the measurements map.
-         *
-         * This helper returns a prioritized list of observation keys (strings) that
-         * should be used for modeling given the available measurements and system.
-         *
-         * @param measurements Map of measurement name -> value.
-         * @param system GNSS system of the satellite.
-         * @param system_str Human-readable system string used for logging/selection.
-         * @return Vector of measurement keys to attempt processing in priority order.
          */
         std::vector<std::string> selectObservationTypes(const std::map<std::string, double>& measurements,
             System system, const std::string& system_str) const;
 
+        // -------------------------------------------------------------------
+        // Observation processing helpers
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Compute the base modeled range value shared by iono-free and uncombined paths.
+         *
+         * Includes geometric range, satellite clock, relativistic correction,
+         * dry troposphere, antenna PCO/PCV, code/phase bias, Shapiro delay,
+         * atmospheric loading, solid tide, and pole tide.
+         *
+         * @param obs           RINEX observation (for satellite ID, system, time).
+         * @param ppp_obs       PppObservation with LOS vector and mapping factors.
+         * @param geom          Pre-computed satellite geometry.
+         * @param signal_type   Signal key (e.g. "C1W", "L1C") for antenna/bias lookup.
+         * @return Base modeled value in meters.
+         */
+        double computeBaseModeledValue(const RinexObservation& obs,
+            const PppObservation& ppp_obs,
+            const SatGeometry& geom,
+            const std::string& signal_type) const;
+
+        /**
+         * @brief Compute pole-tide LOS projection shared by iono-free and uncombined paths.
+         * @param rx_pos Receiver ECEF position.
+         * @param time   Epoch time.
+         * @param los    LOS unit vector (receiver?satellite).
+         * @return Pole tide correction projected onto the LOS (meters).
+         */
+        double computePoleTideProjection(const Eigen::Vector3d& rx_pos,
+            const GnssTime& time,
+            const Eigen::Vector3d& los) const;
+
         /**
          * @brief Process a single iono-free (or composed) observation and fill a PppObservation.
-         *
-         * This internal routine performs the bulk of per-observation modeling when an
-         * ionosphere-free combination has been requested: it computes geometry, applies
-         * satellite and receiver corrections, computes troposphere and relativistic terms,
-         * and populates \p ppp_obs with modeled values and metadata.
-         *
-         * @param obs Input RINEX observation record.
-         * @param state Current PPP state used for modeling.
-         * @param ppp_obs Output modeled observation structure to populate.
-         * @param system_str System identifier string (e.g., "GPS").
-         * @param selected_signals Vector of selected signal pairs for the observation.
-         * @param comb_type Combination type string describing the processing (e.g., "LC").
-         * @param rx_pos Receiver ECEF position used for geometry (meters).
-         * @param sat_pos Satellite ECEF position (meters).
-         * @param sat_vel Satellite ECEF velocity (m/s).
-         * @param elevation Elevation angle in radians (or degrees according to project convention).
-         * @param azimuth Azimuth angle in radians.
-         * @param rx_antenna_type Receiver antenna type string for antenna corrections.
-         * @param range Geometric range between receiver and satellite (meters).
-         * @param tropo_delay Modeled tropospheric slant delay (meters).
-         * @param sat_clock Satellite clock correction (seconds or meters depending on convention).
-         * @param shapiro_delay Shapiro delay (meters).
-         * @param sagnac_corr Sagnac correction (meters).
-         * @param atm_loading_corr Atmospheric loading correction (meters).
-         * @param relativistic_corr Relativistic correction (meters).
-         * @param solid_tide Solid Earth tide correction (meters).
-         * @return true if the observation was successfully processed and \p ppp_obs populated; false otherwise.
          */
         bool processIonoFreeObservation(const RinexObservation& obs, PppState& state,
             PppObservation& ppp_obs, const std::string& system_str,
             const std::vector<std::pair<std::string, std::string>> selected_signals,
-            const std::string& comb_type, const Eigen::Vector3d& rx_pos,
-            const Eigen::Vector3d& sat_pos, const Eigen::Vector3d& sat_vel,
-            double elevation, double azimuth,
-            const std::string& rx_antenna_type, double range, double tropo_delay,
-            double sat_clock, double shapiro_delay, double sagnac_corr,
-            double atm_loading_corr, double relativistic_corr, double solid_tide);
+            const std::string& comb_type, const SatGeometry& geom);
+
+        /**
+         * @brief Process a single iono-free code or phase pair and write results into ppp_obs.
+         *
+         * Extracted from the inner lambda of processIonoFreeObservation.
+         *
+         * @return true if the pair was successfully modeled.
+         */
+        bool processIonoFreePair(const RinexObservation& obs, PppObservation& ppp_obs,
+            const std::string& system_str,
+            const std::pair<std::string, std::string>& sig_pair,
+            char meas_type,
+            const SatGeometry& geom,
+            double pole_tide_corr,
+            const std::string& comb_type);
 
         /**
          * @brief Form ionosphere-free combined measurements (observed + variance).
-         *
-         * Extracts and forms LC (iono-free) combinations from the provided raw
-         * RINEX measurements according to the supplied selected signal pairs.
-         * The function converts carrier-phase cycles to meters when required and
-         * computes the combination variance (pre elevation/mapping scaling).
-         *
-         * @param obs Input RINEX observation record.
-         * @param system GNSS system enum for frequency lookup.
-         * @param selected_signals Vector of (sig1, sig2) pairs to form combinations from.
-         * @param out_observed Output map filled with combined observed values (key = "SIG1_SIG2").
-         * @param out_variances Output map filled with combined variances (same keys as out_observed).
-         * @return true if at least one combined measurement was formed; false otherwise.
          */
         bool formIonoFreeMeasurements(const RinexObservation& obs, System system,
             const std::vector<std::pair<std::string, std::string>>& selected_signals,
             std::map<std::string, double>& out_observed,
             std::map<std::string, double>& out_variances) const;
 
+        /**
+         * @brief Process a single uncombined observation and fill a PppObservation.
+         */
+        bool processUncombinedObservation(const RinexObservation& obs, PppState& state,
+            PppObservation& ppp_obs, const std::string& system_str,
+            const std::vector<std::pair<std::string, std::string>>& selected_signals,
+            const SatGeometry& geom);
+
     };
 
 } // namespace GnssProcessor
-
-#endif // PPPMODEL_HPP

@@ -1,6 +1,4 @@
 #pragma once
-#ifndef IF_PHASE_SLIP_DETECTOR_HPP
-#define IF_PHASE_SLIP_DETECTOR_HPP
 
 /**
 * @file IfPhaseSlipDetector.hpp
@@ -243,5 +241,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-#endif // IF_PHASE_SLIP_DETECTOR_HPP

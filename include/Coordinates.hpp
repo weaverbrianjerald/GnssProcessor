@@ -1,6 +1,4 @@
 #pragma once
-#ifndef COORDINATES_HPP
-#define COORDINATES_HPP
 
 /**
  * @file Coordinates.hpp
@@ -91,5 +89,3 @@
     } // namespace Coordinates
 
 } // namespace GnssProcessor
-
-#endif // COORDINATES_HPP

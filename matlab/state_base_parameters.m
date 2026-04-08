@@ -68,8 +68,8 @@ end
 
 % Reference point for ENU
 %x0 = x(end);  y0 = y(end);  z0 = z(end); % last epoch
-%x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
-x0 = -1248596.4806;  y0 = -4819428.1948;  z0 = 3976505.8949; % AMC4 (NRCAN PPP)
+x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
+%x0 = -1248596.4806;  y0 = -4819428.1948;  z0 = 3976505.8949; % AMC4 (NRCAN PPP)
 
 % Convert reference ECEF → geodetic
 [llh] = ecef2lla([x0 y0 z0]);

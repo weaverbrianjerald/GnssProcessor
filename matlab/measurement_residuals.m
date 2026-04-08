@@ -102,51 +102,9 @@ for row = 1:nTypes
             if isempty(globalIdx), globalIdx = k; end
             if globalIdx > size(colors,1), globalIdx = mod(globalIdx-1, size(colors,1)) + 1; end
 
-            x = T_sub.utc(idx_sat);
-            y = T_sub.residual_m(idx_sat);
-
-            % Sort by time (IMPORTANT)
-            [x, ord] = sort(x);
-            y = y(ord);
-
-            n = numel(x);
-            if n < 2
-                % Just plot the single point/short series
-                plot(x, y, '-', 'Color', colors(colorRow,:), 'DisplayName', sat);
-                continue;
-            end
-
-            dt = diff(x);
-            dt_median = median(dt);
-
-            % Better break rule (pick one):
-            % isBreak = dt > dt_median;        % your original (often too aggressive)
-            isBreak = dt > 5*dt_median;        % more typical
-
-            breakIdx = find(isBreak);          % indices in dt (1..n-1)
-            startIdx = 1;
-
-            % Plot segments
-            if ~isempty(breakIdx)
-                for kk = 1:numel(breakIdx)
-                    endIdx = breakIdx(kk);
-
-                    if endIdx >= startIdx
-                        plot(x(startIdx:endIdx), y(startIdx:endIdx), ...
-                            'LineStyle','-', 'Marker','none', ...
-                            'Color',colors(colorRow,:), ...
-                            'DisplayName', sat); % optional
-                    end
-                    startIdx = endIdx + 1;
-                end
-            end
-
-            if startIdx <= n
-                plot(x(startIdx:n), y(startIdx:n), ...
-                    'LineStyle','-', 'Marker','none', ...
-                    'Color',colors(colorRow,:), ...
-                    'DisplayName', sat); % optional
-            end
+            scatter(T_sub.utc(idx_sat), T_sub.residual_m(idx_sat), ...
+                10, colors(colorRow,:), 'filled', ...
+                'DisplayName', sat);
         end
 
         xlabel('UTC Time');

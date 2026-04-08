@@ -1,4 +1,6 @@
-﻿/**
+﻿#pragma once
+
+/**
 * @file Planetary.hpp
 * @brief Planetary utilities: Sun & Moon positions and ephemeris handling.
 *
@@ -6,9 +8,6 @@
 * using the IAU 1976/1980 precession/nutation model with GAST and polar
 * motion.  All rotations use the static Rxyz() helper for consistency.
 */
-
-#ifndef PLANETARY_HPP
-#define PLANETARY_HPP
 
 #include "LogManager.hpp"
 #include <Eigen/Dense>
@@ -179,5 +178,3 @@ namespace GnssProcessor {
     };
 
 }
-
-#endif // PLANETARY_HPP

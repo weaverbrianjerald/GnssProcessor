@@ -1,6 +1,4 @@
 #pragma once
-#ifndef GNSSCONFIG_HPP
-#define GNSSCONFIG_HPP
 
 #include "LogManager.hpp"
 #include <array>
@@ -91,12 +89,19 @@ namespace GnssProcessor {
         double troposphere{ 1e-8 };
 
         /// Ionosphere zenith delay (m*m/s). Only active in PPP-RTK
-        /// uncombined mode. 0.02 is within the typical 0.01-0.1 range.
-        double ionosphere{ 0.02 };
+        /// uncombined mode. Scaled to slant by 1/sin²(el) per satellite.
+        /// 0.02 is within the typical 0.01-0.1 range for the zenith value.
+        double ionosphere{ 0.10 };
 
         /// Carrier phase ambiguity (m*m/s). Zero for constant-ambiguity
         /// float model (standard).
         double ambiguity{ 0.0 };
+
+        /// Receiver code bias / inter-frequency bias (m*m/s). In uncombined
+        /// PPP-RTK, one code bias per non-reference signal absorbs the
+        /// receiver hardware delay difference. Very stable short-term;
+        /// 1e-4 allows ~3 mm/sqrt(30 s) drift.
+        double code_bias{ 1e-4 };
 
         /// Inter-system time bias (m*m/s). ISBs are very stable short-term;
         /// 1e-7 allows ~0.17 mm/sqrt(30 s) drift, sufficient for
@@ -108,10 +113,14 @@ namespace GnssProcessor {
         /// appropriate for slow azimuthal asymmetry evolution.
         double tropo_gradient{ 5e-12 };
 
-        /// Phase clock offset (m*m/s). Typically white noise like the code clock,
-        /// but can be smaller if the receiver hardware is stable. 1e4 treats it
-        /// as unconstrained each epoch (same as code clock default).
-        double phase_clock{ 1e4 };
+        /// Phase clock offset delta (m*m/s). In the "common clock + delta"
+        /// parameterization the delta captures the receiver code-phase hardware
+        /// bias difference, which is physically stable (nearly constant over
+        /// hours). A very small random-walk spectral density keeps the delta
+        /// tightly constrained so the common clock absorbs epoch-to-epoch
+        /// timing variations while ambiguities remain estimable.
+        /// 1e-9 yields ~1 mm/sqrt(hr) drift.
+        double phase_clock{ 1e-9 };
     };
 
     /**
@@ -125,6 +134,7 @@ namespace GnssProcessor {
         double troposphere{ 0.5 };      ///< Initial tropospheric zenith delay standard deviation (m).
         double ionosphere{ 5.0 };       ///< Initial ionospheric zenith delay standard deviation (m).
         double ambiguity{ 1e3 };      ///< Initial ambiguity standard deviation (m).
+        double code_bias{ 10.0 };         ///< Initial receiver code bias (IFB) standard deviation (m).
         double system_time_offset{ 1e2 }; ///< Initial inter-system time bias standard deviation (m).
         double tropo_gradient{ 1e-3 };     ///< Initial tropo gradient standard deviation (m).
         double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
@@ -138,6 +148,45 @@ namespace GnssProcessor {
     struct DefaultMeasurementNoise {
         double code_std_m{ 0.30 };   ///< Code measurement standard deviation (m).
         double phase_std_m{ 0.003 }; ///< Phase measurement standard deviation (m).
+    };
+
+    /**
+     * @brief Grouped enable/disable flags for core PPP model corrections.
+     *
+     * Each flag controls whether the corresponding correction term is
+     * computed and applied during observation modelling.  When a flag is
+     * false, the associated correction evaluates to zero (the neutral
+     * element for an additive range correction) so the rest of the
+     * processing chain is unaffected.
+     *
+     * All flags default to \c true so that the full model is active
+     * unless the user explicitly disables individual terms.
+     */
+    struct ModelCorrections {
+        // --- Atmosphere ---
+        bool enable_troposphere{ true };               ///< Saastamoinen ZHD + GMF dry mapping (slant hydrostatic delay).
+
+        // --- Relativistic / propagation ---
+        bool enable_relativistic_correction{ true };  ///< Periodic relativistic clock correction (-2 r·v / c²).
+        bool enable_shapiro_delay{ true };             ///< Shapiro (gravitational path) delay.
+
+        // --- Geophysical site displacements ---
+        bool enable_solid_earth_tide{ true };          ///< IERS 2010 solid Earth tide displacement.
+        bool enable_ocean_tide_loading{ true };        ///< Ocean tidal loading displacement (BLQ).
+        bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP).
+        bool enable_atmospheric_loading{ true };       ///< Atmospheric pressure loading displacement.
+
+        // --- Antenna phase centre ---
+        bool enable_satellite_pco{ true };             ///< Satellite antenna phase centre offset.
+        bool enable_satellite_pcv{ true };             ///< Satellite antenna phase centre variation.
+        bool enable_receiver_pco{ true };              ///< Receiver antenna phase centre offset.
+        bool enable_receiver_pcv{ true };              ///< Receiver antenna phase centre variation.
+
+        // --- Carrier-phase ---
+        bool enable_phase_windup{ true };              ///< Carrier-phase wind-up correction.
+
+        // --- Product biases ---
+        bool enable_code_phase_bias{ true };            ///< Code/phase bias corrections from BIA product files.
     };
 
     /**
@@ -237,6 +286,12 @@ namespace GnssProcessor {
          * @return Reference to the DefaultMeasurementNoise struct.
          */
         const DefaultMeasurementNoise& getDefaultMeasurementNoise() const { return default_meas_noise_; }
+
+        /**
+         * @brief Gets the model correction enable/disable flags.
+         * @return Const reference to the ModelCorrections struct.
+         */
+        const ModelCorrections& getModelCorrections() const { return model_corrections_; }
 
         /**
          * @brief Gets the signal priorities map.
@@ -341,9 +396,10 @@ namespace GnssProcessor {
          * @brief Check if separate phase clock estimation is enabled.
          *
          * When true, a separate receiver phase clock offset state is estimated
-         * in addition to the code clock. Phase measurements use
-         * (code_clock + phase_clock_offset) while code measurements use
-         * code_clock only. This implements the "common clocks" separation model.
+         * in addition to the common receiver clock. The common clock enters all
+         * measurements (code and phase) and the phase clock offset is an additive
+         * delta for phase measurements only: phase = common_clock + delta.
+         * This "common clock + delta" parameterization avoids rank deficiency.
          *
          * @return True if phase clock offset estimation is enabled.
          */
@@ -359,6 +415,44 @@ namespace GnssProcessor {
          * @return True if the IF phase slip detector is enabled.
          */
         bool enableIfSlipDetector() const { return enable_if_slip_detector_; }
+
+        /**
+         * @brief Check if accumulated (unwrapped) phase wind-up is enabled.
+         *
+         * When false (default), the phase wind-up correction is computed as the
+         * fractional-cycle geometric angle at each epoch, bounded to ±half cycle.
+         * The float ambiguity absorbs any integer-cycle component.
+         *
+         * When true, the wind-up angle is accumulated across epochs using 2?
+         * unwrapping so that the correction is continuous.  This is required
+         * for integer ambiguity resolution (IAR) where the ambiguity must
+         * remain at a constant integer value.  Note: accumulated mode has
+         * known interactions with ambiguity re-seeding and slip-detector
+         * resets that can introduce position biases until those paths are
+         * updated to be accumulation-aware.
+         *
+         * @return True if accumulated phase wind-up is enabled.
+         */
+        bool accumulatePhaseWindUp() const { return accumulate_phase_windup_; }
+
+        /**
+         * @brief Check if between-satellite single differencing is enabled.
+         *
+         * When true, the measurement model applies a between-satellite
+         * single-difference (BSSD) operator to the design matrix, innovation
+         * vector and measurement noise.  For each constellation the
+         * highest-elevation satellite is chosen as the pivot; all other
+         * satellites of the same constellation are differenced against it.
+         * This eliminates the receiver clock (and ISB) from the observation
+         * equations, improving observability of ambiguities and ionosphere
+         * states and accelerating PPP-RTK convergence.
+         *
+         * The differencing is applied in the state space (operator D premultiplies
+         * H, z and R) so the state vector parameterization is unchanged.
+         *
+         * @return True if BSSD is enabled.
+         */
+        bool enableBetweenSatelliteSd() const { return enable_between_satellite_sd_; }
 
         /**
          * @brief Check if a user-supplied reference position is configured.
@@ -411,11 +505,13 @@ namespace GnssProcessor {
         bool relinearize_geometry_{ false };            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
         bool estimate_phase_clock_{ false };            ///< Estimate separate phase clock offset.
         bool enable_if_slip_detector_{ true };             ///< Enable the IF phase slip detector.
+        bool accumulate_phase_windup_{ false };                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
+        bool enable_between_satellite_sd_{ false };                ///< Between-satellite single-difference operator in measurement model.
 
         bool has_reference_position_{ false };                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_{ 0.0, 0.0, 0.0 }; ///< User-supplied reference position ECEF (m).
+
+        ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
     };
 
 } // namespace GnssProcessor
-
-#endif // GNSSCONFIG_HPP

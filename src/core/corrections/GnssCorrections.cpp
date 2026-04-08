@@ -220,7 +220,7 @@ namespace GnssProcessor {
         const SatelliteClockInterpolationMode mode = config_ ? config_->getSatelliteClockInterpolationMode() : SatelliteClockInterpolationMode::Linear;
 
         constexpr double MAX_WINDOW     = 3600.0;
-        constexpr double MAX_CLOCK_BIAS = 1e9;
+        constexpr double MAX_CLOCK_BIAS = 1e-3;        // 1 ms (~300 km), well above typical GNSS clock biases (~us)
         constexpr size_t LAGRANGE_POINTS = 9;
 
         if (satellite.empty()) {
@@ -451,9 +451,9 @@ namespace GnssProcessor {
 
         // Conservative sanity limits
         constexpr double MAX_CORRECTION = 1e-6;        // 1 microsecond (~300 m), far above expected (~tens of ns)
-        constexpr double MIN_POSITION_NORM = 1.8e7;    // ~20,000 km
-        constexpr double MAX_POSITION_NORM = 3.2e7;    // ~32,000 km
-        constexpr double MAX_VELOCITY_NORM = 1.5e4;    // ~15 km/s
+        constexpr double MIN_POSITION_NORM = 2.0e7;    // ~20,000 km (lowest MEO orbit)
+        constexpr double MAX_POSITION_NORM = 4.5e7;    // ~45,000 km (above BeiDou GEO ~42,164 km)
+        constexpr double MAX_VELOCITY_NORM = 5.0e3;    // ~5 km/s (GNSS satellites: ~3-4 km/s)
 
         std::string system_str = PppUtils::getSystemString(satellite);
 
@@ -470,7 +470,7 @@ namespace GnssProcessor {
             log_manager_.getLogger("ppp_model")->warn(
                 "Unrealistic relativistic input norms for {} ({}): pos_norm={:.3e} m, vel_norm={:.3e} m/s",
                 satellite, system_str, pos_norm, vel_norm);
-			//return 0.0; //Beidou IGSO/MEO satellites can have higher velocity norms, so we won't reject based on velocity alone
+            return 0.0;
         }
 
         const double r_dot_v = sat_pos.dot(sat_vel);
@@ -524,8 +524,8 @@ namespace GnssProcessor {
         constexpr double GM = Constants::GRAVITATIONAL_CONSTANT; // GM = 3.986005e14 m³/s² (WGS-84)
         constexpr double C = Constants::SPEED_OF_LIGHT;          // c = 299792458 m/s
         constexpr double C_SQUARED = C * C;
-        constexpr double MIN_POSITION_NORM = 1.8e7; // approx. 20,000 km
-        constexpr double MAX_POSITION_NORM = 3.2e7; // approx. 32,000 km
+        constexpr double MIN_POSITION_NORM = 2.0e7; // ~20,000 km (lowest MEO orbit)
+        constexpr double MAX_POSITION_NORM = 4.5e7; // ~45,000 km (above BeiDou GEO ~42,164 km)
         constexpr double MAX_DELAY = 0.03;          // Max ~30 mm (typical is ~2 cm)
 
         // Validate inputs
@@ -540,10 +540,10 @@ namespace GnssProcessor {
         const double rrec = rx_pos.norm();            // Receiver position norm
         const double rrs = (sat_pos - rx_pos).norm(); // Range (satellite to receiver)
         
-        if (rrs < 1e3 || rsat < MIN_POSITION_NORM || rsat > MAX_POSITION_NORM) {
+        if (rrs < 1.9e7 || rsat < MIN_POSITION_NORM || rsat > MAX_POSITION_NORM) {
             log_manager_.getLogger("ppp_model")->warn("Unrealistic Shapiro delay norms for {} ({}): range={:.3e} m, sat_norm={:.3e} m",
                 satellite, system_str, rrs, rsat);
-			//return 0.0; // Beidou IGSO/MEO satellites can have ranges slightly below 1e3 m in extreme cases, so we won't reject based on range alone
+            return 0.0;
         }
 
         // rpath = (2*mu/c^2) * ln((rsat + rrec + rrs) / (rsat + rrec - rrs))
@@ -584,11 +584,11 @@ namespace GnssProcessor {
         // Formula: (ω_E / c) * (x_s * y_r - y_s * x_r), where ω_E is Earth's angular velocity, c is speed of light
         constexpr double EARTH_ANGULAR_VELOCITY = 7.2921151467e-5; // rad/s
         constexpr double C = Constants::SPEED_OF_LIGHT; // m/s
-        constexpr double MAX_SAGNAC_CORRECTION = 50.0; // Max expected correction in meters
-        constexpr double MIN_RX_NORM = 6e6; // Earth radius approx. 6.3e6 m
-        constexpr double MAX_RX_NORM = 7e6;
-        constexpr double MIN_SAT_NORM = 2e7; // Typical GNSS orbit approx. 2e7 m
-        constexpr double MAX_SAT_NORM = 3e7;
+        constexpr double MAX_SAGNAC_CORRECTION = 40.0; // Max expected correction in meters (~30 m typical)
+        constexpr double MIN_RX_NORM = 6.1e6; // Earth surface min (~6.35e6 m) with margin
+        constexpr double MAX_RX_NORM = 6.6e6; // Earth surface max + moderate altitude
+        constexpr double MIN_SAT_NORM = 2.0e7; // ~20,000 km (lowest MEO orbit)
+        constexpr double MAX_SAT_NORM = 4.5e7; // ~45,000 km (above BeiDou GEO ~42,164 km)
 
         // Validate inputs
         if (!rx_pos.allFinite() || !sat_pos.allFinite()) {
@@ -1367,7 +1367,8 @@ namespace GnssProcessor {
         double wavelength,
         const GnssTime& time,
         const Eigen::Vector3d& sun_pos,
-        const Eigen::Vector3d& sat_vel) const {
+        const Eigen::Vector3d& sat_vel,
+        bool accumulate) const {
 
         // Phase wind-up correction for carrier phase
         // Wu et al. (1993) convention:
@@ -1492,28 +1493,109 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        // Compute angle between effective dipoles
-        double cos_alpha = Ds.dot(Dr) / (Ds_norm * Dr_norm);
-        cos_alpha = std::clamp(cos_alpha, -1.0, 1.0);
+        // Compute signed angle between effective dipoles using atan2 for
+        // full (-π, π] range.  This avoids the acos + sign approach which
+        // loses information near 0 and π.
+        Eigen::Vector3d Ds_hat = Ds / Ds_norm;
+        Eigen::Vector3d Dr_hat = Dr / Dr_norm;
+        double dot_val = Ds_hat.dot(Dr_hat);
+        double cross_val = k.dot(Ds_hat.cross(Dr_hat));
+        double windUp_c = std::atan2(cross_val, dot_val);  // radians (-pi, pi]
 
-        double windUp_c = std::acos(cos_alpha);  // radians [0, pi]
+        // ===================================================================
+        // Phase wind-up mode selection
+        // ===================================================================
+        //
+        // Two modes are supported, controlled by the `accumulate` parameter
+        // (set via the "accumulate_phase_windup" JSON config option):
+        //
+        // --- FRACTIONAL MODE (accumulate = false, DEFAULT) ---
+        //
+        //   Returns the raw atan2 angle directly, bounded to (-π, π]
+        //   (±half cycle).  The float ambiguity in the Kalman filter absorbs
+        //   the integer-cycle component.  When the geometric angle wraps
+        //   past ±π between epochs, the modeled value jumps by ~1 cycle and
+        //   the float ambiguity adjusts over subsequent epochs to track the
+        //   shift.  This is the standard approach for float-ambiguity PPP.
+        //
+        // --- ACCUMULATED MODE (accumulate = true) ---
+        //
+        //   The raw angle is unwrapped relative to the previous epoch's
+        //   accumulated value using the identity:
+        //       accumulated = prev + remainder(raw - prev, 2π)
+        //   This produces a continuous (no-jump) wind-up correction whose
+        //   integer-cycle component is constant within a satellite arc.
+        //   The carrier-phase ambiguity therefore stays at a constant
+        //   integer value — a prerequisite for integer ambiguity resolution
+        //   (IAR).
+        //
+        //   KNOWN ISSUES WITH ACCUMULATED MODE (to address when implementing IAR):
+        //
+        //   1. Ambiguity re-seeding inconsistency.
+        //      When a cycle slip or KF outlier resets an ambiguity, the seed
+        //      is computed from obs.modeled (which includes the current
+        //      accumulated wind-up).  If resetPhaseWindUp() is then called,
+        //      the next epoch's computeModels() starts a fresh wind-up arc
+        //      at the raw atan2 value, but the ambiguity was seeded for the
+        //      old accumulated value.  The mismatch (potentially tens of cm)
+        //      appears as a position bias until the filter re-converges.
+        //      Mitigation: do NOT reset prev_windup_ on cycle slips;
+        //      instead let accumulation continue across ambiguity resets.
+        //      This has been applied in Application.cpp (wind-up resets
+        //      removed from slip/outlier handlers).
+        //
+        //   2. Relinearization double-call.
+        //      When relinearize_geometry is enabled, computeModels() is
+        //      called twice per epoch.  The second call sees the same
+        //      prev_windup_ stored by the first, so unwrapping produces
+        //      diff ≈ 0.  This is benign but means the wind-up at the
+        //      relinearized position is not perfectly recomputed (the
+        //      tiny position change barely affects the geometric angle).
+        //
+        //   3. Long observation gaps.
+        //      If a satellite disappears for many hours, the true wind-up
+        //      may advance by multiple full cycles.  The unwrapping picks
+        //      the closest 2π-equivalent to the stale prev_windup_, which
+        //      may differ from the true accumulated value by N full
+        //      cycles.  The fresh ambiguity seed absorbs this offset, so
+        //      the position is not affected, but the ambiguity will not
+        //      be at its "true" integer value until the full wind-up
+        //      history is reconstructed (e.g. from broadcast ephemeris
+        //      attitude propagation during the gap).
+        //
+        //   4. Satellite attitude model limitations.
+        //      The yaw-steering model used here is a simplified nominal
+        //      model.  During eclipse and noon-turn manoeuvres the real
+        //      satellite yaw rate deviates from nominal, producing a
+        //      wind-up error that persists in the accumulated value for
+        //      the rest of the arc.  With the fractional approach, such
+        //      errors are bounded to ±half cycle; with accumulation they
+        //      can grow without bound.  Block-specific yaw models (e.g.
+        //      GPS IIR, IIF, III, Galileo IOV/FOC) would mitigate this.
+        //
+        // ===================================================================
 
-        // Determine sign (Wu et al. 1993, Eq. 8)
-        if (k.dot(Ds.cross(Dr)) < 0.0) {
-            windUp_c = -windUp_c;
+        if (accumulate) {
+            // Unwrap relative to previous epoch to maintain continuity.
+            constexpr double TWO_PI = 2.0 * Constants::PI;
+            auto it = prev_windup_.find(satellite);
+            if (it != prev_windup_.end()) {
+                double diff = windUp_c - it->second;
+                // Map diff into (-π, π]
+                diff = diff - TWO_PI * std::round(diff / TWO_PI);
+                windUp_c = it->second + diff;
+            }
         }
 
-        // No inter-epoch accumulation: compute wind-up fresh each epoch.
-        // The float ambiguity in the Kalman filter absorbs any integer-cycle
-        // component. Accumulating prev_windup_ caused regularly-spaced spikes
-        // in the IF phase slip detector because the unwrapping drift introduced
-        // discrete jumps into the modeled range between-epoch differences.
+        // Store current value for next-epoch unwrapping (used in accumulated
+        // mode; harmless to maintain in fractional mode for diagnostics).
+        prev_windup_[satellite] = windUp_c;
 
         // Convert radians to meters
         double phi_m = windUp_c * wavelength / (2.0 * Constants::PI);
 
-        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad)",
-            satellite, phi_m, windUp_c);
+        log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad, {})",
+            satellite, phi_m, windUp_c, accumulate ? "accumulated" : "fractional");
         return phi_m;
     }
 

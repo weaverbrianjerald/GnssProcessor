@@ -1,6 +1,4 @@
 #pragma once
-#ifndef OCEAN_TIDE_MODEL_HPP
-#define OCEAN_TIDE_MODEL_HPP
 
 /**
  * @file OceanTideModel.hpp
@@ -210,5 +208,3 @@ namespace GnssProcessor {
     };
 
 } // namespace GnssProcessor
-
-#endif // OCEAN_TIDE_MODEL_HPP
