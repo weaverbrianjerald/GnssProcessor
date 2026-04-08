@@ -185,53 +185,80 @@ namespace GnssProcessor {
         /** Per-constellation state keyed by system string (e.g. "GPS"). */
         std::map<std::string, ConstellationState> constellation_state_;
 
-        /**
-         * @brief Find the IF phase label in a PppObservation.
-         *
-         * Scans `obs.observed` for the first key starting with 'L' that contains '_'.
-         *
-         * @param obs Observation to inspect.
-         * @param[out] phase_if_key The IF phase label found (e.g. "L1C_L2W").
-         * @return true if found.
-         */
+        /** @brief Per-satellite data collected during observation grouping. */
+        struct SatData {
+            std::string satellite;
+            std::string phase_if_key;
+            std::string sig1, sig2;
+            double phi_if_omc;
+            double elevation;
+            double lambda_if;
+            System system;
+        };
+
         bool findPhaseIfLabel(const PppObservation& obs, std::string& phase_if_key) const;
-
-        /**
-         * @brief Split an IF label "L1C_L2W" into ("L1C", "L2W").
-         */
         bool splitIfLabel(const std::string& label, std::string& sig1, std::string& sig2) const;
-
-        /**
-         * @brief Compute the effective IF wavelength in meters for two phase signals.
-         *
-         * Uses c1*lambda1 - c2*lambda2 where c1, c2 are the IF combination coefficients.
-         *
-         * @param obs Observation with system/satellite context.
-         * @param sig1 First phase signal (e.g. "L1C").
-         * @param sig2 Second phase signal (e.g. "L2W").
-         * @return IF wavelength in meters, or 0.0 on error.
-         */
         double computeIfWavelengthMeters(const PppObservation& obs,
             const std::string& sig1, const std::string& sig2) const;
 
-        /**
-         * @brief Iterative MAD-based outlier check on between-epoch double differences.
-         *
-         * Implements the checkOutliers() function from the MATLAB code:
-         * - Computes MAD-based adaptive threshold = kOutlierSigmaMultiplier * 1.4826 * MAD
-         * - If adaptive threshold > lambda_if/4 OR max(|x|) > 0.5*lambda_if:
-         *   iteratively removes the worst outlier whose |x| > 0.5*lambda_if.
-         * - Returns NaN for outlier entries.
-         *
-         * @param values Map of satellite -> double-difference value.
-         * @param ref_satellite Reference satellite ID (excluded from MAD).
-         * @param lambda_if IF wavelength (meters).
-         * @return Map of satellite -> cleaned value (NaN for outliers).
-         */
         std::map<std::string, double> checkOutliers(
             const std::map<std::string, double>& values,
             const std::string& ref_satellite,
             double lambda_if) const;
+
+        /** @brief Compute median of a vector (sorts in-place). */
+        static double computeMedian(std::vector<double>& values);
+
+        /**
+         * @brief Group observations by constellation and extract IF phase OMC data.
+         * @param observations Epoch observations.
+         * @return Map of system string -> vector of SatData.
+         */
+        std::map<std::string, std::vector<SatData>> groupByConstellation(
+            const std::vector<PppObservation>& observations) const;
+
+        /**
+         * @brief Select or validate the reference satellite for a constellation.
+         * @param sat_vec  Satellite data for this constellation.
+         * @param cs       Persistent constellation state (ref is updated in-place).
+         * @return True if the reference changed this epoch.
+         */
+        bool selectReference(const std::vector<SatData>& sat_vec, ConstellationState& cs) const;
+
+        /**
+         * @brief Process double differences for one constellation and flag slips.
+         *
+         * Handles reference-change correction, reference-slip check, and
+         * non-reference outlier detection. Appends flagged keys to reset_keys.
+         *
+         * @param sat_vec         Satellite data for this constellation.
+         * @param sys_str         System string (for logging).
+         * @param cs              Persistent constellation state.
+         * @param grad_phi_if     Current-epoch between-satellite gradients.
+         * @param lambda_if       Median IF wavelength for this constellation.
+         * @param ref_changed     Whether the reference satellite changed.
+         * @param position_sigma_3d 3D position sigma (meters).
+         * @param[out] reset_keys Ambiguity keys to reset are appended here.
+         */
+        void processDoubleDifferences(
+            const std::vector<SatData>& sat_vec,
+            const std::string& sys_str,
+            ConstellationState& cs,
+            const std::map<std::string, double>& grad_phi_if,
+            double lambda_if,
+            bool ref_changed,
+            double position_sigma_3d,
+            std::vector<std::string>& reset_keys);
+
+        /**
+         * @brief Write a single trace CSV record.
+         */
+        void writeTraceRecord(const SatData& sd, const std::string& sys_str,
+            double grad, double delta_grad,
+            const std::string& ref_sat, bool ref_changed,
+            double lambda_if, bool is_slip,
+            const std::string& slip_reason,
+            double position_sigma_3d, bool pos_gated) const;
 
         /** Output stream for IF slip trace CSV file. */
         mutable std::ofstream trace_file_;

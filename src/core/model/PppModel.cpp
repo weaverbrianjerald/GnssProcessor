@@ -110,6 +110,7 @@ const char* signalModeLabel(SignalMode m) {
             rinex_parser),
         ionosphere_(config, log_manager, product_parser, rinex_parser),
         antenna_(config, product_parser, log_manager, rinex_parser),
+        stochastic_model_(config, log_manager),
         signal_priorities_(config.getSignalPriorities()),
         // Initialize reference from cache
         klobuchar_coeffs_(ProductCache::getInstance().getKlobucharCoeffs())
@@ -268,6 +269,7 @@ const char* signalModeLabel(SignalMode m) {
             ppp_obs.lli_flags = obs.lli_flags;
 
             ppp_obs.sat_pos = geom.sat_pos;
+            ppp_obs.sat_vel = geom.sat_vel;
             ppp_obs.rx_pos_linearization = geom.rx_pos;
             ppp_obs.elevation = geom.elevation;
             ppp_obs.azimuth = geom.azimuth;
@@ -323,6 +325,34 @@ const char* signalModeLabel(SignalMode m) {
             if (is_iono_free && !config_.isUncombinedEnabled()) {
                 if (!processIonoFreeObservation(obs, state, ppp_obs, system_str, selected_signals, comb_type, geom)) {
                     continue;
+                }
+            }
+
+            // --- Model Doppler observables (range-rate in m/s) ---
+            if (config_.estimateVelocity()) {
+                const double range_rate_sat = geom.los.dot(geom.sat_vel);
+                for (const auto& [key, val] : obs.measurements) {
+                    if (key.empty() || key[0] != 'D') continue;
+                    const double wavelength = ppp_utils_.getWavelength(obs.system, key, obs.satellite);
+                    if (wavelength <= 0.0) continue;
+
+                    // Convert RINEX Doppler (Hz) to range-rate (m/s).
+                    // Positive Doppler in RINEX = approaching = decreasing range.
+                    const double observed_rr = -val * wavelength;
+
+                    ppp_obs.observed[key] = observed_rr;
+                    ppp_obs.modeled[key] = range_rate_sat;
+
+                    // Variance: default Doppler variance converted to (m/s)^2.
+                    const auto& n = config_.getDefaultMeasurementNoise();
+                    const double default_var = (n.doppler_std_m * wavelength) * (n.doppler_std_m * wavelength);
+                    double var = obs.variances.count(key) ? obs.variances.at(key) * wavelength * wavelength : default_var;
+                    var = stochastic_model_.computeVariance(key, obs.measurements, geom.elevation, var);
+                    ppp_obs.variances[key] = var;
+
+                    log_manager_.getLogger("ppp_model")->trace(
+                        "Doppler {} for {}: obs_rr={:.4f} m/s, mod_rr={:.4f} m/s, var={:.6f}",
+                        key, obs.satellite, observed_rr, range_rate_sat, var);
                 }
             }
 
@@ -734,8 +764,9 @@ const char* signalModeLabel(SignalMode m) {
             modeled_obs[j] = computeBaseModeledValue(obs, ppp_obs, geom, type) + pole_tide_corr;
 
             const auto& n = config_.getDefaultMeasurementNoise();
-            variances[j] = obs.variances.count(type) ? obs.variances.at(type)
+            const double fallback_var = obs.variances.count(type) ? obs.variances.at(type)
                 : (meas_type == 'C' ? n.code_std_m * n.code_std_m : n.phase_std_m * n.phase_std_m);
+            variances[j] = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, fallback_var);
 
             frequencies[j] = ppp_utils_.getFrequency(type, obs.system, obs.satellite);
             if (frequencies[j] <= 0.0) {
@@ -770,11 +801,6 @@ const char* signalModeLabel(SignalMode m) {
                 meas *= wavelengths[j];
             }
             observed_value += (j == 0 ? c1 : c2) * meas;
-        }
-
-        const double sin_el = std::sin(geom.elevation * Constants::PI / 180.0);
-        if (sin_el > 1e-6) {
-            variance_value = variance_value / (sin_el * sin_el);
         }
 
         ppp_obs.observed[ref_type] = observed_value;
@@ -912,10 +938,12 @@ const char* signalModeLabel(SignalMode m) {
                         break;
                     }
                     meas *= wl; // cycles -> meters
-                    var_vals[j] = obs.variances.count(type) ? obs.variances.at(type) : default_phase_var;
+                    const double fallback_var = obs.variances.count(type) ? obs.variances.at(type) : default_phase_var;
+                    var_vals[j] = stochastic_model_.computeVariance(type, obs.measurements, 90.0, fallback_var);
                 }
                 else {
-                    var_vals[j] = obs.variances.count(type) ? obs.variances.at(type) : default_code_var;
+                    const double fallback_var = obs.variances.count(type) ? obs.variances.at(type) : default_code_var;
+                    var_vals[j] = stochastic_model_.computeVariance(type, obs.measurements, 90.0, fallback_var);
                 }
                 meas_vals[j] = meas;
             }
@@ -1024,10 +1052,7 @@ const char* signalModeLabel(SignalMode m) {
 
             double variance = obs.variances.count(type) ? obs.variances.at(type)
                 : (meas_type == 'C' ? default_code_var : default_phase_var);
-            const double sin_el = std::sin(geom.elevation * Constants::PI / 180.0);
-            if (sin_el > 1e-6) {
-                variance = variance / (sin_el * sin_el);
-            }
+            variance = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, variance);
 
             ppp_obs.observed[type] = observed_value;
             ppp_obs.modeled[type] = modeled_value;

@@ -5,6 +5,7 @@
 #include "LogManager.hpp"
 #include "PppModel.hpp"
 #include "MeasurementModel.hpp"
+#include "ImuIntegrator.hpp"
 #include <Constants.hpp>
 #include <Eigen/Dense>
 #include <map>
@@ -82,6 +83,41 @@ namespace GnssProcessor {
         void predict(double dt);
 
         /**
+         * @brief IMU-aided prediction between two GNSS epochs.
+         *
+         * When IMU integration is enabled, this replaces the standard
+         * predict() call.  It runs the strapdown mechanization from
+         * @p t_start to @p t_end using IMU data, propagates the full
+         * state vector (position, velocity, attitude, biases) and injects
+         * the corresponding INS error-state transition and process noise
+         * into the Kalman filter covariance.  Non-INS states (clock,
+         * tropo, ambiguities, etc.) are predicted with the standard
+         * random-walk model.
+         *
+         * @param t_start Previous GNSS epoch time.
+         * @param t_end   Current GNSS epoch time.
+         * @param imu     Reference to the ImuIntegrator holding loaded data.
+         */
+        void predictImu(const GnssTime& t_start, const GnssTime& t_end,
+                        const ImuIntegrator& imu);
+
+        /**
+         * @brief Get the current body-to-ECEF attitude matrix.
+         *
+         * Maintained by predictImu() and updated after GNSS measurement
+         * updates (via the attitude error state feedback).
+         *
+         * @return Current C_b^e rotation matrix.
+         */
+        const Eigen::Matrix3d& getAttitude() const { return C_b_e_; }
+
+        /**
+         * @brief Set the body-to-ECEF attitude matrix.
+         * @param C New attitude rotation matrix.
+         */
+        void setAttitude(const Eigen::Matrix3d& C) { C_b_e_ = C; }
+
+        /**
          * @brief Perform a measurement update using the provided epoch measurement.
          *
          * The method computes the Kalman gain, applies the state correction,
@@ -141,6 +177,7 @@ namespace GnssProcessor {
         
         std::vector<std::string> last_reset_satellites_;  //!< Satellites with ambiguity resets from last update.
         bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
+        Eigen::Matrix3d C_b_e_ = Eigen::Matrix3d::Identity(); //!< Body-to-ECEF rotation matrix (IMU attitude).
 
         // -------------------------------------------------------------------
         // Construction helpers

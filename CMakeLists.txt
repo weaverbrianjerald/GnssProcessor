@@ -21,6 +21,8 @@ find_package(spdlog REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 find_package(netCDF REQUIRED)
+find_package(CURL REQUIRED)
+find_package(ZLIB REQUIRED)
 
 include_directories(${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 
@@ -35,7 +37,7 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
 add_library(gnss_core STATIC
     src/core/atmosphere/Troposphere.cpp
     src/core/atmosphere/Ionosphere.cpp
-    src/core/common/CycleSlipDetector.cpp
+    
     src/core/common/GnssConfig.cpp
     src/core/common/LogManager.cpp
     src/core/common/ProductManager.cpp
@@ -51,9 +53,12 @@ add_library(gnss_core STATIC
     src/core/corrections/OceanTideModel.cpp
     src/core/filter/KalmanFilter.cpp
     src/core/filter/StateManager.cpp
+    src/core/filter/ImuIntegrator.cpp
+    src/core/filter/AmbiguityResolver.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/model/PppModel.cpp
     src/core/model/PppRtkModel.cpp
+    src/core/model/StochasticModel.cpp
     src/core/model/Antenna.cpp
     src/core/rinex/RinexParser.cpp
     src/core/rtcm/RtcmParser.cpp
@@ -64,9 +69,14 @@ add_library(gnss_core STATIC
     src/core/common/Application.cpp
 	src/core/common/MwSlipDetector.cpp
 	src/core/common/IfPhaseSlipDetector.cpp
+    src/core/common/DataDownloader.cpp
+    src/core/common/ProductResolver.cpp
+    src/core/realtime/NtripClient.cpp
+    src/core/realtime/RtcmStreamReader.cpp
+    src/core/realtime/RealTimeEngine.cpp
  "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
-target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf)
+target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 
 # Main executable (link against gnss_core only)
 add_executable(gnss_processor src/main.cpp "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")

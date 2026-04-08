@@ -132,47 +132,44 @@ namespace GnssProcessor {
      * @return double Frequency in Hz on success, 0.0 on unknown/unsupported input.
      */
     double PppUtils::getFrequency(const std::string& freq_type, System system, const std::string& satellite) const {
+        // Helper: check whether freq_type matches any observable type for a given band digit.
+        // RINEX observable codes follow {type}{band}{attr} (e.g. C1W, L1C, D1C, S1C).
+        // We match on all four observable type prefixes (C, L, D, S) for each band.
+        auto matchesBand = [&freq_type](char band) -> bool {
+            const char prefixes[] = { 'C', 'L', 'D', 'S' };
+            const std::string target(1, band);
+            for (char p : prefixes) {
+                const std::string pat = std::string(1, p) + target;
+                if (freq_type.find(pat) != std::string::npos) return true;
+            }
+            return false;
+        };
+
         if (system == System::GPS) {
-            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                return Constants::GPS_L1_FREQ;
-            }
-            if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
-                return Constants::GPS_L2_FREQ;
-            }
-            if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
-                return Constants::GPS_L5_FREQ;
-            }
+            if (matchesBand('1')) return Constants::GPS_L1_FREQ;
+            if (matchesBand('2')) return Constants::GPS_L2_FREQ;
+            if (matchesBand('5')) return Constants::GPS_L5_FREQ;
         }
         else if (system == System::Galileo) {
-            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                return Constants::GAL_E1_FREQ;
-            }
-            if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
-                return Constants::GAL_E5A_FREQ;
-            }
-            if (freq_type.find("C7") != std::string::npos || freq_type.find("L7") != std::string::npos) {
-                return Constants::GAL_E5B_FREQ;
-            }
-            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
-                return Constants::GAL_E6_FREQ;
-            }
-            if (freq_type.find("C8") != std::string::npos || freq_type.find("L8") != std::string::npos) {
-                return Constants::GAL_E5_FREQ;
-            }
+            if (matchesBand('1')) return Constants::GAL_E1_FREQ;
+            if (matchesBand('5')) return Constants::GAL_E5A_FREQ;
+            if (matchesBand('7')) return Constants::GAL_E5B_FREQ;
+            if (matchesBand('6')) return Constants::GAL_E6_FREQ;
+            if (matchesBand('8')) return Constants::GAL_E5_FREQ;
         }
         else if (system == System::GLONASS) {
             // CDMA signals (bands 3, 4, 6) have fixed frequencies — no channel offset
-            if (freq_type.find("C3") != std::string::npos || freq_type.find("L3") != std::string::npos) {
+            if (matchesBand('3')) {
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G3 frequency for {} (CDMA): {:.3f} MHz",
                     satellite, Constants::GLONASS_G3_BASE_FREQ / 1e6);
                 return Constants::GLONASS_G3_BASE_FREQ;
             }
-            if (freq_type.find("C4") != std::string::npos || freq_type.find("L4") != std::string::npos) {
+            if (matchesBand('4')) {
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G1a frequency for {} (CDMA): {:.3f} MHz",
                     satellite, Constants::GLONASS_G1A_FREQ / 1e6);
                 return Constants::GLONASS_G1A_FREQ;
             }
-            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
+            if (matchesBand('6')) {
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G2a frequency for {} (CDMA): {:.3f} MHz",
                     satellite, Constants::GLONASS_G2A_FREQ / 1e6);
                 return Constants::GLONASS_G2A_FREQ;
@@ -189,12 +186,12 @@ namespace GnssProcessor {
             }
 
             double freq = 0.0;
-            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
+            if (matchesBand('1')) {
                 freq = Constants::GLONASS_G1_BASE_FREQ + channel * Constants::GLONASS_G1_CHANNEL_OFFSET;
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G1 frequency for {} (channel {}): {:.3f} MHz",
                     satellite, channel, freq / 1e6);
             }
-            else if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
+            else if (matchesBand('2')) {
                 freq = Constants::GLONASS_G2_BASE_FREQ + channel * Constants::GLONASS_G2_CHANNEL_OFFSET;
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G2 frequency for {} (channel {}): {:.3f} MHz",
                     satellite, channel, freq / 1e6);
@@ -214,46 +211,22 @@ namespace GnssProcessor {
             return freq;
         }
         else if (system == System::BeiDou) {
-            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                return Constants::BDS_B1C_FREQ;
-            }
-            if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
-                return Constants::BDS_B1_FREQ;
-            }
-            if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
-                return Constants::BDS_B2A_FREQ;
-            }
-            if (freq_type.find("C7") != std::string::npos || freq_type.find("L7") != std::string::npos) {
-                return Constants::BDS_B2_FREQ;
-            }
-            if (freq_type.find("C8") != std::string::npos || freq_type.find("L8") != std::string::npos) {
-                return Constants::BDS_B2AB_FREQ;
-            }
-            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
-                return Constants::BDS_B3_FREQ;
-            }
+            if (matchesBand('1')) return Constants::BDS_B1C_FREQ;
+            if (matchesBand('2')) return Constants::BDS_B1_FREQ;
+            if (matchesBand('5')) return Constants::BDS_B2A_FREQ;
+            if (matchesBand('7')) return Constants::BDS_B2_FREQ;
+            if (matchesBand('8')) return Constants::BDS_B2AB_FREQ;
+            if (matchesBand('6')) return Constants::BDS_B3_FREQ;
         }
         else if (system == System::QZSS) {
-            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                return Constants::QZSS_L1_FREQ;
-            }
-            if (freq_type.find("C2") != std::string::npos || freq_type.find("L2") != std::string::npos) {
-                return Constants::QZSS_L2_FREQ;
-            }
-            if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
-                return Constants::QZSS_L5_FREQ;
-            }
-            if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
-                return Constants::QZSS_L6_FREQ;
-            }
+            if (matchesBand('1')) return Constants::QZSS_L1_FREQ;
+            if (matchesBand('2')) return Constants::QZSS_L2_FREQ;
+            if (matchesBand('5')) return Constants::QZSS_L5_FREQ;
+            if (matchesBand('6')) return Constants::QZSS_L6_FREQ;
         }
         else if (system == System::SBAS) {
-            if (freq_type.find("C1") != std::string::npos || freq_type.find("L1") != std::string::npos) {
-                return Constants::SBAS_L1_FREQ;
-            }
-            if (freq_type.find("C5") != std::string::npos || freq_type.find("L5") != std::string::npos) {
-                return Constants::SBAS_L5_FREQ;
-            }
+            if (matchesBand('1')) return Constants::SBAS_L1_FREQ;
+            if (matchesBand('5')) return Constants::SBAS_L5_FREQ;
         }
 
         log_manager_.getLogger("ppp_utils")->warn("Unknown frequency for {} on system {}", freq_type, static_cast<int>(system));

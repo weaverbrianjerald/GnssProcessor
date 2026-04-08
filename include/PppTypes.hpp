@@ -26,6 +26,42 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Enumeration of GNSS and auxiliary measurement types.
+     *
+     * Used to classify measurement rows so that the measurement model,
+     * Jacobian builder and noise assignment can dispatch on the observable
+     * category rather than parsing the first character of RINEX codes.
+     */
+    enum class MeasurementType {
+        Code,       /**< Pseudorange (code) measurement (RINEX 'C' observables). */
+        Phase,      /**< Carrier-phase measurement (RINEX 'L' observables). */
+        Doppler,    /**< Doppler-shift measurement (RINEX 'D' observables, units: Hz). */
+        SNR,        /**< Signal-to-noise ratio (RINEX 'S' observables). */
+        Inertial,   /**< Inertial measurement (e.g. accelerometer / gyroscope). */
+        Unknown     /**< Unrecognised or unsupported measurement type. */
+    };
+
+    /**
+     * @brief Classify a RINEX-style observable key into a MeasurementType.
+     *
+     * The classification is based on the first character of @p key:
+     *   'C' -> Code, 'L' -> Phase, 'D' -> Doppler, 'S' -> SNR.
+     *
+     * @param key Observable key (e.g. "C1W", "L1C", "D1C", "S1C").
+     * @return Corresponding MeasurementType, or MeasurementType::Unknown.
+     */
+    inline MeasurementType classifyMeasurement(const std::string& key) {
+        if (key.empty()) return MeasurementType::Unknown;
+        switch (key[0]) {
+        case 'C': return MeasurementType::Code;
+        case 'L': return MeasurementType::Phase;
+        case 'D': return MeasurementType::Doppler;
+        case 'S': return MeasurementType::SNR;
+        default:  return MeasurementType::Unknown;
+        }
+    }
+
+    /**
      * @brief Observation information for a single satellite at an epoch.
      *
      * Contains raw and modeled observables, residuals and variances,
@@ -42,6 +78,7 @@ namespace GnssProcessor {
         std::map<std::string, double> variances;     /**< Variance (or sigma^2) for each observable */
         std::map<std::string, int> lli_flags;        /**< Loss-of-lock indicators keyed by observable name */
         Eigen::Vector3d sat_pos;                     /**< Satellite ECEF position (meters) */
+        Eigen::Vector3d sat_vel = Eigen::Vector3d::Zero(); /**< Satellite ECEF velocity (meters/second) */
         Eigen::Vector3d rx_pos_linearization;        /**< Receiver ECEF position used as the linearization point (meters) */
         double elevation;                            /**< Elevation angle (degrees) */
         double azimuth;                              /**< Azimuth angle (degrees) */
@@ -58,6 +95,7 @@ namespace GnssProcessor {
      */
     struct PppState {
         Eigen::Vector3d position;                    /**< Receiver ECEF position (meters) */
+        Eigen::Vector3d velocity = Eigen::Vector3d::Zero(); /**< Receiver ECEF velocity (meters/second) */
         double clock_bias;                           /**< Receiver clock bias (meters) */
         double troposphere_zwd;                      /**< Zenith wet delay (meters) */
         double tropo_gradient_north{ 0.0 };          /**< Tropospheric north gradient (meters) */

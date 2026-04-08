@@ -68,6 +68,12 @@ namespace GnssProcessor {
     // Utility helpers
     // ===================================================================
 
+    void MeasurementModel::setImuState(const Eigen::Matrix3d& C_b_e,
+                                        const Eigen::Vector3d& f_b_corrected) {
+        tc_C_b_e_ = C_b_e;
+        tc_f_b_ = f_b_corrected;
+    }
+
     std::string MeasurementModel::systemToIsbName(System system) {
         switch (system) {
         case System::GPS:     return "";
@@ -187,17 +193,19 @@ namespace GnssProcessor {
 
         // Code bias (IFB) states for non-reference bands
         std::set<std::string> required_code_biases;
-        for (const auto& obs : observations) {
-            const std::string sys = PppUtils::getSystemString(obs.satellite);
-            for (const auto& [ref_type, observed] : obs.observed) {
-                if (ref_type.empty() || ref_type[0] != 'C' || ref_type.size() < 2) continue;
-                if (ref_type[1] == '1') continue;
-                const std::string cb_key = sys + "_" + ref_type;
-                required_code_biases.insert(cb_key);
-                if (state_manager_.getCodeBiasIndex(cb_key) < 0) {
-                    state_manager_.addCodeBiasState(cb_key, 0.0);
-                    log_manager_.getLogger("measurement_model")->debug(
-                        "{}Added code bias state for {}", epoch_prefix, cb_key);
+        if (config_.estimateIfb()) {
+            for (const auto& obs : observations) {
+                const std::string sys = PppUtils::getSystemString(obs.satellite);
+                for (const auto& [ref_type, observed] : obs.observed) {
+                    if (ref_type.empty() || ref_type[0] != 'C' || ref_type.size() < 2) continue;
+                    if (ref_type[1] == '1') continue;
+                    const std::string cb_key = sys + "_" + ref_type;
+                    required_code_biases.insert(cb_key);
+                    if (state_manager_.getCodeBiasIndex(cb_key) < 0) {
+                        state_manager_.addCodeBiasState(cb_key, 0.0);
+                        log_manager_.getLogger("measurement_model")->debug(
+                            "{}Added code bias state for {}", epoch_prefix, cb_key);
+                    }
                 }
             }
         }
@@ -214,13 +222,20 @@ namespace GnssProcessor {
         const std::string& epoch_prefix) const {
         if (ref_type.empty()) return false;
 
-        const char mt = ref_type[0];
-        if (mt != 'C' && mt != 'L') return false;
+        const MeasurementType mt = classifyMeasurement(ref_type);
+
+        // Accept Code, Phase, and (if velocity estimation is active) Doppler.
+        if (mt != MeasurementType::Code && mt != MeasurementType::Phase &&
+            !(mt == MeasurementType::Doppler && config_.estimateVelocity()))
+            return false;
 
         const bool is_uncombined = config_.isUncombinedEnabled();
         const bool has_underscore = (ref_type.find('_') != std::string::npos);
 
-        if (is_uncombined) {
+        // Doppler measurements are always single-frequency observables (no IF combination).
+        if (mt == MeasurementType::Doppler) {
+            if (has_underscore) return false;
+        } else if (is_uncombined) {
             if (has_underscore) return false;
         } else {
             if (!has_underscore) return false;
@@ -250,11 +265,54 @@ namespace GnssProcessor {
         Eigen::VectorXd& jacobian,
         double& predicted) const {
 
-        const bool is_phase = (!ref_type.empty() && ref_type[0] == 'L');
+        const MeasurementType mtype = classifyMeasurement(ref_type);
+        const bool is_phase = (mtype == MeasurementType::Phase);
+        const bool is_doppler = (mtype == MeasurementType::Doppler);
         const bool is_uncombined = config_.isUncombinedEnabled();
         const double mapping_wet = obs.mf_w;
 
         jacobian = Eigen::VectorXd::Zero(state_size);
+
+        // -----------------------------------------------------------------
+        // Doppler measurements: range-rate = LOS . (sat_vel - rx_vel)
+        // H_vel = -LOS.
+        // Doppler measurements do not depend on tropo, ambiguity, iono, etc.
+        // -----------------------------------------------------------------
+        if (is_doppler) {
+            if (!state_manager_.hasVelocity()) return false;
+
+            // Velocity partial: -LOS
+            jacobian.segment<3>(state_manager_.getVelocityIndex()) = -obs.los;
+
+            // Predicted range-rate: modeled (sat contribution) - LOS . rx_vel
+            const Eigen::Vector3d rx_vel = x.segment<3>(state_manager_.getVelocityIndex());
+            predicted = obs.modeled.at(ref_type) - obs.los.dot(rx_vel);
+
+            // --- Tightly-coupled INS partials for Doppler ---
+            // In TC mode the velocity error includes the attitude-error coupling:
+            //   ?v = ... + skew(C_b^e * f_b) * ?? + C_b^e * ?ba
+            // Therefore:
+            //   ?(range-rate)/???  = -LOS^T * [C*f]×
+            //   ?(range-rate)/??ba = -LOS^T * C_b^e
+            if (config_.tightlyCoupledImu() && state_manager_.hasImuBiases()) {
+                const Eigen::Vector3d f_e = tc_C_b_e_ * tc_f_b_; // specific force in ECEF
+                // skew(f_e) such that skew(f_e) * ?? = f_e × ??
+                Eigen::Matrix3d skew_fe;
+                skew_fe <<       0.0, -f_e(2),  f_e(1),
+                            f_e(2),      0.0, -f_e(0),
+                           -f_e(1),  f_e(0),      0.0;
+
+                // Attitude error partial: ?(range-rate)/??? = -LOS^T * skew(f_e)
+                const Eigen::Vector3d att_partial = -skew_fe.transpose() * obs.los;
+                jacobian.segment<3>(state_manager_.getAttitudeIndex()) = att_partial;
+
+                // Accelerometer bias partial: ?(range-rate)/??ba = -LOS^T * C
+                const Eigen::Vector3d ba_partial = -tc_C_b_e_.transpose() * obs.los;
+                jacobian.segment<3>(state_manager_.getAccelBiasIndex()) = ba_partial;
+            }
+
+            return true;
+        }
 
         // Position partial: -LOS
         jacobian.segment<3>(state_manager_.getPositionIndex()) = -obs.los;
@@ -319,22 +377,18 @@ namespace GnssProcessor {
         }
 
         // Receiver code bias / IFB (PPP-RTK uncombined, non-reference code bands)
+        // The IFB is a direct receiver hardware delay in meters — its Jacobian
+        // coefficient is simply 1.0.  Previous code used an iono-free combination
+        // coefficient (-mu_j / (mu_1 - mu_j)) which incorrectly coupled the IFB
+        // to the ionosphere state and is inconsistent with the cssrlib reference.
         double code_bias_term = 0.0;
-        if (is_uncombined && !is_phase && ref_type.size() >= 2 && ref_type[1] != '1') {
+        if (config_.estimateIfb() && is_uncombined && !is_phase && ref_type.size() >= 2 && ref_type[1] != '1') {
             const std::string sys = PppUtils::getSystemString(obs.satellite);
             const std::string cb_key = sys + "_" + ref_type;
             const int cb_idx = state_manager_.getCodeBiasIndex(cb_key);
             if (cb_idx >= 0 && cb_idx < static_cast<int>(state_size)) {
-                const double freq_j = ppp_utils_.getFrequency(ref_type, obs.system, obs.satellite);
-                const double freq_1 = ppp_utils_.getFrequency("C1", obs.system, obs.satellite);
-                if (freq_j > 0.0 && freq_1 > 0.0) {
-                    const double f_iono = Constants::GPS_L1_FREQ;
-                    const double mu_j = (f_iono * f_iono) / (freq_j * freq_j);
-                    const double mu_1 = (f_iono * f_iono) / (freq_1 * freq_1);
-                    const double ifb_coeff = -mu_j / (mu_1 - mu_j);
-                    jacobian(cb_idx) = ifb_coeff;
-                    code_bias_term = ifb_coeff * x(cb_idx);
-                }
+                jacobian(cb_idx) = 1.0;
+                code_bias_term = x(cb_idx);
             }
         }
 
@@ -358,6 +412,23 @@ namespace GnssProcessor {
             jacobian(amb_idx) = 1.0;
             predicted += x(amb_idx);
         }
+
+        // --- Tightly-coupled INS partials for code/phase (range) ---
+        // The position error ?p is already handled by the -LOS partial above.
+        // In TC mode the attitude error state ?? contributes to the position
+        // error budget through the INS error-state transition matrix (?).
+        // The cross-covariance P(pos, att) from the IMU prediction already
+        // propagates this coupling, so the range Jacobian does not need an
+        // explicit ??/??? term.  However, to improve the *direct*
+        // observability of IMU biases from range measurements, we add the
+        // second-order position-dependent partial when TC mode is active:
+        //   ??/???  ? 0  (attitude ? position coupling is in ?, not H)
+        //   ??/??ba ? 0  (same reasoning)
+        //   ??/??bg ? 0
+        // These remain zero; the cross-covariance from the IMU prediction
+        // provides the coupling.  The explicit attitude-error partials in
+        // the Doppler row (above) provide direct observability for the
+        // bias and attitude states in tightly-coupled mode.
 
         return true;
     }

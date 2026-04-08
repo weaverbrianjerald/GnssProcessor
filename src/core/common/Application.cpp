@@ -29,7 +29,12 @@
 #include "TimeUtils.hpp"
 #include "ProductCache.hpp"
 #include "Coordinates.hpp"
+#include "ProductResolver.hpp"
+#include "NtripClient.hpp"
+#include "RtcmStreamReader.hpp"
+#include "AmbiguityResolver.hpp"
 #include <chrono>
+#include <fstream>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -76,6 +81,63 @@ bool Application::initLoggingAndConfig() {
         return false;
     }
     log_manager_.getLogger("main_log")->info("Configuration loaded from {}", config_path_.string());
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1b: Resolve (download/cache) product and RINEX data
+// ---------------------------------------------------------------------------
+
+bool Application::resolveData() {
+    const auto& dl = config_.getDownloadConfig();
+    if (!dl.enabled) {
+        log_manager_.getLogger("main_log")->info("Auto data download disabled; using manually specified paths");
+        return true;
+    }
+
+    // Map GnssConfig::DownloadConfig -> ProductResolver::DownloadConfig
+    ProductResolver::DownloadConfig rc;
+    rc.enabled           = dl.enabled;
+    rc.data_root         = dl.data_root;
+    rc.product_source    = dl.product_source;
+    rc.product_type      = dl.product_type;
+    rc.netrc_path        = dl.netrc_path;
+    rc.station           = dl.station;
+    rc.station_country   = dl.station_country;
+    rc.year              = dl.year;
+    rc.doy               = dl.doy;
+    rc.download_rinex    = dl.download_rinex;
+    rc.download_products = dl.download_products;
+    rc.atx_path          = dl.atx_path;
+    rc.nc_path           = dl.nc_path;
+    rc.crx2rnx_path      = dl.crx2rnx_path;
+
+    ProductResolver resolver(rc, log_manager_);
+    ProductResolver::ResolvedPaths resolved;
+
+    if (!resolver.resolve(resolved)) {
+        log_manager_.getLogger("main_log")->error("Data resolution failed");
+        return false;
+    }
+
+    // Apply resolved paths back into GnssConfig so the rest of the pipeline
+    // picks them up transparently.
+    if (!resolved.product_paths.empty()) {
+        config_.setProductPaths(resolved.product_paths);
+        log_manager_.getLogger("main_log")->info(
+            "Auto-resolved {} product files into config", resolved.product_paths.size());
+    }
+    if (!resolved.navigation_path.empty()) {
+        config_.setNavigationPath(resolved.navigation_path);
+        log_manager_.getLogger("main_log")->info(
+            "Auto-resolved navigation: {}", resolved.navigation_path.string());
+    }
+    if (!resolved.observation_path.empty()) {
+        config_.setObservationPath(resolved.observation_path);
+        log_manager_.getLogger("main_log")->info(
+            "Auto-resolved observation RINEX: {}", resolved.observation_path.string());
+    }
+
     return true;
 }
 
@@ -357,6 +419,24 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
         ++relinear_pass;
         need_update = false;
 
+        // In tightly-coupled mode, provide current INS attitude and specific
+        // force to the measurement model so Doppler Jacobian rows include
+        // attitude-error and accelerometer-bias partials.
+        if (config_.tightlyCoupledImu() && imu_integrator_ && kalman_filter_) {
+            const Eigen::VectorXd x = state_manager_->getStateVector();
+            Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
+            if (state_manager_->hasImuBiases())
+                accel_bias = x.segment<3>(state_manager_->getAccelBiasIndex());
+            // Use a nominal gravity-subtracted specific force in body frame.
+            // At rest, f_b ≈ C^T * (-g).  For moving platforms the last IMU
+            // sample is a good approximation over the GNSS epoch interval.
+            const Eigen::Vector3d g_e = ImuIntegrator::computeGravityEcef(
+                x.segment<3>(state_manager_->getPositionIndex()));
+            const Eigen::Matrix3d C = kalman_filter_->getAttitude();
+            const Eigen::Vector3d f_b = C.transpose() * (-g_e) - accel_bias;
+            meas_model_->setImuState(C, f_b);
+        }
+
         EpochMeasurement meas_update = meas_model_->computeMeasurementUpdate(
             modeled_obs, state_manager_->getStateVector(), carry_excluded_measurements);
         if (meas_update.innovations.size() == 0 || !meas_model_->validateMeasurementUpdate(meas_update)) {
@@ -452,6 +532,19 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
         return;
     }
 
+    // Set IMU state for tightly-coupled Jacobian partials.
+    if (config_.tightlyCoupledImu() && imu_integrator_ && kalman_filter_) {
+        const Eigen::VectorXd x = state_manager_->getStateVector();
+        Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
+        if (state_manager_->hasImuBiases())
+            accel_bias = x.segment<3>(state_manager_->getAccelBiasIndex());
+        const Eigen::Vector3d g_e = ImuIntegrator::computeGravityEcef(
+            x.segment<3>(state_manager_->getPositionIndex()));
+        const Eigen::Matrix3d C = kalman_filter_->getAttitude();
+        const Eigen::Vector3d f_b = C.transpose() * (-g_e) - accel_bias;
+        meas_model_->setImuState(C, f_b);
+    }
+
     EpochMeasurement relinear_meas = meas_model_->computeMeasurementUpdate(
         relinear_obs, state_manager_->getStateVector());
     if (relinear_meas.innovations.size() == 0 || !meas_model_->validateMeasurementUpdate(relinear_meas)) return;
@@ -497,33 +590,40 @@ void Application::updatePositionSigma() {
 void Application::logEpochSummary(const std::string& epoch_prefix) {
     const bool is_ppp = (config_.getProcessingMode() == ProcessingMode::PPP);
     const bool phase_clk = config_.estimatePhaseClock();
+    const bool has_vel = config_.estimateVelocity();
     const auto& pos = ppp_state_.position;
+    const auto& vel = ppp_state_.velocity;
+
+    // Build optional velocity suffix.
+    std::string vel_str;
+    if (has_vel)
+        vel_str = fmt::format(", Vel ({:.3f}, {:.3f}, {:.3f}) m/s", vel.x(), vel.y(), vel.z());
 
     if (is_ppp) {
         if (phase_clk) {
             log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m, mode=PPP",
+                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m{}, mode=PPP",
                 epoch_prefix, pos.x(), pos.y(), pos.z(),
-                ppp_state_.clock_bias, ppp_state_.phase_clock_offset, ppp_state_.troposphere_zwd);
+                ppp_state_.clock_bias, ppp_state_.phase_clock_offset, ppp_state_.troposphere_zwd, vel_str);
         } else {
             log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m, mode=PPP",
+                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m{}, mode=PPP",
                 epoch_prefix, pos.x(), pos.y(), pos.z(),
-                ppp_state_.clock_bias, ppp_state_.troposphere_zwd);
+                ppp_state_.clock_bias, ppp_state_.troposphere_zwd, vel_str);
         }
     } else {
         if (phase_clk) {
             log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m, IonoStates {}, mode=PPP-RTK",
+                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, PhaseClk {:.3f} m, Tropo {:.3f} m{}, IonoStates {}, mode=PPP-RTK",
                 epoch_prefix, pos.x(), pos.y(), pos.z(),
                 ppp_state_.clock_bias, ppp_state_.phase_clock_offset, ppp_state_.troposphere_zwd,
-                ppp_state_.slant_ionosphere.size());
+                vel_str, ppp_state_.slant_ionosphere.size());
         } else {
             log_manager_.getLogger("main_log")->info(
-                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m, IonoStates {}, mode=PPP-RTK",
+                "{}Position ({:.3f}, {:.3f}, {:.3f}) m, Clock {:.3f} m, Tropo {:.3f} m{}, IonoStates {}, mode=PPP-RTK",
                 epoch_prefix, pos.x(), pos.y(), pos.z(),
                 ppp_state_.clock_bias, ppp_state_.troposphere_zwd,
-                ppp_state_.slant_ionosphere.size());
+                vel_str, ppp_state_.slant_ionosphere.size());
         }
     }
 }
@@ -549,15 +649,23 @@ void Application::writeEpochTraces(const GnssTime& current_time,
 // ---------------------------------------------------------------------------
 
 int Application::run() {
-    // --- Phase 1: Logging & configuration ---
-    if (!initLoggingAndConfig()) return 1;
+// --- Phase 1: Logging & configuration ---
+if (!initLoggingAndConfig()) return 1;
 
-    // --- Phase 2: Parse RINEX & load products ---
-    if (!loadInputData()) return 1;
+// --- Branch on application mode ---
+if (config_.getAppMode() == AppMode::RealTime) {
+    return runRealTime();
+}
 
-    // --- Phase 3: Create processing components ---
-    constexpr size_t core_state_size = 5; // Position(3) + Clock(1) + Tropo(1)
-    state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, config_);
+// --- Phase 1b: Resolve (download/cache) product and RINEX data ---
+if (!resolveData()) return 1;
+
+// --- Phase 2: Parse RINEX & load products ---
+if (!loadInputData()) return 1;
+
+// --- Phase 3: Create processing components ---
+constexpr size_t core_state_size = 5; // Position(3) + Clock(1) + Tropo(1)
+state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, config_);
 
     if (!initializePosition()) return 1;
 
@@ -573,8 +681,44 @@ int Application::run() {
         if_slip_detector_->enableTracing(log_dir_);
     }
 
+    // IMU integrator (GNSS/INS coupled mode)
+    if (config_.enableImu()) {
+        imu_integrator_ = std::make_unique<ImuIntegrator>(config_, log_manager_);
+        const auto& imu_path = config_.getImuConfig().imu_file_path;
+        if (!imu_path.empty()) {
+            if (!imu_integrator_->loadData(imu_path)) {
+                log_manager_.getLogger("main_log")->warn(
+                    "IMU enabled but failed to load data from {}; falling back to GNSS-only",
+                    imu_path.string());
+                imu_integrator_.reset();
+            } else {
+                const char* mode_str = config_.tightlyCoupledImu()
+                    ? "tightly-coupled" : "loosely-coupled";
+                log_manager_.getLogger("main_log")->info(
+                    "IMU integration enabled ({}): {} samples loaded",
+                    mode_str, imu_integrator_->sampleCount());
+            }
+        } else {
+            log_manager_.getLogger("main_log")->warn("IMU enabled but no imu_file_path configured");
+            imu_integrator_.reset();
+        }
+    }
+
     ppp_model_->initializeState(ppp_state_);
     state_manager_->syncPppStateToStateVector(ppp_state_);
+
+    // Ambiguity resolution (MLAMBDA)
+    if (config_.getArMode() > 0) {
+        AmbiguityResolverConfig ar_config;
+        ar_config.ar_mode            = config_.getArMode();
+        ar_config.ratio_threshold    = config_.getArRatioThreshold();
+        ar_config.elevation_mask_ar  = config_.getArElevationMask();
+        ar_config.hold_variance      = config_.getArHoldVariance();
+        ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
+        log_manager_.getLogger("main_log")->info(
+            "Ambiguity resolution enabled: mode={}, ratio_thresh={:.1f}, elev_mask={:.1f} deg",
+            ar_config.ar_mode, ar_config.ratio_threshold, ar_config.elevation_mask_ar);
+    }
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);
     trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir_, is_ppp_rtk);
@@ -617,6 +761,7 @@ int Application::run() {
             }
         }
         prev_tow_ = current_time.tow;
+        prev_epoch_time_ = current_time;
 
         // 4c. Sync PppState from the state vector.
         try {
@@ -645,7 +790,12 @@ int Application::run() {
         handleWlsSeeding(current_time, epoch_prefix, modeled_obs, gap_detected);
 
         // 4f. Kalman prediction.
-        kalman_filter_->predict(dt);
+        if (imu_integrator_ && imu_integrator_->hasData() && !first_epoch_) {
+            // IMU-aided prediction: use strapdown mechanization.
+            kalman_filter_->predictImu(prev_epoch_time_, current_time, *imu_integrator_);
+        } else {
+            kalman_filter_->predict(dt);
+        }
         try {
             state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
         } catch (const std::exception& e) {
@@ -664,6 +814,24 @@ int Application::run() {
         // 4i. Optional geometry relinearization.
         runGeometryRelinearization(epoch_prefix, epoch_obs, applied_meas, have_applied);
 
+        // 4i2. Integer ambiguity resolution (MLAMBDA).
+        if (ambiguity_resolver_ && have_applied) {
+            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs);
+            if (ar_result.success) {
+                // Apply fixed state to the filter
+                state_manager_->setStateVector(ar_result.fixed_state);
+                state_manager_->setCovariance(ar_result.fixed_covariance);
+
+                // Fix-and-hold: constrain ambiguities to integer values
+                ambiguity_resolver_->holdAmbiguities(*state_manager_, ar_result);
+
+                log_manager_.getLogger("main_log")->info(
+                    "{}AR: fixed {}/{} ambs, ratio={:.2f}",
+                    epoch_prefix, ar_result.num_fixed, ar_result.num_candidates,
+                    ar_result.ratio);
+            }
+        }
+
         // 4j. Store posterior position sigma for IF slip gating on the next epoch.
         updatePositionSigma();
 
@@ -676,6 +844,108 @@ int Application::run() {
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
     log_manager_.getLogger("main_log")->info("Processing completed in {} ms, mode={}",
         duration_ms, is_ppp_rtk ? "PPP-RTK" : "PPP");
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Real-time processing entry point
+// ---------------------------------------------------------------------------
+
+int Application::runRealTime() {
+    auto log = log_manager_.getLogger("main_log");
+    log->info("Starting real-time processing mode");
+
+    // --- Phase 1b: Resolve product data (still needed for orbits/clocks) ---
+    if (!resolveData()) return 1;
+
+    // --- Initialize real-time engine ---
+    RealTimeEngine engine(config_, log_manager_);
+    if (!engine.initialize()) {
+        log->error("Failed to initialize real-time engine");
+        return 1;
+    }
+
+    const auto& rt_config = config_.getRealTimeConfig();
+
+    // --- Select input source ---
+    if (rt_config.input_type == "file") {
+        // File replay mode: read RTCM binary file and feed frames.
+        log->info("Real-time file replay from: {}", rt_config.input_path);
+
+        std::ifstream stream(rt_config.input_path, std::ios::binary);
+        if (!stream.is_open()) {
+            log->error("Failed to open RTCM replay file: {}", rt_config.input_path);
+            return 1;
+        }
+
+        RtcmStreamReader reader;
+        constexpr size_t kChunkSize = 4096;
+        std::vector<uint8_t> chunk(kChunkSize);
+
+        auto wall_start = std::chrono::high_resolution_clock::now();
+
+        while (stream.good()) {
+            stream.read(reinterpret_cast<char*>(chunk.data()), kChunkSize);
+            auto bytes_read = static_cast<size_t>(stream.gcount());
+            if (bytes_read == 0) break;
+
+            reader.feed(chunk.data(), bytes_read);
+
+            while (auto frame = reader.nextFrame()) {
+                engine.feedRtcmFrame(*frame);
+            }
+        }
+
+        auto wall_end = std::chrono::high_resolution_clock::now();
+        auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
+        log->info("File replay complete: {} epochs in {} ms, {} frames extracted, {} bytes discarded",
+                  engine.epochCount(), dur_ms,
+                  reader.framesExtracted(), reader.bytesDiscarded());
+    }
+    else if (rt_config.input_type == "ntrip") {
+        // NTRIP live stream mode.
+        NtripConfig ntrip_cfg;
+        ntrip_cfg.host              = rt_config.ntrip_host;
+        ntrip_cfg.port              = rt_config.ntrip_port;
+        ntrip_cfg.mountpoint        = rt_config.ntrip_mountpoint;
+        ntrip_cfg.username          = rt_config.ntrip_user;
+        ntrip_cfg.password          = rt_config.ntrip_password;
+        ntrip_cfg.nmea_gga          = rt_config.nmea_gga;
+        ntrip_cfg.reconnect_delay_s = rt_config.reconnect_delay_s;
+
+        NtripClient client(ntrip_cfg, log_manager_);
+        if (!client.start()) {
+            log->error("Failed to start NTRIP client");
+            return 1;
+        }
+
+        log->info("NTRIP client started, streaming from {}:{}/{}",
+                  ntrip_cfg.host, ntrip_cfg.port, ntrip_cfg.mountpoint);
+
+        RtcmStreamReader reader;
+        std::vector<uint8_t> buf;
+
+        // Main processing loop — runs until the connection is closed or
+        // the process is interrupted.
+        while (client.isConnected()) {
+            size_t n = client.read(buf, 4096);
+            if (n == 0) continue;
+
+            reader.feed(buf);
+
+            while (auto frame = reader.nextFrame()) {
+                engine.feedRtcmFrame(*frame);
+            }
+        }
+
+        client.stop();
+        log->info("NTRIP session ended: {} epochs processed", engine.epochCount());
+    }
+    else {
+        log->error("Unsupported real-time input_type: '{}'", rt_config.input_type);
+        return 1;
+    }
 
     return 0;
 }

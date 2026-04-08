@@ -64,6 +64,20 @@ namespace GnssProcessor {
          */
         bool validateMeasurementUpdate(const EpochMeasurement& measurement) const;
 
+        /**
+         * @brief Set the body-to-ECEF attitude matrix for tightly-coupled Jacobians.
+         *
+         * In tightly-coupled GNSS/INS mode the measurement Jacobian includes
+         * attitude-error and accelerometer-bias partials for Doppler rows.
+         * Call this once per epoch (after IMU mechanization) before
+         * computeMeasurementUpdate().
+         *
+         * @param C_b_e Current body-to-ECEF rotation matrix.
+         * @param f_b_corrected Bias-corrected specific force in body frame (m/s²).
+         */
+        void setImuState(const Eigen::Matrix3d& C_b_e,
+                         const Eigen::Vector3d& f_b_corrected);
+
     private:
         StateManager& state_manager_;    ///< Reference to the state manager (non-owning).
         const PppModel& ppp_model_;      ///< Reference to the PPP modeling component (non-owning).
@@ -73,6 +87,10 @@ namespace GnssProcessor {
 
         bool isb_initialized_ = false;  ///< Flag to track if ISB has been initialized
         bool phase_clock_initialized_ = false; ///< Flag to track if phase clock offset has been seeded
+
+        // Tightly-coupled IMU state (set per-epoch via setImuState())
+        Eigen::Matrix3d tc_C_b_e_ = Eigen::Matrix3d::Identity(); ///< Body-to-ECEF rotation.
+        Eigen::Vector3d tc_f_b_ = Eigen::Vector3d::Zero();       ///< Bias-corrected specific force (body frame).
 
         // -------------------------------------------------------------------
         // Utility helpers

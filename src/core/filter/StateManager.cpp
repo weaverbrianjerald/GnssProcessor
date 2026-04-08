@@ -67,11 +67,17 @@ namespace GnssProcessor {
     double bandFrequency(char band, System system) {
         switch (system) {
         case System::GPS:
-        case System::QZSS:
-        case System::SBAS:
             if (band == '2') return Constants::GPS_L2_FREQ;
             if (band == '5') return Constants::GPS_L5_FREQ;
             return Constants::GPS_L1_FREQ;
+        case System::QZSS:
+            if (band == '2') return Constants::QZSS_L2_FREQ;
+            if (band == '5') return Constants::QZSS_L5_FREQ;
+            if (band == '6') return Constants::QZSS_L6_FREQ;
+            return Constants::QZSS_L1_FREQ;
+        case System::SBAS:
+            if (band == '5') return Constants::SBAS_L5_FREQ;
+            return Constants::SBAS_L1_FREQ;
         case System::Galileo:
             if (band == '5') return Constants::GAL_E5A_FREQ;
             if (band == '7') return Constants::GAL_E5B_FREQ;
@@ -79,16 +85,19 @@ namespace GnssProcessor {
             if (band == '6') return Constants::GAL_E6_FREQ;
             return Constants::GPS_L1_FREQ;
         case System::BeiDou:
+            if (band == '1') return Constants::BDS_B1C_FREQ;
             if (band == '2') return Constants::BDS_B1_FREQ;
             if (band == '5') return Constants::BDS_B2A_FREQ;
             if (band == '7') return Constants::BDS_B2_FREQ;
             if (band == '8') return Constants::BDS_B2AB_FREQ;
             if (band == '6') return Constants::BDS_B3_FREQ;
-            return Constants::GPS_L1_FREQ;
+            return Constants::BDS_B1C_FREQ;
         case System::GLONASS:
             if (band == '2') return Constants::GLONASS_G2_BASE_FREQ;
             if (band == '3') return Constants::GLONASS_G3_BASE_FREQ;
-            return Constants::GPS_L1_FREQ;
+            if (band == '4') return Constants::GLONASS_G1A_FREQ;
+            if (band == '6') return Constants::GLONASS_G2A_FREQ;
+            return Constants::GLONASS_G1_BASE_FREQ;
         default:
             return Constants::GPS_L1_FREQ;
         }
@@ -158,11 +167,21 @@ namespace GnssProcessor {
 
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
         : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config),
+          velocity_idx_(std::numeric_limits<size_t>::max()),
           phase_clock_idx_(std::numeric_limits<size_t>::max()),
           gradient_north_idx_(std::numeric_limits<size_t>::max()),
-          gradient_east_idx_(std::numeric_limits<size_t>::max()) {
+          gradient_east_idx_(std::numeric_limits<size_t>::max()),
+          attitude_idx_(std::numeric_limits<size_t>::max()),
+          accel_bias_idx_(std::numeric_limits<size_t>::max()),
+          gyro_bias_idx_(std::numeric_limits<size_t>::max()) {
 
-        // Optional phase clock offset state (after ZWD).
+        // Optional velocity states (Vx, Vy, Vz) right after position + clock + tropo.
+        if (config_.estimateVelocity()) {
+            velocity_idx_ = base_core_size_;
+            base_core_size_ += 3;
+        }
+
+        // Optional phase clock offset state.
         if (config_.estimatePhaseClock()) {
             phase_clock_idx_ = base_core_size_;
             base_core_size_ += 1;
@@ -174,6 +193,16 @@ namespace GnssProcessor {
             gradient_north_idx_ = base_core_size_;
             gradient_east_idx_ = base_core_size_ + 1;
             base_core_size_ += 2;
+        }
+
+        // Optional IMU error states: attitude(3) + accel_bias(3) + gyro_bias(3) = 9 states
+        if (config_.enableImu()) {
+            attitude_idx_   = base_core_size_;
+            base_core_size_ += 3;
+            accel_bias_idx_ = base_core_size_;
+            base_core_size_ += 3;
+            gyro_bias_idx_  = base_core_size_;
+            base_core_size_ += 3;
         }
 
         // Determine which systems need inter-system time bias states
@@ -207,6 +236,12 @@ namespace GnssProcessor {
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
         covariance_(3, 3) = clock_var;
         covariance_(4, 4) = tropo_var;
+
+        // Initialize velocity covariance if enabled
+        if (config_.estimateVelocity()) {
+            double vel_var = init.velocity * init.velocity;
+            covariance_.block(velocity_idx_, velocity_idx_, 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
+        }
         
         // Initialize phase clock offset covariance if enabled
         if (config_.estimatePhaseClock()) {
@@ -220,6 +255,17 @@ namespace GnssProcessor {
             covariance_(gradient_north_idx_, gradient_north_idx_) = grad_var;
             covariance_(gradient_east_idx_, gradient_east_idx_) = grad_var;
         }
+
+        // Initialize IMU bias covariances if enabled
+        if (config_.enableImu()) {
+            const auto& ic = config_.getImuConfig();
+            double att_var = ic.initial_attitude_std * ic.initial_attitude_std;
+            covariance_.block(attitude_idx_, attitude_idx_, 3, 3) = Eigen::Matrix3d::Identity() * att_var;
+            double ab_var = ic.initial_accel_bias_std * ic.initial_accel_bias_std;
+            covariance_.block(accel_bias_idx_, accel_bias_idx_, 3, 3) = Eigen::Matrix3d::Identity() * ab_var;
+            double gb_var = ic.initial_gyro_bias_std * ic.initial_gyro_bias_std;
+            covariance_.block(gyro_bias_idx_, gyro_bias_idx_, 3, 3) = Eigen::Matrix3d::Identity() * gb_var;
+        }
         
         // Initialize inter-system time offset covariances
         for (const auto& [sys_name, idx] : system_time_offset_indices_) {
@@ -228,9 +274,12 @@ namespace GnssProcessor {
         
         // Log initialization using LogManager-provided logger
         auto logger = log_manager_.getLogger("state_manager");
-        logger->info("StateManager initialized with core state size: {} (base={}, phase_clock={}, gradients={}, time_offsets={})",
-            core_state_size_, base_core_size_, config_.estimatePhaseClock() ? 1 : 0,
-            config_.estimateTropoGradients() ? 2 : 0, systems_with_time_offsets_.size());
+        logger->info("StateManager initialized with core state size: {} (base={}, velocity={}, phase_clock={}, gradients={}, imu={}, time_offsets={})",
+            core_state_size_, base_core_size_, config_.estimateVelocity() ? 3 : 0,
+            config_.estimatePhaseClock() ? 1 : 0,
+            config_.estimateTropoGradients() ? 2 : 0,
+            config_.enableImu() ? 9 : 0,
+            systems_with_time_offsets_.size());
         
         if (!systems_with_time_offsets_.empty()) {
             std::string offset_systems;
@@ -328,6 +377,12 @@ namespace GnssProcessor {
         double pos_var = pn.position * dt;
         Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
 
+        // Velocity noise (m²/s² per s)
+        if (hasVelocity()) {
+            double vel_var = pn.velocity * dt;
+            Q.block(getVelocityIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
+        }
+
         // Clock noise - typically very large spectral density for white noise clock.
         // When BSSD is active the clock column is zeroed in H, so the clock
         // receives no measurement update.  Skip process noise to prevent
@@ -404,9 +459,16 @@ namespace GnssProcessor {
 
     Eigen::MatrixXd StateManager::getTransitionMatrix(double dt) const {
         size_t state_size = getStateSize();
-        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(state_size, state_size); // simple, without dynamics
+        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(state_size, state_size);
+
+        // Position-velocity coupling: pos(k+1) = pos(k) + vel(k) * dt
+        if (hasVelocity()) {
+            F.block(getPositionIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * dt;
+        }
+
         auto logger = log_manager_.getLogger("state_manager");
-        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s", F.rows(), F.cols(), dt);
+        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s, velocity_coupling={}",
+            F.rows(), F.cols(), dt, hasVelocity() ? "on" : "off");
         return F;
     }
 
@@ -415,6 +477,8 @@ namespace GnssProcessor {
     // ===================================================================
 
     size_t StateManager::getPositionIndex() const { return 0; }
+    size_t StateManager::getVelocityIndex() const { return velocity_idx_; }
+    bool   StateManager::hasVelocity() const { return velocity_idx_ != std::numeric_limits<size_t>::max(); }
     size_t StateManager::getClockIndex() const { return 3; }
     size_t StateManager::getPhaseClockIndex() const { return phase_clock_idx_; }
     bool   StateManager::hasPhaseClock() const { return phase_clock_idx_ != std::numeric_limits<size_t>::max(); }
@@ -428,6 +492,13 @@ namespace GnssProcessor {
     size_t StateManager::getTropoGradientNorthIndex() const { return gradient_north_idx_; }
     size_t StateManager::getTropoGradientEastIndex() const { return gradient_east_idx_; }
     bool   StateManager::hasTropoGradients() const { return gradient_north_idx_ != std::numeric_limits<size_t>::max(); }
+
+    bool   StateManager::hasImuBiases() const { return accel_bias_idx_ != std::numeric_limits<size_t>::max(); }
+    size_t StateManager::getAccelBiasIndex() const { return accel_bias_idx_; }
+    size_t StateManager::getGyroBiasIndex() const { return gyro_bias_idx_; }
+    size_t StateManager::getAttitudeIndex() const { return attitude_idx_; }
+
+
 
     size_t StateManager::getSystemTimeOffsetIndex(const std::string& system_name) const {
         auto it = system_time_offset_indices_.find(system_name);
@@ -478,6 +549,9 @@ namespace GnssProcessor {
         ppp_state.clock_bias       = current_state(state_manager.getClockIndex());
         ppp_state.troposphere_zwd  = current_state(state_manager.getTropoIndex());
 
+        if (state_manager.hasVelocity())
+            ppp_state.velocity = current_state.segment<3>(state_manager.getVelocityIndex());
+
         if (state_manager.hasPhaseClock())
             ppp_state.phase_clock_offset = current_state(state_manager.getPhaseClockIndex());
         if (state_manager.hasTropoGradients()) {
@@ -509,6 +583,9 @@ namespace GnssProcessor {
         sv.segment<3>(getPositionIndex()) = ppp_state.position;
         sv(getClockIndex()) = ppp_state.clock_bias;
         sv(getTropoIndex()) = ppp_state.troposphere_zwd;
+
+        if (hasVelocity())
+            sv.segment<3>(getVelocityIndex()) = ppp_state.velocity;
 
         if (hasPhaseClock())
             sv(getPhaseClockIndex()) = ppp_state.phase_clock_offset;

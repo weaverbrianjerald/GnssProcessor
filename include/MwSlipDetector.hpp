@@ -145,6 +145,32 @@ namespace GnssProcessor {
          */
         double computeAdaptiveThreshold(const MwArcStats& stats, double lambda_wl) const;
 
+        /**
+         * @brief Compute the MAD-derived Gaussian-equivalent sigma from an arc's diff window.
+         * @param stats  Arc statistics whose diff_window is used.
+         * @return Sigma in meters, or NaN if insufficient history.
+         */
+        static double computeMadSigma(const MwArcStats& stats);
+
+        /**
+         * @brief Process a single MW sample: update statistics or flag a slip.
+         *
+         * Handles the first-epoch initialization, adaptive threshold evaluation,
+         * trace writing, and Welford/Hatch statistics update for one MW value.
+         *
+         * @param obs          Observation (for tracing metadata).
+         * @param stats_key    Key into mw_stats_ for this arc.
+         * @param mw_m         Current MW value (meters).
+         * @param lambda_wl    Wide-lane wavelength (meters).
+         * @param sig1         First signal identifier (for tracing).
+         * @param sig2         Second signal identifier (for tracing).
+         * @return True if a slip was detected (caller should generate reset keys).
+         */
+        bool processMwSample(const PppObservation& obs,
+            const std::string& stats_key,
+            double mw_m, double lambda_wl,
+            const std::string& sig1, const std::string& sig2);
+
         /** Output stream for MWWL trace CSV file (mutable for const access). */
         mutable std::ofstream mwwl_trace_;
 

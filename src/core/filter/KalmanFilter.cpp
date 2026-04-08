@@ -96,6 +96,24 @@ namespace GnssProcessor {
                 P(idx, idx) = isb_std * isb_std;
         }
 
+        if (state_manager_.hasImuBiases()) {
+            const auto& ic = config_.getImuConfig();
+            const size_t att_idx = state_manager_.getAttitudeIndex();
+            const size_t ab_idx  = state_manager_.getAccelBiasIndex();
+            const size_t gb_idx  = state_manager_.getGyroBiasIndex();
+            const double att_std = ic.initial_attitude_std;
+            const double ab_std  = ic.initial_accel_bias_std;
+            const double gb_std  = ic.initial_gyro_bias_std;
+            for (size_t k = 0; k < 3; ++k) {
+                if (att_idx + k < state_size && isUnsetVariance(P(att_idx + k, att_idx + k)))
+                    P(att_idx + k, att_idx + k) = att_std * att_std;
+                if (ab_idx + k < state_size && isUnsetVariance(P(ab_idx + k, ab_idx + k)))
+                    P(ab_idx + k, ab_idx + k) = ab_std * ab_std;
+                if (gb_idx + k < state_size && isUnsetVariance(P(gb_idx + k, gb_idx + k)))
+                    P(gb_idx + k, gb_idx + k) = gb_std * gb_std;
+            }
+        }
+
         const size_t num_amb = state_manager_.getAmbiguities().size();
         if (num_amb > 0) {
             P.bottomRightCorner(num_amb, num_amb).diagonal().setConstant(amb_std * amb_std);
@@ -132,6 +150,9 @@ namespace GnssProcessor {
         const size_t state_size = state_manager_.getStateSize();
         size_t base_core_size = 5;
         if (config.estimateTropoGradients()) base_core_size += 2;
+        if (config.estimateVelocity()) base_core_size += 3;
+        if (config.estimatePhaseClock()) base_core_size += 1;
+        if (config.enableImu()) base_core_size += 9;
         if (state_size < base_core_size) {
             log_manager_.getLogger("kalman_filter")->error(
                 "Invalid state size from StateManager: {}, minimum {} required for mode {}",
@@ -231,6 +252,113 @@ namespace GnssProcessor {
         // Log after prediction
         if (logger_) logger_->logStateVector(x, "Predicted State Vector");
         if (logger_) logger_->logCovarianceMatrix(P, "Predicted Covariance Matrix");
+    }
+
+    // ===================================================================
+    // IMU-aided prediction
+    // ===================================================================
+
+    void KalmanFilter::predictImu(const GnssTime& t_start, const GnssTime& t_end,
+                                   const ImuIntegrator& imu) {
+        auto klogger = log_manager_.getLogger("kalman_filter");
+
+        Eigen::VectorXd x = state_manager_.getStateVector();
+        Eigen::MatrixXd P = state_manager_.getCovariance();
+        const size_t state_size = state_manager_.getStateSize();
+
+        // --- Extract current IMU-related states ---
+        const Eigen::Vector3d pos = x.segment<3>(state_manager_.getPositionIndex());
+        Eigen::Vector3d vel = Eigen::Vector3d::Zero();
+        if (state_manager_.hasVelocity())
+            vel = x.segment<3>(state_manager_.getVelocityIndex());
+
+        Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
+        Eigen::Vector3d gyro_bias  = Eigen::Vector3d::Zero();
+        if (state_manager_.hasImuBiases()) {
+            accel_bias = x.segment<3>(state_manager_.getAccelBiasIndex());
+            gyro_bias  = x.segment<3>(state_manager_.getGyroBiasIndex());
+        }
+
+        // --- Run strapdown mechanization ---
+        const ImuPrediction pred = imu.integrate(t_start, t_end, pos, vel, C_b_e_,
+                                                  accel_bias, gyro_bias);
+        if (!pred.valid) {
+            klogger->warn("IMU integration returned no valid samples, falling back to standard predict");
+            const double dt = TimeUtils::continuousGpsSeconds(t_end)
+                            - TimeUtils::continuousGpsSeconds(t_start);
+            predict(std::max(dt, 0.01));
+            return;
+        }
+
+        // --- Apply mechanized state to the state vector ---
+        x.segment<3>(state_manager_.getPositionIndex()) = pred.position;
+        if (state_manager_.hasVelocity())
+            x.segment<3>(state_manager_.getVelocityIndex()) = pred.velocity;
+        C_b_e_ = pred.attitude;
+
+        // Attitude error state is reset to zero after each mechanization
+        // (the attitude correction is directly applied to C_b_e_).
+        if (state_manager_.hasImuBiases()) {
+            x.segment<3>(state_manager_.getAttitudeIndex()).setZero();
+        }
+
+        // --- Build the full-state transition and process noise ---
+        // The IMU provides a 15x15 Phi and Q for the INS error states:
+        //   [dp(3), dv(3), dpsi(3), dba(3), dbg(3)]
+        // We map these to the full state vector indices.
+        //
+        // For non-INS states (clock, tropo, ambiguities, ISB, etc.) we use
+        // the standard random-walk process noise (same as predict()).
+
+        Eigen::MatrixXd F_full = Eigen::MatrixXd::Identity(state_size, state_size);
+        Eigen::MatrixXd Q_full = state_manager_.getProcessNoiseMatrix(pred.dt_total);
+
+        // Map INS error-state indices to full state indices.
+        // INS order: pos(0-2), vel(3-5), att(6-8), ba(9-11), bg(12-14)
+        std::vector<size_t> ins_map(15, std::numeric_limits<size_t>::max());
+        ins_map[0] = state_manager_.getPositionIndex();
+        ins_map[1] = state_manager_.getPositionIndex() + 1;
+        ins_map[2] = state_manager_.getPositionIndex() + 2;
+        if (state_manager_.hasVelocity()) {
+            ins_map[3] = state_manager_.getVelocityIndex();
+            ins_map[4] = state_manager_.getVelocityIndex() + 1;
+            ins_map[5] = state_manager_.getVelocityIndex() + 2;
+        }
+        if (state_manager_.hasImuBiases()) {
+            ins_map[6]  = state_manager_.getAttitudeIndex();
+            ins_map[7]  = state_manager_.getAttitudeIndex() + 1;
+            ins_map[8]  = state_manager_.getAttitudeIndex() + 2;
+            ins_map[9]  = state_manager_.getAccelBiasIndex();
+            ins_map[10] = state_manager_.getAccelBiasIndex() + 1;
+            ins_map[11] = state_manager_.getAccelBiasIndex() + 2;
+            ins_map[12] = state_manager_.getGyroBiasIndex();
+            ins_map[13] = state_manager_.getGyroBiasIndex() + 1;
+            ins_map[14] = state_manager_.getGyroBiasIndex() + 2;
+        }
+
+        // Inject the INS Phi and Q into the full matrices.
+        for (size_t i = 0; i < 15; ++i) {
+            if (ins_map[i] >= state_size) continue;
+            for (size_t j = 0; j < 15; ++j) {
+                if (ins_map[j] >= state_size) continue;
+                F_full(ins_map[i], ins_map[j]) = pred.Phi(i, j);
+                Q_full(ins_map[i], ins_map[j]) = pred.Q_ins(i, j);
+            }
+        }
+
+        // --- Covariance propagation ---
+        P = F_full * P * F_full.transpose() + Q_full;
+        P = 0.5 * (P + P.transpose());
+
+        // --- Store ---
+        state_manager_.setStateVector(x);
+        state_manager_.setCovariance(P);
+
+        klogger->info("IMU prediction: {} samples over {:.3f}s, pos_delta={:.3f}m",
+            pred.num_samples, pred.dt_total, (pred.position - pos).norm());
+
+        if (logger_) logger_->logStateVector(x, "IMU Predicted State Vector");
+        if (logger_) logger_->logCovarianceMatrix(P, "IMU Predicted Covariance Matrix");
     }
 
     // ===================================================================
@@ -349,6 +477,32 @@ namespace GnssProcessor {
         state_manager_.setStateVector(x);
         state_manager_.setCovariance(P);
         state_manager_.setStateEpochTime(measurement.time);
+
+        // --- IMU attitude error feedback ---
+        // After the GNSS update, the attitude error state dpsi has been
+        // corrected.  Apply it to the rotation matrix and reset dpsi to zero.
+        if (state_manager_.hasImuBiases()) {
+            const size_t att_idx = state_manager_.getAttitudeIndex();
+            const Eigen::Vector3d dpsi = x.segment<3>(att_idx);
+            if (dpsi.norm() > 1e-15) {
+                // Small-angle rotation correction: C_corrected = (I - [dpsi]x) * C
+                Eigen::Matrix3d dR;
+                dR <<       1.0, -dpsi(2),  dpsi(1),
+                       dpsi(2),       1.0, -dpsi(0),
+                      -dpsi(1),  dpsi(0),       1.0;
+                C_b_e_ = dR * C_b_e_;
+                // Re-orthonormalize.
+                Eigen::JacobiSVD<Eigen::Matrix3d> svd(C_b_e_, Eigen::ComputeFullU | Eigen::ComputeFullV);
+                C_b_e_ = svd.matrixU() * svd.matrixV().transpose();
+                if (C_b_e_.determinant() < 0.0) C_b_e_.col(2) *= -1.0;
+
+                // Reset the attitude error state to zero.
+                Eigen::VectorXd x_reset = state_manager_.getStateVector();
+                x_reset.segment<3>(att_idx).setZero();
+                state_manager_.setStateVector(x_reset);
+            }
+        }
+
 
         // Per-satellite residual summary
         {
@@ -520,6 +674,22 @@ namespace GnssProcessor {
         for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
             if (idx < static_cast<size_t>(P.rows()))
                 P(idx, idx) = amb_std * amb_std;
+        }
+
+        // IMU bias states
+        if (state_manager_.hasImuBiases()) {
+            const auto& ic = config_.getImuConfig();
+            const double att_var = ic.initial_attitude_std * ic.initial_attitude_std;
+            const double ab_var  = ic.initial_accel_bias_std * ic.initial_accel_bias_std;
+            const double gb_var  = ic.initial_gyro_bias_std * ic.initial_gyro_bias_std;
+            const size_t att_idx = state_manager_.getAttitudeIndex();
+            const size_t ab_idx  = state_manager_.getAccelBiasIndex();
+            const size_t gb_idx  = state_manager_.getGyroBiasIndex();
+            for (size_t k = 0; k < 3; ++k) {
+                if (att_idx + k < static_cast<size_t>(P.rows())) P(att_idx + k, att_idx + k) = att_var;
+                if (ab_idx + k < static_cast<size_t>(P.rows())) P(ab_idx + k, ab_idx + k) = ab_var;
+                if (gb_idx + k < static_cast<size_t>(P.rows())) P(gb_idx + k, gb_idx + k) = gb_var;
+            }
         }
 
         klogger->warn("{}Complete reset applied: state_size={}, ambiguity_std={:.3f} m",

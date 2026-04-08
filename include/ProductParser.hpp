@@ -224,6 +224,21 @@ namespace GnssProcessor {
         std::vector<ErpData> erps_;        ///< Parsed Earth rotation parameters (ERP).
         std::vector<double> klobuchar_coeffs_; ///< Parsed Klobuchar ionospheric coefficients.
         std::vector<SunEphemeris> sun_ephemeris_; ///< Computed or parsed Sun ephemeris for epochs.
+
+        /** @brief Filter configured product paths by file extension. */
+        std::vector<std::filesystem::path> getPathsByExtension(const std::string& ext) const;
+
+        /** @brief Join a vector of paths into a comma-separated string. */
+        static std::string joinPaths(const std::vector<std::filesystem::path>& paths);
+
+        /** @brief Validate a 3-char satellite PRN (system letter + 2 digits). */
+        static bool isValidPrn(const std::string& prn);
+
+        /** @brief Right-trim whitespace from a string in-place. */
+        static void rtrim(std::string& s);
+
+        /** @brief Remove all whitespace from a string. */
+        static std::string sanitize(const std::string& s);
     };
 
 } // namespace GnssProcessor

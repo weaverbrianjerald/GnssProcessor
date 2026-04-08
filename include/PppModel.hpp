@@ -21,6 +21,7 @@
 #include "Ionosphere.hpp"
 #include "Antenna.hpp"
 #include "ModelGeometry.hpp"
+#include "StochasticModel.hpp"
 #include <Eigen/Dense>
 #include <vector>
 #include <map>
@@ -218,6 +219,7 @@ namespace GnssProcessor {
         Model::Geometry geometry_;             /**< Geometry and satellite interpolation helpers. */
         Antenna antenna_;                      /**< Antenna model for receiver and satellite corrections. */
         GnssCorrections gnss_corrections_;     /**< Container for clock/orbit/bias/erp corrections. */
+        StochasticModelWeight stochastic_model_; /**< Stochastic (weighting) model for variance computation. */
 
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priority lists (by system). */
         std::vector<double> klobuchar_coeffs_;  /**< Klobuchar coefficients (if available) */

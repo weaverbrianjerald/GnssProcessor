@@ -120,6 +120,21 @@ namespace GnssProcessor {
         size_t getPositionIndex() const;
 
         /**
+         * @brief Index of the receiver velocity state within the state vector.
+         *
+         * Velocity occupies three consecutive elements (Vx, Vy, Vz).
+         * Only present when velocity estimation is enabled.
+         * @return Index of the first velocity element, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getVelocityIndex() const;
+
+        /**
+         * @brief Check if velocity estimation is active.
+         * @return True if velocity states exist in the state vector.
+         */
+        bool hasVelocity() const;
+
+        /**
          * @brief Index of the receiver clock bias state within the state vector.
          * @return Index of the clock bias state.
          */
@@ -405,12 +420,52 @@ namespace GnssProcessor {
          */
         void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys);
 
+        // -------------------------------------------------------------------
+        // IMU bias states (GNSS/INS integration)
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Check if IMU bias states are present in the state vector.
+         * @return True if accelerometer and gyroscope bias states exist.
+         */
+        bool hasImuBiases() const;
+
+        /**
+         * @brief Index of the first accelerometer bias state (ba_x).
+         *
+         * Accelerometer biases occupy 3 consecutive elements (ba_x, ba_y, ba_z).
+         * @return Index, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getAccelBiasIndex() const;
+
+        /**
+         * @brief Index of the first gyroscope bias state (bg_x).
+         *
+         * Gyroscope biases occupy 3 consecutive elements (bg_x, bg_y, bg_z).
+         * @return Index, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getGyroBiasIndex() const;
+
+        /**
+         * @brief Index of the first attitude error state (dpsi_x).
+         *
+         * Attitude errors occupy 3 consecutive elements (dpsi_x, dpsi_y, dpsi_z).
+         * Only present when IMU integration is enabled.
+         * @return Index, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getAttitudeIndex() const;
+
+
     private:
-        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients, +1 if phase clock).
+        size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients, +1 if phase clock, +3 if velocity).
         size_t base_core_size_;                     //!< Base core size without inter-system time offsets.
+        size_t velocity_idx_;                       //!< Index of velocity Vx state (max if disabled).
         size_t phase_clock_idx_;                    //!< Index of phase clock offset (max if disabled).
         size_t gradient_north_idx_;                 //!< Index of tropo north gradient (max if disabled).
         size_t gradient_east_idx_;                  //!< Index of tropo east gradient (max if disabled).
+        size_t attitude_idx_;                       //!< Index of attitude error dpsi_x (max if disabled).
+        size_t accel_bias_idx_;                     //!< Index of accelerometer bias ba_x (max if disabled).
+        size_t gyro_bias_idx_;                      //!< Index of gyroscope bias bg_x (max if disabled).
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.

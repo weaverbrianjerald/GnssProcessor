@@ -12,6 +12,38 @@
 namespace GnssProcessor {
 
     /**
+     * @brief Enumeration for the top-level application execution mode.
+     *
+     * Selects between batch post-processing from files and real-time
+     * streaming operation.
+     */
+    enum class AppMode {
+        PostProcessing, ///< Batch processing from RINEX / product files.
+        RealTime        ///< Streaming / live processing from RTCM data.
+    };
+
+    /**
+     * @brief Configuration for real-time streaming mode.
+     *
+     * When AppMode::RealTime is selected these settings control the NTRIP
+     * caster connection, observation source and output behaviour.
+     */
+    struct RealTimeConfig {
+        std::string ntrip_host;                   ///< NTRIP caster hostname.
+        int         ntrip_port{ 2101 };           ///< NTRIP caster port.
+        std::string ntrip_mountpoint;             ///< NTRIP mountpoint name.
+        std::string ntrip_user;                   ///< NTRIP username (empty = anonymous).
+        std::string ntrip_password;               ///< NTRIP password.
+        std::string nmea_gga;                     ///< Optional GGA sentence for VRS.
+        int         reconnect_delay_s{ 5 };       ///< Seconds before reconnect on failure.
+        std::string input_type{ "ntrip" };        ///< Input source: "ntrip", "tcp", "serial", "file".
+        std::string input_path;                   ///< Path or address for non-NTRIP input.
+        std::string output_type{ "console" };     ///< Output destination: "console", "file", "nmea".
+        std::string output_path;                  ///< Path for file-based output.
+        size_t      max_epoch_buffer{ 100 };      ///< Max epochs to buffer before dropping oldest.
+    };
+
+    /**
      * @brief Enumeration for GNSS processing modes.
      *
      * Defines the available processing modes for the GNSS processor.
@@ -52,6 +84,18 @@ namespace GnssProcessor {
     enum class SatelliteClockInterpolationMode {
         Linear,   ///< Linear interpolation.
         Lagrange  ///< Lagrange interpolation.
+    };
+
+    /**
+     * @brief Enumeration for measurement stochastic (weighting) models.
+     *
+     * Selects how observation variances are scaled based on satellite geometry
+     * or signal quality indicators.
+     */
+    enum class StochasticModelType {
+        Constant,   ///< Use the a-priori ?² directly, no geometry scaling.
+        Elevation,  ///< Classic 1/sin²(el) weighting (default).
+        SNR         ///< SNR-based weighting using the SIGMA-? model.
     };
 
     /**
@@ -121,6 +165,12 @@ namespace GnssProcessor {
         /// timing variations while ambiguities remain estimable.
         /// 1e-9 yields ~1 mm/sqrt(hr) drift.
         double phase_clock{ 1e-9 };
+
+        /// Receiver velocity (m*m/s). Models the expected velocity variation
+        /// between epochs.  A large value (~1e2) treats velocity as nearly
+        /// unconstrained, suitable for pedestrian or vehicular dynamics.
+        /// Smaller values smooth the velocity estimate over time.
+        double velocity{ 1e2 };
     };
 
     /**
@@ -130,6 +180,7 @@ namespace GnssProcessor {
      */
     struct InitialStd {
         double position{ 1e2 };       ///< Initial position standard deviation (m).
+        double velocity{ 1e2 };       ///< Initial velocity standard deviation (m/s).
         double clock{ 1e3 };          ///< Initial clock bias standard deviation (m).
         double troposphere{ 0.5 };      ///< Initial tropospheric zenith delay standard deviation (m).
         double ionosphere{ 5.0 };       ///< Initial ionospheric zenith delay standard deviation (m).
@@ -148,7 +199,85 @@ namespace GnssProcessor {
     struct DefaultMeasurementNoise {
         double code_std_m{ 0.30 };   ///< Code measurement standard deviation (m).
         double phase_std_m{ 0.003 }; ///< Phase measurement standard deviation (m).
+        double doppler_std_m{ 0.5 }; ///< Doppler measurement standard deviation (Hz).
     };
+
+    /**
+     * @brief Parameters for the SNR-based stochastic (SIGMA-?) model.
+     *
+     * The model computes measurement standard deviation as:
+     *   ? = a + b · 10^(?SNR_dBHz / 10)
+     * where SNR_dBHz is the signal-to-noise ratio in dB-Hz read from RINEX
+     * 'S' observables.  The parameters @c a and @c b are specified
+     * separately for code and phase measurements.
+     *
+     * When SNR is unavailable for a measurement the model falls back to
+     * the classic elevation-based 1/sin²(el) weighting using the default
+     * measurement noise values.
+     *
+     * Reference: Brunner F.K., Hartinger H., Troyer L. (1999),
+     *            "GPS signal diffraction modelling: the stochastic
+     *            SIGMA-? model", Journal of Geodesy.
+     */
+    struct SnrModelParams {
+        double code_a{ 0.30 };        ///< Additive floor for code ? (meters).
+        double code_b{ 300.0 };       ///< Multiplier for code exponential term (meters).
+        double phase_a{ 0.002 };      ///< Additive floor for phase ? (meters).
+        double phase_b{ 0.3 };        ///< Multiplier for phase exponential term (meters).
+        double snr_floor_dbhz{ 20.0 };///< Minimum SNR (dB-Hz) to clamp before computing ?.
+        double snr_ceil_dbhz{ 55.0 }; ///< Maximum SNR (dB-Hz) to clamp before computing ?.
+    };
+
+    /**
+     * @brief Selects how GNSS and INS measurements are fused.
+     *
+     * - LooseCoupled: GNSS position/velocity solutions update INS states
+     *   as pseudo-measurements.  The existing MeasurementModel operates
+     *   independently and IMU only drives the prediction step.
+     * - TightCoupled: Raw GNSS code/phase/Doppler observations update the
+     *   full INS+GNSS error-state vector directly.  The MeasurementModel
+     *   Jacobian is extended with attitude-error partials so that GNSS
+     *   measurements constrain attitude, sensor biases and ambiguities
+     *   simultaneously.
+     */
+    enum class ImuCouplingMode {
+        LooseCoupled,   ///< IMU prediction + GNSS solution update.
+        TightCoupled    ///< IMU prediction + raw GNSS observation update.
+    };
+
+    /**
+     * @brief Configuration for IMU (Inertial Measurement Unit) integration.
+     *
+     * When enabled, the Kalman filter uses IMU specific-force and angular-rate
+     * measurements to propagate position, velocity and attitude between GNSS
+     * epochs.  The coupling_mode selects loosely- or tightly-coupled fusion.
+     * Nine additional states (3 attitude error + 3 accelerometer bias +
+     * 3 gyroscope bias) are added to the filter.
+     */
+    struct ImuConfig {
+        bool enabled{ false };                       ///< Master enable for IMU integration.
+        ImuCouplingMode coupling_mode{ ImuCouplingMode::LooseCoupled }; ///< Fusion strategy.
+        std::filesystem::path imu_file_path;         ///< Path to the IMU CSV data file.
+
+        /// Accelerometer noise density (m/s²/?Hz).  Typical MEMS: 0.01–0.1.
+        double accel_noise_density{ 0.05 };
+        /// Gyroscope noise density (rad/s/?Hz).  Typical MEMS: 1e-4–1e-3.
+        double gyro_noise_density{ 5e-4 };
+        /// Accelerometer bias instability (m/s³/?Hz, random-walk spectral density).
+        double accel_bias_instability{ 1e-4 };
+        /// Gyroscope bias instability (rad/s²/?Hz, random-walk spectral density).
+        double gyro_bias_instability{ 1e-6 };
+
+        /// Initial accelerometer bias standard deviation (m/s²).
+        double initial_accel_bias_std{ 0.1 };
+        /// Initial gyroscope bias standard deviation (rad/s).
+        double initial_gyro_bias_std{ 1e-3 };
+
+        /// Initial attitude uncertainty (rad).  Used to seed the attitude
+        /// block of the error-state covariance.
+        double initial_attitude_std{ 0.1 };
+    };
+
 
     /**
      * @brief Grouped enable/disable flags for core PPP model corrections.
@@ -187,6 +316,31 @@ namespace GnssProcessor {
 
         // --- Product biases ---
         bool enable_code_phase_bias{ true };            ///< Code/phase bias corrections from BIA product files.
+    };
+
+    /**
+     * @brief Configuration for automatic data download and local caching.
+     *
+     * When enabled, the application automatically downloads satellite orbit,
+     * clock, bias, ERP and broadcast navigation products from CDDIS, and
+     * optionally observation RINEX data.  Previously downloaded files are
+     * reused from the local cache.
+     */
+    struct DownloadConfig {
+        bool enabled{ false };                       ///< Master enable for auto-download.
+        std::filesystem::path data_root;             ///< Local cache root directory.
+        std::string product_source{ "COD" };         ///< 3-char analysis centre prefix.
+        std::string product_type{ "FIN" };            ///< Product latency: FIN, RAP, ULT.
+        std::filesystem::path netrc_path;            ///< Path to .netrc file (empty = default).
+        std::string station;                         ///< 4- or 9-char station name for RINEX download.
+        std::string station_country{ "USA" };         ///< 3-char country code.
+        int year{ 0 };                               ///< Observation year (0 = auto-detect).
+        int doy{ 0 };                                ///< Observation day-of-year (0 = auto-detect).
+        bool download_rinex{ false };                ///< Download observation RINEX from CDDIS.
+        bool download_products{ true };              ///< Download SP3/CLK/BIA/ERP/BRDC.
+        std::filesystem::path atx_path;              ///< Path to local ATX file (not downloaded).
+        std::filesystem::path nc_path;               ///< Path to local ocean-loading NC file.
+        std::filesystem::path crx2rnx_path;          ///< Path to crx2rnx executable for Hatanaka decompression.
     };
 
     /**
@@ -292,6 +446,18 @@ namespace GnssProcessor {
          * @return Const reference to the ModelCorrections struct.
          */
         const ModelCorrections& getModelCorrections() const { return model_corrections_; }
+
+        /**
+         * @brief Gets the stochastic (weighting) model selection.
+         * @return Current StochasticModelType (Constant, Elevation or SNR).
+         */
+        StochasticModelType getStochasticModel() const { return stochastic_model_; }
+
+        /**
+         * @brief Gets the SNR-based stochastic model parameters.
+         * @return Const reference to the SnrModelParams struct.
+         */
+        const SnrModelParams& getSnrModelParams() const { return snr_model_params_; }
 
         /**
          * @brief Gets the signal priorities map.
@@ -436,6 +602,18 @@ namespace GnssProcessor {
         bool accumulatePhaseWindUp() const { return accumulate_phase_windup_; }
 
         /**
+         * @brief Check if receiver velocity estimation from Doppler is enabled.
+         *
+         * When true, three velocity states (Vx, Vy, Vz) are added to the
+         * Kalman filter state vector and Doppler ('D') measurements are
+         * used for updates.  This requires that the RINEX data contain
+         * Doppler observables.
+         *
+         * @return True if velocity estimation is enabled.
+         */
+        bool estimateVelocity() const { return estimate_velocity_; }
+
+        /**
          * @brief Check if between-satellite single differencing is enabled.
          *
          * When true, the measurement model applies a between-satellite
@@ -455,6 +633,22 @@ namespace GnssProcessor {
         bool enableBetweenSatelliteSd() const { return enable_between_satellite_sd_; }
 
         /**
+         * @brief Check if receiver inter-frequency bias (IFB) estimation is enabled.
+         *
+         * When true (default in PPP-RTK uncombined mode), per-system code-bias
+         * states are added for every non-reference code band.  These absorb the
+         * receiver hardware delay difference between frequency bands that is not
+         * removed by external SSR code-bias products.
+         *
+         * Disable this when SSR code-bias corrections are complete and no
+         * residual receiver IFB needs to be estimated, reducing the state
+         * dimension and improving observability of the ionosphere state.
+         *
+         * @return True if IFB estimation is enabled.
+         */
+        bool estimateIfb() const { return estimate_ifb_; }
+
+        /**
          * @brief Check if a user-supplied reference position is configured.
          * @return True if reference_position_ecef was specified in the JSON config.
          */
@@ -470,6 +664,92 @@ namespace GnssProcessor {
          * @return Reference position as {X, Y, Z} in meters.
          */
         const std::array<double, 3>& getReferencePositionEcef() const { return reference_position_ecef_; }
+
+        /**
+         * @brief Check if IMU integration is enabled.
+         * @return True if IMU processing is active.
+         */
+        bool enableImu() const { return imu_config_.enabled; }
+
+        /**
+         * @brief Check if tightly-coupled GNSS/INS mode is active.
+         *
+         * Tightly coupled means raw GNSS observations (code, phase, Doppler)
+         * directly update the full INS+GNSS error-state vector, with the
+         * measurement Jacobian extended to include attitude-error partials.
+         *
+         * @return True if IMU is enabled AND coupling_mode == TightCoupled.
+         */
+        bool tightlyCoupledImu() const {
+            return imu_config_.enabled &&
+                   imu_config_.coupling_mode == ImuCouplingMode::TightCoupled;
+        }
+
+        /**
+         * @brief Get the IMU configuration block.
+         * @return Const reference to the ImuConfig struct.
+         */
+        const ImuConfig& getImuConfig() const { return imu_config_; }
+
+        /**
+         * @brief Get the data download configuration block.
+         * @return Const reference to the DownloadConfig struct.
+         */
+        const DownloadConfig& getDownloadConfig() const { return download_config_; }
+
+        /**
+         * @brief Get the top-level application execution mode.
+         * @return AppMode (PostProcessing or RealTime).
+         */
+        AppMode getAppMode() const { return app_mode_; }
+
+        /**
+         * @brief Get the real-time processing configuration.
+         * @return Const reference to the RealTimeConfig struct.
+         */
+        const RealTimeConfig& getRealTimeConfig() const { return realtime_config_; }
+
+        /**
+         * @brief Get the integer ambiguity resolution mode.
+         * @return AR mode: 0=float-only, 1=continuous, 2=instantaneous, 3=fix-and-hold.
+         */
+        int getArMode() const { return ar_mode_; }
+
+        /**
+         * @brief Get the LAMBDA ratio test threshold.
+         * @return Ratio threshold (e.g. 3.0).
+         */
+        double getArRatioThreshold() const { return ar_ratio_threshold_; }
+
+        /**
+         * @brief Get the elevation mask for AR candidates.
+         * @return Elevation mask in degrees.
+         */
+        double getArElevationMask() const { return ar_elevation_mask_; }
+
+        /**
+         * @brief Get the fix-and-hold pseudo-observation variance.
+         * @return Variance in m^2.
+         */
+        double getArHoldVariance() const { return ar_hold_variance_; }
+
+        /**
+         * @brief Override the observation path (used by auto-download).
+         * @param path New observation RINEX path.
+         */
+        void setObservationPath(const std::filesystem::path& path) { observation_path_ = path; }
+
+        /**
+         * @brief Override the navigation path (used by auto-download).
+         * @param path New broadcast navigation RINEX path.
+         */
+        void setNavigationPath(const std::filesystem::path& path) { navigation_path_ = path; }
+
+        /**
+         * @brief Override the product paths list (used by auto-download).
+         * @param paths New vector of product file paths.
+         */
+        void setProductPaths(const std::vector<std::filesystem::path>& paths) { product_paths_ = paths; }
 
     private:
         ProcessingMode processing_mode_{ ProcessingMode::PPP }; ///< Processing mode (PPP or PPP-RTK).
@@ -507,11 +787,25 @@ namespace GnssProcessor {
         bool enable_if_slip_detector_{ true };             ///< Enable the IF phase slip detector.
         bool accumulate_phase_windup_{ false };                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         bool enable_between_satellite_sd_{ false };                ///< Between-satellite single-difference operator in measurement model.
+        bool estimate_ifb_{ true };                                    ///< Estimate receiver inter-frequency bias (IFB) for non-reference code bands.
+        bool estimate_velocity_{ false };                           ///< Estimate receiver velocity from Doppler observations.
 
         bool has_reference_position_{ false };                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_{ 0.0, 0.0, 0.0 }; ///< User-supplied reference position ECEF (m).
 
         ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
+        StochasticModelType stochastic_model_{ StochasticModelType::Elevation }; ///< Measurement stochastic model selection.
+        SnrModelParams snr_model_params_;                                ///< SNR-based model parameters.
+        ImuConfig imu_config_;                                           ///< IMU integration configuration.
+        DownloadConfig download_config_;                                  ///< Data download and caching configuration.
+        AppMode app_mode_{ AppMode::PostProcessing };                    ///< Top-level execution mode.
+        RealTimeConfig realtime_config_;                                  ///< Real-time streaming configuration.
+
+        // --- Ambiguity Resolution ---
+        int    ar_mode_{ 0 };                  ///< AR mode: 0=float, 1=continuous, 2=instantaneous, 3=fix-and-hold.
+        double ar_ratio_threshold_{ 3.0 };     ///< LAMBDA ratio test threshold for acceptance.
+        double ar_elevation_mask_{ 20.0 };     ///< Elevation mask for AR candidates (degrees).
+        double ar_hold_variance_{ 0.001 };     ///< Pseudo-obs variance for fix-and-hold (m^2).
     };
 
 } // namespace GnssProcessor

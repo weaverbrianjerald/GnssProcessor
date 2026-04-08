@@ -3,8 +3,9 @@
     "GPS",
     "Galileo"
   ],
-  "processing_mode": "PPP",
-  "uncombined_enabled": false,
+  "app_mode": "post",
+  "processing_mode": "PPP-RTK",
+  "uncombined_enabled": true,
   "signal_mode": "dual",
   "satellite_interpolation_mode": "lagrange",
   "satellite_clock_interpolation_mode": "linear",
@@ -13,12 +14,19 @@
   "sinex_file_path": "",
   "rtcm_file_path": "",
   "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt",
+  "igs_station_list_path": "C:/GnssProcessorSupport/station_lists/IGS_Station_Names.txt",
   "estimate_tropo_gradients": false,
   "estimate_phase_clock": false,
   "relinearize_geometry": false,
   "enable_if_slip_detector": false,
   "accumulate_phase_windup": false,
   "enable_between_satellite_sd": false,
+  "estimate_velocity": false,
+  "estimate_ifb": true,
+  "ar_mode": 0,
+  "ar_ratio_threshold": 3.0,
+  "ar_elevation_mask": 20.0,
+  "ar_hold_variance": 0.001,
   "elevation_mask_deg": 10.0,
   "leap_seconds_tai": 37.0,
   "receiver_antenna_orientation": {
@@ -27,7 +35,8 @@
   },
   "default_measurement_noise": {
     "code_std_m": 0.600,
-    "phase_std_m": 0.002
+    "phase_std_m": 0.002,
+    "doppler_std_m": 0.5
   },
   "process_noise": {
     "position_q": 1e2,
@@ -37,10 +46,12 @@
     "ionosphere_q": 0.1,
     "code_bias_q": 1e-4,
     "system_time_offset_q": 1e-12,
-    "tropo_gradient_q": 5e-12
+    "tropo_gradient_q": 5e-12,
+    "velocity_q": 1e2
   },
   "initial_std": {
     "position": 1e3,
+    "velocity": 100.0,
     "clock": 1e3,
     "troposphere": 0.5,
     "ionosphere": 5.0,
@@ -73,5 +84,56 @@
     "enable_receiver_pcv": true,
     "enable_phase_windup": true,
     "enable_code_phase_bias": true
+  },
+  "stochastic_model": "elevation",
+  "snr_model_params": {
+    "code_a": 0.30,
+    "code_b": 300.0,
+    "phase_a": 0.002,
+    "phase_b": 0.3,
+    "snr_floor_dbhz": 20.0,
+    "snr_ceil_dbhz": 55.0
+  },
+  "enable_imu": false,
+  "imu_config": {
+    "imu_file_path": "",
+    "imu_coupling_mode": "loosely_coupled",
+    "accel_noise_density": 0.05,
+    "gyro_noise_density": 5e-4,
+    "accel_bias_instability": 1e-4,
+    "gyro_bias_instability": 1e-6,
+    "initial_accel_bias_std": 0.1,
+    "initial_gyro_bias_std": 1e-3,
+    "initial_attitude_std": 0.1
+  },
+  "data_download": {
+    "enabled": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "product_source": "COD",
+    "product_type": "FIN",
+    "netrc_path": "",
+    "station": "GCGO",
+    "station_country": "USA",
+    "year": 2024,
+    "doy": 129,
+    "download_rinex": true,
+    "download_products": true,
+    "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",
+    "nc_path": "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe"
+  },
+  "realtime_config": {
+    "ntrip_host": "",
+    "ntrip_port": 2101,
+    "ntrip_mountpoint": "",
+    "ntrip_user": "",
+    "ntrip_password": "",
+    "nmea_gga": "",
+    "reconnect_delay_s": 5,
+    "input_type": "ntrip",
+    "input_path": "",
+    "output_type": "console",
+    "output_path": "",
+    "max_epoch_buffer": 100
   }
 }

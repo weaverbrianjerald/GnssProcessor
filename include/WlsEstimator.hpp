@@ -86,8 +86,53 @@ private:
     const GnssConfig& config_;      /**< Reference to configuration parameters. */
     StateManager& state_manager_;   /**< Reference to the StateManager for state queries/updates. */
     LogManager& log_manager_;       /**< Reference to LogManager for logging. */
-    //WlsLogger wls_logger_;          /**< Local logger used to produce WLS traces (file-managed). */
     std::unique_ptr<WlsLogger> wls_logger_; /**< Optional WLS logger: created only when debug logging is enabled. */
+
+    static constexpr size_t kCoreSize = 5;  /**< Number of core states: position(3) + clock + tropo. */
+
+    /** @brief Per-observation data collected during filtering. */
+    struct WlsObs {
+        double observed;            /**< Observed pseudorange (meters). */
+        double modeled;             /**< Modeled pseudorange (meters). */
+        double variance;            /**< Observation variance (meters²). */
+        double mf_w;                /**< Wet troposphere mapping factor. */
+        double initial_range;       /**< Geometric range at observation time (meters). */
+        double elevation;           /**< Satellite elevation (degrees). */
+        Eigen::Vector3d sat_pos;    /**< Satellite ECEF position (meters). */
+        std::string satellite;      /**< Satellite identifier. */
+        std::string combo_type;     /**< Observation type key. */
+    };
+
+    /**
+     * @brief Filter and collect valid code observations for WLS.
+     * @param observations Per-satellite PPP observations for the epoch.
+     * @param epoch_tow    GPS time-of-week (for logging).
+     * @return Vector of WlsObs passing system, geometry and elevation checks.
+     */
+    std::vector<WlsObs> filterObservations(const std::vector<PppObservation>& observations, double epoch_tow) const;
+
+    /**
+     * @brief Compute predicted pseudorange for a single observation.
+     * @param obs     Filtered observation entry.
+     * @param pos     Current receiver position estimate (meters).
+     * @param clock   Current receiver clock estimate (meters).
+     * @param trop_z  Current zenith wet troposphere estimate (meters).
+     * @return Predicted pseudorange (meters).
+     */
+    static double predictObs(const WlsObs& obs, const Eigen::Vector3d& pos, double clock, double trop_z);
+
+    /**
+     * @brief Compute RMS and max-absolute residuals over filtered observations.
+     * @param wls_obs Filtered observations.
+     * @param pos     Final position estimate.
+     * @param clock   Final clock estimate.
+     * @param trop_z  Final zenith wet tropo estimate.
+     * @param[out] rms     Root-mean-square of residuals.
+     * @param[out] max_abs Maximum absolute residual.
+     */
+    static void computeResiduals(const std::vector<WlsObs>& wls_obs,
+        const Eigen::Vector3d& pos, double clock, double trop_z,
+        double& rms, double& max_abs);
 };
 
 } // namespace GnssProcessor

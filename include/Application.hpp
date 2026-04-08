@@ -11,6 +11,7 @@
 #include "GnssConfig.hpp"
 #include "LogManager.hpp"
 #include "ProductParser.hpp"
+#include "ProductResolver.hpp"
 #include "RinexParser.hpp"
 #include "StateManager.hpp"
 #include "PppModel.hpp"
@@ -20,6 +21,9 @@
 #include "MwSlipDetector.hpp"
 #include "IfPhaseSlipDetector.hpp"
 #include "TraceLogger.hpp"
+#include "ImuIntegrator.hpp"
+#include "RealTimeEngine.hpp"
+#include "AmbiguityResolver.hpp"
 #include "PppTypes.hpp"
 #include <filesystem>
 #include <memory>
@@ -79,6 +83,17 @@ private:
      * @return true on success, false on failure.
      */
     bool initLoggingAndConfig();
+
+    /**
+     * @brief Resolve (and optionally download) product and RINEX data files.
+     *
+     * When data_download is enabled in the config, this phase downloads
+     * missing product files from CDDIS and updates GnssConfig paths.
+     * When disabled, this is a no-op.
+     *
+     * @return true on success, false on failure.
+     */
+    bool resolveData();
 
     /**
      * @brief Parse RINEX observations and load external products into the cache.
@@ -195,6 +210,17 @@ private:
      */
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
+    /**
+     * @brief Run the real-time processing pipeline.
+     *
+     * Connects to the configured data source (NTRIP, TCP, file replay),
+     * decodes RTCM frames, and processes each epoch through a
+     * RealTimeEngine instance.
+     *
+     * @return 0 on clean shutdown, non-zero on error.
+     */
+    int runRealTime();
+
     // -----------------------------------------------------------------------
     // Data members
     // -----------------------------------------------------------------------
@@ -214,12 +240,15 @@ private:
     std::unique_ptr<MwSlipDetector>      mw_slip_detector_;
     std::unique_ptr<IfPhaseSlipDetector> if_slip_detector_;
     std::unique_ptr<TraceLogger>         trace_logger_;
+    std::unique_ptr<ImuIntegrator>       imu_integrator_;
+    std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter). */
     Eigen::Vector3d initial_position_;        /**< Position used for sanity-check reversion. */
 
     bool first_epoch_{true};                  /**< True until first WLS seeding completes. */
     double prev_tow_{0.0};                    /**< Previous epoch TOW for dt computation. */
+    GnssTime prev_epoch_time_{0, 0.0};        /**< Previous epoch full GnssTime for IMU integration. */
     double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 };
 

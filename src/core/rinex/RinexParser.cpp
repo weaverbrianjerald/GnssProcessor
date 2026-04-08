@@ -349,8 +349,17 @@ namespace GnssProcessor {
                                     const auto& n = config_.getDefaultMeasurementNoise();
                                     const double default_code_var = n.code_std_m * n.code_std_m;
                                     const double default_phase_var = n.phase_std_m * n.phase_std_m;
+                                    const double default_doppler_var = n.doppler_std_m * n.doppler_std_m;
 
-                                    double variance = (obs_types[j][0] == 'C') ? default_code_var : default_phase_var;
+                                    double variance = default_code_var;
+                                    if (!obs_types[j].empty()) {
+                                        switch (obs_types[j][0]) {
+                                        case 'L': variance = default_phase_var; break;
+                                        case 'D': variance = default_doppler_var; break;
+                                        case 'S': variance = 1.0; break;
+                                        default:  variance = default_code_var; break;
+                                        }
+                                    }
 
                                     obs.variances[obs_types[j]] = variance;
                                     if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
@@ -453,8 +462,17 @@ namespace GnssProcessor {
                                     const auto& n = config_.getDefaultMeasurementNoise();
                                     const double default_code_var = n.code_std_m * n.code_std_m;
                                     const double default_phase_var = n.phase_std_m * n.phase_std_m;
+                                    const double default_doppler_var = n.doppler_std_m * n.doppler_std_m;
 
-                                    double variance = (obs_types[j][0] == 'C') ? default_code_var : default_phase_var;
+                                    double variance = default_code_var;
+                                    if (!obs_types[j].empty()) {
+                                        switch (obs_types[j][0]) {
+                                        case 'L': variance = default_phase_var; break;
+                                        case 'D': variance = default_doppler_var; break;
+                                        case 'S': variance = 1.0; break;
+                                        default:  variance = default_code_var; break;
+                                        }
+                                    }
 
                                     obs.variances[obs_types[j]] = variance;
                                     if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
