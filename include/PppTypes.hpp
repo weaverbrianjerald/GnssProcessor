@@ -127,7 +127,7 @@ namespace GnssProcessor {
         Eigen::VectorXd residuals;                   /**< Post-fit residuals */
         Eigen::MatrixXd residuals_covariance;        /**< Covariance of residuals */
         Eigen::VectorXd residuals_standardized;      /**< Standardized (normalized) residuals for outlier detection */
-        size_t bad_residual_count;                   /**< Count of residuals flagged as bad/outliers */
+        size_t bad_residual_count{ 0 };              /**< Count of residuals flagged as bad/outliers */
         std::set<std::string> excluded_measurements; /**< Set of "satellite_signaltype" keys excluded as code outliers (persists across rebuild passes) */
     };
 
@@ -183,6 +183,24 @@ namespace GnssProcessor {
         GnssTime start_time;                         /**< Validity interval start */
         GnssTime end_time;                           /**< Validity interval end */
     };
+
+    /**
+     * @brief Satellite clock reference observable pair parsed from the BIA DESCRIPTION block.
+     *
+     * The satellite clock for each GNSS system is estimated from an ionosphere-free
+     * combination of two specific code signals (e.g. C1W+C2W for GPS).  In uncombined
+     * PPP-RTK mode the receiver hardware delay for each signal relative to this IF
+     * combination must be parameterised using geometry-free ionosphere-free (GF-IF)
+     * coefficients.  This struct stores the two reference signal codes so the
+     * measurement model can compute the correct coefficients.
+     */
+    struct ClockRefSignals {
+        std::string sig1;                            /**< First reference code signal (e.g. "C1W") */
+        std::string sig2;                            /**< Second reference code signal (e.g. "C2W") */
+    };
+
+    /** Per-system satellite clock reference observables (system char 'G','E',… -> pair). */
+    using ClockRefMap = std::map<char, ClockRefSignals>;
 
     /**
      * @brief Earth rotation / pole correction parameters (ERP) at an epoch.

@@ -226,6 +226,22 @@ namespace GnssProcessor {
         const std::map<std::string, double>& getIonosphereElevations() const;
 
         /**
+         * @brief Mark a set of satellite ionosphere states as frozen (BSSD pivots).
+         *
+         * Frozen states receive zero process noise to prevent unbounded
+         * variance growth on unobservable pivot ionosphere states.
+         *
+         * @param sats Set of satellite IDs whose iono states are frozen.
+         */
+        void setFrozenIonosphereSatellites(const std::set<std::string>& sats);
+
+        /**
+         * @brief Get the set of frozen ionosphere satellites.
+         * @return Set of satellite IDs.
+         */
+        const std::set<std::string>& getFrozenIonosphereSatellites() const;
+
+        /**
          * @brief Index of the tropospheric north gradient state.
          * @return Index of Gn state, or std::numeric_limits<size_t>::max() if gradients disabled.
          */
@@ -400,6 +416,73 @@ namespace GnssProcessor {
          */
         const std::map<std::string, size_t>& getCodeBiasStates() const;
 
+        // -------------------------------------------------------------------
+        // Per-satellite signal bias states  (uncorrected satellite HW delay)
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Lookup a per-satellite signal bias state index.
+         *
+         * Keys have the format "satellite|signal" (e.g. "E11|C7Q").
+         *
+         * @param key Satellite bias key.
+         * @return Zero-based state index, or -1 if not present.
+         */
+        int getSatBiasIndex(const std::string& key) const;
+
+        /**
+         * @brief Add a new per-satellite signal bias state and return its index.
+         *
+         * @param key Unique key "satellite|signal".
+         * @param initial_value Initial bias value in meters (typically 0.0).
+         * @return Index assigned to the newly-created state.
+         */
+        size_t addSatBiasState(const std::string& key, double initial_value);
+
+        /**
+         * @brief Remove all satellite bias states except those listed in keep_keys.
+         *
+         * @param keep_keys Set of keys to keep.
+         */
+        void pruneSatBiasStatesExcept(const std::set<std::string>& keep_keys);
+
+        /**
+         * @brief Get reference to the internal satellite bias index map.
+         * @return Map from key to state index.
+         */
+        const std::map<std::string, size_t>& getSatBiasStates() const;
+
+        // -------------------------------------------------------------------
+        // Relaxed ambiguity support
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Mark an ambiguity key as "relaxed" (non-zero process noise).
+         *
+         * Relaxed ambiguities receive the phase_bias process noise instead
+         * of the standard (typically zero) ambiguity process noise.  This
+         * allows the ambiguity to slowly track elevation-dependent residuals
+         * from missing receiver ATX or BIA data.
+         *
+         * @param amb_key Ambiguity key (e.g. "G01_L1W_L5Q").
+         */
+        void markAmbiguityRelaxed(const std::string& amb_key);
+
+        /**
+         * @brief Check whether an ambiguity key is marked as relaxed.
+         * @param amb_key Ambiguity key.
+         * @return True if the key is in the relaxed set.
+         */
+        bool isAmbiguityRelaxed(const std::string& amb_key) const;
+
+        /**
+         * @brief Clear all relaxed-ambiguity marks.
+         *
+         * Called at the start of each epoch before ensureRequiredStates()
+         * rebuilds the set from current observations.
+         */
+        void clearRelaxedAmbiguities();
+
         /**
          * @brief Remove an ambiguity state by key.
          *
@@ -469,9 +552,12 @@ namespace GnssProcessor {
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
+        std::set<std::string> relaxed_ambiguities_; //!< Ambiguity keys with non-zero process noise (incomplete product coverage).
         std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).
+        std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
+        std::set<std::string> frozen_ionosphere_sats_; //!< Satellites whose iono state is frozen (BSSD pivot).
         GnssTime state_epoch_time_;                 //!< Epoch time associated with the stored state.
         Eigen::VectorXd state_vector_;              //!< Filter state vector (core + ambiguities).
         Eigen::MatrixXd covariance_;                //!< State covariance matrix.

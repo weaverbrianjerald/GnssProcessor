@@ -13,6 +13,7 @@
  */
 
 #include "MwSlipDetector.hpp"
+#include "TimeUtils.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -30,8 +31,8 @@ namespace GnssProcessor {
           log_manager_(log_manager),
           ppp_utils_(log_manager) {
         log_manager_.getLogger("mw_slip_detector")->info(
-            "MwSlipDetector initialized (adaptive MAD-based, k={:.1f}, min_epochs={})",
-            kMadSigmaMultiplier, kMinEpochsForAdaptive);
+            "MwSlipDetector initialized (adaptive MAD-based, k={:.1f}, floor={:.1f} WL, min_epochs={})",
+            kMadSigmaMultiplier, kMinThresholdCycles, kMinEpochsForAdaptive);
     }
 
     // =================================================================
@@ -131,6 +132,33 @@ namespace GnssProcessor {
             if (!phase_if_key.empty() && !code_if_key.empty()) return true;
         }
         return (!phase_if_key.empty() && !code_if_key.empty());
+    }
+
+    std::vector<MwSlipDetector::IfPair>
+    MwSlipDetector::collectIonoFreePairs(const PppObservation& obs) const {
+        // Build maps: band-pair key -> (phase label, code label).
+        // An IF label like "L1W_L5Q" has band-pair key "1_5".
+        std::map<std::string, std::string> phase_by_bands;
+        std::map<std::string, std::string> code_by_bands;
+        for (const auto& [k, v] : obs.observed) {
+            if (k.size() < 2 || k.find('_') == std::string::npos) continue;
+            const size_t us = k.find('_');
+            if (us < 2 || us + 2 >= k.size()) continue;
+            // Extract band digits from each half: e.g. "L1W" -> '1', "L5Q" -> '5'.
+            const char b1 = k[1];
+            const char b2 = k[us + 2];
+            if (b1 < '1' || b1 > '9' || b2 < '1' || b2 > '9') continue;
+            const std::string bkey = std::string(1, b1) + "_" + std::string(1, b2);
+            if (k[0] == 'L') phase_by_bands[bkey] = k;
+            else if (k[0] == 'C') code_by_bands[bkey] = k;
+        }
+        std::vector<IfPair> result;
+        for (const auto& [bkey, pkey] : phase_by_bands) {
+            auto it = code_by_bands.find(bkey);
+            if (it != code_by_bands.end())
+                result.push_back({pkey, it->second});
+        }
+        return result;
     }
 
     bool MwSlipDetector::splitIfLabel(const std::string& label,
@@ -294,13 +322,31 @@ namespace GnssProcessor {
 
         auto& stats = mw_stats_[stats_key];
         constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
+        const double epoch_s = TimeUtils::continuousGpsSeconds(obs.time);
+
+        // Detect data gaps: if the satellite was absent for longer than
+        // the configured threshold, discard the stale arc and start fresh.
+        // Without this, the pre-gap mean / diff_window carry over and
+        // produce enormous (tens of meters) spurious deviations that
+        // either go undetected (adaptive threshold not yet available) or
+        // contaminate the rolling MAD window.
+        if (stats.count > 0 && stats.last_epoch_s > 0.0) {
+            const double gap = epoch_s - stats.last_epoch_s;
+            if (gap > kMaxGapSeconds) {
+                log_manager_.getLogger("mw_slip_detector")->debug(
+                    "Data gap {:.1f}s > {:.0f}s for {}: resetting MW arc (n={})",
+                    gap, kMaxGapSeconds, stats_key, stats.count);
+                stats = MwArcStats{};          // reset to default-initialized
+            }
+        }
 
         // First epoch: initialize arc
         if (stats.count == 0) {
-            stats.mean    = mw_m;
-            stats.M2      = 0.0;
-            stats.count   = 1;
-            stats.prev_mw = mw_m;
+            stats.mean         = mw_m;
+            stats.M2           = 0.0;
+            stats.count        = 1;
+            stats.prev_mw      = mw_m;
+            stats.last_epoch_s = epoch_s;
             stats.diff_window.clear();
 
             if (mwwl_trace_.is_open())
@@ -335,15 +381,21 @@ namespace GnssProcessor {
 
         // Update running statistics (Welford / Hatch)
         stats.count++;
+        // Cap the denominator so the mean stays responsive on long arcs.
+        // Without this, after hundreds of epochs the weight 1/n becomes
+        // negligible and the mean cannot track small level shifts,
+        // producing an exponential-decay pattern in the MW deviation.
+        const double eff_n  = static_cast<double>(std::min(stats.count, kMaxHatchCount));
         const double delta  = mw_m - stats.mean;
-        stats.mean += delta / static_cast<double>(stats.count);
+        stats.mean += delta / eff_n;
         const double delta2 = mw_m - stats.mean;
         stats.M2 += delta * delta2;
 
         stats.diff_window.push_back(mw_diff);
         if (stats.diff_window.size() > kMwWindowSize)
             stats.diff_window.pop_front();
-        stats.prev_mw = mw_m;
+        stats.prev_mw      = mw_m;
+        stats.last_epoch_s = epoch_s;
 
         return false;
     }
@@ -370,39 +422,52 @@ namespace GnssProcessor {
             const bool has_lli = hasAnyPhaseLockLoss(obs);
 
             // Try combined (PPP) path first
-            std::string phase_if_key, code_if_key;
-            const bool has_if = findIonoFreeLabels(obs, phase_if_key, code_if_key);
+            const auto if_pairs = collectIonoFreePairs(obs);
+            const bool has_if = !if_pairs.empty();
 
             if (has_if) {
                 // ---- Combined (PPP) path ----
-                std::string s1, s2, c1, c2;
-                if (!splitIfLabel(phase_if_key, s1, s2)) continue;
-                if (!splitIfLabel(code_if_key, c1, c2)) continue;
-
+                // Process each IF pair independently so that cycle slips
+                // on any combination are detected.  Each pair gets its
+                // own MW arc keyed by "sat_phase_key".
                 if (has_lli) {
-                    const std::string amb_key = obs.satellite + "_" + phase_if_key;
-                    reset_keys.push_back(amb_key);
-                    logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
-                    if (mwwl_trace_.is_open()) {
-                        constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
-                        writeTraceRecord(obs, s1, s2, computeMwMeters(obs, s1, s2, c1, c2),
-                                         NaN, NaN, NaN, 0,
-                                         computeWideLaneWavelengthMeters(obs, s1, s2),
-                                         NaN, false, true);
+                    for (const auto& ifp : if_pairs) {
+                        const std::string amb_key = obs.satellite + "_" + ifp.phase_key;
+                        reset_keys.push_back(amb_key);
+                        logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
+                        std::string s1, s2;
+                        if (mwwl_trace_.is_open() && splitIfLabel(ifp.phase_key, s1, s2)) {
+                            std::string c1, c2;
+                            splitIfLabel(ifp.code_key, c1, c2);
+                            constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
+                            writeTraceRecord(obs, s1, s2, computeMwMeters(obs, s1, s2, c1, c2),
+                                             NaN, NaN, NaN, 0,
+                                             computeWideLaneWavelengthMeters(obs, s1, s2),
+                                             NaN, false, true);
+                        }
                     }
-                    mw_stats_.erase(obs.satellite);
+                    // Erase all MW arcs for this satellite.
+                    for (auto it = mw_stats_.begin(); it != mw_stats_.end(); )
+                        it = (it->first.rfind(obs.satellite, 0) == 0) ? mw_stats_.erase(it) : std::next(it);
                     continue;
                 }
 
-                const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
-                if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
-                const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
-                if (!std::isfinite(mw_m)) continue;
+                for (const auto& ifp : if_pairs) {
+                    std::string s1, s2, c1, c2;
+                    if (!splitIfLabel(ifp.phase_key, s1, s2)) continue;
+                    if (!splitIfLabel(ifp.code_key, c1, c2)) continue;
 
-                if (processMwSample(obs, obs.satellite, mw_m, lambda_wl, s1, s2)) {
-                    const std::string amb_key = obs.satellite + "_" + phase_if_key;
-                    reset_keys.push_back(amb_key);
-                    logger->warn("Scheduling reset for {}", amb_key);
+                    const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
+                    if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
+                    const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
+                    if (!std::isfinite(mw_m)) continue;
+
+                    const std::string stats_key = obs.satellite + "_" + ifp.phase_key;
+                    if (processMwSample(obs, stats_key, mw_m, lambda_wl, s1, s2)) {
+                        const std::string amb_key = obs.satellite + "_" + ifp.phase_key;
+                        reset_keys.push_back(amb_key);
+                        logger->warn("Scheduling reset for {}", amb_key);
+                    }
                 }
             } else {
                 // ---- Uncombined (PPP-RTK) path ----

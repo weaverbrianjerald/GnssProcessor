@@ -767,7 +767,8 @@ namespace GnssProcessor {
     // BIA bias parsing
     // =================================================================
 
-    bool ProductParser::parseBia(const std::filesystem::path& bia_path, std::vector<BiasData>& biases) {
+    bool ProductParser::parseBia(const std::filesystem::path& bia_path, std::vector<BiasData>& biases,
+                                ClockRefMap& clock_refs) {
         try {
             std::ifstream file(bia_path);
             if (!file.is_open()) {
@@ -776,9 +777,11 @@ namespace GnssProcessor {
             }
 
             biases.clear();
+            clock_refs.clear();
             auto logger = log_manager_.getLogger("product_parser");
             std::string line;
             size_t line_count = 0;
+            bool in_description_block = false;
             bool in_solution_block = false;
 
             auto parse_bias_time = [](const std::string& time_str) -> GnssTime {
@@ -817,6 +820,35 @@ namespace GnssProcessor {
                 line.erase(line.find_last_not_of(" \t\r\n") + 1);
                 if (line.empty() || line[0] == '*') continue;
 
+                // --- BIAS/DESCRIPTION block: extract clock reference observables ---
+                if (line.find("+BIAS/DESCRIPTION") != std::string::npos) {
+                    in_description_block = true;
+                    continue;
+                }
+                if (line.find("-BIAS/DESCRIPTION") != std::string::npos) {
+                    in_description_block = false;
+                    continue;
+                }
+                if (in_description_block) {
+                    // SATELLITE_CLOCK_REFERENCE_OBSERVABLES   G  C1W  C2W
+                    if (line.find("SATELLITE_CLOCK_REFERENCE_OBSERVABLES") != std::string::npos) {
+                        // Tokenize everything after the keyword
+                        const auto kw_end = line.find("SATELLITE_CLOCK_REFERENCE_OBSERVABLES")
+                                          + std::string("SATELLITE_CLOCK_REFERENCE_OBSERVABLES").size();
+                        std::istringstream iss(line.substr(kw_end));
+                        std::string sys_char, s1, s2;
+                        if (iss >> sys_char >> s1 >> s2) {
+                            if (sys_char.size() == 1 && s1.size() == 3 && s2.size() == 3) {
+                                clock_refs[sys_char[0]] = ClockRefSignals{ s1, s2 };
+                                logger->info("BIA clock reference: system={} sig1={} sig2={}",
+                                    sys_char, s1, s2);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // --- BIAS/SOLUTION block ---
                 if (line.find("+BIAS/SOLUTION") != std::string::npos) {
                     in_solution_block = true;
                     logger->debug("Started parsing BIAS/SOLUTION block at line {}", line_count);
@@ -1060,7 +1092,17 @@ namespace GnssProcessor {
         loadMulti("SP3",  &ProductParser::getOrbitPaths, &ProductParser::parseSp3, orbits_);
         loadMulti("CLK",  &ProductParser::getClockPaths, &ProductParser::parseClk, clocks_);
         loadSingle("ATX", "ATX", &ProductParser::parseAtx, antennas_);
-        loadSingle("BIA", "BIA", &ProductParser::parseBia, biases_);
+
+        // BIA: special case — parseBia also extracts the clock reference map
+        {
+            auto path = getProductPath("BIA");
+            if (path.empty()) { ppp_log->warn("No BIA file path provided"); }
+            else if (parseBia(path, biases_, clock_refs_))
+                ppp_log->info("Loaded BIA file: {}", path.string());
+            else
+                ppp_log->error("Failed to load BIA file: {}", path.string());
+        }
+
         loadSingle("ERP", "ERP", &ProductParser::parseErp, erps_);
 
         auto rnx_path = getProductPath("RNX");

@@ -240,6 +240,13 @@ namespace GnssProcessor {
                 freeze_state(state_manager_.getPhaseClockIndex());
             for (const auto& sys : state_manager_.getSystemsWithTimeOffsets())
                 freeze_state(state_manager_.getSystemTimeOffsetIndex(sys));
+
+            // Freeze BSSD pivot ionosphere states (iono column zeroed in S-transform).
+            for (const auto& sat : state_manager_.getFrozenIonosphereSatellites()) {
+                const int iono_idx = state_manager_.getIonosphereIndex(sat);
+                if (iono_idx >= 0)
+                    freeze_state(static_cast<size_t>(iono_idx));
+            }
         }
 
         log_manager_.getLogger("kalman_filter")->trace("Predicted state for dt={:.3f} s: x size={}, P size={}x{}",
@@ -540,6 +547,26 @@ namespace GnssProcessor {
         auto klogger = log_manager_.getLogger("kalman_filter");
         const double amb_std = config_.getAmbiguityStd();
         const auto [primary_sat, ref_sat] = splitBssdSatId(outlier_sat);
+        const bool bssd_active = config_.enableBetweenSatelliteSd();
+
+        // In BSSD mode, look up the pivot satellite for this constellation
+        // so we can compute SD seeds and protect the pivot value.
+        const auto& bssd_pivots = measurement_model_.getBssdPivotSatellites();
+        const std::string primary_cons = PppUtils::getSystemString(primary_sat);
+        auto piv_it = bssd_pivots.find(primary_cons);
+        const std::string pivot_sat = (bssd_active && piv_it != bssd_pivots.end())
+                                    ? piv_it->second : std::string{};
+
+        // Compute the pivot's absolute seed once (used by all non-pivot resets).
+        double pivot_abs_seed = 0.0;
+        if (bssd_active && !pivot_sat.empty()) {
+            for (const auto& obs : measurement.observations) {
+                if (obs.satellite != pivot_sat) continue;
+                if (obs.observed.count(outlier_sig))
+                    pivot_abs_seed = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
+                break;
+            }
+        }
 
         // Helper: reset a single ambiguity and track the satellite
         auto resetOneAmbiguity = [&](const std::string& sat, const std::string& label) {
@@ -554,12 +581,33 @@ namespace GnssProcessor {
                 return;
             }
 
+            // The pivot's SD ambiguity is always 0 by definition.  Do not
+            // inflate its variance — that would trigger the BSSD disturbance
+            // detector and cascade into an unnecessary pivot handover.
+            // The handleBssdPivotHandover logic will detect the slip through
+            // other signals and manage the handover cleanly.
+            if (bssd_active && sat == pivot_sat) {
+                klogger->info("{}Phase outlier on BSSD pivot {} {}: keeping frozen at 0",
+                    epoch_prefix, sat, outlier_sig);
+                last_reset_satellites_.push_back(sat);
+                return;
+            }
+
             const double prev_amb = x(amb_idx);
             double seed_value = 0.0;
+
+            // Compute absolute seed from current state.
+            double abs_seed = 0.0;
             for (const auto& obs : measurement.observations) {
                 if (obs.satellite != sat) continue;
-                seed_value = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
+                abs_seed = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
                 break;
+            }
+            if (bssd_active && !pivot_sat.empty()) {
+                // Convert to SD seed: N_sd = N_abs(i) - N_abs(pivot)
+                seed_value = abs_seed - pivot_abs_seed;
+            } else {
+                seed_value = abs_seed;
             }
 
             x(amb_idx) = seed_value;
@@ -567,15 +615,17 @@ namespace GnssProcessor {
             P.col(amb_idx).setZero();
             P(amb_idx, amb_idx) = amb_std * amb_std;
 
-            klogger->info("{}Reinitialized ambiguity for {} {} (idx {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m",
-                epoch_prefix, sat, outlier_sig, amb_idx, prev_amb, seed_value, amb_std);
+            klogger->info("{}Reinitialized ambiguity for {} {} (idx {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m{}",
+                epoch_prefix, sat, outlier_sig, amb_idx, prev_amb, seed_value, amb_std,
+                bssd_active ? " (SD)" : "");
 
             last_reset_satellites_.push_back(sat);
         };
 
         resetOneAmbiguity(primary_sat, "primary");
 
-        // BSSD: also reset the reference satellite's ambiguity
+        // BSSD: also reset the reference satellite's ambiguity.
+        // For the pivot, this sets its value to 0 and resets its covariance.
         if (!ref_sat.empty())
             resetOneAmbiguity(ref_sat, "BSSD-ref");
     }
@@ -670,10 +720,41 @@ namespace GnssProcessor {
             }
         }
 
-        // Ambiguities
+        // Ambiguities — reset all to initial variance, but keep BSSD pivot
+        // ambiguities and ionosphere frozen (value=0, variance=0).  Without
+        // this the disturbance detector would fire on every epoch after a
+        // complete reset because all satellites would appear disturbed.
+        const auto& bssd_pivots = measurement_model_.getBssdPivotSatellites();
+        const bool bssd_active = config_.enableBetweenSatelliteSd();
+
         for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
-            if (idx < static_cast<size_t>(P.rows()))
-                P(idx, idx) = amb_std * amb_std;
+            if (idx >= static_cast<size_t>(P.rows())) continue;
+
+            // Check if this ambiguity belongs to a BSSD pivot satellite.
+            if (bssd_active) {
+                const auto us = key.find('_');
+                if (us != std::string::npos) {
+                    const std::string sat = key.substr(0, us);
+                    const std::string cons = PppUtils::getSystemString(sat);
+                    auto piv_it = bssd_pivots.find(cons);
+                    if (piv_it != bssd_pivots.end() && piv_it->second == sat) {
+                        P(idx, idx) = 0.0;  // keep frozen
+                        continue;
+                    }
+                }
+            }
+            P(idx, idx) = amb_std * amb_std;
+        }
+
+        // Freeze BSSD pivot ionosphere states after reset.
+        if (bssd_active && config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+            for (const auto& [sat, idx] : state_manager_.getIonosphereStates()) {
+                if (idx >= static_cast<size_t>(P.rows())) continue;
+                const std::string cons = PppUtils::getSystemString(sat);
+                auto piv_it = bssd_pivots.find(cons);
+                if (piv_it != bssd_pivots.end() && piv_it->second == sat)
+                    P(idx, idx) = 0.0;  // keep frozen
+            }
         }
 
         // IMU bias states

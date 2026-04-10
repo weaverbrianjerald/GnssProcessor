@@ -535,6 +535,81 @@ namespace GnssProcessor {
         return correction;
     }
 
+    bool Antenna::hasReceiverAtxEntry(const std::string& signal, System system) const {
+        // --- Map signal to ATX frequency key (same logic as getAntennaCorrection) ---
+        std::string atx_freq;
+        if (system == System::GPS) {
+            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "G01";
+            else if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "G02";
+            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "G05";
+        } else if (system == System::Galileo) {
+            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "E01";
+            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "E05";
+            else if (signal.find("C7") == 0 || signal.find("L7") == 0) atx_freq = "E07";
+            else if (signal.find("C6") == 0 || signal.find("L6") == 0) atx_freq = "E06";
+            else if (signal.find("C8") == 0 || signal.find("L8") == 0) atx_freq = "E08";
+        } else if (system == System::GLONASS) {
+            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "R01";
+            else if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "R02";
+            else if (signal.find("C3") == 0 || signal.find("L3") == 0) atx_freq = "R03";
+        } else if (system == System::BeiDou) {
+            if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "C02";
+            else if (signal.find("C7") == 0 || signal.find("L7") == 0) atx_freq = "C07";
+            else if (signal.find("C6") == 0 || signal.find("L6") == 0) atx_freq = "C06";
+            else if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "C01";
+            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "C05";
+            else if (signal.find("C8") == 0 || signal.find("L8") == 0) atx_freq = "C08";
+        } else if (system == System::QZSS) {
+            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "J01";
+            else if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "J02";
+            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "J05";
+            else if (signal.find("C6") == 0 || signal.find("L6") == 0) atx_freq = "J06";
+        } else if (system == System::SBAS) {
+            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "S01";
+            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "S05";
+        }
+        if (atx_freq.empty()) return false;
+
+        // --- Find receiver antenna entry (same matching as getAntennaCorrection) ---
+        const std::string rx_type_raw = rinex_parser_.getReceiverAntennaType();
+        std::string rx_type_sanitized;
+        rx_type_sanitized.reserve(rx_type_raw.size());
+        for (char c : rx_type_raw)
+            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
+
+        std::string rx_type_underscore;
+        rx_type_underscore.reserve(rx_type_raw.size());
+        for (char c : rx_type_raw) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
+                    rx_type_underscore.push_back('_');
+            } else {
+                rx_type_underscore.push_back(c);
+            }
+        }
+        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
+            rx_type_underscore.pop_back();
+
+        const AntennaData* rx_entry = nullptr;
+        for (const auto& a : antennas_) {
+            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
+                rx_entry = &a;
+                break;
+            }
+        }
+        if (!rx_entry) {
+            for (const auto& a : antennas_) {
+                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
+                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
+                    rx_entry = &a;
+                    break;
+                }
+            }
+        }
+        if (!rx_entry) return false;
+        return rx_entry->pco.count(atx_freq) > 0;
+    }
+
     /**
      * @brief Return the receiver antenna type string from the RINEX parser.
      *

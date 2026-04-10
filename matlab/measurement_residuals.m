@@ -44,9 +44,9 @@ markerList = {'o','s','d','^','v','>','<','p','h','x','+'};
 
 try
     addpath(genpath('C:\temp\gnss-qc\matlab\visualization'));
-    colors = distinguishable_colors(200);
+    colors = distinguishable_colors(1e3);
 catch
-    colors = lines(200);
+    colors = lines(1e3);
 end
 
 %% --- Get unique systems and measurement types ---

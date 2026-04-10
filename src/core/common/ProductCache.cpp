@@ -231,6 +231,7 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
         clocks_ = parser.moveClocks();
         antennas_ = parser.moveAntennas();
         biases_ = parser.moveBiases();
+        clock_ref_signals_ = parser.moveClockRefSignals();
         erps_ = parser.moveErps();
         klobuchar_coeffs_ = parser.moveKlobucharCoeffs();
         sun_ephemeris_ = parser.moveSunEphemeris();

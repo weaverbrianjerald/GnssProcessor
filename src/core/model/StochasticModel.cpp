@@ -52,12 +52,11 @@ namespace GnssProcessor {
 
         case StochasticModelType::SNR:
             if (is_code_or_phase) {
-                return computeSnr(obs_type, measurements, default_var);
+                return computeSnr(obs_type, measurements, elevation_deg, default_var);
             }
             // For Doppler/SNR observables the SIGMA-? model is not
-            // applicable — fall back to constant (no elevation scaling
-            // when the user chose SNR mode).
-            return computeConstant(default_var);
+            // applicable — fall back to elevation-based weighting.
+            return computeElevation(default_var, elevation_deg);
         }
 
         return default_var; // unreachable — keeps compilers happy
@@ -83,6 +82,7 @@ namespace GnssProcessor {
     double StochasticModelWeight::computeSnr(
         const std::string& obs_type,
         const std::map<std::string, double>& measurements,
+        double elevation_deg,
         double default_var) const {
 
         // Build the matching SNR key: replace leading C/L with S.
@@ -91,8 +91,8 @@ namespace GnssProcessor {
 
         auto it = measurements.find(snr_key);
         if (it == measurements.end() || it->second <= 0.0) {
-            // No SNR available — fall back to constant.
-            return computeConstant(default_var);
+            // No SNR available — fall back to elevation-based weighting.
+            return computeElevation(default_var, elevation_deg);
         }
 
         double snr_dbhz = it->second;

@@ -1,4 +1,4 @@
-clear all; clc; %close all;
+clear all; %clc; %close all;
 
 fname = 'C:\GnssProcessor\build\x64-Release\logs\mwwl_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\mwwl_trace.csv';
@@ -108,8 +108,10 @@ for col = 1:numel(systemList)
         %     'Marker', m, 'MarkerEdgeColor', c, 'MarkerFaceColor', 'none');
         scatter(T_sys.utc(idx_key), T_sys.dev_from_mean_m(idx_key), 36, ...
             'Marker', m, 'MarkerEdgeColor', 'none', 'MarkerFaceColor', c);
+        % scatter(T_sys.utc(idx_key), T_sys.mw_m(idx_key), 36, ...
+        %     'Marker', m, 'MarkerEdgeColor', 'none', 'MarkerFaceColor', c);
 
-        % Legend entry (invisible helper like your script)
+        % Legend entry
         h = plot(T_sys.utc(find(idx_key,1)), 0, ...
             'Marker', m, 'LineStyle','none', 'Color', c, 'DisplayName', thisKey);
         set(h, 'Visible','off');

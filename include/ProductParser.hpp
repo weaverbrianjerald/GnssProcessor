@@ -106,9 +106,12 @@ namespace GnssProcessor {
          * @brief Parse bias (BIA) file.
          * @param path Path to the BIA file.
          * @param biases Output vector populated with parsed @ref BiasData entries.
+         * @param clock_refs Output map populated with per-system clock reference signal pairs
+         *                   parsed from the BIAS/DESCRIPTION block (may be empty if not present).
          * @return True on success, false on failure.
          */
-        bool parseBia(const std::filesystem::path& path, std::vector<BiasData>& biases);
+        bool parseBia(const std::filesystem::path& path, std::vector<BiasData>& biases,
+                      ClockRefMap& clock_refs);
 
         /**
          * @brief Parse Earth rotation parameter (ERP) file.
@@ -192,6 +195,11 @@ namespace GnssProcessor {
         std::vector<BiasData> moveBiases() { return std::move(biases_); }
 
         /**
+         * @brief Move clock reference signal map out of parser.
+         */
+        ClockRefMap moveClockRefSignals() { return std::move(clock_refs_); }
+
+        /**
          * @brief Move ERPs out of parser. Parser's erps_ will be empty after call.
          */
         std::vector<ErpData> moveErps() { return std::move(erps_); }
@@ -221,6 +229,7 @@ namespace GnssProcessor {
         std::vector<ClockData> clocks_;    ///< Parsed satellite clock data (CLK).
         std::vector<AntennaData> antennas_;///< Parsed antenna corrections (ATX).
         std::vector<BiasData> biases_;     ///< Parsed differential bias data (BIA).
+        ClockRefMap clock_refs_;              ///< Per-system satellite clock reference observables from BIA DESCRIPTION.
         std::vector<ErpData> erps_;        ///< Parsed Earth rotation parameters (ERP).
         std::vector<double> klobuchar_coeffs_; ///< Parsed Klobuchar ionospheric coefficients.
         std::vector<SunEphemeris> sun_ephemeris_; ///< Computed or parsed Sun ephemeris for epochs.

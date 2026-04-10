@@ -1,8 +1,0 @@
-bitstruct
-galois
-crccheck
-notebook
-numpy
-matplotlib
-cartopy
-pysolid

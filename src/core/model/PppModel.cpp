@@ -31,6 +31,7 @@
 #include "ProductCache.hpp"
 #include <algorithm>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 namespace GnssProcessor {
@@ -40,6 +41,17 @@ namespace GnssProcessor {
 // ===========================================================================
 
 namespace {
+
+/// Map system display name to the single-char key used in ClockRefMap.
+char systemNameToClockRefChar(const std::string& sys) {
+    if (sys == "GPS")     return 'G';
+    if (sys == "Galileo") return 'E';
+    if (sys == "GLONASS") return 'R';
+    if (sys == "BeiDou")  return 'C';
+    if (sys == "QZSS")    return 'J';
+    if (sys == "SBAS")    return 'S';
+    return '\0';
+}
 
 /// Maps RINEX observation code prefixes to frequency band names per system.
 const std::map<std::string, std::vector<std::pair<std::string, std::string>>>& getSystemToBands() {
@@ -309,16 +321,42 @@ const char* signalModeLabel(SignalMode m) {
 
             // --- Process observation ---
             if (config_.isUncombinedEnabled()) {
-                // Preserve raw RINEX measurements before processUncombinedObservation overwrites observed values.
+                // Build the set of signal keys that were actually selected for
+                // positioning so that raw_observed and observed only contain
+                // those signals.  Without this filter, unselected bands from
+                // the RINEX file leak into observed and cause the MW slip
+                // detector to evaluate spurious frequency-pair combinations.
+                std::set<std::string> selected_keys;
+                for (const auto& sp : selected_signals) {
+                    if (!sp.first.empty())  selected_keys.insert(sp.first);
+                    if (!sp.second.empty()) selected_keys.insert(sp.second);
+                }
+
+                // Preserve raw RINEX measurements for selected signals only.
                 for (const auto& [key, val] : ppp_obs.observed) {
                     if (key.size() >= 2 && (key[0] == 'C' || key[0] == 'L') &&
-                        key.find('_') == std::string::npos) {
+                        key.find('_') == std::string::npos &&
+                        selected_keys.count(key)) {
                         ppp_obs.raw_observed[key] = val;
                     }
                 }
 
                 if (!processUncombinedObservation(obs, state, ppp_obs, system_str, selected_signals, geom)) {
                     continue;
+                }
+
+                // Strip observed of any raw RINEX keys that were not selected,
+                // so downstream consumers (e.g. MW slip detector) only see the
+                // signals that are actually used for positioning.
+                for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
+                    const auto& k = it->first;
+                    if (k.size() >= 2 && (k[0] == 'C' || k[0] == 'L') &&
+                        k.find('_') == std::string::npos &&
+                        !selected_keys.count(k)) {
+                        it = ppp_obs.observed.erase(it);
+                    } else {
+                        ++it;
+                    }
                 }
             }
 
@@ -404,36 +442,146 @@ const char* signalModeLabel(SignalMode m) {
         const auto& band_map = getBandMap();
         if (band_map.find(system_str) == band_map.end()) return false;
 
-        const auto effective_signal_mode = config_.isUncombinedEnabled()
-            ? SignalMode::All
-            : config_.getSignalMode();
+        // Determine which frequency bands are allowed for this system.
+        //
+        // In uncombined PPP-RTK mode with lock_signals_to_clock_ref enabled
+        // (the default), only the two bands that match the BIA satellite-clock
+        // reference observables are permitted.  This avoids extra IFB states
+        // for non-reference bands and keeps the measurement model strictly
+        // consistent with the clock/bias products.
+        //
+        // When the lock is disabled, or no clock-ref info is available for
+        // this system, we fall back to the previous behaviour (SignalMode::All
+        // for uncombined, or the configured signal_mode for combined).
+        std::vector<std::string> clock_ref_bands;  // populated only when lock is active
+        const std::vector<std::string>* allowed_bands_ptr = nullptr;
+        // When the clock-ref lock is active, maps each RINEX band digit
+        // (e.g. '1', '2') to the required tracking attribute (e.g. 'W')
+        // so that only signals matching the clock-reference observables
+        // are accepted.  Empty when the lock is inactive.
+        std::map<char, char> clock_ref_attr;
 
-        const auto& allowed_bands = band_map.at(system_str).at(effective_signal_mode);
+        const bool use_clock_ref_lock = config_.isUncombinedEnabled()
+                                     && config_.lockSignalsToClockRef();
 
-        for (const auto& sig : signals) {
-            if (!measurements.count(sig)) continue;
-            for (const auto& [pattern, band] : bands_it->second) {
-                if (std::find(allowed_bands.begin(), allowed_bands.end(), band) == allowed_bands.end())
-                    continue;
-                if (sig.find(pattern) != 0) continue;
-
-                if (freq_band_to_signal.find(band) == freq_band_to_signal.end()) {
-                    freq_band_to_signal[band] = { "", "" };
-                    freq_bands.push_back(band);
-                }
-                auto& [best_code, best_phase] = freq_band_to_signal[band];
-                if (sig[0] == 'C' && (best_code.empty() ||
-                    std::find(signals.begin(), signals.end(), sig) <
-                    std::find(signals.begin(), signals.end(), best_code))) {
-                    best_code = sig;
-                }
-                if (sig[0] == 'L' && (best_phase.empty() ||
-                    std::find(signals.begin(), signals.end(), sig) <
-                    std::find(signals.begin(), signals.end(), best_phase))) {
-                    best_phase = sig;
+        if (use_clock_ref_lock) {
+            // Try to derive the two allowed bands from the BIA clock-reference signals
+            const char sys_char = systemNameToClockRefChar(system_str);
+            const auto& clock_refs = ProductCache::getInstance().getClockRefSignals();
+            auto crit = clock_refs.find(sys_char);
+            if (crit != clock_refs.end()) {
+                const auto& ref = crit->second;
+                // Build RINEX prefix from the clock-ref signal (e.g. "C1W" → "C1")
+                // and look up the band name via the system_to_bands table.
+                // Also extract the tracking attribute per band digit so that
+                // only signals with a matching attribute are accepted later.
+                for (const auto* sig : { &ref.sig1, &ref.sig2 }) {
+                    if (sig->size() < 2) continue;
+                    const std::string prefix = sig->substr(0, 2); // e.g. "C1"
+                    for (const auto& [pat, band] : bands_it->second) {
+                        if (pat == prefix) {
+                            if (std::find(clock_ref_bands.begin(), clock_ref_bands.end(), band)
+                                == clock_ref_bands.end()) {
+                                clock_ref_bands.push_back(band);
+                            }
+                            break;
+                        }
+                    }
+                    // Record required tracking attribute for this band digit
+                    // (e.g. "C1W" → band digit '1', attribute 'W').
+                    if (sig->size() >= 3) {
+                        clock_ref_attr[(*sig)[1]] = (*sig)[2];
+                    }
                 }
             }
+            if (!clock_ref_bands.empty()) {
+                allowed_bands_ptr = &clock_ref_bands;
+                log_manager_.getLogger("ppp_model")->trace(
+                    "Clock-ref lock active for {}: allowed bands = [{}], attributes = [{}]",
+                    system_str, [&]{
+                        std::string s;
+                        for (size_t i = 0; i < clock_ref_bands.size(); ++i) {
+                            if (i) s += ", ";
+                            s += clock_ref_bands[i];
+                        }
+                        return s;
+                    }(), [&]{
+                        std::string s;
+                        for (auto it = clock_ref_attr.begin(); it != clock_ref_attr.end(); ++it) {
+                            if (it != clock_ref_attr.begin()) s += ", ";
+                            s += it->first;
+                            s += ':';
+                            s += it->second;
+                        }
+                        return s;
+                    }());
+            }
         }
+
+        // Fall back to the static band map when clock-ref lock is not active
+        // or when no clock-ref info was available for this system.
+        // Respect the configured signal_mode so the user can control how many
+        // frequency bands enter the filter (dual, triple or all).
+        if (!allowed_bands_ptr) {
+            allowed_bands_ptr = &band_map.at(system_str).at(config_.getSignalMode());
+        }
+
+        const auto& allowed_bands = *allowed_bands_ptr;
+
+        // Scans the priority-ordered signal list and populates
+        // freq_band_to_signal / freq_bands for every signal that passes
+        // the band and (optionally) attribute filters.
+        auto populate = [&](const std::map<char, char>& attr_filter) {
+            for (const auto& sig : signals) {
+                if (!measurements.count(sig)) continue;
+                // When an attribute filter is active, reject signals whose
+                // tracking attribute does not match the clock-reference
+                // observable for the corresponding band digit.
+                // Signal format is "{type}{band}{attr}" (e.g. "C1W").
+                if (!attr_filter.empty() && sig.size() >= 3) {
+                    auto ait = attr_filter.find(sig[1]);
+                    if (ait != attr_filter.end() && sig[2] != ait->second)
+                        continue;
+                }
+                for (const auto& [pattern, band] : bands_it->second) {
+                    if (std::find(allowed_bands.begin(), allowed_bands.end(), band) == allowed_bands.end())
+                        continue;
+                    if (sig.find(pattern) != 0) continue;
+
+                    if (freq_band_to_signal.find(band) == freq_band_to_signal.end()) {
+                        freq_band_to_signal[band] = { "", "" };
+                        freq_bands.push_back(band);
+                    }
+                    auto& [best_code, best_phase] = freq_band_to_signal[band];
+                    if (sig[0] == 'C' && (best_code.empty() ||
+                        std::find(signals.begin(), signals.end(), sig) <
+                        std::find(signals.begin(), signals.end(), best_code))) {
+                        best_code = sig;
+                    }
+                    if (sig[0] == 'L' && (best_phase.empty() ||
+                        std::find(signals.begin(), signals.end(), sig) <
+                        std::find(signals.begin(), signals.end(), best_phase))) {
+                        best_phase = sig;
+                    }
+                }
+            }
+        };
+
+        // First pass: strict attribute match against clock-ref signals.
+        populate(clock_ref_attr);
+
+        // If the strict attribute filter produced no results (the receiver
+        // does not track the exact clock-ref tracking mode), retry without
+        // the attribute constraint so the system is not excluded entirely.
+        // The band restriction is still enforced.
+        if (freq_bands.empty() && !clock_ref_attr.empty()) {
+            log_manager_.getLogger("ppp_model")->debug(
+                "Clock-ref attribute lock produced no signals for {}; "
+                "relaxing to band-only lock", system_str);
+            static const std::map<char, char> no_attr;
+            populate(no_attr);
+        }
+
         return !freq_bands.empty();
     }
 
@@ -527,20 +675,13 @@ const char* signalModeLabel(SignalMode m) {
 
         if (candidate_pairs.empty()) return false;
 
-        // Score and pick best code pair and best phase pair by signal priority.
-        auto pick_best = [&](const std::vector<std::pair<std::string, std::string>>& candidates)
-            -> std::pair<std::string, std::string> {
-            auto best = candidates.front();
-            int best_score = std::numeric_limits<int>::max();
-            for (const auto& p : candidates) {
-                auto it1 = std::find(signals.begin(), signals.end(), p.first);
-                auto it2 = std::find(signals.begin(), signals.end(), p.second);
-                int idx1 = (it1 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it1));
-                int idx2 = (it2 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it2));
-                int score = idx1 + idx2;
-                if (score < best_score) { best_score = score; best = p; }
-            }
-            return best;
+        // Score each pair by signal priority (lower is better).
+        auto pair_score = [&](const std::pair<std::string, std::string>& p) -> int {
+            auto it1 = std::find(signals.begin(), signals.end(), p.first);
+            auto it2 = std::find(signals.begin(), signals.end(), p.second);
+            int idx1 = (it1 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it1));
+            int idx2 = (it2 == signals.end()) ? std::numeric_limits<int>::max() / 2 : static_cast<int>(std::distance(signals.begin(), it2));
+            return idx1 + idx2;
         };
 
         std::vector<std::pair<std::string, std::string>> code_cands, phase_cands;
@@ -548,8 +689,17 @@ const char* signalModeLabel(SignalMode m) {
             if (!p.first.empty() && p.first[0] == 'C') code_cands.push_back(p);
             else if (!p.first.empty() && p.first[0] == 'L') phase_cands.push_back(p);
         }
-        if (!code_cands.empty())  selected_signals.push_back(pick_best(code_cands));
-        if (!phase_cands.empty()) selected_signals.push_back(pick_best(phase_cands));
+
+        // Sort by priority (best first) for deterministic ordering.
+        // The first pair is the primary combination used by the MW slip
+        // detector; additional pairs provide independent geometry.
+        std::sort(code_cands.begin(), code_cands.end(),
+            [&](const auto& a, const auto& b) { return pair_score(a) < pair_score(b); });
+        std::sort(phase_cands.begin(), phase_cands.end(),
+            [&](const auto& a, const auto& b) { return pair_score(a) < pair_score(b); });
+
+        for (const auto& p : code_cands)  selected_signals.push_back(p);
+        for (const auto& p : phase_cands) selected_signals.push_back(p);
 
         return !selected_signals.empty();
     }
@@ -606,11 +756,13 @@ const char* signalModeLabel(SignalMode m) {
                 if (band != freq_bands.back()) available_signals += ", ";
             }
             const auto effective_mode = config_.isUncombinedEnabled() ? SignalMode::All : config_.getSignalMode();
-            log_manager_.getLogger("ppp_model")->debug("Available signals for {} {}: [{}], signal_mode={} (effective={})",
+            const char* band_note = (config_.isUncombinedEnabled() && config_.lockSignalsToClockRef())
+                                  ? " clock-ref-locked" : "";
+            log_manager_.getLogger("ppp_model")->debug("Available signals for {} {}: [{}], signal_mode={} (effective={}{})",
                 obs.satellite, system_str,
                 available_signals.empty() ? "none" : available_signals,
                 signalModeLabel(config_.getSignalMode()),
-                signalModeLabel(effective_mode));
+                signalModeLabel(effective_mode), band_note);
         }
 
         selected_signals.clear();
@@ -821,16 +973,15 @@ const char* signalModeLabel(SignalMode m) {
         const std::vector<std::pair<std::string, std::string>> selected_signals,
         const std::string& comb_type, const SatGeometry& geom) {
 
-        size_t num_freq = (comb_type == "triple") ? 3 : (comb_type == "dual") ? 2 : 0;
-        if (num_freq == 0) {
+        if (comb_type != "dual" && comb_type != "triple") {
             log_manager_.getLogger("ppp_model")->warn("Invalid combination type {} for {}", comb_type, obs.satellite);
             return false;
         }
 
-        if (selected_signals.size() > num_freq * 2 || selected_signals.size() < 2) {
+        if (selected_signals.size() < 2) {
             log_manager_.getLogger("ppp_model")->warn(
-                "Invalid number of signal pairs for {} combination for {} (expected up to {}, got {})",
-                comb_type, obs.satellite, num_freq * 2, selected_signals.size());
+                "Too few signal pairs for {} combination for {} (got {})",
+                comb_type, obs.satellite, selected_signals.size());
             return false;
         }
 
@@ -895,103 +1046,6 @@ const char* signalModeLabel(SignalMode m) {
         return success;
     }
 
-    bool PppModel::formIonoFreeMeasurements(const RinexObservation& obs, System system,
-        const std::vector<std::pair<std::string, std::string>>& selected_signals,
-        std::map<std::string, double>& out_observed,
-        std::map<std::string, double>& out_variances) const {
-
-        out_observed.clear();
-        out_variances.clear();
-
-        const auto& n = config_.getDefaultMeasurementNoise();
-        const double default_code_var = n.code_std_m * n.code_std_m;
-        const double default_phase_var = n.phase_std_m * n.phase_std_m;
-
-        for (const auto& pair : selected_signals) {
-            if (pair.first.empty() || pair.second.empty()) {
-                log_manager_.getLogger("ppp_model")->trace("Skipping pair with empty member: {}/{}", pair.first, pair.second);
-                continue;
-            }
-            // must be same measurement family (both code or both phase) for LC formation here
-            if (pair.first[0] != pair.second[0]) {
-                log_manager_.getLogger("ppp_model")->warn("Mixed-signal pair unsupported for IF formation: {} / {}", pair.first, pair.second);
-                continue;
-            }
-            if (!obs.measurements.count(pair.first) || !obs.measurements.count(pair.second)) {
-                log_manager_.getLogger("ppp_model")->trace("Missing measurement(s) for pair {} / {} on {}", pair.first, pair.second, obs.satellite);
-                continue;
-            }
-
-            // read raw measurements and variances (convert phase cycles to meters here)
-            double meas_vals[2] = { 0.0, 0.0 };
-            double var_vals[2] = { 0.0, 0.0 };
-            bool is_phase = (pair.first[0] == 'L');
-
-            for (size_t j = 0; j < 2; ++j) {
-                const std::string& type = (j == 0 ? pair.first : pair.second);
-                double meas = obs.measurements.at(type);
-                if (is_phase) {
-                    double wl = ppp_utils_.getWavelength(obs.system, type);
-                    if (wl <= 0.0) {
-                        log_manager_.getLogger("ppp_model")->warn("Invalid wavelength for phase type {} on {}", type, obs.satellite);
-                        meas_vals[0] = meas_vals[1] = 0.0;
-                        break;
-                    }
-                    meas *= wl; // cycles -> meters
-                    const double fallback_var = obs.variances.count(type) ? obs.variances.at(type) : default_phase_var;
-                    var_vals[j] = stochastic_model_.computeVariance(type, obs.measurements, 90.0, fallback_var);
-                }
-                else {
-                    const double fallback_var = obs.variances.count(type) ? obs.variances.at(type) : default_code_var;
-                    var_vals[j] = stochastic_model_.computeVariance(type, obs.measurements, 90.0, fallback_var);
-                }
-                meas_vals[j] = meas;
-            }
-
-            if (meas_vals[0] == 0.0 && meas_vals[1] == 0.0) {
-                continue;
-            }
-
-            // compute frequency-dependent IF coefficients
-            double f1 = ppp_utils_.getFrequency(pair.first, system, obs.satellite);
-            double f2 = ppp_utils_.getFrequency(pair.second, system, obs.satellite);
-            if (f1 <= 0.0 || f2 <= 0.0 || std::abs(f1 - f2) < 1e-9) {
-                log_manager_.getLogger("ppp_model")->warn("Invalid frequencies for IF formation: {} ({:.3f} MHz), {} ({:.3f} MHz)",
-                    pair.first, f1 / 1e6, pair.second, f2 / 1e6);
-                continue;
-            }
-
-            const double f1_sq = f1 * f1;
-            const double f2_sq = f2 * f2;
-            const double denom = (f1_sq - f2_sq);
-            if (!std::isfinite(denom) || std::abs(denom) < 1e-12) {
-                log_manager_.getLogger("ppp_model")->warn("Denominator too small for IF coefficients for pair {}_{} on {}", pair.first, pair.second, obs.satellite);
-                continue;
-            }
-            const double c1 = f1_sq / denom;
-            const double c2 = -f2_sq / denom;
-            if (!std::isfinite(c1) || !std::isfinite(c2)) {
-                log_manager_.getLogger("ppp_model")->warn("Non-finite IF coefficients for pair {}_{} on {}", pair.first, pair.second, obs.satellite);
-                continue;
-            }
-
-            const std::string ref = pair.first + "_" + pair.second;
-            const double observed_comb = c1 * meas_vals[0] + c2 * meas_vals[1];
-            const double var_comb = c1 * c1 * var_vals[0] + c2 * c2 * var_vals[1];
-
-            if (!std::isfinite(observed_comb) || !std::isfinite(var_comb)) {
-                log_manager_.getLogger("ppp_model")->warn("Non-finite IF result for {} on {}", ref, obs.satellite);
-                continue;
-            }
-
-            out_observed[ref] = observed_comb;
-            out_variances[ref] = var_comb; // pre elevation mapping (mapping done later)
-            log_manager_.getLogger("ppp_model")->trace("Formed IF {} for {}: observed={:.3f} m, var={:.6f}", ref, obs.satellite, observed_comb, var_comb);
-        }
-
-        return !out_observed.empty();
-    }
-
     /**
      * @brief Process uncombined observations for PPP-RTK: individual signals without iono-free combination.
      *
@@ -1024,6 +1078,19 @@ const char* signalModeLabel(SignalMode m) {
             if (!obs.measurements.count(type)) {
                 log_manager_.getLogger("ppp_model")->trace(
                     "Missing measurement for {} on {} in uncombined mode", type, obs.satellite);
+                continue;
+            }
+
+            // Skip signals that have no BIA product entry when required.
+            // When estimate_sat_biases is enabled, these signals are kept and
+            // a per-satellite bias state will absorb the uncorrected delay.
+            if (config_.requireBiaForSignals()
+                && !config_.estimateSatBiases()
+                && config_.getModelCorrections().enable_code_phase_bias
+                && !gnss_corrections_.hasBiasEntry(obs.satellite, type)) {
+                log_manager_.getLogger("ppp_model")->debug(
+                    "Skipping {} on {} — no BIA entry (require_bia_for_signals=true)",
+                    type, obs.satellite);
                 continue;
             }
 

@@ -21,6 +21,7 @@
 #include "PppTypes.hpp"
 #include "OceanTideModel.hpp"
 #include <array>
+#include <set>
 #include <unordered_map>
 #include <vector>
 #include <Eigen/Dense>
@@ -226,6 +227,18 @@ namespace GnssProcessor {
             const GnssTime& time) const;
 
         /**
+         * @brief Check whether the BIA product contains any entry for a satellite+signal pair.
+         *
+         * This is a fast O(1) lookup against a set built at construction time.
+         * It does not check time validity — only whether the pair exists at all.
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @param signal    RINEX observation code (e.g. "C1W", "L5Q").
+         * @return True if at least one BiasData entry matches the pair.
+         */
+        bool hasBiasEntry(const std::string& satellite, const std::string& signal) const;
+
+        /**
          * @brief Compute phase wind-up correction for carrier-phase.
          * @param satellite Satellite identifier string.
          * @param system Satellite system enum (System).
@@ -303,6 +316,9 @@ namespace GnssProcessor {
 
         std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;
         void buildClockIndex();
+
+        std::set<std::string> bias_signals_;   ///< Fast lookup: "satellite|signal" keys from BIA
+        void buildBiasIndex();
 
         // Phase wind-up state per satellite (for continuity between epochs)
         mutable std::unordered_map<std::string, double> prev_windup_;

@@ -72,6 +72,7 @@ namespace GnssProcessor {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (full) with {} clocks, {} erps, {} biases",
             clocks_.size(), erps_.size(), biases_.size());
         buildClockIndex();
+        buildBiasIndex();
     }
 
     void GnssCorrections::setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps) {
@@ -364,7 +365,7 @@ namespace GnssProcessor {
         const double rrec = rx_pos.norm();
         const double rrs  = (sat_pos - rx_pos).norm();
 
-        if (rrs < 1.9e7 || rsat < MIN_SAT_NORM || rsat > MAX_SAT_NORM) {
+        if (rrs < 1.5e7 || rsat < MIN_SAT_NORM || rsat > MAX_SAT_NORM) {
             log->warn("Unrealistic Shapiro norms for {} ({}): range={:.3e} m, sat={:.3e} m", satellite, sys, rrs, rsat);
             return 0.0;
         }
@@ -820,6 +821,20 @@ namespace GnssProcessor {
         log->trace("No bias for {} ({}) {} at TOW {:.3f}",
             satellite, PppUtils::getSystemString(satellite), freq_type, time.tow);
         return 0.0;
+    }
+
+    void GnssCorrections::buildBiasIndex() {
+        bias_signals_.clear();
+        for (const auto& b : biases_)
+            bias_signals_.insert(b.satellite + "|" + b.signal);
+        log_manager_.getLogger("corrections")->debug(
+            "Built bias index: {} unique satellite|signal pairs from {} entries",
+            bias_signals_.size(), biases_.size());
+    }
+
+    bool GnssCorrections::hasBiasEntry(const std::string& satellite,
+                                        const std::string& signal) const {
+        return bias_signals_.count(satellite + "|" + signal) > 0;
     }
 
     // =================================================================

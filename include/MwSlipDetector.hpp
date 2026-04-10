@@ -105,6 +105,7 @@ namespace GnssProcessor {
             double M2{ 0.0 };              /**< Welford accumulator for variance (m^2). */
             size_t count{ 0 };             /**< Number of MW samples accumulated. */
             double prev_mw{ 0.0 };         /**< Previous epoch MW value for differencing (meters). */
+            double last_epoch_s{ 0.0 };    /**< Continuous GPS seconds of the last update (for gap detection). */
             std::deque<double> diff_window; /**< Rolling window of epoch-to-epoch MW differences (meters). */
         };
 
@@ -114,8 +115,19 @@ namespace GnssProcessor {
         /** Maximum number of recent MW values kept per satellite for MAD computation. */
         static constexpr size_t kMwWindowSize = 30;
 
-        /** Multiplier applied to the MAD-derived sigma for the adaptive threshold. */
-        static constexpr double kMadSigmaMultiplier = 12.0;
+        /** Maximum effective count used in the Hatch (recursive) mean.
+         *  Once the arc exceeds this count the weighting denominator is
+         *  clamped, giving new samples a minimum weight of 1/kMaxHatchCount.
+         *  Without this cap the mean becomes nearly frozen on long arcs and
+         *  cannot track level shifts that fall just below the detection
+         *  threshold, producing the characteristic exponential-decay
+         *  residual pattern reported in MW time-difference diagnostics. */
+        static constexpr size_t kMaxHatchCount = 100;
+
+        /** Multiplier applied to the MAD-derived sigma for the adaptive threshold.
+         *  A value of 4.0 corresponds to ~0.006% false alarm rate for Gaussian
+         *  noise, while keeping the detector sensitive to slips >= 2 WL cycles. */
+        static constexpr double kMadSigmaMultiplier = 8.0;
 
         /**
          * @brief Minimum number of epochs before the adaptive (MAD-based)
@@ -124,12 +136,21 @@ namespace GnssProcessor {
         static constexpr size_t kMinEpochsForAdaptive = 5;
 
         /** Minimum slip threshold expressed in wide-lane cycles.
-         *  Prevents the adaptive threshold from becoming too tight when
-         *  MW noise is very low. A floor of 2.5 WL cycles ensures only
-         *  large catastrophic slips (tens of cycles) are caught here;
-         *  smaller 1-2 cycle slips are left to the post-fit standardized
+         *  Prevents the adaptive threshold from becoming unrealistically
+         *  tight when MW noise is very low.  A floor of 1.0 WL cycle
+         *  ensures sub-cycle noise fluctuations are never flagged;
+         *  smaller 1-cycle slips are left to the post-fit standardized
          *  measurement residual check which is more sensitive. */
-        static constexpr double kMinThresholdCycles = 2.5;
+        static constexpr double kMinThresholdCycles = 1.0;
+
+        /** Maximum inter-epoch gap (seconds) before the arc is reset.
+         *  If more than this many seconds elapse between consecutive MW
+         *  samples for a satellite the running statistics are discarded
+         *  and a fresh arc is started.  This prevents stale pre-gap
+         *  statistics from contaminating the post-gap mean / MAD and
+         *  avoids the large spurious deviations observed after data
+         *  gaps. */
+        static constexpr double kMaxGapSeconds = 120.0;
 
         /**
          * @brief Compute the MAD-based adaptive threshold for a satellite arc.
@@ -191,6 +212,25 @@ namespace GnssProcessor {
          * @return false otherwise.
          */
         bool findIonoFreeLabels(const PppObservation& obs, std::string& phase_if_key, std::string& code_if_key) const;
+
+        /**
+         * @brief Matched IF phase/code label pair.
+         */
+        struct IfPair {
+            std::string phase_key;  ///< e.g. "L1W_L5Q"
+            std::string code_key;   ///< e.g. "C1W_C5Q"
+        };
+
+        /**
+         * @brief Collect all matched ionosphere-free phase/code pairs.
+         *
+         * Returns every IF phase label that has a corresponding code label
+         * using the same pair of frequency bands.
+         *
+         * @param obs Observation to inspect.
+         * @return Vector of matched pairs (may be empty).
+         */
+        std::vector<IfPair> collectIonoFreePairs(const PppObservation& obs) const;
 
         /**
          * @brief Split an IF label of the form "L1C_L2W" into its two component signals.

@@ -1,6 +1,8 @@
 #pragma once
 
+
 #include "LogManager.hpp"
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <map>
@@ -171,6 +173,19 @@ namespace GnssProcessor {
         /// unconstrained, suitable for pedestrian or vehicular dynamics.
         /// Smaller values smooth the velocity estimate over time.
         double velocity{ 1e2 };
+
+        /// Per-satellite signal bias (m*m/s).  Absorbs uncorrected satellite
+        /// hardware delays on signals without BIA product coverage.  Nearly
+        /// constant over hours; 1e-10 allows ~0.01 mm/sqrt(30 s) drift.
+        double sat_bias{ 1e-10 };
+
+        /// Relaxed ambiguity process noise (m*m/s).  Applied to phase IF
+        /// ambiguities that lack full product coverage (missing BIA or
+        /// receiver ATX).  Allows the ambiguity to slowly track the
+        /// elevation-dependent receiver PCV residual instead of holding
+        /// a fixed value.  1e-6 yields ~0.17 mm/sqrt(30 s), sufficient
+        /// to follow the PCV variation over a satellite pass.
+        double phase_bias{ 1e-6 };
     };
 
     /**
@@ -189,6 +204,7 @@ namespace GnssProcessor {
         double system_time_offset{ 1e2 }; ///< Initial inter-system time bias standard deviation (m).
         double tropo_gradient{ 1e-3 };     ///< Initial tropo gradient standard deviation (m).
         double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
+        double sat_bias{ 10.0 };              ///< Initial per-satellite signal bias standard deviation (m).
     };
 
     /**
@@ -198,7 +214,7 @@ namespace GnssProcessor {
      */
     struct DefaultMeasurementNoise {
         double code_std_m{ 0.30 };   ///< Code measurement standard deviation (m).
-        double phase_std_m{ 0.003 }; ///< Phase measurement standard deviation (m).
+        double phase_std_m{ 0.002 }; ///< Phase measurement standard deviation (m).
         double doppler_std_m{ 0.5 }; ///< Doppler measurement standard deviation (Hz).
     };
 
@@ -418,6 +434,22 @@ namespace GnssProcessor {
         double getElevationMaskDeg() const { return elevation_mask_deg_; }
 
         /**
+         * @brief Get the list of satellites excluded from processing.
+         * @return Vector of satellite identifiers (e.g. "E14", "E18").
+         */
+        const std::vector<std::string>& getExcludedSatellites() const { return excluded_satellites_; }
+
+        /**
+         * @brief Check whether a satellite is excluded from processing.
+         * @param satellite Satellite identifier (e.g. "E14").
+         * @return true if the satellite should be skipped.
+         */
+        bool isSatelliteExcluded(const std::string& satellite) const {
+            return std::find(excluded_satellites_.begin(), excluded_satellites_.end(), satellite)
+                != excluded_satellites_.end();
+        }
+
+        /**
          * @brief Gets the receiver antenna orientation.
          * @return Reference to the ReceiverAntennaOrientation struct.
          */
@@ -633,6 +665,19 @@ namespace GnssProcessor {
         bool enableBetweenSatelliteSd() const { return enable_between_satellite_sd_; }
 
         /**
+         * @brief Get the BSSD pivot minimum elevation (degrees).
+         *
+         * The current pivot satellite is retained as long as its elevation
+         * stays above this threshold.  A new highest-elevation satellite is
+         * chosen only when the current pivot drops below it or disappears.
+         * This hysteresis avoids frequent handovers between satellites with
+         * similar elevations.
+         *
+         * @return Pivot retention elevation threshold in degrees.
+         */
+        double getBssdPivotMinElevation() const { return bssd_pivot_min_elevation_deg_; }
+
+        /**
          * @brief Check if receiver inter-frequency bias (IFB) estimation is enabled.
          *
          * When true (default in PPP-RTK uncombined mode), per-system code-bias
@@ -647,6 +692,63 @@ namespace GnssProcessor {
          * @return True if IFB estimation is enabled.
          */
         bool estimateIfb() const { return estimate_ifb_; }
+
+        /**
+         * @brief Check if signal selection is locked to clock-reference bands.
+         *
+         * When true (default) and uncombined PPP-RTK mode is active, only the
+         * two frequency bands corresponding to the satellite clock reference
+         * observables from the BIA DESCRIPTION block are used.  This avoids
+         * extra IFB states for non-reference bands and ensures the measurement
+         * model is fully consistent with the clock/bias products.
+         *
+         * Set to false to allow all available frequency bands (the old
+         * behaviour).  Extra bands will require IFB estimation.
+         *
+         * @return True if signal selection is restricted to clock-reference bands.
+         */
+        bool lockSignalsToClockRef() const { return lock_signals_to_clock_ref_; }
+
+        /**
+         * @brief Check if signals without BIA product coverage should be excluded.
+         *
+         * When true and estimate_sat_biases is false, the uncombined observation
+         * processor will skip any signal for which the BIA product file does not
+         * contain a bias entry.  When estimate_sat_biases is true this toggle is
+         * ignored (uncovered signals get an estimated bias state instead).
+         *
+         * @return True if BIA coverage is required for signal acceptance.
+         */
+        bool requireBiaForSignals() const { return require_bia_for_signals_; }
+
+        /**
+         * @brief Check if per-satellite signal bias estimation is enabled.
+         *
+         * When true, signals without BIA product coverage are kept and a
+         * per-satellite-per-signal bias state is added to the Kalman filter
+         * to absorb the uncorrected satellite hardware delay.  This allows
+         * using all available signals even when the BIA product has incomplete
+         * coverage.
+         *
+         * @return True if satellite bias estimation is enabled.
+         */
+        bool estimateSatBiases() const { return estimate_sat_biases_; }
+
+        /**
+         * @brief Variance multiplier for code measurements without BIA coverage.
+         *
+         * When > 1.0 and estimate_sat_biases is false, code observations on
+         * signals that lack a .BIA product entry have their measurement
+         * variance inflated by this factor.  The uncorrected satellite
+         * hardware delay is treated as unmodelled noise on code, while the
+         * corresponding phase measurement absorbs it into the float
+         * ambiguity (no inflation needed).
+         *
+         * Set to 1.0 to disable (no extra downweighting).
+         *
+         * @return Variance inflation factor (dimensionless, >= 1.0).
+         */
+        double noBiaCodeDownweight() const { return no_bia_code_downweight_; }
 
         /**
          * @brief Check if a user-supplied reference position is configured.
@@ -764,6 +866,7 @@ namespace GnssProcessor {
         DefaultMeasurementNoise default_meas_noise_;          ///< Default measurement noise (fallback).
         std::map<std::string, std::vector<std::string>> signal_priorities_; ///< Signal priorities per system.
         std::vector<std::string> active_systems_ = { "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS" }; ///< Active GNSS systems.
+        std::vector<std::string> excluded_satellites_;                ///< Satellites excluded from processing (e.g. "E14", "E18").
         std::filesystem::path product_list_path_;            ///< Path to product list file.
         std::vector<std::filesystem::path> product_paths_;   ///< Product file paths (SP3, CLK, etc.).
         std::filesystem::path observation_path_;             ///< Path to observation RINEX file.
@@ -787,7 +890,12 @@ namespace GnssProcessor {
         bool enable_if_slip_detector_{ true };             ///< Enable the IF phase slip detector.
         bool accumulate_phase_windup_{ false };                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         bool enable_between_satellite_sd_{ false };                ///< Between-satellite single-difference operator in measurement model.
+        double bssd_pivot_min_elevation_deg_{ 45.0 };              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
         bool estimate_ifb_{ true };                                    ///< Estimate receiver inter-frequency bias (IFB) for non-reference code bands.
+        bool lock_signals_to_clock_ref_{ true };                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.
+        bool require_bia_for_signals_{ true };                           ///< Only use signals with BIA product coverage.
+        bool estimate_sat_biases_{ false };                               ///< Estimate per-satellite bias for signals without BIA coverage.
+        double no_bia_code_downweight_{ 100.0 };                            ///< Variance multiplier for code on signals without BIA coverage.
         bool estimate_velocity_{ false };                           ///< Estimate receiver velocity from Doppler observations.
 
         bool has_reference_position_{ false };                          ///< True if user supplied a reference ECEF position.

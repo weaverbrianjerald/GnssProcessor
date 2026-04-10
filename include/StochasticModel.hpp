@@ -9,8 +9,8 @@
  *  - **Constant**  — use the a-priori ?² directly, no geometry scaling.
  *  - **Elevation** — classic  ?² / sin²(el)  weighting.
  *  - **SNR**       — SIGMA-? model:  ? = a + b · 10^(?SNR/10),
- *                     falls back to constant when no SNR observable is
- *                     available for a given measurement.
+ *                     falls back to elevation-based weighting when no
+ *                     SNR observable is available for a given measurement.
  *
  * The class is configured once from GnssConfig and then called by PppModel
  * for every individual variance computation.  It replaces the ad-hoc
@@ -55,7 +55,7 @@ namespace GnssProcessor {
          *  - **Elevation**:  @p default_var / sin²(@p elevation_deg).
          *  - **SNR**: (a + b · 10^(?SNR/10))² using the matching RINEX 'S'
          *    observable from @p measurements; if no SNR is found, falls back
-         *    to the Constant result.
+         *    to the Elevation result.
          *
          * For Doppler ('D') and SNR ('S') observable types the returned
          * variance is always the @p default_var (possibly elevation-scaled
@@ -85,11 +85,12 @@ namespace GnssProcessor {
         /**
          * @brief Compute variance under the SNR (SIGMA-?) model.
          *
-         * Falls back to computeConstant() when no matching SNR observable
+         * Falls back to computeElevation() when no matching SNR observable
          * is available.
          */
         double computeSnr(const std::string& obs_type,
                           const std::map<std::string, double>& measurements,
+                          double elevation_deg,
                           double default_var) const;
 
         StochasticModelType model_type_;    ///< Active weighting strategy.

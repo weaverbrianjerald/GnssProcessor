@@ -203,6 +203,32 @@ namespace GnssProcessor {
         void resetAllPhaseWindUp() { antenna_.resetAllPhaseWindUp(); }
 
         /**
+         * @brief Check whether the BIA product has an entry for a satellite+signal pair.
+         *
+         * Delegates to GnssCorrections::hasBiasEntry().
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @param signal    RINEX observation code (e.g. "C7Q").
+         * @return True if BIA coverage exists for the pair.
+         */
+        bool hasBiasEntry(const std::string& satellite, const std::string& signal) const {
+            return gnss_corrections_.hasBiasEntry(satellite, signal);
+        }
+
+        /**
+         * @brief Check whether the receiver antenna has ATX coverage for a signal.
+         *
+         * Delegates to Antenna::hasReceiverAtxEntry().
+         *
+         * @param signal RINEX observation code (e.g. "L5Q").
+         * @param system GNSS system of the observation.
+         * @return True if the receiver antenna model has PCO data for this signal.
+         */
+        bool hasReceiverAtxEntry(const std::string& signal, System system) const {
+            return antenna_.hasReceiverAtxEntry(signal, system);
+        }
+
+        /**
          * @brief Default destructor.
          */
         ~PppModel() = default;
@@ -342,14 +368,6 @@ namespace GnssProcessor {
             const SatGeometry& geom,
             double pole_tide_corr,
             const std::string& comb_type);
-
-        /**
-         * @brief Form ionosphere-free combined measurements (observed + variance).
-         */
-        bool formIonoFreeMeasurements(const RinexObservation& obs, System system,
-            const std::vector<std::pair<std::string, std::string>>& selected_signals,
-            std::map<std::string, double>& out_observed,
-            std::map<std::string, double>& out_variances) const;
 
         /**
          * @brief Process a single uncombined observation and fill a PppObservation.

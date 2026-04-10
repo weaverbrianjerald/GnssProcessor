@@ -1,75 +1,192 @@
+// =====================================================================
+//  GnssProcessor configuration
+//
+//  This file uses C/C++ style comments (// and /* */).
+//  To switch between modes, swap the active/commented lines marked with:
+//     [PPP]        — standard iono-free combined PPP
+//     [PPP-RTK]    — uncombined PPP-RTK with BSSD (dual-freq, clock-ref locked)
+//     [PPP-RTK-3F] — uncombined PPP-RTK with BSSD (triple-freq, no IFB needed)
+//     [PPP-RTK-UD] — uncombined PPP-RTK undifferenced with IFB (all signals)
+// =====================================================================
 {
-  "active_systems": [
-    "GPS",
-    "Galileo"
-  ],
   "app_mode": "post",
-  "processing_mode": "PPP-RTK",
-  "uncombined_enabled": true,
-  "signal_mode": "dual",
-  "satellite_interpolation_mode": "lagrange",
-  "satellite_clock_interpolation_mode": "linear",
-  "observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
-  "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
-  "sinex_file_path": "",
-  "rtcm_file_path": "",
-  "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt",
-  "igs_station_list_path": "C:/GnssProcessorSupport/station_lists/IGS_Station_Names.txt",
-  "estimate_tropo_gradients": false,
-  "estimate_phase_clock": false,
-  "relinearize_geometry": false,
-  "enable_if_slip_detector": false,
-  "accumulate_phase_windup": false,
-  "enable_between_satellite_sd": false,
-  "estimate_velocity": false,
-  "estimate_ifb": true,
-  "ar_mode": 0,
-  "ar_ratio_threshold": 3.0,
-  "ar_elevation_mask": 20.0,
-  "ar_hold_variance": 0.001,
-  "elevation_mask_deg": 10.0,
-  "leap_seconds_tai": 37.0,
-  "receiver_antenna_orientation": {
-    "azimuth_deg": 0.0,
-    "elevation_deg": 90.0
+
+  // =================================================================
+  //  Processing
+  // =================================================================
+  "processing": {
+    // --- Processing mode ---------------------------------------------------
+    "mode": "PPP-RTK",                              // Non-ionosphere-free
+    //"mode": "PPP",                                // Ionosphere-free
+
+    // --- Signal combination ------------------------------------------------
+    "uncombined_enabled": true,                      // [PPP-RTK] per-signal observables
+    //"uncombined_enabled": false,                  // [PPP] iono-free combinations
+
+    "signal_mode": "dual",                          // [PPP-RTK] dual-freq locked to clock-ref bands
+    //"signal_mode": "triple",                       // [PPP-RTK-3F] add L5/E5b (BSSD eliminates receiver IFB)
+    //"signal_mode": "all",                          // [PPP-RTK-UD] all available signals (needs IFB estimation)
+    "elevation_mask_deg": 5.0,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "active_systems": [ "GPS", "Galileo" ],
+    "excluded_satellites": [],
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "GLONASS": "CPIXQ",
+      "BeiDou": "IDPXQZ",
+      "QZSS": "CSLXIQDEX",
+      "SBAS": "CXIQ"
+    }
   },
-  "default_measurement_noise": {
-    "code_std_m": 0.600,
-    "phase_std_m": 0.002,
-    "doppler_std_m": 0.5
+
+  // =================================================================
+  //  Estimation toggles
+  // =================================================================
+  "estimation": {
+    "estimate_tropo_gradients": false,
+
+    // --- Phase clock -------------------------------------------------------
+    //  PPP-RTK: forced true automatically (separates code/phase HW delays).
+    //  PPP:     optional; enable for code-phase clock separation.
+    "estimate_phase_clock": false,
+
+    "estimate_velocity": false,
+
+    // --- Inter-frequency bias (IFB) ----------------------------------------
+    //  Under BSSD the receiver IFB is unobservable (cancels in SD), so keep
+    //  false for dual-freq or triple-freq BSSD.  Enable for undifferenced only.
+    "estimate_ifb": false, // [PPP-RTK] [PPP-RTK-3F] BSSD — IFB unobservable
+    // "estimate_ifb": true,                           // [PPP-RTK-UD] estimate receiver IFB per extra band
+
+    // --- Clock-ref signal lock ---------------------------------------------
+    //  When true, only the two BIA clock-reference bands are used.
+    //  When false, signal_mode controls which bands enter the filter.
+    //  BSSD eliminates the receiver IFB on ALL bands, so no IFB estimation
+    //  is needed — just turn off the lock and select triple/all.
+    //"lock_signals_to_clock_ref": true,               // [PPP-RTK] match BIA clock-ref signals
+    // "lock_signals_to_clock_ref": false,            // [PPP] not needed for IF combination
+    "lock_signals_to_clock_ref": false, // [PPP-RTK-3F] open extra bands (BSSD handles IFB)
+    // "lock_signals_to_clock_ref": false,            // [PPP-RTK-UD] open all bands (IFB absorbs delay)
+
+    // --- BIA product signal filter -----------------------------------------
+    //  When true, signals without a matching satellite+signal entry in the
+    //  .BIA product are excluded.  Prevents uncorrected satellite hardware
+    //  biases from leaking into the model.  Safe to leave on for all modes.
+    "require_bia_for_signals": false,
+
+    // --- Satellite bias estimation ------------------------------------------
+    //  When true, signals/IF-combinations without full BIA product coverage
+    //  get a per-satellite bias state that absorbs the uncorrected satellite
+    //  hardware delay.  In uncombined mode the state acts on raw signals;
+    //  in PPP (iono-free) mode it acts on code IF combinations where at
+    //  least one component signal lacks a BIA entry (phase IF absorbs the
+    //  bias into the float ambiguity and needs no state).
+    //  Process noise is very small (nearly constant bias).
+    //  Overrides require_bia_for_signals for those signals.
+    "estimate_sat_biases": false,
+
+    // --- Measurement downweight for missing corrections ----------------------
+    //  Variance multiplier applied to measurements that lack full product
+    //  coverage.  Affects:
+    //   - Code measurements/IF-combinations without BIA coverage (when
+    //     estimate_sat_biases is false; when true, a bias state absorbs it).
+    //   - Phase IF combinations where the receiver antenna model lacks
+    //     ATX PCO/PCV data for a component signal (elevation-dependent
+    //     PCV residual cannot be absorbed by the constant float ambiguity).
+    //  Set to 1.0 to disable.  100.0 is a reasonable default.
+    "no_bia_code_downweight": 1.0,
+
+    // --- Cycle-slip detection -----------------------------------------------
+    "enable_if_slip_detector": false, // [PPP-RTK] MW detector is primary
+    // "enable_if_slip_detector": true,               // [PPP] IF double-diff detector, very experimental
+
+    "accumulate_phase_windup": false,
+
+    // --- Between-satellite single differencing (BSSD) ----------------------
+    //  Eliminates receiver clock/ISB AND receiver IFB (all common biases).
+    //  Works with any number of frequency bands.  Undifferenced mode keeps
+    //  clock/ISB observable so IFB can be estimated independently.
+    "between_satellite_sd": {
+      "enabled": true, // [PPP-RTK] [PPP-RTK-3F] BSSD on
+      //"enabled": false,                            // [PPP] BSSD off
+      // "enabled": false,                            // [PPP-RTK-UD] undifferenced (IFB observable)
+      "pivot_min_elevation": 35.0
+    },
+
+    // --- Ambiguity resolution -----------------------------------------------
+    "ambiguity_resolution": {
+      "mode": 0, // 0=float, 1=continuous, 2=instantaneous, 3=fix-and-hold
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    }
   },
-  "process_noise": {
-    "position_q": 1e2,
-    "clock_bias_q": 1e3,
-    "phase_clock_q": 1e-9,
-    "troposphere_q": 1e-8,
-    "ionosphere_q": 0.1,
-    "code_bias_q": 1e-4,
-    "system_time_offset_q": 1e-12,
-    "tropo_gradient_q": 5e-12,
-    "velocity_q": 1e2
+
+  // =================================================================
+  //  Kalman filter tuning
+  // =================================================================
+  "filter": {
+    "process_noise": {
+      "position_q": 1e2,
+
+      // --- Clock process noise ----------------------------------------------
+      "clock_bias_q": 1e3,                            // [PPP-RTK] BSSD eliminates clock; value less critical
+      // "clock_bias_q": 1e8,                          // [PPP] white-noise clock (unconstrained each epoch)
+      // "clock_bias_q": 1e8,                          // [PPP-RTK-UD] undifferenced — white-noise clock
+
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-8,
+
+      // --- Ionosphere process noise -----------------------------------------
+      "ionosphere_q": 0.03,                           // [PPP-RTK] per-sat slant iono random walk
+      // "ionosphere_q": 0.0,                          // [PPP] not used (iono-free eliminates iono)
+
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-10,                            // per-satellite signal bias (nearly constant)
+      "phase_bias_q": 1e-6,                             // relaxed ambiguity for phase IF without full ATX/BIA
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "velocity_q": 1e2
+    },
+    "initial_std": {
+      "position": 1e3,
+      "velocity": 100.0,
+      "clock": 1e3,
+      "troposphere": 0.5,
+
+      // --- Ionosphere initial std -------------------------------------------
+      "ionosphere": 5.0,                              // [PPP-RTK] per-sat slant iono uncertainty
+      // "ionosphere": 0.0,                            // [PPP] unused
+
+      "ambiguity": 1e3,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1e3,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.002,
+      "doppler_std_m": 0.5
+    },
+    "stochastic_model": "elevation",
+    "snr_model_params": {
+      "code_a": 0.30,
+      "code_b": 300.0,
+      "phase_a": 0.002,
+      "phase_b": 0.3,
+      "snr_floor_dbhz": 20.0,
+      "snr_ceil_dbhz": 55.0
+    }
   },
-  "initial_std": {
-    "position": 1e3,
-    "velocity": 100.0,
-    "clock": 1e3,
-    "troposphere": 0.5,
-    "ionosphere": 5.0,
-    "ambiguity": 1e3,
-    "code_bias": 10.0,
-    "system_time_offset": 1e3,
-    "tropo_gradient": 0.001
-  },
-  "zhd_pressure_mbar": 1013.25,
-  "zhd_temp_kelvin": 288.15,
-  "signal_priorities": {
-    "GPS": "WCSLXPYMIQ",
-    "Galileo": "CBXIQ",
-    "GLONASS": "CPIXQ",
-    "BeiDou": "IDPXQZ",
-    "QZSS": "CSLXIQDEX",
-    "SBAS": "CXIQ"
-  },
+
+  // =================================================================
+  //  Model corrections  (typically identical for PPP and PPP-RTK)
+  // =================================================================
   "model_corrections": {
     "enable_troposphere": true,
     "enable_relativistic_correction": true,
@@ -85,19 +202,35 @@
     "enable_phase_windup": true,
     "enable_code_phase_bias": true
   },
-  "stochastic_model": "elevation",
-  "snr_model_params": {
-    "code_a": 0.30,
-    "code_b": 300.0,
-    "phase_a": 0.002,
-    "phase_b": 0.3,
-    "snr_floor_dbhz": 20.0,
-    "snr_ceil_dbhz": 55.0
+
+  // =================================================================
+  //  Receiver
+  // =================================================================
+  "receiver": {
+    "antenna_orientation": {
+      "azimuth_deg": 0.0,
+      "elevation_deg": 90.0
+    },
+    "zhd_pressure_mbar": 1013.25,
+    "zhd_temp_kelvin": 288.15
   },
-  "enable_imu": false,
-  "imu_config": {
+
+  // =================================================================
+  //  File paths
+  // =================================================================
+  "files": {
+    "observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+    "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
+    "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt"
+  },
+
+  // =================================================================
+  //  IMU
+  // =================================================================
+  "imu": {
+    "enabled": false,
+    "coupling_mode": "loosely_coupled",
     "imu_file_path": "",
-    "imu_coupling_mode": "loosely_coupled",
     "accel_noise_density": 0.05,
     "gyro_noise_density": 5e-4,
     "accel_bias_instability": 1e-4,
@@ -106,6 +239,10 @@
     "initial_gyro_bias_std": 1e-3,
     "initial_attitude_std": 0.1
   },
+
+  // =================================================================
+  //  Data download
+  // =================================================================
   "data_download": {
     "enabled": true,
     "data_root": "C:/GnssProcessorSupport/products",
@@ -122,7 +259,11 @@
     "nc_path": "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
     "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe"
   },
-  "realtime_config": {
+
+  // =================================================================
+  //  Real-time streaming
+  // =================================================================
+  "realtime": {
     "ntrip_host": "",
     "ntrip_port": 2101,
     "ntrip_mountpoint": "",

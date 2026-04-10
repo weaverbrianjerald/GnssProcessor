@@ -118,6 +118,21 @@ namespace GnssProcessor {
 		 * getAntennaCorrection().
 		 */
 		void dumpAntennaModels() const;
+
+		/**
+		 * @brief Check whether the receiver antenna model has ATX coverage
+		 *        for a given signal.
+		 *
+		 * Maps the RINEX signal code (e.g. "L5Q") to the ATX frequency
+		 * key (e.g. "G05") using the same logic as getAntennaCorrection(),
+		 * then checks whether the matched receiver antenna entry has a PCO
+		 * vector for that key.
+		 *
+		 * @param signal  RINEX observation code (e.g. "L5Q", "C7Q").
+		 * @param system  GNSS system of the observation.
+		 * @return True if the receiver antenna has PCO data for this signal's frequency.
+		 */
+		bool hasReceiverAtxEntry(const std::string& signal, System system) const;
 	private:
 		/** @brief Logger for informational and diagnostic messages. */
 		LogManager& log_manager_;

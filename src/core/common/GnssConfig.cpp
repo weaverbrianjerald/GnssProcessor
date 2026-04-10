@@ -4,8 +4,14 @@
  *
  * Organization:
  *  - String / enum helpers
+ *  - Backward-compatible JSON accessors
  *  - loadFromJson  (grouped by parsing section)
  *  - getProductPath
+ *
+ * The parser accepts both the new hierarchical JSON layout and the
+ * legacy flat layout.  Each setting is read through a helper that
+ * tries the new nested path first, then falls back to the old
+ * top-level key so that existing config files keep working.
  */
 
 #include "GnssConfig.hpp"
@@ -30,6 +36,46 @@ namespace GnssProcessor {
             for (const auto& s : v) { if (!r.empty()) r += sep; r += s; }
             return r;
         }
+
+        /// Navigate into a nested JSON object using a dot-separated path.
+        /// Returns a pointer to the value, or nullptr if any segment is missing.
+        const nlohmann::json* resolvePath(const nlohmann::json& root, const std::string& dotPath) {
+            const nlohmann::json* node = &root;
+            std::string::size_type start = 0;
+            while (start < dotPath.size()) {
+                auto dot = dotPath.find('.', start);
+                auto key = dotPath.substr(start, dot - start);
+                if (!node->is_object() || !node->contains(key)) return nullptr;
+                node = &(*node)[key];
+                start = (dot == std::string::npos) ? dotPath.size() : dot + 1;
+            }
+            return node;
+        }
+
+        /// Read a scalar value from JSON trying `newPath` (dot-separated) first,
+        /// then `legacyKey` (top-level), then returning `defaultVal`.
+        template <typename T>
+        T jval(const nlohmann::json& root, const std::string& newPath,
+               const std::string& legacyKey, const T& defaultVal) {
+            if (auto* p = resolvePath(root, newPath))
+                return p->get<T>();
+            if (!legacyKey.empty() && root.contains(legacyKey))
+                return root[legacyKey].get<T>();
+            return defaultVal;
+        }
+
+        /// Return a reference to a nested JSON object (new path or legacy key).
+        /// Falls back to an empty static object.
+        const nlohmann::json& jsection(const nlohmann::json& root,
+                                       const std::string& newPath,
+                                       const std::string& legacyKey = "") {
+            if (auto* p = resolvePath(root, newPath))
+                return *p;
+            if (!legacyKey.empty() && root.contains(legacyKey))
+                return root[legacyKey];
+            static const nlohmann::json empty = nlohmann::json::object();
+            return empty;
+        }
     }
 
     // =================================================================
@@ -44,17 +90,19 @@ namespace GnssProcessor {
                 return false;
             }
 
-            nlohmann::json json;
-            file >> json;
+            nlohmann::json json = nlohmann::json::parse(file,
+                /*callback=*/ nullptr, /*allow_exceptions=*/ true, /*ignore_comments=*/ true);
             auto log = log_manager.getLogger("gnss_config");
 
-            // --- Processing mode ---
-            std::string mode = json.value("processing_mode", "PPP");
-            processing_mode_ = (mode == "PPP-RTK") ? ProcessingMode::PPP_RTK : ProcessingMode::PPP;
-
-            // --- Signal mode ---
+            // =============================================================
+            //  Section: processing
+            // =============================================================
             {
-                std::string raw = json.value("signal_mode", "Dual");
+                std::string mode = jval<std::string>(json, "processing.mode", "processing_mode", "PPP");
+                processing_mode_ = (mode == "PPP-RTK") ? ProcessingMode::PPP_RTK : ProcessingMode::PPP;
+            }
+            {
+                std::string raw = jval<std::string>(json, "processing.signal_mode", "signal_mode", "Dual");
                 std::string low = toLower(raw);
                 if      (low == "dual")   signal_mode_ = SignalMode::Dual;
                 else if (low == "triple") signal_mode_ = SignalMode::Triple;
@@ -62,119 +110,69 @@ namespace GnssProcessor {
                 else { log->warn("Invalid signal_mode '{}', defaulting to Dual", raw); signal_mode_ = SignalMode::Dual; }
                 log->info("Signal mode: {}", raw);
             }
-
-            // --- Satellite position/velocity interpolation ---
             {
-                std::string raw = json.value("satellite_interpolation_mode", "Lagrange");
+                std::string raw = jval<std::string>(json, "processing.satellite_interpolation_mode",
+                                                     "satellite_interpolation_mode", "Lagrange");
                 std::string low = toLower(raw);
                 if      (low == "lagrange") satellite_interpolation_mode_ = SatelliteInterpolationMode::Lagrange;
                 else if (low == "finite")   satellite_interpolation_mode_ = SatelliteInterpolationMode::Finite;
                 else if (low == "hermite")  satellite_interpolation_mode_ = SatelliteInterpolationMode::Hermite;
                 else if (low == "spline")   satellite_interpolation_mode_ = SatelliteInterpolationMode::Spline;
-                else { log->warn("Invalid satellite_interpolation_mode '{}', defaulting to Lagrange", raw); satellite_interpolation_mode_ = SatelliteInterpolationMode::Lagrange; }
+                else { log->warn("Invalid satellite_interpolation_mode '{}', defaulting to Lagrange", raw);
+                       satellite_interpolation_mode_ = SatelliteInterpolationMode::Lagrange; }
                 log->info("Satellite Pos Vel interpolation mode: {}", raw);
             }
-
-            // --- Satellite clock interpolation ---
             {
-                std::string raw = json.value("satellite_clock_interpolation_mode", "Linear");
+                std::string raw = jval<std::string>(json, "processing.satellite_clock_interpolation_mode",
+                                                     "satellite_clock_interpolation_mode", "Linear");
                 std::string low = toLower(raw);
                 if      (low == "linear")   satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
                 else if (low == "lagrange") satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Lagrange;
-                else { log->warn("Invalid satellite_clock_interpolation_mode '{}', defaulting to Linear", raw); satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear; }
+                else { log->warn("Invalid satellite_clock_interpolation_mode '{}', defaulting to Linear", raw);
+                       satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear; }
                 log->info("Satellite Clock interpolation mode: {}", raw);
             }
 
-            // --- Scalar parameters ---
-            uncombined_enabled_ = json.value("uncombined_enabled", false);
+            uncombined_enabled_ = jval<bool>(json, "processing.uncombined_enabled", "uncombined_enabled", false);
             if (processing_mode_ == ProcessingMode::PPP_RTK) {
                 uncombined_enabled_ = true;
                 log->info("PPP-RTK mode: forcing uncombined_enabled=true");
             }
-            elevation_mask_deg_ = json.value("elevation_mask_deg", 10.0);
+            elevation_mask_deg_ = jval<double>(json, "processing.elevation_mask_deg", "elevation_mask_deg", 10.0);
+            leap_seconds_tai_   = jval<double>(json, "processing.leap_seconds_tai", "leap_seconds_tai", 37.0);
 
-            // --- Antenna orientation ---
-            receiver_antenna_orientation_.azimuth_deg = json["receiver_antenna_orientation"].value("azimuth_deg", 0.0);
-            receiver_antenna_orientation_.elevation_deg = json["receiver_antenna_orientation"].value("elevation_deg", 90.0);
+            // Relinearize geometry lives under processing (it affects the model loop).
+            relinearize_geometry_ = jval<bool>(json, "processing.relinearize_geometry", "relinearize_geometry", false);
 
-            // --- Process noise spectral densities (m²/s) ---
+            // Active systems
+            active_systems_.clear();
             {
-                const auto& pn = json["process_noise"];
-                process_noise_.position            = pn.value("position_q", 0.0);
-                process_noise_.clock               = pn.value("clock_bias_q", 1e4);
-                process_noise_.troposphere         = pn.value("troposphere_q", 1e-8);
-                process_noise_.ionosphere          = pn.value("ionosphere_q", 0.10);
-                process_noise_.system_time_offset  = pn.value("system_time_offset_q", 1e-7);
-                process_noise_.code_bias           = pn.value("code_bias_q", 1e-4);
-                process_noise_.tropo_gradient      = pn.value("tropo_gradient_q", 5e-12);
-                process_noise_.phase_clock         = pn.value("phase_clock_q", 1e-9);
-                process_noise_.velocity            = pn.value("velocity_q", 1e2);
+                const auto& arr = jsection(json, "processing.active_systems", "active_systems");
+                if (arr.is_array())
+                    active_systems_ = arr.get<std::vector<std::string>>();
             }
-
-            // --- Initial standard deviations ---
-            {
-                const auto& is = json["initial_std"];
-                initial_std_.position            = is.value("position", 1e2);
-                initial_std_.velocity            = is.value("velocity", 1e2);
-                initial_std_.clock               = is.value("clock", 1e3);
-                initial_std_.troposphere         = is.value("troposphere", 0.5);
-                initial_std_.ionosphere          = is.value("ionosphere", 5.0);
-                initial_std_.ambiguity           = is.value("ambiguity", 1e3);
-                initial_std_.system_time_offset  = is.value("system_time_offset", 1e3);
-                initial_std_.code_bias           = is.value("code_bias", 10.0);
-                initial_std_.tropo_gradient      = is.value("tropo_gradient", 1e-3);
-                initial_std_.phase_clock         = is.value("phase_clock", 1e3);
-            }
-
-            // --- Default measurement noise ---
-            if (json.contains("default_measurement_noise")) {
-                const auto& j = json["default_measurement_noise"];
-                default_meas_noise_.code_std_m  = j.value("code_std_m", 0.600);
-                default_meas_noise_.phase_std_m = j.value("phase_std_m", 0.002);
-                default_meas_noise_.doppler_std_m = j.value("doppler_std_m", 0.5);
+            if (active_systems_.empty()) {
+                active_systems_ = { "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS" };
+                log->info("No active systems specified, using default: GPS, Galileo, GLONASS, BeiDou, QZSS, SBAS");
             } else {
-                default_meas_noise_.code_std_m  = 0.600;
-                default_meas_noise_.phase_std_m = 0.002;
-                default_meas_noise_.doppler_std_m = 0.5;
-            }
-            log->info("Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m, doppler_std={:.3f} Hz",
-                default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m, default_meas_noise_.doppler_std_m);
-
-            // --- Boolean toggles ---
-            estimate_tropo_gradients_   = json.value("estimate_tropo_gradients", false);
-            relinearize_geometry_       = json.value("relinearize_geometry", false);
-            estimate_phase_clock_       = json.value("estimate_phase_clock", false);
-            enable_if_slip_detector_    = json.value("enable_if_slip_detector", true);
-            accumulate_phase_windup_    = json.value("accumulate_phase_windup", false);
-            enable_between_satellite_sd_ = json.value("enable_between_satellite_sd", false);
-            estimate_velocity_           = json.value("estimate_velocity", false);
-            estimate_ifb_                = json.value("estimate_ifb", true);
-
-            ar_mode_                = json.value("ar_mode", 0);
-            ar_ratio_threshold_     = json.value("ar_ratio_threshold", 3.0);
-            ar_elevation_mask_      = json.value("ar_elevation_mask", 20.0);
-            ar_hold_variance_       = json.value("ar_hold_variance", 0.001);
-
-            if (uncombined_enabled_ && !estimate_phase_clock_) {
-                estimate_phase_clock_ = true;
-                log->info("Uncombined mode: forcing estimate_phase_clock=true "
-                    "(required to separate code/phase receiver hardware delays)");
+                for (const auto& system : active_systems_)
+                    if (system != "GPS" && system != "Galileo" && system != "GLONASS" &&
+                        system != "BeiDou" && system != "QZSS" && system != "SBAS")
+                        log->warn("Unknown system in active_systems: {}", system);
+                log->info("Active systems: {}", joinStrings(active_systems_));
             }
 
-            log->info("Toggles: tropo_grad={}, relin_geom={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, imu={}",
-                estimate_tropo_gradients_ ? "on" : "off",
-                relinearize_geometry_     ? "on" : "off",
-                estimate_phase_clock_     ? "on" : "off",
-                enable_if_slip_detector_  ? "on" : "off",
-                accumulate_phase_windup_  ? "on" : "off",
-                enable_between_satellite_sd_ ? "on" : "off",
-                estimate_velocity_        ? "on" : "off",
-                estimate_ifb_             ? "on" : "off",
-                imu_config_.enabled
-                    ? (imu_config_.coupling_mode == ImuCouplingMode::TightCoupled ? "tight" : "loose")
-                    : "off");
+            // Excluded satellites
+            excluded_satellites_.clear();
+            {
+                const auto& arr = jsection(json, "processing.excluded_satellites", "excluded_satellites");
+                if (arr.is_array())
+                    excluded_satellites_ = arr.get<std::vector<std::string>>();
+            }
+            if (!excluded_satellites_.empty())
+                log->info("Excluded satellites: {}", joinStrings(excluded_satellites_));
 
-            // --- Signal priorities ---
+            // Signal priorities
             static const std::map<std::string, std::vector<char>> system_bands = {
                 {"GPS",     {'1','2','5'}},
                 {"Galileo", {'1','5','7','6','8'}},
@@ -186,104 +184,164 @@ namespace GnssProcessor {
             static const char obs_types[] = {'C','L','D','S'};
 
             signal_priorities_.clear();
-            if (json.contains("signal_priorities")) {
-                for (const auto& [system, value] : json["signal_priorities"].items()) {
-                    if (value.is_string()) {
-                        std::string attrs = value.get<std::string>();
-                        auto bands_it = system_bands.find(system);
-                        if (bands_it == system_bands.end()) {
-                            log->warn("No band definition for system '{}', skipping signal priorities", system);
-                            continue;
+            {
+                const auto& sp = jsection(json, "processing.signal_priorities", "signal_priorities");
+                if (sp.is_object()) {
+                    for (const auto& [system, value] : sp.items()) {
+                        if (value.is_string()) {
+                            std::string attrs = value.get<std::string>();
+                            auto bands_it = system_bands.find(system);
+                            if (bands_it == system_bands.end()) {
+                                log->warn("No band definition for system '{}', skipping signal priorities", system);
+                                continue;
+                            }
+                            std::vector<std::string> expanded;
+                            for (char band : bands_it->second)
+                                for (char ot : obs_types)
+                                    for (char attr : attrs)
+                                        expanded.push_back(std::string{ot, band, attr});
+                            signal_priorities_[system] = std::move(expanded);
+                        } else if (value.is_array()) {
+                            signal_priorities_[system] = value.get<std::vector<std::string>>();
                         }
-                        std::vector<std::string> expanded;
-                        for (char band : bands_it->second)
-                            for (char ot : obs_types)
-                                for (char attr : attrs)
-                                    expanded.push_back(std::string{ot, band, attr});
-                        signal_priorities_[system] = std::move(expanded);
-                    } else if (value.is_array()) {
-                        signal_priorities_[system] = value.get<std::vector<std::string>>();
                     }
                 }
             }
 
-            // --- Active systems ---
-            active_systems_.clear();
-            if (json.contains("active_systems")) {
-                active_systems_ = json["active_systems"].get<std::vector<std::string>>();
-                for (const auto& system : active_systems_)
-                    if (system != "GPS" && system != "Galileo" && system != "GLONASS" &&
-                        system != "BeiDou" && system != "QZSS" && system != "SBAS")
-                        log_manager.getLogger()->warn("Unknown system in active_systems: {}", system);
-            }
-            if (active_systems_.empty()) {
-                active_systems_ = { "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS" };
-                log_manager.getLogger()->info("No active systems specified, using default: GPS, Galileo, GLONASS, BeiDou, QZSS, SBAS");
-            } else {
-                log_manager.getLogger()->info("Active systems: {}", joinStrings(active_systems_));
-            }
+            // =============================================================
+            //  Section: estimation
+            // =============================================================
+            estimate_tropo_gradients_ = jval<bool>(json, "estimation.estimate_tropo_gradients",
+                                                    "estimate_tropo_gradients", false);
+            estimate_phase_clock_     = jval<bool>(json, "estimation.estimate_phase_clock",
+                                                    "estimate_phase_clock", false);
+            estimate_velocity_        = jval<bool>(json, "estimation.estimate_velocity",
+                                                    "estimate_velocity", false);
+            estimate_ifb_             = jval<bool>(json, "estimation.estimate_ifb",
+                                                    "estimate_ifb", true);
+            lock_signals_to_clock_ref_ = jval<bool>(json, "estimation.lock_signals_to_clock_ref",
+                                                     "lock_signals_to_clock_ref", true);
+            require_bia_for_signals_   = jval<bool>(json, "estimation.require_bia_for_signals",
+                                                     "require_bia_for_signals", true);
+            estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
+                                                     "estimate_sat_biases", false);
+            no_bia_code_downweight_    = jval<double>(json, "estimation.no_bia_code_downweight",
+                                                      "no_bia_code_downweight", 100.0);
+            if (no_bia_code_downweight_ < 1.0) no_bia_code_downweight_ = 1.0;
+            enable_if_slip_detector_  = jval<bool>(json, "estimation.enable_if_slip_detector",
+                                                    "enable_if_slip_detector", true);
+            accumulate_phase_windup_  = jval<bool>(json, "estimation.accumulate_phase_windup",
+                                                    "accumulate_phase_windup", false);
 
-            // --- File paths ---
-            observation_path_ = json.value("observation_path", "");
-            navigation_path_ = json.value("navigation_path", "");
-            if (observation_path_.empty() || !std::filesystem::exists(observation_path_)) {
-                log_manager.getLogger()->warn("Invalid or missing observation RINEX file path: {}", observation_path_.string());
-                observation_path_ = "C:/GnssProcessorSupport/products/rnx/GCGO_20241290000_01D_30S_5Epochs.rnx";
-            }
-            if (navigation_path_.empty() || !std::filesystem::exists(navigation_path_)) {
-                log_manager.getLogger()->warn("Invalid or missing navigation RINEX file path: {}", navigation_path_.string());
-                navigation_path_ = "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx";
-            }
+            // Between-satellite single differencing
+            enable_between_satellite_sd_ = jval<bool>(json, "estimation.between_satellite_sd.enabled",
+                                                       "enable_between_satellite_sd", false);
+            bssd_pivot_min_elevation_deg_ = jval<double>(json, "estimation.between_satellite_sd.pivot_min_elevation",
+                                                          "bssd_pivot_min_elevation", 45.0);
 
-            // --- Product list ---
-            product_list_path_ = json.value("product_list_path", "");
-            if (!product_list_path_.empty() && std::filesystem::exists(product_list_path_)) {
-                std::ifstream product_file(product_list_path_);
-                std::string line;
-                while (std::getline(product_file, line)) {
-                    line.erase(line.find_last_not_of(" \t\r\n") + 1);
-                    if (!line.empty()) product_paths_.push_back(line);
-                }
-            } else {
-                log_manager.getLogger()->warn("Invalid or missing product list path: {}", product_list_path_.string());
-            }
+            // Ambiguity resolution
+            ar_mode_            = jval<int>(json, "estimation.ambiguity_resolution.mode",
+                                            "ar_mode", 0);
+            ar_ratio_threshold_ = jval<double>(json, "estimation.ambiguity_resolution.ratio_threshold",
+                                                "ar_ratio_threshold", 3.0);
+            ar_elevation_mask_  = jval<double>(json, "estimation.ambiguity_resolution.elevation_mask",
+                                                "ar_elevation_mask", 20.0);
+            ar_hold_variance_   = jval<double>(json, "estimation.ambiguity_resolution.hold_variance",
+                                                "ar_hold_variance", 0.001);
 
-            // --- Troposphere defaults ---
-            zhd_pressure_mbar = json.value("zhd_pressure_mbar", 1013.25);
-            zhd_temp_kelvin   = json.value("zhd_temp_kelvin", 288.15);
-            log->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
-
-            // --- Leap seconds ---
-            leap_seconds_tai_ = json.value("leap_seconds_tai", 37.0);
-
-            // --- Ocean tidal loading BLQ ---
-            std::string otl_path_str = json.value("otl_blq_path", "");
-            if (!otl_path_str.empty()) {
-                otl_blq_path_ = otl_path_str;
-                if (std::filesystem::exists(otl_blq_path_))
-                    log->info("OTL BLQ file: {}", otl_blq_path_.string());
-                else {
-                    log->warn("OTL BLQ file not found: {}", otl_blq_path_.string());
-                    otl_blq_path_.clear();
-                }
+            if (uncombined_enabled_ && !estimate_phase_clock_) {
+                estimate_phase_clock_ = true;
+                log->info("Uncombined mode: forcing estimate_phase_clock=true "
+                    "(required to separate code/phase receiver hardware delays)");
             }
 
-            // --- Reference position (optional) ---
-            if (json.contains("reference_position_ecef")) {
-                const auto& rp = json["reference_position_ecef"];
-                if (rp.is_object() && rp.contains("x") && rp.contains("y") && rp.contains("z")) {
-                    reference_position_ecef_ = { rp.value("x", 0.0), rp.value("y", 0.0), rp.value("z", 0.0) };
-                    has_reference_position_ = true;
-                    log->info("Reference position ECEF: ({:.4f}, {:.4f}, {:.4f}) m",
-                        reference_position_ecef_[0], reference_position_ecef_[1], reference_position_ecef_[2]);
-                } else {
-                    log->warn("reference_position_ecef present but missing x/y/z fields — ignored");
-                }
+            log->info("Toggles: tropo_grad={}, relin_geom={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}",
+                estimate_tropo_gradients_ ? "on" : "off",
+                relinearize_geometry_     ? "on" : "off",
+                estimate_phase_clock_     ? "on" : "off",
+                enable_if_slip_detector_  ? "on" : "off",
+                accumulate_phase_windup_  ? "on" : "off",
+                enable_between_satellite_sd_ ? "on" : "off",
+                estimate_velocity_        ? "on" : "off",
+                estimate_ifb_             ? "on" : "off",
+                lock_signals_to_clock_ref_ ? "on" : "off",
+                require_bia_for_signals_  ? "on" : "off",
+                estimate_sat_biases_      ? "on" : "off",
+                no_bia_code_downweight_,
+                imu_config_.enabled
+                    ? (imu_config_.coupling_mode == ImuCouplingMode::TightCoupled ? "tight" : "loose")
+                    : "off");
+
+            // =============================================================
+            //  Section: filter
+            // =============================================================
+            {
+                const auto& pn = jsection(json, "filter.process_noise", "process_noise");
+                process_noise_.position            = pn.value("position_q", 0.0);
+                process_noise_.clock               = pn.value("clock_bias_q", 1e4);
+                process_noise_.troposphere         = pn.value("troposphere_q", 1e-8);
+                process_noise_.ionosphere          = pn.value("ionosphere_q", 0.10);
+                process_noise_.system_time_offset  = pn.value("system_time_offset_q", 1e-7);
+                process_noise_.code_bias           = pn.value("code_bias_q", 1e-4);
+                process_noise_.tropo_gradient      = pn.value("tropo_gradient_q", 5e-12);
+                process_noise_.phase_clock         = pn.value("phase_clock_q", 1e-9);
+                process_noise_.velocity            = pn.value("velocity_q", 1e2);
+                process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+                process_noise_.phase_bias           = pn.value("phase_bias_q", 1e-6);
+            }
+            {
+                const auto& is = jsection(json, "filter.initial_std", "initial_std");
+                initial_std_.position            = is.value("position", 1e2);
+                initial_std_.velocity            = is.value("velocity", 1e2);
+                initial_std_.clock               = is.value("clock", 1e3);
+                initial_std_.troposphere         = is.value("troposphere", 0.5);
+                initial_std_.ionosphere          = is.value("ionosphere", 5.0);
+                initial_std_.ambiguity           = is.value("ambiguity", 1e3);
+                initial_std_.system_time_offset  = is.value("system_time_offset", 1e3);
+                initial_std_.code_bias           = is.value("code_bias", 10.0);
+                initial_std_.tropo_gradient      = is.value("tropo_gradient", 1e-3);
+                initial_std_.phase_clock         = is.value("phase_clock", 1e3);
+                initial_std_.sat_bias            = is.value("sat_bias", 10.0);
+            }
+            {
+                const auto& mn = jsection(json, "filter.measurement_noise", "default_measurement_noise");
+                default_meas_noise_.code_std_m    = mn.value("code_std_m", 0.600);
+                default_meas_noise_.phase_std_m   = mn.value("phase_std_m", 0.002);
+                default_meas_noise_.doppler_std_m = mn.value("doppler_std_m", 0.5);
+            }
+            log->info("Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m, doppler_std={:.3f} Hz",
+                default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m, default_meas_noise_.doppler_std_m);
+
+            // Stochastic model
+            {
+                std::string raw = jval<std::string>(json, "filter.stochastic_model", "stochastic_model", "elevation");
+                std::string low = toLower(raw);
+                if      (low == "constant")  stochastic_model_ = StochasticModelType::Constant;
+                else if (low == "elevation") stochastic_model_ = StochasticModelType::Elevation;
+                else if (low == "snr")       stochastic_model_ = StochasticModelType::SNR;
+                else { log->warn("Invalid stochastic_model '{}', defaulting to Elevation", raw);
+                       stochastic_model_ = StochasticModelType::Elevation; }
+                log->info("Stochastic model: {}", raw);
+            }
+            {
+                const auto& sp = jsection(json, "filter.snr_model_params", "snr_model_params");
+                snr_model_params_.code_a         = sp.value("code_a", 0.30);
+                snr_model_params_.code_b         = sp.value("code_b", 300.0);
+                snr_model_params_.phase_a        = sp.value("phase_a", 0.002);
+                snr_model_params_.phase_b        = sp.value("phase_b", 0.3);
+                snr_model_params_.snr_floor_dbhz = sp.value("snr_floor_dbhz", 20.0);
+                snr_model_params_.snr_ceil_dbhz  = sp.value("snr_ceil_dbhz", 55.0);
+                log->info("SNR model params: code_a={:.3f}, code_b={:.1f}, phase_a={:.4f}, phase_b={:.3f}, floor={:.0f} dBHz, ceil={:.0f} dBHz",
+                    snr_model_params_.code_a, snr_model_params_.code_b,
+                    snr_model_params_.phase_a, snr_model_params_.phase_b,
+                    snr_model_params_.snr_floor_dbhz, snr_model_params_.snr_ceil_dbhz);
             }
 
-            // --- Model correction flags ---
-            if (json.contains("model_corrections")) {
-                const auto& mc = json["model_corrections"];
+            // =============================================================
+            //  Section: model_corrections  (unchanged leaf keys)
+            // =============================================================
+            {
+                const auto& mc = jsection(json, "model_corrections", "model_corrections");
                 model_corrections_.enable_troposphere              = mc.value("enable_troposphere", true);
                 model_corrections_.enable_relativistic_correction = mc.value("enable_relativistic_correction", true);
                 model_corrections_.enable_shapiro_delay           = mc.value("enable_shapiro_delay", true);
@@ -314,44 +372,84 @@ namespace GnssProcessor {
                 model_corrections_.enable_phase_windup            ? "on" : "off",
                 model_corrections_.enable_code_phase_bias        ? "on" : "off");
 
-            // --- Stochastic model ---
+            // =============================================================
+            //  Section: receiver
+            // =============================================================
             {
-                std::string raw = json.value("stochastic_model", "elevation");
-                std::string low = toLower(raw);
-                if      (low == "constant")  stochastic_model_ = StochasticModelType::Constant;
-                else if (low == "elevation") stochastic_model_ = StochasticModelType::Elevation;
-                else if (low == "snr")       stochastic_model_ = StochasticModelType::SNR;
-                else { log->warn("Invalid stochastic_model '{}', defaulting to Elevation", raw); stochastic_model_ = StochasticModelType::Elevation; }
-                log->info("Stochastic model: {}", raw);
+                const auto& ao = jsection(json, "receiver.antenna_orientation", "receiver_antenna_orientation");
+                receiver_antenna_orientation_.azimuth_deg   = ao.value("azimuth_deg", 0.0);
+                receiver_antenna_orientation_.elevation_deg = ao.value("elevation_deg", 90.0);
             }
-            if (json.contains("snr_model_params")) {
-                const auto& sp = json["snr_model_params"];
-                snr_model_params_.code_a        = sp.value("code_a", 0.30);
-                snr_model_params_.code_b        = sp.value("code_b", 300.0);
-                snr_model_params_.phase_a       = sp.value("phase_a", 0.002);
-                snr_model_params_.phase_b       = sp.value("phase_b", 0.3);
-                snr_model_params_.snr_floor_dbhz = sp.value("snr_floor_dbhz", 20.0);
-                snr_model_params_.snr_ceil_dbhz  = sp.value("snr_ceil_dbhz", 55.0);
-                log->info("SNR model params: code_a={:.3f}, code_b={:.1f}, phase_a={:.4f}, phase_b={:.3f}, floor={:.0f} dBHz, ceil={:.0f} dBHz",
-                    snr_model_params_.code_a, snr_model_params_.code_b,
-                    snr_model_params_.phase_a, snr_model_params_.phase_b,
-                    snr_model_params_.snr_floor_dbhz, snr_model_params_.snr_ceil_dbhz);
+            zhd_pressure_mbar = jval<double>(json, "receiver.zhd_pressure_mbar", "zhd_pressure_mbar", 1013.25);
+            zhd_temp_kelvin   = jval<double>(json, "receiver.zhd_temp_kelvin", "zhd_temp_kelvin", 288.15);
+            log->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
+
+            // Reference position (optional)
+            {
+                const auto& rp = jsection(json, "receiver.reference_position_ecef", "reference_position_ecef");
+                if (rp.is_object() && rp.contains("x") && rp.contains("y") && rp.contains("z")) {
+                    reference_position_ecef_ = { rp.value("x", 0.0), rp.value("y", 0.0), rp.value("z", 0.0) };
+                    has_reference_position_ = true;
+                    log->info("Reference position ECEF: ({:.4f}, {:.4f}, {:.4f}) m",
+                        reference_position_ecef_[0], reference_position_ecef_[1], reference_position_ecef_[2]);
+                }
             }
 
-            // --- IMU configuration ---
-            imu_config_.enabled = json.value("enable_imu", false);
-            if (json.contains("imu_config")) {
-                const auto& ic = json["imu_config"];
+            // =============================================================
+            //  Section: files
+            // =============================================================
+            observation_path_ = jval<std::string>(json, "files.observation_path", "observation_path", "");
+            navigation_path_  = jval<std::string>(json, "files.navigation_path", "navigation_path", "");
+            if (observation_path_.empty() || !std::filesystem::exists(observation_path_)) {
+                log->warn("Invalid or missing observation RINEX file path: {}", observation_path_.string());
+                observation_path_ = "C:/GnssProcessorSupport/products/rnx/GCGO_20241290000_01D_30S_5Epochs.rnx";
+            }
+            if (navigation_path_.empty() || !std::filesystem::exists(navigation_path_)) {
+                log->warn("Invalid or missing navigation RINEX file path: {}", navigation_path_.string());
+                navigation_path_ = "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx";
+            }
+
+            product_list_path_ = jval<std::string>(json, "files.product_list_path", "product_list_path", "");
+            if (!product_list_path_.empty() && std::filesystem::exists(product_list_path_)) {
+                std::ifstream product_file(product_list_path_);
+                std::string line;
+                while (std::getline(product_file, line)) {
+                    line.erase(line.find_last_not_of(" \t\r\n") + 1);
+                    if (!line.empty()) product_paths_.push_back(line);
+                }
+            } else {
+                log->warn("Invalid or missing product list path: {}", product_list_path_.string());
+            }
+
+            // Ocean tidal loading BLQ
+            {
+                std::string otl_path_str = jval<std::string>(json, "files.otl_blq_path", "otl_blq_path", "");
+                if (!otl_path_str.empty()) {
+                    otl_blq_path_ = otl_path_str;
+                    if (std::filesystem::exists(otl_blq_path_))
+                        log->info("OTL BLQ file: {}", otl_blq_path_.string());
+                    else {
+                        log->warn("OTL BLQ file not found: {}", otl_blq_path_.string());
+                        otl_blq_path_.clear();
+                    }
+                }
+            }
+
+            // =============================================================
+            //  Section: imu
+            // =============================================================
+            {
+                const auto& ic = jsection(json, "imu", "imu_config");
+                imu_config_.enabled = jval<bool>(json, "imu.enabled", "enable_imu", false);
                 std::string imu_path_str = ic.value("imu_file_path", "");
                 if (!imu_path_str.empty()) {
                     imu_config_.imu_file_path = imu_path_str;
-                    if (!std::filesystem::exists(imu_config_.imu_file_path)) {
+                    if (!std::filesystem::exists(imu_config_.imu_file_path))
                         log->warn("IMU file not found: {}", imu_config_.imu_file_path.string());
-                    }
                 }
-                // Coupling mode
                 {
-                    std::string raw = ic.value("imu_coupling_mode", "loosely_coupled");
+                    std::string raw = ic.value("coupling_mode",
+                                        ic.value("imu_coupling_mode", "loosely_coupled"));
                     std::string low = toLower(raw);
                     if (low == "tightly_coupled" || low == "tight")
                         imu_config_.coupling_mode = ImuCouplingMode::TightCoupled;
@@ -376,14 +474,15 @@ namespace GnssProcessor {
                     imu_config_.accel_noise_density, imu_config_.gyro_noise_density,
                     imu_config_.accel_bias_instability, imu_config_.gyro_bias_instability);
 
-                // Tightly-coupled requires velocity estimation (Doppler updates velocity).
                 if (imu_config_.coupling_mode == ImuCouplingMode::TightCoupled && !estimate_velocity_) {
                     estimate_velocity_ = true;
                     log->info("Tightly-coupled IMU: forcing estimate_velocity=true");
                 }
             }
 
-            // --- Data download configuration ---
+            // =============================================================
+            //  Section: data_download
+            // =============================================================
             if (json.contains("data_download")) {
                 const auto& dl = json["data_download"];
                 download_config_.enabled           = dl.value("enabled", false);
@@ -412,7 +511,9 @@ namespace GnssProcessor {
                 }
             }
 
-            // --- Application mode ---
+            // =============================================================
+            //  Section: application mode & realtime
+            // =============================================================
             {
                 std::string mode_str = json.value("app_mode", "post");
                 if (mode_str == "realtime" || mode_str == "real_time" || mode_str == "rt") {
@@ -422,10 +523,8 @@ namespace GnssProcessor {
                 }
                 log->info("Application mode: {}", app_mode_ == AppMode::RealTime ? "realtime" : "post");
             }
-
-            // --- Real-time configuration ---
-            if (json.contains("realtime_config")) {
-                const auto& rt = json["realtime_config"];
+            {
+                const auto& rt = jsection(json, "realtime", "realtime_config");
                 realtime_config_.ntrip_host        = rt.value("ntrip_host", "");
                 realtime_config_.ntrip_port         = rt.value("ntrip_port", 2101);
                 realtime_config_.ntrip_mountpoint   = rt.value("ntrip_mountpoint", "");
@@ -448,7 +547,9 @@ namespace GnssProcessor {
                 }
             }
 
-            // --- Summary ---
+            // =============================================================
+            //  Summary
+            // =============================================================
             log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
                 "observation_path={}, navigation_path={}, {} products, leap_seconds={}",
                 processing_mode_ == ProcessingMode::PPP ? "PPP" : "PPP-RTK",

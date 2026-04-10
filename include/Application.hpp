@@ -155,6 +155,32 @@ private:
                           const std::vector<PppObservation>& modeled_obs);
 
     /**
+     * @brief Reset a single ambiguity with BSSD awareness.
+     *
+     * When BSSD is active:
+     *  - **Pivot satellite**: the reset is deferred — the ambiguity value
+     *    is kept at 0 (correct by definition) and its variance is not
+     *    inflated, so handleBssdPivotHandover can cleanly hand over to
+     *    a healthy satellite.
+     *  - **Non-pivot satellite**: the ambiguity is re-seeded as a proper
+     *    SD value (absolute_seed ? pivot_absolute_seed) so the rest of
+     *    the constellation is undisturbed.
+     *
+     * When BSSD is not active, falls back to the simple absolute reset.
+     *
+     * @param amb_key       Ambiguity state key (e.g. "G01_L1C").
+     * @param sat_id        Satellite identifier extracted from amb_key.
+     * @param signal        Signal key extracted from amb_key (e.g. "L1C").
+     * @param modeled_obs   Modeled observations for the current epoch.
+     * @param epoch_prefix  Log prefix string.
+     */
+    void resetAmbiguityBssdAware(const std::string& amb_key,
+                                  const std::string& sat_id,
+                                  const std::string& signal,
+                                  const std::vector<PppObservation>& modeled_obs,
+                                  const std::string& epoch_prefix);
+
+    /**
      * @brief Run the iterative Kalman filter update / relinearization loop.
      *
      * @param epoch_prefix      Log prefix string.

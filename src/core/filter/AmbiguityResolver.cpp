@@ -306,6 +306,10 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         // Skip below AR elevation mask
         if (info.elevation < config_.elevation_mask_ar) continue;
 
+        // Skip relaxed ambiguities (non-zero process noise) — they track
+        // a time-varying bias and should not be resolved to integers.
+        if (state_manager.isAmbiguityRelaxed(key)) continue;
+
         ambs.push_back(std::move(info));
     }
 

@@ -336,14 +336,112 @@ void Application::handleWlsSeeding(const GnssTime& current_time,
 // ---------------------------------------------------------------------------
 
 namespace {
-    /// Extract satellite ID from an ambiguity key (e.g. "G01_L1C_L2W" -> "G01").
+    /// Extract satellite ID from an ambiguity key (e.g. "G01_L1C" -> "G01").
     std::string satIdFromAmbiguityKey(const std::string& key) {
         size_t underscore_pos = key.find('_');
         if (underscore_pos != std::string::npos && underscore_pos >= 2)
             return key.substr(0, underscore_pos);
         return {};
     }
+
+    /// Extract signal from an ambiguity key (e.g. "G01_L1C" -> "L1C").
+    std::string signalFromAmbiguityKey(const std::string& key) {
+        size_t underscore_pos = key.find('_');
+        if (underscore_pos != std::string::npos && underscore_pos + 1 < key.size())
+            return key.substr(underscore_pos + 1);
+        return {};
+    }
 } // anonymous namespace
+
+void Application::resetAmbiguityBssdAware(
+    const std::string& amb_key,
+    const std::string& sat_id,
+    const std::string& signal,
+    const std::vector<PppObservation>& modeled_obs,
+    const std::string& epoch_prefix) {
+
+    const double reset_std_m = config_.getAmbiguityStd();
+
+    // When BSSD is not active, use the simple absolute reset.
+    if (!config_.enableBetweenSatelliteSd()) {
+        state_manager_->resetAmbiguity(amb_key, reset_std_m);
+        return;
+    }
+
+    const auto& pivots = meas_model_->getBssdPivotSatellites();
+    const std::string cons = PppUtils::getSystemString(sat_id);
+    auto piv_it = pivots.find(cons);
+
+    // No pivot yet (first epoch) — fall back to simple reset.
+    if (piv_it == pivots.end()) {
+        state_manager_->resetAmbiguity(amb_key, reset_std_m);
+        return;
+    }
+
+    const std::string& pivot_sat = piv_it->second;
+    auto log = log_manager_.getLogger("main_log");
+
+    // --- Pivot satellite affected ---
+    // Do NOT reset the pivot's ambiguity directly.  Leave its value at 0
+    // (correct by BSSD definition) and do NOT inflate the variance.
+    // handleBssdPivotHandover() will detect the slip through the MW
+    // history reset and hand over to a healthy satellite if needed.
+    // Resetting the pivot here would blow up its variance, trigger the
+    // disturbance detector, and cascade into unnecessary reconvergence.
+    if (sat_id == pivot_sat) {
+        log->info("{}BSSD: pivot {} slipped on {} — deferring to handover "
+                  "(ambiguity kept frozen at 0)",
+                  epoch_prefix, sat_id, signal);
+        return;
+    }
+
+    // --- Non-pivot satellite affected ---
+    // Compute a proper SD seed:  N_sd = N_abs(sat) - N_abs(pivot).
+    // This preserves the BSSD parameterization so the rest of the
+    // constellation is not disturbed.
+    const int amb_idx = state_manager_->getAmbiguityIndex(amb_key);
+    if (amb_idx < 0) {
+        state_manager_->resetAmbiguity(amb_key, reset_std_m);
+        return;
+    }
+
+    const Eigen::VectorXd x = state_manager_->getStateVector();
+
+    // Find observations for the affected satellite and the pivot.
+    const PppObservation* obs_sat = nullptr;
+    const PppObservation* obs_piv = nullptr;
+    for (const auto& obs : modeled_obs) {
+        if (obs.satellite == sat_id)   obs_sat = &obs;
+        if (obs.satellite == pivot_sat) obs_piv = &obs;
+        if (obs_sat && obs_piv) break;
+    }
+
+    double sd_seed = 0.0;
+    if (obs_sat && obs_piv) {
+        const double abs_seed = state_manager_->computeAmbiguitySeed(*obs_sat, signal, x);
+        const double piv_seed = state_manager_->computeAmbiguitySeed(*obs_piv, signal, x);
+        sd_seed = abs_seed - piv_seed;
+    } else if (obs_sat) {
+        // Pivot not visible — best-effort absolute seed; handover will fix it.
+        sd_seed = state_manager_->computeAmbiguitySeed(*obs_sat, signal, x);
+    }
+
+    Eigen::VectorXd x_mod = x;
+    Eigen::MatrixXd P = state_manager_->getCovariance();
+    const auto aidx = static_cast<Eigen::Index>(amb_idx);
+
+    const double old_val = x_mod(aidx);
+    x_mod(aidx) = sd_seed;
+    P.row(aidx).setZero();
+    P.col(aidx).setZero();
+    P(aidx, aidx) = reset_std_m * reset_std_m;
+
+    state_manager_->setStateVector(x_mod);
+    state_manager_->setCovariance(P);
+
+    log->info("{}BSSD SD-aware reset {}: {:.4f} -> {:.4f} (pivot={})",
+              epoch_prefix, amb_key, old_val, sd_seed, pivot_sat);
+}
 
 void Application::detectCycleSlips(const std::string& epoch_prefix,
                                    const std::vector<PppObservation>& modeled_obs) {
@@ -353,12 +451,12 @@ void Application::detectCycleSlips(const std::string& epoch_prefix,
     {
         const auto reset_keys = mw_slip_detector_->detectLargeMwResets(modeled_obs);
         if (!reset_keys.empty()) {
-            const double reset_std_m = config_.getAmbiguityStd();
             for (const auto& key : reset_keys) {
-                state_manager_->resetAmbiguity(key, reset_std_m);
+                const std::string sat_id = satIdFromAmbiguityKey(key);
+                const std::string signal = signalFromAmbiguityKey(key);
+                resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs, epoch_prefix);
                 // Phase wind-up is NOT reset: the accumulated wind-up is consistent
                 // with the modeled values used to re-seed the ambiguity.
-                const std::string sat_id = satIdFromAmbiguityKey(key);
                 if (!sat_id.empty()) {
                     if_slip_detector_->resetSatellite(sat_id);
                     log_manager_.getLogger("main_log")->debug("{}Reset IF history for {} (MW cycle slip detected)", epoch_prefix, sat_id);
@@ -375,10 +473,10 @@ void Application::detectCycleSlips(const std::string& epoch_prefix,
     if (config_.enableIfSlipDetector()) {
         const auto if_reset_keys = if_slip_detector_->detect(modeled_obs, prev_pos_sigma_3d_);
         if (!if_reset_keys.empty()) {
-            const double reset_std_m = config_.getAmbiguityStd();
             for (const auto& key : if_reset_keys) {
-                state_manager_->resetAmbiguity(key, reset_std_m);
                 const std::string sat_id = satIdFromAmbiguityKey(key);
+                const std::string signal = signalFromAmbiguityKey(key);
+                resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs, epoch_prefix);
                 if (!sat_id.empty()) {
                     mw_slip_detector_->resetSatellite(sat_id);
                     log_manager_.getLogger("main_log")->debug("{}Reset MW history for {} (IF phase slip detected)", epoch_prefix, sat_id);

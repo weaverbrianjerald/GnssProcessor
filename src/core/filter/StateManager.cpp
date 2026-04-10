@@ -158,6 +158,7 @@ namespace GnssProcessor {
         // Decrement all dynamic-state indices that were above the removed index
         for (auto& kv : ambiguity_indices_)   if (kv.second > rem_idx) --kv.second;
         for (auto& kv : code_bias_indices_)   if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : sat_bias_indices_)    if (kv.second > rem_idx) --kv.second;
         for (auto& kv : ionosphere_indices_)  if (kv.second > rem_idx) --kv.second;
     }
 
@@ -340,7 +341,7 @@ namespace GnssProcessor {
     }
 
     size_t StateManager::getStateSize() const {
-        return core_state_size_ + code_bias_indices_.size() + ionosphere_indices_.size() + ambiguity_indices_.size();
+        return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size() + ionosphere_indices_.size() + ambiguity_indices_.size();
     }
 
     Eigen::VectorXd StateManager::getStateVector() const {
@@ -416,6 +417,9 @@ namespace GnssProcessor {
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             const double q_zenith = pn.ionosphere;
             for (const auto& [sat, idx] : ionosphere_indices_) {
+                // Suppress process noise for BSSD pivot iono states (unobservable).
+                if (frozen_ionosphere_sats_.count(sat)) continue;
+
                 double sin2_el = 1.0; // default: zenith (no scaling)
                 auto el_it = ionosphere_elevations_.find(sat);
                 if (el_it != ionosphere_elevations_.end() && el_it->second > 0.0) {
@@ -428,10 +432,27 @@ namespace GnssProcessor {
         }
 
         // Receiver code bias (IFB) noise (PPP-RTK uncombined)
-        if (!code_bias_indices_.empty()) {
+        // Suppressed under BSSD: receiver DCB/IFB columns are zeroed in
+        // the SD H-matrix, so these states are unobservable.
+        if (!code_bias_indices_.empty() && !config_.enableBetweenSatelliteSd()) {
             double cb_var = pn.code_bias * dt;
             for (const auto& [key, idx] : code_bias_indices_) {
                 Q(idx, idx) = cb_var;
+            }
+        }
+
+        // Per-satellite signal bias noise (PPP-RTK uncombined).
+        // These absorb uncorrected satellite hardware delays on signals
+        // without BIA coverage.  Nearly constant — very small random walk.
+        // Suppressed for BSSD pivot satellites (absorbed into eliminated clock).
+        if (!sat_bias_indices_.empty()) {
+            const double sb_var = pn.sat_bias * dt;
+            for (const auto& [key, idx] : sat_bias_indices_) {
+                // key format: "satellite|signal" — extract satellite prefix
+                const auto bar = key.find('|');
+                const std::string sat = (bar != std::string::npos) ? key.substr(0, bar) : key;
+                if (frozen_ionosphere_sats_.count(sat)) continue;
+                Q(idx, idx) = sb_var;
             }
         }
 
@@ -447,8 +468,11 @@ namespace GnssProcessor {
         // Ambiguity process noise (should be 0 for constant ambiguities)
         if (state_size > core_state_size_) {
             for (const auto& [key, idx] : ambiguity_indices_) {
-                double amb_var = pn.ambiguity * dt;
-                Q(idx, idx) = amb_var;
+                if (relaxed_ambiguities_.count(key)) {
+                    Q(idx, idx) = pn.phase_bias * dt;
+                } else {
+                    Q(idx, idx) = pn.ambiguity * dt;
+                }
             }
         }
 
@@ -725,7 +749,21 @@ namespace GnssProcessor {
                 }
             }
 
-            return observed_m - modeled_m - clk_term - tropo_wet - isb - tropo_grad - iono_term;
+            // Per-satellite signal bias (PPP-RTK uncombined, signals without BIA).
+            // Must be subtracted so the ambiguity seed is not corrupted by a
+            // converged sat-bias estimate (critical for 3rd-frequency signals
+            // under BSSD where pivot handovers re-compute absolute seeds).
+            double sat_bias_term = 0.0;
+            //if (config_.estimateSatBiases() && config_.isUncombinedEnabled()
+            if (config_.estimateSatBiases()
+                && !ref_type.empty() && ref_type[0] == 'L') {
+                const std::string sb_key = obs.satellite + "|" + ref_type;
+                const int sb_idx = getSatBiasIndex(sb_key);
+                if (sb_idx >= 0 && sb_idx < static_cast<int>(x.size()))
+                    sat_bias_term = x(sb_idx);
+            }
+
+            return observed_m - modeled_m - clk_term - tropo_wet - isb - tropo_grad - iono_term - sat_bias_term;
         } catch (...) {
             return 0.0;
         }
@@ -831,6 +869,14 @@ namespace GnssProcessor {
         return ionosphere_elevations_;
     }
 
+    void StateManager::setFrozenIonosphereSatellites(const std::set<std::string>& sats) {
+        frozen_ionosphere_sats_ = sats;
+    }
+
+    const std::set<std::string>& StateManager::getFrozenIonosphereSatellites() const {
+        return frozen_ionosphere_sats_;
+    }
+
     // ===================================================================
     // Receiver code bias (inter-frequency bias) state management
     // ===================================================================
@@ -886,6 +932,79 @@ namespace GnssProcessor {
 
             logger->debug("Removed code bias state for {} at former index {}", key, rem_idx);
         }
+    }
+
+    // ===================================================================
+    // Per-satellite signal bias state management
+    // ===================================================================
+
+    int StateManager::getSatBiasIndex(const std::string& key) const {
+        auto it = sat_bias_indices_.find(key);
+        return it != sat_bias_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getSatBiasStates() const {
+        return sat_bias_indices_;
+    }
+
+    size_t StateManager::addSatBiasState(const std::string& key, double initial_value) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_bias_indices_.count(key)) {
+            logger->trace("Sat bias state for {} already exists at index {}", key, sat_bias_indices_[key]);
+            return sat_bias_indices_[key];
+        }
+
+        const double sb_std = config_.getInitialStd().sat_bias;
+        const size_t index = appendState(initial_value, sb_std * sb_std);
+        sat_bias_indices_[key] = index;
+
+        logger->info("Added sat bias state for {} at index {}, initial={:.3f} m, std={:.1f} m",
+            key, index, initial_value, sb_std);
+        return index;
+    }
+
+    void StateManager::pruneSatBiasStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_bias_indices_.empty()) return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [key, idx] : sat_bias_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
+        if (to_remove.empty()) return;
+
+        logger->info("Pruning {} sat bias states (keeping {})", to_remove.size(), keep_keys.size());
+        for (const auto& key : to_remove) {
+            auto it = sat_bias_indices_.find(key);
+            if (it == sat_bias_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneSatBiasStatesExcept: invalid index {} for {}", rem_idx, key);
+                continue;
+            }
+
+            removeStateAtIndex(rem_idx);
+            sat_bias_indices_.erase(key);
+
+            logger->debug("Removed sat bias state for {} at former index {}", key, rem_idx);
+        }
+    }
+
+    // ===================================================================
+    // Relaxed ambiguity support
+    // ===================================================================
+
+    void StateManager::markAmbiguityRelaxed(const std::string& amb_key) {
+        relaxed_ambiguities_.insert(amb_key);
+    }
+
+    bool StateManager::isAmbiguityRelaxed(const std::string& amb_key) const {
+        return relaxed_ambiguities_.count(amb_key) > 0;
+    }
+
+    void StateManager::clearRelaxedAmbiguities() {
+        relaxed_ambiguities_.clear();
     }
 
 } // namespace GnssProcessor

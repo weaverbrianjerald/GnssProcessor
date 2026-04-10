@@ -100,6 +100,7 @@ for col = 1:nSys
         idx_sat = T_sys.satellite == sat;
         times = T_sys.utc(idx_sat);
         vals  = double(T_sys.iono_m(idx_sat));
+        %nd=2; vals  = [NaN(nd,1); diff(double(T_sys.iono_m(idx_sat)),nd)];
 
         globalIdx = find(strcmp(uniqueSats, sat));
         if isempty(globalIdx), globalIdx = k; end

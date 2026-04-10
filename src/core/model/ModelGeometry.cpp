@@ -280,8 +280,8 @@ namespace GnssProcessor {
             double& mf_d,
             Eigen::Vector3d& sat_vel) const
         {
-            // TODO: Use health flags from BRDC/SP3/CLK to reject unhealthy satellites
-            if (obs.satellite == "E14") return false;
+            // Reject user-configured excluded satellites (e.g. E14/E18 eccentric orbit).
+            if (config_.isSatelliteExcluded(obs.satellite)) return false;
 
             const double c = Constants::SPEED_OF_LIGHT;
             const double omegaE = Constants::EARTH_ANGULAR_VELOCITY;
@@ -359,13 +359,12 @@ namespace GnssProcessor {
 
             // Sagnac (diagnostic — implicitly included via Earth rotation of sat_pos)
             sagnac_corr = (omegaE / c) * (sat_pos_em.x() * rx_pos.y() - sat_pos_em.y() * rx_pos.x());
-            atm_loading_corr = 0.0;
 
-            // Ocean tidal loading
+            // Ocean tidal loading (site displacement projected onto LOS)
             Eigen::Vector3d otl_ecef = config_.getModelCorrections().enable_ocean_tide_loading
                 ? corrections_.computeOceanTideCorrection(rx_pos, obs.time)
                 : Eigen::Vector3d::Zero();
-            double otl_corr = otl_ecef.dot(-los);
+            atm_loading_corr = otl_ecef.dot(-los);
 
             // Solid Earth tide (uses cached Sun/Moon positions)
             ensureSunMoonCached(obs.time);
