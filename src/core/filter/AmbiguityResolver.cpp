@@ -8,10 +8,12 @@
  */
 
 #include "AmbiguityResolver.hpp"
+#include "Constants.hpp"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
 #include <limits>
+#include <set>
 #include <fmt/format.h>
 
 namespace GnssProcessor {
@@ -22,7 +24,7 @@ namespace GnssProcessor {
 
 AmbiguityResolver::AmbiguityResolver(const AmbiguityResolverConfig& config,
                                      LogManager& log_manager)
-    : config_(config), log_manager_(log_manager) {
+    : config_(config), log_manager_(log_manager), ppp_utils_(log_manager) {
 }
 
 // ===========================================================================
@@ -306,9 +308,10 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         // Skip below AR elevation mask
         if (info.elevation < config_.elevation_mask_ar) continue;
 
-        // Skip relaxed ambiguities (non-zero process noise) — they track
-        // a time-varying bias and should not be resolved to integers.
-        if (state_manager.isAmbiguityRelaxed(key)) continue;
+        // Skip unresolvable ambiguities — missing BIA/ATX coverage means
+        // the float value absorbs a time-constant bias and cannot be
+        // resolved to the correct integer.
+        if (state_manager.isAmbiguityUnresolvable(key)) continue;
 
         ambs.push_back(std::move(info));
     }
@@ -349,12 +352,23 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
 }
 
 // ===========================================================================
-// Resolve
+// Resolve (no WL constraint — forwards to constrained with empty map)
 // ===========================================================================
 
 AmbiguityResolution AmbiguityResolver::resolve(
     const StateManager& state_manager,
     const std::vector<PppObservation>& observations) {
+    return resolve(state_manager, observations, {});
+}
+
+// ===========================================================================
+// Resolve (with optional WL constraint)
+// ===========================================================================
+
+AmbiguityResolution AmbiguityResolver::resolve(
+    const StateManager& state_manager,
+    const std::vector<PppObservation>& observations,
+    const std::map<std::string, int>& wl_ambiguities) {
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
@@ -373,9 +387,19 @@ AmbiguityResolution AmbiguityResolver::resolve(
         return result;
     }
 
-    const int nb = static_cast<int>(pairs.size());
     const Eigen::VectorXd x = state_manager.getStateVector();
     const Eigen::MatrixXd P = state_manager.getCovariance();
+
+    // Try WL-constrained NL resolution first when WL integers are available
+    if (!wl_ambiguities.empty()) {
+        auto wl_result = resolveWlConstrained(pairs, x, P, wl_ambiguities, observations);
+        if (wl_result.success) {
+            wl_result.num_candidates = result.num_candidates;
+            return wl_result;
+        }
+    }
+
+    const int nb = static_cast<int>(pairs.size());
     const int na = static_cast<int>(x.size()); // full state size
 
     // Extract DD ambiguity float vector: y_dd = x[i] - x[ref]
@@ -453,6 +477,268 @@ AmbiguityResolution AmbiguityResolver::resolve(
                    pairs[k].sat_i, pairs[k].sat_ref, pairs[k].signal,
                    y_dd(k), afix(k), y_dd(k) - afix(k));
     }
+
+    return result;
+}
+
+// ===========================================================================
+// WL-constrained NL resolution (two-step approach)
+// ===========================================================================
+
+AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
+    const std::vector<DdPair>& pairs,
+    const Eigen::VectorXd& x,
+    const Eigen::MatrixXd& P,
+    const std::map<std::string, int>& wl_ambiguities,
+    const std::vector<PppObservation>& observations) {
+
+    auto log = log_manager_.getLogger("ambiguity_resolver");
+    AmbiguityResolution result;
+
+    // Build satellite -> observation map for system/frequency lookup
+    std::map<std::string, const PppObservation*> obs_map;
+    for (const auto& obs : observations)
+        obs_map[obs.satellite] = &obs;
+
+    // Group DD pairs by satellite pair key (sat_i + "|" + sat_ref).
+    // We need exactly two signals per satellite pair to form the WL/NL transform.
+    struct DdPairInfo {
+        int pair_idx;        // index into pairs[]
+        std::string signal;
+        double freq;         // frequency in Hz
+        double wavelength;   // wavelength in meters
+    };
+    // key: "sat_i|sat_ref" -> vector of DdPairInfo
+    std::map<std::string, std::vector<DdPairInfo>> sat_pair_groups;
+
+    for (int k = 0; k < static_cast<int>(pairs.size()); ++k) {
+        const auto& p = pairs[k];
+        auto obs_it = obs_map.find(p.sat_i);
+        if (obs_it == obs_map.end()) continue;
+        const auto& obs = *obs_it->second;
+
+        const double freq = ppp_utils_.getFrequency(p.signal, obs.system, obs.satellite);
+        const double wl   = ppp_utils_.getWavelength(obs.system, p.signal, obs.satellite);
+        if (!(std::isfinite(freq) && freq > 0.0 && std::isfinite(wl) && wl > 0.0)) continue;
+
+        const std::string spkey = p.sat_i + "|" + p.sat_ref;
+        sat_pair_groups[spkey].push_back({ k, p.signal, freq, wl });
+    }
+
+    // Identify dual-frequency pairs with known DD WL integers
+    struct NlCandidate {
+        int dd_idx_1;         // index of L1 DD in pairs[]
+        int dd_idx_2;         // index of L2 DD in pairs[]
+        double f1, f2;        // frequencies (Hz)
+        double lam1, lam2;    // wavelengths (m)
+        int dd_wl;            // DD WL integer (known)
+        double lambda_nl;     // NL wavelength (m)
+    };
+    std::vector<NlCandidate> nl_candidates;
+    // Track which DD indices are consumed by NL pairs
+    std::set<int> consumed_dd;
+
+    for (const auto& [spkey, infos] : sat_pair_groups) {
+        if (infos.size() != 2) continue;  // need exactly two frequencies
+
+        const auto& a = infos[0];
+        const auto& b = infos[1];
+        const auto& p_a = pairs[a.pair_idx];
+        const auto& p_b = pairs[b.pair_idx];
+
+        // Determine which is f1 (higher) and f2 (lower)
+        const bool a_is_f1 = a.freq > b.freq;
+        const auto& hi = a_is_f1 ? a : b;
+        const auto& lo = a_is_f1 ? b : a;
+
+        // Look up the DD WL integer from the MW detector's resolved WL map.
+        // WL key format is "SAT_SIG1_SIG2" where SIG1 is on the higher freq.
+        // DD_WL = SD_WL(sat_i) - SD_WL(sat_ref)
+        const std::string wl_key_i   = p_a.sat_i   + "_" + hi.signal + "_" + lo.signal;
+        const std::string wl_key_ref = p_a.sat_ref  + "_" + hi.signal + "_" + lo.signal;
+
+        auto it_i   = wl_ambiguities.find(wl_key_i);
+        auto it_ref = wl_ambiguities.find(wl_key_ref);
+        if (it_i == wl_ambiguities.end() || it_ref == wl_ambiguities.end()) continue;
+
+        const int dd_wl = it_i->second - it_ref->second;
+
+        const double f1 = hi.freq;
+        const double f2 = lo.freq;
+        const double lambda_nl = Constants::SPEED_OF_LIGHT / (f1 + f2);
+
+        nl_candidates.push_back({
+            hi.pair_idx, lo.pair_idx,
+            f1, f2, hi.wavelength, lo.wavelength,
+            dd_wl, lambda_nl
+        });
+        consumed_dd.insert(hi.pair_idx);
+        consumed_dd.insert(lo.pair_idx);
+    }
+
+    if (nl_candidates.empty()) {
+        log->debug("WL-constrained AR: no dual-frequency pairs with known WL");
+        return result;  // empty, caller falls through to standard LAMBDA
+    }
+
+    // Build the reduced NL ambiguity vector and covariance.
+    //
+    // For each NL candidate, the float DD NL ambiguity (in cycles) is:
+    //   n_NL = (f1 * DD_1/lam1 + f2 * DD_2/lam2) / (f1+f2)
+    //
+    // where DD_1, DD_2 are the float DD ambiguities in meters.
+    //
+    // Only NL candidates enter the LAMBDA search.  Unpaired DD ambiguities
+    // (single-signal DDs without a matching second frequency or WL integer)
+    // are excluded — they cannot be properly resolved in the WL/NL
+    // framework and would contaminate the ratio test.
+    const int n_nl  = static_cast<int>(nl_candidates.size());
+
+    if (n_nl <= 0) {
+        log->debug("WL-constrained AR: no NL candidates");
+        return result;
+    }
+
+    // Build transformation matrix T (n_nl x pairs.size()) that maps original
+    // DD vector to the NL vector.
+    const int n_orig = static_cast<int>(pairs.size());
+    Eigen::MatrixXd T = Eigen::MatrixXd::Zero(n_nl, n_orig);
+    // Also build the WL correction vector (for back-transformation)
+    Eigen::VectorXd wl_correction = Eigen::VectorXd::Zero(n_orig);
+
+    for (int k = 0; k < n_nl; ++k) {
+        const auto& nlc = nl_candidates[k];
+        const double f_sum = nlc.f1 + nlc.f2;
+
+        // n_NL = (f1/lam1 * DD_1 + f2/lam2 * DD_2) / (f1+f2)
+        // In the NL row, we want the result in NL cycles, so:
+        //   row[dd_idx_1] = f1 / (lam1 * f_sum)
+        //   row[dd_idx_2] = f2 / (lam2 * f_sum)
+        T(k, nlc.dd_idx_1) = nlc.f1 / (nlc.lam1 * f_sum);
+        T(k, nlc.dd_idx_2) = nlc.f2 / (nlc.lam2 * f_sum);
+
+        // WL correction for back-transformation:
+        // DD_1 [m] = (n_NL + f2/(f1+f2) * dd_wl) * lam1
+        // DD_2 [m] = (n_NL - f1/(f1+f2) * dd_wl) * lam2
+        wl_correction(nlc.dd_idx_1) = nlc.f2 / f_sum * nlc.dd_wl * nlc.lam1;
+        wl_correction(nlc.dd_idx_2) = -nlc.f1 / f_sum * nlc.dd_wl * nlc.lam2;
+    }
+
+    // Extract original DD float vector (meters)
+    Eigen::VectorXd y_dd(n_orig);
+    for (int k = 0; k < n_orig; ++k)
+        y_dd(k) = x(pairs[k].state_idx_i) - x(pairs[k].state_idx_ref);
+
+    // Original DD covariance (meters^2)
+    Eigen::MatrixXd Qdd(n_orig, n_orig);
+    for (int i = 0; i < n_orig; ++i) {
+        for (int j = 0; j < n_orig; ++j) {
+            int ii = pairs[i].state_idx_i;
+            int ir = pairs[i].state_idx_ref;
+            int ji = pairs[j].state_idx_i;
+            int jr = pairs[j].state_idx_ref;
+            Qdd(i, j) = P(ii, ji) - P(ii, jr) - P(ir, ji) + P(ir, jr);
+        }
+    }
+
+    // Transform to reduced NL space (cycles)
+    Eigen::VectorXd y_reduced = T * y_dd;           // [n_NL cycles]
+    Eigen::MatrixXd Q_reduced = T * Qdd * T.transpose();
+    Q_reduced = 0.5 * (Q_reduced + Q_reduced.transpose());
+
+    // Run MLAMBDA on the NL-only set
+    Eigen::VectorXd afix_reduced;
+    Eigen::VectorXd s;
+    if (!mlambda(y_reduced, Q_reduced, afix_reduced, s)) {
+        log->debug("WL-constrained AR: MLAMBDA failed on NL problem");
+        return result;
+    }
+
+    if (s(0) <= 0.0 || s(1) <= 0.0) {
+        log->debug("WL-constrained AR: invalid distances s1={:.6f} s2={:.6f}", s(0), s(1));
+        return result;
+    }
+
+    result.ratio = s(1) / s(0);
+    log->info("WL-constrained AR: {} NL ambs, ratio={:.2f} (threshold={:.1f})",
+              n_nl, result.ratio, config_.ratio_threshold);
+
+    if (result.ratio < config_.ratio_threshold) {
+        log->info("WL-constrained AR ratio test failed: {:.2f} < {:.1f}",
+                  result.ratio, config_.ratio_threshold);
+        return result;
+    }
+
+    // Back-transform: recover fixed DD ambiguities in meters.
+    // For NL-paired DDs:
+    //   DD_1 [m] = (n_NL_fixed + f2/(f1+f2) * dd_wl) * lam1
+    //   DD_2 [m] = (n_NL_fixed - f1/(f1+f2) * dd_wl) * lam2
+    Eigen::VectorXd afix_orig(n_orig);
+    afix_orig.setZero();
+
+    for (int k = 0; k < n_nl; ++k) {
+        const auto& nlc = nl_candidates[k];
+        const double f_sum = nlc.f1 + nlc.f2;
+        const double n_nl_fixed = afix_reduced(k);
+
+        afix_orig(nlc.dd_idx_1) = (n_nl_fixed + nlc.f2 / f_sum * nlc.dd_wl) * nlc.lam1;
+        afix_orig(nlc.dd_idx_2) = (n_nl_fixed - nlc.f1 / f_sum * nlc.dd_wl) * nlc.lam2;
+
+        log->debug("  NL pair {}-{} {}/{}: n_NL_float={:.3f} n_NL_fixed={:.0f} dd_wl={}, "
+                   "DD1={:.3f}m DD2={:.3f}m",
+                   pairs[nlc.dd_idx_1].sat_i, pairs[nlc.dd_idx_1].sat_ref,
+                   pairs[nlc.dd_idx_1].signal, pairs[nlc.dd_idx_2].signal,
+                   y_reduced(k), n_nl_fixed, nlc.dd_wl,
+                   afix_orig(nlc.dd_idx_1), afix_orig(nlc.dd_idx_2));
+    }
+
+    // Compute fixed state using only the NL-paired DD ambiguities.
+    // Build the cross-covariance and DD covariance for the consumed DDs only.
+    const int n_fixed_dd = 2 * n_nl;
+    std::vector<int> fixed_dd_indices;
+    fixed_dd_indices.reserve(n_fixed_dd);
+    for (int k = 0; k < n_nl; ++k) {
+        fixed_dd_indices.push_back(nl_candidates[k].dd_idx_1);
+        fixed_dd_indices.push_back(nl_candidates[k].dd_idx_2);
+    }
+
+    const int na = static_cast<int>(x.size());
+    Eigen::MatrixXd Qab(na, n_fixed_dd);
+    Eigen::MatrixXd Qbb(n_fixed_dd, n_fixed_dd);
+    Eigen::VectorXd y_fixed(n_fixed_dd);
+    Eigen::VectorXd a_fixed(n_fixed_dd);
+
+    for (int c = 0; c < n_fixed_dd; ++c) {
+        const int dd_c = fixed_dd_indices[c];
+        y_fixed(c) = y_dd(dd_c);
+        a_fixed(c) = afix_orig(dd_c);
+        for (int k = 0; k < na; ++k) {
+            Qab(k, c) = P(k, pairs[dd_c].state_idx_i) - P(k, pairs[dd_c].state_idx_ref);
+        }
+        for (int r = 0; r < n_fixed_dd; ++r) {
+            const int dd_r = fixed_dd_indices[r];
+            int ii = pairs[dd_r].state_idx_i;
+            int ir = pairs[dd_r].state_idx_ref;
+            int ji = pairs[dd_c].state_idx_i;
+            int jr = pairs[dd_c].state_idx_ref;
+            Qbb(r, c) = P(ii, ji) - P(ii, jr) - P(ir, ji) + P(ir, jr);
+        }
+    }
+
+    Qbb = 0.5 * (Qbb + Qbb.transpose());
+    Eigen::VectorXd residual = y_fixed - a_fixed;
+    Eigen::MatrixXd Qbb_inv = Qbb.ldlt().solve(Eigen::MatrixXd::Identity(n_fixed_dd, n_fixed_dd));
+    Eigen::MatrixXd K_fix = Qab * Qbb_inv;
+
+    result.fixed_state = x - K_fix * residual;
+    result.fixed_covariance = P - K_fix * Qab.transpose();
+    result.fixed_covariance = 0.5 * (result.fixed_covariance + result.fixed_covariance.transpose());
+
+    result.success = true;
+    result.num_fixed = n_nl;
+
+    log->info("WL-constrained AR succeeded: {} NL pairs fixed, ratio={:.2f}",
+              n_nl, result.ratio);
 
     return result;
 }

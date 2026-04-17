@@ -133,6 +133,12 @@ namespace GnssProcessor {
 		 * @return True if the receiver antenna has PCO data for this signal's frequency.
 		 */
 		bool hasReceiverAtxEntry(const std::string& signal, System system) const;
+
+		/**
+		 * @brief Access the parsed antenna model entries.
+		 * @return Const reference to the antenna data vector.
+		 */
+		const std::vector<AntennaData>& getAntennas() const { return antennas_; }
 	private:
 		/** @brief Logger for informational and diagnostic messages. */
 		LogManager& log_manager_;

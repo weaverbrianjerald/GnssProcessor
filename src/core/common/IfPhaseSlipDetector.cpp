@@ -73,6 +73,25 @@ namespace GnssProcessor {
         const std::string& slip_reason,
         double position_sigma_3d, bool pos_gated) const {
 
+        auto logger = log_manager_.getLogger("if_slip_detector");
+
+        if (is_slip) {
+            logger->info("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
+                "ref={} lambda_if={:.6f} slip_reason={} pos_sigma={:.3f}{}",
+                current_epoch_.week, current_epoch_.tow,
+                sd.satellite, sys_str, sd.elevation,
+                grad, delta_grad, ref_sat, lambda_if, slip_reason,
+                position_sigma_3d, pos_gated ? " [pos_gated]" : "");
+        } else {
+            logger->debug("[W{} {:.3f}] {} {} elev={:.1f} grad={:.6f} delta_grad={:.6f} "
+                "ref={}{} lambda_if={:.6f} reason={} pos_sigma={:.3f}{}",
+                current_epoch_.week, current_epoch_.tow,
+                sd.satellite, sys_str, sd.elevation,
+                grad, delta_grad, ref_sat,
+                ref_changed ? " [changed]" : "", lambda_if, slip_reason,
+                position_sigma_3d, pos_gated ? " [pos_gated]" : "");
+        }
+
         if (!trace_file_.is_open()) return;
 
         trace_file_ << std::fixed << std::setprecision(3)
@@ -208,24 +227,67 @@ namespace GnssProcessor {
             if (!std::isfinite(obs.elevation) || obs.elevation < config_.getElevationMaskDeg()) continue;
 
             std::string phase_if_key;
-            if (!findPhaseIfLabel(obs, phase_if_key)) continue;
+            if (findPhaseIfLabel(obs, phase_if_key)) {
+                // --- Combined (PPP) path: IF key already exists ---
+                std::string sig1, sig2;
+                if (!splitIfLabel(phase_if_key, sig1, sig2)) continue;
 
-            std::string sig1, sig2;
-            if (!splitIfLabel(phase_if_key, sig1, sig2)) continue;
+                auto obs_it = obs.observed.find(phase_if_key);
+                auto mod_it = obs.modeled.find(phase_if_key);
+                if (obs_it == obs.observed.end() || mod_it == obs.modeled.end()) continue;
 
-            auto obs_it = obs.observed.find(phase_if_key);
-            auto mod_it = obs.modeled.find(phase_if_key);
-            if (obs_it == obs.observed.end() || mod_it == obs.modeled.end()) continue;
+                const double phi_if_omc = obs_it->second - mod_it->second;
+                if (!std::isfinite(phi_if_omc)) continue;
 
-            const double phi_if_omc = obs_it->second - mod_it->second;
-            if (!std::isfinite(phi_if_omc)) continue;
+                const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
+                if (lambda_if <= 0.0) continue;
 
-            const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
-            if (lambda_if <= 0.0) continue;
+                result[PppUtils::getSystemString(obs.system)].push_back(
+                    { obs.satellite, phase_if_key, sig1, sig2,
+                      phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
+            } else {
+                // --- Uncombined (PPP-RTK) path: synthesize IF OMC ---
+                // Find two phase signals on different frequency bands.
+                std::vector<std::tuple<std::string, double, double>> phase_signals; // sig, observed, modeled
+                for (const auto& [key, val] : obs.observed) {
+                    if (key.empty() || key[0] != 'L') continue;
+                    if (key.find('_') != std::string::npos) continue; // skip IF combinations
+                    auto mod_it = obs.modeled.find(key);
+                    if (mod_it == obs.modeled.end()) continue;
+                    phase_signals.emplace_back(key, val, mod_it->second);
+                }
+                if (phase_signals.size() < 2) continue;
 
-            result[PppUtils::getSystemString(obs.system)].push_back(
-                { obs.satellite, phase_if_key, sig1, sig2,
-                  phi_if_omc, obs.elevation, lambda_if, obs.system });
+                // Use first two phase signals to form IF combination.
+                const auto& [sig1, obs1, mod1] = phase_signals[0];
+                const auto& [sig2, obs2, mod2] = phase_signals[1];
+
+                const double f1 = ppp_utils_.getFrequency(sig1, obs.system, obs.satellite);
+                const double f2 = ppp_utils_.getFrequency(sig2, obs.system, obs.satellite);
+                if (!std::isfinite(f1) || !std::isfinite(f2) || f1 <= 0.0 || f2 <= 0.0) continue;
+
+                const double f1sq = f1 * f1;
+                const double f2sq = f2 * f2;
+                const double denom = f1sq - f2sq;
+                if (std::abs(denom) < 1e-12) continue;
+
+                const double c1 = f1sq / denom;
+                const double c2 = -f2sq / denom;
+
+                const double omc1 = obs1 - mod1;
+                const double omc2 = obs2 - mod2;
+                const double phi_if_omc = c1 * omc1 + c2 * omc2;
+                if (!std::isfinite(phi_if_omc)) continue;
+
+                const double lambda_if = computeIfWavelengthMeters(obs, sig1, sig2);
+                if (lambda_if <= 0.0) continue;
+
+                const std::string synth_key = sig1 + "_" + sig2;
+
+                result[PppUtils::getSystemString(obs.system)].push_back(
+                    { obs.satellite, synth_key, sig1, sig2,
+                      phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
+            }
         }
 
         return result;
@@ -262,7 +324,7 @@ namespace GnssProcessor {
     // Double-difference processing
     // =================================================================
 
-    void IfPhaseSlipDetector::processDoubleDifferences(
+    std::map<std::string, double> IfPhaseSlipDetector::processDoubleDifferences(
         const std::vector<SatData>& sat_vec,
         const std::string& sys_str,
         ConstellationState& cs,
@@ -270,6 +332,7 @@ namespace GnssProcessor {
         double lambda_if,
         bool ref_changed,
         double position_sigma_3d,
+        const Eigen::Vector3d& delta_pos,
         std::vector<std::string>& reset_keys) {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
@@ -281,7 +344,7 @@ namespace GnssProcessor {
 
         // Find reference SatData
         const SatData* ref_data = sat_map.count(cs.ref_satellite) ? sat_map.at(cs.ref_satellite) : nullptr;
-        if (!ref_data) return;
+        if (!ref_data) return {};
 
         // --- Handle reference change: apply median offset to prev gradients ---
         if (ref_changed && !cs.prev_grad.empty()) {
@@ -314,19 +377,39 @@ namespace GnssProcessor {
         for (const auto& [sat, dd] : delta_grad)
             if (!std::isfinite(dd)) { all_finite = false; break; }
 
-        if (pos_gated) {
-            // Store gradients for tracing but suppress slip flagging
-            return;
+        // --- Geometry correction: remove (e_sat - e_ref) · ?pos ---
+        // The between-satellite single-difference does NOT perfectly cancel
+        // geometry.  The epoch-to-epoch position change produces a residual
+        // of (e_sat - e_ref) · ?pos in each double difference.  Correct it
+        // using the current-epoch LOS vectors and the position change.
+        if (delta_pos.norm() > 1e-6) {
+            const Eigen::Vector3d& ref_los = ref_data->los;
+            for (auto& [sat, dd] : delta_grad) {
+                if (!std::isfinite(dd)) continue;
+                auto sit = sat_map.find(sat);
+                if (sit == sat_map.end()) continue;
+                const double geom_correction = (sit->second->los - ref_los).dot(delta_pos);
+                dd -= geom_correction;
+            }
         }
 
-        if (all_finite && delta_grad.size() >= 2) {
-            // --- Reference satellite slip check ---
+        if (pos_gated) {
+            // Return geometry-corrected DDs for tracing/caching but suppress slip flagging
+            return delta_grad;
+        }
+
+        // --- Reference satellite slip check (runs regardless of all_finite) ---
+        // Collect finite non-reference double differences. If the median is
+        // large, the reference satellite slipped — not the non-ref satellites.
+        // This must run before individual outlier detection so that the
+        // common-mode reference slip is removed first.
+        {
             std::vector<double> non_ref_dds;
             for (const auto& [sat, dd] : delta_grad)
                 if (sat != cs.ref_satellite && std::isfinite(dd))
                     non_ref_dds.push_back(dd);
 
-            if (!non_ref_dds.empty()) {
+            if (non_ref_dds.size() >= 2) {
                 const double median_dd = computeMedian(non_ref_dds);
 
                 if (std::abs(median_dd) > 0.5 * lambda_if) {
@@ -334,44 +417,56 @@ namespace GnssProcessor {
                     reset_keys.push_back(ref_amb_key);
 
                     logger->warn("{}: Reference satellite {} IF phase slip: "
-                        "median(delta_grad)={:.4f} m > 0.5*lambda_IF={:.4f} m; reset {}",
-                        sys_str, cs.ref_satellite, median_dd, 0.5 * lambda_if, ref_amb_key);
+                        "median(delta_grad)={:.4f} m ({:.1f} IF cyc) > 0.5*lambda_IF={:.4f} m "
+                        "(n_finite={}); reset {}",
+                        sys_str, cs.ref_satellite, median_dd,
+                        median_dd / lambda_if, 0.5 * lambda_if,
+                        non_ref_dds.size(), ref_amb_key);
 
                     writeTraceRecord(*ref_data, sys_str, 0.0, median_dd,
                         cs.ref_satellite, false, lambda_if, true, "ref_slip",
                         position_sigma_3d, false);
 
-                    // Correct prev gradients and recompute double diffs
+                    // Correct prev gradients by the median offset and recompute
+                    // double diffs so that subsequent outlier detection sees only
+                    // the per-satellite residual after removing the reference slip.
                     for (auto& [sat, prev_g] : cs.prev_grad)
                         if (sat != cs.ref_satellite) prev_g += median_dd;
 
                     delta_grad.clear();
+                    all_finite = true;
                     for (const auto& [sat, g] : grad_phi_if) {
                         auto prev_it = cs.prev_grad.find(sat);
-                        delta_grad[sat] = (prev_it != cs.prev_grad.end())
-                            ? g - prev_it->second
-                            : std::numeric_limits<double>::quiet_NaN();
+                        if (prev_it != cs.prev_grad.end()) {
+                            delta_grad[sat] = g - prev_it->second;
+                        } else {
+                            delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
+                            all_finite = false;
+                        }
                     }
                 }
+            }
+        }
 
-                // --- Non-reference outlier check ---
-                auto cleaned = checkOutliers(delta_grad, cs.ref_satellite, lambda_if);
-                for (const auto& [sat, dd] : cleaned) {
-                    if (sat == cs.ref_satellite) continue;
-                    if (!std::isfinite(dd) && std::isfinite(delta_grad[sat])) {
-                        auto sit = sat_map.find(sat);
-                        if (sit == sat_map.end()) continue;
-                        const std::string amb_key = sat + "_" + sit->second->phase_if_key;
-                        reset_keys.push_back(amb_key);
+        // --- Non-reference outlier detection ---
+        if (all_finite && delta_grad.size() >= 2) {
+            // Full MAD-based adaptive outlier check
+            auto cleaned = checkOutliers(delta_grad, cs.ref_satellite, lambda_if);
+            for (const auto& [sat, dd] : cleaned) {
+                if (sat == cs.ref_satellite) continue;
+                if (!std::isfinite(dd) && std::isfinite(delta_grad[sat])) {
+                    auto sit = sat_map.find(sat);
+                    if (sit == sat_map.end()) continue;
+                    const std::string amb_key = sat + "_" + sit->second->phase_if_key;
+                    reset_keys.push_back(amb_key);
 
-                        logger->warn("{}: IF phase slip for {}: delta_grad={:.4f} m, lambda_IF={:.4f} m; reset {}",
-                            sys_str, sat, delta_grad[sat], lambda_if, amb_key);
+                    logger->warn("{}: IF phase slip for {}: delta_grad={:.4f} m, lambda_IF={:.4f} m; reset {}",
+                        sys_str, sat, delta_grad[sat], lambda_if, amb_key);
 
-                        writeTraceRecord(*sit->second, sys_str,
-                            grad_phi_if.at(sat), delta_grad.at(sat),
-                            cs.ref_satellite, ref_changed, lambda_if,
-                            true, "non_ref_outlier", position_sigma_3d, false);
-                    }
+                    writeTraceRecord(*sit->second, sys_str,
+                        grad_phi_if.at(sat), delta_grad.at(sat),
+                        cs.ref_satellite, ref_changed, lambda_if,
+                        true, "non_ref_outlier", position_sigma_3d, false);
                 }
             }
         } else {
@@ -385,8 +480,16 @@ namespace GnssProcessor {
 
                 logger->warn("{}: IF phase slip (fixed threshold) for {}: |delta_grad|={:.4f} m > lambda_IF={:.4f} m; reset {}",
                     sys_str, sat, std::abs(dd), lambda_if, amb_key);
+
+                writeTraceRecord(*sit->second, sys_str,
+                    grad_phi_if.count(sat) ? grad_phi_if.at(sat)
+                        : std::numeric_limits<double>::quiet_NaN(),
+                    dd, cs.ref_satellite, ref_changed, lambda_if,
+                    true, "fixed_threshold", position_sigma_3d, false);
             }
         }
+
+        return delta_grad;
     }
 
     // =================================================================
@@ -395,10 +498,12 @@ namespace GnssProcessor {
 
     std::vector<std::string> IfPhaseSlipDetector::detect(
         const std::vector<PppObservation>& observations,
-        double position_sigma_3d) {
+        double position_sigma_3d,
+        const Eigen::Vector3d& receiver_position) {
 
         std::vector<std::string> reset_keys;
         auto logger = log_manager_.getLogger("if_slip_detector");
+        last_if_jumps_.clear();
 
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
@@ -414,6 +519,12 @@ namespace GnssProcessor {
             if (sat_vec.size() < 2) continue;
 
             auto& cs = constellation_state_[sys_str];
+
+            // Compute epoch-to-epoch position change for geometry correction.
+            Eigen::Vector3d delta_pos = Eigen::Vector3d::Zero();
+            if (cs.has_prev_position && receiver_position.norm() > 1e-6) {
+                delta_pos = receiver_position - cs.prev_position;
+            }
 
             // Median IF wavelength
             std::vector<double> lambdas;
@@ -435,19 +546,22 @@ namespace GnssProcessor {
             for (const auto& sd : sat_vec)
                 grad_phi_if[sd.satellite] = sd.phi_if_omc - ref_data->phi_if_omc;
 
-            // Double-difference processing (if previous epoch exists)
-            if (!cs.prev_grad.empty())
-                processDoubleDifferences(sat_vec, sys_str, cs, grad_phi_if,
-                    lambda_if, ref_changed, position_sigma_3d, reset_keys);
-
-            // Compute delta_grad for tracing (non-slip satellites)
+            // Double-difference processing (if previous epoch exists).
+            // Returns geometry-corrected, reference-slip-corrected delta_grads.
             std::map<std::string, double> delta_grad;
-            for (const auto& [sat, g] : grad_phi_if) {
-                auto prev_it = cs.prev_grad.find(sat);
-                delta_grad[sat] = (prev_it != cs.prev_grad.end())
-                    ? g - prev_it->second
-                    : std::numeric_limits<double>::quiet_NaN();
-            }
+            if (!cs.prev_grad.empty())
+                delta_grad = processDoubleDifferences(sat_vec, sys_str, cs, grad_phi_if,
+                    lambda_if, ref_changed, position_sigma_3d, delta_pos, reset_keys);
+
+            // For satellites without a previous epoch, fill NaN
+            for (const auto& [sat, g] : grad_phi_if)
+                if (delta_grad.find(sat) == delta_grad.end())
+                    delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
+
+            // Build elevation lookup for caching
+            std::map<std::string, double> sat_elev;
+            for (const auto& sd : sat_vec)
+                sat_elev[sd.satellite] = sd.elevation;
 
             // Write trace records for non-slip satellites
             if (trace_file_.is_open()) {
@@ -468,13 +582,36 @@ namespace GnssProcessor {
                 }
             }
 
+            // Cache IF jump values for external query (joint MW+IF repair)
+            for (const auto& [sat, dd] : delta_grad) {
+                IfJumpInfo info;
+                info.delta_grad_m = dd;
+                info.lambda_if_m = lambda_if;
+                info.elevation_deg = sat_elev.count(sat) ? sat_elev.at(sat) : 0.0;
+                info.valid = std::isfinite(dd);
+                last_if_jumps_[sat] = info;
+            }
+
             // Store gradients for next epoch (exclude reset satellites)
             cs.prev_grad.clear();
+            cs.prev_los.clear();
             for (const auto& [sat, g] : grad_phi_if) {
                 bool was_reset = false;
                 for (const auto& key : reset_keys)
                     if (key.find(sat + "_") == 0) { was_reset = true; break; }
-                if (!was_reset) cs.prev_grad[sat] = g;
+                if (!was_reset) {
+                    cs.prev_grad[sat] = g;
+                    auto sit_it = std::find_if(sat_vec.begin(), sat_vec.end(),
+                        [&](const SatData& sd) { return sd.satellite == sat; });
+                    if (sit_it != sat_vec.end())
+                        cs.prev_los[sat] = sit_it->los;
+                }
+            }
+
+            // Store receiver position for geometry correction on next epoch.
+            if (receiver_position.norm() > 1e-6) {
+                cs.prev_position = receiver_position;
+                cs.has_prev_position = true;
             }
         }
 
@@ -492,6 +629,7 @@ namespace GnssProcessor {
             if (it != cs.prev_grad.end()) {
                 logger->debug("Cleared IF phase history for {} in constellation {}", satellite, sys);
                 cs.prev_grad.erase(it);
+                cs.prev_los.erase(satellite);
             }
             if (cs.ref_satellite == satellite) {
                 logger->debug("Reference satellite {} for {} was reset, will reselect next epoch", satellite, sys);
@@ -503,7 +641,16 @@ namespace GnssProcessor {
 
     void IfPhaseSlipDetector::resetAll() {
         constellation_state_.clear();
+        last_if_jumps_.clear();
         log_manager_.getLogger("if_slip_detector")->debug("All IF phase slip state cleared");
+    }
+
+    IfPhaseSlipDetector::IfJumpInfo IfPhaseSlipDetector::getLastIfJump(
+        const std::string& satellite) const {
+        auto it = last_if_jumps_.find(satellite);
+        if (it != last_if_jumps_.end())
+            return it->second;
+        return {};
     }
 
 } // namespace GnssProcessor

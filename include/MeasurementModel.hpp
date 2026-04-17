@@ -1,6 +1,10 @@
 #pragma once
 
 
+
+
+#pragma once
+
 #include "StateManager.hpp"
 #include "PppModel.hpp"
 #include "GnssConfig.hpp"
@@ -8,6 +12,9 @@
 #include "LogManager.hpp"
 #include "PppTypes.hpp"
 #include "RinexParser.hpp"
+#include "BssdPivotManager.hpp"
+#include "StateInitializer.hpp"
+#include "BssdTransform.hpp"
 #include <Eigen/Dense>
 #include <vector>
 #include <string>
@@ -26,21 +33,15 @@ namespace GnssProcessor {
      * assembles the innovation vector, design matrix H and measurement noise R, and provides
      * validation helpers for outlier and quality checks.
      *
-     * The implementation is decomposed into focused helpers:
-     *  - State pre-pass:  ensureRequiredStates()
-     *  - Filtering:       isUsableMeasurement()
-     *  - Jacobian:        buildJacobianRow()
- *  - Initialization:  initializeInterSystemBiases(), initializePhaseClockOffset(), initializeCodeBiases()
+     * Heavy-lifting sub-tasks are delegated to focused components:
+     *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
+     *  - BssdPivotManager:  pivot selection, handover, and state re-referencing.
+     *  - BssdTransform:     between-satellite single-difference S-transformation.
      */
     class MeasurementModel {
     public:
         /**
          * @brief Construct a MeasurementModel.
-         *
-         * The model stores references to a live @c StateManager and @c LogManager,
-         * and a const reference to the configured @c PppModel and @c GnssConfig.
-         * The constructor should initialize any helpers (e.g. @c PppUtils) using the
-         * provided @c LogManager.
          *
          * @param state_manager Reference to the Kalman filter state manager (owned externally).
          * @param ppp_model     Const reference to the PPP model that computes corrections and modeled observables.
@@ -67,11 +68,6 @@ namespace GnssProcessor {
         /**
          * @brief Set the body-to-ECEF attitude matrix for tightly-coupled Jacobians.
          *
-         * In tightly-coupled GNSS/INS mode the measurement Jacobian includes
-         * attitude-error and accelerometer-bias partials for Doppler rows.
-         * Call this once per epoch (after IMU mechanization) before
-         * computeMeasurementUpdate().
-         *
          * @param C_b_e Current body-to-ECEF rotation matrix.
          * @param f_b_corrected Bias-corrected specific force in body frame (m/s²).
          */
@@ -80,94 +76,76 @@ namespace GnssProcessor {
 
         /**
          * @brief Get the current BSSD pivot satellite for each constellation.
-         *
-         * Returns an empty map when BSSD is not active or before the first
-         * epoch has been processed.
-         *
-         * @return Map from constellation name (e.g. "GPS") to pivot satellite
-         *         identifier (e.g. "G01").
          */
         const std::map<std::string, std::string>& getBssdPivotSatellites() const {
-            return bssd_pivot_sat_;
+            return pivot_manager_.getPivotSatellites();
         }
 
+        /// Access the pivot manager (for external components that need pivot info).
+        BssdPivotManager& getPivotManager() { return pivot_manager_; }
+        const BssdPivotManager& getPivotManager() const { return pivot_manager_; }
+
+        /// Provide the MW detector to the pivot manager for quality-based scoring.
+        void setMwDetector(const MwSlipDetector* mw) { pivot_manager_.setMwDetector(mw); }
+
+        /// Access the state initializer (for shared helpers like resolveReceiverBias).
+        StateInitializer& getStateInitializer() { return state_initializer_; }
+        const StateInitializer& getStateInitializer() const { return state_initializer_; }
+
     private:
-        StateManager& state_manager_;    ///< Reference to the state manager (non-owning).
-        const PppModel& ppp_model_;      ///< Reference to the PPP modeling component (non-owning).
-        const GnssConfig& config_;       ///< Processing configuration (read-only).
-        LogManager& log_manager_;        ///< Reference to the logging manager (non-owning).
-        PppUtils ppp_utils_;             ///< Utility helpers (frequency/wavelength helpers) initialized with the logger.
+        // -------------------------------------------------------------------
+        // Core dependencies (non-owning references)
+        // -------------------------------------------------------------------
 
-        bool isb_initialized_ = false;  ///< Flag to track if ISB has been initialized
-        bool phase_clock_initialized_ = false; ///< Flag to track if phase clock offset has been seeded
-        bool code_bias_initialized_ = false; ///< Flag to track if DCB/IFB states have been seeded
+        StateManager& state_manager_;
+        const PppModel& ppp_model_;
+        const GnssConfig& config_;
+        LogManager& log_manager_;
 
-        /// Tracked BSSD pivot satellite per constellation (persists across epochs).
-        /// Used to detect pivot handovers and re-reference SD ambiguity states.
-        std::map<std::string, std::string> bssd_pivot_sat_;
+        // -------------------------------------------------------------------
+        // Delegate components
+        // -------------------------------------------------------------------
+
+        /// First-epoch state seeding (ISB, phase clock, DCB/IFB).
+        StateInitializer state_initializer_;
+
+        /// BSSD pivot satellite manager (selection, handover, re-referencing).
+        BssdPivotManager pivot_manager_;
+
+        /// BSSD S-transformation (differencing operator).
+        BssdTransform bssd_transform_;
+
+        // -------------------------------------------------------------------
+        // Per-instance helpers
+        // -------------------------------------------------------------------
+
+        PppUtils ppp_utils_;  ///< Frequency/wavelength helpers.
+
+        /// Epoch at which the BSSD pivot was last selected.  Used to
+        /// prevent re-running pivot handover during measurement rebuilds
+        /// within the same epoch (outlier-triggered rebuilds must reuse
+        /// the original pivot to avoid cascading SD-ambiguity invalidation).
+        GnssTime last_pivot_epoch_{};
+
+        /// Per-constellation set of frequency bands covered by the BSSD pivot.
+        /// Populated at the start of each computeMeasurementUpdate() call.
+        /// When BSSD is active, measurements on bands not covered by the
+        /// pivot are excluded (they would pass through as undifferenced
+        /// singletons with zeroed clock columns, corrupting the solution).
+        /// Key: constellation (e.g. "GPS"), Value: set of bands (e.g. {"L1","L2","C1","C2"}).
+        mutable std::map<std::string, std::set<std::string>> bssd_pivot_bands_;
 
         // Tightly-coupled IMU state (set per-epoch via setImuState())
-        Eigen::Matrix3d tc_C_b_e_ = Eigen::Matrix3d::Identity(); ///< Body-to-ECEF rotation.
-        Eigen::Vector3d tc_f_b_ = Eigen::Vector3d::Zero();       ///< Bias-corrected specific force (body frame).
+        Eigen::Matrix3d tc_C_b_e_ = Eigen::Matrix3d::Identity();
+        Eigen::Vector3d tc_f_b_ = Eigen::Vector3d::Zero();
 
         // -------------------------------------------------------------------
-        // Utility helpers
+        // Product coverage checks
         // -------------------------------------------------------------------
-
-        /**
-         * @brief Map a System enum to its constellation name for ISB lookup.
-         *
-         * Returns an empty string for GPS (reference system) and "Unknown"
-         * for unrecognized values.
-         */
-        static std::string systemToIsbName(System system);
-
-        /**
-         * @brief Map a System enum to the single-char system identifier used by the BIA clock reference map.
-         */
-        static char systemToClockRefChar(System system);
-
-        /**
-         * @brief Resolved receiver-bias state for one observation signal.
-         *
-         * Returned by resolveReceiverBias() to tell the Jacobian builder
-         * which code-bias state key to use and with what coefficient.
-         */
-        struct ReceiverBiasEntry {
-            std::string state_key;   /**< Key into code_bias_indices_ (e.g. "G_DCB" or "G_IFB5"). */
-            double      coefficient; /**< Jacobian coefficient for the state.  NaN ? no bias modelled. */
-        };
-
-        /**
-         * @brief Determine the receiver-bias state and coefficient for a signal.
-         *
-         * For signals on one of the two clock-reference bands the method
-         * returns the per-system DCB state with the GF-IF coefficient ?_j.
-         * For signals on any other band it returns a per-system-per-band IFB
-         * state with coefficient 1.0 (the total receiver delay for that band
-         * relative to the IF clock is an independent free parameter).
-         *
-         * @param obs_signal  Signal key (e.g. "C1W", "L5Q").
-         * @param system      GNSS system enum.
-         * @param satellite   Satellite id (for GLONASS frequency slot lookup).
-         * @return ReceiverBiasEntry with state_key and coefficient.
-         *         coefficient is NaN when no bias can be modelled.
-         */
-        ReceiverBiasEntry resolveReceiverBias(const std::string& obs_signal,
-                                               System system,
-                                               const std::string& satellite) const;
 
         /**
          * @brief Check whether both component signals of an IF combination
          *        have BIA product coverage.
-         *
-         * For a key like "C1W_C5Q" this checks hasBiasEntry for both
-         * "C1W" and "C5Q".  Returns true for non-IF keys (no underscore)
-         * and when both components have coverage.
-         *
-         * @param satellite Satellite identifier.
-         * @param if_key    IF combination key (e.g. "C1W_C5Q").
-         * @return True if both component signals have BIA coverage.
          */
         bool ifCombHasFullBia(const std::string& satellite,
                               const std::string& if_key) const;
@@ -175,32 +153,8 @@ namespace GnssProcessor {
         /**
          * @brief Check whether both component signals of an IF combination
          *        have receiver antenna ATX coverage (PCO/PCV).
-         *
-         * For a key like "L1W_L5Q" this checks hasReceiverAtxEntry for
-         * both "L1W" and "L5Q".  Returns true for non-IF keys.
-         *
-         * @param if_key  IF combination key (e.g. "L1W_L5Q").
-         * @param system  GNSS system.
-         * @return True if both component signals have receiver ATX coverage.
          */
         bool ifCombHasFullRxAtx(const std::string& if_key, System system) const;
-
-        /**
-         * @brief Compute a "raw" residual for an observation/ref_type pair.
-         *
-         * residual = observed - modeled - rx_clk - mf_w*zwd - isb - tropo_grad
-         *          - iono - code_bias
-         *
-         * In uncombined mode the per-satellite ionosphere and receiver
-         * code-bias (DCB/IFB) contributions are subtracted so that the
-         * returned residual is free of all currently-estimated states.
-         *
-         * Used by initializeInterSystemBiases(), initializePhaseClockOffset(),
-         * and initializeCodeBiases() to avoid duplicating the residual formula.
-         */
-        double computeRawResidual(const PppObservation& obs,
-            const std::string& ref_type,
-            const Eigen::VectorXd& x) const;
 
         // -------------------------------------------------------------------
         // State pre-pass
@@ -211,25 +165,9 @@ namespace GnssProcessor {
          *        required by the current epoch exist in the StateManager.
          *
          * Also prunes stale states that are no longer needed.
-         *
-         * @param observations Epoch observations.
-         * @param epoch_prefix Log prefix string.
          */
         void ensureRequiredStates(const std::vector<PppObservation>& observations,
             const std::string& epoch_prefix);
-
-        /**
-         * @brief Compute ionosphere seed from dual-frequency code pseudoranges.
-         *
-         * Uses the geometry-free code combination P1-P2 to estimate the slant
-         * ionospheric delay at the ionosphere state reference frequency
-         * (GPS L1).  Follows cssrlib: I = (P1 - P2) / (1 - (f1/f2)^2).
-         *
-         * @param obs  Observation record with code measurements in meters.
-         * @return Estimated slant iono delay in meters at the reference
-         *         frequency, or 0.0 if dual-frequency codes are unavailable.
-         */
-        double computeIonosphereSeed(const PppObservation& obs) const;
 
         // -------------------------------------------------------------------
         // Measurement filtering
@@ -237,9 +175,6 @@ namespace GnssProcessor {
 
         /**
          * @brief Determine whether a given observation/ref_type pair is usable.
-         *
-         * Checks signal type (C/L), combination mode (iono-free vs uncombined),
-         * availability of modeled data, and exclusion list.
          */
         bool isUsableMeasurement(const PppObservation& obs,
             const std::string& ref_type,
@@ -252,18 +187,6 @@ namespace GnssProcessor {
 
         /**
          * @brief Build one Jacobian row and compute the predicted observable.
-         *
-         * Fills in the position, clock, phase-clock, tropo, tropo-gradient,
-         * ISB, ionosphere, code-bias, and ambiguity entries for a single
-         * measurement row.
-         *
-         * @param obs          Observation record.
-         * @param ref_type     Signal key (e.g. "C1W_C2W" or "L1C").
-         * @param x            Current state vector.
-         * @param state_size   Total state size.
-         * @param[out] jacobian  Populated Jacobian row (sized to state_size).
-         * @param[out] predicted Predicted observable value at the current state.
-         * @return true if the row was successfully built; false to skip this measurement.
          */
         bool buildJacobianRow(const PppObservation& obs,
             const std::string& ref_type,
@@ -273,83 +196,15 @@ namespace GnssProcessor {
             double& predicted) const;
 
         // -------------------------------------------------------------------
-        // First-epoch initializers
+        // BSSD delegation
         // -------------------------------------------------------------------
 
-        /**
-         * @brief Initialize inter-system biases from first-epoch code observations.
-         */
-        void initializeInterSystemBiases(const std::vector<PppObservation>& observations,
-                                          const std::string& epoch_prefix);
-
-        /**
-         * @brief Seed the phase clock offset from the code-phase residual difference.
-         */
-        void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
-                                         const std::string& epoch_prefix);
-
-        /**
-         * @brief Seed DCB/IFB states from cross-band code residual differences.
-         *
-         * Uses the first reference band as an anchor and computes the median
-         * bias estimate across satellites for each DCB/IFB state.  Must be
-         * called after ensureRequiredStates() has created the code-bias
-         * states and after the ionosphere states have been seeded.
-         */
-        void initializeCodeBiases(const std::vector<PppObservation>& observations,
-                                   const std::string& epoch_prefix);
-
-        // -------------------------------------------------------------------
-        // Between-satellite single difference
-        // -------------------------------------------------------------------
-
-        /**
-         * @brief Detect and handle BSSD pivot satellite handovers.
-         *
-         * Uses sticky pivot selection with elevation hysteresis: the current
-         * pivot is retained while it remains above bssd_pivot_min_elevation.
-         *
-         * When the pivot's ambiguity has been disturbed (cycle slip or outlier
-         * reset), the handler selects the best healthy (undisturbed) satellite
-         * as a replacement and applies a lossless T P T' re-referencing to
-         * preserve all converged filter information.  Only the disturbed
-         * pivot's own ambiguity is affected.  If no healthy replacement
-         * exists, the pivot is re-zeroed in place as a last resort.
-         *
-         * Must be called **before** innovations are computed so the corrected
-         * state vector flows into the measurement equations.
-         */
         void handleBssdPivotHandover(const std::vector<PppObservation>& observations,
                                       const std::string& epoch_prefix);
 
-        /**
-         * @brief Apply between-satellite single-difference (BSSD) S-transformation.
-         */
-        void applyBetweenSatelliteSingleDifference(EpochMeasurement& update,
-                                                    const std::string& epoch_prefix);
-
-        /**
-         * @brief Freeze pivot ambiguity covariances to zero.
-         *
-         * The BSSD pivot's H-column is zeroed in the S-transformation, so
-         * the pivot receives no measurement update and its variance can never
-         * converge.  This helper explicitly sets its covariance row/col to
-         * zero after every epoch so that the disturbance detector does not
-         * confuse the never-converging initial variance with a cycle-slip
-         * reset.
-         */
         void freezePivotAmbiguityCovariance();
 
-        /**
-         * @brief Freeze pivot ionosphere covariances to zero.
-         *
-         * Under BSSD the pivot satellite's ionosphere column is zeroed in
-         * the S-transformation (absorbed into the eliminated clock).
-         * Without freezing, the ionosphere variance grows without bound
-         * via process noise, degrading convergence through stale
-         * cross-covariances.
-         */
-        void freezePivotIonosphereCovariance();
+        void freezePivotIonoAndBiasCovariance();
     };
 
 } // namespace GnssProcessor

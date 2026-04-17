@@ -67,6 +67,17 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Enumeration for MW slip detector signal selection.
+     *
+     * Controls which frequency bands the Melbourne-Wubbena slip detector
+     * uses to form dual-frequency MW pairs.
+     */
+    enum class MwSignalMode {
+        Filter, ///< Use only the bands selected by the KF signal_mode (default).
+        All     ///< Use all available RINEX bands (raw_observed).
+    };
+
+    /**
      * @brief Enumeration for satellite velocity interpolation.
      *
      * Specifies the type of interpolation used for satellite velocity computation.
@@ -96,8 +107,9 @@ namespace GnssProcessor {
      */
     enum class StochasticModelType {
         Constant,   ///< Use the a-priori ?² directly, no geometry scaling.
-        Elevation,  ///< Classic 1/sin²(el) weighting (default).
-        SNR         ///< SNR-based weighting using the SIGMA-? model.
+        Elevation,      ///< Classic 1/sin²(el) weighting (default).
+        SNR,            ///< SNR-based weighting using the SIGMA-? model.
+        SatelliteBlock  ///< Block/frequency-dependent zenith noise with 1/sin²(el) scaling.
     };
 
     /**
@@ -178,14 +190,6 @@ namespace GnssProcessor {
         /// hardware delays on signals without BIA product coverage.  Nearly
         /// constant over hours; 1e-10 allows ~0.01 mm/sqrt(30 s) drift.
         double sat_bias{ 1e-10 };
-
-        /// Relaxed ambiguity process noise (m*m/s).  Applied to phase IF
-        /// ambiguities that lack full product coverage (missing BIA or
-        /// receiver ATX).  Allows the ambiguity to slowly track the
-        /// elevation-dependent receiver PCV residual instead of holding
-        /// a fixed value.  1e-6 yields ~0.17 mm/sqrt(30 s), sufficient
-        /// to follow the PCV variation over a satellite pass.
-        double phase_bias{ 1e-6 };
     };
 
     /**
@@ -242,6 +246,69 @@ namespace GnssProcessor {
         double phase_b{ 0.3 };        ///< Multiplier for phase exponential term (meters).
         double snr_floor_dbhz{ 20.0 };///< Minimum SNR (dB-Hz) to clamp before computing ?.
         double snr_ceil_dbhz{ 55.0 }; ///< Maximum SNR (dB-Hz) to clamp before computing ?.
+    };
+
+    /**
+     * @brief Parameters for the satellite-block-dependent stochastic model.
+     *
+     * Assigns zenith-direction code and phase noise based on the satellite
+     * block type extracted from the ATX antenna model (e.g. "BLOCK IIF",
+     * "BLOCK IIIA", "GALILEO-2").  A per-frequency-band scale factor is
+     * applied on top.  The result is then scaled by 1/sin²(el) like the
+     * standard Elevation model.
+     *
+     * Block types are matched by substring (case-insensitive) so that
+     * "BLOCKIIIA" matches an ATX type of "G04_BLOCKIIIA_G074".
+     */
+    struct SatBlockNoiseParams {
+        /// Zenith code noise per block type (meters).  Key is a substring
+        /// that will be matched against the ATX type field (e.g. "BLOCKIII",
+        /// "BLOCKIIF", "GALILEO").  First match wins.
+        std::vector<std::pair<std::string, double>> block_code_std_m{
+            {"BLOCKIIIA", 0.10},
+            {"BLOCKIII",  0.10},
+            {"BLOCKIIR",  0.20},
+            {"BLOCKIIF",  0.15},
+            {"BLOCKII",   0.30},
+            {"GALILEO",   0.10},
+            {"BEIDOU-3",  0.15},
+            {"BEIDOU",    0.25},
+            {"GLONASS-M+",0.20},
+            {"GLONASS-K", 0.15},
+            {"GLONASS",   0.30}
+        };
+
+        /// Zenith phase noise per block type (meters).  Same matching rules.
+        std::vector<std::pair<std::string, double>> block_phase_std_m{
+            {"BLOCKIIIA", 0.001},
+            {"BLOCKIII",  0.001},
+            {"BLOCKIIR",  0.002},
+            {"BLOCKIIF",  0.0015},
+            {"BLOCKII",   0.003},
+            {"GALILEO",   0.001},
+            {"BEIDOU-3",  0.0015},
+            {"BEIDOU",    0.002},
+            {"GLONASS-K", 0.0015},
+            {"GLONASS",   0.003}
+        };
+
+        /// Per-frequency-band scale factor applied to the zenith noise.
+        /// The frequency band digit (second character of the RINEX signal
+        /// code, e.g. '1' in "L1W") determines the scale.
+        /// Missing bands default to 1.0.
+        std::map<char, double> freq_band_scale{
+            {'1', 1.0},
+            {'2', 1.0},
+            {'5', 0.5},
+            {'6', 0.8},
+            {'7', 0.7},
+            {'8', 0.6}
+        };
+
+        /// Fallback code noise when no block match is found (meters).
+        double default_code_std_m{ 0.30 };
+        /// Fallback phase noise when no block match is found (meters).
+        double default_phase_std_m{ 0.002 };
     };
 
     /**
@@ -360,6 +427,66 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Configuration for spdlog file loggers and CSV trace outputs.
+     *
+     * Each flag controls whether the corresponding log file or trace CSV
+     * is created and written at runtime.  Defaults are all-on so that
+     * disabling output requires an explicit opt-out in the JSON config.
+     */
+    struct LoggingConfig {
+        // --- spdlog file loggers (.log) ---
+        bool enable_main_log{ true };              ///< logs/main_log.log
+        bool enable_gnss_config{ true };            ///< logs/gnss_config.log
+        bool enable_kalman_filter{ true };          ///< logs/kalman_filter.log
+        bool enable_state_manager{ true };          ///< logs/state_manager.log
+        bool enable_ppp_model{ true };              ///< logs/ppp_model.log
+        bool enable_measurement_model{ true };      ///< logs/measurement_model.log
+        bool enable_mw_slip_detector{ true };       ///< logs/mw_slip_detector.log
+        bool enable_if_slip_detector{ true };       ///< logs/if_slip_detector.log
+        bool enable_gf_slip_detector{ true };       ///< logs/gf_slip_detector.log
+        bool enable_cycle_slip_manager{ true };     ///< logs/cycle_slip_manager.log
+        bool enable_ambiguity_resolver{ true };     ///< logs/ambiguity_resolver.log
+        bool enable_corrections{ true };            ///< logs/corrections.log
+        bool enable_geometry{ true };               ///< logs/geometry.log
+        bool enable_troposphere{ true };            ///< logs/troposphere.log
+        bool enable_ionosphere{ true };             ///< logs/ionosphere.log
+        bool enable_antenna{ true };                ///< logs/antenna.log
+        bool enable_antenna_model{ true };          ///< logs/antenna_model.log
+        bool enable_ocean_tide{ true };             ///< logs/ocean_tide.log
+        bool enable_planetary_model{ true };        ///< logs/planetary_model.log
+        bool enable_stochastic_model{ true };       ///< logs/stochastic_model.log
+        bool enable_rinex_parser{ true };           ///< logs/rinex_parser.log
+        bool enable_product_parser{ true };         ///< logs/product_parser.log
+        bool enable_product_cache{ true };          ///< logs/product_cache.log
+        bool enable_resolver{ true };               ///< logs/resolver.log
+        bool enable_state_initializer{ true };      ///< logs/state_initializer.log
+        bool enable_bssd_pivot_manager{ true };     ///< logs/bssd_pivot_manager.log
+        bool enable_bssd_transform{ true };         ///< logs/bssd_transform.log
+        bool enable_ppp_utils{ true };              ///< logs/ppp_utils.log
+        bool enable_downloader{ true };             ///< logs/downloader.log
+        bool enable_ntrip{ true };                  ///< logs/ntrip.log
+        bool enable_rt_engine{ true };              ///< logs/rt_engine.log
+        bool enable_imu{ true };                    ///< logs/imu.log
+
+        // --- CSV trace files ---
+        bool enable_state_trace{ true };            ///< logs/state_trace.csv
+        bool enable_ambiguity_trace{ true };        ///< logs/ambiguity_trace.csv
+        bool enable_ionosphere_trace{ true };       ///< logs/ionosphere_trace.csv
+        bool enable_residual_trace{ true };         ///< logs/measurement_residuals.csv
+        bool enable_wls_trace{ true };              ///< logs/wls_trace.csv
+        bool enable_mw_slip_trace{ true };          ///< logs/mwwl_trace.csv
+        bool enable_if_slip_trace{ true };          ///< logs/if_slip_trace.csv
+        bool enable_gf_slip_trace{ true };          ///< logs/gf_slip_trace.csv
+
+        /**
+         * @brief Look up whether a given spdlog logger name is enabled.
+         * @param name Logger name (e.g. "kalman_filter").
+         * @return true if the logger should produce file output.
+         */
+        bool isLoggerEnabled(const std::string& name) const;
+    };
+
+    /**
      * @brief Configuration class for GNSS processing.
      *
      * This class loads and stores configuration parameters from a JSON file,
@@ -410,6 +537,16 @@ namespace GnssProcessor {
         SignalMode getSignalMode() const { return signal_mode_; }
 
         /**
+         * @brief Gets the MW slip detector signal selection mode.
+         *
+         * Controls whether the MW detector forms pairs from the KF-selected
+         * bands only (Filter, default) or from all available RINEX bands (All).
+         *
+         * @return Current MwSignalMode.
+         */
+        MwSignalMode getMwSignalMode() const { return mw_signal_mode_; }
+
+        /**
          * @brief Gets the satellite position and velocity interpolation mode.
          * @return Current satellite position and velocity interpolation mode (lagrange, finite, hermite, or spline).
          */
@@ -432,6 +569,21 @@ namespace GnssProcessor {
          * @return Elevation mask value.
          */
         double getElevationMaskDeg() const { return elevation_mask_deg_; }
+
+        /**
+         * @brief Gets the data gap tolerance in seconds.
+         *
+         * When the elapsed time between consecutive epochs exceeds this
+         * threshold the filter treats the gap as a data outage and
+         * re-seeds the receiver clock from WLS.
+         *
+         * A value of 0 (the default) means "use the measurement rate"
+         * — i.e. any epoch spacing larger than the nominal interval is
+         * treated as a gap.
+         *
+         * @return Gap tolerance in seconds (0 = measurement-rate default).
+         */
+        double getDataGapTolerance() const { return data_gap_tolerance_s_; }
 
         /**
          * @brief Get the list of satellites excluded from processing.
@@ -490,6 +642,12 @@ namespace GnssProcessor {
          * @return Const reference to the SnrModelParams struct.
          */
         const SnrModelParams& getSnrModelParams() const { return snr_model_params_; }
+
+        /**
+         * @brief Gets the satellite-block stochastic model parameters.
+         * @return Const reference to the SatBlockNoiseParams struct.
+         */
+        const SatBlockNoiseParams& getSatBlockNoiseParams() const { return sat_block_noise_params_; }
 
         /**
          * @brief Gets the signal priorities map.
@@ -836,6 +994,12 @@ namespace GnssProcessor {
         double getArHoldVariance() const { return ar_hold_variance_; }
 
         /**
+         * @brief Get the logging configuration block.
+         * @return Const reference to the LoggingConfig struct.
+         */
+        const LoggingConfig& getLoggingConfig() const { return logging_config_; }
+
+        /**
          * @brief Override the observation path (used by auto-download).
          * @param path New observation RINEX path.
          */
@@ -856,10 +1020,12 @@ namespace GnssProcessor {
     private:
         ProcessingMode processing_mode_{ ProcessingMode::PPP }; ///< Processing mode (PPP or PPP-RTK).
         SignalMode signal_mode_{ SignalMode::Dual };            ///< Signal mode (Dual, Triple, All).
+        MwSignalMode mw_signal_mode_{ MwSignalMode::Filter };  ///< MW detector signal selection (Filter or All).
         SatelliteInterpolationMode satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }; ///< Satellite position/velocity interpolation mode (Lagrange, Finite, Hermite, Spline).
         SatelliteClockInterpolationMode satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }; ///< Satellite clock interpolation mode (Linear, Lagrange).
         bool uncombined_enabled_{ false };                      ///< Enable uncombined processing.
         double elevation_mask_deg_{ 10.0 };                    ///< Elevation mask in degrees.
+        double data_gap_tolerance_s_{ 0.0 };                     ///< Data gap tolerance (s); 0 = use measurement rate.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         ProcessNoise process_noise_;                          ///< Process noise parameters.
         InitialStd initial_std_;                              ///< Initial state uncertainties.
@@ -887,13 +1053,13 @@ namespace GnssProcessor {
         bool estimate_tropo_gradients_{ false };   ///< Estimate troposphere horizontal gradients (Gn, Ge).
         bool relinearize_geometry_{ false };            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
         bool estimate_phase_clock_{ false };            ///< Estimate separate phase clock offset.
-        bool enable_if_slip_detector_{ true };             ///< Enable the IF phase slip detector.
+        bool enable_if_slip_detector_{ false };             ///< Enable the IF phase slip detector (experimental, disabled by default).
         bool accumulate_phase_windup_{ false };                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         bool enable_between_satellite_sd_{ false };                ///< Between-satellite single-difference operator in measurement model.
         double bssd_pivot_min_elevation_deg_{ 45.0 };              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
-        bool estimate_ifb_{ true };                                    ///< Estimate receiver inter-frequency bias (IFB) for non-reference code bands.
-        bool lock_signals_to_clock_ref_{ true };                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.
-        bool require_bia_for_signals_{ true };                           ///< Only use signals with BIA product coverage.
+        bool estimate_ifb_{ false };                                    ///< Estimate receiver inter-frequency bias (IFB) for non-reference code bands.
+        bool lock_signals_to_clock_ref_{ false };                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.
+        bool require_bia_for_signals_{ false };                           ///< Only use signals with BIA product coverage.
         bool estimate_sat_biases_{ false };                               ///< Estimate per-satellite bias for signals without BIA coverage.
         double no_bia_code_downweight_{ 100.0 };                            ///< Variance multiplier for code on signals without BIA coverage.
         bool estimate_velocity_{ false };                           ///< Estimate receiver velocity from Doppler observations.
@@ -904,6 +1070,7 @@ namespace GnssProcessor {
         ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
         StochasticModelType stochastic_model_{ StochasticModelType::Elevation }; ///< Measurement stochastic model selection.
         SnrModelParams snr_model_params_;                                ///< SNR-based model parameters.
+        SatBlockNoiseParams sat_block_noise_params_;                      ///< Satellite-block stochastic model parameters.
         ImuConfig imu_config_;                                           ///< IMU integration configuration.
         DownloadConfig download_config_;                                  ///< Data download and caching configuration.
         AppMode app_mode_{ AppMode::PostProcessing };                    ///< Top-level execution mode.
@@ -914,6 +1081,8 @@ namespace GnssProcessor {
         double ar_ratio_threshold_{ 3.0 };     ///< LAMBDA ratio test threshold for acceptance.
         double ar_elevation_mask_{ 20.0 };     ///< Elevation mask for AR candidates (degrees).
         double ar_hold_variance_{ 0.001 };     ///< Pseudo-obs variance for fix-and-hold (m^2).
+
+        LoggingConfig logging_config_;             ///< Logger and trace file enable/disable flags.
     };
 
 } // namespace GnssProcessor

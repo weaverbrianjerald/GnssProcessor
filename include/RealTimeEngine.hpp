@@ -23,7 +23,6 @@
 #include "KalmanFilter.hpp"
 #include "MeasurementModel.hpp"
 #include "MwSlipDetector.hpp"
-#include "IfPhaseSlipDetector.hpp"
 #include "PppModel.hpp"
 #include "PppTypes.hpp"
 #include "ProductParser.hpp"
@@ -124,7 +123,6 @@ private:
     std::unique_ptr<KalmanFilter>        kalman_filter_;
     std::unique_ptr<WlsEstimator>        wls_estimator_;
     std::unique_ptr<MwSlipDetector>      mw_slip_detector_;
-    std::unique_ptr<IfPhaseSlipDetector> if_slip_detector_;
     std::unique_ptr<TraceLogger>         trace_logger_;
 
     PppState ppp_state_{};
@@ -134,7 +132,6 @@ private:
     bool      first_epoch_{ true };
     double    prev_tow_{ 0.0 };
     GnssTime  prev_epoch_time_{ 0, 0.0 };
-    double    prev_pos_sigma_3d_{ std::numeric_limits<double>::max() };
 
     // Observation buffer for epoch assembly from streaming frames.
     GnssTime                        pending_epoch_time_{ 0, 0.0 };

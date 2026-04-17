@@ -75,7 +75,20 @@ public:
      *
      * @param state_manager   Current filter state (provides ambiguity indices).
      * @param observations    Modeled observations for this epoch (for elevation, satellite info).
+     * @param wl_ambiguities  Resolved SD WL integers from the MW detector.
+     *                        Keys are "SAT_SIG1_SIG2" (e.g. "G01_L1C_L2W"),
+     *                        values are the rounded SD WL integer.  When
+     *                        available for a DD pair, a two-step WL/NL approach
+     *                        is used: the WL is fixed from MW, and only the NL
+     *                        is searched with LAMBDA, halving the search space.
      * @return AmbiguityResolution result.
+     */
+    AmbiguityResolution resolve(const StateManager& state_manager,
+                                const std::vector<PppObservation>& observations,
+                                const std::map<std::string, int>& wl_ambiguities);
+
+    /**
+     * @brief Attempt to resolve integer ambiguities (no WL constraint).
      */
     AmbiguityResolution resolve(const StateManager& state_manager,
                                 const std::vector<PppObservation>& observations);
@@ -176,6 +189,31 @@ private:
 
     AmbiguityResolverConfig config_;
     LogManager& log_manager_;
+    PppUtils ppp_utils_;   ///< For frequency/wavelength lookups in NL computation.
+
+    /**
+     * @brief Two-step WL/NL resolution using known WL integers.
+     *
+     * For each satellite pair that has DD pairs on two frequencies AND a
+     * known DD WL integer, the (L1, L2) DD pair is transformed to the
+     * NL domain.  LAMBDA runs on the NL-only set — unpaired DD
+     * ambiguities without a matching second frequency or WL integer are
+     * excluded to avoid contaminating the ratio test.  The fixed NL
+     * integers are back-transformed to the original signal domain.
+     *
+     * @param pairs            DD pairs (from buildDdPairs).
+     * @param x                Full state vector.
+     * @param P                Full covariance matrix.
+     * @param wl_ambiguities   Resolved SD WL integers from MW detector.
+     * @param observations     Observations (for system/frequency info).
+     * @return AmbiguityResolution result, or empty if the method is not applicable.
+     */
+    AmbiguityResolution resolveWlConstrained(
+        const std::vector<DdPair>& pairs,
+        const Eigen::VectorXd& x,
+        const Eigen::MatrixXd& P,
+        const std::map<std::string, int>& wl_ambiguities,
+        const std::vector<PppObservation>& observations);
 };
 
 } // namespace GnssProcessor

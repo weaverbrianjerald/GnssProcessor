@@ -320,8 +320,14 @@ namespace GnssProcessor {
         std::set<std::string> bias_signals_;   ///< Fast lookup: "satellite|signal" keys from BIA
         void buildBiasIndex();
 
-        // Phase wind-up state per satellite (for continuity between epochs)
-        mutable std::unordered_map<std::string, double> prev_windup_;
+        // Phase wind-up state per satellite (for continuity between epochs).
+        // Stores the accumulated angle (radians) and the GPS seconds of the
+        // last update so that stale entries can be discarded after data gaps.
+        struct WindUpState {
+            double angle{ 0.0 };      ///< Accumulated wind-up angle (radians).
+            double epoch_s{ 0.0 };    ///< Continuous GPS seconds of last update.
+        };
+        mutable std::unordered_map<std::string, WindUpState> prev_windup_;
 
         OceanTideModel ocean_tide_model_;  ///< Ocean tidal loading model
 

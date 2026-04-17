@@ -322,21 +322,22 @@ const char* signalModeLabel(SignalMode m) {
             // --- Process observation ---
             if (config_.isUncombinedEnabled()) {
                 // Build the set of signal keys that were actually selected for
-                // positioning so that raw_observed and observed only contain
-                // those signals.  Without this filter, unselected bands from
-                // the RINEX file leak into observed and cause the MW slip
-                // detector to evaluate spurious frequency-pair combinations.
+                // positioning so that observed only contains those signals.
+                // The KF measurement model must not see unselected bands.
                 std::set<std::string> selected_keys;
                 for (const auto& sp : selected_signals) {
                     if (!sp.first.empty())  selected_keys.insert(sp.first);
                     if (!sp.second.empty()) selected_keys.insert(sp.second);
                 }
 
-                // Preserve raw RINEX measurements for selected signals only.
+                // Preserve ALL raw RINEX code+phase measurements in raw_observed
+                // regardless of signal_mode.  The MW cycle slip detector uses
+                // raw_observed to form all possible dual-frequency MW pairs,
+                // enabling multi-frequency slip detection (e.g. L1/L2/L5) even
+                // when signal_mode restricts the KF to dual-frequency only.
                 for (const auto& [key, val] : ppp_obs.observed) {
                     if (key.size() >= 2 && (key[0] == 'C' || key[0] == 'L') &&
-                        key.find('_') == std::string::npos &&
-                        selected_keys.count(key)) {
+                        key.find('_') == std::string::npos) {
                         ppp_obs.raw_observed[key] = val;
                     }
                 }
@@ -346,8 +347,8 @@ const char* signalModeLabel(SignalMode m) {
                 }
 
                 // Strip observed of any raw RINEX keys that were not selected,
-                // so downstream consumers (e.g. MW slip detector) only see the
-                // signals that are actually used for positioning.
+                // so the KF measurement model only sees signals that match the
+                // configured signal_mode for positioning.
                 for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
                     const auto& k = it->first;
                     if (k.size() >= 2 && (k[0] == 'C' || k[0] == 'L') &&
@@ -918,7 +919,8 @@ const char* signalModeLabel(SignalMode m) {
             const auto& n = config_.getDefaultMeasurementNoise();
             const double fallback_var = obs.variances.count(type) ? obs.variances.at(type)
                 : (meas_type == 'C' ? n.code_std_m * n.code_std_m : n.phase_std_m * n.phase_std_m);
-            variances[j] = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, fallback_var);
+            variances[j] = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, fallback_var,
+                obs.satellite, antenna_.getAntennas());
 
             frequencies[j] = ppp_utils_.getFrequency(type, obs.system, obs.satellite);
             if (frequencies[j] <= 0.0) {
@@ -1081,15 +1083,20 @@ const char* signalModeLabel(SignalMode m) {
                 continue;
             }
 
-            // Skip signals that have no BIA product entry when required.
-            // When estimate_sat_biases is enabled, these signals are kept and
-            // a per-satellite bias state will absorb the uncorrected delay.
-            if (config_.requireBiaForSignals()
+            // Skip CODE signals that have no BIA product entry when required.
+            // Phase measurements are always kept — the float ambiguity absorbs
+            // any time-constant satellite phase bias from missing BIA coverage.
+            // When estimate_sat_biases is enabled, code signals are also kept
+            // because a per-satellite bias state absorbs the uncorrected delay.
+            // MW slip detection is unaffected (it uses raw_observed).
+            const char meas_type_pre = type[0];
+            if (meas_type_pre == 'C'
+                && config_.requireBiaForSignals()
                 && !config_.estimateSatBiases()
                 && config_.getModelCorrections().enable_code_phase_bias
                 && !gnss_corrections_.hasBiasEntry(obs.satellite, type)) {
                 log_manager_.getLogger("ppp_model")->debug(
-                    "Skipping {} on {} — no BIA entry (require_bia_for_signals=true)",
+                    "Skipping code {} on {} — no BIA entry (require_bia_for_signals=true)",
                     type, obs.satellite);
                 continue;
             }
@@ -1119,7 +1126,8 @@ const char* signalModeLabel(SignalMode m) {
 
             double variance = obs.variances.count(type) ? obs.variances.at(type)
                 : (meas_type == 'C' ? default_code_var : default_phase_var);
-            variance = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, variance);
+            variance = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, variance,
+                obs.satellite, antenna_.getAntennas());
 
             ppp_obs.observed[type] = observed_value;
             ppp_obs.modeled[type] = modeled_value;

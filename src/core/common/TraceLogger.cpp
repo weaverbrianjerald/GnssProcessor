@@ -20,53 +20,64 @@
 
 namespace GnssProcessor {
 
-TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& log_dir, bool is_ppp_rtk)
-    : log_manager_(log_manager), is_ppp_rtk_(is_ppp_rtk) {
-    std::error_code ec;
-    if (!std::filesystem::exists(log_dir)) {
-        std::filesystem::create_directories(log_dir, ec);
-        if (ec) {
-            try {
-                log_manager_.getLogger("main_log")->warn("Failed to create log directory '{}': {}", log_dir.string(), ec.message());
-            } catch (...) { /* best-effort logging only */ }
-        }
+TraceLogger::TraceLogger(LogManager& log_manager, const std::filesystem::path& log_dir, bool is_ppp_rtk,
+                     const LoggingConfig& logging_config)
+: log_manager_(log_manager), is_ppp_rtk_(is_ppp_rtk) {
+std::error_code ec;
+if (!std::filesystem::exists(log_dir)) {
+    std::filesystem::create_directories(log_dir, ec);
+    if (ec) {
+        try {
+            log_manager_.getLogger("main_log")->warn("Failed to create log directory '{}': {}", log_dir.string(), ec.message());
+        } catch (...) { /* best-effort logging only */ }
     }
+}
 
-    const auto state_path = log_dir / "state_trace.csv";
-    const auto amb_path = log_dir / "ambiguity_trace.csv";
-    const auto iono_path = log_dir / "ionosphere_trace.csv";
-    const auto residual_path = log_dir / "measurement_residuals.csv";
-    const auto wls_path = log_dir / "wls_trace.csv";
+const auto state_path = log_dir / "state_trace.csv";
+const auto amb_path = log_dir / "ambiguity_trace.csv";
+const auto iono_path = log_dir / "ionosphere_trace.csv";
+const auto residual_path = log_dir / "measurement_residuals.csv";
+const auto wls_path = log_dir / "wls_trace.csv";
 
+if (logging_config.enable_state_trace) {
     state_trace_.open(state_path, std::ios::out | std::ios::trunc);
     if (!state_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open state trace file '{}'", state_path.string()); }
         catch (...) {}
     }
+}
 
+if (logging_config.enable_ambiguity_trace) {
     ambiguity_trace_.open(amb_path, std::ios::out | std::ios::trunc);
     if (!ambiguity_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open ambiguity trace file '{}'", amb_path.string()); }
         catch (...) {}
     }
+}
 
+if (logging_config.enable_ionosphere_trace) {
     ionosphere_trace_.open(iono_path, std::ios::out | std::ios::trunc);
     if (!ionosphere_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open ionosphere trace file '{}'", iono_path.string()); }
         catch (...) {}
     }
+}
 
+if (logging_config.enable_residual_trace) {
     residual_trace_.open(residual_path, std::ios::out | std::ios::trunc);
     if (!residual_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open residual trace file '{}'", residual_path.string()); }
         catch (...) {}
     }
+}
 
+if (logging_config.enable_wls_trace) {
     wls_trace_.open(wls_path, std::ios::out | std::ios::trunc);
     if (!wls_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open WLS trace file '{}'", wls_path.string()); }
         catch (...) {}
     }
+}
 
     // Write base header to state trace file but do NOT terminate with newline.
     // Dynamic time-offset columns are appended on the first call to logState().

@@ -17,6 +17,8 @@
 
 namespace GnssProcessor {
 
+    class CycleSlipManager;
+
     /**
      * @file KalmanFilter.hpp
      * @brief Kalman filter interface for PPP/PPP-RTK state estimation.
@@ -166,6 +168,18 @@ namespace GnssProcessor {
          */
         bool wasCompleteReset() const { return was_complete_reset_; }
 
+        /**
+         * @brief Provide optional access to the CycleSlipManager for MW-based
+         *        outlier tiebreaking.
+         *
+         * When set, validatePostFitResiduals uses MW deviation scores to
+         * disambiguate competing phase outliers with nearly equal
+         * standardized residuals.
+         *
+         * @param csm Pointer to the CycleSlipManager (may be nullptr).
+         */
+        void setCycleSlipManager(CycleSlipManager* csm) { cycle_slip_manager_ = csm; }
+
     private:
         StateManager& state_manager_;         //!< Reference to external state manager for state storage and access.
         const GnssConfig& config_;            //!< Reference to GNSS configuration (read-only).
@@ -177,6 +191,7 @@ namespace GnssProcessor {
         
         std::vector<std::string> last_reset_satellites_;  //!< Satellites with ambiguity resets from last update.
         bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
+        CycleSlipManager* cycle_slip_manager_ = nullptr;   //!< Optional access to MW data for outlier tiebreaking.
         Eigen::Matrix3d C_b_e_ = Eigen::Matrix3d::Identity(); //!< Body-to-ECEF rotation matrix (IMU attitude).
 
         // -------------------------------------------------------------------
@@ -238,6 +253,7 @@ namespace GnssProcessor {
          * @param epoch_prefix Log prefix.
          */
         void resetFilterCovariance(Eigen::MatrixXd& P, const std::string& epoch_prefix);
+
     };
 
 } // namespace GnssProcessor

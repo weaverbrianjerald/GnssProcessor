@@ -34,6 +34,7 @@
 #include "RtcmStreamReader.hpp"
 #include "AmbiguityResolver.hpp"
 #include <chrono>
+#include <set>
 #include <fstream>
 #include <vector>
 #include <algorithm>
@@ -80,6 +81,30 @@ bool Application::initLoggingAndConfig() {
         log_manager_.getLogger("main_log")->error("Failed to load JSON configuration from {}", config_path_.string());
         return false;
     }
+
+    // Apply logger enable/disable flags from the logging config section.
+    {
+        const auto& lc = config_.getLoggingConfig();
+        std::set<std::string> disabled;
+        // Enumerate all known logger names and check against config.
+        static const std::vector<std::string> all_loggers = {
+            "main_log", "gnss_config", "kalman_filter", "state_manager",
+            "ppp_model", "measurement_model", "mw_slip_detector",
+            "if_slip_detector", "gf_slip_detector", "cycle_slip_manager",
+            "ambiguity_resolver",
+            "corrections", "geometry", "troposphere", "ionosphere",
+            "antenna", "antenna_model", "ocean_tide", "planetary_model",
+            "stochastic_model", "rinex_parser", "product_parser",
+            "product_cache", "resolver", "state_initializer",
+            "bssd_pivot_manager", "bssd_transform", "ppp_utils",
+            "downloader", "ntrip", "rt_engine", "imu"
+        };
+        for (const auto& name : all_loggers) {
+            if (!lc.isLoggerEnabled(name)) disabled.insert(name);
+        }
+        if (!disabled.empty()) log_manager_.setDisabledLoggers(disabled);
+    }
+
     log_manager_.getLogger("main_log")->info("Configuration loaded from {}", config_path_.string());
     return true;
 }
@@ -353,138 +378,16 @@ namespace {
     }
 } // anonymous namespace
 
-void Application::resetAmbiguityBssdAware(
-    const std::string& amb_key,
-    const std::string& sat_id,
-    const std::string& signal,
-    const std::vector<PppObservation>& modeled_obs,
-    const std::string& epoch_prefix) {
-
-    const double reset_std_m = config_.getAmbiguityStd();
-
-    // When BSSD is not active, use the simple absolute reset.
-    if (!config_.enableBetweenSatelliteSd()) {
-        state_manager_->resetAmbiguity(amb_key, reset_std_m);
-        return;
-    }
-
-    const auto& pivots = meas_model_->getBssdPivotSatellites();
-    const std::string cons = PppUtils::getSystemString(sat_id);
-    auto piv_it = pivots.find(cons);
-
-    // No pivot yet (first epoch) — fall back to simple reset.
-    if (piv_it == pivots.end()) {
-        state_manager_->resetAmbiguity(amb_key, reset_std_m);
-        return;
-    }
-
-    const std::string& pivot_sat = piv_it->second;
-    auto log = log_manager_.getLogger("main_log");
-
-    // --- Pivot satellite affected ---
-    // Do NOT reset the pivot's ambiguity directly.  Leave its value at 0
-    // (correct by BSSD definition) and do NOT inflate the variance.
-    // handleBssdPivotHandover() will detect the slip through the MW
-    // history reset and hand over to a healthy satellite if needed.
-    // Resetting the pivot here would blow up its variance, trigger the
-    // disturbance detector, and cascade into unnecessary reconvergence.
-    if (sat_id == pivot_sat) {
-        log->info("{}BSSD: pivot {} slipped on {} — deferring to handover "
-                  "(ambiguity kept frozen at 0)",
-                  epoch_prefix, sat_id, signal);
-        return;
-    }
-
-    // --- Non-pivot satellite affected ---
-    // Compute a proper SD seed:  N_sd = N_abs(sat) - N_abs(pivot).
-    // This preserves the BSSD parameterization so the rest of the
-    // constellation is not disturbed.
-    const int amb_idx = state_manager_->getAmbiguityIndex(amb_key);
-    if (amb_idx < 0) {
-        state_manager_->resetAmbiguity(amb_key, reset_std_m);
-        return;
-    }
-
-    const Eigen::VectorXd x = state_manager_->getStateVector();
-
-    // Find observations for the affected satellite and the pivot.
-    const PppObservation* obs_sat = nullptr;
-    const PppObservation* obs_piv = nullptr;
-    for (const auto& obs : modeled_obs) {
-        if (obs.satellite == sat_id)   obs_sat = &obs;
-        if (obs.satellite == pivot_sat) obs_piv = &obs;
-        if (obs_sat && obs_piv) break;
-    }
-
-    double sd_seed = 0.0;
-    if (obs_sat && obs_piv) {
-        const double abs_seed = state_manager_->computeAmbiguitySeed(*obs_sat, signal, x);
-        const double piv_seed = state_manager_->computeAmbiguitySeed(*obs_piv, signal, x);
-        sd_seed = abs_seed - piv_seed;
-    } else if (obs_sat) {
-        // Pivot not visible — best-effort absolute seed; handover will fix it.
-        sd_seed = state_manager_->computeAmbiguitySeed(*obs_sat, signal, x);
-    }
-
-    Eigen::VectorXd x_mod = x;
-    Eigen::MatrixXd P = state_manager_->getCovariance();
-    const auto aidx = static_cast<Eigen::Index>(amb_idx);
-
-    const double old_val = x_mod(aidx);
-    x_mod(aidx) = sd_seed;
-    P.row(aidx).setZero();
-    P.col(aidx).setZero();
-    P(aidx, aidx) = reset_std_m * reset_std_m;
-
-    state_manager_->setStateVector(x_mod);
-    state_manager_->setCovariance(P);
-
-    log->info("{}BSSD SD-aware reset {}: {:.4f} -> {:.4f} (pivot={})",
-              epoch_prefix, amb_key, old_val, sd_seed, pivot_sat);
-}
+// ---------------------------------------------------------------------------
+// Epoch helper: Detect and repair cycle slips
+// ---------------------------------------------------------------------------
 
 void Application::detectCycleSlips(const std::string& epoch_prefix,
-                                   const std::vector<PppObservation>& modeled_obs) {
-    // --- MW / LLI detection ---
-    // Run once per epoch, before the relinearization loop, to avoid duplicate
-    // MWWL trace entries and zero-delta MW values on subsequent passes.
-    {
-        const auto reset_keys = mw_slip_detector_->detectLargeMwResets(modeled_obs);
-        if (!reset_keys.empty()) {
-            for (const auto& key : reset_keys) {
-                const std::string sat_id = satIdFromAmbiguityKey(key);
-                const std::string signal = signalFromAmbiguityKey(key);
-                resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs, epoch_prefix);
-                // Phase wind-up is NOT reset: the accumulated wind-up is consistent
-                // with the modeled values used to re-seed the ambiguity.
-                if (!sat_id.empty()) {
-                    if_slip_detector_->resetSatellite(sat_id);
-                    log_manager_.getLogger("main_log")->debug("{}Reset IF history for {} (MW cycle slip detected)", epoch_prefix, sat_id);
-                }
-            }
-            log_manager_.getLogger("main_log")->warn("{}Applied {} MW/LLI ambiguity resets", epoch_prefix, reset_keys.size());
-            state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        }
-    }
-
-    // --- IF phase slip detection ---
-    // Catches small slips (1-2 cycles) that the MW detector misses due to code noise.
-    // Uses the post-update position sigma from the *previous* epoch to gate detection.
-    if (config_.enableIfSlipDetector()) {
-        const auto if_reset_keys = if_slip_detector_->detect(modeled_obs, prev_pos_sigma_3d_);
-        if (!if_reset_keys.empty()) {
-            for (const auto& key : if_reset_keys) {
-                const std::string sat_id = satIdFromAmbiguityKey(key);
-                const std::string signal = signalFromAmbiguityKey(key);
-                resetAmbiguityBssdAware(key, sat_id, signal, modeled_obs, epoch_prefix);
-                if (!sat_id.empty()) {
-                    mw_slip_detector_->resetSatellite(sat_id);
-                    log_manager_.getLogger("main_log")->debug("{}Reset MW history for {} (IF phase slip detected)", epoch_prefix, sat_id);
-                }
-            }
-            log_manager_.getLogger("main_log")->warn("{}Applied {} IF phase ambiguity resets", epoch_prefix, if_reset_keys.size());
-            state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
-        }
+                               const std::vector<PppObservation>& modeled_obs) {
+    auto result = cycle_slip_manager_->detectAndRepair(
+        epoch_prefix, modeled_obs, *state_manager_, *meas_model_);
+    if (result.state_modified) {
+        state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
     }
 }
 
@@ -507,13 +410,20 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     };
     const double kPosRelinearThreshM = has_phase() ? 100.0 : 1000.0;
 
+    // The maximum number of passes must accommodate one rebuild per
+    // outlier/ambiguity-reset plus a few geometry-relinearization passes.
+    // For PPP-RTK the number of individual ambiguity states can be large
+    // (satellites × frequencies), so a fixed cap of 10 is insufficient.
+    const int max_passes = static_cast<int>(
+        std::max<size_t>(10, state_manager_->getAmbiguities().size() + 3));
+
     int relinear_pass = 0;
     bool need_relinear = true;
     bool need_update = true;
     size_t carry_bad_residual_count = 0;
     std::set<std::string> carry_excluded_measurements;
 
-    while ((need_update || need_relinear) && relinear_pass < 10) {
+    while ((need_update || need_relinear) && relinear_pass < max_passes) {
         ++relinear_pass;
         need_update = false;
 
@@ -566,18 +476,21 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                 "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                 epoch_prefix, relinear_pass);
 
-            // Reset MW and IF slip detector history for satellites that had ambiguities reset.
+            // Reset MW slip detector history for satellites that had ambiguities reset.
             // Phase wind-up is NOT reset (see detectCycleSlips comment for rationale).
             if (kalman_filter_->wasCompleteReset()) {
-                if_slip_detector_->resetAll();
+                // Full reset: clear all MW arc history so stale stats
+                // don't contaminate post-reset arcs.
+                for (const auto& obs : modeled_obs) {
+                    cycle_slip_manager_->resetSatellite(obs.satellite);
+                }
                 log_manager_.getLogger("main_log")->info(
-                    "{}Reset IF slip detector state (complete filter reset)", epoch_prefix);
+                    "{}Reset MW slip detector state (complete filter reset)", epoch_prefix);
             } else {
                 for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
-                    mw_slip_detector_->resetSatellite(sat_id);
-                    if_slip_detector_->resetSatellite(sat_id);
+                    cycle_slip_manager_->resetSatellite(sat_id);
                     log_manager_.getLogger("main_log")->debug(
-                        "{}Reset MW and IF history for {} (KF ambiguity reset)", epoch_prefix, sat_id);
+                        "{}Reset MW history for {} (KF ambiguity reset)", epoch_prefix, sat_id);
                 }
             }
 
@@ -771,12 +684,20 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     meas_model_      = std::make_unique<MeasurementModel>(*state_manager_, *ppp_model_, config_, log_manager_);
     kalman_filter_   = std::make_unique<KalmanFilter>(*state_manager_, config_, log_manager_, *ppp_model_);
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
-    mw_slip_detector_  = std::make_unique<MwSlipDetector>(config_, log_manager_);
-    if_slip_detector_  = std::make_unique<IfPhaseSlipDetector>(config_, log_manager_);
+    cycle_slip_manager_  = std::make_unique<CycleSlipManager>(config_, log_manager_);
 
-    mw_slip_detector_->enableTracing(log_dir_);
-    if (config_.enableIfSlipDetector()) {
-        if_slip_detector_->enableTracing(log_dir_);
+    // Provide BIA satellite biases to the MW and EWL detectors for integer rounding
+    cycle_slip_manager_->setCorrections(&ppp_model_->getCorrections());
+
+    // Provide MW detector to the BSSD pivot manager for quality-based pivot scoring.
+    meas_model_->setMwDetector(&cycle_slip_manager_->mwDetector());
+
+    // Provide MW data to the KF outlier handler for tiebreaking.
+    kalman_filter_->setCycleSlipManager(cycle_slip_manager_.get());
+
+    const auto& logging_cfg = config_.getLoggingConfig();
+    if (logging_cfg.enable_mw_slip_trace) {
+        cycle_slip_manager_->enableMwTracing(log_dir_);
     }
 
     // IMU integrator (GNSS/INS coupled mode)
@@ -819,7 +740,7 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     }
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);
-    trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir_, is_ppp_rtk);
+    trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir_, is_ppp_rtk, config_.getLoggingConfig());
     if (!trace_logger_->isInitialized()) {
         log_manager_.getLogger("main_log")->warn(
             "TraceLogger could not open CSV trace files in '{}'; continuing without CSV traces", log_dir_.string());
@@ -852,8 +773,11 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         } else {
             dt = current_time.tow - prev_tow_;
             const double expected_interval = rinex_parser_->getHeader().interval.value_or(30.0);
-            gap_detected = dt > expected_interval * 2.0;
-            if (std::abs(dt - expected_interval) > 1e-3) {
+            const double gap_tol = config_.getDataGapTolerance() > 0.0
+                                 ? config_.getDataGapTolerance()
+                                 : expected_interval * 1.5;
+            gap_detected = dt > gap_tol;
+            if (std::abs(dt - expected_interval) > 0.5) {
                 log_manager_.getLogger("main_log")->warn("{}Unexpected time step {}s (expected {}s)",
                     epoch_prefix, dt, expected_interval);
             }
@@ -914,7 +838,8 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
         // 4i2. Integer ambiguity resolution (MLAMBDA).
         if (ambiguity_resolver_ && have_applied) {
-            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs);
+            const auto wl_ambs = cycle_slip_manager_->getResolvedWlAmbiguities();
+            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs);
             if (ar_result.success) {
                 // Apply fixed state to the filter
                 state_manager_->setStateVector(ar_result.fixed_state);

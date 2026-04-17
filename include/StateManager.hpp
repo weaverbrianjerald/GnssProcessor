@@ -320,10 +320,12 @@ namespace GnssProcessor {
          * @brief Reset (or create then reset) a float ambiguity state.
          *
          * Behaviour:
-         *  - If the ambiguity key exists, the state's value is set to zero.
          *  - Cross-covariances for that ambiguity row/column are zeroed.
          *  - The ambiguity diagonal variance is set to (std_m)^2.
-         *  - If the ambiguity key does not exist, a new ambiguity state is created and initialized accordingly.
+         *  - The ambiguity value is left unchanged (it will be overwritten
+         *    by the geometry-based seed in ensureRequiredStates).
+         *  - The key is marked as pending re-seed.
+         *  - If the ambiguity key does not exist, a new state is created.
          *
          * This method is intended for ambiguity reinitialization after a detected phase outlier.
          *
@@ -342,8 +344,8 @@ namespace GnssProcessor {
          * where rx_clock, zwd, inter-system time offset (isb) and tropospheric
          * gradient contribution are read from the supplied state vector at the
          * standard core-state indices.  This centralizes the formula used when
-         * creating new ambiguities and when re-seeding ambiguities that were
-         * reset to zero (e.g. after cycle-slip or outlier detection).
+         * creating new ambiguities and when re-seeding ambiguities after
+         * cycle-slip or outlier detection.
          *
          * @param obs        The PppObservation containing observed/modeled values and wet mapping factor.
          * @param ref_type   The iono-free key into obs.observed / obs.modeled (e.g. "L1C_L2W").
@@ -453,35 +455,66 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& getSatBiasStates() const;
 
         // -------------------------------------------------------------------
-        // Relaxed ambiguity support
+        // Unresolvable ambiguity support
         // -------------------------------------------------------------------
 
         /**
-         * @brief Mark an ambiguity key as "relaxed" (non-zero process noise).
+         * @brief Mark an ambiguity as unresolvable (excluded from integer AR).
          *
-         * Relaxed ambiguities receive the phase_bias process noise instead
-         * of the standard (typically zero) ambiguity process noise.  This
-         * allows the ambiguity to slowly track elevation-dependent residuals
-         * from missing receiver ATX or BIA data.
+         * Ambiguities missing BIA phase bias or receiver ATX coverage
+         * absorb a time-constant satellite/receiver bias into their
+         * float value.  They cannot be resolved to the correct integer,
+         * so they are excluded from the LAMBDA search.  Process noise
+         * remains zero (the absorbed bias is constant).
          *
          * @param amb_key Ambiguity key (e.g. "G01_L1W_L5Q").
          */
-        void markAmbiguityRelaxed(const std::string& amb_key);
+        void markAmbiguityUnresolvable(const std::string& amb_key);
 
         /**
-         * @brief Check whether an ambiguity key is marked as relaxed.
+         * @brief Check whether an ambiguity key is marked as unresolvable.
          * @param amb_key Ambiguity key.
-         * @return True if the key is in the relaxed set.
+         * @return True if the key is in the unresolvable set.
          */
-        bool isAmbiguityRelaxed(const std::string& amb_key) const;
+        bool isAmbiguityUnresolvable(const std::string& amb_key) const;
 
         /**
-         * @brief Clear all relaxed-ambiguity marks.
+         * @brief Clear all unresolvable-ambiguity marks.
          *
          * Called at the start of each epoch before ensureRequiredStates()
          * rebuilds the set from current observations.
          */
-        void clearRelaxedAmbiguities();
+        void clearUnresolvableAmbiguities();
+
+        /**
+         * @brief Check whether an ambiguity is awaiting re-seeding.
+         *
+         * After resetAmbiguity() the ambiguity is marked pending so that
+         * ensureRequiredStates() can compute a proper geometry-based seed
+         * before the next KF update.
+         *
+         * @param amb_key Ambiguity key.
+         * @return True if the key needs re-seeding.
+         */
+        bool isAmbiguityPendingReseed(const std::string& amb_key) const;
+
+        /**
+         * @brief Clear a single pending-reseed mark after the seed is applied.
+         * @param amb_key Ambiguity key.
+         */
+        void clearPendingReseed(const std::string& amb_key);
+
+        /**
+         * @brief Mark an ambiguity as pending re-seed without modifying state.
+         *
+         * Used when the caller manages the state vector and covariance
+         * externally (e.g., during a pivot handover that operates on local
+         * copies of x and P).  ensureRequiredStates() will recompute the
+         * seed on the next call.
+         *
+         * @param amb_key Ambiguity key.
+         */
+        void markAmbiguityPendingReseed(const std::string& amb_key);
 
         /**
          * @brief Remove an ambiguity state by key.
@@ -552,7 +585,8 @@ namespace GnssProcessor {
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
-        std::set<std::string> relaxed_ambiguities_; //!< Ambiguity keys with non-zero process noise (incomplete product coverage).
+        std::set<std::string> unresolvable_ambiguities_; //!< Ambiguity keys excluded from integer AR (incomplete product coverage).
+        std::set<std::string> pending_reseed_ambiguities_; //!< Ambiguity keys awaiting re-seeding after reset.
         std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).

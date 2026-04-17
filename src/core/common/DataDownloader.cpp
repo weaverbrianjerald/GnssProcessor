@@ -226,10 +226,8 @@ std::filesystem::path DataDownloader::convertCrxToRnx(
     // Resolve crx2rnx executable: use explicit path, or search common locations.
     std::filesystem::path exe = crx2rnx_exe;
     if (exe.empty() || !std::filesystem::exists(exe)) {
-        // Search well-known locations on Windows.
+        // Search well-known filesystem locations first.
         const std::vector<std::filesystem::path> search_paths = {
-            "crx2rnx.exe",                                      // on PATH
-            "crx2rnx",                                          // on PATH (non-Windows)
             "C:/Program Files/crx2rnx/crx2rnx.exe",
         };
         exe.clear();
@@ -239,6 +237,21 @@ std::filesystem::path DataDownloader::convertCrxToRnx(
                 break;
             }
         }
+
+        // Fall back to PATH lookup via `where` (Windows) or `which` (Unix).
+        if (exe.empty()) {
+#ifdef _WIN32
+            const char* which_cmd = "where crx2rnx.exe >nul 2>&1";
+            const char* exe_name  = "crx2rnx.exe";
+#else
+            const char* which_cmd = "which crx2rnx >/dev/null 2>&1";
+            const char* exe_name  = "crx2rnx";
+#endif
+            if (std::system(which_cmd) == 0) {
+                exe = exe_name;   // found on PATH; std::system() will resolve it
+            }
+        }
+
         if (exe.empty()) {
             log->error("crx2rnx executable not found (configure data_download.crx2rnx_path)");
             return {};

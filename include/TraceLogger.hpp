@@ -12,6 +12,7 @@
 #include <fstream>
 #include <string>
 #include "LogManager.hpp"
+#include "GnssConfig.hpp"
 #include "PppTypes.hpp"
 #include "StateManager.hpp"
 #include "MeasurementModel.hpp" // for EpochMeasurement
@@ -44,8 +45,10 @@ public:
      * @param log_manager Reference to the application's LogManager used for internal logging.
      * @param log_dir Directory where trace files will be created.
      * @param is_ppp_rtk True when running a PPP-RTK variant (affects file naming/columns).
+     * @param logging_config Logging configuration controlling which trace files are opened.
      */
-    TraceLogger(LogManager& log_manager, const std::filesystem::path& log_dir, bool is_ppp_rtk);
+    TraceLogger(LogManager& log_manager, const std::filesystem::path& log_dir, bool is_ppp_rtk,
+                const LoggingConfig& logging_config = LoggingConfig{});
 
     /**
      * @brief Check whether trace files were successfully opened.

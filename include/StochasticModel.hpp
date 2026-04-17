@@ -19,8 +19,10 @@
 
 #include "GnssConfig.hpp"
 #include "LogManager.hpp"
+#include "PppTypes.hpp"
 #include <map>
 #include <string>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -75,6 +77,30 @@ namespace GnssProcessor {
                                double elevation_deg,
                                double default_var) const;
 
+        /**
+         * @brief Compute measurement variance with satellite block awareness.
+         *
+         * When the active model is SatelliteBlock, uses @p satellite and
+         * @p antennas to look up the ATX block type and derive a
+         * block/frequency-dependent zenith noise, then applies 1/sin²(el)
+         * scaling.  For other model types the additional parameters are
+         * ignored and the result is identical to the 4-argument overload.
+         *
+         * @param obs_type      RINEX observable key (e.g. "C1W", "L1C").
+         * @param measurements  All measurements for this satellite/epoch.
+         * @param elevation_deg Satellite elevation angle in degrees.
+         * @param default_var   Fallback variance (m²) when block lookup fails.
+         * @param satellite     Satellite identifier (e.g. "G04").
+         * @param antennas      Parsed ATX antenna entries for block lookup.
+         * @return Computed variance in m².
+         */
+        double computeVariance(const std::string& obs_type,
+                               const std::map<std::string, double>& measurements,
+                               double elevation_deg,
+                               double default_var,
+                               const std::string& satellite,
+                               const std::vector<AntennaData>& antennas) const;
+
     private:
         /** @brief Compute variance under the Constant model (passthrough). */
         double computeConstant(double default_var) const;
@@ -93,8 +119,21 @@ namespace GnssProcessor {
                           double elevation_deg,
                           double default_var) const;
 
+        /**
+         * @brief Compute variance under the SatelliteBlock model.
+         *
+         * Looks up the satellite's ATX block type, selects a zenith noise
+         * based on block and frequency band, then applies 1/sin²(el).
+         */
+        double computeSatBlock(const std::string& obs_type,
+                               double elevation_deg,
+                               double default_var,
+                               const std::string& satellite,
+                               const std::vector<AntennaData>& antennas) const;
+
         StochasticModelType model_type_;    ///< Active weighting strategy.
         SnrModelParams      snr_params_;    ///< Parameters for the SNR model.
+        SatBlockNoiseParams sat_block_params_; ///< Parameters for the satellite-block model.
         LogManager&         log_manager_;   ///< Logging manager reference.
     };
 

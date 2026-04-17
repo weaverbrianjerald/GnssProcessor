@@ -22,6 +22,46 @@
 namespace GnssProcessor {
 
     // =================================================================
+    // LoggingConfig helpers
+    // =================================================================
+
+    bool LoggingConfig::isLoggerEnabled(const std::string& name) const {
+        if (name == "main_log")              return enable_main_log;
+        if (name == "gnss_config")           return enable_gnss_config;
+        if (name == "kalman_filter")         return enable_kalman_filter;
+        if (name == "state_manager")         return enable_state_manager;
+        if (name == "ppp_model")             return enable_ppp_model;
+        if (name == "measurement_model")     return enable_measurement_model;
+        if (name == "mw_slip_detector")      return enable_mw_slip_detector;
+        if (name == "if_slip_detector")      return enable_if_slip_detector;
+        if (name == "gf_slip_detector")      return enable_gf_slip_detector;
+        if (name == "cycle_slip_manager")    return enable_cycle_slip_manager;
+        if (name == "ambiguity_resolver")    return enable_ambiguity_resolver;
+        if (name == "corrections")           return enable_corrections;
+        if (name == "geometry")              return enable_geometry;
+        if (name == "troposphere")           return enable_troposphere;
+        if (name == "ionosphere")            return enable_ionosphere;
+        if (name == "antenna")               return enable_antenna;
+        if (name == "antenna_model")         return enable_antenna_model;
+        if (name == "ocean_tide")            return enable_ocean_tide;
+        if (name == "planetary_model")       return enable_planetary_model;
+        if (name == "stochastic_model")      return enable_stochastic_model;
+        if (name == "rinex_parser")          return enable_rinex_parser;
+        if (name == "product_parser")        return enable_product_parser;
+        if (name == "product_cache")         return enable_product_cache;
+        if (name == "resolver")              return enable_resolver;
+        if (name == "state_initializer")     return enable_state_initializer;
+        if (name == "bssd_pivot_manager")    return enable_bssd_pivot_manager;
+        if (name == "bssd_transform")        return enable_bssd_transform;
+        if (name == "ppp_utils")             return enable_ppp_utils;
+        if (name == "downloader")            return enable_downloader;
+        if (name == "ntrip")                 return enable_ntrip;
+        if (name == "rt_engine")             return enable_rt_engine;
+        if (name == "imu")                   return enable_imu;
+        return true; // unknown loggers default to enabled
+    }
+
+    // =================================================================
     // Helpers
     // =================================================================
 
@@ -111,6 +151,14 @@ namespace GnssProcessor {
                 log->info("Signal mode: {}", raw);
             }
             {
+                std::string raw = jval<std::string>(json, "processing.mw_signals", "mw_signals", "filter");
+                std::string low = toLower(raw);
+                if      (low == "filter") mw_signal_mode_ = MwSignalMode::Filter;
+                else if (low == "all")    mw_signal_mode_ = MwSignalMode::All;
+                else { log->warn("Invalid mw_signals '{}', defaulting to filter", raw); mw_signal_mode_ = MwSignalMode::Filter; }
+                log->info("MW signal mode: {}", raw);
+            }
+            {
                 std::string raw = jval<std::string>(json, "processing.satellite_interpolation_mode",
                                                      "satellite_interpolation_mode", "Lagrange");
                 std::string low = toLower(raw);
@@ -139,6 +187,7 @@ namespace GnssProcessor {
                 log->info("PPP-RTK mode: forcing uncombined_enabled=true");
             }
             elevation_mask_deg_ = jval<double>(json, "processing.elevation_mask_deg", "elevation_mask_deg", 10.0);
+            data_gap_tolerance_s_ = jval<double>(json, "processing.data_gap_tolerance_s", "data_gap_tolerance_s", 0.0);
             leap_seconds_tai_   = jval<double>(json, "processing.leap_seconds_tai", "leap_seconds_tai", 37.0);
 
             // Relinearize geometry lives under processing (it affects the model loop).
@@ -218,18 +267,18 @@ namespace GnssProcessor {
             estimate_velocity_        = jval<bool>(json, "estimation.estimate_velocity",
                                                     "estimate_velocity", false);
             estimate_ifb_             = jval<bool>(json, "estimation.estimate_ifb",
-                                                    "estimate_ifb", true);
+                                                    "estimate_ifb", false);
             lock_signals_to_clock_ref_ = jval<bool>(json, "estimation.lock_signals_to_clock_ref",
-                                                     "lock_signals_to_clock_ref", true);
+                                                     "lock_signals_to_clock_ref", false);
             require_bia_for_signals_   = jval<bool>(json, "estimation.require_bia_for_signals",
-                                                     "require_bia_for_signals", true);
+                                                     "require_bia_for_signals", false);
             estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
                                                      "estimate_sat_biases", false);
             no_bia_code_downweight_    = jval<double>(json, "estimation.no_bia_code_downweight",
                                                       "no_bia_code_downweight", 100.0);
             if (no_bia_code_downweight_ < 1.0) no_bia_code_downweight_ = 1.0;
             enable_if_slip_detector_  = jval<bool>(json, "estimation.enable_if_slip_detector",
-                                                    "enable_if_slip_detector", true);
+                                                    "enable_if_slip_detector", false);
             accumulate_phase_windup_  = jval<bool>(json, "estimation.accumulate_phase_windup",
                                                     "accumulate_phase_windup", false);
 
@@ -248,6 +297,67 @@ namespace GnssProcessor {
                                                 "ar_elevation_mask", 20.0);
             ar_hold_variance_   = jval<double>(json, "estimation.ambiguity_resolution.hold_variance",
                                                 "ar_hold_variance", 0.001);
+
+            // =============================================================
+            //  Smart defaults: derive sensible estimation toggles from
+            //  the processing mode (PPP vs PPP-RTK) and signal mode so
+            //  that the JSON config acts as an activation file.
+            //
+            //  PPP-RTK bias strategies (applied when user does not
+            //  explicitly set the toggle in JSON):
+            //
+            //  1. lock_signals_to_clock_ref  – restrict to clock-ref
+            //     bands.  Too restrictive, default OFF.
+            //
+            //  2. estimate_sat_biases (code-only) – estimate a per-
+            //     satellite code-bias state for signals without BIA
+            //     coverage.  Phase ambiguities already absorb satellite
+            //     phase biases, so only code needs this.  BEST DEFAULT.
+            //
+            //  3. require_bia_for_signals – reject any signal (code or
+            //     phase) lacking BIA coverage.  Fallback when option 2
+            //     is disabled, and always needed for MW integer rounding
+            //     (the MW observable must be bias-corrected to resolve
+            //     the widelane integer).
+            // =============================================================
+            if (processing_mode_ == ProcessingMode::PPP_RTK) {
+                // --- estimate_sat_biases smart default (option 2, code-only) ---
+                if (!resolvePath(json, "estimation.estimate_sat_biases")
+                    && !json.contains("estimate_sat_biases")) {
+                    estimate_sat_biases_ = true;
+                    log->info("Smart default: estimate_sat_biases=true "
+                        "(PPP-RTK estimates per-satellite code biases for signals "
+                        "without BIA coverage)");
+                }
+
+                // --- require_bia_for_signals / estimate_sat_biases coupling ---
+                // When estimating satellite code biases, the filter absorbs
+                // uncorrected code delays so BIA signal filtering is unnecessary.
+                // When NOT estimating them, reject signals without BIA coverage
+                // so unmodelled code delay does not corrupt the solution.
+                // Either way, require_bia_for_signals is still honoured by the
+                // MW detector for integer widelane rounding.
+                if (!resolvePath(json, "estimation.require_bia_for_signals")
+                    && !json.contains("require_bia_for_signals")) {
+                    require_bia_for_signals_ = !estimate_sat_biases_;
+                    log->info("Smart default: require_bia_for_signals={} "
+                        "({})",
+                        require_bia_for_signals_ ? "true" : "false",
+                        estimate_sat_biases_
+                            ? "sat code-bias estimation absorbs uncorrected delays"
+                            : "no sat-bias estimation; reject signals without BIA");
+                }
+
+                // --- lock_signals_to_clock_ref smart default (option 1) ---
+                // Too restrictive by default; keep OFF unless user enables it.
+                if (!resolvePath(json, "estimation.lock_signals_to_clock_ref")
+                    && !json.contains("lock_signals_to_clock_ref")) {
+                    lock_signals_to_clock_ref_ = false;
+                    log->info("Smart default: lock_signals_to_clock_ref=false "
+                        "(not restricting to clock-reference bands)");
+                }
+
+            }
 
             if (uncombined_enabled_ && !estimate_phase_clock_) {
                 estimate_phase_clock_ = true;
@@ -287,7 +397,6 @@ namespace GnssProcessor {
                 process_noise_.phase_clock         = pn.value("phase_clock_q", 1e-9);
                 process_noise_.velocity            = pn.value("velocity_q", 1e2);
                 process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
-                process_noise_.phase_bias           = pn.value("phase_bias_q", 1e-6);
             }
             {
                 const auto& is = jsection(json, "filter.initial_std", "initial_std");
@@ -316,9 +425,10 @@ namespace GnssProcessor {
             {
                 std::string raw = jval<std::string>(json, "filter.stochastic_model", "stochastic_model", "elevation");
                 std::string low = toLower(raw);
-                if      (low == "constant")  stochastic_model_ = StochasticModelType::Constant;
-                else if (low == "elevation") stochastic_model_ = StochasticModelType::Elevation;
-                else if (low == "snr")       stochastic_model_ = StochasticModelType::SNR;
+                if      (low == "constant")        stochastic_model_ = StochasticModelType::Constant;
+                else if (low == "elevation")       stochastic_model_ = StochasticModelType::Elevation;
+                else if (low == "snr")             stochastic_model_ = StochasticModelType::SNR;
+                else if (low == "satellite_block")  stochastic_model_ = StochasticModelType::SatelliteBlock;
                 else { log->warn("Invalid stochastic_model '{}', defaulting to Elevation", raw);
                        stochastic_model_ = StochasticModelType::Elevation; }
                 log->info("Stochastic model: {}", raw);
@@ -545,6 +655,55 @@ namespace GnssProcessor {
                         realtime_config_.ntrip_mountpoint,
                         realtime_config_.output_type);
                 }
+            }
+
+            // =============================================================
+            //  Section: logging
+            // =============================================================
+            {
+                const auto& lg = jsection(json, "logging", "logging");
+                // spdlog file loggers
+                logging_config_.enable_main_log           = lg.value("enable_main_log", true);
+                logging_config_.enable_gnss_config        = lg.value("enable_gnss_config", true);
+                logging_config_.enable_kalman_filter      = lg.value("enable_kalman_filter", true);
+                logging_config_.enable_state_manager      = lg.value("enable_state_manager", true);
+                logging_config_.enable_ppp_model          = lg.value("enable_ppp_model", true);
+                logging_config_.enable_measurement_model  = lg.value("enable_measurement_model", true);
+                logging_config_.enable_mw_slip_detector   = lg.value("enable_mw_slip_detector", true);
+                logging_config_.enable_if_slip_detector   = lg.value("enable_if_slip_detector", true);
+                logging_config_.enable_gf_slip_detector   = lg.value("enable_gf_slip_detector", true);
+                logging_config_.enable_cycle_slip_manager = lg.value("enable_cycle_slip_manager", true);
+                logging_config_.enable_ambiguity_resolver = lg.value("enable_ambiguity_resolver", true);
+                logging_config_.enable_corrections        = lg.value("enable_corrections", true);
+                logging_config_.enable_geometry           = lg.value("enable_geometry", true);
+                logging_config_.enable_troposphere        = lg.value("enable_troposphere", true);
+                logging_config_.enable_ionosphere         = lg.value("enable_ionosphere", true);
+                logging_config_.enable_antenna            = lg.value("enable_antenna", true);
+                logging_config_.enable_antenna_model      = lg.value("enable_antenna_model", true);
+                logging_config_.enable_ocean_tide         = lg.value("enable_ocean_tide", true);
+                logging_config_.enable_planetary_model    = lg.value("enable_planetary_model", true);
+                logging_config_.enable_stochastic_model   = lg.value("enable_stochastic_model", true);
+                logging_config_.enable_rinex_parser       = lg.value("enable_rinex_parser", true);
+                logging_config_.enable_product_parser     = lg.value("enable_product_parser", true);
+                logging_config_.enable_product_cache      = lg.value("enable_product_cache", true);
+                logging_config_.enable_resolver           = lg.value("enable_resolver", true);
+                logging_config_.enable_state_initializer  = lg.value("enable_state_initializer", true);
+                logging_config_.enable_bssd_pivot_manager = lg.value("enable_bssd_pivot_manager", true);
+                logging_config_.enable_bssd_transform     = lg.value("enable_bssd_transform", true);
+                logging_config_.enable_ppp_utils          = lg.value("enable_ppp_utils", true);
+                logging_config_.enable_downloader         = lg.value("enable_downloader", true);
+                logging_config_.enable_ntrip              = lg.value("enable_ntrip", true);
+                logging_config_.enable_rt_engine          = lg.value("enable_rt_engine", true);
+                logging_config_.enable_imu                = lg.value("enable_imu", true);
+                // CSV trace files
+                logging_config_.enable_state_trace        = lg.value("enable_state_trace", true);
+                logging_config_.enable_ambiguity_trace    = lg.value("enable_ambiguity_trace", true);
+                logging_config_.enable_ionosphere_trace   = lg.value("enable_ionosphere_trace", true);
+                logging_config_.enable_residual_trace     = lg.value("enable_residual_trace", true);
+                logging_config_.enable_wls_trace          = lg.value("enable_wls_trace", true);
+                logging_config_.enable_mw_slip_trace      = lg.value("enable_mw_slip_trace", true);
+                logging_config_.enable_if_slip_trace      = lg.value("enable_if_slip_trace", true);
+                logging_config_.enable_gf_slip_trace      = lg.value("enable_gf_slip_trace", true);
             }
 
             // =============================================================

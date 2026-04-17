@@ -72,7 +72,7 @@ namespace GnssProcessor {
         System system;                               /**< Constellation/System for the satellite */
         GnssTime time;                               /**< Epoch time of the observation */
         std::map<std::string, double> observed;      /**< Raw observed measurement values keyed by observable name (e.g. "C1", "L1") */
-        std::map<std::string, double> raw_observed;  /**< Original RINEX observables (L1C, C1W, etc.) for MW detection */
+        std::map<std::string, double> raw_observed;  /**< All RINEX code+phase observables (L1C, C1W, L5Q, etc.) for cycle slip detection — always contains every available signal regardless of signal_mode */
         std::map<std::string, double> modeled;       /**< Modeled values for the same observables */
         std::map<std::string, double> residuals;     /**< Residuals = observed - modeled */
         std::map<std::string, double> variances;     /**< Variance (or sigma^2) for each observable */

@@ -216,6 +216,12 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Get read-only access to the internal GnssCorrections instance.
+         * @return Const reference to the corrections helper.
+         */
+        const GnssCorrections& getCorrections() const { return gnss_corrections_; }
+
+        /**
          * @brief Check whether the receiver antenna has ATX coverage for a signal.
          *
          * Delegates to Antenna::hasReceiverAtxEntry().
@@ -226,6 +232,14 @@ namespace GnssProcessor {
          */
         bool hasReceiverAtxEntry(const std::string& signal, System system) const {
             return antenna_.hasReceiverAtxEntry(signal, system);
+        }
+
+        /**
+         * @brief Access the parsed ATX antenna entries.
+         * @return Const reference to the antenna data vector.
+         */
+        const std::vector<AntennaData>& getAntennas() const {
+            return antenna_.getAntennas();
         }
 
         /**

@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <limits>
 #include <numeric>
+#include <set>
 
 namespace GnssProcessor {
 
@@ -31,8 +32,62 @@ namespace GnssProcessor {
           log_manager_(log_manager),
           ppp_utils_(log_manager) {
         log_manager_.getLogger("mw_slip_detector")->info(
-            "MwSlipDetector initialized (adaptive MAD-based, k={:.1f}, floor={:.1f} WL, min_epochs={})",
-            kMadSigmaMultiplier, kMinThresholdCycles, kMinEpochsForAdaptive);
+            "MwSlipDetector initialized (adaptive MAD-based, k={:.1f}, floor={:.1f} WL, "
+            "initial={:.1f} WL, min_epochs={}, wl_lock_epochs={}, mw_signals={})",
+            kMadSigmaMultiplier, kMinThresholdCycles, kInitialThresholdCycles,
+            kMinEpochsForAdaptive, kMinEpochsForWlLock,
+            config_.getMwSignalMode() == MwSignalMode::All ? "all" : "filter");
+    }
+
+    // =================================================================
+    // Per-satellite MW quality query
+    // =================================================================
+
+    SatelliteMwQuality MwSlipDetector::getSatelliteMwQuality(const std::string& satellite) const {
+        SatelliteMwQuality q;
+        const std::string prefix = satellite + "_";
+        bool any_bia = false;
+        bool all_bia_locked = true;
+        bool sigma_initialized = false;
+
+        for (const auto& [key, stats] : mw_stats_) {
+            if (key.compare(0, prefix.size(), prefix) != 0) continue;
+
+            ++q.num_pairs;
+            if (stats.count < q.min_arc_length || q.num_pairs == 1)
+                q.min_arc_length = stats.count;
+
+            const double sigma = computeMadSigma(stats);
+            if (std::isfinite(sigma)) {
+                if (!sigma_initialized || sigma > q.worst_sigma) {
+                    q.worst_sigma = sigma;
+                    sigma_initialized = true;
+                }
+            }
+
+            if (stats.bia_corrected) {
+                any_bia = true;
+                if (!stats.wl_locked) all_bia_locked = false;
+            }
+        }
+
+        q.all_wl_locked = any_bia && all_bia_locked && q.num_pairs > 0;
+        if (!sigma_initialized) q.worst_sigma = 1e9;
+        return q;
+    }
+
+    double MwSlipDetector::getWorstMwScore(const std::string& satellite) const {
+        const std::string prefix = satellite + "_";
+        double worst = 0.0;
+        for (const auto& [key, stats] : mw_stats_) {
+            if (key.compare(0, prefix.size(), prefix) != 0) continue;
+            if (stats.count < kMinEpochsForAdaptive) continue;
+            const double sigma = stats.last_sigma;
+            if (!std::isfinite(sigma) || sigma <= 0.0) continue;
+            const double score = std::abs(stats.last_dev) / sigma;
+            if (score > worst) worst = score;
+        }
+        return worst;
     }
 
     // =================================================================
@@ -65,7 +120,8 @@ namespace GnssProcessor {
                     << "mw_sigma_m,mw_sigma_cycles,"
                     << "arc_count,"
                     << "lambda_wl_m,threshold_m,threshold_cycles,"
-                    << "is_slip,is_lli\n";
+                    << "is_slip,is_lli,"
+                    << "bia_corrected,sat_mw_bias_m,rounded_wl,wl_locked\n";
 
         logger->info("MWWL tracing enabled: {}", trace_path.string());
         return true;
@@ -82,7 +138,11 @@ namespace GnssProcessor {
                                            double lambda_wl,
                                            double thresh_m,
                                            bool is_slip,
-                                           bool is_lli) const {
+                                           bool is_lli,
+                                           bool bia_corrected,
+                                           double sat_mw_bias_m,
+                                           int rounded_wl,
+                                           bool wl_locked) const {
         if (!mwwl_trace_.is_open()) return;
 
         const auto to_cyc = [&](double val_m) -> double {
@@ -113,7 +173,10 @@ namespace GnssProcessor {
 
         mwwl_trace_ << arc_count << ","
                     << lambda_wl << "," << thresh_m << "," << to_cyc(thresh_m) << ","
-                    << (is_slip ? 1 : 0) << "," << (is_lli ? 1 : 0) << "\n";
+                    << (is_slip ? 1 : 0) << "," << (is_lli ? 1 : 0) << ","
+                    << (bia_corrected ? 1 : 0) << ","
+                    << std::setprecision(6) << sat_mw_bias_m << ","
+                    << rounded_wl << "," << (wl_locked ? 1 : 0) << "\n";
     }
 
     // =================================================================
@@ -204,7 +267,17 @@ namespace GnssProcessor {
         struct BandSignals { std::string code; std::string phase; };
         std::map<char, BandSignals> bands;
 
-        for (const auto& [key, val] : obs.observed) {
+        // Choose signal source based on config:
+        //  - Filter (default): obs.observed — only bands the KF processes,
+        //    keeping the MW detector aligned with signal_mode and avoiding
+        //    noisy EWL pairs the filter doesn't use.
+        //  - All: obs.raw_observed — every available RINEX band for maximum
+        //    multi-frequency coverage.
+        const auto& source = (config_.getMwSignalMode() == MwSignalMode::All)
+                                 ? obs.raw_observed
+                                 : obs.observed;
+
+        for (const auto& [key, val] : source) {
             if (key.size() < 2) continue;
             const char prefix = key[0];
             if (prefix != 'C' && prefix != 'L') continue;
@@ -282,6 +355,42 @@ namespace GnssProcessor {
         return std::isfinite(mw_m) ? mw_m : NaN;
     }
 
+    bool MwSlipDetector::computeSatMwBias(const PppObservation& obs,
+        const std::string& sig1, const std::string& sig2,
+        const std::string& code1, const std::string& code2,
+        double& bias_m) const {
+
+        bias_m = 0.0;
+        if (!corrections_) return false;
+
+        // Check all four BIA entries exist
+        if (!corrections_->hasBiasEntry(obs.satellite, sig1) ||
+            !corrections_->hasBiasEntry(obs.satellite, sig2) ||
+            !corrections_->hasBiasEntry(obs.satellite, code1) ||
+            !corrections_->hasBiasEntry(obs.satellite, code2))
+            return false;
+
+        const double b_L1 = corrections_->getBiasCorrection(obs.satellite, sig1, obs.time);
+        const double b_L2 = corrections_->getBiasCorrection(obs.satellite, sig2, obs.time);
+        const double b_C1 = corrections_->getBiasCorrection(obs.satellite, code1, obs.time);
+        const double b_C2 = corrections_->getBiasCorrection(obs.satellite, code2, obs.time);
+
+        const double f1 = ppp_utils_.getFrequency(sig1, obs.system, obs.satellite);
+        const double f2 = ppp_utils_.getFrequency(sig2, obs.system, obs.satellite);
+        if (!(std::isfinite(f1) && std::isfinite(f2) && f1 > 0.0 && f2 > 0.0)) return false;
+
+        const double f_diff = f1 - f2;
+        const double f_sum  = f1 + f2;
+        if (std::abs(f_diff) < 1.0 || std::abs(f_sum) < 1.0) return false;
+
+        // b_MW = (f1*b_L1 - f2*b_L2)/(f1-f2) - (f1*b_C1 + f2*b_C2)/(f1+f2)
+        const double wl_phase_bias = (f1 * b_L1 - f2 * b_L2) / f_diff;
+        const double nl_code_bias  = (f1 * b_C1 + f2 * b_C2) / f_sum;
+        bias_m = wl_phase_bias - nl_code_bias;
+
+        return std::isfinite(bias_m);
+    }
+
     // =================================================================
     // Statistics / threshold
     // =================================================================
@@ -309,7 +418,7 @@ namespace GnssProcessor {
     double MwSlipDetector::computeAdaptiveThreshold(const MwArcStats& stats, double lambda_wl) const {
         const double sigma = computeMadSigma(stats);
         if (!std::isfinite(sigma))
-            return std::numeric_limits<double>::quiet_NaN();
+            return kInitialThresholdCycles * lambda_wl;
 
         const double min_thresh = kMinThresholdCycles * lambda_wl;
         return std::max(kMadSigmaMultiplier * sigma, min_thresh);
@@ -318,7 +427,15 @@ namespace GnssProcessor {
     bool MwSlipDetector::processMwSample(const PppObservation& obs,
         const std::string& stats_key,
         double mw_m, double lambda_wl,
-        const std::string& sig1, const std::string& sig2) {
+        const std::string& sig1, const std::string& sig2,
+        bool bia_corrected, double sat_mw_bias,
+        int* out_slip_cycles,
+        bool* out_wl_known,
+        double* out_slip_frac) {
+
+        if (out_slip_cycles) *out_slip_cycles = 0;
+        if (out_wl_known)    *out_wl_known = false;
+        if (out_slip_frac)   *out_slip_frac = 0.5;
 
         auto& stats = mw_stats_[stats_key];
         constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
@@ -326,10 +443,6 @@ namespace GnssProcessor {
 
         // Detect data gaps: if the satellite was absent for longer than
         // the configured threshold, discard the stale arc and start fresh.
-        // Without this, the pre-gap mean / diff_window carry over and
-        // produce enormous (tens of meters) spurious deviations that
-        // either go undetected (adaptive threshold not yet available) or
-        // contaminate the rolling MAD window.
         if (stats.count > 0 && stats.last_epoch_s > 0.0) {
             const double gap = epoch_s - stats.last_epoch_s;
             if (gap > kMaxGapSeconds) {
@@ -340,7 +453,7 @@ namespace GnssProcessor {
             }
         }
 
-        // First epoch: initialize arc
+        // First epoch: initialize arc.
         if (stats.count == 0) {
             stats.mean         = mw_m;
             stats.M2           = 0.0;
@@ -348,48 +461,138 @@ namespace GnssProcessor {
             stats.prev_mw      = mw_m;
             stats.last_epoch_s = epoch_s;
             stats.diff_window.clear();
+            stats.bia_corrected = bia_corrected;
+            stats.lambda_wl     = lambda_wl;
+            stats.wl_locked     = false;
+            stats.rounded_wl    = 0;
+
+            // WL integer locking is deferred until kMinEpochsForWlLock
+            // consecutive epochs have been accumulated.  A single MW
+            // sample is too noisy (especially for EWL pairs) for a
+            // reliable rounding decision.
 
             if (mwwl_trace_.is_open())
-                writeTraceRecord(obs, sig1, sig2, mw_m, mw_m, 0.0, NaN,
-                                 stats.count, lambda_wl, NaN, false, false);
+                writeTraceRecord(obs, sig1, sig2, mw_m, stats.mean, 0.0, NaN,
+                                 stats.count, lambda_wl, NaN, false, false,
+                                 bia_corrected, sat_mw_bias,
+                                 stats.rounded_wl, stats.wl_locked);
             return false;
         }
 
         const double mw_diff = mw_m - stats.prev_mw;
+
+        // For BIA-corrected arcs not yet locked: attempt rounding once
+        // the Hatch mean has accumulated enough epochs.  Waiting for
+        // kMinEpochsForWlLock samples lets the mean converge to within a
+        // fraction of a WL cycle before the irreversible decision.
+        if (stats.bia_corrected && !stats.wl_locked && lambda_wl > 0.0
+            && stats.count >= kMinEpochsForWlLock) {
+            const double mean_cyc = stats.mean / lambda_wl;
+            const double frac = mean_cyc - std::round(mean_cyc);
+            if (std::abs(frac) < 0.25) {
+                stats.rounded_wl = static_cast<int>(std::round(mean_cyc));
+                stats.mean = stats.rounded_wl * lambda_wl;
+                stats.wl_locked = true;
+                log_manager_.getLogger("mw_slip_detector")->info(
+                    "WL locked for {} (epoch {}): N_WL={}, mean_cyc={:.3f}, frac={:.3f}",
+                    stats_key, stats.count, stats.rounded_wl, mean_cyc, frac);
+            }
+        }
+
         const double dev     = mw_m - stats.mean;
         const double thresh  = computeAdaptiveThreshold(stats, lambda_wl);
         const double sigma   = computeMadSigma(stats);
         const bool is_slip   = std::isfinite(thresh) && std::abs(dev) > thresh;
 
+        // Cache for external queries (e.g. outlier tiebreaker).
+        stats.last_dev   = dev;
+        stats.last_sigma = sigma;
+
         if (mwwl_trace_.is_open())
             writeTraceRecord(obs, sig1, sig2, mw_m, stats.mean, dev, sigma,
-                             stats.count, lambda_wl, thresh, is_slip, false);
+                             stats.count, lambda_wl, thresh, is_slip, false,
+                             stats.bia_corrected, sat_mw_bias,
+                             stats.rounded_wl, stats.wl_locked);
 
         if (is_slip) {
             auto logger = log_manager_.getLogger("mw_slip_detector");
+
+            // Compute WL slip magnitude.
+            // The WL combination N_WL = N_1 - N_2 cannot by itself distinguish
+            // which signal slipped.  Multi-frequency cross-consistency in the
+            // CycleSlipManager identifies the culprit signal.
+            int slip_cycles = 0;
+            bool wl_known = false;
+            if (stats.wl_locked && lambda_wl > 0.0) {
+                const double new_cyc = mw_m / lambda_wl;
+                const double new_frac = new_cyc - std::round(new_cyc);
+                if (std::abs(new_frac) < 0.25) {
+                    const int new_wl = static_cast<int>(std::round(new_cyc));
+                    slip_cycles = new_wl - stats.rounded_wl;
+                    wl_known = (slip_cycles != 0);
+                    if (out_slip_frac) *out_slip_frac = std::abs(new_frac);
+                }
+            }
+
+            // Fallback for non-locked arcs (e.g. BSSD pivot with BIA):
+            // The epoch-to-epoch MW jump cancels the receiver bias, so
+            // dev / lambda_wl should be near-integer for a true cycle slip.
+            if (!wl_known && !stats.wl_locked && lambda_wl > 0.0) {
+                const double dev_cyc = dev / lambda_wl;
+                const double dev_frac = dev_cyc - std::round(dev_cyc);
+                if (std::abs(dev_frac) < 0.25 && std::abs(dev_cyc) >= 0.5) {
+                    slip_cycles = static_cast<int>(std::round(dev_cyc));
+                    wl_known = true;
+                    if (out_slip_frac) *out_slip_frac = std::abs(dev_frac);
+                    log_manager_.getLogger("mw_slip_detector")->info(
+                        "WL slip estimated from jump for {}: dN_WL={}, dev_cyc={:.3f}, frac={:.3f}",
+                        stats_key, slip_cycles, dev_cyc, dev_frac);
+                }
+            }
+            if (out_slip_cycles) *out_slip_cycles = slip_cycles;
+            if (out_wl_known)    *out_wl_known = wl_known;
+
             logger->warn(
                 "MW slip detected for {} ({}): |dev|={:.3f} m ({:.1f} WL) > thresh={:.3f} m ({:.1f} WL), "
-                "mean={:.3f} m, sigma={:.4f} m, arc_n={}, lambda_wl={:.3f} m",
+                "mean={:.3f} m, sigma={:.4f} m, arc_n={}, lambda_wl={:.3f} m, bia={}, locked={}, delta_wl={}",
                 obs.satellite, PppUtils::getSystemString(obs.system),
                 std::abs(dev), std::abs(dev) / lambda_wl,
                 thresh, thresh / lambda_wl,
                 stats.mean, std::isfinite(sigma) ? sigma : -1.0,
-                stats.count, lambda_wl);
-            mw_stats_.erase(stats_key);
+                stats.count, lambda_wl,
+                stats.bia_corrected ? "yes" : "no",
+                stats.wl_locked ? "yes" : "no",
+                slip_cycles != 0 ? std::to_string(slip_cycles) + " WL" : "n/a");
+
+            // For bias-corrected locked arcs with a known integer slip,
+            // shift the arc by the integer offset to maintain continuity
+            // rather than discarding the accumulated statistics.
+            if (stats.wl_locked && wl_known && slip_cycles != 0) {
+                stats.rounded_wl += slip_cycles;
+                stats.mean = stats.rounded_wl * lambda_wl;
+                stats.prev_mw = mw_m;
+                stats.last_epoch_s = epoch_s;
+                // Clear the diff window so the MAD is not contaminated by
+                // the pre-slip differences.
+                stats.diff_window.clear();
+                logger->info("MW arc shifted for {} (bia-locked): new N_WL={}, mean={:.3f} m",
+                             stats_key, stats.rounded_wl, stats.mean);
+            } else {
+                mw_stats_.erase(stats_key);
+            }
             return true;
         }
 
         // Update running statistics (Welford / Hatch)
+        // When the WL is locked, skip mean update (it's deterministic).
         stats.count++;
-        // Cap the denominator so the mean stays responsive on long arcs.
-        // Without this, after hundreds of epochs the weight 1/n becomes
-        // negligible and the mean cannot track small level shifts,
-        // producing an exponential-decay pattern in the MW deviation.
-        const double eff_n  = static_cast<double>(std::min(stats.count, kMaxHatchCount));
-        const double delta  = mw_m - stats.mean;
-        stats.mean += delta / eff_n;
-        const double delta2 = mw_m - stats.mean;
-        stats.M2 += delta * delta2;
+        if (!stats.wl_locked) {
+            const double eff_n  = static_cast<double>(std::min(stats.count, kMaxHatchCount));
+            const double delta  = mw_m - stats.mean;
+            stats.mean += delta / eff_n;
+            const double delta2 = mw_m - stats.mean;
+            stats.M2 += delta * delta2;
+        }
 
         stats.diff_window.push_back(mw_diff);
         if (stats.diff_window.size() > kMwWindowSize)
@@ -404,16 +607,47 @@ namespace GnssProcessor {
     // Core detection logic
     // =================================================================
 
-    std::vector<std::string> MwSlipDetector::detectLargeMwResets(
+    std::vector<MwSlipResult> MwSlipDetector::detectLargeMwResets(
         const std::vector<PppObservation>& observations) {
 
-        std::vector<std::string> reset_keys;
-        reset_keys.reserve(observations.size());
+        std::vector<MwSlipResult> results;
+        results.reserve(observations.size());
         auto logger = log_manager_.getLogger("mw_slip_detector");
+
+        // Helper: push a reset result (no known WL integer)
+        auto pushReset = [&](const std::string& key, double lwl = 0.0,
+                             const std::string& s1 = {}, const std::string& s2 = {},
+                             const std::string& sat = {}) {
+            results.push_back({ key, 0, false, lwl, s1, s2, sat });
+        };
 
         // Capture epoch time from first valid observation for tracing
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
+
+        // -----------------------------------------------------------------
+        // Intermediate storage for the BSSD two-pass MW approach.
+        // Used for BOTH combined (PPP) and uncombined (PPP-RTK) paths
+        // whenever BIA satellite biases are available.  The internal
+        // between-satellite differencing eliminates the receiver WL bias
+        // and enables integer WL locking, regardless of the filter's
+        // measurement model parameterization.
+        //
+        // Keyed by (constellation_char + "_" + phase1 + "_" + phase2).
+        // -----------------------------------------------------------------
+        struct SatMwEntry {
+            const PppObservation* obs;
+            UncombinedPair pair;
+            double mw_raw;          // raw MW in meters
+            double mw_bia;          // MW after subtracting satellite BIA bias (meters)
+            double sat_mw_bias;     // satellite BIA MW bias that was subtracted (meters)
+            bool   has_bia;         // true if satellite BIA was available
+            double lambda_wl;       // WL wavelength (meters)
+            bool   is_combined;     // true if this came from the combined (PPP) path
+            std::string if_phase_key; // IF phase label for combined reset keys (e.g. "L1C_L2W")
+        };
+        // group_key -> satellite -> entry
+        std::map<std::string, std::map<std::string, SatMwEntry>> sd_groups;
 
         for (const auto& obs : observations) {
             if (obs.satellite.empty()) continue;
@@ -427,13 +661,10 @@ namespace GnssProcessor {
 
             if (has_if) {
                 // ---- Combined (PPP) path ----
-                // Process each IF pair independently so that cycle slips
-                // on any combination are detected.  Each pair gets its
-                // own MW arc keyed by "sat_phase_key".
                 if (has_lli) {
                     for (const auto& ifp : if_pairs) {
                         const std::string amb_key = obs.satellite + "_" + ifp.phase_key;
-                        reset_keys.push_back(amb_key);
+                        pushReset(amb_key);
                         logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
                         std::string s1, s2;
                         if (mwwl_trace_.is_open() && splitIfLabel(ifp.phase_key, s1, s2)) {
@@ -446,11 +677,15 @@ namespace GnssProcessor {
                                              NaN, false, true);
                         }
                     }
-                    // Erase all MW arcs for this satellite.
                     for (auto it = mw_stats_.begin(); it != mw_stats_.end(); )
                         it = (it->first.rfind(obs.satellite, 0) == 0) ? mw_stats_.erase(it) : std::next(it);
                     continue;
                 }
+
+                // Track which band-pairs already have IF labels (e.g. "1_2" from "L1W_L2W")
+                // so we can add supplementary uncombined MW pairs for bands not covered
+                // by the combined signal_mode (e.g. L1-L5, L2-L5 when signal_mode=dual).
+                std::set<std::string> if_band_pairs;
 
                 for (const auto& ifp : if_pairs) {
                     std::string s1, s2, c1, c2;
@@ -459,14 +694,100 @@ namespace GnssProcessor {
 
                     const double lambda_wl = computeWideLaneWavelengthMeters(obs, s1, s2);
                     if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
-                    const double mw_m = computeMwMeters(obs, s1, s2, c1, c2);
-                    if (!std::isfinite(mw_m)) continue;
+                    const double mw_raw = computeMwMeters(obs, s1, s2, c1, c2);
+                    if (!std::isfinite(mw_raw)) continue;
 
-                    const std::string stats_key = obs.satellite + "_" + ifp.phase_key;
-                    if (processMwSample(obs, stats_key, mw_m, lambda_wl, s1, s2)) {
-                        const std::string amb_key = obs.satellite + "_" + ifp.phase_key;
-                        reset_keys.push_back(amb_key);
-                        logger->warn("Scheduling reset for {}", amb_key);
+                    // Record the band pair as covered only after confirming
+                    // a valid MW could be formed.  Otherwise, a failed IF
+                    // pair would block the supplementary uncombined path
+                    // from producing the MW for that band combination.
+                    if (s1.size() >= 2 && s2.size() >= 2)
+                        if_band_pairs.insert(std::string(1, s1[1]) + "_" + std::string(1, s2[1]));
+
+                    // Compute satellite BIA MW bias
+                    double sat_bias = 0.0;
+                    const bool has_bia = computeSatMwBias(obs, s1, s2, c1, c2, sat_bias);
+                    const double mw_bia = has_bia ? (mw_raw - sat_bias) : mw_raw;
+
+                    if (has_bia) {
+                        // Collect for two-pass BSSD integer processing
+                        const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                        const std::string group_key = std::string(1, cons) + "_" + s1 + "_" + s2;
+                        sd_groups[group_key][obs.satellite] = {
+                            &obs, { s1, s2, c1, c2 }, mw_raw, mw_bia,
+                            sat_bias, has_bia, lambda_wl,
+                            /*is_combined=*/true, ifp.phase_key
+                        };
+                    } else {
+                        // No BIA: undifferenced processing only, no integer locking
+                        const std::string stats_key = obs.satellite + "_" + ifp.phase_key;
+                        int slip_cyc = 0;
+                        bool wl_known = false;
+                        double slip_frac = 0.5;
+                        if (processMwSample(obs, stats_key, mw_raw, lambda_wl, s1, s2,
+                                            /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
+                                            &slip_cyc, &wl_known, &slip_frac)) {
+                            results.push_back({ obs.satellite + "_" + ifp.phase_key,
+                                                slip_cyc, wl_known, lambda_wl,
+                                                s1, s2, obs.satellite, slip_frac });
+                            logger->warn("Scheduling reset for {} (wl_known={}, slip_wl={})",
+                                         obs.satellite + "_" + ifp.phase_key, wl_known, slip_cyc);
+                        }
+                    }
+                }
+
+                // Supplementary uncombined MW pairs from raw_observed for band
+                // pairs not already covered by the combined IF labels.  This
+                // provides extra multi-frequency constraints for cycle slip
+                // detection (e.g. L1-L5, L2-L5) even when signal_mode limits
+                // the KF to dual-frequency IF combinations.
+                const auto uc_pairs = collectUncombinedPairs(obs);
+                for (const auto& pair : uc_pairs) {
+                    // Skip pairs already handled via the combined path
+                    if (pair.phase1.size() >= 2 && pair.phase2.size() >= 2) {
+                        const std::string bkey = std::string(1, pair.phase1[1]) + "_"
+                                               + std::string(1, pair.phase2[1]);
+                        if (if_band_pairs.count(bkey)) continue;
+                    }
+
+                    const double lambda_wl = computeWideLaneWavelengthMeters(obs, pair.phase1, pair.phase2);
+                    if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
+                    const double mw_raw = computeMwMeters(obs, pair.phase1, pair.phase2, pair.code1, pair.code2);
+                    if (!std::isfinite(mw_raw)) continue;
+
+                    double sat_bias = 0.0;
+                    const bool has_bia = computeSatMwBias(obs, pair.phase1, pair.phase2,
+                                                          pair.code1, pair.code2, sat_bias);
+                    const double mw_bia = has_bia ? (mw_raw - sat_bias) : mw_raw;
+
+                    if (has_bia) {
+                        const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                        const std::string group_key = std::string(1, cons) + "_" + pair.phase1 + "_" + pair.phase2;
+                        sd_groups[group_key][obs.satellite] = {
+                            &obs, pair, mw_raw, mw_bia,
+                            sat_bias, has_bia, lambda_wl,
+                            /*is_combined=*/false, {}
+                        };
+                    } else {
+                        const std::string stats_key = obs.satellite + "_" + pair.phase1 + "_" + pair.phase2;
+                        int slip_cyc = 0;
+                        bool wl_known = false;
+                        double slip_frac = 0.5;
+                        if (processMwSample(obs, stats_key, mw_raw, lambda_wl, pair.phase1, pair.phase2,
+                                            /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
+                                            &slip_cyc, &wl_known, &slip_frac)) {
+                            // Supplementary pairs produce per-signal reset entries
+                            // with full signal info for the multi-frequency solver.
+                            results.push_back({ obs.satellite + "_" + pair.phase1,
+                                                slip_cyc, wl_known, lambda_wl,
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac });
+                            results.push_back({ obs.satellite + "_" + pair.phase2,
+                                                slip_cyc, wl_known, lambda_wl,
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac });
+                            logger->warn("Scheduling supplementary MW reset for {}_{}, {}_{} (wl_known={}, slip_wl={})",
+                                         obs.satellite, pair.phase1, obs.satellite, pair.phase2,
+                                         wl_known, slip_cyc);
+                        }
                     }
                 }
             } else {
@@ -475,9 +796,9 @@ namespace GnssProcessor {
                 if (uc_pairs.empty()) continue;
 
                 if (has_lli) {
-                    for (const auto& [key, val] : obs.observed)
+                    for (const auto& [key, val] : obs.raw_observed)
                         if (!key.empty() && key[0] == 'L' && key.find('_') == std::string::npos)
-                            reset_keys.push_back(obs.satellite + "_" + key);
+                            pushReset(obs.satellite + "_" + key);
                     logger->warn("LLI lock loss (uncombined): scheduling all phase ambiguity resets for {}", obs.satellite);
                     for (auto it = mw_stats_.begin(); it != mw_stats_.end(); )
                         it = (it->first.rfind(obs.satellite, 0) == 0) ? mw_stats_.erase(it) : std::next(it);
@@ -487,22 +808,195 @@ namespace GnssProcessor {
                 for (const auto& pair : uc_pairs) {
                     const double lambda_wl = computeWideLaneWavelengthMeters(obs, pair.phase1, pair.phase2);
                     if (!(std::isfinite(lambda_wl) && lambda_wl > 0.0)) continue;
-                    const double mw_m = computeMwMeters(obs, pair.phase1, pair.phase2, pair.code1, pair.code2);
-                    if (!std::isfinite(mw_m)) continue;
+                    const double mw_raw = computeMwMeters(obs, pair.phase1, pair.phase2, pair.code1, pair.code2);
+                    if (!std::isfinite(mw_raw)) continue;
 
-                    const std::string stats_key = obs.satellite + "_" + pair.phase1 + "_" + pair.phase2;
-                    if (processMwSample(obs, stats_key, mw_m, lambda_wl, pair.phase1, pair.phase2)) {
-                        const std::string amb1 = obs.satellite + "_" + pair.phase1;
-                        const std::string amb2 = obs.satellite + "_" + pair.phase2;
-                        reset_keys.push_back(amb1);
-                        reset_keys.push_back(amb2);
-                        logger->warn("Scheduling reset for {}, {}", amb1, amb2);
+                    // Compute satellite BIA MW bias
+                    double sat_bias = 0.0;
+                    const bool has_bia = computeSatMwBias(obs, pair.phase1, pair.phase2,
+                                                          pair.code1, pair.code2, sat_bias);
+                    const double mw_bia = has_bia ? (mw_raw - sat_bias) : mw_raw;
+
+                    if (has_bia) {
+                        // Collect for two-pass BSSD integer processing
+                        const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                        const std::string group_key = std::string(1, cons) + "_" + pair.phase1 + "_" + pair.phase2;
+                        sd_groups[group_key][obs.satellite] = {
+                            &obs, pair, mw_raw, mw_bia,
+                            sat_bias, has_bia, lambda_wl,
+                            /*is_combined=*/false, {}
+                        };
+                    } else {
+                        // No BIA: undifferenced processing, no integer locking
+                        const std::string stats_key = obs.satellite + "_" + pair.phase1 + "_" + pair.phase2;
+                        int slip_cyc = 0;
+                        bool wl_known = false;
+                        double slip_frac = 0.5;
+                        if (processMwSample(obs, stats_key, mw_raw, lambda_wl, pair.phase1, pair.phase2,
+                                            /*bia_corrected=*/false, /*sat_mw_bias=*/0.0,
+                                            &slip_cyc, &wl_known, &slip_frac)) {
+                            results.push_back({ obs.satellite + "_" + pair.phase1,
+                                                slip_cyc, wl_known, lambda_wl,
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac });
+                            results.push_back({ obs.satellite + "_" + pair.phase2,
+                                                slip_cyc, wl_known, lambda_wl,
+                                                pair.phase1, pair.phase2, obs.satellite, slip_frac });
+                            logger->warn("Scheduling reset for {}_{}, {}_{} (wl_known={}, slip_wl={})",
+                                         obs.satellite, pair.phase1, obs.satellite, pair.phase2,
+                                         wl_known, slip_cyc);
+                        }
                     }
                 }
             }
         }
 
-        return reset_keys;
+        // -----------------------------------------------------------------
+        // Pass 2: BSSD single-difference MW processing
+        //
+        // For each (constellation, band-pair) group that has BIA-corrected
+        // MW values, select a pivot (highest elevation) and form SD values.
+        // The SD eliminates the receiver WL bias, making the result near-
+        // integer in WL cycles when combined with the satellite BIA correction.
+        //
+        // This runs for BOTH combined (PPP) and uncombined (PPP-RTK) paths.
+        // The MW observable is always formed from raw RINEX signals and is
+        // independent of the filter's measurement model parameterization.
+        // -----------------------------------------------------------------
+        for (auto& [group_key, sat_entries] : sd_groups) {
+            if (sat_entries.empty()) continue;
+
+            // Select pivot: highest elevation satellite in this group
+            std::string best_pivot;
+            double best_elev = -999.0;
+            for (const auto& [sat, entry] : sat_entries) {
+                if (entry.obs->elevation > best_elev) {
+                    best_elev = entry.obs->elevation;
+                    best_pivot = sat;
+                }
+            }
+            if (best_pivot.empty()) continue;
+
+            // Detect pivot change and reset SD arcs if needed
+            auto prev_pivot_it = sd_pivot_sat_.find(group_key);
+            if (prev_pivot_it != sd_pivot_sat_.end() && prev_pivot_it->second != best_pivot) {
+                logger->debug("BSSD MW pivot change for {}: {} -> {} (resetting SD arcs)",
+                              group_key, prev_pivot_it->second, best_pivot);
+                for (const auto& [sat, entry] : sat_entries) {
+                    if (sat == best_pivot) continue;
+                    const std::string stats_key = sat + "_" + entry.pair.phase1 + "_" + entry.pair.phase2;
+                    auto arc_it = mw_stats_.find(stats_key);
+                    if (arc_it != mw_stats_.end()) {
+                        if (arc_it->second.bia_corrected) {
+                            mw_stats_.erase(arc_it);
+                        }
+                    }
+                }
+            }
+            sd_pivot_sat_[group_key] = best_pivot;
+
+            const auto& pivot_entry = sat_entries.at(best_pivot);
+
+            for (const auto& [sat, entry] : sat_entries) {
+                const std::string stats_key = sat + "_" + entry.pair.phase1 + "_" + entry.pair.phase2;
+
+                if (sat == best_pivot) {
+                    // Pivot: process undifferenced BIA-corrected MW.
+                    // Cannot integer-lock (receiver bias still present)
+                    // but BIA subtraction improves the Hatch mean stability.
+                    // The fallback jump-based WL estimation in processMwSample
+                    // can still resolve the integer slip from the deviation.
+                    int pivot_slip_cyc = 0;
+                    bool pivot_wl_known = false;
+                    double pivot_slip_frac = 0.5;
+                    if (processMwSample(*entry.obs, stats_key, entry.mw_bia, entry.lambda_wl,
+                                        entry.pair.phase1, entry.pair.phase2,
+                                        /*bia_corrected=*/false, entry.sat_mw_bias,
+                                        &pivot_slip_cyc, &pivot_wl_known, &pivot_slip_frac)) {
+                        if (entry.is_combined) {
+                            results.push_back({ sat + "_" + entry.if_phase_key,
+                                                pivot_slip_cyc, pivot_wl_known, entry.lambda_wl,
+                                                entry.pair.phase1, entry.pair.phase2, sat, pivot_slip_frac });
+                        } else {
+                            results.push_back({ sat + "_" + entry.pair.phase1,
+                                                pivot_slip_cyc, pivot_wl_known, entry.lambda_wl,
+                                                entry.pair.phase1, entry.pair.phase2, sat, pivot_slip_frac });
+                            results.push_back({ sat + "_" + entry.pair.phase2,
+                                                pivot_slip_cyc, pivot_wl_known, entry.lambda_wl,
+                                                entry.pair.phase1, entry.pair.phase2, sat, pivot_slip_frac });
+                        }
+                        logger->warn("Scheduling reset for {} (pivot, wl_known={}, slip_wl={})",
+                                     entry.is_combined ? (sat + "_" + entry.if_phase_key)
+                                                       : (sat + "_" + entry.pair.phase1 + "+" + entry.pair.phase2),
+                                     pivot_wl_known, pivot_slip_cyc);
+                    }
+                } else {
+                    // Non-pivot: form single-difference MW.
+                    // SD = MW_sat(BIA-corrected) - MW_pivot(BIA-corrected)
+                    // This removes the receiver WL bias, leaving:
+                    //   SD_MW = (N_WL_sat - N_WL_pivot) * lambda_wl + noise
+                    const double sd_mw = entry.mw_bia - pivot_entry.mw_bia;
+
+                    int slip_cyc = 0;
+                    bool wl_known = false;
+                    double slip_frac = 0.5;
+                    if (processMwSample(*entry.obs, stats_key, sd_mw, entry.lambda_wl,
+                                        entry.pair.phase1, entry.pair.phase2,
+                                        /*bia_corrected=*/true, entry.sat_mw_bias,
+                                        &slip_cyc, &wl_known, &slip_frac)) {
+                        if (entry.is_combined) {
+                            results.push_back({ sat + "_" + entry.if_phase_key,
+                                                slip_cyc, wl_known, entry.lambda_wl,
+                                                entry.pair.phase1, entry.pair.phase2, sat, slip_frac });
+                        } else {
+                            results.push_back({ sat + "_" + entry.pair.phase1,
+                                                slip_cyc, wl_known, entry.lambda_wl,
+                                                entry.pair.phase1, entry.pair.phase2, sat, slip_frac });
+                            results.push_back({ sat + "_" + entry.pair.phase2,
+                                                slip_cyc, wl_known, entry.lambda_wl,
+                                                entry.pair.phase1, entry.pair.phase2, sat, slip_frac });
+                        }
+                        logger->warn("Scheduling reset for {} (wl_known={}, slip_wl={})",
+                                     entry.is_combined ? (sat + "_" + entry.if_phase_key)
+                                                       : (sat + "_" + entry.pair.phase1 + "+" + entry.pair.phase2),
+                                     wl_known, slip_cyc);
+                    }
+                }
+            }
+        }
+
+        return results;
+    }
+
+    // =================================================================
+    // Resolved WL accessor
+    // =================================================================
+
+    std::map<std::string, int> MwSlipDetector::getResolvedWlAmbiguities() const {
+        std::map<std::string, int> resolved;
+        for (const auto& [key, stats] : mw_stats_) {
+            if (stats.wl_locked)
+                resolved[key] = stats.rounded_wl;
+        }
+        return resolved;
+    }
+
+    // =================================================================
+    // Active arc keys accessor
+    // =================================================================
+
+    std::vector<std::string> MwSlipDetector::getActiveArcKeys() const {
+        std::vector<std::string> keys;
+        keys.reserve(mw_stats_.size());
+        for (const auto& [key, stats] : mw_stats_) {
+            // Only return arcs with enough history to have detected a slip
+            // if one occurred.  Immature arcs defer slip detection (the MAD
+            // is not yet valid), so treating them as "clean" would create
+            // false dN_i - dN_j = 0 constraints that conflict with real slips
+            // detected on mature arcs for the same satellite.
+            if (stats.diff_window.size() >= kMinEpochsForAdaptive)
+                keys.push_back(key);
+        }
+        return keys;
     }
 
     // =================================================================
@@ -527,6 +1021,17 @@ namespace GnssProcessor {
                 cit = mw_stats_.erase(cit);
             } else {
                 ++cit;
+            }
+
+        // If this satellite was an SD pivot, remove the pivot entry so that
+        // a new pivot is selected next epoch and all dependent SD arcs reset.
+        for (auto pit = sd_pivot_sat_.begin(); pit != sd_pivot_sat_.end(); )
+            if (pit->second == satellite) {
+                logger->debug("Cleared SD pivot {} for group {} (external satellite reset)",
+                    satellite, pit->first);
+                pit = sd_pivot_sat_.erase(pit);
+            } else {
+                ++pit;
             }
     }
 

@@ -37,7 +37,6 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
 add_library(gnss_core STATIC
     src/core/atmosphere/Troposphere.cpp
     src/core/atmosphere/Ionosphere.cpp
-    
     src/core/common/GnssConfig.cpp
     src/core/common/LogManager.cpp
     src/core/common/ProductManager.cpp
@@ -56,24 +55,30 @@ add_library(gnss_core STATIC
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
     src/core/measurement/MeasurementModel.cpp
+    src/core/measurement/StateInitializer.cpp
+    src/core/measurement/BssdTransform.cpp
     src/core/model/PppModel.cpp
     src/core/model/PppRtkModel.cpp
     src/core/model/StochasticModel.cpp
     src/core/model/Antenna.cpp
     src/core/rinex/RinexParser.cpp
     src/core/rtcm/RtcmParser.cpp
-    src/core/sinex/SinexParser.cpp
-    src/core/ssystem/SSystem.cpp
+    #src/core/sinex/SinexParser.cpp
+    #src/core/ssystem/SSystem.cpp
     src/core/model/ModelGeometry.cpp
     src/core/model/Planetary.cpp
     src/core/common/Application.cpp
 	src/core/common/MwSlipDetector.cpp
-	src/core/common/IfPhaseSlipDetector.cpp
+	#src/core/common/IfPhaseSlipDetector.cpp
+	#src/core/common/GfSlipDetector.cpp
+	src/core/common/GraphicSlipDetector.cpp
+	src/core/common/CycleSlipManager.cpp
     src/core/common/DataDownloader.cpp
     src/core/common/ProductResolver.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
     src/core/realtime/RealTimeEngine.cpp
+    src/core/filter/BssdPivotManager.cpp
  "src/core/common/Coordinates.cpp" "src/core/common/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)

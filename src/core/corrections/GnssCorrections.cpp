@@ -941,17 +941,26 @@ namespace GnssProcessor {
         // Required for IAR where ambiguities must remain constant integers.
         // Fractional mode (default): raw atan2 angle; float ambiguity absorbs
         // integer-cycle component. See header for full design discussion.
+        const double epoch_s = static_cast<double>(time.week) * 604800.0 + time.tow;
         if (accumulate) {
             constexpr double TWO_PI = 2.0 * Constants::PI;
+            constexpr double kMaxGapSeconds = 300.0; // 5 minutes
             auto pw_it = prev_windup_.find(satellite);
             if (pw_it != prev_windup_.end()) {
-                double diff = windUp_c - pw_it->second;
-                diff -= TWO_PI * std::round(diff / TWO_PI);
-                windUp_c = pw_it->second + diff;
+                const double gap = epoch_s - pw_it->second.epoch_s;
+                if (gap > 0.0 && gap < kMaxGapSeconds) {
+                    double diff = windUp_c - pw_it->second.angle;
+                    diff -= TWO_PI * std::round(diff / TWO_PI);
+                    windUp_c = pw_it->second.angle + diff;
+                } else if (gap >= kMaxGapSeconds) {
+                    log_manager_.getLogger("ppp_model")->debug(
+                        "Phase wind-up gap {:.0f}s > {:.0f}s for {}: restarting accumulation",
+                        gap, kMaxGapSeconds, satellite);
+                }
             }
         }
 
-        prev_windup_[satellite] = windUp_c;
+        prev_windup_[satellite] = { windUp_c, epoch_s };
 
         double phi_m = windUp_c * wavelength / (2.0 * Constants::PI);
         log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad, {})",
@@ -962,7 +971,7 @@ namespace GnssProcessor {
     void GnssCorrections::resetPhaseWindUp(const std::string& satellite) {
         auto it = prev_windup_.find(satellite);
         if (it != prev_windup_.end()) {
-            log_manager_.getLogger("corrections")->debug("Reset phase wind-up for {}: prev={:.3f} rad", satellite, it->second);
+            log_manager_.getLogger("corrections")->debug("Reset phase wind-up for {}: prev={:.3f} rad", satellite, it->second.angle);
             prev_windup_.erase(it);
         }
     }

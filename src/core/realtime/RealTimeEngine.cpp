@@ -100,18 +100,23 @@ bool RealTimeEngine::initialize() {
     kalman_filter_   = std::make_unique<KalmanFilter>(*state_manager_, config_, log_manager_, *ppp_model_);
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
     mw_slip_detector_  = std::make_unique<MwSlipDetector>(config_, log_manager_);
-    if_slip_detector_  = std::make_unique<IfPhaseSlipDetector>(config_, log_manager_);
+
+    // Provide BIA satellite biases to the MW detector for WL integer rounding
+    mw_slip_detector_->setCorrections(&ppp_model_->getCorrections());
+
+    // Provide MW detector to the BSSD pivot manager for quality-based pivot scoring.
+    meas_model_->setMwDetector(mw_slip_detector_.get());
 
     ppp_model_->initializeState(ppp_state_);
     state_manager_->syncPppStateToStateVector(ppp_state_);
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);
     std::filesystem::path log_dir{"logs"};
-    trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir, is_ppp_rtk);
+    const auto& logging_cfg = config_.getLoggingConfig();
+    trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir, is_ppp_rtk, logging_cfg);
 
-    mw_slip_detector_->enableTracing(log_dir);
-    if (config_.enableIfSlipDetector()) {
-        if_slip_detector_->enableTracing(log_dir);
+    if (logging_cfg.enable_mw_slip_trace) {
+        mw_slip_detector_->enableTracing(log_dir);
     }
 
     log->info("Real-time engine initialized (position seeded at ({:.1f}, {:.1f}, {:.1f}))",
@@ -184,7 +189,10 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     } else {
         dt = current_time.tow - prev_tow_;
         if (dt < 0.0) dt += TimeUtils::SECONDS_IN_WEEK; // week rollover
-        gap_detected = dt > 10.0; // >10 s gap
+        const double gap_tol = config_.getDataGapTolerance() > 0.0
+                             ? config_.getDataGapTolerance()
+                             : 1.0;  // default: 1 s (typical RT rate)
+        gap_detected = dt > gap_tol;
     }
     prev_tow_ = current_time.tow;
     prev_epoch_time_ = current_time;
@@ -261,19 +269,12 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     state_manager_->updatePppStateFromVector(
         state_manager_->getStateVector(), ppp_state_, *state_manager_);
 
-    // --- Cycle slip detection ---
+    // --- Cycle slip detection (MW, pre-estimation) ---
     {
-        const auto mw_resets = mw_slip_detector_->detectLargeMwResets(modeled_obs);
+        const auto slip_results = mw_slip_detector_->detectLargeMwResets(modeled_obs);
         const double reset_std = config_.getAmbiguityStd();
-        for (const auto& key : mw_resets) {
-            state_manager_->resetAmbiguity(key, reset_std);
-        }
-    }
-    if (config_.enableIfSlipDetector()) {
-        const auto if_resets = if_slip_detector_->detect(modeled_obs, prev_pos_sigma_3d_);
-        const double reset_std = config_.getAmbiguityStd();
-        for (const auto& key : if_resets) {
-            state_manager_->resetAmbiguity(key, reset_std);
+        for (const auto& sr : slip_results) {
+            state_manager_->resetAmbiguity(sr.amb_key, reset_std);
         }
     }
 
@@ -287,16 +288,6 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // --- Extract posterior state ---
     state_manager_->updatePppStateFromVector(
         state_manager_->getStateVector(), ppp_state_, *state_manager_);
-
-    // --- Position sigma for next epoch's IF slip gating ---
-    {
-        const Eigen::MatrixXd P = state_manager_->getCovariance();
-        size_t pi = state_manager_->getPositionIndex();
-        if (P.rows() > static_cast<Eigen::Index>(pi + 2)) {
-            double var3d = P(pi, pi) + P(pi + 1, pi + 1) + P(pi + 2, pi + 2);
-            prev_pos_sigma_3d_ = std::sqrt(std::max(var3d, 0.0));
-        }
-    }
 
     ++epoch_count_;
 

@@ -13,6 +13,7 @@
 #include "KalmanFilter.hpp"
 #include "KalmanFilterLogger.hpp"
 #include "MeasurementModel.hpp"
+#include "CycleSlipManager.hpp"
 #include "PppModel.hpp"
 #include "TimeUtils.hpp"
 #include <spdlog/spdlog.h>
@@ -452,9 +453,19 @@ namespace GnssProcessor {
         const Eigen::MatrixXd Sr = R_ - measurement.H * P * Ht;
         measurement.residuals_covariance = Sr;
 
+        // Standardize post-fit residuals using the post-fit residual
+        // covariance Sr(i,i) = (R - H*P_post*H')(i,i).
+        //
+        //  - Sr is the theoretically correct covariance for the post-fit
+        //    residual vector (v = z - H*x_post).  Using the innovation
+        //    covariance S = H*P*H' + R would over-scale the denominator
+        //    and suppress outlier detection.
+        //  - When Sr(i,i) is near-zero the measurement is almost perfectly
+        //    explained; we clamp to a small positive value to avoid division
+        //    by zero.
         Eigen::VectorXd sres(measurement.residuals.size());
         for (Eigen::Index i = 0; i < sres.size(); ++i) {
-            const double sii = (i < Sr.rows() && i < Sr.cols()) ? Sr(i, i) : std::numeric_limits<double>::quiet_NaN();
+            const double sii = (i < Sr.rows() && i < Sr.cols()) ? Sr(i, i) : 1e-6;
             const double denom = std::sqrt(std::max(sii, 1e-12));
             const double val = measurement.residuals(i);
             sres(i) = (std::isfinite(val) && std::isfinite(denom) && denom > 0.0) ? (val / denom) : 0.0;
@@ -512,7 +523,7 @@ namespace GnssProcessor {
 
 
         // Per-satellite residual summary
-        {
+        if (is_outlier) {
             const size_t n_res = std::min({ static_cast<size_t>(measurement.residuals.size()),
                                             measurement.satellite_ids.size(),
                                             measurement.signal_types.size() });
@@ -549,21 +560,41 @@ namespace GnssProcessor {
         const auto [primary_sat, ref_sat] = splitBssdSatId(outlier_sat);
         const bool bssd_active = config_.enableBetweenSatelliteSd();
 
-        // In BSSD mode, look up the pivot satellite for this constellation
-        // so we can compute SD seeds and protect the pivot value.
+        // In BSSD mode, identify the pivot satellite for this constellation.
+        // Primary source: the pivot manager's map.  Fallback: the ref_sat
+        // extracted from the SD pair name (BssdTransform always forms pairs
+        // as "non_pivot-pivot", so ref_sat IS the pivot when present).
         const auto& bssd_pivots = measurement_model_.getBssdPivotSatellites();
         const std::string primary_cons = PppUtils::getSystemString(primary_sat);
         auto piv_it = bssd_pivots.find(primary_cons);
         const std::string pivot_sat = (bssd_active && piv_it != bssd_pivots.end())
-                                    ? piv_it->second : std::string{};
+                                    ? piv_it->second
+                                    : (bssd_active && !ref_sat.empty())
+                                        ? ref_sat : std::string{};
 
         // Compute the pivot's absolute seed once (used by all non-pivot resets).
+        // The pivot may use a different tracking attribute on the same band
+        // (e.g. L1W vs L1C), so match by frequency band (first two chars).
         double pivot_abs_seed = 0.0;
+        std::string pivot_band_sig;  // actual signal type the pivot uses on this band
         if (bssd_active && !pivot_sat.empty()) {
+            const std::string outlier_band = (outlier_sig.size() >= 2)
+                                           ? outlier_sig.substr(0, 2) : outlier_sig;
             for (const auto& obs : measurement.observations) {
                 if (obs.satellite != pivot_sat) continue;
-                if (obs.observed.count(outlier_sig))
+                // Try exact match first, then band match.
+                if (obs.observed.count(outlier_sig)) {
                     pivot_abs_seed = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
+                    pivot_band_sig = outlier_sig;
+                } else {
+                    for (const auto& [sig, val] : obs.observed) {
+                        if (sig.size() >= 2 && sig.substr(0, 2) == outlier_band) {
+                            pivot_abs_seed = state_manager_.computeAmbiguitySeed(obs, sig, x);
+                            pivot_band_sig = sig;
+                            break;
+                        }
+                    }
+                }
                 break;
             }
         }
@@ -584,13 +615,18 @@ namespace GnssProcessor {
             // The pivot's SD ambiguity is always 0 by definition.  Do not
             // inflate its variance — that would trigger the BSSD disturbance
             // detector and cascade into an unnecessary pivot handover.
-            // The handleBssdPivotHandover logic will detect the slip through
-            // other signals and manage the handover cleanly.
             if (bssd_active && sat == pivot_sat) {
                 klogger->info("{}Phase outlier on BSSD pivot {} {}: keeping frozen at 0",
                     epoch_prefix, sat, outlier_sig);
                 last_reset_satellites_.push_back(sat);
                 return;
+            }
+            // Safety: if BSSD is active but pivot_sat is unexpectedly empty,
+            // log a diagnostic so the issue is visible.
+            if (bssd_active && pivot_sat.empty()) {
+                klogger->warn("{}Phase outlier on {} {}: BSSD active but pivot lookup "
+                              "returned empty (cons={})",
+                              epoch_prefix, sat, outlier_sig, primary_cons);
             }
 
             const double prev_amb = x(amb_idx);
@@ -624,10 +660,24 @@ namespace GnssProcessor {
 
         resetOneAmbiguity(primary_sat, "primary");
 
-        // BSSD: also reset the reference satellite's ambiguity.
-        // For the pivot, this sets its value to 0 and resets its covariance.
-        if (!ref_sat.empty())
+        // In BSSD mode the ref_sat is always the pivot (the SD pair is
+        // formed as "non_pivot-pivot" in BssdTransform).  The pivot's SD
+        // ambiguity is 0 by definition — resetting it would corrupt every
+        // other SD measurement that references it and trigger an
+        // unnecessary pivot handover.  Only the primary (non-pivot)
+        // satellite needs its ambiguity reset.
+        //
+        // In non-BSSD mode (or when the SD identifier contains a non-pivot
+        // reference, e.g. combined-mode IF pairs), reset the ref_sat.
+        // Guard: when bssd_active with a ref_sat, the ref_sat is the pivot
+        // even if the pivot lookup was empty (the SD pair format guarantees
+        // the second element is the pivot).
+        if (!ref_sat.empty() && !bssd_active) {
             resetOneAmbiguity(ref_sat, "BSSD-ref");
+        } else if (!ref_sat.empty()) {
+            klogger->info("{}Phase outlier on SD pair {}: skipping ref_sat {} reset (BSSD pivot)",
+                epoch_prefix, outlier_sat, ref_sat);
+        }
     }
 
     void KalmanFilter::handleCodeOutlier(EpochMeasurement& measurement,
@@ -804,23 +854,30 @@ namespace GnssProcessor {
         const size_t meta_n = std::min({ num_obs, measurement.satellite_ids.size(), measurement.signal_types.size() });
 
         // --- Per-measurement diagnostic log ---
+        // Helper: emit the per-residual table at a given log level.
+        auto logResidualTable = [&](spdlog::level::level_enum lvl) {
+            for (size_t i = 0; i < meta_n; ++i) {
+                const auto ei = static_cast<Eigen::Index>(i);
+                const double var_i = (i < static_cast<size_t>(vres.rows()) && i < static_cast<size_t>(vres.cols()))
+                    ? vres(ei, ei) : std::numeric_limits<double>::quiet_NaN();
+                const double sigma_i = std::sqrt(std::max(var_i, 0.0));
+                const double s_i = sres(ei);
+                const double s_abs = std::abs(s_i);
+                klogger->log(lvl,
+                    "{}  res[{:02d}] {} {}: v={:+.4f} m, sigma={:.4f} m, s={:+.3f}, |s|={:.3f}, outlier={}",
+                    epoch_prefix, static_cast<int>(i),
+                    measurement.satellite_ids[i], measurement.signal_types[i],
+                    res(ei), sigma_i, s_i, s_abs,
+                    (std::isfinite(s_abs) && s_abs > threshold) ? "YES" : "no");
+            }
+        };
+
         klogger->debug("{}Post-fit residual check: n_obs={}, threshold={:.3f}, bad_count={}, bad_percent={:.3f}",
             epoch_prefix, num_obs, threshold, measurement.bad_residual_count, bad_meas_percent);
 
-        for (size_t i = 0; i < meta_n; ++i) {
-            const auto ei = static_cast<Eigen::Index>(i);
-            const double var_i = (i < static_cast<size_t>(vres.rows()) && i < static_cast<size_t>(vres.cols()))
-                ? vres(ei, ei) : std::numeric_limits<double>::quiet_NaN();
-            const double sigma_i = std::sqrt(std::max(var_i, 0.0));
-            const double s_i = sres(ei);
-            const double s_abs = std::abs(s_i);
-            klogger->debug(
-                "{}  res[{:02d}] {} {}: v={:+.4f} m, sigma={:.4f} m, s={:+.3f}, |s|={:.3f}, outlier={}",
-                epoch_prefix, static_cast<int>(i),
-                measurement.satellite_ids[i], measurement.signal_types[i],
-                res(ei), sigma_i, s_i, s_abs,
-                (std::isfinite(s_abs) && s_abs > threshold) ? "YES" : "no");
-        }
+        // Always emit at debug level.
+        if (klogger->should_log(spdlog::level::debug))
+            logResidualTable(spdlog::level::debug);
 
         if (meta_n != num_obs) {
             klogger->warn("{}Residual metadata size mismatch: res={}, sat_ids={}, sig_types={}. Logged {} entries.",
@@ -845,29 +902,146 @@ namespace GnssProcessor {
         bool is_complete_reset = false;
 
         if (max_sres > threshold) {
-            const std::string outlier_sat = measurement.satellite_ids[max_idx];
-            const std::string outlier_sig = measurement.signal_types[max_idx];
+
+            // If the residual table was not already emitted at debug level,
+            // re-emit it at warn so the full context is visible alongside
+            // the outlier diagnostics.
+            if (!klogger->should_log(spdlog::level::debug))
+                logResidualTable(spdlog::level::warn);
+
+            // --- MW tiebreaker for competing phase outliers ---
+            // When multiple satellites in the same constellation have phase
+            // outliers with nearly equal |sres|, the raw maximum pick is
+            // unreliable.  Use MW deviation scores to identify the satellite
+            // most likely to have actually slipped.
+            size_t chosen_idx = max_idx;
+            if (!measurement.signal_types[max_idx].empty()
+                && measurement.signal_types[max_idx][0] == 'L'
+                && cycle_slip_manager_) {
+
+                // Ratio threshold: a competitor is "close" if its |sres|
+                // is within 5% of the maximum.
+                constexpr double kRatioThresh = 0.95;
+
+                const auto [max_prim, max_ref] = splitBssdSatId(
+                    measurement.satellite_ids[max_idx]);
+                const std::string max_cons = PppUtils::getSystemString(max_prim);
+
+                // Collect all phase-outlier indices for the same constellation
+                // whose |sres| is close to the maximum.
+                struct Candidate {
+                    size_t idx;
+                    std::string sat;   // primary satellite
+                    double sres_abs;
+                    double mw_score;
+                };
+                std::vector<Candidate> candidates;
+
+                for (size_t i = 0; i < meta_n; ++i) {
+                    const auto& sig = measurement.signal_types[i];
+                    if (sig.empty() || sig[0] != 'L') continue;
+                    const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
+                    if (!std::isfinite(sa) || sa <= threshold) continue;
+                    if (sa < max_sres * kRatioThresh) continue;
+
+                    const auto [prim, ref] = splitBssdSatId(
+                        measurement.satellite_ids[i]);
+                    if (PppUtils::getSystemString(prim) != max_cons) continue;
+
+                    // Deduplicate by satellite (one entry per sat, keep the
+                    // worst |sres| for that satellite).
+                    bool found = false;
+                    for (auto& c : candidates) {
+                        if (c.sat == prim) { found = true; break; }
+                    }
+                    if (!found) {
+                        candidates.push_back({i, prim, sa, 0.0});
+                    }
+                }
+
+                if (candidates.size() > 1) {
+                    // Query MW scores.
+                    const auto& mw = cycle_slip_manager_->mwDetector();
+                    for (auto& c : candidates)
+                        c.mw_score = mw.getWorstMwScore(c.sat);
+
+                    // Pick the candidate with the highest MW score.
+                    auto best = std::max_element(candidates.begin(),
+                        candidates.end(), [](const Candidate& a, const Candidate& b) {
+                            return a.mw_score < b.mw_score;
+                        });
+
+                    if (best != candidates.end() && best->mw_score > 0.0
+                        && best->idx != max_idx) {
+                        klogger->info(
+                            "{}MW tiebreaker: {} candidates within {:.0f}% of max "
+                            "|sres|={:.3f}. Choosing {} (MW score={:.2f}) over {} "
+                            "(MW score={:.2f})",
+                            epoch_prefix, candidates.size(),
+                            (1.0 - kRatioThresh) * 100.0, max_sres,
+                            best->sat, best->mw_score,
+                            candidates[0].sat == best->sat
+                                ? candidates[1].sat : candidates[0].sat,
+                            candidates[0].sat == best->sat
+                                ? candidates[1].mw_score : candidates[0].mw_score);
+                        chosen_idx = best->idx;
+                    }
+                }
+            }
+
+            const std::string outlier_sat = measurement.satellite_ids[chosen_idx];
+            const std::string outlier_sig = measurement.signal_types[chosen_idx];
             const double sigma_max = std::sqrt(std::max(
-                vres(static_cast<Eigen::Index>(max_idx), static_cast<Eigen::Index>(max_idx)), 0.0));
+                vres(static_cast<Eigen::Index>(chosen_idx),
+                     static_cast<Eigen::Index>(chosen_idx)), 0.0));
 
             klogger->warn(
                 "{}Max standardized residual for {} {}: |s|={:.3f} (s={:+.3f}, residual {:.3f} m, sigma {:.3f} m, idx {})",
                 epoch_prefix, outlier_sat, outlier_sig,
-                max_sres, sres(static_cast<Eigen::Index>(max_idx)),
-                res(static_cast<Eigen::Index>(max_idx)), sigma_max, max_idx);
+                std::abs(sres(static_cast<Eigen::Index>(chosen_idx))),
+                sres(static_cast<Eigen::Index>(chosen_idx)),
+                res(static_cast<Eigen::Index>(chosen_idx)), sigma_max, chosen_idx);
 
             if (!outlier_sig.empty() && outlier_sig[0] == 'L') {
                 handlePhaseOutlier(measurement, outlier_sat, outlier_sig, x, P, epoch_prefix);
+
+                const auto [prim, ref] = splitBssdSatId(outlier_sat);
+                measurement.excluded_measurements.insert(prim + "_" + outlier_sig);
+
+                // Check for correlated phase outliers on other frequencies
+                // for the same satellite.  When a cycle slip affects an SD
+                // pair, all phase signals for that satellite typically show
+                // outliers with nearly equal |sres| and opposite signs.
+                // Resetting only one frequency leaves the others corrupted,
+                // causing unnecessary extra rebuild passes.
+                for (size_t i = 0; i < meta_n; ++i) {
+                    if (i == chosen_idx) continue;
+                    const auto& co_sig = measurement.signal_types[i];
+                    if (co_sig.empty() || co_sig[0] != 'L') continue;
+                    if (measurement.satellite_ids[i] != outlier_sat) continue;
+                    const double co_abs = std::abs(sres(static_cast<Eigen::Index>(i)));
+                    if (!std::isfinite(co_abs) || co_abs <= threshold) continue;
+
+                    klogger->info(
+                        "{}Correlated phase outlier on same satellite: {} {} "
+                        "|s|={:.3f}, resetting alongside {} {}",
+                        epoch_prefix, outlier_sat, co_sig, co_abs,
+                        outlier_sat, outlier_sig);
+
+                    handlePhaseOutlier(measurement, outlier_sat, co_sig, x, P, epoch_prefix);
+                    measurement.excluded_measurements.insert(prim + "_" + co_sig);
+                }
             } else {
-                handleCodeOutlier(measurement, outlier_sat, outlier_sig, max_idx, epoch_prefix);
+                handleCodeOutlier(measurement, outlier_sat, outlier_sig, chosen_idx, epoch_prefix);
             }
 
             is_outlier_found = true;
             measurement.bad_residual_count++;
 
             klogger->warn("{}Outlier flagged: idx={}, sat={}, sig={}, max_sres={:.3f} > threshold={:.3f}; bad_residual_count={}",
-                epoch_prefix, max_idx, outlier_sat, outlier_sig,
-                max_sres, threshold, measurement.bad_residual_count);
+                epoch_prefix, chosen_idx, outlier_sat, outlier_sig,
+                std::abs(sres(static_cast<Eigen::Index>(chosen_idx))),
+                threshold, measurement.bad_residual_count);
         } else {
             klogger->debug("{}No outliers: max_sres={:.3f} <= threshold={:.3f}",
                 epoch_prefix, max_sres, threshold);

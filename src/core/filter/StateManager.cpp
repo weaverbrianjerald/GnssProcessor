@@ -465,14 +465,13 @@ namespace GnssProcessor {
             }
         }
 
-        // Ambiguity process noise (should be 0 for constant ambiguities)
+        // Ambiguity process noise (zero for constant ambiguities).
+        // Ambiguities missing BIA/ATX phase coverage absorb a time-constant
+        // satellite bias into the float value — no extra process noise needed.
+        // They are excluded from integer AR via the unresolvable-ambiguity set.
         if (state_size > core_state_size_) {
             for (const auto& [key, idx] : ambiguity_indices_) {
-                if (relaxed_ambiguities_.count(key)) {
-                    Q(idx, idx) = pn.phase_bias * dt;
-                } else {
-                    Q(idx, idx) = pn.ambiguity * dt;
-                }
+                Q(idx, idx) = pn.ambiguity * dt;
             }
         }
 
@@ -664,12 +663,15 @@ namespace GnssProcessor {
             return false;
         }
 
-        state_vector_(idx) = 0.0;
+        // Keep the current value — it will be overwritten by a proper
+        // geometry-based seed in ensureRequiredStates().
         covariance_.row(idx).setZero();
         covariance_.col(idx).setZero();
         covariance_(idx, idx) = std_m * std_m;
 
-        logger->info("Reset ambiguity {} at index {}: value=0.0 m, std={:.3f} m (var={:.3e})",
+        pending_reseed_ambiguities_.insert(key);
+
+        logger->info("Reset ambiguity {} at index {}: marked pending reseed, std={:.3f} m (var={:.3e})",
             key, idx_i, std_m, std_m * std_m);
         return true;
     }
@@ -749,19 +751,10 @@ namespace GnssProcessor {
                 }
             }
 
-            // Per-satellite signal bias (PPP-RTK uncombined, signals without BIA).
-            // Must be subtracted so the ambiguity seed is not corrupted by a
-            // converged sat-bias estimate (critical for 3rd-frequency signals
-            // under BSSD where pivot handovers re-compute absolute seeds).
+            // Per-satellite signal bias — code-only estimation.
+            // Phase ambiguities absorb satellite phase biases, so no
+            // sat-bias state exists for L signals and the term is zero.
             double sat_bias_term = 0.0;
-            //if (config_.estimateSatBiases() && config_.isUncombinedEnabled()
-            if (config_.estimateSatBiases()
-                && !ref_type.empty() && ref_type[0] == 'L') {
-                const std::string sb_key = obs.satellite + "|" + ref_type;
-                const int sb_idx = getSatBiasIndex(sb_key);
-                if (sb_idx >= 0 && sb_idx < static_cast<int>(x.size()))
-                    sat_bias_term = x(sb_idx);
-            }
 
             return observed_m - modeled_m - clk_term - tropo_wet - isb - tropo_grad - iono_term - sat_bias_term;
         } catch (...) {
@@ -992,19 +985,31 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Relaxed ambiguity support
+    // Unresolvable ambiguity support
     // ===================================================================
 
-    void StateManager::markAmbiguityRelaxed(const std::string& amb_key) {
-        relaxed_ambiguities_.insert(amb_key);
+    void StateManager::markAmbiguityUnresolvable(const std::string& amb_key) {
+        unresolvable_ambiguities_.insert(amb_key);
     }
 
-    bool StateManager::isAmbiguityRelaxed(const std::string& amb_key) const {
-        return relaxed_ambiguities_.count(amb_key) > 0;
+    bool StateManager::isAmbiguityUnresolvable(const std::string& amb_key) const {
+        return unresolvable_ambiguities_.count(amb_key) > 0;
     }
 
-    void StateManager::clearRelaxedAmbiguities() {
-        relaxed_ambiguities_.clear();
+    void StateManager::clearUnresolvableAmbiguities() {
+        unresolvable_ambiguities_.clear();
+    }
+
+    bool StateManager::isAmbiguityPendingReseed(const std::string& amb_key) const {
+        return pending_reseed_ambiguities_.count(amb_key) > 0;
+    }
+
+    void StateManager::clearPendingReseed(const std::string& amb_key) {
+        pending_reseed_ambiguities_.erase(amb_key);
+    }
+
+    void StateManager::markAmbiguityPendingReseed(const std::string& amb_key) {
+        pending_reseed_ambiguities_.insert(amb_key);
     }
 
 } // namespace GnssProcessor

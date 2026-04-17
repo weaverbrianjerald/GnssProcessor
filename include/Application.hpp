@@ -18,8 +18,7 @@
 #include "MeasurementModel.hpp"
 #include "KalmanFilter.hpp"
 #include "WlsEstimator.hpp"
-#include "MwSlipDetector.hpp"
-#include "IfPhaseSlipDetector.hpp"
+#include "CycleSlipManager.hpp"
 #include "TraceLogger.hpp"
 #include "ImuIntegrator.hpp"
 #include "RealTimeEngine.hpp"
@@ -148,37 +147,13 @@ private:
     /**
      * @brief Detect MW and IF phase cycle slips and reset affected ambiguities.
      *
+     * Delegates to CycleSlipManager::detectAndRepair().
+     *
      * @param epoch_prefix  Log prefix string.
      * @param modeled_obs   Modeled observations for this epoch.
      */
     void detectCycleSlips(const std::string& epoch_prefix,
                           const std::vector<PppObservation>& modeled_obs);
-
-    /**
-     * @brief Reset a single ambiguity with BSSD awareness.
-     *
-     * When BSSD is active:
-     *  - **Pivot satellite**: the reset is deferred — the ambiguity value
-     *    is kept at 0 (correct by definition) and its variance is not
-     *    inflated, so handleBssdPivotHandover can cleanly hand over to
-     *    a healthy satellite.
-     *  - **Non-pivot satellite**: the ambiguity is re-seeded as a proper
-     *    SD value (absolute_seed ? pivot_absolute_seed) so the rest of
-     *    the constellation is undisturbed.
-     *
-     * When BSSD is not active, falls back to the simple absolute reset.
-     *
-     * @param amb_key       Ambiguity state key (e.g. "G01_L1C").
-     * @param sat_id        Satellite identifier extracted from amb_key.
-     * @param signal        Signal key extracted from amb_key (e.g. "L1C").
-     * @param modeled_obs   Modeled observations for the current epoch.
-     * @param epoch_prefix  Log prefix string.
-     */
-    void resetAmbiguityBssdAware(const std::string& amb_key,
-                                  const std::string& sat_id,
-                                  const std::string& signal,
-                                  const std::vector<PppObservation>& modeled_obs,
-                                  const std::string& epoch_prefix);
 
     /**
      * @brief Run the iterative Kalman filter update / relinearization loop.
@@ -263,8 +238,7 @@ private:
     std::unique_ptr<MeasurementModel>    meas_model_;
     std::unique_ptr<KalmanFilter>        kalman_filter_;
     std::unique_ptr<WlsEstimator>        wls_estimator_;
-    std::unique_ptr<MwSlipDetector>      mw_slip_detector_;
-    std::unique_ptr<IfPhaseSlipDetector> if_slip_detector_;
+    std::unique_ptr<CycleSlipManager>     cycle_slip_manager_;
     std::unique_ptr<TraceLogger>         trace_logger_;
     std::unique_ptr<ImuIntegrator>       imu_integrator_;
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;

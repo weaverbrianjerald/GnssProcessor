@@ -43,6 +43,7 @@
 #include "PppTypes.hpp"
 #include "GnssConfig.hpp"
 #include "LogManager.hpp"
+#include <Eigen/Dense>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -102,7 +103,8 @@ namespace GnssProcessor {
          * @return std::vector<std::string> Vector of ambiguity keys to reset.
          */
         std::vector<std::string> detect(const std::vector<PppObservation>& observations,
-            double position_sigma_3d = 0.0);
+            double position_sigma_3d = 0.0,
+            const Eigen::Vector3d& receiver_position = Eigen::Vector3d::Zero());
 
         /**
          * @brief Clear IF phase history for a specific satellite.
@@ -120,6 +122,30 @@ namespace GnssProcessor {
          * Called after a complete filter reset.
          */
         void resetAll();
+
+        /**
+         * @brief IF phase jump information for one satellite from the last detect() call.
+         */
+        struct IfJumpInfo {
+            double delta_grad_m{ 0.0 };  ///< Between-epoch DD IF phase jump (meters).
+            double lambda_if_m{ 0.0 };   ///< IF wavelength (meters).
+            double elevation_deg{ 0.0 };  ///< Satellite elevation (degrees) at detection epoch.
+            bool   valid{ false };        ///< True if a finite jump was computed.
+        };
+
+        /**
+         * @brief Retrieve the IF phase jump for a satellite from the last detect() call.
+         *
+         * Returns the between-epoch, between-satellite double-differenced IF
+         * phase jump (in meters) that was computed during the most recent
+         * call to detect().  This is the quantity denoted delta_grad in the
+         * internal processing.  The value is relative to the constellation's
+         * reference satellite and is valid only when IfJumpInfo::valid is true.
+         *
+         * @param satellite  Satellite identifier (e.g. "G01").
+         * @return IfJumpInfo  Phase jump info (valid=false if not available).
+         */
+        IfJumpInfo getLastIfJump(const std::string& satellite) const;
 
         /**
          * @brief Enable CSV tracing for IF phase slip diagnostics.
@@ -175,6 +201,15 @@ namespace GnssProcessor {
             /** Previous epoch between-satellite IF OMC gradients keyed by satellite ID. */
             std::map<std::string, double> prev_grad;
 
+            /** Previous epoch LOS unit vectors keyed by satellite ID (for geometry correction). */
+            std::map<std::string, Eigen::Vector3d> prev_los;
+
+            /** Receiver position at the previous epoch (ECEF meters). */
+            Eigen::Vector3d prev_position{ Eigen::Vector3d::Zero() };
+
+            /** True if prev_position has been set at least once. */
+            bool has_prev_position{ false };
+
             /** Current reference satellite ID for this constellation. */
             std::string ref_satellite;
 
@@ -185,6 +220,11 @@ namespace GnssProcessor {
         /** Per-constellation state keyed by system string (e.g. "GPS"). */
         std::map<std::string, ConstellationState> constellation_state_;
 
+        /** Cached per-satellite IF jump from the most recent detect() call.
+         *  Populated at the end of detect() so that getLastIfJump() can
+         *  return values without re-computing. */
+        std::map<std::string, IfJumpInfo> last_if_jumps_;
+
         /** @brief Per-satellite data collected during observation grouping. */
         struct SatData {
             std::string satellite;
@@ -194,6 +234,7 @@ namespace GnssProcessor {
             double elevation;
             double lambda_if;
             System system;
+            Eigen::Vector3d los{ Eigen::Vector3d::Zero() }; ///< LOS unit vector for geometry correction.
         };
 
         bool findPhaseIfLabel(const PppObservation& obs, std::string& phase_if_key) const;
@@ -240,7 +281,7 @@ namespace GnssProcessor {
          * @param position_sigma_3d 3D position sigma (meters).
          * @param[out] reset_keys Ambiguity keys to reset are appended here.
          */
-        void processDoubleDifferences(
+        std::map<std::string, double> processDoubleDifferences(
             const std::vector<SatData>& sat_vec,
             const std::string& sys_str,
             ConstellationState& cs,
@@ -248,6 +289,7 @@ namespace GnssProcessor {
             double lambda_if,
             bool ref_changed,
             double position_sigma_3d,
+            const Eigen::Vector3d& delta_pos,
             std::vector<std::string>& reset_keys);
 
         /**

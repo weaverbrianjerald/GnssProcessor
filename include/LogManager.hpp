@@ -3,9 +3,12 @@
 #include <memory>
 #include <string>
 #include <filesystem>
+#include <set>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/pattern_formatter.h>
 #include <map>
+#include <chrono>
 
 namespace GnssProcessor {
 
@@ -102,11 +105,24 @@ namespace GnssProcessor {
          *
          * If a logger with @p logger_name already exists it is returned. Otherwise a new logger
          * is created (using the same sink configuration as the default logger), stored and returned.
+         * If the logger name is in the disabled set, it is created at spdlog::level::off so that
+         * no messages are written to its file.
          *
          * @param logger_name Name of the logger/module (e.g., \"gnss_processor.core\").
          * @return shared_ptr to the requested spdlog::logger.
          */
         std::shared_ptr<spdlog::logger> getLogger(const std::string& logger_name);
+
+        /**
+         * @brief Mark a set of logger names as disabled.
+         *
+         * Disabled loggers are created with level=off so their .log files
+         * remain empty.  Call this before the first getLogger() call for
+         * best effect; loggers already created are retroactively silenced.
+         *
+         * @param names Set of logger names to disable.
+         */
+        void setDisabledLoggers(const std::set<std::string>& names);
 
     private:
         /// Map of logger name to spdlog logger instance.
@@ -121,6 +137,9 @@ namespace GnssProcessor {
         /// Whether initialize() has been successfully called.
         bool initialized_ = false;
 
+        /// Set of logger names whose level should be forced to off.
+        std::set<std::string> disabled_loggers_;
+
         /**
          * @brief Convert project LogLevel to spdlog::level::level_enum.
          *
@@ -128,6 +147,18 @@ namespace GnssProcessor {
          * @return Corresponding spdlog level enum value.
          */
         spdlog::level::level_enum toSpdlogLevel(LogLevel level) const;
+
+        /**
+         * @brief Build a pattern_formatter that uses GPS time for the %* flag.
+         *
+         * The returned formatter replaces the '%*' custom flag with the
+         * message timestamp shifted by the GPS–UTC leap-second offset so
+         * that log timestamps align with RINEX GPS epoch times.
+         */
+        std::unique_ptr<spdlog::pattern_formatter> makeGpsFormatter() const;
+
+        /// GPS–UTC offset in seconds (currently 18).
+        int gps_utc_offset_s_{ 18 };
     };
 
 } // namespace GnssProcessor
