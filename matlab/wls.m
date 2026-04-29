@@ -4,7 +4,7 @@
 %           + ENU conversion + position error magnitude
 %  ============================================================
 
-clear; clc; close all;
+clear; clc; %close all;
 
 %% --- Load CSV file ---
 fname = 'C:\GnssProcessor\build\x64-Release\logs\wls_trace.csv';

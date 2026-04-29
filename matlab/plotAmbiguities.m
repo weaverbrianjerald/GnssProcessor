@@ -1,4 +1,4 @@
-clear all; clc; close all;
+clear all; clc; %close all;
 
 fname = 'C:\GnssProcessor\build\x64-Release\logs\ambiguity_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\ambiguity_trace.csv';
@@ -74,7 +74,7 @@ T.signal = categorical(sigCol);
 gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
 gpsSeconds = double(T.week) * 7 * 86400 + double(T.tow_s);
 % Note: residual example used gpsEpoch + seconds(gpsSeconds)
-T.utc = gpsEpoch + seconds(gpsSeconds);
+T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
 
 %% --- Prepare plotting settings ---
 uniqueSats = categories(T.satellite);
@@ -132,6 +132,7 @@ for col = 1:nSys
             globalIdx = k;
         end
         err = double(T_sys.std_m(idx_key));
+        %vals = [NaN; abs(diff(double(T_sys.value_m(idx_key)),1))]; % time-difference
         vals = double(T_sys.value_m(idx_key));
         times = T_sys.utc(idx_key);
 
@@ -140,11 +141,11 @@ for col = 1:nSys
         s = markerList{mod(k-1,numel(markerList))+1};
         scatter(times, vals, 36, 'Marker', s, 'MarkerEdgeColor', c, 'MarkerFaceColor', 'none');
         % Draw vertical errorbars without markers or connecting lines
-        if ~isempty(times)
-            % Use errorbar with no marker to draw vertical bars only
-            he = errorbar(times, vals, err, 'LineStyle', 'none', 'Color', c, 'CapSize', 8);
-            set(he, 'Marker', 'none');
-        end
+        % if ~isempty(times)
+        %     % Use errorbar with no marker to draw vertical bars only
+        %     he = errorbar(times, vals, err, 'LineStyle', 'none', 'Color', c, 'CapSize', 8);
+        %     set(he, 'Marker', 'none');
+        % end
         % Provide display name for legend
         % Create an invisible line object to show in legend (avoids duplicate entries)
         plt_temp_lng = plot(times(1), 0, 'Marker', s, 'LineStyle', 'none', 'Color', c, 'DisplayName', thisKey);

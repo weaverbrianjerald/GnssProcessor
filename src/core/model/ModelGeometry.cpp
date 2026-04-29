@@ -1,9 +1,22 @@
-﻿#include "ModelGeometry.hpp"
-#include "ProductParser.hpp"
-#include "Constants.hpp"
-#include "Coordinates.hpp"
-#include "ProductCache.hpp"
-#include "Interpolate.hpp"
+﻿#include "model/ModelGeometry.hpp"
+/*!
+ * \file ModelGeometry.cpp
+ * \brief Satellite/receiver geometry and correction computations for PPP.
+ *
+ * The implementation is organized as:
+ *  - Construction / product loading
+ *  - Private helpers:  extractPseudorange, computeEmissionState, ensureSunMoonCached
+ *  - Core geometry:    computeSatelliteGeometry
+ *  - Orbit interpolation: getSatellitePV
+ *  - Topocentric / attitude / wind-up utilities
+ */
+
+#include "model/ModelGeometry.hpp"
+#include "products/ProductParser.hpp"
+#include "common/Constants.hpp"
+#include "math/Coordinates.hpp"
+#include "products/ProductCache.hpp"
+#include "math/Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -11,114 +24,19 @@
 
 namespace GnssProcessor {
 
+
     namespace Model {
 
-        // Anonymous namespace for file-local utilities
-        namespace {
+        // (Unused anonymous-namespace interpolation helpers removed;
+        //  all interpolation now goes through Interpolate:: class methods.)
 
-            /**
-             * @brief Compute barycentric Lagrange interpolation weights for nodes `x`.
-             *
-             * Given a vector of node abscissas `x = {x0, x1, ..., x_{n-1}}` this routine
-             * returns barycentric weights `w` suitable for use in the barycentric
-             * interpolation formula:
-             *    p(xq) = ( sum_j w[j] * y[j] / (xq - x[j]) ) / ( sum_j w[j] / (xq - x[j]) )
-             *
-             * The implementation computes the product of (x[j] - x[k]) for k != j in
-             * log-space to avoid overflow/underflow when x values are large (for example
-             * continuous GPS seconds on the order of 1e9). The sign of the product is
-             * tracked separately. Extremely large or small log-products are clamped to
-             * prevent numeric exceptions; if any two nodes are closer than 1e-9, the
-             * corresponding weight is treated as invalid and left zero.
-             *
-             * @param x Vector of node x-coordinates. Values must be distinct for meaningful weights.
-             * @return Vector of barycentric weights of the same length as `x`.
-             *         If `x` is empty an empty vector is returned. If `x` has one element
-             *         a vector `{1.0}` is returned.
-             */
-            std::vector<double> barycentricWeights(const std::vector<double>& x) {
-                size_t n = x.size();
-                if (n == 0) return {};
-                if (n == 1) return { 1.0 };
+        // =================================================================
+        // Construction / product loading
+        // =================================================================
 
-                std::vector<double> w(n, 0.0);
-
-                // Compute weights in log-space to avoid overflow/underflow
-                for (size_t j = 0; j < n; ++j) {
-                    double log_abs_prod = 0.0;
-                    int sign = 1;
-                    bool valid = true;
-
-                    for (size_t k = 0; k < n; ++k) {
-                        if (k != j) {
-                            double diff = x[j] - x[k];
-                            if (std::abs(diff) < 1e-9) {
-                                valid = false;
-                                break;
-                            }
-                            log_abs_prod += std::log(std::abs(diff));
-                            if (diff < 0) sign = -sign;
-                        }
-                    }
-
-                    if (valid) {
-                        // w[j] = 1 / prod = sign * exp(-log_abs_prod)
-                        // Clamp to prevent extreme values
-                        if (log_abs_prod > 700.0) {
-                            w[j] = 0.0; // Underflow: product too large, weight negligible
-                        }
-                        else if (log_abs_prod < -700.0) {
-                            w[j] = sign * 1e300; // Overflow protection
-                        }
-                        else {
-                            w[j] = sign * std::exp(-log_abs_prod);
-                        }
-                    }
-                }
-                return w;
-            }
-
-            // Evaluate barycentric Lagrange polynomial
-            template<typename VecType>
-            VecType barycentricEval(const std::vector<double>& x,
-                const std::vector<double>& w,
-                const std::vector<VecType>& y,
-                double xq) {
-                double den = 0.0;
-                VecType num = VecType::Zero();
-                for (size_t j = 0; j < x.size(); ++j) {
-                    double diff = xq - x[j];
-                    if (std::abs(diff) < 1e-12) {
-                        return y[j]; // Exact node
-                    }
-                    double term = w[j] / diff;
-                    num += term * y[j];
-                    den += term;
-                }
-                return (den == 0.0) ? num : (num / den);
-            }
-        } // namespace
-
-        /**
-         * @brief Construct the Geometry helper used for satellite/receiver geometry and corrections.
-         *
-         * This constructor initializes internal models and product-dependent containers
-         * required by the PPP geometry routines (orbits, clocks, antenna models, ERP, etc.).
-         * Heavy product loading is performed by the private `loadData()` method which is
-         * invoked from the constructor implementation.
-         *
-         * @param config Read-only processing configuration providing masks, product paths and options.
-         * @param parser ProductParser used to locate and parse auxiliary products (SP3, CLK, ATX, BIA, ERP, RNX, ...).
-         * @param rinex Reference to the parsed RINEX data (observations/header metadata) required by some loaders.
-         * @param log_mgr LogManager used for diagnostic, warning and error messages.
-         *
-         * @note Member initialization order follows the declaration order in the header;
-         *       the constructor delegates product parsing to `loadData()` to avoid inline
-         *       initialization ordering issues and to centralize error handling.
-         */
         Geometry::Geometry(const GnssConfig& config, ProductCache& cache,
             const RinexParser& rinex, LogManager& log_mgr)
-            : corrections_(log_mgr, cache.getClocks(), cache.getErps()),
+            : corrections_(log_mgr, config, cache.getClocks(), cache.getErps(), cache.getBiases(), rinex),
             config_(config),
             planetary_(log_mgr),
             troposphere_(config, log_mgr),
@@ -127,7 +45,7 @@ namespace GnssProcessor {
             rinex_parser_(rinex),
             elevation_threshold_(config.getElevationMaskDeg()),
             signal_priorities_(config.getSignalPriorities()),
-            // Initialize references from cache - NO COPIES
+            // Initialize references from cache
             orbits_(cache.getOrbits()),
             clocks_(cache.getClocks()),
             antennas_(cache.getAntennas()),
@@ -141,36 +59,12 @@ namespace GnssProcessor {
             //corrections_.setClocksAndErps(cache.getClocks(), cache.getErps());
 
             log_manager_.getLogger("geometry")->info(
-                "Geometry model initialized (zero-copy): {} orbits, {} clocks, elev_mask={:.1f}°",
-                orbits_.size(), clocks_.size(), elevation_threshold_
+                "Geometry model initialized: {} orbits, {} clocks, elev_mask={:.1f} deg", orbits_.size(), clocks_.size(), elevation_threshold_
             );
             // Build indices from the cached product vectors so lookups are O(1)
             loadData();
         }
 
-        /**
-         * @brief Load auxiliary GNSS product and model data into Geometry internal containers.
-         *
-         * Populates the member containers used by geometry and correction routines:
-         * - `orbits_` (SP3 orbit entries)
-         * - `clocks_` (CLK satellite clocks)
-         * - `antennas_` (ATX antenna models)
-         * - `biases_` (BIA biases)
-         * - `erps_` (ERP entries)
-         * - `klobuchar_coeffs_` (RINEX Klobuchar coefficients)
-         *
-         * The method queries `product_parser_` for product paths and calls the
-         * corresponding parse functions. Successfully parsed data is moved into the
-         * member vectors; parsing failures generate warnings and leave previous data
-         * unchanged where appropriate. After loading, `corrections_.setClocksAndErps`
-         * is invoked to update internal correction models.
-         *
-         * All parsing errors and unexpected exceptions are logged via `log_manager_`.
-         * This function catches exceptions thrown by parsers and logs them as errors;
-         * it does not propagate exceptions.
-         *
-         * @note Called from the constructor to initialize product-dependent data.
-         */
         void Geometry::loadData() {
             log_manager_.getLogger("geometry")->debug("Begin satellite orbit index");
 
@@ -191,59 +85,183 @@ namespace GnssProcessor {
             }
 
             log_manager_.getLogger("geometry")->info("Built orbit index for {} satellites", orbit_index_.size());
+
+            // Attempt to load ocean tidal loading coefficients from BLQ file
+            auto otl_path = config_.getOtlBlqPath();
+            if (!otl_path.empty()) {
+                std::string station_name = rinex_parser_.getHeader().marker_name;
+                if (!station_name.empty()) {
+                    if (corrections_.loadOceanTideFromBLQ(otl_path.string(), station_name)) {
+                        log_manager_.getLogger("geometry")->info(
+                            "Loaded OTL BLQ coefficients for station '{}'", station_name);
+                    } else {
+                        log_manager_.getLogger("geometry")->warn(
+                            "Could not load OTL BLQ coefficients for station '{}' from '{}'",
+                            station_name, otl_path.string());
+                    }
+                } else {
+                    log_manager_.getLogger("geometry")->warn(
+                        "OTL BLQ path configured but RINEX marker name is empty; using approximate OTL model");
+                }
+            } else {
+                log_manager_.getLogger("geometry")->info(
+                    "No OTL BLQ file configured; using approximate ocean tidal loading model");
+            }
         }
 
-        /**
-         * @brief Compute geometric range between receiver and satellite.
-         *
-         * Computes the Euclidean distance between receiver and satellite ECEF
-         * coordinates using a straightforward vector norm:
-         *   range = ||sat_pos - rx_pos||
-         *
-         * @param rx_pos Receiver ECEF position (meters).
-         * @param sat_pos Satellite ECEF position (meters).
-         * @return Geometric range in meters.
-         *
-         * @note This function does not apply Earth rotation, relativistic, or other
-         *       propagation corrections — it returns the straight-line distance in ECEF.
-         */
+        // =================================================================
+        // Simple accessors
+        // =================================================================
+
         double Geometry::computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const {
             return (sat_pos - rx_pos).norm(); // meters
         }
 
-        /**
-         * @brief Compute satellite geometry and apply standard propagation corrections for an observation.
-         *
-         * Performs the end-to-end geometry computation required by the PPP observation model:
-         * - Interpolates satellite PVT at the signal emission epoch;
-         * - Iterates Time-Of-Flight (TOF) to account for signal travel and Earth rotation;
-         * - Applies satellite clock (CLK) and relativistic periodic corrections;
-         * - Rotates emission-time satellite position to reception-time ECEF;
-         * - Computes line-of-sight, geometric range, elevation and azimuth (degrees);
-         * - Computes troposphere mapping factors, zenith hydrostatic delay (ZHD), Shapiro delay,
-         *   solid Earth tide and other diagnostic corrections (atmospheric loading, Sagnac, ...).
-         *
-         * @param[in]  obs               RINEX observation record containing satellite id and epoch.
-         * @param[in]  state             Current PPP state (receiver position, troposphere/state variables, ...).
-         * @param[out] sat_pos           Satellite ECEF position at reception-time (meters).
-         * @param[out] rx_pos            Receiver ECEF position (meters).
-         * @param[out] elevation         Satellite elevation at receiver in degrees.
-         * @param[out] azimuth           Satellite azimuth at receiver in degrees (0..360).
-         * @param[out] los               Line‑of‑sight unit vector from receiver to satellite (ECEF).
-         * @param[out] range             Geometric range between receiver and satellite (meters).
-         * @param[out] tropo_delay       Total tropospheric delay (meters) (ZHD and mapping applied as implemented).
-         * @param[out] sat_clock         Total satellite clock correction (seconds) (CLK value + relativistic periodic term).
-         * @param[out] shapiro_delay     Shapiro gravitational path delay (meters).
-         * @param[out] sagnac_corr       Sagnac correction (meters). When emission-time rotation is applied this is implicitly included (returned for diagnostics).
-         * @param[out] atm_loading_corr  Atmospheric loading correction (meters).
-         * @param[out] relativistic_corr Relativistic periodic correction applied to satellite clock (seconds).
-         * @param[out] solid_tide        Solid Earth tide radial correction (meters).
-         * @param[out] mf_w              Tropospheric wet mapping factor (unitless).
-         * @param[out] mf_d              Tropospheric dry/hydrostatic mapping factor (unitless).
-         * @param[out] sat_vel           Satellite ECEF velocity at emission time (meters/second).
-         * @return True on success; false if geometry/corrections could not be computed
-         *         (invalid receiver/satellite data, insufficient orbit/clock nodes, below elevation mask, or non-convergence).
-         */
+
+        // =================================================================
+        // Private helpers
+        // =================================================================
+
+        void Geometry::ensureSunMoonCached(const GnssTime& time) const {
+            const double cached_t = TimeUtils::continuousGpsSeconds(cached_sun_moon_epoch_);
+            const double query_t  = TimeUtils::continuousGpsSeconds(time);
+            if (std::abs(query_t - cached_t) > 1e-3) {
+                planetary_.computeSunMoonPosition(time, erps_,
+                    cached_sun_pos_, cached_moon_pos_);
+                cached_sun_moon_epoch_ = time;
+            }
+        }
+
+        bool Geometry::extractPseudorange(const RinexObservation& obs, double& pseudorange) const {
+            // Collect available code observations (keys starting with 'C')
+            std::vector<std::pair<std::string, double>> code_obs;
+            for (const auto& [key, val] : obs.measurements)
+                if (!key.empty() && key[0] == 'C' && std::isfinite(val) && val > 1e6)
+                    code_obs.emplace_back(key, val);
+
+            if (code_obs.empty()) {
+                log_manager_.getLogger("geometry")->warn(
+                    "No code pseudorange available for {} at TOW {:.3f} — skipping observation",
+                    obs.satellite, obs.time.tow);
+                return false;
+            }
+
+            // Attempt ionosphere-free combination from two code signals on different bands
+            if (code_obs.size() >= 2) {
+                const std::string sys_str = PppUtils::getSystemString(obs.system);
+                auto prio_it = signal_priorities_.find(sys_str);
+                std::string sig1, sig2;
+
+                if (prio_it != signal_priorities_.end()) {
+                    for (const auto& sig : prio_it->second) {
+                        if (sig.empty() || sig[0] != 'C') continue;
+                        if (obs.measurements.count(sig) == 0) continue;
+                        const double v = obs.measurements.at(sig);
+                        if (!std::isfinite(v) || v < 1e6) continue;
+                        const char band = sig.size() > 1 ? sig[1] : '0';
+                        if (sig1.empty()) {
+                            sig1 = sig;
+                        } else {
+                            if (band != (sig1.size() > 1 ? sig1[1] : '0')) {
+                                sig2 = sig;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!sig1.empty() && !sig2.empty()) {
+                    PppUtils utils(log_manager_);
+                    const double f1 = utils.getFrequency(sig1, obs.system, obs.satellite);
+                    const double f2 = utils.getFrequency(sig2, obs.system, obs.satellite);
+                    if (f1 > 0.0 && f2 > 0.0 && std::abs(f1 - f2) > 1e6) {
+                        const double p1 = obs.measurements.at(sig1);
+                        const double p2 = obs.measurements.at(sig2);
+                        const double f1sq = f1 * f1, f2sq = f2 * f2;
+                        const double pr_if = (f1sq * p1 - f2sq * p2) / (f1sq - f2sq);
+                        if (std::isfinite(pr_if) && pr_if > 1e6) {
+                            pseudorange = pr_if;
+                            log_manager_.getLogger("geometry")->trace(
+                                "Using IF pseudorange for {} TOF seed: {:.3f} m ({}={:.3f}, {}={:.3f})",
+                                obs.satellite, pseudorange, sig1, p1, sig2, p2);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: first valid code pseudorange
+            pseudorange = code_obs.front().second;
+            log_manager_.getLogger("geometry")->trace(
+                "Using single pseudorange for {} TOF seed: {:.3f} m ({})",
+                obs.satellite, pseudorange, code_obs.front().first);
+            return true;
+        }
+
+        bool Geometry::computeEmissionState(const RinexObservation& obs,
+            const Eigen::Vector3d& rx_pos, double pseudorange,
+            Eigen::Vector3d& sat_pos_em, Eigen::Vector3d& sat_vel_em,
+            double& sat_clock_out, GnssTime& emission_time) const {
+
+            const double c = Constants::SPEED_OF_LIGHT;
+            const double tof = pseudorange / c;
+
+            // Step 1: Approximate emission time from pseudorange
+            emission_time = obs.time;
+            emission_time.tow -= tof;
+            if (emission_time.tow < 0) {
+                emission_time.tow += TimeUtils::SECONDS_IN_WEEK;
+                emission_time.week -= 1;
+            }
+
+            // Step 2: Satellite clock at approximate emission time
+            double sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time);
+            if (std::abs(sat_clk) < 1e-12) {
+                log_manager_.getLogger("geometry")->warn(
+                    "Satellite clock correction is zero/invalid for {} at emission TOW {:.3f} - skipping",
+                    obs.satellite, emission_time.tow);
+                return false;
+            }
+
+            // Step 3: Corrected GPS transmission time
+            emission_time = obs.time;
+            emission_time.tow -= (tof + sat_clk);
+            if (emission_time.tow < 0) {
+                emission_time.tow += TimeUtils::SECONDS_IN_WEEK;
+                emission_time.week -= 1;
+            }
+            if (emission_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
+                emission_time.tow -= TimeUtils::SECONDS_IN_WEEK;
+                emission_time.week += 1;
+            }
+
+            // Step 4: Interpolate satellite orbit at corrected emission time
+            auto [pos_em, vel_em] = getSatellitePV(obs.satellite, emission_time);
+            if (pos_em.norm() < 1.9e7 || !pos_em.allFinite()) {
+                log_manager_.getLogger("geometry")->warn(
+                    "Invalid satellite position at emission time for {} at TOW {:.3f}: norm={:.3e} m",
+                    obs.satellite, emission_time.tow, pos_em.norm());
+                return false;
+            }
+            sat_pos_em = pos_em;
+            sat_vel_em = vel_em;
+
+            // Step 5: Re-evaluate satellite clock at corrected emission time
+            sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time);
+            if (std::abs(sat_clk) < 1e-12) {
+                log_manager_.getLogger("geometry")->warn(
+                    "Satellite clock is zero/invalid for {} at corrected emission TOW {:.3f} - skipping",
+                    obs.satellite, emission_time.tow);
+                return false;
+            }
+            sat_clock_out = sat_clk;
+            return true;
+        }
+
+        // =================================================================
+        // Core geometry computation
+        // =================================================================
+
         bool Geometry::computeSatelliteGeometry(const RinexObservation& obs, const PppState& state,
             Eigen::Vector3d& sat_pos,
             Eigen::Vector3d& rx_pos,
@@ -262,15 +280,13 @@ namespace GnssProcessor {
             double& mf_d,
             Eigen::Vector3d& sat_vel) const
         {
-			// TODO: Use health flags from BRDC/SP3/CLK to reject unhealthy satellites
-            // Requires loading health data into cache and exposing it here.
-			// For now, we can hardcode a known unhealthy satellite (launched into wrong orbit).
-            if (obs.satellite == "E14") return false;
+            // Reject user-configured excluded satellites (e.g. E14/E18 eccentric orbit).
+            if (config_.isSatelliteExcluded(obs.satellite)) return false;
 
             const double c = Constants::SPEED_OF_LIGHT;
-            const double omegaE = Constants::EARTH_ANGULAR_VELOCITY; // rad/s
+            const double omegaE = Constants::EARTH_ANGULAR_VELOCITY;
 
-            // --- Step 1: Validate receiver position ---
+            // --- Validate receiver position ---
             rx_pos = state.position;
             if (rx_pos.norm() < 1e3 || !rx_pos.allFinite()) {
                 log_manager_.getLogger("geometry")->warn("Invalid receiver position for {} at TOW {:.3f}",
@@ -278,124 +294,48 @@ namespace GnssProcessor {
                 return false;
             }
 
-            // Initial satellite position (approx. reception time)
-            Eigen::Vector3d sat_pos_init = getSatellitePV(obs.satellite, obs.time).first;
-            if (sat_pos_init.norm() < 1e3 || !sat_pos_init.allFinite()) {
-                log_manager_.getLogger("geometry")->warn("Invalid initial satellite position for {} at TOW {:.3f}",
-                    obs.satellite, obs.time.tow);
+            // --- Extract pseudorange ---
+            double pseudorange = 0.0;
+            if (!extractPseudorange(obs, pseudorange))
                 return false;
-            }
 
-            // Initial time-of-flight (TOF) guess
-            double tof = (sat_pos_init - rx_pos).norm() / c; // [s]
-            double tof_delta = 1.0;
-            constexpr int max_iter = 5;
-
-            Eigen::Vector3d sat_pos_em, sat_vel_em;
+            // --- Emission-time computation ---
+            Eigen::Vector3d sat_pos_em = Eigen::Vector3d::Zero();
+            Eigen::Vector3d sat_vel_em = Eigen::Vector3d::Zero();
             double sat_clock_em = 0.0;
+            GnssTime emission_time{};
 
-            // --- Step 2: Iterative TOF refinement ---
-            // 
-            // The emission time computation follows the standard PPP approach:
-            //   t_emission = t_reception - TOF
-            //
-            // Important: SP3 orbits and CLK files are tabulated in GPS system time.
-            // The satellite clock correction from CLK files gives the offset:
-            //   t_satellite_proper = t_GPS_system - dt_sat
-            //
-            // For orbit lookup, we use GPS system time (emission_time).
-            // The satellite clock correction is applied to the pseudorange equation.
-            //
-            double d_tof = 1e-16;
-            for (int iter = 0; iter < max_iter && tof_delta > d_tof; ++iter) {
-                // Emission time = reception time - TOF (in GPS system time)
-                GnssTime emission_time = obs.time;
-                emission_time.tow -= tof;
-                if (emission_time.tow < 0) { emission_time.tow += TimeUtils::SECONDS_IN_WEEK; emission_time.week -= 1; }
-
-                // Get satellite clock correction at emission time.
-                // This is dt_sat such that: t_satellite_proper = t_GPS - dt_sat
-                // A positive dt_sat means the satellite clock is ahead of GPS time.
-                sat_clock_em = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time); // [s]
-
-                // Reject observations with failed clock interpolation.
-                // A zero clock typically indicates missing clock data (interpolation returned 0.0 as fallback).
-                // Valid satellite clocks are typically in the range of microseconds to milliseconds,
-                // so |sat_clock| < 1e-12 s (1 picosecond) is almost certainly invalid.
-                if (std::abs(sat_clock_em) < 1e-12) {
-                    log_manager_.getLogger("geometry")->warn(
-                        "Satellite clock correction is zero/invalid for {} at emission TOW {:.3f} - skipping observation",
-                        obs.satellite, emission_time.tow);
-                    return false;
-                }
-
-                // For orbit interpolation, we need the satellite position at the GPS system time
-                // when the signal was transmitted. This is emission_time (already in GPS system time).
-                // We do NOT adjust orbit lookup by sat_clock - the SP3 is in GPS system time.
-                auto [sat_pos_em_new, sat_vel_em_new] = getSatellitePV(obs.satellite, emission_time);
-                sat_pos_em = sat_pos_em_new;
-                sat_vel_em = sat_vel_em_new;
-
-                if (sat_pos_em.norm() < 1e3 || !sat_pos_em.allFinite() || !std::isfinite(sat_clock_em)) {
-                    log_manager_.getLogger("geometry")->warn("Invalid satellite data at emission time for {} at TOW {:.3f}",
-                        obs.satellite, emission_time.tow);
-                    return false;
-                }
-
-                // Relativistic correction (applied to satellite clock)
-                // This is the periodic relativistic effect: dtr = -2(r·v)/c²
-                relativistic_corr = corrections_.computeRelativisticCorrection(obs.satellite, sat_pos_em, sat_vel_em);
-
-                // Total satellite clock correction (CLK file value + relativistic periodic term)
-                sat_clock = sat_clock_em + relativistic_corr;
-                //sat_clock = sat_clock_em;
-
-                // --- Earth rotation correction ---
-                // Rotate satellite position from emission-time ECEF to reception-time ECEF.
-                // This accounts for Earth's rotation during signal propagation.
-                // The Sagnac effect is implicitly included when using the rotated position.
-                double theta = omegaE * tof;
-                double cos_theta = std::cos(theta);
-                double sin_theta = std::sin(theta);
-                Eigen::Matrix3d R_earth;
-                R_earth << cos_theta, sin_theta, 0.0,
-                    -sin_theta, cos_theta, 0.0,
-                    0.0, 0.0, 1.0;
-                sat_pos = R_earth * sat_pos_em; // Now in reception-time ECEF frame
-
-                // Update TOF based on geometric range in reception-time frame
-                double new_range = (sat_pos - rx_pos).norm();
-                double new_tof = new_range / c;
-                tof_delta = std::abs(new_tof - tof);
-                tof = new_tof;
-            }
-
-            if (tof_delta > d_tof) {
-                log_manager_.getLogger("geometry")->warn("TOF iteration failed to converge for {}: delta={:.3e} s",
-                    obs.satellite, tof_delta);
+            if (!computeEmissionState(obs, rx_pos, pseudorange, sat_pos_em, sat_vel_em, sat_clock_em, emission_time))
                 return false;
-            }
 
-            // Diagnostic: Log final emission time and satellite PVT details
+            // --- Earth rotation correction (Sagnac) ---
             {
-                GnssTime emission_time = obs.time;
-                emission_time.tow -= tof;
-                if (emission_time.tow < 0) { emission_time.tow += TimeUtils::SECONDS_IN_WEEK; emission_time.week -= 1; }
-
-                // Compute r·v for relativistic check
-                double r_dot_v = sat_pos_em.dot(sat_vel_em);
-
-                log_manager_.getLogger("geometry")->debug(
-                    "Geometry {} at rx_tow={:.3f}: emission_tow={:.3f}, tof={:.6f}s ({:.3f}m), "
-                    "sat_clk_raw={:.3e}s, rel_corr={:.3e}s, sat_clk_total={:.3e}s ({:.3f}m), "
-                    "r_dot_v={:.3e}, vel_norm={:.1f}m/s",
-                    obs.satellite, obs.time.tow, emission_time.tow, tof, tof * c,
-                    sat_clock_em, relativistic_corr, sat_clock, sat_clock * c,
-                    r_dot_v, sat_vel_em.norm());
+                const double geom_tof = (sat_pos_em - rx_pos).norm() / c;
+                const double theta = omegaE * geom_tof;
+                Eigen::Matrix3d R_earth;
+                R_earth <<  std::cos(theta), std::sin(theta), 0.0,
+                           -std::sin(theta), std::cos(theta), 0.0,
+                            0.0,             0.0,             1.0;
+                sat_pos = R_earth * sat_pos_em;
             }
 
-            // --- Final geometry (all in reception-time ECEF frame) ---
-            range = (sat_pos - rx_pos).norm(); // [m]
+            // --- Relativistic periodic correction ---
+            relativistic_corr = config_.getModelCorrections().enable_relativistic_correction
+                ? corrections_.computeRelativisticCorrection(obs.satellite, sat_pos_em, sat_vel_em)
+                : 0.0;
+
+            sat_clock = sat_clock_em;
+
+            log_manager_.getLogger("geometry")->debug(
+                "Geometry {} at rx_tow={:.3f}: emission_tow={:.3f}, tof={:.9f}s ({:.3f}m), "
+                "sat_clk={:.3e}s, rel_corr={:.3e}s, r_dot_v={:.3e}, vel_norm={:.1f}m/s",
+                obs.satellite, obs.time.tow, emission_time.tow,
+                pseudorange / c, pseudorange,
+                sat_clock_em, relativistic_corr,
+                sat_pos_em.dot(sat_vel_em), sat_vel_em.norm());
+
+            // --- Final geometry (reception-time ECEF frame) ---
+            range = (sat_pos - rx_pos).norm();
             los = (sat_pos - rx_pos) / range;
             Topocentric topo = computeTopocentric(rx_pos, sat_pos);
             elevation = topo.elevation_deg;
@@ -409,25 +349,29 @@ namespace GnssProcessor {
             }
 
             // --- Propagation corrections ---
-            troposphere_.getTroposphereMapping(elevation, mf_d, mf_w);
-            double zhd = troposphere_.computeSaastamoinenZHD(rx_pos); // zenith hydrostatic (dry) component
-            tropo_delay = zhd;
-            shapiro_delay = corrections_.computeShapiroDelay(obs.satellite, rx_pos, sat_pos);
+            troposphere_.getTroposphereMapping(elevation, rx_pos, obs.time, mf_d, mf_w);
+            tropo_delay = config_.getModelCorrections().enable_troposphere
+                ? troposphere_.computeSaastamoinenZHD(rx_pos)
+                : 0.0;
+            shapiro_delay = config_.getModelCorrections().enable_shapiro_delay
+                ? corrections_.computeShapiroDelay(obs.satellite, rx_pos, sat_pos)
+                : 0.0;
 
-            // Sagnac correction is zero when using rotated satellite position (already accounted for)
-            // But we still compute it for logging/diagnostic purposes
-            sagnac_corr = 0.0; // Implicitly included in Earth rotation
-            //sagnac_corr = corrections_.computeSagnacCorrection(rx_pos, sat_pos); // Implicitly included in Earth rotation
+            // Sagnac (diagnostic — implicitly included via Earth rotation of sat_pos)
+            sagnac_corr = (omegaE / c) * (sat_pos_em.x() * rx_pos.y() - sat_pos_em.y() * rx_pos.x());
 
-            atm_loading_corr = 0.0; // placeholder
+            // Ocean tidal loading (site displacement projected onto LOS)
+            Eigen::Vector3d otl_ecef = config_.getModelCorrections().enable_ocean_tide_loading
+                ? corrections_.computeOceanTideCorrection(rx_pos, obs.time)
+                : Eigen::Vector3d::Zero();
+            atm_loading_corr = otl_ecef.dot(-los);
 
-            double mjd = TimeUtils::gpsTimeToJulianDate(obs.time.week, obs.time.tow);
-            double mjd_tt = TimeUtils::gpsMjdToTTMjd(mjd, "GPS", config_.getLeapSeconds());
-            Eigen::Vector3d sun_pos = planetary_.computeSunPosition(mjd_tt);
-            Eigen::Vector3d moon_pos = planetary_.computeMoonPosition(mjd_tt);
-            solid_tide = corrections_.computeSolidEarthTide(rx_pos, sat_pos, sun_pos, moon_pos);
+            // Solid Earth tide (uses cached Sun/Moon positions)
+            ensureSunMoonCached(obs.time);
+            solid_tide = config_.getModelCorrections().enable_solid_earth_tide
+                ? corrections_.computeSolidEarthTide(rx_pos, sat_pos, cached_sun_pos_, cached_moon_pos_, obs.time)
+                : 0.0;
 
-            // Output emission-time velocity (for relativistic correction, phase wind-up, etc.)
             sat_vel = sat_vel_em;
 
             log_manager_.getLogger("geometry")->trace(
@@ -442,30 +386,25 @@ namespace GnssProcessor {
             return true;
         }
 
+        // =================================================================
+        // Orbit interpolation
+        // =================================================================
+
         /**
-        * @brief Compute satellite position and velocity together efficiently.
-        *
-        * This combined function performs the index lookup, node filtering, and sorting
-        * only ONCE, then evaluates the interpolant at three points (t, t+h, t-h) to
-        * get both position and velocity.
-        *
-        * Performance: ~3x faster than calling getSatellitePosition + getSatelliteVelocity
-        * separately, since we avoid redundant index lookups and sorting.
-        *
-        * @param[in] satellite Satellite identifier string (e.g. "G01", "E11").
-        * @param[in] time      Epoch at which position/velocity are requested.
-        * @return Pair of {position (m), velocity (m/s)}. Returns {Zero, Zero} on failure.
-        */
+         * @brief Compute satellite position and velocity via Neville interpolation.
+         *
+         * Selects the IGS_POINTS nearest orbit nodes, validates for gaps and
+         * extrapolation, then evaluates position and velocity via Neville's
+         * algorithm with nodes sorted by distance from the query point.
+         */
         std::pair<Eigen::Vector3d, Eigen::Vector3d> Geometry::getSatellitePV(
             const std::string& satellite, const GnssTime& time) const
         {
-            constexpr size_t IGS_POINTS = 9;
-            constexpr size_t MIN_POINTS = 4;
-            constexpr double MAX_SPAN = 7200.0;
-            constexpr double SP3_INTERVAL = 900.0;
-            constexpr double MIN_POS_NORM = 1.5e7;
-            constexpr double MAX_POS_NORM = 4.0e7;
-            constexpr double MAX_VEL_NORM = 15000.0;
+            constexpr size_t IGS_POINTS = 11;
+            constexpr size_t MIN_POINTS = 9;
+            constexpr double MIN_POS_NORM = 1.9e7;   // ~19,000 km (lowest MEO orbit)
+            constexpr double MAX_POS_NORM = 4.5e7;   // ~45,000 km (above BeiDou GEO ~42,164 km)
+            constexpr double MAX_VEL_NORM = 5.0e3;    // ~5 km/s (GNSS satellites: ~3-4 km/s)
 
             const auto zero_result = std::make_pair(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
@@ -484,145 +423,144 @@ namespace GnssProcessor {
             const auto& sat_orbits = it->second;  // Already sorted chronologically in loadData()
             const double t_query = TimeUtils::continuousGpsSeconds(time);
 
-            // Binary search for the first node >= t_query
-            auto upper_it = std::lower_bound(sat_orbits.begin(), sat_orbits.end(), t_query,
-                [](const OrbitData* o, double t) {
-                    return TimeUtils::continuousGpsSeconds(o->time) < t;
-                });
-
-            size_t upper_idx = std::distance(sat_orbits.begin(), upper_it);
-
-            // Center the window around the query time
-            // For IGS_POINTS=9: half_before=4, so window is [upper_idx-4, upper_idx+4]
-            size_t half_before = IGS_POINTS / 2;
-
-            size_t start_idx = 0;
-            if (upper_idx > half_before) {
-                start_idx = upper_idx - half_before;
+            // Detect the SP3 epoch interval from the actual orbit data rather than
+            // assuming a fixed 900 s (15 min) or 300 s (5 min) spacing. Use the
+            // median of the first few consecutive-node spacings for robustness
+            // against occasional gaps.
+            double sp3_interval = 300.0; // fallback = 5-minutes
+            if (sat_orbits.size() >= 2) {
+                std::vector<double> spacings;
+                spacings.reserve(std::min<size_t>(sat_orbits.size() - 1, 10));
+                for (size_t i = 0; i + 1 < sat_orbits.size() && spacings.size() < 10; ++i) {
+                    double dt = TimeUtils::continuousGpsSeconds(sat_orbits[i + 1]->time)
+                              - TimeUtils::continuousGpsSeconds(sat_orbits[i]->time);
+                    if (dt > 0.0) spacings.push_back(dt);
+                }
+                if (!spacings.empty()) {
+                    std::sort(spacings.begin(), spacings.end());
+                    sp3_interval = spacings[spacings.size() / 2]; // median
+                }
             }
-            // Clamp to valid range
-            if (start_idx + IGS_POINTS > sat_orbits.size()) {
-                start_idx = sat_orbits.size() > IGS_POINTS ? sat_orbits.size() - IGS_POINTS : 0;
-            }
-            size_t end_idx = std::min(start_idx + IGS_POINTS, sat_orbits.size());
+            const double MAX_SPAN = sp3_interval * (IGS_POINTS - 1) + 1.0;
 
-            // Collect valid nodes from the fixed window
-            std::vector<const OrbitData*> nodes;
-            nodes.reserve(IGS_POINTS);
+            // === STEP 1: Collect ALL valid nodes for this satellite ===
+            // Precompute continuous GPS seconds for each orbit node to avoid
+            // redundant recomputation inside sort comparators.
+            struct NodeEntry {
+                const OrbitData* ptr;
+                double t;   // precomputed continuousGpsSeconds
+            };
+            std::vector<NodeEntry> valid_nodes;
+            valid_nodes.reserve(sat_orbits.size());
 
-            for (size_t i = start_idx; i < end_idx; ++i) {
-                const OrbitData* o = sat_orbits[i];
+            for (const OrbitData* o : sat_orbits) {
                 if (!o->position_valid || !o->position.allFinite()) continue;
                 double norm = o->position.norm();
                 if (norm <= MIN_POS_NORM || norm >= MAX_POS_NORM) continue;
-                nodes.push_back(o);
+                valid_nodes.push_back({ o, TimeUtils::continuousGpsSeconds(o->time) });
             }
+
+            if (valid_nodes.size() < MIN_POINTS) {
+                log_manager_.getLogger("geometry")->warn(
+                    "getSatellitePV: insufficient valid nodes ({}) for {} at week {} tow {:.3f}",
+                    valid_nodes.size(), satellite, time.week, time.tow);
+                return zero_result;
+            }
+
+            // === STEP 2: Select the IGS_POINTS nearest nodes to the query time ===
+            // Use partial_sort to efficiently find the closest nodes without fully
+            // sorting the entire valid_nodes vector.
+            const size_t n_select = std::min(valid_nodes.size(), IGS_POINTS);
+
+            std::partial_sort(valid_nodes.begin(), valid_nodes.begin() + n_select, valid_nodes.end(),
+                [t_query](const NodeEntry& a, const NodeEntry& b) {
+                    return std::abs(a.t - t_query) < std::abs(b.t - t_query);
+                });
+
+            std::vector<NodeEntry> nodes(valid_nodes.begin(), valid_nodes.begin() + n_select);
 
             if (nodes.size() < MIN_POINTS) {
                 log_manager_.getLogger("geometry")->warn(
-                    "getSatellitePV: insufficient valid nodes ({}) for {} at week {} tow {:.3f}",
+                    "getSatellitePV: insufficient nearest nodes ({}) for {} at week {} tow {:.3f}",
                     nodes.size(), satellite, time.week, time.tow);
                 return zero_result;
             }
 
-            // Nodes are already in chronological order (from sorted sat_orbits)
+            // === STEP 3: Gap and extrapolation checks (chronological order) ===
+            // Sort nodes chronologically for gap/extrapolation validation
+            std::sort(nodes.begin(), nodes.end(), [](const NodeEntry& a, const NodeEntry& b) {
+                return a.t < b.t;
+            });
 
-            // === CHECK FOR EXTRAPOLATION ===
-            const double t_first = TimeUtils::continuousGpsSeconds(nodes.front()->time);
-            const double t_last = TimeUtils::continuousGpsSeconds(nodes.back()->time);
+            const double t_first = nodes.front().t;
+            const double t_last = nodes.back().t;
 
+            // Check for extrapolation
             if (t_query < t_first || t_query > t_last) {
                 const double extrap_dist = (t_query < t_first) ? (t_first - t_query) : (t_query - t_last);
-                if (extrap_dist > SP3_INTERVAL / 2.0) {
+                if (extrap_dist > sp3_interval / 2.0) {
                     log_manager_.getLogger("geometry")->warn(
                         "Position extrapolation for {} at week {} tow {:.3f}: {:.1f}s outside SP3 window [{:.1f}, {:.1f}]s",
                         satellite, time.week, time.tow, extrap_dist,
-                        nodes.front()->time.tow, nodes.back()->time.tow);
+                        nodes.front().ptr->time.tow, nodes.back().ptr->time.tow);
                 }
             }
 
-            // === CHECK FOR DATA GAPS ===
+            // Check for data gaps — if the span is too large, trim to MIN_POINTS closest
             const double span = t_last - t_first;
             if (span > MAX_SPAN) {
-                // Re-select with minimum points closest to query
-                std::sort(nodes.begin(), nodes.end(), [t_query](const OrbitData* a, const OrbitData* b) {
-                    return std::abs(TimeUtils::continuousGpsSeconds(a->time) - t_query) <
-                        std::abs(TimeUtils::continuousGpsSeconds(b->time) - t_query);
+                std::sort(nodes.begin(), nodes.end(), [t_query](const NodeEntry& a, const NodeEntry& b) {
+                    return std::abs(a.t - t_query) < std::abs(b.t - t_query);
                     });
                 if (nodes.size() > MIN_POINTS) {
                     nodes.resize(MIN_POINTS);
                 }
-                std::sort(nodes.begin(), nodes.end(), [](const OrbitData* a, const OrbitData* b) {
-                    return TimeUtils::continuousGpsSeconds(a->time) < TimeUtils::continuousGpsSeconds(b->time);
+                std::sort(nodes.begin(), nodes.end(), [](const NodeEntry& a, const NodeEntry& b) {
+                    return a.t < b.t;
                     });
+
+                // Re-check span after trimming — a large gap in the middle could
+                // still leave the trimmed set spanning an unreasonable range.
+                const double trimmed_span = nodes.back().t - nodes.front().t;
+                if (trimmed_span > MAX_SPAN) {
+                    log_manager_.getLogger("geometry")->warn(
+                        "getSatellitePV: data gap too large after trimming for {} at week {} tow {:.3f}: "
+                        "span={:.1f}s exceeds MAX_SPAN={:.1f}s",
+                        satellite, time.week, time.tow, trimmed_span, MAX_SPAN);
+                    return zero_result;
+                }
             }
 
-            // === BUILD INTERPOLATION ARRAYS ===
+            // === STEP 4: Build interpolation arrays sorted by distance from query ===
+            // Neville's algorithm converges best when nodes are ordered nearest-first.
             const size_t n = nodes.size();
+
+            // Sort by distance from query for Neville's optimal convergence
+            std::sort(nodes.begin(), nodes.end(), [t_query](const NodeEntry& a, const NodeEntry& b) {
+                return std::abs(a.t - t_query) < std::abs(b.t - t_query);
+            });
+
             std::vector<double> x(n);
             std::vector<double> yx(n), yy(n), yz(n);
             for (size_t i = 0; i < n; ++i) {
-                x[i] = TimeUtils::continuousGpsSeconds(nodes[i]->time);
-                yx[i] = nodes[i]->position.x();
-                yy[i] = nodes[i]->position.y();
-                yz[i] = nodes[i]->position.z();
+                x[i] = nodes[i].t;
+                yx[i] = nodes[i].ptr->position.x();
+                yy[i] = nodes[i].ptr->position.y();
+                yz[i] = nodes[i].ptr->position.z();
             }
 
             Eigen::Vector3d pos = Eigen::Vector3d::Zero();
             Eigen::Vector3d vel = Eigen::Vector3d::Zero();
 
-            // Position interpolation uses barycentric Lagrange interpolation
-            auto w = Interpolate::barycentricWeights(x);
-            pos.x() = Interpolate::barycentricEval(x, w, yx, t_query);
-            pos.y() = Interpolate::barycentricEval(x, w, yy, t_query);
-            pos.z() = Interpolate::barycentricEval(x, w, yz, t_query);
-
-            // Velocity computation depends on interpolation mode
+            // Neville's algorithm: simultaneous position and velocity interpolation
             try {
-                SatelliteInterpolationMode mode = config_.getSatelliteInterpolationMode();
+                double px, vx, py, vy, pz, vz;
+                Interpolate::nevilleInterpDeriv(x, yx, t_query, px, vx);
+                Interpolate::nevilleInterpDeriv(x, yy, t_query, py, vy);
+                Interpolate::nevilleInterpDeriv(x, yz, t_query, pz, vz);
 
-                if (mode == SatelliteInterpolationMode::Lagrange) {
-                    vel.x() = Interpolate::barycentricDeriv(x, w, yx, t_query);
-                    vel.y() = Interpolate::barycentricDeriv(x, w, yy, t_query);
-                    vel.z() = Interpolate::barycentricDeriv(x, w, yz, t_query);
-                }
-                else if (mode == SatelliteInterpolationMode::Hermite) {
-                    auto mx = Interpolate::monotoneHermiteSlopes(x, yx);
-                    auto my = Interpolate::monotoneHermiteSlopes(x, yy);
-                    auto mz = Interpolate::monotoneHermiteSlopes(x, yz);
-
-                    if (mx.size() == n && my.size() == n && mz.size() == n) {
-                        vel.x() = Interpolate::hermiteDeriv(x, yx, mx, t_query);
-                        vel.y() = Interpolate::hermiteDeriv(x, yy, my, t_query);
-                        vel.z() = Interpolate::hermiteDeriv(x, yz, mz, t_query);
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn(
-                            "getSatellitePV: Hermite slopes computation failed for {}", satellite);
-                        return zero_result;
-                    }
-                }
-                else if (mode == SatelliteInterpolationMode::Spline) {
-                    auto cx = Interpolate::naturalSplineSecondDerivs(x, yx);
-                    auto cy = Interpolate::naturalSplineSecondDerivs(x, yy);
-                    auto cz = Interpolate::naturalSplineSecondDerivs(x, yz);
-
-                    if (cx.size() == n && cy.size() == n && cz.size() == n) {
-                        vel.x() = Interpolate::splineDeriv(x, yx, cx, t_query);
-                        vel.y() = Interpolate::splineDeriv(x, yy, cy, t_query);
-                        vel.z() = Interpolate::splineDeriv(x, yz, cz, t_query);
-                    }
-                    else {
-                        log_manager_.getLogger("geometry")->warn(
-                            "getSatellitePV: Spline coefficients computation failed for {}", satellite);
-                        return zero_result;
-                    }
-                }
-                else {
-                    log_manager_.getLogger("geometry")->error(
-                        "getSatellitePV: unknown interpolation mode for {}", satellite);
-                    return zero_result;
-                }
+                pos = Eigen::Vector3d(px, py, pz);
+                vel = Eigen::Vector3d(vx, vy, vz);
             }
             catch (const std::exception& ex) {
                 log_manager_.getLogger("geometry")->warn(
@@ -653,39 +591,27 @@ namespace GnssProcessor {
                 vel = Eigen::Vector3d::Zero();
             }
 
+            // Find chronological window bounds for debug logging without re-sorting
+            auto [t_min_it, t_max_it] = std::minmax_element(x.begin(), x.end());
+            // Map back to node indices for TOW display
+            size_t i_min = static_cast<size_t>(t_min_it - x.begin());
+            size_t i_max = static_cast<size_t>(t_max_it - x.begin());
+
             log_manager_.getLogger("geometry")->debug(
                 "getSatellitePV for {} at tow={:.3f}: pos=({:.3f}, {:.3f}, {:.3f}) km, "
                 "vel=({:.3f}, {:.3f}, {:.3f}) m/s, |v|={:.3f} m/s, nodes={}, window=[{:.1f},{:.1f}]",
                 satellite, time.tow,
                 pos.x() / 1000.0, pos.y() / 1000.0, pos.z() / 1000.0,
                 vel.x(), vel.y(), vel.z(), vel.norm(),
-                n, nodes.front()->time.tow, nodes.back()->time.tow);
+                n, nodes[i_min].ptr->time.tow, nodes[i_max].ptr->time.tow);
 
             return { pos, vel };
         }
 
+        // =================================================================
+        // Topocentric / attitude / wind-up utilities
+        // =================================================================
 
-
-        /**
-         * @brief Compute topocentric elevation and azimuth from ECEF coordinates.
-         *
-         * Converts the vector from receiver to satellite into a local East-North-Up (ENU)
-         * frame at the receiver and returns topocentric angles in degrees:
-         *  - `Topocentric::elevation_deg` in range [0, 90]
-         *  - `Topocentric::azimuth_deg` in range [0, 360)
-         *
-         * The routine:
-         *  - computes the line vector delta = sat_pos_ecef - rx_pos_ecef,
-         *  - forms the ENU rotation from receiver geocentric latitude/longitude,
-         *  - projects the unit LOS into ENU and computes elevation = asin(up) and azimuth = atan2(E, N).
-         *
-         * On degenerate input (near-zero range or invalid receiver magnitude) the function
-         * returns a default `Topocentric` with zeroed angles and logs a warning.
-         *
-         * @param[in] rx_pos_ecef  Receiver ECEF position (meters).
-         * @param[in] sat_pos_ecef Satellite ECEF position (meters).
-         * @return Topocentric containing elevation and azimuth in degrees.
-         */
         Topocentric Geometry::computeTopocentric(const Eigen::Vector3d& rx_pos_ecef,
             const Eigen::Vector3d& sat_pos_ecef) const {
             Topocentric out;
@@ -696,27 +622,18 @@ namespace GnssProcessor {
                 log_manager_.getLogger("geometry")->warn("Degenerate range in topocentric computation: range={:.3f} m", range);
                 return out;
             }
-
-            double r = rx_pos_ecef.norm();
-            if (r < 1e-6) {
+            if (rx_pos_ecef.norm() < 1e-6) {
                 log_manager_.getLogger("geometry")->warn("Invalid receiver ECEF magnitude in topocentric computation");
                 return out;
             }
 
-            // Use geodetic latitude/longitude (from Coordinates) — more accurate than geocentric estimate.
             Coordinates::Llh ref_llh = Coordinates::ecefToLlh(rx_pos_ecef);
-
-            // Convert delta (ECEF) to local ENU. ecefToEnu returns ENU = R^T * vec_ecef.
-            // We want unit LOS in ENU, so normalize after conversion.
             Eigen::Vector3d los_enu = Coordinates::ecefToEnu(delta, ref_llh) / range;
 
-            double up = std::clamp(los_enu.z(), -1.0, 1.0);
-            double elev_rad = std::asin(up);
-            double elev_deg = elev_rad * 180.0 / Constants::PI;
+            double elev_deg = std::asin(std::clamp(los_enu.z(), -1.0, 1.0)) * 180.0 / Constants::PI;
             elev_deg = std::max(0.0, std::min(90.0, elev_deg));
 
-            double az_rad = std::atan2(los_enu.x(), los_enu.y());
-            double az_deg = az_rad * 180.0 / Constants::PI;
+            double az_deg = std::atan2(los_enu.x(), los_enu.y()) * 180.0 / Constants::PI;
             if (az_deg < 0.0) az_deg += 360.0;
 
             out.elevation_deg = elev_deg;
@@ -724,59 +641,42 @@ namespace GnssProcessor {
 
             log_manager_.getLogger("geometry")->trace("Topocentric: elev={:.3f}°, az={:.3f}° (lat≈{:.6f}°)",
                 elev_deg, az_deg, ref_llh.lat_rad * 180.0 / Constants::PI);
-
             return out;
         }
 
-        /**
-         * @brief Compute satellite antenna attitude unit vectors (yaw‑steering model).
-         *
-         * Computes unit vectors describing the satellite antenna attitude used for
-         * antenna phase-center variation (PCV) corrections and phase wind-up modeling.
-         * The routine implements a yaw-steering style attitude calculation using the
-         * satellite velocity and the Sun direction:
-         *  - `d_s`  : body-to-sun / boresight-like unit vector (ECEF)
-         *  - `y_s`  : cross-track unit vector (ECEF)
-         *
-         * Behavior and safeguards:
-         *  - Uses interpolated Sun position for the provided epoch (`time`).
-         *  - Handles degenerate geometry (e.g., velocity nearly parallel to Sun vector)
-         *    by falling back to a stable orthogonal axis to avoid NaNs.
-         *  - Output vectors are normalized unit vectors.
-         *
-         * @param[in]  system  GNSS system identifier (enum) to allow system-specific rules.
-         * @param[in]  sat_pos Satellite ECEF position (meters).
-         * @param[in]  sat_vel Satellite ECEF velocity (meters/second).
-         * @param[out] d_s     Body-to-sun / boresight unit vector (ECEF).
-         * @param[out] y_s     Cross-track unit vector (ECEF).
-         * @param[in]  time    Epoch corresponding to satellite state (GPS week + tow).
-         *
-         * @note Callers should ensure `sat_pos` and `sat_vel` are finite and non-zero;
-         *       the implementation performs defensive checks and selects fallbacks when necessary.
-         */
         void Geometry::computeSatelliteAttitude(System system,
             const Eigen::Vector3d& sat_pos,
             const Eigen::Vector3d& sat_vel,
             Eigen::Vector3d& d_s,
             Eigen::Vector3d& y_s,
             const GnssTime& time) const {
-            // Get Sun position
-            Eigen::Vector3d sun_pos = planetary_.interpolateSunPosition(time);
-            if (sun_pos.norm() < 1e6) { // Fallback if no ephemeris
-                sun_pos = Eigen::Vector3d(1.496e11, 0.0, 0.0); // 1 AU along x-axis
+
+            ensureSunMoonCached(time);
+            Eigen::Vector3d sun_pos = cached_sun_pos_;
+
+            if (sun_pos.norm() < 1e6) {
+                sun_pos = Eigen::Vector3d(1.496e11, 0.0, 0.0); // 1 AU fallback
                 log_manager_.getLogger("geometry")->warn("No Sun ephemeris for time TOW {0}", time.tow);
             }
-            Eigen::Vector3d e = (sun_pos - sat_pos).normalized(); // Sun direction
 
-            // Compute yaw-steering attitude
+            Eigen::Vector3d e = (sun_pos - sat_pos).normalized();
+
+            // Yaw-steering attitude
             Eigen::Vector3d y = sat_vel.normalized().cross(e);
-            if (y.norm() < 1e-6) { // Handle collinearity
-                y = Eigen::Vector3d(0.0, 1.0, 0.0); // Arbitrary fallback
-            }
+            if (y.norm() < 1e-6)
+                y = Eigen::Vector3d(0.0, 1.0, 0.0); // collinearity fallback
             y_s = y.normalized();
-            Eigen::Vector3d z_s = -sat_pos.normalized();
-            d_s = y_s.cross(z_s).normalized();
+            d_s = y_s.cross(-sat_pos.normalized()).normalized();
         }
 
-    }
+        void Geometry::resetPhaseWindUp(const std::string& satellite) {
+            corrections_.resetPhaseWindUp(satellite);
+        }
+
+        void Geometry::resetAllPhaseWindUp() {
+            corrections_.resetAllPhaseWindUp();
+        }
+
+    } // namespace Model
+
 } // namespace GnssProcessor

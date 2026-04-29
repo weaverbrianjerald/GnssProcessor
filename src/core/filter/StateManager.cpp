@@ -1,26 +1,30 @@
 /*!
+/*!
  * \file StateManager.cpp
  * \brief Implementation of StateManager: manages Kalman filter state, covariance and ambiguities.
  *
- * This file implements helpers to manipulate the filter state vector and covariance,
- * build process-noise and transition matrices, manage ambiguity indices, and store
- * persistent per-measurement variance scaling. Logging is performed via LogManager.
+ * The implementation is organized as:
+ *  - Internal helpers:    appendState(), removeStateAtIndex()
+ *  - Construction
+ *  - Core accessors/mutators
+ *  - Process noise / transition
+ *  - Index getters
+ *  - Ambiguity management
+ *  - PppState sync
+ *  - Ionosphere state management
+ *  - Code bias state management
  */
 
-#include "StateManager.hpp"
-#include "LogManager.hpp"
+#include "filter/StateManager.hpp"
+#include "filter/StateKeySchema.hpp"
+#include "logging/LogManager.hpp"
+#include "common/Constants.hpp"
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
 #include <Eigen/Dense>
 
 // Formatter specialization for Eigen::VectorXd
-/*!
- * \brief fmt formatter specialization for printing Eigen::VectorXd.
- *
- * Produces a human-readable comma-separated list enclosed in square brackets,
- * e.g. "[1.234, 2.345, 3.456]".
- */
 template <>
 struct fmt::formatter<Eigen::VectorXd> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
@@ -31,36 +35,202 @@ struct fmt::formatter<Eigen::VectorXd> {
         out = fmt::format_to(out, "[");
         for (Eigen::Index i = 0; i < vec.size(); ++i) {
             out = fmt::format_to(out, "{:.3f}", vec(i));
-            if (i < vec.size() - 1) {
+            if (i < vec.size() - 1)
                 out = fmt::format_to(out, ", ");
-            }
         }
-        out = fmt::format_to(out, "]");
-        return out;
+        return fmt::format_to(out, "]");
     }
 };
 
 namespace GnssProcessor {
 
-    /**
-     * @brief Construct a StateManager instance.
-     *
-     * Initializes the internal state vector and covariance with core-state dimensions
-     * provided by \p core_state_size. Initial covariance diagonal values for core
-     * states are seeded from \p config.getInitialStd(). The LogManager is used for
-     * informational tracing.
-     *
-     * For multi-GNSS processing, inter-system time biases are added for each active
-     * system except GPS (which serves as the reference). The core_state_size is
-     * extended to include these additional states.
-     *
-     * @param core_state_size Number of base core states (e.g., 5 for PPP, 6 for PPP-RTK).
-     * @param log_manager Reference to LogManager used for diagnostic logging.
-     * @param config Read-only configuration providing default initial standard deviations.
-     */
+    // ===================================================================
+    // File-scope helpers
+    // ===================================================================
+
+    namespace {
+
+    /// Map System enum to ISB constellation name (empty for GPS = reference).
+    std::string systemToIsbName(System system) {
+        switch (system) {
+        case System::GPS:     return "";
+        case System::Galileo: return "Galileo";
+        case System::GLONASS: return "GLONASS";
+        case System::BeiDou:  return "BeiDou";
+        case System::QZSS:    return "QZSS";
+        case System::SBAS:    return "SBAS";
+        default:              return "";
+        }
+    }
+
+    /// Map a band digit + GNSS system to the carrier frequency (Hz).
+    /// Used by computeAmbiguitySeed() when PppUtils is not available.
+    double bandFrequency(char band, System system) {
+        switch (system) {
+        case System::GPS:
+            if (band == '2') return Constants::GPS_L2_FREQ;
+            if (band == '5') return Constants::GPS_L5_FREQ;
+            return Constants::GPS_L1_FREQ;
+        case System::QZSS:
+            if (band == '2') return Constants::QZSS_L2_FREQ;
+            if (band == '5') return Constants::QZSS_L5_FREQ;
+            if (band == '6') return Constants::QZSS_L6_FREQ;
+            return Constants::QZSS_L1_FREQ;
+        case System::SBAS:
+            if (band == '5') return Constants::SBAS_L5_FREQ;
+            return Constants::SBAS_L1_FREQ;
+        case System::Galileo:
+            if (band == '5') return Constants::GAL_E5A_FREQ;
+            if (band == '7') return Constants::GAL_E5B_FREQ;
+            if (band == '8') return Constants::GAL_E5_FREQ;
+            if (band == '6') return Constants::GAL_E6_FREQ;
+            return Constants::GPS_L1_FREQ;
+        case System::BeiDou:
+            if (band == '1') return Constants::BDS_B1C_FREQ;
+            if (band == '2') return Constants::BDS_B1_FREQ;
+            if (band == '5') return Constants::BDS_B2A_FREQ;
+            if (band == '7') return Constants::BDS_B2_FREQ;
+            if (band == '8') return Constants::BDS_B2AB_FREQ;
+            if (band == '6') return Constants::BDS_B3_FREQ;
+            return Constants::BDS_B1C_FREQ;
+        case System::GLONASS:
+            if (band == '2') return Constants::GLONASS_G2_BASE_FREQ;
+            if (band == '3') return Constants::GLONASS_G3_BASE_FREQ;
+            if (band == '4') return Constants::GLONASS_G1A_FREQ;
+            if (band == '6') return Constants::GLONASS_G2A_FREQ;
+            return Constants::GLONASS_G1_BASE_FREQ;
+        default:
+            return Constants::GPS_L1_FREQ;
+        }
+    }
+
+    } // anonymous namespace
+
+    // ===================================================================
+    // Internal state vector / covariance manipulation
+    // ===================================================================
+
+    size_t StateManager::appendState(double initial_value, double initial_variance) {
+        const size_t index = getStateSize();
+        Eigen::VectorXd new_sv(index + 1);
+        Eigen::MatrixXd new_cov = Eigen::MatrixXd::Zero(index + 1, index + 1);
+
+        if (index > 0) {
+            new_sv.head(index) = state_vector_;
+            new_cov.topLeftCorner(index, index) = covariance_;
+        }
+        new_sv(index) = initial_value;
+        new_cov(index, index) = initial_variance;
+
+        state_vector_ = std::move(new_sv);
+        covariance_ = std::move(new_cov);
+        return index;
+    }
+
+    void StateManager::removeStateAtIndex(size_t rem_idx) {
+        const size_t state_size = getStateSize();
+        const size_t new_size = state_size - 1;
+        const auto ri = static_cast<Eigen::Index>(rem_idx);
+
+        Eigen::VectorXd new_sv = Eigen::VectorXd::Zero(new_size);
+        Eigen::MatrixXd new_cov = Eigen::MatrixXd::Zero(new_size, new_size);
+
+        // Head (before removed index)
+        if (rem_idx > 0) {
+            new_sv.head(ri) = state_vector_.head(ri);
+            new_cov.topLeftCorner(ri, ri) = covariance_.topLeftCorner(ri, ri);
+        }
+
+        // Tail (after removed index)
+        if (rem_idx + 1 < state_size) {
+            const auto tail = static_cast<Eigen::Index>(state_size - rem_idx - 1);
+            new_sv.segment(ri, tail) = state_vector_.segment(ri + 1, tail);
+            new_cov.block(ri, ri, tail, tail) = covariance_.block(ri + 1, ri + 1, tail, tail);
+            // Cross-covariance between head and tail
+            if (rem_idx > 0) {
+                new_cov.block(0, ri, ri, tail) = covariance_.block(0, ri + 1, ri, tail);
+                new_cov.block(ri, 0, tail, ri) = covariance_.block(ri + 1, 0, tail, ri);
+            }
+        }
+
+        state_vector_ = std::move(new_sv);
+        covariance_ = std::move(new_cov);
+
+        // Decrement all dynamic-state indices that were above the removed index
+        for (auto& kv : ambiguity_indices_)   if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : code_bias_indices_)   if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : sat_bias_indices_)    if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : ionosphere_indices_)  if (kv.second > rem_idx) --kv.second;
+    }
+
+    // ===================================================================
+    // Construction
+    // ===================================================================
+
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
-        : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config) {
-        
+        : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config),
+          is_baseline_(config.isBaselineMode()),
+          velocity_idx_(std::numeric_limits<size_t>::max()),
+          phase_clock_idx_(std::numeric_limits<size_t>::max()),
+          gradient_north_idx_(std::numeric_limits<size_t>::max()),
+          gradient_east_idx_(std::numeric_limits<size_t>::max()),
+          attitude_idx_(std::numeric_limits<size_t>::max()),
+          accel_bias_idx_(std::numeric_limits<size_t>::max()),
+          gyro_bias_idx_(std::numeric_limits<size_t>::max()) {
+
+        // Baseline mode: strip to position-only core.  DD processing
+        // cancels receiver-side clocks/ISBs and (short-baseline) iono/tropo,
+        // so none of those states are estimated.  Ambiguities are still
+        // added dynamically via addAmbiguity() â€” the keys are DD-specific
+        // ("GPS|G05|L1C|G01") but StateManager doesn't care about format.
+        if (is_baseline_) {
+            core_state_size_ = base_core_size_;   // just position (3)
+            systems_with_time_offsets_.clear();
+            system_time_offset_indices_.clear();
+            state_vector_ = Eigen::VectorXd::Zero(core_state_size_);
+            covariance_ = Eigen::MatrixXd::Identity(core_state_size_, core_state_size_);
+            const auto& init = config_.getInitialStd();
+            const double pos_var = init.position * init.position;
+            if (core_state_size_ >= 3) {
+                covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
+            }
+            log_manager_.getLogger("state_manager")->info(
+                "StateManager initialised in BASELINE mode: core size={}, "
+                "position-only (no clock/tropo/iono/system-offset states)",
+                core_state_size_);
+            return;
+        }
+
+        // Optional velocity states (Vx, Vy, Vz) right after position + clock + tropo.
+        if (config_.estimateVelocity()) {
+            velocity_idx_ = base_core_size_;
+            base_core_size_ += 3;
+        }
+
+        // Optional phase clock offset state.
+        if (config_.estimatePhaseClock()) {
+            phase_clock_idx_ = base_core_size_;
+            base_core_size_ += 1;
+        }
+
+        // If tropo gradients are enabled, insert Gn and Ge right after the last
+        // base core state (after phase clock if present, or after ZWD).
+        if (config_.estimateTropoGradients()) {
+            gradient_north_idx_ = base_core_size_;
+            gradient_east_idx_ = base_core_size_ + 1;
+            base_core_size_ += 2;
+        }
+
+        // Optional IMU error states: attitude(3) + accel_bias(3) + gyro_bias(3) = 9 states
+        if (config_.enableImu()) {
+            attitude_idx_   = base_core_size_;
+            base_core_size_ += 3;
+            accel_bias_idx_ = base_core_size_;
+            base_core_size_ += 3;
+            gyro_bias_idx_  = base_core_size_;
+            base_core_size_ += 3;
+        }
+
         // Determine which systems need inter-system time bias states
         // GPS is the reference system, so we add time offset states for all other active systems
         const auto& active_systems = config_.getActiveSystems();
@@ -87,14 +257,40 @@ namespace GnssProcessor {
         double pos_var = init.position * init.position;
         double clock_var = init.clock * init.clock;
         double tropo_var = init.troposphere * init.troposphere;
-        double iono_var = init.ionosphere * init.ionosphere;
         double time_offset_var = init.system_time_offset * init.system_time_offset;
         
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
         covariance_(3, 3) = clock_var;
         covariance_(4, 4) = tropo_var;
-        if (base_core_size_ >= 6) {
-            covariance_(5, 5) = iono_var;
+
+        // Initialize velocity covariance if enabled
+        if (config_.estimateVelocity()) {
+            double vel_var = init.velocity * init.velocity;
+            covariance_.block(velocity_idx_, velocity_idx_, 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
+        }
+        
+        // Initialize phase clock offset covariance if enabled
+        if (config_.estimatePhaseClock()) {
+            double phase_clock_var = init.phase_clock * init.phase_clock;
+            covariance_(phase_clock_idx_, phase_clock_idx_) = phase_clock_var;
+        }
+
+        // Initialize gradient covariances if enabled
+        if (config_.estimateTropoGradients()) {
+            double grad_var = init.tropo_gradient * init.tropo_gradient;
+            covariance_(gradient_north_idx_, gradient_north_idx_) = grad_var;
+            covariance_(gradient_east_idx_, gradient_east_idx_) = grad_var;
+        }
+
+        // Initialize IMU bias covariances if enabled
+        if (config_.enableImu()) {
+            const auto& ic = config_.getImuConfig();
+            double att_var = ic.initial_attitude_std * ic.initial_attitude_std;
+            covariance_.block(attitude_idx_, attitude_idx_, 3, 3) = Eigen::Matrix3d::Identity() * att_var;
+            double ab_var = ic.initial_accel_bias_std * ic.initial_accel_bias_std;
+            covariance_.block(accel_bias_idx_, accel_bias_idx_, 3, 3) = Eigen::Matrix3d::Identity() * ab_var;
+            double gb_var = ic.initial_gyro_bias_std * ic.initial_gyro_bias_std;
+            covariance_.block(gyro_bias_idx_, gyro_bias_idx_, 3, 3) = Eigen::Matrix3d::Identity() * gb_var;
         }
         
         // Initialize inter-system time offset covariances
@@ -104,8 +300,12 @@ namespace GnssProcessor {
         
         // Log initialization using LogManager-provided logger
         auto logger = log_manager_.getLogger("state_manager");
-        logger->info("StateManager initialized with core state size: {} (base={}, time_offsets={})",
-            core_state_size_, base_core_size_, systems_with_time_offsets_.size());
+        logger->info("StateManager initialized with core state size: {} (base={}, velocity={}, phase_clock={}, gradients={}, imu={}, time_offsets={})",
+            core_state_size_, base_core_size_, config_.estimateVelocity() ? 3 : 0,
+            config_.estimatePhaseClock() ? 1 : 0,
+            config_.estimateTropoGradients() ? 2 : 0,
+            config_.enableImu() ? 9 : 0,
+            systems_with_time_offsets_.size());
         
         if (!systems_with_time_offsets_.empty()) {
             std::string offset_systems;
@@ -116,36 +316,20 @@ namespace GnssProcessor {
         }
     }
 
-    /**
-     * @brief Return the epoch time associated with the current state.
-     * @return GnssTime containing GPS week and time-of-week for the stored state.
-     */
+    // ===================================================================
+    // Core accessors / mutators
+    // ===================================================================
+
     GnssTime StateManager::getStateEpochTime() const {
         return state_epoch_time_;
     }
 
-    /**
-     * @brief Set the epoch time for the current state.
-     *
-     * Updates the internal epoch timestamp and emits a trace-level log.
-     *
-     * @param time GnssTime to associate with the current state.
-     */
     void StateManager::setStateEpochTime(const GnssTime& time) {
         state_epoch_time_ = time;
         auto logger = log_manager_.getLogger("state_manager");
         logger->trace("Set state epoch time: week={}, TOW={:.3f}", time.week, time.tow);
     }
 
-    /**
-     * @brief Replace the internal state vector.
-     *
-     * The provided vector must have size equal to getStateSize(). The method
-     * validates finiteness of values and will throw if the size is incorrect.
-     *
-     * @param state New state vector to set (copy).
-     * @throws std::invalid_argument if the provided vector size does not match the expected state size.
-     */
     void StateManager::setStateVector(const Eigen::VectorXd& state) {
         auto logger = log_manager_.getLogger("state_manager");
         if (static_cast<size_t>(state.size()) != getStateSize()) {
@@ -161,15 +345,6 @@ namespace GnssProcessor {
             state, getStateSize(), ambiguity_indices_.size());
     }
 
-    /**
-     * @brief Replace the internal covariance matrix.
-     *
-     * The matrix must be square and its dimensions must equal the current state size.
-     * Non-finite entries are rejected.
-     *
-     * @param covariance New covariance matrix to set (copy).
-     * @throws std::invalid_argument if dimensions do not match state size or the matrix contains non-finite values.
-     */
     void StateManager::setCovariance(const Eigen::MatrixXd& covariance) {
         auto logger = log_manager_.getLogger("state_manager");
         if (static_cast<size_t>(covariance.rows()) != getStateSize() ||
@@ -190,45 +365,22 @@ namespace GnssProcessor {
             getStateSize(), ambiguity_indices_.size());
     }
 
-    /**
-     * @brief Total state dimension (core states + ambiguity states).
-     * @return Number of states currently tracked.
-     */
     size_t StateManager::getStateSize() const {
-        return core_state_size_ + ambiguity_indices_.size();
+        return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size() + ionosphere_indices_.size() + ambiguity_indices_.size();
     }
 
-    /**
-     * @brief Get a copy of the internal state vector.
-     * @return Eigen::VectorXd copy of the state vector.
-     */
     Eigen::VectorXd StateManager::getStateVector() const {
         return state_vector_;
     }
 
-    /**
-     * @brief Get a copy of the internal covariance matrix.
-     * @return Eigen::MatrixXd copy of the covariance matrix.
-     */
     Eigen::MatrixXd StateManager::getCovariance() const {
         return covariance_;
     }
 
-    /**
-     * @brief Build the process-noise matrix Q for a prediction interval dt.
-     *
-     * The implementation uses spectral densities stored in the configuration
-     * (units: m^2/s) and multiplies by dt to obtain variances (m^2).
-     * Core-state entries (position, clock, troposphere, optional ionosphere,
-     * inter-system time offsets) and any ambiguity diagonal entries are populated.
-     * Ambiguity process noise is typically zero (or near-zero) for constant
-     * ambiguity modeling. Inter-system time offsets use a very small process
-     * noise to model the slow drift of inter-system biases.
-     *
-     * @param dt Time interval in seconds for which Q is requested (must be > 0).
-     * @return Q matrix sized (state_size x state_size).
-     * @throws std::invalid_argument if dt <= 0.
-     */
+    // ===================================================================
+    // Process noise / transition
+    // ===================================================================
+
     Eigen::MatrixXd StateManager::getProcessNoiseMatrix(double dt) const {
         auto logger = log_manager_.getLogger("state_manager");
         if (dt <= 0.0) {
@@ -240,281 +392,294 @@ namespace GnssProcessor {
         Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(state_size, state_size);
 
         // Process noise: variance = spectral_density * dt
-        // Config stores spectral density in units of m²/s (variance rate)
+        // Config stores spectral density in units of mï¿½/s (variance rate)
         const auto& pn = config_.getProcessNoise();
 
         size_t posIdx = getPositionIndex();
-        size_t clockIdx = getClockIndex();
-        size_t tropoIdx = getTropoIndex();
 
-        // Position noise (m²/s * s = m²)
+        // Position noise applies in every mode (static: pn.position=0, kinematic: ~100 mÂ²/s).
         double pos_var = pn.position * dt;
         Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
 
-        // Clock noise - typically very large spectral density for white noise clock
-        double clock_var = pn.clock * dt;
-        Q(clockIdx, clockIdx) = clock_var;
+        // Baseline mode: no clock / tropo / iono / system-offset / bias states
+        // in the state vector.  Apply ambiguity process noise below (if any)
+        // and return.  DD ambiguities are physically constant â†’ pn.ambiguity
+        // typically 0, so Q ends up as just the position block.
+        if (is_baseline_) {
+            if (state_size > core_state_size_) {
+                for (const auto& [key, idx] : ambiguity_indices_) {
+                    Q(idx, idx) = pn.ambiguity * dt;
+                }
+            }
+            return Q;
+        }
+
+        size_t clockIdx = getClockIndex();
+        size_t tropoIdx = getTropoIndex();
+
+        // Velocity noise (mï¿½/sï¿½ per s)
+        if (hasVelocity()) {
+            double vel_var = pn.velocity * dt;
+            Q.block(getVelocityIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
+        }
+
+        // Clock noise - typically very large spectral density for white noise clock.
+        // When BSSD is active the clock column is zeroed in H, so the clock
+        // receives no measurement update.  Skip process noise to prevent
+        // unbounded variance growth; the WLS seeder maintains the clock value.
+        if (!config_.enableBetweenSatelliteSd()) {
+            double clock_var = pn.clock * dt;
+            Q(clockIdx, clockIdx) = clock_var;
+        }
+
+        // Phase clock offset noise (when enabled)
+        // Also suppressed under BSSD for the same reason as the clock.
+        if (config_.estimatePhaseClock() && !config_.enableBetweenSatelliteSd()) {
+            size_t phaseClockIdx = getPhaseClockIndex();
+            double phase_clock_var = pn.phase_clock * dt;
+            Q(phaseClockIdx, phaseClockIdx) = phase_clock_var;
+        }
 
         // Tropospheric noise
         double tropo_var = pn.troposphere * dt;
         Q(tropoIdx, tropoIdx) = tropo_var;
 
-        // Ionospheric noise (PPP-RTK only)
-        if (base_core_size_ >= 6) {
-            size_t ionoIdx = getIonoIndex();
-            double iono_var = pn.ionosphere * dt;
-            Q(ionoIdx, ionoIdx) = iono_var;
+        // Tropospheric gradient noise (Gn, Ge)
+        if (config_.estimateTropoGradients()) {
+            double grad_var = pn.tropo_gradient * dt;
+            Q(gradient_north_idx_, gradient_north_idx_) = grad_var;
+            Q(gradient_east_idx_, gradient_east_idx_) = grad_var;
         }
 
-        // Inter-system time offset noise (very small for slow drift)
-        double time_offset_var = pn.system_time_offset * dt;
-        for (const auto& [sys_name, idx] : system_time_offset_indices_) {
-            Q(idx, idx) = time_offset_var;
-        }
+        // Per-satellite ionospheric noise (PPP-RTK uncombined)
+        // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sinï¿½(el)
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+            const double q_zenith = pn.ionosphere;
+            for (const auto& [sat, idx] : ionosphere_indices_) {
+                // Suppress process noise for BSSD pivot iono states (unobservable).
+                if (frozen_ionosphere_sats_.count(sat)) continue;
 
-        // Ambiguity process noise (should be 0 for constant ambiguities)
-        if (state_size > core_state_size_) {
-            for (const auto& [key, idx] : ambiguity_indices_) {
-                double amb_var = pn.ambiguity * dt;
-                Q(idx, idx) = amb_var;
+                double sin2_el = 1.0; // default: zenith (no scaling)
+                auto el_it = ionosphere_elevations_.find(sat);
+                if (el_it != ionosphere_elevations_.end() && el_it->second > 0.0) {
+                    const double sin_el = std::sin(el_it->second * Constants::PI / 180.0);
+                    sin2_el = sin_el * sin_el;
+                    if (sin2_el < 0.01) sin2_el = 0.01; // floor at ~5.7 deg to avoid blow-up
+                }
+                Q(idx, idx) = (q_zenith / sin2_el) * dt;
             }
         }
 
-        logger->trace("Computed process noise matrix: size={}x{}, dt={:.3f} s, clock_var={:.3e}, time_offset_var={:.3e}", 
-            Q.rows(), Q.cols(), dt, clock_var, time_offset_var);
+        // Receiver code bias (IFB) noise (PPP-RTK uncombined)
+        // Suppressed under BSSD: receiver DCB/IFB columns are zeroed in
+        // the SD H-matrix, so these states are unobservable.
+        if (!code_bias_indices_.empty() && !config_.enableBetweenSatelliteSd()) {
+            double cb_var = pn.code_bias * dt;
+            for (const auto& [key, idx] : code_bias_indices_) {
+                Q(idx, idx) = cb_var;
+            }
+        }
+
+        // Per-satellite signal bias noise (PPP-RTK uncombined).
+        // These absorb uncorrected satellite hardware delays on signals
+        // without BIA coverage.  Nearly constant ï¿½ very small random walk.
+        // Suppressed for BSSD pivot satellites (absorbed into eliminated clock).
+        if (!sat_bias_indices_.empty()) {
+            const double sb_var = pn.sat_bias * dt;
+            for (const auto& [key, idx] : sat_bias_indices_) {
+                // key format documented in StateKeySchema.hpp;
+                // helper preserves the lenient "no pipe -> whole key"
+                // fallback the original loop relied on.
+                const std::string sat = StateKeys::satelliteFromSatBiasKey(key);
+                if (frozen_ionosphere_sats_.count(sat)) continue;
+                Q(idx, idx) = sb_var;
+            }
+        }
+
+        // Inter-system time offset noise (very small for slow drift).
+        // Suppressed under BSSD: ISB columns are zeroed in the SD H-matrix.
+        if (!config_.enableBetweenSatelliteSd()) {
+            double time_offset_var = pn.system_time_offset * dt;
+            for (const auto& [sys_name, idx] : system_time_offset_indices_) {
+                Q(idx, idx) = time_offset_var;
+            }
+        }
+
+        // Ambiguity process noise (zero for constant ambiguities).
+        // Ambiguities missing BIA/ATX phase coverage absorb a time-constant
+        // satellite bias into the float value ï¿½ no extra process noise needed.
+        // They are excluded from integer AR via the unresolvable-ambiguity set.
+        if (state_size > core_state_size_) {
+            for (const auto& [key, idx] : ambiguity_indices_) {
+                Q(idx, idx) = pn.ambiguity * dt;
+            }
+        }
+
+        logger->trace("Computed process noise matrix: size={}x{}, dt={:.3f} s, clock_q={:.3e}, bssd={}",
+            Q.rows(), Q.cols(), dt, pn.clock, config_.enableBetweenSatelliteSd() ? "on" : "off");
         return Q;
     }
 
-    /**
-     * @brief Get the state transition matrix for interval dt.
-     *
-     * Current implementation returns the identity matrix (no dynamics) sized
-     * to the current state dimension. The method logs computed matrix size.
-     *
-     * @param dt Time interval in seconds; currently unused but kept for API compatibility.
-     * @return Identity transition matrix (state_size x state_size).
-     */
     Eigen::MatrixXd StateManager::getTransitionMatrix(double dt) const {
         size_t state_size = getStateSize();
-        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(state_size, state_size); // simple, without dynamics
+        Eigen::MatrixXd F = Eigen::MatrixXd::Identity(state_size, state_size);
+
+        // Position-velocity coupling: pos(k+1) = pos(k) + vel(k) * dt
+        if (hasVelocity()) {
+            F.block(getPositionIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * dt;
+        }
+
         auto logger = log_manager_.getLogger("state_manager");
-        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s", F.rows(), F.cols(), dt);
+        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s, velocity_coupling={}",
+            F.rows(), F.cols(), dt, hasVelocity() ? "on" : "off");
         return F;
     }
 
-    /**
-     * @brief Index of the first position element (x) in the state vector.
-     * @return Zero-based index for position (always 0).
-     */
-    size_t StateManager::getPositionIndex() const {
-        return 0;
-    }
+    // ===================================================================
+    // Index getters
+    // ===================================================================
 
-    /**
-     * @brief Index of the receiver clock bias state within the state vector.
-     * @return Zero-based index for clock bias (default 3).
-     */
+    size_t StateManager::getPositionIndex() const { return 0; }
+    size_t StateManager::getVelocityIndex() const { return velocity_idx_; }
+    bool   StateManager::hasVelocity() const { return velocity_idx_ != std::numeric_limits<size_t>::max(); }
     size_t StateManager::getClockIndex() const {
-        return 3;
+        // In baseline mode the clock cancels via DD and has no state.
+        return is_baseline_ ? std::numeric_limits<size_t>::max() : 3;
     }
-
-    /**
-     * @brief Index of the tropospheric zenith wet delay (ZWD) state.
-     * @return Zero-based index for tropo state (default 4).
-     */
+    size_t StateManager::getPhaseClockIndex() const { return phase_clock_idx_; }
+    bool   StateManager::hasPhaseClock() const { return phase_clock_idx_ != std::numeric_limits<size_t>::max(); }
     size_t StateManager::getTropoIndex() const {
-        return 4;
+        // In baseline mode (short baseline) tropo cancels via DD and has no state.
+        return is_baseline_ ? std::numeric_limits<size_t>::max() : 4;
     }
 
-    /**
-     * @brief Index of the ionospheric zenith delay state (if present).
-     *
-     * If PPP-RTK mode is enabled (base_core_size_ >= 6) returns the ionosphere index;
-     * otherwise returns std::numeric_limits<size_t>::max() to indicate absence.
-     *
-     * @return Iono state index or max() when iono state is not present.
-     */
     size_t StateManager::getIonoIndex() const {
-        return base_core_size_ >= 6 ? 5 : std::numeric_limits<size_t>::max();
+        // Deprecated: per-satellite iono states are managed dynamically.
+        return std::numeric_limits<size_t>::max();
     }
 
-    /**
-     * @brief Get the index of the inter-system time bias for a given system.
-     *
-     * @param system_name Name of the GNSS system (e.g., "Galileo", "GLONASS", "BeiDou").
-     * @return Index of the system time bias state, or std::numeric_limits<size_t>::max() if not present.
-     */
+    size_t StateManager::getTropoGradientNorthIndex() const { return gradient_north_idx_; }
+    size_t StateManager::getTropoGradientEastIndex() const { return gradient_east_idx_; }
+    bool   StateManager::hasTropoGradients() const { return gradient_north_idx_ != std::numeric_limits<size_t>::max(); }
+
+    bool   StateManager::hasImuBiases() const { return accel_bias_idx_ != std::numeric_limits<size_t>::max(); }
+    size_t StateManager::getAccelBiasIndex() const { return accel_bias_idx_; }
+    size_t StateManager::getGyroBiasIndex() const { return gyro_bias_idx_; }
+    size_t StateManager::getAttitudeIndex() const { return attitude_idx_; }
+
+
+
     size_t StateManager::getSystemTimeOffsetIndex(const std::string& system_name) const {
         auto it = system_time_offset_indices_.find(system_name);
         return it != system_time_offset_indices_.end() ? it->second : std::numeric_limits<size_t>::max();
     }
 
-    /**
-     * @brief Get the number of inter-system time bias states.
-     *
-     * @return Number of inter-system time bias states.
-     */
     size_t StateManager::getNumSystemTimeOffsets() const {
         return systems_with_time_offsets_.size();
     }
 
-    /**
-     * @brief Get the list of systems that have time offset states.
-     *
-     * @return Vector of system names with time offset states.
-     */
     const std::vector<std::string>& StateManager::getSystemsWithTimeOffsets() const {
         return systems_with_time_offsets_;
     }
 
-    /**
-     * @brief Get ambiguity state index corresponding to a key.
-     * @param key Ambiguity name/key (typically "G01_L1" or similar).
-     * @return Zero-based index of the ambiguity state, or -1 if not found.
-     */
+    // ===================================================================
+    // Ambiguity management
+    // ===================================================================
+
     int StateManager::getAmbiguityIndex(const std::string& key) const {
         auto it = ambiguity_indices_.find(key);
         return it != ambiguity_indices_.end() ? static_cast<int>(it->second) : -1;
     }
 
-    /**
-     * @brief Get reference to the map of ambiguity keys to indices.
-     * @return Const reference to the internal ambiguity index map.
-     */
     const std::map<std::string, size_t>& StateManager::getAmbiguities() const {
         return ambiguity_indices_;
     }
 
-    /**
-     * @brief Add an ambiguity state and return its assigned index.
-     *
-     * If the ambiguity already exists the existing index is returned.
-     * The state vector and covariance matrix are resized preserving existing
-     * values; the new diagonal ambiguity variance is initialized from the
-     * configuration ambiguity standard deviation.
-     *
-     * @param key Unique ambiguity key.
-     * @param initial_value Initial ambiguity value in meters.
-     * @return Index assigned to the ambiguity (existing or newly created).
-     */
     size_t StateManager::addAmbiguity(const std::string& key, double initial_value) {
         auto logger = log_manager_.getLogger("state_manager");
         if (ambiguity_indices_.count(key)) {
             logger->trace("Ambiguity {} already exists at index {}", key, ambiguity_indices_[key]);
             return ambiguity_indices_[key];
         }
-        size_t index = getStateSize();
+        const double amb_std = config_.getAmbiguityStd();
+        const size_t index = appendState(initial_value, amb_std * amb_std);
         ambiguity_indices_[key] = index;
-
-        // Resize state and covariance, preserving existing values
-        Eigen::VectorXd new_state(index + 1);
-        Eigen::MatrixXd new_cov(index + 1, index + 1);
-        new_state.setZero();
-        new_cov.setIdentity();
-
-        // Copy existing state and covariance
-        if (index > 0) {
-            new_state.head(index) = state_vector_;
-            new_cov.topLeftCorner(index, index) = covariance_;
-        }
-        new_state(index) = initial_value;
-
-        const double amb_std_m = config_.getAmbiguityStd();
-        new_cov(index, index) = amb_std_m * amb_std_m; // Initial ambiguity variance (std^2 -> meters^2)
-
-        state_vector_ = new_state;
-        covariance_ = new_cov;
 
         logger->info("Added ambiguity {} at index {} with initial value {:.3f}", key, index, initial_value);
         return index;
     }
 
-    /**
-     * @brief Populate a PppState from a raw state vector.
-     *
-     * Copies core-state entries (position, clock, troposphere, optional ionosphere,
-     * inter-system time offsets) and any tracked ambiguities into the provided \p ppp_state.
-     *
-     * @param current_state State vector to read values from.
-     * @param ppp_state Output structure that will receive core states and ambiguities.
-     * @param state_manager Reference used to resolve ambiguity indices (kept for API compatibility).
-     */
+    // ===================================================================
+    // PppState synchronization
+    // ===================================================================
+
     void StateManager::updatePppStateFromVector(const Eigen::VectorXd& current_state, PppState& ppp_state, const StateManager& state_manager) const {
-        // Position
-        ppp_state.position = current_state.segment<3>(state_manager.getPositionIndex());
+        ppp_state.position         = current_state.segment<3>(state_manager.getPositionIndex());
+        ppp_state.clock_bias       = current_state(state_manager.getClockIndex());
+        ppp_state.troposphere_zwd  = current_state(state_manager.getTropoIndex());
 
-        // Clock bias
-        ppp_state.clock_bias = current_state(state_manager.getClockIndex());
+        if (state_manager.hasVelocity())
+            ppp_state.velocity = current_state.segment<3>(state_manager.getVelocityIndex());
 
-        // Troposphere zenith delay
-        ppp_state.troposphere_zwd = current_state(state_manager.getTropoIndex());
-
-        // Ionosphere zenith delay only if using PPP-RTK
-        if (base_core_size_ >= 6) {
-            ppp_state.ionosphere_zenith_delay = current_state(state_manager.getIonoIndex());
+        if (state_manager.hasPhaseClock())
+            ppp_state.phase_clock_offset = current_state(state_manager.getPhaseClockIndex());
+        if (state_manager.hasTropoGradients()) {
+            ppp_state.tropo_gradient_north = current_state(state_manager.getTropoGradientNorthIndex());
+            ppp_state.tropo_gradient_east  = current_state(state_manager.getTropoGradientEastIndex());
         }
 
-        // Inter-system time offsets
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+            ppp_state.slant_ionosphere.clear();
+            for (const auto& [sat, idx] : ionosphere_indices_)
+                if (idx < static_cast<size_t>(current_state.size()))
+                    ppp_state.slant_ionosphere[sat] = current_state(idx);
+        }
+
         ppp_state.system_time_offsets.clear();
         for (const auto& sys : systems_with_time_offsets_) {
-            size_t idx = getSystemTimeOffsetIndex(sys);
-            if (idx < static_cast<size_t>(current_state.size())) {
+            const size_t idx = getSystemTimeOffsetIndex(sys);
+            if (idx < static_cast<size_t>(current_state.size()))
                 ppp_state.system_time_offsets[sys] = current_state(idx);
-            }
         }
 
-        // Ambiguities
-        const auto& ambiguities = state_manager.getAmbiguities();
-        for (const auto& [key, idx] : ambiguities) {
-            if (state_manager.getAmbiguityIndex(key) > 0) {
+        for (const auto& [key, idx] : state_manager.getAmbiguities())
+            if (state_manager.getAmbiguityIndex(key) > 0)
                 ppp_state.ambiguities[key] = current_state(state_manager.getAmbiguityIndex(key));
-            }
-        }
     }
 
-    /**
-     * @brief Synchronize values from a PppState into the internal state vector.
-     *
-     * Copies core-state values (position, clock, tropo, iono, inter-system time offsets)
-     * from \p ppp_state into the internal state vector and calls setStateVector,
-     * which validates sizes and finiteness.
-     *
-     * @param ppp_state Source PppState containing values to sync.
-     */
-    void StateManager::syncPppStateToStateVector(const PppState& ppp_state)
-    {
+    void StateManager::syncPppStateToStateVector(const PppState& ppp_state) {
         Eigen::VectorXd sv = state_vector_;
         sv.segment<3>(getPositionIndex()) = ppp_state.position;
         sv(getClockIndex()) = ppp_state.clock_bias;
         sv(getTropoIndex()) = ppp_state.troposphere_zwd;
-        if (base_core_size_ >= 6) {
-            sv(getIonoIndex()) = ppp_state.ionosphere_zenith_delay;
+
+        if (hasVelocity())
+            sv.segment<3>(getVelocityIndex()) = ppp_state.velocity;
+
+        if (hasPhaseClock())
+            sv(getPhaseClockIndex()) = ppp_state.phase_clock_offset;
+        if (hasTropoGradients()) {
+            sv(getTropoGradientNorthIndex()) = ppp_state.tropo_gradient_north;
+            sv(getTropoGradientEastIndex())  = ppp_state.tropo_gradient_east;
         }
-        
-        // Sync inter-system time offsets
-        for (const auto& [sys, value] : ppp_state.system_time_offsets) {
-            size_t idx = getSystemTimeOffsetIndex(sys);
-            if (idx < static_cast<size_t>(sv.size())) {
-                sv(idx) = value;
+
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+            for (const auto& [sat, value] : ppp_state.slant_ionosphere) {
+                auto it = ionosphere_indices_.find(sat);
+                if (it != ionosphere_indices_.end() && it->second < static_cast<size_t>(sv.size()))
+                    sv(it->second) = value;
             }
         }
-        
+
+        for (const auto& [sys, value] : ppp_state.system_time_offsets) {
+            const size_t idx = getSystemTimeOffsetIndex(sys);
+            if (idx < static_cast<size_t>(sv.size()))
+                sv(idx) = value;
+        }
+
         setStateVector(sv);
     }
 
-    /**
-     * @brief Reset (or create and reset) a float ambiguity state.
-     *
-     * Behavior:
-     *  - Adds the ambiguity if it does not exist.
-     *  - Sets ambiguity value to 0.0 m.
-     *  - Zeros cross-covariance rows/columns for that ambiguity.
-     *  - Sets diagonal variance to (std_m)^2.
-     *
-     * @param key Ambiguity key identifying the float ambiguity.
-     * @param std_m Standard deviation in meters to set on the ambiguity diagonal (must be > 0).
-     * @return true if the ambiguity was reset (or created and reset); false on invalid input or failure.
-     */
     bool StateManager::resetAmbiguity(const std::string& key, double std_m) {
         auto logger = log_manager_.getLogger("state_manager");
 
@@ -537,127 +702,49 @@ namespace GnssProcessor {
             return false;
         }
 
-        const size_t idx = static_cast<size_t>(idx_i);
-
-        if (idx >= static_cast<size_t>(state_vector_.size()) ||
-            idx >= static_cast<size_t>(covariance_.rows()) ||
-            idx >= static_cast<size_t>(covariance_.cols())) {
+        const auto idx = static_cast<Eigen::Index>(idx_i);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
             logger->error("resetAmbiguity index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
-                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+                key, idx_i, state_vector_.size(), covariance_.rows(), covariance_.cols());
             return false;
         }
 
-        state_vector_(static_cast<Eigen::Index>(idx)) = 0.0;
+        // Keep the current value ï¿½ it will be overwritten by a proper
+        // geometry-based seed in ensureRequiredStates().
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = std_m * std_m;
 
-        // Zero cross-covariances first, then restore diagonal (avoid wiping it to 0).
-        covariance_.row(static_cast<Eigen::Index>(idx)).setZero();
-        covariance_.col(static_cast<Eigen::Index>(idx)).setZero();
-        covariance_(static_cast<Eigen::Index>(idx), static_cast<Eigen::Index>(idx)) = std_m * std_m;
+        pending_reseed_ambiguities_.insert(key);
 
-        logger->info("Reset ambiguity {} at index {}: value=0.0 m, std={:.3f} m (var={:.3e})",
-            key, idx, std_m, std_m * std_m);
-
+        logger->info("Reset ambiguity {} at index {}: marked pending reseed, std={:.3f} m (var={:.3e})",
+            key, idx_i, std_m, std_m * std_m);
         return true;
     }
 
-    /**
-     * @brief Helper to build the persistent measurement key from satellite and signal.
-     * @param sat Satellite identifier (e.g. "G01").
-     * @param sig Signal type (e.g. "C1C" or "L1").
-     * @return Concatenated key "sat_sig".
-     */
-    static std::string makeMeasKey(const std::string& sat, const std::string& sig) {
-        return sat + "_" + sig;
-    }
-
-    /**
-     * @brief Persistently set a measurement variance scaling factor for a satellite/signal.
-     *
-     * The scale should be > 0. The stored scale is later used to inflate measurement variances
-     * for persistent outlier handling (e.g., increasing code noise for a misbehaving observable).
-     *
-     * @param sat Satellite identifier string.
-     * @param signal_type Signal type string.
-     * @param scale Multiplier to persist (must be > 0).
-     */
-    void StateManager::setMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double scale) {
+    bool StateManager::renameAmbiguity(const std::string& old_key, const std::string& new_key) {
         auto logger = log_manager_.getLogger("state_manager");
-        if (sat.empty() || signal_type.empty()) {
-            logger->warn("setMeasurementVarianceScale called with empty sat/signal");
-            return;
+        if (old_key.empty() || new_key.empty()) {
+            logger->warn("renameAmbiguity called with empty key (old='{}', new='{}')", old_key, new_key);
+            return false;
         }
-        if (!(std::isfinite(scale) && scale > 0.0)) {
-            logger->warn("setMeasurementVarianceScale called with invalid scale for {} {}: {}", sat, signal_type, scale);
-            return;
+        if (old_key == new_key) return true;  // no-op
+        auto it = ambiguity_indices_.find(old_key);
+        if (it == ambiguity_indices_.end()) {
+            logger->trace("renameAmbiguity: old_key '{}' not found", old_key);
+            return false;
         }
-
-        const std::string key = makeMeasKey(sat, signal_type);
-        meas_var_scale_[key] = scale;
-
-        logger->info("Set measurement variance scale: {} -> {:.3f}", key, scale);
+        if (ambiguity_indices_.count(new_key)) {
+            logger->warn("renameAmbiguity: new_key '{}' already exists (old='{}')", new_key, old_key);
+            return false;
+        }
+        const size_t idx = it->second;
+        ambiguity_indices_.erase(it);
+        ambiguity_indices_[new_key] = idx;
+        logger->trace("Renamed ambiguity '{}' -> '{}' at index {}", old_key, new_key, idx);
+        return true;
     }
 
-    /**
-     * @brief Retrieve the persistent measurement variance scale for a satellite/signal.
-     * @param sat Satellite identifier.
-     * @param signal_type Signal type string.
-     * @return Stored multiplier if present and valid; otherwise returns 1.0 (no scaling).
-     */
-    double StateManager::getMeasurementVarianceScale(const std::string& sat, const std::string& signal_type) const {
-        if (sat.empty() || signal_type.empty()) return 1.0;
-
-        const std::string key = makeMeasKey(sat, signal_type);
-        auto it = meas_var_scale_.find(key);
-        return (it != meas_var_scale_.end() && std::isfinite(it->second) && it->second > 0.0) ? it->second : 1.0;
-    }
-
-    /**
-     * @brief Multiply the stored measurement variance scale by \p factor.
-     *
-     * Convenience wrapper that reads the current scale (default 1.0), multiplies
-     * by \p factor and stores the new value. Intended for persistent inflation
-     * after repeated outliers.
-     *
-     * @param sat Satellite identifier.
-     * @param signal_type Signal type string.
-     * @param factor Multiplicative factor (must be > 0).
-     */
-    void StateManager::inflateMeasurementVarianceScale(const std::string& sat, const std::string& signal_type, double factor) {
-        auto logger = log_manager_.getLogger("state_manager");
-        if (sat.empty() || signal_type.empty()) {
-            logger->warn("inflateMeasurementVarianceScale called with empty sat/signal");
-            return;
-        }
-        if (!(std::isfinite(factor) && factor > 0.0)) {
-            logger->warn("inflateMeasurementVarianceScale called with invalid factor for {} {}: {}", sat, signal_type, factor);
-            return;
-        }
-
-        const double current = getMeasurementVarianceScale(sat, signal_type);
-        const double next = current * factor;
-        setMeasurementVarianceScale(sat, signal_type, next);
-
-        logger->info("Inflated measurement variance scale: {}_{}: {:.3f} -> {:.3f}",
-            sat, signal_type, current, next);
-    }
-
-    /**
-     * @brief Clear all persisted measurement variance scales.
-     *
-     * Clears the internal map and logs the action.
-     */
-    void StateManager::clearMeasurementVarianceScales() {
-        auto logger = log_manager_.getLogger("state_manager");
-        meas_var_scale_.clear();
-        logger->info("Cleared measurement variance scales");
-    }
-
-    /**
-     * @brief Remove a tracked ambiguity from the state vector and covariance.
-     *
-     * Safely removes the ambiguity row/column and shifts subsequent ambiguity indices down.
-     * Returns false when the key is not found or when attempting to remove a core-state index.
-     */
     bool StateManager::removeAmbiguity(const std::string& key) {
         auto logger = log_manager_.getLogger("state_manager");
         if (key.empty()) {
@@ -671,57 +758,77 @@ namespace GnssProcessor {
         }
 
         const size_t rem_idx = it->second;
-        const size_t state_size = getStateSize();
-        if (rem_idx < core_state_size_ || state_size <= core_state_size_) {
-            logger->warn("removeAmbiguity: attempting to remove invalid index {} (core_state_size={}, state_size={}) for key {}",
-                rem_idx, core_state_size_, state_size, key);
+        if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+            logger->warn("removeAmbiguity: invalid index {} for key {}", rem_idx, key);
             return false;
         }
 
-        // Erase mapping first
-        ambiguity_indices_.erase(it);
-
-        const size_t new_size = state_size - 1;
-        Eigen::VectorXd new_state = Eigen::VectorXd::Zero(new_size);
-        Eigen::MatrixXd new_cov = Eigen::MatrixXd::Zero(new_size, new_size);
-
-        // Copy head portion before removed index (may include core states)
-        if (rem_idx > 0) {
-            new_state.head(static_cast<int>(rem_idx)) = state_vector_.head(static_cast<int>(rem_idx));
-            new_cov.topLeftCorner(static_cast<int>(rem_idx), static_cast<int>(rem_idx)) =
-                covariance_.topLeftCorner(static_cast<int>(rem_idx), static_cast<int>(rem_idx));
-        }
-
-        // Copy tail portion after removed index, shifted left by one
-        if (rem_idx + 1 < state_size) {
-            const size_t tail = state_size - rem_idx - 1;
-            new_state.tail(static_cast<int>(tail)) = state_vector_.segment(static_cast<int>(rem_idx + 1), static_cast<int>(tail));
-            new_cov.topRightCorner(static_cast<int>(rem_idx), static_cast<int>(tail)).setZero();
-            new_cov.bottomLeftCorner(static_cast<int>(tail), static_cast<int>(rem_idx)).setZero();
-
-            new_cov.block(static_cast<int>(rem_idx), static_cast<int>(rem_idx),
-                static_cast<int>(tail), static_cast<int>(tail)) =
-                covariance_.block(static_cast<int>(rem_idx + 1), static_cast<int>(rem_idx + 1),
-                    static_cast<int>(tail), static_cast<int>(tail));
-            // Copy cross terms between head and tail
-            if (rem_idx > 0) {
-                new_cov.topRightCorner(static_cast<int>(rem_idx), static_cast<int>(tail)) =
-                    covariance_.topRightCorner(static_cast<int>(rem_idx), static_cast<int>(tail));
-                new_cov.bottomLeftCorner(static_cast<int>(tail), static_cast<int>(rem_idx)) =
-                    covariance_.bottomLeftCorner(static_cast<int>(tail), static_cast<int>(rem_idx));
-            }
-        }
-
-        state_vector_ = std::move(new_state);
-        covariance_ = std::move(new_cov);
-
-        // Update indices for remaining ambiguities (decrement indices > rem_idx)
-        for (auto& kv : ambiguity_indices_) {
-            if (kv.second > rem_idx) --kv.second;
-        }
+        removeStateAtIndex(rem_idx);
+        ambiguity_indices_.erase(key);
 
         logger->info("Removed ambiguity {} at former index {}. New state size={}", key, rem_idx, getStateSize());
         return true;
+    }
+
+    double StateManager::computeAmbiguitySeed(const PppObservation& obs,
+                                               const std::string& ref_type,
+                                               const Eigen::VectorXd& x) const {
+        try {
+            if (!obs.observed.count(ref_type) || !obs.modeled.count(ref_type))
+                return 0.0;
+
+            const double observed_m = obs.observed.at(ref_type);
+            const double modeled_m  = obs.modeled.at(ref_type);
+            const double tropo_wet  = obs.mf_w * x(getTropoIndex());
+
+            // Receiver clock (+ phase clock delta when enabled)
+            double clk_term = x(getClockIndex());
+            if (hasPhaseClock())
+                clk_term += x(getPhaseClockIndex());
+
+            // Inter-system time offset
+            double isb = 0.0;
+            {
+                const std::string isb_name = systemToIsbName(obs.system);
+                const size_t isb_idx = getSystemTimeOffsetIndex(isb_name);
+                if (isb_idx < static_cast<size_t>(x.size()))
+                    isb = x(static_cast<Eigen::Index>(isb_idx));
+            }
+
+            // Tropospheric gradient contribution
+            double tropo_grad = 0.0;
+            if (hasTropoGradients()) {
+                const double el_rad = obs.elevation * Constants::PI / 180.0;
+                const double az_rad = obs.azimuth  * Constants::PI / 180.0;
+                const double mf_grad = 1.0 / (std::sin(el_rad) * std::tan(el_rad) + 0.0032);
+                const double gn = x(static_cast<Eigen::Index>(getTropoGradientNorthIndex()));
+                const double ge = x(static_cast<Eigen::Index>(getTropoGradientEastIndex()));
+                tropo_grad = mf_grad * (gn * std::cos(az_rad) + ge * std::sin(az_rad));
+            }
+
+            // Per-satellite ionosphere (PPP-RTK uncombined, phase advance)
+            double iono_term = 0.0;
+            if (config_.isUncombinedEnabled() && !ref_type.empty() && ref_type[0] == 'L') {
+                const int iono_idx = getIonosphereIndex(obs.satellite);
+                if (iono_idx >= 0 && iono_idx < static_cast<int>(x.size())) {
+                    double alpha = 1.0;
+                    if (ref_type.size() >= 2) {
+                        const double freq = bandFrequency(ref_type[1], obs.system);
+                        alpha = (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ) / (freq * freq);
+                    }
+                    iono_term = -alpha * x(iono_idx);
+                }
+            }
+
+            // Per-satellite signal bias ï¿½ code-only estimation.
+            // Phase ambiguities absorb satellite phase biases, so no
+            // sat-bias state exists for L signals and the term is zero.
+            double sat_bias_term = 0.0;
+
+            return observed_m - modeled_m - clk_term - tropo_wet - isb - tropo_grad - iono_term - sat_bias_term;
+        } catch (...) {
+            return 0.0;
+        }
     }
 
     void StateManager::pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys) {
@@ -731,12 +838,11 @@ namespace GnssProcessor {
             return;
         }
 
-        // Collect keys to remove
         std::vector<std::string> to_remove;
         to_remove.reserve(ambiguity_indices_.size());
-        for (const auto& kv : ambiguity_indices_) {
-            if (keep_keys.find(kv.first) == keep_keys.end()) to_remove.push_back(kv.first);
-        }
+        for (const auto& [key, idx] : ambiguity_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
 
         if (to_remove.empty()) {
             logger->trace("pruneAmbiguitiesExcept: nothing to remove (keep_keys size={})", keep_keys.size());
@@ -744,11 +850,235 @@ namespace GnssProcessor {
         }
 
         logger->info("Pruning {} ambiguities (keeping {} keys)", to_remove.size(), keep_keys.size());
-        // Remove in reverse-order by index to avoid repeated shifting costs is not necessary
-        // because removeAmbiguity updates indices correctly. Remove in the order collected.
-        for (const auto& key : to_remove) {
+        for (const auto& key : to_remove)
             removeAmbiguity(key);
+    }
+
+    // ===================================================================
+    // Per-satellite ionosphere state management (PPP-RTK uncombined)
+    // ===================================================================
+
+    int StateManager::getIonosphereIndex(const std::string& satellite) const {
+        auto it = ionosphere_indices_.find(satellite);
+        return it != ionosphere_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getIonosphereStates() const {
+        return ionosphere_indices_;
+    }
+
+    size_t StateManager::addIonosphereState(const std::string& satellite, double initial_value) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (ionosphere_indices_.count(satellite)) {
+            logger->trace("Ionosphere state for {} already exists at index {}", satellite, ionosphere_indices_[satellite]);
+            return ionosphere_indices_[satellite];
         }
+
+        // Scale initial variance by obliquity factor 1/sinï¿½(el) when elevation is available
+        const double iono_std = config_.getInitialStd().ionosphere;
+        double init_var = iono_std * iono_std;
+        auto el_it = ionosphere_elevations_.find(satellite);
+        if (el_it != ionosphere_elevations_.end() && el_it->second > 0.0) {
+            double sin2_el = std::sin(el_it->second * Constants::PI / 180.0);
+            sin2_el *= sin2_el;
+            if (sin2_el < 0.01) sin2_el = 0.01;
+            init_var /= sin2_el;
+        }
+
+        const size_t index = appendState(initial_value, init_var);
+        ionosphere_indices_[satellite] = index;
+
+        logger->info("Added ionosphere state for {} at index {} with initial value {:.3f} m, init_std={:.1f} m",
+            satellite, index, initial_value, std::sqrt(init_var));
+        return index;
+    }
+
+    void StateManager::pruneIonosphereStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (ionosphere_indices_.empty())
+            return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [sat, idx] : ionosphere_indices_)
+            if (keep_keys.find(sat) == keep_keys.end())
+                to_remove.push_back(sat);
+        if (to_remove.empty()) return;
+
+        logger->info("Pruning {} ionosphere states (keeping {} satellites)", to_remove.size(), keep_keys.size());
+        for (const auto& sat : to_remove) {
+            auto it = ionosphere_indices_.find(sat);
+            if (it == ionosphere_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneIonosphereStatesExcept: invalid index {} for {}", rem_idx, sat);
+                continue;
+            }
+
+            removeStateAtIndex(rem_idx);
+            ionosphere_indices_.erase(sat);
+            ionosphere_elevations_.erase(sat);
+
+            logger->debug("Removed ionosphere state for {} at former index {}", sat, rem_idx);
+        }
+    }
+
+    void StateManager::setIonosphereElevation(const std::string& satellite, double elevation_deg) {
+        ionosphere_elevations_[satellite] = elevation_deg;
+    }
+
+    const std::map<std::string, double>& StateManager::getIonosphereElevations() const {
+        return ionosphere_elevations_;
+    }
+
+    void StateManager::setFrozenIonosphereSatellites(const std::set<std::string>& sats) {
+        frozen_ionosphere_sats_ = sats;
+    }
+
+    const std::set<std::string>& StateManager::getFrozenIonosphereSatellites() const {
+        return frozen_ionosphere_sats_;
+    }
+
+    // ===================================================================
+    // Receiver code bias (inter-frequency bias) state management
+    // ===================================================================
+
+    int StateManager::getCodeBiasIndex(const std::string& key) const {
+        auto it = code_bias_indices_.find(key);
+        return it != code_bias_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getCodeBiasStates() const {
+        return code_bias_indices_;
+    }
+
+    size_t StateManager::addCodeBiasState(const std::string& key, double initial_value) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (code_bias_indices_.count(key)) {
+            logger->trace("Code bias state for {} already exists at index {}", key, code_bias_indices_[key]);
+            return code_bias_indices_[key];
+        }
+
+        const double cb_std = config_.getInitialStd().code_bias;
+        const size_t index = appendState(initial_value, cb_std * cb_std);
+        code_bias_indices_[key] = index;
+
+        logger->info("Added code bias state for {} at index {}, initial={:.3f} m, std={:.1f} m",
+            key, index, initial_value, cb_std);
+        return index;
+    }
+
+    void StateManager::pruneCodeBiasStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (code_bias_indices_.empty()) return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [key, idx] : code_bias_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
+        if (to_remove.empty()) return;
+
+        logger->info("Pruning {} code bias states (keeping {})", to_remove.size(), keep_keys.size());
+        for (const auto& key : to_remove) {
+            auto it = code_bias_indices_.find(key);
+            if (it == code_bias_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneCodeBiasStatesExcept: invalid index {} for {}", rem_idx, key);
+                continue;
+            }
+
+            removeStateAtIndex(rem_idx);
+            code_bias_indices_.erase(key);
+
+            logger->debug("Removed code bias state for {} at former index {}", key, rem_idx);
+        }
+    }
+
+    // ===================================================================
+    // Per-satellite signal bias state management
+    // ===================================================================
+
+    int StateManager::getSatBiasIndex(const std::string& key) const {
+        auto it = sat_bias_indices_.find(key);
+        return it != sat_bias_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getSatBiasStates() const {
+        return sat_bias_indices_;
+    }
+
+    size_t StateManager::addSatBiasState(const std::string& key, double initial_value) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_bias_indices_.count(key)) {
+            logger->trace("Sat bias state for {} already exists at index {}", key, sat_bias_indices_[key]);
+            return sat_bias_indices_[key];
+        }
+
+        const double sb_std = config_.getInitialStd().sat_bias;
+        const size_t index = appendState(initial_value, sb_std * sb_std);
+        sat_bias_indices_[key] = index;
+
+        logger->info("Added sat bias state for {} at index {}, initial={:.3f} m, std={:.1f} m",
+            key, index, initial_value, sb_std);
+        return index;
+    }
+
+    void StateManager::pruneSatBiasStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_bias_indices_.empty()) return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [key, idx] : sat_bias_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
+        if (to_remove.empty()) return;
+
+        logger->info("Pruning {} sat bias states (keeping {})", to_remove.size(), keep_keys.size());
+        for (const auto& key : to_remove) {
+            auto it = sat_bias_indices_.find(key);
+            if (it == sat_bias_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneSatBiasStatesExcept: invalid index {} for {}", rem_idx, key);
+                continue;
+            }
+
+            removeStateAtIndex(rem_idx);
+            sat_bias_indices_.erase(key);
+
+            logger->debug("Removed sat bias state for {} at former index {}", key, rem_idx);
+        }
+    }
+
+    // ===================================================================
+    // Unresolvable ambiguity support
+    // ===================================================================
+
+    void StateManager::markAmbiguityUnresolvable(const std::string& amb_key) {
+        unresolvable_ambiguities_.insert(amb_key);
+    }
+
+    bool StateManager::isAmbiguityUnresolvable(const std::string& amb_key) const {
+        return unresolvable_ambiguities_.count(amb_key) > 0;
+    }
+
+    void StateManager::clearUnresolvableAmbiguities() {
+        unresolvable_ambiguities_.clear();
+    }
+
+    bool StateManager::isAmbiguityPendingReseed(const std::string& amb_key) const {
+        return pending_reseed_ambiguities_.count(amb_key) > 0;
+    }
+
+    void StateManager::clearPendingReseed(const std::string& amb_key) {
+        pending_reseed_ambiguities_.erase(amb_key);
+    }
+
+    void StateManager::markAmbiguityPendingReseed(const std::string& amb_key) {
+        pending_reseed_ambiguities_.insert(amb_key);
     }
 
 } // namespace GnssProcessor
