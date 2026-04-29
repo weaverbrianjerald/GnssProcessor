@@ -12,9 +12,9 @@
  *   - Petit & Luzum (2010), IERS Technical Note 36
  */
 
-#include "OceanTideModel.hpp"
-#include "Coordinates.hpp"
-#include "Constants.hpp"
+#include "corrections/OceanTideModel.hpp"
+#include "math/Coordinates.hpp"
+#include "common/Constants.hpp"
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -48,12 +48,12 @@ namespace GnssProcessor {
      *
      * Implements the IERS 2010 expressions (Simon et al. 1994) for the
      * fundamental arguments of nutation theory:
-     *   l   — Mean anomaly of the Moon  (F1)
-     *   l'  — Mean anomaly of the Sun   (F2)
-     *   F   — Mean argument of latitude of the Moon (F3)
-     *   D   — Mean elongation of Moon from Sun (F4)
-     *   ?   — Longitude of ascending node of Moon (F5)
-     *   ?   — Greenwich Mean Sidereal Time (GMST)
+     *   l   Â— Mean anomaly of the Moon  (F1)
+     *   l'  Â— Mean anomaly of the Sun   (F2)
+     *   F   Â— Mean argument of latitude of the Moon (F3)
+     *   D   Â— Mean elongation of Moon from Sun (F4)
+     *   ?   Â— Longitude of ascending node of Moon (F5)
+     *   ?   Â— Greenwich Mean Sidereal Time (GMST)
      *
      * @param t_centuries Julian centuries of TT from J2000.0.
      * @param ut1_frac UT1 day fraction (for GMST).
@@ -111,7 +111,7 @@ namespace GnssProcessor {
      * @brief Compute tidal arguments for all 11 constituents using Doodson multipliers.
      *
      * The tidal argument for constituent j is:
-     *   ?_j = n1·(? + ?) + n2·s + n3·h + n4·p + n5·(-N') + n6·ps
+     *   ?_j = n1Â·(? + ?) + n2Â·s + n3Â·h + n4Â·p + n5Â·(-N') + n6Â·ps
      *
      * where [n1..n6] are the Doodson multipliers and:
      *   ? = GMST
@@ -130,7 +130,7 @@ namespace GnssProcessor {
      *   ps = s - D + l' ? h + l' (but for the major tides, ps column is 0)
      *
      * For practical computation we map Doodson arguments to Delaunay:
-     *   argument = n1·(GMST + ?) + (n2 + n1)·(F + ?) - n1·(F + ?)  ... etc.
+     *   argument = n1Â·(GMST + ?) + (n2 + n1)Â·(F + ?) - n1Â·(F + ?)  ... etc.
      *
      * Simplified direct mapping for each constituent using Delaunay + GMST:
      *
@@ -153,12 +153,12 @@ namespace GnssProcessor {
         const double ps = h + lp;            // longitude of Sun's perigee (approximation, rarely needed)
 
         // ? = GMST + ? - s  (lunar time angle)
-        // But for our Doodson encoding: argument = n1·? + n2·s + n3·h + n4·p + n5·N' + n6·ps
+        // But for our Doodson encoding: argument = n1Â·? + n2Â·s + n3Â·h + n4Â·p + n5Â·N' + n6Â·ps
         // where ? = GMST + ? - s
-        // So: argument = n1·(GMST + ?) + (n2 - n1)·s + n3·h + n4·p + n5·N' + n6·ps
+        // So: argument = n1Â·(GMST + ?) + (n2 - n1)Â·s + n3Â·h + n4Â·p + n5Â·N' + n6Â·ps
         //
         // Actually the standard Doodson encoding uses:
-        //   argument = n1·(GMST + ?) + n2·s + n3·h + n4·p + n5·N' + n6·ps
+        //   argument = n1Â·(GMST + ?) + n2Â·s + n3Â·h + n4Â·p + n5Â·N' + n6Â·ps
         // where our n1 multiplies (GMST + ?), and n2 accounts for the 's' that is
         // NOT already subtracted by ?. The table in the header already encodes the
         // arguments directly as multipliers of [GMST+?, s, h, p, N', ps].

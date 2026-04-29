@@ -15,9 +15,10 @@
  *  - Code bias state management
  */
 
-#include "StateManager.hpp"
-#include "LogManager.hpp"
-#include "Constants.hpp"
+#include "filter/StateManager.hpp"
+#include "filter/StateKeySchema.hpp"
+#include "logging/LogManager.hpp"
+#include "common/Constants.hpp"
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -168,6 +169,7 @@ namespace GnssProcessor {
 
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
         : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config),
+          is_baseline_(config.isBaselineMode()),
           velocity_idx_(std::numeric_limits<size_t>::max()),
           phase_clock_idx_(std::numeric_limits<size_t>::max()),
           gradient_north_idx_(std::numeric_limits<size_t>::max()),
@@ -175,6 +177,29 @@ namespace GnssProcessor {
           attitude_idx_(std::numeric_limits<size_t>::max()),
           accel_bias_idx_(std::numeric_limits<size_t>::max()),
           gyro_bias_idx_(std::numeric_limits<size_t>::max()) {
+
+        // Baseline mode: strip to position-only core.  DD processing
+        // cancels receiver-side clocks/ISBs and (short-baseline) iono/tropo,
+        // so none of those states are estimated.  Ambiguities are still
+        // added dynamically via addAmbiguity() â€” the keys are DD-specific
+        // ("GPS|G05|L1C|G01") but StateManager doesn't care about format.
+        if (is_baseline_) {
+            core_state_size_ = base_core_size_;   // just position (3)
+            systems_with_time_offsets_.clear();
+            system_time_offset_indices_.clear();
+            state_vector_ = Eigen::VectorXd::Zero(core_state_size_);
+            covariance_ = Eigen::MatrixXd::Identity(core_state_size_, core_state_size_);
+            const auto& init = config_.getInitialStd();
+            const double pos_var = init.position * init.position;
+            if (core_state_size_ >= 3) {
+                covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
+            }
+            log_manager_.getLogger("state_manager")->info(
+                "StateManager initialised in BASELINE mode: core size={}, "
+                "position-only (no clock/tropo/iono/system-offset states)",
+                core_state_size_);
+            return;
+        }
 
         // Optional velocity states (Vx, Vy, Vz) right after position + clock + tropo.
         if (config_.estimateVelocity()) {
@@ -367,18 +392,32 @@ namespace GnssProcessor {
         Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(state_size, state_size);
 
         // Process noise: variance = spectral_density * dt
-        // Config stores spectral density in units of m²/s (variance rate)
+        // Config stores spectral density in units of mï¿½/s (variance rate)
         const auto& pn = config_.getProcessNoise();
 
         size_t posIdx = getPositionIndex();
-        size_t clockIdx = getClockIndex();
-        size_t tropoIdx = getTropoIndex();
 
-        // Position noise (m²/s * s = m²)
+        // Position noise applies in every mode (static: pn.position=0, kinematic: ~100 mÂ²/s).
         double pos_var = pn.position * dt;
         Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
 
-        // Velocity noise (m²/s² per s)
+        // Baseline mode: no clock / tropo / iono / system-offset / bias states
+        // in the state vector.  Apply ambiguity process noise below (if any)
+        // and return.  DD ambiguities are physically constant â†’ pn.ambiguity
+        // typically 0, so Q ends up as just the position block.
+        if (is_baseline_) {
+            if (state_size > core_state_size_) {
+                for (const auto& [key, idx] : ambiguity_indices_) {
+                    Q(idx, idx) = pn.ambiguity * dt;
+                }
+            }
+            return Q;
+        }
+
+        size_t clockIdx = getClockIndex();
+        size_t tropoIdx = getTropoIndex();
+
+        // Velocity noise (mï¿½/sï¿½ per s)
         if (hasVelocity()) {
             double vel_var = pn.velocity * dt;
             Q.block(getVelocityIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
@@ -413,7 +452,7 @@ namespace GnssProcessor {
         }
 
         // Per-satellite ionospheric noise (PPP-RTK uncombined)
-        // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin²(el)
+        // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sinï¿½(el)
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             const double q_zenith = pn.ionosphere;
             for (const auto& [sat, idx] : ionosphere_indices_) {
@@ -443,14 +482,15 @@ namespace GnssProcessor {
 
         // Per-satellite signal bias noise (PPP-RTK uncombined).
         // These absorb uncorrected satellite hardware delays on signals
-        // without BIA coverage.  Nearly constant — very small random walk.
+        // without BIA coverage.  Nearly constant ï¿½ very small random walk.
         // Suppressed for BSSD pivot satellites (absorbed into eliminated clock).
         if (!sat_bias_indices_.empty()) {
             const double sb_var = pn.sat_bias * dt;
             for (const auto& [key, idx] : sat_bias_indices_) {
-                // key format: "satellite|signal" — extract satellite prefix
-                const auto bar = key.find('|');
-                const std::string sat = (bar != std::string::npos) ? key.substr(0, bar) : key;
+                // key format documented in StateKeySchema.hpp;
+                // helper preserves the lenient "no pipe -> whole key"
+                // fallback the original loop relied on.
+                const std::string sat = StateKeys::satelliteFromSatBiasKey(key);
                 if (frozen_ionosphere_sats_.count(sat)) continue;
                 Q(idx, idx) = sb_var;
             }
@@ -467,7 +507,7 @@ namespace GnssProcessor {
 
         // Ambiguity process noise (zero for constant ambiguities).
         // Ambiguities missing BIA/ATX phase coverage absorb a time-constant
-        // satellite bias into the float value — no extra process noise needed.
+        // satellite bias into the float value ï¿½ no extra process noise needed.
         // They are excluded from integer AR via the unresolvable-ambiguity set.
         if (state_size > core_state_size_) {
             for (const auto& [key, idx] : ambiguity_indices_) {
@@ -502,10 +542,16 @@ namespace GnssProcessor {
     size_t StateManager::getPositionIndex() const { return 0; }
     size_t StateManager::getVelocityIndex() const { return velocity_idx_; }
     bool   StateManager::hasVelocity() const { return velocity_idx_ != std::numeric_limits<size_t>::max(); }
-    size_t StateManager::getClockIndex() const { return 3; }
+    size_t StateManager::getClockIndex() const {
+        // In baseline mode the clock cancels via DD and has no state.
+        return is_baseline_ ? std::numeric_limits<size_t>::max() : 3;
+    }
     size_t StateManager::getPhaseClockIndex() const { return phase_clock_idx_; }
     bool   StateManager::hasPhaseClock() const { return phase_clock_idx_ != std::numeric_limits<size_t>::max(); }
-    size_t StateManager::getTropoIndex() const { return 4; }
+    size_t StateManager::getTropoIndex() const {
+        // In baseline mode (short baseline) tropo cancels via DD and has no state.
+        return is_baseline_ ? std::numeric_limits<size_t>::max() : 4;
+    }
 
     size_t StateManager::getIonoIndex() const {
         // Deprecated: per-satellite iono states are managed dynamically.
@@ -663,7 +709,7 @@ namespace GnssProcessor {
             return false;
         }
 
-        // Keep the current value — it will be overwritten by a proper
+        // Keep the current value ï¿½ it will be overwritten by a proper
         // geometry-based seed in ensureRequiredStates().
         covariance_.row(idx).setZero();
         covariance_.col(idx).setZero();
@@ -673,6 +719,29 @@ namespace GnssProcessor {
 
         logger->info("Reset ambiguity {} at index {}: marked pending reseed, std={:.3f} m (var={:.3e})",
             key, idx_i, std_m, std_m * std_m);
+        return true;
+    }
+
+    bool StateManager::renameAmbiguity(const std::string& old_key, const std::string& new_key) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (old_key.empty() || new_key.empty()) {
+            logger->warn("renameAmbiguity called with empty key (old='{}', new='{}')", old_key, new_key);
+            return false;
+        }
+        if (old_key == new_key) return true;  // no-op
+        auto it = ambiguity_indices_.find(old_key);
+        if (it == ambiguity_indices_.end()) {
+            logger->trace("renameAmbiguity: old_key '{}' not found", old_key);
+            return false;
+        }
+        if (ambiguity_indices_.count(new_key)) {
+            logger->warn("renameAmbiguity: new_key '{}' already exists (old='{}')", new_key, old_key);
+            return false;
+        }
+        const size_t idx = it->second;
+        ambiguity_indices_.erase(it);
+        ambiguity_indices_[new_key] = idx;
+        logger->trace("Renamed ambiguity '{}' -> '{}' at index {}", old_key, new_key, idx);
         return true;
     }
 
@@ -751,7 +820,7 @@ namespace GnssProcessor {
                 }
             }
 
-            // Per-satellite signal bias — code-only estimation.
+            // Per-satellite signal bias ï¿½ code-only estimation.
             // Phase ambiguities absorb satellite phase biases, so no
             // sat-bias state exists for L signals and the term is zero.
             double sat_bias_term = 0.0;
@@ -805,7 +874,7 @@ namespace GnssProcessor {
             return ionosphere_indices_[satellite];
         }
 
-        // Scale initial variance by obliquity factor 1/sin²(el) when elevation is available
+        // Scale initial variance by obliquity factor 1/sinï¿½(el) when elevation is available
         const double iono_std = config_.getInitialStd().ionosphere;
         double init_var = iono_std * iono_std;
         auto el_it = ionosphere_elevations_.find(satellite);

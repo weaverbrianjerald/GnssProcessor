@@ -1,6 +1,6 @@
-#include "Ionosphere.hpp"
-#include "Constants.hpp"
-#include "ProductCache.hpp"
+#include "atmosphere/Ionosphere.hpp"
+#include "common/Constants.hpp"
+#include "products/ProductCache.hpp"
 #include <fstream>
 #include <sstream>
 #include <filesystem>

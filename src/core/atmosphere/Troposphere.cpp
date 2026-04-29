@@ -13,10 +13,10 @@
  *   numerical weather model data, Geophys. Res. Lett., 33, L07304.
  */
 
-#include "GnssConfig.hpp"
-#include "Troposphere.hpp"
-#include "Constants.hpp"
-#include "Coordinates.hpp"
+#include "config/GnssConfig.hpp"
+#include "atmosphere/Troposphere.hpp"
+#include "common/Constants.hpp"
+#include "math/Coordinates.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -57,7 +57,7 @@ namespace GnssProcessor {
 
     Troposphere::Troposphere(const GnssConfig& config, LogManager& log_mgr)
         : config_(config), log_manager_(log_mgr) {
-        log_manager_.getLogger("troposphere")->info("Troposphere model initialized (GMF): mode={}, elev_mask={}°",
+        log_manager_.getLogger("troposphere")->info("Troposphere model initialized (GMF): mode={}, elev_mask={}Â°",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK", config_.getElevationMaskDeg());
     }
 
@@ -148,7 +148,7 @@ namespace GnssProcessor {
         double abs_lat = std::abs(lat); // radians
 
         // === GMF coefficients (Boehm et al. 2006, Table 1) ===
-        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°
+        // 5 data points at latitudes: 15Â°, 30Â°, 45Â°, 60Â°, 75Â°
         //
         // Hydrostatic: mean and annual amplitude
         static constexpr double ah_mean[] = { 1.2769934e-3, 1.2683230e-3, 1.2465397e-3,
@@ -175,13 +175,13 @@ namespace GnssProcessor {
                                                44.626982e-3, 54.736038e-3 };
 
         // Latitude interpolation index
-        // Grid starts at 15° with 15° spacing: 15°, 30°, 45°, 60°, 75°
-        // Latitudes below 15° use the 15° value; above 75° use the 75° value.
+        // Grid starts at 15Â° with 15Â° spacing: 15Â°, 30Â°, 45Â°, 60Â°, 75Â°
+        // Latitudes below 15Â° use the 15Â° value; above 75Â° use the 75Â° value.
         double lat_deg = abs_lat * 180.0 / Constants::PI;
         double idx_frac = (lat_deg - 15.0) / 15.0;
         idx_frac = std::clamp(idx_frac, 0.0, 4.0);  // clamp to [0, 4] for 5 grid points
         int idx = static_cast<int>(idx_frac);
-        if (idx >= 4) idx = 3; // clamp to last interval [60°, 75°]
+        if (idx >= 4) idx = 3; // clamp to last interval [60Â°, 75Â°]
         double frac = idx_frac - idx;
         frac = std::clamp(frac, 0.0, 1.0);
 

@@ -1,15 +1,163 @@
-#include "RinexParser.hpp"
-#include "ProductParser.hpp"
-#include "TimeUtils.hpp"
+#include "rinex/RinexParser.hpp"
+#include "products/ProductParser.hpp"
+#include "math/TimeUtils.hpp"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <cctype>
+#include <set>
 #include <spdlog/spdlog.h>
-#include "Constants.hpp"
-#include <PppTypes.hpp>
+#include "common/Constants.hpp"
+#include "common/PppTypes.hpp"
 
 namespace GnssProcessor {
+
+    namespace {
+        /**
+         * @brief Translate a RINEX 2.x 2-character observation code to RINEX 3.x 3-character form.
+         *
+         * RINEX 2.x uses two-character observation codes (e.g., "C1", "L1", "P2"), where the
+         * tracking attribute (C/A vs P(Y) vs L2C, etc.) is implicit and depends on the
+         * receiver and constellation. RINEX 3.x makes the attribute explicit as the third
+         * character (e.g., "C1C", "C1W", "C2L"). This function applies the most common
+         * mapping for each (system, frequency-band) pair, matching what mainstream
+         * geodetic receivers (e.g., Trimble NETR9, Septentrio PolaRx) emit. Pseudoranges
+         * recorded as P-codes ("P1", "P2") map to the encrypted/precise attributes
+         * ("C1W"/"C2W" for GPS, "C1P"/"C2P" for GLONASS).
+         *
+         * Where the v2 code is already 3 characters (i.e., already v3), it is returned
+         * unchanged. Where the v2 code length is not 2, it is also returned unchanged.
+         *
+         * @param v2_code Two-character RINEX 2.x observation code (e.g., "C1", "L2", "P1").
+         * @param system  GNSS system the observation belongs to.
+         * @return Three-character RINEX 3.x observation code, or the input if it could not be translated.
+         */
+        std::string translateV2ObsCodeToV3(const std::string& v2_code, System system) {
+            if (v2_code.size() != 2) return v2_code;
+            const char obs_type = v2_code[0];
+            const char freq     = v2_code[1];
+
+            // Validate first char is one of the legal RINEX measurement types.
+            if (obs_type != 'C' && obs_type != 'L' && obs_type != 'D' &&
+                obs_type != 'S' && obs_type != 'P') {
+                return v2_code;
+            }
+
+            // RINEX 2.x P-code: encrypted P(Y) on GPS, P-code on GLONASS.
+            if (obs_type == 'P') {
+                char buf[4] = { 'C', freq, '\0', '\0' };
+                if (system == System::GLONASS) buf[2] = 'P';
+                else                            buf[2] = 'W'; // GPS or unknown -> Z-tracking
+                return std::string(buf);
+            }
+
+            // Determine the attribute character per (system, obs-type, frequency band).
+            //
+            // Note on the GPS L2 disambiguation: a RINEX 2.x mixed file can list both "C2"
+            // (L2 civilian, typically L2C-L on modern survey receivers) and "P2" (L2 P(Y)
+            // tracked via Z-tracking) in the same epoch. Both refer to L2 codes but on
+            // different signals, so they must NOT collapse onto the same v3 code. We map
+            // P2 -> C2W (canonical Z-tracking attribute) and C2 -> C2L (L2C-L attribute);
+            // the carrier phase / Doppler / SNR observables on L2 stay paired with the
+            // P-code track (L2W/D2W/S2W), which matches what NETR9-class receivers report.
+            char attr = 'C';
+            switch (system) {
+            case System::GPS:
+                if (obs_type == 'C') {
+                    // L2 C-code is the L2C-L civilian channel; everything else is C/A or L5-Q.
+                    if      (freq == '1') attr = 'C';
+                    else if (freq == '2') attr = 'L';
+                    else if (freq == '5') attr = 'Q';
+                    else                  attr = 'C';
+                } else {
+                    // L/D/S codes track the carrier paired with the (Z-tracked) P-code on L2.
+                    if      (freq == '1') attr = 'C';
+                    else if (freq == '2') attr = 'W';
+                    else if (freq == '5') attr = 'Q';
+                    else                  attr = 'C';
+                }
+                break;
+            case System::GLONASS:
+                // G1/G2 C/A -> C, G3 (CDMA L3OC) -> I.
+                if (freq == '3') attr = 'I';
+                else             attr = 'C';
+                break;
+            case System::Galileo:
+                // E1/E5a/E5b/E6/E5(a+b) all default to combined I+Q (X) tracking.
+                attr = 'X';
+                break;
+            case System::BeiDou:
+                // B1I (RINEX2 freq 2), B2I (freq 7), B3I (freq 6) all use I attribute.
+                attr = 'I';
+                break;
+            case System::QZSS:
+                // L1 C/A -> C, L2C/L5/L6 -> X (combined).
+                attr = (freq == '1') ? 'C' : 'X';
+                break;
+            case System::SBAS:
+                // L1 C/A -> C, L5 I-channel -> I.
+                attr = (freq == '5') ? 'I' : 'C';
+                break;
+            default:
+                attr = 'C';
+                break;
+            }
+
+            char buf[4] = { obs_type, freq, attr, '\0' };
+            return std::string(buf);
+        }
+
+        /**
+         * @brief Strip leading and trailing ASCII whitespace (incl. CR) in place.
+         */
+        void trimInPlace(std::string& s) {
+            const auto first = s.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) { s.clear(); return; }
+            const auto last = s.find_last_not_of(" \t\r\n");
+            s = s.substr(first, last - first + 1);
+        }
+
+        /**
+         * @brief Parse an integer from a fixed-width substring; returns false on blank/invalid.
+         */
+        bool parseFixedInt(const std::string& line, size_t off, size_t len, int& out) {
+            if (off >= line.size()) return false;
+            std::string s = line.substr(off, std::min(len, line.size() - off));
+            trimInPlace(s);
+            if (s.empty()) return false;
+            try { out = std::stoi(s); return true; }
+            catch (...) { return false; }
+        }
+
+        /**
+         * @brief Parse a double from a fixed-width substring; returns false on blank/invalid.
+         */
+        bool parseFixedDouble(const std::string& line, size_t off, size_t len, double& out) {
+            if (off >= line.size()) return false;
+            std::string s = line.substr(off, std::min(len, line.size() - off));
+            trimInPlace(s);
+            if (s.empty()) return false;
+            try { out = std::stod(s); return true; }
+            catch (...) { return false; }
+        }
+
+        /**
+         * @brief Map first-character system identifier to System enum.
+         */
+        System systemFromSatPrefix(char c) {
+            switch (c) {
+            case 'G': return System::GPS;
+            case 'R': return System::GLONASS;
+            case 'E': return System::Galileo;
+            case 'C': return System::BeiDou;
+            case 'J': return System::QZSS;
+            case 'S': return System::SBAS;
+            default:  return System::Unknown;
+            }
+        }
+    } // anonymous namespace
+
 
     /**
      * @brief Construct a RinexParser.
@@ -235,6 +383,81 @@ namespace GnssProcessor {
                             log_manager_.getLogger("rinex_parser")->info("Parsed {} observation types for system {}: {}", current_obs_types.size(), sys, obs_types_str);
                         }
                     }
+                    else if (label.find("# / TYPES OF OBSERV") != std::string::npos) {
+                        // RINEX 2.x observation type list (single, shared across all systems).
+                        // Format: I6 num_types, then up to 9 codes per line in 6-char fields
+                        // (4 leading spaces + A2 code) starting at column 6 and ending at
+                        // column 60. Continuation lines repeat the format with cols 0-5 blank.
+                        int num_types = 0;
+                        if (!parseFixedInt(line, 0, 6, num_types) || num_types <= 0) {
+                            log_manager_.getLogger("rinex_parser")->warn(
+                                "Invalid # / TYPES OF OBSERV count in line: {}", line);
+                            continue;
+                        }
+
+                        std::vector<std::string> v2_obs_types;
+                        v2_obs_types.reserve(static_cast<size_t>(num_types));
+
+                        auto extractCodesFromLine = [&](const std::string& src) {
+                            // Codes occupy 6-char fields starting at column 6, up to 9 per line.
+                            for (size_t off = 6; off + 6 <= 60 &&
+                                 v2_obs_types.size() < static_cast<size_t>(num_types); off += 6) {
+                                if (off + 6 > src.size()) break;
+                                std::string code = src.substr(off + 4, 2);
+                                trimInPlace(code);
+                                if (code.size() == 2) {
+                                    v2_obs_types.push_back(code);
+                                }
+                            }
+                        };
+
+                        extractCodesFromLine(line);
+
+                        // Read continuation lines until we have all declared types or
+                        // hit a non-continuation line.
+                        while (v2_obs_types.size() < static_cast<size_t>(num_types)) {
+                            std::string cont;
+                            if (!std::getline(file, cont)) break;
+                            // Strip trailing CR so column positions are reliable.
+                            if (!cont.empty() && cont.back() == '\r') cont.pop_back();
+
+                            // Sanity check: continuation lines should also carry the same label.
+                            const std::string clabel = cont.size() >= 60 ? cont.substr(60) : "";
+                            if (clabel.find("# / TYPES OF OBSERV") == std::string::npos) {
+                                log_manager_.getLogger("rinex_parser")->warn(
+                                    "Expected # / TYPES OF OBSERV continuation; got '{}'.  "
+                                    "Header parsing may be incomplete.", cont);
+                                break;
+                            }
+                            extractCodesFromLine(cont);
+                        }
+
+                        if (v2_obs_types.size() != static_cast<size_t>(num_types)) {
+                            log_manager_.getLogger("rinex_parser")->warn(
+                                "Expected {} v2 observation types, parsed {}",
+                                num_types, v2_obs_types.size());
+                        }
+
+                        // RINEX 2.x is observation-type-shared: assign the same list to every
+                        // system the file may contain. Mixed (M) files use these for all
+                        // constellations; pure (G/R/E/C/J/S) files only ever exercise one.
+                        static const System kAllSystems[] = {
+                            System::GPS, System::GLONASS, System::Galileo,
+                            System::BeiDou, System::QZSS, System::SBAS,
+                        };
+                        for (System sys : kAllSystems) {
+                            header_.obs_types[sys] = v2_obs_types;
+                        }
+
+                        std::string types_str;
+                        for (size_t i = 0; i < v2_obs_types.size(); ++i) {
+                            types_str += v2_obs_types[i];
+                            if (i + 1 < v2_obs_types.size()) types_str += ", ";
+                        }
+                        log_manager_.getLogger("rinex_parser")->info(
+                            "Parsed {} RINEX 2.x observation types (shared across systems): {}",
+                            v2_obs_types.size(), types_str);
+                    }
                     else if (label.find("INTERVAL") != std::string::npos) {
                         header_.interval = std::stod(line.substr(0, 10));
                     }
@@ -379,113 +602,237 @@ namespace GnssProcessor {
                         }
                     }
                     else {
-                        // RINEX 2.x parsing
-                        if (line.length() < 26) continue;
-                        std::istringstream iss(line.substr(0, 26));
-                        int year, month, day, hour, min, flag;
-                        double sec;
-                        iss >> year >> month >> day >> hour >> min >> sec >> flag;
-                        if (!iss || flag > 1) {
-                            log_manager_.getLogger("rinex_parser")->debug("Skipping invalid epoch line: {}", line);
+                        // RINEX 2.x epoch + observation parsing.
+                        //
+                        // Epoch record (FORTRAN 1-indexed columns; 0-indexed below):
+                        //   col 1-2   : 2-digit year
+                        //   col 4-5   : month
+                        //   col 7-8   : day
+                        //   col 10-11 : hour
+                        //   col 13-14 : minute
+                        //   col 16-26 : seconds (F11.7)
+                        //   col 28    : epoch flag (0 ok, 1 power fail, 2-5 events, 6 cycle slip)
+                        //   col 29-31 : number of satellites (or records-to-follow for events)
+                        //   col 32+   : satellite list, A1 + I2.2 per sat, max 12 per line.
+                        //               Continuation lines pad cols 0-31 with spaces.
+                        //
+                        // Per-satellite observation block: ceil(N_obs_types / 5) lines, each
+                        // with up to 5 observations laid out as F14.3, I1, I1 (16 chars each).
+                        // 0.0 means "data not available".
+
+                        // Strip a trailing CR so column-based slicing is robust on CRLF files.
+                        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+                        // An epoch record starts with a space and has digits at columns 1-2
+                        // (the 2-digit year). Anything else (orphan obs lines, blank rows from
+                        // truncated event records, etc.) is silently skipped.
+                        if (line.size() < 32 ||
+                            !std::isdigit(static_cast<unsigned char>(line[1])) ||
+                            !std::isdigit(static_cast<unsigned char>(line[2]))) {
                             continue;
                         }
-                        year = year < 80 ? 2000 + year : 1900 + year; // RINEX 2.x 2-digit year
-                        GnssTime epoch_time = TimeUtils::GnssTimeFromDate(year, month, day, hour, min, sec, header_.time_system);
+
+                        int year = 0, month = 0, day = 0, hour = 0, minute = 0;
+                        double seconds = 0.0;
+                        int epoch_flag = 0, num_records = 0;
+
+                        if (!parseFixedInt   (line,  1,  2, year)    ||
+                            !parseFixedInt   (line,  4,  2, month)   ||
+                            !parseFixedInt   (line,  7,  2, day)     ||
+                            !parseFixedInt   (line, 10,  2, hour)    ||
+                            !parseFixedInt   (line, 13,  2, minute)  ||
+                            !parseFixedDouble(line, 15, 11, seconds)) {
+                            log_manager_.getLogger("rinex_parser")->debug(
+                                "Skipping malformed v2 epoch line: {}", line);
+                            continue;
+                        }
+                        // The flag and num-records columns may be blank for sparse files;
+                        // both default to zero on parse failure (which is the benign case).
+                        parseFixedInt(line, 28, 1, epoch_flag);
+                        parseFixedInt(line, 29, 3, num_records);
+
+                        // Event records (flag 2-5) carry num_records *header-style* lines that
+                        // we don't currently consume; skip them so we stay aligned.
+                        if (epoch_flag >= 2 && epoch_flag <= 5) {
+                            for (int i = 0; i < num_records; ++i) {
+                                std::string skipline;
+                                if (!std::getline(file, skipline)) break;
+                            }
+                            continue;
+                        }
+                        // Cycle-slip flag (6) records list satellites with no obs values; skip.
+                        if (epoch_flag == 6) {
+                            const int v2_sat_lines = (num_records + 11) / 12 - 1; // continuation lines only
+                            for (int i = 0; i < v2_sat_lines; ++i) {
+                                std::string skipline;
+                                if (!std::getline(file, skipline)) break;
+                            }
+                            continue;
+                        }
+                        if (epoch_flag != 0 && epoch_flag != 1) {
+                            log_manager_.getLogger("rinex_parser")->debug(
+                                "Skipping v2 epoch with unsupported flag {}", epoch_flag);
+                            continue;
+                        }
+
+                        // RINEX 2.x convention: years <80 belong to the 2000s, otherwise 1900s.
+                        year = (year < 80) ? (2000 + year) : (1900 + year);
+
+                        GnssTime epoch_time = TimeUtils::GnssTimeFromDate(
+                            year, month, day, hour, minute, seconds, header_.time_system);
                         if (first_epoch) {
                             time_of_first_obs_ = epoch_time;
                             first_epoch = false;
                         }
 
-                        std::string sat_list = line.substr(29);
-                        std::istringstream sat_iss(sat_list);
-                        int num_sats;
-                        sat_iss >> num_sats;
+                        // Pull satellite IDs from the epoch line (cols 32+) plus continuation
+                        // lines (also at cols 32+). Each ID is 3 chars: system letter + 2-digit PRN.
+                        // Pre-RINEX-2.10 GPS-only files may emit a leading space in place of the
+                        // system letter ("  5") — convert those to "G05".
                         std::vector<std::string> sat_ids;
-                        for (int i = 0; i < num_sats; ++i) {
-                            if ((i % 12 == 0 && i > 0) || sat_iss.eof()) {
-                                if (!std::getline(file, line)) break;
-                                sat_iss.clear();
-                                sat_iss.str(line);
+                        sat_ids.reserve(static_cast<size_t>(num_records));
+
+                        auto extractSatsFromLine = [&](const std::string& src) {
+                            for (size_t pos = 32;
+                                 pos + 3 <= src.size() &&
+                                 sat_ids.size() < static_cast<size_t>(num_records);
+                                 pos += 3) {
+                                std::string sat = src.substr(pos, 3);
+                                // All-blank slot signals the end of the on-line list.
+                                if (sat.find_first_not_of(' ') == std::string::npos) break;
+
+                                // Normalize blanks/system-letter quirks:
+                                //   "  5" or " 5"  -> "G05"   (legacy GPS-only files)
+                                //   "G 5"          -> "G05"
+                                //   "G 5"  pieces  -> already 3 chars, just zero-pad PRN
+                                if (sat[0] == ' ') sat[0] = 'G';
+                                if (sat[1] == ' ') sat[1] = '0';
+                                if (sat.size() < 3 || sat[2] == ' ') {
+                                    // Defensive: shouldn't happen if file is well-formed.
+                                    log_manager_.getLogger("rinex_parser")->debug(
+                                        "Malformed sat slot at col {} in: {}", pos, src);
+                                    continue;
+                                }
+                                sat_ids.push_back(sat);
                             }
-                            std::string sat_id;
-                            sat_iss >> sat_id;
-                            if (sat_id.length() == 2) sat_id = "G" + sat_id; // RINEX 2.x omits system for GPS
-                            else if (sat_id[0] == 'R' && sat_id.length() == 2) sat_id = "R0" + sat_id[1];
-                            sat_ids.push_back(sat_id);
+                        };
+                        extractSatsFromLine(line);
+
+                        while (sat_ids.size() < static_cast<size_t>(num_records)) {
+                            std::string contline;
+                            if (!std::getline(file, contline)) break;
+                            if (!contline.empty() && contline.back() == '\r') contline.pop_back();
+                            // Continuation lines pad cols 0-31 with spaces; if they're shorter,
+                            // pad so col 32 is reachable.
+                            if (contline.size() < 32) contline.resize(32, ' ');
+                            extractSatsFromLine(contline);
                         }
 
+                        if (sat_ids.size() != static_cast<size_t>(num_records)) {
+                            log_manager_.getLogger("rinex_parser")->warn(
+                                "Epoch declared {} satellites; recovered {} IDs",
+                                num_records, sat_ids.size());
+                        }
+
+                        // RINEX 2.x is type-shared. Use any populated entry; default to GPS.
+                        const auto& shared_obs_types = header_.obs_types[System::GPS];
+                        if (shared_obs_types.empty()) {
+                            log_manager_.getLogger("rinex_parser")->error(
+                                "No # / TYPES OF OBSERV declared in v2 header; cannot parse epoch.");
+                            // Without an obs-types declaration we can't know how many lines
+                            // per satellite to consume; bail on this epoch.
+                            continue;
+                        }
+                        const size_t n_obs_types = shared_obs_types.size();
+                        const size_t lines_per_sat = (n_obs_types + 4) / 5; // ceil(N/5)
+
+                        const auto& noise_cfg = config_.getDefaultMeasurementNoise();
+                        const double default_code_var    = noise_cfg.code_std_m    * noise_cfg.code_std_m;
+                        const double default_phase_var   = noise_cfg.phase_std_m   * noise_cfg.phase_std_m;
+                        const double default_doppler_var = noise_cfg.doppler_std_m * noise_cfg.doppler_std_m;
+
                         for (const auto& sat_id : sat_ids) {
-                            if (!std::getline(file, line)) {
-                                log_manager_.getLogger("rinex_parser")->warn("Unexpected end of file while reading satellite data for {}", sat_id);
+                            // Slurp the per-satellite obs block into a single padded buffer so
+                            // we can index obs[j] at a fixed offset regardless of trailing
+                            // whitespace stripping in the source file.
+                            std::string obs_buf;
+                            obs_buf.reserve(80 * lines_per_sat);
+                            bool short_block = false;
+                            for (size_t k = 0; k < lines_per_sat; ++k) {
+                                std::string oline;
+                                if (!std::getline(file, oline)) {
+                                    short_block = true;
+                                    break;
+                                }
+                                if (!oline.empty() && oline.back() == '\r') oline.pop_back();
+                                if (oline.size() < 80) oline.resize(80, ' ');
+                                obs_buf += oline;
+                            }
+                            if (short_block) {
+                                log_manager_.getLogger("rinex_parser")->warn(
+                                    "Unexpected EOF while reading obs block for {}", sat_id);
                                 break;
                             }
-                            System system = sat_id[0] == 'G' ? System::GPS :
-                                sat_id[0] == 'R' ? System::GLONASS :
-                                sat_id[0] == 'E' ? System::Galileo :
-                                sat_id[0] == 'C' ? System::BeiDou :
-                                sat_id[0] == 'J' ? System::QZSS :
-                                sat_id[0] == 'S' ? System::SBAS : System::Unknown;
+
+                            const System system = systemFromSatPrefix(sat_id[0]);
                             if (system == System::Unknown) {
-                                log_manager_.getLogger("rinex_parser")->warn("Unknown system for satellite: {}", sat_id);
+                                log_manager_.getLogger("rinex_parser")->debug(
+                                    "Unknown system for satellite '{}'; skipping epoch row", sat_id);
                                 continue;
                             }
 
                             RinexObservation obs;
-                            obs.satellite = sat_id;
-                            obs.system = system;
-                            obs.time = epoch_time;
+                            obs.satellite   = sat_id;
+                            obs.system      = system;
+                            obs.time        = epoch_time;
                             obs.receiver_id = header_.marker_name;
 
-                            auto obs_types = header_.obs_types[system];
-                            std::istringstream data_iss(line);
-                            int types_per_line = 5; // RINEX 2.x: 5 obs per line
-                            for (size_t j = 0; j < obs_types.size(); ++j) {
-                                if (j > 0 && j % types_per_line == 0) {
-                                    if (!std::getline(file, line)) break;
-                                    data_iss.clear();
-                                    data_iss.str(line);
-                                }
-                                std::string value_str, lli_str, snr_str;
-                                data_iss >> std::setw(14) >> value_str >> std::setw(1) >> lli_str >> std::setw(1) >> snr_str;
-                                if (value_str.empty() || value_str.find_first_not_of(" \t") == std::string::npos) {
+                            for (size_t j = 0; j < n_obs_types; ++j) {
+                                const size_t line_idx = j / 5;
+                                const size_t slot_idx = j % 5;
+                                const size_t base = line_idx * 80 + slot_idx * 16;
+                                if (base + 16 > obs_buf.size()) break;
+
+                                std::string value_str = obs_buf.substr(base, 14);
+                                const char lli_c = obs_buf[base + 14];
+                                // (SNR strength indicator is at base+15; not currently consumed.)
+
+                                trimInPlace(value_str);
+                                if (value_str.empty()) continue;
+
+                                double value = 0.0;
+                                try { value = std::stod(value_str); }
+                                catch (const std::exception&) {
+                                    log_manager_.getLogger("rinex_parser")->debug(
+                                        "Invalid v2 obs value '{}' for {} {}",
+                                        value_str, sat_id, shared_obs_types[j]);
                                     continue;
                                 }
-                                try {
-                                    double value = std::stod(value_str);
-                                    /*
-                                    if (system == System::GLONASS && glonass_freq_slots_.count(sat_id)) {
-                                        value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
-                                    }
-                                    */
-                                    obs.measurements[obs_types[j]] = value;
+                                // Per RINEX 2.x: 0.0 indicates "observation not made".
+                                if (value == 0.0) continue;
 
-                                    const auto& n = config_.getDefaultMeasurementNoise();
-                                    const double default_code_var = n.code_std_m * n.code_std_m;
-                                    const double default_phase_var = n.phase_std_m * n.phase_std_m;
-                                    const double default_doppler_var = n.doppler_std_m * n.doppler_std_m;
+                                // Translate the v2 2-char code into the v3 3-char form the
+                                // downstream pipeline (PppModel, MeasurementModel, etc.) expects.
+                                const std::string v3_code =
+                                    translateV2ObsCodeToV3(shared_obs_types[j], system);
 
-                                    double variance = default_code_var;
-                                    if (!obs_types[j].empty()) {
-                                        switch (obs_types[j][0]) {
-                                        case 'L': variance = default_phase_var; break;
-                                        case 'D': variance = default_doppler_var; break;
-                                        case 'S': variance = 1.0; break;
-                                        default:  variance = default_code_var; break;
-                                        }
-                                    }
+                                obs.measurements[v3_code] = value;
 
-                                    obs.variances[obs_types[j]] = variance;
-                                    if (!lli_str.empty() && lli_str.find_first_of("0123456789") != std::string::npos) {
-                                        obs.lli_flags[obs_types[j]] = std::stoi(lli_str);
-                                    }
-                                    else {
-                                        obs.lli_flags[obs_types[j]] = 0;
-                                    }
+                                double variance = default_code_var;
+                                switch (v3_code[0]) {
+                                case 'L': variance = default_phase_var;   break;
+                                case 'D': variance = default_doppler_var; break;
+                                case 'S': variance = 1.0;                 break;
+                                case 'C':
+                                default:  variance = default_code_var;    break;
                                 }
-                                catch (const std::exception& e) {
-                                    log_manager_.getLogger("rinex_parser")->debug("Invalid observation value for {} {}: {}", sat_id, obs_types[j], e.what());
-                                }
+                                obs.variances[v3_code] = variance;
+
+                                int lli = 0;
+                                if (lli_c >= '0' && lli_c <= '9') lli = lli_c - '0';
+                                obs.lli_flags[v3_code] = lli;
                             }
+
                             if (!obs.measurements.empty()) {
                                 observations_.push_back(obs);
                             }
@@ -709,5 +1056,4 @@ namespace GnssProcessor {
         return epoch_times;
     }
 
-    } // namespace GnssProcessor
-    //#endif
+} // namespace GnssProcessor

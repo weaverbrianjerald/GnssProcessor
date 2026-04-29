@@ -7,8 +7,9 @@
  * integer ambiguity resolution and fix-and-hold.
  */
 
-#include "AmbiguityResolver.hpp"
-#include "Constants.hpp"
+#include "filter/AmbiguityResolver.hpp"
+#include "filter/StateKeySchema.hpp"
+#include "common/Constants.hpp"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -287,13 +288,17 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
     std::vector<AmbInfo> ambs;
 
     for (const auto& [key, idx] : amb_map) {
-        auto sep = key.find('_');
-        if (sep == std::string::npos) continue;
+        // Skip any non-PPP keys that may share the ambiguity map (e.g.
+        // baseline DD entries in mixed configurations).  The PPP parser
+        // splits on the FIRST underscore, preserving iono-free combos
+        // ("L1C_L5Q") in the signal field unchanged.
+        const auto parsed = StateKeys::parseAmbiguityKey(key);
+        if (!parsed) continue;
 
         AmbInfo info;
         info.key = key;
-        info.satellite = key.substr(0, sep);
-        info.signal = key.substr(sep + 1);
+        info.satellite = parsed->satellite;
+        info.signal = parsed->signal;
         info.constellation = info.satellite.substr(0, 1);
         info.state_idx = static_cast<int>(idx);
 
@@ -308,7 +313,7 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         // Skip below AR elevation mask
         if (info.elevation < config_.elevation_mask_ar) continue;
 
-        // Skip unresolvable ambiguities � missing BIA/ATX coverage means
+        // Skip unresolvable ambiguities � missing BIA/ATX coverage means
         // the float value absorbs a time-constant bias and cannot be
         // resolved to the correct integer.
         if (state_manager.isAmbiguityUnresolvable(key)) continue;
@@ -352,7 +357,7 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
 }
 
 // ===========================================================================
-// Resolve (no WL constraint � forwards to constrained with empty map)
+// Resolve (no WL constraint � forwards to constrained with empty map)
 // ===========================================================================
 
 AmbiguityResolution AmbiguityResolver::resolve(
@@ -456,7 +461,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
         return result;
     }
 
-    // Fix succeeded � compute fixed state and covariance
+    // Fix succeeded � compute fixed state and covariance
     // x_fixed = x - Qab * inv(Qb) * (y_dd - afix)
     Eigen::VectorXd residual = y_dd - afix;
     Eigen::MatrixXd Qb_inv = Qb.ldlt().solve(Eigen::MatrixXd::Identity(nb, nb));
@@ -476,6 +481,224 @@ AmbiguityResolution AmbiguityResolver::resolve(
         log->debug("  DD {}-{} {}: float={:.3f} fixed={:.0f} diff={:.3f}",
                    pairs[k].sat_i, pairs[k].sat_ref, pairs[k].signal,
                    y_dd(k), afix(k), y_dd(k) - afix(k));
+    }
+
+    return result;
+}
+
+// ===========================================================================
+// Resolve (baseline / DD path)
+//
+// The state vector already holds DD ambiguity floats keyed
+// "DD|cons|sat_i|rov_code|pivot".  The MLAMBDA core expects integer-
+// valued targets, so meter-valued floats are converted to cycles by
+// dividing by the per-pair carrier wavelength before the search and
+// the integer fix is multiplied back to meters for the back-substitution
+// step.  No SD subtraction is applied — the state is already DD.
+// ===========================================================================
+
+namespace {
+
+/// Constellation string ("GPS", "Galileo", ...) → System enum.
+/// Mirrors PppUtils::getSystemString(System) inversely.  Unknown returns
+/// System::Unknown so the caller can skip the row.
+GnssProcessor::System ddStringToSystem(const std::string& cons) {
+    using GnssProcessor::System;
+    if (cons == "GPS")     return System::GPS;
+    if (cons == "Galileo") return System::Galileo;
+    if (cons == "GLONASS") return System::GLONASS;
+    if (cons == "BeiDou")  return System::BeiDou;
+    if (cons == "QZSS")    return System::QZSS;
+    if (cons == "SBAS")    return System::SBAS;
+    return System::Unknown;
+}
+
+} // namespace
+
+AmbiguityResolution AmbiguityResolver::resolveDd(
+    const StateManager& state_manager,
+    const std::vector<PppObservation>& observations,
+    const std::set<std::string>& exclude_keys) {
+
+    auto log = log_manager_.getLogger("ambiguity_resolver");
+    AmbiguityResolution result;
+
+    if (config_.ar_mode == 0) {
+        log->debug("AR (DD) disabled (ar_mode=0)");
+        return result;
+    }
+
+    // Build sat -> elevation lookup so we can apply the elevation mask.
+    std::map<std::string, double> sat_elev;
+    for (const auto& obs : observations) {
+        sat_elev[obs.satellite] = obs.elevation;
+    }
+
+    // Per-DD-pair info captured during key parsing.  Stored in a local
+    // struct rather than reusing DdPair because DD-mode pairs only need
+    // a single state index (the DD itself) plus the per-pair wavelength.
+    struct DdEntry {
+        int state_idx;        ///< Index of the DD ambiguity float in the full state vector.
+        std::string sat_i;    ///< Non-pivot satellite (for diagnostics).
+        std::string sat_p;    ///< Pivot satellite (for diagnostics).
+        std::string rov_code; ///< Rover RINEX code (drives wavelength lookup).
+        double      lambda;   ///< Carrier wavelength of @c rov_code on this satellite (m).
+    };
+    std::vector<DdEntry> entries;
+
+    const auto& amb_map = state_manager.getAmbiguities();
+    const Eigen::VectorXd x_full = state_manager.getStateVector();
+
+    int n_skipped_excluded  = 0;  // non-integer-capable per MeasurementModel
+    int n_skipped_elevation = 0;
+    int n_skipped_unknown   = 0;
+    int n_skipped_no_obs    = 0;
+
+    for (const auto& [key, idx] : amb_map) {
+        if (key.compare(0, 3, "DD|") != 0) continue;
+
+        // Parse "DD|<cons>|<sat_i>|<rov_code>|<pivot>" by walking '|'.
+        // Bail on any malformed key — the writer side guarantees this
+        // format, so a mismatch likely means stale state from another
+        // mode and should be ignored.
+        const auto p1 = key.find('|', 0);              // after "DD"
+        const auto p2 = key.find('|', p1 + 1);
+        const auto p3 = key.find('|', p2 + 1);
+        const auto p4 = key.find('|', p3 + 1);
+        if (p1 == std::string::npos || p2 == std::string::npos
+         || p3 == std::string::npos || p4 == std::string::npos) {
+            ++n_skipped_unknown;
+            continue;
+        }
+        const std::string cons     = key.substr(p1 + 1, p2 - p1 - 1);
+        const std::string sat_i    = key.substr(p2 + 1, p3 - p2 - 1);
+        const std::string rov_code = key.substr(p3 + 1, p4 - p3 - 1);
+        const std::string pivot    = key.substr(p4 + 1);
+
+        if (exclude_keys.count(key)) { ++n_skipped_excluded; continue; }
+
+        auto e_it = sat_elev.find(sat_i);
+        if (e_it == sat_elev.end()) { ++n_skipped_no_obs; continue; }
+        if (e_it->second < config_.elevation_mask_ar) {
+            ++n_skipped_elevation;
+            continue;
+        }
+
+        const System sys = ddStringToSystem(cons);
+        if (sys == System::Unknown) { ++n_skipped_unknown; continue; }
+
+        const double lam = ppp_utils_.getWavelength(sys, rov_code, sat_i);
+        if (!(std::isfinite(lam) && lam > 0.0)) { ++n_skipped_unknown; continue; }
+
+        const int sidx = static_cast<int>(idx);
+        if (sidx < 0 || sidx >= x_full.size()) { ++n_skipped_unknown; continue; }
+
+        // A DD ambiguity that's still at exactly its initial seed has
+        // had no measurement update applied yet; including it would
+        // distort the search and the ratio test.
+        if (x_full(sidx) == 0.0) { ++n_skipped_unknown; continue; }
+
+        entries.push_back({ sidx, sat_i, pivot, rov_code, lam });
+    }
+
+    result.num_candidates = static_cast<int>(entries.size());
+
+    log->debug("AR (DD) candidate set: {} eligible, skipped: non_integer_capable={}, "
+               "elev<mask={}, no_obs={}, malformed/unknown={}",
+               entries.size(), n_skipped_excluded, n_skipped_elevation,
+               n_skipped_no_obs, n_skipped_unknown);
+
+    if (entries.size() < 2) {
+        log->debug("AR (DD): need at least 2 candidates, have {}", entries.size());
+        return result;
+    }
+
+    const Eigen::MatrixXd P_full = state_manager.getCovariance();
+    const int nb = static_cast<int>(entries.size());
+    const int na = static_cast<int>(x_full.size());
+
+    // Float vector and covariance in METERS (the state's native units).
+    Eigen::VectorXd y_meters(nb);
+    Eigen::MatrixXd Qb_meters(nb, nb);
+    for (int i = 0; i < nb; ++i) {
+        y_meters(i) = x_full(entries[i].state_idx);
+        for (int j = 0; j < nb; ++j) {
+            Qb_meters(i, j) = P_full(entries[i].state_idx, entries[j].state_idx);
+        }
+    }
+    Qb_meters = 0.5 * (Qb_meters + Qb_meters.transpose());
+
+    // Convert to CYCLES for MLAMBDA.  diag(D) = 1/lambda is the
+    // meters→cycles transform; symmetric scaling for the covariance.
+    Eigen::VectorXd y_cycles(nb);
+    Eigen::MatrixXd Qb_cycles(nb, nb);
+    for (int i = 0; i < nb; ++i) {
+        y_cycles(i) = y_meters(i) / entries[i].lambda;
+        for (int j = 0; j < nb; ++j) {
+            Qb_cycles(i, j) = Qb_meters(i, j)
+                            / (entries[i].lambda * entries[j].lambda);
+        }
+    }
+
+    Eigen::VectorXd afix_cycles;
+    Eigen::VectorXd s;
+    if (!mlambda(y_cycles, Qb_cycles, afix_cycles, s)) {
+        log->debug("MLAMBDA (DD) failed (covariance not positive definite or search failed)");
+        return result;
+    }
+
+    if (s(0) <= 0.0 || s(1) <= 0.0) {
+        log->debug("MLAMBDA (DD): invalid squared distances s1={:.6f} s2={:.6f}", s(0), s(1));
+        return result;
+    }
+
+    result.ratio = s(1) / s(0);
+    log->info("MLAMBDA (DD): {} ambs, ratio={:.2f} (threshold={:.1f}), s1={:.4f} s2={:.4f}",
+              nb, result.ratio, config_.ratio_threshold, s(0), s(1));
+
+    if (result.ratio < config_.ratio_threshold) {
+        log->info("AR (DD) ratio test failed: {:.2f} < {:.1f}",
+                  result.ratio, config_.ratio_threshold);
+        return result;
+    }
+
+    // Convert the integer fix back to METERS for the back-substitution.
+    Eigen::VectorXd afix_meters(nb);
+    for (int i = 0; i < nb; ++i) {
+        afix_meters(i) = afix_cycles(i) * entries[i].lambda;
+    }
+
+    // Cross-covariance between full state and DD floats (no SD subtraction
+    // — we're picking columns directly because the state IS the DD).
+    Eigen::MatrixXd Qab_meters(na, nb);
+    for (int k = 0; k < na; ++k) {
+        for (int dd = 0; dd < nb; ++dd) {
+            Qab_meters(k, dd) = P_full(k, entries[dd].state_idx);
+        }
+    }
+
+    // Standard fix-back: x_fixed = x - Qab * Qb^-1 * (y - afix).
+    const Eigen::VectorXd residual = y_meters - afix_meters;
+    const Eigen::MatrixXd Qb_inv =
+        Qb_meters.ldlt().solve(Eigen::MatrixXd::Identity(nb, nb));
+    const Eigen::MatrixXd K_fix = Qab_meters * Qb_inv;
+
+    result.fixed_state      = x_full - K_fix * residual;
+    result.fixed_covariance = P_full - K_fix * Qab_meters.transpose();
+    result.fixed_covariance =
+        0.5 * (result.fixed_covariance + result.fixed_covariance.transpose());
+
+    result.success   = true;
+    result.num_fixed = nb;
+
+    log->info("AR (DD) succeeded: {} ambiguities fixed, ratio={:.2f}", nb, result.ratio);
+
+    if (log->should_log(spdlog::level::debug)) {
+        for (int k = 0; k < nb; ++k) {
+            log->debug("  DD {}-{} {}: float={:.4f} m fixed={:.4f} m diff={:.4f} m (lambda={:.4f} m)",
+                       entries[k].sat_i, entries[k].sat_p, entries[k].rov_code,
+                       y_meters(k), afix_meters(k), residual(k), entries[k].lambda);
+        }
     }
 
     return result;
@@ -590,7 +813,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     //
     // Only NL candidates enter the LAMBDA search.  Unpaired DD ambiguities
     // (single-signal DDs without a matching second frequency or WL integer)
-    // are excluded � they cannot be properly resolved in the WL/NL
+    // are excluded � they cannot be properly resolved in the WL/NL
     // framework and would contaminate the ratio test.
     const int n_nl  = static_cast<int>(nl_candidates.size());
 
@@ -804,6 +1027,71 @@ void AmbiguityResolver::holdAmbiguities(StateManager& state_manager,
     state_manager.setCovariance(P);
 
     log->info("Fix-and-hold applied: {} DD constraints, hold_var={:.4f}", nv, config_.hold_variance);
+}
+
+// ===========================================================================
+// Fix-and-hold for baseline (DD) state
+//
+// Each ambiguity row is a single selector H(k, dd_idx)=1 instead of the
+// (i, ref) row used by the SD path — the state value already IS the DD.
+// ===========================================================================
+
+void AmbiguityResolver::holdAmbiguitiesDd(StateManager& state_manager,
+                                          const AmbiguityResolution& resolution) {
+    auto log = log_manager_.getLogger("ambiguity_resolver");
+
+    if (!resolution.success || config_.ar_mode != 3) return;
+
+    // Collect every DD-keyed ambiguity index that is in range of the
+    // resolution's fixed_state.  An ambiguity that was added or removed
+    // between resolveDd() and this call is silently skipped — its row
+    // would reference a stale or non-existent fixed value.
+    std::vector<int> dd_indices;
+    const auto& amb_map = state_manager.getAmbiguities();
+    const Eigen::Index n_fixed = resolution.fixed_state.size();
+    for (const auto& [key, idx] : amb_map) {
+        if (key.compare(0, 3, "DD|") != 0) continue;
+        const Eigen::Index ei = static_cast<Eigen::Index>(idx);
+        if (ei < 0 || ei >= n_fixed) continue;
+        dd_indices.push_back(static_cast<int>(idx));
+    }
+
+    if (dd_indices.empty()) {
+        log->debug("Fix-and-hold (DD): no DD ambiguities in state, skipping");
+        return;
+    }
+
+    const int nb = static_cast<int>(dd_indices.size());
+    const int nx = static_cast<int>(state_manager.getStateSize());
+    Eigen::VectorXd x = state_manager.getStateVector();
+    Eigen::MatrixXd P = state_manager.getCovariance();
+
+    // Pseudo-observation v(k) = fixed_state(dd_k) - x(dd_k).
+    // H(k, dd_k) = 1 — selector rather than difference.
+    Eigen::VectorXd v(nb);
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nb, nx);
+    for (int k = 0; k < nb; ++k) {
+        const int idx = dd_indices[k];
+        v(k) = resolution.fixed_state(idx) - x(idx);
+        H(k, idx) = 1.0;
+    }
+
+    Eigen::MatrixXd R = Eigen::MatrixXd::Identity(nb, nb) * config_.hold_variance;
+
+    Eigen::MatrixXd PHt = P * H.transpose();
+    Eigen::MatrixXd S   = H * PHt + R;
+    Eigen::MatrixXd K   = PHt * S.ldlt().solve(Eigen::MatrixXd::Identity(nb, nb));
+
+    x = x + K * v;
+    Eigen::MatrixXd IKH = Eigen::MatrixXd::Identity(nx, nx) - K * H;
+    P = IKH * P * IKH.transpose() + K * R * K.transpose();
+    P = 0.5 * (P + P.transpose());
+
+    state_manager.setStateVector(x);
+    state_manager.setCovariance(P);
+
+    log->info("Fix-and-hold (DD) applied: {} ambiguities, hold_var={:.4f}",
+              nb, config_.hold_variance);
 }
 
 } // namespace GnssProcessor

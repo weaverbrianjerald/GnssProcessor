@@ -9,7 +9,7 @@
  * Logging is performed via spdlog for diagnostics and progress reporting.
  */
 
-#include "SinexParser.hpp"
+#include "sinex/SinexParser.hpp"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>

@@ -3,9 +3,9 @@
  * @brief Implementation of IMU strapdown mechanization.
  */
 
-#include "ImuIntegrator.hpp"
-#include "Constants.hpp"
-#include "TimeUtils.hpp"
+#include "filter/ImuIntegrator.hpp"
+#include "common/Constants.hpp"
+#include "math/TimeUtils.hpp"
 #include <fstream>
 #include <sstream>
 #include <algorithm>

@@ -18,17 +18,17 @@
  * ProductParser, RinexParser and StateManager for external data and state bookkeeping.
  */
 
-#include "GnssConfig.hpp"
-#include "PppModel.hpp"
-#include "PppTypes.hpp"
-#include "RinexParser.hpp"
-#include "StateManager.hpp"
-#include "ProductParser.hpp"
-#include "Constants.hpp"
-#include "Coordinates.hpp"
-#include "MeasurementModel.hpp"
-#include "TimeUtils.hpp"
-#include "ProductCache.hpp"
+#include "config/GnssConfig.hpp"
+#include "model/PppModel.hpp"
+#include "common/PppTypes.hpp"
+#include "rinex/RinexParser.hpp"
+#include "filter/StateManager.hpp"
+#include "products/ProductParser.hpp"
+#include "common/Constants.hpp"
+#include "math/Coordinates.hpp"
+#include "measurement/MeasurementModel.hpp"
+#include "math/TimeUtils.hpp"
+#include "products/ProductCache.hpp"
 #include <algorithm>
 #include <fstream>
 #include <set>

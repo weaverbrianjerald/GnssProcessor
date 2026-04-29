@@ -7,3 +7,24 @@ build/
 *.pyc
 __pycache__/
 reference_software/
+
+# -------------------------------------------------------------------
+# Internal-mode test fixtures.
+#
+# data/ is populated by scripts/bootstrap_internal_data.py from
+# canonical sources (CDDIS for IGS products, files.igs.org for ATX,
+# DGFI-TUM for the EOT20 ocean tide model, etc.) on first use.  None
+# of the bulk content belongs in version control:
+#
+#   - SP3 / CLK / BIA / ERP / BRDC : tens of MB each, multi-day sets
+#   - obs RINEX                    : up to ~35 MB per station-day
+#   - igs20.atx                    : ~41 MB
+#   - EOT20_load.nc                : ~280 MB
+#
+# We keep the directory skeleton (README.md files) so a fresh clone
+# has a clear place for the bootstrap to write into.
+# -------------------------------------------------------------------
+data/observations/**
+!data/observations/README.md
+data/products/**
+!data/products/README.md

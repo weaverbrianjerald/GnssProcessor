@@ -3,10 +3,10 @@
  * @brief First-epoch state seeding for ISB, phase clock, and code biases.
  */
 
-#include "StateInitializer.hpp"
-#include "PppModel.hpp"
-#include "ProductCache.hpp"
-#include "Constants.hpp"
+#include "measurement/StateInitializer.hpp"
+#include "model/PppModel.hpp"
+#include "products/ProductCache.hpp"
+#include "common/Constants.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -173,7 +173,7 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
         }
     }
 
-    // Receiver code bias (DCB / IFB — code only, uncombined)
+    // Receiver code bias (DCB / IFB Â— code only, uncombined)
     double code_bias = 0.0;
     if (config_.estimateIfb() && config_.isUncombinedEnabled()
         && !ref_type.empty() && ref_type[0] == 'C') {

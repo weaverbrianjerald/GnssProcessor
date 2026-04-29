@@ -1,6 +1,6 @@
-﻿#include "Antenna.hpp"
-#include "Coordinates.hpp"
-#include "ProductCache.hpp"
+﻿#include "model/Antenna.hpp"
+#include "math/Coordinates.hpp"
+#include "products/ProductCache.hpp"
 #include <Eigen/Dense>
 #include <cstdio>
 

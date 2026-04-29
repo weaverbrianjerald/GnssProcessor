@@ -3,7 +3,7 @@
  * @brief Stateful RTCM3 frame extractor implementation.
  */
 
-#include "RtcmStreamReader.hpp"
+#include "realtime/RtcmStreamReader.hpp"
 #include <algorithm>
 
 namespace GnssProcessor {
@@ -109,13 +109,13 @@ std::optional<std::vector<uint8_t>> RtcmStreamReader::nextFrame() {
                           | (static_cast<uint32_t>(frame[3 + payload_len + 2]));
 
         if (computed != received) {
-            // CRC mismatch — skip this preamble byte and keep scanning.
+            // CRC mismatch Â— skip this preamble byte and keep scanning.
             buf_.pop_front();
             ++bytes_discarded_;
             continue;
         }
 
-        // Good frame — remove from buffer and return.
+        // Good frame Â— remove from buffer and return.
         for (size_t i = 0; i < frame_len; ++i) buf_.pop_front();
         ++frames_extracted_;
         return frame;

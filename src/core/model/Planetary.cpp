@@ -10,9 +10,9 @@
 * All returned position vectors are ECEF Cartesian vectors in meters.
 */
 
-#include "Constants.hpp"
-#include "Planetary.hpp"
-#include "PppTypes.hpp"
+#include "common/Constants.hpp"
+#include "model/Planetary.hpp"
+#include "common/PppTypes.hpp"
 
 namespace GnssProcessor {
 

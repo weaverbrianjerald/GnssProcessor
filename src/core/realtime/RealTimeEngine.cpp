@@ -6,10 +6,10 @@
  * for epoch-at-a-time streaming operation rather than batch iteration.
  */
 
-#include "RealTimeEngine.hpp"
-#include "ProductCache.hpp"
-#include "Coordinates.hpp"
-#include "Constants.hpp"
+#include "realtime/RealTimeEngine.hpp"
+#include "products/ProductCache.hpp"
+#include "math/Coordinates.hpp"
+#include "common/Constants.hpp"
 #include <cmath>
 #include <limits>
 #include <fmt/format.h>
@@ -50,14 +50,14 @@ bool RealTimeEngine::initialize() {
 
     // RinexParser is still needed as a structural dependency of PppModel for
     // header metadata (antenna type, approximate position).  In real-time mode
-    // we construct it but parsing the observation file is optional — if one is
+    // we construct it but parsing the observation file is optional Â— if one is
     // configured we parse it to seed the header, otherwise we set defaults.
     rinex_parser_ = std::make_unique<RinexParser>(config_, log_manager_, *product_parser_);
 
     std::filesystem::path obs_path = config_.getObservationPath();
     if (!obs_path.empty() && std::filesystem::exists(obs_path)) {
         if (!rinex_parser_->parse()) {
-            log->warn("Failed to parse RINEX for header seeding — using defaults");
+            log->warn("Failed to parse RINEX for header seeding Â— using defaults");
         }
     }
 
@@ -147,7 +147,7 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
         if (pending_obs_.empty()) {
             pending_epoch_time_ = obs.time;
         } else if (std::abs(obs.time.tow - pending_epoch_time_.tow) > 0.5) {
-            // New epoch — process the buffered one.
+            // New epoch Â— process the buffered one.
             processEpoch(pending_obs_);
             pending_obs_.clear();
             pending_epoch_time_ = obs.time;

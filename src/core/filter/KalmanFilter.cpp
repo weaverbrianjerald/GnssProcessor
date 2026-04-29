@@ -10,18 +10,18 @@
  *  - resetFilterCovariance()    — complete filter reset when too many outliers accumulate.
  */
 
-#include "KalmanFilter.hpp"
-#include "KalmanFilterLogger.hpp"
-#include "MeasurementModel.hpp"
-#include "CycleSlipManager.hpp"
-#include "PppModel.hpp"
-#include "TimeUtils.hpp"
+#include "filter/KalmanFilter.hpp"
+#include "logging/KalmanFilterLogger.hpp"
+#include "measurement/MeasurementModel.hpp"
+#include "slip/CycleSlipManager.hpp"
+#include "model/PppModel.hpp"
+#include "math/TimeUtils.hpp"
 #include <spdlog/spdlog.h>
 #include <Eigen/Dense>
 #include <Eigen/QR>
 #include <stdexcept>
 #include <limits>
-#include "Constants.hpp"
+#include "common/Constants.hpp"
 
 namespace GnssProcessor {
 
@@ -58,17 +58,30 @@ namespace GnssProcessor {
     void KalmanFilter::seedCovarianceDiagonals(Eigen::MatrixXd& P, size_t state_size) const {
         const auto& initial_std = config_.getInitialStd();
         const double pos_std   = initial_std.position >= 0            ? initial_std.position            : 1000.0;
-        const double clock_std = initial_std.clock >= 0               ? initial_std.clock               : 1e6;
-        const double tropo_std = initial_std.troposphere >= 0         ? initial_std.troposphere         : 0.5;
         const double amb_std   = initial_std.ambiguity >= 0           ? initial_std.ambiguity           : 1e4;
-        const double isb_std   = initial_std.system_time_offset >= 0  ? initial_std.system_time_offset  : 100.0;
 
         const size_t pos_idx   = state_manager_.getPositionIndex();
-        const size_t clock_idx = state_manager_.getClockIndex();
-        const size_t tropo_idx = state_manager_.getTropoIndex();
 
         if (isUnsetVariance(P(pos_idx, pos_idx)))
             P.block(pos_idx, pos_idx, 3, 3) = Eigen::Matrix3d::Identity() * pos_std * pos_std;
+
+        // Baseline mode: no clock/tropo/phase-clock/gradient/ISB/IMU states
+        // in the core layout — skip seeding them, jump straight to ambiguities.
+        if (config_.isBaselineMode()) {
+            const size_t num_amb = state_manager_.getAmbiguities().size();
+            if (num_amb > 0) {
+                P.bottomRightCorner(num_amb, num_amb).diagonal().setConstant(amb_std * amb_std);
+            }
+            return;
+        }
+
+        const double clock_std = initial_std.clock >= 0               ? initial_std.clock               : 1e6;
+        const double tropo_std = initial_std.troposphere >= 0         ? initial_std.troposphere         : 0.5;
+        const double isb_std   = initial_std.system_time_offset >= 0  ? initial_std.system_time_offset  : 100.0;
+
+        const size_t clock_idx = state_manager_.getClockIndex();
+        const size_t tropo_idx = state_manager_.getTropoIndex();
+
         if (isUnsetVariance(P(clock_idx, clock_idx)))
             P(clock_idx, clock_idx) = clock_std * clock_std;
         if (isUnsetVariance(P(tropo_idx, tropo_idx)))
@@ -149,15 +162,23 @@ namespace GnssProcessor {
         }
 
         const size_t state_size = state_manager_.getStateSize();
-        size_t base_core_size = 5;
-        if (config.estimateTropoGradients()) base_core_size += 2;
-        if (config.estimateVelocity()) base_core_size += 3;
-        if (config.estimatePhaseClock()) base_core_size += 1;
-        if (config.enableImu()) base_core_size += 9;
-        if (state_size < base_core_size) {
+        // Baseline mode: state vector is position (3) + DD ambiguities only.
+        // No clock / tropo / velocity / IMU / ISB states — skip the PPP
+        // minimum-size check and the associated base_core_size computation.
+        const size_t min_core = config.isBaselineMode()
+            ? 3  // position only
+            : [&] {
+                size_t b = 5;
+                if (config.estimateTropoGradients()) b += 2;
+                if (config.estimateVelocity())       b += 3;
+                if (config.estimatePhaseClock())     b += 1;
+                if (config.enableImu())              b += 9;
+                return b;
+              }();
+        if (state_size < min_core) {
             log_manager_.getLogger("kalman_filter")->error(
                 "Invalid state size from StateManager: {}, minimum {} required for mode {}",
-                state_size, base_core_size, modeLabel(config));
+                state_size, min_core, modeLabel(config));
             throw std::invalid_argument("Invalid state size");
         }
 
@@ -463,16 +484,42 @@ namespace GnssProcessor {
         //  - When Sr(i,i) is near-zero the measurement is almost perfectly
         //    explained; we clamp to a small positive value to avoid division
         //    by zero.
+        // Standardize residuals using Sr = R - H·P_post·Hᵀ as the diagonal
+        // denominator, clamped to the measurement's OWN noise variance R(i,i).
+        //
+        // Why the R floor: when one state in the filter absorbs a row's
+        // innovation almost perfectly (e.g., a DD phase ambiguity with
+        // huge initial variance → K_amb ≈ 1, P_post_amb ≈ 0), the formal
+        // post-fit residual covariance collapses to Sr = R·S⁻¹·R which is
+        // numerically much smaller than R itself.  The previous 1e-12
+        // floor was unphysical — it let near-zero residuals register as
+        // dozens of sigmas and caused DD phase updates to be rejected
+        // every epoch.
+        //
+        // Clamping to R(i,i) keeps the well-posed PPP case unchanged
+        // (Sr > R there) and restores physical meaning to the
+        // standardized residual in absorption-heavy cases: "how many
+        // measurement-sigma away from zero is this residual".  A real
+        // cycle slip (e.g. 1 L1 cycle = 0.19 m on a 2 mm phase obs) is
+        // still ~95σ and trips detection as usual.
         Eigen::VectorXd sres(measurement.residuals.size());
         for (Eigen::Index i = 0; i < sres.size(); ++i) {
-            const double sii = (i < Sr.rows() && i < Sr.cols()) ? Sr(i, i) : 1e-6;
-            const double denom = std::sqrt(std::max(sii, 1e-12));
+            const double sii = (i < Sr.rows() && i < Sr.cols()) ? Sr(i, i) : 0.0;
+            const double r_floor = (i < measurement.R_v.size() && measurement.R_v(i) > 0.0)
+                                 ? measurement.R_v(i) : 0.0;
+            // Use R(i,i) as the floor; the 1e-12 term guards against
+            // pathological cases where both Sr and R are unset.
+            const double denom = std::sqrt(std::max({ sii, r_floor, 1e-12 }));
             const double val = measurement.residuals(i);
             sres(i) = (std::isfinite(val) && std::isfinite(denom) && denom > 0.0) ? (val / denom) : 0.0;
         }
         measurement.residuals_standardized = sres;
 
         // --- Outlier handling ---
+        // Runs for both PPP and baseline.  The Sr-clamped-to-R standardization
+        // above keeps this check numerically well-posed even in DD phase
+        // absorption scenarios, while preserving cycle-slip detection
+        // (a 1-cycle slip is still ~95σ on a 2 mm phase obs).
         auto [is_outlier, is_reset] = validatePostFitResiduals(measurement, x_prev, P_prev);
         was_complete_reset_ = is_reset;
 
@@ -558,6 +605,19 @@ namespace GnssProcessor {
         auto klogger = log_manager_.getLogger("kalman_filter");
         const double amb_std = config_.getAmbiguityStd();
         const auto [primary_sat, ref_sat] = splitBssdSatId(outlier_sat);
+
+        // --- Baseline DD path ---
+        // DD ambiguities use a different state-key format from the PPP /
+        // BSSD path ("DD|cons|sat_i|rov_code|pivot" vs "sat_sig"), and only
+        // one DD ambiguity exists per row (the pivot is not a state).  Hand
+        // off to the baseline-aware variant before any PPP-format key
+        // construction runs.
+        if (config_.isBaselineMode()) {
+            handleBaselinePhaseOutlier(measurement, outlier_sat, outlier_sig,
+                                       primary_sat, ref_sat, x, P, epoch_prefix);
+            return;
+        }
+
         const bool bssd_active = config_.enableBetweenSatelliteSd();
 
         // In BSSD mode, identify the pivot satellite for this constellation.
@@ -680,6 +740,99 @@ namespace GnssProcessor {
         }
     }
 
+    // -------------------------------------------------------------------
+    // Baseline (DD) phase outlier handler — see header for design notes.
+    // -------------------------------------------------------------------
+    void KalmanFilter::handleBaselinePhaseOutlier(const EpochMeasurement& measurement,
+        const std::string& outlier_sat, const std::string& outlier_sig,
+        const std::string& primary_sat, const std::string& ref_sat,
+        Eigen::VectorXd& x, Eigen::MatrixXd& P,
+        const std::string& epoch_prefix) {
+
+        auto klogger = log_manager_.getLogger("kalman_filter");
+        const double amb_std = config_.getAmbiguityStd();
+
+        if (primary_sat.empty() || ref_sat.empty()) {
+            klogger->warn("{}Baseline phase outlier: malformed pair '{}' "
+                          "(expected 'sat_i-pivot' from MeasurementModel)",
+                          epoch_prefix, outlier_sat);
+            return;
+        }
+
+        // Recover the rover RINEX code: aliased rows have "rov/ref" in
+        // signal_types, e.g. "L2W/L2C".  The DD ambiguity key uses the
+        // rover side only — see MeasurementModel::computeMeasurementUpdate.
+        std::string rov_code = outlier_sig;
+        const auto slash = rov_code.find('/');
+        if (slash != std::string::npos) {
+            rov_code = rov_code.substr(0, slash);
+        }
+
+        // Constellation prefix matches MeasurementModel's ddConstellationOf.
+        // Inlined here to avoid a cross-module dependency for one switch.
+        auto consPrefix = [](char sys) -> std::string {
+            switch (sys) {
+            case 'G': return "GPS";
+            case 'E': return "Galileo";
+            case 'R': return "GLONASS";
+            case 'C': return "BeiDou";
+            case 'J': return "QZSS";
+            case 'S': return "SBAS";
+            case 'I': return "IRNSS";
+            default:  return std::string(1, sys);
+            }
+        };
+        if (primary_sat.empty()) return;
+        const std::string cons = consPrefix(primary_sat[0]);
+        const std::string amb_key =
+            "DD|" + cons + "|" + primary_sat + "|" + rov_code + "|" + ref_sat;
+
+        const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
+        if (amb_idx < 0) {
+            klogger->warn("{}Baseline phase outlier: DD ambiguity not found for key '{}'",
+                          epoch_prefix, amb_key);
+            return;
+        }
+
+        // Find the matching row to recover the pre-update DD residual.
+        // MeasurementModel sets innov = innov_pre - x(amb_idx) for phase
+        // rows, so re-seeding at x(amb_idx) + innov restores innov_pre as
+        // the new ambiguity float.  Subsequent epochs will then start with
+        // a small innovation regardless of slip magnitude.
+        Eigen::Index row_idx = -1;
+        const Eigen::Index nrows = measurement.innovations.size();
+        for (Eigen::Index i = 0; i < nrows; ++i) {
+            if (i >= static_cast<Eigen::Index>(measurement.satellite_ids.size())) break;
+            if (i >= static_cast<Eigen::Index>(measurement.signal_types.size())) break;
+            if (measurement.satellite_ids[static_cast<size_t>(i)] == outlier_sat
+             && measurement.signal_types[static_cast<size_t>(i)] == outlier_sig) {
+                row_idx = i;
+                break;
+            }
+        }
+
+        const double prev_amb = x(amb_idx);
+        double seed_value = prev_amb;
+        if (row_idx >= 0) {
+            seed_value = prev_amb + measurement.innovations(row_idx);
+        } else {
+            klogger->warn("{}Baseline phase outlier: row not found for sat='{}' sig='{}', "
+                          "re-seed degraded to current state value",
+                          epoch_prefix, outlier_sat, outlier_sig);
+        }
+
+        x(amb_idx) = seed_value;
+        P.row(amb_idx).setZero();
+        P.col(amb_idx).setZero();
+        P(amb_idx, amb_idx) = amb_std * amb_std;
+
+        klogger->info("{}Baseline phase outlier: re-seeded {} (idx {}): "
+                      "prev={:.4f} m -> seed={:.4f} m, std={:.3f} m",
+                      epoch_prefix, amb_key, amb_idx, prev_amb, seed_value, amb_std);
+
+        last_reset_satellites_.push_back(primary_sat);
+    }
+
     void KalmanFilter::handleCodeOutlier(EpochMeasurement& measurement,
         const std::string& outlier_sat, const std::string& outlier_sig,
         size_t max_idx, const std::string& epoch_prefix) {
@@ -734,13 +887,26 @@ namespace GnssProcessor {
 
         P.setZero();
 
-        // Core states: position (3), clock (1), tropo ZWD (1)
         const double pos_var   = initial_std.position >= 0 ? initial_std.position * initial_std.position : 10000.0;
-        const double clk_var   = initial_std.clock >= 0    ? initial_std.clock * initial_std.clock       : 90000.0;
-        const double tropo_var = initial_std.troposphere >= 0 ? initial_std.troposphere * initial_std.troposphere : 0.25;
         P(0, 0) = pos_var;
         P(1, 1) = pos_var;
         P(2, 2) = pos_var;
+
+        // Baseline mode: no clock/tropo/gradient/ISB/iono/IMU states to
+        // reset; go straight to the ambiguity block below.
+        if (config_.isBaselineMode()) {
+            for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
+                if (idx < static_cast<size_t>(P.rows())) {
+                    P(idx, idx) = amb_std * amb_std;
+                }
+            }
+            klogger->warn("{}Complete reset applied (baseline): state_size={}, ambiguity_std={:.3f} m",
+                epoch_prefix, static_cast<size_t>(P.rows()), amb_std);
+            return;
+        }
+
+        const double clk_var   = initial_std.clock >= 0    ? initial_std.clock * initial_std.clock       : 90000.0;
+        const double tropo_var = initial_std.troposphere >= 0 ? initial_std.troposphere * initial_std.troposphere : 0.25;
         P(3, 3) = clk_var;
         P(4, 4) = tropo_var;
 

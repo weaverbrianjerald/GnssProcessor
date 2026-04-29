@@ -3,7 +3,7 @@
  * @brief NTRIP v2 client implementation using libcurl.
  */
 
-#include "NtripClient.hpp"
+#include "realtime/NtripClient.hpp"
 #include <curl/curl.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -85,7 +85,7 @@ size_t NtripClient::curlWriteCallback(void* data, size_t size, size_t nmemb, voi
     }
     self->buf_cv_.notify_one();
 
-    // Returning 0 tells curl to abort — honour the running flag.
+    // Returning 0 tells curl to abort Â— honour the running flag.
     return self->running_.load() ? total : 0;
 }
 
@@ -124,7 +124,7 @@ void NtripClient::receiveLoop() {
             curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
         }
 
-        // Streaming: no timeout — the transfer runs until we abort.
+        // Streaming: no timeout Â— the transfer runs until we abort.
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &NtripClient::curlWriteCallback);

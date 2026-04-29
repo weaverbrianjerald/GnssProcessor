@@ -1,4 +1,4 @@
-﻿#include "ModelGeometry.hpp"
+﻿#include "model/ModelGeometry.hpp"
 /*!
  * \file ModelGeometry.cpp
  * \brief Satellite/receiver geometry and correction computations for PPP.
@@ -11,12 +11,12 @@
  *  - Topocentric / attitude / wind-up utilities
  */
 
-#include "ModelGeometry.hpp"
-#include "ProductParser.hpp"
-#include "Constants.hpp"
-#include "Coordinates.hpp"
-#include "ProductCache.hpp"
-#include "Interpolate.hpp"
+#include "model/ModelGeometry.hpp"
+#include "products/ProductParser.hpp"
+#include "common/Constants.hpp"
+#include "math/Coordinates.hpp"
+#include "products/ProductCache.hpp"
+#include "math/Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>

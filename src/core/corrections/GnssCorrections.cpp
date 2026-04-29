@@ -12,12 +12,12 @@
  *  - Phase wind-up
  */
 
-#include "GnssCorrections.hpp"
-#include "Coordinates.hpp"
-#include "Constants.hpp"
-#include "GnssConfig.hpp"
-#include "RinexParser.hpp"
-#include "Interpolate.hpp"
+#include "corrections/GnssCorrections.hpp"
+#include "math/Coordinates.hpp"
+#include "common/Constants.hpp"
+#include "config/GnssConfig.hpp"
+#include "rinex/RinexParser.hpp"
+#include "math/Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>

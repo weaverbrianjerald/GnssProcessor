@@ -19,12 +19,14 @@
  *  - validateMeasurementUpdate � post-assembly validation.
  */
 
-#include "PppModel.hpp"
-#include "PppTypes.hpp"
-#include "MeasurementModel.hpp"
-#include "ProductCache.hpp"
-#include "RinexParser.hpp"
-#include "TimeUtils.hpp"
+#include "model/PppModel.hpp"
+#include "common/PppTypes.hpp"
+#include "measurement/MeasurementModel.hpp"
+#include "products/ProductCache.hpp"
+#include "rinex/RinexParser.hpp"
+#include "math/TimeUtils.hpp"
+#include "common/SignalBand.hpp"
+#include "measurement/BrsdTransform.hpp"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -56,6 +58,7 @@ namespace GnssProcessor {
           state_initializer_(config, ppp_model, state_manager, log_manager),
           pivot_manager_(config, log_manager),
           bssd_transform_(config, state_manager, pivot_manager_, log_manager),
+          dd_pivot_manager_(config, log_manager),
           ppp_utils_(log_manager) {
         log_manager_.getLogger("measurement_model")->info("MeasurementModel initialized with {} signal priority sets, mode={}",
             config_.getSignalPriorities().size(), modeLabel(config_));
@@ -884,6 +887,13 @@ namespace GnssProcessor {
         pivot_manager_.handlePivotHandover(observations, state_manager_, epoch_prefix);
     }
 
+    // -------------------------------------------------------------------
+    // DD pivot handover (S-transform) moved to DdPivotManager.
+    // The legacy MeasurementModel::handleBaselinePivotHandover method
+    // is gone; @c dd_pivot_manager_.selectPivots applies the handover
+    // internally when the chosen pivot differs from the sticky one.
+    // -------------------------------------------------------------------
+
     void MeasurementModel::freezePivotAmbiguityCovariance()
     {
         pivot_manager_.freezePivotAmbiguityCovariance(state_manager_);
@@ -892,6 +902,656 @@ namespace GnssProcessor {
     void MeasurementModel::freezePivotIonoAndBiasCovariance()
     {
         pivot_manager_.freezePivotIonoAndBiasCovariance(state_manager_);
+    }
+
+    // =================================================================
+    // Baseline (DD) measurement update — Slice 5e+
+    //
+    // Unified path: DD rows are built from two per-receiver PppModel
+    // outputs rather than a separate geometry layer.  The per-receiver
+    // residuals (observed - modeled) already incorporate Sagnac, emission
+    // time, satellite clock, Shapiro, antenna PCO/PCV, solid tide, and
+    // stochastic-model variances — DD cancels the parts that are common
+    // between receivers (sat clock on short baselines, most propagation
+    // terms) and leaves the position-dependent geometry + ambiguity
+    // signal the filter needs.
+    // =================================================================
+
+    namespace {
+
+        /// Build the DD ambiguity key: "DD|cons|sat_i|code|pivot".
+        std::string makeDdAmbKey(const std::string& cons,
+                                 const std::string& sat_i,
+                                 const std::string& code,
+                                 const std::string& pivot) {
+            return "DD|" + cons + "|" + sat_i + "|" + code + "|" + pivot;
+        }
+
+        /// Map first char of a satellite id to constellation name.
+        std::string ddConstellationOf(const std::string& sat) {
+            if (sat.empty()) return {};
+            switch (sat[0]) {
+                case 'G': return "GPS";
+                case 'E': return "Galileo";
+                case 'R': return "GLONASS";
+                case 'C': return "BeiDou";
+                case 'J': return "QZSS";
+                case 'S': return "SBAS";
+                case 'I': return "IRNSS";
+                default:  return std::string(1, sat[0]);
+            }
+        }
+
+        /// Constellation string -> System enum.  Used by IF row collapse
+        /// to look up frequencies via PppUtils::getFrequency().  Returns
+        /// System::Unknown for unrecognised names so the caller can skip.
+        System ddSystemFromConsName(const std::string& cons) {
+            if (cons == "GPS")     return System::GPS;
+            if (cons == "Galileo") return System::Galileo;
+            if (cons == "GLONASS") return System::GLONASS;
+            if (cons == "BeiDou")  return System::BeiDou;
+            if (cons == "QZSS")    return System::QZSS;
+            if (cons == "SBAS")    return System::SBAS;
+            return System::Unknown;
+        }
+
+    } // anonymous namespace
+
+    EpochMeasurement MeasurementModel::computeMeasurementUpdate(
+        const std::vector<PppObservation>& rov_modeled,
+        const std::vector<PppObservation>& ref_modeled,
+        const Eigen::VectorXd& current_state,
+        const std::set<std::string>& excluded_measurements) {
+
+        EpochMeasurement em;
+        // Seed the output exclusion set from the caller's carry set so
+        // the KF outlier handlers (which use insert(), not assign) build
+        // a cumulative union across rebuild passes.  Without this, the
+        // caller's `carry_excluded = em.excluded_measurements` after the
+        // KF returns would replace the previous pass's exclusions with
+        // only this pass's additions, and a satellite with two bad
+        // signals would oscillate (pass N excludes C1C; pass N+1 starts
+        // fresh, excludes C2W, forgets C1C; pass N+2 sees C1C again).
+        // Mirrors the PPP overload's behavior at line 595.
+        em.excluded_measurements = excluded_measurements;
+
+        auto klog = log_manager_.getLogger("measurement_model");
+        // First-epoch diagnostic: reveal whether shared sats / signals exist.
+        // Off after first call via a static flag so we don't spam the log.
+        static bool first_dd_call = true;
+        const bool diag = first_dd_call;
+        if (diag) {
+            klog->info("DD first-epoch diagnostic: rov_modeled={} sats, ref_modeled={} sats",
+                       rov_modeled.size(), ref_modeled.size());
+            if (!rov_modeled.empty()) {
+                const auto& r0 = rov_modeled.front();
+                std::string codes;
+                for (const auto& [code, v] : r0.observed) { codes += code; codes += ' '; }
+                klog->info("DD diag: rov[0]={} observed_codes=[{}]", r0.satellite, codes);
+            }
+            if (!ref_modeled.empty()) {
+                const auto& e0 = ref_modeled.front();
+                std::string codes;
+                for (const auto& [code, v] : e0.observed) { codes += code; codes += ' '; }
+                klog->info("DD diag: ref[0]={} observed_codes=[{}]", e0.satellite, codes);
+            }
+        }
+        if (rov_modeled.empty() || ref_modeled.empty()) { first_dd_call = false; return em; }
+        em.time = rov_modeled.front().time;
+
+        const bool code_only = config_.getBaselineConfig().code_only;
+        const double amb_init_std = config_.getInitialStd().ambiguity;
+        const double amb_init_var =
+            (amb_init_std > 0.0 ? amb_init_std * amb_init_std : 1e8);
+
+        // Active-system + excluded-sat filters.
+        const auto& active_vec = config_.getActiveSystems();
+        const std::set<std::string> active_set(active_vec.begin(), active_vec.end());
+
+        // Index by satellite.
+        std::map<std::string, const PppObservation*> rov_by_sat, ref_by_sat;
+        for (const auto& o : rov_modeled) rov_by_sat[o.satellite] = &o;
+        for (const auto& o : ref_modeled) ref_by_sat[o.satellite] = &o;
+
+        // Aliasing policy: when true, codes that share the same (System, Band)
+        // but differ in tracking attribute (e.g. rov C2W vs ref C2C) are
+        // paired across receivers.  When false, only exact-string code
+        // matches are kept (legacy strict behavior).  Off-band cancellation
+        // properties of DD do NOT depend on identical attributes — a small
+        // sat-DCB residual remains on code DDs (absorbed by the ambiguity
+        // float on phase DDs in non-code-only mode).  See Phase 2 plan for
+        // DCB harmonization.
+        const bool signal_aliasing = config_.getBaselineConfig().signal_aliasing;
+
+        // Per-band canonical code chosen at one receiver: pick the
+        // tracking attribute with the lowest @c signalAttributePriority().
+        // Returns map keyed by (band, obs_type) → (rinex_code, priority).
+        auto pickCanonical = [](const PppObservation& obs, const std::string& cons) {
+            std::map<std::pair<FrequencyBand, char>,
+                     std::pair<std::string, int>> best;
+            for (const auto& [code, val] : obs.observed) {
+                if (code.size() < 3) continue;
+                const auto cls = classifySignal(cons, code);
+                if (cls.band == FrequencyBand::Unknown) continue;
+                if (cls.type != ObsType::Code && cls.type != ObsType::Phase) continue;
+                const auto key = std::make_pair(cls.band, static_cast<char>(cls.type));
+                const int prio = signalAttributePriority(cons, cls.band, cls.attribute);
+                auto it = best.find(key);
+                if (it == best.end() || prio < it->second.second) {
+                    best[key] = { code, prio };
+                }
+            }
+            return best;
+        };
+
+        // Group shared sats by constellation.  For each (sat, band, obs_type)
+        // tuple shared between the two receivers, run the BRSD transform
+        // (BrsdTransform::apply) to compute the between-receiver
+        // residual + variance + rover-side LOS once.  Downstream BSSD
+        // pivot-differencing then forms DD rows from BRSD entries.
+        //
+        // BRSD output replaces what used to be a thin SharedSignal
+        // metadata struct: BrsdObservation already carries the same
+        // (band, obs_type, rov_code, ref_code, brsd_aliased) metadata
+        // plus the freshly-computed residual / variance / LOS, so the
+        // canonical-code selection and BRSD math live in a single pass.
+        struct SharedInfo {
+            const PppObservation* rov{ nullptr };
+            const PppObservation* ref{ nullptr };
+            std::vector<BrsdObservation> brsd_signals;  ///< One BRSD per shared (band, obs_type).
+            double avg_snr{ 0.0 };
+            size_t num_sigs{ 0 };
+        };
+        std::map<std::string, std::map<std::string, SharedInfo>> by_cons;
+
+        for (const auto& [sat, rov_ptr] : rov_by_sat) {
+            const std::string cons = ddConstellationOf(sat);
+            if (!active_set.empty() && active_set.find(cons) == active_set.end()) continue;
+            if (config_.isSatelliteExcluded(sat)) continue;
+
+            auto ref_it = ref_by_sat.find(sat);
+            if (ref_it == ref_by_sat.end()) continue;
+            const PppObservation* ref_ptr = ref_it->second;
+
+            SharedInfo info;
+            info.rov = rov_ptr;
+            info.ref = ref_ptr;
+
+            const auto rov_canon = pickCanonical(*rov_ptr, cons);
+            const auto ref_canon = pickCanonical(*ref_ptr, cons);
+            for (const auto& [k, rov_pair] : rov_canon) {
+                auto rit = ref_canon.find(k);
+                if (rit == ref_canon.end()) continue;
+                const std::string& rov_code = rov_pair.first;
+                const std::string& ref_code = rit->second.first;
+                const bool aliased = (rov_code != ref_code);
+                if (aliased && !signal_aliasing) continue;  // strict mode drops mismatches
+
+                auto brsd = BrsdTransform::apply(*rov_ptr, *ref_ptr, cons,
+                                                 rov_code, ref_code,
+                                                 k.first, k.second);
+                if (!brsd) continue;  // missing observed/modeled or NaN
+                info.brsd_signals.push_back(std::move(*brsd));
+            }
+
+            // SNR averaging — any 'S*' RINEX code on the rover side.
+            double snr_sum = 0.0; size_t snr_cnt = 0;
+            for (const auto& [code, val] : rov_ptr->observed) {
+                if (!code.empty() && code[0] == 'S') { snr_sum += val; ++snr_cnt; }
+            }
+            info.num_sigs = info.brsd_signals.size();
+            info.avg_snr  = (snr_cnt > 0) ? (snr_sum / snr_cnt) : 0.0;
+            if (info.num_sigs < 2) continue;
+            by_cons[cons][sat] = std::move(info);
+        }
+        if (diag) {
+            size_t total_shared = 0;
+            size_t total_aliased = 0;
+            for (const auto& [cons, sats] : by_cons) {
+                klog->info("DD diag: constellation '{}' has {} shared sats with ≥2 signals", cons, sats.size());
+                total_shared += sats.size();
+                for (const auto& [sat, info] : sats) {
+                    std::string codes;
+                    for (const auto& b : info.brsd_signals) {
+                        codes += b.rov_code;
+                        if (b.brsd_aliased) {
+                            codes += "->"; codes += b.ref_code; ++total_aliased;
+                        }
+                        codes += '(';
+                        codes += bandLabel(b.band);
+                        codes += ") ";
+                    }
+                    klog->info("DD diag:   {}: {} BRSD signals=[{}]", sat,
+                               info.brsd_signals.size(), codes);
+                }
+            }
+            klog->info("DD diag: {} total viable shared sats; signal_aliasing={}, aliased_signals={}",
+                       total_shared, signal_aliasing, total_aliased);
+        }
+        if (by_cons.empty()) {
+            if (diag) klog->info("DD diag: EARLY RETURN — by_cons empty");
+            first_dd_call = false;
+            return em;
+        }
+
+        // --- Sticky pivot selection per constellation ---
+        // Build the candidate map (cons → sat → ranking-info) from the
+        // BRSD-populated by_cons structure and hand it to DdPivotManager.
+        // The manager's selectPivots applies the sticky-or-rerank logic
+        // and, on a pivot change, the S-transform handover (gated by
+        // BaselineConfig::enable_pivot_handover) — preserving DD
+        // ambiguity integer cycles across handovers.
+        DdPivotManager::CandidateMap pivot_candidates;
+        for (const auto& [cons, sats] : by_cons) {
+            for (const auto& [sat, info] : sats) {
+                pivot_candidates[cons][sat] = { info.avg_snr, info.num_sigs };
+            }
+        }
+        const std::map<std::string, std::string> pivots =
+            dd_pivot_manager_.selectPivots(pivot_candidates, state_manager_);
+
+        if (diag) {
+            for (const auto& [c, p] : pivots) {
+                klog->info("DD diag: pivot for '{}' = '{}'", c, p);
+            }
+        }
+        if (pivots.empty()) {
+            if (diag) klog->info("DD diag: EARLY RETURN — pivots empty");
+            first_dd_call = false;
+            return em;
+        }
+
+        // --- Collect DD rows ---
+        // Each row carries both rover and reference RINEX codes.  When
+        // aliasing is off they are equal (legacy behavior).  When on and
+        // the receivers report different tracking attributes on the same
+        // band, the row is built cross-attribute — residuals and variances
+        // are looked up under each receiver's own code.
+        //
+        // @c integer_capable is true iff all four observations in the DD
+        // (rov_i, rov_p, ref_i, ref_p) use the same RINEX code.  Only
+        // those rows have receiver-bias and satellite-bias terms that
+        // cancel pairwise; the float ambiguity is then a clean integer
+        // multiple of the carrier wavelength and is eligible for AR.
+        // Any other combination (rov/ref mismatch on this row, OR rover
+        // code differs between sat_i and pivot, OR reference code does)
+        // carries a non-integer DCB / IFB residual.
+        // The DD row carries the BRSD-combined variance for the non-pivot
+        // (var_brsd_i = var_rov_i + var_ref_i) and pivot (var_brsd_p =
+        // var_rov_p + var_ref_p).  Diagonal R = var_brsd_i + var_brsd_p;
+        // off-diagonal R between rows sharing a pivot = var_brsd_p alone.
+        // Splitting along the BRSD seam (rather than four var_*_*
+        // components) makes the variance composition trace cleanly back
+        // to the BrsdObservation layer.
+        struct DdRow {
+            char obs_type{ 'C' };
+            std::string sat_i, sat_p, cons;
+            std::string rov_code, ref_code;
+            FrequencyBand band{ FrequencyBand::Unknown };
+            bool integer_capable{ true };
+            Eigen::RowVector3d h_pos;
+            double innov_pre{ 0.0 };
+            double var_brsd_i{ 0.0 };  ///< BRSD variance on the non-pivot side (var_rov + var_ref).
+            double var_brsd_p{ 0.0 };  ///< BRSD variance on the pivot side (var_rov + var_ref).
+            std::string group_key;
+            int amb_idx{ -1 };
+            double innov{ 0.0 };
+        };
+        std::vector<DdRow> rows;
+
+        // ---- BSSD step: BRSD entries → DD rows ----
+        // Hand the BRSD inputs and pivot map to BssdTransform::differenceBrsd,
+        // which performs the BSSD differencing per (cons, band, obs_type)
+        // group and returns BssdDdRow entries (residual, variance pair,
+        // rover-side LOS pair, integer-capability flag, metadata).
+        // MeasurementModel then layers on its private bookkeeping —
+        // group_key for R off-diagonal correlation and the H_pos partial
+        // derived from the LOS pair — to produce a DdRow.
+        //
+        // The differencing math now lives entirely inside BssdTransform;
+        // the same class also serves PPP-RTK SD via apply().  See the
+        // class header for the architectural notes on the two methods.
+        {
+            // Build a (cons, sat) → vector<BrsdObservation> view over
+            // by_cons.  The static differenceBrsd signature wants this
+            // shape so the structural dependency on MeasurementModel's
+            // local SharedInfo struct stays decoupled.
+            std::map<std::string,
+                     std::map<std::string, std::vector<BrsdObservation>>> brsd_by_cons_sat;
+            for (const auto& [cons, sats] : by_cons) {
+                for (const auto& [sat, info] : sats) {
+                    brsd_by_cons_sat[cons][sat] = info.brsd_signals;
+                }
+            }
+
+            const auto bssd_rows = BssdTransform::differenceBrsd(
+                brsd_by_cons_sat, pivots, excluded_measurements);
+
+            rows.reserve(bssd_rows.size());
+            for (const auto& br : bssd_rows) {
+                DdRow r;
+                r.obs_type        = br.obs_type;
+                r.sat_i           = br.sat_i;
+                r.sat_p           = br.sat_p;
+                r.cons            = br.cons;
+                r.rov_code        = br.rov_code;
+                r.ref_code        = br.ref_code;
+                r.band            = br.band;
+                r.integer_capable = br.integer_capable;
+                r.innov_pre       = br.innov_pre;
+                r.var_brsd_i      = br.var_brsd_i;
+                r.var_brsd_p      = br.var_brsd_p;
+                // Geometry partial w.r.t. the rover position state.
+                // Reference LOS doesn't appear because the reference is
+                // not a state in baseline mode (its contribution already
+                // cancelled in the BRSD layer feeding differenceBrsd).
+                r.h_pos = -(br.los_rov_i - br.los_rov_p).transpose();
+                // Group key for R off-diagonal correlation: same pivot
+                // variance contribution is shared by all non-pivot rows
+                // on the same (cons, band, obs_type).
+                r.group_key = br.cons + "|" + bandLabel(br.band)
+                            + "|" + std::string(1, br.obs_type);
+                rows.push_back(std::move(r));
+            }
+        }
+
+        // --- Iono-free row collapse (long-baseline / educational mode) ---
+        // When @c BaselineConfig::use_iono_free is on, replace the per-band
+        // DD rows for each (sat_i, pivot, obs_type) group with a single
+        // row formed from the dual-frequency ionosphere-free combination
+        //
+        //     y_IF = α·y_1 + β·y_2,   α = f1²/(f1²-f2²),  β = -f2²/(f1²-f2²)
+        //
+        // where (f1, y_1) is the higher-frequency band and (f2, y_2) is
+        // the lower.  This eliminates the first-order ionospheric delay
+        // — required for long baselines (>10-20 km) where the DD does
+        // NOT cancel iono between receivers.  Cost: ~3x amplified code
+        // noise on GPS L1+L2 (the variance scales by α²+β² ≈ 9.5), and
+        // the ambiguity is no longer integer-cycle (it's a non-trivial
+        // linear combination of N1 and N2 in cycles), so AR is excluded
+        // for IF phase rows via @c integer_capable=false.  Sat-pairs
+        // with fewer than two shared bands are dropped — IF needs two.
+        // The H_pos block is unchanged: the geometry partial is the
+        // same linear combination's derivative w.r.t. position, which
+        // factors out of α and β (both scaled the same).
+        if (config_.getBaselineConfig().use_iono_free && !rows.empty()) {
+            // Group row indices by (cons, sat_i, sat_p, obs_type).
+            std::map<std::string, std::vector<size_t>> if_groups;
+            for (size_t i = 0; i < rows.size(); ++i) {
+                const auto& r = rows[i];
+                const std::string gk = r.cons + "|" + r.sat_i + "|" + r.sat_p
+                                     + "|" + std::string(1, r.obs_type);
+                if_groups[gk].push_back(i);
+            }
+
+            std::vector<DdRow> if_rows;
+            if_rows.reserve(if_groups.size());
+            size_t n_dropped_single_band = 0;
+
+            for (const auto& [gk, idxs] : if_groups) {
+                if (idxs.size() < 2) {
+                    // Need two bands to cancel ionosphere; skip.
+                    ++n_dropped_single_band;
+                    continue;
+                }
+                // Pick the two highest frequencies among the available
+                // bands.  Standard choice for GPS is L1+L2; for Galileo
+                // E1+E5a; for BeiDou B1+B3; etc.  Picking by frequency
+                // (rather than band priority) keeps the formula's α/β
+                // numerically well-conditioned.
+                std::vector<size_t> sorted_idxs = idxs;
+                const System sys = ddSystemFromConsName(rows[sorted_idxs.front()].cons);
+                std::sort(sorted_idxs.begin(), sorted_idxs.end(),
+                    [&](size_t a, size_t b) {
+                        const double fa = ppp_utils_.getFrequency(
+                            rows[a].rov_code, sys, rows[a].sat_i);
+                        const double fb = ppp_utils_.getFrequency(
+                            rows[b].rov_code, sys, rows[b].sat_i);
+                        return fa > fb;
+                    });
+
+                const DdRow& r1 = rows[sorted_idxs[0]];  // higher f
+                const DdRow& r2 = rows[sorted_idxs[1]];  // lower f
+
+                const double f1 = ppp_utils_.getFrequency(r1.rov_code, sys, r1.sat_i);
+                const double f2 = ppp_utils_.getFrequency(r2.rov_code, sys, r2.sat_i);
+                if (!(std::isfinite(f1) && std::isfinite(f2))
+                 || f1 <= 0.0 || f2 <= 0.0 || f1 == f2) {
+                    ++n_dropped_single_band;
+                    continue;
+                }
+                const double f1s   = f1 * f1;
+                const double f2s   = f2 * f2;
+                const double denom = f1s - f2s;
+                const double alpha =  f1s / denom;
+                const double beta  = -f2s / denom;
+                const double a2 = alpha * alpha;
+                const double b2 = beta  * beta;
+
+                DdRow ifr;
+                ifr.obs_type = r1.obs_type;
+                ifr.sat_i    = r1.sat_i;
+                ifr.sat_p    = r1.sat_p;
+                ifr.cons     = r1.cons;
+                ifr.band     = r1.band;            // documentation only
+                // Concatenated codes serve as both the ambiguity-key code
+                // segment and the trace signal_types token.
+                ifr.rov_code = r1.rov_code + "+" + r2.rov_code;
+                ifr.ref_code = r1.ref_code + "+" + r2.ref_code;
+                ifr.h_pos    = r1.h_pos;           // identical for both bands
+                ifr.innov_pre = alpha * r1.innov_pre + beta * r2.innov_pre;
+                ifr.var_brsd_i = a2 * r1.var_brsd_i + b2 * r2.var_brsd_i;
+                ifr.var_brsd_p = a2 * r1.var_brsd_p + b2 * r2.var_brsd_p;
+                // Distinct group key so IF rows correlate with each other
+                // (same pivot variance) but not with any per-band rows
+                // that might appear in mixed scenarios (currently they
+                // don't; rows is fully replaced below).
+                ifr.group_key = ifr.cons + "|IF|" + std::string(1, ifr.obs_type);
+                ifr.amb_idx   = -1;
+                // IF ambiguity is c·(f1·N1 - f2·N2)/(f1²-f2²) — never an
+                // integer cycle.  Force float-only so AR's exclusion set
+                // catches it at @c getNonIntegerCapableDdAmbiguityKeys().
+                ifr.integer_capable = false;
+                if_rows.push_back(std::move(ifr));
+            }
+
+            if (diag) {
+                klog->info("DD diag: IF row collapse: {} per-band rows -> {} IF rows "
+                           "({} sat-pair groups dropped for <2 bands)",
+                           rows.size(), if_rows.size(), n_dropped_single_band);
+            }
+            rows = std::move(if_rows);
+        }
+
+        if (rows.empty()) {
+            if (diag) klog->info("DD diag: EARLY RETURN — rows empty (no shared band/obs_type with the pivot)");
+            first_dd_call = false;
+            return em;
+        }
+
+        // --- Prune stale DD ambiguity states ---
+        // Compute the set of DD ambiguity keys this epoch will reference
+        // by reading the final post-collapse @c rows vector.  Each phase
+        // row contributes one expected key built from its rov_code, which
+        // is either a single RINEX code ("L1C") in per-band mode or the
+        // concatenated IF label ("L1C+L2W") after iono-free collapse.
+        // Any DD-keyed ambiguity in the state that's NOT in this set is
+        // stale and removed.  This catches every leak path in one pass:
+        //   - pivot change for a group (old pivot's keys vanish from the set)
+        //   - rover or reference tracker switching codes mid-arc
+        //   - satellite leaving view at either receiver
+        //   - satellite added to excluded_satellites at runtime
+        //   - iono-free toggle changing the code segment of every key
+        //   - any other condition that produces no row this epoch
+        // Must run BEFORE em.H column indices are sized below — the H
+        // matrix uses state_manager.getStateSize(), and removeAmbiguity()
+        // compacts the state vector and shifts dynamic-state indices.
+        // Building the expected set from @c rows (rather than from the
+        // pre-collapse @c by_cons / @c brsd_signals) ensures the expected
+        // and added keys agree on whether the code segment is per-band or
+        // an IF concatenation; otherwise every IF DD ambiguity is pruned
+        // and re-added each epoch, losing covariance.
+        {
+            std::set<std::string> expected_dd_keys;
+            for (const auto& r : rows) {
+                if (r.obs_type != 'L') continue;
+                expected_dd_keys.insert(
+                    makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
+            }
+            std::vector<std::string> to_prune;
+            for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
+                if (key.compare(0, 3, "DD|") != 0) continue;
+                if (expected_dd_keys.count(key)) continue;
+                to_prune.push_back(key);
+            }
+            for (const auto& k : to_prune) state_manager_.removeAmbiguity(k);
+            if (!to_prune.empty()) {
+                log_manager_.getLogger("main_log")->info(
+                    "DD: pruned {} stale ambiguity state(s) (sat dropout, code "
+                    "switch, or pivot change)", to_prune.size());
+            }
+        }
+
+        // --- Refresh the AR-exclusion-key snapshot ---
+        // Any phase row whose four observations are NOT all the same
+        // RINEX code carries a residual receiver IFB or satellite DCB
+        // term that does not round to integer.  Those keys are exposed
+        // to AmbiguityResolver::resolveDd via getNonIntegerCapableDdAmbiguityKeys()
+        // so they remain float-only.  Rebuilt from scratch each epoch
+        // from the current phase rows; code rows are skipped because
+        // they do not create ambiguity states.
+        non_integer_capable_dd_ambiguity_keys_.clear();
+        for (const auto& r : rows) {
+            if (r.obs_type != 'L') continue;
+            if (r.integer_capable) continue;
+            non_integer_capable_dd_ambiguity_keys_.insert(
+                makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
+        }
+
+        // --- Ensure DD ambiguity states exist for phase rows ---
+        if (!code_only) {
+            for (auto& r : rows) {
+                if (r.obs_type != 'L') continue;
+                // Ambiguity key uses the rover's RINEX code.  When
+                // aliasing is on and the rover and reference disagree on
+                // tracking attribute, the float ambiguity will absorb the
+                // residual sat-DCB; integer fixing requires DCB
+                // harmonization (Phase 2 plan) to be valid.
+                const std::string key = makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p);
+                int aidx = state_manager_.getAmbiguityIndex(key);
+                if (aidx < 0) {
+                    state_manager_.addAmbiguity(key, r.innov_pre);
+                    aidx = state_manager_.getAmbiguityIndex(key);
+                    if (aidx >= 0) {
+                        Eigen::MatrixXd P = state_manager_.getCovariance();
+                        P(aidx, aidx) = amb_init_var;
+                        state_manager_.setCovariance(P);
+                    }
+                }
+                r.amb_idx = aidx;
+            }
+        }
+
+        // --- Per-row innov (code = pre; phase = pre - amb_state) ---
+        Eigen::VectorXd x;
+        try {
+            const size_t ss = state_manager_.getStateSize();
+            x = (current_state.size() == static_cast<Eigen::Index>(ss))
+                ? current_state
+                : state_manager_.getStateVector();
+        } catch (const std::exception& ex) {
+            klog->error("DD state-vector fetch failed: {}", ex.what());
+            first_dd_call = false;
+            return em;
+        } catch (...) {
+            klog->error("DD state-vector fetch failed: unknown exception");
+            first_dd_call = false;
+            return em;
+        }
+        std::vector<size_t> kept;
+        kept.reserve(rows.size());
+        try {
+            for (size_t i = 0; i < rows.size(); ++i) {
+                auto& r = rows[i];
+                if (code_only && r.obs_type == 'L') continue;
+                if (r.obs_type == 'L') {
+                    if (r.amb_idx < 0) continue;
+                    if (r.amb_idx >= x.size()) {
+                        klog->warn("DD row {} amb_idx={} out of range x.size={}", i, r.amb_idx, x.size());
+                        continue;
+                    }
+                    r.innov = r.innov_pre - x(r.amb_idx);
+                } else {
+                    r.innov = r.innov_pre;
+                }
+                kept.push_back(i);
+            }
+        } catch (const std::exception& ex) {
+            klog->error("DD innov loop failed: {}", ex.what());
+            first_dd_call = false;
+            return em;
+        }
+        const Eigen::Index m = static_cast<Eigen::Index>(kept.size());
+        if (diag) {
+            klog->info("DD diag: {} total DD rows built, {} kept after filter (code_only={})",
+                       rows.size(), m, code_only);
+        }
+        if (m == 0) {
+            if (diag) klog->info("DD diag: EARLY RETURN — m==0 (all rows filtered out)");
+            first_dd_call = false;
+            return em;
+        }
+
+        try {
+            const size_t n_state = state_manager_.getStateSize();
+            em.innovations = Eigen::VectorXd(m);
+            em.H = Eigen::MatrixXd::Zero(m, static_cast<Eigen::Index>(n_state));
+            em.R_full = Eigen::MatrixXd::Zero(m, m);
+            em.R_v = Eigen::VectorXd::Zero(m);
+            em.satellite_ids.reserve(static_cast<size_t>(m));
+            em.signal_types.reserve(static_cast<size_t>(m));
+
+            for (Eigen::Index a = 0; a < m; ++a) {
+                const auto& r = rows[kept[static_cast<size_t>(a)]];
+                em.H.block(a, 0, 1, 3) = r.h_pos;
+                if (r.obs_type == 'L' && r.amb_idx >= 0
+                    && static_cast<size_t>(r.amb_idx) < n_state) {
+                    em.H(a, r.amb_idx) = 1.0;
+                }
+                em.innovations(a) = r.innov;
+                em.R_v(a)         = r.var_brsd_i + r.var_brsd_p;
+                em.satellite_ids.push_back(r.sat_i + "-" + r.sat_p);
+                // Surface the rover code in residual traces.  When aliased
+                // with a different reference attribute, append the ref
+                // code so log readers can spot mixed-attribute rows.
+                em.signal_types.push_back(
+                    (r.rov_code == r.ref_code)
+                        ? r.rov_code
+                        : (r.rov_code + "/" + r.ref_code));
+            }
+            for (Eigen::Index a = 0; a < m; ++a) {
+                const auto& ra = rows[kept[static_cast<size_t>(a)]];
+                em.R_full(a, a) = em.R_v(a);
+                for (Eigen::Index b = a + 1; b < m; ++b) {
+                    const auto& rb = rows[kept[static_cast<size_t>(b)]];
+                    if (ra.group_key != rb.group_key) continue;
+                    const double cov = ra.var_brsd_p;
+                    em.R_full(a, b) = cov;
+                    em.R_full(b, a) = cov;
+                }
+            }
+        } catch (const std::exception& ex) {
+            klog->error("DD H/R assembly failed: {}", ex.what());
+            first_dd_call = false;
+            return em;
+        } catch (...) {
+            klog->error("DD H/R assembly failed: unknown exception");
+            first_dd_call = false;
+            return em;
+        }
+
+        first_dd_call = false;
+        return em;
     }
 
 } // namespace GnssProcessor

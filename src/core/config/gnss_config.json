@@ -7,24 +7,45 @@
   "app_mode": "post", // post, realtime
 
   // =================================================================
+  //  Data source
+  //
+  //    "internal"   - turnkey mode.  PathResolver globs the bundled
+  //                   data/ tree (see files.internal_data_root below)
+  //                   for SP3 / CLK / BIA / ERP / ATX / NC / brdc and
+  //                   matches RINEX observations by station name.
+  //                   No network access; data_download.enabled is
+  //                   ignored.  This is the unit-test / demo path.
+  //    "production" - real runs.  PathResolver delegates to
+  //                   ProductResolver, which downloads any missing
+  //                   IGS long-name files from CDDIS into
+  //                   data_download.data_root.  Configure year, doy,
+  //                   station, etc. in the data_download block below.
+  // =================================================================
+  "data_source": "internal",
+
+  // =================================================================
   //  Processing
   // =================================================================
   "processing": {
-    // --- Processing mode ---------------------------------------------------
-    "mode": "PPP-RTK", // PPP, PPP-RTK
-    //"mode": "PPP",                                // Ionosphere-free
+    "mode": "Baseline-Single", // PPP, PPP-RTK, Baseline-Single, Baseline-Differential
+    "active_systems": [ "GPS" ],
+    "signal_mode": "dual",
+    "elevation_mask_deg": 10.0,
+
+    //"run_smoother":  true,
 
     // --- Signal combination ------------------------------------------------
     //"uncombined_enabled": true,
-    "signal_mode": "dual", // dual, triple, all
-    //"mw_signals": "filter",   // filter (default: use KF bands), all (use all RINEX bands)
-    "elevation_mask_deg": 10.0,
-    // "data_gap_tolerance_s": 0,        // 0 = measurement rate (default)
+    // Hard data-gap threshold (seconds).  When the time between two
+    // processed epochs exceeds this value, baseline mode resets MW arc
+    // statistics on both receivers, erases all DD ambiguities, and
+    // forgets sticky pivots so the post-gap epoch starts from clean
+    // state.  0 = use built-in default (60 s in baseline mode).
+    // "data_gap_tolerance_s": 60.0,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": false,
     "satellite_interpolation_mode": "lagrange",
     "satellite_clock_interpolation_mode": "linear",
-    "active_systems": [ "GPS", "Galileo" ],
     "excluded_satellites": [],
     "signal_priorities": {
       "GPS": "WCSLXPYMIQ",
@@ -37,12 +58,106 @@
   },
 
   // =================================================================
+  //  Baseline fixture preset
+  //
+  //  Picks one of the named bundles in
+  //  include/config/BaselineFixtures.hpp.  The loader fills in any
+  //  field of the baseline section below that you leave blank — your
+  //  own values always win.  Set to "Custom" (or omit) to disable
+  //  presets entirely.
+  //
+  //    "IGS_Pasadena" - Caltech (CIT100USA) vs JPL (JPLM00USA),
+  //                     ~10 km baseline, 2024-DOY129.  Both stations
+  //                     publish to CDDIS daily; bootstrap fetches
+  //                     them automatically.
+  //    "OSU_Campus"   - Local OSU survey (NARY ref + 233 rover),
+  //                     ~340 m baseline, 2023-DOY321.  Not on any
+  //                     public archive — you must drop the obs files
+  //                     into data/observations/baseline/short/static/
+  //                     by hand.
+  // =================================================================
+  "baseline_fixture": "IGS_Pasadena",
+
+  "baseline": {
+    // rinex_path is OPTIONAL in internal-data mode.  If left empty
+    // (or omitted) the resolver matches a file by station name under
+    // <internal_data_root>/observations/ (recursively).  Set
+    // explicitly to override or to point at a file outside the
+    // internal tree.  Reference station's position_ecef is required
+    // but will be filled in from the preset above when blank.
+    "reference": {
+      "name": "",
+      "rinex_path": "",
+      // "position_ecef": [ X, Y, Z ],  // filled from preset when blank
+      "fixed": true
+    },
+    // Single-rover form ("rover" object) and multi-rover form ("rovers"
+    // array) are both accepted; provide either or both and they will be
+    // concatenated.  Use ProcessingMode "Baseline-Multi" to actually run
+    // all configured rovers (Baseline-Single truncates to the first one).
+    // In multi-rover mode each rover writes its trace files to
+    // logs/rover_<name>/ so they don't collide.
+    "rover": {
+      "name": "",
+      "rinex_path": ""
+    },
+    // "rovers": [
+    //     { "name": "NARY", "rinex_path": "..." },
+    //     { "name": "ROV2", "rinex_path": "..." },
+    //     { "name": "ROV3", "rinex_path": "..." }
+    // ],
+    "max_baseline_km": 30.0,
+    "epoch_sync_tolerance_s": 0.01,
+    // Slice 2a (Phase 2 in the baseline plan): code_only=false enables
+    // float phase DDs.  Phase ambiguities are added lazily as new
+    // (sat_i, code, pivot) combinations appear and erased by the per-
+    // receiver MW slip detector.  Ambiguity fixing (MLAMBDA) is Slice 2b
+    // and is gated separately.
+    "code_only": false,
+    // Pair signals across receivers at the band level when tracking
+    // attributes differ (e.g. rover C2W vs reference C2C, both GPS L2).
+    // Default true; set false for strict exact-RINEX-code matching.
+    "signal_aliasing": true,
+    // Use the dual-frequency ionosphere-free combination instead of
+    // per-band uncombined DDs.  Required for long baselines (>10-20 km)
+    // where DD does NOT cancel the inter-receiver ionospheric delay;
+    // optional knob on short baselines for testing / education.  IF
+    // phase ambiguities are not integer-cycle, so AR is automatically
+    // excluded for IF rows.  Sat-pairs with <2 shared bands are
+    // dropped in this mode.  Default false (uncombined).
+    "use_iono_free": true,
+    // When the per-constellation sticky pivot changes (incumbent left
+    // the shared-sat set), apply an S-transformation to re-reference
+    // existing DD ambiguities to the new pivot rather than erasing and
+    // re-seeding them.  Preserves integer cycle information and
+    // eliminates position discontinuities at pivot handovers.  Default
+    // true; set false to compare against the legacy reset behavior.
+    "enable_pivot_handover": true
+  },
+
+  // =================================================================
   //  File paths
+  //
+  //  All four fields are OPTIONAL.  PathResolver fills in anything
+  //  left empty:
+  //    - In data_source=internal mode it globs internal_data_root
+  //      (defaults to <project_root>/data when not specified — relative
+  //      paths here are resolved against the project root, not the
+  //      current working directory).
+  //    - In data_source=production mode it downloads from CDDIS into
+  //      data_download.data_root.
+  //
+  //  Set observation_path / navigation_path / product_list_path to
+  //  pin a specific file and bypass auto-discovery for that input.
+  //  product_list_path remains supported as a legacy escape hatch
+  //  (one path per line); when empty, PathResolver populates the
+  //  product list from the directory layout instead.
   // =================================================================
   "files": {
-    "observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
-    "navigation_path": "C:/GnssProcessorSupport/products/rnx/BRDC00IGS_R_20241290000_01D_MN.rnx",
-    "product_list_path": "C:/GnssProcessorSupport/products/default_products.txt"
+    "internal_data_root": "./data"
+    //"observation_path": "",
+    //"navigation_path": "",
+    //"product_list_path": ""
   },
 
   // =================================================================
@@ -66,19 +181,19 @@
   "estimation": {
 
     //"estimate_tropo_gradients": false,
-    //"estimate_phase_clock": false,              // forced true by uncombined mode
+    //"estimate_phase_clock": false,              
     //"estimate_velocity": false,
-    //"estimate_ifb": false,                      
-    //"lock_signals_to_clock_ref": false,          // smart default: false for PPP-RTK
-    //"require_bia_for_signals": false,            // smart default: !estimate_sat_biases
-    "estimate_sat_biases": false,                  // smart default: true for PPP-RTK (code-only)
+    //"estimate_ifb": false,
+    //"lock_signals_to_clock_ref": false,
+    //"require_bia_for_signals": false,
+    //"estimate_sat_biases": true,
     //"no_bia_code_downweight": 1.0,
     //"enable_if_slip_detector": false,
     //"accumulate_phase_windup": true,
 
     // --- Between-satellite single differencing (BSSD) ----------------------
     "between_satellite_sd": {
-      "enabled": true,
+      //"enabled": true,
       "pivot_min_elevation": 45.0
     },
 
@@ -96,7 +211,8 @@
   // =================================================================
   "filter": {
     "process_noise": {
-      "position_q": 1e2,
+      //"position_q": 1e2, // kinematic
+      "position_q": 0.0, // static
 
       // --- Clock process noise ----------------------------------------------
       "clock_bias_q": 1e3,
@@ -128,13 +244,13 @@
     },
     "measurement_noise": {
       "code_std_m": 0.300,
-      "phase_std_m": 0.002,
+      "phase_std_m": 0.001,
       "doppler_std_m": 0.5
     },
     // Stochastic model: "constant", "elevation", "snr", or "satellite_block".
     // "satellite_block" uses ATX block type + frequency band to set zenith
     // noise, then applies 1/sin²(el) scaling.
-    "stochastic_model": "elevation",
+    "stochastic_model": "satellite_block",
     "snr_model_params": {
       "code_a": 0.10,
       "code_b": 1.00,
@@ -193,7 +309,16 @@
   },
 
   // =================================================================
-  //  Data download
+  //  Data download (production mode only)
+  //
+  //  Used when data_source = "production".  In internal mode every
+  //  field below is ignored and the downloader is never invoked.
+  //
+  //  data_root is the local cache directory; ProductResolver creates
+  //  the standard orbit/, clock/, dcb/, erp/, brdc/, rinex/, atx/, nc/
+  //  subdirectories under it on first use.  atx_path / nc_path /
+  //  crx2rnx_path point at user-supplied static resources that
+  //  ProductResolver does not know how to download.
   // =================================================================
   "data_download": {
     "enabled": true,
@@ -201,15 +326,24 @@
     "product_source": "COD",
     "product_type": "FIN",
     "netrc_path": "",
-    "station": "GCGO",
+    // Production mode picks ONE obs station to download.  For
+    // baseline runs you'd typically download the reference and drop
+    // the rover in manually, OR run internal mode with bootstrap
+    // (the recommended path — see scripts/bootstrap_internal_data.py).
+    "station": "CIT1",
     "station_country": "USA",
     "year": 2024,
     "doy": 129,
-    "download_rinex": true,
+    "download_rinex": false,
     "download_products": true,
     "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",
     "nc_path": "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
-    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe"
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
+    // When false (the default), DataDownloader removes each .gz file
+    // after a successful gunzip — saves ~half the cache footprint.
+    // Set true if you want to keep the byte-exact compressed copy
+    // alongside the decompressed product (e.g. for archival).
+    "keep_zip_after_unzip": false
   },
 
   // =================================================================

@@ -3,8 +3,8 @@
  * @brief Implementation of the StochasticModelWeight class.
  */
 
-#include "StochasticModel.hpp"
-#include "Constants.hpp"
+#include "model/StochasticModel.hpp"
+#include "common/Constants.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cctype>
@@ -19,6 +19,7 @@ namespace GnssProcessor {
         : model_type_(config.getStochasticModel()),
           snr_params_(config.getSnrModelParams()),
           sat_block_params_(config.getSatBlockNoiseParams()),
+          phase_elevation_weighting_(config.phaseElevationWeighting()),
           log_manager_(log_mgr) {
 
         const char* name = "unknown";
@@ -52,17 +53,17 @@ namespace GnssProcessor {
             return computeConstant(default_var);
 
         case StochasticModelType::Elevation:
-            return computeElevation(default_var, elevation_deg);
+            return elevationScale(obs_type, default_var, elevation_deg);
 
         case StochasticModelType::SNR:
             if (is_code_or_phase) {
                 return computeSnr(obs_type, measurements, elevation_deg, default_var);
             }
-            return computeElevation(default_var, elevation_deg);
+            return elevationScale(obs_type, default_var, elevation_deg);
 
         case StochasticModelType::SatelliteBlock:
             // Without satellite info, fall back to elevation weighting.
-            return computeElevation(default_var, elevation_deg);
+            return elevationScale(obs_type, default_var, elevation_deg);
         }
 
         return default_var;
@@ -81,10 +82,14 @@ namespace GnssProcessor {
         }
 
         const char mt = obs_type[0];
-        if (mt == 'C' || mt == 'L') {
+        if (mt == 'C') {
             return computeSatBlock(obs_type, elevation_deg, default_var, satellite, antennas);
         }
-        return computeElevation(default_var, elevation_deg);
+        // Phase (and everything else) uses the configured measurement_noise
+        // with elevation scaling ï¿½ no per-block/band differentiation.
+        // elevationScale honours the phase_elevation_weighting flag so
+        // phase can be held at default_var when the flag is off.
+        return elevationScale(obs_type, default_var, elevation_deg);
     }
 
     // ===================================================================
@@ -101,7 +106,16 @@ namespace GnssProcessor {
         if (sin_el > 1e-6) {
             return default_var / (sin_el * sin_el);
         }
-        return default_var; // near-zero elevation — don't amplify to infinity
+        return default_var; // near-zero elevation ï¿½ don't amplify to infinity
+    }
+
+    double StochasticModelWeight::elevationScale(const std::string& obs_type,
+                                                  double default_var,
+                                                  double elevation_deg) const {
+        if (!phase_elevation_weighting_ && !obs_type.empty() && obs_type[0] == 'L') {
+            return default_var;
+        }
+        return computeElevation(default_var, elevation_deg);
     }
 
     double StochasticModelWeight::computeSnr(
@@ -116,8 +130,9 @@ namespace GnssProcessor {
 
         auto it = measurements.find(snr_key);
         if (it == measurements.end() || it->second <= 0.0) {
-            // No SNR available — fall back to elevation-based weighting.
-            return computeElevation(default_var, elevation_deg);
+            // No SNR available ï¿½ fall back to elevation-based weighting
+            // (respects the phase_elevation_weighting flag).
+            return elevationScale(obs_type, default_var, elevation_deg);
         }
 
         double snr_dbhz = it->second;
@@ -131,7 +146,7 @@ namespace GnssProcessor {
         const double a = is_code ? snr_params_.code_a : snr_params_.phase_a;
         const double b = is_code ? snr_params_.code_b : snr_params_.phase_b;
 
-        // SIGMA-? model:  ? = a + b · 10^(?SNR / 10)
+        // SIGMA-? model:  ? = a + b ï¿½ 10^(?SNR / 10)
         const double sigma = a + b * std::pow(10.0, -snr_dbhz / 10.0);
 
         log_manager_.getLogger("stochastic_model")->trace(
@@ -206,8 +221,9 @@ namespace GnssProcessor {
             "freq_scale={:.2f}, scaled_std={:.4f} m",
             satellite, atx_type, matched_block, obs_type, zenith_std, freq_scale, scaled_std);
 
-        // Apply elevation weighting on top.
-        return computeElevation(var, elevation_deg);
+        // Apply elevation weighting on top (skipped for phase when the
+        // phase_elevation_weighting flag is disabled).
+        return elevationScale(obs_type, var, elevation_deg);
     }
 
 } // namespace GnssProcessor

@@ -9,25 +9,47 @@ clear all; clc; %close all;
 %% --- Load CSV file ---
 fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\state_trace.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\smoother_trace.csv';
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to UTC datetime ---
 gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
-gpsSeconds = T.week * 7 * 86400 + T.tow_s;
+try
+    gpsSeconds = T.week * 7 * 86400 + T.tow_s;
+catch
+    gpsSeconds = T.week * 7 * 86400 + T.tow;
+end
 T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
 
 %% --- Extract variables ---
 % Core
 t = T.utc;
 
-x  = T.x_m;     y  = T.y_m;     z  = T.z_m;
-xs = T.x_std_m; ys = T.y_std_m; zs = T.z_std_m;
+try
+    x  = T.x_m;     y  = T.y_m;     z  = T.z_m;
+catch
+    x  = T.x;     y  = T.y;     z  = T.z;
+end
+try
+    xs = T.x_std_m; ys = T.y_std_m; zs = T.z_std_m;
+catch
+    xs = T.sigma_x; ys = T.sigma_y; zs = T.sigma_z;
+end
 
 clk  = T.clock_m;
-clks = T.clock_std_m;
+try
+    clks = T.clock_std_m;
+catch
+    clks = T.clock_m;
+end
 
-trop  = T.tropo_m;
-trops = T.tropo_std_m;
+try
+    trop  = T.tropo_m;
+    trops = T.tropo_std_m;
+catch
+    trop  = T.tropo_zwd_m;
+    trops = T.sigma_tropo_m;
+end
 
 % Extras
 %%% Galileo clock
