@@ -54,6 +54,11 @@ namespace GnssProcessor {
         inline bool parseInt(std::string_view& sv, int& out) {
             skipWs(sv);
             if (sv.empty()) return false;
+            // std::from_chars (C++17) accepts a leading '-' but not '+';
+            // istringstream did. Skip an explicit '+' so SP3/CLK/ATX files
+            // that pad positive integers with a sign still parse.
+            if (sv.front() == '+') sv.remove_prefix(1);
+            if (sv.empty()) return false;
             const char* first = sv.data();
             const char* last  = first + sv.size();
             auto [ptr, ec] = std::from_chars(first, last, out);
@@ -64,6 +69,15 @@ namespace GnssProcessor {
 
         inline bool parseDouble(std::string_view& sv, double& out) {
             skipWs(sv);
+            if (sv.empty()) return false;
+            // Same '+' handling as parseInt.  ATX PCO lines look like
+            //   "    +0.83     -0.27    +86.72   NORTH / EAST / UP"
+            // — std::from_chars rejects the '+' and the entire entry's
+            // PCO/PCV ends up unloaded, silently dropping the antenna
+            // correction at runtime. This is the bug that kept
+            // JAVRINGANT_DM_SCIS (and most BLOCK IIF satellite entries)
+            // from contributing PCO/PCV after the cfa3080 optimization.
+            if (sv.front() == '+') sv.remove_prefix(1);
             if (sv.empty()) return false;
             const char* first = sv.data();
             const char* last  = first + sv.size();
