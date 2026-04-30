@@ -19,6 +19,7 @@
 #include "math/Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <numeric>
 #include <unordered_map>
 
@@ -86,26 +87,54 @@ namespace GnssProcessor {
 
             log_manager_.getLogger("geometry")->info("Built orbit index for {} satellites", orbit_index_.size());
 
-            // Attempt to load ocean tidal loading coefficients from BLQ file
-            auto otl_path = config_.getOtlBlqPath();
-            if (!otl_path.empty()) {
-                std::string station_name = rinex_parser_.getHeader().marker_name;
-                if (!station_name.empty()) {
-                    if (corrections_.loadOceanTideFromBLQ(otl_path.string(), station_name)) {
-                        log_manager_.getLogger("geometry")->info(
-                            "Loaded OTL BLQ coefficients for station '{}'", station_name);
-                    } else {
-                        log_manager_.getLogger("geometry")->warn(
-                            "Could not load OTL BLQ coefficients for station '{}' from '{}'",
-                            station_name, otl_path.string());
-                    }
+            // Ocean tidal loading: precedence is BLQ → EOT20 grid → safe-zero.
+            //   1. If a BLQ file is configured AND the station name is found in
+            //      it, use the station-specific Onsala coefficients (highest
+            //      fidelity, includes horizontal components).
+            //   2. Else if EOT20_load.nc is available, synthesize per-station
+            //      radial coefficients from the global load grid by bilinear
+            //      interpolation at the receiver's a priori ECEF position.
+            //   3. Else OceanTideModel falls back to a zero displacement (the
+            //      previous latitude-scaled approximate model was phase-blind
+            //      and could inject a biased oscillation into the up channel).
+            // Skip the load entirely when OTL is disabled — avoids a misleading
+            // "loaded coefficients" log line when the per-epoch site won't use them.
+            auto log = log_manager_.getLogger("geometry");
+            if (!config_.getModelCorrections().enable_ocean_tide_loading) {
+                log->info("OTL: disabled via enable_ocean_tide_loading=false; skipping coefficient load");
+                return;
+            }
+            const auto otl_blq_path = config_.getOtlBlqPath();
+            const auto eot20_path   = config_.getDownloadConfig().nc_path;
+            const std::string station_name = rinex_parser_.getHeader().marker_name;
+            const Eigen::Vector3d station_ecef = rinex_parser_.getApproxPositionXyz();
+
+            bool loaded = false;
+            if (!otl_blq_path.empty() && !station_name.empty()) {
+                if (corrections_.loadOceanTideFromBLQ(otl_blq_path.string(), station_name)) {
+                    log->info("OTL: loaded BLQ coefficients for station '{}'", station_name);
+                    loaded = true;
                 } else {
-                    log_manager_.getLogger("geometry")->warn(
-                        "OTL BLQ path configured but RINEX marker name is empty; using approximate OTL model");
+                    log->warn("OTL: BLQ '{}' had no entry for station '{}'; trying EOT20 fallback",
+                              otl_blq_path.string(), station_name);
                 }
-            } else {
-                log_manager_.getLogger("geometry")->info(
-                    "No OTL BLQ file configured; using approximate ocean tidal loading model");
+            } else if (!otl_blq_path.empty() && station_name.empty()) {
+                log->warn("OTL: BLQ path configured but RINEX marker name is empty; trying EOT20 fallback");
+            }
+
+            if (!loaded && !eot20_path.empty() && std::filesystem::exists(eot20_path)
+                && station_ecef.allFinite() && station_ecef.norm() > 1e6) {
+                if (corrections_.loadOceanTideFromEot20(eot20_path.string(), station_ecef)) {
+                    log->info("OTL: synthesized coefficients from EOT20 grid '{}'", eot20_path.string());
+                    loaded = true;
+                } else {
+                    log->warn("OTL: EOT20 synthesis failed for '{}'; OTL displacement will be zero",
+                              eot20_path.string());
+                }
+            }
+
+            if (!loaded) {
+                log->info("OTL: no BLQ or EOT20 source available; ocean tidal loading disabled (zero displacement)");
             }
         }
 

@@ -298,6 +298,22 @@ namespace GnssProcessor {
         bool loadOceanTideFromBLQ(const std::string& blq_path, const std::string& station_name);
 
         /**
+         * @brief Synthesize OTL coefficients from the EOT20 global load grid.
+         *
+         * Bilinearly interpolates the EOT20_load.nc complex height coefficients
+         * at the station position and converts them to BLQ-style amplitude and
+         * Greenwich phase lag for the 11 BLQ constituents. Provides station-
+         * specific OTL for any location on Earth without per-station BLQ files.
+         *
+         * @param nc_path       Path to EOT20_load.nc.
+         * @param station_ecef  Receiver ECEF position (meters).
+         * @return True if synthesis succeeded; on failure, the model retains
+         *         whatever coefficients (or absence thereof) were set previously.
+         */
+        bool loadOceanTideFromEot20(const std::string& nc_path,
+                                    const Eigen::Vector3d& station_ecef);
+
+        /**
          * @brief Check whether station-specific OTL coefficients are available.
          * @return True if OTL coefficients have been loaded.
          */
