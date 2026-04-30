@@ -38,8 +38,23 @@ namespace GnssProcessor {
         /// Error messages.
         Error,
         /// Critical (fatal) messages.
-        Critical
+        Critical,
+        /// Disabled — emit nothing. Used to silence individual loggers via per-logger overrides.
+        Off
     };
+
+    /**
+     * @brief Parse a LogLevel from a JSON-friendly string.
+     *
+     * Accepts case-insensitive: "trace", "debug", "info", "warn"/"warning",
+     * "error"/"err", "critical"/"crit", "off". Unknown strings throw
+     * @c std::invalid_argument so the config loader can warn the user.
+     *
+     * @param s Level name from the JSON config.
+     * @return Corresponding LogLevel.
+     * @throws std::invalid_argument if @p s is not a recognized level.
+     */
+    LogLevel logLevelFromString(const std::string& s);
 
     /**
      * @class LogManager
@@ -127,6 +142,20 @@ namespace GnssProcessor {
         void setDisabledLoggers(const std::set<std::string>& names);
 
         /**
+         * @brief Apply per-logger level overrides.
+         *
+         * Each entry maps a logger name (e.g. "kalman_filter") to the level
+         * at which that logger should emit. Loggers not listed continue to
+         * use the global level passed to @c initialize(). Disabled loggers
+         * (via @c setDisabledLoggers) take precedence over any override
+         * here. Loggers already created are updated immediately; not-yet-
+         * created loggers will pick up their override when first requested.
+         *
+         * @param levels Map of logger name → LogLevel.
+         */
+        void setLoggerLevels(const std::map<std::string, LogLevel>& levels);
+
+        /**
          * @brief Set the GNSS epoch time used for the [tow=...] field in
          *        every subsequent log message on the calling thread.
          *
@@ -160,6 +189,9 @@ namespace GnssProcessor {
 
         /// Set of logger names whose level should be forced to off.
         std::set<std::string> disabled_loggers_;
+
+        /// Per-logger level overrides; absent entries fall back to @c level_.
+        std::map<std::string, LogLevel> per_logger_levels_;
 
         /**
          * @brief Convert project LogLevel to spdlog::level::level_enum.

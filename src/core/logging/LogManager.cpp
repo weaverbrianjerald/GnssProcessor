@@ -1,11 +1,28 @@
 #include "logging/LogManager.hpp"
 #include "math/TimeUtils.hpp"
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <algorithm>
+#include <cctype>
 #include <iomanip>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 
 namespace GnssProcessor {
+
+    LogLevel logLevelFromString(const std::string& s) {
+        std::string lower(s.size(), '\0');
+        std::transform(s.begin(), s.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower == "trace")                            return LogLevel::Trace;
+        if (lower == "debug")                            return LogLevel::Debug;
+        if (lower == "info")                             return LogLevel::Info;
+        if (lower == "warn" || lower == "warning")       return LogLevel::Warn;
+        if (lower == "error" || lower == "err")          return LogLevel::Error;
+        if (lower == "critical" || lower == "crit")      return LogLevel::Critical;
+        if (lower == "off" || lower == "none" || lower == "disabled") return LogLevel::Off;
+        throw std::invalid_argument("Unknown LogLevel string: '" + s + "'");
+    }
 
     // ===================================================================
     // Per-thread current-epoch context for log lines
@@ -122,18 +139,19 @@ namespace GnssProcessor {
             // braces but are not strictly required.
             spdlog::set_formatter(makeGpsFormatter());
 
-            // Initialize default logger (gnss_processor)
+            // Default logger ("gnss_processor") is console-only by design.
+            // It catches messages from spdlog::xxx() global calls and from a
+            // small number of legacy sites that use getLogger() with no name;
+            // all module-specific logging should go to a named logger
+            // (getLogger("module_name")) that lands in its own .log file.
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-            auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                (log_dir / "gnss_processor.log").string(), 1024 * 1024 * 5, 3);
-            auto logger = std::make_shared<spdlog::logger>("gnss_processor", spdlog::sinks_init_list{ file_sink, console_sink });
+            auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
             logger->set_formatter(makeGpsFormatter());
             logger->set_level(toSpdlogLevel(level));
             logger->flush_on(spdlog::level::info);
             spdlog::register_logger(logger);
             loggers_["gnss_processor"] = logger;
             initialized_ = true;
-            logger->info("LogManager initialized with log directory: {}", log_dir.string());
             return true;
         }
         catch (const spdlog::spdlog_ex& e) {
@@ -213,17 +231,17 @@ namespace GnssProcessor {
                     (log_dir_ / (logger_name + ".log")).string(), 1024 * 1024 * 5, 3);
                 auto logger = std::make_shared<spdlog::logger>(logger_name, spdlog::sinks_init_list{ file_sink, console_sink });
                 logger->set_formatter(makeGpsFormatter());
+                // Effective level = (disabled ? Off : per-logger override ?: global level_).
                 if (disabled_loggers_.count(logger_name)) {
                     logger->set_level(spdlog::level::off);
+                } else if (auto it = per_logger_levels_.find(logger_name); it != per_logger_levels_.end()) {
+                    logger->set_level(toSpdlogLevel(it->second));
                 } else {
                     logger->set_level(toSpdlogLevel(level_));
                 }
                 logger->flush_on(spdlog::level::info);
                 spdlog::register_logger(logger);
                 loggers_[logger_name] = logger;
-                if (!disabled_loggers_.count(logger_name)) {
-                    logger->info("Initialized logger {} with file: {}", logger_name, (log_dir_ / (logger_name + ".log")).string());
-                }
             }
             catch (const spdlog::spdlog_ex& e) {
                 loggers_["gnss_processor"]->error("Failed to initialize logger {}: {}. Using default logger.", logger_name, e.what());
@@ -244,6 +262,19 @@ namespace GnssProcessor {
         }
     }
 
+    void LogManager::setLoggerLevels(const std::map<std::string, LogLevel>& levels) {
+        per_logger_levels_ = levels;
+        // Retroactively apply to already-created loggers.  Disabled loggers
+        // keep their off state (disable wins over a per-logger level).
+        for (const auto& [name, level] : levels) {
+            if (disabled_loggers_.count(name)) continue;
+            auto it = loggers_.find(name);
+            if (it != loggers_.end()) {
+                it->second->set_level(toSpdlogLevel(level));
+            }
+        }
+    }
+
     /**
      * @brief Convert project LogLevel to spdlog's level enum.
      *
@@ -258,6 +289,7 @@ namespace GnssProcessor {
         case LogLevel::Warn: return spdlog::level::warn;
         case LogLevel::Error: return spdlog::level::err;
         case LogLevel::Critical: return spdlog::level::critical;
+        case LogLevel::Off: return spdlog::level::off;
         default: return spdlog::level::info;
         }
     }

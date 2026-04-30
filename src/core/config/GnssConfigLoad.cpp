@@ -989,7 +989,7 @@ namespace GnssProcessor {
     // =================================================================
     //  Section: logging
     // =================================================================
-    void GnssConfig::loadLoggingSection_(const nlohmann::json& json, LogManager& /*log_manager*/) {
+    void GnssConfig::loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager) {
         const auto& lg = jsection(json, "logging", "logging");
         // spdlog file loggers
         logging_config_.enable_main_log           = lg.value("enable_main_log", true);
@@ -1035,6 +1035,23 @@ namespace GnssProcessor {
         logging_config_.enable_mw_slip_trace      = lg.value("enable_mw_slip_trace", true);
         logging_config_.enable_if_slip_trace      = lg.value("enable_if_slip_trace", true);
         logging_config_.enable_gf_slip_trace      = lg.value("enable_gf_slip_trace", true);
+
+        // Per-logger level overrides: logging.levels = { "name": "level", ... }
+        // Each entry sets one logger's emission threshold; loggers absent from
+        // the map fall back to the global level set in LogManager::initialize().
+        // Disabled loggers (enable_X = false) take precedence over any entry here.
+        logging_config_.per_logger_levels.clear();
+        if (lg.contains("levels") && lg["levels"].is_object()) {
+            for (const auto& [name, val] : lg["levels"].items()) {
+                if (!val.is_string()) continue;
+                try {
+                    logging_config_.per_logger_levels[name] = logLevelFromString(val.get<std::string>());
+                } catch (const std::invalid_argument& e) {
+                    log_manager.getLogger("gnss_config")->warn(
+                        "Ignoring unknown log level for '{}': {}", name, e.what());
+                }
+            }
+        }
     }
 
     // =================================================================

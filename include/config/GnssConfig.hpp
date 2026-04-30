@@ -569,6 +569,27 @@ namespace GnssProcessor {
          * @return true if the logger should produce file output.
          */
         bool isLoggerEnabled(const std::string& name) const;
+
+        /**
+         * @brief Per-logger severity overrides parsed from JSON @c logging.levels.
+         *
+         * Map of logger name → LogLevel. Loggers absent from this map fall
+         * back to the global level set in @c LogManager::initialize() (Info
+         * by default). Disabled loggers (via the @c enable_X flags above)
+         * take precedence over any entry here.
+         *
+         * Example JSON:
+         * @code
+         * "logging": {
+         *   "levels": {
+         *     "kalman_filter": "debug",
+         *     "geometry": "warn",
+         *     "ppp_model": "info"
+         *   }
+         * }
+         * @endcode
+         */
+        std::map<std::string, LogLevel> per_logger_levels;
     };
 
     /**

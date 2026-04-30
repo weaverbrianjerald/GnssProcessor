@@ -108,6 +108,13 @@ bool Application::initLoggingAndConfig() {
             if (!lc.isLoggerEnabled(name)) disabled.insert(name);
         }
         if (!disabled.empty()) log_manager_.setDisabledLoggers(disabled);
+
+        // Apply per-logger level overrides (logging.levels in JSON).
+        // Disabled loggers take precedence; any override here only applies
+        // to loggers not in the disabled set.
+        if (!lc.per_logger_levels.empty()) {
+            log_manager_.setLoggerLevels(lc.per_logger_levels);
+        }
     }
 
     log_manager_.getLogger("main_log")->info("Configuration loaded from {}", config_path_.string());

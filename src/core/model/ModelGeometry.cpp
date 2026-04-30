@@ -246,9 +246,15 @@ namespace GnssProcessor {
             // Step 2: Satellite clock at approximate emission time
             double sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time);
             if (std::abs(sat_clk) < 1e-12) {
-                log_manager_.getLogger("geometry")->warn(
-                    "Satellite clock correction is zero/invalid for {} at emission TOW {:.3f} - skipping",
-                    obs.satellite, emission_time.tow);
+                // Warn once per satellite per session. The "no clock product"
+                // condition is essentially static within a daily run (typical
+                // for BeiDou GEOs absent from MGEX clock products), so the
+                // duplicate-per-epoch firehose is pure noise.
+                if (sats_warned_no_clock_.insert(obs.satellite).second) {
+                    log_manager_.getLogger("geometry")->warn(
+                        "Satellite {} has zero/invalid clock product; observations from this satellite will be skipped this session",
+                        obs.satellite);
+                }
                 return false;
             }
 
