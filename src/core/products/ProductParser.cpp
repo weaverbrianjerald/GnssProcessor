@@ -548,7 +548,12 @@ namespace GnssProcessor {
                     int year, month, day, hour, minute;
                     double second;
                     if (iss >> year >> month >> day >> hour >> minute >> second) {
-                        if (year >= 1980 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
+                        // Year >= 1970 admits pre-GPS-epoch dates (Block I
+                        // satellites launched 1978-02-22 onward). They parse
+                        // to negative GPS weeks, which the matcher treats as
+                        // "no covering window" for any modern epoch — i.e.,
+                        // the entries simply never apply, with no warning.
+                        if (year >= 1970 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
                             hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0.0 && second < 61.0) {
                             try { return TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, minute, second); }
                             catch (...) { return GnssTime{ 0,0.0 }; }
