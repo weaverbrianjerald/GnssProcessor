@@ -84,6 +84,9 @@ namespace GnssProcessor {
         bool signal_aliasing{ true };         ///< Pair signals across receivers at the band level when tracking attributes differ (e.g. rover C2W vs reference C2C, both GPS L2).  When false, only exact RINEX-3 string matches form DD rows (legacy strict behavior).  Default ON because mixed-receiver fleets are common and the strict path silently drops viable measurements.  Sat-DCB residual on cross-attribute code rows is small (typically <1 m) and is absorbed by the float ambiguity for phase rows.  Phase 2 plan adds DCB harmonization for ambiguity fixing.
         bool use_iono_free{ false };          ///< Use the dual-frequency ionosphere-free combination instead of per-band uncombined DDs.  Long-baseline (>10-20 km) DDs do NOT cancel ionosphere between receivers; the IF combination eliminates the first-order term at the cost of ~3x amplified code noise and a non-integer ambiguity (float-only — AR is automatically excluded for IF rows).  On short baselines IF is unnecessary and noisier than uncombined; the toggle exists as a testing / educational knob.  Per sat-pair and obs-type the row builder picks the two highest-frequency bands available at both rover and reference and collapses them into a single IF row.  Sat-pairs with fewer than two shared bands are dropped in IF mode.
         bool enable_pivot_handover{ true };   ///< When the per-constellation sticky pivot changes (incumbent left the shared-sat set), apply an S-transformation to re-reference the existing DD ambiguities to the new pivot instead of erasing and re-seeding them.  Preserves integer cycle information across pivot changes — the user-visible symptom of NOT doing this is a position discontinuity at every pivot handover, since the freshly-seeded float ambiguities have to absorb the rover's geometry residual all over again.  The transform is x_new = T·x_old, P_new = T·P_old·Tᵀ, where T is the standard DD S-transform that maps (DD relative to old pivot) to (DD relative to new pivot).  Default true; set false to revert to the legacy reset-on-handover behavior for testing or comparison.
+        bool estimate_differential_tropo{ false };  ///< Estimate a single differential zenith wet delay (Δzwd ≡ ZWD_rov − ZWD_ref) as a state, mapped to slant via the wet mapping function.  PppModel applies only the Saastamoinen ZHD a-priori; the wet delay is otherwise unmodeled and on short baselines (< ~10 km) it cancels in BRSD because both stations see nearly identical wet path delays.  On longer baselines (especially with altitude differences) Δzwd can reach several centimeters and the residual smears into vertical position and float ambiguities.  Set true with use_iono_free for the typical long-baseline configuration.  Per phase DD row the H column entry is (mf_w_rov_i − mf_w_rov_p); short-baseline approximation assumes mapping functions match between rover and reference.  Single state (one Δzwd, one process-noise channel); not adequate for >100 km baselines where rover and reference mapping functions diverge.
+        double differential_tropo_init_std_m{ 0.1 };  ///< Initial standard deviation of the differential ZWD state (m).  Default covers ~1 cm/10 km horizontal × 30 km plus modest altitude-difference contribution.  Used only when @c estimate_differential_tropo is true.
+        double differential_tropo_process_noise_m_per_sqrt_s{ 1e-4 };  ///< Random-walk process noise spectral density (m/√s) for the differential ZWD state.  Default 1e-4 ≈ 6 mm/√h, a typical published value for short-to-medium-baseline differential troposphere drift.  Squared to a per-second variance rate inside @c getProcessNoiseMatrix.  Used only when @c estimate_differential_tropo is true.
     };
 
     /**
@@ -454,6 +457,7 @@ namespace GnssProcessor {
     struct ModelCorrections {
         // --- Atmosphere ---
         bool enable_troposphere{ true };               ///< Saastamoinen ZHD + GMF dry mapping (slant hydrostatic delay).
+        bool enable_klobuchar_ionosphere{ false };     ///< Klobuchar ionospheric delay model (single-frequency fallback only).  IF combinations and DD short-baselines cancel ionosphere geometrically; PPP-RTK uncombined estimates per-satellite slant iono states.  In all three of those configs the Klobuchar model is a no-op — but constructing the @c Ionosphere instance still pays for an extra @c Model::Geometry load and the Klobuchar coefficient parse.  Default off.  Enable only for single-frequency PPP runs that need a-priori iono.
 
         // --- Relativistic / propagation ---
         bool enable_relativistic_correction{ true };  ///< Periodic relativistic clock correction (-2 r�v / c�).
@@ -470,6 +474,7 @@ namespace GnssProcessor {
         bool enable_satellite_pcv{ true };             ///< Satellite antenna phase centre variation.
         bool enable_receiver_pco{ true };              ///< Receiver antenna phase centre offset.
         bool enable_receiver_pcv{ true };              ///< Receiver antenna phase centre variation.
+        bool enable_atx_frequency_fallback{ true };    ///< When the ATX entry doesn't have PCO/PCV for the requested frequency (common for L5 / E5* / B2a on older satellites or receiver antennas), look up the nearest available frequency on the same antenna and use its values instead of silently skipping the correction.  Cross-frequency PCO drift on a single physical antenna is typically <1 cm — better than the few-cm vertical residual that comes from skipping a frequency entirely.  Set false to revert to the legacy "skip if missing" behavior for A/B comparison.
 
         // --- Carrier-phase ---
         bool enable_phase_windup{ true };              ///< Carrier-phase wind-up correction.
@@ -892,6 +897,55 @@ namespace GnssProcessor {
         bool relinearizeGeometry() const { return relinearize_geometry_; }
 
         /**
+         * @brief Threshold on |Δpos| for relinearization when at least one
+         *        phase observation is available in the epoch.  Default 1.0 m.
+         *
+         * Phase rows pin the position state tightly — once the filter has
+         * converged, |Δpos| drops to sub-cm and the second-pass H matrix
+         * is essentially identical to the first.  Even a relaxed 1 m
+         * threshold relinearizes only during early convergence.
+         */
+        double relinearizeDposThresholdPhaseM() const { return relinearize_dpos_threshold_phase_m_; }
+
+        /**
+         * @brief Threshold on |Δpos| for relinearization in code-only mode
+         *        (no phase observables in the epoch).  Default 100.0 m.
+         *
+         * SPP-style code-only solutions exhibit ~5 m epoch-to-epoch
+         * jitter even after convergence, so a low threshold would fire
+         * every epoch.  100 m skips relinearization on routine epochs
+         * and only fires on truly large jumps (e.g. cold start).
+         */
+        double relinearizeDposThresholdCodeOnlyM() const { return relinearize_dpos_threshold_code_only_m_; }
+
+        /**
+         * @brief Hard cap on relinearization passes per run.  -1 (default)
+         *        means unlimited.
+         *
+         * Safety net for noisy modes (code-only single-frequency with ~5 m
+         * SPP-style position jitter) where the |Δpos| threshold would fire
+         * every epoch and we'd be paying double the per-epoch cost
+         * indefinitely.  After the cap is reached, relinearization is
+         * silently skipped for the rest of the run.
+         */
+        int relinearizeMaxCount() const { return relinearize_max_count_; }
+
+        /**
+         * @brief Number of threads Eigen should use for dense matmul / solve.
+         *
+         * 0 → leave the OpenMP runtime default (typically the core count).
+         * 1 → single-threaded (recommended for small-matrix workloads where
+         *      fork/join overhead exceeds the parallel speedup; PPP-RTK
+         *      with n≈350, m≈250 falls in this range).
+         * N → pin to N threads.
+         *
+         * Applied once during @c Application::run() via
+         * @c Eigen::setNbThreads().  Build still links OpenMP so threading
+         * can be re-enabled at runtime by editing the config — no rebuild.
+         */
+        int eigenThreads() const { return eigen_threads_; }
+
+        /**
          * @brief Check if separate phase clock estimation is enabled.
          *
          * When true, a separate receiver phase clock offset state is estimated
@@ -964,6 +1018,31 @@ namespace GnssProcessor {
          * @return True if BSSD is enabled.
          */
         bool enableBetweenSatelliteSd() const { return enable_between_satellite_sd_; }
+
+        /**
+         * @brief Allow GLONASS satellites to participate in BSSD.
+         *
+         * GLONASS uses FDMA — each satellite has its own carrier frequency
+         * — so the receiver hardware delay differs per-channel and does
+         * NOT cancel in between-satellite differencing.  By default
+         * (false) GLONASS is dropped at three gates: ensureRequiredStates,
+         * isUsableMeasurement, and BssdPivotManager pivot selection.
+         *
+         * When true, GLONASS observations flow through BSSD.  Per-(sat,
+         * signal) sat-bias states absorb the receiver inter-channel bias
+         * (ICB) — leverages the existing @c estimate_sat_biases path,
+         * which adds states whenever BIA coverage is missing (always
+         * the case for GLONASS in standard products).  GLONASS phase
+         * ambiguities are auto-marked unresolvable so LAMBDA never
+         * tries to integer-fix the ICB-contaminated value.
+         *
+         * Recommended: keep false unless you really need the extra
+         * geometry from GLONASS.  GPS+Galileo+BeiDou already provide
+         * 30+ satellites, more than enough for a clean PPP-RTK
+         * solution.  Set true and also @c estimate_sat_biases=true to
+         * activate.
+         */
+        bool enableGlonassBssd() const { return enable_glonass_bssd_; }
 
         /**
          * @brief Get the BSSD pivot minimum elevation (degrees).
@@ -1296,12 +1375,17 @@ namespace GnssProcessor {
         std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
 
         bool estimate_tropo_gradients_{ false };   ///< Estimate troposphere horizontal gradients (Gn, Ge).
-        bool relinearize_geometry_{ false };            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
+        bool   relinearize_geometry_{ false };            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
+        double relinearize_dpos_threshold_phase_m_{ 1.0 };     ///< |Δpos| threshold (m) when phase observables are present.
+        double relinearize_dpos_threshold_code_only_m_{ 100.0 }; ///< |Δpos| threshold (m) when no phase observables (code-only).
+        int    relinearize_max_count_{ -1 };              ///< Hard cap on total relinearizations per run; -1 = unlimited.
+        int    eigen_threads_{ 1 };                       ///< Eigen thread count (0=default, 1=sequential, N=pinned).  See eigenThreads().
         bool run_smoother_{ false };                    ///< Run backward RTS smoother after forward Kalman pass (post-processing only).
         bool estimate_phase_clock_{ false };            ///< Estimate separate phase clock offset.
         bool enable_if_slip_detector_{ false };             ///< Enable the IF phase slip detector (experimental, disabled by default).
         bool accumulate_phase_windup_{ false };                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         bool enable_between_satellite_sd_{ false };                ///< Between-satellite single-difference operator in measurement model.
+        bool enable_glonass_bssd_{ false };                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         double bssd_pivot_min_elevation_deg_{ 45.0 };              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
         bool estimate_ifb_{ false };                                    ///< Estimate receiver inter-frequency bias (IFB) for non-reference code bands.
         bool lock_signals_to_clock_ref_{ false };                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.

@@ -3,8 +3,93 @@
 #include "products/ProductCache.hpp"
 #include <Eigen/Dense>
 #include <cstdio>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace GnssProcessor {
+
+    namespace {
+
+        // ---- ATX nearest-frequency fallback ---------------------------------
+        // For each requested ATX frequency key (e.g. "G05"), the chain lists
+        // alternates ordered by *frequency proximity* — closest carrier
+        // frequency first.  Used when an antenna entry's pco/pcv map doesn't
+        // include the requested key (common for L5 / E5* / B2a on older
+        // satellites and many receiver antennas published before triple-freq
+        // tracking was widespread).  Cross-frequency PCO drift on the same
+        // physical antenna is typically <1 cm; that is much better than the
+        // few-cm vertical residual from leaving the correction at zero.
+        //
+        // Frequency ordering reference (MHz):
+        //   GPS    L1=1575.42  L2=1227.60  L5=1176.45
+        //   Gal    E1=1575.42  E6=1278.75  E5b=1207.14  E5(a+b)=1191.795  E5a=1176.45
+        //   GLO    L1≈1602     L2≈1246     L3=1202.025
+        //   BDS    B1C=1575.42 B1I=1561.098 B3I=1268.52 B2b=1207.14 B2(a+b)=1191.795 B2a=1176.45
+        //   QZSS   L1=1575.42  L6=1278.75   L2=1227.60                              L5=1176.45
+        //   SBAS   L1=1575.42                                                       L5=1176.45
+        const std::map<std::string, std::vector<std::string>>& atxFallbackChain() {
+            static const std::map<std::string, std::vector<std::string>> chain = {
+                // GPS
+                { "G01", { "G02", "G05" } },
+                { "G02", { "G05", "G01" } },
+                { "G05", { "G02", "G01" } },
+                // Galileo
+                { "E01", { "E06", "E08", "E07", "E05" } },
+                { "E05", { "E08", "E07", "E06", "E01" } },
+                { "E07", { "E08", "E05", "E06", "E01" } },
+                { "E06", { "E07", "E08", "E05", "E01" } },
+                { "E08", { "E07", "E05", "E06", "E01" } },
+                // GLONASS
+                { "R01", { "R02", "R03" } },
+                { "R02", { "R03", "R01" } },
+                { "R03", { "R02", "R01" } },
+                // BeiDou
+                { "C01", { "C02", "C06", "C08", "C07", "C05" } },
+                { "C02", { "C01", "C06", "C08", "C07", "C05" } },
+                { "C05", { "C08", "C07", "C06", "C01", "C02" } },
+                { "C06", { "C07", "C08", "C05", "C02", "C01" } },
+                { "C07", { "C08", "C05", "C06", "C02", "C01" } },
+                { "C08", { "C07", "C05", "C06", "C02", "C01" } },
+                // QZSS
+                { "J01", { "J06", "J02", "J05" } },
+                { "J02", { "J06", "J05", "J01" } },
+                { "J05", { "J02", "J06", "J01" } },
+                { "J06", { "J02", "J05", "J01" } },
+                // SBAS
+                { "S01", { "S05" } },
+                { "S05", { "S01" } },
+            };
+            return chain;
+        }
+
+        /// Pick an effective ATX frequency key from @p entry_map.  Returns
+        /// @p requested when present and the @p good predicate accepts the
+        /// stored value; otherwise walks the per-system fallback chain
+        /// (when @p enable_fallback is true) and returns the first
+        /// alternate that satisfies the predicate.  Empty string when
+        /// nothing matches — callers should treat that as "skip the
+        /// correction" (legacy behavior).
+        template <typename Map, typename GoodPred>
+        std::string pickAtxFrequencyKey(const Map& entry_map,
+                                         const std::string& requested,
+                                         bool enable_fallback,
+                                         GoodPred good) {
+            if (requested.empty()) return {};
+            auto it = entry_map.find(requested);
+            if (it != entry_map.end() && good(it->second)) return requested;
+            if (!enable_fallback) return {};
+            const auto& chain = atxFallbackChain();
+            auto cit = chain.find(requested);
+            if (cit == chain.end()) return {};
+            for (const auto& alt : cit->second) {
+                auto ait = entry_map.find(alt);
+                if (ait != entry_map.end() && good(ait->second)) return alt;
+            }
+            return {};
+        }
+
+    } // namespace
 
     /**
      * @file Antenna.cpp
@@ -298,10 +383,24 @@ namespace GnssProcessor {
         // adjust for the offset between CoM and APC (PCO) and the direction-dependent
         // phase variation (PCV).
         double sat_pco_corr = 0.0, sat_pcv_corr = 0.0;
-        if (sat_entry && sat_entry->pco.count(atx_freq)) {
+        // Pick effective ATX keys for PCO and PCV separately — an ATX entry
+        // may carry PCO for a frequency without a populated PCV grid (or
+        // vice versa), and the fallback chains are walked independently.
+        const bool atx_fallback_on =
+            config_.getModelCorrections().enable_atx_frequency_fallback;
+        const std::string sat_pco_freq = sat_entry
+            ? pickAtxFrequencyKey(sat_entry->pco, atx_freq, atx_fallback_on,
+                                  [](const Eigen::Vector3d& v) { return v.allFinite(); })
+            : std::string{};
+        const std::string sat_pcv_freq = sat_entry
+            ? pickAtxFrequencyKey(sat_entry->pcv, atx_freq, atx_fallback_on,
+                                  [](const std::vector<std::vector<double>>& t) { return !t.empty(); })
+            : std::string{};
+        if (sat_entry && (!sat_pco_freq.empty() || !sat_pcv_freq.empty())) {
             // === PCO ===
-            if (config_.getModelCorrections().enable_satellite_pco) {
-            Eigen::Vector3d pco_body = sat_entry->pco.at(atx_freq) * 1e-3; // mm -> m, in satellite body frame
+            if (config_.getModelCorrections().enable_satellite_pco
+                && !sat_pco_freq.empty()) {
+            Eigen::Vector3d pco_body = sat_entry->pco.at(sat_pco_freq) * 1e-3; // mm -> m, in satellite body frame
             if (pco_body.allFinite()) {
                 // Since sat_frame is orthonormal: sat_frame.transpose() * pco_body transforms body->ECEF
                 Eigen::Vector3d pco_ecef = sat_frame.transpose() * pco_body;
@@ -309,24 +408,34 @@ namespace GnssProcessor {
                 // Satellite APC is closer to receiver than CoM, shortening the range
                 correction -= sat_pco_corr;
 
+                if (sat_pco_freq != atx_freq) {
+                    log_manager_.getLogger("antenna")->debug(
+                        "SAT PCO fallback for {} {}: requested freq={} missing, using {}",
+                        satellite, sat_entry->type, atx_freq, sat_pco_freq);
+                }
                 log_manager_.getLogger("antenna")->trace(
                     "SAT PCO {} {} freq={}: body_mm=({:.4f},{:.4f},{:.4f}) body_m=({:.6f},{:.6f},{:.6f}) "
                     "ecef_m=({:.6f},{:.6f},{:.6f}) dot(pco_ecef,los)={:.6f} m",
-                    satellite, sat_entry->type, atx_freq,
-                    sat_entry->pco.at(atx_freq).x(), sat_entry->pco.at(atx_freq).y(), sat_entry->pco.at(atx_freq).z(),
+                    satellite, sat_entry->type, sat_pco_freq,
+                    sat_entry->pco.at(sat_pco_freq).x(), sat_entry->pco.at(sat_pco_freq).y(), sat_entry->pco.at(sat_pco_freq).z(),
                     pco_body.x(), pco_body.y(), pco_body.z(),
                     pco_ecef.x(), pco_ecef.y(), pco_ecef.z(),
                     sat_pco_corr);
             } else {
                 log_manager_.getLogger("antenna")->warn("Invalid satellite PCO for {} {} atx_freq={} at TOW {:.3f}",
-                    satellite, sat_entry->type, atx_freq, time.tow);
+                    satellite, sat_entry->type, sat_pco_freq, time.tow);
             }
             } // enable_satellite_pco
 
             // === PCV ===
-            if (config_.getModelCorrections().enable_satellite_pcv &&
-                sat_entry->pcv.count(atx_freq) && !sat_entry->pcv.at(atx_freq).empty()) {
-                const auto& pcv_table = sat_entry->pcv.at(atx_freq);
+            if (config_.getModelCorrections().enable_satellite_pcv
+                && !sat_pcv_freq.empty()) {
+                const auto& pcv_table = sat_entry->pcv.at(sat_pcv_freq);
+                if (sat_pcv_freq != atx_freq) {
+                    log_manager_.getLogger("antenna")->debug(
+                        "SAT PCV fallback for {} {}: requested freq={} missing, using {}",
+                        satellite, sat_entry->type, atx_freq, sat_pcv_freq);
+                }
 
                 // Nadir angle: angle between boresight (+Z = k_s, toward Earth) and LOS (sat->rx)
                 // For visible satellites this is typically 0-14 degrees, matching ATX PCV table range.
@@ -351,13 +460,13 @@ namespace GnssProcessor {
                         "SAT PCV {} {} freq={}: nadir={:.4f} deg, az_body={:.4f} deg, "
                         "zen1={:.1f}, dzen={:.1f}, dazi={:.1f}, grid={}x{}, "
                         "interp_arg={:.4f}, pcv_raw_mm={:.4f}, pcv_m={:.6f}",
-                        satellite, sat_entry->type, atx_freq,
+                        satellite, sat_entry->type, sat_pcv_freq,
                         nadir, az_sat, zen1, dzen, dazi,
                         pcv_table.size(), pcv_table[0].size(),
                         nadir - zen1, pcv_raw, pcv);
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid satellite PCV for {} {} atx_freq={} at TOW {:.3f}",
-                        satellite, sat_entry->type, atx_freq, time.tow);
+                        satellite, sat_entry->type, sat_pcv_freq, time.tow);
                 }
             }
 
@@ -428,38 +537,54 @@ namespace GnssProcessor {
         }
 
         // === Receiver ===
-        if (rx_entry && rx_entry->pco.count(atx_freq)) {
+        // Independent fallback walks for PCO and PCV (same rationale as
+        // the satellite side above).
+        const std::string rx_pco_freq = rx_entry
+            ? pickAtxFrequencyKey(rx_entry->pco, atx_freq, atx_fallback_on,
+                                  [](const Eigen::Vector3d& v) { return v.allFinite(); })
+            : std::string{};
+        const std::string rx_pcv_freq = rx_entry
+            ? pickAtxFrequencyKey(rx_entry->pcv, atx_freq, atx_fallback_on,
+                                  [](const std::vector<std::vector<double>>& t) { return !t.empty(); })
+            : std::string{};
+        if (rx_entry && (!rx_pco_freq.empty() || !rx_pcv_freq.empty())) {
             // === PCO ===
-            if (config_.getModelCorrections().enable_receiver_pco) {
+            if (config_.getModelCorrections().enable_receiver_pco
+                && !rx_pco_freq.empty()) {
             // ATX receiver PCO is stored as North/East/Up (NEU) in mm
-            Eigen::Vector3d pco_neu = rx_entry->pco.at(atx_freq) * 1e-3;  // Convert mm to m
+            Eigen::Vector3d pco_neu = rx_entry->pco.at(rx_pco_freq) * 1e-3;  // Convert mm to m
 
             if (pco_neu.allFinite()) {
                 // Transform PCO from local NEU to ECEF using centralized coordinate rotation
                 double rx_norm = rx_pos.norm();
                 if (rx_norm > 1e3) {
                     Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
-                    
+
                     // Get ENU→ECEF rotation matrix
                     Eigen::Matrix3d ori = Coordinates::enuToEcefMatrix(rx_llh.lat_rad, rx_llh.lon_rad);
-                    
+
                     // ATX receiver PCO is stored as North/East/Up (NEU); reorder to ENU
                     Eigen::Vector3d pco_enu(pco_neu(1), pco_neu(0), pco_neu(2));
-                    
+
                     // Transform ENU to ECEF
                     Eigen::Vector3d pco_ecef = ori * pco_enu;
-                    
+
                     // Project onto satellite-to-receiver LOS
                     rx_pco_corr = pco_ecef.dot(los);
-                    
+
                     // Receiver PCO adds to modeled range
                     correction += rx_pco_corr;
 
+                    if (rx_pco_freq != atx_freq) {
+                        log_manager_.getLogger("antenna")->debug(
+                            "RX PCO fallback for {} '{}': requested freq={} missing, using {}",
+                            satellite, rx_entry->type, atx_freq, rx_pco_freq);
+                    }
                     log_manager_.getLogger("antenna")->trace(
                         "RX PCO {} freq={} type='{}': neu_mm=({:.4f},{:.4f},{:.4f}) neu_m=({:.6f},{:.6f},{:.6f}) "
                         "enu_m=({:.6f},{:.6f},{:.6f}) ecef_m=({:.6f},{:.6f},{:.6f}) dot(pco_ecef,los)={:.6f} m",
-                        satellite, atx_freq, rx_entry->type,
-                        rx_entry->pco.at(atx_freq).x(), rx_entry->pco.at(atx_freq).y(), rx_entry->pco.at(atx_freq).z(),
+                        satellite, rx_pco_freq, rx_entry->type,
+                        rx_entry->pco.at(rx_pco_freq).x(), rx_entry->pco.at(rx_pco_freq).y(), rx_entry->pco.at(rx_pco_freq).z(),
                         pco_neu.x(), pco_neu.y(), pco_neu.z(),
                         pco_enu.x(), pco_enu.y(), pco_enu.z(),
                         pco_ecef.x(), pco_ecef.y(), pco_ecef.z(),
@@ -468,14 +593,19 @@ namespace GnssProcessor {
             }
             else {
                 log_manager_.getLogger("antenna")->warn("Invalid receiver PCO for {} {} atx_freq={} at TOW {:.3f}",
-                    satellite, rx_type_sanitized, atx_freq, time.tow);
+                    satellite, rx_type_sanitized, rx_pco_freq, time.tow);
             }
             } // enable_receiver_pco
 
             // === PCV ===
-            if (config_.getModelCorrections().enable_receiver_pcv &&
-                rx_entry->pcv.count(atx_freq) && !rx_entry->pcv.at(atx_freq).empty()) {
-                const auto& pcv_table = rx_entry->pcv.at(atx_freq);
+            if (config_.getModelCorrections().enable_receiver_pcv
+                && !rx_pcv_freq.empty()) {
+                const auto& pcv_table = rx_entry->pcv.at(rx_pcv_freq);
+                if (rx_pcv_freq != atx_freq) {
+                    log_manager_.getLogger("antenna")->debug(
+                        "RX PCV fallback for {} '{}': requested freq={} missing, using {}",
+                        satellite, rx_entry->type, atx_freq, rx_pcv_freq);
+                }
                 double zenith = 90.0 - elevation;
                 double dazi = rx_entry->dazi > 0.0 ? rx_entry->dazi : 5.0;
                 double dzen = rx_entry->dzen > 0.0 ? rx_entry->dzen : 5.0;
@@ -490,14 +620,14 @@ namespace GnssProcessor {
                         "RX PCV {} freq={} type='{}': elev={:.4f} zen={:.4f} az={:.4f} "
                         "zen1={:.1f} dzen={:.1f} dazi={:.1f} grid={}x{} "
                         "interp_arg={:.4f} pcv_raw_mm={:.4f} pcv_m={:.6f}",
-                        satellite, atx_freq, rx_entry->type,
+                        satellite, rx_pcv_freq, rx_entry->type,
                         elevation, zenith, azimuth,
                         zen1, dzen, dazi,
                         pcv_table.size(), pcv_table[0].size(),
                         zenith - zen1, pcv_raw, pcv);
                 } else {
                     log_manager_.getLogger("antenna")->warn("Invalid receiver PCV for {} {} atx_freq={} at TOW {:.3f}",
-                        satellite, rx_type_sanitized, atx_freq, time.tow);
+                        satellite, rx_type_sanitized, rx_pcv_freq, time.tow);
                 }
             }
         }

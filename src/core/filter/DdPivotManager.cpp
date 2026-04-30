@@ -10,6 +10,9 @@
 #include "filter/DdPivotManager.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
+#include <Eigen/Cholesky>
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace GnssProcessor {
@@ -150,36 +153,75 @@ namespace GnssProcessor {
 
         if (transforms.empty()) return;
 
-        // Build the full-state T matrix.  Identity for unaffected rows;
-        // S-transform rows for each (cons, code) group:
-        //   For Si != new_pivot: row Si has +1 on diagonal (default)
-        //                        and -1 on the new-pivot column.
-        //   For Si == new_pivot: row gets diagonal flipped to -1 (the
-        //                        new value is -old_DD(new_pivot) ≡ DD(old_pivot, new_pivot)).
-        const size_t state_size = state_manager.getStateSize();
-        Eigen::MatrixXd T = Eigen::MatrixXd::Identity(state_size, state_size);
+        // Apply x_new = T·x and P_new = T·P·Tᵀ for the S-transform without
+        // materializing the full state_size × state_size T.  T is identity
+        // outside the per-group blocks; for each group, with new-pivot row
+        // j and other group rows i_k, the only non-identity entries of T
+        // are T(j, j) = -1 and T(i_k, j) = -1.  Equivalently:
+        //   x'(j) = -x(j); x'(i) = x(i) - x(j)
+        //   P_1.row(j) = -P.row(j); P_1.row(i) = P.row(i) - P.row(j)
+        //   P_2.col(j) = -P_1.col(j); P_2.col(i) = P_1.col(i) - P_1.col(j)
+        // Groups have disjoint row sets (each ambiguity belongs to exactly
+        // one (cons, code, pivot) group) so the in-place updates compose
+        // without interference.  Saves an O(n³) full matrix multiply per
+        // handover, which scales badly when the state has many ambiguities.
+        Eigen::VectorXd x = state_manager.getStateVector();
+        Eigen::MatrixXd P = state_manager.getCovariance();
 
+        // Pass 1: row updates of P (and x) — produces P_1 = T·P.
         for (const auto& gt : transforms) {
             const int j = gt.indices[gt.new_pivot_pos];
+            const Eigen::RowVectorXd row_j = P.row(j);  // copy
+            const double x_j = x(j);
             for (size_t k = 0; k < gt.indices.size(); ++k) {
                 const int i = gt.indices[k];
                 if (k == static_cast<size_t>(gt.new_pivot_pos)) {
-                    T(i, i) = -1.0;
+                    x(i) = -x_j;
+                    P.row(i) = -row_j;
                 } else {
-                    T(i, j) = -1.0;
+                    x(i) -= x_j;
+                    P.row(i) -= row_j;
                 }
             }
         }
 
-        // Apply x_new = T·x and P_new = T·P·Tᵀ.  Symmetrize defensively.
-        Eigen::VectorXd x = state_manager.getStateVector();
-        Eigen::MatrixXd P = state_manager.getCovariance();
-        Eigen::VectorXd x_new = T * x;
-        Eigen::MatrixXd P_new = T * P * T.transpose();
-        P_new = 0.5 * (P_new + P_new.transpose());
+        // Pass 2: column updates of P_1 — produces P_2 = P_1·Tᵀ = T·P·Tᵀ.
+        for (const auto& gt : transforms) {
+            const int j = gt.indices[gt.new_pivot_pos];
+            const Eigen::VectorXd col_j = P.col(j);  // copy after Pass 1
+            for (size_t k = 0; k < gt.indices.size(); ++k) {
+                const int i = gt.indices[k];
+                if (k == static_cast<size_t>(gt.new_pivot_pos)) {
+                    P.col(i) = -col_j;
+                } else {
+                    P.col(i) -= col_j;
+                }
+            }
+        }
 
-        state_manager.setStateVector(x_new);
-        state_manager.setCovariance(P_new);
+        // Symmetrize defensively, then check PSD via LDLT.  Symmetrization
+        // alone fixes asymmetry from FP rounding; it does NOT guarantee
+        // positive-semi-definiteness if P was already ill-conditioned or
+        // a near-rank-deficient pivot row crept through.  Log when the
+        // LDLT reports any non-positive pivot so the issue surfaces in
+        // logs rather than poisoning the filter silently.
+        P = 0.5 * (P + P.transpose());
+        {
+            Eigen::LDLT<Eigen::MatrixXd> ldlt(P);
+            const auto& d = ldlt.vectorD();
+            double min_d = d.minCoeff();
+            if (ldlt.info() != Eigen::Success || min_d <= 0.0) {
+                log_manager_.getLogger("main_log")->warn(
+                    "DD pivot handover: P not PSD after T·P·Tᵀ (min LDLT "
+                    "diagonal = {:.3e}); applying epsilon regularization",
+                    min_d);
+                const double eps = std::max(1e-12, std::abs(min_d) + 1e-9);
+                P.diagonal().array() += eps;
+            }
+        }
+
+        state_manager.setStateVector(x);
+        state_manager.setCovariance(P);
 
         // Rename ambiguity keys.  State indices are unchanged — only
         // the key strings move.

@@ -16,6 +16,7 @@
 #include "realtime/NtripClient.hpp"
 #include "realtime/RtcmStreamReader.hpp"
 #include "filter/AmbiguityResolver.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
@@ -185,17 +186,48 @@ int Application::runBaseline() {
         mw_ref.enableTracing(log_dir_);
     }
 
+    // Build the active-systems set once.  The MW pre-filter must respect
+    // the same active_systems gate that the DD measurement model uses
+    // downstream; otherwise MW slips on systems the user explicitly
+    // disabled (e.g. "active_systems": ["GPS"]) would still erase
+    // ambiguities for unrelated constellations and pollute the slip stats.
+    const auto& active_vec = config_.getActiveSystems();
+    const std::set<std::string> active_set(active_vec.begin(), active_vec.end());
+
     // Lambda: convert a station's epoch RINEX observations into the
-    // minimum PppObservation subset the MW detector needs.  Geometry
-    // (sat_pos, LOS, elevation, etc.) is irrelevant for MW — it's a raw
-    // code+phase combination.  Populating both @c observed and
-    // @c raw_observed lets either MwSignalMode (Filter or All) work.
-    // Stateless and shared across all rovers.
-    auto toMinimalPppObs = [](const std::vector<RinexObservation>& rin_obs) {
+    // minimum PppObservation subset the MW detector needs.  MW itself
+    // is a raw code+phase combination — geometry (sat_pos, LOS, range,
+    // tropo, etc.) is irrelevant — but @c MwSlipDetector::detectLargeMwResets
+    // gates each observation by @c obs.elevation against the configured
+    // elevation mask, so populating elevation is required or every obs
+    // is silently skipped.  We use the PppModel's orbit interpolator
+    // (already loaded from product or broadcast sources) to get sat
+    // position at the receive epoch and compute topocentric elevation
+    // against the station's static a-priori ECEF.  An unresolvable
+    // satellite leaves elevation at zero and the mask drops it — the
+    // same outcome the legacy code path produced for missing orbits.
+    // Populating both @c observed and @c raw_observed lets either
+    // MwSignalMode (Filter or All) work.  Observations from systems not
+    // in @c active_systems are dropped here so the MW detector never
+    // sees them.  Stateless and shared across all rovers; per-rover /
+    // per-reference Geometry handle and active_set are supplied at the
+    // call site.
+    auto toMinimalPppObs = [](const std::vector<RinexObservation>& rin_obs,
+                              const Eigen::Vector3d& rx_pos,
+                              const Model::Geometry& geom,
+                              const std::set<std::string>& active_systems) {
         std::vector<PppObservation> out;
         out.reserve(rin_obs.size());
         for (const auto& r : rin_obs) {
-            PppObservation p;
+            // Active-systems gate: skip observations from disabled
+            // constellations.  Empty active_systems is treated as "all
+            // active" to preserve legacy behavior when the field is
+            // unset.
+            if (!active_systems.empty()) {
+                const std::string cons = PppUtils::getSystemString(r.system);
+                if (!active_systems.count(cons)) continue;
+            }
+            PppObservation p{};
             p.satellite  = r.satellite;
             p.system     = r.system;
             p.time       = r.time;
@@ -206,6 +238,15 @@ int Application::runBaseline() {
                 if (t != 'C' && t != 'L') continue;  // MW uses code + phase only
                 p.observed[code]     = val;
                 p.raw_observed[code] = val;
+            }
+            if (!r.satellite.empty() && rx_pos.norm() > 1.0) {
+                const auto pv = geom.getSatellitePV(r.satellite, r.time);
+                if (pv.first.norm() > 1.0) {
+                    const auto topo = geom.computeTopocentric(rx_pos, pv.first);
+                    p.elevation = topo.elevation_deg;
+                    p.azimuth   = topo.azimuth_deg;
+                    p.sat_pos   = pv.first;
+                }
             }
             out.push_back(std::move(p));
         }
@@ -344,14 +385,11 @@ int Application::runBaseline() {
         // because state_manager_ was just rebuilt above for this rover).
         auto eraseAmbiguitiesForSat = [&](const std::string& sat) -> size_t {
             std::vector<std::string> to_remove;
-            const std::string sat_i_pat = "|" + sat + "|";   // sat_i position
-            const std::string pivot_suf = "|" + sat;         // pivot position (end of key)
             for (const auto& [key, idx] : state_manager_->getAmbiguities()) {
-                if (key.compare(0, 3, "DD|") != 0) continue;
-                const bool hits_sat_i = key.find(sat_i_pat) != std::string::npos;
-                const bool hits_pivot = (key.size() >= pivot_suf.size()
-                    && key.compare(key.size() - pivot_suf.size(), pivot_suf.size(), pivot_suf) == 0);
-                if (hits_sat_i || hits_pivot) to_remove.push_back(key);
+                const auto p = StateKeys::parseDdAmbiguityKey(key);
+                if (!p) continue;
+                if (p->sat_i == sat || p->pivot == sat)
+                    to_remove.push_back(key);
             }
             for (const auto& k : to_remove) state_manager_->removeAmbiguity(k);
             return to_remove.size();
@@ -401,6 +439,11 @@ int Application::runBaseline() {
         // the structural multi-rover wrapping rather than cosmetic
         // re-indentation; a future pass can reflow if desired.
         for (const auto& se : synced) {
+            // Tag every log line emitted during this epoch with its
+            // RINEX-aligned TOW.  The thread-local context is consumed
+            // by the [%T] field in makeGpsFormatter().
+            LogManager::setCurrentEpochTime(se.time);
+
             // --- Station presence + dt =====================================
             // Compute station presence and dt up front so hard-gap detection
             // can run BEFORE the MW slip check (which assumes consecutive-
@@ -426,8 +469,9 @@ int Application::runBaseline() {
             // re-fire on the next full epoch.  Default tolerance of 60 s
             // covers typical 1-Hz / 30-s missions; set
             // processing.data_gap_tolerance_s in the config to override.
+            constexpr double kDefaultDataGapToleranceSec = 60.0;
             const double gap_tol = (config_.getDataGapTolerance() > 0.0)
-                ? config_.getDataGapTolerance() : 60.0;
+                ? config_.getDataGapTolerance() : kDefaultDataGapToleranceSec;
             if (both_present && dt > gap_tol) {
                 log->info("Baseline: hard data gap detected dt={:.3f}s > tolerance={:.1f}s "
                     "(prev_tow={:.3f} -> tow={:.3f}); resetting MW arcs and DD ambiguities",
@@ -465,14 +509,20 @@ int Application::runBaseline() {
                 auto it_rov = se.by_station.find(rover_name);
                 std::set<std::string> slipped;
                 if (it_ref != se.by_station.end()) {
-                    auto ppp_ref = toMinimalPppObs(it_ref->second);
+                    auto ppp_ref = toMinimalPppObs(it_ref->second, ref_pos,
+                                                   ref_ppp_model_->getGeometry(),
+                                                   active_set);
                     for (const auto& r : mw_ref.detectLargeMwResets(ppp_ref)) {
                         slipped.insert(r.satellite);
                         ++n_slips_ref;
                     }
                 }
                 if (it_rov != se.by_station.end()) {
-                    auto ppp_rov = toMinimalPppObs(it_rov->second);
+                    const Eigen::Vector3d rov_rx_pos =
+                        state_manager_->getStateVector().head<3>();
+                    auto ppp_rov = toMinimalPppObs(it_rov->second, rov_rx_pos,
+                                                   ppp_model_->getGeometry(),
+                                                   active_set);
                     for (const auto& r : mw_rov.detectLargeMwResets(ppp_rov)) {
                         slipped.insert(r.satellite);
                         ++n_slips_rov;
@@ -844,6 +894,7 @@ int Application::runBaseline() {
     log->info("Baseline refactor complete (Slice 5d): DD observations now go through the "
               "shared KalmanFilter. Inspect logs/kalman_filter.log and "
               "logs/measurement_residuals.csv for the standard diagnostic surface.");
+    if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
     return 0;
 }
 

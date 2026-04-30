@@ -31,7 +31,11 @@ void PivotManager::buildEpochMaps(
     cons_info.clear();
 
     for (const auto& obs : observations) {
-        if (obs.system == System::GLONASS) continue;
+        // Skip GLONASS by default — its FDMA per-channel receiver delay
+        // breaks the standard BSSD assumption that receiver-side terms
+        // cancel between satellites.  Opt back in via enable_glonass_bssd
+        // (combined with estimate_sat_biases to absorb the ICB).
+        if (obs.system == System::GLONASS && !config_.enableGlonassBssd()) continue;
 
         const std::string cons = PppUtils::getSystemString(obs.satellite);
 

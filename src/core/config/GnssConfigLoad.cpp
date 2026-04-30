@@ -180,6 +180,19 @@ namespace GnssProcessor {
 
         // Relinearize geometry lives under processing (it affects the model loop).
         relinearize_geometry_ = jval<bool>(json, "processing.relinearize_geometry", "relinearize_geometry", false);
+        relinearize_dpos_threshold_phase_m_ = jval<double>(json,
+            "processing.relinearize_dpos_threshold_phase_m",
+            "relinearize_dpos_threshold_phase_m", 1.0);
+        relinearize_dpos_threshold_code_only_m_ = jval<double>(json,
+            "processing.relinearize_dpos_threshold_code_only_m",
+            "relinearize_dpos_threshold_code_only_m", 100.0);
+        relinearize_max_count_        = jval<int>(json,
+            "processing.relinearize_max_count",        "relinearize_max_count",        -1);
+
+        // Eigen thread count.  Default 1 (sequential) — PPP-RTK matrix sizes
+        // (n≈350, m≈250) sit below the threshold where OpenMP fork/join
+        // overhead is absorbed by the parallel speedup.  0 = OpenMP default.
+        eigen_threads_ = jval<int>(json, "processing.eigen_threads", "eigen_threads", 1);
 
         // Backward RTS smoother: post-processing only. Real-time guard
         // is applied by loadAppModeAndRealtimeSection_, once app_mode_
@@ -281,6 +294,8 @@ namespace GnssProcessor {
         // Between-satellite single differencing
         enable_between_satellite_sd_ = jval<bool>(json, "estimation.between_satellite_sd.enabled",
                                                    "enable_between_satellite_sd", false);
+        enable_glonass_bssd_         = jval<bool>(json, "estimation.between_satellite_sd.enable_glonass",
+                                                   "enable_glonass_bssd", false);
         bssd_pivot_min_elevation_deg_ = jval<double>(json, "estimation.between_satellite_sd.pivot_min_elevation",
                                                       "bssd_pivot_min_elevation", 45.0);
 
@@ -415,9 +430,11 @@ namespace GnssProcessor {
             model_corrections_.enable_receiver_pcv            = mc.value("enable_receiver_pcv", true);
             model_corrections_.enable_phase_windup            = mc.value("enable_phase_windup", true);
             model_corrections_.enable_code_phase_bias        = mc.value("enable_code_phase_bias", true);
+            model_corrections_.enable_atx_frequency_fallback  = mc.value("enable_atx_frequency_fallback", true);
+            model_corrections_.enable_klobuchar_ionosphere    = mc.value("enable_klobuchar_ionosphere", false);
         }
         log->info("Model corrections: tropo={}, rel={}, shapiro={}, set={}, otl={}, pole={}, atm={}, "
-            "sat_pco={}, sat_pcv={}, rx_pco={}, rx_pcv={}, windup={}, cpb={}",
+            "sat_pco={}, sat_pcv={}, rx_pco={}, rx_pcv={}, windup={}, cpb={}, atx_fallback={}",
             model_corrections_.enable_troposphere              ? "on" : "off",
             model_corrections_.enable_relativistic_correction ? "on" : "off",
             model_corrections_.enable_shapiro_delay           ? "on" : "off",
@@ -430,7 +447,8 @@ namespace GnssProcessor {
             model_corrections_.enable_receiver_pco            ? "on" : "off",
             model_corrections_.enable_receiver_pcv            ? "on" : "off",
             model_corrections_.enable_phase_windup            ? "on" : "off",
-            model_corrections_.enable_code_phase_bias        ? "on" : "off");
+            model_corrections_.enable_code_phase_bias        ? "on" : "off",
+            model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
     }
 
     // =================================================================
@@ -886,6 +904,12 @@ namespace GnssProcessor {
         baseline_config_.signal_aliasing        = bl.value("signal_aliasing", true);
         baseline_config_.use_iono_free          = bl.value("use_iono_free", false);
         baseline_config_.enable_pivot_handover  = bl.value("enable_pivot_handover", true);
+        baseline_config_.estimate_differential_tropo =
+            bl.value("estimate_differential_tropo", false);
+        baseline_config_.differential_tropo_init_std_m =
+            bl.value("differential_tropo_init_std_m", 0.1);
+        baseline_config_.differential_tropo_process_noise_m_per_sqrt_s =
+            bl.value("differential_tropo_process_noise_m_per_sqrt_s", 1e-4);
         if (baseline_config_.code_only) {
             log->info("Baseline: code_only=true — phase DDs will be skipped by the filter");
         }
@@ -907,6 +931,13 @@ namespace GnssProcessor {
         if (!baseline_config_.enable_pivot_handover) {
             log->info("Baseline: enable_pivot_handover=false — DD ambiguities will be erased and "
                       "re-seeded on every pivot change (legacy behavior).");
+        }
+        if (baseline_config_.estimate_differential_tropo) {
+            log->info("Baseline: estimate_differential_tropo=true — adding 1 differential ZWD "
+                      "state (init_std={:.3f} m, process_noise={:.2e} m/sqrt(s)).  Recommended "
+                      "for >10-20 km baselines where the wet delay no longer cancels in BRSD.",
+                      baseline_config_.differential_tropo_init_std_m,
+                      baseline_config_.differential_tropo_process_noise_m_per_sqrt_s);
         }
 
         // --- Validate against mode ---

@@ -386,6 +386,20 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
         if (!date_hint.empty()) log->info("Internal mode: baseline date hint='{}'", date_hint);
     }
 
+    // ---- Pinned observation path: extract date_hint ----------------
+    // When the user supplies @c files.observation_path explicitly, the
+    // auto-discovery block above is skipped and @c date_hint stays empty.
+    // The product-filter at the bottom of this function then becomes a
+    // no-op and ProductParser dutifully loads every CLK/SP3/BIA in the
+    // cache regardless of date.  Extract the hint here so the filter
+    // works in both auto and pinned modes.
+    if (date_hint.empty() && !config_.isBaselineMode()
+        && !config_.getObservationPath().empty()) {
+        date_hint = extractYyyyDoy(config_.getObservationPath());
+        log->info("Internal mode: observation pinned to '{}' (date hint='{}')",
+            config_.getObservationPath().string(), date_hint);
+    }
+
     // ---- Broadcast navigation (date-aware) ------------------------
     // Prefer products/brdc/unzip (matches ProductResolver layout); fall
     // back to legacy products/rnx/ if some user has hand-curated files

@@ -414,6 +414,13 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                                       bool& was_complete_reset) {
     reset_satellites.clear();
     was_complete_reset = false;
+
+    // Snapshot the pre-update position so runGeometryRelinearization can
+    // gate its second pass on |Δpos|.  Captured before any KF update so
+    // outlier-rebuild loops inside this function don't mask the true epoch
+    // displacement.
+    relinearize_pre_update_pos_ =
+        state_manager_->getStateVector().head<3>();
     // Choose a relinearization threshold based on whether phase measurements are present.
     auto has_phase = [&modeled_obs]() {
         for (const auto& obs : modeled_obs) {
@@ -548,6 +555,48 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
                                              bool have_applied) {
     if (!config_.relinearizeGeometry() || !have_applied) return;
 
+    // ---- Gates -------------------------------------------------------
+    // 1. |Δpos| threshold (auto-picked by data availability): skip
+    //    relinearization when the primary update moved the position less
+    //    than the threshold.  Phase data pins position tightly so a
+    //    1 m default catches only early-convergence epochs; code-only
+    //    epochs see SPP-style ~5 m jitter so a 100 m default fires only
+    //    on truly large jumps (cold start, post-gap recovery).
+    // 2. Per-run cap: hard limit on total relinearizations to bound
+    //    worst-case cost on pathological inputs.
+    const Eigen::Vector3d post_update_pos =
+        state_manager_->getStateVector().head<3>();
+    const double dpos = (post_update_pos - relinearize_pre_update_pos_).norm();
+
+    bool has_phase = false;
+    for (const auto& obs : epoch_obs) {
+        for (const auto& [code, val] : obs.measurements) {
+            if (!code.empty() && code[0] == 'L') { has_phase = true; break; }
+        }
+        if (has_phase) break;
+    }
+    const double thresh = has_phase
+        ? config_.relinearizeDposThresholdPhaseM()
+        : config_.relinearizeDposThresholdCodeOnlyM();
+    if (thresh > 0.0 && dpos < thresh) {
+        log_manager_.getLogger("main_log")->debug(
+            "{}Geometry relinearization skipped: |Δpos|={:.4f} m < threshold {:.4f} m ({})",
+            epoch_prefix, dpos, thresh, has_phase ? "phase" : "code-only");
+        return;
+    }
+    const int cap = config_.relinearizeMaxCount();
+    if (cap >= 0 && relinearize_count_ >= cap) {
+        // Don't log per-epoch once the cap is hit — would spam.  One
+        // info-level "cap reached" line is emitted when we cross it.
+        if (relinearize_count_ == cap) {
+            log_manager_.getLogger("main_log")->info(
+                "{}Geometry relinearization cap ({}) reached; suppressing further passes",
+                epoch_prefix, cap);
+            ++relinearize_count_;  // bump past so the message fires once
+        }
+        return;
+    }
+
     try {
         state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
     } catch (const std::exception& e) {
@@ -579,6 +628,7 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
     if (relinear_meas.innovations.size() == 0 || !meas_model_->validateMeasurementUpdate(relinear_meas)) return;
 
     auto relinear_result = kalman_filter_->update(relinear_meas);
+    ++relinearize_count_;
     if (relinear_result == KalmanFilter::UpdateResult::Applied) {
         applied_meas = relinear_meas;
         try {
@@ -749,6 +799,22 @@ int Application::run() {
 // --- Phase 1: Logging & configuration ---
 if (!initLoggingAndConfig()) return 1;
 
+// Apply Eigen thread count.  Default in config is 1 (sequential) because
+// PPP-RTK / baseline matrix sizes (n≈350, m≈250) sit below the size at
+// which OpenMP fork/join overhead is offset by the parallel speedup —
+// in profile traces vcomp140 idle-at-barrier showed up as ~13% of the
+// run.  Set processing.eigen_threads to 0 (OpenMP default) or any N > 1
+// to opt back into multi-threaded.
+const int eigen_threads = config_.eigenThreads();
+if (eigen_threads > 0) {
+    Eigen::setNbThreads(eigen_threads);
+    log_manager_.getLogger("main_log")->info(
+        "Eigen thread count: {} (config-pinned)", eigen_threads);
+} else {
+    log_manager_.getLogger("main_log")->info(
+        "Eigen thread count: {} (OpenMP default)", Eigen::nbThreads());
+}
+
 // --- Branch on application mode ---
 if (config_.getAppMode() == AppMode::RealTime) {
     return runRealTime();
@@ -865,8 +931,14 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         state_manager_->setStateEpochTime(current_time);
+        LogManager::setCurrentEpochTime(current_time);
 
-        const std::string epoch_prefix = "[" + TimeUtils::formatGnssTime(current_time) + "] ";
+        // The unified [%E] field in the spdlog pattern (LogManager) now
+        // carries the GPS week / TOW / GPS-scale datetime for every log
+        // line; an in-message-body epoch prefix would duplicate it.  Kept
+        // as an empty variable so the existing "{}..." format strings
+        // need no edits.
+        const std::string epoch_prefix;
 
         // 4b. Compute time step and detect data gaps.
         // When downsampling is active the effective cadence is
@@ -1045,6 +1117,8 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
     log_manager_.getLogger("main_log")->info("Processing completed in {} ms, mode={}",
         duration_ms, is_ppp_rtk ? "PPP-RTK" : "PPP");
+
+    if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
 
     return 0;
 }

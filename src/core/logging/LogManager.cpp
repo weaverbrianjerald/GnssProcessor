@@ -1,47 +1,65 @@
 #include "logging/LogManager.hpp"
+#include "math/TimeUtils.hpp"
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 
 namespace GnssProcessor {
 
     // ===================================================================
-    // Custom spdlog flag formatter: GPS time (%* flag)
+    // Per-thread current-epoch context for log lines
     // ===================================================================
+    //
+    // Set by the application at the top of each per-epoch processing
+    // iteration; consumed by TowFlagFormatter on every log message.
+    // Thread-local so worker threads (e.g. multi-rover baselines, future
+    // network mode) each carry their own current epoch.
+    namespace {
+        thread_local std::optional<GnssTime> tls_current_epoch_;
+    }
 
-    class GpsTimeFlagFormatter : public spdlog::custom_flag_formatter {
+    void LogManager::setCurrentEpochTime(const GnssTime& t) {
+        tls_current_epoch_ = t;
+    }
+
+    void LogManager::clearCurrentEpochTime() {
+        tls_current_epoch_.reset();
+    }
+
+    // ===================================================================
+    // Custom spdlog flag formatter: unified epoch field (%E)
+    // ===================================================================
+    //
+    // Emits "wk, tow.mmm (YYYY-MM-DD HH:MM:SS.mmm)" in GPS time scale
+    // when the calling thread has a current epoch set, a placeholder of
+    // matching width otherwise.  The datetime is GPS-scale (NO UTC leap-
+    // second subtraction) so it aligns with TOW exactly — a 30 s RINEX
+    // file produces lines on the HH:MM:00 / HH:MM:30 grid, not 18 s off.
+    class EpochFlagFormatter : public spdlog::custom_flag_formatter {
     public:
-        explicit GpsTimeFlagFormatter(int offset_s) : offset_s_(offset_s) {}
-
-        void format(const spdlog::details::log_msg& msg, const std::tm& /*unused*/,
+        void format(const spdlog::details::log_msg& /*msg*/, const std::tm& /*unused*/,
                      spdlog::memory_buf_t& dest) override {
-            // Shift the message time_point by the GPS-UTC offset.
-            auto gps_tp = msg.time + std::chrono::seconds(offset_s_);
-            auto tt = std::chrono::system_clock::to_time_t(gps_tp);
-            std::tm gps_tm;
-#ifdef _WIN32
-            gmtime_s(&gps_tm, &tt);
-#else
-            gmtime_r(&tt, &gps_tm);
-#endif
-            auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
-                gps_tp.time_since_epoch()) % 1000;
-
-            // Format: YYYY-MM-DD HH:MM:SS.mmm
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-                gps_tm.tm_year + 1900, gps_tm.tm_mon + 1, gps_tm.tm_mday,
-                gps_tm.tm_hour, gps_tm.tm_min, gps_tm.tm_sec,
-                static_cast<int>(millis.count()));
+            char buf[64];
+            if (tls_current_epoch_.has_value()) {
+                int year = 0, month = 0, day = 0, hour = 0, minute = 0;
+                double second = 0.0;
+                TimeUtils::gpsTimeToGpsScaleCalendar(
+                    *tls_current_epoch_, year, month, day, hour, minute, second);
+                std::snprintf(buf, sizeof(buf),
+                              "%4d, %9.3f (%04d-%02d-%02d %02d:%02d:%06.3f)",
+                              tls_current_epoch_->week, tls_current_epoch_->tow,
+                              year, month, day, hour, minute, second);
+            } else {
+                std::snprintf(buf, sizeof(buf),
+                              "----, --------- (---------- --:--:------)");
+            }
             dest.append(std::string_view(buf));
         }
 
         std::unique_ptr<custom_flag_formatter> clone() const override {
-            return std::make_unique<GpsTimeFlagFormatter>(offset_s_);
+            return std::make_unique<EpochFlagFormatter>();
         }
-
-    private:
-        int offset_s_;
     };
 
     /**
@@ -93,6 +111,16 @@ namespace GnssProcessor {
                     std::filesystem::remove(entry.path());
                 }
             }
+
+            // Apply the GPS+TOW formatter globally so that the 48-odd
+            // call sites that use the default global logger directly
+            // (spdlog::info, spdlog::warn, ...) also get GPS-scale
+            // timestamps and the [tow=...] field.  spdlog clones the
+            // formatter onto every registered logger and stores it as
+            // the default for new loggers, so per-logger
+            // set_formatter() calls below remain a defensive belt-and-
+            // braces but are not strictly required.
+            spdlog::set_formatter(makeGpsFormatter());
 
             // Initialize default logger (gnss_processor)
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -236,8 +264,8 @@ namespace GnssProcessor {
 
     std::unique_ptr<spdlog::pattern_formatter> LogManager::makeGpsFormatter() const {
         auto formatter = std::make_unique<spdlog::pattern_formatter>();
-        formatter->add_flag<GpsTimeFlagFormatter>('*', gps_utc_offset_s_);
-        formatter->set_pattern("[%*] [%n] [%^%l%$] %v");
+        formatter->add_flag<EpochFlagFormatter>('E');
+        formatter->set_pattern("[%E] [%n] [%^%l%$] %v");
         return formatter;
     }
 

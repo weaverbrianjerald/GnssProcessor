@@ -164,6 +164,23 @@ namespace GnssProcessor {
         size_t getTropoIndex() const;
 
         /**
+         * @brief Index of the differential ZWD state (baseline mode only).
+         *
+         * Estimable when @c BaselineConfig::estimate_differential_tropo is on.
+         * The state represents Δzwd = ZWD_rover − ZWD_reference; phase DD H
+         * rows write @c (mf_w_i − mf_w_p) into this column.  Returns
+         * @c std::numeric_limits<size_t>::max() when not present (which is
+         * the case in PPP / PPP-RTK modes, or in baseline mode with the flag
+         * off — wet delay is then assumed to cancel in BRSD).
+         */
+        size_t getDifferentialTropoIndex() const;
+
+        /**
+         * @brief Check whether the differential ZWD state is active.
+         */
+        bool hasDifferentialTropo() const;
+
+        /**
          * @brief Index of the ionospheric zenith delay state (PPP-RTK only).
          * @return Index of the ionosphere state, or an index >= state size if not present.
          * @deprecated Use getIonosphereIndex(satellite) for per-satellite iono states.
@@ -601,6 +618,7 @@ namespace GnssProcessor {
         size_t attitude_idx_;                       //!< Index of attitude error dpsi_x (max if disabled).
         size_t accel_bias_idx_;                     //!< Index of accelerometer bias ba_x (max if disabled).
         size_t gyro_bias_idx_;                      //!< Index of gyroscope bias bg_x (max if disabled).
+        size_t differential_tropo_idx_;             //!< Index of baseline-mode differential ZWD state (max if disabled).
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.

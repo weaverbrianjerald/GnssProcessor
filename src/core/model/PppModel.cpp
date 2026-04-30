@@ -120,13 +120,25 @@ const char* signalModeLabel(SignalMode m) {
             ProductCache::getInstance().getErps(),
             ProductCache::getInstance().getBiases(),
             rinex_parser),
-        ionosphere_(config, log_manager, product_parser, rinex_parser),
+        // ionosphere_ is std::optional — constructed in the body below
+        // only when the Klobuchar fallback is actually requested.
         antenna_(config, product_parser, log_manager, rinex_parser),
         stochastic_model_(config, log_manager),
         signal_priorities_(config.getSignalPriorities()),
         // Initialize reference from cache
         klobuchar_coeffs_(ProductCache::getInstance().getKlobucharCoeffs())
     {
+        // Optional Klobuchar ionospheric-delay model.  Skipped (along with
+        // its inner Geometry construction and coefficient parse) for the
+        // common configs where it would be a no-op anyway: iono-free
+        // combinations, DD short-baseline, and PPP-RTK uncombined (per-
+        // satellite slant iono states).  Set
+        // model_corrections.enable_klobuchar_ionosphere=true for single-
+        // frequency PPP runs that genuinely need the fallback.
+        if (config.getModelCorrections().enable_klobuchar_ionosphere) {
+            ionosphere_.emplace(config, log_manager, product_parser, rinex_parser);
+        }
+
         // Connect GLONASS frequency slots from RINEX parser to PppUtils
         ppp_utils_.setGlonassSlots(rinex_parser_.getGlonassFreqSlots());
         log_manager_.getLogger("ppp_model")->info(
@@ -1187,11 +1199,18 @@ const char* signalModeLabel(SignalMode m) {
             log_manager_.getLogger("ppp_model")->trace("Dual-frequency iono-free combination available for {}: ionospheric delay=0.0 m", freq_type);
             return 0.0; // Ionosphere-free, no delay
         }
+        if (!ionosphere_.has_value()) {
+            // Klobuchar is gated off in model_corrections — the row needing
+            // a single-frequency a-priori delay just gets 0.  In typical
+            // post-processed runs this path never fires (IF / DD / PPP-RTK
+            // uncombined all bypass it earlier in this function).
+            return 0.0;
+        }
         if (klobuchar_coeffs_.size() != 8) {
             log_manager_.getLogger("ppp_model")->warn("No Klobuchar coefficients available for {}", freq_type);
             return 0.0;
         }
-        double delay = ionosphere_.computeKlobucharDelay(time, rx_pos, sat_pos, freq);
+        double delay = ionosphere_->computeKlobucharDelay(time, rx_pos, sat_pos, freq);
         log_manager_.getLogger("ppp_model")->trace("Computed Klobuchar ionospheric delay for {}: {:.3f} m", freq_type, delay);
         return delay;
     }

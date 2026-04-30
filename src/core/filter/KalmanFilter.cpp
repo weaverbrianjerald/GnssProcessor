@@ -19,6 +19,7 @@
 #include <spdlog/spdlog.h>
 #include <Eigen/Dense>
 #include <Eigen/QR>
+#include <chrono>
 #include <stdexcept>
 #include <limits>
 #include "common/Constants.hpp"
@@ -30,6 +31,119 @@ namespace GnssProcessor {
     // ===================================================================
 
     namespace {
+
+    // -------------------------------------------------------------------
+    // Sparse-H helpers
+    // -------------------------------------------------------------------
+    //
+    // The measurement design matrix H is dense in storage (~m × n) but the
+    // *content* is extremely sparse: each row has only ~5 non-zeros out of
+    // ~350 columns (geometry block + ambiguity column + maybe tropo / iono).
+    // Treating it as dense in `H·P`, `HP·Hᵀ`, and `K·H` wastes O(n²·m) ops
+    // on zero entries.
+    //
+    // The helpers below build a per-row list of (column, value) pairs once
+    // per epoch and then walk that list for each H-touching product.  The
+    // result of each helper is the same dense matrix the dense matmul
+    // would produce — the rest of the filter doesn't change shape.
+    //
+    // Threshold 1e-12 separates "real geometry partial" from FP noise
+    // emitted by zero-initialized blocks.
+
+    constexpr double kHSparseThreshold = 1e-12;
+
+    struct SparseHRow {
+        std::vector<int>    cols;
+        std::vector<double> vals;
+    };
+
+    /// Build per-row (col, val) lists of all non-zeros in H.
+    std::vector<SparseHRow> buildSparseH(const Eigen::MatrixXd& H) {
+        std::vector<SparseHRow> out(static_cast<size_t>(H.rows()));
+        for (Eigen::Index i = 0; i < H.rows(); ++i) {
+            auto& r = out[static_cast<size_t>(i)];
+            r.cols.reserve(8);
+            r.vals.reserve(8);
+            for (Eigen::Index j = 0; j < H.cols(); ++j) {
+                const double v = H(i, j);
+                if (std::abs(v) > kHSparseThreshold) {
+                    r.cols.push_back(static_cast<int>(j));
+                    r.vals.push_back(v);
+                }
+            }
+        }
+        return out;
+    }
+
+    /// HP = H · P  (m×n).  Row-by-row sparse accumulation.
+    Eigen::MatrixXd sparseHP(const std::vector<SparseHRow>& Hs,
+                              const Eigen::MatrixXd& P) {
+        const Eigen::Index m = static_cast<Eigen::Index>(Hs.size());
+        const Eigen::Index n = P.cols();
+        Eigen::MatrixXd out = Eigen::MatrixXd::Zero(m, n);
+        for (Eigen::Index i = 0; i < m; ++i) {
+            const auto& r = Hs[static_cast<size_t>(i)];
+            const size_t nnz = r.cols.size();
+            for (size_t k = 0; k < nnz; ++k) {
+                out.row(i).noalias() += r.vals[k] * P.row(r.cols[k]);
+            }
+        }
+        return out;
+    }
+
+    /// S_HHt = HP · Hᵀ  (m×m, symmetric).  Column-walk per pair.
+    Eigen::MatrixXd sparseHPHt(const Eigen::MatrixXd& HP,
+                                const std::vector<SparseHRow>& Hs) {
+        const Eigen::Index m = static_cast<Eigen::Index>(Hs.size());
+        Eigen::MatrixXd out(m, m);
+        for (Eigen::Index i = 0; i < m; ++i) {
+            for (Eigen::Index j = i; j < m; ++j) {
+                const auto& rj = Hs[static_cast<size_t>(j)];
+                double s = 0.0;
+                const size_t nnz = rj.cols.size();
+                for (size_t k = 0; k < nnz; ++k) {
+                    s += HP(i, rj.cols[k]) * rj.vals[k];
+                }
+                out(i, j) = s;
+                if (i != j) out(j, i) = s;
+            }
+        }
+        return out;
+    }
+
+    /// K·H (n×n).  K is n×m, H is m×n.  For each non-zero in row i of H,
+    /// add val * K.col(i) into the corresponding column of the output.
+    Eigen::MatrixXd sparseKH(const Eigen::MatrixXd& K,
+                              const std::vector<SparseHRow>& Hs,
+                              Eigen::Index n) {
+        Eigen::MatrixXd out = Eigen::MatrixXd::Zero(n, n);
+        const Eigen::Index m = static_cast<Eigen::Index>(Hs.size());
+        for (Eigen::Index i = 0; i < m; ++i) {
+            const auto& r = Hs[static_cast<size_t>(i)];
+            const size_t nnz = r.cols.size();
+            for (size_t k = 0; k < nnz; ++k) {
+                out.col(r.cols[k]).noalias() += r.vals[k] * K.col(i);
+            }
+        }
+        return out;
+    }
+
+    /// H·v  (m,).  Sparse row-wise dot.
+    Eigen::VectorXd sparseHv(const std::vector<SparseHRow>& Hs,
+                              const Eigen::VectorXd& v) {
+        const Eigen::Index m = static_cast<Eigen::Index>(Hs.size());
+        Eigen::VectorXd out(m);
+        for (Eigen::Index i = 0; i < m; ++i) {
+            const auto& r = Hs[static_cast<size_t>(i)];
+            double s = 0.0;
+            const size_t nnz = r.cols.size();
+            for (size_t k = 0; k < nnz; ++k) {
+                s += r.vals[k] * v(r.cols[k]);
+            }
+            out(i) = s;
+        }
+        return out;
+    }
 
     const char* modeLabel(const GnssConfig& cfg) {
         return cfg.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK";
@@ -396,8 +510,12 @@ namespace GnssProcessor {
 
     KalmanFilter::UpdateResult KalmanFilter::update(EpochMeasurement& measurement) {
         auto klogger = log_manager_.getLogger("kalman_filter");
+        // epoch_tag is still consumed by the side-channel KalmanFilterLogger
+        // (separate file, not spdlog-managed) so it stays formatted.
+        // epoch_prefix is now empty: the spdlog %E field carries the same
+        // info, and duplicating it in the message body looks cluttered.
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
-        const std::string epoch_prefix = "[" + epoch_tag + "] ";
+        const std::string epoch_prefix;
 
         last_reset_satellites_.clear();
         was_complete_reset_ = false;
@@ -425,54 +543,120 @@ namespace GnssProcessor {
             R_ = measurement.R_v.asDiagonal();
         }
 
-        Eigen::VectorXd x = state_manager_.getStateVector();
-        Eigen::MatrixXd P = state_manager_.getCovariance();
+        // Read once and treat as immutable pre-update values; the post-update
+        // results are computed into x_new / P_new so we can hand pre-update
+        // copies to the outlier validator without paying for an explicit
+        // backup (~1 MB matrix copy at n=350).
+        const Eigen::VectorXd x = state_manager_.getStateVector();
+        const Eigen::MatrixXd P = state_manager_.getCovariance();
 
         if (logger_) logger_->logVector(measurement.innovations, "Innovations Vector", epoch_tag);
         if (logger_) logger_->logMatrix(measurement.H, "Measurement Matrix H", epoch_tag);
         if (logger_) logger_->logMatrix(R_, "Measurement Noise Matrix R", epoch_tag);
 
+        // --- Per-phase timers --------------------------------------------
+        // Accumulators are static so they survive across update() calls;
+        // they're dumped to the kalman_filter log at debug level on each
+        // call (per-call values) and a cumulative summary is available via
+        // logKalmanFilterTimings() at end of run.  std::chrono::steady_clock
+        // is a few nanoseconds per now() — negligible vs the matmuls below.
+        using clk = std::chrono::steady_clock;
+        const auto t0 = clk::now();
+
+        // --- Build per-row sparse view of H once per call ----------------
+        // H has ~5 non-zeros / row out of ~n columns (geometry, amb, optional
+        // tropo / iono).  The four products below switch from dense O(n²·m)
+        // / O(n·m²) to O(nnz_per_row · n · m) / O(nnz_per_row · m²).
+        const std::vector<SparseHRow> Hs = buildSparseH(measurement.H);
+
         // --- Innovation covariance & Kalman gain ---
-        const Eigen::MatrixXd Ht = measurement.H.transpose();
-        const Eigen::MatrixXd S = measurement.H * P * Ht + R_;
+        const Eigen::MatrixXd HP = sparseHP(Hs, P);          // m×n
+        Eigen::MatrixXd S        = sparseHPHt(HP, Hs);       // m×m
+        S += R_;                                              // diagonal-add
+        const auto t_after_S = clk::now();
 
-        Eigen::JacobiSVD<Eigen::MatrixXd> svd(S);
-        const double cond = svd.singularValues()(0)
-            / svd.singularValues()(svd.singularValues().size() - 1);
-        klogger->trace("{}S matrix condition number: {:.3e}", epoch_prefix, cond);
-
-        Eigen::MatrixXd S_inv;
-        Eigen::LDLT<Eigen::MatrixXd> ldlt(S);
-        if (ldlt.info() == Eigen::Success) {
-            S_inv = ldlt.solve(Eigen::MatrixXd::Identity(S.rows(), S.cols()));
-        } else {
-            klogger->warn("{}LDLT failed for S matrix (condition={:.3e}), falling back to pseudo-inverse",
-                epoch_prefix, cond);
-            S_inv = Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd>(S).pseudoInverse();
+        // Condition-number diagnostic is only consumed by a TRACE log line;
+        // skip the JacobiSVD (O(m³) with a heavy constant) when not enabled.
+        if (klogger->should_log(spdlog::level::trace)) {
+            Eigen::JacobiSVD<Eigen::MatrixXd> svd(S);
+            const double cond = svd.singularValues()(0)
+                / svd.singularValues()(svd.singularValues().size() - 1);
+            klogger->trace("{}S matrix condition number: {:.3e}", epoch_prefix, cond);
         }
 
-        const Eigen::MatrixXd K = P * Ht * S_inv;
+        // Build K via a single solve against H·P instead of materializing
+        // S⁻¹ explicitly.  K = P·Hᵀ·S⁻¹ = (S⁻¹·H·P)ᵀ since S is symmetric.
+        // Saves an O(m³) solve-with-identity and an O(n·m²) extra matmul.
+        Eigen::MatrixXd K;
+        Eigen::LDLT<Eigen::MatrixXd> ldlt(S);
+        if (ldlt.info() == Eigen::Success) {
+            K = ldlt.solve(HP).transpose();
+        } else {
+            klogger->warn("{}LDLT failed for S matrix, falling back to pseudo-inverse",
+                epoch_prefix);
+            const Eigen::MatrixXd S_pinv =
+                Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd>(S).pseudoInverse();
+            K = HP.transpose() * S_pinv;
+        }
         if (logger_) logger_->logKalmanGain(K, "Kalman Gain Matrix K", epoch_tag);
+        const auto t_after_K = clk::now();
 
-        // --- Save pre-update copy ---
-        Eigen::VectorXd x_prev = x;
-        Eigen::MatrixXd P_prev = P;
-
-        // --- State correction ---
+        // --- State correction (into a new vector — pre-update x stays intact) ---
         const Eigen::VectorXd dx = K * measurement.innovations;
-        x = x + dx;
+        const Eigen::VectorXd x_new = x + dx;
         klogger->debug("{}Kalman update dx.norm={:.3e}", epoch_prefix, dx.norm());
 
-        // --- Joseph covariance update ---
-        const Eigen::MatrixXd I_minus_KH = Eigen::MatrixXd::Identity(state_size, state_size)
-            - K * measurement.H;
-        P = I_minus_KH * P * I_minus_KH.transpose() + K * R_ * K.transpose();
-        P = 0.5 * (P + P.transpose());
+        // --- Joseph covariance update (into a new matrix) ---
+        // Build (I - K·H) via sparse-K·H plus an in-place diagonal +1.
+        // Saves the n²·m K·H matmul (most of K·H lands on zero columns
+        // of H anyway).
+        Eigen::MatrixXd I_minus_KH = -sparseKH(K, Hs, static_cast<Eigen::Index>(state_size));
+        I_minus_KH.diagonal().array() += 1.0;
+        Eigen::MatrixXd P_new = I_minus_KH * P * I_minus_KH.transpose()
+                              + K * R_ * K.transpose();
+        P_new = 0.5 * (P_new + P_new.transpose());
+        const auto t_after_P = clk::now();
 
         // --- Post-fit residuals ---
-        measurement.residuals = measurement.innovations - measurement.H * dx;
-        const Eigen::MatrixXd Sr = R_ - measurement.H * P * Ht;
-        measurement.residuals_covariance = Sr;
+        measurement.residuals = measurement.innovations - sparseHv(Hs, dx);
+
+        // Sr = R - H·P_post·Hᵀ.  Only the diagonal is consumed (by the
+        // outlier handler and the residuals trace); building the full m×m
+        // matrix costs O(n²·m + n·m²), but per-row dot products give the
+        // diagonals in O(nnz·m) total.  Off-diagonals stay zero — the
+        // outlier-handler shrink loop is happy with that.
+        const Eigen::MatrixXd HP_new = sparseHP(Hs, P_new);  // m×n
+        Eigen::VectorXd sr_diag(measurement.H.rows());
+        for (Eigen::Index i = 0; i < measurement.H.rows(); ++i) {
+            const auto& r = Hs[static_cast<size_t>(i)];
+            double hphi = 0.0;
+            for (size_t k = 0; k < r.cols.size(); ++k) {
+                hphi += r.vals[k] * HP_new(i, r.cols[k]);
+            }
+            sr_diag(i) = R_(i, i) - hphi;
+        }
+        measurement.residuals_covariance = sr_diag.asDiagonal();
+        const auto t_after_Sr = clk::now();
+
+        // Phase totals in microseconds (wall clock).  Static accumulators
+        // survive across calls; logKalmanFilterTimings() prints the running
+        // totals on demand (called from Application end-of-run).
+        const auto us = [](clk::time_point a, clk::time_point b) -> long long {
+            return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+        };
+        const long long us_S  = us(t0, t_after_S);
+        const long long us_K  = us(t_after_S, t_after_K);
+        const long long us_P  = us(t_after_K, t_after_P);
+        const long long us_Sr = us(t_after_P, t_after_Sr);
+        ++timing_n_calls_;
+        timing_us_S_  += us_S;
+        timing_us_K_  += us_K;
+        timing_us_P_  += us_P;
+        timing_us_Sr_ += us_Sr;
+        klogger->debug(
+            "{}KF timing (us): S={} K={} P={} Sr={} | n_state={} m={} ",
+            epoch_prefix, us_S, us_K, us_P, us_Sr,
+            state_size, measurement.H.rows());
 
         // Standardize post-fit residuals using the post-fit residual
         // covariance Sr(i,i) = (R - H*P_post*H')(i,i).
@@ -504,7 +688,7 @@ namespace GnssProcessor {
         // still ~95σ and trips detection as usual.
         Eigen::VectorXd sres(measurement.residuals.size());
         for (Eigen::Index i = 0; i < sres.size(); ++i) {
-            const double sii = (i < Sr.rows() && i < Sr.cols()) ? Sr(i, i) : 0.0;
+            const double sii = (i < sr_diag.size()) ? sr_diag(i) : 0.0;
             const double r_floor = (i < measurement.R_v.size() && measurement.R_v(i) > 0.0)
                                  ? measurement.R_v(i) : 0.0;
             // Use R(i,i) as the floor; the 1e-12 term guards against
@@ -520,27 +704,34 @@ namespace GnssProcessor {
         // above keeps this check numerically well-posed even in DD phase
         // absorption scenarios, while preserving cycle-slip detection
         // (a 1-cycle slip is still ~95σ on a 2 mm phase obs).
-        auto [is_outlier, is_reset] = validatePostFitResiduals(measurement, x_prev, P_prev);
+        // x and P here are the pre-update values; validate doesn't mutate
+        // them (the `&` parameters are legacy, not actually written to).
+        auto [is_outlier, is_reset] = validatePostFitResiduals(
+            measurement,
+            const_cast<Eigen::VectorXd&>(x),
+            const_cast<Eigen::MatrixXd&>(P));
         was_complete_reset_ = is_reset;
 
         if (is_outlier) {
-            state_manager_.setStateVector(x_prev);
-            state_manager_.setCovariance(P_prev);
-
+            // No state-vector / covariance writeback needed: x and P here
+            // ARE the values currently held by state_manager (we read them
+            // at the top of this function and the outlier path took us
+            // here without any intervening write).  Skipping the explicit
+            // setStateVector / setCovariance saves another ~1 MB write.
             klogger->info("{}{}. Measurement rebuild required.",
                 epoch_prefix,
                 is_reset ? "Complete filter reset requested by residual check"
                          : "Outlier handled (ambiguity reset/R change)");
 
-            if (logger_) logger_->logStateVector(x_prev, "State After Outlier Handling", epoch_tag);
-            if (logger_) logger_->logCovarianceMatrix(P_prev, "Covariance After Outlier Handling", epoch_tag);
+            if (logger_) logger_->logStateVector(x, "State After Outlier Handling", epoch_tag);
+            if (logger_) logger_->logCovarianceMatrix(P, "Covariance After Outlier Handling", epoch_tag);
 
             return UpdateResult::NeedsMeasurementRebuild;
         }
 
         // --- Commit ---
-        state_manager_.setStateVector(x);
-        state_manager_.setCovariance(P);
+        state_manager_.setStateVector(x_new);
+        state_manager_.setCovariance(P_new);
         state_manager_.setStateEpochTime(measurement.time);
 
         // --- IMU attitude error feedback ---
@@ -548,7 +739,7 @@ namespace GnssProcessor {
         // corrected.  Apply it to the rotation matrix and reset dpsi to zero.
         if (state_manager_.hasImuBiases()) {
             const size_t att_idx = state_manager_.getAttitudeIndex();
-            const Eigen::Vector3d dpsi = x.segment<3>(att_idx);
+            const Eigen::Vector3d dpsi = x_new.segment<3>(att_idx);
             if (dpsi.norm() > 1e-15) {
                 // Small-angle rotation correction: C_corrected = (I - [dpsi]x) * C
                 Eigen::Matrix3d dR;
@@ -1002,7 +1193,7 @@ namespace GnssProcessor {
 
         auto klogger = log_manager_.getLogger("kalman_filter");
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
-        const std::string epoch_prefix = "[" + epoch_tag + "] ";
+        const std::string epoch_prefix;  // see KalmanFilter::update for rationale
 
         const double threshold = config_.getResidualThreshold();
         const double bad_meas_percent = config_.getBadMeasPercent();
@@ -1232,6 +1423,40 @@ namespace GnssProcessor {
             is_complete_reset ? "true" : "false");
 
         return { is_outlier_found, is_complete_reset };
+    }
+
+    void KalmanFilter::logKalmanFilterTimings() {
+        // Route the end-of-run summary to main_log so it lands next to the
+        // "Processing completed in N ms" line — easier to find when
+        // comparing run-to-run timings.  The per-epoch debug line in
+        // update() still goes to kalman_filter.log for detailed inspection.
+        auto logger = log_manager_.getLogger("main_log");
+        if (timing_n_calls_ == 0) {
+            logger->info("KF timing summary: no update() calls recorded.");
+            return;
+        }
+        const double n = static_cast<double>(timing_n_calls_);
+        const double S_us  = static_cast<double>(timing_us_S_)  / n;
+        const double K_us  = static_cast<double>(timing_us_K_)  / n;
+        const double P_us  = static_cast<double>(timing_us_P_)  / n;
+        const double Sr_us = static_cast<double>(timing_us_Sr_) / n;
+        const double total_us = S_us + K_us + P_us + Sr_us;
+        logger->info(
+            "KF timing summary over {} update() calls (mean us / call):\n"
+            "  S form  (H*P + S=HP*Ht+R) : {:8.1f}\n"
+            "  K solve (LDLT + solve)    : {:8.1f}\n"
+            "  P Joseph (I-KH P (I-KH)') : {:8.1f}\n"
+            "  Sr diag (R - H*P_post*Ht) : {:8.1f}\n"
+            "  ---------------------------------\n"
+            "  total per call            : {:8.1f}\n"
+            "  cumulative wall (s)       : {:8.3f}",
+            timing_n_calls_, S_us, K_us, P_us, Sr_us, total_us,
+            (total_us * timing_n_calls_) / 1.0e6);
+        timing_us_S_  = 0;
+        timing_us_K_  = 0;
+        timing_us_P_  = 0;
+        timing_us_Sr_ = 0;
+        timing_n_calls_ = 0;
     }
 
 } // namespace GnssProcessor

@@ -176,9 +176,12 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     const GnssTime current_time = epoch_obs.front().time;
     state_manager_->setStateEpochTime(current_time);
+    LogManager::setCurrentEpochTime(current_time);
 
-    const std::string epoch_prefix =
-        "[RT " + TimeUtils::formatGnssTime(current_time) + "] ";
+    // Mode tag only — the spdlog %E field already carries the GPS time.
+    // "[RT] " distinguishes realtime-engine output from post-processing
+    // when both modes share a console.
+    const std::string epoch_prefix = "[RT] ";
 
     // --- Time step / gap detection ---
     double dt;

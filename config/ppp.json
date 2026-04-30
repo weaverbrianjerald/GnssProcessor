@@ -1,0 +1,142 @@
+// Single-receiver Precise Point Positioning.
+// Observation: data/observations/absolute/*.rnx (auto-discovered by PathResolver).
+// See docs/CONFIG.md for field-level reference.
+{
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "PPP",
+    "active_systems": [ "GPS", "Galileo" ],
+    "signal_mode": "dual",
+    "elevation_mask_deg": 10.0,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "excluded_satellites": [],
+    "signal_priorities": {
+      "GPS":     "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "GLONASS": "CPIXQ",
+      "BeiDou":  "IDPXQZ",
+      "QZSS":    "CSLXIQDEX",
+      "SBAS":    "CXIQ"
+    }
+  },
+
+  "files": {
+    "internal_data_root": "./data"
+  },
+
+  "estimation": {
+    // No-op when full OSB coverage exists; activates per-(sat, signal)
+    // sat-bias states only for code observations whose IF combination
+    // lacks BIA (typically the third frequency in triple-freq mode).
+    "estimate_sat_biases": true,
+    "between_satellite_sd": {
+      "enabled": false
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 0.0,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-8,
+      "ionosphere_q": 0.03,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-10,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "velocity_q": 1e2
+    },
+    "initial_std": {
+      "position": 1000.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 1000.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.5
+    },
+    "stochastic_model": "satellite_block",
+    "snr_model_params": {
+      "code_a": 0.10, "code_b": 1.00,
+      "phase_a": 0.001, "phase_b": 0.010,
+      "snr_floor_dbhz": 20.0, "snr_ceil_dbhz": 55.0
+    }
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": true,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": true,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true
+  },
+
+  "receiver": {
+    "antenna_orientation": { "azimuth_deg": 0.0, "elevation_deg": 90.0 },
+    "zhd_pressure_mbar": 1013.25,
+    "zhd_temp_kelvin":   288.15
+  },
+
+  "imu": { "enabled": false },
+
+  "data_download": {
+    "enabled": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "product_source": "COD",
+    "product_type":   "FIN",
+    "station": "CIT1", "station_country": "USA",
+    "year": 2024, "doy": 129,
+    "download_rinex": false,
+    "download_products": true,
+    "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",
+    "nc_path":  "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
+    "keep_zip_after_unzip": false
+  },
+
+  "logging": {
+    "enable_main_log":            true,
+    "enable_kalman_filter":       true,
+    "enable_state_manager":       true,
+    "enable_measurement_model":   true,
+    "enable_mw_slip_detector":    true,
+    "enable_cycle_slip_manager":  true,
+    "enable_ambiguity_resolver":  true,
+    "enable_state_initializer":   true,
+    "enable_bssd_pivot_manager":  true,
+    "enable_bssd_transform":      true,
+    "enable_state_trace":      true,
+    "enable_ambiguity_trace":  true,
+    "enable_residual_trace":   true,
+    "enable_wls_trace":        true,
+    "enable_mw_slip_trace":    true
+  }
+}

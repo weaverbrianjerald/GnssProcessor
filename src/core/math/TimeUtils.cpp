@@ -292,4 +292,14 @@ namespace GnssProcessor {
         return oss.str();
     }
 
+    void TimeUtils::gpsTimeToGpsScaleCalendar(const GnssTime& gpsTime, int& year, int& month,
+                                              int& day, int& hour, int& minute, double& second) {
+        const double gps_seconds = static_cast<double>(gpsTime.week)
+                                 * static_cast<double>(SECONDS_IN_WEEK) + gpsTime.tow;
+        const double jd_gps = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
+        // No leap-second subtraction — the calendar fields end up on the
+        // same grid as TOW (e.g. TOW=281400 → 06:10:00.000, not 06:09:42).
+        julianDayToGregorian(jd_gps, year, month, day, hour, minute, second);
+    }
+
 } // namespace GnssProcessor

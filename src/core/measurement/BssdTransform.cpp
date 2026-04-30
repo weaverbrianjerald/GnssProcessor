@@ -121,7 +121,16 @@ std::map<std::string, std::string> cons_pivot_sat;
         }
     }
 
-    // ---- Step 3: Partition into SD / singleton / pass-through ----------
+    // ---- Step 3: Partition into SD-eligible rows; reject everything else
+    // BSSD purity rule: a row that cannot be paired with a same-group pivot
+    // is REJECTED, not passed through.  Letting an undifferenced row
+    // survive would silently feed a measurement whose receiver-clock /
+    // ISB / code-bias dependence has been zeroed out of H by Step 6
+    // (those columns get globally zeroed because *differenced* rows no
+    // longer depend on them) — but the row itself was never differenced.
+    // The Kalman filter would then absorb the receiver clock and biases
+    // into other states.  Drop the row instead so BSSD mode only ever
+    // applies properly-differenced observations.
     std::map<std::string, int> grp_cnt;
     for (const auto& ri : rows) {
         if (pivot_map.count(ri.group_key))
@@ -129,46 +138,89 @@ std::map<std::string, std::string> cons_pivot_sat;
     }
 
     struct SdEntry { Eigen::Index row; std::string gk; };
-    std::vector<SdEntry>       sd_entries;
-    std::vector<Eigen::Index>  pass_rows;
+    std::vector<SdEntry> sd_entries;
+    size_t n_rejected_no_pivot = 0;
+    size_t n_rejected_singleton = 0;
+    size_t n_pivot_consumed = 0;
 
     for (const auto& ri : rows) {
-        if (!pivot_map.count(ri.group_key) || grp_cnt[ri.group_key] <= 1) {
-            pass_rows.push_back(ri.row);
-        } else if (pivot_map[ri.group_key] != ri.row) {
+        if (!pivot_map.count(ri.group_key)) {
+            ++n_rejected_no_pivot;
+        } else if (grp_cnt[ri.group_key] <= 1) {
+            ++n_rejected_singleton;
+        } else if (pivot_map[ri.group_key] == ri.row) {
+            ++n_pivot_consumed;
+        } else {
             sd_entries.push_back({ri.row, ri.group_key});
         }
     }
 
-    const size_t n_sd   = sd_entries.size();
-    const size_t n_pass = pass_rows.size();
+    const size_t n_sd = sd_entries.size();
+    const size_t n_rejected = n_rejected_no_pivot + n_rejected_singleton;
     if (n_sd == 0) {
-        log_manager_.getLogger("bssd_transform")->debug(
-            "{}BSSD: all groups are singletons", epoch_prefix);
+        log_manager_.getLogger("bssd_transform")->info(
+            "{}BSSD: no SD pairs formed ({} rejected: {} no-pivot, "
+            "{} singleton; {} pivot consumed) — emitting empty update",
+            epoch_prefix, n_rejected,
+            n_rejected_no_pivot, n_rejected_singleton, n_pivot_consumed);
+        update.innovations.resize(0);
+        update.H.resize(0, update.H.cols());
+        update.R_full.resize(0, 0);
+        update.R_v.resize(0);
+        update.satellite_ids.clear();
+        update.signal_types.clear();
         return;
     }
 
-    // ---- Step 4: Build differencing operator D -------------------------
-    const Eigen::Index m = static_cast<Eigen::Index>(n_sd + n_pass);
-    Eigen::MatrixXd D = Eigen::MatrixXd::Zero(m, n);
+    // ---- Step 4-5: Sparse SD transform ---------------------------------
+    // The differencing operator D has exactly two non-zeros per SD row:
+    // +1 at the non-pivot's input index, -1 at the pivot's input index.
+    // The dense D · X family of products is therefore wasteful — each
+    // operation collapses to a per-row difference of input rows.  R_undiff
+    // is also "diagonal held as full n×n dense" — purely silly.
+    //
+    // Below we compute new_z, new_H, and new_R directly from the sparse
+    // structure.  The new R has a known sparsity pattern: within a group,
+    // off-diagonal entries equal the pivot's variance (the shared term);
+    // across different groups, entries are zero.
+    const Eigen::Index m = static_cast<Eigen::Index>(n_sd);
 
-    Eigen::Index o = 0;
-    for (size_t k = 0; k < n_sd; ++k, ++o) {
-        D(o, sd_entries[k].row)            =  1.0;
-        D(o, pivot_map[sd_entries[k].gk])  = -1.0;
+    struct SdSparse {
+        Eigen::Index pos;   ///< Input row that gets the +1 (non-pivot).
+        Eigen::Index neg;   ///< Input row that gets the -1 (pivot).
+        std::string  gk;    ///< Group key — used for R off-diagonal pattern.
+    };
+    std::vector<SdSparse> sd_rows;
+    sd_rows.reserve(n_sd);
+    for (const auto& e : sd_entries) {
+        sd_rows.push_back({ e.row, pivot_map[e.gk], e.gk });
     }
-    for (size_t k = 0; k < n_pass; ++k, ++o) {
-        D(o, pass_rows[k]) = 1.0;
+
+    Eigen::VectorXd new_z(m);
+    Eigen::MatrixXd new_H(m, update.H.cols());
+    for (Eigen::Index k = 0; k < m; ++k) {
+        const auto& r = sd_rows[static_cast<size_t>(k)];
+        new_z(k)      = update.innovations(r.pos) - update.innovations(r.neg);
+        new_H.row(k)  = update.H.row(r.pos)       - update.H.row(r.neg);
     }
 
-    // ---- Step 5: Transform z, H, R -------------------------------------
-    Eigen::MatrixXd R_undiff = Eigen::MatrixXd::Zero(n, n);
-    for (Eigen::Index i = 0; i < n; ++i)
-        R_undiff(i, i) = update.R_v(i);
-
-    Eigen::VectorXd new_z = D * update.innovations;
-    Eigen::MatrixXd new_H = D * update.H;
-    Eigen::MatrixXd new_R = D * R_undiff * D.transpose();
+    // new_R(i,i) = R_v(pos_i) + R_v(neg_i)
+    // new_R(i,j) for i ≠ j:
+    //   same group  → R_v(pivot_idx)  (D(i,pivot)·D(j,pivot)·R = (-1)(-1)R)
+    //   diff group → 0
+    Eigen::MatrixXd new_R = Eigen::MatrixXd::Zero(m, m);
+    for (Eigen::Index i = 0; i < m; ++i) {
+        const auto& ri = sd_rows[static_cast<size_t>(i)];
+        new_R(i, i) = update.R_v(ri.pos) + update.R_v(ri.neg);
+        for (Eigen::Index j = i + 1; j < m; ++j) {
+            const auto& rj = sd_rows[static_cast<size_t>(j)];
+            if (ri.gk == rj.gk) {
+                const double r_piv = update.R_v(ri.neg);  // shared pivot
+                new_R(i, j) = r_piv;
+                new_R(j, i) = r_piv;
+            }
+        }
+    }
 
     // ---- Step 6: Zero columns that cancel after differencing -----------
     const auto zero_col = [&](size_t idx) {
@@ -238,11 +290,6 @@ std::map<std::string, std::string> cons_pivot_sat;
             update.satellite_ids[static_cast<size_t>(r)]);
         new_sig_types.push_back(update.signal_types[static_cast<size_t>(i)]);
     }
-    for (size_t k = 0; k < n_pass; ++k) {
-        const Eigen::Index i = pass_rows[k];
-        new_sat_ids.push_back(update.satellite_ids[static_cast<size_t>(i)]);
-        new_sig_types.push_back(update.signal_types[static_cast<size_t>(i)]);
-    }
 
     // ---- Step 9: Pivot summary -----------------------------------------
     std::string pivot_summary;
@@ -266,9 +313,11 @@ std::map<std::string, std::string> cons_pivot_sat;
     update.signal_types  = std::move(new_sig_types);
 
     log_manager_.getLogger("bssd_transform")->info(
-        "{}BSSD: {} undiff -> {} SD + {} pass = {} total (pivots consumed). "
-        "Zeroed {} ref-amb, {} ref-iono, {} code-bias cols. Pivots: {}",
-        epoch_prefix, n, n_sd, n_pass, m,
+        "{}BSSD: {} undiff -> {} SD ({} rejected: {} no-pivot, {} singleton; "
+        "{} pivot consumed). Zeroed {} ref-amb, {} ref-iono, {} code-bias cols. "
+        "Pivots: {}",
+        epoch_prefix, n, n_sd, n_rejected,
+        n_rejected_no_pivot, n_rejected_singleton, n_pivot_consumed,
         ref_amb_cols.size(), ref_iono_cols.size(),
         state_manager_.getCodeBiasStates().size(),
         pivot_summary);

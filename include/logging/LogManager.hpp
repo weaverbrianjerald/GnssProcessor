@@ -12,6 +12,8 @@
 
 namespace GnssProcessor {
 
+    struct GnssTime;
+
     /**
      * @file include/logging/LogManager.hpp
      * @brief Lightweight logging manager wrapper around spdlog for the GnssProcessor project.
@@ -124,6 +126,25 @@ namespace GnssProcessor {
          */
         void setDisabledLoggers(const std::set<std::string>& names);
 
+        /**
+         * @brief Set the GNSS epoch time used for the [tow=...] field in
+         *        every subsequent log message on the calling thread.
+         *
+         * Set this at the top of each per-epoch processing iteration so
+         * log lines emitted during that epoch carry a TOW that aligns
+         * with the RINEX cadence (e.g. tow=30.000, 60.000).  The value
+         * is thread-local; worker threads see their own setting.  Until
+         * the first call, log lines emit @c "tow=---------" as a
+         * placeholder for boot-time / pre-epoch messages.
+         */
+        static void setCurrentEpochTime(const GnssTime& t);
+
+        /**
+         * @brief Clear the current epoch time so subsequent log
+         *        messages emit the @c "tow=---------" placeholder.
+         */
+        static void clearCurrentEpochTime();
+
     private:
         /// Map of logger name to spdlog logger instance.
         std::map<std::string, std::shared_ptr<spdlog::logger>> loggers_;
@@ -152,12 +173,12 @@ namespace GnssProcessor {
          * @brief Build a pattern_formatter that uses GPS time for the %* flag.
          *
          * The returned formatter replaces the '%*' custom flag with the
-         * message timestamp shifted by the GPS–UTC leap-second offset so
+         * message timestamp shifted by the GPSï¿½UTC leap-second offset so
          * that log timestamps align with RINEX GPS epoch times.
          */
         std::unique_ptr<spdlog::pattern_formatter> makeGpsFormatter() const;
 
-        /// GPS–UTC offset in seconds (currently 18).
+        /// GPSï¿½UTC offset in seconds (currently 18).
         int gps_utc_offset_s_{ 18 };
     };
 

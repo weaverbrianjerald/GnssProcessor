@@ -180,6 +180,18 @@ namespace GnssProcessor {
          */
         void setCycleSlipManager(CycleSlipManager* csm) { cycle_slip_manager_ = csm; }
 
+        /**
+         * @brief Emit cumulative per-phase timing totals to the
+         *        @c kalman_filter logger at info level.
+         *
+         * Each call to @c update() accumulates microseconds spent in the
+         * four hottest phases — innovation covariance / Kalman gain / Joseph
+         * covariance / post-fit residuals.  Call once at end of run to see
+         * where time went.  Counters reset only when this function is
+         * called.
+         */
+        void logKalmanFilterTimings();
+
     private:
         StateManager& state_manager_;         //!< Reference to external state manager for state storage and access.
         const GnssConfig& config_;            //!< Reference to GNSS configuration (read-only).
@@ -193,6 +205,15 @@ namespace GnssProcessor {
         bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
         CycleSlipManager* cycle_slip_manager_ = nullptr;   //!< Optional access to MW data for outlier tiebreaking.
         Eigen::Matrix3d C_b_e_ = Eigen::Matrix3d::Identity(); //!< Body-to-ECEF rotation matrix (IMU attitude).
+
+        // -------------------------------------------------------------------
+        // Per-phase timing accumulators (microseconds; written by update())
+        // -------------------------------------------------------------------
+        long long timing_us_S_  = 0;   //!< H·P + S = HP·Hᵀ + R
+        long long timing_us_K_  = 0;   //!< LDLT(S) + solve for K
+        long long timing_us_P_  = 0;   //!< Joseph covariance update
+        long long timing_us_Sr_ = 0;   //!< Diagonal-only post-fit covariance
+        size_t    timing_n_calls_ = 0; //!< Number of update() calls accumulated.
 
         // -------------------------------------------------------------------
         // Construction helpers
