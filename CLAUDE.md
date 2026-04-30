@@ -112,7 +112,36 @@ by a single top-level config field, `data_source`:
   `ProductResolver`, which builds IGS long-name URLs from
   `data_download.{year, doy, station, product_source, product_type}`
   and downloads any missing products from CDDIS into
-  `data_download.data_root`.  Same on-disk layout as internal mode.
+  `data_download.data_root`.  Date-first layout under that root:
+  ```
+  data_root/
+    <YYYY-DOY>/
+      products/        ready *.SP3 *.CLK *.BIA *.ERP *_MN.rnx
+      obs/<station>/   ready *.rnx (Hatanaka files converted via crx2rnx)
+    static/atx/        igs20.atx (configured via data_download.atx_path)
+    static/nc/         EOT20_load.nc (configured via data_download.nc_path)
+    cache/<YYYY-DOY>/  raw .gz / .crx downloads, kept for debug; safe to delete
+  ```
+  Internal mode keeps the older flat layout (`internal_data_root/products/{orbit,clock,...}/unzip/`)
+  populated by `scripts/bootstrap_internal_data.py`; the two layouts are
+  internally consistent within their respective modes but do not share roots.
+
+**CDDIS authentication.** Production-mode downloads use HTTP Basic auth
+via `.netrc`. `DataDownloader` resolves the file at startup in this
+order: `data_download.netrc_path` (if set) → `~/.netrc` → `~/_netrc`
+(Windows convention). If none is found a warning is logged at startup;
+HTTP 401 / 403 responses include the resolved-path and a hint pointing
+at the CDDIS netrc-creation guide.
+
+**crx2rnx (Hatanaka decompression).** RNXCMP's `crx2rnx` is invoked
+with stderr+stdout captured (via `_popen` / `popen`); failures are
+logged at error level with the exit code and the first ~10 lines of
+output. Resolution order for the executable:
+`data_download.crx2rnx_path` → well-known install dirs (incl.
+`C:/GnssProcessorSupport/exe/crx2rnx.exe`) → `where crx2rnx.exe`
+(Windows) / `which crx2rnx` (Unix). When a `.crx.gz` download
+succeeds but conversion fails, ProductResolver hard-errors rather
+than masking the problem with a `.rnx.gz` fallback.
 
 Either mode produces a `PathResolver::ResolvedPaths` struct that the
 `Application` driver merges into `GnssConfig` via the
