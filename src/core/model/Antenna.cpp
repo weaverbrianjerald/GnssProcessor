@@ -337,15 +337,33 @@ namespace GnssProcessor {
         sat_frame.row(1) = j_s.transpose();
         sat_frame.row(2) = k_s.transpose();
 
-        // Satellite antenna selection with validity interval
+        // Satellite antenna selection with validity interval.
+        //
+        // We track id-matched candidates separately from the final selection
+        // so a no-match warning can name the exact candidates the matcher
+        // tried (with their validity windows) instead of just "no entry
+        // found." Past silent failures of this loop have been impossible to
+        // diagnose from a one-line warning alone.
         const AntennaData* sat_entry = nullptr;
+        int id_matches = 0;
+        std::string id_match_summary;  // first 3 candidates' types + windows
         for (const auto& a : antennas_) {
-            // Match satellite PRN at the start of the type string
+            // Match satellite PRN at the start of the type string.
             // Format: "PRN_BLOCK_SVN" e.g. "G04_BLOCKIIIA_G074"
             const bool id_match =
                 (a.type.find(satellite + "_") == 0) ||
                 (a.type.find("_" + satellite + "_") != std::string::npos);
             if (!id_match) continue;
+
+            ++id_matches;
+            if (id_matches <= 3) {
+                if (!id_match_summary.empty()) id_match_summary += "; ";
+                id_match_summary += "'" + a.type + "' valid [" +
+                    std::to_string(a.valid_from.week) + ":" +
+                    std::to_string(static_cast<int64_t>(a.valid_from.tow)) + ", " +
+                    std::to_string(a.valid_until.week) + ":" +
+                    std::to_string(static_cast<int64_t>(a.valid_until.tow)) + ")";
+            }
 
             const bool has_valid_from = (a.valid_from.week > 0);
             const bool has_valid_until = (a.valid_until.week > 0);
@@ -358,7 +376,7 @@ namespace GnssProcessor {
                     sat_entry = &a;
                     log_manager_.getLogger("antenna")->debug(
                         "Matched satellite antenna for {}: type='{}' valid [{:d}:{:.0f}, {:d}:{:.0f})",
-                        satellite, a.type, 
+                        satellite, a.type,
                         a.valid_from.week, a.valid_from.tow,
                         a.valid_until.week, a.valid_until.tow);
                     break;
@@ -373,9 +391,26 @@ namespace GnssProcessor {
         }
 
         if (!sat_entry) {
-            log_manager_.getLogger("antenna")->warn(
-                "No satellite antenna entry found for {} at {:d}:{:.3f}",
-                satellite, time.week, time.tow);
+            if (id_matches == 0) {
+                // Type-string match failed entirely — strongly suggests the
+                // ATX wasn't loaded or the per-entry type strings don't
+                // start with the PRN. Tells the user where to look.
+                log_manager_.getLogger("antenna")->warn(
+                    "No satellite antenna entry found for {} at {:d}:{:.3f}: "
+                    "0 ATX entries had a type string starting with '{}_' (out of {} loaded). "
+                    "Check that the ATX file was parsed (product_parser logger at debug) and "
+                    "that the entries' PRN field was extracted correctly.",
+                    satellite, time.week, time.tow, satellite, antennas_.size());
+            } else {
+                // ATX has entries for this PRN but none cover the obs epoch —
+                // likely a date / validity-parse mismatch.
+                log_manager_.getLogger("antenna")->warn(
+                    "No satellite antenna entry found for {} at {:d}:{:.3f}: "
+                    "{} ATX entries matched the PRN but none had a covering validity window. "
+                    "First {} considered: {}",
+                    satellite, time.week, time.tow, id_matches,
+                    std::min(id_matches, 3), id_match_summary);
+            }
         }
 
         // === Satellite ===
