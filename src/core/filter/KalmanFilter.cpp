@@ -11,6 +11,7 @@
  */
 
 #include "filter/KalmanFilter.hpp"
+#include "logging/GatedSink.hpp"
 #include "logging/KalmanFilterLogger.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "slip/CycleSlipManager.hpp"
@@ -257,7 +258,20 @@ namespace GnssProcessor {
     KalmanFilter::KalmanFilter(StateManager& state_manager, const GnssConfig& config,
         LogManager& log_manager, const PppModel& ppp_model)
         : state_manager_(state_manager), config_(config), log_manager_(log_manager),
-        ppp_model_(ppp_model), measurement_model_(state_manager, ppp_model, config, log_manager) {
+        ppp_model_(ppp_model), measurement_model_(state_manager, ppp_model, config, log_manager),
+        residual_history_(
+            // Translate GnssConfig::ResidualHistoryConfig → tracker's
+            // own Config struct.  Keeping the tracker independent of
+            // GnssConfig avoids a header-dependency cycle and lets the
+            // tracker be reused outside this codebase if useful.
+            ResidualHistoryTracker::Config{
+                config.getResidualHistoryConfig().enabled,
+                config.getResidualHistoryConfig().alpha,
+                config.getResidualHistoryConfig().warmup_n,
+                config.getResidualHistoryConfig().z_threshold,
+                config.getResidualHistoryConfig().fraction_threshold
+            },
+            log_manager) {
 
         // Optional file logger (trace mode only)
         try {
@@ -273,6 +287,19 @@ namespace GnssProcessor {
             }
         } catch (...) {
             // Silently continue without file logger.
+        }
+
+        // Concise-log gate: when enabled, install a GatedSink wrapper around
+        // the kalman_filter logger's sinks so beginEpoch/endEpoch can route
+        // intermediate-pass output away from disk without changing call sites.
+        // The gate stays null when the flag is off — beginEpoch/endEpoch
+        // become no-ops with no per-call cost.
+        if (config_.getLoggingConfig().kalman_filter_concise_log) {
+            gate_ = log_manager_.installGatedSink("kalman_filter");
+            if (gate_) {
+                log_manager_.getLogger("kalman_filter")->info(
+                    "Concise log mode enabled: only first + final pass per epoch will be retained");
+            }
         }
 
         const size_t state_size = state_manager_.getStateSize();
@@ -520,6 +547,23 @@ namespace GnssProcessor {
         last_reset_satellites_.clear();
         was_complete_reset_ = false;
 
+        // Concise-log gating: pass 1 emits live; passes ≥2 buffer into the
+        // gate WITHOUT clearing — every intermediate pass's outlier-handling
+        // lines and residual summary accumulate into one epoch-wide buffer.
+        // endEpoch replays the whole buffer in order, so the user sees:
+        //   pass 1 live   ▸   pass 2 outliers   ▸   pass 3 outliers   ▸
+        //   …            ▸   final pass residual summary (no outliers)
+        // beginEpoch clears the buffer between epochs, so accumulation
+        // never bleeds across epoch boundaries.
+        ++pass_index_;
+        if (gate_) {
+            if (pass_index_ == 1) {
+                gate_->setPolicy(GatedSink::Policy::Passthrough);
+            } else {
+                gate_->setPolicy(GatedSink::Policy::Buffer);
+            }
+        }
+
         // --- Input validation ---
         if (measurement.innovations.size() == 0 || measurement.H.rows() == 0 || measurement.R_v.size() == 0) {
             klogger->warn("{}Invalid measurement update: innovations ({}), H ({}x{}), R_v ({})",
@@ -713,12 +757,20 @@ namespace GnssProcessor {
         was_complete_reset_ = is_reset;
 
         if (is_outlier) {
-            // No state-vector / covariance writeback needed: x and P here
-            // ARE the values currently held by state_manager (we read them
-            // at the top of this function and the outlier path took us
-            // here without any intervening write).  Skipping the explicit
-            // setStateVector / setCovariance saves another ~1 MB write.
-            klogger->info("{}{}. Measurement rebuild required.",
+            // Writeback: handlePhaseOutlier (and friends) modified x and P
+            // in place to reset the affected ambiguity to a fresh seed
+            // value with inflated covariance.  Without this writeback those
+            // changes are local to this stack frame and silently discarded
+            // when we return — the slipped ambiguity then stays at its
+            // pre-update (corrupt) value and the same slip residual
+            // reappears on every subsequent rebuild pass and every
+            // subsequent epoch.  Costs an extra n²-element copy on the
+            // outlier path, which fires far less often than the success
+            // path; the persistence-vs-perf trade-off is the right one.
+            state_manager_.setStateVector(x);
+            state_manager_.setCovariance(P);
+
+            klogger->debug("{}{}. Measurement rebuild required.",
                 epoch_prefix,
                 is_reset ? "Complete filter reset requested by residual check"
                          : "Outlier handled (ambiguity reset/R change)");
@@ -855,7 +907,7 @@ namespace GnssProcessor {
             const std::string amb_key = sat + "_" + outlier_sig;
             const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
 
-            klogger->info("{}Phase outlier action ({}): ambiguity reset for key={}, amb_idx={}",
+            klogger->debug("{}Phase outlier action ({}): ambiguity reset for key={}, amb_idx={}",
                 epoch_prefix, label, amb_key, amb_idx);
 
             if (amb_idx < 0) {
@@ -867,7 +919,7 @@ namespace GnssProcessor {
             // inflate its variance — that would trigger the BSSD disturbance
             // detector and cascade into an unnecessary pivot handover.
             if (bssd_active && sat == pivot_sat) {
-                klogger->info("{}Phase outlier on BSSD pivot {} {}: keeping frozen at 0",
+                klogger->debug("{}Phase outlier on BSSD pivot {} {}: keeping frozen at 0",
                     epoch_prefix, sat, outlier_sig);
                 last_reset_satellites_.push_back(sat);
                 return;
@@ -902,7 +954,7 @@ namespace GnssProcessor {
             P.col(amb_idx).setZero();
             P(amb_idx, amb_idx) = amb_std * amb_std;
 
-            klogger->info("{}Reinitialized ambiguity for {} {} (idx {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m{}",
+            klogger->debug("{}Reinitialized ambiguity for {} {} (idx {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m{}",
                 epoch_prefix, sat, outlier_sig, amb_idx, prev_amb, seed_value, amb_std,
                 bssd_active ? " (SD)" : "");
 
@@ -926,7 +978,7 @@ namespace GnssProcessor {
         if (!ref_sat.empty() && !bssd_active) {
             resetOneAmbiguity(ref_sat, "BSSD-ref");
         } else if (!ref_sat.empty()) {
-            klogger->info("{}Phase outlier on SD pair {}: skipping ref_sat {} reset (BSSD pivot)",
+            klogger->debug("{}Phase outlier on SD pair {}: skipping ref_sat {} reset (BSSD pivot)",
                 epoch_prefix, outlier_sat, ref_sat);
         }
     }
@@ -1017,9 +1069,9 @@ namespace GnssProcessor {
         P.col(amb_idx).setZero();
         P(amb_idx, amb_idx) = amb_std * amb_std;
 
-        klogger->info("{}Baseline phase outlier: re-seeded {} (idx {}): "
-                      "prev={:.4f} m -> seed={:.4f} m, std={:.3f} m",
-                      epoch_prefix, amb_key, amb_idx, prev_amb, seed_value, amb_std);
+        klogger->debug("{}Baseline phase outlier: re-seeded {} (idx {}): "
+                       "prev={:.4f} m -> seed={:.4f} m, std={:.3f} m",
+                       epoch_prefix, amb_key, amb_idx, prev_amb, seed_value, amb_std);
 
         last_reset_satellites_.push_back(primary_sat);
     }
@@ -1034,7 +1086,7 @@ namespace GnssProcessor {
         const std::string excl_key = primary_sat + "_" + outlier_sig;
         measurement.excluded_measurements.insert(excl_key);
 
-        klogger->info("{}Code outlier action: excluding measurement {} {} (key={})",
+        klogger->debug("{}Code outlier action: excluding measurement {} {} (key={})",
             epoch_prefix, outlier_sat, outlier_sig, excl_key);
 
         // Remove the offending row from all measurement vectors/matrices
@@ -1232,10 +1284,6 @@ namespace GnssProcessor {
         klogger->debug("{}Post-fit residual check: n_obs={}, threshold={:.3f}, bad_count={}, bad_percent={:.3f}",
             epoch_prefix, num_obs, threshold, measurement.bad_residual_count, bad_meas_percent);
 
-        // Always emit at debug level.
-        if (klogger->should_log(spdlog::level::debug))
-            logResidualTable(spdlog::level::debug);
-
         if (meta_n != num_obs) {
             klogger->warn("{}Residual metadata size mismatch: res={}, sat_ids={}, sig_types={}. Logged {} entries.",
                 epoch_prefix, num_obs, measurement.satellite_ids.size(), measurement.signal_types.size(), meta_n);
@@ -1251,8 +1299,261 @@ namespace GnssProcessor {
             if (std::isfinite(std::abs(sres(i))) && std::abs(sres(i)) > threshold)
                 ++num_over;
 
-        klogger->debug("{}Residual summary: max|sres|={:.3f} at idx={}, over_threshold={}/{}",
-            epoch_prefix, max_sres, max_idx, num_over, num_obs);
+        // Per-row residual table — emitted only at TRACE (every
+        // epoch) or at DEBUG when an outlier was detected.  The
+        // log gets STRICTLY MORE concise as the threshold ascends:
+        //   - trace: full per-row table every epoch
+        //   - debug: per-row table only on outlier events
+        //   - info  : no per-row data (Residual summary line covers it)
+        //   - warn  : no per-row data (only pivot warnings + outlier-flagged warns)
+        //
+        // The previous warn-level fallback that re-emitted the table
+        // when an outlier fired and debug was off has been removed —
+        // it produced bulk per-row output at the warn threshold,
+        // contradicting the "more concise as level rises" intent.
+        if (klogger->should_log(spdlog::level::trace)) {
+            logResidualTable(spdlog::level::trace);
+        } else if (max_sres > threshold && klogger->should_log(spdlog::level::debug)) {
+            logResidualTable(spdlog::level::debug);
+        }
+
+        // Severity-stratified by iteration outcome:
+        //   - INFO when this pass will commit cleanly (max_sres ≤ threshold) —
+        //     gives users one summary line per converged epoch by default.
+        //   - DEBUG when outliers will be handled this pass; per-iteration
+        //     summaries during rebuild loops are diagnostic, not summary.
+        //
+        // The pivot-slip detector below can still escalate this pass to a
+        // forced rebuild, but its own warn-level message carries the
+        // visible-by-default signal in that case — repeating the residual
+        // summary at info would be redundant.
+        const auto residual_summary_level =
+            (max_sres > threshold) ? spdlog::level::debug : spdlog::level::info;
+
+        // Compute RMS of standardized residuals over finite entries.
+        // Useful as a "is the filter overall happy" scalar — RMS|sres|
+        // near 1.0 means residuals are consistent with the modelled
+        // covariance; values >> 1 mean the filter is over-confident
+        // (R or P too tight); values << 1 mean over-conservative.
+        double sum_sq = 0.0;
+        std::size_t n_valid_sres = 0;
+        for (Eigen::Index i = 0; i < sres.size(); ++i) {
+            const double s = sres(i);
+            if (std::isfinite(s)) {
+                sum_sq += s * s;
+                ++n_valid_sres;
+            }
+        }
+        const double rms_sres = (n_valid_sres > 0)
+            ? std::sqrt(sum_sq / static_cast<double>(n_valid_sres)) : 0.0;
+
+        // Position σ from the predicted-state covariance diagonal.
+        // ECEF position lives at state indices 0..2 by the
+        // StateManager schema (see include/filter/StateKeySchema.hpp).
+        // Reported in metres so users can eyeball convergence at a
+        // glance from a single info line.
+        const double sx = (P.rows() >= 3) ? std::sqrt(std::max(P(0, 0), 0.0)) : 0.0;
+        const double sy = (P.rows() >= 3) ? std::sqrt(std::max(P(1, 1), 0.0)) : 0.0;
+        const double sz = (P.rows() >= 3) ? std::sqrt(std::max(P(2, 2), 0.0)) : 0.0;
+
+        klogger->log(residual_summary_level,
+            "{}Residual summary: max|sres|={:.3f} at idx={}, RMS|sres|={:.3f}, "
+            "over_threshold={}/{}, σ_pos=({:.3f}, {:.3f}, {:.3f}) m",
+            epoch_prefix, max_sres, max_idx, rms_sres, num_over, num_obs, sx, sy, sz);
+
+        // --- Pivot slip detector (MAD-based, percentage-thresholded) ---
+        //
+        // Runs BEFORE the per-row outlier dispatch.  When a BSSD pivot
+        // satellite has a phase tracking glitch (sub-cycle drift, brief
+        // multipath ringing, partial reacquisition), every SD residual
+        // that uses that pivot picks up the same offset — same sign,
+        // similar magnitude, on the same frequency band.  The per-row
+        // |sres|>threshold check sees N independent outliers and would
+        // peel them off one by one (each non-pivot ambiguity reset
+        // incorrectly), wasting N rebuild passes and corrupting per-sat
+        // MW arc histories on innocent satellites.
+        //
+        // The detector groups phase rows by (pivot, freq_band), then
+        // tests each group for the coherent-offset signature using
+        // robust statistics:
+        //   1. Group must have at least MIN_GROUP_SIZE rows (small groups
+        //      have too little statistical power for the test).
+        //   2. At least ABOVE_FRACTION_MIN of the group's |sres| must be
+        //      above the per-row outlier threshold (vs. a fixed count, so
+        //      the trigger scales with sat visibility).
+        //   3. |median(residual)| must exceed MEDIAN_FLOOR_M to avoid
+        //      firing on numerical noise.
+        //   4. MAD / |median| must be below MAD_RATIO_MAX — this is the
+        //      key robustness step: the median is unaffected by one or
+        //      two satellites that ALSO genuinely slipped at the same
+        //      epoch, and MAD measures spread without being inflated by
+        //      those outliers.  Tight MAD relative to median ⇒ coherent
+        //      pivot offset; loose MAD ⇒ independent outliers.
+        //
+        // On detection: each non-pivot SD ambiguity in the group is reset
+        // via handlePhaseOutlier (BSSD non-pivot path), all rows are
+        // added to excluded_measurements for the rebuild, and the
+        // per-row dispatch below is skipped for this pass — the pivot
+        // slip explains every outlier in the group, so peeling them off
+        // individually is wasted work.
+        {
+            constexpr size_t MIN_GROUP_SIZE      = 4;
+            constexpr double ABOVE_FRACTION_MIN  = 0.5;
+            constexpr double MAD_RATIO_MAX       = 0.4;
+            constexpr double MEDIAN_FLOOR_M      = 0.005;
+
+            struct Group {
+                std::vector<size_t> indices;
+                std::vector<double> residuals;
+                size_t above = 0;
+            };
+            // Key: ("G11", "L1") — pivot satellite + frequency band (first 2
+            // chars of the signal type).  Only phase rows ('L') are grouped.
+            std::map<std::pair<std::string, std::string>, Group> groups;
+            for (size_t i = 0; i < meta_n; ++i) {
+                const auto& sat_id = measurement.satellite_ids[i];
+                const auto& sig    = measurement.signal_types[i];
+                if (sig.size() < 2 || sig[0] != 'L') continue;
+                const auto [prim, pivot] = splitBssdSatId(sat_id);
+                if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
+                const std::string band = sig.substr(0, 2);     // "L1", "L2", "L5"
+                auto& g = groups[{ pivot, band }];
+                g.indices.push_back(i);
+                g.residuals.push_back(res(static_cast<Eigen::Index>(i)));
+                const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
+                if (std::isfinite(sa) && sa > threshold) ++g.above;
+            }
+
+            // Helper: median (modifies its argument).  Even-count median
+            // averages the two middle values for stability.
+            auto medianInPlace = [](std::vector<double>& v) -> double {
+                const size_t n = v.size();
+                std::nth_element(v.begin(), v.begin() + n / 2, v.end());
+                if (n % 2 != 0) return v[n / 2];
+                const double upper = v[n / 2];
+                std::nth_element(v.begin(), v.begin() + n / 2 - 1, v.end());
+                return 0.5 * (v[n / 2 - 1] + upper);
+            };
+
+            bool any_pivot_slip = false;
+            for (auto& [key, g] : groups) {
+                const size_t n = g.indices.size();
+                if (n < MIN_GROUP_SIZE) continue;
+                const double frac = static_cast<double>(g.above) / static_cast<double>(n);
+                if (frac < ABOVE_FRACTION_MIN) continue;
+
+                std::vector<double> r_copy = g.residuals;
+                const double med = medianInPlace(r_copy);
+                if (std::abs(med) < MEDIAN_FLOOR_M) continue;
+
+                std::vector<double> abs_dev;
+                abs_dev.reserve(g.residuals.size());
+                for (double v : g.residuals) abs_dev.push_back(std::abs(v - med));
+                const double mad = medianInPlace(abs_dev);
+                const double mad_ratio = mad / std::abs(med);
+                if (mad_ratio > MAD_RATIO_MAX) continue;
+
+                // Identify the constellation from the pivot's PRN prefix.  All
+                // non-pivot rows in this group share the constellation by
+                // construction (BSSD groups SD pairs within a constellation).
+                const std::string pivot_sat = key.first;
+                const std::string cons      = PppUtils::getSystemString(pivot_sat);
+
+                // -----------------------------------------------------------
+                // Temporal corroboration via the residual-history tracker.
+                //
+                // The spatial criteria above (fraction-above-threshold +
+                // tight MAD around a non-zero median) catch the geometric
+                // signature of a pivot slip.  But spatial coherence alone
+                // also matches genuine atmospheric events (storm fronts,
+                // scintillation) that shift many sats simultaneously.
+                //
+                // The tracker adds the "is each row in this group also
+                // anomalous against its OWN history?" axis.  When the
+                // tracker is enabled and at least @c warmup_n samples
+                // have accumulated for the group's rows, we count what
+                // fraction of them have |z| > z_threshold against their
+                // EWMA mean and stdev.  Spatial AND temporal agreement
+                // logs as HIGH confidence; spatial alone logs as MEDIUM.
+                // The handover request fires either way — the temporal
+                // signal currently augments diagnostics rather than
+                // gating the action.  Promoting it to a gate is a
+                // one-line change here once you've gathered confidence
+                // in the false-positive rate.
+                // -----------------------------------------------------------
+                std::string confidence_tag = "MEDIUM (spatial-only)";
+                size_t temporal_total = 0, temporal_outliers = 0;
+                if (residual_history_.isEnabled()) {
+                    for (size_t i = 0; i < g.indices.size(); ++i) {
+                        const size_t row_idx = g.indices[i];
+                        const auto& sat_id = measurement.satellite_ids[row_idx];
+                        const auto& sig    = measurement.signal_types[row_idx];
+                        const auto [prim, _piv] = splitBssdSatId(sat_id);
+                        const double r = g.residuals[i];
+                        const auto ev = residual_history_.evaluate(prim, sig, r);
+                        if (ev.warmed_up) {
+                            ++temporal_total;
+                            if (ev.is_outlier) ++temporal_outliers;
+                        }
+                    }
+                    if (temporal_total > 0) {
+                        const double temporal_frac =
+                            static_cast<double>(temporal_outliers) / static_cast<double>(temporal_total);
+                        if (temporal_frac >= residual_history_.fractionThreshold()) {
+                            confidence_tag = std::string("HIGH (temporal agrees: ")
+                                + std::to_string(temporal_outliers) + "/"
+                                + std::to_string(temporal_total) + " rows over z-threshold)";
+                        } else {
+                            confidence_tag = std::string("MEDIUM (temporal disagrees: ")
+                                + std::to_string(temporal_outliers) + "/"
+                                + std::to_string(temporal_total) + " rows over z-threshold, "
+                                + "below fraction threshold)";
+                        }
+                    } else {
+                        confidence_tag = "MEDIUM (temporal: no warmed-up rows yet)";
+                    }
+                }
+
+                klogger->warn(
+                    "{}PIVOT SLIP [{}] on {} {} {} band: {}/{} SD residuals coherent "
+                    "(median={:+.4f} m, MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                    "Requesting forced pivot handover.",
+                    epoch_prefix, confidence_tag, cons, pivot_sat, key.second /* band */,
+                    g.above, n, med, mad, mad_ratio, frac);
+
+                // Request a pivot handover for this constellation. Application
+                // forwards this to MeasurementModel::requestPivotHandover after
+                // KF returns NeedsMeasurementRebuild; the next pass's
+                // computeMeasurementUpdate triggers PivotManager's handover
+                // path, which losslessly re-references all SD ambiguities,
+                // ionosphere states, and satellite biases to a new pivot.
+                // Resetting every non-pivot SD ambiguity in place would have
+                // been wrong: the non-pivots are stable; only the pivot's
+                // observation drifted.
+                requested_pivot_handovers_.insert(cons);
+
+                // Exclude every row in the affected group from this rebuild
+                // pass so the per-row outlier handler doesn't pile on with
+                // false-positive resets.  After the handover (next pass),
+                // these rows will be re-formed against the new pivot and
+                // residuals against clean satellites will be near zero.
+                for (size_t row_idx : g.indices) {
+                    const auto& sat_id = measurement.satellite_ids[row_idx];
+                    const auto& sig_t  = measurement.signal_types[row_idx];
+                    const auto [prim, _piv] = splitBssdSatId(sat_id);
+                    measurement.excluded_measurements.insert(prim + "_" + sig_t);
+                }
+                any_pivot_slip = true;
+            }
+
+            if (any_pivot_slip) {
+                ++measurement.bad_residual_count;
+                klogger->debug("{}Pivot slip handled. Measurement rebuild required.", epoch_prefix);
+                klogger->debug("{}Post-fit residual check result: outlier_found={}, complete_reset={}",
+                    epoch_prefix, "true", "false");
+                return { /*outlier_found=*/true, /*complete_reset=*/false };
+            }
+        }
 
         // --- Dispatch outlier handling ---
         bool is_outlier_found = false;
@@ -1260,11 +1561,13 @@ namespace GnssProcessor {
 
         if (max_sres > threshold) {
 
-            // If the residual table was not already emitted at debug level,
-            // re-emit it at warn so the full context is visible alongside
-            // the outlier diagnostics.
-            if (!klogger->should_log(spdlog::level::debug))
-                logResidualTable(spdlog::level::warn);
+            // (The per-row residual table dump for outlier
+            // diagnosis is now handled by the ascending-conciseness
+            // block higher up: at debug level the table emits when
+            // max_sres > threshold; at info/warn it doesn't, by
+            // design.  Users wanting the per-row context for an
+            // outlier event drop their kalman_filter level to
+            // debug.)
 
             // --- MW tiebreaker for competing phase outliers ---
             // When multiple satellites in the same constellation have phase
@@ -1330,7 +1633,7 @@ namespace GnssProcessor {
 
                     if (best != candidates.end() && best->mw_score > 0.0
                         && best->idx != max_idx) {
-                        klogger->info(
+                        klogger->debug(
                             "{}MW tiebreaker: {} candidates within {:.0f}% of max "
                             "|sres|={:.3f}. Choosing {} (MW score={:.2f}) over {} "
                             "(MW score={:.2f})",
@@ -1379,7 +1682,7 @@ namespace GnssProcessor {
                     const double co_abs = std::abs(sres(static_cast<Eigen::Index>(i)));
                     if (!std::isfinite(co_abs) || co_abs <= threshold) continue;
 
-                    klogger->info(
+                    klogger->debug(
                         "{}Correlated phase outlier on same satellite: {} {} "
                         "|s|={:.3f}, resetting alongside {} {}",
                         epoch_prefix, outlier_sat, co_sig, co_abs,
@@ -1422,7 +1725,75 @@ namespace GnssProcessor {
             is_outlier_found ? "true" : "false",
             is_complete_reset ? "true" : "false");
 
+        // Feed accepted residuals into the residual-history tracker.
+        // Only fires on the "clean commit" path: no outliers detected
+        // and no complete reset.  Excluded measurements are skipped
+        // because their residuals weren't actually applied to the
+        // state.  This keeps the EWMA statistics representative of
+        // the rows the filter ACTUALLY used to update the state.
+        if (residual_history_.isEnabled() && !is_outlier_found && !is_complete_reset) {
+            for (size_t i = 0; i < meta_n; ++i) {
+                const auto& sat_id = measurement.satellite_ids[i];
+                const auto& sig    = measurement.signal_types[i];
+                if (sat_id.empty() || sig.empty()) continue;
+                const auto [prim, _piv] = splitBssdSatId(sat_id);
+                const std::string excl_key = prim + "_" + sig;
+                if (measurement.excluded_measurements.count(excl_key)) continue;
+                const double r = res(static_cast<Eigen::Index>(i));
+                if (!std::isfinite(r)) continue;
+                residual_history_.record(prim, sig, r);
+            }
+
+            // Emit the per-epoch residual-history digest at info
+            // level alongside the per-pass "Residual summary" line
+            // above.  Provides at-a-glance "is the tracker warmed
+            // up, what's the typical scale, anything wild" without
+            // requiring users to scrape per-row trace logs.
+            const auto rh_summary = residual_history_.summarize();
+            if (rh_summary.entry_count > 0) {
+                klogger->info(
+                    "{}ResidualHistory: tracking {} (sat,sig) entries "
+                    "({} warmed up); σ across rows: median={:.4f} m, max={:.4f} m",
+                    epoch_prefix, rh_summary.entry_count, rh_summary.warmed_up,
+                    rh_summary.median_std, rh_summary.max_std);
+            }
+        }
+
         return { is_outlier_found, is_complete_reset };
+    }
+
+    std::set<std::string> KalmanFilter::takeRequestedPivotHandovers() {
+        std::set<std::string> out;
+        out.swap(requested_pivot_handovers_);
+        return out;
+    }
+
+    void KalmanFilter::beginEpoch() {
+        // Reset the per-epoch pass counter and put the gate in passthrough
+        // so pass 1 emits live. No-op when concise mode is disabled
+        // (gate_ stays null and pass_index_ is unused outside update()).
+        pass_index_ = 0;
+        if (gate_) {
+            gate_->setPolicy(GatedSink::Policy::Passthrough);
+            gate_->clearBuffer();
+        }
+    }
+
+    void KalmanFilter::endEpoch() {
+        // The buffer at this point holds the cumulative output of every
+        // post-pass-1 update(): each pass's "Residual summary" line plus,
+        // where applicable, that pass's outlier-handling block (Max sres,
+        // Phase outlier action, Reinitialized ambiguity, Outlier flagged,
+        // etc.).  Replaying it gives the user the intermediate-outlier
+        // detail AND the final pass's residual check showing zero outliers
+        // after rebuilds converged.
+        // Restore passthrough so any post-loop logging from the caller
+        // (position summary, KF timing) emits live as usual.
+        if (gate_) {
+            gate_->replayBuffer();
+            gate_->clearBuffer();
+            gate_->setPolicy(GatedSink::Policy::Passthrough);
+        }
     }
 
     void KalmanFilter::logKalmanFilterTimings() {

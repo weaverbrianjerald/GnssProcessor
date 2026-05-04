@@ -78,6 +78,30 @@ public:
         const std::string& epoch_prefix);
 
     /**
+     * @brief Request a forced pivot handover for a single constellation on
+     *        the next call to @c handlePivotHandover.
+     *
+     * Used by external detectors (the KF post-fit residual analyzer) to
+     * signal that the current pivot's observation has slipped even though
+     * its filter STATE is intact (so @c isPivotDisturbed wouldn't flag
+     * it on its own). On the next @c handlePivotHandover call, the
+     * disturbance branch is entered for the requested constellations as
+     * if @c isPivotDisturbed had returned true; the same lossless
+     * re-referencing logic that handles state-disturbed pivots picks a
+     * replacement and updates state. The request is consumed (cleared)
+     * after the handover runs, so it must be re-issued each epoch the
+     * detector wants the handover repeated.
+     *
+     * Idempotent — multiple requests for the same constellation in a
+     * row collapse to one handover.
+     *
+     * @param constellation Constellation name (e.g. "GPS", "Galileo").
+     * @param reason        Free-text reason logged at warn level.
+     */
+    void requestForcedHandover(const std::string& constellation,
+                                const std::string& reason);
+
+    /**
      * @brief Freeze pivot ambiguity covariances to zero.
      *
      * Must be called after ensureRequiredStates() so that newly created
@@ -309,6 +333,12 @@ private:
 
     /// Previous-epoch elevation per satellite for ascending/descending detection.
     std::map<std::string, double> prev_elevation_;
+
+    /// Constellations whose pivot is flagged for forced handover on the next
+    /// @c handlePivotHandover call. Populated by @c requestForcedHandover,
+    /// consumed (erased) inside @c handlePivotHandover after the disturbance
+    /// branch processes each entry.
+    std::set<std::string> forced_handover_requests_;
 };
 
 } // namespace GnssProcessor

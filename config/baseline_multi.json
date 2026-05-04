@@ -97,9 +97,12 @@
     },
     "stochastic_model": "satellite_block",
     "snr_model_params": {
-      "code_a": 0.10, "code_b": 1.00,
-      "phase_a": 0.001, "phase_b": 0.010,
-      "snr_floor_dbhz": 20.0, "snr_ceil_dbhz": 55.0
+      "code_a": 0.10,
+      "code_b": 1.00,
+      "phase_a": 0.001,
+      "phase_b": 0.010,
+      "snr_floor_dbhz": 20.0,
+      "snr_ceil_dbhz": 55.0
     }
   },
 

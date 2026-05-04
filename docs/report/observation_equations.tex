@@ -1,0 +1,128 @@
+% ============================================================
+%  Observation equations
+% ============================================================
+
+This section gives the full \emph{undifferenced} observation model that
+the filter linearises around at each epoch.  The PPP-RTK
+parameterisation is uncombined: per-signal pseudorange and carrier
+phase are consumed directly, without forming ionosphere-free or
+wide-lane combinations as a preprocessing step.  Combinations
+(\textsc{IF}, \textsc{MW}, \textsc{GF}) are still computed for
+diagnostic and slip-detection purposes (see
+\texttt{slip/MwSlipDetector}, \texttt{slip/GfSlipDetector}) but they
+do not enter the measurement update path.
+
+\subsection{Code (pseudorange) observation}
+
+For receiver $\rx$ tracking satellite $\sat$ on signal $\sigl$, the
+observed pseudorange is
+\begin{empheq}[box=\fbox]{equation}
+\code^\sat_{\rx,\sigl}
+\;=\;
+\geomrange^\sat_\rx
+\;+\; \sLight(\mathrm{d}t_\rx - \mathrm{d}t^\sat)
+\;+\; \sLight\,\delta t^{(g(\sat))}_\rx
+\;+\; T^\sat_\rx
+\;+\; \mu_\sigl\, I^\sat_{\rx,1}
+\;+\; B_{\rx,\sigl} - B^\sat_\sigl
+\;+\; \varepsilon^\code_{\rx,\sat,\sigl}.
+\label{eq:obs-code}
+\end{empheq}
+
+\subsection{Carrier-phase observation}
+
+The corresponding carrier-phase observation, scaled to metres by
+$\lambda_\sigl$, is
+\begin{empheq}[box=\fbox]{equation}
+\phaseo^\sat_{\rx,\sigl}
+\;=\;
+\geomrange^\sat_\rx
+\;+\; \sLight(\mathrm{d}t_\rx - \mathrm{d}t^\sat)
+\;+\; \sLight\,\delta t^{(g(\sat))}_\rx
+\;+\; T^\sat_\rx
+\;-\; \mu_\sigl\, I^\sat_{\rx,1}
+\;+\; \lambda_\sigl\, N^\sat_{\rx,\sigl}
+\;+\; b_{\rx,\sigl} - b^\sat_\sigl
+\;+\; \varepsilon^\phaseo_{\rx,\sat,\sigl}.
+\label{eq:obs-phase}
+\end{empheq}
+
+The defining structural difference between \Cref{eq:obs-code,eq:obs-phase}
+is the sign of the ionospheric term: $+\mu_\sigl I$ on code,
+$-\mu_\sigl I$ on phase.  Three additional remarks:
+
+\begin{enumerate}[leftmargin=*, itemsep=0pt]
+\item The phase ambiguity $N^\sat_{\rx,\sigl}$ is integer in
+      principle but is contaminated by the receiver-plus-satellite
+      phase biases $b_{\rx,\sigl} - b^\sat_\sigl$.  In a
+      \emph{float} solution these biases are absorbed into
+      $N^\sat_{\rx,\sigl}$, leaving a non-integer state with no
+      structural advantage over the code observation.  Recovering
+      integer-valued ambiguities therefore requires either external
+      Fractional Cycle Bias (FCB) products or differencing
+      (\Cref{sec:diff}), which cancels common-mode bias terms.
+\item The clock product $\sLight\,\mathrm{d}t^\sat$ is read from the
+      analysis-centre CLK file and treated as deterministic in the
+      filter; any error in the product appears as residual on the
+      observation and is absorbed by the receiver clock state.
+\item The system time offset $\sLight\,\delta t^{(g(\sat))}_\rx$ is
+      zero by construction when $g(\sat)$ is the reference
+      constellation (default GPS).  Together with the receiver clock
+      $\sLight\,\mathrm{d}t_\rx$ this means a multi-constellation run
+      carries $|\sysset|$ clock-like states in total.
+\end{enumerate}
+
+\subsection{Geometric range and linearisation}\label{sec:obs-geometry}
+
+The geometric range $\geomrange^\sat_\rx = \|\satpos - \rxpos_\rx\|_2$
+enters \Cref{eq:obs-code,eq:obs-phase} non-linearly through the
+receiver position $\rxpos_\rx$.  The filter linearises about the
+current state estimate $\hat{\rxpos}_\rx$:
+\begin{equation}
+\geomrange^\sat_\rx
+\;=\;
+\hat{\geomrange}^\sat_\rx
+\;-\; (\los^\sat_{\hat{\rx}})^{\Tr} (\rxpos_\rx - \hat{\rxpos}_\rx)
+\;+\; \mathcal{O}\!\left(\|\rxpos_\rx - \hat{\rxpos}_\rx\|^2\right),
+\label{eq:geom-linear}
+\end{equation}
+with the unit line-of-sight
+\begin{equation}
+\los^\sat_{\hat{\rx}}
+\;:=\;
+\frac{\satpos - \hat{\rxpos}_\rx}{\|\satpos - \hat{\rxpos}_\rx\|_2}.
+\label{eq:los}
+\end{equation}
+The Jacobian row $\jacH_{(\sat,\sigl)}$ contributing to the design
+matrix at the position columns is therefore $-(\los^\sat_{\hat{\rx}})^{\Tr}$.
+For sub-metre residual targets this single linearisation per epoch is
+sufficient; the engine optionally relinearises within the epoch
+(\texttt{processing.relinearize\_geometry}, on by default) to handle
+long initial position offsets.
+
+The satellite position $\satpos$ is itself a function of the
+transmission time, which depends on $\geomrange^\sat_\rx / \sLight$
+and therefore on $\rxpos_\rx$.  Resolving this implicit dependency by
+fixed-point iteration (typically 1--2 sweeps) is performed by
+\texttt{model/ModelGeometry}.
+
+\subsection{Stochastic model}
+
+Observation noise covariance is structured per epoch as a block
+diagonal matrix with entries
+\begin{equation}
+\sigma^2_{\rx,\sat,\sigl}
+\;=\;
+\sigma^2_{0,\text{type}(\sigl)}\;\cdot\; w(\theta^\sat_\rx)^{-1}\;\cdot\;
+\xi(\text{C/N}_0\text{ at } (\rx,\sat,\sigl)),
+\label{eq:noise-model}
+\end{equation}
+combining a per-type baseline ($\sigma_{0,\text{code}}$,
+$\sigma_{0,\text{phase}}$ from \texttt{filter.measurement\_noise}), an
+elevation-dependent down-weighting factor $w(\theta) \in \{1, \sin\theta,
+\sin^2\theta, \dots\}$ selected by
+\texttt{filter.stochastic\_model}, and an optional carrier-to-noise
+ratio scaling $\xi$ parameterised by \texttt{snr\_model\_params}.
+Cross-correlations between observations are assumed zero in the
+undifferenced parameterisation; differencing introduces structured
+correlations handled in \Cref{sec:diff}.

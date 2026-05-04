@@ -1,0 +1,96 @@
+% ============================================================
+%  Notation, symbol table, sign conventions
+% ============================================================
+
+\paragraph{Indices and sets.}
+We use lower-case Latin letters for indices and calligraphic upper-case
+for sets:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item $\rx \in \rxset$ --- receiver.  Single-receiver modes (PPP,
+      PPP-RTK) have $|\rxset| = 1$; baseline modes have a fixed
+      reference and one or more rovers.
+\item $g \in \sysset = \{\text{GPS}, \text{GAL}, \text{BDS},
+      \text{GLO}, \text{QZS}, \dots\}$ --- constellation.
+\item $\sat \in \satset{g}$ --- satellite of constellation $g$.
+      $\piv{g}$ denotes the pivot satellite of constellation $g$
+      under the BSSD parameterisation (\Cref{sec:diff}).
+\item $\sigl \in \sigset$ --- signal/observation type, identified by
+      its RINEX-3 three-character code (e.g.\ \texttt{C1C}, \texttt{L2W},
+      \texttt{L5X}).
+\item $k \in \mathbb{N}$ --- discrete epoch index.
+\end{itemize}
+
+\paragraph{Vectors and matrices.}
+Bold lower-case for vectors ($\bm{x}$, $\rxpos$); bold upper-case for
+matrices ($\jacH$, $\covM$).  $\bm{a}^{\Tr}$ is the transpose.
+A hat denotes a state estimate; a tilde a one-step prediction:
+$\hat{\stateV}_{k|k}$ vs.\ $\tilde{\stateV}_{k|k-1}$.
+
+\paragraph{Observables.}
+For each receiver/satellite/signal triple, the engine consumes two
+real-valued observables (in metres) per epoch:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item $\code^\sat_{\rx,\sigl}$ --- pseudorange (code), in metres.
+\item $\phaseo^\sat_{\rx,\sigl}$ --- carrier phase, scaled to metres
+      via $\lambda_\sigl$.  The accumulated cycle count $\Phi^\sat_{\rx,\sigl} \cdot \lambda_\sigl^{-1}$
+      is the integer ambiguity plus a fractional bias.
+\end{itemize}
+Where the distinction matters, $\sigl$ may further denote the band
+($L_1, L_2, L_5, \ldots$) and the tracking attribute (e.g.\ \texttt{C}, \texttt{W}, \texttt{X}).
+
+\paragraph{Frequencies and wavelengths.}
+$f_\sigl$ is the carrier frequency (Hz) and $\lambda_\sigl = \sLight / f_\sigl$
+the wavelength (m).  The frequency-squared scaling factor used to
+project the L1-equivalent slant ionospheric delay onto signal $\sigl$
+is
+\begin{equation}
+\mu_\sigl \;:=\; \frac{f_1^2}{f_\sigl^2}.
+\label{eq:iono-scaling}
+\end{equation}
+
+\paragraph{Differencing operators.}
+Three differencing operations recur throughout the document:
+\begin{equation*}
+\bsd{q^{\sat,\piv{g}}_{\rx,\sigl}}
+  := q^\sat_{\rx,\sigl} - q^{\piv{g}}_{\rx,\sigl},
+\quad
+\brd{q^{\sat}_{\rx_1\rx_2,\sigl}}
+  := q^\sat_{\rx_1,\sigl} - q^\sat_{\rx_2,\sigl},
+\quad
+\dd{q^{\sat,\piv{g}}_{\rx_1\rx_2,\sigl}}
+  := \bsd{\big(\brd{q^\sat_{\rx_1\rx_2,\sigl}}\big)}.
+\end{equation*}
+Read $\bsd{q}$ as ``between-satellite single difference of $q$
+relative to pivot $\piv{g}$,'' $\brd{q}$ as ``between-receiver
+single difference,'' and $\dd{q}$ as ``double difference.''
+
+\paragraph{Sign conventions.}
+We adopt the convention that the slant ionospheric delay $I^\sat_{\rx,\sigl}$
+enters \emph{additively} on the code observable and \emph{subtractively}
+on the carrier phase observable; this is the source of the well-known
+``code--phase divergence.''  All other range-additive terms (geometry,
+clocks, troposphere, biases) carry the same sign on both observables.
+See \Cref{eq:obs-code,eq:obs-phase} for the explicit equations.
+
+\paragraph{Symbol table.}
+\begin{center}
+\begin{tabular}{@{}llp{0.55\linewidth}@{}}
+\toprule
+Symbol & Units & Meaning \\
+\midrule
+$\rxpos_\rx, \satpos$         & m   & ECEF position of receiver/satellite \\
+$\geomrange^\sat_\rx$         & m   & geometric range $\|\satpos - \rxpos_\rx\|$ \\
+$\los^\sat_\rx$               & --- & unit LOS from $\rx$ to $\sat$ in ECEF \\
+$\sLight\,\mathrm{d}t_\rx$    & m   & receiver clock offset (scaled by $c$) \\
+$\sLight\,\mathrm{d}t^\sat$   & m   & satellite clock offset (from CLK product) \\
+$\sLight\,\delta t^{(g)}_\rx$ & m   & receiver inter-system time offset for constellation $g\neq g_{\mathrm{ref}}$ \\
+$T^\sat_\rx$                  & m   & total tropospheric path delay \\
+$\zhd^\sat_\rx, \zwd^\sat_\rx$ & m  & zenith hydrostatic / wet components \\
+$I^\sat_{\rx,1}$              & m   & L1-equivalent slant ionospheric delay \\
+$N^\sat_{\rx,\sigl}$          & cyc & integer carrier-phase ambiguity \\
+$b_{\rx,\sigl}, b^\sat_\sigl$ & m   & receiver / satellite phase biases \\
+$B_{\rx,\sigl}, B^\sat_\sigl$ & m   & receiver / satellite code biases (OSB) \\
+$\varepsilon^\code, \varepsilon^\phaseo$ & m & residual (multipath + thermal) \\
+\bottomrule
+\end{tabular}
+\end{center}

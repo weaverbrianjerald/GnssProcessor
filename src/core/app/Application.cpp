@@ -452,6 +452,13 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     size_t carry_bad_residual_count = 0;
     std::set<std::string> carry_excluded_measurements;
 
+    // Concise-log gate: marks the start of a new epoch's update loop. When
+    // logging.kalman_filter_concise_log is on, pass-1 messages emit live
+    // and passes ≥2 are buffered; endEpoch (below) replays the buffer
+    // accumulated by the FINAL pass and discards the rest. No-op when the
+    // flag is off.
+    if (kalman_filter_) kalman_filter_->beginEpoch();
+
     while ((need_update || need_relinear) && relinear_pass < max_passes) {
         ++relinear_pass;
         need_update = false;
@@ -505,6 +512,41 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                 "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                 epoch_prefix, relinear_pass);
 
+            // Pivot-slip handover requests from the KF post-fit residual
+            // detector.  Forward each constellation's request to the
+            // MeasurementModel's PivotManager — the next pass's
+            // computeMeasurementUpdate calls handlePivotHandover, which
+            // honors the request, picks a healthy replacement pivot, and
+            // re-references all SD ambiguities / iono / sat biases
+            // losslessly to the new pivot.  Take-and-clear semantics so
+            // the same request doesn't re-fire on subsequent passes if
+            // the detector doesn't fire again.
+            auto handover_cons = kalman_filter_->takeRequestedPivotHandovers();
+            auto& res_hist = kalman_filter_->getResidualHistoryTracker();
+            for (const auto& cons : handover_cons) {
+                log_manager_.getLogger("main_log")->info(
+                    "{}Forwarding KF-detected pivot slip on {} to PivotManager for handover next pass",
+                    epoch_prefix, cons);
+                meas_model_->getPivotManager().requestForcedHandover(
+                    cons, "KF post-fit residual detector flagged coherent pivot offset");
+                // Reset residual-history entries whose constellation
+                // matches the handover.  After re-referencing to a new
+                // pivot the BSSD residuals are no longer comparable to
+                // the pre-handover EWMA statistics, so clearing them
+                // forces a fresh warm-up.  No-op when the tracker is
+                // disabled.
+                const char cons_prefix =
+                    cons == "GPS"     ? 'G' :
+                    cons == "Galileo" ? 'E' :
+                    cons == "BeiDou"  ? 'C' :
+                    cons == "GLONASS" ? 'R' :
+                    cons == "QZSS"    ? 'J' :
+                    cons == "SBAS"    ? 'S' : '\0';
+                if (cons_prefix != '\0' && res_hist.isEnabled()) {
+                    res_hist.resetConstellationSignal(cons_prefix, /*signal=*/"");
+                }
+            }
+
             // Reset MW slip detector history for satellites that had ambiguities reset.
             // Phase wind-up is NOT reset (see detectCycleSlips comment for rationale).
             if (kalman_filter_->wasCompleteReset()) {
@@ -515,12 +557,18 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                     cycle_slip_manager_->resetSatellite(obs.satellite);
                     reset_satellites.insert(obs.satellite);
                 }
+                if (res_hist.isEnabled()) res_hist.resetAll();
                 log_manager_.getLogger("main_log")->info(
                     "{}Reset MW slip detector state (complete filter reset)", epoch_prefix);
             } else {
                 for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
                     cycle_slip_manager_->resetSatellite(sat_id);
                     reset_satellites.insert(sat_id);
+                    // Mirror the satellite-level MW reset on the
+                    // residual-history tracker — every (sat_id,
+                    // signal) entry's stats are invalidated by the
+                    // ambiguity reset.
+                    if (res_hist.isEnabled()) res_hist.resetSatellite(sat_id);
                     log_manager_.getLogger("main_log")->debug(
                         "{}Reset MW history for {} (KF ambiguity reset)", epoch_prefix, sat_id);
                 }
@@ -550,6 +598,13 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
 
         need_relinear = (pos_jump > kPosRelinearThreshM);
     }
+
+    // Concise-log gate: replay the final pass's buffer (the "last pass"
+    // visible in the kalman_filter log) and restore passthrough mode. No-op
+    // when the gate is null. Must run regardless of how the loop exited
+    // (max_passes hit, no more rebuilds, or measurement failure) so that
+    // the gate state is always consistent for the next epoch's beginEpoch.
+    if (kalman_filter_) kalman_filter_->endEpoch();
 }
 
 // ---------------------------------------------------------------------------
@@ -852,6 +907,20 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
     // Provide BIA satellite biases to the MW and EWL detectors for integer rounding
     cycle_slip_manager_->setCorrections(&ppp_model_->getCorrections());
+
+    // Adaptive MW arc-reset gap tolerance.  When IMU isn't bridging gaps
+    // and the RINEX sampling interval is coarser than 5 s, any inter-epoch
+    // gap longer than the nominal cadence is suspicious — tightening the
+    // gap tolerance to the data rate prevents the MW detector from
+    // silently initializing a fresh arc on a slip-corrupted sample after
+    // a brief outage.  IMU mode keeps the default 120 s because INS
+    // propagation legitimately bridges gaps that long.
+    if (!config_.enableImu()) {
+        const double rinex_interval = rinex_parser_->getHeader().interval.value_or(0.0);
+        if (rinex_interval > 5.0) {
+            cycle_slip_manager_->mwDetector().setMaxGapSeconds(rinex_interval);
+        }
+    }
 
     // Provide MW detector to the BSSD pivot manager for quality-based pivot scoring.
     meas_model_->setMwDetector(&cycle_slip_manager_->mwDetector());

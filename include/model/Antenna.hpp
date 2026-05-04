@@ -135,6 +135,27 @@ namespace GnssProcessor {
 		bool hasReceiverAtxEntry(const std::string& signal, System system) const;
 
 		/**
+		 * @brief Strict ATX coverage check: both satellite and receiver
+		 *        antenna entries must supply finite PCO and populated
+		 *        PCV grids for the *exact* requested frequency.
+		 *
+		 * Used when @c model_corrections.require_atx_coverage is true
+		 * to filter out observations whose (sat, signal) pair would
+		 * otherwise process without proper antenna calibration.  The
+		 * @c enable_atx_frequency_fallback chain is intentionally
+		 * NOT consulted by this query — strict means strict.
+		 *
+		 * @param satellite Satellite identifier (e.g. "G05", "E11").
+		 * @param signal    RINEX-3 observation code (e.g. "L5Q", "C7Q").
+		 * @param system    GNSS system enum for the satellite.
+		 * @return True iff sat and rx entries each have finite PCO
+		 *         and non-empty PCV for the signal's exact frequency.
+		 */
+		bool hasFullAtxCoverage(const std::string& satellite,
+		                        const std::string& signal,
+		                        System system) const;
+
+		/**
 		 * @brief Access the parsed antenna model entries.
 		 * @return Const reference to the antenna data vector.
 		 */

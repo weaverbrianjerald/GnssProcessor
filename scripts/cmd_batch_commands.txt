@@ -1,0 +1,1 @@
+python scripts/run_batch.py --stations JPLM --year 2025 --start-doy 200 --end-doy 215 --template config/ppp_rtk_kinematic_multi_prod.json --output-root batch_results_GE_Dual/JLPM_week_2025_200_215 --max-workers 4

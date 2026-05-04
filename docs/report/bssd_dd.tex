@@ -1,0 +1,158 @@
+% ============================================================
+%  Differencing transformations: BSSD and DD
+% ============================================================
+
+PPP-RTK and baseline modes do not consume the undifferenced
+observations of \Cref{eq:obs-code,eq:obs-phase} directly.  Each forms
+a linear combination across satellites (BSSD), receivers (BRSD), or
+both (DD), absorbing common-mode terms into the cancellation and
+recovering integer-friendly residual structure.  This section gives
+both the algebraic cancellations and the matrix-form S-transforms
+that map undifferenced parameters to differenced ones.
+
+\subsection{Between-satellite single difference (BSSD)}\label{sec:bssd}
+
+For each constellation $g$, choose a pivot satellite $\piv{g}$
+(typically the highest-elevation tracked sat with a stable phase
+lock; see \texttt{filter/PivotManager}, ``sticky pivot'' policy).  For
+any non-pivot satellite $\sat \in \satset{g} \setminus \{\piv{g}\}$
+and signal $\sigl$, define
+\begin{align}
+\bsd{\code^{\sat,\piv{g}}_{\rx,\sigl}}
+&:= \code^\sat_{\rx,\sigl} - \code^{\piv{g}}_{\rx,\sigl}, \notag\\
+\bsd{\phaseo^{\sat,\piv{g}}_{\rx,\sigl}}
+&:= \phaseo^\sat_{\rx,\sigl} - \phaseo^{\piv{g}}_{\rx,\sigl}.
+\end{align}
+Substituting \Cref{eq:obs-code,eq:obs-phase} and cancelling the
+receiver-side common terms ($\sLight\,\mathrm{d}t_\rx$,
+$\sLight\,\delta t^{(g)}_\rx$, $B_{\rx,\sigl}$, $b_{\rx,\sigl}$) yields
+\begin{empheq}[box=\fbox]{align}
+\bsd{\code^{\sat,\piv{g}}_{\rx,\sigl}}
+&\;=\; \bsd{\geomrange^{\sat,\piv{g}}_\rx}
+     - \sLight\,\bsd{\mathrm{d}t^{\sat,\piv{g}}}
+     + \bsd{T^{\sat,\piv{g}}_\rx}
+     + \mu_\sigl\,\bsd{I^{\sat,\piv{g}}_{\rx,1}}
+     - \bsd{B^{\sat,\piv{g}}_\sigl}
+     + \bsd{\varepsilon^\code}, \label{eq:bssd-code}\\
+\bsd{\phaseo^{\sat,\piv{g}}_{\rx,\sigl}}
+&\;=\; \bsd{\geomrange^{\sat,\piv{g}}_\rx}
+     - \sLight\,\bsd{\mathrm{d}t^{\sat,\piv{g}}}
+     + \bsd{T^{\sat,\piv{g}}_\rx}
+     - \mu_\sigl\,\bsd{I^{\sat,\piv{g}}_{\rx,1}}
+     + \lambda_\sigl\,\bsd{N^{\sat,\piv{g}}_{\rx,\sigl}}
+     - \bsd{b^{\sat,\piv{g}}_\sigl}
+     + \bsd{\varepsilon^\phaseo}. \label{eq:bssd-phase}
+\end{empheq}
+The cancellations are exact only when both observations enter the
+filter with the same modelling: same tropospheric mapping (which is
+why $\bsd{T}$ is small but not zero), same antenna PCV correction,
+and so on.
+
+\paragraph{Pivot transitions.}
+When the incumbent pivot leaves the visible set, $\piv{g}$ is
+re-elected from the remaining satellites.  The float ambiguities
+$\{\bsd{N^{\sat,\piv{g}^{\mathrm{old}}}_{\rx,\sigl}}\}_{\sat,\sigl}$
+must be re-expressed relative to $\piv{g}^{\mathrm{new}}$.  Rather than
+discarding and re-seeding (which destroys the integer information
+accumulated since the last fix), the engine applies the linear
+S-transformation $\stateV^{\mathrm{new}} = \bm{S}\,\stateV^{\mathrm{old}}$
+with $\bm{S}$ chosen so that
+$\bsd{N^{\piv{g}^{\mathrm{new}},\piv{g}^{\mathrm{old}}}_{\rx,\sigl}}$
+becomes the new reference (zero).  The covariance transforms as
+$\covM^{\mathrm{new}} = \bm{S}\,\covM^{\mathrm{old}}\,\bm{S}^{\Tr}$;
+see \texttt{filter/PivotManager} for the implementation and
+\texttt{baseline.enable\_pivot\_handover} for the governing config flag.
+
+\subsection{Between-receiver single difference (BRSD)}\label{sec:brsd}
+
+In baseline modes there is at least one rover $\rx_{\mathrm{rov}}$ and
+exactly one fixed-coordinate reference $\rx_{\mathrm{ref}}$.  The
+BRSD operator forms
+\begin{equation}
+\brd{\code^{\sat}_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}},\sigl}}
+\;:=\;
+\code^\sat_{\rx_{\mathrm{rov}},\sigl} - \code^\sat_{\rx_{\mathrm{ref}},\sigl},
+\end{equation}
+and analogously for $\brd{\phaseo}$.  The cancellations produced by
+$\brd{\cdot}$ are dual to those produced by $\bsd{\cdot}$: BRSD
+cancels \emph{satellite}-side common terms ($\sLight\,\mathrm{d}t^\sat$,
+$B^\sat_\sigl$, $b^\sat_\sigl$) but preserves receiver clock and
+biases of \emph{both} stations.  No state-space estimation of
+satellite biases is required when $\brd{}$ is applied --- they
+disappear before reaching the filter.
+
+\subsection{Double difference (DD)}\label{sec:dd}
+
+The composition $\dd{\cdot} = \bsd{\big(\brd{\cdot}\big)}$ is
+order-independent up to noise correlation: $\bsd{\big(\brd{\cdot}\big)} = \brd{\big(\bsd{\cdot}\big)}$.
+Applying it to the carrier-phase model and collecting common-mode
+cancellations:
+\begin{equation}
+\dd{\phaseo^{\sat,\piv{g}}_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}},\sigl}}
+\;=\;
+\dd{\geomrange^{\sat,\piv{g}}_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}}}}
++ \dd{T^{\sat,\piv{g}}_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}}}}
+- \mu_\sigl\,\dd{I^{\sat,\piv{g}}_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}},1}}
++ \lambda_\sigl\,\dd{N^{\sat,\piv{g}}_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}},\sigl}}
++ \dd{\varepsilon^\phaseo}.
+\label{eq:dd-phase}
+\end{equation}
+What survives in \Cref{eq:dd-phase} is precisely the geometry term
+(linear in the rover position perturbation), the differential
+atmospheric delays, and the integer DD ambiguity --- the structural
+form that makes carrier-phase RTK possible.
+
+\paragraph{Short vs.\ long baselines.}
+On short baselines (\,$\lesssim \SI{10}{km}$\,) the differential
+atmospheric terms in \Cref{eq:dd-phase} are negligible at the
+millimetre level and need not be modelled.  As baseline length grows,
+the differential ionosphere $\dd{I}$ scales linearly with separation
+and saturates at typically \SI{1}{m} for separations of a few hundred
+kilometres, swamping the carrier wavelength.  Two mitigations are
+available in \texttt{GnssProcessor}:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item \texttt{baseline.use\_iono\_free} forms the dual-frequency
+      ionosphere-free combination at the DD level, eliminating the
+      first-order ionospheric term at the cost of a non-integer
+      ambiguity (AR is automatically excluded for IF rows) and
+      $\sim 3\times$ amplified code noise;
+\item \texttt{baseline.estimate\_differential\_tropo} adds a single
+      $\Delta\zwd_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}}}$ state with
+      slow random-walk dynamics, capturing the residual differential
+      wet delay that survives the BRSD on baselines with significant
+      altitude difference.
+\end{itemize}
+
+\subsection{S-transform structure}
+
+Both BSSD and DD admit a matrix-form representation as
+$\stateV_{\mathrm{diff}} = \bm{S}\,\stateV_{\mathrm{undiff}}$ with
+$\bm{S}$ acting as a block design transform.  For BSSD restricted to
+the ambiguity block of one constellation $g$ on one signal $\sigl$,
+with $|\satset{g}|$ tracked sats, $\bm{S}$ is a
+$(|\satset{g}|-1) \times |\satset{g}|$ matrix of the form
+\begin{equation}
+\bm{S}_{\mathrm{BSSD}}
+\;=\;
+\begin{bmatrix}
+1 & 0 & \cdots & 0 & -1 & 0 & \cdots & 0 \\
+0 & 1 & \cdots & 0 & -1 & 0 & \cdots & 0 \\
+\vdots & & \ddots & & \vdots & & \\
+0 & 0 & \cdots & 0 & -1 & 0 & \cdots & 1
+\end{bmatrix},
+\end{equation}
+where the column of $-1$'s sits at the index of the pivot
+$\piv{g}$.  The DD case stacks BSSD on top of an analogous
+between-receiver $\bm{S}_{\mathrm{BRSD}}$, yielding
+$\bm{S}_{\mathrm{DD}} = \bm{S}_{\mathrm{BSSD}} \otimes \bm{S}_{\mathrm{BRSD}}$
+when the satellite and receiver dimensions are factorisable.  The
+transformed covariance is $\covM_{\mathrm{diff}} = \bm{S}\,\covM_{\mathrm{undiff}}\,\bm{S}^{\Tr}$,
+a generally dense matrix even when $\covM_{\mathrm{undiff}}$ is
+diagonal (because each differenced row borrows from the same pivot
+column).  This dense correlation structure is the algebraic reason
+DD-based filters cannot be naively implemented as independent
+per-pair scalar updates --- the correctly correlated joint update is
+what unlocks integer ambiguity recovery via the LAMBDA decorrelation.
+The general theory and a thorough catalogue of admissible
+S-transforms is given in \textcite{teunissen1985generalised} and in
+the rank-defect treatment of \textcite{deJonge1998processing}.

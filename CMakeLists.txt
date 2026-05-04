@@ -45,6 +45,7 @@ add_library(gnss_core STATIC
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
     src/core/logging/LogManager.cpp
+    src/core/logging/GatedSink.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/ProductCache.cpp
@@ -61,6 +62,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManager.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
+    src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/StateInitializer.cpp
     src/core/measurement/BssdTransform.cpp

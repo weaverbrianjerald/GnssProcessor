@@ -1,4 +1,5 @@
 #include "logging/LogManager.hpp"
+#include "logging/GatedSink.hpp"
 #include "math/TimeUtils.hpp"
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <algorithm>
@@ -260,6 +261,27 @@ namespace GnssProcessor {
                 it->second->set_level(spdlog::level::off);
             }
         }
+    }
+
+    std::shared_ptr<GatedSink> LogManager::installGatedSink(const std::string& logger_name) {
+        auto it = loggers_.find(logger_name);
+        if (it == loggers_.end() || !it->second) return nullptr;
+        auto& logger = it->second;
+        auto& sinks = logger->sinks();
+
+        // Idempotency: if the logger already has exactly one sink and it's
+        // a GatedSink, return it. Avoids stacking gates on repeated calls.
+        if (sinks.size() == 1) {
+            if (auto existing = std::dynamic_pointer_cast<GatedSink>(sinks.front())) {
+                return existing;
+            }
+        }
+
+        // Wrap the current sinks in a GatedSink and replace.
+        auto gate = std::make_shared<GatedSink>(sinks);
+        sinks.clear();
+        sinks.push_back(gate);
+        return gate;
     }
 
     void LogManager::setLoggerLevels(const std::map<std::string, LogLevel>& levels) {

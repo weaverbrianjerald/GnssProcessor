@@ -508,7 +508,22 @@ std::filesystem::path DataDownloader::convertCrxToRnx(
     // next to the .crx input, regardless of where it was invoked from.
     const std::filesystem::path abs_crx = std::filesystem::absolute(crx_path);
     std::ostringstream cmd;
+#ifdef _WIN32
+    // cmd.exe (which _popen invokes via "cmd /c <string>") strips one
+    // leading and one trailing `"` from the command string before
+    // executing — an idiosyncratic rule documented under "If /S is
+    // not specified" in `cmd /?`.  When the command starts with a
+    // quoted exe path AND has a quoted argument, that rule strips
+    // the wrong pair and leaves a malformed line like
+    //     C:/.../crx2rnx.exe" "C:\...\foo.crx 2>&1
+    // which produces the classic "The filename, directory name, or
+    // volume label syntax is incorrect" diagnostic.  Wrap the entire
+    // command in an extra outer pair of quotes so the rule strips
+    // those and the inner quoting survives intact.
+    cmd << "\"\"" << exe.string() << "\" \"" << abs_crx.string() << "\" 2>&1\"";
+#else
     cmd << '"' << exe.string() << "\" \"" << abs_crx.string() << "\" 2>&1";
+#endif
 
     log->info("Converting CRX -> RNX: {} {}", exe.string(), abs_crx.filename().string());
 

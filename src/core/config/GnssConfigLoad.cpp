@@ -299,6 +299,27 @@ namespace GnssProcessor {
         bssd_pivot_min_elevation_deg_ = jval<double>(json, "estimation.between_satellite_sd.pivot_min_elevation",
                                                       "bssd_pivot_min_elevation", 45.0);
 
+        // Residual history tracker (post-fit temporal corroboration of
+        // spatial pivot-slip detection).  Defaults are off — opt in
+        // via JSON.  See ResidualHistoryTracker.hpp for the EWMA
+        // recurrence and reset semantics.
+        residual_history_.enabled = jval<bool>(json,
+            "estimation.residual_history.enabled",   "residual_history_enabled",   false);
+        residual_history_.alpha   = jval<double>(json,
+            "estimation.residual_history.alpha",     "residual_history_alpha",     0.05);
+        residual_history_.warmup_n = static_cast<std::size_t>(std::max<int>(1, jval<int>(json,
+            "estimation.residual_history.warmup_n",  "residual_history_warmup_n",  20)));
+        residual_history_.z_threshold = jval<double>(json,
+            "estimation.residual_history.z_threshold", "residual_history_z_threshold", 4.0);
+        residual_history_.fraction_threshold = jval<double>(json,
+            "estimation.residual_history.fraction_threshold", "residual_history_fraction_threshold", 0.5);
+        if (residual_history_.enabled) {
+            log->info("Residual history tracker: alpha={:.3f}, warmup_n={}, "
+                "z_threshold={:.2f}, fraction_threshold={:.2f}",
+                residual_history_.alpha, residual_history_.warmup_n,
+                residual_history_.z_threshold, residual_history_.fraction_threshold);
+        }
+
         // Ambiguity resolution
         ar_mode_            = jval<int>(json, "estimation.ambiguity_resolution.mode",
                                         "ar_mode", 0);
@@ -345,6 +366,15 @@ namespace GnssProcessor {
             process_noise_.phase_clock         = pn.value("phase_clock_q", 1e-9);
             process_noise_.velocity            = pn.value("velocity_q", 1e2);
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+            // Ambiguity process noise.  Default 1e-12 is a numerical
+            // safety floor — sub-mm accumulation per day, physically
+            // indistinguishable from the constant-ambiguity model,
+            // keeps per-(sat, signal) ambiguity covariance from
+            // underflowing on long phase arcs (which on its own can
+            // trigger non-positive-definite Cholesky downstream).
+            // Set 0.0 in the JSON to enforce strict constant
+            // ambiguity.
+            process_noise_.ambiguity           = pn.value("ambiguity_q", 1e-12);
         }
         {
             const auto& is = jsection(json, "filter.initial_std", "initial_std");
@@ -369,41 +399,91 @@ namespace GnssProcessor {
         log->info("Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m, doppler_std={:.3f} Hz",
             default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m, default_meas_noise_.doppler_std_m);
 
-        // Stochastic model
+        // -----------------------------------------------------------
+        // Derive per-block code/phase σ tables from the unitless
+        // ratio table × the measurement_noise baselines.  The user
+        // tunes one σ per observable type (code, phase) via
+        // filter.measurement_noise; the per-block proportions follow
+        // automatically.  This keeps the relative hardware-quality
+        // hierarchy (Block III at 1/3 of legacy Block II, etc.)
+        // anchored to a single user knob and prevents drift between
+        // the code and phase block tables that previously had to be
+        // hand-edited in tandem.
+        // -----------------------------------------------------------
+        {
+            auto& bp = sat_block_noise_params_;
+            bp.block_code_std_m.clear();
+            bp.block_phase_std_m.clear();
+            bp.block_code_std_m.reserve(bp.block_scale_factors.size());
+            bp.block_phase_std_m.reserve(bp.block_scale_factors.size());
+            for (const auto& [block, scale] : bp.block_scale_factors) {
+                bp.block_code_std_m.emplace_back(block,
+                    scale * default_meas_noise_.code_std_m);
+                bp.block_phase_std_m.emplace_back(block,
+                    scale * default_meas_noise_.phase_std_m);
+            }
+            // Fallback when no block match: scale factor 1.0 →
+            // baseline σ unchanged (conservative — matches the
+            // legacy / worst-case zenith noise).
+            bp.default_code_std_m  = default_meas_noise_.code_std_m;
+            bp.default_phase_std_m = default_meas_noise_.phase_std_m;
+
+            log->info("Sat-block noise: derived from measurement_noise "
+                "(code_zen ∈ [{:.3f}, {:.3f}] m, phase_zen ∈ [{:.4f}, {:.4f}] m) "
+                "× per-block scale factors",
+                default_meas_noise_.code_std_m  / 3.0, default_meas_noise_.code_std_m,
+                default_meas_noise_.phase_std_m / 3.0, default_meas_noise_.phase_std_m);
+        }
+
+        // Stochastic model.  Drives both code and phase weighting,
+        // but each model handles phase per its own per-model rule
+        // (see GnssConfig::getStochasticModel() docstring).  In
+        // particular, SatelliteBlock uses the block + freq + elevation
+        // pipeline on code while phase reduces to just the configured
+        // phase_std_m amplified by elevation.
         {
             std::string raw = jval<std::string>(json, "filter.stochastic_model", "stochastic_model", "elevation");
-            std::string low = toLower(raw);
+            const std::string low = toLower(raw);
             if      (low == "constant")        stochastic_model_ = StochasticModelType::Constant;
             else if (low == "elevation")       stochastic_model_ = StochasticModelType::Elevation;
             else if (low == "snr")             stochastic_model_ = StochasticModelType::SNR;
-            else if (low == "satellite_block")  stochastic_model_ = StochasticModelType::SatelliteBlock;
-            else { log->warn("Invalid stochastic_model '{}', defaulting to Elevation", raw);
-                   stochastic_model_ = StochasticModelType::Elevation; }
+            else if (low == "satellite_block") stochastic_model_ = StochasticModelType::SatelliteBlock;
+            else {
+                log->warn("Invalid stochastic_model '{}', defaulting to Elevation", raw);
+                stochastic_model_ = StochasticModelType::Elevation;
+            }
             log->info("Stochastic model: {}", raw);
         }
-        // Phase-elevation weighting toggle.  Default true preserves
-        // the historical 1/sin²(el) scaling applied to phase under
-        // Elevation / SatelliteBlock / SNR-fallback.  Set false when
-        // empirical phase residuals show elevation-independent noise
-        // and the standardized-residual cycle-slip check is missing
-        // detections at low elevation.
-        phase_elevation_weighting_ = jval<bool>(json,
-            "filter.phase_elevation_weighting",
-            "phase_elevation_weighting",
-            true);
-        if (!phase_elevation_weighting_) {
-            log->info("Phase elevation weighting: OFF "
-                "(phase variance uses default/block value without 1/sin^2(el))");
-        }
+        // Elevation-amplification σ-power, separately configurable for
+        // code and phase.  Variance scales as 1/sin^(2·power)(elev),
+        // i.e. σ = σ_zen / sin^power(elev).  Defaults: code=1.0
+        // (legacy csc²(θ) on variance, fits code multipath and tropo
+        // path-length physics), phase=0.5 (csc(θ) on variance, fits
+        // phase carrier-loop noise + PCV miscalibration physics and
+        // keeps low-elevation residual checks usable).
+        code_elevation_power_  = jval<double>(json,
+            "filter.code_elevation_power",  "code_elevation_power",  1.0);
+        phase_elevation_power_ = jval<double>(json,
+            "filter.phase_elevation_power", "phase_elevation_power", 0.5);
+        log->info("Elevation power: code={:.2f}, phase={:.2f}  "
+            "(var_actual = var_zen / sin^(2·power)(elev))",
+            code_elevation_power_, phase_elevation_power_);
         {
+            // SNR model defaults are tuned for the variance-additive
+            // form  σ² = a² + b²·10^(-CN0/10).  These differ from any
+            // values left over from the σ-additive era; configs from
+            // before the formula switch should be re-tuned (the old
+            // code_b ≈ 1.0 etc. produces a near-flat σ vs CN0 under
+            // the new form, defeating the SNR axis).
             const auto& sp = jsection(json, "filter.snr_model_params", "snr_model_params");
             snr_model_params_.code_a         = sp.value("code_a", 0.30);
-            snr_model_params_.code_b         = sp.value("code_b", 300.0);
-            snr_model_params_.phase_a        = sp.value("phase_a", 0.002);
-            snr_model_params_.phase_b        = sp.value("phase_b", 0.3);
+            snr_model_params_.code_b         = sp.value("code_b", 50.0);
+            snr_model_params_.phase_a        = sp.value("phase_a", 0.001);
+            snr_model_params_.phase_b        = sp.value("phase_b", 0.5);
             snr_model_params_.snr_floor_dbhz = sp.value("snr_floor_dbhz", 20.0);
             snr_model_params_.snr_ceil_dbhz  = sp.value("snr_ceil_dbhz", 55.0);
-            log->info("SNR model params: code_a={:.3f}, code_b={:.1f}, phase_a={:.4f}, phase_b={:.3f}, floor={:.0f} dBHz, ceil={:.0f} dBHz",
+            log->info("SNR model params (variance-additive): code_a={:.3f}, code_b={:.2f}, "
+                "phase_a={:.4f}, phase_b={:.2f}, floor={:.0f} dBHz, ceil={:.0f} dBHz",
                 snr_model_params_.code_a, snr_model_params_.code_b,
                 snr_model_params_.phase_a, snr_model_params_.phase_b,
                 snr_model_params_.snr_floor_dbhz, snr_model_params_.snr_ceil_dbhz);
@@ -431,6 +511,7 @@ namespace GnssProcessor {
             model_corrections_.enable_phase_windup            = mc.value("enable_phase_windup", true);
             model_corrections_.enable_code_phase_bias        = mc.value("enable_code_phase_bias", true);
             model_corrections_.enable_atx_frequency_fallback  = mc.value("enable_atx_frequency_fallback", true);
+            model_corrections_.require_atx_coverage           = mc.value("require_atx_coverage",          false);
             model_corrections_.enable_klobuchar_ionosphere    = mc.value("enable_klobuchar_ionosphere", false);
         }
         log->info("Model corrections: tropo={}, rel={}, shapiro={}, set={}, otl={}, pole={}, atm={}, "
@@ -449,6 +530,10 @@ namespace GnssProcessor {
             model_corrections_.enable_phase_windup            ? "on" : "off",
             model_corrections_.enable_code_phase_bias        ? "on" : "off",
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
+        if (model_corrections_.require_atx_coverage) {
+            log->info("ATX coverage: STRICT — observations without complete sat+rx PCO+PCV "
+                "for the exact signal frequency will be dropped.");
+        }
     }
 
     // =================================================================
@@ -991,50 +1076,60 @@ namespace GnssProcessor {
     // =================================================================
     void GnssConfig::loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager) {
         const auto& lg = jsection(json, "logging", "logging");
+        // All logger toggles default to *false*: a missing key means
+        // "off."  Configs explicitly opt loggers in by setting their
+        // enable_* key to true.  This keeps batch-mode runs (and any
+        // other quiet-by-design caller) from inheriting verbose
+        // per-epoch output through omission.  Interactive configs
+        // that want rich diagnostics list each logger they want on.
         // spdlog file loggers
-        logging_config_.enable_main_log           = lg.value("enable_main_log", true);
-        logging_config_.enable_gnss_config        = lg.value("enable_gnss_config", true);
-        logging_config_.enable_kalman_filter      = lg.value("enable_kalman_filter", true);
-        logging_config_.enable_smoother           = lg.value("enable_smoother", true);
-        logging_config_.enable_state_manager      = lg.value("enable_state_manager", true);
-        logging_config_.enable_ppp_model          = lg.value("enable_ppp_model", true);
-        logging_config_.enable_measurement_model  = lg.value("enable_measurement_model", true);
-        logging_config_.enable_mw_slip_detector   = lg.value("enable_mw_slip_detector", true);
-        logging_config_.enable_if_slip_detector   = lg.value("enable_if_slip_detector", true);
-        logging_config_.enable_gf_slip_detector   = lg.value("enable_gf_slip_detector", true);
-        logging_config_.enable_cycle_slip_manager = lg.value("enable_cycle_slip_manager", true);
-        logging_config_.enable_ambiguity_resolver = lg.value("enable_ambiguity_resolver", true);
-        logging_config_.enable_corrections        = lg.value("enable_corrections", true);
-        logging_config_.enable_geometry           = lg.value("enable_geometry", true);
-        logging_config_.enable_troposphere        = lg.value("enable_troposphere", true);
-        logging_config_.enable_ionosphere         = lg.value("enable_ionosphere", true);
-        logging_config_.enable_antenna            = lg.value("enable_antenna", true);
-        logging_config_.enable_antenna_model      = lg.value("enable_antenna_model", true);
-        logging_config_.enable_ocean_tide         = lg.value("enable_ocean_tide", true);
-        logging_config_.enable_planetary_model    = lg.value("enable_planetary_model", true);
-        logging_config_.enable_stochastic_model   = lg.value("enable_stochastic_model", true);
-        logging_config_.enable_rinex_parser       = lg.value("enable_rinex_parser", true);
-        logging_config_.enable_product_parser     = lg.value("enable_product_parser", true);
-        logging_config_.enable_product_cache      = lg.value("enable_product_cache", true);
-        logging_config_.enable_resolver           = lg.value("enable_resolver", true);
-        logging_config_.enable_state_initializer  = lg.value("enable_state_initializer", true);
-        logging_config_.enable_bssd_pivot_manager = lg.value("enable_bssd_pivot_manager", true);
-        logging_config_.enable_bssd_transform     = lg.value("enable_bssd_transform", true);
-        logging_config_.enable_ppp_utils          = lg.value("enable_ppp_utils", true);
-        logging_config_.enable_downloader         = lg.value("enable_downloader", true);
-        logging_config_.enable_ntrip              = lg.value("enable_ntrip", true);
-        logging_config_.enable_rt_engine          = lg.value("enable_rt_engine", true);
-        logging_config_.enable_imu                = lg.value("enable_imu", true);
+        logging_config_.enable_main_log           = lg.value("enable_main_log", false);
+        logging_config_.enable_gnss_config        = lg.value("enable_gnss_config", false);
+        logging_config_.enable_kalman_filter      = lg.value("enable_kalman_filter", false);
+        logging_config_.enable_smoother           = lg.value("enable_smoother", false);
+        logging_config_.enable_state_manager      = lg.value("enable_state_manager", false);
+        logging_config_.enable_ppp_model          = lg.value("enable_ppp_model", false);
+        logging_config_.enable_measurement_model  = lg.value("enable_measurement_model", false);
+        logging_config_.enable_mw_slip_detector   = lg.value("enable_mw_slip_detector", false);
+        logging_config_.enable_if_slip_detector   = lg.value("enable_if_slip_detector", false);
+        logging_config_.enable_gf_slip_detector   = lg.value("enable_gf_slip_detector", false);
+        logging_config_.enable_cycle_slip_manager = lg.value("enable_cycle_slip_manager", false);
+        logging_config_.enable_ambiguity_resolver = lg.value("enable_ambiguity_resolver", false);
+        logging_config_.enable_corrections        = lg.value("enable_corrections", false);
+        logging_config_.enable_geometry           = lg.value("enable_geometry", false);
+        logging_config_.enable_troposphere        = lg.value("enable_troposphere", false);
+        logging_config_.enable_ionosphere         = lg.value("enable_ionosphere", false);
+        logging_config_.enable_antenna            = lg.value("enable_antenna", false);
+        logging_config_.enable_antenna_model      = lg.value("enable_antenna_model", false);
+        logging_config_.enable_ocean_tide         = lg.value("enable_ocean_tide", false);
+        logging_config_.enable_planetary_model    = lg.value("enable_planetary_model", false);
+        logging_config_.enable_stochastic_model   = lg.value("enable_stochastic_model", false);
+        logging_config_.enable_rinex_parser       = lg.value("enable_rinex_parser", false);
+        logging_config_.enable_product_parser     = lg.value("enable_product_parser", false);
+        logging_config_.enable_product_cache      = lg.value("enable_product_cache", false);
+        logging_config_.enable_resolver           = lg.value("enable_resolver", false);
+        logging_config_.enable_state_initializer  = lg.value("enable_state_initializer", false);
+        logging_config_.enable_bssd_pivot_manager = lg.value("enable_bssd_pivot_manager", false);
+        logging_config_.enable_bssd_transform     = lg.value("enable_bssd_transform", false);
+        logging_config_.enable_ppp_utils          = lg.value("enable_ppp_utils", false);
+        logging_config_.enable_downloader         = lg.value("enable_downloader", false);
+        logging_config_.enable_ntrip              = lg.value("enable_ntrip", false);
+        logging_config_.enable_rt_engine          = lg.value("enable_rt_engine", false);
+        logging_config_.enable_imu                = lg.value("enable_imu", false);
         // CSV trace files
-        logging_config_.enable_state_trace        = lg.value("enable_state_trace", true);
-        logging_config_.enable_ambiguity_trace    = lg.value("enable_ambiguity_trace", true);
-        logging_config_.enable_ionosphere_trace   = lg.value("enable_ionosphere_trace", true);
-        logging_config_.enable_residual_trace     = lg.value("enable_residual_trace", true);
-        logging_config_.enable_wls_trace          = lg.value("enable_wls_trace", true);
-        logging_config_.enable_smoother_trace     = lg.value("enable_smoother_trace", true);
-        logging_config_.enable_mw_slip_trace      = lg.value("enable_mw_slip_trace", true);
-        logging_config_.enable_if_slip_trace      = lg.value("enable_if_slip_trace", true);
-        logging_config_.enable_gf_slip_trace      = lg.value("enable_gf_slip_trace", true);
+        logging_config_.enable_state_trace        = lg.value("enable_state_trace", false);
+        logging_config_.enable_ambiguity_trace    = lg.value("enable_ambiguity_trace", false);
+        logging_config_.enable_ionosphere_trace   = lg.value("enable_ionosphere_trace", false);
+        logging_config_.enable_residual_trace     = lg.value("enable_residual_trace", false);
+        logging_config_.enable_wls_trace          = lg.value("enable_wls_trace", false);
+        logging_config_.enable_smoother_trace     = lg.value("enable_smoother_trace", false);
+        logging_config_.enable_mw_slip_trace      = lg.value("enable_mw_slip_trace", false);
+        logging_config_.enable_if_slip_trace      = lg.value("enable_if_slip_trace", false);
+        logging_config_.enable_gf_slip_trace      = lg.value("enable_gf_slip_trace", false);
+
+        // Concise KF log mode — suppresses intermediate rebuild passes,
+        // keeps pass-1 + final-pass output verbatim. Default off (full).
+        logging_config_.kalman_filter_concise_log = lg.value("kalman_filter_concise_log", false);
 
         // Per-logger level overrides: logging.levels = { "name": "level", ... }
         // Each entry sets one logger's emission threshold; loggers absent from

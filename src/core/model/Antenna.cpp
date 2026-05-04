@@ -89,6 +89,57 @@ namespace GnssProcessor {
             return {};
         }
 
+    /// Map a RINEX-3 signal code (e.g. "L5Q", "C7Q") and its system to
+    /// the ATX frequency key (e.g. "G05", "E07").  Returns the empty
+    /// string when the signal isn't recognised for that system.  Kept
+    /// as a single source of truth so coverage queries
+    /// (@c hasReceiverAtxEntry, @c hasFullAtxCoverage) stay in sync.
+    /// @c getAntennaCorrection has its own inline copy of this mapping
+    /// that should track this one.
+    std::string signalToAtxFrequencyKey(const std::string& signal, System system) {
+        if (signal.size() < 2) return {};
+        const std::string two = signal.substr(0, 2);
+        switch (system) {
+        case System::GPS:
+            if (two == "C1" || two == "L1") return "G01";
+            if (two == "C2" || two == "L2") return "G02";
+            if (two == "C5" || two == "L5") return "G05";
+            return {};
+        case System::Galileo:
+            if (two == "C1" || two == "L1") return "E01";
+            if (two == "C5" || two == "L5") return "E05";
+            if (two == "C7" || two == "L7") return "E07";
+            if (two == "C6" || two == "L6") return "E06";
+            if (two == "C8" || two == "L8") return "E08";
+            return {};
+        case System::GLONASS:
+            if (two == "C1" || two == "L1") return "R01";
+            if (two == "C2" || two == "L2") return "R02";
+            if (two == "C3" || two == "L3") return "R03";
+            return {};
+        case System::BeiDou:
+            if (two == "C2" || two == "L2") return "C02";
+            if (two == "C7" || two == "L7") return "C07";
+            if (two == "C6" || two == "L6") return "C06";
+            if (two == "C1" || two == "L1") return "C01";
+            if (two == "C5" || two == "L5") return "C05";
+            if (two == "C8" || two == "L8") return "C08";
+            return {};
+        case System::QZSS:
+            if (two == "C1" || two == "L1") return "J01";
+            if (two == "C2" || two == "L2") return "J02";
+            if (two == "C5" || two == "L5") return "J05";
+            if (two == "C6" || two == "L6") return "J06";
+            return {};
+        case System::SBAS:
+            if (two == "C1" || two == "L1") return "S01";
+            if (two == "C5" || two == "L5") return "S05";
+            return {};
+        default:
+            return {};
+        }
+    }
+
     } // namespace
 
     /**
@@ -701,38 +752,7 @@ namespace GnssProcessor {
     }
 
     bool Antenna::hasReceiverAtxEntry(const std::string& signal, System system) const {
-        // --- Map signal to ATX frequency key (same logic as getAntennaCorrection) ---
-        std::string atx_freq;
-        if (system == System::GPS) {
-            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "G01";
-            else if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "G02";
-            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "G05";
-        } else if (system == System::Galileo) {
-            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "E01";
-            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "E05";
-            else if (signal.find("C7") == 0 || signal.find("L7") == 0) atx_freq = "E07";
-            else if (signal.find("C6") == 0 || signal.find("L6") == 0) atx_freq = "E06";
-            else if (signal.find("C8") == 0 || signal.find("L8") == 0) atx_freq = "E08";
-        } else if (system == System::GLONASS) {
-            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "R01";
-            else if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "R02";
-            else if (signal.find("C3") == 0 || signal.find("L3") == 0) atx_freq = "R03";
-        } else if (system == System::BeiDou) {
-            if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "C02";
-            else if (signal.find("C7") == 0 || signal.find("L7") == 0) atx_freq = "C07";
-            else if (signal.find("C6") == 0 || signal.find("L6") == 0) atx_freq = "C06";
-            else if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "C01";
-            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "C05";
-            else if (signal.find("C8") == 0 || signal.find("L8") == 0) atx_freq = "C08";
-        } else if (system == System::QZSS) {
-            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "J01";
-            else if (signal.find("C2") == 0 || signal.find("L2") == 0) atx_freq = "J02";
-            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "J05";
-            else if (signal.find("C6") == 0 || signal.find("L6") == 0) atx_freq = "J06";
-        } else if (system == System::SBAS) {
-            if (signal.find("C1") == 0 || signal.find("L1") == 0) atx_freq = "S01";
-            else if (signal.find("C5") == 0 || signal.find("L5") == 0) atx_freq = "S05";
-        }
+        const std::string atx_freq = signalToAtxFrequencyKey(signal, system);
         if (atx_freq.empty()) return false;
 
         // --- Find receiver antenna entry (same matching as getAntennaCorrection) ---
@@ -773,6 +793,81 @@ namespace GnssProcessor {
         }
         if (!rx_entry) return false;
         return rx_entry->pco.count(atx_freq) > 0;
+    }
+
+    bool Antenna::hasFullAtxCoverage(const std::string& satellite,
+                                      const std::string& signal,
+                                      System system) const {
+        // Strict coverage: the (sat, signal) is "in the ATX" only when
+        // both the satellite and receiver entries supply finite PCO and
+        // populated PCV grids for the *exact* requested frequency —
+        // never via the @c enable_atx_frequency_fallback chain.  This
+        // is the gate the @c require_atx_coverage flag opts into.
+        const std::string atx_freq = signalToAtxFrequencyKey(signal, system);
+        if (atx_freq.empty()) return false;
+
+        auto entryHasPcoAndPcv = [&atx_freq](const AntennaData& a) -> bool {
+            const auto pco_it = a.pco.find(atx_freq);
+            if (pco_it == a.pco.end()) return false;
+            if (!pco_it->second.allFinite()) return false;
+            const auto pcv_it = a.pcv.find(atx_freq);
+            if (pcv_it == a.pcv.end()) return false;
+            if (pcv_it->second.empty()) return false;
+            return true;
+        };
+
+        // --- Satellite entry: ATX type strings are typically of the
+        // form "<PRN>_BLOCK..._<SVN>", so a substring match on the
+        // PRN works for both leading and middle positions.
+        const AntennaData* sat_entry = nullptr;
+        for (const auto& a : antennas_) {
+            if (a.type.find(satellite + "_") == 0 ||
+                a.type.find("_" + satellite + "_") != std::string::npos) {
+                sat_entry = &a;
+                break;
+            }
+        }
+        if (!sat_entry || !entryHasPcoAndPcv(*sat_entry)) return false;
+
+        // --- Receiver entry (same matching logic as hasReceiverAtxEntry) ---
+        const std::string rx_type_raw = rinex_parser_.getReceiverAntennaType();
+        std::string rx_type_sanitized;
+        rx_type_sanitized.reserve(rx_type_raw.size());
+        for (char c : rx_type_raw)
+            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
+
+        std::string rx_type_underscore;
+        rx_type_underscore.reserve(rx_type_raw.size());
+        for (char c : rx_type_raw) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
+                    rx_type_underscore.push_back('_');
+            } else {
+                rx_type_underscore.push_back(c);
+            }
+        }
+        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
+            rx_type_underscore.pop_back();
+
+        const AntennaData* rx_entry = nullptr;
+        for (const auto& a : antennas_) {
+            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
+                rx_entry = &a;
+                break;
+            }
+        }
+        if (!rx_entry) {
+            for (const auto& a : antennas_) {
+                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
+                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
+                    rx_entry = &a;
+                    break;
+                }
+            }
+        }
+        if (!rx_entry || !entryHasPcoAndPcv(*rx_entry)) return false;
+
+        return true;
     }
 
     /**

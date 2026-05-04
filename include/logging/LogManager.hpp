@@ -142,6 +142,21 @@ namespace GnssProcessor {
         void setDisabledLoggers(const std::set<std::string>& names);
 
         /**
+         * @brief Replace a named logger's sinks with a GatedSink wrapper.
+         *
+         * The GatedSink forwards messages in Passthrough mode, buffers them
+         * in Buffer mode. Used by KalmanFilter to suppress intermediate
+         * rebuild-pass output without touching call sites. Idempotent —
+         * calling it twice on the same logger returns the same wrapper.
+         * Must be called after the logger has been created.
+         *
+         * @param logger_name Name of the logger to wrap.
+         * @return Shared pointer to the GatedSink, or nullptr if the logger
+         *         doesn't exist.
+         */
+        std::shared_ptr<class GatedSink> installGatedSink(const std::string& logger_name);
+
+        /**
          * @brief Apply per-logger level overrides.
          *
          * Each entry maps a logger name (e.g. "kalman_filter") to the level

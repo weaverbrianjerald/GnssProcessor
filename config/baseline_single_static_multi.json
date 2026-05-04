@@ -1,0 +1,85 @@
+// Baseline-Single (DD), GPS+Galileo, static, IGS_Pasadena fixture.
+// Tests: double-differenced multi-system baseline, per-constellation
+//        sticky pivot.  Same ~10 km Caltech↔JPL geometry as the
+//        GPS-only variant.
+{
+  "app_mode": "post",
+  "data_source": "internal",
+  "baseline_fixture": "IGS_Pasadena",
+
+  "processing": {
+    "mode": "Baseline-Single",
+    "active_systems": [ "GPS", "Galileo" ],
+    "signal_mode": "dual",
+    "elevation_mask_deg": 10.0,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "eigen_threads": 10,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS":     "WCSLXPYMIQ",
+      "Galileo": "CBXIQ"
+    }
+  },
+
+  "files": {
+    "internal_data_root": "./data"
+  },
+
+  "baseline": {
+    "reference": {},
+    "rover":     {},
+    "max_baseline_km":          15.0,
+    "epoch_sync_tolerance_s":    0.01,
+    "signal_aliasing":           true,
+    "enable_pivot_handover":     true,
+    "estimate_differential_tropo": false,
+    "use_iono_free":             false
+  },
+
+  "estimation": {
+    "estimate_velocity": false,
+    "ambiguity_resolution": { "mode": 0 }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q":     1e2,
+      "troposphere_q":  1e-8
+    },
+    "initial_std": {
+      "position":      100.0,
+      "troposphere":     0.5,
+      "ambiguity":     100.0
+    },
+    "measurement_noise": {
+      "code_std_m":  0.300,
+      "phase_std_m": 0.001
+    },
+    "stochastic_model": "satellite_block"
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_solid_earth_tide": true,
+    "enable_pole_tide": true,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true
+  },
+
+  "data_download": {
+    "enabled": false,
+    "year": 2024, "doy": 129,
+    "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx"
+  },
+
+  "logging": {
+    "enable_main_log": true,
+    "enable_state_trace": true,
+    "enable_residual_trace": true
+  }
+}

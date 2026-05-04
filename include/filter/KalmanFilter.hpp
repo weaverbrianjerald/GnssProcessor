@@ -6,11 +6,13 @@
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "filter/ImuIntegrator.hpp"
+#include "filter/ResidualHistoryTracker.hpp"
 #include "common/Constants.hpp"
 #include "logging/KalmanFilterLogger.hpp"
 #include <Eigen/Dense>
 #include <map>
 #include <deque>
+#include <set>
 #include <string>
 #include <vector>
 #include <memory>
@@ -192,6 +194,61 @@ namespace GnssProcessor {
          */
         void logKalmanFilterTimings();
 
+        /**
+         * @brief Take ownership of the constellations whose pivot the KF
+         *        flagged for forced handover during the last @c update().
+         *
+         * After @c validatePostFitResiduals detects a coherent residual
+         * pattern indicating a pivot satellite slipped (every SD pair
+         * against pivot X on band B shows a tight, same-sign offset),
+         * the constellation name (e.g. "GPS") is added to an internal
+         * set. The @c Application driver retrieves this set after the
+         * KF returns @c NeedsMeasurementRebuild and forwards it to
+         * @c MeasurementModel::requestPivotHandover, which routes it
+         * to @c PivotManager. The handover is then performed at the
+         * start of the next rebuild pass's @c computeMeasurementUpdate.
+         *
+         * Returning by value clears the internal set — callers that
+         * need to peek without consuming should add a separate getter.
+         *
+         * @return Set of constellation names (e.g. {"GPS", "Galileo"}).
+         */
+        std::set<std::string> takeRequestedPivotHandovers();
+
+        /**
+         * @brief Mutable access to the post-fit residual history tracker.
+         *
+         * Exposed to the @c Application driver so external resets
+         * (cycle-slip ambiguity resets in @c StateManager, pivot
+         * handovers in @c PivotManager, satellite drops) can call
+         * @c resetSatSignal / @c resetSatellite /
+         * @c resetConstellationSignal in lockstep with the existing
+         * reset machinery.  @c isEnabled() returns false when the
+         * feature is off in config; callers can short-circuit on
+         * that without touching the maps.
+         */
+        ResidualHistoryTracker& getResidualHistoryTracker() { return residual_history_; }
+
+        /**
+         * @brief Mark the start of a new epoch for concise-log gating.
+         *
+         * Resets the internal pass counter and switches the kalman_filter
+         * sink to passthrough mode (so pass-1 messages emit immediately).
+         * No-op when concise mode is disabled.  Safe to call before every
+         * epoch; pairs with @c endEpoch.
+         */
+        void beginEpoch();
+
+        /**
+         * @brief Mark end of an epoch's update loop for concise-log gating.
+         *
+         * Replays the buffer accumulated during the final pass (which
+         * contains the last pass's messages, since @c update clears the
+         * buffer at the start of each non-first pass) and returns the
+         * sink to passthrough mode.  No-op when concise mode is disabled.
+         */
+        void endEpoch();
+
     private:
         StateManager& state_manager_;         //!< Reference to external state manager for state storage and access.
         const GnssConfig& config_;            //!< Reference to GNSS configuration (read-only).
@@ -205,6 +262,28 @@ namespace GnssProcessor {
         bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
         CycleSlipManager* cycle_slip_manager_ = nullptr;   //!< Optional access to MW data for outlier tiebreaking.
         Eigen::Matrix3d C_b_e_ = Eigen::Matrix3d::Identity(); //!< Body-to-ECEF rotation matrix (IMU attitude).
+
+        // -------------------------------------------------------------------
+        // Concise-log state (kalman_filter logger gate). All only used when
+        // logging.kalman_filter_concise_log = true; otherwise gate_ is null
+        // and the per-epoch hooks are no-ops.
+        // -------------------------------------------------------------------
+        std::shared_ptr<class GatedSink> gate_;  //!< null when concise mode is off.
+        int  pass_index_ = 0;                    //!< 0 between epochs, ≥1 during update().
+
+        /// Constellations whose pivot was flagged during the last residual
+        /// validation as requiring a handover (KF-detected pivot slip).
+        /// Populated by @c validatePostFitResiduals's pivot-slip detector,
+        /// drained by @c takeRequestedPivotHandovers after the KF returns
+        /// NeedsMeasurementRebuild. Empty in steady state.
+        std::set<std::string> requested_pivot_handovers_;
+
+        /// Post-fit residual history tracker.  No-op when
+        /// @c estimation.residual_history.enabled is false in config;
+        /// otherwise accumulates EWMA mean/variance per (sat, signal)
+        /// and is queried by the spatial pivot-slip detector to
+        /// corroborate with temporal evidence.
+        mutable ResidualHistoryTracker residual_history_;
 
         // -------------------------------------------------------------------
         // Per-phase timing accumulators (microseconds; written by update())

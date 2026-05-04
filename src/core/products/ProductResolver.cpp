@@ -302,6 +302,27 @@ std::filesystem::path ProductResolver::resolveRinex(const std::string& yyyydoy, 
 
     const std::vector<std::string> rate_list = { "30S", "15S", "01S" };
 
+    // Phase 0: short-circuit if a converted .rnx for any rate is
+    // already sitting in ready_dir from a prior run.  Without this
+    // every re-run re-invokes crx2rnx and re-stages the output, which
+    // is wasted work and noisy in the log.  We probe both Hatanaka
+    // and plain naming because either may have produced the ready
+    // file on the original run.
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(ready_dir, ec)) {
+            for (const auto& rate : rate_list) {
+                const std::string ready_name =
+                    long_station + "_R_" + yyyydoy + "0000_01D_" + rate + "_MO.rnx";
+                const std::filesystem::path ready_path = ready_dir / ready_name;
+                if (std::filesystem::exists(ready_path, ec)) {
+                    log->info("RINEX: cached at {}", ready_path.string());
+                    return ready_path;
+                }
+            }
+        }
+    }
+
     // Phase 1: Hatanaka .crx.gz. Convert via crx2rnx after gunzip.
     bool crx_conversion_failure = false;
     for (const auto& rate : rate_list) {
@@ -332,14 +353,16 @@ std::filesystem::path ProductResolver::resolveRinex(const std::string& yyyydoy, 
             break;
         }
 
-        // Move the converted .rnx into the ready dir.
+        // Move the converted .rnx into the ready dir.  Windows
+        // std::filesystem::rename fails when the target exists; the
+        // copy_file fallback uses overwrite_existing so re-runs after a
+        // partial stage still succeed.
         std::filesystem::create_directories(ready_dir);
         std::filesystem::path final_path = ready_dir / rnx_in_cache.filename();
         if (final_path != rnx_in_cache) {
             std::error_code ec;
             std::filesystem::rename(rnx_in_cache, final_path, ec);
             if (ec) {
-                // Cross-device fallback: copy + remove.
                 std::filesystem::copy_file(rnx_in_cache, final_path,
                     std::filesystem::copy_options::overwrite_existing, ec);
                 if (ec) {

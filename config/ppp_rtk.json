@@ -8,9 +8,9 @@
 
   "processing": {
     "mode": "PPP-RTK",
-    "active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
+    "active_systems": [ "GPS", "Galileo", "BeiDou" ],
     "signal_mode": "all",
-    "elevation_mask_deg": 5.0,
+    "elevation_mask_deg": 10.0,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": true,
     "eigen_threads": 10,
@@ -33,6 +33,7 @@
     // restore auto-discovery from data/observations/absolute/.
     "observation_path": "C:/GnssProcessor/data/rinex/debug/GCGO00USA_R_20241290000_01D_30S_MO.rnx"
     //"observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/GCGO00USA_R_20241290000_01D_30S_MO.rnx"
+    //"observation_path": "C:/GnssProcessorSupport/rinex/30S/weird_case/GCGO00USA_R_20241290000_01D_30S_MO.rnx"
   },
 
   "estimation": {
@@ -43,7 +44,7 @@
     "estimate_sat_biases": true,
     "between_satellite_sd": {
       "enabled": true,
-      "enable_glonass": true,
+      //"enable_glonass": true,
       "pivot_min_elevation": 30.0
     },
     "ambiguity_resolution": {

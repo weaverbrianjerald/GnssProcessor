@@ -172,6 +172,31 @@ namespace GnssProcessor {
      * Selects how observation variances are scaled based on satellite geometry
      * or signal quality indicators.
      */
+    /**
+     * @brief Configuration for the post-fit residual history tracker.
+     *
+     * The tracker (see @c filter/ResidualHistoryTracker.hpp) maintains
+     * an EWMA mean and variance of the post-fit residual for each
+     * (satellite, signal) row.  When the spatial pivot-slip detector
+     * in @c KalmanFilter flags a candidate group, the tracker
+     * supplies a temporal corroboration signal: the fraction of
+     * rows in the group whose residual exceeds @c z_threshold sigma
+     * relative to its own EWMA history.  When that fraction exceeds
+     * @c fraction_threshold the temporal evidence and spatial
+     * evidence agree → high-confidence pivot slip.
+     *
+     * All settings live under the JSON path
+     * @c estimation.residual_history.{enabled,alpha,warmup_n,
+     * z_threshold,fraction_threshold}.
+     */
+    struct ResidualHistoryConfig {
+        bool        enabled            = false; ///< Master toggle.  Default off; opt in via JSON.
+        double      alpha              = 0.05;  ///< EWMA forgetting factor (≈30-epoch effective window at α=0.05).
+        std::size_t warmup_n           = 20;    ///< Min samples per (sat, signal) before z-tests fire.
+        double      z_threshold        = 4.0;   ///< |z| threshold for declaring a row temporally anomalous.
+        double      fraction_threshold = 0.5;   ///< Group-level fraction-of-anomalous-rows threshold for corroborating a spatial pivot-slip request.
+    };
+
     enum class StochasticModelType {
         Constant,   ///< Use the a-priori ?� directly, no geometry scaling.
         Elevation,      ///< Classic 1/sin�(el) weighting (default).
@@ -218,9 +243,17 @@ namespace GnssProcessor {
         /// 0.02 is within the typical 0.01-0.1 range for the zenith value.
         double ionosphere{ 0.10 };
 
-        /// Carrier phase ambiguity (m*m/s). Zero for constant-ambiguity
-        /// float model (standard).
-        double ambiguity{ 0.0 };
+        /// Carrier phase ambiguity (m*m/s).  Default 1e-12 is a "safety
+        /// floor" — sub-mm accumulation per day, indistinguishable from
+        /// the constant-ambiguity model in physical terms, but enough
+        /// to keep the per-(sat, signal) ambiguity covariance from
+        /// underflowing toward zero on long arcs.  Variance shrinks via
+        /// every measurement update; without a floor, after hours of
+        /// clean tracking the joint covariance Cholesky can lose
+        /// positive-definiteness and trigger numerical errors.  Set to
+        /// 0.0 to recover the strict constant-ambiguity model when
+        /// you're sure the joint covariance can absorb the conditioning.
+        double ambiguity{ 1e-12 };
 
         /// Receiver code bias / inter-frequency bias (m*m/s). In uncombined
         /// PPP-RTK, one code bias per non-reference signal absorbs the
@@ -290,29 +323,60 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Parameters for the SNR-based stochastic (SIGMA-?) model.
+     * @brief Parameters for the SNR-based stochastic model.
      *
-     * The model computes measurement standard deviation as:
-     *   ? = a + b � 10^(?SNR_dBHz / 10)
-     * where SNR_dBHz is the signal-to-noise ratio in dB-Hz read from RINEX
-     * 'S' observables.  The parameters @c a and @c b are specified
-     * separately for code and phase measurements.
+     * The model computes measurement variance using the
+     * variance-additive form (Hadas & Bosy 2015, building on the
+     * Hartinger & Brunner 1999 SIGMA-ε framework):
      *
-     * When SNR is unavailable for a measurement the model falls back to
-     * the classic elevation-based 1/sin�(el) weighting using the default
-     * measurement noise values.
+     *   σ² = a² + b² · 10^(-CN0_dBHz / 10)
      *
-     * Reference: Brunner F.K., Hartinger H., Troyer L. (1999),
-     *            "GPS signal diffraction modelling: the stochastic
-     *            SIGMA-? model", Journal of Geodesy.
+     * with @c a the high-SNR noise floor (the asymptote at
+     * CN0 → ∞) and @c b the SNR-sensitivity coefficient.  Both have
+     * units of metres.  Variance-additive is preferred over the
+     * legacy σ-additive form (σ = a + b · 10^(-SNR/10)) because
+     * independent noise contributions add in *variance*, not in
+     * standard deviation; squaring the σ-additive form generates an
+     * unphysical 2ab cross-term.
+     *
+     * On top of the variance, the model applies:
+     *  - Per-band chip-rate scaling for *code* observations
+     *    (reuses @c SatBlockNoiseParams::freq_band_scale).  Phase
+     *    observations get no per-band scaling — chip rate doesn't
+     *    enter the carrier-loop noise formula.
+     *  - Wieser 2002 hybrid elevation amplification: the SNR-derived
+     *    σ² is multiplied by 1/sin²(el) (gated by
+     *    @c phase_elevation_weighting for phase rows).  This captures
+     *    multipath-driven noise that pure SNR weighting misses.
+     *
+     * When the receiver-reported S-observable is missing for a given
+     * row, the model synthesizes a CN0 from elevation using a typical
+     * antenna gain pattern (CN0_zenith ≈ 50 dBHz, drop ≈ 15 dB to
+     * horizon) rather than discontinuously switching to a different
+     * functional form.
+     *
+     * Reference values (variance-additive form):
+     *   code  : a ≈ 0.10–0.30 m,    b ≈ 30–100 m
+     *   phase : a ≈ 0.001–0.003 m,  b ≈ 0.3–1.0 m
+     *
+     * References:
+     *  - Hartinger H., Brunner F.K. (1999),
+     *    "Variances of GPS phase observations: the SIGMA-ε model",
+     *    GPS Solutions.
+     *  - Wieser A. (2002),
+     *    "Robust and fuzzy techniques for parameter estimation and
+     *    quality assessment in GPS", Engineering Geodesy / TU Graz.
+     *  - Hadas T., Bosy J. (2015),
+     *    "IGS RTS precise orbits and clocks verification and accuracy
+     *    of real time PPP", GPS Solutions 19(1).
      */
     struct SnrModelParams {
-        double code_a{ 0.30 };        ///< Additive floor for code ? (meters).
-        double code_b{ 300.0 };       ///< Multiplier for code exponential term (meters).
-        double phase_a{ 0.002 };      ///< Additive floor for phase ? (meters).
-        double phase_b{ 0.3 };        ///< Multiplier for phase exponential term (meters).
-        double snr_floor_dbhz{ 20.0 };///< Minimum SNR (dB-Hz) to clamp before computing ?.
-        double snr_ceil_dbhz{ 55.0 }; ///< Maximum SNR (dB-Hz) to clamp before computing ?.
+        double code_a{ 0.30 };        ///< High-SNR code σ floor (m).  σ → a as CN0 → ∞.
+        double code_b{ 50.0 };        ///< Code SNR-sensitivity coefficient (m).
+        double phase_a{ 0.001 };      ///< High-SNR phase σ floor (m).
+        double phase_b{ 0.5 };        ///< Phase SNR-sensitivity coefficient (m).
+        double snr_floor_dbhz{ 20.0 };///< CN0 floor; observations below this are clamped (or rejected upstream).
+        double snr_ceil_dbhz{ 55.0 }; ///< CN0 ceiling; observations above this are clamped to avoid σ → a noise floor exactly.
     };
 
     /**
@@ -328,54 +392,62 @@ namespace GnssProcessor {
      * "BLOCKIIIA" matches an ATX type of "G04_BLOCKIIIA_G074".
      */
     struct SatBlockNoiseParams {
-        /// Zenith code noise per block type (meters).  Key is a substring
-        /// that will be matched against the ATX type field (e.g. "BLOCKIII",
-        /// "BLOCKIIF", "GALILEO").  First match wins.
-        std::vector<std::pair<std::string, double>> block_code_std_m{
-            {"BLOCKIIIA", 0.10},
-            {"BLOCKIII",  0.10},
-            {"BLOCKIIR",  0.20},
-            {"BLOCKIIF",  0.15},
-            {"BLOCKII",   0.30},
-            {"GALILEO",   0.10},
-            {"BEIDOU-3",  0.15},
-            {"BEIDOU",    0.25},
-            {"GLONASS-M+",0.20},
-            {"GLONASS-K", 0.15},
-            {"GLONASS",   0.30}
+        /// Per-block scale factor (unitless).  Multiplied at config-
+        /// load time by @c measurement_noise.code_std_m and
+        /// @c measurement_noise.phase_std_m to populate the absolute
+        /// @c block_code_std_m / @c block_phase_std_m tables below.
+        ///
+        /// The ratios encode the relative hardware-noise hierarchy:
+        /// legacy blocks (Block II, GLONASS-M legacy) get 1.0× the
+        /// configured baseline; modern hardware (Block III, Galileo
+        /// FOC, BeiDou-3) gets 1/3.  Intermediate blocks fall in
+        /// between.  These ratios are intentionally not exposed as
+        /// JSON knobs — the user tunes the *baseline* σ once via
+        /// @c measurement_noise.{code,phase}_std_m and the per-block
+        /// proportions follow automatically (and consistently between
+        /// code and phase).
+        ///
+        /// Keys are substrings matched against the ATX type field;
+        /// first hit wins.  Ordering matters — specific blocks must
+        /// precede their parents (BLOCKIIIA before BLOCKIII before
+        /// BLOCKII; BEIDOU-3 before BEIDOU; GLONASS-M+ before
+        /// GLONASS-K before GLONASS).
+        std::vector<std::pair<std::string, double>> block_scale_factors{
+            {"BLOCKIIIA",  1.0 / 3.0},
+            {"BLOCKIII",   1.0 / 3.0},
+            {"BLOCKIIF",   1.0 / 2.0},
+            {"BLOCKIIR",   2.0 / 3.0},
+            {"BLOCKII",    1.0      },
+            {"GALILEO",    1.0 / 3.0},
+            {"BEIDOU-3",   1.0 / 2.0},
+            {"BEIDOU",     5.0 / 6.0},
+            {"GLONASS-K",  1.0 / 2.0},
+            {"GLONASS-M+", 2.0 / 3.0},
+            {"GLONASS",    1.0      }
         };
 
-        /// Zenith phase noise per block type (meters).  Same matching rules.
-        std::vector<std::pair<std::string, double>> block_phase_std_m{
-            /*{"BLOCKIIIA", 0.001},
-            {"BLOCKIII",  0.001},
-            {"BLOCKIIR",  0.002},
-            {"BLOCKIIF",  0.0015},
-            {"BLOCKII",   0.003},
-            {"GALILEO",   0.001},
-            {"BEIDOU-3",  0.0015},
-            {"BEIDOU",    0.002},
-            {"GLONASS-K", 0.0015},
-            {"GLONASS",   0.003}*/
-            // Phase noise is quite consistent across blocks, so we use the same values for all to avoid overfitting to the limited ATX types.
-            // TODO read from config phase_std_m because nothing is changed for the phase data
-            {"BLOCKIIIA", 0.001},
-            {"BLOCKIII",  0.001},
-            {"BLOCKIIR",  0.001},
-            {"BLOCKIIF",  0.001},
-            {"BLOCKII",   0.001},
-            {"GALILEO",   0.001},
-            {"BEIDOU-3",  0.001},
-            {"BEIDOU",    0.001},
-            {"GLONASS-M+",0.001},
-            {"GLONASS-K", 0.001},
-			{"GLONASS",   0.001}
-        };
+        /// Zenith code noise per block type (meters).  **Derived** at
+        /// config-load time as @c block_scale_factors × @c
+        /// measurement_noise.code_std_m.  Direct edits here are
+        /// silently overwritten when the loader runs; this field
+        /// exists so that the lookup-time consumer
+        /// (@c StochasticModel) can keep its existing two-table
+        /// interface without needing live access to the
+        /// measurement-noise baseline.
+        std::vector<std::pair<std::string, double>> block_code_std_m;
 
-        /// Per-frequency-band scale factor applied to the zenith noise.
-        /// The frequency band digit (second character of the RINEX signal
-        /// code, e.g. '1' in "L1W") determines the scale.
-        /// Missing bands default to 1.0.
+        /// Zenith phase noise per block type (meters).  **Derived** as
+        /// @c block_scale_factors × @c measurement_noise.phase_std_m,
+        /// preserving the same per-block ratio structure as the code
+        /// table.  This lets the per-block phase differentiation
+        /// follow the user's chosen baseline phase σ automatically
+        /// rather than living in a parallel hand-tuned table.
+        std::vector<std::pair<std::string, double>> block_phase_std_m;
+
+        /// Per-frequency-band scale factor applied to the zenith
+        /// noise.  The frequency band digit (second character of the
+        /// RINEX signal code, e.g. '1' in "L1W") determines the
+        /// scale.  Missing bands default to 1.0.
         std::map<char, double> freq_band_scale{
             {'1', 1.0},
             {'2', 1.0},
@@ -386,8 +458,13 @@ namespace GnssProcessor {
         };
 
         /// Fallback code noise when no block match is found (meters).
+        /// **Derived** at config-load time as
+        /// @c measurement_noise.code_std_m (i.e.\ scale factor 1.0,
+        /// equivalent to the worst legacy block).
         double default_code_std_m{ 0.30 };
         /// Fallback phase noise when no block match is found (meters).
+        /// **Derived** at config-load time as
+        /// @c measurement_noise.phase_std_m.
         double default_phase_std_m{ 0.002 };
     };
 
@@ -475,6 +552,7 @@ namespace GnssProcessor {
         bool enable_receiver_pco{ true };              ///< Receiver antenna phase centre offset.
         bool enable_receiver_pcv{ true };              ///< Receiver antenna phase centre variation.
         bool enable_atx_frequency_fallback{ true };    ///< When the ATX entry doesn't have PCO/PCV for the requested frequency (common for L5 / E5* / B2a on older satellites or receiver antennas), look up the nearest available frequency on the same antenna and use its values instead of silently skipping the correction.  Cross-frequency PCO drift on a single physical antenna is typically <1 cm — better than the few-cm vertical residual that comes from skipping a frequency entirely.  Set false to revert to the legacy "skip if missing" behavior for A/B comparison.
+        bool require_atx_coverage{ false };            ///< When true, drop observations whose (sat, signal) lacks complete ATX coverage on **both** the satellite and receiver entries — i.e., satellite PCO+PCV and receiver PCO+PCV must all resolve to non-empty entries for the row's exact frequency, *without* @c enable_atx_frequency_fallback being used to substitute a neighbouring frequency.  Default false (legacy behaviour: observations are kept and any missing PCO/PCV is silently zeroed).  Set true when you've explicitly chosen `signal_mode: "all"` and want the ATX file to be the authoritative whitelist, dropping rows that would otherwise process without proper antenna calibration.
 
         // --- Carrier-phase ---
         bool enable_phase_windup{ true };              ///< Carrier-phase wind-up correction.
@@ -562,6 +640,25 @@ namespace GnssProcessor {
         bool enable_mw_slip_trace{ true };          ///< logs/mwwl_trace.csv
         bool enable_if_slip_trace{ true };          ///< logs/if_slip_trace.csv
         bool enable_gf_slip_trace{ true };          ///< logs/gf_slip_trace.csv
+
+        /**
+         * @brief Concise per-epoch logging for the Kalman-filter logger.
+         *
+         * When @c true, the @c kalman_filter logger only emits the FIRST
+         * and LAST measurement-update pass within each epoch (regardless
+         * of whether outliers were found). All intermediate rebuild
+         * passes are suppressed.  Lets the user keep tight phase noise +
+         * aggressive outlier rejection without the per-pass log volume
+         * blowing up — typical reduction is 5-10× on outlier-heavy runs.
+         *
+         * Pass-1 messages are written immediately at their original
+         * level; intermediate passes are buffered into a per-pass slot
+         * and discarded; the final pass's slot is replayed when the
+         * caller signals end-of-epoch.  No call-site changes — the
+         * gate is implemented as a sink wrapper around the existing
+         * @c kalman_filter sinks, applied at startup.
+         */
+        bool kalman_filter_concise_log{ false };
 
         /**
          * @brief Look up whether a given spdlog logger name is enabled.
@@ -761,41 +858,71 @@ namespace GnssProcessor {
 
         /**
          * @brief Gets the stochastic (weighting) model selection.
-         * @return Current StochasticModelType (Constant, Elevation or SNR).
+         *
+         * The selected model controls the **code** weighting in full;
+         * phase weighting is model-specific:
+         *  - @c Constant       : phase = default_var (no scaling).
+         *  - @c Elevation      : phase = default_var / sin²(el).
+         *  - @c SNR            : variance-additive σ² with Wieser
+         *                        elevation amplification.
+         *  - @c SatelliteBlock : phase = phase_std_m² / sin²(el)
+         *                        — the block table and per-band
+         *                        chip-rate scaling are intentionally
+         *                        bypassed for phase because the
+         *                        per-block carrier-loop noise
+         *                        differential is below the
+         *                        multipath/atmospheric noise floor in
+         *                        practice.  Code keeps the full
+         *                        block + freq + elevation pipeline.
+         *
+         * @return Current StochasticModelType.
          */
         StochasticModelType getStochasticModel() const { return stochastic_model_; }
+
+        /**
+         * @brief σ-power for elevation amplification on code observations.
+         *
+         * The stochastic models apply elevation amplification of the
+         * form
+         *   σ_actual = σ_zen / sin^p(elev)
+         *   var_actual = var_zen / sin^(2p)(elev)
+         *
+         * where @c p is this returned value for code rows and
+         * @c getPhaseElevationPower() for phase.  The legacy
+         * 1/sin²(elev) variance scaling corresponds to @c p = 1.0
+         * (the default for code).  Code multipath and tropospheric
+         * path-length effects on pseudorange both scale roughly as
+         * csc²(θ), so 1.0 is the right default.
+         *
+         * Configurable via @c filter.code_elevation_power.
+         */
+        double getCodeElevationPower() const { return code_elevation_power_; }
+
+        /**
+         * @brief σ-power for elevation amplification on phase observations.
+         *
+         * Defaults to 0.5, giving a 1/sin(elev) variance scaling
+         * (gentler than code's 1/sin²(elev)).  Justification: phase
+         * noise at low elevation is dominated by carrier-loop SNR
+         * (which falls slowly with elevation, not as csc²) and
+         * antenna PCV miscalibration — neither follows the csc²(θ)
+         * mapping function that drives code multipath.  At a 10°
+         * mask, p=0.5 amplifies σ by 2.4× rather than 5.8×, keeping
+         * standardized-residual cycle-slip detection effective at
+         * low elevation.
+         *
+         * Setting @c phase_elevation_power = 1.0 in the JSON
+         * recovers the legacy symmetric csc²(θ) phase weighting.
+         *
+         * Configurable via @c filter.phase_elevation_power.
+         */
+        double getPhaseElevationPower() const { return phase_elevation_power_; }
 
         /**
          * @brief Gets the SNR-based stochastic model parameters.
          * @return Const reference to the SnrModelParams struct.
          */
         const SnrModelParams& getSnrModelParams() const { return snr_model_params_; }
-
-        /**
-         * @brief Check if elevation-based variance scaling is applied to phase observations.
-         *
-         * When true (the default), carrier-phase measurement variance is
-         * scaled by @c 1/sin²(el) under the Elevation and SatelliteBlock
-         * models, and by the elevation fallback inside the SNR model when
-         * no @c 'S' observable is available.
-         *
-         * When false, phase observations are returned at their unscaled
-         * @c default_var (or block-specific zenith noise under
-         * SatelliteBlock).  This matches empirical behavior of modern
-         * receivers where phase tracking-loop noise is nearly elevation-
-         * independent above ~10°; the apparent low-elevation "noise" is
-         * usually multipath bias rather than zero-mean noise.
-         *
-         * Disabling phase elevation weighting keeps standardized-residual
-         * outlier / cycle-slip detection usable at low elevations — at
-         * 10° an @c 1/sin²(el) inflation drops a 1-cycle L1 slip from
-         * ~95σ to ~3σ, below typical rejection thresholds.
-         *
-         * Code observations are unaffected by this flag.
-         *
-         * @return True if phase observations receive @c 1/sin²(el) scaling.
-         */
-        bool phaseElevationWeighting() const { return phase_elevation_weighting_; }
 
         /**
          * @brief Gets the satellite-block stochastic model parameters.
@@ -1136,6 +1263,20 @@ namespace GnssProcessor {
         bool estimateSatBiases() const { return estimate_sat_biases_; }
 
         /**
+         * @brief Configuration block for the post-fit residual history
+         *        tracker.
+         *
+         * The tracker is a temporal corroboration layer over the
+         * spatial pivot-slip detector in @c KalmanFilter.  When
+         * @c enabled is false (default) the existing detection path
+         * runs unchanged; when true, candidate pivot-slip groups are
+         * queried against per-(sat, signal) EWMA residual statistics
+         * and the joint signal is logged as high-confidence vs
+         * spatial-only.  See @c filter/ResidualHistoryTracker.hpp.
+         */
+        const ResidualHistoryConfig& getResidualHistoryConfig() const { return residual_history_; }
+
+        /**
          * @brief Variance multiplier for code measurements without BIA coverage.
          *
          * When > 1.0 and estimate_sat_biases is false, code observations on
@@ -1414,13 +1555,15 @@ namespace GnssProcessor {
         bool estimate_sat_biases_{ false };                               ///< Estimate per-satellite bias for signals without BIA coverage.
         double no_bia_code_downweight_{ 100.0 };                            ///< Variance multiplier for code on signals without BIA coverage.
         bool estimate_velocity_{ false };                           ///< Estimate receiver velocity from Doppler observations.
+        ResidualHistoryConfig residual_history_;                    ///< Per-(sat, signal) post-fit residual history tracker config.
 
         bool has_reference_position_{ false };                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_{ 0.0, 0.0, 0.0 }; ///< User-supplied reference position ECEF (m).
 
         ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
         StochasticModelType stochastic_model_{ StochasticModelType::Elevation }; ///< Measurement stochastic model selection.
-        bool phase_elevation_weighting_{ true };                                ///< Apply 1/sin²(el) scaling to carrier-phase observations.
+        double code_elevation_power_{ 1.0 };  ///< σ-power on the elevation amplification for **code** observations: σ = σ_zen / sin^p(elev).  p=1.0 reproduces the legacy 1/sin²(elev) variance scaling.  See @c getCodeElevationPower().
+        double phase_elevation_power_{ 0.5 }; ///< σ-power for **phase**: default 0.5 gives variance scaling 1/sin(elev), much gentler than the code's 1/sin²(elev).  See @c getPhaseElevationPower().
         SnrModelParams snr_model_params_;                                ///< SNR-based model parameters.
         SatBlockNoiseParams sat_block_noise_params_;                      ///< Satellite-block stochastic model parameters.
         ImuConfig imu_config_;                                           ///< IMU integration configuration.

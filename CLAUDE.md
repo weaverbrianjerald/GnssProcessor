@@ -98,7 +98,21 @@ JSON section is `processing` (loop-level toggles) or `estimation` (state-vector 
 ## File management (RINEX, products, downloads)
 
 Input-file location goes through one class — `PathResolver` — driven
-by a single top-level config field, `data_source`:
+by a single top-level config field, `data_source`.  Both modes share
+the same on-disk layout (date-first); they differ only in how files
+get there (bundled fixtures vs automatic downloads).
+
+**Unified layout** under any data root:
+```
+<root>/
+  <YYYY-DOY>/                      e.g. "2024-129"
+    products/                      ready *.SP3 *.CLK *.BIA *.ERP *_MN.rnx
+    obs/<station>/                 ready *.rnx (Hatanaka converted via crx2rnx)
+  static/
+    atx/igs20.atx
+    nc/EOT20_load.nc
+  cache/<YYYY-DOY>/                raw .gz / .crx (production-mode only)
+```
 
 - **`data_source: "internal"`** (default).  PathResolver globs the
   bundled `data/` tree at `getInternalDataRoot()` (a CMake-baked
@@ -112,19 +126,27 @@ by a single top-level config field, `data_source`:
   `ProductResolver`, which builds IGS long-name URLs from
   `data_download.{year, doy, station, product_source, product_type}`
   and downloads any missing products from CDDIS into
-  `data_download.data_root`.  Date-first layout under that root:
-  ```
-  data_root/
-    <YYYY-DOY>/
-      products/        ready *.SP3 *.CLK *.BIA *.ERP *_MN.rnx
-      obs/<station>/   ready *.rnx (Hatanaka files converted via crx2rnx)
-    static/atx/        igs20.atx (configured via data_download.atx_path)
-    static/nc/         EOT20_load.nc (configured via data_download.nc_path)
-    cache/<YYYY-DOY>/  raw .gz / .crx downloads, kept for debug; safe to delete
-  ```
-  Internal mode keeps the older flat layout (`internal_data_root/products/{orbit,clock,...}/unzip/`)
-  populated by `scripts/bootstrap_internal_data.py`; the two layouts are
-  internally consistent within their respective modes but do not share roots.
+  `data_download.data_root`.  Same layout — a directory populated by
+  internal-mode bootstrap is a perfectly valid production cache and
+  vice versa.
+
+**Date selection (internal mode).**  PathResolver picks a date from,
+in order: (1) the YYYYDOY embedded in `files.observation_path` /
+`baseline.{reference,rovers}.rinex_path` if pinned, (2)
+`data_download.{year, doy}` (re-used as a generic date hint even
+under `data_source = internal`), (3) the earliest `<YYYY-DOY>/`
+subdir under `<root>` (lex sort).  Step (3) makes a single-fixture
+data root work without any config knobs at all.
+
+**Migrating from the old flat layout.**  Pre-refactor data trees had
+`<root>/products/{orbit,clock,dcb,erp,brdc,rinex}/{zip,unzip}/` plus
+`products/{atx,nc}/` and `observations/`.  Run
+`python scripts/migrate_data_layout.py <root>` to relocate everything
+in-place (`--dry-run` previews).  Idempotent and safe on the bundled
+`data/`, an ad-hoc project-tree production cache, or a user-owned
+root like `C:/GnssProcessorSupport/products/`.  User-managed dirs
+outside the canonical scan paths (e.g. a hand-curated
+`data/rinex/debug/`) are preserved.
 
 **CDDIS authentication.** Production-mode downloads use HTTP Basic auth
 via `.netrc`. `DataDownloader` resolves the file at startup in this
@@ -160,12 +182,6 @@ signal that PathResolver should fill it in.  This lets a config
 override one specific input while letting everything else
 auto-resolve.
 
-**Internal-mode date hint.** When the bundled `data/` contains files
-for multiple dates (e.g. both 2023-321 and 2024-129), PathResolver
-extracts a YYYYDOY hint from the chosen observation file and uses it
-to prefer the matching `_MN.` broadcast nav.  See
-`extractYyyyDoy()` in `src/core/products/PathResolver.cpp`.
-
 **Internal-mode bootstrap.** `data/` is `.gitignore`d except for
 README shells.  Populate it once after a fresh clone:
 ```
@@ -173,16 +189,14 @@ python scripts/bootstrap_internal_data.py            # full set
 python scripts/bootstrap_internal_data.py --no-eot20 # skip the 280 MB ocean tide file
 python scripts/bootstrap_internal_data.py --crx2rnx C:/path/to/crx2rnx.exe
 ```
-The script downloads SP3 / CLK / BIA / ERP / BRDC for each date in
-its `FIXTURE_DATES` list (CDDIS, requires `.netrc`), `igs20.atx`
-from `files.igs.org` (no auth), and `EOT20_load.nc` from DGFI-TUM.
-For CDDIS-hosted observation files (Hatanaka `.crx.gz`) the script
-locates `crx2rnx` (RNXCMP package) on PATH or via the `--crx2rnx`
-flag, runs the conversion, and stages the resulting `.rnx` under
-`data/observations/<target_subdir>/`.  Local research data (e.g.
-the OSU baseline fixtures) is not on a public archive and the
-script prints a "please supply manually" message at the end with
-the destination paths.
+The script writes the unified date-first layout: products land in
+`data/<YYYY-DOY>/products/`, observations in
+`data/<YYYY-DOY>/obs/<station>/`, raw `.gz` / `.crx` intermediates in
+`data/cache/<YYYY-DOY>/`, and `igs20.atx` / `EOT20_load.nc` under
+`data/static/`.  PathResolver picks files up by station-name match
+within the date subtree.  Local research data (e.g. the OSU baseline
+fixtures) is not on a public archive and the script prints a "please
+supply manually" message at the end with the destination paths.
 
 **Baseline fixture presets.** The top-level config field
 `baseline_fixture` selects a named bundle of (reference station,
@@ -194,7 +208,7 @@ reference ECEF, rover station, year/DOY) from
   bootstrap fetches them automatically.
 - `OSU_Campus` — Local OSU survey (NARY ref + 233 rover), ~340 m,
   2023-DOY321.  Not on any public archive; user supplies the obs
-  files manually under `data/observations/baseline/short/static/`.
+  files manually under `data/2023-321/obs/<station>/`.
 - `Custom` — disable presets entirely; every baseline field must be
   set explicitly in the JSON config.
 

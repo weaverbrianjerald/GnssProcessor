@@ -102,32 +102,35 @@ class ObsFixture:
     doy: int
     rate: str = "30S"       # sampling: 30S / 15S / 01S
     on_cddis: bool = True   # False => local research data, must be supplied by user
-    target_subdir: str = "absolute"  # observations/<subdir>/...
 
 #: Obs files the bootstrap fetches.  CDDIS-hosted stations are fully
 #: automatic; non-IGS stations (typical for research baseline fixtures)
 #: get a "please supply" message at the end of the run.
+#:
+#: Files are placed under @c <repo>/data/<YYYY-DOY>/obs/<station_lower>/
+#: per the unified date-first layout — the C++ ``PathResolver`` picks
+#: them up by station-name match within that subtree.
 FIXTURE_OBSERVATIONS: list[ObsFixture] = [
     # PPP fixture: GCGO on CDDIS daily archive.
     ObsFixture(station="GCGO", country="USA", year=2024, doy=129,
-               rate="30S", on_cddis=True, target_subdir="absolute"),
+               rate="30S", on_cddis=True),
     # IGS_Pasadena baseline fixture: Caltech (CIT1) vs JPL (JPLM),
     # ~10 km separation, both on CDDIS.  The C++ side picks them up
     # via the baseline_fixture="IGS_Pasadena" preset in gnss_config.json.
     ObsFixture(station="CIT1", country="USA", year=2024, doy=129,
-               rate="30S", on_cddis=True, target_subdir="baseline/short/igs_pasadena"),
+               rate="30S", on_cddis=True),
     ObsFixture(station="JPLM", country="USA", year=2024, doy=129,
-               rate="30S", on_cddis=True, target_subdir="baseline/short/igs_pasadena"),
+               rate="30S", on_cddis=True),
     # OSU_Campus baseline fixture: local research data, not on any
     # public archive.  Bootstrap leaves a "please supply manually"
     # message if these aren't already present.  The C++ side picks
     # them up via the baseline_fixture="OSU_Campus" preset.
     ObsFixture(station="C103", country="",   year=2023, doy=321,
-               rate="30S", on_cddis=False, target_subdir="baseline/short/static"),
+               rate="30S", on_cddis=False),
     ObsFixture(station="NARY", country="",   year=2023, doy=321,
-               rate="30S", on_cddis=False, target_subdir="baseline/short/static"),
+               rate="30S", on_cddis=False),
     ObsFixture(station="233",  country="",   year=2023, doy=321,
-               rate="30S", on_cddis=False, target_subdir="baseline/short/static"),
+               rate="30S", on_cddis=False),
 ]
 
 #: Static (non-date-keyed) downloads.
@@ -368,50 +371,75 @@ def cddis_obs_url_v2(fix: ObsFixture) -> tuple[str, str]:
 cddis_obs_url = cddis_obs_url_v3
 
 # ---------------------------------------------------------------------
+# Layout helpers (must match PathResolver / ProductResolver exactly)
+# ---------------------------------------------------------------------
+
+def date_dir_name(year: int, doy: int) -> str:
+    """Canonical "YYYY-DOY" date-dir name (matches the C++ side)."""
+    return f"{year:04d}-{doy:03d}"
+
+def products_dir(data_root: Path, year: int, doy: int) -> Path:
+    return data_root / date_dir_name(year, doy) / "products"
+
+def cache_dir(data_root: Path, year: int, doy: int) -> Path:
+    return data_root / "cache" / date_dir_name(year, doy)
+
+def obs_dir(data_root: Path, year: int, doy: int, station_long: str) -> Path:
+    return data_root / date_dir_name(year, doy) / "obs" / station_long.lower()
+
+def static_dir(data_root: Path, kind: str) -> Path:
+    return data_root / "static" / kind
+
+# ---------------------------------------------------------------------
 # Top-level fetch routines
 # ---------------------------------------------------------------------
 
-def fetch_products_for_date(year: int, doy: int, products_root: Path) -> None:
-    """Pull SP3/CLK (3-day window), BIA/ERP (single day), and BRDC."""
+def fetch_products_for_date(year: int, doy: int, data_root: Path) -> None:
+    """Pull SP3/CLK (3-day window), BIA/ERP (single day), and BRDC into
+    the date-first layout under @c <data_root>/<YYYY-DOY>/products/.
+
+    Raw .gz downloads land in @c <data_root>/cache/<YYYY-DOY>/ to match
+    @c ProductResolver — the .gz is removed by @c gunzip_inplace once
+    the decompressed product is in place.
+    """
     days_3 = [shifted_doy(year, doy, s) for s in (-1, 0, 1)]
     days_1 = [(year, doy)]
 
-    plan: list[tuple[str, str, list[tuple[int,int]]]] = [
-        ("orb",  "orbit", days_3),
-        ("clk",  "clock", days_3),
-        ("dcb",  "dcb",   days_1),
-        ("erp",  "erp",   days_1),
+    plan: list[tuple[str, list[tuple[int, int]]]] = [
+        ("orb", days_3),
+        ("clk", days_3),
+        ("dcb", days_1),
+        ("erp", days_1),
     ]
-    for tag, subdir, dates in plan:
+    for tag, dates in plan:
         for (y, d) in dates:
             url, fname = cddis_product_url(tag, y, d)
-            zip_dir = products_root / subdir / "zip"
-            unzip_dir = products_root / subdir / "unzip"
-            unzip_path = unzip_dir / fname[:-3]   # strip .gz
-            if unzip_path.exists():
-                print(f"  cached  {unzip_path.relative_to(products_root.parent)}")
+            ready = products_dir(data_root, y, d) / fname[:-3]   # strip .gz
+            if ready.exists():
+                print(f"  cached  {ready.relative_to(data_root)}")
                 continue
-            zip_path = zip_dir / fname
+            zip_path = cache_dir(data_root, y, d) / fname
             if not download_file(url, zip_path):
                 continue
-            gunzip_inplace(zip_path, unzip_path)
+            gunzip_inplace(zip_path, ready)
 
     for (y, d) in days_1:
         url, fname = cddis_brdc_url(y, d)
-        zip_dir = products_root / "brdc" / "zip"
-        unzip_dir = products_root / "brdc" / "unzip"
-        unzip_path = unzip_dir / fname[:-3]
-        if unzip_path.exists():
-            print(f"  cached  {unzip_path.relative_to(products_root.parent)}")
+        ready = products_dir(data_root, y, d) / fname[:-3]
+        if ready.exists():
+            print(f"  cached  {ready.relative_to(data_root)}")
             continue
-        zip_path = zip_dir / fname
+        zip_path = cache_dir(data_root, y, d) / fname
         if not download_file(url, zip_path):
             continue
-        gunzip_inplace(zip_path, unzip_path)
+        gunzip_inplace(zip_path, ready)
 
-def fetch_observations(observations_root: Path, products_root: Path,
+def fetch_observations(data_root: Path,
                        crx2rnx_exe: Path | None) -> tuple[list[str], list[str]]:
     """Fetch each obs fixture; return (manual_supply_list, crx_pending_list).
+
+    Files land at @c <data_root>/<YYYY-DOY>/obs/<station_lower>/<file>
+    so they're discoverable by @c PathResolver via station-name match.
 
     ``manual_supply_list`` covers fixtures with @c on_cddis=False (local
     research data the user must drop in by hand).
@@ -423,22 +451,32 @@ def fetch_observations(observations_root: Path, products_root: Path,
     manual: list[str] = []
     crx_pending: list[str] = []
     for fix in FIXTURE_OBSERVATIONS:
-        target_dir = observations_root / fix.target_subdir
+        # Long-name station identifier (SSSS00CCC) when on_cddis;
+        # otherwise just the original short name lower-cased — the
+        # PathResolver matches case-insensitively on substring.
+        if fix.on_cddis:
+            station_long = (fix.station + ("00" + fix.country
+                            if len(fix.station) == 4 else "")).upper()
+        else:
+            station_long = fix.station.upper()
+
+        target_dir = obs_dir(data_root, fix.year, fix.doy, station_long)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         if not fix.on_cddis:
             # Detect both long-name (.rnx) and RINEX-2 short-name (.YYo) forms.
             yy = f"{fix.year % 100:02d}"
             short_name = f"{fix.station.upper()}{fix.doy:03d}0.{yy}o"
-            long_name  = f"{fix.station.upper()}_R_{yyyydoy(fix.year, fix.doy)}0000_01D_{fix.rate}_MO.rnx"
+            long_name  = f"{station_long}_R_{yyyydoy(fix.year, fix.doy)}0000_01D_{fix.rate}_MO.rnx"
             short_path = target_dir / short_name
             long_path  = target_dir / long_name
             if short_path.exists() or long_path.exists():
-                print(f"  cached  {(short_path if short_path.exists() else long_path).relative_to(observations_root.parent)}")
+                hit = short_path if short_path.exists() else long_path
+                print(f"  cached  {hit.relative_to(data_root)}")
             else:
                 manual.append(
                     f"{fix.station} {fix.year}-{fix.doy:03d} -> "
-                    f"{target_dir.relative_to(observations_root.parent)}/"
+                    f"{target_dir.relative_to(data_root)}/"
                 )
             continue
 
@@ -448,8 +486,7 @@ def fetch_observations(observations_root: Path, products_root: Path,
         # RINEX-2 short name (ssssdddh.YYd.gz).  Some stations have
         # both, some only one.  We try v3 first and fall back to v2
         # on any download failure (typically HTTP 404).
-        zip_dir   = products_root / "rinex" / "zip"
-        unzip_dir = products_root / "rinex" / "unzip"
+        cdir = cache_dir(data_root, fix.year, fix.doy)
         candidates = [
             ("v3", *cddis_obs_url_v3(fix)),
             ("v2", *cddis_obs_url_v2(fix)),
@@ -459,13 +496,13 @@ def fetch_observations(observations_root: Path, products_root: Path,
         # the target observations dir, treat that as a cached hit.
         already_have = False
         for tag, _url, fname in candidates:
-            compact_in_cache = unzip_dir / fname[:-3]                # strip .gz
+            compact_in_cache = cdir / fname[:-3]                # strip .gz
             rnx_for_candidate = expected_rnx_output(compact_in_cache)
             if rnx_for_candidate is None:
                 continue
             target_rnx = target_dir / rnx_for_candidate.name
             if target_rnx.exists():
-                print(f"  cached  {target_rnx.relative_to(observations_root.parent)}")
+                print(f"  cached  {target_rnx.relative_to(data_root)}")
                 already_have = True
                 break
         if already_have:
@@ -477,9 +514,9 @@ def fetch_observations(observations_root: Path, products_root: Path,
         produced_rnx = None
         last_compact = None
         for tag, url, fname in candidates:
-            compact_path = unzip_dir / fname[:-3]                    # strip .gz
+            compact_path = cdir / fname[:-3]                     # strip .gz
             if not compact_path.exists():
-                zip_path = zip_dir / fname
+                zip_path = cdir / fname
                 if not download_file(url, zip_path,
                                      log_prefix=f"({tag}) "):
                     continue
@@ -505,10 +542,10 @@ def fetch_observations(observations_root: Path, products_root: Path,
                 )
                 target_rnx = target_dir / target_rnx_basename
                 crx_pending.append(
-                    f"{last_compact.relative_to(observations_root.parent)} -> "
-                    f"{target_rnx.relative_to(observations_root.parent)}"
+                    f"{last_compact.relative_to(data_root)} -> "
+                    f"{target_rnx.relative_to(data_root)}"
                 )
-                print(f"  staged  {last_compact.relative_to(observations_root.parent)} "
+                print(f"  staged  {last_compact.relative_to(data_root)} "
                       f"(crx2rnx unavailable — will need manual conversion)")
             else:
                 print(f"  !! no CDDIS spelling worked for {fix.station} "
@@ -516,8 +553,8 @@ def fetch_observations(observations_root: Path, products_root: Path,
                       file=sys.stderr)
             continue
 
-        # Move into the observations dir.  PathResolver will pick it
-        # up on the next run via station-name match.
+        # Move into the per-station obs dir.  PathResolver will pick
+        # it up on the next run via station-name match.
         target_rnx = target_dir / produced_rnx.name
         try:
             shutil.move(str(produced_rnx), str(target_rnx))
@@ -525,18 +562,19 @@ def fetch_observations(observations_root: Path, products_root: Path,
             print(f"  move failed {produced_rnx} -> {target_rnx}: {e!r}",
                   file=sys.stderr)
             continue
-        print(f"  rnx     {target_rnx.relative_to(observations_root.parent)}")
+        print(f"  rnx     {target_rnx.relative_to(data_root)}")
     return manual, crx_pending
 
-def fetch_static_assets(products_root: Path, *, want_eot20: bool) -> None:
-    atx_path = products_root / "atx" / "igs20.atx"
+def fetch_static_assets(data_root: Path, *, want_eot20: bool) -> None:
+    """Place date-independent assets under @c <data_root>/static/."""
+    atx_path = static_dir(data_root, "atx") / "igs20.atx"
     if not atx_path.exists():
         download_file(IGS20_ATX_URL, atx_path)
     else:
-        print(f"  cached  {atx_path.relative_to(products_root.parent)}")
+        print(f"  cached  {atx_path.relative_to(data_root)}")
 
     if want_eot20:
-        nc_path = products_root / "nc" / "EOT20_load.nc"
+        nc_path = static_dir(data_root, "nc") / "EOT20_load.nc"
         if not nc_path.exists():
             ok = download_file(EOT20_LOAD_NC_URL, nc_path)
             if not ok:
@@ -548,7 +586,7 @@ def fetch_static_assets(products_root: Path, *, want_eot20: bool) -> None:
                     file=sys.stderr,
                 )
         else:
-            print(f"  cached  {nc_path.relative_to(products_root.parent)}")
+            print(f"  cached  {nc_path.relative_to(data_root)}")
 
 # ---------------------------------------------------------------------
 # Entry point
@@ -583,16 +621,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(f"!! {repo} doesn't look like a GnssProcessor checkout", file=sys.stderr)
         return 2
 
-    data_root         = repo / "data"
-    products_root     = data_root / "products"
-    observations_root = data_root / "observations"
+    data_root = repo / "data"
 
-    print(f"Bootstrap target: {data_root}")
+    print(f"Bootstrap target: {data_root} (date-first layout)")
 
     print("\n[1/3] IGS products (SP3, CLK, BIA, ERP, BRDC) per fixture date")
     for (year, doy) in FIXTURE_DATES:
         print(f"  date {year}-{doy:03d}")
-        fetch_products_for_date(year, doy, products_root)
+        fetch_products_for_date(year, doy, data_root)
 
     print("\n[2/3] Observation RINEX fixtures")
     crx2rnx_exe = find_crx2rnx(args.crx2rnx)
@@ -604,11 +640,10 @@ def main(argv: Iterable[str] | None = None) -> int:
               "--crx2rnx PATH on the next run.)")
     else:
         print(f"  crx2rnx: {crx2rnx_exe}")
-    manual, crx_pending = fetch_observations(observations_root, products_root,
-                                             crx2rnx_exe)
+    manual, crx_pending = fetch_observations(data_root, crx2rnx_exe)
 
     print("\n[3/3] Static assets (igs20.atx, EOT20_load.nc)")
-    fetch_static_assets(products_root, want_eot20=not args.no_eot20)
+    fetch_static_assets(data_root, want_eot20=not args.no_eot20)
 
     if manual:
         print(

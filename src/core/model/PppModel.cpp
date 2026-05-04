@@ -1113,6 +1113,22 @@ const char* signalModeLabel(SignalMode m) {
                 continue;
             }
 
+            // Skip signals lacking strict ATX coverage when the user
+            // has set @c model_corrections.require_atx_coverage.  Both
+            // satellite and receiver antenna entries must supply
+            // finite PCO and populated PCV for this signal's exact
+            // frequency — no fallback chain.  Used to make the ATX
+            // file an authoritative whitelist when "all" signals are
+            // requested but only an ATX-curated subset should
+            // actually process.
+            if (config_.getModelCorrections().require_atx_coverage
+                && !antenna_.hasFullAtxCoverage(obs.satellite, type, obs.system)) {
+                log_manager_.getLogger("ppp_model")->debug(
+                    "Skipping {} on {} — no strict ATX coverage (require_atx_coverage=true)",
+                    type, obs.satellite);
+                continue;
+            }
+
             const char meas_type = type[0];
             if (meas_type != 'C' && meas_type != 'L') continue;
 

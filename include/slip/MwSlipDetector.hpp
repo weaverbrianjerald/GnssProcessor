@@ -186,6 +186,22 @@ namespace GnssProcessor {
         void setCorrections(const GnssCorrections* corrections) { corrections_ = corrections; }
 
         /**
+         * @brief Override the inter-epoch gap tolerance for arc resets.
+         *
+         * Overrides @c kDefaultMaxGapSeconds for this detector instance.
+         * Application sets this to the RINEX sampling interval when the
+         * data rate is coarser than 5 s and IMU is not available, so any
+         * gap longer than the nominal cadence resets the arc rather than
+         * silently absorbing a slip-during-gap into the running mean.
+         * When IMU bridges gaps the default 120 s is preserved by not
+         * calling this setter.
+         *
+         * @param seconds  New gap tolerance.  Values ≤ 0 are ignored
+         *                 (default is preserved).
+         */
+        void setMaxGapSeconds(double seconds);
+
+        /**
          * @brief Query aggregated MW arc quality for a satellite.
          *
          * Scans all MW arc stats keyed by the given satellite prefix and
@@ -220,6 +236,10 @@ namespace GnssProcessor {
         LogManager& log_manager_;     /**< Reference to logging manager. */
         PppUtils ppp_utils_;          /**< Utility helpers for frequency/wavelength lookups. */
         const GnssCorrections* corrections_{ nullptr }; /**< Optional bias lookup (owned externally). */
+
+        /// Effective max-gap tolerance.  Overridable via @c setMaxGapSeconds;
+        /// initialized to @c kDefaultMaxGapSeconds.
+        double max_gap_seconds_{ kDefaultMaxGapSeconds };
 
         /**
          * @brief Per-satellite running statistics for the MW time series.
@@ -296,14 +316,27 @@ namespace GnssProcessor {
          *  sensitive. */
         static constexpr double kMinThresholdCycles = 0.5;
 
-        /** Maximum inter-epoch gap (seconds) before the arc is reset.
-         *  If more than this many seconds elapse between consecutive MW
-         *  samples for a satellite the running statistics are discarded
-         *  and a fresh arc is started.  This prevents stale pre-gap
-         *  statistics from contaminating the post-gap mean / MAD and
-         *  avoids the large spurious deviations observed after data
-         *  gaps. */
-        static constexpr double kMaxGapSeconds = 120.0;
+        /** Default maximum inter-epoch gap (seconds) before the arc is
+         *  reset.  Override at runtime via @c setMaxGapSeconds — typical
+         *  use is to tighten this to the RINEX sampling interval when
+         *  IMU is not available, so a brief outage cannot silently
+         *  initialize a fresh arc with a slip-corrupted baseline.
+         *  When IMU is available and bridging gaps via INS propagation,
+         *  the default is preserved so legitimate continuous arcs
+         *  survive 60–120 s outages. */
+        static constexpr double kDefaultMaxGapSeconds = 120.0;
+
+        /** Maximum fractional WL cycle on the first sample of a new
+         *  BIA-corrected arc.  A clean phase track on a satellite whose
+         *  hardware bias is removed yields MW values clustered tightly
+         *  around an integer × λ_WL.  When the very first sample of a
+         *  fresh arc lands more than this far from the nearest integer,
+         *  the arc was almost certainly initialized with a slip already
+         *  baked in (e.g., a slip occurred during the data gap that
+         *  triggered the arc reset).  Treat that case as a slip on
+         *  init rather than letting the corrupt value become the new
+         *  running mean. */
+        static constexpr double kInitFracThresh = 0.4;
 
         /** Minimum number of consecutive epochs in a BIA-corrected arc
          *  before the WL integer is locked by rounding.  Locking on the
