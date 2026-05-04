@@ -176,7 +176,8 @@ namespace GnssProcessor {
           gradient_east_idx_(std::numeric_limits<size_t>::max()),
           attitude_idx_(std::numeric_limits<size_t>::max()),
           accel_bias_idx_(std::numeric_limits<size_t>::max()),
-          gyro_bias_idx_(std::numeric_limits<size_t>::max()) {
+          gyro_bias_idx_(std::numeric_limits<size_t>::max()),
+          differential_tropo_idx_(std::numeric_limits<size_t>::max()) {
 
         // Baseline mode: strip to position-only core.  DD processing
         // cancels receiver-side clocks/ISBs and (short-baseline) iono/tropo,
@@ -187,6 +188,18 @@ namespace GnssProcessor {
             core_state_size_ = base_core_size_;   // just position (3)
             systems_with_time_offsets_.clear();
             system_time_offset_indices_.clear();
+
+            // Optional differential ZWD state for long-baseline mode.
+            // Slotted right after position so the layout stays simple
+            // (position 0..2, Δzwd at 3); ambiguities still get appended
+            // by addAmbiguity() above this fixed core.
+            const bool with_diff_tropo =
+                config_.getBaselineConfig().estimate_differential_tropo;
+            if (with_diff_tropo) {
+                differential_tropo_idx_ = core_state_size_;
+                ++core_state_size_;
+            }
+
             state_vector_ = Eigen::VectorXd::Zero(core_state_size_);
             covariance_ = Eigen::MatrixXd::Identity(core_state_size_, core_state_size_);
             const auto& init = config_.getInitialStd();
@@ -194,10 +207,21 @@ namespace GnssProcessor {
             if (core_state_size_ >= 3) {
                 covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
             }
-            log_manager_.getLogger("state_manager")->info(
-                "StateManager initialised in BASELINE mode: core size={}, "
-                "position-only (no clock/tropo/iono/system-offset states)",
-                core_state_size_);
+            if (with_diff_tropo) {
+                const double dt_std =
+                    config_.getBaselineConfig().differential_tropo_init_std_m;
+                covariance_(differential_tropo_idx_, differential_tropo_idx_) =
+                    dt_std * dt_std;
+                log_manager_.getLogger("state_manager")->info(
+                    "StateManager initialised in BASELINE mode: core size={}, "
+                    "position + differential ZWD (init_std={:.3f} m)",
+                    core_state_size_, dt_std);
+            } else {
+                log_manager_.getLogger("state_manager")->info(
+                    "StateManager initialised in BASELINE mode: core size={}, "
+                    "position-only (no clock/tropo/iono/system-offset states)",
+                    core_state_size_);
+            }
             return;
         }
 
@@ -402,14 +426,23 @@ namespace GnssProcessor {
         Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
 
         // Baseline mode: no clock / tropo / iono / system-offset / bias states
-        // in the state vector.  Apply ambiguity process noise below (if any)
+        // in the state vector.  Apply ambiguity process noise below (if any),
+        // optionally apply random-walk noise to the differential ZWD state,
         // and return.  DD ambiguities are physically constant → pn.ambiguity
-        // typically 0, so Q ends up as just the position block.
+        // typically 0, so Q is essentially the position block plus (optionally)
+        // a 1×1 Δzwd entry.
         if (is_baseline_) {
             if (state_size > core_state_size_) {
                 for (const auto& [key, idx] : ambiguity_indices_) {
                     Q(idx, idx) = pn.ambiguity * dt;
                 }
+            }
+            if (hasDifferentialTropo()) {
+                // Spectral density (m/√s) → variance per second when squared.
+                const double sigma =
+                    config_.getBaselineConfig().differential_tropo_process_noise_m_per_sqrt_s;
+                Q(differential_tropo_idx_, differential_tropo_idx_) =
+                    sigma * sigma * dt;
             }
             return Q;
         }
@@ -551,6 +584,12 @@ namespace GnssProcessor {
     size_t StateManager::getTropoIndex() const {
         // In baseline mode (short baseline) tropo cancels via DD and has no state.
         return is_baseline_ ? std::numeric_limits<size_t>::max() : 4;
+    }
+    size_t StateManager::getDifferentialTropoIndex() const {
+        return differential_tropo_idx_;
+    }
+    bool StateManager::hasDifferentialTropo() const {
+        return differential_tropo_idx_ != std::numeric_limits<size_t>::max();
     }
 
     size_t StateManager::getIonoIndex() const {

@@ -20,6 +20,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <vector>
+#include <netcdf.h>
 
 namespace GnssProcessor {
 
@@ -247,71 +249,23 @@ namespace GnssProcessor {
         return ecef_disp;
     }
 
-    Eigen::Vector3d OceanTideModel::computeApproximateDisplacement(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
-        if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
-            return Eigen::Vector3d::Zero();
-        }
-
-        // Convert GPS time to TT Julian centuries from J2000.0
-        double t_centuries = TimeUtils::gpsTimeToTtCenturies(time);
-        double ut1_frac = std::fmod(TimeUtils::gpsTimeToMjd(time), 1.0);
-
-        auto fund_args = computeFundamentalArguments(t_centuries, ut1_frac);
-        auto tidal_args = computeTidalArguments(fund_args);
-
-        // Approximate global-average coastal amplitudes (meters) for the radial component.
-        // These represent typical mid-latitude coastal station values.
-        // Horizontal components are typically ~30-40% of radial.
-        // Interior/continental stations have smaller values.
+    Eigen::Vector3d OceanTideModel::computeApproximateDisplacement(const Eigen::Vector3d& /*rx_pos*/,
+                                                                    const GnssTime& /*time*/) const {
+        // No station-specific OTL coefficients (BLQ or EOT20) are loaded.
         //
-        // Order: M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa
-        static constexpr double APPROX_AMP_UP[11] = {
-            0.0120, 0.0040, 0.0025, 0.0011,  // semi-diurnal: M2, S2, N2, K2
-            0.0032, 0.0025, 0.0010, 0.0005,  // diurnal: K1, O1, P1, Q1
-            0.0003, 0.0001, 0.0002            // long-period: Mf, Mm, Ssa
-        };
-        static constexpr double APPROX_AMP_HOR[11] = {
-            0.0035, 0.0012, 0.0007, 0.0003,
-            0.0009, 0.0007, 0.0003, 0.0002,
-            0.0001, 0.0000, 0.0001
-        };
-
-        // Scale by approximate latitude dependence:
-        // Coastal stations have larger OTL; interior stations much smaller.
-        // Distance from coast is hard to model, so we use a simple latitude scaling.
-        Coordinates::Llh llh = Coordinates::ecefToLlh(rx_pos);
-
-        // Simple scale: full amplitude near equator (~1.0x), reduce for high-latitude.
-        double lat_scale = std::cos(llh.lat_rad) * 0.8 + 0.2;
-
-        // Use a zero phase offset (no station-specific information available).
-        // This means the model captures the correct frequency content and
-        // approximate amplitude but not the exact phase relationship.
-        // For PPP, even an approximate amplitude and period match helps the
-        // filter absorb less of the signal into the position states.
-        double disp_up = 0.0;
-        double disp_east = 0.0;
-        double disp_north = 0.0;
-
-        for (size_t j = 0; j < 11; ++j) {
-            double chi = tidal_args[j];
-            disp_up    += APPROX_AMP_UP[j]  * lat_scale * std::cos(chi);
-            disp_east  += APPROX_AMP_HOR[j] * lat_scale * std::cos(chi + Constants::PI / 4.0); // approximate phase offset
-            disp_north += APPROX_AMP_HOR[j] * lat_scale * std::cos(chi + Constants::PI / 2.0);
-        }
-
-        Eigen::Vector3d enu_disp(disp_east, disp_north, disp_up);
-        Eigen::Vector3d ecef_disp = Coordinates::enuToEcef(enu_disp, llh);
-
-        if (!ecef_disp.allFinite() || ecef_disp.norm() > 0.5) {
-            return Eigen::Vector3d::Zero();
-        }
-
-        log_manager_.getLogger("ocean_tide")->trace(
-            "Approximate OTL at TOW {:.3f}: up={:.4f}, E={:.4f}, N={:.4f} m (lat_scale={:.3f})",
-            time.tow, disp_up, disp_east, disp_north, lat_scale);
-
-        return ecef_disp;
+        // The previous fallback synthesized a phase-blind, latitude-scaled OTL
+        // signal from global-average coastal amplitudes. With a wrong Greenwich
+        // phase that signal injects a coherent biased oscillation into the up
+        // channel that the filter cannot absorb cleanly — for many stations it
+        // is worse than no correction at all. Returning zero lets the receiver
+        // clock and ZTD absorb residual OTL energy without fighting a fictitious
+        // model.
+        //
+        // To get real OTL displacement, configure either:
+        //   (a) files.otl_blq_path  → station-specific BLQ from Onsala, or
+        //   (b) data_download.nc_path → EOT20_load.nc (synthesized for any
+        //       station via OceanTideModel::parseEot20Load).
+        return Eigen::Vector3d::Zero();
     }
 
     /**
@@ -413,6 +367,208 @@ namespace GnssProcessor {
         log_manager_.getLogger("ocean_tide")->info(
             "Parsed BLQ for station '{}': M2 amp_up={:.4f} m, S2={:.4f} m, K1={:.4f} m",
             station_name, amp_up[0], amp_up[1], amp_up[4]);
+
+        return true;
+    }
+
+    /**
+     * @brief Synthesize OtlStationCoefficients from EOT20_load.nc.
+     *
+     * EOT20 schema (DGFI-TUM, Hart-Davis et al. 2021):
+     *   dims: lon (2883, with -0.125° / 360.125° boundary repeats), lat (1441,
+     *         descending 90 → -90), constituents (17)
+     *   vars: lon[lon], lat[lat] (degrees);
+     *         hRe[const, lat, lon], hIm[const, lat, lon] (int16, scale_factor);
+     *         constituents.constituent_order = "2n2 j1 k1 k2 m2 m4 mf mm n2 o1 p1 q1 s1 s2 sa ssa t2"
+     *
+     * We read a 17 × 2 × 2 hyperslab (≈ 544 bytes after auto-scaling), bilinear-
+     * interpolate each constituent at the station's (lat, lon), and pick the
+     * 11 BLQ-order constituents (indices [4 13 8 3 2 9 10 11 6 7 15] in EOT20).
+     */
+    bool OceanTideModel::parseEot20Load(const std::string& nc_path,
+                                        const Eigen::Vector3d& station_ecef,
+                                        OtlStationCoefficients& coeffs) const {
+        auto log = log_manager_.getLogger("ocean_tide");
+
+        if (!station_ecef.allFinite() || station_ecef.norm() < 1e6) {
+            log->error("EOT20: invalid station ECEF ({:.3e}, {:.3e}, {:.3e})",
+                       station_ecef.x(), station_ecef.y(), station_ecef.z());
+            return false;
+        }
+
+        int ncid = -1;
+        if (int rc = nc_open(nc_path.c_str(), NC_NOWRITE, &ncid); rc != NC_NOERR) {
+            log->error("EOT20: cannot open '{}': {}", nc_path, nc_strerror(rc));
+            return false;
+        }
+
+        // RAII close — every early return below will unwind through this.
+        struct NcCloser {
+            int id;
+            ~NcCloser() { if (id >= 0) nc_close(id); }
+        } closer{ ncid };
+
+        auto getDim = [&](const char* name, size_t& out) -> bool {
+            int dimid;
+            if (nc_inq_dimid(ncid, name, &dimid) != NC_NOERR) return false;
+            return nc_inq_dimlen(ncid, dimid, &out) == NC_NOERR;
+        };
+        auto getVarId = [&](const char* name, int& out) -> bool {
+            return nc_inq_varid(ncid, name, &out) == NC_NOERR;
+        };
+
+        size_t n_lon = 0, n_lat = 0, n_const = 0;
+        if (!getDim("lon", n_lon) || !getDim("lat", n_lat) || !getDim("constituents", n_const)) {
+            log->error("EOT20: missing required dimension(s) lon/lat/constituents in '{}'", nc_path);
+            return false;
+        }
+        if (n_const < 17 || n_lon < 2 || n_lat < 2) {
+            log->error("EOT20: unexpected dimensions (lon={}, lat={}, const={})", n_lon, n_lat, n_const);
+            return false;
+        }
+
+        int varid_lon = -1, varid_lat = -1, varid_hRe = -1, varid_hIm = -1;
+        if (!getVarId("lon", varid_lon) || !getVarId("lat", varid_lat) ||
+            !getVarId("hRe", varid_hRe) || !getVarId("hIm", varid_hIm)) {
+            log->error("EOT20: missing required variable(s) lon/lat/hRe/hIm in '{}'", nc_path);
+            return false;
+        }
+
+        // Pull scale_factor / add_offset from the packed int16 variables.
+        // The netCDF C library (unlike the Python netCDF4 binding) does NOT
+        // auto-apply these — nc_get_vara_double returns the raw integer
+        // values cast to double, and the user must scale manually. EOT20
+        // packs hRe/hIm as int16 with scale_factor ≈ 5.34e-5 (m/LSB);
+        // without applying it, the synthesized amplitudes come out ~20 000×
+        // too large (meters of "OTL" instead of millimeters).
+        auto getScaleOffset = [&](int varid, double& scale, double& offset) {
+            scale  = 1.0;
+            offset = 0.0;
+            // Errors are non-fatal — absent attributes mean "no packing,"
+            // i.e. scale=1, offset=0, which is the correct default.
+            (void)nc_get_att_double(ncid, varid, "scale_factor", &scale);
+            (void)nc_get_att_double(ncid, varid, "add_offset",   &offset);
+        };
+        double scale_re = 1.0, offset_re = 0.0;
+        double scale_im = 1.0, offset_im = 0.0;
+        getScaleOffset(varid_hRe, scale_re, offset_re);
+        getScaleOffset(varid_hIm, scale_im, offset_im);
+
+        std::vector<double> lon_arr(n_lon), lat_arr(n_lat);
+        if (nc_get_var_double(ncid, varid_lon, lon_arr.data()) != NC_NOERR ||
+            nc_get_var_double(ncid, varid_lat, lat_arr.data()) != NC_NOERR) {
+            log->error("EOT20: failed to read lon/lat arrays");
+            return false;
+        }
+
+        // Station geodetic coordinates
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(station_ecef);
+        const double lat_deg = llh.lat_rad * 180.0 / Constants::PI;
+        double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
+        // Normalize lon to [0, 360) so it falls inside lon_arr's interior
+        // (lon_arr[0] = -0.125, lon_arr[n_lon-1] = 360.125 are boundary repeats).
+        lon_deg = std::fmod(lon_deg, 360.0);
+        if (lon_deg < 0.0) lon_deg += 360.0;
+
+        // Find bracketing indices. lon ascending, lat descending.
+        size_t j_lon = 0;
+        {
+            // Largest j_lon such that lon_arr[j_lon] <= lon_deg.
+            // Binary search.
+            size_t lo = 0, hi = n_lon - 1;
+            while (lo + 1 < hi) {
+                size_t m = (lo + hi) / 2;
+                if (lon_arr[m] <= lon_deg) lo = m;
+                else hi = m;
+            }
+            j_lon = lo;
+        }
+        size_t i_lat = 0;
+        {
+            // lat descending: largest i_lat such that lat_arr[i_lat] >= lat_deg.
+            size_t lo = 0, hi = n_lat - 1;
+            while (lo + 1 < hi) {
+                size_t m = (lo + hi) / 2;
+                if (lat_arr[m] >= lat_deg) lo = m;
+                else hi = m;
+            }
+            i_lat = lo;
+        }
+
+        if (j_lon + 1 >= n_lon || i_lat + 1 >= n_lat) {
+            log->error("EOT20: station at lat={:.4f} lon={:.4f} fell outside grid", lat_deg, lon_deg);
+            return false;
+        }
+
+        const double dlon = lon_arr[j_lon + 1] - lon_arr[j_lon];
+        const double dlat = lat_arr[i_lat + 1] - lat_arr[i_lat];  // negative (descending)
+        if (!(std::abs(dlon) > 1e-9) || !(std::abs(dlat) > 1e-9)) {
+            log->error("EOT20: degenerate grid spacing dlon={} dlat={}", dlon, dlat);
+            return false;
+        }
+        const double flon = (lon_deg - lon_arr[j_lon]) / dlon;
+        const double flat = (lat_deg - lat_arr[i_lat]) / dlat;  // ratio of two negatives → in [0, 1]
+
+        // Read 17 × 2 × 2 hyperslab. The C library returns raw int16-as-double;
+        // we apply scale_factor and add_offset manually.
+        const size_t start[3] = { 0,        i_lat, j_lon };
+        const size_t count[3] = { n_const,  2,     2     };
+        std::vector<double> hRe_box(n_const * 4), hIm_box(n_const * 4);
+        if (nc_get_vara_double(ncid, varid_hRe, start, count, hRe_box.data()) != NC_NOERR ||
+            nc_get_vara_double(ncid, varid_hIm, start, count, hIm_box.data()) != NC_NOERR) {
+            log->error("EOT20: failed to read hRe/hIm hyperslab at lat[{}], lon[{}]", i_lat, j_lon);
+            return false;
+        }
+        for (auto& v : hRe_box) v = v * scale_re + offset_re;
+        for (auto& v : hIm_box) v = v * scale_im + offset_im;
+
+        // Bilinear at the 2×2 corner block, layout per constituent: [lat0,lon0; lat0,lon1; lat1,lon0; lat1,lon1]
+        auto bilinear = [flat, flon](const double* box) {
+            return (1.0 - flat) * ((1.0 - flon) * box[0] + flon * box[1])
+                 +        flat  * ((1.0 - flon) * box[2] + flon * box[3]);
+        };
+
+        // EOT20 constituent order:
+        //   0:2n2  1:j1  2:k1  3:k2  4:m2  5:m4  6:mf  7:mm
+        //   8:n2   9:o1 10:p1 11:q1 12:s1 13:s2 14:sa 15:ssa 16:t2
+        // BLQ order (OTL_CONSTITUENT_NAMES):  M2 S2 N2 K2 K1 O1 P1 Q1 Mf Mm Ssa
+        static constexpr int EOT20_INDICES_FOR_BLQ[11] = { 4, 13, 8, 3, 2, 9, 10, 11, 6, 7, 15 };
+
+        constexpr double R2D = 180.0 / Constants::PI;
+        for (size_t k = 0; k < 11; ++k) {
+            const size_t e = static_cast<size_t>(EOT20_INDICES_FOR_BLQ[k]);
+            const double* re_corners = &hRe_box[e * 4];
+            const double* im_corners = &hIm_box[e * 4];
+            const double re = bilinear(re_corners);
+            const double im = bilinear(im_corners);
+
+            // FES/EOT convention: complex Z = re + i·im, with the real signal
+            //   h(t) = Re{ Z · exp(i·χ(t)) } = A·cos(χ - φ),
+            //   A = sqrt(re² + im²),  φ = atan2(-im, re).
+            // φ in BLQ format is the Greenwich phase lag in degrees.
+            const double amp = std::sqrt(re * re + im * im);
+            const double phase_deg = std::atan2(-im, re) * R2D;
+
+            coeffs.constituents[k].amp_up    = amp;
+            coeffs.constituents[k].phase_up  = phase_deg;
+            // EOT20_load.nc carries only the radial component. The horizontal
+            // OTL signal (typically 1–3 mm peak) is left at zero.
+            coeffs.constituents[k].amp_west   = 0.0;
+            coeffs.constituents[k].amp_south  = 0.0;
+            coeffs.constituents[k].phase_west = 0.0;
+            coeffs.constituents[k].phase_south= 0.0;
+        }
+
+        coeffs.station_name = "EOT20-synthesized";
+        coeffs.valid = true;
+
+        log->info(
+            "EOT20 synthesized OTL at lat={:.4f}° lon={:.4f}°: "
+            "M2 up={:.4f} m / {:+.1f}°, S2 up={:.4f} m, K1 up={:.4f} m",
+            lat_deg, lon_deg,
+            coeffs.constituents[0].amp_up, coeffs.constituents[0].phase_up,
+            coeffs.constituents[1].amp_up,
+            coeffs.constituents[4].amp_up);
 
         return true;
     }

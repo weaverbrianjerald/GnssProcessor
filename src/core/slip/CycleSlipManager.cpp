@@ -125,7 +125,24 @@ void CycleSlipManager::resetAmbiguityBssdAware(
         if (obs_sat && obs_piv) break;
     }
 
-    double sd_seed = 0.0;
+    // Reset the covariance unconditionally -- the float value is corrupted
+    // by the slip and we want the filter to absorb new info quickly.
+    Eigen::MatrixXd P = state_manager.getCovariance();
+    const auto aidx = static_cast<Eigen::Index>(amb_idx);
+    const double old_val = x(aidx);
+    P.row(aidx).setZero();
+    P.col(aidx).setZero();
+    P(aidx, aidx) = reset_std_m * reset_std_m;
+
+    // Only re-seed the float value when BOTH observations are available
+    // this epoch.  In BSSD mode the state stores N_sat - N_pivot; seeding
+    // with the absolute N_sat (which is what computeAmbiguitySeed returns
+    // for a single obs) is off by N_pivot -- potentially many cycles -- and
+    // the filter takes many epochs to drag it back, often triggering
+    // spurious outlier rejections en route.  When the pivot obs is missing
+    // (dropped below mask, or just lost), defer the reseed to the next
+    // epoch via markAmbiguityPendingReseed; ensureRequiredStates() picks
+    // it up there with both obs in hand.
     if (obs_sat && obs_piv) {
         // The pivot may use a different tracking attribute on the same
         // frequency band (e.g. L1W vs L1C).  Find the pivot's actual
@@ -140,27 +157,27 @@ void CycleSlipManager::resetAmbiguityBssdAware(
                 }
             }
         }
-        sd_seed = state_manager.computeAmbiguitySeed(*obs_sat, signal, x)
-                - state_manager.computeAmbiguitySeed(*obs_piv, piv_signal, x);
-    } else if (obs_sat) {
-        sd_seed = state_manager.computeAmbiguitySeed(*obs_sat, signal, x);
+        const double sd_seed =
+            state_manager.computeAmbiguitySeed(*obs_sat, signal, x)
+          - state_manager.computeAmbiguitySeed(*obs_piv, piv_signal, x);
+
+        Eigen::VectorXd x_mod = x;
+        x_mod(aidx) = sd_seed;
+        state_manager.setStateVector(x_mod);
+        state_manager.setCovariance(P);
+
+        log->info("{}BSSD SD-aware reset {}: {:.4f} -> {:.4f} (pivot={})",
+                  epoch_prefix, amb_key, old_val, sd_seed, pivot_sat);
+    } else {
+        // Pivot obs (and possibly self obs) missing -- inflate variance,
+        // leave the state value alone, and let the next epoch reseed.
+        state_manager.setCovariance(P);
+        state_manager.markAmbiguityPendingReseed(amb_key);
+
+        log->info("{}BSSD SD-aware reset {}: pivot {} obs missing this epoch, "
+                  "variance inflated, reseed deferred to next epoch (old={:.4f})",
+                  epoch_prefix, amb_key, pivot_sat, old_val);
     }
-
-    Eigen::VectorXd x_mod = x;
-    Eigen::MatrixXd P = state_manager.getCovariance();
-    const auto aidx = static_cast<Eigen::Index>(amb_idx);
-
-    const double old_val = x_mod(aidx);
-    x_mod(aidx) = sd_seed;
-    P.row(aidx).setZero();
-    P.col(aidx).setZero();
-    P(aidx, aidx) = reset_std_m * reset_std_m;
-
-    state_manager.setStateVector(x_mod);
-    state_manager.setCovariance(P);
-
-    log->info("{}BSSD SD-aware reset {}: {:.4f} -> {:.4f} (pivot={})",
-              epoch_prefix, amb_key, old_val, sd_seed, pivot_sat);
 }
 
 // ===========================================================================

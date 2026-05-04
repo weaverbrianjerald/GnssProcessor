@@ -492,6 +492,16 @@ namespace GnssProcessor {
         ocean_tide_model_.setStationCoefficients(coeffs);
     }
 
+    bool GnssCorrections::loadOceanTideFromEot20(const std::string& nc_path,
+                                                 const Eigen::Vector3d& station_ecef) {
+        OtlStationCoefficients coeffs;
+        if (ocean_tide_model_.parseEot20Load(nc_path, station_ecef, coeffs)) {
+            ocean_tide_model_.setStationCoefficients(coeffs);
+            return true;
+        }
+        return false;
+    }
+
     bool GnssCorrections::loadOceanTideFromBLQ(const std::string& blq_path, const std::string& station_name) {
         OtlStationCoefficients coeffs;
         if (ocean_tide_model_.parseBLQ(blq_path, station_name, coeffs)) {

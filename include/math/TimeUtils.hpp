@@ -57,7 +57,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Converts Gregorian date and time already on the GPS time scale
-         *        to GPS week and TOW — without applying any leap-second correction.
+         *        to GPS week and TOW ï¿½ without applying any leap-second correction.
          *
          * Use this for timestamps that are already expressed in GPS time (e.g.
          * SP3 / CLK product epochs).  For UTC timestamps use gregorianToGpsTime()
@@ -208,7 +208,7 @@ namespace GnssProcessor {
          *
          * T = (JD ? 2451545.0) / 36525.0
          *
-         * @param jd Julian Date (on any time scale — caller is responsible
+         * @param jd Julian Date (on any time scale ï¿½ caller is responsible
          *           for ensuring the correct scale for the intended use).
          * @return Julian centuries from J2000.0.
          */
@@ -231,9 +231,9 @@ namespace GnssProcessor {
          * @brief Converts day-of-year to month and day.
          *
          * @param year  Calendar year (used for leap-year determination).
-         * @param doy   Day of year (1-based, 1–365 or 1–366 for leap years).
-         * @param month Output: month (1–12).
-         * @param day   Output: day of month (1–31).
+         * @param doy   Day of year (1-based, 1ï¿½365 or 1ï¿½366 for leap years).
+         * @param month Output: month (1ï¿½12).
+         * @param day   Output: day of month (1ï¿½31).
          * @return True if conversion succeeded; false if doy is out of range.
          */
         static bool dayOfYearToDate(int year, int doy, int& month, int& day);
@@ -279,6 +279,19 @@ namespace GnssProcessor {
          * @return Formatted string (e.g., "Week 1234, TOW 12345.67 (2023-10-01 12:34:56.789)").
          */
         static std::string formatGnssTime(const GnssTime& time);
+
+        /**
+         * @brief Convert (week, tow) to a GPS-time-scale calendar date.
+         *
+         * Unlike @c gpsTimeToGregorian, this does NOT subtract the
+         * GPS-UTC leap-second offset, so the returned wall-clock fields
+         * align exactly with the TOW grid (a 30-second RINEX file produces
+         * times at HH:MM:00.000 and HH:MM:30.000, never a 42-second offset).
+         * Used by log formatters that want every line to read on the same
+         * grid as the data.
+         */
+        static void gpsTimeToGpsScaleCalendar(const GnssTime& time, int& year, int& month,
+                                              int& day, int& hour, int& minute, double& second);
 
         /**
          * @brief Computes the offset from a time system to Terrestrial Time (TT).

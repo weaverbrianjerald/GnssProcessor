@@ -8,9 +8,13 @@
  * carrier-phase observations:
  *  - **Constant**  � use the a-priori ?� directly, no geometry scaling.
  *  - **Elevation** � classic  ?� / sin�(el)  weighting.
- *  - **SNR**       � SIGMA-? model:  ? = a + b � 10^(?SNR/10),
- *                     falls back to elevation-based weighting when no
- *                     SNR observable is available for a given measurement.
+ *  - **SNR**       — variance-additive form: σ² = a² + b²·10^(-CN0/10),
+ *                     with code-only chip-rate per-band scaling, Wieser
+ *                     hybrid 1/sin²(el) elevation amplification on top,
+ *                     and a synthesised CN0 fallback when the receiver-
+ *                     reported S-observable is missing.  See
+ *                     SnrModelParams in GnssConfig.hpp for the formula
+ *                     details and references.
  *
  * The class is configured once from GnssConfig and then called by PppModel
  * for every individual variance computation.  It replaces the ad-hoc
@@ -105,33 +109,65 @@ namespace GnssProcessor {
         /** @brief Compute variance under the Constant model (passthrough). */
         double computeConstant(double default_var) const;
 
-        /** @brief Compute variance under the Elevation model. */
-        double computeElevation(double default_var, double elevation_deg) const;
-
         /**
-         * @brief Elevation-aware wrapper that respects the
-         *        @c phaseElevationWeighting() config flag.
+         * @brief Apply elevation amplification with a configurable
+         *        σ-power that depends on the observable type.
          *
-         * Behaves exactly like @c computeElevation() except that when
-         * @p obs_type is a phase observable ("L...") and phase elevation
-         * weighting is disabled, the unscaled @p default_var is returned.
-         * Code and non-measurement observables continue to receive the
-         * standard @c 1/sin²(el) scaling.
+         *   var_actual = var_zen / sin^(2·power)(elev)
+         *
+         * with @c power = @c code_elevation_power_ for @c 'C…' rows
+         * and @c phase_elevation_power_ for @c 'L…' rows (and code's
+         * power as a default for everything else).  Empty obs_type
+         * uses the code power.  Near-zero elevations are clipped to
+         * avoid amplifying to infinity — anything below the
+         * configured elevation mask should be filtered upstream of
+         * this function anyway.
          */
-        double elevationScale(const std::string& obs_type,
-                              double default_var,
-                              double elevation_deg) const;
+        double computeElevation(const std::string& obs_type,
+                                double default_var,
+                                double elevation_deg) const;
 
         /**
-         * @brief Compute variance under the SNR (SIGMA-?) model.
+         * @brief Compute variance under the SNR model
+         *        (variance-additive form, Wieser hybrid).
          *
-         * Falls back to computeElevation() when no matching SNR observable
-         * is available.
+         * Pipeline:
+         *  1. Resolve CN0: read the matching @c S<band><attr>
+         *     observable from @p measurements, or synthesise it from
+         *     elevation (see @c synthesizeCn0FromElevation) when the
+         *     S-observable is absent / non-positive.
+         *  2. Clamp CN0 to @c [snr_floor_dbhz, snr_ceil_dbhz].
+         *  3. Compute base variance:
+         *       σ² = a² + b²·10^(-CN0/10)
+         *     using the (a, b) pair appropriate to code or phase.
+         *  4. Apply chip-rate per-band scaling on **code only**
+         *     (reusing @c SatBlockNoiseParams::freq_band_scale).
+         *     Phase σ² is band-flat — chip rate doesn't enter the
+         *     PLL noise formula.
+         *  5. Apply Wieser hybrid elevation amplification:
+         *     σ²_final = σ² / sin²(el), uniformly to code and phase.
          */
         double computeSnr(const std::string& obs_type,
                           const std::map<std::string, double>& measurements,
                           double elevation_deg,
                           double default_var) const;
+
+        /**
+         * @brief Estimate CN0 (dB-Hz) from satellite elevation using
+         *        a typical antenna gain pattern.
+         *
+         * Used when the receiver-reported @c S-observable is missing
+         * for a given measurement.  Linear-in-(1 - sin θ) drop from a
+         * zenith maximum mirrors textbook antenna patterns
+         * (Misra & Enge 2011 §6.2):
+         *   CN0(θ) ≈ CN0_max - K·(1 - sin θ)
+         * with @c CN0_max ≈ 50 dBHz and @c K ≈ 15 dB hard-coded as
+         * receiver-class-typical defaults.  This keeps the noise
+         * model coherent at the boundary where some sats have S
+         * observables and others don't, instead of discontinuously
+         * switching to a different functional form.
+         */
+        double synthesizeCn0FromElevation(double elevation_deg) const;
 
         /**
          * @brief Compute variance under the SatelliteBlock model.
@@ -145,10 +181,11 @@ namespace GnssProcessor {
                                const std::string& satellite,
                                const std::vector<AntennaData>& antennas) const;
 
-        StochasticModelType model_type_;    ///< Active weighting strategy.
+        StochasticModelType model_type_;    ///< Active weighting strategy.  Each model defines its own per-observable handling for phase vs code (see GnssConfig::getStochasticModel() docstring).
         SnrModelParams      snr_params_;    ///< Parameters for the SNR model.
         SatBlockNoiseParams sat_block_params_; ///< Parameters for the satellite-block model.
-        bool phase_elevation_weighting_{ true }; ///< Apply 1/sin²(el) to phase observables.
+        double code_elevation_power_;       ///< σ-power for code elevation amplification (1.0 = legacy csc²(θ) on variance).
+        double phase_elevation_power_;      ///< σ-power for phase elevation amplification (0.5 = gentler csc(θ) on variance).
         LogManager&         log_manager_;   ///< Logging manager reference.
     };
 

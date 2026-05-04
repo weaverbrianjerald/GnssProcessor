@@ -8,7 +8,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <set>
+#include <utility>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 namespace GnssProcessor {
@@ -33,8 +34,8 @@ bool icontains(const std::string& haystack, const std::string& needle) {
 
 /// Best-effort date extraction from a RINEX or IGS-product filename.
 /// Returns a 7-character "YYYYDOY" string on success, empty string
-/// otherwise.  Used as a hint to prefer same-day products when
-/// multiple are present in the cache.
+/// otherwise.  Used as a date hint when the user pins
+/// @c observation_path / a baseline @c rinex_path.
 ///
 /// Recognises both IGS long-name variants and RINEX-2 short names:
 ///
@@ -96,47 +97,45 @@ std::string extractYyyyDoy(const std::filesystem::path& p) {
     return {};
 }
 
-/// Convert a 7-char "YYYYDOY" string to days since 2000-01-01.  Used
-/// purely as an ordering / difference primitive — the absolute value
-/// is meaningless, only the gap between two values is.  Returns -1 if
-/// the input doesn't parse, in which case callers should treat the
-/// associated file as date-less.
-int yyyydoyToDaysSince2000(const std::string& yyyydoy) {
-    if (yyyydoy.size() != 7) return -1;
-    int year, doy;
-    try {
-        year = std::stoi(yyyydoy.substr(0, 4));
-        doy  = std::stoi(yyyydoy.substr(4, 3));
-    } catch (...) { return -1; }
-    if (year < 2000 || year > 2100 || doy < 1 || doy > 366) return -1;
-    int days = 0;
-    for (int y = 2000; y < year; ++y) {
-        const bool leap = (y % 4 == 0) && (y % 100 != 0 || y % 400 == 0);
-        days += leap ? 366 : 365;
-    }
-    return days + doy - 1;
+/// Format (year, doy) as the canonical "YYYY-DOY" date-dir name used
+/// throughout the unified layout (e.g. @c "2024-129").
+std::string dateDirName(int year, int doy) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%03d", year, doy);
+    return std::string(buf);
 }
 
-/// Decide whether a file is in-window for a given date hint.
-///
-/// "In window" means the file's filename either does not encode a date
-/// at all (ATX, EOT20 NC, hand-written test fixtures, etc. — kept
-/// unconditionally because they're date-agnostic) OR encodes a date
-/// within @p window_days of the hint.  The default ±1 day window
-/// matches the orbit/clock interpolation boundary that production-mode
-/// ProductResolver uses (prev / obs / next).
-///
-/// Pre-condition: @p hint is a valid 7-char YYYYDOY string.  Callers
-/// that haven't extracted a hint should skip filtering altogether.
-bool isProductInDateWindow(const std::filesystem::path& product,
-                           const std::string& hint,
-                           int window_days = 1) {
-    const std::string product_yd = extractYyyyDoy(product);
-    if (product_yd.empty()) return true;  // date-less file, always keep
-    const int hint_days = yyyydoyToDaysSince2000(hint);
-    const int prod_days = yyyydoyToDaysSince2000(product_yd);
-    if (hint_days < 0 || prod_days < 0) return true;  // unparseable, err on the side of keeping
-    return std::abs(prod_days - hint_days) <= window_days;
+/// True if @p name matches the @c "YYYY-DOY" date-dir convention.
+/// Used to enumerate the per-date subdirs under @c <root>.
+bool isDateDirName(const std::string& name) {
+    if (name.size() != 8 || name[4] != '-') return false;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(name[i]))) return false;
+    }
+    for (size_t i = 5; i < 8; ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(name[i]))) return false;
+    }
+    return true;
+}
+
+/// Shift (@p year, @p doy) by @p delta whole days, handling year
+/// rollover and leap years.  @p delta is typically -1 or +1 for the
+/// orbit/clock interpolation window.
+std::pair<int, int> shiftDate(int year, int doy, int delta) {
+    auto isLeap = [](int y) {
+        return (y % 4 == 0) && (y % 100 != 0 || y % 400 == 0);
+    };
+    int y = year;
+    int d = doy + delta;
+    while (d < 1) {
+        y -= 1;
+        d += isLeap(y) ? 366 : 365;
+    }
+    while (d > (isLeap(y) ? 366 : 365)) {
+        d -= isLeap(y) ? 366 : 365;
+        y += 1;
+    }
+    return { y, d };
 }
 
 } // anonymous namespace
@@ -190,68 +189,57 @@ std::vector<std::filesystem::path> PathResolver::globByExtension(
     return out;
 }
 
-std::filesystem::path PathResolver::findObservationByStation(
-    const std::vector<std::filesystem::path>& search_roots,
+std::filesystem::path PathResolver::pickStationRnx(
+    const std::filesystem::path& obs_root,
     const std::string& station_name) const {
 
+    std::error_code ec;
     if (station_name.empty()) return {};
+    if (!std::filesystem::exists(obs_root, ec)) return {};
 
     // Build the list of name fragments to try.  The fixture catalog
     // and most production configs use the IGS 9-char long-name form
-    // (SSSS00CCC, e.g. "CIT100USA"), but CDDIS publishes some older
-    // stations only as RINEX-2 short names (e.g. "cit11290.24d"),
-    // whose filename contains just the 4-char station ID.  When the
-    // input looks like a long-name we accept either form.  Pure
-    // substring containment is intentionally kept (case-insensitive)
-    // so 4-char IDs like "JPLM" still match the long-name file
-    // "JPLM00USA_R_..." cleanly.
-    std::vector<std::string> needles;
-    needles.push_back(station_name);
+    // (SSSS00CCC, e.g. "CIT100USA"), but some directories may be
+    // named with the 4-char station ID alone (matches lower-case
+    // production cache convention) — accept both.
+    std::vector<std::string> needles{ station_name };
     if (station_name.size() == 9 &&
         std::isalpha(static_cast<unsigned char>(station_name[0])) &&
         station_name[4] == '0' && station_name[5] == '0') {
-        // Looks like SSSS00CCC — also accept the 4-char SSSS prefix.
         needles.push_back(station_name.substr(0, 4));
     }
 
-    // Recursive scan over each search root.  Typical roots:
-    //   - <internal_data_root>/observations/      (curated fixtures
-    //     under absolute/, baseline/short/...)
-    //   - <internal_data_root>/products/rinex/unzip/  (production-mode
-    //     download cache and bootstrap intermediate files)
-    // Caller controls the list so the same helper works for either
-    // PPP (single obs) or baseline (per-station) lookups.
-    std::vector<std::filesystem::path> hits;
-    for (const auto& root : search_roots) {
-        std::error_code ec;
-        if (root.empty() || !std::filesystem::exists(root, ec)) continue;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(root, ec)) {
-            if (ec) break;
-            if (!entry.is_regular_file()) continue;
-            const std::string fname = entry.path().filename().string();
-            const std::string ext   = toLowerLocal(entry.path().extension().string());
-            // Accept .rnx, .rinex, .obs, .NNo (RINEX 2 short-name year-based).
-            // .NNd / .NND (Hatanaka-compressed) intentionally NOT accepted
-            // here — the RINEX parser can't read them, so handing one back
-            // would just defer the failure.  Bootstrap converts to .o
-            // before placing in observations/; production-mode
-            // ProductResolver does the same for the rinex/unzip cache.
-            const bool is_rinex_ext =
-                ext == ".rnx" || ext == ".rinex" || ext == ".obs" ||
-                (ext.size() == 4 && ext[0] == '.' && std::isdigit(static_cast<unsigned char>(ext[1]))
-                                  && std::isdigit(static_cast<unsigned char>(ext[2]))
-                                  && (ext[3] == 'o' || ext[3] == 'O'));
-            if (!is_rinex_ext) continue;
-            for (const auto& needle : needles) {
-                if (icontains(fname, needle)) {
-                    hits.push_back(entry.path());
-                    break;
-                }
-            }
+    for (const auto& entry : std::filesystem::directory_iterator(obs_root, ec)) {
+        if (ec) break;
+        if (!entry.is_directory()) continue;
+        const std::string dname = entry.path().filename().string();
+        bool matches = false;
+        for (const auto& n : needles) {
+            if (icontains(dname, n)) { matches = true; break; }
         }
+        if (!matches) continue;
+
+        // Prefer .rnx in lex order.
+        auto rnxs = globByExtension(entry.path(), {".rnx"});
+        if (!rnxs.empty()) return rnxs.front();
+
+        // Fallback: RINEX-2 .NNo short-name files (case-insensitive).
+        std::error_code ec2;
+        std::vector<std::filesystem::path> short_hits;
+        for (const auto& f : std::filesystem::directory_iterator(entry.path(), ec2)) {
+            if (ec2) break;
+            if (!f.is_regular_file()) continue;
+            const std::string ext = toLowerLocal(f.path().extension().string());
+            const bool is_rnx2 = ext.size() == 4 && ext[0] == '.'
+                && std::isdigit(static_cast<unsigned char>(ext[1]))
+                && std::isdigit(static_cast<unsigned char>(ext[2]))
+                && (ext[3] == 'o' || ext[3] == 'O');
+            if (is_rnx2) short_hits.push_back(f.path());
+        }
+        std::sort(short_hits.begin(), short_hits.end());
+        if (!short_hits.empty()) return short_hits.front();
     }
-    std::sort(hits.begin(), hits.end());
-    return hits.empty() ? std::filesystem::path{} : hits.front();
+    return {};
 }
 
 bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
@@ -265,212 +253,190 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
         return false;
     }
 
-    const std::filesystem::path products_root     = root / "products";
-    const std::filesystem::path observations_root = root / "observations";
-    // Search roots for observation RINEX files.  Both the curated
-    // observations/ tree (where bootstrap places converted .rnx/.o
-    // files) and the production-cache layout (products/rinex/unzip/,
-    // where ProductResolver downloads in production mode and where
-    // users can drop manually-fetched files) are valid sources.  The
-    // resolver picks the first file matching the station name across
-    // either root, lex-sorted.
-    const std::vector<std::filesystem::path> obs_search_roots = {
-        observations_root,
-        products_root / "rinex" / "unzip",
-    };
+    // -------- Step 1: determine the observation date ---------------
+    // Three ranked sources: the pinned obs filename, data_download
+    // year/doy (which doubles as a generic date hint even in internal
+    // mode), then the earliest <YYYY-DOY>/ subdir under <root>.
+    int year = 0, doy = 0;
+    std::string date_hint;
 
-    // ---- Products: glob the canonical subdir layout ----------------
-    // Matches the directory structure ProductResolver creates in
-    // production, so the same files appear regardless of mode.
+    if (!config_.getObservationPath().empty()) {
+        date_hint = extractYyyyDoy(config_.getObservationPath());
+    }
+    if (date_hint.empty() && config_.isBaselineMode()) {
+        const auto& bc = config_.getBaselineConfig();
+        if (!bc.reference.rinex_path.empty()) {
+            date_hint = extractYyyyDoy(bc.reference.rinex_path);
+        }
+        for (size_t i = 0; date_hint.empty() && i < bc.rovers.size(); ++i) {
+            if (!bc.rovers[i].rinex_path.empty()) {
+                date_hint = extractYyyyDoy(bc.rovers[i].rinex_path);
+            }
+        }
+    }
+    if (!date_hint.empty()) {
+        year = std::stoi(date_hint.substr(0, 4));
+        doy  = std::stoi(date_hint.substr(4, 3));
+        log->info("Internal mode: date hint '{}-{:03d}' from pinned RINEX path",
+            year, doy);
+    }
+    if (year == 0 || doy == 0) {
+        const auto& dl = config_.getDownloadConfig();
+        if (dl.year > 0 && dl.doy > 0) {
+            year = dl.year;
+            doy  = dl.doy;
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%04d%03d", year, doy);
+            date_hint = buf;
+            log->info("Internal mode: date '{}-{:03d}' from data_download.year/doy",
+                year, doy);
+        }
+    }
+    if (year == 0 || doy == 0) {
+        // Last resort: walk <root>/ for YYYY-DOY/ subdirs.
+        std::vector<std::filesystem::path> date_dirs;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+            if (ec) break;
+            if (!entry.is_directory()) continue;
+            if (isDateDirName(entry.path().filename().string())) {
+                date_dirs.push_back(entry.path());
+            }
+        }
+        if (date_dirs.empty()) {
+            log->error("Internal mode: no <YYYY-DOY>/ subdir under {} and no "
+                       "date hint from observation_path or "
+                       "data_download.year/doy",
+                       root.string());
+            log->error("Run: python scripts/bootstrap_internal_data.py "
+                       "to populate the layout.");
+            return false;
+        }
+        std::sort(date_dirs.begin(), date_dirs.end());
+        const std::string name = date_dirs.front().filename().string();
+        year = std::stoi(name.substr(0, 4));
+        doy  = std::stoi(name.substr(5, 3));
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%04d%03d", year, doy);
+        date_hint = buf;
+        log->info("Internal mode: auto-detected date {}-{:03d} from {}/",
+            year, doy, name);
+    }
+
+    // -------- Step 2: discover products by date --------------------
+    // Orbit + clock pull from a 3-day window (prev/obs/next) so
+    // satellite interpolation has boundary points.  BIA/ERP/BRDC
+    // are obs-day only — they're piecewise constant or interpolated
+    // across the day boundary differently.
+    const auto [yp, dp] = shiftDate(year, doy, -1);
+    const auto [yn, dn] = shiftDate(year, doy, +1);
+
+    const std::filesystem::path prev_day_products = root / dateDirName(yp, dp)   / "products";
+    const std::filesystem::path obs_day_products  = root / dateDirName(year, doy)/ "products";
+    const std::filesystem::path next_day_products = root / dateDirName(yn, dn)   / "products";
+
     auto append = [&](std::vector<std::filesystem::path>&& v) {
         for (auto& p : v) resolved.product_paths.push_back(std::move(p));
     };
-    append(globByExtension(products_root / "orbit" / "unzip", {".sp3"}));
-    append(globByExtension(products_root / "clock" / "unzip", {".clk"}));
-    append(globByExtension(products_root / "dcb"   / "unzip", {".bia", ".bsx"}));
-    append(globByExtension(products_root / "erp"   / "unzip", {".erp"}));
-    append(globByExtension(products_root / "atx",              {".atx"}));
-    append(globByExtension(products_root / "nc",               {".nc"}));
-    log->info("Internal mode: discovered {} product files under {}",
-        resolved.product_paths.size(), products_root.string());
 
-    // ---- Pick observation files first (they anchor the date) -------
-    // PPP / PPP-RTK: scan observations/ for one .rnx / .NNo file.
-    // Baseline: per-station matches under observations/ by station name.
-    // The "date hint" extracted from the picked obs file is then used
-    // to disambiguate when multiple nav / product files are present in
-    // the cache (e.g. 2023-321 and 2024-129 both shipped in data/).
-    std::string date_hint;
+    for (const auto& d : { prev_day_products, obs_day_products, next_day_products }) {
+        append(globByExtension(d, {".sp3"}));
+        append(globByExtension(d, {".clk"}));
+    }
+    append(globByExtension(obs_day_products, {".bia", ".bsx"}));
+    append(globByExtension(obs_day_products, {".erp"}));
+
+    // Static (date-less) assets.  Live under a fixed @c static/
+    // subtree at the root; every date shares them.
+    append(globByExtension(root / "static" / "atx", {".atx"}));
+    append(globByExtension(root / "static" / "nc",  {".nc"}));
+
+    log->info("Internal mode: discovered {} product files for date {}-{:03d}",
+        resolved.product_paths.size(), year, doy);
+
+    // -------- Step 3: broadcast navigation --------------------------
+    // Same products dir; pick the *_MN.rnx (multi-system broadcast
+    // nav) when present, else any .rnx in there as a fallback.
+    if (config_.getNavigationPath().empty()) {
+        const auto nav_candidates = globByExtension(obs_day_products, {".rnx"});
+        std::filesystem::path picked;
+        for (const auto& p : nav_candidates) {
+            if (icontains(p.filename().string(), "_MN.")) { picked = p; break; }
+        }
+        if (picked.empty() && !nav_candidates.empty()) picked = nav_candidates.front();
+        if (!picked.empty()) {
+            resolved.navigation_path = picked;
+            log->info("Internal mode: navigation = {}", picked.string());
+        } else {
+            log->warn("Internal mode: no broadcast navigation file under {}",
+                obs_day_products.string());
+        }
+    }
+
+    // -------- Step 4: observations ---------------------------------
+    // <root>/<YYYY-DOY>/obs/<station>/.  PPP / PPP-RTK pick a single
+    // file (preferring the configured station if any); baseline mode
+    // resolves per-station against the BaselineConfig entries.
+    const std::filesystem::path obs_root = root / dateDirName(year, doy) / "obs";
 
     if (!config_.isBaselineMode() && config_.getObservationPath().empty()) {
-        std::vector<std::filesystem::path> obs_candidates;
-        for (const auto& search_root : obs_search_roots) {
+        std::filesystem::path picked;
+        const auto& dl = config_.getDownloadConfig();
+        if (!dl.station.empty()) {
+            picked = pickStationRnx(obs_root, dl.station);
+        }
+        if (picked.empty()) {
+            // No station configured / no match — fall back to the
+            // first .rnx under any obs/<station>/ subdir.
             std::error_code ec;
-            if (search_root.empty() || !std::filesystem::exists(search_root, ec)) continue;
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(search_root, ec)) {
-                if (ec) break;
-                if (!entry.is_regular_file()) continue;
-                const std::string parent = entry.path().parent_path().filename().string();
-                const std::string ext    = toLowerLocal(entry.path().extension().string());
-                // Accept .rnx / .rinex / .obs / .NNo (RINEX 2 obs short-name).
-                // Hatanaka files are rejected — the parser can't read them.
-                const bool is_rinex_ext =
-                    ext == ".rnx" || ext == ".rinex" || ext == ".obs" ||
-                    (ext.size() == 4 && ext[0] == '.'
-                                     && std::isdigit(static_cast<unsigned char>(ext[1]))
-                                     && std::isdigit(static_cast<unsigned char>(ext[2]))
-                                     && (ext[3] == 'o' || ext[3] == 'O'));
-                if (!is_rinex_ext) continue;
-                obs_candidates.push_back(entry.path());
-                // Prefer files under .../absolute/ — they're the canonical
-                // PPP fixtures.  First such hit wins.
-                if (resolved.observation_path.empty() && icontains(parent, "absolute")) {
-                    resolved.observation_path = entry.path();
+            std::vector<std::filesystem::path> all_obs;
+            if (std::filesystem::exists(obs_root, ec)) {
+                for (const auto& entry : std::filesystem::directory_iterator(obs_root, ec)) {
+                    if (ec) break;
+                    if (!entry.is_directory()) continue;
+                    auto rnxs = globByExtension(entry.path(), {".rnx"});
+                    for (auto& p : rnxs) all_obs.push_back(std::move(p));
                 }
             }
+            std::sort(all_obs.begin(), all_obs.end());
+            if (!all_obs.empty()) picked = all_obs.front();
         }
-        if (resolved.observation_path.empty() && !obs_candidates.empty()) {
-            std::sort(obs_candidates.begin(), obs_candidates.end());
-            resolved.observation_path = obs_candidates.front();
-        }
-        if (!resolved.observation_path.empty()) {
-            date_hint = extractYyyyDoy(resolved.observation_path);
-            log->info("Internal mode: observation = {} (date hint='{}')",
-                resolved.observation_path.string(), date_hint);
+        if (!picked.empty()) {
+            resolved.observation_path = picked;
+            log->info("Internal mode: observation = {}", picked.string());
         } else {
-            log->warn("Internal mode: no observation RINEX found under {} or {}",
-                observations_root.string(),
-                (products_root / "rinex" / "unzip").string());
+            log->warn("Internal mode: no observation RINEX under {}",
+                obs_root.string());
         }
     } else if (config_.isBaselineMode()) {
         const auto& bc = config_.getBaselineConfig();
         if (bc.reference.rinex_path.empty()) {
-            const auto p = findObservationByStation(obs_search_roots, bc.reference.name);
+            const auto p = pickStationRnx(obs_root, bc.reference.name);
             if (!p.empty()) {
                 resolved.baseline_reference_rinex_path = p;
                 log->info("Internal mode: baseline reference '{}' = {}",
                     bc.reference.name, p.string());
             } else {
-                log->warn("Internal mode: no RINEX matching reference station '{}' "
-                          "under {} or {}",
-                    bc.reference.name, observations_root.string(),
-                    (products_root / "rinex" / "unzip").string());
+                log->warn("Internal mode: no RINEX matching reference '{}' under {}",
+                    bc.reference.name, obs_root.string());
             }
         }
         resolved.baseline_rover_rinex_paths.resize(bc.rovers.size());
         for (size_t i = 0; i < bc.rovers.size(); ++i) {
             if (!bc.rovers[i].rinex_path.empty()) continue;
-            const auto p = findObservationByStation(obs_search_roots, bc.rovers[i].name);
+            const auto p = pickStationRnx(obs_root, bc.rovers[i].name);
             if (!p.empty()) {
                 resolved.baseline_rover_rinex_paths[i] = p;
                 log->info("Internal mode: baseline rover '{}' = {}",
                     bc.rovers[i].name, p.string());
             } else {
-                log->warn("Internal mode: no RINEX matching rover station '{}' "
-                          "under {} or {}",
-                    bc.rovers[i].name, observations_root.string(),
-                    (products_root / "rinex" / "unzip").string());
-            }
-        }
-        // Prefer the reference station's path for the date hint;
-        // fall back to whatever's already on the config (manual override).
-        std::filesystem::path date_hint_src = !resolved.baseline_reference_rinex_path.empty()
-            ? resolved.baseline_reference_rinex_path
-            : bc.reference.rinex_path;
-        if (date_hint_src.empty() && !resolved.baseline_rover_rinex_paths.empty()) {
-            for (const auto& p : resolved.baseline_rover_rinex_paths) {
-                if (!p.empty()) { date_hint_src = p; break; }
-            }
-        }
-        if (!date_hint_src.empty()) date_hint = extractYyyyDoy(date_hint_src);
-        if (!date_hint.empty()) log->info("Internal mode: baseline date hint='{}'", date_hint);
-    }
-
-    // ---- Broadcast navigation (date-aware) ------------------------
-    // Prefer products/brdc/unzip (matches ProductResolver layout); fall
-    // back to legacy products/rnx/ if some user has hand-curated files
-    // there from before this refactor.  Within the candidate set we
-    // prefer (a) a filename containing date_hint, then (b) "_MN." for
-    // multi-system broadcast nav (covers every constellation).
-    if (config_.getNavigationPath().empty()) {
-        auto nav_candidates = globByExtension(products_root / "brdc" / "unzip", {".rnx"});
-        if (nav_candidates.empty())
-            nav_candidates = globByExtension(products_root / "rnx", {".rnx"});
-        if (!nav_candidates.empty()) {
-            std::filesystem::path picked;
-            // Pass 1: date hint + multi-system.
-            if (!date_hint.empty()) {
-                for (const auto& p : nav_candidates) {
-                    const std::string fn = p.filename().string();
-                    if (fn.find(date_hint) != std::string::npos &&
-                        icontains(fn, "_MN.")) { picked = p; break; }
-                }
-            }
-            // Pass 2: date hint only.
-            if (picked.empty() && !date_hint.empty()) {
-                for (const auto& p : nav_candidates) {
-                    if (p.filename().string().find(date_hint) != std::string::npos) {
-                        picked = p; break;
-                    }
-                }
-            }
-            // Pass 3: any multi-system file.
-            if (picked.empty()) {
-                for (const auto& p : nav_candidates) {
-                    if (icontains(p.filename().string(), "_MN.")) { picked = p; break; }
-                }
-            }
-            // Pass 4: anything.
-            if (picked.empty()) picked = nav_candidates.front();
-            resolved.navigation_path = picked;
-            log->info("Internal mode: navigation = {}", picked.string());
-        } else {
-            log->warn("Internal mode: no broadcast navigation file under {} or {}",
-                (products_root / "brdc" / "unzip").string(),
-                (products_root / "rnx").string());
-        }
-    }
-
-    // ---- Date-filter the product list ----------------------------
-    // The glob pass above happily pulled in every SP3/CLK/BIA/ERP it
-    // could find, including products from unrelated fixture dates
-    // sitting in the same cache (e.g. 2023-321 and 2024-129 both ship
-    // in the bundled data set).  ProductParser would then load them
-    // all, which is wasteful and noisy at best and can confuse
-    // interpolation at day boundaries at worst.  Now that we have a
-    // date hint from the obs file, drop products outside the
-    // ±1-day orbit window — the same window ProductResolver uses in
-    // production mode.  Date-less files (igs20.atx, EOT20_load.nc)
-    // pass through because their filenames don't encode a YYYYDOY.
-    if (!date_hint.empty() && !resolved.product_paths.empty()) {
-        const size_t before = resolved.product_paths.size();
-        std::vector<std::filesystem::path> kept;
-        kept.reserve(before);
-        std::vector<std::string> dropped_for_log;
-        for (auto& p : resolved.product_paths) {
-            if (isProductInDateWindow(p, date_hint, /*window_days=*/1)) {
-                kept.push_back(std::move(p));
-            } else {
-                dropped_for_log.push_back(p.filename().string());
-            }
-        }
-        resolved.product_paths = std::move(kept);
-        log->info("Internal mode: date-filtered products around hint '{}': "
-                  "kept {}/{} (dropped {})",
-                  date_hint, resolved.product_paths.size(), before,
-                  dropped_for_log.size());
-        if (!dropped_for_log.empty() && log->level() == spdlog::level::debug) {
-            for (const auto& fn : dropped_for_log) {
-                log->debug("  dropped (out of window): {}", fn);
+                log->warn("Internal mode: no RINEX matching rover '{}' under {}",
+                    bc.rovers[i].name, obs_root.string());
             }
         }
     }
 
-    // Friendly first-run hint.  If we ended up with nothing — no
-    // products, no nav, no obs (or no baseline obs in baseline mode) —
-    // the most likely cause is a fresh clone that hasn't run the
-    // bootstrap yet.  The .gitignore keeps only README.md files
-    // under data/, so the directories exist but are empty of fixtures.
+    // -------- Step 5: empty-tree warning ---------------------------
     const bool found_anything =
         !resolved.product_paths.empty() ||
         !resolved.navigation_path.empty() ||
@@ -480,7 +446,8 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
                     resolved.baseline_rover_rinex_paths.end(),
                     [](const std::filesystem::path& p) { return !p.empty(); });
     if (!found_anything) {
-        log->warn("Internal data tree {} appears unpopulated.", root.string());
+        log->warn("Internal data tree {} appears unpopulated for date {}-{:03d}.",
+            root.string(), year, doy);
         log->warn("Run: python scripts/bootstrap_internal_data.py "
                   "(from the repo root) to download the bundled fixtures.");
     }

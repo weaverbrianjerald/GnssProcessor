@@ -9,7 +9,7 @@ __pycache__/
 reference_software/
 
 # -------------------------------------------------------------------
-# Internal-mode test fixtures.
+# Internal-mode test fixtures (date-first unified layout).
 #
 # data/ is populated by scripts/bootstrap_internal_data.py from
 # canonical sources (CDDIS for IGS products, files.igs.org for ATX,
@@ -20,11 +20,35 @@ reference_software/
 #   - obs RINEX                    : up to ~35 MB per station-day
 #   - igs20.atx                    : ~41 MB
 #   - EOT20_load.nc                : ~280 MB
-#
-# We keep the directory skeleton (README.md files) so a fresh clone
-# has a clear place for the bootstrap to write into.
 # -------------------------------------------------------------------
-data/observations/**
-!data/observations/README.md
-data/products/**
-!data/products/README.md
+# Date-keyed fixture subtrees (e.g. data/2024-129/products/...)
+data/[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]/
+# Date-independent assets and raw download cache (production-mode).
+data/static/
+data/cache/
+# User-managed debug RINEX subsets (e.g. trimmed 1-hour files for
+# fast iteration); pinned by some configs via files.observation_path.
+data/rinex/
+
+# One-time migration artifacts from the flat→date-first refactor —
+# preserved README content from the old layout.
+data/*.legacy
+
+# -------------------------------------------------------------------
+# Orchestrator outputs (scripts/run_batch.py).
+#
+# Each cell writes its run_config.json, captured stdout/stderr, and
+# a logs/ tree (state_trace.csv etc.) under here.  Can grow to GBs
+# across a multi-week batch.
+# -------------------------------------------------------------------
+batch_results/
+batch_results_*/
+
+# Top-level logs/ when running gnss_processor.exe directly from the
+# repo root (cwd-relative log_dir_ default in Application).
+logs/
+
+# Orphan from a pre-refactor staging experiment.  Production-mode
+# cache lives at C:/GnssProcessorSupport/products/ per the configs;
+# nothing references this in-tree directory anymore.
+data_production/

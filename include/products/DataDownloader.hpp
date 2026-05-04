@@ -12,6 +12,17 @@ namespace GnssProcessor {
  * Uses libcurl for HTTPS transfers and zlib for gzip decompression.
  * CDDIS authentication is handled via the standard .netrc mechanism
  * (libcurl reads ~/.netrc automatically when instructed).
+ *
+ * On construction the .netrc path is resolved explicitly:
+ *   1. If @c netrc_path is set and exists, use it.
+ *   2. Else look for @c ~/.netrc (Unix convention).
+ *   3. Else look for @c ~/_netrc (Windows convention).
+ *   4. Else log a warning (CDDIS downloads will fail).
+ *
+ * The resolved path is passed to libcurl via @c CURLOPT_NETRC_FILE so the
+ * behaviour is deterministic across platforms — libcurl's default file
+ * discovery differs between Windows and Unix and silently picks up nothing
+ * if the user uses the "wrong" convention for their OS.
  */
 class DataDownloader {
 public:
@@ -19,8 +30,7 @@ public:
      * @brief Construct a DataDownloader.
      * @param log_manager Logging facility.
      * @param netrc_path  Path to the .netrc credentials file.  If empty,
-     *                    libcurl's default (~/_netrc on Windows, ~/.netrc
-     *                    on Unix) is used.
+     *                    auto-discovery checks @c ~/.netrc then @c ~/_netrc.
      * @param keep_zip_after_unzip
      *                    When @c false (the default), @c downloadAndDecompress
      *                    deletes the @c .gz file once decompression succeeds.
@@ -95,8 +105,13 @@ public:
 
 private:
     LogManager& log_manager_;
-    std::filesystem::path netrc_path_;
+    std::filesystem::path netrc_path_;       ///< Resolved .netrc path (empty = none found).
+    bool netrc_resolved_{ false };           ///< True once @c resolveNetrcPath() ran.
     bool keep_zip_after_unzip_{ false };
+
+    /// Resolve and validate the .netrc location once per process. Logs the
+    /// outcome at info (found) or warn (not found). Idempotent.
+    void resolveNetrcPath();
 };
 
 } // namespace GnssProcessor

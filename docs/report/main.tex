@@ -1,0 +1,125 @@
+% ============================================================
+%  GnssProcessor: Mathematical Reference
+%
+%  Scope: equations, state vector layout, and design rationale that
+%  Doxygen can't typeset cleanly.  Implementation-level documentation
+%  (call signatures, parameter docs) remains in the headers under
+%  include/ and is rendered via Doxygen.  Cross-references between
+%  the two are explicit ("see §3.2" / "see KalmanFilter::update").
+%
+%  Build (latexmk handles biber automatically):
+%      latexmk -pdf main.tex
+% ============================================================
+
+\documentclass[11pt,letterpaper]{article}
+
+% --- Math
+\usepackage{amsmath, amssymb, amsthm, mathtools, bm}
+\usepackage{empheq}                 % boxed equations via \begin{empheq}[box=\fbox]{...}
+\usepackage{siunitx}                % \SI{10}{km} etc. for typeset units
+
+% --- Layout
+\usepackage[margin=1in]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{booktabs}
+
+% --- Cross-refs and links
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    citecolor=blue!50!black,
+    urlcolor=blue!50!black,
+}
+\usepackage[capitalize, noabbrev]{cleveref}
+
+% --- Bibliography
+\usepackage[backend=biber, style=numeric-comp, sorting=nyt]{biblatex}
+\addbibresource{references.bib}
+
+% --- Notation shortcuts (kept centralised so all chapters render
+%     consistently; do not redefine in section files).
+\newcommand{\rxset}{\mathcal{R}}                     % set of receivers
+\newcommand{\sysset}{\mathcal{G}}                    % set of constellations
+\newcommand{\satset}[1]{\mathcal{S}_{#1}}            % sats in constellation g
+\newcommand{\sigset}{\mathcal{B}}                    % set of signals
+\newcommand{\rx}{r}                                  % receiver index
+\newcommand{\sat}{i}                                 % satellite index
+\newcommand{\piv}[1]{p_{#1}}                         % pivot of constellation g
+\newcommand{\sigl}{s}                                % signal index
+\newcommand{\Tr}{\mathrm{T}}                         % transpose
+
+\newcommand{\rxpos}{\bm{r}}                          % receiver pos vector
+\newcommand{\satpos}{\bm{r}^{\sat}}                  % satellite pos vector
+\newcommand{\los}{\bm{e}}                            % unit line-of-sight
+\newcommand{\stateV}{\bm{x}}                         % state vector
+\newcommand{\covM}{\bm{P}}                           % state covariance
+\newcommand{\jacH}{\bm{H}}                           % design matrix
+
+\newcommand{\bsd}[1]{\Delta #1}                      % between-sat SD
+\newcommand{\brd}[1]{\nabla #1}                      % between-rx  SD
+\newcommand{\dd}[1]{\nabla\Delta #1}                 % double-difference
+\newcommand{\bsdpiv}[3]{#1^{#2,\piv{#3}}}            % BSSD wrt pivot of g
+
+\newcommand{\code}{P}                                % pseudorange obs
+\newcommand{\phaseo}{\Phi}                           % carrier-phase obs
+\newcommand{\zwd}{\mathrm{ZWD}}
+\newcommand{\zhd}{\mathrm{ZHD}}
+\newcommand{\geomrange}{\rho}                        % geometric range
+\newcommand{\sLight}{c}                              % speed of light
+
+\title{\bfseries GnssProcessor: Mathematical Reference}
+\author{}
+\date{Revision date: \today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+
+\section{Introduction}\label{sec:intro}
+
+This document is the mathematical companion to \texttt{GnssProcessor}, a
+C\texttt{++}17 post-processing and real-time GNSS engine implementing
+PPP, PPP-RTK, and double-differenced baseline modes.  Its scope is
+deliberately narrow:
+\begin{itemize}[leftmargin=*]
+\item State vector layout (\Cref{sec:state}) --- which states the
+      filter carries and when each is enabled.
+\item Observation equations (\Cref{sec:obs}) --- the
+      \emph{uncombined} pseudorange and carrier-phase models the
+      filter linearizes around.
+\item Differencing transformations (\Cref{sec:diff}) --- the
+      between-satellite single-difference (BSSD) used in PPP-RTK and
+      the double-difference (DD) used in baseline modes, including
+      the S-transform structure that maps undifferenced parameters
+      to differenced ones.
+\end{itemize}
+
+Implementation details (function signatures, class responsibilities,
+config field reference) live in the headers under \texttt{include/}
+and are rendered via Doxygen.  When this document references a
+specific algorithmic component, it cites the source file directly
+(e.g.\ \texttt{src/core/filter/KalmanFilter.cpp}).
+
+The notation follows the IGS conventions adopted by
+\textcite{subirana2013gnss} and \textcite{teunissen2017handbook};
+see \Cref{sec:notation} for the symbol table this document depends on.
+
+\section{Notation and conventions}\label{sec:notation}
+\input{notation}
+
+\section{State vector layout}\label{sec:state}
+\input{state_vector}
+
+\section{Observation equations}\label{sec:obs}
+\input{observation_equations}
+
+\section{Differencing transformations}\label{sec:diff}
+\input{bssd_dd}
+
+\printbibliography
+
+\end{document}

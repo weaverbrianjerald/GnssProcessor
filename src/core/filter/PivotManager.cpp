@@ -31,7 +31,11 @@ void PivotManager::buildEpochMaps(
     cons_info.clear();
 
     for (const auto& obs : observations) {
-        if (obs.system == System::GLONASS) continue;
+        // Skip GLONASS by default — its FDMA per-channel receiver delay
+        // breaks the standard BSSD assumption that receiver-side terms
+        // cancel between satellites.  Opt back in via enable_glonass_bssd
+        // (combined with estimate_sat_biases to absorb the ICB).
+        if (obs.system == System::GLONASS && !config_.enableGlonassBssd()) continue;
 
         const std::string cons = PppUtils::getSystemString(obs.satellite);
 
@@ -415,6 +419,15 @@ void PivotManager::reReferenceSatBiases(
 // Main pivot handover
 // ===========================================================================
 
+void PivotManager::requestForcedHandover(const std::string& constellation,
+                                          const std::string& reason) {
+    auto log = log_manager_.getLogger("bssd_pivot_manager");
+    log->warn("Forced pivot handover requested for {} ({}). "
+              "Will be processed at next handlePivotHandover call.",
+              constellation, reason);
+    forced_handover_requests_.insert(constellation);
+}
+
 void PivotManager::handlePivotHandover(
     const std::vector<PppObservation>& observations,
     StateManager& state_manager,
@@ -477,8 +490,24 @@ void PivotManager::handlePivotHandover(
         // handover), no disturbance check is needed � the old pivot is
         // simply being replaced because it dropped below the elevation
         // threshold, and the lossless handover handles this correctly.
+        // Forced-handover requests come from external detectors (KF
+        // post-fit residual analyzer) when a pivot's *observation* has
+        // slipped while its filter STATE remains intact.  Treat the
+        // constellation as if isPivotDisturbed had returned true so the
+        // existing handleDisturbedPivot recovery path runs end-to-end:
+        // pick a healthy replacement, fall through to the lossless
+        // re-referencing block below.  Consume the request whether or not
+        // a replacement was found — a fresh request must be re-issued
+        // each epoch the detector still wants the handover.
+        const bool forced = forced_handover_requests_.count(cons) > 0;
         if (pivot == old_pivot &&
-            isPivotDisturbed(old_pivot, phase_sigs, state_manager, x, P)) {
+            (forced || isPivotDisturbed(old_pivot, phase_sigs, state_manager, x, P))) {
+            if (forced) {
+                log->warn("{}BSSD pivot {} in {}: forced handover honored "
+                          "(KF-detected pivot slip)",
+                          epoch_prefix, old_pivot, cons);
+            }
+            forced_handover_requests_.erase(cons);
             if (!handleDisturbedPivot(cons, pivot, sat_info, phase_sigs,
                                       state_manager, x, P, epoch_prefix)) {
                 // Re-zeroed in place, no handover.
@@ -486,7 +515,7 @@ void PivotManager::handlePivotHandover(
                 cov_modified   = true;
                 continue;
             }
-            // pivot was updated to the replacement � fall through to handover.
+            // pivot was updated to the replacement — fall through to handover.
         }
 
         if (pivot == old_pivot) continue;

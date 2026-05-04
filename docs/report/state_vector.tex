@@ -1,0 +1,141 @@
+% ============================================================
+%  State vector layout
+% ============================================================
+
+The Kalman filter operates on a state vector $\stateV_k \in \mathbb{R}^{n_k}$
+whose dimension $n_k$ \emph{varies across epochs}: per-satellite and
+per-(satellite, signal) substates are added when a new sat/signal is
+first observed and pruned (or marked stale) when the satellite drops
+below the elevation mask or its phase track is interrupted by a cycle
+slip without recovery.  All bookkeeping --- key$\to$index maps, free-list
+re-use, and dimensional reshaping of $\stateV$ and $\covM$ --- is
+encapsulated in \texttt{StateManager}; \texttt{KalmanFilter} consumes
+the state through that interface and never indexes raw memory by
+hard-coded offsets.
+
+\subsection{Schematic layout}
+
+In schematic form, suppressing the epoch index $k$:
+\begin{align}
+\stateV \;=\; \big[\,
+& \underbrace{\rxpos_\rx^{\Tr}}_{3} \,,\,
+  \underbrace{\bm{v}_\rx^{\Tr}}_{0\text{ or }3} \,,\,
+  \underbrace{\sLight\,\mathrm{d}t_\rx}_{1} \,,\,
+  \underbrace{(\sLight\,\delta t^{(g)}_\rx)_{g\neq g_{\mathrm{ref}}}^{\Tr}}_{|\sysset|-1} \,,\, \notag\\
+& \underbrace{\zwd_\rx,\,(g_N, g_E)}_{1+0\text{ or }1+2} \,,\,
+  \underbrace{(\sLight\,\mathrm{d}t^{\phi}_\rx)}_{0\text{ or }1} \,,\, \notag\\
+& \underbrace{(I^\sat_{\rx,1})_{\sat \in \mathcal{V}_k}^{\Tr}}_{|\mathcal{V}_k|} \,,\,
+  \underbrace{(N^\sat_{\rx,\sigl})_{(\sat,\sigl) \in \mathcal{A}_k}^{\Tr}}_{|\mathcal{A}_k|} \,,\, \notag\\
+& \underbrace{(B_{\rx,\sigl})_{\sigl \in \sigset}^{\Tr}}_{|\sigset|} \,,\,
+  \underbrace{(B^\sat_\sigl)_{(\sat,\sigl) \in \mathcal{D}_k}^{\Tr}}_{|\mathcal{D}_k|}
+\,\big]^{\Tr}.
+\end{align}
+where
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item $\mathcal{V}_k$ is the set of satellites currently visible at
+      epoch $k$ (i.e.\ above the elevation mask, with valid orbit/clock
+      products and at least one tracked signal),
+\item $\mathcal{A}_k \subseteq \mathcal{V}_k \times \sigset$ is the set
+      of phase-tracked (satellite, signal) pairs,
+\item $\mathcal{D}_k \subseteq \mathcal{V}_k \times \sigset$ is the
+      subset of (satellite, signal) pairs for which the BIA product
+      lacks a satellite OSB and a state-space estimate is therefore
+      created (see \texttt{estimation.estimate\_sat\_biases}).
+\end{itemize}
+
+\subsection{Component-by-component description}
+
+\paragraph{Position $\rxpos_\rx \in \mathbb{R}^3$.}
+ECEF Cartesian receiver position.  Always present.  Initialised either
+from the RINEX header approximate position or, after the first epoch,
+from a Weighted Least-Squares (WLS) seed solution to within the
+linearisation radius of the geometric range model
+(\Cref{sec:obs-geometry}).
+
+\paragraph{Velocity $\bm{v}_\rx \in \mathbb{R}^3$.}
+Optional.  Enabled by \texttt{estimation.estimate\_velocity = true}, or
+forced on by tightly-coupled IMU integration.  When present, the
+position-velocity block evolves as a discrete-time integrated random
+walk under the kinematic process model with spectral densities
+\texttt{position\_q} and \texttt{velocity\_q} respectively.
+
+\paragraph{Receiver clock $\sLight\,\mathrm{d}t_\rx$.}
+Single state, in metres.  Process noise is large
+(\texttt{clock\_bias\_q} $\sim 10^3\,\text{m}^2$ per second) so the
+state is effectively re-estimated each epoch; this captures
+oscillator drift without imposing a stochastic model that may not
+match the receiver's actual oscillator.
+
+\paragraph{Inter-system time offsets $\sLight\,\delta t^{(g)}_\rx$.}
+One per active constellation other than the chosen reference (default
+GPS).  These absorb the per-constellation clock biases that arise from
+mixing analysis-centre-defined clock products across systems
+(``GAL\,$-$\,GPS time offset,'' etc.).
+
+\paragraph{Tropospheric ZWD and gradients.}
+$\zwd_\rx$ models the zenith wet delay; the zenith hydrostatic
+component $\zhd_\rx$ is treated deterministically via the Saastamoinen
+model \cite{saastamoinen1972atmospheric}.  Total slant tropospheric
+delay is then
+\begin{equation}
+T^\sat_\rx \;=\;
+m_h(\theta^\sat_\rx)\,\zhd_\rx
+\;+\;
+m_w(\theta^\sat_\rx)\,\zwd_\rx
+\;+\;
+m_w(\theta^\sat_\rx)\cot\theta^\sat_\rx \big[
+g_N \cos\alpha^\sat_\rx + g_E \sin\alpha^\sat_\rx
+\big],
+\label{eq:tropo-mapping}
+\end{equation}
+with elevation $\theta^\sat_\rx$, azimuth $\alpha^\sat_\rx$, and the
+Niell or VMF mapping functions $m_h, m_w$.  Gradients $(g_N, g_E)$ are
+optional.
+
+\paragraph{Per-satellite slant ionosphere $I^\sat_{\rx,1}$.}
+PPP-RTK-only.  One state per visible satellite, expressed at the L1
+frequency; signal-specific delays follow \Cref{eq:iono-scaling}.
+Initial value seeded from the Klobuchar broadcast model when no
+external ionospheric product is available.  Modelling these per-sat
+states explicitly is what permits PPP-RTK to retain integer ambiguity
+recovery without forming the ionosphere-free combination (which
+amplifies code noise by a factor of $\sim 3$).
+
+\paragraph{Carrier-phase ambiguities $N^\sat_{\rx,\sigl}$.}
+One state per phase-tracked $(\sat, \sigl)$ pair, in cycles.  Treated
+as float during the prediction/update cycle and resolved to integers
+post-hoc by the LAMBDA-family algorithms in
+\texttt{filter/AmbiguityResolver} \cite{teunissen1995lambda} when AR
+is enabled.  Cycle slips trigger a re-seed via
+\texttt{StateManager::resetAmbiguity}, which inflates the diagonal
+covariance entry while preserving the cross-state correlations that
+permit a consistent re-fix.
+
+\paragraph{Receiver code biases $B_{\rx,\sigl}$.}
+One per signal in $\sigset$.  These absorb the receiver-side
+inter-frequency biases that the OSB convention does not reference to
+zero.
+
+\paragraph{Satellite code biases $B^\sat_\sigl$.}
+Per (satellite, signal) pair, but \emph{only when the BIA file does
+not supply an OSB} for that pair --- typically a third-frequency
+signal in a triple-frequency setup.  When present, these states are
+weakly stochastic (\texttt{sat\_bias\_q} $\sim 10^{-10}$) since the
+underlying physical biases are nearly stationary on the daily
+timescale.
+
+\subsection{Dynamic indexing}\label{sec:state-indexing}
+
+The variable-dimension blocks ($I, N, B^\sat$) are addressed via key
+maps maintained by \texttt{StateManager}.  The canonical key formats
+are defined once in \texttt{include/filter/StateKeySchema.hpp}:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item iono key: \texttt{"<sys><prn>"}, e.g.\ \texttt{"G05"} for GPS PRN~5;
+\item ambiguity key: \texttt{"<sys><prn>\_<signal>"}, e.g.\ \texttt{"G05\_L1C"};
+\item satellite-bias key: \texttt{"<sys><prn>\_<signal>"}, sharing the
+      ambiguity-key namespace but stored under a distinct map.
+\end{itemize}
+This single source of truth eliminates the off-by-one errors that
+plague hand-managed dynamic state vectors and makes the BSSD/DD
+S-transforms (\Cref{sec:diff}) implementable as block operations on
+the relevant key sets.

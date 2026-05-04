@@ -130,6 +130,33 @@ namespace GnssProcessor {
         bool parseBLQ(const std::string& blq_path, const std::string& station_name,
                       OtlStationCoefficients& coeffs) const;
 
+        /**
+         * @brief Synthesize per-station OTL coefficients from the EOT20 global load grid.
+         *
+         * Reads a small (17 × 2 × 2) hyperslab from the DGFI-TUM EOT20_load.nc
+         * file around the station, bilinearly interpolates the complex height
+         * coefficients (hRe, hIm) at the station position, and converts them to
+         * BLQ-style amplitude / Greenwich phase lag for the 11 BLQ constituents.
+         *
+         * Convention (FES / EOT): h(t) = A · cos(χ(t) - φ), with
+         *   A = sqrt(hRe² + hIm²) and φ = atan2(-hIm, hRe).
+         * EOT20 carries only the radial (height) load component; horizontal
+         * amplitudes are set to zero. The radial signal dominates OTL
+         * (horizontals are typically 1–3 mm peak), so this is a substantial
+         * upgrade over the latitude-scaled phase-blind fallback.
+         *
+         * @param nc_path        Path to EOT20_load.nc.
+         * @param station_ecef   Receiver ECEF position (meters), used to derive
+         *                       (lat, lon) for grid interpolation.
+         * @param[out] coeffs    Output coefficients (amp_up / phase_up filled,
+         *                       horizontal components zeroed).
+         * @return True on success; false if the file cannot be opened, expected
+         *         variables/dimensions are missing, or the station position is invalid.
+         */
+        bool parseEot20Load(const std::string& nc_path,
+                            const Eigen::Vector3d& station_ecef,
+                            OtlStationCoefficients& coeffs) const;
+
     private:
         LogManager& log_manager_;
         OtlStationCoefficients station_coeffs_;

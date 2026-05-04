@@ -318,6 +318,14 @@ private:
     GnssTime prev_epoch_time_{0, 0.0};        /**< Previous epoch full GnssTime for IMU integration. */
     double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 
+    /// Pre-update position captured at the top of each runFilterUpdateLoop;
+    /// used by runGeometryRelinearization to compute |Δpos| against the
+    /// post-update state and decide whether relinearization is needed.
+    Eigen::Vector3d relinearize_pre_update_pos_{ Eigen::Vector3d::Zero() };
+    /// Total relinearization passes applied this run; capped by
+    /// config_.relinearizeMaxCount() when that value is non-negative.
+    int relinearize_count_{ 0 };
+
     std::vector<SmootherEpochSnapshot> smoother_buffer_; /**< Per-epoch snapshots captured for the backward RTS smoother (populated only when config_.runSmoother() is true). */
 };
 

@@ -27,6 +27,7 @@
 #include "math/TimeUtils.hpp"
 #include "common/SignalBand.hpp"
 #include "measurement/BrsdTransform.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -113,24 +114,43 @@ namespace GnssProcessor {
 
         // --- First pass: collect required satellites and ambiguity keys ---
         for (const auto& obs : observations) {
-            // Skip GLONASS entirely when BSSD is active (FDMA ICB issue).
-            if (obs.system == System::GLONASS && config_.enableBetweenSatelliteSd())
+            // Skip GLONASS in BSSD by default — its FDMA per-channel
+            // receiver delay does not cancel in between-satellite SD.
+            // The user can opt back in with enable_glonass_bssd=true,
+            // in which case the per-(sat, signal) sat-bias machinery
+            // (estimate_sat_biases) absorbs the ICB on code rows and
+            // float ambiguities absorb it on phase rows.
+            if (obs.system == System::GLONASS && config_.enableBetweenSatelliteSd()
+                && !config_.enableGlonassBssd())
                 continue;
 
             for (const auto& [ref_type, observed] : obs.observed) {
                 if (ref_type.empty()) continue;
                 if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) continue;
 
-                // When BSSD is active, skip signals on frequency bands
-                // not covered by the pivot — they cannot form SDs and
-                // their states would be unobservable.
+                // When BSSD is active, skip signals on frequency bands not
+                // covered by the pivot — they cannot form SDs and their
+                // states would be unobservable.  For iono-free combos
+                // (e.g. "L1C_L2W") BOTH constituent bands must be covered;
+                // otherwise the resulting IF row would land in a group
+                // where the pivot has no member and BssdTransform would
+                // reject it as a singleton, leaving the ambiguity orphaned
+                // in the state.
                 if (!bssd_pivot_bands_.empty() && ref_type.size() >= 2
                     && (ref_type[0] == 'C' || ref_type[0] == 'L')) {
                     const std::string cons = PppUtils::getSystemString(obs.satellite);
                     auto cit = bssd_pivot_bands_.find(cons);
-                    if (cit != bssd_pivot_bands_.end()
-                        && !cit->second.count(ref_type.substr(0, 2)))
-                        continue;
+                    if (cit != bssd_pivot_bands_.end()) {
+                        const std::string band1 = ref_type.substr(0, 2);
+                        if (!cit->second.count(band1)) continue;
+                        const auto us = ref_type.find('_');
+                        if (us != std::string::npos
+                            && us >= 2
+                            && ref_type.size() >= us + 3) {
+                            const std::string band2 = ref_type.substr(us + 1, 2);
+                            if (!cit->second.count(band2)) continue;
+                        }
+                    }
                 }
 
                 if (is_uncombined && (ref_type[0] == 'C' || ref_type[0] == 'L'))
@@ -259,6 +279,22 @@ namespace GnssProcessor {
         // excluded from the LAMBDA search.  The float ambiguity still absorbs
         // the time-constant satellite phase bias with zero process noise.
         state_manager_.clearUnresolvableAmbiguities();
+
+        // GLONASS in BSSD: every phase ambiguity is contaminated by the
+        // receiver per-channel inter-channel bias (ICB) which the float
+        // ambiguity absorbs.  IAR would lock onto the wrong integer; mark
+        // all GLONASS phase ambiguities unresolvable so LAMBDA skips them.
+        if (config_.enableBetweenSatelliteSd() && config_.enableGlonassBssd()) {
+            for (const auto& obs : observations) {
+                if (obs.system != System::GLONASS) continue;
+                for (const auto& [ref_type, observed] : obs.observed) {
+                    if (ref_type.empty() || ref_type[0] != 'L') continue;
+                    const std::string amb_key = obs.satellite + "_" + ref_type;
+                    if (!required_ambiguities.count(amb_key)) continue;
+                    state_manager_.markAmbiguityUnresolvable(amb_key);
+                }
+            }
+        }
         if (!is_uncombined) {
             // Combined (IF) mode: check both component signals of the IF label.
             for (const auto& obs : observations) {
@@ -372,7 +408,8 @@ namespace GnssProcessor {
         const std::string& epoch_prefix) const {
         if (ref_type.empty()) return false;
 
-        if (obs.system == System::GLONASS && config_.enableBetweenSatelliteSd()) {
+        if (obs.system == System::GLONASS && config_.enableBetweenSatelliteSd()
+            && !config_.enableGlonassBssd()) {
             return false;
         }
 
@@ -596,7 +633,7 @@ namespace GnssProcessor {
         update.observations = observations;
         update.excluded_measurements = excluded_measurements;
         const std::string epoch_tag = TimeUtils::formatGnssTime(update.time);
-        const std::string epoch_prefix = "[" + epoch_tag + "] ";
+        const std::string epoch_prefix;  // %E in spdlog pattern carries the timestamp
 
         if (observations.empty()) {
             log_manager_.getLogger("measurement_model")->error("{}No observations provided for measurement update, mode={}",
@@ -816,7 +853,7 @@ namespace GnssProcessor {
 
     bool MeasurementModel::validateMeasurementUpdate(const EpochMeasurement& measurement) const {
         const std::string epoch_tag = TimeUtils::formatGnssTime(measurement.time);
-        const std::string epoch_prefix = "[" + epoch_tag + "] ";
+        const std::string epoch_prefix;  // %E in spdlog pattern carries the timestamp
 
         if (measurement.innovations.size() != measurement.R_v.size() ||
             measurement.innovations.size() != measurement.H.rows() ||
@@ -1193,6 +1230,13 @@ namespace GnssProcessor {
             double innov_pre{ 0.0 };
             double var_brsd_i{ 0.0 };  ///< BRSD variance on the non-pivot side (var_rov + var_ref).
             double var_brsd_p{ 0.0 };  ///< BRSD variance on the pivot side (var_rov + var_ref).
+            ///< Rover-side wet mapping function values for the non-pivot and
+            ///< pivot satellites.  Used to populate the H column for the
+            ///< differential ZWD state when @c estimate_differential_tropo
+            ///< is on.  Values are nearly band-independent so the IF
+            ///< collapse just propagates the per-band values from r1.
+            double mf_w_rov_i{ 0.0 };
+            double mf_w_rov_p{ 0.0 };
             std::string group_key;
             int amb_idx{ -1 };
             double innov{ 0.0 };
@@ -1246,6 +1290,19 @@ namespace GnssProcessor {
                 // not a state in baseline mode (its contribution already
                 // cancelled in the BRSD layer feeding differenceBrsd).
                 r.h_pos = -(br.los_rov_i - br.los_rov_p).transpose();
+                // Wet mapping function values for the differential-ZWD H
+                // column.  PppModel populates @c mf_w on each PppObservation
+                // from the GMF/VMF wet mapping function at the rover's
+                // elevation; nearly band-independent so any band's per-row
+                // value is fine.  Default 0.0 if the satellite isn't in
+                // rov_by_sat (shouldn't happen — both stations agreed on
+                // the satellite at the BRSD layer — but be defensive).
+                {
+                    auto it_i = rov_by_sat.find(br.sat_i);
+                    auto it_p = rov_by_sat.find(br.sat_p);
+                    r.mf_w_rov_i = (it_i != rov_by_sat.end()) ? it_i->second->mf_w : 0.0;
+                    r.mf_w_rov_p = (it_p != rov_by_sat.end()) ? it_p->second->mf_w : 0.0;
+                }
                 // Group key for R off-diagonal correlation: same pivot
                 // variance contribution is shared by all non-pivot rows
                 // on the same (cons, band, obs_type).
@@ -1339,6 +1396,11 @@ namespace GnssProcessor {
                 ifr.rov_code = r1.rov_code + "+" + r2.rov_code;
                 ifr.ref_code = r1.ref_code + "+" + r2.ref_code;
                 ifr.h_pos    = r1.h_pos;           // identical for both bands
+                // Wet mapping function is essentially frequency-independent;
+                // the GMF/VMF wet partial depends on elevation only, so r1
+                // and r2 agree to within a few PPM.  Propagate r1's values.
+                ifr.mf_w_rov_i = r1.mf_w_rov_i;
+                ifr.mf_w_rov_p = r1.mf_w_rov_p;
                 ifr.innov_pre = alpha * r1.innov_pre + beta * r2.innov_pre;
                 ifr.var_brsd_i = a2 * r1.var_brsd_i + b2 * r2.var_brsd_i;
                 ifr.var_brsd_p = a2 * r1.var_brsd_p + b2 * r2.var_brsd_p;
@@ -1392,16 +1454,23 @@ namespace GnssProcessor {
         // an IF concatenation; otherwise every IF DD ambiguity is pruned
         // and re-added each epoch, losing covariance.
         {
-            std::set<std::string> expected_dd_keys;
+            // Build the expected set as parsed (cons, sat_i, code, pivot) tuples
+            // so the prune doesn't depend on string-formatting details of
+            // makeDdAmbKey matching exactly what's stored.  Then walk the
+            // ambiguity map, parse each DD-namespaced key, and remove any
+            // tuple not in the expected set.
+            using DdTuple = std::tuple<std::string, std::string, std::string, std::string>;
+            std::set<DdTuple> expected;
             for (const auto& r : rows) {
                 if (r.obs_type != 'L') continue;
-                expected_dd_keys.insert(
-                    makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
+                expected.emplace(r.cons, r.sat_i, r.rov_code, r.sat_p);
             }
             std::vector<std::string> to_prune;
             for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
-                if (key.compare(0, 3, "DD|") != 0) continue;
-                if (expected_dd_keys.count(key)) continue;
+                const auto parts = StateKeys::parseDdAmbiguityKey(key);
+                if (!parts) continue;
+                if (expected.count({ parts->cons, parts->sat_i, parts->code, parts->pivot }))
+                    continue;
                 to_prune.push_back(key);
             }
             for (const auto& k : to_prune) state_manager_.removeAmbiguity(k);
@@ -1511,12 +1580,29 @@ namespace GnssProcessor {
             em.satellite_ids.reserve(static_cast<size_t>(m));
             em.signal_types.reserve(static_cast<size_t>(m));
 
+            // Differential ZWD column index — pulled once outside the row
+            // loop; max() if not present (PPP / PPP-RTK or baseline with
+            // estimate_differential_tropo=false).
+            const size_t diff_tropo_idx = state_manager_.getDifferentialTropoIndex();
+            const bool has_diff_tropo = state_manager_.hasDifferentialTropo()
+                && diff_tropo_idx < n_state;
+
             for (Eigen::Index a = 0; a < m; ++a) {
                 const auto& r = rows[kept[static_cast<size_t>(a)]];
                 em.H.block(a, 0, 1, 3) = r.h_pos;
                 if (r.obs_type == 'L' && r.amb_idx >= 0
                     && static_cast<size_t>(r.amb_idx) < n_state) {
                     em.H(a, r.amb_idx) = 1.0;
+                }
+                // Differential ZWD partial: phase rows only (the wet delay
+                // affects code identically but adding code rows would just
+                // double-up the geometry constraint with poorer SNR).  In
+                // DD between non-pivot i and pivot p, ∂y/∂Δzwd ≈ mf_w_i −
+                // mf_w_p (rover-side, short-baseline approximation that the
+                // mapping functions match between rover and reference).
+                if (has_diff_tropo && r.obs_type == 'L') {
+                    em.H(a, static_cast<Eigen::Index>(diff_tropo_idx)) =
+                        r.mf_w_rov_i - r.mf_w_rov_p;
                 }
                 em.innovations(a) = r.innov;
                 em.R_v(a)         = r.var_brsd_i + r.var_brsd_p;

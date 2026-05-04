@@ -12,6 +12,8 @@
 
 namespace GnssProcessor {
 
+    struct GnssTime;
+
     /**
      * @file include/logging/LogManager.hpp
      * @brief Lightweight logging manager wrapper around spdlog for the GnssProcessor project.
@@ -36,8 +38,23 @@ namespace GnssProcessor {
         /// Error messages.
         Error,
         /// Critical (fatal) messages.
-        Critical
+        Critical,
+        /// Disabled â€” emit nothing. Used to silence individual loggers via per-logger overrides.
+        Off
     };
+
+    /**
+     * @brief Parse a LogLevel from a JSON-friendly string.
+     *
+     * Accepts case-insensitive: "trace", "debug", "info", "warn"/"warning",
+     * "error"/"err", "critical"/"crit", "off". Unknown strings throw
+     * @c std::invalid_argument so the config loader can warn the user.
+     *
+     * @param s Level name from the JSON config.
+     * @return Corresponding LogLevel.
+     * @throws std::invalid_argument if @p s is not a recognized level.
+     */
+    LogLevel logLevelFromString(const std::string& s);
 
     /**
      * @class LogManager
@@ -124,6 +141,54 @@ namespace GnssProcessor {
          */
         void setDisabledLoggers(const std::set<std::string>& names);
 
+        /**
+         * @brief Replace a named logger's sinks with a GatedSink wrapper.
+         *
+         * The GatedSink forwards messages in Passthrough mode, buffers them
+         * in Buffer mode. Used by KalmanFilter to suppress intermediate
+         * rebuild-pass output without touching call sites. Idempotent â€”
+         * calling it twice on the same logger returns the same wrapper.
+         * Must be called after the logger has been created.
+         *
+         * @param logger_name Name of the logger to wrap.
+         * @return Shared pointer to the GatedSink, or nullptr if the logger
+         *         doesn't exist.
+         */
+        std::shared_ptr<class GatedSink> installGatedSink(const std::string& logger_name);
+
+        /**
+         * @brief Apply per-logger level overrides.
+         *
+         * Each entry maps a logger name (e.g. "kalman_filter") to the level
+         * at which that logger should emit. Loggers not listed continue to
+         * use the global level passed to @c initialize(). Disabled loggers
+         * (via @c setDisabledLoggers) take precedence over any override
+         * here. Loggers already created are updated immediately; not-yet-
+         * created loggers will pick up their override when first requested.
+         *
+         * @param levels Map of logger name â†’ LogLevel.
+         */
+        void setLoggerLevels(const std::map<std::string, LogLevel>& levels);
+
+        /**
+         * @brief Set the GNSS epoch time used for the [tow=...] field in
+         *        every subsequent log message on the calling thread.
+         *
+         * Set this at the top of each per-epoch processing iteration so
+         * log lines emitted during that epoch carry a TOW that aligns
+         * with the RINEX cadence (e.g. tow=30.000, 60.000).  The value
+         * is thread-local; worker threads see their own setting.  Until
+         * the first call, log lines emit @c "tow=---------" as a
+         * placeholder for boot-time / pre-epoch messages.
+         */
+        static void setCurrentEpochTime(const GnssTime& t);
+
+        /**
+         * @brief Clear the current epoch time so subsequent log
+         *        messages emit the @c "tow=---------" placeholder.
+         */
+        static void clearCurrentEpochTime();
+
     private:
         /// Map of logger name to spdlog logger instance.
         std::map<std::string, std::shared_ptr<spdlog::logger>> loggers_;
@@ -140,6 +205,9 @@ namespace GnssProcessor {
         /// Set of logger names whose level should be forced to off.
         std::set<std::string> disabled_loggers_;
 
+        /// Per-logger level overrides; absent entries fall back to @c level_.
+        std::map<std::string, LogLevel> per_logger_levels_;
+
         /**
          * @brief Convert project LogLevel to spdlog::level::level_enum.
          *
@@ -152,12 +220,12 @@ namespace GnssProcessor {
          * @brief Build a pattern_formatter that uses GPS time for the %* flag.
          *
          * The returned formatter replaces the '%*' custom flag with the
-         * message timestamp shifted by the GPS–UTC leap-second offset so
+         * message timestamp shifted by the GPSï¿½UTC leap-second offset so
          * that log timestamps align with RINEX GPS epoch times.
          */
         std::unique_ptr<spdlog::pattern_formatter> makeGpsFormatter() const;
 
-        /// GPS–UTC offset in seconds (currently 18).
+        /// GPSï¿½UTC offset in seconds (currently 18).
         int gps_utc_offset_s_{ 18 };
     };
 

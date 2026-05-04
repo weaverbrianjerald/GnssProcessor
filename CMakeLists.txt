@@ -24,6 +24,11 @@ find_package(netCDF REQUIRED)
 find_package(CURL REQUIRED)
 find_package(ZLIB REQUIRED)
 
+# OpenMP for Eigen matmul / solve parallelism.  Eigen detects the
+# _OPENMP macro automatically and threads its dense BLAS-equivalent
+# kernels.  Optional — linked only when the toolchain provides it.
+find_package(OpenMP)
+
 include_directories(${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 
 # Ensure optimized builds also emit debug info/PDBs for profiling
@@ -40,6 +45,7 @@ add_library(gnss_core STATIC
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
     src/core/logging/LogManager.cpp
+    src/core/logging/GatedSink.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/ProductCache.cpp
@@ -56,6 +62,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManager.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
+    src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/StateInitializer.cpp
     src/core/measurement/BssdTransform.cpp
@@ -91,6 +98,12 @@ add_library(gnss_core STATIC
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(gnss_core PUBLIC OpenMP::OpenMP_CXX)
+    message(STATUS "OpenMP enabled — Eigen will parallelize dense matmul / solve.")
+else()
+    message(STATUS "OpenMP not found — Eigen kernels will run single-threaded.")
+endif()
 
 # Bake the project root into the binary so PathResolver / GnssConfig
 # can default files.internal_data_root to <project_root>/data without
@@ -136,10 +149,9 @@ add_custom_command(TARGET gnss_processor_module POST_BUILD
 )
 
 add_custom_command(TARGET gnss_processor POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/config
-    COMMAND ${CMAKE_COMMAND} -E copy
-            ${CMAKE_SOURCE_DIR}/src/core/config/gnss_config.json
-            ${CMAKE_BINARY_DIR}/config/gnss_config.json
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/config
+            ${CMAKE_BINARY_DIR}/config
 )
 
 # Disable manifests globally for MSVC (Windows 11 fix)

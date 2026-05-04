@@ -34,10 +34,19 @@ namespace GnssProcessor {
           ppp_utils_(log_manager) {
         log_manager_.getLogger("mw_slip_detector")->info(
             "MwSlipDetector initialized (adaptive MAD-based, k={:.1f}, floor={:.1f} WL, "
-            "initial={:.1f} WL, min_epochs={}, wl_lock_epochs={}, mw_signals={})",
+            "initial={:.1f} WL, min_epochs={}, wl_lock_epochs={}, gap_tol={:.1f}s, mw_signals={})",
             kMadSigmaMultiplier, kMinThresholdCycles, kInitialThresholdCycles,
-            kMinEpochsForAdaptive, kMinEpochsForWlLock,
+            kMinEpochsForAdaptive, kMinEpochsForWlLock, max_gap_seconds_,
             config_.getMwSignalMode() == MwSignalMode::All ? "all" : "filter");
+    }
+
+    void MwSlipDetector::setMaxGapSeconds(double seconds) {
+        if (seconds > 0.0) {
+            max_gap_seconds_ = seconds;
+            log_manager_.getLogger("mw_slip_detector")->info(
+                "MW gap tolerance set to {:.1f}s (was default {:.1f}s)",
+                seconds, kDefaultMaxGapSeconds);
+        }
     }
 
     // =================================================================
@@ -444,12 +453,15 @@ namespace GnssProcessor {
 
         // Detect data gaps: if the satellite was absent for longer than
         // the configured threshold, discard the stale arc and start fresh.
+        // The threshold is overridable via setMaxGapSeconds — Application
+        // tightens it to the RINEX sampling interval when IMU isn't
+        // available and the data rate is coarser than 5 s.
         if (stats.count > 0 && stats.last_epoch_s > 0.0) {
             const double gap = epoch_s - stats.last_epoch_s;
-            if (gap > kMaxGapSeconds) {
+            if (gap > max_gap_seconds_) {
                 log_manager_.getLogger("mw_slip_detector")->debug(
-                    "Data gap {:.1f}s > {:.0f}s for {}: resetting MW arc (n={})",
-                    gap, kMaxGapSeconds, stats_key, stats.count);
+                    "Data gap {:.1f}s > {:.1f}s for {}: resetting MW arc (n={})",
+                    gap, max_gap_seconds_, stats_key, stats.count);
                 stats = MwArcStats{};          // reset to default-initialized
             }
         }
@@ -471,6 +483,42 @@ namespace GnssProcessor {
             // consecutive epochs have been accumulated.  A single MW
             // sample is too noisy (especially for EWL pairs) for a
             // reliable rounding decision.
+
+            // Sanity check: a BIA-corrected MW value should land near
+            // integer × λ_WL on a clean phase track.  When the very first
+            // sample of a fresh arc has a large fractional offset, the
+            // arc was almost certainly initialized with a slip already
+            // baked in (e.g., a slip occurred during the data gap that
+            // triggered the reset, OR this is the first observation of
+            // the satellite after a long absence and the tracking loop
+            // is still settling).  Declare a slip on init so the
+            // ambiguity gets reset rather than letting the corrupt
+            // value become the new running mean — silent baseline
+            // corruption is precisely the failure mode that lets a
+            // 30-cycle slip slip through to the post-fit residuals.
+            if (bia_corrected && lambda_wl > 0.0) {
+                const double init_cyc = mw_m / lambda_wl;
+                const double frac = std::abs(init_cyc - std::round(init_cyc));
+                if (frac > kInitFracThresh) {
+                    log_manager_.getLogger("mw_slip_detector")->warn(
+                        "MW init suspicious for {}: BIA-corrected MW={:.4f} m → "
+                        "{:.3f} WL cyc has fractional |frac|={:.3f} > {:.2f}. "
+                        "Forcing ambiguity reset (unknown integer slip during arc reset).",
+                        stats_key, mw_m, init_cyc, frac, kInitFracThresh);
+
+                    if (mwwl_trace_.is_open())
+                        writeTraceRecord(obs, sig1, sig2, mw_m, stats.mean,
+                                         0.0, NaN, stats.count, lambda_wl, NaN,
+                                         /*is_slip=*/true, /*excessive=*/false,
+                                         bia_corrected, sat_mw_bias,
+                                         stats.rounded_wl, stats.wl_locked);
+
+                    if (out_slip_cycles) *out_slip_cycles = 0;     // unknown integer
+                    if (out_wl_known)    *out_wl_known    = false;
+                    if (out_slip_frac)   *out_slip_frac   = frac;
+                    return true;
+                }
+            }
 
             if (mwwl_trace_.is_open())
                 writeTraceRecord(obs, sig1, sig2, mw_m, stats.mean, 0.0, NaN,

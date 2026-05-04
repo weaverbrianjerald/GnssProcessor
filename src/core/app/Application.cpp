@@ -108,6 +108,13 @@ bool Application::initLoggingAndConfig() {
             if (!lc.isLoggerEnabled(name)) disabled.insert(name);
         }
         if (!disabled.empty()) log_manager_.setDisabledLoggers(disabled);
+
+        // Apply per-logger level overrides (logging.levels in JSON).
+        // Disabled loggers take precedence; any override here only applies
+        // to loggers not in the disabled set.
+        if (!lc.per_logger_levels.empty()) {
+            log_manager_.setLoggerLevels(lc.per_logger_levels);
+        }
     }
 
     log_manager_.getLogger("main_log")->info("Configuration loaded from {}", config_path_.string());
@@ -414,6 +421,13 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                                       bool& was_complete_reset) {
     reset_satellites.clear();
     was_complete_reset = false;
+
+    // Snapshot the pre-update position so runGeometryRelinearization can
+    // gate its second pass on |Δpos|.  Captured before any KF update so
+    // outlier-rebuild loops inside this function don't mask the true epoch
+    // displacement.
+    relinearize_pre_update_pos_ =
+        state_manager_->getStateVector().head<3>();
     // Choose a relinearization threshold based on whether phase measurements are present.
     auto has_phase = [&modeled_obs]() {
         for (const auto& obs : modeled_obs) {
@@ -437,6 +451,13 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     bool need_update = true;
     size_t carry_bad_residual_count = 0;
     std::set<std::string> carry_excluded_measurements;
+
+    // Concise-log gate: marks the start of a new epoch's update loop. When
+    // logging.kalman_filter_concise_log is on, pass-1 messages emit live
+    // and passes ≥2 are buffered; endEpoch (below) replays the buffer
+    // accumulated by the FINAL pass and discards the rest. No-op when the
+    // flag is off.
+    if (kalman_filter_) kalman_filter_->beginEpoch();
 
     while ((need_update || need_relinear) && relinear_pass < max_passes) {
         ++relinear_pass;
@@ -491,6 +512,41 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                 "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                 epoch_prefix, relinear_pass);
 
+            // Pivot-slip handover requests from the KF post-fit residual
+            // detector.  Forward each constellation's request to the
+            // MeasurementModel's PivotManager — the next pass's
+            // computeMeasurementUpdate calls handlePivotHandover, which
+            // honors the request, picks a healthy replacement pivot, and
+            // re-references all SD ambiguities / iono / sat biases
+            // losslessly to the new pivot.  Take-and-clear semantics so
+            // the same request doesn't re-fire on subsequent passes if
+            // the detector doesn't fire again.
+            auto handover_cons = kalman_filter_->takeRequestedPivotHandovers();
+            auto& res_hist = kalman_filter_->getResidualHistoryTracker();
+            for (const auto& cons : handover_cons) {
+                log_manager_.getLogger("main_log")->info(
+                    "{}Forwarding KF-detected pivot slip on {} to PivotManager for handover next pass",
+                    epoch_prefix, cons);
+                meas_model_->getPivotManager().requestForcedHandover(
+                    cons, "KF post-fit residual detector flagged coherent pivot offset");
+                // Reset residual-history entries whose constellation
+                // matches the handover.  After re-referencing to a new
+                // pivot the BSSD residuals are no longer comparable to
+                // the pre-handover EWMA statistics, so clearing them
+                // forces a fresh warm-up.  No-op when the tracker is
+                // disabled.
+                const char cons_prefix =
+                    cons == "GPS"     ? 'G' :
+                    cons == "Galileo" ? 'E' :
+                    cons == "BeiDou"  ? 'C' :
+                    cons == "GLONASS" ? 'R' :
+                    cons == "QZSS"    ? 'J' :
+                    cons == "SBAS"    ? 'S' : '\0';
+                if (cons_prefix != '\0' && res_hist.isEnabled()) {
+                    res_hist.resetConstellationSignal(cons_prefix, /*signal=*/"");
+                }
+            }
+
             // Reset MW slip detector history for satellites that had ambiguities reset.
             // Phase wind-up is NOT reset (see detectCycleSlips comment for rationale).
             if (kalman_filter_->wasCompleteReset()) {
@@ -501,12 +557,18 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                     cycle_slip_manager_->resetSatellite(obs.satellite);
                     reset_satellites.insert(obs.satellite);
                 }
+                if (res_hist.isEnabled()) res_hist.resetAll();
                 log_manager_.getLogger("main_log")->info(
                     "{}Reset MW slip detector state (complete filter reset)", epoch_prefix);
             } else {
                 for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
                     cycle_slip_manager_->resetSatellite(sat_id);
                     reset_satellites.insert(sat_id);
+                    // Mirror the satellite-level MW reset on the
+                    // residual-history tracker — every (sat_id,
+                    // signal) entry's stats are invalidated by the
+                    // ambiguity reset.
+                    if (res_hist.isEnabled()) res_hist.resetSatellite(sat_id);
                     log_manager_.getLogger("main_log")->debug(
                         "{}Reset MW history for {} (KF ambiguity reset)", epoch_prefix, sat_id);
                 }
@@ -536,6 +598,13 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
 
         need_relinear = (pos_jump > kPosRelinearThreshM);
     }
+
+    // Concise-log gate: replay the final pass's buffer (the "last pass"
+    // visible in the kalman_filter log) and restore passthrough mode. No-op
+    // when the gate is null. Must run regardless of how the loop exited
+    // (max_passes hit, no more rebuilds, or measurement failure) so that
+    // the gate state is always consistent for the next epoch's beginEpoch.
+    if (kalman_filter_) kalman_filter_->endEpoch();
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +616,48 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
                                              EpochMeasurement& applied_meas,
                                              bool have_applied) {
     if (!config_.relinearizeGeometry() || !have_applied) return;
+
+    // ---- Gates -------------------------------------------------------
+    // 1. |Δpos| threshold (auto-picked by data availability): skip
+    //    relinearization when the primary update moved the position less
+    //    than the threshold.  Phase data pins position tightly so a
+    //    1 m default catches only early-convergence epochs; code-only
+    //    epochs see SPP-style ~5 m jitter so a 100 m default fires only
+    //    on truly large jumps (cold start, post-gap recovery).
+    // 2. Per-run cap: hard limit on total relinearizations to bound
+    //    worst-case cost on pathological inputs.
+    const Eigen::Vector3d post_update_pos =
+        state_manager_->getStateVector().head<3>();
+    const double dpos = (post_update_pos - relinearize_pre_update_pos_).norm();
+
+    bool has_phase = false;
+    for (const auto& obs : epoch_obs) {
+        for (const auto& [code, val] : obs.measurements) {
+            if (!code.empty() && code[0] == 'L') { has_phase = true; break; }
+        }
+        if (has_phase) break;
+    }
+    const double thresh = has_phase
+        ? config_.relinearizeDposThresholdPhaseM()
+        : config_.relinearizeDposThresholdCodeOnlyM();
+    if (thresh > 0.0 && dpos < thresh) {
+        log_manager_.getLogger("main_log")->debug(
+            "{}Geometry relinearization skipped: |Δpos|={:.4f} m < threshold {:.4f} m ({})",
+            epoch_prefix, dpos, thresh, has_phase ? "phase" : "code-only");
+        return;
+    }
+    const int cap = config_.relinearizeMaxCount();
+    if (cap >= 0 && relinearize_count_ >= cap) {
+        // Don't log per-epoch once the cap is hit — would spam.  One
+        // info-level "cap reached" line is emitted when we cross it.
+        if (relinearize_count_ == cap) {
+            log_manager_.getLogger("main_log")->info(
+                "{}Geometry relinearization cap ({}) reached; suppressing further passes",
+                epoch_prefix, cap);
+            ++relinearize_count_;  // bump past so the message fires once
+        }
+        return;
+    }
 
     try {
         state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
@@ -579,6 +690,7 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
     if (relinear_meas.innovations.size() == 0 || !meas_model_->validateMeasurementUpdate(relinear_meas)) return;
 
     auto relinear_result = kalman_filter_->update(relinear_meas);
+    ++relinearize_count_;
     if (relinear_result == KalmanFilter::UpdateResult::Applied) {
         applied_meas = relinear_meas;
         try {
@@ -749,6 +861,22 @@ int Application::run() {
 // --- Phase 1: Logging & configuration ---
 if (!initLoggingAndConfig()) return 1;
 
+// Apply Eigen thread count.  Default in config is 1 (sequential) because
+// PPP-RTK / baseline matrix sizes (n≈350, m≈250) sit below the size at
+// which OpenMP fork/join overhead is offset by the parallel speedup —
+// in profile traces vcomp140 idle-at-barrier showed up as ~13% of the
+// run.  Set processing.eigen_threads to 0 (OpenMP default) or any N > 1
+// to opt back into multi-threaded.
+const int eigen_threads = config_.eigenThreads();
+if (eigen_threads > 0) {
+    Eigen::setNbThreads(eigen_threads);
+    log_manager_.getLogger("main_log")->info(
+        "Eigen thread count: {} (config-pinned)", eigen_threads);
+} else {
+    log_manager_.getLogger("main_log")->info(
+        "Eigen thread count: {} (OpenMP default)", Eigen::nbThreads());
+}
+
 // --- Branch on application mode ---
 if (config_.getAppMode() == AppMode::RealTime) {
     return runRealTime();
@@ -779,6 +907,20 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
     // Provide BIA satellite biases to the MW and EWL detectors for integer rounding
     cycle_slip_manager_->setCorrections(&ppp_model_->getCorrections());
+
+    // Adaptive MW arc-reset gap tolerance.  When IMU isn't bridging gaps
+    // and the RINEX sampling interval is coarser than 5 s, any inter-epoch
+    // gap longer than the nominal cadence is suspicious — tightening the
+    // gap tolerance to the data rate prevents the MW detector from
+    // silently initializing a fresh arc on a slip-corrupted sample after
+    // a brief outage.  IMU mode keeps the default 120 s because INS
+    // propagation legitimately bridges gaps that long.
+    if (!config_.enableImu()) {
+        const double rinex_interval = rinex_parser_->getHeader().interval.value_or(0.0);
+        if (rinex_interval > 5.0) {
+            cycle_slip_manager_->mwDetector().setMaxGapSeconds(rinex_interval);
+        }
+    }
 
     // Provide MW detector to the BSSD pivot manager for quality-based pivot scoring.
     meas_model_->setMwDetector(&cycle_slip_manager_->mwDetector());
@@ -865,8 +1007,14 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         state_manager_->setStateEpochTime(current_time);
+        LogManager::setCurrentEpochTime(current_time);
 
-        const std::string epoch_prefix = "[" + TimeUtils::formatGnssTime(current_time) + "] ";
+        // The unified [%E] field in the spdlog pattern (LogManager) now
+        // carries the GPS week / TOW / GPS-scale datetime for every log
+        // line; an in-message-body epoch prefix would duplicate it.  Kept
+        // as an empty variable so the existing "{}..." format strings
+        // need no edits.
+        const std::string epoch_prefix;
 
         // 4b. Compute time step and detect data gaps.
         // When downsampling is active the effective cadence is
@@ -1045,6 +1193,8 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
     log_manager_.getLogger("main_log")->info("Processing completed in {} ms, mode={}",
         duration_ms, is_ppp_rtk ? "PPP-RTK" : "PPP");
+
+    if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
 
     return 0;
 }

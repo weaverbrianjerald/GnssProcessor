@@ -236,7 +236,12 @@ namespace GnssProcessor {
 
     bool TimeUtils::isValidGregorianDate(int year, int month, int day,
         int hour, int minute, double second) {
-        if (year < 1980 || month < 1 || month > 12 || day < 1 ||
+        // Year >= 1970 admits pre-GPS-epoch dates (Block I satellite ATX
+        // VALID FROM lines from 1978, etc.).  These convert to negative
+        // GPS weeks via gregorianGpsToGpsTime, which downstream callers
+        // handle correctly — the antenna matcher treats them as
+        // "no covering window" for any modern epoch.
+        if (year < 1970 || month < 1 || month > 12 || day < 1 ||
             hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
             second < 0.0 || second >= 60.0)
             return false;
@@ -290,6 +295,16 @@ namespace GnssProcessor {
             << std::setw(6) << std::fixed << std::setprecision(3) << second
             << " UTC)";
         return oss.str();
+    }
+
+    void TimeUtils::gpsTimeToGpsScaleCalendar(const GnssTime& gpsTime, int& year, int& month,
+                                              int& day, int& hour, int& minute, double& second) {
+        const double gps_seconds = static_cast<double>(gpsTime.week)
+                                 * static_cast<double>(SECONDS_IN_WEEK) + gpsTime.tow;
+        const double jd_gps = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
+        // No leap-second subtraction — the calendar fields end up on the
+        // same grid as TOW (e.g. TOW=281400 → 06:10:00.000, not 06:09:42).
+        julianDayToGregorian(jd_gps, year, month, day, hour, minute, second);
     }
 
 } // namespace GnssProcessor

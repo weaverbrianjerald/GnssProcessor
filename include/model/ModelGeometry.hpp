@@ -23,6 +23,7 @@
 #include "model/Planetary.hpp"
 #include "atmosphere/Troposphere.hpp"
 #include <map>
+#include <set>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -267,6 +268,12 @@ namespace GnssProcessor {
         mutable GnssTime cached_sun_moon_epoch_{0, -1.0};  /**< Epoch of cached Sun/Moon. */
         mutable Eigen::Vector3d cached_sun_pos_{Eigen::Vector3d::Zero()};   /**< Cached Sun ECEF (m). */
         mutable Eigen::Vector3d cached_moon_pos_{Eigen::Vector3d::Zero()};  /**< Cached Moon ECEF (m). */
+
+        /// Satellites already warned about for missing/invalid clock products.
+        /// Without this set the warning fires once per (call site × satellite ×
+        /// epoch) and dominates geometry.log — typically 4 sats × 2 calls/epoch
+        /// × thousands of epochs. We warn once per satellite per session.
+        mutable std::set<std::string> sats_warned_no_clock_;
     };
 
     } // namespace Model

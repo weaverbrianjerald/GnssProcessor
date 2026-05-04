@@ -1,47 +1,83 @@
 #include "logging/LogManager.hpp"
+#include "logging/GatedSink.hpp"
+#include "math/TimeUtils.hpp"
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <algorithm>
+#include <cctype>
 #include <iomanip>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 
 namespace GnssProcessor {
 
-    // ===================================================================
-    // Custom spdlog flag formatter: GPS time (%* flag)
-    // ===================================================================
+    LogLevel logLevelFromString(const std::string& s) {
+        std::string lower(s.size(), '\0');
+        std::transform(s.begin(), s.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower == "trace")                            return LogLevel::Trace;
+        if (lower == "debug")                            return LogLevel::Debug;
+        if (lower == "info")                             return LogLevel::Info;
+        if (lower == "warn" || lower == "warning")       return LogLevel::Warn;
+        if (lower == "error" || lower == "err")          return LogLevel::Error;
+        if (lower == "critical" || lower == "crit")      return LogLevel::Critical;
+        if (lower == "off" || lower == "none" || lower == "disabled") return LogLevel::Off;
+        throw std::invalid_argument("Unknown LogLevel string: '" + s + "'");
+    }
 
-    class GpsTimeFlagFormatter : public spdlog::custom_flag_formatter {
+    // ===================================================================
+    // Per-thread current-epoch context for log lines
+    // ===================================================================
+    //
+    // Set by the application at the top of each per-epoch processing
+    // iteration; consumed by TowFlagFormatter on every log message.
+    // Thread-local so worker threads (e.g. multi-rover baselines, future
+    // network mode) each carry their own current epoch.
+    namespace {
+        thread_local std::optional<GnssTime> tls_current_epoch_;
+    }
+
+    void LogManager::setCurrentEpochTime(const GnssTime& t) {
+        tls_current_epoch_ = t;
+    }
+
+    void LogManager::clearCurrentEpochTime() {
+        tls_current_epoch_.reset();
+    }
+
+    // ===================================================================
+    // Custom spdlog flag formatter: unified epoch field (%E)
+    // ===================================================================
+    //
+    // Emits "wk, tow.mmm (YYYY-MM-DD HH:MM:SS.mmm)" in GPS time scale
+    // when the calling thread has a current epoch set, a placeholder of
+    // matching width otherwise.  The datetime is GPS-scale (NO UTC leap-
+    // second subtraction) so it aligns with TOW exactly — a 30 s RINEX
+    // file produces lines on the HH:MM:00 / HH:MM:30 grid, not 18 s off.
+    class EpochFlagFormatter : public spdlog::custom_flag_formatter {
     public:
-        explicit GpsTimeFlagFormatter(int offset_s) : offset_s_(offset_s) {}
-
-        void format(const spdlog::details::log_msg& msg, const std::tm& /*unused*/,
+        void format(const spdlog::details::log_msg& /*msg*/, const std::tm& /*unused*/,
                      spdlog::memory_buf_t& dest) override {
-            // Shift the message time_point by the GPS-UTC offset.
-            auto gps_tp = msg.time + std::chrono::seconds(offset_s_);
-            auto tt = std::chrono::system_clock::to_time_t(gps_tp);
-            std::tm gps_tm;
-#ifdef _WIN32
-            gmtime_s(&gps_tm, &tt);
-#else
-            gmtime_r(&tt, &gps_tm);
-#endif
-            auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
-                gps_tp.time_since_epoch()) % 1000;
-
-            // Format: YYYY-MM-DD HH:MM:SS.mmm
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-                gps_tm.tm_year + 1900, gps_tm.tm_mon + 1, gps_tm.tm_mday,
-                gps_tm.tm_hour, gps_tm.tm_min, gps_tm.tm_sec,
-                static_cast<int>(millis.count()));
+            char buf[64];
+            if (tls_current_epoch_.has_value()) {
+                int year = 0, month = 0, day = 0, hour = 0, minute = 0;
+                double second = 0.0;
+                TimeUtils::gpsTimeToGpsScaleCalendar(
+                    *tls_current_epoch_, year, month, day, hour, minute, second);
+                std::snprintf(buf, sizeof(buf),
+                              "%4d, %9.3f (%04d-%02d-%02d %02d:%02d:%06.3f)",
+                              tls_current_epoch_->week, tls_current_epoch_->tow,
+                              year, month, day, hour, minute, second);
+            } else {
+                std::snprintf(buf, sizeof(buf),
+                              "----, --------- (---------- --:--:------)");
+            }
             dest.append(std::string_view(buf));
         }
 
         std::unique_ptr<custom_flag_formatter> clone() const override {
-            return std::make_unique<GpsTimeFlagFormatter>(offset_s_);
+            return std::make_unique<EpochFlagFormatter>();
         }
-
-    private:
-        int offset_s_;
     };
 
     /**
@@ -94,18 +130,29 @@ namespace GnssProcessor {
                 }
             }
 
-            // Initialize default logger (gnss_processor)
+            // Apply the GPS+TOW formatter globally so that the 48-odd
+            // call sites that use the default global logger directly
+            // (spdlog::info, spdlog::warn, ...) also get GPS-scale
+            // timestamps and the [tow=...] field.  spdlog clones the
+            // formatter onto every registered logger and stores it as
+            // the default for new loggers, so per-logger
+            // set_formatter() calls below remain a defensive belt-and-
+            // braces but are not strictly required.
+            spdlog::set_formatter(makeGpsFormatter());
+
+            // Default logger ("gnss_processor") is console-only by design.
+            // It catches messages from spdlog::xxx() global calls and from a
+            // small number of legacy sites that use getLogger() with no name;
+            // all module-specific logging should go to a named logger
+            // (getLogger("module_name")) that lands in its own .log file.
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-            auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                (log_dir / "gnss_processor.log").string(), 1024 * 1024 * 5, 3);
-            auto logger = std::make_shared<spdlog::logger>("gnss_processor", spdlog::sinks_init_list{ file_sink, console_sink });
+            auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
             logger->set_formatter(makeGpsFormatter());
             logger->set_level(toSpdlogLevel(level));
             logger->flush_on(spdlog::level::info);
             spdlog::register_logger(logger);
             loggers_["gnss_processor"] = logger;
             initialized_ = true;
-            logger->info("LogManager initialized with log directory: {}", log_dir.string());
             return true;
         }
         catch (const spdlog::spdlog_ex& e) {
@@ -185,17 +232,17 @@ namespace GnssProcessor {
                     (log_dir_ / (logger_name + ".log")).string(), 1024 * 1024 * 5, 3);
                 auto logger = std::make_shared<spdlog::logger>(logger_name, spdlog::sinks_init_list{ file_sink, console_sink });
                 logger->set_formatter(makeGpsFormatter());
+                // Effective level = (disabled ? Off : per-logger override ?: global level_).
                 if (disabled_loggers_.count(logger_name)) {
                     logger->set_level(spdlog::level::off);
+                } else if (auto it = per_logger_levels_.find(logger_name); it != per_logger_levels_.end()) {
+                    logger->set_level(toSpdlogLevel(it->second));
                 } else {
                     logger->set_level(toSpdlogLevel(level_));
                 }
                 logger->flush_on(spdlog::level::info);
                 spdlog::register_logger(logger);
                 loggers_[logger_name] = logger;
-                if (!disabled_loggers_.count(logger_name)) {
-                    logger->info("Initialized logger {} with file: {}", logger_name, (log_dir_ / (logger_name + ".log")).string());
-                }
             }
             catch (const spdlog::spdlog_ex& e) {
                 loggers_["gnss_processor"]->error("Failed to initialize logger {}: {}. Using default logger.", logger_name, e.what());
@@ -216,6 +263,40 @@ namespace GnssProcessor {
         }
     }
 
+    std::shared_ptr<GatedSink> LogManager::installGatedSink(const std::string& logger_name) {
+        auto it = loggers_.find(logger_name);
+        if (it == loggers_.end() || !it->second) return nullptr;
+        auto& logger = it->second;
+        auto& sinks = logger->sinks();
+
+        // Idempotency: if the logger already has exactly one sink and it's
+        // a GatedSink, return it. Avoids stacking gates on repeated calls.
+        if (sinks.size() == 1) {
+            if (auto existing = std::dynamic_pointer_cast<GatedSink>(sinks.front())) {
+                return existing;
+            }
+        }
+
+        // Wrap the current sinks in a GatedSink and replace.
+        auto gate = std::make_shared<GatedSink>(sinks);
+        sinks.clear();
+        sinks.push_back(gate);
+        return gate;
+    }
+
+    void LogManager::setLoggerLevels(const std::map<std::string, LogLevel>& levels) {
+        per_logger_levels_ = levels;
+        // Retroactively apply to already-created loggers.  Disabled loggers
+        // keep their off state (disable wins over a per-logger level).
+        for (const auto& [name, level] : levels) {
+            if (disabled_loggers_.count(name)) continue;
+            auto it = loggers_.find(name);
+            if (it != loggers_.end()) {
+                it->second->set_level(toSpdlogLevel(level));
+            }
+        }
+    }
+
     /**
      * @brief Convert project LogLevel to spdlog's level enum.
      *
@@ -230,14 +311,15 @@ namespace GnssProcessor {
         case LogLevel::Warn: return spdlog::level::warn;
         case LogLevel::Error: return spdlog::level::err;
         case LogLevel::Critical: return spdlog::level::critical;
+        case LogLevel::Off: return spdlog::level::off;
         default: return spdlog::level::info;
         }
     }
 
     std::unique_ptr<spdlog::pattern_formatter> LogManager::makeGpsFormatter() const {
         auto formatter = std::make_unique<spdlog::pattern_formatter>();
-        formatter->add_flag<GpsTimeFlagFormatter>('*', gps_utc_offset_s_);
-        formatter->set_pattern("[%*] [%n] [%^%l%$] %v");
+        formatter->add_flag<EpochFlagFormatter>('E');
+        formatter->set_pattern("[%E] [%n] [%^%l%$] %v");
         return formatter;
     }
 

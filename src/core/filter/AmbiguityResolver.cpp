@@ -287,6 +287,14 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
     };
     std::vector<AmbInfo> ambs;
 
+    // Hoist the full-state copies out of the per-ambiguity loop.  Both
+    // getStateVector and getCovariance return by value; doing them once
+    // per ambiguity is O(n) and O(n²) per call respectively, which adds
+    // up on a state with many ambiguities even though AR only runs once
+    // per epoch.
+    const Eigen::VectorXd sv = state_manager.getStateVector();
+    const Eigen::MatrixXd P  = state_manager.getCovariance();
+
     for (const auto& [key, idx] : amb_map) {
         // Skip any non-PPP keys that may share the ambiguity map (e.g.
         // baseline DD entries in mixed configurations).  The PPP parser
@@ -302,10 +310,24 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         info.constellation = info.satellite.substr(0, 1);
         info.state_idx = static_cast<int>(idx);
 
-        // Check that ambiguity state is initialized (non-zero)
-        const Eigen::VectorXd sv = state_manager.getStateVector();
+        // Two separate filters with documented intent:
+        //   (1) value == 0  → uninitialized seed.  computeAmbiguitySeed()
+        //       returns 0 when the obs/modeled maps don't have the signal,
+        //       so the float ambiguity hasn't yet been informed by data.
+        //       LAMBDA candidate would be undefined.
+        //   (2) variance == 0 → frozen BSSD pivot.  The pivot's row/col
+        //       are zeroed by BssdPivotManager::freezePivotAmbiguityCovariance
+        //       and the value is set to exactly 0 by the SD reference.  A
+        //       state with zero variance can't be decorrelated; LAMBDA
+        //       would divide by zero or produce a degenerate Q matrix.
+        // Both are robust under exact float arithmetic: the values are
+        // assigned via setZero() and don't drift (KF gain·residual is
+        // zero when the covariance row/col are zero).  Listing both checks
+        // documents intent and survives future changes that might leave
+        // one or the other non-zero.
         if (info.state_idx >= sv.size()) continue;
-        if (sv(info.state_idx) == 0.0) continue;
+        if (sv(info.state_idx) == 0.0) continue;          // uninitialized seed
+        if (P(info.state_idx, info.state_idx) == 0.0) continue;  // frozen pivot
 
         auto it = sat_elev.find(info.satellite);
         info.elevation = (it != sat_elev.end()) ? it->second : 0.0;

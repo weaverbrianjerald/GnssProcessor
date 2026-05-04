@@ -12,20 +12,53 @@
  * receive a populated @c ResolvedPaths struct and feed it back into
  * @c GnssConfig.
  *
+ * ## Unified on-disk layout
+ *
+ * Both internal and production modes use the same date-first tree.
+ * The two modes differ in *origin* of the files (bundled fixtures vs
+ * automatic downloads) but read from the same shape:
+ *
+ * @code
+ *   <root>/
+ *     <YYYY-DOY>/                e.g. "2024-129"
+ *       products/                ready-to-use IGS products
+ *         *.SP3 *.CLK *.BIA *.ERP *_MN.rnx (broadcast nav)
+ *       obs/<station>/           per-station observation RINEX
+ *         *.rnx                  (Hatanaka files converted via crx2rnx)
+ *     static/                    date-independent assets
+ *       atx/igs20.atx
+ *       nc/EOT20_load.nc
+ *     cache/<YYYY-DOY>/          (production-mode only) raw .gz / .crx
+ * @endcode
+ *
+ * @c <root> is @c GnssConfig::getInternalDataRoot() in internal mode
+ * and @c data_download.data_root in production mode — the user can
+ * point them at the same directory or keep them separate.  The layout
+ * itself is identical, so a directory populated by internal-mode
+ * bootstrap is a perfectly valid production-mode cache and vice
+ * versa.
+ *
  * ## Modes
  *
  *  - @c DataSource::Internal: file discovery is performed by globbing
  *    the local directory tree at @c GnssConfig::getInternalDataRoot().
  *    No network access.  Suited to unit tests, demos, and any run
- *    against the bundled fixtures under @c <project_root>/data.
+ *    against the bundled fixtures.
  *
  *  - @c DataSource::Production: the resolver delegates to
  *    @c ProductResolver, which builds IGS long-name URLs from
  *    @c data_download.year / @c doy / @c station / @c product_source
  *    and downloads anything missing into @c data_download.data_root.
- *    The on-disk layout produced by @c ProductResolver is identical
- *    to the internal tree, so the glob logic used for internal mode
- *    works against a populated production cache too.
+ *
+ * ## Date selection (internal mode)
+ *
+ * Internal mode needs to know which @c <YYYY-DOY>/ subdir to read.
+ * Sources, in order of preference:
+ *  1. The date encoded in @c files.observation_path's filename
+ *     (or any baseline @c rinex_path, when in baseline mode).
+ *  2. @c data_download.year / @c data_download.doy — these double as
+ *     a generic date hint, valid for either mode.
+ *  3. The earliest @c <YYYY-DOY>/ subdir under @c <root> (lex sort).
  *
  * ## Path precedence
  *
@@ -38,9 +71,9 @@
  *
  * The application driver applies the resolved paths back into
  * @c GnssConfig via the existing @c setObservationPath /
- * @c setNavigationPath / @c setProductPaths setters plus the new
+ * @c setNavigationPath / @c setProductPaths setters plus the
  * @c setBaselineReferenceRinexPath / @c setBaselineRoverRinexPath
- * setters added for baseline-mode integration.
+ * setters used for baseline-mode integration.
  */
 
 #include "config/GnssConfig.hpp"
@@ -122,26 +155,24 @@ private:
         const std::vector<std::string>& extensions) const;
 
     /**
-     * @brief Find a RINEX observation file that mentions @p station_name in its filename.
+     * @brief Pick a RINEX observation file for @p station_name from
+     *        @c <obs_root>/<station>/.
      *
-     * Matches IGS long names (@c SSSS00CCC_R_…) and 4-char short names
-     * (@c SSSSDDDH.YYO).  Case-insensitive on the station tag.  When
-     * multiple candidates exist the first hit in lex order wins.
-     * Each entry in @p search_roots is scanned recursively, so
-     * per-experiment subdirectories (@c absolute/,
-     * @c baseline/short/static/, @c baseline/short/igs_pasadena/)
-     * and the production-cache layout (@c products/rinex/unzip/)
-     * all work without further configuration.
+     * Used by internal-mode resolution to map a configured station
+     * identifier to the corresponding obs file inside the date-first
+     * tree.  Scans direct children of @p obs_root for a directory
+     * whose name (case-insensitive) contains @p station_name; in the
+     * matching directory returns the first @c .rnx (lex sort) or, as
+     * a fallback, a RINEX-2 @c .NNo short-name file.
      *
      * When the input is a 9-char IGS long-name (SSSS00CCC), the
-     * 4-char station-ID prefix is also accepted as a match — this is
-     * how RINEX-2 short-name files (e.g. @c cit11290.24o) are matched
-     * against a configured @c "CIT100USA".
+     * 4-char station-ID prefix is also accepted — this lets a
+     * configured @c "CIT100USA" match a directory named @c "cit1/".
      *
      * @return The matched file, or an empty path if none found.
      */
-    std::filesystem::path findObservationByStation(
-        const std::vector<std::filesystem::path>& search_roots,
+    std::filesystem::path pickStationRnx(
+        const std::filesystem::path& obs_root,
         const std::string& station_name) const;
 
     const GnssConfig& config_;

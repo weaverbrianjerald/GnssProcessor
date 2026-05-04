@@ -23,6 +23,7 @@
 #include "model/ModelGeometry.hpp"
 #include "model/StochasticModel.hpp"
 #include <Eigen/Dense>
+#include <optional>
 #include <vector>
 #include <map>
 #include <string>
@@ -255,7 +256,7 @@ namespace GnssProcessor {
         StateManager& state_manager_;          /**< State manager for ambiguity and state bookkeeping. */
 
         PppUtils ppp_utils_;                   /**< Utility helpers for PPP math and constants. */
-        Ionosphere ionosphere_;                /**< Ionospheric model instance. */
+        std::optional<Ionosphere> ionosphere_; /**< Klobuchar fallback model.  Constructed only when @c model_corrections.enable_klobuchar_ionosphere is true; std::nullopt otherwise.  Constructing it pulls in another @c Model::Geometry plus a Klobuchar coefficient parse, both of which are wasted in IF / DD / PPP-RTK-uncombined where Klobuchar is never queried. */
         Model::Geometry geometry_;             /**< Geometry and satellite interpolation helpers. */
         Antenna antenna_;                      /**< Antenna model for receiver and satellite corrections. */
         GnssCorrections gnss_corrections_;     /**< Container for clock/orbit/bias/erp corrections. */
