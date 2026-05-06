@@ -212,9 +212,17 @@ namespace GnssProcessor {
          *
          * @param satellite Satellite identifier (e.g. "G01").
          * @param initial_value Initial slant ionosphere delay in meters.
+         * @param std_scale Multiplier applied to @c initial_std.ionosphere when
+         *        forming the initial variance.  Defaults to 1.0 (use the
+         *        configured std as-is).  Pass a value > 1 when the initial
+         *        value is unreliable (e.g. seed=0 because no BIA-covered
+         *        code pair was available) so the filter doesn't trust the
+         *        zero too tightly and converges quickly to the true iono.
+         *        The obliquity (1/sin² el) scaling is applied on top of this.
          * @return Index assigned to the newly-created ionosphere state.
          */
-        size_t addIonosphereState(const std::string& satellite, double initial_value);
+        size_t addIonosphereState(const std::string& satellite, double initial_value,
+                                  double std_scale = 1.0);
 
         /**
          * @brief Remove all per-satellite ionosphere states except those listed in keep_keys.
@@ -243,20 +251,27 @@ namespace GnssProcessor {
         const std::map<std::string, double>& getIonosphereElevations() const;
 
         /**
-         * @brief Mark a set of satellite ionosphere states as frozen (BSSD pivots).
+         * @brief Mark a set of satellites as BSSD pivots (state-freeze).
          *
-         * Frozen states receive zero process noise to prevent unbounded
-         * variance growth on unobservable pivot ionosphere states.
+         * The pivot's per-(sat, signal) states — ionosphere, ambiguities,
+         * and sat-biases — are frozen at value=0, variance=0 by the BSSD
+         * S-transform.  This set tells @c getProcessNoiseMatrix() to skip
+         * Q for those states so process noise can't grow their variance
+         * past the disturbance-detection threshold (which would trigger a
+         * spurious pivot handover every epoch).  Real cycle slips on the
+         * pivot's *observation* are caught separately by the phase-only
+         * pivot-slip detector in @c KalmanFilter::validatePostFitResiduals
+         * and routed through @c forced_handover_requests_.
          *
-         * @param sats Set of satellite IDs whose iono states are frozen.
+         * @param sats Set of pivot satellite IDs.
          */
-        void setFrozenIonosphereSatellites(const std::set<std::string>& sats);
+        void setFrozenPivotSatellites(const std::set<std::string>& sats);
 
         /**
-         * @brief Get the set of frozen ionosphere satellites.
+         * @brief Get the set of BSSD pivot satellites whose states are frozen.
          * @return Set of satellite IDs.
          */
-        const std::set<std::string>& getFrozenIonosphereSatellites() const;
+        const std::set<std::string>& getFrozenPivotSatellites() const;
 
         /**
          * @brief Index of the tropospheric north gradient state.
@@ -628,7 +643,7 @@ namespace GnssProcessor {
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
-        std::set<std::string> frozen_ionosphere_sats_; //!< Satellites whose iono state is frozen (BSSD pivot).
+        std::set<std::string> frozen_pivot_sats_; //!< BSSD pivot satellites: iono, ambiguity, and sat-bias states are frozen (Q=0).
         GnssTime state_epoch_time_;                 //!< Epoch time associated with the stored state.
         Eigen::VectorXd state_vector_;              //!< Filter state vector (core + ambiguities).
         Eigen::MatrixXd covariance_;                //!< State covariance matrix.

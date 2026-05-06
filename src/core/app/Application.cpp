@@ -962,14 +962,22 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     // Ambiguity resolution (MLAMBDA)
     if (config_.getArMode() > 0) {
         AmbiguityResolverConfig ar_config;
-        ar_config.ar_mode            = config_.getArMode();
-        ar_config.ratio_threshold    = config_.getArRatioThreshold();
-        ar_config.elevation_mask_ar  = config_.getArElevationMask();
-        ar_config.hold_variance      = config_.getArHoldVariance();
+        ar_config.ar_mode               = config_.getArMode();
+        ar_config.ratio_threshold       = config_.getArRatioThreshold();
+        ar_config.elevation_mask_ar     = config_.getArElevationMask();
+        ar_config.hold_variance         = config_.getArHoldVariance();
+        ar_config.min_epochs            = config_.getArMinEpochs();
+        ar_config.max_position_sigma_m  = config_.getArMaxPositionSigma();
+        ar_config.ratio_upper_bound     = config_.getArRatioUpperBound();
+        ar_config.wl_only               = config_.getArWlOnly();
+        ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log_manager_.getLogger("main_log")->info(
-            "Ambiguity resolution enabled: mode={}, ratio_thresh={:.1f}, elev_mask={:.1f} deg",
-            ar_config.ar_mode, ar_config.ratio_threshold, ar_config.elevation_mask_ar);
+            "Ambiguity resolution enabled: mode={}, wl_only={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+            "min_epochs={}, max_pos_σ={:.3f} m",
+            ar_config.ar_mode, ar_config.wl_only ? "on" : "off",
+            ar_config.ratio_threshold, ar_config.ratio_upper_bound,
+            ar_config.elevation_mask_ar, ar_config.min_epochs, ar_config.max_position_sigma_m);
     }
 
     const bool is_ppp_rtk = (config_.getProcessingMode() == ProcessingMode::PPP_RTK);

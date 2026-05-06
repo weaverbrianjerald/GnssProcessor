@@ -8,6 +8,7 @@
 
 #include "realtime/RealTimeEngine.hpp"
 #include "products/ProductCache.hpp"
+#include "products/SsrCorrectionStore.hpp"
 #include "math/Coordinates.hpp"
 #include "common/Constants.hpp"
 #include <cmath>
@@ -131,19 +132,13 @@ bool RealTimeEngine::initialize() {
 void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
     // Decode the frame through the existing RtcmParser message API.
     // This is a temporary file-less parser invocation.
-    RtcmParser parser("");
-    if (!parser.parseMessage(frame)) return;
+    RtcmParser parser;
+    parser.parseFrame(frame);
 
-    // Convert RtcmObservations to RinexObservations and buffer them.
-    for (const auto& rtcm_obs : parser.getObservations()) {
-        RinexObservation obs;
-        obs.satellite    = rtcm_obs.satellite;
-        obs.system       = rtcm_obs.system;
-        obs.time         = rtcm_obs.time;
-        obs.measurements = rtcm_obs.measurements;
-        obs.variances    = rtcm_obs.variances;
-
-        // Detect epoch boundary.
+    // Observations: buffer until a new epoch is detected, then submit the
+    // previous epoch.  MSM4/MSM7 decode is a follow-up phase — until then
+    // getObservations() is empty and this loop is a no-op.
+    for (const auto& obs : parser.getObservations()) {
         if (pending_obs_.empty()) {
             pending_epoch_time_ = obs.time;
         } else if (std::abs(obs.time.tow - pending_epoch_time_.tow) > 0.5) {
@@ -152,8 +147,38 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
             pending_obs_.clear();
             pending_epoch_time_ = obs.time;
         }
+        pending_obs_.push_back(obs);
+    }
 
-        pending_obs_.push_back(std::move(obs));
+    // Push decoded SSR records into the shared SsrCorrectionStore.  The
+    // orbit / clock query paths in Geometry and GnssCorrections consult
+    // the store transparently — no further wiring at the per-epoch level.
+    auto& ssr_store = SsrCorrectionStore::getInstance();
+    SsrHeader hdr{};   // Header re-emit isn't available per-record yet; pass empty.
+    for (const auto& r : parser.getSsrOrbits())         ssr_store.pushOrbit(r, hdr);
+    for (const auto& r : parser.getSsrClocks())         ssr_store.pushClock(r, hdr);
+    for (const auto& r : parser.getSsrCombined())       ssr_store.pushCombined(r, hdr);
+    for (const auto& r : parser.getSsrCodeBiases())     ssr_store.pushCodeBias(r, hdr);
+    for (const auto& r : parser.getSsrPhaseBiases())    ssr_store.pushPhaseBias(r, hdr);
+    for (const auto& r : parser.getSsrUras())           ssr_store.pushUra(r, hdr);
+    for (const auto& r : parser.getSsrHighRateClocks()) ssr_store.pushHighRateClock(r, hdr);
+
+    const std::size_t n_ssr =
+        parser.getSsrOrbits().size()      + parser.getSsrClocks().size() +
+        parser.getSsrCombined().size()    + parser.getSsrCodeBiases().size() +
+        parser.getSsrPhaseBiases().size() + parser.getSsrUras().size() +
+        parser.getSsrHighRateClocks().size();
+    if (n_ssr > 0) {
+        log_manager_.getLogger("rt_engine")->trace(
+            "RTCM {}: pushed {} SSR records to store ({} sats cached)",
+            parser.lastMessageType(), n_ssr, ssr_store.size());
+    }
+    if (!parser.getStationCoords().empty()) {
+        const auto& s = parser.getStationCoords().front();
+        log_manager_.getLogger("rt_engine")->info(
+            "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
+            parser.lastMessageType(), s.reference_station_id,
+            s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
     }
 }
 

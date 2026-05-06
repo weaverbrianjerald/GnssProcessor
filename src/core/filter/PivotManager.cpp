@@ -677,14 +677,21 @@ void PivotManager::freezePivotAmbiguityCovariance(StateManager& state_manager) {
 
 void PivotManager::freezePivotIonoAndBiasCovariance(StateManager& state_manager) {
     if (pivot_sat_.empty()) return;
-    if (!config_.isUncombinedEnabled()) return;
 
-    // Inform StateManager which iono states are frozen so that
-    // getProcessNoiseMatrix() can suppress their process noise.
+    // Always register the pivot list with StateManager so process noise
+    // is suppressed for *all* frozen pivot states (ambiguities, iono,
+    // sat-biases).  This must run in every BSSD mode — the ambiguity
+    // freeze is what prevents the spurious-handover flip-flop, and
+    // pivot ambiguities exist in both PPP IF combined and PPP-RTK
+    // uncombined modes.
     std::set<std::string> frozen_sats;
     for (const auto& [cons, piv] : pivot_sat_)
         frozen_sats.insert(piv);
-    state_manager.setFrozenIonosphereSatellites(frozen_sats);
+    state_manager.setFrozenPivotSatellites(frozen_sats);
+
+    // Iono and sat-bias states only exist in uncombined mode — only
+    // bother zeroing those P entries when those states actually exist.
+    if (!config_.isUncombinedEnabled()) return;
 
     Eigen::MatrixXd Pf = state_manager.getCovariance();
     bool any_frozen = false;

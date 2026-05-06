@@ -329,6 +329,16 @@ namespace GnssProcessor {
                                             "ar_elevation_mask", 20.0);
         ar_hold_variance_   = jval<double>(json, "estimation.ambiguity_resolution.hold_variance",
                                             "ar_hold_variance", 0.001);
+        ar_min_epochs_           = jval<int>(json, "estimation.ambiguity_resolution.min_epochs",
+                                              "ar_min_epochs", 10);
+        ar_max_position_sigma_m_ = jval<double>(json, "estimation.ambiguity_resolution.max_position_sigma_m",
+                                                 "ar_max_position_sigma_m", 0.05);
+        ar_ratio_upper_bound_    = jval<double>(json, "estimation.ambiguity_resolution.ratio_upper_bound",
+                                                 "ar_ratio_upper_bound", 1e4);
+        ar_wl_only_              = jval<bool>(json, "estimation.ambiguity_resolution.wl_only",
+                                               "ar_wl_only", false);
+        ar_wl_only_pseudo_var_   = jval<double>(json, "estimation.ambiguity_resolution.wl_only_pseudo_var",
+                                                 "ar_wl_only_pseudo_var", 1e-4);
 
         log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}",
             estimate_tropo_gradients_ ? "on" : "off",
@@ -801,9 +811,31 @@ namespace GnssProcessor {
             realtime_config_.reconnect_delay_s  = rt.value("reconnect_delay_s", 5);
             realtime_config_.input_type         = rt.value("input_type", "ntrip");
             realtime_config_.input_path         = rt.value("input_path", "");
+            realtime_config_.tcp_host           = rt.value("tcp_host", "");
+            realtime_config_.tcp_port           = rt.value("tcp_port", 28784);
             realtime_config_.output_type        = rt.value("output_type", "console");
             realtime_config_.output_path        = rt.value("output_path", "");
             realtime_config_.max_epoch_buffer   = rt.value("max_epoch_buffer", 100U);
+
+            // Optional SSR corrections stream (separate NTRIP mountpoint
+            // or file-replay).  Default: disabled — single-stream behaviour.
+            if (rt.contains("corrections") && rt.at("corrections").is_object()) {
+                const auto& cc = rt.at("corrections");
+                auto& c = realtime_config_.corrections;
+                c.enabled            = cc.value("enabled", false);
+                c.input_type         = cc.value("input_type", std::string{"ntrip"});
+                c.ntrip_host         = cc.value("ntrip_host", std::string{});
+                c.ntrip_port         = cc.value("ntrip_port", 2101);
+                c.ntrip_mountpoint   = cc.value("ntrip_mountpoint", std::string{});
+                c.ntrip_user         = cc.value("ntrip_user", std::string{});
+                c.ntrip_password     = cc.value("ntrip_password", std::string{});
+                c.nmea_gga           = cc.value("nmea_gga", std::string{});
+                c.reconnect_delay_s  = cc.value("reconnect_delay_s", 5);
+                c.input_path         = cc.value("input_path", std::string{});
+                c.tcp_host           = cc.value("tcp_host", std::string{});
+                c.tcp_port           = cc.value("tcp_port", 28784);
+            }
+
             if (app_mode_ == AppMode::RealTime) {
                 log->info("Real-time config: input={}, ntrip={}:{}/{}, output={}",
                     realtime_config_.input_type,
@@ -811,6 +843,15 @@ namespace GnssProcessor {
                     realtime_config_.ntrip_port,
                     realtime_config_.ntrip_mountpoint,
                     realtime_config_.output_type);
+                if (realtime_config_.corrections.enabled) {
+                    const auto& c = realtime_config_.corrections;
+                    if (c.input_type == "ntrip") {
+                        log->info("Real-time corrections: ntrip={}:{}/{}",
+                                  c.ntrip_host, c.ntrip_port, c.ntrip_mountpoint);
+                    } else {
+                        log->info("Real-time corrections: file={}", c.input_path);
+                    }
+                }
             }
         }
     }

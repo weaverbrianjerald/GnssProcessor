@@ -18,6 +18,8 @@
 #include "config/GnssConfig.hpp"
 #include "rinex/RinexParser.hpp"
 #include "math/Interpolate.hpp"
+#include "math/TimeUtils.hpp"
+#include "products/SsrCorrectionStore.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -122,6 +124,39 @@ namespace GnssProcessor {
         }
 
         double clock_corr = interpolateClock(satellite, time, clocks_);
+
+        // Apply SSR clock correction overlay when:
+        //   (a) the realtime engine has pushed a fresh record, and
+        //   (b) the SSR's IODE matches the broadcast clock baseline.
+        // CLK-derived ClockData carries iode=-1 (unknown), in which case
+        // the IODE gate is permissive and the existing behaviour stands.
+        // A future broadcast-nav parser will set iode on each clock
+        // sample, after which this gate rejects mismatched corrections.
+        int brdc_iode = -1;
+        {
+            const auto it_idx = clock_index_.find(satellite);
+            if (it_idx != clock_index_.end() && !it_idx->second.empty()) {
+                const double t_query = TimeUtils::continuousGpsSeconds(time);
+                const ClockData* closest = nullptr;
+                double best_dt = std::numeric_limits<double>::max();
+                for (const ClockData* nd : it_idx->second) {
+                    const double dt_abs = std::abs(
+                        TimeUtils::continuousGpsSeconds(nd->time) - t_query);
+                    if (dt_abs < best_dt) { best_dt = dt_abs; closest = nd; }
+                }
+                if (closest) brdc_iode = closest->iode;
+            }
+        }
+
+        if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+            ssr && ssr->has_clock && std::isfinite(clock_corr)
+            && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
+            const double dt = TimeUtils::continuousGpsSeconds(time)
+                            - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+            clock_corr += SsrCorrectionStore::applyClockToBias(
+                ssr->c0, ssr->c1, ssr->c2, ssr->hr_clock, dt);
+        }
+
         if (std::isfinite(clock_corr) && std::abs(clock_corr) < 1e-1) {
             log->trace("Interpolated clock for {} ({}) at TOW {:.3f}: {:.3e} s",
                 satellite, PppUtils::getSystemString(satellite), time.tow, clock_corr);
@@ -835,11 +870,67 @@ namespace GnssProcessor {
 
     void GnssCorrections::buildBiasIndex() {
         bias_signals_.clear();
-        for (const auto& b : biases_)
+        size_t skipped_zero_code = 0;
+        size_t skipped_glonass_code = 0;
+        // Skip CODE bias entries that should not be applied:
+        //
+        // 1. Zero-valued entries.  Some MGEX products ship placeholder
+        //    C2I/C6I entries for BeiDou with bias=0.0 (every satellite,
+        //    every code signal); treating those as "covered" causes the
+        //    model to apply zero correction AND suppress the per-(sat,
+        //    signal) sat-bias state path, leaving the real ~tens-of-
+        //    metres hardware delay unmodelled and the row pinned as a
+        //    permanent outlier.
+        //
+        // 2. GLONASS code entries, regardless of value.  GLONASS is
+        //    FDMA — each satellite has a different carrier — so the
+        //    *receiver*-side hardware delay differs per channel and
+        //    can't be cancelled by a single-value-per-(sat, signal)
+        //    bias correction.  Even when a product publishes a GLONASS
+        //    DCB it's a network-aggregate that won't reflect this
+        //    receiver's per-channel delays.  Treating the entries as
+        //    missing forces the per-(sat, signal) sat-bias state path
+        //    to absorb whatever the actual delay is.
+        //
+        // Both paths require @c estimate_sat_biases=true to actually
+        // create the absorbing state.  Phase biases are left as-is
+        // (zero is a meaningful value in some product schemes; GLONASS
+        // phase biases, when published, are usable because the float
+        // ambiguity absorbs whatever the receiver-side ICB is anyway).
+        for (const auto& b : biases_) {
+            const bool is_code = !b.signal.empty() && b.signal[0] == 'C';
+            if (is_code && b.bias == 0.0) {
+                ++skipped_zero_code;
+                continue;
+            }
+            // GLONASS PRNs in IGS conventions are "R01"…"R26".
+            const bool is_glonass_sat = !b.satellite.empty() && b.satellite[0] == 'R';
+            if (is_code && is_glonass_sat) {
+                ++skipped_glonass_code;
+                continue;
+            }
             bias_signals_.insert(b.satellite + "|" + b.signal);
-        log_manager_.getLogger("corrections")->debug(
-            "Built bias index: {} unique satellite|signal pairs from {} entries",
-            bias_signals_.size(), biases_.size());
+        }
+        auto log = log_manager_.getLogger("corrections");
+        log->debug(
+            "Built bias index: {} unique satellite|signal pairs from {} entries "
+            "({} zero code entries skipped, {} GLONASS code entries skipped)",
+            bias_signals_.size(), biases_.size(),
+            skipped_zero_code, skipped_glonass_code);
+        if (skipped_zero_code > 0) {
+            log->info(
+                "Skipped {} zero-valued code bias entries; treated as missing "
+                "so per-sat bias states will be created (requires "
+                "estimate_sat_biases=true to take effect).",
+                skipped_zero_code);
+        }
+        if (skipped_glonass_code > 0) {
+            log->info(
+                "Skipped {} GLONASS code bias entries; FDMA per-channel delay "
+                "is absorbed by per-(sat, signal) sat-bias states regardless "
+                "of product values (requires estimate_sat_biases=true).",
+                skipped_glonass_code);
+        }
     }
 
     bool GnssCorrections::hasBiasEntry(const std::string& satellite,

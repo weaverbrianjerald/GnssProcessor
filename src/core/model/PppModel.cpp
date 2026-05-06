@@ -641,6 +641,19 @@ const char* signalModeLabel(SignalMode m) {
         auto target_bands = band_map.at(system_str).at(config_.getSignalMode());
         std::vector<std::pair<std::string, std::string>> candidate_pairs;
 
+        // Reject IF pairs whose noise amplification factor exceeds this cap.
+        // The IF combination noise is sqrt(α₁² + α₂²)·σ where α_i = f_i²/(f_i²−f_j²);
+        // typical wide pairs (GPS L1/L2, BeiDou B1I/B3) sit at K ≈ 3, but pairs
+        // separated by only ~15 MHz (BeiDou B1C/B1I, B2I/B2b/B2ab variants) yield
+        // K ≈ 50–80, which turns ~0.3 m code noise into ~15–25 m IF noise.  The
+        // cap is checked once per band pair below — code and phase share the
+        // same K because the band frequency is attribute-independent.
+        constexpr double kMaxIfNoiseFactor = 10.0;
+        auto if_noise_factor = [&](const std::string& sig) -> double {
+            if (sig.empty()) return std::numeric_limits<double>::quiet_NaN();
+            return ppp_utils_.getFrequency(sig, obs.system, obs.satellite);
+        };
+
         for (size_t i = 0; i < target_bands.size(); ++i) {
             for (size_t j = i + 1; j < target_bands.size(); ++j) {
                 const auto& b1 = target_bands[i];
@@ -666,6 +679,33 @@ const char* signalModeLabel(SignalMode m) {
 
                 const auto& s1 = freq_band_to_signal.at(b1);
                 const auto& s2 = freq_band_to_signal.at(b2);
+
+                // Frequency-separation check.  Use the code signal if available,
+                // else the phase signal — frequency is band-level, so the K is
+                // identical for both.
+                const std::string check_sig1 = !s1.first.empty() ? s1.first : s1.second;
+                const std::string check_sig2 = !s2.first.empty() ? s2.first : s2.second;
+                if (!check_sig1.empty() && !check_sig2.empty()) {
+                    const double f1 = if_noise_factor(check_sig1);
+                    const double f2 = if_noise_factor(check_sig2);
+                    if (std::isfinite(f1) && std::isfinite(f2) && f1 > 0 && f2 > 0) {
+                        const double f1_sq = f1 * f1;
+                        const double f2_sq = f2 * f2;
+                        const double denom = f1_sq - f2_sq;
+                        const double K = (std::abs(denom) > 1e-3 * f1_sq)
+                            ? std::sqrt(f1_sq * f1_sq + f2_sq * f2_sq) / std::abs(denom)
+                            : std::numeric_limits<double>::infinity();
+                        if (K > kMaxIfNoiseFactor) {
+                            log_manager_.getLogger("ppp_model")->debug(
+                                "Skipping IF pair for {} {}: bands {}/{} too close — "
+                                "noise amplification K={:.1f} exceeds cap {:.1f} "
+                                "(f1={:.3f} MHz, f2={:.3f} MHz)",
+                                obs.satellite, system_str, b1, b2, K, kMaxIfNoiseFactor,
+                                f1 * 1e-6, f2 * 1e-6);
+                            continue;
+                        }
+                    }
+                }
 
                 if (!s1.first.empty() && !s2.first.empty()) {
                     candidate_pairs.emplace_back(s1.first, s2.first);

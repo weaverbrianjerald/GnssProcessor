@@ -16,6 +16,8 @@
 #include "common/Constants.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
+#include "products/SsrCorrectionStore.hpp"
+#include "math/TimeUtils.hpp"
 #include "math/Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
@@ -624,6 +626,40 @@ namespace GnssProcessor {
                     "getSatellitePV: invalid velocity for {} at tow {:.3f}: norm={:.1f} m/s",
                     satellite, time.tow, vel.norm());
                 vel = Eigen::Vector3d::Zero();
+            }
+
+            // Apply SSR orbit correction if a fresh record is available
+            // AND the SSR's IODE matches the broadcast-nav baseline our
+            // closest interpolation node was generated from.  When the
+            // baseline has no IODE (SP3-derived: iode=-1) the gate is
+            // permissive — the comparison no-ops, preserving the existing
+            // post-processing behaviour.  Once a broadcast-nav parser
+            // populates iode on OrbitData, the gate becomes meaningful
+            // and rejects corrections that would land on the wrong
+            // ephemeris baseline.
+            int brdc_iode = -1;
+            {
+                const auto it_idx = orbit_index_.find(satellite);
+                if (it_idx != orbit_index_.end() && !it_idx->second.empty()) {
+                    const double t_query = TimeUtils::continuousGpsSeconds(time);
+                    const OrbitData* closest = nullptr;
+                    double best_dt = std::numeric_limits<double>::max();
+                    for (const OrbitData* nd : it_idx->second) {
+                        const double dt_abs = std::abs(
+                            TimeUtils::continuousGpsSeconds(nd->time) - t_query);
+                        if (dt_abs < best_dt) { best_dt = dt_abs; closest = nd; }
+                    }
+                    if (closest) brdc_iode = closest->iode;
+                }
+            }
+
+            if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+                ssr && ssr->has_orbit
+                && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
+                const double dt = TimeUtils::continuousGpsSeconds(time)
+                                - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+                pos = SsrCorrectionStore::applyOrbitToPosition(
+                    pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
             }
 
             // Find chronological window bounds for debug logging without re-sorting

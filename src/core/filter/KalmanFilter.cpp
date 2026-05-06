@@ -405,7 +405,7 @@ namespace GnssProcessor {
                 freeze_state(state_manager_.getSystemTimeOffsetIndex(sys));
 
             // Freeze BSSD pivot ionosphere states (iono column zeroed in S-transform).
-            for (const auto& sat : state_manager_.getFrozenIonosphereSatellites()) {
+            for (const auto& sat : state_manager_.getFrozenPivotSatellites()) {
                 const int iono_idx = state_manager_.getIonosphereIndex(sat);
                 if (iono_idx >= 0)
                     freeze_state(static_cast<size_t>(iono_idx));
@@ -1398,6 +1398,8 @@ namespace GnssProcessor {
         // individually is wasted work.
         {
             constexpr size_t MIN_GROUP_SIZE      = 4;
+            constexpr size_t MIN_POOL_SIZE       = 3;  // cross-band detector
+            constexpr size_t MIN_DISTINCT_BANDS  = 2;  // cross-band detector
             constexpr double ABOVE_FRACTION_MIN  = 0.5;
             constexpr double MAD_RATIO_MAX       = 0.4;
             constexpr double MEDIAN_FLOOR_M      = 0.005;
@@ -1407,9 +1409,14 @@ namespace GnssProcessor {
                 std::vector<double> residuals;
                 size_t above = 0;
             };
-            // Key: ("G11", "L1") — pivot satellite + frequency band (first 2
-            // chars of the signal type).  Only phase rows ('L') are grouped.
+            // Per-band groups, keyed by (pivot, band).
             std::map<std::pair<std::string, std::string>, Group> groups;
+            // Cross-band per-pivot pools, used as a fallback when individual
+            // bands carry too few non-pivot rows to clear MIN_GROUP_SIZE but
+            // the multi-band picture still shows a coherent slip pattern.
+            std::map<std::string, Group> pivot_pools;
+            std::map<std::string, std::set<std::string>> pivot_pool_bands;
+
             for (size_t i = 0; i < meta_n; ++i) {
                 const auto& sat_id = measurement.satellite_ids[i];
                 const auto& sig    = measurement.signal_types[i];
@@ -1417,11 +1424,20 @@ namespace GnssProcessor {
                 const auto [prim, pivot] = splitBssdSatId(sat_id);
                 if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
                 const std::string band = sig.substr(0, 2);     // "L1", "L2", "L5"
+                const double r  = res(static_cast<Eigen::Index>(i));
+                const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
+                const bool   ab = std::isfinite(sa) && sa > threshold;
+
                 auto& g = groups[{ pivot, band }];
                 g.indices.push_back(i);
-                g.residuals.push_back(res(static_cast<Eigen::Index>(i)));
-                const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
-                if (std::isfinite(sa) && sa > threshold) ++g.above;
+                g.residuals.push_back(r);
+                if (ab) ++g.above;
+
+                auto& pp = pivot_pools[pivot];
+                pp.indices.push_back(i);
+                pp.residuals.push_back(r);
+                if (ab) ++pp.above;
+                pivot_pool_bands[pivot].insert(band);
             }
 
             // Helper: median (modifies its argument).  Even-count median
@@ -1546,6 +1562,237 @@ namespace GnssProcessor {
                 any_pivot_slip = true;
             }
 
+            // -----------------------------------------------------------
+            // Cross-band pivot-slip detector
+            //
+            // The per-band pass requires ≥ MIN_GROUP_SIZE non-pivot SD rows
+            // *within a single band*.  When phase coverage is sparse on any
+            // one band — common for mixed BeiDou-2/BeiDou-3 (some sats on
+            // C2I/C7I, others on C1X/C5X) or new-block satellites that have
+            // partial signal sets — a real pivot disturbance can leave each
+            // per-band group below 4 rows even when the *pooled* picture
+            // is unambiguous.  Pool across bands per pivot and apply the
+            // same coherence criteria with MIN_POOL_SIZE = 3 and an
+            // explicit ≥ MIN_DISTINCT_BANDS requirement.  The multi-band
+            // requirement is what makes this evidence *stronger* than
+            // within-band: a coherent same-sign residual pattern across
+            // independent frequency channels is hard to mimic with
+            // multipath or atmospheric events.
+            // -----------------------------------------------------------
+            for (auto& [pivot_sat, pp] : pivot_pools) {
+                const std::string cons = PppUtils::getSystemString(pivot_sat);
+                // Skip if the per-band detector already requested a
+                // handover for this constellation.
+                if (requested_pivot_handovers_.count(cons)) continue;
+
+                const size_t n = pp.indices.size();
+                if (n < MIN_POOL_SIZE) continue;
+
+                const auto& bands_set = pivot_pool_bands[pivot_sat];
+                if (bands_set.size() < MIN_DISTINCT_BANDS) continue;
+
+                const double frac = static_cast<double>(pp.above) / static_cast<double>(n);
+                if (frac < ABOVE_FRACTION_MIN) continue;
+
+                std::vector<double> r_copy = pp.residuals;
+                const double med = medianInPlace(r_copy);
+                if (std::abs(med) < MEDIAN_FLOOR_M) continue;
+
+                std::vector<double> abs_dev;
+                abs_dev.reserve(pp.residuals.size());
+                for (double v : pp.residuals) abs_dev.push_back(std::abs(v - med));
+                const double mad = medianInPlace(abs_dev);
+                const double mad_ratio = mad / std::abs(med);
+                if (mad_ratio > MAD_RATIO_MAX) continue;
+
+                // Build a comma-joined band list for the log line.
+                std::string bands_str;
+                for (const auto& b : bands_set) {
+                    if (!bands_str.empty()) bands_str += ",";
+                    bands_str += b;
+                }
+
+                klogger->warn(
+                    "{}PIVOT SLIP [cross-band] on {} {} ({} bands [{}]): {}/{} "
+                    "SD residuals coherent across bands (median={:+.4f} m, "
+                    "MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                    "Requesting forced pivot handover.",
+                    epoch_prefix, cons, pivot_sat, bands_set.size(), bands_str,
+                    pp.above, n, med, mad, mad_ratio, frac);
+
+                requested_pivot_handovers_.insert(cons);
+
+                for (size_t row_idx : pp.indices) {
+                    const auto& sat_id = measurement.satellite_ids[row_idx];
+                    const auto& sig_t  = measurement.signal_types[row_idx];
+                    const auto [prim, _piv] = splitBssdSatId(sat_id);
+                    measurement.excluded_measurements.insert(prim + "_" + sig_t);
+                }
+                any_pivot_slip = true;
+            }
+
+            // -----------------------------------------------------------
+            // Non-pivot multi-band cycle-slip detector
+            //
+            // Mirror of the cross-band pivot detector, with the axes of
+            // coherence rotated 90°: a single non-pivot satellite whose
+            // phase observations slipped on multiple bands simultaneously
+            // shows up as one satellite × many bands of same-sign anomalous
+            // residuals against an otherwise-clean pivot.  A real cycle
+            // slip jumps the integer ambiguity by N cycles on every band
+            // the satellite tracks; the SD residual is N·λ_band, which is
+            // band-dependent in metres but band-independent in cycles.
+            // The integer-cycle consistency check is the strongest
+            // discriminator from atmospheric / multipath events (which
+            // scale with f² for iono and with ~constant in metres for
+            // tropo/multipath, neither matching N·λ_band per-band).
+            //
+            // Especially valuable as a backstop for GLONASS, where the
+            // MW pre-filter detector has reduced sensitivity due to the
+            // FDMA receiver inter-channel WL bias inflating the MAD floor.
+            //
+            // On detection: ambiguities for the affected satellite are
+            // marked pending re-seed and its rows excluded from the
+            // current rebuild pass.  No constellation-wide pivot
+            // handover — the pivot is unaffected.
+            // -----------------------------------------------------------
+            {
+                constexpr size_t MIN_NONPIVOT_BANDS = 2;
+                constexpr double MIN_RESIDUAL_M     = 0.05;  // ~quarter L1 cycle
+                constexpr double INT_CYCLE_TOL      = 0.30;
+                constexpr int    MAX_SLIP_CYCLES    = 50;    // sanity cap
+
+                struct NpvEntry {
+                    std::vector<size_t> indices;
+                    std::vector<double> residuals;
+                    std::set<std::string> bands;
+                    size_t above = 0;
+                    int    sign = 0;     // 0=mixed/empty, ±1 = consistent
+                };
+                std::map<std::string, NpvEntry> nonpivot_pools;
+
+                for (size_t i = 0; i < meta_n; ++i) {
+                    const auto& sat_id = measurement.satellite_ids[i];
+                    const auto& sig    = measurement.signal_types[i];
+                    if (sig.size() < 2 || sig[0] != 'L') continue;
+                    const auto [prim, pivot] = splitBssdSatId(sat_id);
+                    if (pivot.empty() || prim == pivot) continue;
+
+                    const double r  = res(static_cast<Eigen::Index>(i));
+                    const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
+                    const bool   ab = std::isfinite(sa) && sa > threshold;
+
+                    auto& e = nonpivot_pools[prim];
+                    e.indices.push_back(i);
+                    e.residuals.push_back(r);
+                    e.bands.insert(sig.substr(0, 2));
+                    if (ab) {
+                        ++e.above;
+                        // Sign tracking only over anomalous rows: noise-driven
+                        // sign flips on quiet rows shouldn't disqualify the sat.
+                        const int rs = (r > 0.0) ? +1 : (r < 0.0 ? -1 : 0);
+                        if (e.sign == 0 && rs != 0)        e.sign = rs;
+                        else if (rs != 0 && rs != e.sign)  e.sign = 0;  // mixed
+                    }
+                }
+
+                // Local PppUtils for wavelength lookup.  Default GLONASS slot
+                // table is used (accurate to <0.5 MHz, fine for the 0.3-cycle
+                // tolerance in the integer check below).
+                PppUtils ppp_utils_local(log_manager_);
+
+                auto satToSystem = [](const std::string& sat) -> System {
+                    if (sat.empty()) return System::Unknown;
+                    switch (sat[0]) {
+                    case 'G': return System::GPS;
+                    case 'E': return System::Galileo;
+                    case 'R': return System::GLONASS;
+                    case 'C': return System::BeiDou;
+                    case 'J': return System::QZSS;
+                    case 'S': return System::SBAS;
+                    default:  return System::Unknown;
+                    }
+                };
+
+                const double amb_init_std = config_.getInitialStd().ambiguity;
+
+                for (auto& [sat, e] : nonpivot_pools) {
+                    if (e.bands.size() < MIN_NONPIVOT_BANDS) continue;
+                    if (e.above       < MIN_NONPIVOT_BANDS) continue;
+                    if (e.sign == 0) continue;  // mixed signs → not a slip
+
+                    std::vector<double> abs_residuals;
+                    abs_residuals.reserve(e.residuals.size());
+                    for (double r : e.residuals) abs_residuals.push_back(std::abs(r));
+                    const double med_abs = medianInPlace(abs_residuals);
+                    if (med_abs < MIN_RESIDUAL_M) continue;
+
+                    // Integer-cycle consistency: each row's |residual| / λ_band
+                    // must round to the same non-zero integer with tolerance
+                    // INT_CYCLE_TOL.  This is what distinguishes a real cycle
+                    // slip from atmospheric / multipath events.
+                    const System sys = satToSystem(sat);
+                    int   common_cycles    = 0;
+                    bool  first            = true;
+                    bool  integer_consistent = true;
+                    for (size_t k = 0; k < e.indices.size(); ++k) {
+                        const auto& sig_t = measurement.signal_types[e.indices[k]];
+                        const double lam = ppp_utils_local.getWavelength(sys, sig_t, sat);
+                        if (!(std::isfinite(lam) && lam > 0.0)) {
+                            integer_consistent = false; break;
+                        }
+                        const double cyc = std::abs(e.residuals[k]) / lam;
+                        const int    ric = static_cast<int>(std::lround(cyc));
+                        if (ric == 0 || ric > MAX_SLIP_CYCLES
+                         || std::abs(cyc - static_cast<double>(ric)) > INT_CYCLE_TOL) {
+                            integer_consistent = false; break;
+                        }
+                        if (first) { common_cycles = ric; first = false; }
+                        else if (ric != common_cycles) {
+                            integer_consistent = false; break;
+                        }
+                    }
+                    if (!integer_consistent) continue;
+
+                    std::string bands_str;
+                    for (const auto& b : e.bands) {
+                        if (!bands_str.empty()) bands_str += ",";
+                        bands_str += b;
+                    }
+                    const std::string cons = PppUtils::getSystemString(sat);
+
+                    klogger->warn(
+                        "{}NON-PIVOT SLIP on {} {} ({} bands [{}], sign={:+d}, "
+                        "N={} cycles, |median res|={:.4f} m, {}/{} rows above threshold). "
+                        "Resetting ambiguities for this satellite.",
+                        epoch_prefix, cons, sat, e.bands.size(), bands_str,
+                        e.sign, common_cycles, med_abs, e.above, e.indices.size());
+
+                    // Single-sat reset: mark each ambiguity for re-seed and
+                    // wipe its row/col cross-covariance with diagonal inflated
+                    // to the initial-ambiguity variance.  ensureRequiredStates
+                    // on the next rebuild pass will compute a fresh SD seed
+                    // against the (unchanged) pivot.
+                    for (size_t row_idx : e.indices) {
+                        const auto& sat_id = measurement.satellite_ids[row_idx];
+                        const auto& sig_t  = measurement.signal_types[row_idx];
+                        const auto [prim, _piv] = splitBssdSatId(sat_id);
+                        const std::string amb_key = prim + "_" + sig_t;
+                        measurement.excluded_measurements.insert(amb_key);
+
+                        const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
+                        if (amb_idx >= 0 && amb_idx < static_cast<int>(P.rows())) {
+                            const auto ai = static_cast<Eigen::Index>(amb_idx);
+                            P.row(ai).setZero();
+                            P.col(ai).setZero();
+                            P(ai, ai) = amb_init_std * amb_init_std;
+                        }
+                        state_manager_.markAmbiguityPendingReseed(amb_key);
+                    }
+                    any_pivot_slip = true;
+                }
+            }
+
             if (any_pivot_slip) {
                 ++measurement.bad_residual_count;
                 klogger->debug("{}Pivot slip handled. Measurement rebuild required.", epoch_prefix);
@@ -1651,6 +1898,12 @@ namespace GnssProcessor {
 
             const std::string outlier_sat = measurement.satellite_ids[chosen_idx];
             const std::string outlier_sig = measurement.signal_types[chosen_idx];
+            // Capture residual values by value before dispatch: handleCodeOutlier
+            // shifts measurement.residuals* to drop the offending row, after which
+            // sres/res(chosen_idx) alias the row that was previously at chosen_idx+1.
+            const double outlier_sres     = sres(static_cast<Eigen::Index>(chosen_idx));
+            const double outlier_sres_abs = std::abs(outlier_sres);
+            const double outlier_res      = res(static_cast<Eigen::Index>(chosen_idx));
             const double sigma_max = std::sqrt(std::max(
                 vres(static_cast<Eigen::Index>(chosen_idx),
                      static_cast<Eigen::Index>(chosen_idx)), 0.0));
@@ -1658,9 +1911,7 @@ namespace GnssProcessor {
             klogger->warn(
                 "{}Max standardized residual for {} {}: |s|={:.3f} (s={:+.3f}, residual {:.3f} m, sigma {:.3f} m, idx {})",
                 epoch_prefix, outlier_sat, outlier_sig,
-                std::abs(sres(static_cast<Eigen::Index>(chosen_idx))),
-                sres(static_cast<Eigen::Index>(chosen_idx)),
-                res(static_cast<Eigen::Index>(chosen_idx)), sigma_max, chosen_idx);
+                outlier_sres_abs, outlier_sres, outlier_res, sigma_max, chosen_idx);
 
             if (!outlier_sig.empty() && outlier_sig[0] == 'L') {
                 handlePhaseOutlier(measurement, outlier_sat, outlier_sig, x, P, epoch_prefix);
@@ -1700,7 +1951,7 @@ namespace GnssProcessor {
 
             klogger->warn("{}Outlier flagged: idx={}, sat={}, sig={}, max_sres={:.3f} > threshold={:.3f}; bad_residual_count={}",
                 epoch_prefix, chosen_idx, outlier_sat, outlier_sig,
-                std::abs(sres(static_cast<Eigen::Index>(chosen_idx))),
+                outlier_sres_abs,
                 threshold, measurement.bad_residual_count);
         } else {
             klogger->debug("{}No outliers: max_sres={:.3f} <= threshold={:.3f}",

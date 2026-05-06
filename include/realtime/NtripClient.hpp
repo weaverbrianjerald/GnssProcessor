@@ -65,6 +65,16 @@ public:
      */
     size_t read(std::vector<uint8_t>& out, size_t max_bytes);
 
+    /**
+     * @brief Non-blocking read with a millisecond timeout.
+     *
+     * Used by the multi-stream realtime loop, where blocking on one
+     * stream would starve the other.  Waits up to @p timeout_ms for
+     * data to arrive; returns 0 on timeout, on stop, or when no data
+     * is buffered after the wait.
+     */
+    size_t tryRead(std::vector<uint8_t>& out, size_t max_bytes, int timeout_ms);
+
 private:
     /// libcurl write-callback feeds bytes into the ring buffer.
     static size_t curlWriteCallback(void* data, size_t size, size_t nmemb, void* userp);

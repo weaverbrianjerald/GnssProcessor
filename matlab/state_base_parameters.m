@@ -90,7 +90,7 @@ end
 % ============================================================
 
 % Reference point for ENU
-x0 = median(x(120:end));  y0 = median(y(120:end));  z0 = median(z(120:end)); % median of post-converged
+x0 = median(x(120:end),'omitmissing');  y0 = median(y(120:end),'omitmissing');  z0 = median(z(120:end),'omitmissing'); % median of post-converged
 %x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
 %x0 = -1248596.4806;  y0 = -4819428.1948;  z0 = 3976505.8949; % AMC4 (NRCAN PPP)
 %x0 = -2493304.6796;  y0 = -4655215.1032;  z0 = 3565497.5918; % JPLM (IGS)
@@ -163,15 +163,39 @@ xlabel('UTC Time');
 grid on;
 
 %% ============================================================
-%  Position Error Magnitude
+%  Position Error: E / N / U / 3D combined
 % ============================================================
 
-figure('Name','Position Error Magnitude','Color','w'); hold on;
-plot(t, pos_err, 'k', 'LineWidth', 1.4);
+cE = [0 0 1];     % blue
+cN = [0 0.6 0];   % green
+cU = [1 0 0];     % red
+c3 = [0 0 0];     % black
+
+figure('Name','Position Error','Color','w'); hold on; grid on; box on;
+plot(t, E,       'Color', cE, 'LineWidth', 1.2);
+plot(t, N,       'Color', cN, 'LineWidth', 1.2);
+plot(t, U,       'Color', cU, 'LineWidth', 1.2);
+plot(t, pos_err, 'Color', c3, 'LineWidth', 1.4);
 xlabel('UTC Time');
 ylabel('Error (m)');
-title('3D Position Error Magnitude (ENU)');
-grid on;
+title('ENU & 3D Position Error');
+legend({'E','N','U','3D'}, 'Location','best');
+
+convergedIdx = 120;
+E=E(convergedIdx:end); N=N(convergedIdx:end); U=U(convergedIdx:end);
+mE = mean(E,'omitnan')*100;       sE = std(E,'omitnan')*100;
+mN = mean(N,'omitnan')*100;       sN = std(N,'omitnan')*100;
+mU = mean(U,'omitnan')*100;       sU = std(U,'omitnan')*100;
+m3 = mean(pos_err,'omitnan')*100; s3 = std(pos_err,'omitnan')*100;
+
+txt = @(y, c, lbl, mu, sg) text(0.02, y, ...
+    sprintf('%3s: mean = %4.1f cm; sigma = %4.1f cm', lbl, mu, sg), ...
+    'Units','normalized', 'Color', c, ...
+    'FontWeight','bold', 'VerticalAlignment','top','FontName','courier');
+txt(0.97, cE, 'E',  mE, sE);
+txt(0.93, cN, 'N',  mN, sN);
+txt(0.89, cU, 'U',  mU, sU);
+txt(0.85, c3, '3D', m3, s3);
 
 %% ============================================================
 %  Clock Bias with ±1σ

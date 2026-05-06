@@ -7,9 +7,10 @@
 clear all; clc; %close all;
 
 %% --- Load CSV file ---
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
+%fname = 'C:\GnssProcessor\batch_results_GE_Dual\JLPM_week_2025_200_215\2025-200\JPLM\logs\state_trace.csv';
+fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\state_trace.csv';
-fname = 'C:\GnssProcessor\build\x64-Release\logs\smoother_trace.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\smoother_trace.csv';
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to UTC datetime ---
@@ -33,14 +34,23 @@ end
 try
     xs = T.x_std_m; ys = T.y_std_m; zs = T.z_std_m;
 catch
-    xs = T.sigma_x; ys = T.sigma_x; zs = T.z_std_m;
+    xs = T.sigma_x; ys = T.sigma_y; zs = T.sigma_z;
 end
 
 clk  = T.clock_m;
-clks = T.clock_std_m;
+try
+    clks = T.clock_std_m;
+catch
+    clks = T.clock_m;
+end
 
-trop  = T.tropo_m;
-trops = T.tropo_std_m;
+try
+    trop  = T.tropo_m;
+    trops = T.tropo_std_m;
+catch
+    trop  = T.tropo_zwd_m;
+    trops = T.sigma_tropo_m;
+end
 
 % Extras
 %%% Galileo clock
@@ -80,9 +90,10 @@ end
 % ============================================================
 
 % Reference point for ENU
-%x0 = x(end);  y0 = y(end);  z0 = z(end); % last epoch
-x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
+x0 = median(x(120:end));  y0 = median(y(120:end));  z0 = median(z(120:end)); % median of post-converged
+%x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
 %x0 = -1248596.4806;  y0 = -4819428.1948;  z0 = 3976505.8949; % AMC4 (NRCAN PPP)
+%x0 = -2493304.6796;  y0 = -4655215.1032;  z0 = 3565497.5918; % JPLM (IGS)
 
 % Convert reference ECEF → geodetic
 [llh] = ecef2lla([x0 y0 z0]);
@@ -152,15 +163,39 @@ xlabel('UTC Time');
 grid on;
 
 %% ============================================================
-%  Position Error Magnitude
+%  Position Error: E / N / U / 3D combined
 % ============================================================
 
-figure('Name','Position Error Magnitude','Color','w'); hold on;
-plot(t, pos_err, 'k', 'LineWidth', 1.4);
+cE = [0 0 1];     % blue
+cN = [0 0.6 0];   % green
+cU = [1 0 0];     % red
+c3 = [0 0 0];     % black
+
+figure('Name','Position Error','Color','w'); hold on; grid on; box on;
+plot(t, E,       'Color', cE, 'LineWidth', 1.2);
+plot(t, N,       'Color', cN, 'LineWidth', 1.2);
+plot(t, U,       'Color', cU, 'LineWidth', 1.2);
+plot(t, pos_err, 'Color', c3, 'LineWidth', 1.4);
 xlabel('UTC Time');
 ylabel('Error (m)');
-title('3D Position Error Magnitude (ENU)');
-grid on;
+title('ENU & 3D Position Error');
+legend({'E','N','U','3D'}, 'Location','best');
+
+convergedIdx = 120;
+E=E(convergedIdx:end); N=N(convergedIdx:end); E=E(convergedIdx:end);
+mE = mean(E,'omitnan')*100;       sE = std(E,'omitnan')*100;
+mN = mean(N,'omitnan')*100;       sN = std(N,'omitnan')*100;
+mU = mean(U,'omitnan')*100;       sU = std(U,'omitnan')*100;
+m3 = mean(pos_err,'omitnan')*100; s3 = std(pos_err,'omitnan')*100;
+
+txt = @(y, c, lbl, mu, sg) text(0.02, y, ...
+    sprintf('%3s: mean = %4.1f cm; sigma = %4.1f cm', lbl, mu, sg), ...
+    'Units','normalized', 'Color', c, ...
+    'FontWeight','bold', 'VerticalAlignment','top','FontName','courier');
+txt(0.97, cE, 'E',  mE, sE);
+txt(0.93, cN, 'N',  mN, sN);
+txt(0.89, cU, 'U',  mU, sU);
+txt(0.85, c3, '3D', m3, s3);
 
 %% ============================================================
 %  Clock Bias with ±1σ

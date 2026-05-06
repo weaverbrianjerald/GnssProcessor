@@ -490,7 +490,7 @@ namespace GnssProcessor {
             const double q_zenith = pn.ionosphere;
             for (const auto& [sat, idx] : ionosphere_indices_) {
                 // Suppress process noise for BSSD pivot iono states (unobservable).
-                if (frozen_ionosphere_sats_.count(sat)) continue;
+                if (frozen_pivot_sats_.count(sat)) continue;
 
                 double sin2_el = 1.0; // default: zenith (no scaling)
                 auto el_it = ionosphere_elevations_.find(sat);
@@ -524,7 +524,7 @@ namespace GnssProcessor {
                 // helper preserves the lenient "no pipe -> whole key"
                 // fallback the original loop relied on.
                 const std::string sat = StateKeys::satelliteFromSatBiasKey(key);
-                if (frozen_ionosphere_sats_.count(sat)) continue;
+                if (frozen_pivot_sats_.count(sat)) continue;
                 Q(idx, idx) = sb_var;
             }
         }
@@ -540,10 +540,19 @@ namespace GnssProcessor {
 
         // Ambiguity process noise (zero for constant ambiguities).
         // Ambiguities missing BIA/ATX phase coverage absorb a time-constant
-        // satellite bias into the float value � no extra process noise needed.
+        // satellite bias into the float value — no extra process noise needed.
         // They are excluded from integer AR via the unresolvable-ambiguity set.
+        // BSSD pivot ambiguities are also frozen (value=0, variance=0 by S-
+        // transform construction); applying Q would grow their variance past
+        // PivotManager::isPivotDisturbed's 1e-12 threshold every epoch and
+        // trigger spurious handovers.
         if (state_size > core_state_size_) {
             for (const auto& [key, idx] : ambiguity_indices_) {
+                const auto us = key.find('_');
+                if (us != std::string::npos) {
+                    const std::string sat = key.substr(0, us);
+                    if (frozen_pivot_sats_.count(sat)) continue;
+                }
                 Q(idx, idx) = pn.ambiguity * dt;
             }
         }
@@ -906,15 +915,17 @@ namespace GnssProcessor {
         return ionosphere_indices_;
     }
 
-    size_t StateManager::addIonosphereState(const std::string& satellite, double initial_value) {
+    size_t StateManager::addIonosphereState(const std::string& satellite, double initial_value,
+                                             double std_scale) {
         auto logger = log_manager_.getLogger("state_manager");
         if (ionosphere_indices_.count(satellite)) {
             logger->trace("Ionosphere state for {} already exists at index {}", satellite, ionosphere_indices_[satellite]);
             return ionosphere_indices_[satellite];
         }
 
-        // Scale initial variance by obliquity factor 1/sin�(el) when elevation is available
-        const double iono_std = config_.getInitialStd().ionosphere;
+        // Scale initial variance by obliquity factor 1/sin²(el) when elevation is available.
+        // std_scale applies on top to inflate uncertainty when the seed value is unreliable.
+        const double iono_std = config_.getInitialStd().ionosphere * std_scale;
         double init_var = iono_std * iono_std;
         auto el_it = ionosphere_elevations_.find(satellite);
         if (el_it != ionosphere_elevations_.end() && el_it->second > 0.0) {
@@ -970,12 +981,12 @@ namespace GnssProcessor {
         return ionosphere_elevations_;
     }
 
-    void StateManager::setFrozenIonosphereSatellites(const std::set<std::string>& sats) {
-        frozen_ionosphere_sats_ = sats;
+    void StateManager::setFrozenPivotSatellites(const std::set<std::string>& sats) {
+        frozen_pivot_sats_ = sats;
     }
 
-    const std::set<std::string>& StateManager::getFrozenIonosphereSatellites() const {
-        return frozen_ionosphere_sats_;
+    const std::set<std::string>& StateManager::getFrozenPivotSatellites() const {
+        return frozen_pivot_sats_;
     }
 
     // ===================================================================

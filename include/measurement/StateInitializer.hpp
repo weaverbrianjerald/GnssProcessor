@@ -18,6 +18,7 @@
 #include "logging/LogManager.hpp"
 #include "common/PppTypes.hpp"
 #include <Eigen/Dense>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -118,8 +119,15 @@ public:
 
     /**
      * @brief Compute ionosphere seed from dual-frequency code pseudoranges.
+     *
+     * Only code signals with valid (non-zero, in-product) BIA coverage are
+     * used.  `(P - mod)` for an uncovered signal carries the raw satellite
+     * code bias, which would pollute the iono seed by tens of metres.
+     * Returns std::nullopt when no usable pair of bands is available — the
+     * caller should fall back to seed=0 with an inflated initial variance
+     * so the filter doesn't trust the zero too tightly.
      */
-    double computeIonosphereSeed(const PppObservation& obs) const;
+    std::optional<double> computeIonosphereSeed(const PppObservation& obs) const;
 
     /**
      * @brief Map a System enum to its constellation name for ISB lookup.

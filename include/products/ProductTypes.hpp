@@ -37,6 +37,10 @@ namespace GnssProcessor {
         Eigen::Vector3d velocity;                    /**< Satellite ECEF velocity (meters/second) */
         bool position_valid{ false };                /**< True if position has been computed/validated */
         bool velocity_valid{ false };                /**< True if velocity has been computed/validated */
+        int  iode{ -1 };                             /**< Issue of Data, Ephemeris (broadcast-nav only).
+                                                          -1 = unknown / not from broadcast (e.g. SP3-derived).
+                                                          Used by the SSR-overlay path to ensure the correction
+                                                          applies to the same ephemeris baseline. */
     };
 
     /**
@@ -48,6 +52,11 @@ namespace GnssProcessor {
         GnssTime start_time;                         /**< Validity interval start */
         GnssTime end_time;                           /**< Validity interval end */
         double clock_bias{ 0.0 };                    /**< Satellite clock bias (seconds or converted to meters as used) */
+        int    iode{ -1 };                           /**< IODE of the broadcast ephemeris record this sample
+                                                          was generated from.  -1 = unknown / not from broadcast
+                                                          (e.g. CLK-derived).  Used by the SSR-overlay path
+                                                          to keep clock corrections paired with the right
+                                                          broadcast baseline. */
     };
 
     /**

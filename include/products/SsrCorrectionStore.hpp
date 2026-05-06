@@ -1,0 +1,191 @@
+#pragma once
+/**
+ * @file SsrCorrectionStore.hpp
+ * @brief Singleton holding the most-recent SSR corrections per satellite.
+ *
+ * Sits beside @c ProductCache.  ProductCache holds static / batch products
+ * (SP3 orbits, RINEX-CLK clocks, ATX antennas, BIA biases, ERP polar
+ * motion).  SsrCorrectionStore holds streaming SSR overlays that the
+ * realtime engine pushes from decoded RTCM 1057-1068 / 1240-1270 / 4076
+ * frames.  Consumers (@c Geometry::getSatellitePV,
+ * @c GnssCorrections::getSatelliteClockCorrection,
+ * @c MeasurementModel) query the store and apply corrections on top of
+ * the broadcast / SP3 baseline.  When the store is empty, all queries
+ * return "no correction" and the caller falls through to broadcast-only.
+ *
+ * Threading: a single mutex protects the per-satellite map.  Real-time
+ * pushes happen on the NTRIP receive thread; engine queries happen on
+ * the per-epoch processing thread.  The mutex window covers a copy of
+ * the @c SatRecord, so query callers never hold the lock during the
+ * subsequent RAC-to-ECEF transform.
+ */
+
+#include "rtcm/RtcmTypes.hpp"
+#include <Eigen/Dense>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <unordered_map>
+
+namespace GnssProcessor {
+
+/**
+ * @class SsrCorrectionStore
+ * @brief Per-satellite "latest SSR record" cache, thread-safe.
+ *
+ * Records are keyed by satellite ID (e.g. "G01", "E11").  Each push
+ * overwrites the previous value of that record type for that satellite.
+ * Lookups are by satellite + maximum acceptable age in seconds; stale
+ * records are reported as missing.
+ */
+class SsrCorrectionStore {
+public:
+    /// Returns the singleton instance.  Construction is the first call.
+    static SsrCorrectionStore& getInstance();
+
+    SsrCorrectionStore(const SsrCorrectionStore&)            = delete;
+    SsrCorrectionStore& operator=(const SsrCorrectionStore&) = delete;
+    SsrCorrectionStore(SsrCorrectionStore&&)                 = delete;
+    SsrCorrectionStore& operator=(SsrCorrectionStore&&)      = delete;
+
+    // -----------------------------------------------------------------
+    // Push API.  Each method overwrites that satellite's previous record
+    // of the same type.  @p header carries the SSR epoch and IOD-SSR
+    // shared by every per-satellite record in the message.
+    // -----------------------------------------------------------------
+    void pushOrbit(const SsrOrbitCorrection& rec, const SsrHeader& header);
+    void pushClock(const SsrClockCorrection& rec, const SsrHeader& header);
+    void pushCombined(const SsrCombinedCorrection& rec, const SsrHeader& header);
+    void pushCodeBias(const SsrCodeBias& rec, const SsrHeader& header);
+    void pushPhaseBias(const SsrPhaseBias& rec, const SsrHeader& header);
+    void pushUra(const SsrUra& rec, const SsrHeader& header);
+    void pushHighRateClock(const SsrHighRateClock& rec, const SsrHeader& header);
+
+    /**
+     * @brief Aggregated orbit + clock correction for one satellite.
+     *
+     * Built on demand by merging the satellite's most recent orbit
+     * (or combined) record with its most recent clock record.  When a
+     * combined record is present and not stale, it wins over separate
+     * orbit + clock messages.
+     */
+    struct OrbitClockCorrection {
+        Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};      ///< Radial / along-track / cross-track delta (m).
+        Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};  ///< RAC velocity delta (m/s).
+        double          c0{0.0};                                  ///< Clock C0 (m).
+        double          c1{0.0};                                  ///< Clock C1 (m/s).
+        double          c2{0.0};                                  ///< Clock C2 (m/s^2).
+        double          hr_clock{0.0};                            ///< High-rate clock delta (m); 0 if not present.
+        GnssTime        epoch_time{0, 0.0};                       ///< SSR reference epoch.
+        int             iode{0};                                  ///< Broadcast IODE this correction applies to.
+        bool            has_orbit{false};                         ///< True if orbit fields are valid.
+        bool            has_clock{false};                         ///< True if clock fields are valid.
+    };
+
+    /**
+     * @brief Look up the merged orbit+clock correction for a satellite.
+     * @param sat        Satellite ID (e.g. "G01").
+     * @param query_time Reference time of the query, used for the staleness check.
+     * @param max_age_s  Maximum acceptable age (query_time - record_time) in seconds.
+     *                   Defaults to 60 s — typical IGS-RTS update interval.
+     * @return Populated correction, or @c std::nullopt if there is no
+     *         record for this satellite or all records are stale.
+     */
+    std::optional<OrbitClockCorrection> getOrbitClock(
+        const std::string& sat,
+        const GnssTime&    query_time,
+        double             max_age_s = 60.0) const;
+
+    /**
+     * @brief Look up the code bias for a (sat, signal) pair.
+     * @return Bias in meters, or 0.0 if absent.
+     */
+    double getCodeBias(const std::string& sat, const std::string& rinex_obs_code) const;
+
+    /**
+     * @brief Look up the phase bias entry for a (sat, signal) pair.
+     */
+    std::optional<SsrPhaseBiasEntry> getPhaseBias(
+        const std::string& sat, const std::string& rinex_obs_code) const;
+
+    /// True iff no records have been pushed.
+    bool isEmpty() const;
+
+    /// Number of satellites with at least one SSR record.
+    std::size_t size() const;
+
+    /// Drop every record.
+    void clear();
+
+    /**
+     * @brief Apply an orbit RAC delta to a broadcast ECEF position.
+     *
+     * Frame convention (RTCM 10403.3 sec. 3.5.13):
+     *   e_along  = vel / |vel|
+     *   e_cross  = (pos × vel) / |pos × vel|
+     *   e_radial = e_along × e_cross
+     *
+     * The propagated delta (delta_rac + delta_rac_dot · dt) is rotated
+     * into ECEF and SUBTRACTED from @p brdc_pos to yield the precise
+     * position (RTCM defines delta = broadcast − precise).
+     */
+    static Eigen::Vector3d applyOrbitToPosition(
+        const Eigen::Vector3d& brdc_pos,
+        const Eigen::Vector3d& brdc_vel,
+        const Eigen::Vector3d& delta_rac,
+        const Eigen::Vector3d& delta_rac_dot,
+        double                 dt);
+
+    /**
+     * @brief Combine clock polynomial and high-rate delta into seconds.
+     * @return Clock correction in seconds; ADD to broadcast clock bias.
+     */
+    static double applyClockToBias(double c0, double c1, double c2, double hr_clock, double dt);
+
+    /**
+     * @brief Decide whether an SSR record is safe to apply to a given broadcast ephemeris.
+     *
+     * SSR corrections are deltas anchored to a specific broadcast
+     * ephemeris record identified by its IODE.  When the rover's
+     * broadcast nav has rolled to a newer IODE before the SSR provider
+     * caught up (or vice versa), applying the SSR delta would land on
+     * the wrong baseline orbit/clock and produce a degraded answer.
+     *
+     * The check is intentionally permissive when either side is
+     * @c -1 ("unknown"):
+     *   - SP3-derived @c OrbitData carries @c iode=-1, so post-processing
+     *     paths (which never actually ought to apply SSR) silently
+     *     pass the gate today.  Tightening this is one of the things
+     *     a future broadcast-nav parser will enable.
+     *   - Some SSR providers omit the IODE for certain message subtypes
+     *     (rare).
+     *
+     * @param broadcast_iode  IODE of the closest broadcast-nav sample, or -1 if unknown.
+     * @param ssr_iode        IODE the SSR record was issued against, or -1 if unknown.
+     * @return true if the correction may be applied; false only when
+     *         both IODEs are known (>= 0) and they differ.
+     */
+    static bool iodeMatches(int broadcast_iode, int ssr_iode) {
+        if (broadcast_iode < 0 || ssr_iode < 0) return true;
+        return broadcast_iode == ssr_iode;
+    }
+
+private:
+    SsrCorrectionStore() = default;
+    ~SsrCorrectionStore() = default;
+
+    struct SatRecord {
+        std::optional<SsrOrbitCorrection>    orbit;
+        std::optional<SsrClockCorrection>    clock;
+        std::optional<SsrCombinedCorrection> combined;
+        std::optional<SsrUra>                ura;
+        std::optional<SsrHighRateClock>      hrclock;
+        std::optional<SsrCodeBias>           code_bias;
+        std::optional<SsrPhaseBias>          phase_bias;
+    };
+
+    mutable std::mutex                       mutex_;
+    std::unordered_map<std::string, SatRecord> by_sat_;
+};
+
+} // namespace GnssProcessor

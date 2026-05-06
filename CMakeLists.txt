@@ -74,6 +74,9 @@ add_library(gnss_core STATIC
     src/core/rinex/RinexParser.cpp
     src/core/rinex/MultiRinexSync.cpp
     src/core/rtcm/RtcmParser.cpp
+    src/core/rtcm/RtcmSsrDecoder.cpp
+    src/core/rtcm/RtcmSignalMap.cpp
+    src/core/rtcm/RtcmMsmDecoder.cpp
     #src/core/sinex/SinexParser.cpp
     #src/core/ssystem/SSystem.cpp
     src/core/model/ModelGeometry.cpp
@@ -89,7 +92,9 @@ add_library(gnss_core STATIC
     src/core/products/DataDownloader.cpp
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
+    src/core/products/SsrCorrectionStore.cpp
     src/core/realtime/NtripClient.cpp
+    src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
     src/core/realtime/RealTimeEngine.cpp
     src/core/filter/PivotManager.cpp
@@ -98,6 +103,10 @@ add_library(gnss_core STATIC
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
+if(WIN32)
+    # ws2_32 is needed by the raw TCP client (winsock2).  No-op elsewhere.
+    target_link_libraries(gnss_core PUBLIC ws2_32)
+endif()
 if(OpenMP_CXX_FOUND)
     target_link_libraries(gnss_core PUBLIC OpenMP::OpenMP_CXX)
     message(STATUS "OpenMP enabled — Eigen will parallelize dense matmul / solve.")
@@ -115,6 +124,13 @@ target_compile_definitions(gnss_core PUBLIC GNSS_PROJECT_ROOT="${CMAKE_SOURCE_DI
 add_executable(gnss_processor src/main.cpp "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_processor PRIVATE gnss_core pybind11::pybind11)
 
+# Standalone RTCM3 file diagnostic tool — decodes a captured dump and
+# prints message-type counts, station coords, latest SSR per satellite,
+# and MSM7 observation summary.  Useful for validating real Septentrio
+# / IGS-RTS captures against the parser before going live.
+add_executable(gnss_rtcm_diag src/tools/rtcm_diag.cpp)
+target_link_libraries(gnss_rtcm_diag PRIVATE gnss_core)
+
 # Unit tests
 enable_testing()
 add_executable(gnss_tests
@@ -122,6 +138,7 @@ add_executable(gnss_tests
     tests/test_state_key_schema.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
+    tests/test_rtcm.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

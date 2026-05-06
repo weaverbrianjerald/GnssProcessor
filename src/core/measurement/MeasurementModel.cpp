@@ -173,11 +173,21 @@ namespace GnssProcessor {
                     if (obs.elevation > 0.0)
                         state_manager_.setIonosphereElevation(obs.satellite, obs.elevation);
 
-                    const double iono_seed = state_initializer_.computeIonosphereSeed(obs);
-                    state_manager_.addIonosphereState(obs.satellite, iono_seed);
+                    const auto iono_seed_opt = state_initializer_.computeIonosphereSeed(obs);
+                    // When no BIA-covered code pair is available, the seed
+                    // would otherwise inherit raw differential code biases
+                    // (e.g. BeiDou with placeholder zero-valued BIA entries).
+                    // Fall back to seed=0 with an inflated initial std so the
+                    // filter freely converges to the true iono via subsequent
+                    // measurements rather than trusting the zero too tightly.
+                    constexpr double kUnseededIonoStdScale = 10.0;
+                    const double iono_seed = iono_seed_opt.value_or(0.0);
+                    const double std_scale = iono_seed_opt.has_value() ? 1.0 : kUnseededIonoStdScale;
+                    state_manager_.addIonosphereState(obs.satellite, iono_seed, std_scale);
                     log_manager_.getLogger("measurement_model")->debug(
-                        "{}Added ionosphere state for satellite {} with seed={:.3f} m",
-                        epoch_prefix, obs.satellite, iono_seed);
+                        "{}Added ionosphere state for satellite {} with seed={:.3f} m{}",
+                        epoch_prefix, obs.satellite, iono_seed,
+                        iono_seed_opt.has_value() ? "" : " (no BIA-covered pair, std×10)");
                 }
             }
             state_manager_.pruneIonosphereStatesExcept(required_iono_sats);
@@ -355,6 +365,62 @@ namespace GnssProcessor {
         // --- Per-satellite signal bias states (code-only in uncombined) ---
         // Phase ambiguities absorb satellite phase biases, so only code
         // measurements without BIA coverage need a per-satellite bias state.
+        //
+        // On first creation the state is seeded from the row's innovation
+        // (observed - predicted-without-bias) rather than 0.  Hardware
+        // delays on uncovered signals (e.g. BeiDou C7I in MGEX BIA, which
+        // ships only C2I/C6I) routinely run 100+ m once differenced
+        // against a same-band pivot whose bias state is also unset.  A
+        // fresh state at value 0 with std initial_std.sat_bias=10 m
+        // produces sres ≫ threshold on epoch 1 and the row is excluded
+        // before the state ever gets a measurement update — pinning the
+        // signal as a permanent outlier.  Seeding collapses the first
+        // innovation to ~0 instead.  The seed absorbs whatever else is
+        // unmodeled at this epoch (clock/iono/ISB residuals); BSSD
+        // cancels the common-mode part across SD pairs, and the small
+        // (10 m) initial std lets future epochs refine the rest.
+        auto seedSatBias = [&](const PppObservation& obs,
+                               const std::string& ref_type,
+                               double observed) -> double {
+            if (!obs.modeled.count(ref_type)) return 0.0;
+            const Eigen::VectorXd x_now = state_manager_.getStateVector();
+            Eigen::VectorXd jac_unused;
+            double predicted = 0.0;
+            if (!buildJacobianRow(obs, ref_type, x_now,
+                                  static_cast<size_t>(x_now.size()),
+                                  jac_unused, predicted))
+                return 0.0;
+            return observed - predicted;
+        };
+
+        // Band-gate helper: when BSSD is active, only signals whose band(s)
+        // are covered by the current pivot are observable in SD.  Creating
+        // a sat-bias state when the band is *not* covered would seed
+        // against the current state vector — including any iono state
+        // that hasn't yet converged for this satellite — and freeze that
+        // contaminated value (process noise on sat-bias is essentially
+        // zero).  When a future pivot rotation finally brings the band
+        // into BSSD, the row uses the stale bad seed, produces a huge
+        // innovation, gets flagged as an outlier, and is excluded from
+        // the update — so the state never gets a chance to recover.
+        // Gating creation on @c bssd_pivot_bands_ ensures the seed is
+        // computed against the converged state at the moment the band
+        // first becomes usable.
+        auto bandCoveredByPivot = [&](const std::string& sat,
+                                       const std::string& sig) -> bool {
+            if (bssd_pivot_bands_.empty()) return true;  // BSSD off
+            const std::string cons = PppUtils::getSystemString(sat);
+            auto cit = bssd_pivot_bands_.find(cons);
+            if (cit == bssd_pivot_bands_.end()) return true;  // no pivot for cons
+            if (sig.size() < 2) return false;
+            if (!cit->second.count(sig.substr(0, 2))) return false;
+            const auto us = sig.find('_');
+            if (us != std::string::npos && us >= 2 && sig.size() >= us + 3) {
+                if (!cit->second.count(sig.substr(us + 1, 2))) return false;
+            }
+            return true;
+        };
+
         std::set<std::string> required_sat_biases;
         if (config_.estimateSatBiases() && config_.isUncombinedEnabled()) {
             for (const auto& obs : observations) {
@@ -362,12 +428,15 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type.find('_') != std::string::npos) continue;
                     if (ref_type[0] != 'C') continue;  // code-only
                     if (ppp_model_.hasBiasEntry(obs.satellite, ref_type)) continue;
+                    if (!bandCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
                     if (state_manager_.getSatBiasIndex(key) < 0) {
-                        state_manager_.addSatBiasState(key, 0.0);
+                        const double seed = seedSatBias(obs, ref_type, observed);
+                        state_manager_.addSatBiasState(key, seed);
                         log_manager_.getLogger("measurement_model")->debug(
-                            "{}Added sat bias state for {}", epoch_prefix, key);
+                            "{}Added sat bias state for {}, seed={:+.3f} m",
+                            epoch_prefix, key, seed);
                     }
                 }
             }
@@ -378,24 +447,45 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
                     if (ref_type.find('_') == std::string::npos) continue;
                     if (ifCombHasFullBia(obs.satellite, ref_type)) continue;
+                    if (!bandCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
                     if (state_manager_.getSatBiasIndex(key) < 0) {
-                        state_manager_.addSatBiasState(key, 0.0);
+                        const double seed = seedSatBias(obs, ref_type, observed);
+                        state_manager_.addSatBiasState(key, seed);
                         log_manager_.getLogger("measurement_model")->debug(
-                            "{}Added IF sat bias state for {}", epoch_prefix, key);
+                            "{}Added IF sat bias state for {}, seed={:+.3f} m",
+                            epoch_prefix, key, seed);
                     }
                 }
             }
         }
 
-        // Sat-bias states are NOT pruned each epoch.  They represent
-        // time-constant satellite hardware delays that must survive
-        // temporary visibility gaps (e.g. satellite dips below the
-        // elevation mask for a few epochs).  The set is bounded by
-        // the number of satellite+signal combinations lacking BIA
-        // coverage.  Stale states for decommissioned satellites are
-        // harmless — the process noise keeps covariance bounded.
+        // Pruning: drop sat-bias states whose band has fallen out of
+        // bssd_pivot_bands_ since the last epoch.  Without this, a stale
+        // state created under a previous pivot keeps its (possibly bad)
+        // seed value frozen via tiny process noise; the next handover
+        // that brings the band back online would reuse the stale value
+        // and produce massive innovations.  Visibility gaps are still
+        // preserved: a state whose band IS still covered but whose
+        // satellite is temporarily below the elevation mask is kept,
+        // because we explicitly include it in @c keep_sat_biases.
+        if (config_.estimateSatBiases()) {
+            std::set<std::string> keep_sat_biases = required_sat_biases;
+            for (const auto& [key, idx] : state_manager_.getSatBiasStates()) {
+                if (keep_sat_biases.count(key)) continue;
+                const auto bar = key.find('|');
+                if (bar == std::string::npos) {
+                    keep_sat_biases.insert(key);  // malformed — preserve defensively
+                    continue;
+                }
+                const std::string sat = key.substr(0, bar);
+                const std::string sig = key.substr(bar + 1);
+                if (bandCoveredByPivot(sat, sig))
+                    keep_sat_biases.insert(key);
+            }
+            state_manager_.pruneSatBiasStatesExcept(keep_sat_biases);
+        }
     }
 
     // ===================================================================
@@ -1345,38 +1435,63 @@ namespace GnssProcessor {
             if_rows.reserve(if_groups.size());
             size_t n_dropped_single_band = 0;
 
+            // Cap on IF noise amplification factor K = sqrt(α²+β²).  Same
+            // physics and same threshold as PppModel::selectIonoFreePairs;
+            // picking by K rather than by raw frequency rank avoids the
+            // BeiDou trap where the two highest frequencies (B1C, B1I) sit
+            // ~14 MHz apart and yield K ≈ 77.  Standard wide pairs (GPS
+            // L1/L2 K≈3, BeiDou B1I/B3 K≈3.5) pass comfortably; narrow
+            // pairs (B1C/B1I, B2x family) are rejected.
+            constexpr double kMaxIfNoiseFactor = 10.0;
+            size_t n_dropped_high_K = 0;
+
             for (const auto& [gk, idxs] : if_groups) {
                 if (idxs.size() < 2) {
                     // Need two bands to cancel ionosphere; skip.
                     ++n_dropped_single_band;
                     continue;
                 }
-                // Pick the two highest frequencies among the available
-                // bands.  Standard choice for GPS is L1+L2; for Galileo
-                // E1+E5a; for BeiDou B1+B3; etc.  Picking by frequency
-                // (rather than band priority) keeps the formula's α/β
-                // numerically well-conditioned.
-                std::vector<size_t> sorted_idxs = idxs;
-                const System sys = ddSystemFromConsName(rows[sorted_idxs.front()].cons);
-                std::sort(sorted_idxs.begin(), sorted_idxs.end(),
-                    [&](size_t a, size_t b) {
+                // Pick the band pair within this sat-pair group with the
+                // smallest noise amplification factor K, subject to K
+                // staying under the cap.  For dual-frequency receivers
+                // there's only one pair so this reduces to the prior
+                // behavior; for triple-/all-frequency it picks the best
+                // available combination.
+                const System sys = ddSystemFromConsName(rows[idxs.front()].cons);
+                double best_K = std::numeric_limits<double>::infinity();
+                size_t best_hi = 0, best_lo = 0;
+                bool found = false;
+                for (size_t i = 0; i < idxs.size(); ++i) {
+                    for (size_t j = i + 1; j < idxs.size(); ++j) {
                         const double fa = ppp_utils_.getFrequency(
-                            rows[a].rov_code, sys, rows[a].sat_i);
+                            rows[idxs[i]].rov_code, sys, rows[idxs[i]].sat_i);
                         const double fb = ppp_utils_.getFrequency(
-                            rows[b].rov_code, sys, rows[b].sat_i);
-                        return fa > fb;
-                    });
+                            rows[idxs[j]].rov_code, sys, rows[idxs[j]].sat_i);
+                        if (!(std::isfinite(fa) && std::isfinite(fb))
+                         || fa <= 0.0 || fb <= 0.0 || fa == fb) continue;
+                        const double fas = fa * fa, fbs = fb * fb;
+                        const double denom = fas - fbs;
+                        if (std::abs(denom) < 1e-3 * fas) continue;
+                        const double K = std::sqrt(fas * fas + fbs * fbs) / std::abs(denom);
+                        if (K < best_K) {
+                            best_K = K;
+                            // hi-frequency index first
+                            if (fa >= fb) { best_hi = idxs[i]; best_lo = idxs[j]; }
+                            else          { best_hi = idxs[j]; best_lo = idxs[i]; }
+                            found = true;
+                        }
+                    }
+                }
+                if (!found || best_K > kMaxIfNoiseFactor) {
+                    ++n_dropped_high_K;
+                    continue;
+                }
 
-                const DdRow& r1 = rows[sorted_idxs[0]];  // higher f
-                const DdRow& r2 = rows[sorted_idxs[1]];  // lower f
+                const DdRow& r1 = rows[best_hi];  // higher f
+                const DdRow& r2 = rows[best_lo];  // lower f
 
                 const double f1 = ppp_utils_.getFrequency(r1.rov_code, sys, r1.sat_i);
                 const double f2 = ppp_utils_.getFrequency(r2.rov_code, sys, r2.sat_i);
-                if (!(std::isfinite(f1) && std::isfinite(f2))
-                 || f1 <= 0.0 || f2 <= 0.0 || f1 == f2) {
-                    ++n_dropped_single_band;
-                    continue;
-                }
                 const double f1s   = f1 * f1;
                 const double f2s   = f2 * f2;
                 const double denom = f1s - f2s;
@@ -1419,8 +1534,10 @@ namespace GnssProcessor {
 
             if (diag) {
                 klog->info("DD diag: IF row collapse: {} per-band rows -> {} IF rows "
-                           "({} sat-pair groups dropped for <2 bands)",
-                           rows.size(), if_rows.size(), n_dropped_single_band);
+                           "({} sat-pair groups dropped for <2 bands, "
+                           "{} dropped because best-pair K > {:.1f})",
+                           rows.size(), if_rows.size(), n_dropped_single_band,
+                           n_dropped_high_K, kMaxIfNoiseFactor);
             }
             rows = std::move(if_rows);
         }

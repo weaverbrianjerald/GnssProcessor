@@ -103,11 +103,41 @@ namespace GnssProcessor {
         std::string ntrip_password;               ///< NTRIP password.
         std::string nmea_gga;                     ///< Optional GGA sentence for VRS.
         int         reconnect_delay_s{ 5 };       ///< Seconds before reconnect on failure.
-        std::string input_type{ "ntrip" };        ///< Input source: "ntrip", "tcp", "serial", "file".
-        std::string input_path;                   ///< Path or address for non-NTRIP input.
+        std::string input_type{ "ntrip" };        ///< Input source: "ntrip", "tcp", "file".
+        std::string input_path;                   ///< Path for "file" input.
+        std::string tcp_host;                     ///< Host for "tcp" input (e.g. receiver IP).
+        int         tcp_port{ 28784 };            ///< Port for "tcp" input.
         std::string output_type{ "console" };     ///< Output destination: "console", "file", "nmea".
         std::string output_path;                  ///< Path for file-based output.
         size_t      max_epoch_buffer{ 100 };      ///< Max epochs to buffer before dropping oldest.
+
+        /**
+         * @brief Optional second RTCM stream carrying SSR corrections.
+         *
+         * Independent of the primary stream above: the primary feeds rover
+         * observations into the engine; this feeds RTCM SSR (1057-1068,
+         * 1240-1270, eventually 4076) into the SsrCorrectionStore.  Both
+         * streams may be active concurrently — the realtime loop polls
+         * each with a short timeout and dispatches frames to the engine.
+         *
+         * Disabled by default; setting @c enabled=true selects the
+         * stream type via @c input_type ("ntrip" or "file").
+         */
+        struct Corrections {
+            bool        enabled{ false };
+            std::string input_type{ "ntrip" };    ///< "ntrip", "tcp", or "file" (replay).
+            std::string ntrip_host;
+            int         ntrip_port{ 2101 };
+            std::string ntrip_mountpoint;         ///< e.g. "IGS01" on products.igs-ip.net
+            std::string ntrip_user;
+            std::string ntrip_password;
+            std::string nmea_gga;
+            int         reconnect_delay_s{ 5 };
+            std::string input_path;               ///< Path for "file" input_type.
+            std::string tcp_host;                 ///< Host for "tcp" input.
+            int         tcp_port{ 28784 };        ///< Port for "tcp" input.
+        };
+        Corrections corrections;                   ///< Optional SSR corrections stream.
     };
 
     /**
@@ -1432,6 +1462,64 @@ namespace GnssProcessor {
         double getArHoldVariance() const { return ar_hold_variance_; }
 
         /**
+         * @brief Minimum filter epochs before AR is allowed.
+         *
+         * Convergence guard: AR runs LAMBDA on the float ambiguity covariance,
+         * and a marginal fix accepted before the float covariance has settled
+         * tends to lock onto wrong integers and cascade — once a wrong integer
+         * is constrained into the state, subsequent LAMBDA searches see a
+         * degenerate covariance direction and produce inflated ratios that
+         * look confident but are mathematically pathological.  10 epochs at
+         * 30s rate ≈ 5 minutes is the minimum sane gate; 30+ minutes is
+         * conservative.  Skipped epochs return @c success=false from resolve().
+         */
+        int getArMinEpochs() const { return ar_min_epochs_; }
+
+        /**
+         * @brief Maximum 3D formal position σ for AR to fire (m).
+         *
+         * Convergence guard based on filter confidence rather than wall time.
+         * AR is skipped when @c sqrt(P(0,0) + P(1,1) + P(2,2)) exceeds this.
+         * Default 5 cm — once the filter is this confident in position, the
+         * float ambiguity covariance is also typically converged enough for
+         * a meaningful integer search.
+         */
+        double getArMaxPositionSigma() const { return ar_max_position_sigma_m_; }
+
+        /**
+         * @brief Upper bound on the LAMBDA ratio test (reject above this).
+         *
+         * Healthy AR ratios sit in the 3–1000 range.  Ratios above ~1e4
+         * indicate the float covariance has a near-zero-variance direction
+         * (degenerate from a previous wrong-integer hold or numerical
+         * pathology), making the second-best integer's chi² distance
+         * effectively infinite.  Such fixes look ultra-confident but are
+         * mathematically suspect.  Reject them and stay float.
+         */
+        double getArRatioUpperBound() const { return ar_ratio_upper_bound_; }
+
+        /**
+         * @brief WL-only AR mode toggle.
+         *
+         * When true, AR applies MW-resolved DD WL integers as Kalman
+         * pseudo-observations on the SD ambiguity state and skips the
+         * LAMBDA NL search entirely.  Use this as a conservative
+         * verification stage before turning on the full WL+NL LAMBDA
+         * pipeline: WL via MW is robust even when float NL covariance
+         * hasn't converged enough for safe integer rounding.
+         */
+        bool getArWlOnly() const { return ar_wl_only_; }
+
+        /**
+         * @brief Pseudo-observation variance (cycles²) for WL-only constraints.
+         *
+         * Default 1e-4 cycle² = (0.01 cycle)² σ.  MW-resolved WL integers
+         * are typically locked to within a small fraction of a cycle, so
+         * the constraint can be tight.
+         */
+        double getArWlOnlyPseudoVar() const { return ar_wl_only_pseudo_var_; }
+
+        /**
          * @brief Get the logging configuration block.
          * @return Const reference to the LoggingConfig struct.
          */
@@ -1579,6 +1667,11 @@ namespace GnssProcessor {
         double ar_ratio_threshold_{ 3.0 };     ///< LAMBDA ratio test threshold for acceptance.
         double ar_elevation_mask_{ 20.0 };     ///< Elevation mask for AR candidates (degrees).
         double ar_hold_variance_{ 0.001 };     ///< Pseudo-obs variance for fix-and-hold (m^2).
+        int    ar_min_epochs_{ 10 };           ///< Minimum filter epochs before AR is allowed (convergence guard).
+        double ar_max_position_sigma_m_{ 0.05 };  ///< Maximum 3D formal position σ for AR to fire (m).
+        double ar_ratio_upper_bound_{ 1e4 };   ///< Reject fixes whose ratio exceeds this (covariance pathology).
+        bool   ar_wl_only_{ false };           ///< WL-only AR: apply MW-resolved WL integers as Kalman pseudo-obs, skip LAMBDA NL search.
+        double ar_wl_only_pseudo_var_{ 1e-4 }; ///< Pseudo-obs variance (cycles²) for WL-only constraints.
 
         LoggingConfig logging_config_;             ///< Logger and trace file enable/disable flags.
     };

@@ -49,6 +49,11 @@ struct AmbiguityResolverConfig {
     double elevation_mask_ar{ 20.0 };  ///< Elevation mask for AR candidates (degrees).
     double hold_variance{ 0.001 };     ///< Pseudo-observation variance for fix-and-hold (m^2).
     int    ar_mode{ 0 };               ///< 0: float-only, 1: continuous, 2: instantaneous, 3: fix-and-hold.
+    int    min_epochs{ 10 };           ///< Convergence guard: skip AR for the first N invocations.
+    double max_position_sigma_m{ 0.05 };  ///< Convergence guard: skip AR when 3D position σ exceeds this (m).
+    double ratio_upper_bound{ 1e4 };   ///< Reject fixes whose ratio exceeds this (degenerate covariance).
+    bool   wl_only{ false };           ///< If true, AR only applies MW-resolved WL integers as Kalman pseudo-observations; no LAMBDA NL search.
+    double wl_only_pseudo_var{ 1e-4 }; ///< Pseudo-observation variance (cycles²) for WL-only constraints.  ~0.01 cycle σ.
 };
 
 /**
@@ -238,6 +243,13 @@ private:
     AmbiguityResolverConfig config_;
     LogManager& log_manager_;
     PppUtils ppp_utils_;   ///< For frequency/wavelength lookups in NL computation.
+    int      epoch_count_{ 0 };  ///< Counts resolve()/resolveDd() invocations for the min-epochs convergence gate.
+    /// Last DD WL integer applied per (sat_i, sat_ref, sig_hi, sig_lo) key,
+    /// used by resolveWlOnly to detect when MW has re-locked at a different
+    /// integer and the L1/L2 SD ambiguity covariance must be inflated so
+    /// the new constraint can take effect in a single epoch rather than
+    /// drifting toward the new integer slowly.
+    std::map<std::string, int> previous_dd_wl_;
 
     /**
      * @brief Two-step WL/NL resolution using known WL integers.
@@ -257,6 +269,39 @@ private:
      * @return AmbiguityResolution result, or empty if the method is not applicable.
      */
     AmbiguityResolution resolveWlConstrained(
+        const std::vector<DdPair>& pairs,
+        const Eigen::VectorXd& x,
+        const Eigen::MatrixXd& P,
+        const std::map<std::string, int>& wl_ambiguities,
+        const std::vector<PppObservation>& observations);
+
+    /**
+     * @brief WL-only resolution: apply MW-resolved WL integers as Kalman
+     *        pseudo-observations on the SD ambiguity state, no LAMBDA NL search.
+     *
+     * For each pair of DD ambiguities (L1, L2) on the same satellite pair where
+     * the DD WL integer is known from MW slip detection, constrains the cycle-
+     * domain combination
+     *     (DD_L1 / λ_L1) − (DD_L2 / λ_L2) = WL_int
+     * via a Kalman update with @c wl_only_pseudo_var (cycles²) variance.  The
+     * fixed_state and fixed_covariance returned reflect the WL-constrained
+     * float — *not* a full integer fix.  Useful as a conservative AR mode
+     * before enabling the full WL+NL LAMBDA pipeline: WL via MW is robust
+     * even when float NL covariance hasn't converged enough for safe
+     * integer rounding.
+     *
+     * Skipped under both convergence gates same as the LAMBDA paths.
+     *
+     * @param pairs           DD pairs (from buildDdPairs).
+     * @param x               Full state vector.
+     * @param P               Full covariance matrix.
+     * @param wl_ambiguities  Resolved SD WL integers from the MW detector.
+     * @param observations    Observations for system/frequency lookup.
+     * @return AmbiguityResolution with success=true if at least one WL
+     *         constraint was applied; ratio is set to +∞ as a sentinel
+     *         (no LAMBDA ratio test ran).
+     */
+    AmbiguityResolution resolveWlOnly(
         const std::vector<DdPair>& pairs,
         const Eigen::VectorXd& x,
         const Eigen::MatrixXd& P,

@@ -63,6 +63,19 @@ size_t NtripClient::read(std::vector<uint8_t>& out, size_t max_bytes) {
     return n;
 }
 
+size_t NtripClient::tryRead(std::vector<uint8_t>& out, size_t max_bytes, int timeout_ms) {
+    std::unique_lock<std::mutex> lock(buf_mutex_);
+    if (timeout_ms > 0) {
+        buf_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                         [this] { return !buf_.empty() || !running_.load(); });
+    }
+    if (buf_.empty()) { out.clear(); return 0; }
+    size_t n = (std::min)(max_bytes, buf_.size());
+    out.assign(buf_.begin(), buf_.begin() + static_cast<std::ptrdiff_t>(n));
+    buf_.erase(buf_.begin(), buf_.begin() + static_cast<std::ptrdiff_t>(n));
+    return n;
+}
+
 // ---------------------------------------------------------------------------
 // libcurl write callback
 // ---------------------------------------------------------------------------

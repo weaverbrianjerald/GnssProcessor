@@ -340,14 +340,22 @@ int Application::runBaseline() {
         // its DD ambiguity state set is independent of other rovers'.
         if (config_.getArMode() > 0) {
             AmbiguityResolverConfig ar_config;
-            ar_config.ar_mode = config_.getArMode();
-            ar_config.ratio_threshold = config_.getArRatioThreshold();
-            ar_config.elevation_mask_ar = config_.getArElevationMask();
-            ar_config.hold_variance = config_.getArHoldVariance();
+            ar_config.ar_mode              = config_.getArMode();
+            ar_config.ratio_threshold      = config_.getArRatioThreshold();
+            ar_config.elevation_mask_ar    = config_.getArElevationMask();
+            ar_config.hold_variance        = config_.getArHoldVariance();
+            ar_config.min_epochs           = config_.getArMinEpochs();
+            ar_config.max_position_sigma_m = config_.getArMaxPositionSigma();
+            ar_config.ratio_upper_bound    = config_.getArRatioUpperBound();
+            ar_config.wl_only              = config_.getArWlOnly();
+            ar_config.wl_only_pseudo_var   = config_.getArWlOnlyPseudoVar();
             ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
-            log->info("Rover '{}' AR enabled: mode={}, ratio_thresh={:.1f}, elev_mask={:.1f} deg, hold_var={:.4f}",
-                rover_name, ar_config.ar_mode, ar_config.ratio_threshold,
-                ar_config.elevation_mask_ar, ar_config.hold_variance);
+            log->info("Rover '{}' AR enabled: mode={}, wl_only={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+                      "hold_var={:.4f}, min_epochs={}, max_pos_σ={:.3f} m",
+                rover_name, ar_config.ar_mode, ar_config.wl_only ? "on" : "off",
+                ar_config.ratio_threshold, ar_config.ratio_upper_bound,
+                ar_config.elevation_mask_ar, ar_config.hold_variance,
+                ar_config.min_epochs, ar_config.max_position_sigma_m);
         }
         else {
             ambiguity_resolver_.reset();
