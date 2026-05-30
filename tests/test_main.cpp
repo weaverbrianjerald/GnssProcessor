@@ -25,7 +25,10 @@
 
 #include <gtest/gtest.h>
 
+#include "atmosphere/Gpt3.hpp"
+#include "atmosphere/Vmf3.hpp"
 #include "common/Constants.hpp"
+#include "logging/LogManager.hpp"
 #include "math/Coordinates.hpp"
 #include "math/Interpolate.hpp"
 #include "math/TimeUtils.hpp"
@@ -250,7 +253,13 @@ TEST(TimeUtilsTest, IsValidGregorianDateEdgeCases) {
     EXPECT_FALSE(TimeUtils::isValidGregorianDate(2024, 4, 31, 0, 0, 0.0));  // April has 30
     EXPECT_FALSE(TimeUtils::isValidGregorianDate(2024, 1, 1, 24, 0, 0.0));  // Bad hour
     EXPECT_FALSE(TimeUtils::isValidGregorianDate(2024, 1, 1, 0, 0, 60.0));  // Bad seconds
-    EXPECT_FALSE(TimeUtils::isValidGregorianDate(1979, 12, 31, 0, 0, 0.0)); // Pre-GPS epoch
+
+    // The validity floor is 1970, NOT the GPS epoch (1980-01-06). Pre-GPS-epoch
+    // dates back to 1970 are accepted by design so Block I satellite ATX
+    // "VALID FROM" lines (from 1978) parse. See commit a2fa2ab and the comment
+    // in TimeUtils::isValidGregorianDate.
+    EXPECT_TRUE(TimeUtils::isValidGregorianDate(1979, 12, 31, 0, 0, 0.0));  // Pre-GPS epoch, >= 1970: OK
+    EXPECT_FALSE(TimeUtils::isValidGregorianDate(1969, 12, 31, 0, 0, 0.0)); // Before 1970 floor: rejected
 }
 
 // continuousGpsSeconds must be monotonically increasing and wrap correctly
@@ -279,7 +288,12 @@ TEST(TimeUtilsTest, J2000CenturiesAtJ2000IsZero) {
 TEST(TimeUtilsTest, GpsToTtJdOffsetIsConstant) {
     const double gps_jd = 2460438.5;  // arbitrary 2024 JD
     double tt_jd = TimeUtils::gpsJdToTtJd(gps_jd);
-    EXPECT_NEAR((tt_jd - gps_jd) * 86400.0, TimeUtils::TT_GPS_OFFSET, 1e-9);
+    // Recovering a sub-second offset by differencing two ~2.46e6-magnitude
+    // Julian Dates is limited by double precision: the ULP at this magnitude is
+    // ~4.7e-10 days (~4e-5 s), so the round-trip cannot resolve the offset to
+    // better than ~1e-5 s. The tolerance reflects that floor, not a model error
+    // — the applied offset is exactly TT_GPS_OFFSET (51.184 s).
+    EXPECT_NEAR((tt_jd - gps_jd) * 86400.0, TimeUtils::TT_GPS_OFFSET, 1e-4);
 }
 
 // BDS time = GPS - 14 s, so a BDS calendar moment converted to GPS time
@@ -521,6 +535,276 @@ TEST(FixtureSmokeTest, Sp3HeaderTimeConversionMatches) {
         << "SP3 calendar -> GPS week mismatch";
     EXPECT_NEAR(computed.tow, header_tow, 1e-3)
         << "SP3 calendar -> GPS TOW mismatch";
+}
+
+// ============================================================================
+// Gpt3 — pressure/temperature lookup from the 5° grid
+// ============================================================================
+
+// Shared GPT3 fixture: spdlog's global logger registry doesn't allow
+// re-registering "gnss_processor", and the binary grid load (~1 MB) is
+// the same for every test, so one LogManager + one loaded grid is reused
+// across the suite.
+class Gpt3Test : public ::testing::Test {
+protected:
+    static LogManager log_mgr_;
+    static Gpt3       model_;
+    static bool       have_fixture_;
+
+    static void SetUpTestSuite() {
+        namespace fs = std::filesystem;
+        const std::string data_dir = GNSS_TEST_DATA_DIR;
+        if (data_dir.empty()) return;
+        fs::path grid = fs::path(data_dir) / "static" / "gpt3" / "gpt3_5.grd";
+        if (!fs::exists(grid)) return;
+
+        const auto log_dir = fs::temp_directory_path() / "gnss_gpt3_test_logs";
+        fs::create_directories(log_dir);
+        log_mgr_.initialize(log_dir, LogLevel::Warn);
+        have_fixture_ = model_.load(grid, log_mgr_);
+    }
+
+    void SetUp() override {
+        if (!have_fixture_) GTEST_SKIP() << "GPT3 grid fixture not present";
+    }
+};
+LogManager Gpt3Test::log_mgr_;
+Gpt3       Gpt3Test::model_;
+bool       Gpt3Test::have_fixture_ = false;
+
+// A query at the exact first grid cell (87.5°N, 2.5°E) at the cell's own
+// orthometric height should reproduce the harmonic value built from the
+// line-2 a0/A1/B1/A2/B2 columns — independent of the load path, so this
+// pins both the parse order and the harmonic evaluation.
+TEST_F(Gpt3Test, QueryAtGridCornerMatchesHarmonic) {
+    EXPECT_TRUE(model_.isLoaded());
+
+    // Line 2 of gpt3_5.grd, copied verbatim into the expected coefficients:
+    //   lat=87.5  lon=2.5
+    //   p:  a0=101421   A1=21   B1=409   A2=-217   B2=-122   [Pa]
+    //   T:  a0=259.2    A1=-13.2 B1=-6.1 A2=2.6    B2=0.3    [K]
+    //   undu=19.36  Hs=-0.00
+    constexpr double doy = 100.0;
+    constexpr double omega = 2.0 * Constants::PI / 365.25;
+    const double c1 = std::cos(omega * doy);
+    const double s1 = std::sin(omega * doy);
+    const double c2 = std::cos(2.0 * omega * doy);
+    const double s2 = std::sin(2.0 * omega * doy);
+
+    const double p_expected_Pa = 101421.0 + 21.0 * c1 + 409.0 * s1 + (-217.0) * c2 + (-122.0) * s2;
+    const double T_expected_K  = 259.2 + (-13.2) * c1 + (-6.1) * s1 + 2.6 * c2 + 0.3 * s2;
+
+    // Query at exactly the grid corner so bilinear weights collapse to (1,0,0,0).
+    // Use the cell's own orthometric height (h_ellipsoidal = Hs + undu = 19.36 m)
+    // so the barometric / lapse reduction is a no-op.
+    Gpt3::Result r{};
+    ASSERT_TRUE(model_.query(87.5, 2.5, /*h_ellipsoidal_m=*/19.36, doy, r));
+
+    EXPECT_NEAR(r.pressure_mbar, p_expected_Pa * 0.01, 1e-4);
+    EXPECT_NEAR(r.temperature_K, T_expected_K, 1e-4);
+}
+
+// Sanity: pressure must decrease with height (standard barometric form).
+TEST_F(Gpt3Test, PressureDecreasesWithHeight) {
+    Gpt3::Result lo{}, hi{};
+    ASSERT_TRUE(model_.query(40.0, -75.0,    0.0, 200.0, lo));
+    ASSERT_TRUE(model_.query(40.0, -75.0, 3000.0, 200.0, hi));
+
+    // 3 km altitude difference should give roughly P_hi ≈ 0.7 × P_lo with
+    // the standard 5.225 exponent; the precise factor is not the test —
+    // monotone decrease is.
+    EXPECT_LT(hi.pressure_mbar, lo.pressure_mbar);
+    EXPECT_GT(hi.pressure_mbar, 0.5 * lo.pressure_mbar);  // sanity floor
+    EXPECT_LT(hi.pressure_mbar, 0.9 * lo.pressure_mbar);  // sanity ceiling
+}
+
+// Longitude wrap: querying at lon=358° and lon=-2° (same physical
+// location) must produce identical pressure and temperature.
+TEST_F(Gpt3Test, LongitudeWrapsConsistently) {
+    Gpt3::Result a{}, b{};
+    ASSERT_TRUE(model_.query(30.0,  358.0, 100.0, 50.0, a));
+    ASSERT_TRUE(model_.query(30.0,   -2.0, 100.0, 50.0, b));
+    EXPECT_NEAR(a.pressure_mbar, b.pressure_mbar, 1e-9);
+    EXPECT_NEAR(a.temperature_K, b.temperature_K, 1e-9);
+}
+
+// ============================================================================
+// Vmf3 — empirical mapping function from GPT3 a + SH-synthesized b/c
+// ============================================================================
+
+// End-to-end VMF3 evaluation against an independent Python port of the
+// same algorithm (scripts/vmf3_reference.py).  Both implementations
+// read the same Vmf3Coefficients.hpp constants, so this pins:
+//  - Legendre recursion (V, W tables)
+//  - Spherical-harmonic synthesis loop and (n,m) ordering
+//  - Seasonal harmonic evaluation
+//  - Marini continued fraction
+// to the canonical vmf3.m algorithm to full double precision.
+TEST(Vmf3Test, MatchesPythonReference) {
+    // Inputs intentionally avoid the equator / prime meridian / DOY 0
+    // edge cases so the SH terms exercise non-trivial values.
+    constexpr double lat = 0.5;                   // rad (~28.6°N)
+    constexpr double lon = 1.0;                   // rad (~57.3°E)
+    constexpr double doy = 100.0;
+    const     double el  = 30.0 * Constants::PI / 180.0;
+    constexpr double a_h = 0.00125;
+    constexpr double a_w = 0.00060;
+
+    // Reference values from scripts/vmf3_reference.py executed against
+    // the same Vmf3Coefficients.hpp this binary links.
+    constexpr double mf_d_ref = 1.9926259863958744;
+    constexpr double mf_w_ref = 1.9964305176721975;
+
+    double mf_d = 0.0, mf_w = 0.0;
+    Vmf3::computeMapping(lat, lon, doy, el, a_h, a_w, mf_d, mf_w);
+
+    EXPECT_NEAR(mf_d, mf_d_ref, 1e-12);
+    EXPECT_NEAR(mf_w, mf_w_ref, 1e-12);
+}
+
+// Sanity: at zenith both mapping functions reduce to 1 because Marini
+// at sin(el)=1 with positive a/b/c collapses to 1.
+TEST(Vmf3Test, AtZenithIsUnity) {
+    const double el_zenith = Constants::PI / 2.0;
+    double mf_d = 0.0, mf_w = 0.0;
+    Vmf3::computeMapping(0.7, 0.3, 150.0, el_zenith, 0.00128, 0.00057, mf_d, mf_w);
+    EXPECT_NEAR(mf_d, 1.0, 1e-10);
+    EXPECT_NEAR(mf_w, 1.0, 1e-10);
+}
+
+// Sanity: at low elevation the mapping factor grows large (cosec-like).
+// 10° elevation gives 1/sin ≈ 5.76 as a lower bound; mf is slightly
+// larger due to the (a,b,c) correction.
+TEST(Vmf3Test, GrowsAtLowElevation) {
+    const double el_low = 10.0 * Constants::PI / 180.0;
+    double mf_d = 0.0, mf_w = 0.0;
+    Vmf3::computeMapping(0.7, 0.3, 150.0, el_low, 0.00128, 0.00057, mf_d, mf_w);
+    EXPECT_GT(mf_d, 5.0);
+    EXPECT_LT(mf_d, 7.0);
+    EXPECT_GT(mf_w, 5.0);
+    EXPECT_LT(mf_w, 7.0);
+}
+
+// ============================================================================
+// Earth-rotation pre-correction for SP3 orbit interpolation
+// ============================================================================
+//
+// Geometry::getSatellitePV rotates each SP3 node's (X, Y) into the ECEF
+// frame at the query epoch before fitting the Neville polynomial — the
+// RTKLIB / cssrlib / IGS convention — and then converts the polynomial's
+// inertial-frame velocity back to ECEF via v_ecef = v_inertial − ω×pos.
+//
+// This test exercises that arithmetic on a synthetic orbit with known
+// analytical truth and confirms:
+//   (a) the pre-rotated polynomial recovers ECEF position at an off-node
+//       query to sub-mm;
+//   (b) the inertial-to-ECEF velocity correction reproduces ECEF
+//       velocity to mm/s.
+//
+// Note: we deliberately do NOT assert "pre-rotation has smaller error
+// than no pre-rotation" on this trajectory.  For a circular equatorial
+// orbit, the ECEF frequency is the beat |ω−n| and the inertial frequency
+// is n (about 2× larger for GPS) — so on this particular toy case the
+// pre-rotated polynomial fits a higher-frequency sinusoid and the
+// comparison can go either way.  The real-world benefit of pre-rotation
+// is for inclined / perturbed orbits where ECEF picks up an (ω+n)
+// component whose amplitude is much larger than the smooth inertial
+// trajectory; that's outside the scope of a deterministic synthetic
+// fixture.
+TEST(OrbitInterpTest, EarthRotationPreCorrectionGivesCorrectECEFState) {
+    constexpr double OMEGA_E = 7.2921151467e-5;   // rad/s  (Constants::EARTH_ANGULAR_VELOCITY)
+    constexpr double a       = 26.5610e6;         // m      (GPS orbital radius)
+    constexpr double n_mean  = 1.45842e-4;        // rad/s  (GPS mean motion, period ≈ 12 h)
+    constexpr double phi0    = 0.7;               // arbitrary phase
+    constexpr double dt_sp3  = 900.0;             // s      (15 min, IGS Final)
+    constexpr int    N       = 11;                // 11 nodes, degree-10 polynomial
+
+    auto pos_eci = [&](double t) {
+        const double a_ang = n_mean * t + phi0;
+        return Eigen::Vector3d(a * std::cos(a_ang), a * std::sin(a_ang), 0.0);
+    };
+    auto vel_eci = [&](double t) {
+        const double a_ang = n_mean * t + phi0;
+        return Eigen::Vector3d(-a * n_mean * std::sin(a_ang),
+                                a * n_mean * std::cos(a_ang),
+                                0.0);
+    };
+    auto eci_to_ecef_at = [&](double t, const Eigen::Vector3d& v_eci) {
+        // R_z(−ω·t) applied to v_eci.
+        const double cs = std::cos(OMEGA_E * t);
+        const double sn = std::sin(OMEGA_E * t);
+        return Eigen::Vector3d( cs * v_eci.x() + sn * v_eci.y(),
+                               -sn * v_eci.x() + cs * v_eci.y(),
+                                v_eci.z());
+    };
+    auto pos_ecef = [&](double t) { return eci_to_ecef_at(t, pos_eci(t)); };
+    auto vel_ecef = [&](double t) {
+        // v_ecef = R(−ω t)·v_eci + ω·R'(−ω t)·r_eci
+        //        = R(−ω t)·v_eci − ω × pos_ecef
+        const Eigen::Vector3d p = pos_ecef(t);
+        const Eigen::Vector3d v_inertial_in_ecef = eci_to_ecef_at(t, vel_eci(t));
+        return Eigen::Vector3d(v_inertial_in_ecef.x() + OMEGA_E * p.y(),
+                               v_inertial_in_ecef.y() - OMEGA_E * p.x(),
+                               v_inertial_in_ecef.z());
+    };
+
+    // Centered 11-node window with off-node query time strictly inside.
+    const double t_q = 5.0 * dt_sp3 + 233.7;
+    std::vector<double>          t_node(N);
+    std::vector<Eigen::Vector3d> p_node(N);
+    for (int i = 0; i < N; ++i) {
+        t_node[i]  = i * dt_sp3;
+        p_node[i]  = pos_ecef(t_node[i]);
+    }
+
+    auto neville3 = [&](const std::vector<double>& x,
+                        const std::vector<Eigen::Vector3d>& y,
+                        double xq,
+                        Eigen::Vector3d& pos_out,
+                        Eigen::Vector3d& vel_out) {
+        std::vector<double> yx(N), yy(N), yz(N);
+        for (int i = 0; i < N; ++i) {
+            yx[i] = y[i].x(); yy[i] = y[i].y(); yz[i] = y[i].z();
+        }
+        double pxo, pyo, pzo, vxo, vyo, vzo;
+        Interpolate::nevilleInterpDeriv(x, yx, xq, pxo, vxo);
+        Interpolate::nevilleInterpDeriv(x, yy, xq, pyo, vyo);
+        Interpolate::nevilleInterpDeriv(x, yz, xq, pzo, vzo);
+        pos_out = Eigen::Vector3d(pxo, pyo, pzo);
+        vel_out = Eigen::Vector3d(vxo, vyo, vzo);
+    };
+
+    // --- Apply the same arithmetic Geometry::getSatellitePV uses ---------
+    std::vector<Eigen::Vector3d> p_node_rot(N);
+    for (int i = 0; i < N; ++i) {
+        const double alpha = OMEGA_E * (t_node[i] - t_q);
+        const double cs = std::cos(alpha), sn = std::sin(alpha);
+        p_node_rot[i] = Eigen::Vector3d(cs * p_node[i].x() - sn * p_node[i].y(),
+                                        sn * p_node[i].x() + cs * p_node[i].y(),
+                                        p_node[i].z());
+    }
+    Eigen::Vector3d pos_interp, v_inertial;
+    neville3(t_node, p_node_rot, t_q, pos_interp, v_inertial);
+    // v_ecef = v_inertial − ω × pos  (matches getSatellitePV)
+    const Eigen::Vector3d vel_interp(v_inertial.x() + OMEGA_E * pos_interp.y(),
+                                      v_inertial.y() - OMEGA_E * pos_interp.x(),
+                                      v_inertial.z());
+
+    // --- Truth ------------------------------------------------------------
+    const Eigen::Vector3d pos_truth = pos_ecef(t_q);
+    const Eigen::Vector3d vel_truth = vel_ecef(t_q);
+
+    // (a) Position recovery: sub-mm for a smooth degree-10 fit at this
+    //     window size.  Generous bound (1 mm) to absorb any floating-point
+    //     skew from x87 / fma differences across builds.
+    const double err_pos = (pos_interp - pos_truth).norm();
+    EXPECT_LT(err_pos, 1e-3) << "pre-rotated pos err: " << err_pos << " m";
+
+    // (b) ECEF velocity recovery: v_ecef = v_inertial − ω×pos must match
+    //     truth to mm/s.  This pins both the rotation arithmetic and the
+    //     downstream conversion formula.
+    const double err_vel = (vel_interp - vel_truth).norm();
+    EXPECT_LT(err_vel, 1e-3) << "pre-rotated vel err: " << err_vel << " m/s";
 }
 
 }  // namespace

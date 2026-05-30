@@ -34,8 +34,6 @@
 
 namespace GnssProcessor {
 
-class MwSlipDetector;  // forward declaration
-
 /**
  * @class PivotManager
  * @brief Manages BSSD pivot satellite selection, handover, and state re-referencing.
@@ -50,32 +48,50 @@ public:
     PivotManager(const GnssConfig& config, LogManager& log_manager);
 
     /**
-     * @brief Provide the MW slip detector for quality-based pivot scoring.
-     *
-     * When set, pivot selection uses MW arc maturity, noise level, and
-     * WL-lock status in addition to elevation and ascending preference.
-     *
-     * @param mw_detector Pointer to the MwSlipDetector (may be nullptr).
-     */
-    void setMwDetector(const MwSlipDetector* mw_detector) { mw_detector_ = mw_detector; }
-
-    /**
      * @brief Run pivot selection and handover for one epoch.
      *
      * Sticky pivot selection: keeps the current pivot while it remains
      * above the configured elevation threshold and undisturbed.  When a
      * new pivot is needed (disturbance, low elevation, first epoch),
-     * candidates are scored using a multi-criteria function that considers
-     * MW arc quality, ascending elevation, and elevation magnitude.
+     * candidates are scored using lexicographic (coverage, score)
+     * ordering — full signal coverage is a hard tier above any partial-
+     * coverage candidate, and within a tier candidates rank by float-
+     * ambiguity convergence and elevation.
      *
      * @param observations   Modeled observations for this epoch.
      * @param state_manager  Filter state (modified on handover).
      * @param epoch_prefix   Log prefix string.
+     * @param forced_only    When true, skip the implicit
+     *                       @c isPivotDisturbed branch — only
+     *                       constellations with a pending
+     *                       @c requestForcedHandover are processed.
+     *                       Used by the same-epoch re-entry path so
+     *                       a rebuild pass after a KF-detected pivot
+     *                       slip applies the handover before the
+     *                       rebuild's measurement update.  Default
+     *                       (first-pass behaviour) runs both forced
+     *                       and disturbance-detection paths.
      */
     void handlePivotHandover(
         const std::vector<PppObservation>& observations,
         StateManager& state_manager,
-        const std::string& epoch_prefix);
+        const std::string& epoch_prefix,
+        bool forced_only = false,
+        const std::set<std::string>& exclude_sats = {});
+
+    /**
+     * @brief Whether any constellation has a pending forced-handover
+     *        request queued via @c requestForcedHandover.
+     *
+     * Used by MeasurementModel's same-epoch re-entry gate: when a
+     * rebuild pass discovers a forced request, the gate fires
+     * @c handlePivotHandover with @c forced_only=true, letting the
+     * handover happen in the same epoch as the post-fit detection
+     * instead of being deferred to the next epoch.
+     */
+    bool hasPendingForcedHandover() const {
+        return !forced_handover_requests_.empty();
+    }
 
     /**
      * @brief Request a forced pivot handover for a single constellation on
@@ -93,13 +109,24 @@ public:
      * detector wants the handover repeated.
      *
      * Idempotent — multiple requests for the same constellation in a
-     * row collapse to one handover.
+     * row collapse to one handover.  Repeated requests accumulate their
+     * @p exclude_sats (set union) so each rebuild pass can add freshly
+     * flagged satellites to the exclusion.
      *
      * @param constellation Constellation name (e.g. "GPS", "Galileo").
      * @param reason        Free-text reason logged at warn level.
+     * @param exclude_sats  Satellites that must NOT be elected as the
+     *                      replacement pivot for this constellation (the
+     *                      offset pivot plus the post-fit detector's
+     *                      within-group residual outliers).  Stashed and
+     *                      unioned into @c handlePivotHandover's effective
+     *                      exclusion so the forced handover lands on a
+     *                      consensus satellite rather than bouncing to
+     *                      another offset sat.  Consumed with the request.
      */
     void requestForcedHandover(const std::string& constellation,
-                                const std::string& reason);
+                                const std::string& reason,
+                                const std::set<std::string>& exclude_sats = {});
 
     /**
      * @brief Freeze pivot ambiguity covariances to zero.
@@ -126,6 +153,31 @@ public:
     /// Check if BSSD pivots have been initialized.
     bool hasPivots() const { return !pivot_sat_.empty(); }
 
+    /**
+     * @brief Forget all sticky pivots and unfreeze sat-specific states.
+     *
+     * Used by @c Application::handleGap on long-gap detection so the
+     * post-gap epoch picks fresh pivots rather than re-referencing
+     * against stale pre-gap incumbents.  After this call:
+     *   - @c pivot_sat_ is empty (next @c handlePivotHandover treats
+     *     the epoch as a fresh BSSD start)
+     *   - @c forced_handover_requests_ is dropped (the request set
+     *     refers to pre-gap constellations that may no longer exist)
+     *   - @c StateManager's frozen-pivot set is cleared so iono and
+     *     sat-bias process noise applies to all satellites again
+     *
+     * The actual iono / sat-bias / ambiguity STATE values for the old
+     * pivot are not modified here — they remain at value=0 with
+     * variance=0 (the frozen-pivot signature).  The caller (handleGap)
+     * is expected to drop those states via the relevant
+     * @c StateManager::pruneXxxStatesExcept({}) calls before the
+     * next ensureRequiredStates() pass rebuilds them around the
+     * newly-elected pivots.
+     *
+     * @param state_manager  Filter state (frozen-pivot set is cleared).
+     */
+    void dropAllPivots(StateManager& state_manager);
+
 private:
     // -------------------------------------------------------------------
     // Per-constellation epoch snapshot (built once per handlePivotHandover)
@@ -135,15 +187,19 @@ private:
     struct SatInfo {
         std::string constellation;   ///< e.g. "GPS"
         double      elevation{0.0};
-        double      elev_rate{0.0};  ///< Elevation rate (deg/epoch), positive = ascending.
         size_t      phase_sig_count{0}; ///< Number of distinct phase signal types (L1W, L2W, L5X, etc.).
+        /// Worst-case float-ambiguity variance (m²) across this sat's
+        /// signals.  Negative sentinel means no ambiguity state yet
+        /// (first BSSD epoch, freshly appeared sat).
+        double      max_amb_variance{-1.0};
     };
 
     /** Per-constellation aggregated info for the current epoch. */
     struct ConstellationInfo {
-        std::string best_sat;      ///< Satellite with highest pivot score.
+        std::string best_sat;      ///< Best candidate (max coverage, score tie-break).
         double      best_score{-1e9};
-        std::string highest_sat;   ///< Satellite with highest elevation (fallback).
+        size_t      best_coverage{0}; ///< Coverage of @c best_sat (lex ordering with score).
+        std::string highest_sat;   ///< Satellite with highest elevation (defensive fallback).
         double      highest_el{-1.0};
         size_t      max_phase_sigs{0}; ///< Maximum phase signal count across all satellites.
     };
@@ -151,48 +207,65 @@ private:
     /**
      * @brief Build per-satellite and per-constellation maps from observations.
      *
-     * Single pass over observations.  Skips GLONASS satellites.  Computes
-     * elevation rate from previous-epoch history when available.
+     * Single pass over observations.  Skips GLONASS satellites unless
+     * @c enable_glonass_bssd is set.  Reads each satellite's worst-case
+     * float-ambiguity variance from @p state_manager so the scoring step
+     * can prefer pivots whose filter states are well-converged (the new
+     * pivot's variance propagates into every same-group SD state via the
+     * T·P·T' re-reference).
+     *
+     * For each constellation the best candidate is selected using
+     * lexicographic ordering on (coverage, score) — full-coverage
+     * candidates always rank above any partial-coverage candidate,
+     * regardless of score.  This is a hard tier rather than an additive
+     * penalty: the BSSD frame requires the pivot to track every signal
+     * any other satellite tracks, so dropping below max coverage in the
+     * presence of a full-coverage alternative is never acceptable.  The
+     * fallback to highest-available coverage is implicit — when no
+     * satellite has full coverage, the comparator picks the maximum
+     * coverage count it sees.
      *
      * @param observations  Epoch observations.
-     * @param[out] sat_info Per-satellite info (constellation, elevation, rate).
-     * @param[out] cons_info Per-constellation info (best scored sat, highest elev).
+     * @param state_manager State manager (read-only — used for variance lookups).
+     * @param[out] sat_info Per-satellite info (constellation, elevation, variance).
+     * @param[out] cons_info Per-constellation info (best candidate, max coverage).
      */
     void buildEpochMaps(
         const std::vector<PppObservation>& observations,
+        const StateManager& state_manager,
         std::map<std::string, SatInfo>& sat_info,
         std::map<std::string, ConstellationInfo>& cons_info);
 
     /**
      * @brief Compute a pivot suitability score for a candidate satellite.
      *
-     * Multi-criteria score combining:
-     *   - MW arc maturity and noise stability (when MW detector is available)
-     *   - WL integer lock status (BIA-corrected arcs)
-     *   - Ascending elevation preference (avoid descending satellites
-     *     that will soon drop below the mask angle)
-     *   - Elevation magnitude (higher is more stable)
+     * Signal coverage is handled outside this function as a hard tier in
+     * @c buildEpochMaps (lexicographic (coverage, score) ordering), so
+     * this function only ranks *within* a coverage tier.  Two criteria:
      *
-     * Scoring breakdown (higher is better):
-     *   - Elevation:   el_deg / 90  (0..1)
-     *   - Ascending:   +0.3 if rate > 0 and el > 20 deg
-     *   - Signal cov:  +0.6 * (phase_sigs / max_phase_sigs) � prefer
-     *                  satellites that track more phase signals so the
-     *                  pivot covers all SD pairs in the constellation
-     *   - MW mature:   +0.5 if min_arc >= kMinEpochsForAdaptive
-     *   - MW noise:    +0.3 if worst_sigma < 0.15 m (well-behaved arc)
-     *   - WL locked:   +0.4 if all BIA-corrected pairs are integer-locked
-     *   - Low elev:    -0.5 if el < 20 deg (unreliable for pivot)
+     *   - State convergence: a satellite whose own float-ambiguity state
+     *     is poorly known propagates that variance into every same-group
+     *     SD ambiguity via the T·P·T' re-reference on handover.  Penalty
+     *     is −min(1.0, √var) on the worst per-signal ambiguity variance,
+     *     with a flat −1.0 sentinel when no state exists yet.
      *
-     * @param sat              Satellite identifier.
-     * @param si               SatInfo for this satellite.
-     * @param max_phase_sigs   Max phase signal count across the constellation
-     *                         (0 to skip signal coverage scoring).
+     *   - Geometry: elevation magnitude (0..1) as a smooth bonus, with
+     *     a −0.5 hard penalty below 20° to discourage near-horizon
+     *     pivots regardless of convergence (troposphere and multipath
+     *     dominate at low elevation).
+     *
+     * On the first BSSD epoch every candidate within a coverage tier has
+     * no state, so the convergence term is constant across candidates
+     * and elevation decides — no special initial-election path needed.
+     *
+     * @param sat Satellite identifier (currently unused; retained for
+     *            future per-sat hooks like elevation-rate or lock-loss
+     *            counters).
+     * @param si  SatInfo for this satellite.
      * @return Pivot suitability score (higher = better candidate).
      */
     double scorePivotCandidate(const std::string& sat,
-                               const SatInfo& si,
-                               size_t max_phase_sigs = 0) const;
+                               const SatInfo& si) const;
 
     /**
      * @brief Collect the set of phase signal types from observations.
@@ -213,7 +286,8 @@ private:
      */
     std::map<std::string, std::string> selectPivotCandidates(
         const std::map<std::string, ConstellationInfo>& cons_info,
-        const std::map<std::string, SatInfo>& sat_info) const;
+        const std::map<std::string, SatInfo>& sat_info,
+        const std::set<std::string>& exclude_sats = {}) const;
 
     /**
      * @brief Handle a disturbed pivot for one constellation.
@@ -240,7 +314,8 @@ private:
         const StateManager& state_manager,
         Eigen::VectorXd& x,
         Eigen::MatrixXd& P,
-        const std::string& epoch_prefix);
+        const std::string& epoch_prefix,
+        const std::set<std::string>& exclude_sats = {});
 
     // -------------------------------------------------------------------
     // Disturbance detection
@@ -325,20 +400,30 @@ private:
     const GnssConfig& config_;
     LogManager& log_manager_;
 
-    /// Optional MW detector for quality-based pivot scoring (not owned).
-    const MwSlipDetector* mw_detector_{ nullptr };
-
     /// Current pivot satellite per constellation (e.g. "GPS" -> "G01").
     std::map<std::string, std::string> pivot_sat_;
-
-    /// Previous-epoch elevation per satellite for ascending/descending detection.
-    std::map<std::string, double> prev_elevation_;
 
     /// Constellations whose pivot is flagged for forced handover on the next
     /// @c handlePivotHandover call. Populated by @c requestForcedHandover,
     /// consumed (erased) inside @c handlePivotHandover after the disturbance
     /// branch processes each entry.
     std::set<std::string> forced_handover_requests_;
+
+    /// Per-constellation replacement-pivot exclusions carried alongside a
+    /// forced-handover request (offset pivot + post-fit residual outliers).
+    /// Unioned into the effective @c exclude_sats in @c handlePivotHandover
+    /// and erased when the matching request is consumed.  This is what stops
+    /// the forced handover from re-anchoring on another offset satellite.
+    std::map<std::string, std::set<std::string>> forced_handover_exclude_;
+
+    /// Satellites already retired as a pivot during the current epoch's
+    /// handover sequence, keyed by constellation.  Reset at each epoch's
+    /// first-pass handover (@c forced_only == false) and accumulated across
+    /// the rebuild loop's forced re-entries, then treated as additional
+    /// exclusions.  This is the backstop that guarantees the post-fit
+    /// handover terminates: a satellite handed off this epoch can never be
+    /// bounced back to, so the anchor is forced onto a fresh satellite.
+    std::map<std::string, std::set<std::string>> retired_pivots_this_epoch_;
 };
 
 } // namespace GnssProcessor

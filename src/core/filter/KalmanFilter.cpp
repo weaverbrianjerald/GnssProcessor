@@ -34,6 +34,60 @@ namespace GnssProcessor {
     namespace {
 
     // -------------------------------------------------------------------
+    // Carrier wavelength lookup
+    // -------------------------------------------------------------------
+    //
+    // Maps a (pivot/owning satellite, band prefix) pair to its carrier
+    // wavelength.  Used by both pivot-slip detection and per-row phase
+    // outlier handling to enforce a λ-fraction floor below which a
+    // residual cannot represent an integer cycle slip.
+    //
+    // @param sat       Satellite identifier (e.g. "G11", "E33").  Constellation
+    //                  is derived from the first character.
+    // @param band_str  Two-character band prefix (e.g. "L1", "L2", "L5").
+    //                  Only the second char (frequency digit) is used.
+    // @return          Wavelength in meters, or 0.0 when the pair is unknown.
+    inline double bandWavelengthForSat(const std::string& sat,
+                                        const std::string& band_str) {
+        if (sat.empty() || band_str.size() < 2) return 0.0;
+        const char prefix = sat[0];
+        const char d      = band_str[1];
+        double freq = 0.0;
+        switch (prefix) {
+        case 'G': case 'J': case 'S':  // GPS / QZSS / SBAS share band-digit mapping
+            if      (d == '1') freq = Constants::GPS_L1_FREQ;
+            else if (d == '2') freq = Constants::GPS_L2_FREQ;
+            else if (d == '5') freq = Constants::GPS_L5_FREQ;
+            break;
+        case 'E':  // Galileo
+            if      (d == '1') freq = Constants::GAL_E1_FREQ;
+            else if (d == '5') freq = Constants::GAL_E5A_FREQ;
+            else if (d == '7') freq = Constants::GAL_E5B_FREQ;
+            else if (d == '6') freq = Constants::GAL_E6_FREQ;
+            else if (d == '8') freq = Constants::GAL_E5_FREQ;
+            break;
+        case 'C':  // BeiDou
+            if      (d == '1') freq = Constants::BDS_B1C_FREQ;
+            else if (d == '2') freq = Constants::BDS_B1_FREQ;   // B1I — legacy band-2 RINEX code
+            else if (d == '5') freq = Constants::BDS_B2A_FREQ;
+            else if (d == '7') freq = Constants::BDS_B2_FREQ;   // B2b
+            else if (d == '6') freq = Constants::BDS_B3_FREQ;
+            else if (d == '8') freq = Constants::BDS_B2AB_FREQ;
+            break;
+        case 'R':  // GLONASS — FDMA center frequency is sufficient for λ/4 floor
+            if      (d == '1') freq = Constants::GLONASS_G1_BASE_FREQ;
+            else if (d == '2') freq = Constants::GLONASS_G2_BASE_FREQ;
+            else if (d == '3') freq = Constants::GLONASS_G3_BASE_FREQ;
+            else if (d == '4') freq = Constants::GLONASS_G1A_FREQ;
+            else if (d == '6') freq = Constants::GLONASS_G2A_FREQ;
+            break;
+        default: break;
+        }
+        if (!(freq > 0.0)) return 0.0;
+        return Constants::SPEED_OF_LIGHT / freq;
+    }
+
+    // -------------------------------------------------------------------
     // Sparse-H helpers
     // -------------------------------------------------------------------
     //
@@ -194,11 +248,13 @@ namespace GnssProcessor {
         const double tropo_std = initial_std.troposphere >= 0         ? initial_std.troposphere         : 0.5;
         const double isb_std   = initial_std.system_time_offset >= 0  ? initial_std.system_time_offset  : 100.0;
 
-        const size_t clock_idx = state_manager_.getClockIndex();
         const size_t tropo_idx = state_manager_.getTropoIndex();
 
-        if (isUnsetVariance(P(clock_idx, clock_idx)))
-            P(clock_idx, clock_idx) = clock_std * clock_std;
+        if (state_manager_.hasClock()) {
+            const size_t clock_idx = state_manager_.getClockIndex();
+            if (isUnsetVariance(P(clock_idx, clock_idx)))
+                P(clock_idx, clock_idx) = clock_std * clock_std;
+        }
         if (isUnsetVariance(P(tropo_idx, tropo_idx)))
             P(tropo_idx, tropo_idx) = tropo_std * tropo_std;
 
@@ -306,10 +362,13 @@ namespace GnssProcessor {
         // Baseline mode: state vector is position (3) + DD ambiguities only.
         // No clock / tropo / velocity / IMU / ISB states — skip the PPP
         // minimum-size check and the associated base_core_size computation.
+        // BSSD mode: receiver clock is omitted (cancels in SD), so the base
+        // drops from 5 (pos+clk+tropo) to 4 (pos+tropo) and the per-system
+        // ISB states aren't allocated either.
         const size_t min_core = config.isBaselineMode()
             ? 3  // position only
             : [&] {
-                size_t b = 5;
+                size_t b = config.enableBetweenSatelliteSd() ? 4 : 5;
                 if (config.estimateTropoGradients()) b += 2;
                 if (config.estimateVelocity())       b += 3;
                 if (config.estimatePhaseClock())     b += 1;
@@ -545,6 +604,7 @@ namespace GnssProcessor {
         const std::string epoch_prefix;
 
         last_reset_satellites_.clear();
+        last_reset_signals_.clear();
         was_complete_reset_ = false;
 
         // Concise-log gating: pass 1 emits live; passes ≥2 buffer into the
@@ -593,6 +653,90 @@ namespace GnssProcessor {
         // backup (~1 MB matrix copy at n=350).
         const Eigen::VectorXd x = state_manager_.getStateVector();
         const Eigen::MatrixXd P = state_manager_.getCovariance();
+
+        // --- Persistent-bias R-inflation ---------------------------------
+        // For phase rows whose (sat, signal) residual history shows a
+        // warmed-up EWMA mean larger than persistent_bias_min_cycles · λ,
+        // add @c mean² to the diagonal R entry.  This downweights the
+        // row in proportion to how badly its historical mean has drifted
+        // from zero, without resetting the ambiguity (the bias isn't a
+        // cycle slip; the channel is just persistently biased by some
+        // unmodeled effect: multipath, PCV miscal, inter-channel
+        // hardware delay).  R-inflation lets the row keep contributing
+        // *less* rather than dropping it entirely — automatic recovery
+        // as the EWMA mean decays.
+        const double persist_floor_cyc = config_.getPersistentBiasMinCycles();
+        if (persist_floor_cyc > 0.0 && residual_history_.isEnabled()) {
+            const Eigen::Index n_rows = measurement.innovations.size();
+            size_t inflated_count = 0;
+            for (Eigen::Index i = 0; i < n_rows; ++i) {
+                const auto& sat_id = measurement.satellite_ids[static_cast<size_t>(i)];
+                const auto& sig    = measurement.signal_types[static_cast<size_t>(i)];
+                if (sig.empty() || sig[0] != 'L') continue;
+                // Iono-free combos don't have a single-λ interpretation;
+                // skip them (consistent with the per-row outlier λ-floor).
+                if (sig.find('_') != std::string::npos) continue;
+                if (sig.size() < 2) continue;
+
+                const auto [prim, _ref] = splitBssdSatId(sat_id);
+                const auto stats_opt = residual_history_.getStats(prim, sig);
+                if (!stats_opt.has_value()) continue;
+                const auto& st = stats_opt.value();
+                // Require the row's EWMA history to be warmed up (the
+                // tracker's own warmup threshold is internal; mirror its
+                // public Config defaults here as a sane floor).
+                if (st.n < 20) continue;
+
+                const std::string band_str = sig.substr(0, 2);
+                const double lambda = bandWavelengthForSat(prim, band_str);
+                if (!(lambda > 0.0)) continue;
+
+                const double floor_m = persist_floor_cyc * lambda;
+                if (std::abs(st.mean) <= floor_m) continue;
+
+                const double extra_var = st.mean * st.mean;
+                R_(i, i) += extra_var;
+                ++inflated_count;
+                klogger->info(
+                    "{}Persistent-bias R-inflation on {} {}: EWMA |mean|={:.4f} m "
+                    "> floor={:.4f} m (λ={:.4f} m, n={}); R diagonal +={:.4e} m²",
+                    epoch_prefix, prim, sig, std::abs(st.mean),
+                    floor_m, lambda, st.n, extra_var);
+            }
+            if (inflated_count > 0) {
+                klogger->debug("{}Persistent-bias R-inflation applied to {} phase rows",
+                    epoch_prefix, inflated_count);
+            }
+        }
+
+        // --- Apply pending Huber R-inflations from previous pass -----------
+        // The Huber post-fit dispatch (see checkPostFitResiduals) detects
+        // sub-cycle phase rows whose |sres_post| exceeds @c huber_k and
+        // queues per-row R targets in @c pending_r_inflations_.  Applied
+        // here at the start of every rebuild pass so the *next* update
+        // runs against a downweighted R for those rows.  Cleared at
+        // epoch boundary via @c beginEpoch / clearPendingRInflations.
+        if (!pending_r_inflations_.empty()) {
+            const Eigen::Index n_rows = measurement.innovations.size();
+            size_t applied = 0;
+            for (Eigen::Index i = 0; i < n_rows; ++i) {
+                const auto& sat_id = measurement.satellite_ids[static_cast<size_t>(i)];
+                const auto& sig    = measurement.signal_types[static_cast<size_t>(i)];
+                if (sig.empty()) continue;
+                const auto [prim, _ref3] = splitBssdSatId(sat_id);
+                const std::string key = prim + "|" + sig;
+                auto it = pending_r_inflations_.find(key);
+                if (it == pending_r_inflations_.end()) continue;
+                if (it->second > R_(i, i)) {
+                    R_(i, i) = it->second;
+                    ++applied;
+                }
+            }
+            if (applied > 0) {
+                klogger->debug("{}Applied {} pending Huber R-inflations to this pass",
+                    epoch_prefix, applied);
+            }
+        }
 
         if (logger_) logger_->logVector(measurement.innovations, "Innovations Vector", epoch_tag);
         if (logger_) logger_->logMatrix(measurement.H, "Measurement Matrix H", epoch_tag);
@@ -733,10 +877,13 @@ namespace GnssProcessor {
         Eigen::VectorXd sres(measurement.residuals.size());
         for (Eigen::Index i = 0; i < sres.size(); ++i) {
             const double sii = (i < sr_diag.size()) ? sr_diag(i) : 0.0;
-            const double r_floor = (i < measurement.R_v.size() && measurement.R_v(i) > 0.0)
-                                 ? measurement.R_v(i) : 0.0;
-            // Use R(i,i) as the floor; the 1e-12 term guards against
-            // pathological cases where both Sr and R are unset.
+            // Floor the denominator at the *working* R(i,i) — the inflated
+            // value, not the formal measurement.R_v.  Without this a Huber or
+            // EWMA R-inflation never registers: the standardized residual
+            // stays pinned to the formal noise, so |sres| can't shrink on the
+            // rebuild and the inflation loop diverges.  The 1e-12 term guards
+            // the pathological case where both Sr and R are unset.
+            const double r_floor = (i < R_.rows() && R_(i, i) > 0.0) ? R_(i, i) : 0.0;
             const double denom = std::sqrt(std::max({ sii, r_floor, 1e-12 }));
             const double val = measurement.residuals(i);
             sres(i) = (std::isfinite(val) && std::isfinite(denom) && denom > 0.0) ? (val / denom) : 0.0;
@@ -785,6 +932,34 @@ namespace GnssProcessor {
         state_manager_.setStateVector(x_new);
         state_manager_.setCovariance(P_new);
         state_manager_.setStateEpochTime(measurement.time);
+
+        // --- Apply pending stuck-code-bias resets -------------------------
+        // Queued by the stuck-code-bias scan inside
+        // validatePostFitResiduals (clean-commit branch above).  Applied
+        // here, immediately after commit, so the next epoch starts with
+        // the re-seeded bias.  Reading the just-committed state via
+        // state_manager_.getStateVector() rather than x_new because
+        // resetSatBiasState mutates state_vector_ in place and we want a
+        // consistent view for any subsequent resets in this batch.
+        if (!pending_sat_bias_resets_.empty()) {
+            const double sb_std   = config_.getInitialStd().sat_bias;
+            const double cold_var = sb_std * sb_std;
+            for (const auto& [key, delta_value] : pending_sat_bias_resets_) {
+                const int idx = state_manager_.getSatBiasIndex(key);
+                if (idx < 0) continue;  // pruned between detect and apply
+                const double cur = state_manager_.getStateVector()(idx);
+                state_manager_.resetSatBiasState(key, cur + delta_value, cold_var);
+                // Clear the row's EWMA + streak history; the new
+                // bias state's converged value is unrelated to the
+                // pre-reset history.
+                const auto bar = key.find('|');
+                if (bar != std::string::npos) {
+                    residual_history_.resetSatSignal(
+                        key.substr(0, bar), key.substr(bar + 1));
+                }
+            }
+            pending_sat_bias_resets_.clear();
+        }
 
         // --- IMU attitude error feedback ---
         // After the GNSS update, the attitude error state dpsi has been
@@ -922,6 +1097,7 @@ namespace GnssProcessor {
                 klogger->debug("{}Phase outlier on BSSD pivot {} {}: keeping frozen at 0",
                     epoch_prefix, sat, outlier_sig);
                 last_reset_satellites_.push_back(sat);
+                last_reset_signals_.emplace_back(sat, outlier_sig);
                 return;
             }
             // Safety: if BSSD is active but pivot_sat is unexpectedly empty,
@@ -959,6 +1135,7 @@ namespace GnssProcessor {
                 bssd_active ? " (SD)" : "");
 
             last_reset_satellites_.push_back(sat);
+            last_reset_signals_.emplace_back(sat, outlier_sig);
         };
 
         resetOneAmbiguity(primary_sat, "primary");
@@ -1074,6 +1251,7 @@ namespace GnssProcessor {
                        epoch_prefix, amb_key, amb_idx, prev_amb, seed_value, amb_std);
 
         last_reset_satellites_.push_back(primary_sat);
+        last_reset_signals_.emplace_back(primary_sat, outlier_sig);
     }
 
     void KalmanFilter::handleCodeOutlier(EpochMeasurement& measurement,
@@ -1085,6 +1263,15 @@ namespace GnssProcessor {
 
         const std::string excl_key = primary_sat + "_" + outlier_sig;
         measurement.excluded_measurements.insert(excl_key);
+
+        // Bump the per-row consecutive-rejection streak.  Cleared on
+        // any future epoch where the row is kept (see
+        // ResidualHistoryTracker::record).  Drives the stuck-bias
+        // detector in the clean-commit path below: when the streak
+        // reaches @c estimation.stuck_code_bias.min_streak the
+        // corresponding sat-bias state is reset to break the loop
+        // where an over-converged bias keeps rejecting its own row.
+        residual_history_.recordRejection(primary_sat, outlier_sig);
 
         klogger->debug("{}Code outlier action: excluding measurement {} {} (key={})",
             epoch_prefix, outlier_sat, outlier_sig, excl_key);
@@ -1150,8 +1337,12 @@ namespace GnssProcessor {
 
         const double clk_var   = initial_std.clock >= 0    ? initial_std.clock * initial_std.clock       : 90000.0;
         const double tropo_var = initial_std.troposphere >= 0 ? initial_std.troposphere * initial_std.troposphere : 0.25;
-        P(3, 3) = clk_var;
-        P(4, 4) = tropo_var;
+        if (state_manager_.hasClock()) {
+            const size_t clk_idx = state_manager_.getClockIndex();
+            P(clk_idx, clk_idx) = clk_var;
+        }
+        const size_t tropo_idx = state_manager_.getTropoIndex();
+        P(tropo_idx, tropo_idx) = tropo_var;
 
         // Tropospheric gradients
         if (config_.estimateTropoGradients()) {
@@ -1373,9 +1564,18 @@ namespace GnssProcessor {
         // incorrectly), wasting N rebuild passes and corrupting per-sat
         // MW arc histories on innocent satellites.
         //
-        // The detector groups phase rows by (pivot, freq_band), then
-        // tests each group for the coherent-offset signature using
-        // robust statistics:
+        // The detector groups phase rows by (pivot, signal) — full
+        // RINEX-3 code, e.g. "L1W" vs "L1C" are separate groups — to
+        // match the per-signal state granularity in PPP-RTK uncombined,
+        // where ambiguity, sat-bias, and ATX corrections are all keyed
+        // per-signal.  A disturbance isolated to one tracking attribute
+        // (single-channel hardware glitch, attribute-specific ATX miscal)
+        // would be diluted at the band level if both attributes are
+        // tracked; per-signal keying preserves sensitivity.  The
+        // cross-band detector below still pools across signals per
+        // pivot and gates on distinct-band count for the independence
+        // argument.  Each group is tested for the coherent-offset
+        // signature using robust statistics:
         //   1. Group must have at least MIN_GROUP_SIZE rows (small groups
         //      have too little statistical power for the test).
         //   2. At least ABOVE_FRACTION_MIN of the group's |sres| must be
@@ -1404,18 +1604,74 @@ namespace GnssProcessor {
             constexpr double MAD_RATIO_MAX       = 0.4;
             constexpr double MEDIAN_FLOOR_M      = 0.005;
 
+            // Robust band (k·MAD, floored) used to classify which non-pivot
+            // SD rows in a firing group DISAGREE with the coherent median.
+            // Those deviating sats are co-disturbed or independently slipping
+            // and are recorded as replacement-pivot exclusions so the forced
+            // handover lands on a consensus satellite (see recordHandoverExcludes).
+            // k=3 sits just inside the observed co-offset separation (a second
+            // offset sat lands ~3.2·MAD off the median); the absolute floor
+            // guards the degenerate MAD→0 case. The PivotManager retired-pivot
+            // backstop guarantees termination even if a borderline outlier is
+            // missed here, so the band is deliberately permissive.
+            constexpr double HANDOVER_EXCLUDE_MAD_K   = 3.0;
+            constexpr double HANDOVER_EXCLUDE_FLOOR_M = 0.02;
+
+            // Wavelength-fraction floor for the median.  A real cycle slip
+            // is an integer number of carrier wavelengths; below ~λ/4 the
+            // residual cannot be a slip, only sub-cycle bias (multipath,
+            // PCV miscal, kinematic dynamics).  Config-tunable per the
+            // GnssConfig::getPivotSlipMinCycles() docstring; 0 disables.
+            // Helper is shared with the per-row phase outlier handler;
+            // see @c bandWavelengthForSat in the file-scope anonymous
+            // namespace.
+            const double cyc_floor_fraction = config_.getPivotSlipMinCycles();
+
             struct Group {
                 std::vector<size_t> indices;
                 std::vector<double> residuals;
                 size_t above = 0;
             };
-            // Per-band groups, keyed by (pivot, band).
+            // Per-signal groups, keyed by (pivot, signal) — full RINEX-3
+            // code, so "L1W" and "L1C" form separate groups (matches the
+            // per-signal state granularity in PPP-RTK uncombined).
             std::map<std::pair<std::string, std::string>, Group> groups;
             // Cross-band per-pivot pools, used as a fallback when individual
-            // bands carry too few non-pivot rows to clear MIN_GROUP_SIZE but
-            // the multi-band picture still shows a coherent slip pattern.
+            // signals carry too few non-pivot rows to clear MIN_GROUP_SIZE
+            // but the multi-band picture still shows a coherent slip pattern.
+            // @c pivot_pool_bands tracks distinct *bands* (frequency axis)
+            // not signals, because the cross-band detector's evidence value
+            // depends on independent frequency channels — two attributes on
+            // the same carrier (L1W + L1C) are not independent.
             std::map<std::string, Group> pivot_pools;
             std::map<std::string, std::set<std::string>> pivot_pool_bands;
+
+            // Gate: exclude SD rows whose (sat, signal) has its ATX
+            // correction frequency-fallback-substituted on either sat or
+            // pivot.  The substituted PCV introduces a small per-sat
+            // bias that, when summed across multiple non-pivot rows in
+            // the same band, mimics a coherent pivot-slip signature
+            // (large non-zero median, tight MAD-around-median).  Without
+            // this gate, "all"-mode runs that include substituted-ATX
+            // bands like GPS L5 produce a perpetual pivot-handover
+            // flip-flop: every new pivot reads as slipped because the
+            // bias is structural, not transient.
+            auto row_atx_substituted = [&](const std::string& sat,
+                                            const std::string& pivot_sat,
+                                            const std::string& signal) -> bool {
+                if (sat.empty() || pivot_sat.empty() || signal.empty()) return false;
+                const System sys =
+                    sat[0] == 'G' ? System::GPS :
+                    sat[0] == 'E' ? System::Galileo :
+                    sat[0] == 'R' ? System::GLONASS :
+                    sat[0] == 'C' ? System::BeiDou :
+                    sat[0] == 'J' ? System::QZSS :
+                    sat[0] == 'S' ? System::SBAS : System::Unknown;
+                if (sys == System::Unknown) return false;
+                if (ppp_model_.wasAtxSubstituted(sat, signal, sys)) return true;
+                if (ppp_model_.wasAtxSubstituted(pivot_sat, signal, sys)) return true;
+                return false;
+            };
 
             for (size_t i = 0; i < meta_n; ++i) {
                 const auto& sat_id = measurement.satellite_ids[i];
@@ -1423,12 +1679,16 @@ namespace GnssProcessor {
                 if (sig.size() < 2 || sig[0] != 'L') continue;
                 const auto [prim, pivot] = splitBssdSatId(sat_id);
                 if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
-                const std::string band = sig.substr(0, 2);     // "L1", "L2", "L5"
+                if (row_atx_substituted(prim, pivot, sig)) continue;  // ATX-substituted: bias mimics slip
+                const std::string band = sig.substr(0, 2);     // "L1", "L2", "L5" — cross-band gate axis only
                 const double r  = res(static_cast<Eigen::Index>(i));
                 const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
                 const bool   ab = std::isfinite(sa) && sa > threshold;
 
-                auto& g = groups[{ pivot, band }];
+                // Per-signal grouping (full RINEX code) for the per-band
+                // detector below — matches per-signal state granularity in
+                // PPP-RTK uncombined.
+                auto& g = groups[{ pivot, sig }];
                 g.indices.push_back(i);
                 g.residuals.push_back(r);
                 if (ab) ++g.above;
@@ -1437,7 +1697,7 @@ namespace GnssProcessor {
                 pp.indices.push_back(i);
                 pp.residuals.push_back(r);
                 if (ab) ++pp.above;
-                pivot_pool_bands[pivot].insert(band);
+                pivot_pool_bands[pivot].insert(band);  // band, not signal — independence axis
             }
 
             // Helper: median (modifies its argument).  Even-count median
@@ -1451,6 +1711,29 @@ namespace GnssProcessor {
                 return 0.5 * (v[n / 2 - 1] + upper);
             };
 
+            // Record the satellites a forced handover must NOT elect as the
+            // new pivot for @p cons: the flagged @p pivot_sat itself, plus any
+            // non-pivot row whose SD residual sits outside the coherent band
+            // around @p med.  Such rows are co-disturbed or independently
+            // slipping — electing one just re-anchors the SD frame on another
+            // offset sat, the handover flip-flop this guards against.  Keyed
+            // per constellation; drained by takeRequestedPivotHandoverExcludeSats.
+            auto recordHandoverExcludes = [&](const Group& grp, double med,
+                                              double mad,
+                                              const std::string& pivot_sat,
+                                              const std::string& cons) {
+                auto& ex = pivot_handover_exclude_sats_[cons];
+                ex.insert(pivot_sat);
+                const double band = std::max(HANDOVER_EXCLUDE_MAD_K * mad,
+                                             HANDOVER_EXCLUDE_FLOOR_M);
+                for (size_t k = 0; k < grp.indices.size(); ++k) {
+                    if (std::abs(grp.residuals[k] - med) <= band) continue;
+                    const auto [prim, _piv] =
+                        splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
+                    if (!prim.empty()) ex.insert(prim);
+                }
+            };
+
             bool any_pivot_slip = false;
             for (auto& [key, g] : groups) {
                 const size_t n = g.indices.size();
@@ -1462,6 +1745,15 @@ namespace GnssProcessor {
                 const double med = medianInPlace(r_copy);
                 if (std::abs(med) < MEDIAN_FLOOR_M) continue;
 
+                const std::string pivot_sat = key.first;
+
+                // Compute MAD around the median *first* so the cycle-floor
+                // decision below can use cluster tightness as evidence.  A
+                // tight cluster is itself proof that the residuals are not
+                // independent noise — multipath/atmosphere at sub-cycle
+                // scale shows MAD/|med| well above the cutoff, while a
+                // coherent pivot disturbance produces MAD/|med| <= 0.1
+                // typically.
                 std::vector<double> abs_dev;
                 abs_dev.reserve(g.residuals.size());
                 for (double v : g.residuals) abs_dev.push_back(std::abs(v - med));
@@ -1469,10 +1761,49 @@ namespace GnssProcessor {
                 const double mad_ratio = mad / std::abs(med);
                 if (mad_ratio > MAD_RATIO_MAX) continue;
 
+                // Wavelength-fraction floor — a real *cycle* slip is ≥ 1 λ,
+                // and the floor was originally added to reject sub-cycle
+                // medians as "bias, not slip."  But the pivot-slip detector
+                // fires a *handover*, not a per-row reset, and a handover
+                // is the right response to any coherent pivot disturbance
+                // regardless of whether the disturbance is an integer
+                // cycle: phase wind-up error, half-cycle ambiguity, brief
+                // pivot-only multipath, hardware bias change — all show
+                // sub-cycle coherent SD residuals and all benefit from
+                // re-referencing to a clean pivot.  The cycle floor is
+                // therefore *bypassed* when the cluster is tighter than
+                // TIGHT_CLUSTER_MAD_RATIO: at that tightness the only
+                // plausible explanation across multiple non-pivot SD rows
+                // is a common pivot disturbance, so we hand over even on
+                // a 1 cm median.  Looser-but-still-passing-MAD clusters
+                // (mad_ratio in (TIGHT, MAX]) keep the original floor as
+                // a hedge against single-frequency atmospheric events
+                // that happen to land below the loose-cluster bound.
+                constexpr double TIGHT_CLUSTER_MAD_RATIO = 0.2;
+                if (cyc_floor_fraction > 0.0 && mad_ratio > TIGHT_CLUSTER_MAD_RATIO) {
+                    // key.second is now the full signal (e.g. "L1W"); the
+                    // wavelength is per-band, so strip the attribute.
+                    const std::string band_for_lambda = key.second.substr(0, 2);
+                    const double lambda = bandWavelengthForSat(pivot_sat, band_for_lambda);
+                    if (lambda > 0.0) {
+                        const double abs_floor = cyc_floor_fraction * lambda;
+                        if (std::abs(med) < abs_floor) {
+                            klogger->debug(
+                                "{}Pivot-slip candidate suppressed by λ/{:.2f} floor "
+                                "on {} {} signal: |med|={:.4f} m < floor={:.4f} m "
+                                "(λ={:.4f} m, MAD/|med|={:.2f} > tight-cluster "
+                                "threshold {:.2f})",
+                                epoch_prefix, 1.0 / cyc_floor_fraction,
+                                pivot_sat, key.second, std::abs(med), abs_floor,
+                                lambda, mad_ratio, TIGHT_CLUSTER_MAD_RATIO);
+                            continue;
+                        }
+                    }
+                }
+
                 // Identify the constellation from the pivot's PRN prefix.  All
                 // non-pivot rows in this group share the constellation by
                 // construction (BSSD groups SD pairs within a constellation).
-                const std::string pivot_sat = key.first;
                 const std::string cons      = PppUtils::getSystemString(pivot_sat);
 
                 // -----------------------------------------------------------
@@ -1531,10 +1862,10 @@ namespace GnssProcessor {
                 }
 
                 klogger->warn(
-                    "{}PIVOT SLIP [{}] on {} {} {} band: {}/{} SD residuals coherent "
+                    "{}PIVOT SLIP [{}] on {} {} {} signal: {}/{} SD residuals coherent "
                     "(median={:+.4f} m, MAD={:.4f} m, MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
                     "Requesting forced pivot handover.",
-                    epoch_prefix, confidence_tag, cons, pivot_sat, key.second /* band */,
+                    epoch_prefix, confidence_tag, cons, pivot_sat, key.second /* signal */,
                     g.above, n, med, mad, mad_ratio, frac);
 
                 // Request a pivot handover for this constellation. Application
@@ -1547,6 +1878,7 @@ namespace GnssProcessor {
                 // been wrong: the non-pivots are stable; only the pivot's
                 // observation drifted.
                 requested_pivot_handovers_.insert(cons);
+                recordHandoverExcludes(g, med, mad, pivot_sat, cons);
 
                 // Exclude every row in the affected group from this rebuild
                 // pass so the per-row outlier handler doesn't pile on with
@@ -1581,8 +1913,10 @@ namespace GnssProcessor {
             // -----------------------------------------------------------
             for (auto& [pivot_sat, pp] : pivot_pools) {
                 const std::string cons = PppUtils::getSystemString(pivot_sat);
-                // Skip if the per-band detector already requested a
-                // handover for this constellation.
+                // Skip if the per-signal detector already requested a
+                // handover for this constellation — its row set is a
+                // subset of this pool's rows and a duplicate warning
+                // would mis-describe the same physical event.
                 if (requested_pivot_handovers_.count(cons)) continue;
 
                 const size_t n = pp.indices.size();
@@ -1621,6 +1955,7 @@ namespace GnssProcessor {
                     pp.above, n, med, mad, mad_ratio, frac);
 
                 requested_pivot_handovers_.insert(cons);
+                recordHandoverExcludes(pp, med, mad, pivot_sat, cons);
 
                 for (size_t row_idx : pp.indices) {
                     const auto& sat_id = measurement.satellite_ids[row_idx];
@@ -1629,6 +1964,206 @@ namespace GnssProcessor {
                     measurement.excluded_measurements.insert(prim + "_" + sig_t);
                 }
                 any_pivot_slip = true;
+            }
+
+            // -----------------------------------------------------------
+            // Code-side pivot disturbance detector (per-band + cross-band)
+            //
+            // Mirror of the phase per-signal and cross-band detectors
+            // above, gated on @c sig[0]=='C' instead of 'L'.  When the
+            // pivot satellite has a code-side bias (DCB drift, ATX
+            // miscal on a specific band/attribute, hardware glitch on
+            // the pivot SV), every SD code row that uses the pivot
+            // inherits the same bias — same sign, similar magnitude,
+            // grouped per full RINEX signal (e.g. "C1W" and "C1C" form
+            // separate per-signal groups, matching per-signal state
+            // granularity in PPP-RTK uncombined).  The cross-band
+            // detector still pools across signals per pivot and gates
+            // on distinct *bands* (frequency axis) for the independence
+            // argument.
+            // Without a coherence test the per-row dispatch peels rows
+            // off one-by-one across N rebuild passes, the iono state in
+            // uncombined mode absorbs the bias through repeated updates,
+            // and bad_residual_count climbs until the rebuild budget is
+            // exhausted (typical user-observed signature: 6-9σ outliers
+            // on every SD pair against a single pivot for a specific
+            // code signal, growing in magnitude across epochs).
+            //
+            // Structural differences from the phase detector:
+            //   - Higher median floor (MEDIAN_FLOOR_M_CODE = 0.30 m).
+            //     Phase uses 5 mm because sub-cycle is meaningful; code
+            //     noise floor sits well above that — routine multipath
+            //     hits 0.1–0.2 m without indicating any pivot problem.
+            //     0.30 m is ~0.6× a typical code σ for a well-modeled
+            //     station, cleanly above multipath and below any real
+            //     pivot disturbance signature.
+            //   - No wavelength floor (cycles don't apply to code).
+            //   - No temporal residual-history corroboration (the EWMA
+            //     tracker is tuned for phase variance; code stats need
+            //     separate tuning — can add later).
+            //   - No non-pivot multi-band variant.  Without the
+            //     integer-cycle consistency check, code-side coherent
+            //     outliers on a non-pivot are just bad measurements;
+            //     the per-row dispatch already handles them correctly
+            //     and the only saving would be fewer rebuild passes.
+            //
+            // Same downstream action as phase: bulk-exclude affected
+            // rows and request a forced pivot handover.  Justified by
+            // the persistence signature — a code bias that fires for
+            // multiple consecutive epochs (e.g. 6σ → 9σ across two
+            // epochs) corrupts the pivot's iono state through repeated
+            // measurement updates in uncombined mode, and re-referencing
+            // to a clean pivot is the only structural fix.
+            //
+            // Reuses @c Group, @c medianInPlace, @c row_atx_substituted,
+            // @c any_pivot_slip, and @c requested_pivot_handovers_ from
+            // the enclosing pivot-slip block.
+            // -----------------------------------------------------------
+            {
+                constexpr size_t MIN_GROUP_CODE        = 4;
+                constexpr size_t MIN_POOL_CODE         = 3;
+                constexpr size_t MIN_DISTINCT_BANDS_C  = 2;
+                constexpr double ABOVE_FRACTION_MIN_C  = 0.5;
+                constexpr double MAD_RATIO_MAX_C       = 0.4;
+                constexpr double MEDIAN_FLOOR_M_CODE   = 0.30;  // m
+
+                std::map<std::pair<std::string, std::string>, Group> code_groups;
+                std::map<std::string, Group> code_pivot_pools;
+                std::map<std::string, std::set<std::string>> code_pivot_pool_bands;
+
+                for (size_t i = 0; i < meta_n; ++i) {
+                    const auto& sat_id = measurement.satellite_ids[i];
+                    const auto& sig    = measurement.signal_types[i];
+                    if (sig.size() < 2 || sig[0] != 'C') continue;
+                    // Skip combined / iono-free pseudo-signals: their
+                    // residual isn't a clean per-signal bias and the
+                    // coherence test would mix scales.
+                    if (sig.find('_') != std::string::npos) continue;
+                    const auto [prim, pivot] = splitBssdSatId(sat_id);
+                    if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
+                    if (row_atx_substituted(prim, pivot, sig)) continue;  // ATX-substituted: bias mimics disturbance
+                    const std::string band = sig.substr(0, 2);  // "C5", "C7", "C1", ... — cross-band gate axis only
+                    const double r  = res(static_cast<Eigen::Index>(i));
+                    const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
+                    const bool   ab = std::isfinite(sa) && sa > threshold;
+
+                    // Per-signal grouping (full RINEX code, e.g. "C1W"
+                    // vs "C1C") matches per-signal state granularity in
+                    // PPP-RTK uncombined — sat-biases and ATX corrections
+                    // are keyed per-signal, so an attribute-specific
+                    // pivot disturbance corrupts only the matching
+                    // states and should be detected at that resolution.
+                    auto& g = code_groups[{ pivot, sig }];
+                    g.indices.push_back(i);
+                    g.residuals.push_back(r);
+                    if (ab) ++g.above;
+
+                    auto& pp = code_pivot_pools[pivot];
+                    pp.indices.push_back(i);
+                    pp.residuals.push_back(r);
+                    if (ab) ++pp.above;
+                    code_pivot_pool_bands[pivot].insert(band);  // band, not signal — independence axis
+                }
+
+                // --- Per-band code pivot-disturbance detector ---
+                // Runs regardless of whether a phase detector already
+                // requested a handover for this constellation: the row
+                // exclusion still matters because phase exclusion didn't
+                // touch the code rows.  The set insert into
+                // @c requested_pivot_handovers_ is idempotent.
+                for (auto& [key, g] : code_groups) {
+                    const size_t n = g.indices.size();
+                    if (n < MIN_GROUP_CODE) continue;
+                    const double frac = static_cast<double>(g.above) / static_cast<double>(n);
+                    if (frac < ABOVE_FRACTION_MIN_C) continue;
+
+                    std::vector<double> r_copy = g.residuals;
+                    const double med = medianInPlace(r_copy);
+                    if (std::abs(med) < MEDIAN_FLOOR_M_CODE) continue;
+
+                    std::vector<double> abs_dev;
+                    abs_dev.reserve(g.residuals.size());
+                    for (double v : g.residuals) abs_dev.push_back(std::abs(v - med));
+                    const double mad = medianInPlace(abs_dev);
+                    const double mad_ratio = mad / std::abs(med);
+                    if (mad_ratio > MAD_RATIO_MAX_C) continue;
+
+                    const std::string& pivot_sat = key.first;
+                    const std::string  cons      = PppUtils::getSystemString(pivot_sat);
+
+                    klogger->warn(
+                        "{}PIVOT CODE DISTURBANCE on {} {} {} signal: {}/{} SD code "
+                        "residuals coherent (median={:+.4f} m, MAD={:.4f} m, "
+                        "MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                        "Requesting forced pivot handover.",
+                        epoch_prefix, cons, pivot_sat, key.second /* signal */,
+                        g.above, n, med, mad, mad_ratio, frac);
+
+                    requested_pivot_handovers_.insert(cons);
+                    recordHandoverExcludes(g, med, mad, pivot_sat, cons);
+                    for (size_t row_idx : g.indices) {
+                        const auto& sat_id = measurement.satellite_ids[row_idx];
+                        const auto& sig_t  = measurement.signal_types[row_idx];
+                        const auto [prim, _piv] = splitBssdSatId(sat_id);
+                        measurement.excluded_measurements.insert(prim + "_" + sig_t);
+                    }
+                    any_pivot_slip = true;
+                }
+
+                // --- Cross-band code pivot-disturbance detector ---
+                // Skip when a handover is already queued for the
+                // constellation — the cross-band pool's row set is a
+                // superset of any per-band group already excluded,
+                // and the cross-band log line would otherwise duplicate
+                // the per-band warning for the same physical event.
+                for (auto& [pivot_sat, pp] : code_pivot_pools) {
+                    const std::string cons = PppUtils::getSystemString(pivot_sat);
+                    if (requested_pivot_handovers_.count(cons)) continue;
+
+                    const size_t n = pp.indices.size();
+                    if (n < MIN_POOL_CODE) continue;
+
+                    const auto& bands_set = code_pivot_pool_bands[pivot_sat];
+                    if (bands_set.size() < MIN_DISTINCT_BANDS_C) continue;
+
+                    const double frac = static_cast<double>(pp.above) / static_cast<double>(n);
+                    if (frac < ABOVE_FRACTION_MIN_C) continue;
+
+                    std::vector<double> r_copy = pp.residuals;
+                    const double med = medianInPlace(r_copy);
+                    if (std::abs(med) < MEDIAN_FLOOR_M_CODE) continue;
+
+                    std::vector<double> abs_dev;
+                    abs_dev.reserve(pp.residuals.size());
+                    for (double v : pp.residuals) abs_dev.push_back(std::abs(v - med));
+                    const double mad = medianInPlace(abs_dev);
+                    const double mad_ratio = mad / std::abs(med);
+                    if (mad_ratio > MAD_RATIO_MAX_C) continue;
+
+                    std::string bands_str;
+                    for (const auto& b : bands_set) {
+                        if (!bands_str.empty()) bands_str += ",";
+                        bands_str += b;
+                    }
+
+                    klogger->warn(
+                        "{}PIVOT CODE DISTURBANCE [cross-band] on {} {} ({} bands [{}]): "
+                        "{}/{} SD code residuals coherent (median={:+.4f} m, MAD={:.4f} m, "
+                        "MAD/|med|={:.2f}, threshold-pass fraction={:.2f}). "
+                        "Requesting forced pivot handover.",
+                        epoch_prefix, cons, pivot_sat, bands_set.size(), bands_str,
+                        pp.above, n, med, mad, mad_ratio, frac);
+
+                    requested_pivot_handovers_.insert(cons);
+                    recordHandoverExcludes(pp, med, mad, pivot_sat, cons);
+                    for (size_t row_idx : pp.indices) {
+                        const auto& sat_id = measurement.satellite_ids[row_idx];
+                        const auto& sig_t  = measurement.signal_types[row_idx];
+                        const auto [prim, _piv] = splitBssdSatId(sat_id);
+                        measurement.excluded_measurements.insert(prim + "_" + sig_t);
+                    }
+                    any_pivot_slip = true;
+                }
             }
 
             // -----------------------------------------------------------
@@ -1802,6 +2337,115 @@ namespace GnssProcessor {
             }
         }
 
+        // --- Huber R-inflation pass (post-fit) ----------------------------
+        // Detect sub-cycle phase rows whose post-fit |sres| exceeds the
+        // Huber threshold but stays below the outlier threshold (or even
+        // above it, as long as the residual is sub-cycle).  For each such
+        // row, queue a target R(i,i) into @c pending_r_inflations_ so the
+        // next rebuild pass downweights the row enough that |sres| lands
+        // at the Huber threshold.  Trigger a rebuild via outlier_found=true
+        // so the existing rebuild loop reruns the update with the inflated
+        // R.  Rows where |res| ≥ cyc_floor·λ are skipped — those are
+        // cycle-slip territory and the dispatch below handles them with
+        // reset.
+        {
+            const double huber_k     = config_.getPhaseHuberSresThreshold();
+            const double cyc_floor   = config_.getPivotSlipMinCycles();
+            const bool   use_innov   = config_.enableHuberInnovation();
+            const bool   huber_on    = config_.enableHuberRInflation();
+            // Rebuild-loop exit tolerance.  The post-fit IRLS fixed point
+            // is |sres| = k exactly, so a bare "|sres| <= k" test would
+            // chase an asymptote; the gate below requires a pass's
+            // relative R step to clear this before re-queuing.  The
+            // innovation scheme lands on k in one shot — the gate then
+            // only blocks its no-op floating-point re-trigger.
+            constexpr double kHuberRConvergenceTol = 0.05;
+            bool huber_triggered     = false;
+            if (huber_on && huber_k > 0.0) {
+                for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(num_obs); ++i) {
+                    const auto& sig = measurement.signal_types[static_cast<size_t>(i)];
+                    if (sig.empty() || sig[0] != 'L') continue;
+                    if (sig.find('_') != std::string::npos) continue;  // iono-free combos
+                    if (sig.size() < 2) continue;
+
+                    const auto& sat_id = measurement.satellite_ids[static_cast<size_t>(i)];
+                    const auto [prim, _hub_piv] = splitBssdSatId(sat_id);
+                    const std::string band_str = sig.substr(0, 2);
+                    const double lambda = bandWavelengthForSat(prim, band_str);
+                    if (!(lambda > 0.0)) continue;
+
+                    // Two R-inflation schemes for a flagged sub-cycle row,
+                    // selected by estimation.enable_huber_innovation:
+                    //
+                    //  - innovation one-shot: standardize the pre-fit
+                    //    innovation v by |s| = |v|/sqrt(HPHᵀ + R), monotone
+                    //    in R — so the R that lands |s| = k is closed-form,
+                    //    R_target = v²/k² - HPHᵀ, where HPHᵀ = (H·P⁻·Hᵀ)(i,i)
+                    //    is the R-independent prior variance projected into
+                    //    the row.  Converges in one rebuild pass.
+                    //
+                    //  - post-fit IRLS: standardize the post-fit residual,
+                    //    |sres| = |res|/sqrt(R), and inflate by (|sres|/k)²
+                    //    per pass.  The post-fit residual drifts up as the
+                    //    row loses weight, so |sres| converges to k only
+                    //    asymptotically (and can overshoot first).
+                    double abs_res  = 0.0;
+                    double abs_sres = 0.0;
+                    double r_target = 0.0;
+                    if (use_innov) {
+                        const double v = measurement.innovations(i);
+                        abs_res = std::abs(v);
+                        if (cyc_floor > 0.0 && abs_res >= cyc_floor * lambda) continue;
+                        const double hph =
+                            (measurement.H.row(i) * P).dot(measurement.H.row(i));
+                        abs_sres = abs_res / std::sqrt(hph + R_(i, i));
+                        if (abs_sres <= huber_k) continue;
+                        r_target = (v * v) / (huber_k * huber_k) - hph;
+                    } else {
+                        abs_res = std::abs(res(i));
+                        if (cyc_floor > 0.0 && abs_res >= cyc_floor * lambda) continue;
+                        abs_sres = std::abs(sres(i));
+                        if (abs_sres <= huber_k) continue;
+                        const double factor = (abs_sres / huber_k) * (abs_sres / huber_k);
+                        r_target = R_(i, i) * factor;
+                    }
+
+                    const std::string key = prim + "|" + sig;
+                    auto it = pending_r_inflations_.find(key);
+                    const double r_existing = (it != pending_r_inflations_.end())
+                                            ? it->second : R_(i, i);
+                    if (r_target > r_existing * (1.0 + kHuberRConvergenceTol)) {
+                        pending_r_inflations_[key] = r_target;
+                        huber_triggered = true;
+                        if (use_innov) {
+                            klogger->info(
+                                "{}Huber R-inflation (innovation one-shot) for {} {}: "
+                                "|v|/sqrt(S)={:.2f} > k={:.1f}, |innov|={:.4f} m "
+                                "(sub-cycle, λ={:.4f} m); R(i,i): {:.3e} → {:.3e} m²",
+                                epoch_prefix, prim, sig, abs_sres, huber_k,
+                                abs_res, lambda, R_(i, i), r_target);
+                        } else {
+                            klogger->info(
+                                "{}Huber R-inflation queued for {} {}: |sres|={:.2f} > k={:.1f}, "
+                                "|res|={:.4f} m (sub-cycle, λ={:.4f} m); R(i,i): {:.3e} → {:.3e} m²",
+                                epoch_prefix, prim, sig, abs_sres, huber_k,
+                                abs_res, lambda, R_(i, i), r_target);
+                        }
+                    }
+                }
+            }
+
+            if (huber_triggered) {
+                klogger->debug(
+                    "{}Huber R-inflation pass requesting measurement rebuild "
+                    "({} rows queued)",
+                    epoch_prefix, pending_r_inflations_.size());
+                klogger->debug("{}Post-fit residual check result: outlier_found={}, complete_reset={}",
+                    epoch_prefix, "true", "false");
+                return { /*outlier_found=*/true, /*complete_reset=*/false };
+            }
+        }
+
         // --- Dispatch outlier handling ---
         bool is_outlier_found = false;
         bool is_complete_reset = false;
@@ -1914,9 +2558,47 @@ namespace GnssProcessor {
                 outlier_sres_abs, outlier_sres, outlier_res, sigma_max, chosen_idx);
 
             if (!outlier_sig.empty() && outlier_sig[0] == 'L') {
-                handlePhaseOutlier(measurement, outlier_sat, outlier_sig, x, P, epoch_prefix);
+                // Wavelength-fraction floor on the *raw* phase residual:
+                // a real cycle slip moves the observation by an integer
+                // number of wavelengths, so anything below
+                // cyc_floor_fraction × λ cannot be a slip and the
+                // ambiguity reset (variance inflation, loss of converged
+                // precision) is the wrong response.  Skip the reset
+                // but still exclude the row from this rebuild — its
+                // sub-cycle bias may be real (multipath, PCV miscal,
+                // kinematic dynamics) and would pull position/clock
+                // if absorbed.  The KF state stays intact; next epoch
+                // brings a fresh measurement.
+                //
+                // Skipped for iono-free combos ("L1C_L2W"-style) since
+                // the combined residual isn't a clean multiple of any
+                // single λ — those still go through reset.
+                const double cyc_floor_fraction = config_.getPivotSlipMinCycles();
+                const bool   subcycle_on        = config_.enableSubcycleSlipSuppression();
+                const bool is_iono_free = (outlier_sig.find('_') != std::string::npos);
+                bool suppressed_by_floor = false;
+                if (subcycle_on && cyc_floor_fraction > 0.0 && !is_iono_free && outlier_sig.size() >= 2) {
+                    const auto [prim_for_lambda, _] = splitBssdSatId(outlier_sat);
+                    const std::string band_str = outlier_sig.substr(0, 2);
+                    const double lambda = bandWavelengthForSat(prim_for_lambda, band_str);
+                    if (lambda > 0.0
+                        && std::abs(outlier_res) < cyc_floor_fraction * lambda) {
+                        klogger->info(
+                            "{}Phase outlier suppressed by λ/{:.2f} floor on {} {}: "
+                            "|res|={:.4f} m < floor={:.4f} m (λ={:.4f} m); "
+                            "excluding row, ambiguity state preserved",
+                            epoch_prefix, 1.0 / cyc_floor_fraction,
+                            outlier_sat, outlier_sig,
+                            std::abs(outlier_res),
+                            cyc_floor_fraction * lambda, lambda);
+                        suppressed_by_floor = true;
+                    }
+                }
 
                 const auto [prim, ref] = splitBssdSatId(outlier_sat);
+                if (!suppressed_by_floor) {
+                    handlePhaseOutlier(measurement, outlier_sat, outlier_sig, x, P, epoch_prefix);
+                }
                 measurement.excluded_measurements.insert(prim + "_" + outlier_sig);
 
                 // Check for correlated phase outliers on other frequencies
@@ -1925,6 +2607,9 @@ namespace GnssProcessor {
                 // outliers with nearly equal |sres| and opposite signs.
                 // Resetting only one frequency leaves the others corrupted,
                 // causing unnecessary extra rebuild passes.
+                //
+                // The λ-floor applies here too — sub-cycle correlated
+                // residuals are bias, not slip, on every band.
                 for (size_t i = 0; i < meta_n; ++i) {
                     if (i == chosen_idx) continue;
                     const auto& co_sig = measurement.signal_types[i];
@@ -1933,13 +2618,35 @@ namespace GnssProcessor {
                     const double co_abs = std::abs(sres(static_cast<Eigen::Index>(i)));
                     if (!std::isfinite(co_abs) || co_abs <= threshold) continue;
 
+                    const double co_res = res(static_cast<Eigen::Index>(i));
+                    bool co_suppressed = false;
+                    if (subcycle_on && cyc_floor_fraction > 0.0
+                        && co_sig.find('_') == std::string::npos
+                        && co_sig.size() >= 2) {
+                        const std::string co_band = co_sig.substr(0, 2);
+                        const double co_lambda = bandWavelengthForSat(prim, co_band);
+                        if (co_lambda > 0.0
+                            && std::abs(co_res) < cyc_floor_fraction * co_lambda) {
+                            klogger->info(
+                                "{}Correlated phase outlier suppressed by λ/{:.2f} floor "
+                                "on {} {}: |res|={:.4f} m < floor={:.4f} m",
+                                epoch_prefix, 1.0 / cyc_floor_fraction,
+                                outlier_sat, co_sig, std::abs(co_res),
+                                cyc_floor_fraction * co_lambda);
+                            co_suppressed = true;
+                        }
+                    }
+
                     klogger->debug(
                         "{}Correlated phase outlier on same satellite: {} {} "
-                        "|s|={:.3f}, resetting alongside {} {}",
+                        "|s|={:.3f}, {} alongside {} {}",
                         epoch_prefix, outlier_sat, co_sig, co_abs,
+                        co_suppressed ? "excluding (floor)" : "resetting",
                         outlier_sat, outlier_sig);
 
-                    handlePhaseOutlier(measurement, outlier_sat, co_sig, x, P, epoch_prefix);
+                    if (!co_suppressed) {
+                        handlePhaseOutlier(measurement, outlier_sat, co_sig, x, P, epoch_prefix);
+                    }
                     measurement.excluded_measurements.insert(prim + "_" + co_sig);
                 }
             } else {
@@ -1995,6 +2702,66 @@ namespace GnssProcessor {
                 residual_history_.record(prim, sig, r);
             }
 
+            // --- Stuck-code-bias scan ----------------------------------
+            // Detect (sat, signal) sat-bias states that have either
+            // been outlier-rejected for too many consecutive epochs
+            // (the closed-loop case where the bias state has over-
+            // converged around the wrong value and its own row keeps
+            // tripping the outlier gate) or whose post-fit EWMA mean
+            // has drifted past the bias floor (the slow-drift case
+            // where the row survives the gate but its converged bias
+            // no longer matches the truth).  Queue resets for
+            // application after commit so the next epoch starts with
+            // a re-seeded bias state.
+            //
+            // Skips BSSD pivot satellites: their sat-bias is frozen
+            // at (value=0, variance=0) by PivotManager and resetting
+            // it would break the BSSD frame.  Any genuine bias
+            // mismatch on a pivot manifests as a coherent shift on
+            // every other sat in the group and is handled by the
+            // existing spatial pivot-slip detector — a different
+            // failure mode.
+            const auto& stuck_cfg = config_.getStuckCodeBiasConfig();
+            if (stuck_cfg.enabled && config_.estimateSatBiases()) {
+                const auto& pivots = state_manager_.getFrozenPivotSatellites();
+                for (const auto& [key, _idx] : state_manager_.getSatBiasStates()) {
+                    const auto bar = key.find('|');
+                    if (bar == std::string::npos) continue;
+                    const std::string sat = key.substr(0, bar);
+                    const std::string sig = key.substr(bar + 1);
+
+                    if (pivots.count(sat)) continue;  // frozen pivot
+
+                    const auto ev = residual_history_.evaluateStuckBias(
+                        sat, sig,
+                        stuck_cfg.bias_floor_m,
+                        stuck_cfg.min_streak);
+                    if (!ev.stuck) continue;
+
+                    // Queue (key, EWMA mean) — applied post-commit in
+                    // update().  EWMA mean is the sign-consistent
+                    // residual offset and gives a much better
+                    // re-seed than just inflating variance and
+                    // letting the next innovation pull the bias
+                    // (which can take many epochs with a converged
+                    // P).  For the streak-only trigger
+                    // (warmed_up == false) the mean is 0 and only
+                    // the variance is inflated — the filter will
+                    // then absorb the next surviving innovation
+                    // freely.
+                    pending_sat_bias_resets_[key] = ev.warmed_up ? ev.ewma_mean : 0.0;
+
+                    klogger->warn(
+                        "{}Stuck code-bias detected on {} {}: "
+                        "streak={}, EWMA mean={:+.4f} m (std={:.4f}, warmed_up={}); "
+                        "queued reset (value+={:+.4f} m, variance -> cold start)",
+                        epoch_prefix, sat, sig,
+                        ev.streak, ev.ewma_mean, ev.ewma_std,
+                        ev.warmed_up ? "yes" : "no",
+                        ev.warmed_up ? ev.ewma_mean : 0.0);
+                }
+            }
+
             // Emit the per-epoch residual-history digest at info
             // level alongside the per-pass "Residual summary" line
             // above.  Provides at-a-glance "is the tracker warmed
@@ -2019,6 +2786,13 @@ namespace GnssProcessor {
         return out;
     }
 
+    std::map<std::string, std::set<std::string>>
+    KalmanFilter::takeRequestedPivotHandoverExcludeSats() {
+        std::map<std::string, std::set<std::string>> out;
+        out.swap(pivot_handover_exclude_sats_);
+        return out;
+    }
+
     void KalmanFilter::beginEpoch() {
         // Reset the per-epoch pass counter and put the gate in passthrough
         // so pass 1 emits live. No-op when concise mode is disabled
@@ -2028,6 +2802,18 @@ namespace GnssProcessor {
             gate_->setPolicy(GatedSink::Policy::Passthrough);
             gate_->clearBuffer();
         }
+
+        // Clear pending Huber R-inflations: each epoch makes a fresh
+        // decision from its own post-fit residuals; long-term persistent
+        // biases are covered by the separate EWMA-based inflation.
+        pending_r_inflations_.clear();
+
+        // Defensive clear of stuck-code-bias resets.  In normal flow
+        // the queue is drained inside update() the same epoch it was
+        // populated, but a non-converging outlier loop or an early
+        // return could leave entries behind — clearing here makes
+        // each epoch start from a known-empty state.
+        pending_sat_bias_resets_.clear();
     }
 
     void KalmanFilter::endEpoch() {
@@ -2079,6 +2865,39 @@ namespace GnssProcessor {
         timing_us_P_  = 0;
         timing_us_Sr_ = 0;
         timing_n_calls_ = 0;
+    }
+
+    // ===================================================================
+    // Pseudo-observation update
+    // ===================================================================
+
+    void KalmanFilter::josephPseudoUpdate(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
+                                          const Eigen::MatrixXd& H, const Eigen::VectorXd& innovation,
+                                          const Eigen::MatrixXd& R,
+                                          Eigen::VectorXd& x_out, Eigen::MatrixXd& P_out) {
+        const Eigen::Index m = H.rows();
+        const Eigen::Index n = P.rows();
+        const Eigen::MatrixXd PHt = P * H.transpose();
+        const Eigen::MatrixXd S   = H * PHt + R;
+        const Eigen::MatrixXd K   = PHt * S.ldlt().solve(Eigen::MatrixXd::Identity(m, m));
+        const Eigen::MatrixXd IKH = Eigen::MatrixXd::Identity(n, n) - K * H;
+
+        const Eigen::VectorXd x_new = x + K * innovation;
+        Eigen::MatrixXd P_new = IKH * P * IKH.transpose() + K * R * K.transpose();
+        P_new = (0.5 * (P_new + P_new.transpose())).eval();
+
+        x_out = x_new;
+        P_out = P_new;
+    }
+
+    void KalmanFilter::applyPseudoObservation(const Eigen::MatrixXd& H,
+                                              const Eigen::VectorXd& innovation,
+                                              const Eigen::MatrixXd& R) {
+        Eigen::VectorXd x = state_manager_.getStateVector();
+        Eigen::MatrixXd P = state_manager_.getCovariance();
+        josephPseudoUpdate(x, P, H, innovation, R, x, P);
+        state_manager_.setStateVector(x);
+        state_manager_.setCovariance(P);
     }
 
 } // namespace GnssProcessor

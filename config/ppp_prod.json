@@ -6,8 +6,10 @@
   "processing": {
     "mode": "PPP",
     "active_systems": [ "GPS", "Galileo" ],
-    "signal_mode": "dual",
+    "frequency_mode": "dual",
     "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": true,
     "eigen_threads": 10,
@@ -37,9 +39,9 @@
 
   "filter": {
     "process_noise": {
-      // Kinematic: position random walk + velocity state.
+      // Kinematic: CWNA position+velocity process model.
       "position_q": 1e2,
-      "velocity_q": 1e0,
+      "acceleration_psd_q": 1e0,
       "clock_bias_q": 1e3,
       "phase_clock_q": 1e-9,
       "troposphere_q": 1e-9,

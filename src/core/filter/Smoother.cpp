@@ -79,12 +79,11 @@ namespace GnssProcessor {
         idx_k.clear();
         idx_k1.clear();
 
-        // Always-present core states: position (3), clock (1), tropo (1).
+        // Always-present core states: position (3) and tropo (1).
         for (size_t j = 0; j < 3; ++j) {
             idx_k.push_back(sk.pos_idx + j);
             idx_k1.push_back(sk1.pos_idx + j);
         }
-        idx_k.push_back(sk.clock_idx);   idx_k1.push_back(sk1.clock_idx);
         idx_k.push_back(sk.tropo_idx);   idx_k1.push_back(sk1.tropo_idx);
 
         // Optional core states — included only if present at BOTH epochs.
@@ -94,6 +93,12 @@ namespace GnssProcessor {
                 idx_k1.push_back(b);
             }
         };
+
+        // Receiver clock — present in non-BSSD PPP / PPP-RTK only.  Skipped
+        // under BSSD because no clock state is allocated; tropo therefore
+        // ends up at index 3 instead of 4, but consumers locate it through
+        // sk.tropo_idx so the relative shift is invisible here.
+        both_scalar(sk.clock_idx, sk1.clock_idx);
         if (sk.velocity_idx != kNone && sk1.velocity_idx != kNone) {
             for (size_t j = 0; j < 3; ++j) {
                 idx_k.push_back(sk.velocity_idx + j);

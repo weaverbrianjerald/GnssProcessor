@@ -271,9 +271,15 @@ namespace GnssProcessor {
          * the convergence pattern. For best numerical behaviour, sort nodes by
          * increasing distance from xq before calling.
          *
-         * Unlike windowed barycentric Lagrange, Neville's algorithm produces a
-         * **unique** polynomial for any given set of nodes — there is no window
-         * boundary that could shift and cause sawtooth-like discontinuities.
+         * The polynomial is unique for a given node set, but continuity of the
+         * interpolant across a streaming query (where the caller selects nodes
+         * per query) depends entirely on the upstream node-selection strategy.
+         * A bracket-centered window (window slides one node per source-epoch
+         * crossing) preserves value continuity because the shared bracket node
+         * pins both old and new polynomials to the same value at the swap.
+         * A nearest-N window swaps a node at the midpoint between source
+         * epochs, where the two polynomials disagree — producing the classic
+         * sawtooth in interpolated position.
          *
          * @param[in]  x   Node abscissae (must have same size as y; need not be sorted).
          * @param[in]  y   Node ordinates.

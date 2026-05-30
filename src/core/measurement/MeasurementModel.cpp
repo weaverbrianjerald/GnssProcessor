@@ -47,6 +47,27 @@ namespace GnssProcessor {
         return cfg.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK";
     }
 
+    /// Compute the initial ambiguity standard deviation override (m) for a
+    /// newly-seeded ambiguity that depends on one or more signals.  When
+    /// @c loosen_amb_q_for_substituted_atx is enabled and any of the listed
+    /// signals had its ATX correction frequency-fallback-substituted,
+    /// returns @c ambiguity_std_substituted_atx.  Otherwise returns -1.0
+    /// (sentinel for "use the global default in StateManager::addAmbiguity").
+    double substitutedAmbStdOverride(const GnssConfig& config,
+                                       const PppModel& ppp_model,
+                                       const PppObservation& obs,
+                                       std::initializer_list<std::string> sigs) {
+        const auto& mc = config.getModelCorrections();
+        if (!mc.loosen_amb_q_for_substituted_atx) return -1.0;
+        for (const auto& sig : sigs) {
+            if (sig.empty()) continue;
+            if (ppp_model.wasAtxSubstituted(obs.satellite, sig, obs.system)) {
+                return mc.ambiguity_std_substituted_atx;
+            }
+        }
+        return -1.0;
+    }
+
     } // anonymous namespace
 
     // ===================================================================
@@ -108,9 +129,18 @@ namespace GnssProcessor {
     void MeasurementModel::ensureRequiredStates(const std::vector<PppObservation>& observations,
         const std::string& epoch_prefix) {
         const bool is_uncombined = config_.isUncombinedEnabled();
+        const bool nlwl = (config_.getStateAmbiguityBasis()
+                           == StateAmbiguityBasis::NlWl);
 
         std::set<std::string> required_ambiguities;
         std::set<std::string> required_iono_sats;
+
+        // For the NlWl path: collect the phase signals seen per (satellite,
+        // band) so we can pick a deterministic reference band per satellite
+        // and seed states from the ref-band phase observation.  Key formed
+        // by RINEX band digit (signal[1]); value is the *first* signal we
+        // saw on that band so seeding is reproducible across rebuilds.
+        std::map<std::string, std::map<char, std::string>> nlwl_phase_signals;
 
         // --- First pass: collect required satellites and ambiguity keys ---
         for (const auto& obs : observations) {
@@ -128,29 +158,18 @@ namespace GnssProcessor {
                 if (ref_type.empty()) continue;
                 if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) continue;
 
-                // When BSSD is active, skip signals on frequency bands not
-                // covered by the pivot — they cannot form SDs and their
-                // states would be unobservable.  For iono-free combos
-                // (e.g. "L1C_L2W") BOTH constituent bands must be covered;
-                // otherwise the resulting IF row would land in a group
-                // where the pivot has no member and BssdTransform would
-                // reject it as a singleton, leaving the ambiguity orphaned
-                // in the state.
-                if (!bssd_pivot_bands_.empty() && ref_type.size() >= 2
+                // When BSSD is active, skip signals not tracked by the
+                // pivot — they cannot form same-signal SDs and the
+                // ambiguity state would be unobservable.  The pivot must
+                // track the identical full signal key (raw signal in
+                // uncombined mode, iono-free combo in IF mode), since
+                // BssdTransform groups SD rows by that exact key.
+                if (!bssd_pivot_signals_.empty() && ref_type.size() >= 2
                     && (ref_type[0] == 'C' || ref_type[0] == 'L')) {
                     const std::string cons = PppUtils::getSystemString(obs.satellite);
-                    auto cit = bssd_pivot_bands_.find(cons);
-                    if (cit != bssd_pivot_bands_.end()) {
-                        const std::string band1 = ref_type.substr(0, 2);
-                        if (!cit->second.count(band1)) continue;
-                        const auto us = ref_type.find('_');
-                        if (us != std::string::npos
-                            && us >= 2
-                            && ref_type.size() >= us + 3) {
-                            const std::string band2 = ref_type.substr(us + 1, 2);
-                            if (!cit->second.count(band2)) continue;
-                        }
-                    }
+                    auto cit = bssd_pivot_signals_.find(cons);
+                    if (cit != bssd_pivot_signals_.end()
+                        && !cit->second.count(ref_type)) continue;
                 }
 
                 if (is_uncombined && (ref_type[0] == 'C' || ref_type[0] == 'L'))
@@ -161,7 +180,34 @@ namespace GnssProcessor {
                 const bool is_iono_free = (ref_type.find('_') != std::string::npos);
                 if (!is_uncombined && !is_iono_free) continue;
 
-                required_ambiguities.insert(obs.satellite + "_" + ref_type);
+                if (nlwl) {
+                    // NlWl basis is uncombined-only (validated at config
+                    // load), so iono-free phase combos cannot appear here.
+                    if (is_iono_free) continue;
+                    if (ref_type.size() < 2) continue;
+                    nlwl_phase_signals[obs.satellite]
+                        .try_emplace(ref_type[1], ref_type);
+                } else {
+                    required_ambiguities.insert(obs.satellite + "_" + ref_type);
+                }
+            }
+        }
+
+        // NlWl basis: assemble NL/WL ambiguity keys from the per-(sat, band)
+        // phase signal map.  Reference band is the lowest-numbered observed
+        // band per satellite (std::map keeps band digits sorted ascending),
+        // frozen for the lifetime of the satellite's arc.
+        nlwl_ref_band_.clear();
+        if (nlwl) {
+            for (const auto& [sat, bands] : nlwl_phase_signals) {
+                if (bands.empty()) continue;
+                const char ref_band = bands.begin()->first;
+                nlwl_ref_band_[sat] = ref_band;
+                required_ambiguities.insert(StateKeys::makeNlAmbiguityKey(sat, ref_band));
+                for (const auto& [b, _sig] : bands) {
+                    if (b == ref_band) continue;
+                    required_ambiguities.insert(StateKeys::makeWlAmbiguityKey(sat, ref_band, b));
+                }
             }
         }
 
@@ -170,8 +216,10 @@ namespace GnssProcessor {
             for (const auto& obs : observations) {
                 if (!required_iono_sats.count(obs.satellite)) continue;
                 if (state_manager_.getIonosphereIndex(obs.satellite) < 0) {
-                    if (obs.elevation > 0.0)
+                    if (obs.elevation > 0.0) {
                         state_manager_.setIonosphereElevation(obs.satellite, obs.elevation);
+                        state_manager_.setIonosphereAzimuth(obs.satellite, obs.azimuth);
+                    }
 
                     const auto iono_seed_opt = state_initializer_.computeIonosphereSeed(obs);
                     // When no BIA-covered code pair is available, the seed
@@ -193,22 +241,31 @@ namespace GnssProcessor {
             state_manager_.pruneIonosphereStatesExcept(required_iono_sats);
 
             for (const auto& obs : observations) {
-                if (required_iono_sats.count(obs.satellite) && obs.elevation > 0.0)
+                if (required_iono_sats.count(obs.satellite) && obs.elevation > 0.0) {
                     state_manager_.setIonosphereElevation(obs.satellite, obs.elevation);
+                    state_manager_.setIonosphereAzimuth(obs.satellite, obs.azimuth);
+                }
             }
         }
 
         // --- Ambiguity states ---
         const bool bssd_active = config_.enableBetweenSatelliteSd();
 
-        // Pivot absolute seeds, keyed by constellation + frequency band
-        // (e.g. "GPS|L1") rather than the full signal type.  Different
-        // tracking attributes on the same band (L1W vs L1C) share the same
-        // frequency; using a band-normalized key ensures a non-pivot
-        // satellite that fell back to a different tracking mode still
-        // subtracts the correct pivot seed for SD ambiguity initialization.
+        // Pivot absolute seeds, keyed by constellation + full signal type
+        // (e.g. "GPS|L1W", "GPS|L1C") — one anchor per (sat, signal) pair.
+        // Under channel_mode=all the pivot tracks multiple signals per band
+        // and each gets its own SD frame; non-pivots' L1W SD against pivot's
+        // L1W, non-pivots' L1C SD against pivot's L1C.  BssdTransform's
+        // group key now uses the same full-signal granularity, so the two
+        // sides agree on what "the pivot row" is for each ambiguity state.
+        //
+        // For NlWl basis the seeds are pre-converted to cycles (NL: pivot's
+        // L_ref_band cycle ambiguity; WL: pivot's N_a - N_b cycle difference
+        // for each band-pair the pivot tracks beyond ref_band).  Keys are
+        // "<cons>|NL" and "<cons>|WL|<a>_<b>" so the lookup at non-pivot
+        // seeding stays a flat string→double map.
         std::map<std::string, double> pivot_abs_seeds;
-        if (bssd_active) {
+        if (bssd_active && !nlwl) {
             const Eigen::VectorXd x_seed = state_manager_.getStateVector();
             const auto& pivot_sats = pivot_manager_.getPivotSatellites();
             for (const auto& obs : observations) {
@@ -218,70 +275,297 @@ namespace GnssProcessor {
                     continue;
                 for (const auto& [ref_type, val] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'L') continue;
-                    const std::string band = (ref_type.size() >= 2)
-                                           ? ref_type.substr(0, 2) : ref_type;
-                    const std::string pkey = cons + "|" + band;
-                    if (pivot_abs_seeds.count(pkey)) continue;
+                    const std::string pkey = cons + "|" + ref_type;
                     pivot_abs_seeds[pkey] =
                         state_manager_.computeAmbiguitySeed(obs, ref_type, x_seed);
                 }
             }
         }
+        if (bssd_active && nlwl) {
+            const Eigen::VectorXd x_seed = state_manager_.getStateVector();
+            const auto& pivot_sats = pivot_manager_.getPivotSatellites();
+            for (const auto& obs : observations) {
+                const std::string cons = PppUtils::getSystemString(obs.satellite);
+                auto piv_it = pivot_sats.find(cons);
+                if (piv_it == pivot_sats.end() || piv_it->second != obs.satellite)
+                    continue;
+                auto sit = nlwl_phase_signals.find(obs.satellite);
+                if (sit == nlwl_phase_signals.end() || sit->second.empty())
+                    continue;
+                const char ref_band = sit->second.begin()->first;
+                const auto& ref_sig = sit->second.begin()->second;
+                const double lambda_ref = ppp_utils_.getWavelength(
+                    obs.system, ref_sig, obs.satellite);
+                if (!std::isfinite(lambda_ref) || lambda_ref <= 0.0) continue;
 
-        for (const auto& obs : observations) {
-            for (const auto& [ref_type, observed] : obs.observed) {
-                if (ref_type.empty() || ref_type[0] != 'L') continue;
-                const std::string amb_key = obs.satellite + "_" + ref_type;
-                if (!required_ambiguities.count(amb_key)) continue;
+                const double nl_seed_cyc =
+                    state_manager_.computeAmbiguitySeed(obs, ref_sig, x_seed)
+                    / lambda_ref;
+                pivot_abs_seeds[cons + "|NL"] = nl_seed_cyc;
 
-                const int existing_idx = state_manager_.getAmbiguityIndex(amb_key);
+                for (const auto& [b, b_sig] : sit->second) {
+                    if (b == ref_band) continue;
+                    const double lambda_b = ppp_utils_.getWavelength(
+                        obs.system, b_sig, obs.satellite);
+                    if (!std::isfinite(lambda_b) || lambda_b <= 0.0) continue;
+                    const double n_b_cyc =
+                        state_manager_.computeAmbiguitySeed(obs, b_sig, x_seed)
+                        / lambda_b;
+                    // WL canonical = N_low_band - N_high_band.  When ref_band
+                    // is the lower of the pair (the typical case, e.g. L1
+                    // ref + L2/L5 WL) WL = NL - N_b.  When ref_band > b
+                    // (rare: sat first observed only on L2, then L1 appears),
+                    // the canonical key has b first, so WL = N_b - NL.
+                    const char a = std::min(ref_band, b);
+                    const char z = std::max(ref_band, b);
+                    const double wl_seed_cyc = (a == ref_band)
+                        ? (nl_seed_cyc - n_b_cyc)
+                        : (n_b_cyc - nl_seed_cyc);
+                    const std::string wl_pair = std::string{ a } + "_" + std::string{ z };
+                    pivot_abs_seeds[cons + "|WL|" + wl_pair] = wl_seed_cyc;
+                }
+            }
+        }
 
-                bool needs_seed = (existing_idx < 0)
-                               || state_manager_.isAmbiguityPendingReseed(amb_key);
+        // Per-band seed/add loop (skipped under NlWl basis — see below).
+        if (!nlwl) {
+            for (const auto& obs : observations) {
+                for (const auto& [ref_type, observed] : obs.observed) {
+                    if (ref_type.empty() || ref_type[0] != 'L') continue;
+                    const std::string amb_key = obs.satellite + "_" + ref_type;
+                    if (!required_ambiguities.count(amb_key)) continue;
 
-                if (needs_seed) {
-                    const Eigen::VectorXd x_now = state_manager_.getStateVector();
-                    double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
+                    const int existing_idx = state_manager_.getAmbiguityIndex(amb_key);
 
-                    if (bssd_active) {
-                        const std::string cons = PppUtils::getSystemString(obs.satellite);
-                        const auto& pivot_sats = pivot_manager_.getPivotSatellites();
-                        auto piv_it = pivot_sats.find(cons);
-                        const bool is_pivot = piv_it != pivot_sats.end()
-                                           && piv_it->second == obs.satellite;
-                        if (is_pivot) {
-                            seed = 0.0;
+                    bool needs_seed = (existing_idx < 0)
+                                   || state_manager_.isAmbiguityPendingReseed(amb_key);
+
+                    if (needs_seed) {
+                        const Eigen::VectorXd x_now = state_manager_.getStateVector();
+                        double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
+
+                        if (bssd_active) {
+                            const std::string cons = PppUtils::getSystemString(obs.satellite);
+                            const auto& pivot_sats = pivot_manager_.getPivotSatellites();
+                            auto piv_it = pivot_sats.find(cons);
+                            const bool is_pivot = piv_it != pivot_sats.end()
+                                               && piv_it->second == obs.satellite;
+                            if (is_pivot) {
+                                // Pivot's row of this exact signal is the
+                                // anchor in BssdTransform's per-signal group;
+                                // state = 0 by construction.
+                                seed = 0.0;
+                            } else {
+                                // SD against the pivot's same-signal seed.
+                                const std::string pkey = cons + "|" + ref_type;
+                                auto ps_it = pivot_abs_seeds.find(pkey);
+                                if (ps_it != pivot_abs_seeds.end())
+                                    seed -= ps_it->second;
+                            }
+                        }
+
+                        if (existing_idx < 0) {
+                            const double init_std_override =
+                                substitutedAmbStdOverride(config_, ppp_model_, obs, {ref_type});
+                            state_manager_.addAmbiguity(amb_key, seed, init_std_override);
+                            log_manager_.getLogger("measurement_model")->debug(
+                                "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m{}",
+                                epoch_prefix, obs.satellite, amb_key, seed,
+                                bssd_active ? " (SD)" : "");
                         } else {
-                            const std::string band = (ref_type.size() >= 2)
-                                                   ? ref_type.substr(0, 2) : ref_type;
-                            const std::string pkey = cons + "|" + band;
-                            auto ps_it = pivot_abs_seeds.find(pkey);
+                            Eigen::VectorXd x_reseed = x_now;
+                            x_reseed(existing_idx) = seed;
+                            state_manager_.setStateVector(x_reseed);
+                            log_manager_.getLogger("measurement_model")->debug(
+                                "{}Re-seeded reset ambiguity for {} (key={}), seed={:.3f} m{}",
+                                epoch_prefix, obs.satellite, amb_key, seed,
+                                bssd_active ? " (SD)" : "");
+                        }
+                        state_manager_.clearPendingReseed(amb_key);
+                    }
+                }
+            }
+        }
+
+        // NlWl seed/add loop.  Iterates the per-(sat, band) phase signal map
+        // built earlier rather than the raw observation list; this keeps
+        // seeding deterministic across measurement-rebuild passes within
+        // the same epoch, and naturally enforces "one NL + one WL per
+        // non-ref band" without requiring the caller-side dedup tracking
+        // that the per-band loop avoids by virtue of its key uniqueness.
+        if (nlwl) {
+            for (const auto& [sat, bands] : nlwl_phase_signals) {
+                if (bands.empty()) continue;
+                const char ref_band = bands.begin()->first;
+                const auto& ref_sig = bands.begin()->second;
+
+                // Find this sat's PppObservation (one per epoch in the
+                // single-receiver path NlWl supports).
+                const PppObservation* obs_ptr = nullptr;
+                for (const auto& obs : observations) {
+                    if (obs.satellite == sat) { obs_ptr = &obs; break; }
+                }
+                if (!obs_ptr) continue;
+                const PppObservation& obs = *obs_ptr;
+
+                const double lambda_ref = ppp_utils_.getWavelength(
+                    obs.system, ref_sig, obs.satellite);
+                if (!std::isfinite(lambda_ref) || lambda_ref <= 0.0) continue;
+
+                const std::string cons = PppUtils::getSystemString(obs.satellite);
+                const auto& pivot_sats = pivot_manager_.getPivotSatellites();
+                auto piv_it = pivot_sats.find(cons);
+                const bool is_pivot = bssd_active
+                                   && piv_it != pivot_sats.end()
+                                   && piv_it->second == obs.satellite;
+
+                // --- NL state ---
+                const std::string nl_key = StateKeys::makeNlAmbiguityKey(sat, ref_band);
+                if (required_ambiguities.count(nl_key)) {
+                    const int existing_idx = state_manager_.getAmbiguityIndex(nl_key);
+                    const bool needs_seed = (existing_idx < 0)
+                        || state_manager_.isAmbiguityPendingReseed(nl_key);
+                    if (needs_seed) {
+                        const Eigen::VectorXd x_now = state_manager_.getStateVector();
+                        double nl_seed_cyc =
+                            state_manager_.computeAmbiguitySeed(obs, ref_sig, x_now)
+                            / lambda_ref;
+                        if (bssd_active) {
+                            if (is_pivot) {
+                                nl_seed_cyc = 0.0;
+                            } else {
+                                auto ps_it = pivot_abs_seeds.find(cons + "|NL");
+                                if (ps_it != pivot_abs_seeds.end())
+                                    nl_seed_cyc -= ps_it->second;
+                            }
+                        }
+                        if (existing_idx < 0) {
+                            const double init_std_override =
+                                substitutedAmbStdOverride(config_, ppp_model_, obs, {ref_sig});
+                            state_manager_.addAmbiguity(nl_key, nl_seed_cyc, init_std_override);
+                            log_manager_.getLogger("measurement_model")->debug(
+                                "{}Added NL ambiguity state {} (band {}), seed={:.3f} cyc{}",
+                                epoch_prefix, nl_key, ref_band, nl_seed_cyc,
+                                bssd_active ? " (SD)" : "");
+                        } else {
+                            Eigen::VectorXd x_reseed = x_now;
+                            x_reseed(existing_idx) = nl_seed_cyc;
+                            state_manager_.setStateVector(x_reseed);
+                            log_manager_.getLogger("measurement_model")->debug(
+                                "{}Re-seeded NL ambiguity {}, seed={:.3f} cyc{}",
+                                epoch_prefix, nl_key, nl_seed_cyc,
+                                bssd_active ? " (SD)" : "");
+                        }
+                        state_manager_.clearPendingReseed(nl_key);
+                    }
+                }
+
+                // --- WL states (one per non-ref band) ---
+                for (const auto& [b, b_sig] : bands) {
+                    if (b == ref_band) continue;
+                    const std::string wl_key = StateKeys::makeWlAmbiguityKey(sat, ref_band, b);
+                    if (!required_ambiguities.count(wl_key)) continue;
+
+                    const int existing_idx = state_manager_.getAmbiguityIndex(wl_key);
+                    const bool needs_seed = (existing_idx < 0)
+                        || state_manager_.isAmbiguityPendingReseed(wl_key);
+                    if (!needs_seed) continue;
+
+                    const double lambda_b = ppp_utils_.getWavelength(
+                        obs.system, b_sig, obs.satellite);
+                    if (!std::isfinite(lambda_b) || lambda_b <= 0.0) continue;
+
+                    const Eigen::VectorXd x_now = state_manager_.getStateVector();
+                    const double nl_cyc =
+                        state_manager_.computeAmbiguitySeed(obs, ref_sig, x_now)
+                        / lambda_ref;
+                    const double n_b_cyc =
+                        state_manager_.computeAmbiguitySeed(obs, b_sig, x_now)
+                        / lambda_b;
+                    // Canonical sign: WL_<low>_<high> stores N_low - N_high.
+                    const char a = std::min(ref_band, b);
+                    const char z = std::max(ref_band, b);
+                    double wl_seed = (a == ref_band) ? (nl_cyc - n_b_cyc)
+                                                     : (n_b_cyc - nl_cyc);
+                    if (bssd_active) {
+                        if (is_pivot) {
+                            wl_seed = 0.0;
+                        } else {
+                            const std::string wl_pair = std::string{ a } + "_" + std::string{ z };
+                            auto ps_it = pivot_abs_seeds.find(cons + "|WL|" + wl_pair);
                             if (ps_it != pivot_abs_seeds.end())
-                                seed -= ps_it->second;
+                                wl_seed -= ps_it->second;
                         }
                     }
-
                     if (existing_idx < 0) {
-                        state_manager_.addAmbiguity(amb_key, seed);
+                        const double init_std_override =
+                            substitutedAmbStdOverride(config_, ppp_model_, obs, {ref_sig, b_sig});
+                        state_manager_.addAmbiguity(wl_key, wl_seed, init_std_override);
                         log_manager_.getLogger("measurement_model")->debug(
-                            "{}Added missing ambiguity state for {} (key={}), seed={:.3f} m{}",
-                            epoch_prefix, obs.satellite, amb_key, seed,
+                            "{}Added WL ambiguity state {} (bands {}-{}), seed={:.3f} cyc{}",
+                            epoch_prefix, wl_key, ref_band, b, wl_seed,
                             bssd_active ? " (SD)" : "");
                     } else {
                         Eigen::VectorXd x_reseed = x_now;
-                        x_reseed(existing_idx) = seed;
+                        x_reseed(existing_idx) = wl_seed;
                         state_manager_.setStateVector(x_reseed);
                         log_manager_.getLogger("measurement_model")->debug(
-                            "{}Re-seeded reset ambiguity for {} (key={}), seed={:.3f} m{}",
-                            epoch_prefix, obs.satellite, amb_key, seed,
+                            "{}Re-seeded WL ambiguity {}, seed={:.3f} cyc{}",
+                            epoch_prefix, wl_key, wl_seed,
                             bssd_active ? " (SD)" : "");
                     }
-                    state_manager_.clearPendingReseed(amb_key);
+                    state_manager_.clearPendingReseed(wl_key);
                 }
             }
         }
 
         state_manager_.pruneAmbiguitiesExcept(required_ambiguities);
+
+        // Defensive band-count check.  A correctly-functioning band
+        // filter should produce at most N distinct phase bands per
+        // satellite, where N corresponds to the configured signal_mode
+        // (Dual = 2, Triple = 3, All = unbounded).  If a satellite ends
+        // up with more bands than expected, some upstream path has
+        // bypassed the filter (e.g., a slip detector emitting a reset
+        // key for a band-filtered signal, or a PPP_RTK overrides we
+        // missed).  The pruneAmbiguitiesExcept call above clears any
+        // such state immediately, but the warning surfaces the
+        // mechanism so it can be tracked down at the source.
+        if (!nlwl) {
+            int expected_bands = 0;
+            switch (config_.getFrequencyMode()) {
+                case FrequencyMode::Dual:   expected_bands = 2; break;
+                case FrequencyMode::Triple: expected_bands = 3; break;
+                case FrequencyMode::All:    expected_bands = 0; break;  // 0 = no cap
+            }
+            if (expected_bands > 0) {
+                std::map<std::string, std::set<char>> per_sat_bands;
+                for (const auto& key : required_ambiguities) {
+                    const auto parts = StateKeys::parseAmbiguityKey(key);
+                    if (!parts) continue;
+                    if (parts->signal.size() < 2) continue;
+                    if (parts->signal.find('_') != std::string::npos) continue;  // IF combo
+                    per_sat_bands[parts->satellite].insert(parts->signal[1]);
+                }
+                for (const auto& [sat, bands] : per_sat_bands) {
+                    if (static_cast<int>(bands.size()) > expected_bands) {
+                        std::string band_list;
+                        for (char b : bands) {
+                            if (!band_list.empty()) band_list += ',';
+                            band_list += b;
+                        }
+                        log_manager_.getLogger("measurement_model")->warn(
+                            "{}Sat {} has {} ambiguity bands {{{}}} — exceeds "
+                            "signal_mode={} cap of {}.  An upstream path bypassed "
+                            "the band filter (likely a slip detector reset key on "
+                            "a band-filtered signal).",
+                            epoch_prefix, sat, bands.size(), band_list,
+                            config_.getFrequencyMode() == FrequencyMode::Dual ? "Dual" : "Triple",
+                            expected_bands);
+                    }
+                }
+            }
+        }
 
         // --- Mark unresolvable ambiguities ---
         // Ambiguities without full BIA phase bias coverage cannot be resolved
@@ -290,53 +574,64 @@ namespace GnssProcessor {
         // the time-constant satellite phase bias with zero process noise.
         state_manager_.clearUnresolvableAmbiguities();
 
-        // GLONASS in BSSD: every phase ambiguity is contaminated by the
-        // receiver per-channel inter-channel bias (ICB) which the float
-        // ambiguity absorbs.  IAR would lock onto the wrong integer; mark
-        // all GLONASS phase ambiguities unresolvable so LAMBDA skips them.
-        if (config_.enableBetweenSatelliteSd() && config_.enableGlonassBssd()) {
-            for (const auto& obs : observations) {
-                if (obs.system != System::GLONASS) continue;
-                for (const auto& [ref_type, observed] : obs.observed) {
-                    if (ref_type.empty() || ref_type[0] != 'L') continue;
-                    const std::string amb_key = obs.satellite + "_" + ref_type;
-                    if (!required_ambiguities.count(amb_key)) continue;
-                    state_manager_.markAmbiguityUnresolvable(amb_key);
-                }
-            }
-        }
-        if (!is_uncombined) {
-            // Combined (IF) mode: check both component signals of the IF label.
-            for (const auto& obs : observations) {
-                for (const auto& [ref_type, observed] : obs.observed) {
-                    if (ref_type.empty() || ref_type[0] != 'L') continue;
-                    if (ref_type.find('_') == std::string::npos) continue;
-                    const std::string amb_key = obs.satellite + "_" + ref_type;
-                    if (!required_ambiguities.count(amb_key)) continue;
-                    const bool missing_bia = !ifCombHasFullBia(obs.satellite, ref_type);
-                    const bool missing_atx = !ifCombHasFullRxAtx(ref_type, obs.system);
-                    if (missing_bia || missing_atx) {
+        // NlWl basis: per-band unresolvable bookkeeping does not apply to
+        // NL/WL state keys.  For now the WL state is always resolvable
+        // (MW provides a near-noise-free integer constraint) and the NL
+        // state's resolvability depends on band-pair BIA coverage in a
+        // way Phase 5 will model properly.  TODO: revisit when LAMBDA NL
+        // search is wired through AmbiguityResolver in the NlWl basis.
+        // The remaining receiver-bias / sat-bias bookkeeping below applies
+        // to code rows only, so it is unaffected by the basis switch.
+        if (!nlwl) {
+            // GLONASS in BSSD: every phase ambiguity is contaminated by
+            // the receiver per-channel inter-channel bias (ICB) which the
+            // float ambiguity absorbs.  IAR would lock onto the wrong
+            // integer; mark all GLONASS phase ambiguities unresolvable
+            // so LAMBDA skips them.
+            if (config_.enableBetweenSatelliteSd() && config_.enableGlonassBssd()) {
+                for (const auto& obs : observations) {
+                    if (obs.system != System::GLONASS) continue;
+                    for (const auto& [ref_type, observed] : obs.observed) {
+                        if (ref_type.empty() || ref_type[0] != 'L') continue;
+                        const std::string amb_key = obs.satellite + "_" + ref_type;
+                        if (!required_ambiguities.count(amb_key)) continue;
                         state_manager_.markAmbiguityUnresolvable(amb_key);
-                        log_manager_.getLogger("measurement_model")->trace(
-                            "{}Unresolvable ambiguity {}: missing_bia={}, missing_atx={}",
-                            epoch_prefix, amb_key, missing_bia, missing_atx);
                     }
                 }
             }
-        } else {
-            // Uncombined (PPP-RTK) mode: check the individual phase signal.
-            for (const auto& obs : observations) {
-                for (const auto& [ref_type, observed] : obs.observed) {
-                    if (ref_type.empty() || ref_type[0] != 'L') continue;
-                    if (ref_type.find('_') != std::string::npos) continue;
-                    const std::string amb_key = obs.satellite + "_" + ref_type;
-                    if (!required_ambiguities.count(amb_key)) continue;
-                    const bool missing_bia = !ppp_model_.hasBiasEntry(obs.satellite, ref_type);
-                    if (missing_bia) {
-                        state_manager_.markAmbiguityUnresolvable(amb_key);
-                        log_manager_.getLogger("measurement_model")->trace(
-                            "{}Unresolvable ambiguity {}: missing phase BIA",
-                            epoch_prefix, amb_key);
+            if (!is_uncombined) {
+                // Combined (IF) mode: check both component signals of the IF label.
+                for (const auto& obs : observations) {
+                    for (const auto& [ref_type, observed] : obs.observed) {
+                        if (ref_type.empty() || ref_type[0] != 'L') continue;
+                        if (ref_type.find('_') == std::string::npos) continue;
+                        const std::string amb_key = obs.satellite + "_" + ref_type;
+                        if (!required_ambiguities.count(amb_key)) continue;
+                        const bool missing_bia = !ifCombHasFullBia(obs.satellite, ref_type);
+                        const bool missing_atx = !ifCombHasFullRxAtx(ref_type, obs.system);
+                        if (missing_bia || missing_atx) {
+                            state_manager_.markAmbiguityUnresolvable(amb_key);
+                            log_manager_.getLogger("measurement_model")->trace(
+                                "{}Unresolvable ambiguity {}: missing_bia={}, missing_atx={}",
+                                epoch_prefix, amb_key, missing_bia, missing_atx);
+                        }
+                    }
+                }
+            } else {
+                // Uncombined (PPP-RTK) mode: check the individual phase signal.
+                for (const auto& obs : observations) {
+                    for (const auto& [ref_type, observed] : obs.observed) {
+                        if (ref_type.empty() || ref_type[0] != 'L') continue;
+                        if (ref_type.find('_') != std::string::npos) continue;
+                        const std::string amb_key = obs.satellite + "_" + ref_type;
+                        if (!required_ambiguities.count(amb_key)) continue;
+                        const bool missing_bia = !ppp_model_.hasBiasEntry(obs.satellite, ref_type);
+                        if (missing_bia) {
+                            state_manager_.markAmbiguityUnresolvable(amb_key);
+                            log_manager_.getLogger("measurement_model")->trace(
+                                "{}Unresolvable ambiguity {}: missing phase BIA",
+                                epoch_prefix, amb_key);
+                        }
                     }
                 }
             }
@@ -403,22 +698,59 @@ namespace GnssProcessor {
         // into BSSD, the row uses the stale bad seed, produces a huge
         // innovation, gets flagged as an outlier, and is excluded from
         // the update — so the state never gets a chance to recover.
-        // Gating creation on @c bssd_pivot_bands_ ensures the seed is
-        // computed against the converged state at the moment the band
+        // Gating creation on @c bssd_pivot_signals_ ensures the seed is
+        // computed against the converged state at the moment the signal
         // first becomes usable.
-        auto bandCoveredByPivot = [&](const std::string& sat,
-                                       const std::string& sig) -> bool {
-            if (bssd_pivot_bands_.empty()) return true;  // BSSD off
+        auto signalCoveredByPivot = [&](const std::string& sat,
+                                         const std::string& sig) -> bool {
+            if (bssd_pivot_signals_.empty()) return true;  // BSSD off
             const std::string cons = PppUtils::getSystemString(sat);
-            auto cit = bssd_pivot_bands_.find(cons);
-            if (cit == bssd_pivot_bands_.end()) return true;  // no pivot for cons
+            auto cit = bssd_pivot_signals_.find(cons);
+            if (cit == bssd_pivot_signals_.end()) return true;  // no pivot for cons
             if (sig.size() < 2) return false;
-            if (!cit->second.count(sig.substr(0, 2))) return false;
-            const auto us = sig.find('_');
-            if (us != std::string::npos && us >= 2 && sig.size() >= us + 3) {
-                if (!cit->second.count(sig.substr(us + 1, 2))) return false;
+            // Match the pivot's full signal key (raw signal in uncombined
+            // mode, iono-free combo in IF mode); BssdTransform groups SD
+            // rows by that exact key.
+            return cit->second.count(sig) > 0;
+        };
+
+        // Helper: try the sat-bias cache before falling back to the
+        // WLS-based seed.  When a (sat, signal) has been pruned recently
+        // (visibility gap, brief masking, geometry hole) the cache
+        // holds its last-known value + diagonal variance.  Restoring it
+        // skips a full re-convergence cycle and prevents the new state
+        // from re-seeding via the first innovation against a not-yet-
+        // converged neighbor state vector.
+        //
+        // Reports back whether a cache restore happened so the caller's
+        // log line can distinguish the "warm restored" vs "WLS seeded"
+        // cases.  Always consumes the cache entry on restore — a key
+        // is either in the active state or in the cache, never both.
+        auto addOrRestoreSatBias = [&](const std::string& key,
+                                       const PppObservation& obs,
+                                       const std::string& ref_type,
+                                       double observed,
+                                       const char* tag) {
+            auto restoration = state_manager_.tryRestoreSatBias(
+                key, state_manager_.getStateEpochTime());
+            if (restoration.has_value()) {
+                state_manager_.addSatBiasStateWithVariance(
+                    key, restoration->value, restoration->variance);
+                state_manager_.consumeSatBiasCacheEntry(key);
+                log_manager_.getLogger("measurement_model")->info(
+                    "{}Restored {} sat bias state for {} from cache: "
+                    "value={:+.3f} m, std={:.3f} m, gap={:.1f} s ({})",
+                    epoch_prefix, tag, key,
+                    restoration->value, std::sqrt(restoration->variance),
+                    restoration->gap_s,
+                    restoration->is_warm ? "warm" : "cold-value");
+            } else {
+                const double seed = seedSatBias(obs, ref_type, observed);
+                state_manager_.addSatBiasState(key, seed);
+                log_manager_.getLogger("measurement_model")->debug(
+                    "{}Added {} sat bias state for {}, seed={:+.3f} m",
+                    epoch_prefix, tag, key, seed);
             }
-            return true;
         };
 
         std::set<std::string> required_sat_biases;
@@ -428,15 +760,11 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type.find('_') != std::string::npos) continue;
                     if (ref_type[0] != 'C') continue;  // code-only
                     if (ppp_model_.hasBiasEntry(obs.satellite, ref_type)) continue;
-                    if (!bandCoveredByPivot(obs.satellite, ref_type)) continue;
+                    if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
                     if (state_manager_.getSatBiasIndex(key) < 0) {
-                        const double seed = seedSatBias(obs, ref_type, observed);
-                        state_manager_.addSatBiasState(key, seed);
-                        log_manager_.getLogger("measurement_model")->debug(
-                            "{}Added sat bias state for {}, seed={:+.3f} m",
-                            epoch_prefix, key, seed);
+                        addOrRestoreSatBias(key, obs, ref_type, observed, "");
                     }
                 }
             }
@@ -447,44 +775,26 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
                     if (ref_type.find('_') == std::string::npos) continue;
                     if (ifCombHasFullBia(obs.satellite, ref_type)) continue;
-                    if (!bandCoveredByPivot(obs.satellite, ref_type)) continue;
+                    if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
                     if (state_manager_.getSatBiasIndex(key) < 0) {
-                        const double seed = seedSatBias(obs, ref_type, observed);
-                        state_manager_.addSatBiasState(key, seed);
-                        log_manager_.getLogger("measurement_model")->debug(
-                            "{}Added IF sat bias state for {}, seed={:+.3f} m",
-                            epoch_prefix, key, seed);
+                        addOrRestoreSatBias(key, obs, ref_type, observed, "IF");
                     }
                 }
             }
         }
 
-        // Pruning: drop sat-bias states whose band has fallen out of
-        // bssd_pivot_bands_ since the last epoch.  Without this, a stale
-        // state created under a previous pivot keeps its (possibly bad)
-        // seed value frozen via tiny process noise; the next handover
-        // that brings the band back online would reuse the stale value
-        // and produce massive innovations.  Visibility gaps are still
-        // preserved: a state whose band IS still covered but whose
-        // satellite is temporarily below the elevation mask is kept,
-        // because we explicitly include it in @c keep_sat_biases.
+        // Strict prune: drop every sat-bias state whose (sat, signal)
+        // isn't required *this* epoch — matches the ambiguity prune
+        // policy.  No state for an invisible satellite or for a signal
+        // that fell out of pivot coverage survives in the active filter.
+        // The pruned states are stashed in the StateManager's sat-bias
+        // cache so a near-term re-acquisition can warm-restart instead
+        // of paying a cold-start re-seed (which is fragile against
+        // un-converged neighbor states — see seedSatBias comment).
         if (config_.estimateSatBiases()) {
-            std::set<std::string> keep_sat_biases = required_sat_biases;
-            for (const auto& [key, idx] : state_manager_.getSatBiasStates()) {
-                if (keep_sat_biases.count(key)) continue;
-                const auto bar = key.find('|');
-                if (bar == std::string::npos) {
-                    keep_sat_biases.insert(key);  // malformed — preserve defensively
-                    continue;
-                }
-                const std::string sat = key.substr(0, bar);
-                const std::string sig = key.substr(bar + 1);
-                if (bandCoveredByPivot(sat, sig))
-                    keep_sat_biases.insert(key);
-            }
-            state_manager_.pruneSatBiasStatesExcept(keep_sat_biases);
+            state_manager_.pruneSatBiasStatesExcept(required_sat_biases);
         }
     }
 
@@ -503,21 +813,19 @@ namespace GnssProcessor {
             return false;
         }
 
-        // When BSSD is active, exclude code/phase measurements on frequency
-        // bands not covered by the pivot satellite.  Such measurements
-        // cannot be differenced and would pass through the BssdTransform
-        // as undifferenced singletons with zeroed clock/ISB columns.
-        // Doppler measurements are exempt — they are not SD-transformed.
-        if (!bssd_pivot_bands_.empty() && ref_type.size() >= 2
-            && (ref_type[0] == 'C' || ref_type[0] == 'L')) {
+        // When BSSD is active, exclude code/phase/Doppler measurements on
+        // signals not tracked by the pivot satellite.  Such measurements
+        // cannot be same-signal differenced and would be rejected by
+        // BssdTransform's purity rule anyway; filtering here is an upstream
+        // optimization.  Doppler is included — under BSSD it is SD-transformed
+        // alongside code/phase, which is what cancels the receiver clock-rate
+        // and ISBR in same-system pairs.
+        if (!bssd_pivot_signals_.empty() && ref_type.size() >= 2
+            && (ref_type[0] == 'C' || ref_type[0] == 'L' || ref_type[0] == 'D')) {
             const std::string cons = PppUtils::getSystemString(obs.satellite);
-            auto cit = bssd_pivot_bands_.find(cons);
-            if (cit != bssd_pivot_bands_.end()) {
-                const std::string band = ref_type.substr(0, 2);
-                if (!cit->second.count(band)) {
-                    return false;
-                }
-            }
+            auto cit = bssd_pivot_signals_.find(cons);
+            if (cit != bssd_pivot_signals_.end()
+                && !cit->second.count(ref_type)) return false;
         }
 
         const MeasurementType mt = classifyMeasurement(ref_type);
@@ -578,6 +886,28 @@ namespace GnssProcessor {
             const Eigen::Vector3d rx_vel = x.segment<3>(state_manager_.getVelocityIndex());
             predicted = obs.modeled.at(ref_type) - obs.los.dot(rx_vel);
 
+            // Receiver clock-rate partial — Doppler observes the GPS-referenced
+            // rate (c · dδt_r/dt) with unit coefficient.  Without this term the
+            // receiver oscillator drift has nowhere to go but the velocity
+            // state, contaminating position via the F[pos, vel] = dt coupling.
+            if (state_manager_.hasClockRate()) {
+                const size_t cr_idx = state_manager_.getClockRateIndex();
+                jacobian(cr_idx) = 1.0;
+                predicted += x(cr_idx);
+            }
+
+            // Inter-system clock-rate offset (ISBR) for non-GPS observations.
+            // Mirrors the ISB partial in the code/phase branch — total observed
+            // rate on a non-GPS Doppler is (global clock-rate + ISBR_sys).
+            const std::string sys_name = StateInitializer::systemToIsbName(obs.system);
+            if (!sys_name.empty()) {
+                const size_t isbr_idx = state_manager_.getSystemTimeRateOffsetIndex(sys_name);
+                if (isbr_idx < state_size) {
+                    jacobian(isbr_idx) = 1.0;
+                    predicted += x(isbr_idx);
+                }
+            }
+
             if (config_.tightlyCoupledImu() && state_manager_.hasImuBiases()) {
                 const Eigen::Vector3d f_e = tc_C_b_e_ * tc_f_b_;
                 Eigen::Matrix3d skew_fe;
@@ -601,9 +931,14 @@ namespace GnssProcessor {
         // Troposphere wet delay
         jacobian(state_manager_.getTropoIndex()) = mapping_wet;
 
-        // Receiver clock
-        jacobian(state_manager_.getClockIndex()) = 1.0;
-        const double rx_clk = x(state_manager_.getClockIndex());
+        // Receiver clock.  Under BSSD the clock cancels in SD and has no
+        // state — skip the Jacobian write and treat the clock contribution
+        // as zero (BssdTransform would have zeroed this column anyway).
+        double rx_clk = 0.0;
+        if (state_manager_.hasClock()) {
+            jacobian(state_manager_.getClockIndex()) = 1.0;
+            rx_clk = x(state_manager_.getClockIndex());
+        }
 
         // Phase clock offset
         double phase_clk_value = 0.0;
@@ -701,11 +1036,52 @@ namespace GnssProcessor {
 
         // Ambiguity (phase only)
         if (is_phase) {
-            const std::string amb_key = obs.satellite + "_" + ref_type;
-            const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
-            if (amb_idx < 0) return false;
-            jacobian(amb_idx) = 1.0;
-            predicted += x(amb_idx);
+            const bool nlwl = (config_.getStateAmbiguityBasis()
+                               == StateAmbiguityBasis::NlWl);
+            if (!nlwl) {
+                const std::string amb_key = obs.satellite + "_" + ref_type;
+                const int amb_idx = state_manager_.getAmbiguityIndex(amb_key);
+                if (amb_idx < 0) return false;
+                jacobian(amb_idx) = 1.0;
+                predicted += x(amb_idx);
+            } else {
+                // NlWl basis: state holds NL_ref (cycles, the L_ref carrier
+                // ambiguity) and WL_(ref, b) = N_a - N_b in canonical
+                // ascending-band form for each non-ref band b.  The phase
+                // observation φ_b in meters is
+                //     φ_b = ρ + λ_b · N_b
+                // where N_b is reconstructed from state as
+                //     N_b = NL_ref                                  (b == ref)
+                //     N_b = NL_ref - sign · WL_<a>_<z>              (b != ref)
+                // with sign = +1 when ref_band is the lower of the pair
+                // and sign = -1 when ref_band is the higher one.
+                if (ref_type.size() < 2) return false;
+                auto rb_it = nlwl_ref_band_.find(obs.satellite);
+                if (rb_it == nlwl_ref_band_.end()) return false;
+                const char ref_band = rb_it->second;
+                const char band = ref_type[1];
+                const double lambda_b = ppp_utils_.getWavelength(
+                    obs.system, ref_type, obs.satellite);
+                if (!std::isfinite(lambda_b) || lambda_b <= 0.0) return false;
+
+                const std::string nl_key = StateKeys::makeNlAmbiguityKey(
+                    obs.satellite, ref_band);
+                const int nl_idx = state_manager_.getAmbiguityIndex(nl_key);
+                if (nl_idx < 0) return false;
+
+                jacobian(nl_idx) = lambda_b;
+                if (band == ref_band) {
+                    predicted += lambda_b * x(nl_idx);
+                } else {
+                    const std::string wl_key = StateKeys::makeWlAmbiguityKey(
+                        obs.satellite, ref_band, band);
+                    const int wl_idx = state_manager_.getAmbiguityIndex(wl_key);
+                    if (wl_idx < 0) return false;
+                    const double wl_sign = (ref_band < band) ? +1.0 : -1.0;
+                    jacobian(wl_idx) = -lambda_b * wl_sign;
+                    predicted += lambda_b * (x(nl_idx) - wl_sign * x(wl_idx));
+                }
+            }
         }
 
         return true;
@@ -742,26 +1118,42 @@ namespace GnssProcessor {
         }
 
         // --- BSSD pivot handover ---
-        // Run only on the first pass of each epoch.  During measurement
-        // rebuilds (outlier/ambiguity-reset passes within the same epoch)
-        // the pivot must remain fixed so that SD ambiguities stay
-        // consistent.  Re-running handover after an outlier handler resets
-        // a pivot's ambiguity would detect it as "disturbed", hand over to
-        // a different satellite, and invalidate all SD ambiguities for that
-        // constellation — producing the cascading large-innovation pattern.
-        if (config_.enableBetweenSatelliteSd() && !(update.time == last_pivot_epoch_)) {
-            handleBssdPivotHandover(observations, epoch_prefix);
-            last_pivot_epoch_ = update.time;
+        // First pass of each epoch: run handover normally (forced and
+        // disturbance-detection paths both active).
+        //
+        // Rebuild passes within the same epoch: skipped by default to
+        // keep the pivot fixed so SD ambiguities stay consistent — an
+        // in-rebuild ambiguity reset can otherwise look like pivot
+        // disturbance and cascade into a spurious handover.
+        //
+        // Exception: when a forced-handover request is pending from
+        // the KF post-fit residual detector, re-enter the handover in
+        // @c forced_only mode so the same epoch's measurement rebuild
+        // runs against the NEW pivot.  Without this re-entry the
+        // detected slip stays smeared across the epoch's update and
+        // only gets re-referenced one epoch late, which is what
+        // produces the kinematic position spike at the detection
+        // epoch.  forced_only mode suppresses the implicit disturbance
+        // check so cascading is impossible — only the constellations
+        // the KF explicitly named get handed over.
+        if (config_.enableBetweenSatelliteSd()) {
+            const bool first_pass = !(update.time == last_pivot_epoch_);
+            const bool has_forced = pivot_manager_.hasPendingForcedHandover();
+            if (first_pass || has_forced) {
+                const bool forced_only = !first_pass && has_forced;
+                handleBssdPivotHandover(observations, epoch_prefix, forced_only);
+                last_pivot_epoch_ = update.time;
+            }
         }
 
-        // --- Build BSSD pivot band coverage map ---
-        // When BSSD is active, only measurements on frequency bands
-        // covered by the pivot satellite may enter the update.
-        // Measurements on uncovered bands would become undifferenced
-        // singletons in the BssdTransform with zeroed clock/ISB columns.
-        // Built before ensureRequiredStates so that ambiguity states for
-        // uncovered bands are not created or retained.
-        bssd_pivot_bands_.clear();
+        // --- Build BSSD pivot signal coverage map ---
+        // When BSSD is active, only measurements on signals tracked by the
+        // pivot satellite may enter the update — BssdTransform groups SD
+        // pairs per full signal type, so a non-pivot's L1C with no L1C row
+        // on the pivot would become an undifferenced singleton.  Built
+        // before ensureRequiredStates so that ambiguity states for
+        // pivot-uncovered signals are not created or retained.
+        bssd_pivot_signals_.clear();
         if (config_.enableBetweenSatelliteSd()) {
             const auto& pivot_sats = pivot_manager_.getPivotSatellites();
             for (const auto& obs : observations) {
@@ -769,10 +1161,10 @@ namespace GnssProcessor {
                 auto piv_it = pivot_sats.find(cons);
                 if (piv_it == pivot_sats.end() || piv_it->second != obs.satellite)
                     continue;
-                auto& bands = bssd_pivot_bands_[cons];
+                auto& sigs = bssd_pivot_signals_[cons];
                 for (const auto& [sig, val] : obs.observed) {
                     if (sig.size() >= 2)
-                        bands.insert(sig.substr(0, 2));
+                        sigs.insert(sig);
                 }
             }
         }
@@ -1009,9 +1401,10 @@ namespace GnssProcessor {
 
     void MeasurementModel::handleBssdPivotHandover(
         const std::vector<PppObservation>& observations,
-        const std::string& epoch_prefix)
+        const std::string& epoch_prefix,
+        bool forced_only)
     {
-        pivot_manager_.handlePivotHandover(observations, state_manager_, epoch_prefix);
+        pivot_manager_.handlePivotHandover(observations, state_manager_, epoch_prefix, forced_only);
     }
 
     // -------------------------------------------------------------------

@@ -66,30 +66,60 @@ const std::map<std::string, std::vector<std::pair<std::string, std::string>>>& g
     return table;
 }
 
-/// Maps system name + SignalMode to the target frequency bands for pair formation.
-const std::map<std::string, std::map<SignalMode, std::vector<std::string>>>& getBandMap() {
-    static const std::map<std::string, std::map<SignalMode, std::vector<std::string>>> table = {
-        {"GPS",     {{SignalMode::Dual, {"L1", "L2"}}, {SignalMode::Triple, {"L1", "L2", "L5"}}, {SignalMode::All, {"L1", "L2", "L5"}}}},
-        {"Galileo", {{SignalMode::Dual, {"E1", "E5a"}}, {SignalMode::Triple, {"E1", "E5a", "E5b"}}, {SignalMode::All, {"E1", "E5a", "E5b", "E6", "E5"}}}},
-        {"GLONASS", {{SignalMode::Dual, {"G1", "G2"}}, {SignalMode::Triple, {"G1", "G2", "G3"}}, {SignalMode::All, {"G1", "G2", "G3", "G1a", "G2a"}}}},
-        {"BeiDou",  {{SignalMode::Dual, {"B1I", "B3"}}, {SignalMode::Triple, {"B1I", "B3", "B2a"}}, {SignalMode::All, {"B1C", "B1I", "B2a", "B2b", "B2ab", "B3"}}}},
-        {"QZSS",    {{SignalMode::Dual, {"L1", "L2"}}, {SignalMode::Triple, {"L1", "L2", "L5"}}, {SignalMode::All, {"L1", "L2", "L5", "L6"}}}},
-        {"SBAS",    {{SignalMode::Dual, {"L1", "L5"}}, {SignalMode::Triple, {"L1", "L5"}}, {SignalMode::All, {"L1", "L5"}}}}
+/// Maps system name + FrequencyMode to the target frequency bands for pair formation.
+const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>>& getBandMap() {
+    static const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>> table = {
+        {"GPS",     {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5"}}}},
+        {"Galileo", {{FrequencyMode::Dual, {"E1", "E5a"}}, {FrequencyMode::Triple, {"E1", "E5a", "E5b"}}, {FrequencyMode::All, {"E1", "E5a", "E5b", "E6", "E5"}}}},
+        {"GLONASS", {{FrequencyMode::Dual, {"G1", "G2"}}, {FrequencyMode::Triple, {"G1", "G2", "G3"}}, {FrequencyMode::All, {"G1", "G2", "G3", "G1a", "G2a"}}}},
+        {"BeiDou",  {{FrequencyMode::Dual, {"B1I", "B3"}}, {FrequencyMode::Triple, {"B1I", "B3", "B2a"}}, {FrequencyMode::All, {"B1C", "B1I", "B2a", "B2b", "B2ab", "B3"}}}},
+        {"QZSS",    {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5", "L6"}}}},
+        {"SBAS",    {{FrequencyMode::Dual, {"L1", "L5"}}, {FrequencyMode::Triple, {"L1", "L5"}}, {FrequencyMode::All, {"L1", "L5"}}}}
     };
     return table;
 }
 
-/// Human-readable label for a SignalMode value.
-const char* signalModeLabel(SignalMode m) {
+/// Human-readable label for a FrequencyMode value.
+const char* frequencyModeLabel(FrequencyMode m) {
     switch (m) {
-    case SignalMode::Dual:   return "Dual";
-    case SignalMode::Triple: return "Triple";
-    case SignalMode::All:    return "All";
+    case FrequencyMode::Dual:   return "Dual";
+    case FrequencyMode::Triple: return "Triple";
+    case FrequencyMode::All:    return "All";
     default:                 return "Unknown";
     }
 }
 
 } // anonymous namespace
+
+    // ===========================================================================
+    //  Free function: allowed RINEX band digits for (constellation, FrequencyMode)
+    // ===========================================================================
+    std::set<char> getAllowedBandDigits(const std::string& constellation, FrequencyMode mode) {
+        std::set<char> digits;
+        const auto& band_map        = getBandMap();
+        const auto& system_to_bands = getSystemToBands();
+
+        auto bit = band_map.find(constellation);
+        if (bit == band_map.end()) return digits;
+        auto mit = bit->second.find(mode);
+        if (mit == bit->second.end()) return digits;
+
+        auto sit = system_to_bands.find(constellation);
+        if (sit == system_to_bands.end()) return digits;
+
+        // For each allowed band name (e.g. "L1", "E5b"), find every RINEX
+        // prefix mapped to it ("C7", "L7" → digit '7' for Galileo E5b)
+        // and collect those digits.  A given band name may have multiple
+        // prefixes (code + phase share the same digit), so the set
+        // deduplicates naturally.
+        for (const auto& band_name : mit->second) {
+            for (const auto& [prefix, name] : sit->second) {
+                if (name == band_name && prefix.size() >= 2)
+                    digits.insert(prefix[1]);
+            }
+        }
+        return digits;
+    }
 
     /**
      * @brief Construct a PppModel instance.
@@ -128,6 +158,13 @@ const char* signalModeLabel(SignalMode m) {
         // Initialize reference from cache
         klobuchar_coeffs_(ProductCache::getInstance().getKlobucharCoeffs())
     {
+        // Wire the antenna model into Geometry so its emission-time
+        // refinement can subtract the IF-combined satellite + receiver
+        // ATX LOS projection from the seed pseudorange.  Both antenna_
+        // and geometry_ are members of this PppModel instance, so the
+        // pointer Geometry stores is valid for the lifetime of *this.
+        geometry_.setAntennaModel(antenna_);
+
         // Optional Klobuchar ionospheric-delay model.  Skipped (along with
         // its inner Geometry construction and coefficient parse) for the
         // common configs where it would be a no-op anyway: iono-free
@@ -258,11 +295,106 @@ const char* signalModeLabel(SignalMode m) {
      * @param modeled_obs Output vector filled with PppObservation entries for processed observations.
      * @return true if at least one observation was successfully modeled, false otherwise.
      */
-    bool PppModel::computeModels(const std::vector<RinexObservation>& observations, PppState& state, std::vector<PppObservation>& modeled_obs) {
+    void PppModel::decideConstellationCanonicals(const std::vector<RinexObservation>& observations) {
+        // Group observations by constellation so per-constellation tallies
+        // only consider that constellation's satellites.
+        std::map<std::string, std::vector<const RinexObservation*>> by_cons;
+        for (const auto& obs : observations) {
+            const std::string sys = PppUtils::getSystemString(obs.system);
+            if (sys == "Unknown") continue;
+            by_cons[sys].push_back(&obs);
+        }
+
+        const auto& system_to_bands = getSystemToBands();
+
+        for (const auto& [cons, sat_obs_list] : by_cons) {
+            if (constellation_canonical_decided_.count(cons)) continue;
+            if (sat_obs_list.empty()) continue;
+
+            auto pit = signal_priorities_.find(cons);
+            if (pit == signal_priorities_.end()) continue;
+            const auto& signals = pit->second;
+
+            auto sit = system_to_bands.find(cons);
+            if (sit == system_to_bands.end()) continue;
+
+            // For each (band, obs_type), the canonical is the priority-list
+            // signal with the highest observation count across this
+            // constellation's satellites this epoch.  Ties are broken by
+            // priority order: since we iterate the priority list once and
+            // only replace when strictly higher count, the earlier
+            // (higher-priority) signal naturally wins ties.
+            struct Candidate {
+                std::string signal;
+                int count{ 0 };
+            };
+            std::map<std::pair<std::string, char>, Candidate> best;
+
+            for (const auto& sig : signals) {
+                if (sig.size() < 3) continue;
+                const char obs_type = sig[0];
+                if (obs_type != 'C' && obs_type != 'L') continue;
+
+                // Resolve which band this signal belongs to via the
+                // RINEX-prefix → band-name table.
+                std::string band_name;
+                for (const auto& [pattern, name] : sit->second) {
+                    if (sig.find(pattern) == 0) { band_name = name; break; }
+                }
+                if (band_name.empty()) continue;
+
+                int count = 0;
+                for (const auto* obs : sat_obs_list)
+                    if (obs->measurements.count(sig)) ++count;
+                if (count == 0) continue;
+
+                const auto key = std::make_pair(band_name, obs_type);
+                auto bit = best.find(key);
+                if (bit == best.end() || count > bit->second.count)
+                    best[key] = { sig, count };
+            }
+
+            for (const auto& [key, cand] : best)
+                constellation_canonical_[cons][key] = cand.signal;
+            constellation_canonical_decided_.insert(cons);
+
+            // Build a stable trace string for the decision log.
+            std::string summary;
+            for (const auto& [key, cand] : best) {
+                if (!summary.empty()) summary += ", ";
+                summary += cand.signal + "(" + key.first + ":"
+                         + std::to_string(cand.count) + ")";
+            }
+            log_manager_.getLogger("ppp_model")->info(
+                "Canonical signals locked for {} ({} sats this epoch): {}",
+                cons, sat_obs_list.size(), summary);
+        }
+    }
+
+    bool PppModel::computeModels(const std::vector<RinexObservation>& observations,
+                                 PppState& state,
+                                 std::vector<PppObservation>& modeled_obs,
+                                 std::map<std::string, DropReason>* drop_reasons) {
+        // Helper: record a drop reason for `sat` if the caller supplied a map.
+        // Resilient to re-entry: if the same sat fails on a different signal
+        // later in the loop, the last reason wins -- callers care about
+        // "what's the final disposition of this sat for this epoch".
+        auto note_drop = [&](const std::string& sat, DropReason r) {
+            if (drop_reasons && !sat.empty() && r != DropReason::None) {
+                (*drop_reasons)[sat] = r;
+            }
+        };
         if (observations.empty()) {
             log_manager_.getLogger("ppp_model")->error("No observations provided for PPP modeling");
             return false;
         }
+
+        // First-epoch-only: decide the canonical (band, type) → signal map
+        // for each constellation based on which priority-list signal is
+        // most-observed across all of its satellites.  Subsequent epochs
+        // skip already-decided constellations.  See the cache member doc
+        // for rationale.
+        decideConstellationCanonicals(observations);
 
         modeled_obs.clear();
         modeled_obs.reserve(observations.size());
@@ -270,16 +402,19 @@ const char* signalModeLabel(SignalMode m) {
         for (const auto& obs : observations) {
             // --- Compute satellite geometry & corrections ---
             SatGeometry geom;
+            DropReason drop_reason = DropReason::None;
             bool geom_ok = geometry_.computeSatelliteGeometry(
                 obs, state,
                 geom.sat_pos, geom.rx_pos, geom.elevation, geom.azimuth,
                 geom.los, geom.range, geom.tropo_zhd,
                 geom.sat_clock, geom.shapiro_delay, geom.sagnac_corr,
                 geom.atm_loading_corr, geom.relativistic_corr, geom.solid_tide,
-                geom.mf_w, geom.mf_d, geom.sat_vel);
+                geom.mf_w, geom.mf_d, geom.sat_vel,
+                drop_reason);
 
             if (!geom_ok) {
                 log_manager_.getLogger("ppp_model")->debug("Geometry failed for {} at TOW {:.3f}", obs.satellite, obs.time.tow);
+                note_drop(obs.satellite, drop_reason);
                 continue;
             }
 
@@ -314,20 +449,27 @@ const char* signalModeLabel(SignalMode m) {
             std::string system_str = PppUtils::getSystemString(obs.system);
             if (system_str == "Unknown") {
                 log_manager_.getLogger("ppp_model")->warn("Unknown system for satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
+                note_drop(obs.satellite, DropReason::NoModel);
                 continue;
             }
 
             auto obs_types = selectObservationTypes(obs.measurements, obs.system, system_str);
             if (obs_types.empty()) {
                 log_manager_.getLogger("ppp_model")->warn("No valid observation types for system {} for satellite {}", system_str, obs.satellite);
+                note_drop(obs.satellite, DropReason::NoModel);
                 continue;
             }
 
             // --- Signal selection ---
+            // Failure here is the classic E11/E12 case: sat is geometrically
+            // fine, above the mask, has products and observations, but no
+            // usable (BIA-covered / ATX-covered / canonical-band) signal
+            // pair could be assembled for positioning.  Surface as NoModel.
             std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
             if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type)) {
+                note_drop(obs.satellite, DropReason::NoModel);
                 continue;
             }
 
@@ -355,6 +497,7 @@ const char* signalModeLabel(SignalMode m) {
                 }
 
                 if (!processUncombinedObservation(obs, state, ppp_obs, system_str, selected_signals, geom)) {
+                    note_drop(obs.satellite, DropReason::NoModel);
                     continue;
                 }
 
@@ -375,6 +518,7 @@ const char* signalModeLabel(SignalMode m) {
 
             if (is_iono_free && !config_.isUncombinedEnabled()) {
                 if (!processIonoFreeObservation(obs, state, ppp_obs, system_str, selected_signals, comb_type, geom)) {
+                    note_drop(obs.satellite, DropReason::NoModel);
                     continue;
                 }
             }
@@ -397,9 +541,11 @@ const char* signalModeLabel(SignalMode m) {
                     // Variance: default Doppler variance converted to (m/s)^2.
                     const auto& n = config_.getDefaultMeasurementNoise();
                     const double default_var = (n.doppler_std_m * wavelength) * (n.doppler_std_m * wavelength);
-                    double var = obs.variances.count(key) ? obs.variances.at(key) * wavelength * wavelength : default_var;
-                    var = stochastic_model_.computeVariance(key, obs.measurements, geom.elevation, var);
+                    const double fallback_var = obs.variances.count(key) ? obs.variances.at(key) * wavelength * wavelength : default_var;
+                    const double zenith_var = stochastic_model_.computeVariance(key, obs.measurements, 90.0, fallback_var);
+                    const double var = stochastic_model_.computeVariance(key, obs.measurements, geom.elevation, fallback_var);
                     ppp_obs.variances[key] = var;
+                    ppp_obs.zenith_variances[key] = zenith_var;
 
                     log_manager_.getLogger("ppp_model")->trace(
                         "Doppler {} for {}: obs_rr={:.4f} m/s, mod_rr={:.4f} m/s, var={:.6f}",
@@ -409,6 +555,27 @@ const char* signalModeLabel(SignalMode m) {
 
             if (!ppp_obs.modeled.empty()) {
                 modeled_obs.push_back(ppp_obs);
+            } else {
+                // Silent-drop hole closer.  Reached when selectSignals
+                // returned true but neither uncombined nor iono-free
+                // processing populated ppp_obs.modeled.  The dominant
+                // case is PPP-mode single-signal fallback: when
+                // selectIonoFreePairs fails for a sat, selectSignals
+                // sets is_iono_free=false and selects single signals --
+                // but there's no processSingleSignalObservation, so
+                // the sat falls through with empty modeled.  Surface
+                // as NoModel with diagnostic context instead of
+                // silently dropping and letting the sat-status trace
+                // fall back to a guess.
+                note_drop(obs.satellite, DropReason::NoModel);
+                log_manager_.getLogger("ppp_model")->debug(
+                    "Sat {} {} dropped with empty modeled set: "
+                    "is_iono_free={}, uncombined={}, comb_type={}, "
+                    "n_selected={} -- check selectIonoFreePairs / "
+                    "frequency_mode interaction",
+                    obs.satellite, system_str,
+                    is_iono_free, config_.isUncombinedEnabled(),
+                    comb_type, selected_signals.size());
             }
         }
 
@@ -464,7 +631,7 @@ const char* signalModeLabel(SignalMode m) {
         // consistent with the clock/bias products.
         //
         // When the lock is disabled, or no clock-ref info is available for
-        // this system, we fall back to the previous behaviour (SignalMode::All
+        // this system, we fall back to the previous behaviour (FrequencyMode::All
         // for uncombined, or the configured signal_mode for combined).
         std::vector<std::string> clock_ref_bands;  // populated only when lock is active
         const std::vector<std::string>* allowed_bands_ptr = nullptr;
@@ -536,7 +703,7 @@ const char* signalModeLabel(SignalMode m) {
         // Respect the configured signal_mode so the user can control how many
         // frequency bands enter the filter (dual, triple or all).
         if (!allowed_bands_ptr) {
-            allowed_bands_ptr = &band_map.at(system_str).at(config_.getSignalMode());
+            allowed_bands_ptr = &band_map.at(system_str).at(config_.getFrequencyMode());
         }
 
         const auto& allowed_bands = *allowed_bands_ptr;
@@ -544,6 +711,52 @@ const char* signalModeLabel(SignalMode m) {
         // Scans the priority-ordered signal list and populates
         // freq_band_to_signal / freq_bands for every signal that passes
         // the band and (optionally) attribute filters.
+        // If the constellation's canonical signal map was decided at the
+        // first epoch (the common case), use it directly: it accounts for
+        // what the receiver actually tracks AND keeps the canonical stable
+        // across epochs, so a brief primary dropout at low elevation does
+        // NOT switch the KF to a different tracking attribute (which would
+        // seed an inter-channel-bias-contaminated ambiguity that persists).
+        // When the canonical is not observed this epoch, selectUncombinedSignals
+        // simply skips the band for this sat this epoch.
+        auto cit = constellation_canonical_.find(system_str);
+        if (cit != constellation_canonical_.end() && !cit->second.empty()) {
+            auto applyCached = [&](const std::map<char, char>& attr_filter) {
+                for (const auto& [key, sig] : cit->second) {
+                    const std::string& band  = key.first;
+                    const char         otype = key.second;
+                    if (std::find(allowed_bands.begin(), allowed_bands.end(), band)
+                        == allowed_bands.end()) continue;
+                    // Honour the clock-ref attribute filter when active.
+                    if (!attr_filter.empty() && sig.size() >= 3) {
+                        auto ait = attr_filter.find(sig[1]);
+                        if (ait != attr_filter.end() && sig[2] != ait->second)
+                            continue;
+                    }
+                    if (freq_band_to_signal.find(band) == freq_band_to_signal.end()) {
+                        freq_band_to_signal[band] = { "", "" };
+                        freq_bands.push_back(band);
+                    }
+                    auto& [best_code, best_phase] = freq_band_to_signal[band];
+                    if (otype == 'C') best_code  = sig;
+                    if (otype == 'L') best_phase = sig;
+                }
+            };
+            applyCached(clock_ref_attr);
+            if (freq_bands.empty() && !clock_ref_attr.empty()) {
+                log_manager_.getLogger("ppp_model")->debug(
+                    "Clock-ref attribute lock rejected cached canonical for {}; "
+                    "relaxing to band-only lock", system_str);
+                static const std::map<char, char> no_attr;
+                applyCached(no_attr);
+            }
+            return !freq_bands.empty();
+        }
+
+        // Fallback when the cache is empty for this constellation
+        // (decideConstellationCanonicals didn't run, or found no
+        // observations for it).  Use the original priority-list walk
+        // with per-epoch measurement filtering as a safety net.
         auto populate = [&](const std::map<char, char>& attr_filter) {
             for (const auto& sig : signals) {
                 if (!measurements.count(sig)) continue;
@@ -624,6 +837,44 @@ const char* signalModeLabel(SignalMode m) {
                 best_code, found_code ? "ok" : "missing",
                 best_phase, found_phase ? "ok" : "missing");
         }
+
+        // channel_mode "all" → augment with every other tracking-mode
+        // channel on the already-selected bands.  buildFrequencyBandMap
+        // picks the priority-best code and phase per band; this loop
+        // adds the remaining channels (e.g. L1W alongside L1C, or C1W
+        // alongside C1C) so each becomes its own KF state ambiguity.
+        // Channels whose band isn't in @p freq_bands are skipped — we
+        // only widen the channel dimension, not the band dimension.
+        // No-op for channel_mode "single"; the canonical priority-best
+        // selection is what that mode asks for.
+        if (config_.getChannelMode() == ChannelMode::All) {
+            std::set<std::string> already;
+            for (const auto& sp : selected_signals) {
+                if (!sp.first.empty())  already.insert(sp.first);
+                if (!sp.second.empty()) already.insert(sp.second);
+            }
+            const auto& system_to_bands = getSystemToBands();
+            auto stb_it = system_to_bands.find(system_str);
+            if (stb_it != system_to_bands.end()) {
+                for (const auto& [sig, val] : obs.measurements) {
+                    if (sig.empty()) continue;
+                    const char prefix = sig[0];
+                    if (prefix != 'C' && prefix != 'L') continue;
+                    if (already.count(sig)) continue;
+                    for (const auto& [pattern, band] : stb_it->second) {
+                        if (sig.find(pattern) != 0) continue;
+                        if (std::find(freq_bands.begin(), freq_bands.end(), band)
+                            == freq_bands.end()) continue;
+                        selected_signals.emplace_back(sig, "");
+                        already.insert(sig);
+                        log_manager_.getLogger("ppp_model")->trace(
+                            "Uncombined band {} for {} {}: extra channel {} added (channel_mode=All)",
+                            band, obs.satellite, system_str, sig);
+                        break;
+                    }
+                }
+            }
+        }
         return !selected_signals.empty();
     }
 
@@ -638,7 +889,7 @@ const char* signalModeLabel(SignalMode m) {
         const auto& band_map = getBandMap();
         if (!band_map.count(system_str)) return false;
 
-        auto target_bands = band_map.at(system_str).at(config_.getSignalMode());
+        auto target_bands = band_map.at(system_str).at(config_.getFrequencyMode());
         std::vector<std::pair<std::string, std::string>> candidate_pairs;
 
         // Reject IF pairs whose noise amplification factor exceeds this cap.
@@ -660,8 +911,8 @@ const char* signalModeLabel(SignalMode m) {
                 const auto& b2 = target_bands[j];
 
                 // Anchor policy: in triple/all modes, at least one band must be the anchor (first band).
-                const auto sm = config_.getSignalMode();
-                const bool use_anchor = (sm == SignalMode::Triple || sm == SignalMode::All) && target_bands.size() >= 2;
+                const auto sm = config_.getFrequencyMode();
+                const bool use_anchor = (sm == FrequencyMode::Triple || sm == FrequencyMode::All) && target_bands.size() >= 2;
                 if (use_anchor && b1 != target_bands.front() && b2 != target_bands.front()) {
                     log_manager_.getLogger("ppp_model")->trace(
                         "Skipping non-anchor band pair for {} {}: {} / {} (anchor={})",
@@ -673,7 +924,7 @@ const char* signalModeLabel(SignalMode m) {
                     log_manager_.getLogger("ppp_model")->debug(
                         "Missing band signals for {} {}: band {} present={}, band {} present={}, signal_mode={}",
                         obs.satellite, system_str, b1, freq_band_to_signal.count(b1),
-                        b2, freq_band_to_signal.count(b2), signalModeLabel(sm));
+                        b2, freq_band_to_signal.count(b2), frequencyModeLabel(sm));
                     continue;
                 }
 
@@ -707,21 +958,60 @@ const char* signalModeLabel(SignalMode m) {
                     }
                 }
 
-                if (!s1.first.empty() && !s2.first.empty()) {
+                // Per-satellite measurement availability check.  The
+                // canonical map @c freq_band_to_signal is constellation-
+                // wide (decided once on the first epoch from the highest-
+                // count signal per (band, type)).  When a constellation
+                // has mixed L5 capability -- e.g., 4 of 11 GPS sats
+                // tracking L5Q -- the canonical locks in L5Q anyway, and
+                // every (L1, L5) candidate references signals that
+                // non-L5 sats simply do not measure.  Downstream
+                // processIonoFreeObservation used to abort the whole
+                // sat on the first such missing-pair hit, so a sat with
+                // a perfectly good (C1W, C2W) pair would still drop
+                // because its (C1W, C5Q) pair lacked C5Q.  Guard the
+                // pair construction against the per-sat measurement set
+                // so non-L5 sats only get (L1, L2) candidates and
+                // L5-capable sats get both (L1, L2) and (L1, L5).
+                const bool code_ok  = !s1.first.empty()  && !s2.first.empty()
+                                   && obs.measurements.count(s1.first)
+                                   && obs.measurements.count(s2.first);
+                const bool phase_ok = !s1.second.empty() && !s2.second.empty()
+                                   && obs.measurements.count(s1.second)
+                                   && obs.measurements.count(s2.second);
+                if (code_ok) {
                     candidate_pairs.emplace_back(s1.first, s2.first);
                     log_manager_.getLogger("ppp_model")->trace(
                         "Selected iono-free code pair for {} {}: {} / {}, bands: {} / {}, signal_mode={}",
-                        obs.satellite, system_str, s1.first, s2.first, b1, b2, signalModeLabel(sm));
+                        obs.satellite, system_str, s1.first, s2.first, b1, b2, frequencyModeLabel(sm));
+                } else if (!s1.first.empty() && !s2.first.empty()) {
+                    log_manager_.getLogger("ppp_model")->debug(
+                        "Skipping iono-free code pair for {} {}: bands {}/{} "
+                        "canonical {}/{} not all measured this epoch "
+                        "(present={}/{}), signal_mode={}",
+                        obs.satellite, system_str, b1, b2, s1.first, s2.first,
+                        obs.measurements.count(s1.first),
+                        obs.measurements.count(s2.first),
+                        frequencyModeLabel(sm));
                 }
-                if (!s1.second.empty() && !s2.second.empty()) {
+                if (phase_ok) {
                     candidate_pairs.emplace_back(s1.second, s2.second);
                     log_manager_.getLogger("ppp_model")->trace(
                         "Selected iono-free phase pair for {} {}: {} / {}, bands: {} / {}, signal_mode={}",
-                        obs.satellite, system_str, s1.second, s2.second, b1, b2, signalModeLabel(sm));
+                        obs.satellite, system_str, s1.second, s2.second, b1, b2, frequencyModeLabel(sm));
+                } else if (!s1.second.empty() && !s2.second.empty()) {
+                    log_manager_.getLogger("ppp_model")->debug(
+                        "Skipping iono-free phase pair for {} {}: bands {}/{} "
+                        "canonical {}/{} not all measured this epoch "
+                        "(present={}/{}), signal_mode={}",
+                        obs.satellite, system_str, b1, b2, s1.second, s2.second,
+                        obs.measurements.count(s1.second),
+                        obs.measurements.count(s2.second),
+                        frequencyModeLabel(sm));
                 } else if (s1.second.empty() || s2.second.empty()) {
                     log_manager_.getLogger("ppp_model")->debug(
-                        "Missing phase signal for {} {}: band {} phase={}, band {} phase={}, signal_mode={}",
-                        obs.satellite, system_str, b1, s1.second, b2, s2.second, signalModeLabel(sm));
+                        "Missing phase signal canonical for {} {}: band {} phase={}, band {} phase={}, signal_mode={}",
+                        obs.satellite, system_str, b1, s1.second, b2, s2.second, frequencyModeLabel(sm));
                 }
             }
         }
@@ -808,14 +1098,19 @@ const char* signalModeLabel(SignalMode m) {
                     (sig_pair.second.empty() ? "none" : sig_pair.second) + ")";
                 if (band != freq_bands.back()) available_signals += ", ";
             }
-            const auto effective_mode = config_.isUncombinedEnabled() ? SignalMode::All : config_.getSignalMode();
-            const char* band_note = (config_.isUncombinedEnabled() && config_.lockSignalsToClockRef())
-                                  ? " clock-ref-locked" : "";
-            log_manager_.getLogger("ppp_model")->debug("Available signals for {} {}: [{}], signal_mode={} (effective={}{})",
+            // The bracketed list is what actually entered obs.observed
+            // for this satellite — that's the authoritative truth.  In
+            // earlier code an "effective_mode = All" was logged when
+            // uncombined mode override-promoted signal_mode to All, but
+            // band selection now respects signal_mode (or clock-ref
+            // bands) directly, so the parenthetical was misleading.
+            const char* clock_ref_note =
+                (config_.isUncombinedEnabled() && config_.lockSignalsToClockRef())
+                    ? " (clock-ref-locked)" : "";
+            log_manager_.getLogger("ppp_model")->debug("Available signals for {} {}: [{}], signal_mode={}{}",
                 obs.satellite, system_str,
                 available_signals.empty() ? "none" : available_signals,
-                signalModeLabel(config_.getSignalMode()),
-                signalModeLabel(effective_mode), band_note);
+                frequencyModeLabel(config_.getFrequencyMode()), clock_ref_note);
         }
 
         selected_signals.clear();
@@ -831,6 +1126,35 @@ const char* signalModeLabel(SignalMode m) {
             comb_type = "uncombined";
         } else if (is_iono_free) {
             if (!selectIonoFreePairs(obs, system_str, signals, freq_band_to_signal, freq_bands, selected_signals)) {
+                // This is the silent-fallback gate.  selectIonoFreePairs
+                // failed (no candidate (band1, band2) pair survived the
+                // freq_band_to_signal + noise-factor + code/phase
+                // availability checks), so we fall through to the
+                // single-signal path.  In PPP mode there is no
+                // processSingleSignalObservation, so the sat ultimately
+                // drops with empty modeled and the satellite-status
+                // trace surfaces it as "NoModel".  Promote to info so
+                // the user can see this fired without enabling
+                // ppp_model debug logging.  The per-pair rejection
+                // reasons (missing band, noise-K cap, etc.) are
+                // logged at debug inside selectIonoFreePairs itself --
+                // bump ppp_model to debug to see them.
+                log_manager_.getLogger("ppp_model")->info(
+                    "selectIonoFreePairs failed for {} {} -- falling back to "
+                    "single-signal mode (freq_bands=[{}], mode={}).  This "
+                    "sat will land in NoModel in the satellite-status trace; "
+                    "set ppp_model log level to debug for per-pair rejection "
+                    "reasons.",
+                    obs.satellite, system_str,
+                    [&]{
+                        std::string s;
+                        for (size_t i = 0; i < freq_bands.size(); ++i) {
+                            if (i) s += ",";
+                            s += freq_bands[i];
+                        }
+                        return s;
+                    }(),
+                    frequencyModeLabel(config_.getFrequencyMode()));
                 comb_type = "single";
                 is_iono_free = false;
             }
@@ -966,19 +1290,38 @@ const char* signalModeLabel(SignalMode m) {
         for (size_t j = 0; j < 2; ++j) {
             const std::string& type = (j == 0 ? sig_pair.first : sig_pair.second);
 
-            modeled_obs[j] = computeBaseModeledValue(obs, ppp_obs, geom, type) + pole_tide_corr;
+            frequencies[j] = ppp_utils_.getFrequency(type, obs.system, obs.satellite);
+            if (frequencies[j] <= 0.0) {
+                log_manager_.getLogger("ppp_model")->warn("Invalid frequency for type {} on system {} for satellite {}", type, system_str, obs.satellite);
+                return false;
+            }
+
+            // Per-signal higher-order ionosphere correction (I₂ + I₃),
+            // applied before the IF combination so the IF-residual term
+            // c₁·I_h(f₁) + c₂·I_h(f₂) lands in the modeled value
+            // automatically (rather than being smeared into the
+            // first-order iono state or the float ambiguity).  No-op
+            // unless model_corrections.enable_higher_order_ionosphere is
+            // on and a GIM is loaded — see PppModel::setGim and
+            // computeHigherOrderIonoCorrection.
+            const double i_h_corr = computeHigherOrderIonoCorrection(
+                obs.time, geom.rx_pos, geom.sat_pos, frequencies[j], meas_type);
+
+            modeled_obs[j] = computeBaseModeledValue(obs, ppp_obs, geom, type)
+                + pole_tide_corr + i_h_corr;
 
             const auto& n = config_.getDefaultMeasurementNoise();
             const double fallback_var = obs.variances.count(type) ? obs.variances.at(type)
                 : (meas_type == 'C' ? n.code_std_m * n.code_std_m : n.phase_std_m * n.phase_std_m);
             variances[j] = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, fallback_var,
                 obs.satellite, antenna_.getAntennas());
-
-            frequencies[j] = ppp_utils_.getFrequency(type, obs.system, obs.satellite);
-            if (frequencies[j] <= 0.0) {
-                log_manager_.getLogger("ppp_model")->warn("Invalid frequency for type {} on system {} for satellite {}", type, system_str, obs.satellite);
-                return false;
-            }
+            // Per-signal zenith variance — stashed for MwSlipDetector even though the
+            // iono-free aggregation below only stores the combined variance under
+            // ref_type.  Without this stash, MW slip detection in iono-free PPP mode
+            // has no per-signal noise prior and falls back to the global-default zenith.
+            ppp_obs.zenith_variances[type] = stochastic_model_.computeVariance(
+                type, obs.measurements, 90.0, fallback_var,
+                obs.satellite, antenna_.getAntennas());
         }
 
         const double f1_sq = frequencies[0] * frequencies[0];
@@ -1050,15 +1393,23 @@ const char* signalModeLabel(SignalMode m) {
                 log_manager_.getLogger("ppp_model")->warn(
                     "Empty signal in selected pair for {} {}: first={}, second={}",
                     obs.satellite, system_str, pair.first, pair.second);
-                return false;
+                return false;  // programming error in selectIonoFreePairs
             }
+            // Defensive: skip individual pairs whose measurements aren't
+            // present for THIS sat rather than aborting the whole sat.
+            // The structural fix lives in selectIonoFreePairs (per-sat
+            // measurement guard before pushing candidates); this branch
+            // is a belt-and-braces in case any caller proposes a pair
+            // that the canonical map says should exist but this sat
+            // didn't actually measure.  Empty code_pairs && phase_pairs
+            // after the loop is caught by the post-loop check below.
             if (!obs.measurements.count(pair.first) || !obs.measurements.count(pair.second)) {
-                log_manager_.getLogger("ppp_model")->warn(
-                    "Missing measurement(s) for {} {}: {} present={}, {} present={}",
+                log_manager_.getLogger("ppp_model")->debug(
+                    "Skipping pair for {} {}: {} present={}, {} present={}",
                     obs.satellite, system_str,
                     pair.first, obs.measurements.count(pair.first),
                     pair.second, obs.measurements.count(pair.second));
-                return false;
+                continue;
             }
             if (pair.first[0] == 'C' && pair.second[0] == 'C') {
                 code_pairs.push_back(pair);
@@ -1068,7 +1419,7 @@ const char* signalModeLabel(SignalMode m) {
                 log_manager_.getLogger("ppp_model")->warn(
                     "Invalid mixed signal pair for {} {}: {} / {}",
                     obs.satellite, system_str, pair.first, pair.second);
-                return false;
+                return false;  // programming error
             }
         }
 
@@ -1179,7 +1530,18 @@ const char* signalModeLabel(SignalMode m) {
                 continue;
             }
 
-            const double modeled_value = computeBaseModeledValue(obs, ppp_obs, geom, type) + pole_tide_corr;
+            // Per-signal higher-order ionosphere correction (I₂ + I₃).
+            // In uncombined / PPP-RTK mode the first-order ionosphere is
+            // estimated as a per-satellite slant state, so subtracting
+            // I_h here means the state cleanly represents I₁ only —
+            // higher-order content no longer leaks into it.  No-op when
+            // disabled or no GIM is wired up; see
+            // PppModel::computeHigherOrderIonoCorrection.
+            const double i_h_corr = computeHigherOrderIonoCorrection(
+                obs.time, geom.rx_pos, geom.sat_pos, freq, meas_type);
+
+            const double modeled_value = computeBaseModeledValue(obs, ppp_obs, geom, type)
+                + pole_tide_corr + i_h_corr;
 
             double observed_value = obs.measurements.at(type);
             if (meas_type == 'L') {
@@ -1192,14 +1554,22 @@ const char* signalModeLabel(SignalMode m) {
                 observed_value *= wavelength;
             }
 
-            double variance = obs.variances.count(type) ? obs.variances.at(type)
+            const double fallback_var = obs.variances.count(type) ? obs.variances.at(type)
                 : (meas_type == 'C' ? default_code_var : default_phase_var);
-            variance = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, variance,
+            // Zenith pass (elevation_deg=90 → sin²=1 neutralizes elevation amplification,
+            // preserving block/band/attribute/SNR scaling).  Consumed by MwSlipDetector
+            // as a pair-aware noise floor that doesn't scale with line-of-sight geometry.
+            const double zenith_variance = stochastic_model_.computeVariance(
+                type, obs.measurements, 90.0, fallback_var,
+                obs.satellite, antenna_.getAntennas());
+            const double variance = stochastic_model_.computeVariance(
+                type, obs.measurements, geom.elevation, fallback_var,
                 obs.satellite, antenna_.getAntennas());
 
             ppp_obs.observed[type] = observed_value;
             ppp_obs.modeled[type] = modeled_value;
             ppp_obs.variances[type] = variance;
+            ppp_obs.zenith_variances[type] = zenith_variance;
 
             log_manager_.getLogger("ppp_model")->trace(
                 "Uncombined {} for {} ({}): observed={:.3f} m, modeled={:.3f} m, variance={:.6f}, freq={:.3f} MHz",
@@ -1210,6 +1580,28 @@ const char* signalModeLabel(SignalMode m) {
         }
 
         return success;
+    }
+
+    // -----------------------------------------------------------------------
+    // Higher-order ionosphere (I₂ + I₃)
+    // -----------------------------------------------------------------------
+
+    double PppModel::computeHigherOrderIonoCorrection(const GnssTime& time,
+                                                      const Eigen::Vector3d& rx_pos,
+                                                      const Eigen::Vector3d& sat_pos,
+                                                      double frequency_hz,
+                                                      char meas_type) const {
+        if (!config_.getModelCorrections().enable_higher_order_ionosphere) return 0.0;
+        if (gim_ == nullptr || !gim_->isLoaded()) return 0.0;
+        if (frequency_hz <= 0.0) return 0.0;
+
+        const GimQuery q = gim_->slantIonoDelay(time, rx_pos, sat_pos, frequency_hz);
+        if (!q.valid) return 0.0;
+
+        return higher_order_iono_.slantHigherOrderDelay(
+            rx_pos, sat_pos,
+            q.ipp_lat_rad, q.ipp_lon_rad, q.ipp_radius_m,
+            q.stec_tecu, frequency_hz, meas_type);
     }
 
     /**

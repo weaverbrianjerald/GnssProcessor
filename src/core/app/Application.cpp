@@ -38,6 +38,7 @@
 #include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
 #include "slip/MwSlipDetector.hpp"
+#include "common/PppUtils.hpp"
 #include <chrono>
 #include <set>
 #include <fstream>
@@ -325,12 +326,19 @@ bool Application::collectEpochObservations(const std::vector<RinexObservation>& 
 // Epoch helper: WLS estimation & KF clock seeding
 // ---------------------------------------------------------------------------
 
-void Application::handleWlsSeeding(const GnssTime& current_time,
-                                   const std::string& epoch_prefix,
-                                   const std::vector<PppObservation>& modeled_obs,
-                                   bool gap_detected) {
-    const auto wls_result = wls_estimator_->estimate(current_time, modeled_obs);
-    if (!wls_result.success() || wls_result.state.size() < 4) return;
+WlsResult Application::handleWlsSeeding(const GnssTime& current_time,
+                                        const std::string& epoch_prefix,
+                                        const std::vector<PppObservation>& modeled_obs,
+                                        bool gap_detected) {
+    // Under BSSD the KF carries no receiver clock state — there's nothing
+    // to seed, and the WLS clock estimate is meaningless to the SD filter.
+    // Skip the entire seeding path.
+    if (!state_manager_->hasClock()) {
+        return WlsResult{};
+    }
+
+    auto wls_result = wls_estimator_->estimate(current_time, modeled_obs);
+    if (!wls_result.success() || wls_result.state.size() < 4) return wls_result;
 
     constexpr double kClockJumpThreshSec = 0.00005; // 0.5 ms
 
@@ -353,9 +361,6 @@ void Application::handleWlsSeeding(const GnssTime& current_time,
         log_manager_.getLogger("main_log")->info(
             "{}Seeded KF clock from WLS (jump): wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m",
             epoch_prefix, wls_clock_bias, kf_clock_bias, delta_clock_m);
-        if (first_epoch_) {
-            first_epoch_ = false;
-        }
     } else {
         log_manager_.getLogger("main_log")->trace(
             "{}Skipped WLS clock seeding: wls_clk={:.3f} m, kf_clk={:.3f} m, delta={:.3f} m, jump_detected={}",
@@ -365,12 +370,135 @@ void Application::handleWlsSeeding(const GnssTime& current_time,
     // Only write expensive WLS trace when overall logging level is Debug.
     if (auto main_logger = log_manager_.getLogger("main_log")) {
         if (main_logger->level() == spdlog::level::debug) {
-            trace_logger_->logWls(gpsToUtcTime(current_time),
+            trace_logger_->logWls(current_time,
                 wls_result, wls_clock_bias, kf_clock_bias, delta_clock_m,
                 jump_detected, should_seed);
         } else {
             main_logger->trace("{}WLS trace skipped (log level != Debug)", epoch_prefix);
         }
+    }
+
+    return wls_result;
+}
+
+// ---------------------------------------------------------------------------
+// Epoch helper: dynamics-mode classification + gap recovery policy
+// ---------------------------------------------------------------------------
+
+Application::DynamicsMode Application::classifyDynamicsMode() const {
+    // Six orders of magnitude below any process noise that represents
+    // real motion, six orders above the typical 1e-12 m²/s numeric-
+    // stability epsilon some users set in static configs.  Crossing
+    // this threshold is unambiguous in practice.
+    constexpr double kKinematicPnPositionThreshold = 1e-6;  // m²/s
+
+    if (state_manager_->hasVelocity()) {
+        return config_.enableImu() ? DynamicsMode::KinematicIMU
+                                   : DynamicsMode::KinematicNoImu;
+    }
+    return (config_.getProcessNoise().position >= kKinematicPnPositionThreshold)
+               ? DynamicsMode::KinematicNoImu
+               : DynamicsMode::Static;
+}
+
+void Application::handleGap(double dt,
+                            bool long_gap,
+                            const std::string& epoch_prefix,
+                            const WlsResult& wls) {
+    auto log = log_manager_.getLogger("main_log");
+    const DynamicsMode mode = classifyDynamicsMode();
+
+    // Per-mode short-circuit on KinematicIMU: the IMU has been
+    // propagating position/velocity through the predict step at
+    // realistic uncertainty, so the gap is already correctly handled
+    // structurally.  Sat-specific cross-covs are still suspect
+    // (geometry / multipath have changed) but iono Q inflation
+    // covers the dominant component.  We only zero the clock cross-
+    // covs to protect the WLS-clock jolt from contaminating position.
+    if (mode == DynamicsMode::KinematicIMU) {
+        if (log) {
+            log->info("{}handleGap: dt={:.1f}s, mode=KinematicIMU, long={} "
+                      "→ IMU bridging; zeroing clock×sat cross-cov only",
+                      epoch_prefix, dt, long_gap);
+        }
+        state_manager_->zeroClockCrossCovariancesToSatStates();
+        return;
+    }
+
+    // Common to Static and KinematicNoImu: protect against stale
+    // clock↔sat-state correlations after the WLS clock jolt.
+    state_manager_->zeroClockCrossCovariancesToSatStates();
+
+    if (mode == DynamicsMode::Static && !long_gap) {
+        if (log) {
+            log->info("{}handleGap: dt={:.1f}s, mode=Static-short "
+                      "→ zeroing position×sat cross-cov",
+                      epoch_prefix, dt);
+        }
+        state_manager_->zeroPositionCrossCovariancesToSatStates();
+        return;
+    }
+
+    // Static-long and KinematicNoImu both need a heavier reset.  The
+    // common backbone: drop all sat-specific states so
+    // ensureRequiredStates rebuilds them around current geometry,
+    // drop BSSD/DD pivots so the next epoch elects fresh.
+    state_manager_->zeroPositionCrossCovariancesToSatStates();
+    state_manager_->pruneIonosphereStatesExcept({});
+    state_manager_->pruneAmbiguitiesExcept({});
+    state_manager_->pruneSatBiasStatesExcept({});
+
+    if (config_.enableBetweenSatelliteSd() && meas_model_) {
+        meas_model_->getPivotManager().dropAllPivots(*state_manager_);
+    }
+    if (meas_model_) {
+        // Baseline DD path: no-op outside baseline mode (sticky map is empty).
+        meas_model_->resetBaselinePivots();
+    }
+
+    if (mode == DynamicsMode::Static) {
+        // Static-long: position value is still the best estimate (the
+        // antenna did not move), but the converged variance is too
+        // tight to absorb post-gap residuals — inflate modestly.
+        constexpr double kStaticLongPosSigmaInflation_m = 0.05;  // 5 cm
+        state_manager_->inflatePositionDiagonal(kStaticLongPosSigmaInflation_m);
+        if (log) {
+            log->info("{}handleGap: dt={:.1f}s, mode=Static-long → pos σ+={:.3f}m, "
+                      "dropped iono/amb/sat-bias states, dropped pivots",
+                      epoch_prefix, dt, kStaticLongPosSigmaInflation_m);
+        }
+        return;
+    }
+
+    // KinematicNoImu: full cold-start.  Reseed position from WLS,
+    // inflate to a large prior, reset velocity, clear sat-bias cache
+    // (the receiver may have power-cycled — pre-gap hardware estimates
+    // are no more trustworthy than a fresh single-epoch seed).
+    constexpr double kKinematicPosSigma_m  = 100.0;  // loose prior
+    constexpr double kKinematicVelSigma_mps = 30.0;  // vehicle-scale
+    if (wls.success() && wls.state.size() >= 3) {
+        Eigen::VectorXd sv = state_manager_->getStateVector();
+        const Eigen::Index pos = static_cast<Eigen::Index>(state_manager_->getPositionIndex());
+        sv(pos + 0) = wls.state(0);
+        sv(pos + 1) = wls.state(1);
+        sv(pos + 2) = wls.state(2);
+        state_manager_->setStateVector(sv);
+        ppp_state_.position = Eigen::Vector3d(wls.state(0), wls.state(1), wls.state(2));
+        if (log) {
+            log->info("{}handleGap: reseeded position from WLS [{:.3f}, {:.3f}, {:.3f}] m",
+                      epoch_prefix, wls.state(0), wls.state(1), wls.state(2));
+        }
+    } else if (log) {
+        log->warn("{}handleGap: WLS unavailable, leaving position value unchanged "
+                  "but inflating variance", epoch_prefix);
+    }
+    state_manager_->inflatePositionDiagonal(kKinematicPosSigma_m);
+    state_manager_->resetVelocityToLoose(kKinematicVelSigma_mps);
+    state_manager_->clearSatBiasCache();
+    if (log) {
+        log->info("{}handleGap: dt={:.1f}s, mode=KinematicNoImu → cold start "
+                  "(pos σ+={:.1f}m, vel σ={:.1f}m/s, dropped iono/amb/sat-bias/cache/pivots)",
+                  epoch_prefix, dt, kKinematicPosSigma_m, kKinematicVelSigma_mps);
     }
 }
 
@@ -407,6 +535,85 @@ void Application::detectCycleSlips(const std::string& epoch_prefix,
     if (result.state_modified) {
         state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Epoch helper: GIM ionosphere-weighting pseudo-observation update
+// ---------------------------------------------------------------------------
+
+void Application::applyGimIonoUpdate(const GnssTime& current_time,
+                                     const std::vector<PppObservation>& modeled_obs) {
+    const auto& iw = config_.getIonosphereWeightingConfig();
+    if (!iw.enabled || !gim_ || !gim_->isLoaded() || !kalman_filter_ || !state_manager_) {
+        return;
+    }
+
+    const Eigen::VectorXd x = state_manager_->getStateVector();
+    if (x.size() < 3) return;
+    const Eigen::Vector3d rx = x.head<3>();
+
+    // One pseudo-observation row per satellite that owns a slant-iono
+    // state and has a valid GIM value above the elevation cutoff.
+    std::vector<int>    idx;    // iono-state column index
+    std::vector<double> innov;  // GIM slant delay - current iono state (m)
+    std::vector<double> var;    // per-row pseudo-obs variance (m^2)
+    std::vector<System> cons;   // constellation, for the common-mode block structure
+
+    for (const auto& obs : modeled_obs) {
+        if (obs.elevation < iw.elevation_cutoff_deg) continue;
+        const int iono_idx = state_manager_->getIonosphereIndex(obs.satellite);
+        if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
+        // The slant-iono state is referenced to GPS L1 for every
+        // constellation (see the MeasurementModel iono Jacobian).
+        const GimQuery q = gim_->slantIonoDelay(current_time, rx, obs.sat_pos,
+                                                Constants::GPS_L1_FREQ);
+        if (!q.valid) continue;
+        const double sigma = std::max(iw.floor_m, iw.std_scale * q.std_m);
+        idx.push_back(iono_idx);
+        innov.push_back(q.delay_m - x(iono_idx));
+        var.push_back(sigma * sigma);
+        cons.push_back(obs.system);
+    }
+
+    const int m = static_cast<int>(idx.size());
+    if (m == 0) return;
+    const int n = static_cast<int>(x.size());
+
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, n);
+    Eigen::VectorXd z(m);
+    for (int k = 0; k < m; ++k) {
+        H(k, idx[k]) = 1.0;
+        z(k) = innov[k];
+    }
+
+    // R = block-diagonal over constellations of  diag(var) + sigma_c^2 * 11^T.
+    // The all-ones block leaves the per-constellation common mode (the
+    // un-modellable receiver iono-datum bias) unconstrained, so only the
+    // between-satellite structure of the GIM is imposed.
+    const double common_var = iw.common_mode_sigma_m * iw.common_mode_sigma_m;
+    Eigen::MatrixXd R = Eigen::MatrixXd::Zero(m, m);
+    for (int r = 0; r < m; ++r) {
+        for (int c = 0; c < m; ++c) {
+            if (cons[r] == cons[c]) R(r, c) = common_var;
+        }
+        R(r, r) += var[r];
+    }
+
+    kalman_filter_->applyPseudoObservation(H, z, R);
+
+    try {
+        state_manager_->updatePppStateFromVector(state_manager_->getStateVector(),
+                                                 ppp_state_, *state_manager_);
+    } catch (const std::exception& e) {
+        log_manager_.getLogger("main_log")->error(
+            "GIM iono update: failed to sync ppp_state: {}", e.what());
+    }
+
+    double sum_abs = 0.0;
+    for (double e : innov) sum_abs += std::abs(e);
+    log_manager_.getLogger("ionosphere")->debug(
+        "GIM iono update: {} sats constrained, mean|innov|={:.3f} m",
+        m, sum_abs / static_cast<double>(m));
 }
 
 // ---------------------------------------------------------------------------
@@ -522,13 +729,52 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
             // the same request doesn't re-fire on subsequent passes if
             // the detector doesn't fire again.
             auto handover_cons = kalman_filter_->takeRequestedPivotHandovers();
+            auto handover_excludes =
+                kalman_filter_->takeRequestedPivotHandoverExcludeSats();
             auto& res_hist = kalman_filter_->getResidualHistoryTracker();
+            const auto& current_pivots =
+                meas_model_->getPivotManager().getPivotSatellites();
             for (const auto& cons : handover_cons) {
-                log_manager_.getLogger("main_log")->info(
-                    "{}Forwarding KF-detected pivot slip on {} to PivotManager for handover next pass",
-                    epoch_prefix, cons);
+                // Replacement-pivot exclusions the post-fit detector recorded
+                // for this constellation (the offset pivot + co-disturbed
+                // within-group outliers).  Forwarded so the forced handover
+                // lands on a consensus satellite instead of bouncing to
+                // another offset sat (the handover flip-flop).
+                static const std::set<std::string> kNoExcludes;
+                const auto ex_it = handover_excludes.find(cons);
+                const std::set<std::string>& ex_sats =
+                    ex_it != handover_excludes.end() ? ex_it->second : kNoExcludes;
+
+                if (!ex_sats.empty()) {
+                    std::string joined;
+                    for (const auto& s : ex_sats) {
+                        if (!joined.empty()) joined += ",";
+                        joined += s;
+                    }
+                    log_manager_.getLogger("main_log")->info(
+                        "{}Forwarding KF-detected pivot slip on {} to PivotManager "
+                        "for handover next pass (exclude replacements: {})",
+                        epoch_prefix, cons, joined);
+                } else {
+                    log_manager_.getLogger("main_log")->info(
+                        "{}Forwarding KF-detected pivot slip on {} to PivotManager for handover next pass",
+                        epoch_prefix, cons);
+                }
+                const char* kHandoverReason =
+                    "KF post-fit residual detector flagged coherent pivot offset";
                 meas_model_->getPivotManager().requestForcedHandover(
-                    cons, "KF post-fit residual detector flagged coherent pivot offset");
+                    cons, kHandoverReason, ex_sats);
+
+                // Propagate the handover to the MW pivot picker so it
+                // doesn't re-elect the slipped sat for its (per-signal-pair)
+                // pivot next epoch.  Without this hint MwSlipDetector and
+                // PivotManager pick independently and can disagree on which
+                // sat to retire after a KF-detected pivot slip.
+                auto piv_it = current_pivots.find(cons);
+                if (piv_it != current_pivots.end() && !piv_it->second.empty()) {
+                    cycle_slip_manager_->notifyPivotForcedHandover(
+                        piv_it->second, kHandoverReason);
+                }
                 // Reset residual-history entries whose constellation
                 // matches the handover.  After re-referencing to a new
                 // pivot the BSSD residuals are no longer comparable to
@@ -545,10 +791,44 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                 if (cons_prefix != '\0' && res_hist.isEnabled()) {
                     res_hist.resetConstellationSignal(cons_prefix, /*signal=*/"");
                 }
+
+                // Release the carry-excluded measurements for this
+                // constellation so the rebuild pass can re-form the SD
+                // rows against the new pivot.  Without this, every row
+                // the spatial detector swept into its group stays
+                // suppressed on the handover epoch — the residual log
+                // shows nothing for them, and (more importantly) the
+                // KF's per-row outlier dispatch never gets a chance to
+                // catch an independent slip that may have coincided
+                // with the pivot's.  After the handover lands those
+                // rows are referenced to a clean pivot; they either
+                // come back small or trip per-row dispatch, which is
+                // the right response once the pivot is no longer the
+                // confounder.
+                if (cons_prefix != '\0') {
+                    size_t cleared = 0;
+                    for (auto it = carry_excluded_measurements.begin();
+                         it != carry_excluded_measurements.end(); ) {
+                        if (!it->empty() && (*it)[0] == cons_prefix) {
+                            it = carry_excluded_measurements.erase(it);
+                            ++cleared;
+                        } else {
+                            ++it;
+                        }
+                    }
+                    if (cleared > 0) {
+                        log_manager_.getLogger("main_log")->debug(
+                            "{}Released {} carry-excluded measurement(s) "
+                            "for {} so the post-handover rebuild pass "
+                            "re-includes its SD rows and re-runs outlier checks",
+                            epoch_prefix, cleared, cons);
+                    }
+                }
             }
 
             // Reset MW slip detector history for satellites that had ambiguities reset.
-            // Phase wind-up is NOT reset (see detectCycleSlips comment for rationale).
+            // Phase wind-up is NOT reset: it is a continuous geometric quantity,
+            // unaffected by the integer-cycle jump of an in-arc cycle slip.
             if (kalman_filter_->wasCompleteReset()) {
                 // Full reset: clear all MW arc history so stale stats
                 // don't contaminate post-reset arcs.
@@ -561,16 +841,73 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                 log_manager_.getLogger("main_log")->info(
                     "{}Reset MW slip detector state (complete filter reset)", epoch_prefix);
             } else {
+                // Prefer per-(sat, signal) MW arc cleanup when the KF
+                // tracked which signal was reset.  Spares MW arcs on
+                // signal pairs that don't involve the slipped signal
+                // (e.g. an L1C slip leaves the L2W/L5X arc intact
+                // instead of nuking it as collateral damage).  Falls
+                // back to the per-sat clear for anything in
+                // last_reset_satellites_ that didn't get a per-signal
+                // entry.
+                std::set<std::string> covered_sats;
+                for (const auto& [sat_id, sig] : kalman_filter_->getLastResetSignals()) {
+                    cycle_slip_manager_->resetSatelliteSignal(sat_id, sig);
+                    reset_satellites.insert(sat_id);
+                    covered_sats.insert(sat_id);
+                    // Residual-history is sat-level; record once per sat.
+                    log_manager_.getLogger("main_log")->debug(
+                        "{}Reset MW history for {} {} (KF ambiguity reset, per-signal)",
+                        epoch_prefix, sat_id, sig);
+                }
                 for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
+                    if (covered_sats.count(sat_id)) {
+                        // Sat already covered by per-signal reset; just
+                        // mirror to residual-history once and skip the
+                        // sat-wide MW clear.
+                        if (res_hist.isEnabled()) res_hist.resetSatellite(sat_id);
+                        continue;
+                    }
                     cycle_slip_manager_->resetSatellite(sat_id);
                     reset_satellites.insert(sat_id);
-                    // Mirror the satellite-level MW reset on the
-                    // residual-history tracker — every (sat_id,
-                    // signal) entry's stats are invalidated by the
-                    // ambiguity reset.
                     if (res_hist.isEnabled()) res_hist.resetSatellite(sat_id);
                     log_manager_.getLogger("main_log")->debug(
-                        "{}Reset MW history for {} (KF ambiguity reset)", epoch_prefix, sat_id);
+                        "{}Reset MW history for {} (KF ambiguity reset, per-sat fallback)",
+                        epoch_prefix, sat_id);
+
+                    // Sat-wide state re-inflation — mirror of the
+                    // CycleSlipManager::detectAndRepair full-reset
+                    // path.  The KF reached this branch by resetting
+                    // every phase ambiguity for the sat, so the same
+                    // (iono, sat-bias) partition-baking risk applies:
+                    // without re-inflating iono and bias variances,
+                    // the reseeded ambiguities lock in whatever
+                    // partition was current at the moment of reset.
+                    // Skips BSSD pivots — their (0, 0) frozen rows are
+                    // already protected by the diag==0 guard inside
+                    // StateManager, but checking here avoids a noisy
+                    // warn log line per skipped pivot.
+                    const auto& sr_cfg = config_.getSlipStateReinflationConfig();
+                    if (sr_cfg.enabled) {
+                        bool is_pivot = false;
+                        if (config_.enableBetweenSatelliteSd()) {
+                            const auto& pivots_now = meas_model_->getBssdPivotSatellites();
+                            const std::string cons = PppUtils::getSystemString(sat_id);
+                            auto pit = pivots_now.find(cons);
+                            is_pivot = (pit != pivots_now.end() && pit->second == sat_id);
+                        }
+                        if (!is_pivot) {
+                            const double io_std = sr_cfg.iono_std_m;
+                            const double sb_std = sr_cfg.sat_bias_std_m;
+                            if (io_std > 0.0) {
+                                state_manager_->reinflateIonosphereVariance(
+                                    sat_id, io_std * io_std);
+                            }
+                            if (sb_std > 0.0) {
+                                state_manager_->reinflateSatBiasVariancesForSat(
+                                    sat_id, sb_std * sb_std);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -842,15 +1179,50 @@ void Application::logEpochSummary(const std::string& epoch_prefix) {
 // ---------------------------------------------------------------------------
 
 void Application::writeEpochTraces(const GnssTime& current_time,
+                                   const std::vector<RinexObservation>& epoch_obs,
+                                   const std::vector<PppObservation>& modeled_obs,
+                                   const std::map<std::string, DropReason>& drop_reasons,
                                    const EpochMeasurement& applied_meas,
-                                   bool have_applied) {
-    const GnssTime utc_time = gpsToUtcTime(current_time);
-    trace_logger_->logState(utc_time, *state_manager_);
-    trace_logger_->logAmbiguities(utc_time, *state_manager_);
-    trace_logger_->logIonosphere(utc_time, *state_manager_);
+                                   bool have_applied,
+                                   const std::set<std::string>& reset_satellites) {
+    // Trace files carry pure GPS time (week + tow_s in GPS scale) so the
+    // timestamps line up exactly with RINEX epoch records.  Earlier code
+    // here subtracted the GPS-UTC leap-second offset via gpsToUtcTime(),
+    // which produced timestamps 18 s behind RINEX and required downstream
+    // MATLAB consumers to add 18 s back -- two leap-second adjustments in
+    // opposite directions that only worked correctly by accident.  No
+    // adjustment is done anywhere now: trace = RINEX = GPS time.
+    const GnssTime gps_time = current_time;
+    trace_logger_->logState(gps_time, *state_manager_);
+    trace_logger_->logAmbiguities(gps_time, *state_manager_);
+    trace_logger_->logIonosphere(gps_time, *state_manager_);
+    trace_logger_->logSatBiases(gps_time, *state_manager_);
     if (have_applied) {
-        trace_logger_->logResiduals(utc_time, applied_meas);
+        trace_logger_->logResiduals(gps_time, applied_meas);
     }
+
+    // Per-satellite epoch status: gather slip set from the CSM's last MW
+    // detector results (only sats that slipped are cached in the map) and
+    // combine with the KF-reset set passed in by the caller.  Both feed
+    // the "Slip" status category in TraceLogger::logSatelliteStatus.  The
+    // raw epoch_obs vector enables the logger to surface "BelowMask" rows
+    // for sats that were tracked in RINEX but dropped by ModelGeometry.
+    std::set<std::string> slipped_sats;
+    if (cycle_slip_manager_) {
+        for (const auto& [sat, mw_res] : cycle_slip_manager_->getLastMwSlips()) {
+            (void)mw_res;
+            slipped_sats.insert(sat);
+        }
+    }
+    trace_logger_->logSatelliteStatus(
+        gps_time, epoch_obs, modeled_obs, drop_reasons, applied_meas, have_applied,
+        *state_manager_, slipped_sats, reset_satellites,
+        config_.getElevationMaskDeg());
+
+    // Per-epoch DOPs (PDOP/HDOP/VDOP/TDOP/GDOP) and ambiguity DOP, plus
+    // per-system + total used-sat counts.
+    trace_logger_->logDops(
+        gps_time, modeled_obs, applied_meas, have_applied, *state_manager_);
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +1277,47 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
     cycle_slip_manager_  = std::make_unique<CycleSlipManager>(config_, log_manager_);
 
+    // GIM construction.  Two independent consumers can request it:
+    //   - estimation.ionosphere_weighting.enabled  → soft pseudo-obs on
+    //     the per-satellite slant iono state (PPP-RTK).
+    //   - model_corrections.enable_higher_order_ionosphere → STEC source
+    //     for the I₂ + I₃ correction applied per-signal in PppModel.
+    // Either flag triggers the IONEX parse; downstream code uses
+    // gim_->isLoaded() to decide whether its work runs.
+    const bool need_gim_for_weighting =
+        config_.getIonosphereWeightingConfig().enabled;
+    const bool need_gim_for_higher_order =
+        config_.getModelCorrections().enable_higher_order_ionosphere;
+    if (need_gim_for_weighting || need_gim_for_higher_order) {
+        gim_ = std::make_unique<GlobalIonosphereMap>(
+            config_.getProductPath("INX").string(), log_manager_);
+        if (!gim_->isLoaded()) {
+            log_manager_.getLogger("ionosphere")->warn(
+                "GIM is required by the configuration ({}{}{}) but no usable "
+                "IONEX file resolved — the dependent feature(s) will be skipped. "
+                "Set data_download.download_gim (production mode) or place an "
+                ".INX file under the date's products/ directory (internal mode). "
+                "For bias consistency, source the GIM from the same analysis "
+                "centre as the code-bias (OSB) product.",
+                need_gim_for_weighting ? "ionosphere_weighting" : "",
+                (need_gim_for_weighting && need_gim_for_higher_order) ? " + " : "",
+                need_gim_for_higher_order ? "higher_order_ionosphere" : "");
+        } else if (need_gim_for_higher_order) {
+            // PppModel needs the pointer to evaluate the I₂+I₃ correction
+            // each epoch.  Pointer is non-owning; gim_ lifetime is the
+            // Application's, which outlives ppp_model_ via destruction order.
+            ppp_model_->setGim(gim_.get());
+        }
+    }
+
+    // Adaptive ionospheric process-noise monitor (opt-in via
+    // estimation.adaptive_iono_process_noise.enable).  Constructed only
+    // when enabled; when absent the iono process noise stays static.
+    if (config_.getAdaptiveIonoQConfig().enabled) {
+        iono_variability_monitor_ =
+            std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
+    }
+
     // Provide BIA satellite biases to the MW and EWL detectors for integer rounding
     cycle_slip_manager_->setCorrections(&ppp_model_->getCorrections());
 
@@ -915,15 +1328,28 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     // silently initializing a fresh arc on a slip-corrupted sample after
     // a brief outage.  IMU mode keeps the default 120 s because INS
     // propagation legitimately bridges gaps that long.
+    //
+    // Apply a 1.5× margin to the nominal cadence so that a "perfect"
+    // back-to-back epoch (gap == nominal interval) doesn't trip the
+    // strict-greater-than comparison inside MwSlipDetector when
+    // floating-point drift in (epoch_s - last_epoch_s) inevitably
+    // produces values like 30.000000001 against a 30 s threshold.  A
+    // real missed epoch produces a gap of ~2× the nominal cadence
+    // (e.g. 60 s on a 30 s file) which still trips the 1.5× threshold,
+    // so genuine outages are still caught.
+    //
+    // Honor processing.gnss_rate_s if the user opted into epoch
+    // decimation — the effective inter-epoch spacing in MW is the
+    // decimated cadence, not the underlying RINEX interval.
     if (!config_.enableImu()) {
         const double rinex_interval = rinex_parser_->getHeader().interval.value_or(0.0);
-        if (rinex_interval > 5.0) {
-            cycle_slip_manager_->mwDetector().setMaxGapSeconds(rinex_interval);
+        const double effective_interval = (config_.getGnssRate() > 0.0)
+                                              ? config_.getGnssRate()
+                                              : rinex_interval;
+        if (effective_interval > 5.0) {
+            cycle_slip_manager_->mwDetector().setMaxGapSeconds(effective_interval * 1.5);
         }
     }
-
-    // Provide MW detector to the BSSD pivot manager for quality-based pivot scoring.
-    meas_model_->setMwDetector(&cycle_slip_manager_->mwDetector());
 
     // Provide MW data to the KF outlier handler for tiebreaking.
     kalman_filter_->setCycleSlipManager(cycle_slip_manager_.get());
@@ -931,6 +1357,12 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     const auto& logging_cfg = config_.getLoggingConfig();
     if (logging_cfg.enable_mw_slip_trace) {
         cycle_slip_manager_->enableMwTracing(log_dir_);
+    }
+    if (logging_cfg.enable_windup_trace && ppp_model_) {
+        ppp_model_->enableWindUpTracing(log_dir_);
+    }
+    if (iono_variability_monitor_ && config_.getAdaptiveIonoQConfig().trace) {
+        iono_variability_monitor_->enableTracing(log_dir_);
     }
 
     // IMU integrator (GNSS/INS coupled mode)
@@ -971,6 +1403,11 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         ar_config.ratio_upper_bound     = config_.getArRatioUpperBound();
         ar_config.wl_only               = config_.getArWlOnly();
         ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
+        ar_config.wl_max_frac           = config_.getArWlMaxFrac();
+        ar_config.min_success_rate      = config_.getArMinSuccessRate();
+        ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
+        ar_config.ar_active_systems     = config_.getArActiveSystems();
+        ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log_manager_.getLogger("main_log")->info(
             "Ambiguity resolution enabled: mode={}, wl_only={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
@@ -1031,6 +1468,7 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         // decimated steps are not flagged as outages.
         double dt;
         bool gap_detected = false;
+        bool long_gap = false;
         const double rinex_interval = rinex_parser_->getHeader().interval.value_or(30.0);
         const double effective_interval = config_.getGnssRate() > 0.0
                                         ? std::max(config_.getGnssRate(), rinex_interval)
@@ -1044,6 +1482,7 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
                                  ? config_.getDataGapTolerance()
                                  : effective_interval * 1.5;
             gap_detected = dt > gap_tol;
+            long_gap     = gap_detected && (dt > config_.getLongGapTolerance());
             if (std::abs(dt - effective_interval) > 0.5) {
                 log_manager_.getLogger("main_log")->warn("{}Unexpected time step {}s (expected {}s)",
                     epoch_prefix, dt, effective_interval);
@@ -1062,8 +1501,13 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         // 4d. Compute modeled observations.
+        // drop_reasons is populated by computeModels for every sat that
+        // fails to make it into modeled_obs (BelowMask / NoProduct /
+        // NoModel).  Consumed by writeEpochTraces -> logSatelliteStatus
+        // so the strip chart distinguishes actionable failure modes.
         std::vector<PppObservation> modeled_obs;
-        if (!ppp_model_->computeModels(epoch_obs, ppp_state_, modeled_obs)) {
+        std::map<std::string, DropReason> drop_reasons;
+        if (!ppp_model_->computeModels(epoch_obs, ppp_state_, modeled_obs, &drop_reasons)) {
             log_manager_.getLogger("main_log")->warn("{}Failed to compute models for epoch", epoch_prefix);
             continue;
         }
@@ -1077,7 +1521,84 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         // 4e. WLS estimation & clock seeding.
-        handleWlsSeeding(current_time, epoch_prefix, modeled_obs, gap_detected);
+        const auto wls_result = handleWlsSeeding(current_time, epoch_prefix, modeled_obs, gap_detected);
+
+        // 4e1. Gap recovery policy.
+        // Runs after the clock has been re-seeded so the gap helpers
+        // edit covariance against the post-seed state.  No-op when
+        // gap_detected is false.  Skipped on the first epoch because
+        // first_epoch_ → gap_detected is intentionally false (dt
+        // wasn't actually computed against a prior epoch).
+        if (gap_detected) {
+            handleGap(dt, long_gap, epoch_prefix, wls_result);
+        }
+
+        // (4e2) Refresh per-ambiguity process-noise overrides for
+        // substituted-ATX states, if enabled.  Walks the current
+        // ambiguity map and tags any state whose underlying signal(s)
+        // had their ATX correction frequency-fallback-substituted, so
+        // the next predict step inflates that state's variance with
+        // @c ambiguity_q_substituted_atx instead of the standard
+        // @c process_noise.ambiguity.  Refreshed every epoch because
+        // the ambiguity set evolves (new sats, slip resets, pivot
+        // handovers); mid-epoch state additions pick up the override
+        // on the next epoch.
+        {
+            const auto& mc_atx = config_.getModelCorrections();
+            if (mc_atx.loosen_amb_q_for_substituted_atx && ppp_model_) {
+                std::map<std::string, double> overrides;
+                for (const auto& [amb_key, idx] : state_manager_->getAmbiguities()) {
+                    const auto u1 = amb_key.find('_');
+                    if (u1 == std::string::npos) continue;
+                    const std::string sat = amb_key.substr(0, u1);
+                    if (sat.empty()) continue;
+                    const System sys =
+                        sat[0] == 'G' ? System::GPS :
+                        sat[0] == 'E' ? System::Galileo :
+                        sat[0] == 'R' ? System::GLONASS :
+                        sat[0] == 'C' ? System::BeiDou :
+                        sat[0] == 'J' ? System::QZSS :
+                        sat[0] == 'S' ? System::SBAS : System::Unknown;
+                    if (sys == System::Unknown) continue;
+                    const std::string rest = amb_key.substr(u1 + 1);
+                    const auto u2 = rest.find('_');
+                    const std::string sig1 = (u2 == std::string::npos) ? rest : rest.substr(0, u2);
+                    const std::string sig2 = (u2 == std::string::npos) ? std::string{} : rest.substr(u2 + 1);
+
+                    bool sub = ppp_model_->wasAtxSubstituted(sat, sig1, sys);
+                    if (!sub && !sig2.empty()) {
+                        sub = ppp_model_->wasAtxSubstituted(sat, sig2, sys);
+                    }
+                    if (sub) {
+                        overrides[amb_key] = mc_atx.ambiguity_q_substituted_atx;
+                    }
+                }
+                state_manager_->setAmbiguityProcessNoiseOverrides(overrides);
+                log_manager_.getLogger("main_log")->debug(
+                    "{}ATX-sub q overrides refreshed: {} ambiguities flagged "
+                    "(toggle=ON, q={:.3e} m²/s)",
+                    epoch_prefix, overrides.size(),
+                    mc_atx.ambiguity_q_substituted_atx);
+            } else {
+                state_manager_->setAmbiguityProcessNoiseOverrides({});
+                log_manager_.getLogger("main_log")->trace(
+                    "{}ATX-sub q overrides cleared (toggle=OFF; all ambiguities "
+                    "use process_noise.ambiguity)",
+                    epoch_prefix);
+            }
+        }
+
+        // (4e3) Adaptive ionospheric process noise.  Refresh per-satellite
+        // iono process-noise overrides from the geometry-free phase
+        // second-difference variability before the predict step consumes
+        // them.  Active only when estimation.adaptive_iono_process_noise is
+        // enabled (the monitor is null otherwise), leaving the override map
+        // empty so getProcessNoiseMatrix() uses process_noise.ionosphere.
+        if (iono_variability_monitor_) {
+            iono_variability_monitor_->update(modeled_obs);
+            state_manager_->setIonoProcessNoiseOverrides(
+                iono_variability_monitor_->processNoiseOverrides());
+        }
 
         // 4f. Kalman prediction.
         if (imu_integrator_ && imu_integrator_->hasData() && !first_epoch_) {
@@ -1086,6 +1607,11 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         } else {
             kalman_filter_->predict(dt);
         }
+        // Predict is the last site in the epoch body that reads first_epoch_;
+        // clear unconditionally here so the flag flips exactly once per run
+        // regardless of WLS success or whether the mode owns a clock state
+        // (BSSD has neither).
+        first_epoch_ = false;
 
         // Smoother prior capture: after predict(), before any cycle-slip or
         // update-driven state modifications, so the recorded a-priori matches
@@ -1121,6 +1647,13 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
             epoch_reset_sats.insert(sat_id);
         }
 
+        // 4h2. Ionosphere weighting: apply the GIM as a between-satellite
+        // soft constraint on the slant-iono states.  Post-processing path
+        // only — runRealTime() never reaches here.  Placed after the
+        // update loop so the smoother posterior capture below records the
+        // GIM-constrained state, and before AR so fixing benefits from it.
+        applyGimIonoUpdate(current_time, modeled_obs);
+
         // Smoother posterior capture: taken BEFORE AR so the smoother
         // operates on float ambiguities (v1 policy).  AR-fixed states
         // are applied below for the forward solution only.
@@ -1128,8 +1661,79 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
         // 4i2. Integer ambiguity resolution (MLAMBDA).
         if (ambiguity_resolver_ && have_applied) {
-            const auto wl_ambs = cycle_slip_manager_->getResolvedWlAmbiguities();
-            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs);
+            auto wl_ambs  = cycle_slip_manager_->getResolvedWlAmbiguities();
+            auto wl_fracs = cycle_slip_manager_->getResolvedWlFractions();
+
+            // Optional AR-side ATX gates: drop WL entries based on ATX
+            // coverage status of either signal in the pair.  The
+            // observations themselves stay in the float Kalman update —
+            // we only forbid integer fixing for these signals because
+            // missing or approximate antenna PCV introduces sub-cycle
+            // errors that bias the integer determination.
+            //
+            // Two complementary gates:
+            //   require_atx_coverage_for_ar   — drop pairs lacking STRICT
+            //                                   coverage on either signal
+            //                                   (substituted OR missing).
+            //   restrict_ar_for_substituted_atx — drop pairs where either
+            //                                   signal's ATX correction was
+            //                                   produced via the
+            //                                   frequency-fallback chain
+            //                                   (substituted only — pairs
+            //                                   with no ATX at all are
+            //                                   allowed through).
+            // Use either, both, or neither depending on policy.
+            const auto& mc = config_.getModelCorrections();
+            const bool gate_strict      = mc.require_atx_coverage_for_ar;
+            const bool gate_substituted = mc.restrict_ar_for_substituted_atx;
+            if ((gate_strict || gate_substituted) && ppp_model_) {
+                int n_dropped_strict      = 0;
+                int n_dropped_substituted = 0;
+                for (auto it = wl_ambs.begin(); it != wl_ambs.end(); ) {
+                    // Key format: "<sat>_<sig1>_<sig2>".
+                    const auto& key = it->first;
+                    const auto u1 = key.find('_');
+                    const auto u2 = (u1 == std::string::npos) ? std::string::npos
+                                                                : key.find('_', u1 + 1);
+                    if (u1 == std::string::npos || u2 == std::string::npos) {
+                        ++it; continue;
+                    }
+                    const std::string sat  = key.substr(0, u1);
+                    const std::string sig1 = key.substr(u1 + 1, u2 - u1 - 1);
+                    const std::string sig2 = key.substr(u2 + 1);
+                    const System sys = sat.empty() ? System::Unknown :
+                        sat[0] == 'G' ? System::GPS :
+                        sat[0] == 'E' ? System::Galileo :
+                        sat[0] == 'R' ? System::GLONASS :
+                        sat[0] == 'C' ? System::BeiDou :
+                        sat[0] == 'J' ? System::QZSS :
+                        sat[0] == 'S' ? System::SBAS : System::Unknown;
+                    bool drop = false;
+                    if (gate_strict) {
+                        const bool a1 = ppp_model_->hasFullAtxCoverage(sat, sig1, sys);
+                        const bool a2 = ppp_model_->hasFullAtxCoverage(sat, sig2, sys);
+                        if (!a1 || !a2) { drop = true; ++n_dropped_strict; }
+                    }
+                    if (!drop && gate_substituted) {
+                        const bool s1 = ppp_model_->wasAtxSubstituted(sat, sig1, sys);
+                        const bool s2 = ppp_model_->wasAtxSubstituted(sat, sig2, sys);
+                        if (s1 || s2) { drop = true; ++n_dropped_substituted; }
+                    }
+                    if (drop) {
+                        wl_fracs.erase(key);
+                        it = wl_ambs.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                if (n_dropped_strict > 0 || n_dropped_substituted > 0) {
+                    log_manager_.getLogger("main_log")->debug(
+                        "{}AR ATX gate: dropped {} (strict-coverage), {} (substituted) WL entries",
+                        epoch_prefix, n_dropped_strict, n_dropped_substituted);
+                }
+            }
+
+            auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs);
             if (ar_result.success) {
                 // Apply fixed state to the filter
                 state_manager_->setStateVector(ar_result.fixed_state);
@@ -1150,7 +1754,8 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
         // 4k. Per-epoch logging & traces.
         logEpochSummary(epoch_prefix);
-        writeEpochTraces(current_time, applied_meas, have_applied);
+        writeEpochTraces(current_time, epoch_obs, modeled_obs, drop_reasons,
+                         applied_meas, have_applied, epoch_reset_sats);
     }
 
     // --- Phase 5: Optional backward RTS smoother pass ---

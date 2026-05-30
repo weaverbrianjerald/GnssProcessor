@@ -70,6 +70,7 @@ namespace GnssProcessor {
                 (type == "ATX" && ext == ".atx") ||
                 (type == "BIA" && ext == ".BIA") ||
                 (type == "ERP" && ext == ".ERP") ||
+                (type == "INX" && (ext == ".INX" || ext == ".inx")) ||
                 (type == "NC"  && ext == ".nc"))
                 return path;
         }

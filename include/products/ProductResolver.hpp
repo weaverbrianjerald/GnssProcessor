@@ -55,6 +55,7 @@ public:
         int doy{ 0 };                       ///< Observation day-of-year (0 = auto-detect).
         bool download_rinex{ false };       ///< Whether to download observation RINEX from CDDIS.
         bool download_products{ true };     ///< Whether to download SP3/CLK/BIA/ERP/BRDC.
+        bool download_gim{ false };         ///< Whether to download the IONEX GIM (global ionosphere map).
         std::filesystem::path atx_path;     ///< Path to a local ATX file (not downloaded).
         std::filesystem::path nc_path;      ///< Path to a local ocean-loading NC file (not downloaded).
         std::filesystem::path crx2rnx_path; ///< Path to crx2rnx executable for Hatanaka decompression.

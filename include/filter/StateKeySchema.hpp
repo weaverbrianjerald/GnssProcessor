@@ -67,6 +67,12 @@ inline constexpr std::string_view kIfbInfix = "IFB";
 /// Receiver differential code bias infix in code-bias keys ("GPS_DCB").
 inline constexpr std::string_view kDcbInfix = "DCB";
 
+/// Narrow-lane infix in NlWl-basis ambiguity keys ("G01_NL_1").
+inline constexpr std::string_view kNlInfix = "NL";
+
+/// Wide-lane infix in NlWl-basis ambiguity keys ("G01_WL_1_2").
+inline constexpr std::string_view kWlInfix = "WL";
+
 // ===========================================================================
 // 1. PPP ambiguity keys — "<satellite>_<signal>"
 // ---------------------------------------------------------------------------
@@ -108,6 +114,142 @@ parseAmbiguityKey(std::string_view key) {
     return AmbiguityKeyParts{
         std::string(key.substr(0, sep)),
         std::string(key.substr(sep + 1)),
+    };
+}
+
+// ===========================================================================
+// 1b. NL/WL ambiguity keys — "<sat>_NL_<band>" / "<sat>_WL_<band_a>_<band_b>"
+// ---------------------------------------------------------------------------
+// Examples: "G01_NL_1", "G01_WL_1_2", "G01_WL_1_5", "E11_WL_1_7".
+//
+// Selected by GnssConfig::getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl
+// (config knob @c estimation.state_ambiguity_basis = "nl_wl").  The basis is
+// global per run, so per-band keys (above) and NL/WL keys never coexist in a
+// single state vector.
+//
+//   sat            : RINEX satellite ID, e.g. "G01", "E11".
+//   band           : single character, the RINEX band digit (i.e. signal[1]).
+//                    For NL keys this is the *reference band* the satellite's
+//                    NL state is tied to (typically the lowest observed band).
+//   band_a, band_b : the band digits of the two carriers in a wide-lane,
+//                    stored in canonical ascending order (band_a < band_b
+//                    lexicographically).  The state value semantically
+//                    represents N_<band_a> - N_<band_b> in cycles.  Note this
+//                    matches the MW convention for the L1/L2 case (band_a=1,
+//                    band_b=2 -> N_1 - N_2).
+//
+// Unit convention: NL/WL state values are in *cycles*, in contrast to the
+// per-band keys above which store ambiguities in meters (λ × N).  This keeps
+// LAMBDA / WL-fix arithmetic native to integers; the measurement Jacobian
+// applies the wavelength scaling.
+//
+// Constructed in:  MeasurementModel (ensureRequiredStates, buildJacobianRow)
+// Stored in:       StateManager::ambiguity_indices_ (same map as per-band)
+// Parsed in:       MwSlipDetector (resolve WL state index for direct update),
+//                  AmbiguityResolver (split state into NL vs WL components).
+// ===========================================================================
+
+/// Decomposed NL ambiguity key.
+struct NlAmbiguityKeyParts {
+    std::string satellite;  ///< Full RINEX sat ID, e.g. "G01".
+    char        band;       ///< RINEX band digit, e.g. '1' for L1.
+};
+
+/// Decomposed WL ambiguity key.  @c band_a < @c band_b always (canonical
+/// ascending order).
+struct WlAmbiguityKeyParts {
+    std::string satellite;  ///< Full RINEX sat ID, e.g. "G01".
+    char        band_a;     ///< Lower-numbered RINEX band digit.
+    char        band_b;     ///< Higher-numbered RINEX band digit.
+};
+
+/// Build an NL ambiguity key.
+inline std::string makeNlAmbiguityKey(std::string_view satellite, char band) {
+    std::string out;
+    out.reserve(satellite.size() + 2 + kNlInfix.size() + 1);
+    out.append(satellite);
+    out.push_back(kAmbiguityDelimiter);
+    out.append(kNlInfix);
+    out.push_back(kAmbiguityDelimiter);
+    out.push_back(band);
+    return out;
+}
+
+/// Build a WL ambiguity key.  @p band_a and @p band_b are sorted into
+/// canonical ascending order on the way in, so the caller does not need
+/// to pre-order them.
+inline std::string makeWlAmbiguityKey(std::string_view satellite,
+                                      char band_a, char band_b) {
+    if (band_a > band_b) {
+        const char tmp = band_a;
+        band_a = band_b;
+        band_b = tmp;
+    }
+    std::string out;
+    out.reserve(satellite.size() + 2 + kWlInfix.size() + 3);
+    out.append(satellite);
+    out.push_back(kAmbiguityDelimiter);
+    out.append(kWlInfix);
+    out.push_back(kAmbiguityDelimiter);
+    out.push_back(band_a);
+    out.push_back(kAmbiguityDelimiter);
+    out.push_back(band_b);
+    return out;
+}
+
+/// Cheap predicate: does @p key match the "<sat>_NL_<digit>" shape?
+/// Used to fast-skip non-NL entries when scanning the mixed ambiguity map.
+inline bool isNlAmbiguityKey(std::string_view key) {
+    // Minimum: 1-char sat + "_NL_" + 1-char band = 6 chars.
+    if (key.size() < 6) return false;
+    if (key.back() < '0' || key.back() > '9') return false;
+    // The "_NL_" tail is fixed-width: positions [size-4, size-2) hold "NL",
+    // and the two surrounding chars must be the ambiguity delimiter.
+    const auto n = key.size();
+    return key[n - 5] == kAmbiguityDelimiter
+        && key[n - 4] == kNlInfix[0]
+        && key[n - 3] == kNlInfix[1]
+        && key[n - 2] == kAmbiguityDelimiter;
+}
+
+/// Cheap predicate: does @p key match the "<sat>_WL_<digit>_<digit>" shape?
+inline bool isWlAmbiguityKey(std::string_view key) {
+    // Minimum: 1-char sat + "_WL_" + "<d>_<d>" = 8 chars.
+    if (key.size() < 8) return false;
+    if (key.back() < '0' || key.back() > '9') return false;
+    const auto n = key.size();
+    if (key[n - 2] != kAmbiguityDelimiter) return false;
+    if (key[n - 3] < '0' || key[n - 3] > '9') return false;
+    return key[n - 7] == kAmbiguityDelimiter
+        && key[n - 6] == kWlInfix[0]
+        && key[n - 5] == kWlInfix[1]
+        && key[n - 4] == kAmbiguityDelimiter;
+}
+
+/// Parse an NL ambiguity key.  Returns @c std::nullopt if the shape does
+/// not match @c "<sat>_NL_<digit>" or the satellite field is empty.
+inline std::optional<NlAmbiguityKeyParts>
+parseNlAmbiguityKey(std::string_view key) {
+    if (!isNlAmbiguityKey(key)) return std::nullopt;
+    const auto sat_len = key.size() - 5;  // size - "_NL_<d>"
+    if (sat_len == 0) return std::nullopt;
+    return NlAmbiguityKeyParts{
+        std::string(key.substr(0, sat_len)),
+        key.back(),
+    };
+}
+
+/// Parse a WL ambiguity key.  Returns @c std::nullopt if the shape does
+/// not match @c "<sat>_WL_<digit>_<digit>" or the satellite field is empty.
+inline std::optional<WlAmbiguityKeyParts>
+parseWlAmbiguityKey(std::string_view key) {
+    if (!isWlAmbiguityKey(key)) return std::nullopt;
+    const auto sat_len = key.size() - 7;  // size - "_WL_<d>_<d>"
+    if (sat_len == 0) return std::nullopt;
+    return WlAmbiguityKeyParts{
+        std::string(key.substr(0, sat_len)),
+        key[key.size() - 3],
+        key.back(),
     };
 }
 

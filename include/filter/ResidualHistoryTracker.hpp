@@ -74,6 +74,19 @@ namespace GnssProcessor {
     /**
      * @class ResidualHistoryTracker
      * @brief EWMA-based per-row residual statistics with anomaly queries.
+     *
+     * Beyond the spatial pivot-slip support described in the file
+     * header, the tracker also carries a per-(sat, signal)
+     * consecutive-rejection counter.  Callers bump it via
+     * @c recordRejection whenever the Kalman filter excludes a row as
+     * an outlier; it is cleared automatically inside @c record() (a
+     * kept row breaks the streak) and by every reset hook (slip,
+     * pivot handover, full clear).  The combined "EWMA mean drift
+     * AND/OR persistent rejections" signal is exposed through
+     * @c evaluateStuckBias and is used by the code-bias-reset path in
+     * @c KalmanFilter to break out of the closed loop where an
+     * over-converged sat-bias state keeps causing its own code rows
+     * to be rejected.
      */
     class ResidualHistoryTracker {
     public:
@@ -113,6 +126,36 @@ namespace GnssProcessor {
             std::size_t n;       ///< Sample count (number of record() calls since last reset).
             double      mean;    ///< EWMA mean (m).
             double      std_dev; ///< EWMA standard deviation (m); 0 when n < 2.
+            std::size_t consecutive_rejections; ///< Number of consecutive epochs the row has been outlier-rejected since the last kept update.
+        };
+
+        /**
+         * @brief Result of @c evaluateStuckBias.
+         *
+         * @c stuck is true when either:
+         *  - the row's consecutive-rejection streak has reached the
+         *    caller's @c min_streak threshold (the row is being
+         *    rejected every epoch — classic stuck-bias signature
+         *    where the bias state's variance has collapsed around a
+         *    wrong value and the outlier gate keeps blocking
+         *    updates), OR
+         *  - the row's history is warmed up AND its EWMA mean's
+         *    magnitude exceeds @c floor_m (the bias has drifted
+         *    enough that even the kept rows show a persistent
+         *    nonzero residual mean — the bias state is converging
+         *    too slowly to absorb the drift).
+         *
+         * Both triggers are considered, so a row that is
+         * intermittently rejected with a coherent residual sign
+         * still trips the check.  @c ewma_mean / @c streak fields
+         * are populated unconditionally for the caller's log line.
+         */
+        struct StuckBiasEvaluation {
+            bool        warmed_up = false; ///< True when the per-row EWMA has @c n ≥ @c warmup_n.
+            bool        stuck     = false; ///< True when either trigger fires.
+            double      ewma_mean = 0.0;   ///< Current EWMA mean (m); valid when @c warmed_up.
+            double      ewma_std  = 0.0;   ///< Current EWMA std (m); valid when @c warmed_up.
+            std::size_t streak    = 0;     ///< Current consecutive-rejection streak.
         };
 
         ResidualHistoryTracker(const Config& cfg, LogManager& log_mgr);
@@ -122,8 +165,23 @@ namespace GnssProcessor {
         bool isEnabled() const { return cfg_.enabled; }
 
         /// Push a post-fit residual into the (@p sat, @p signal) history.
-        /// No-op when the tracker is disabled.
+        /// No-op when the tracker is disabled.  Also clears the
+        /// consecutive-rejection streak for the row: by definition a
+        /// row that has a post-fit residual was kept this epoch, so
+        /// any prior streak is broken.
         void record(const std::string& sat, const std::string& signal, double residual_m);
+
+        /// Bump the consecutive-rejection counter for (@p sat, @p signal).
+        /// Called by the Kalman filter's outlier handler whenever a
+        /// code row is excluded; the streak is read back via
+        /// @c evaluateStuckBias.  No-op when the tracker is disabled.
+        ///
+        /// Note: phase rejections trigger an immediate ambiguity
+        /// reset (which calls @c resetSatSignal and wipes the
+        /// streak), so in practice the counter only accumulates on
+        /// code rows.  Keeping the API signal-agnostic avoids
+        /// coupling the tracker to a signal-type convention.
+        void recordRejection(const std::string& sat, const std::string& signal);
 
         /// Evaluate @p residual_m against the current (@p sat, @p signal)
         /// statistics.  Returns @c warmed_up=false / @c is_outlier=false
@@ -160,6 +218,19 @@ namespace GnssProcessor {
         std::optional<Stats> getStats(const std::string& sat,
                                        const std::string& signal) const;
 
+        /// Evaluate whether the (@p sat, @p signal) row's bias state
+        /// looks stuck.  Returns @c stuck=true when either the
+        /// consecutive-rejection streak has reached @p min_streak
+        /// (≥ 1; 0 disables the streak trigger) OR the warmed-up
+        /// EWMA mean's magnitude exceeds @p floor_m (> 0; ≤ 0
+        /// disables the mean-drift trigger).  Returns a zero-filled
+        /// result when the tracker is disabled or the row has no
+        /// history; callers should treat that as "not stuck".
+        StuckBiasEvaluation evaluateStuckBias(const std::string& sat,
+                                               const std::string& signal,
+                                               double      floor_m,
+                                               std::size_t min_streak) const;
+
         /**
          * @brief Aggregate digest across every tracked (sat, signal).
          *
@@ -187,6 +258,7 @@ namespace GnssProcessor {
             std::size_t n = 0;
             double      mean = 0.0;
             double      var  = 0.0;
+            std::size_t consecutive_rejections = 0; ///< Bumped by recordRejection(); cleared by record() and by all reset hooks.
         };
 
         static std::string makeKey(const std::string& sat, const std::string& signal);

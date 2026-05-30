@@ -13,6 +13,8 @@
 #include "common/Constants.hpp"
 #include <cmath>
 #include <limits>
+#include <map>
+#include <set>
 #include <fmt/format.h>
 
 namespace GnssProcessor {
@@ -102,11 +104,21 @@ bool RealTimeEngine::initialize() {
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
     mw_slip_detector_  = std::make_unique<MwSlipDetector>(config_, log_manager_);
 
+    // Higher-order ionosphere is not yet wired into the real-time path:
+    // the engine relies on RTCM SSR for ionospheric content, not on an
+    // IONEX GIM, and an SSR-to-STEC adapter for HigherOrderIonosphere has
+    // not been written.  Surface this clearly so a user who enabled
+    // higher-order globally doesn't silently get the first-order-only
+    // pipeline at runtime.
+    if (config_.getModelCorrections().enable_higher_order_ionosphere) {
+        log_manager_.getLogger("ionosphere")->warn(
+            "Real-time mode: higher_order_ionosphere is enabled but unsupported "
+            "in the streaming pipeline (no GIM source) — the correction will be "
+            "skipped.  Disable the flag in real-time configs to avoid this warning.");
+    }
+
     // Provide BIA satellite biases to the MW detector for WL integer rounding
     mw_slip_detector_->setCorrections(&ppp_model_->getCorrections());
-
-    // Provide MW detector to the BSSD pivot manager for quality-based pivot scoring.
-    meas_model_->setMwDetector(mw_slip_detector_.get());
 
     ppp_model_->initializeState(ppp_state_);
     state_manager_->syncPppStateToStateVector(ppp_state_);
@@ -261,13 +273,16 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     }
 
     std::vector<PppObservation> modeled_obs;
-    if (!ppp_model_->computeModels(filtered_obs, ppp_state_, modeled_obs)) {
+    std::map<std::string, DropReason> drop_reasons;
+    if (!ppp_model_->computeModels(filtered_obs, ppp_state_, modeled_obs, &drop_reasons)) {
         log->warn("{}Failed to compute models", epoch_prefix);
         return false;
     }
 
     // --- WLS seeding ---
-    {
+    // Under BSSD the KF carries no receiver clock state to seed — skip WLS
+    // entirely (its clock estimate is meaningless to the SD filter).
+    if (state_manager_->hasClock()) {
         const auto wls_result = wls_estimator_->estimate(current_time, modeled_obs);
         if (wls_result.success() && wls_result.state.size() >= 4) {
             const double wls_clock = wls_result.state(3);
@@ -327,11 +342,32 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // --- Trace logging ---
     if (trace_logger_ && trace_logger_->isInitialized()) {
-        const GnssTime utc = gpsToUtcTime(current_time);
-        trace_logger_->logState(utc, *state_manager_);
-        trace_logger_->logAmbiguities(utc, *state_manager_);
-        trace_logger_->logIonosphere(utc, *state_manager_);
-        trace_logger_->logResiduals(utc, meas_update);
+        // Trace files carry pure GPS time so timestamps line up exactly
+        // with RINEX epoch records.  See Application::writeEpochTraces for
+        // the rationale (no leap-second conversion in either direction).
+        const GnssTime& gps_time = current_time;
+        trace_logger_->logState(gps_time, *state_manager_);
+        trace_logger_->logAmbiguities(gps_time, *state_manager_);
+        trace_logger_->logIonosphere(gps_time, *state_manager_);
+        trace_logger_->logSatBiases(gps_time, *state_manager_);
+        trace_logger_->logResiduals(gps_time, meas_update);
+
+        // Satellite-status strip chart: real-time engine has no CSM-driven
+        // MW slip set (slip detection lives in the post-processing
+        // Application path), so the only slip signal here is the KF's
+        // ambiguity-reset list from the latest update.  Raw epoch_obs is
+        // forwarded so the logger can surface BelowMask rows for sats
+        // dropped by ModelGeometry.  No-op for an unconfigured trace.
+        const auto& reset_vec = kalman_filter_->getLastResetSatellites();
+        const std::set<std::string> reset_sats(reset_vec.begin(), reset_vec.end());
+        trace_logger_->logSatelliteStatus(
+            gps_time, epoch_obs, modeled_obs, drop_reasons,
+            meas_update, /*have_applied=*/true,
+            *state_manager_, /*slipped_sats=*/{}, reset_sats,
+            config_.getElevationMaskDeg());
+        trace_logger_->logDops(
+            gps_time, modeled_obs, meas_update, /*have_applied=*/true,
+            *state_manager_);
     }
 
     return true;

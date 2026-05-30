@@ -123,6 +123,10 @@ std::string ProductResolver::buildProductFilename(const std::string& tag,
         return src + "0" + type_seg + "_" + yyyydoy + "0000_01D_12H_ERP.ERP.gz";
     } else if (tag == "brdc") {
         return "BRDC00IGS_R_" + yyyydoy + "0000_01D_MN.rnx.gz";
+    } else if (tag == "gim") {
+        // CODE's GIM uses the OPS campaign segment (not MGX): COD0OPSFIN / COD0OPSRAP.
+        const std::string gim_lat = (typ == "RAP") ? "RAP" : "FIN";
+        return src + "0OPS" + gim_lat + "_" + yyyydoy + "0000_01D_01H_GIM.INX.gz";
     }
     return {};
 }
@@ -137,6 +141,12 @@ std::string ProductResolver::buildProductUrl(const std::string& tag,
         // Broadcast nav is under /archive/gnss/data/daily/YYYY/brdc/
         std::string year_str = yyyydoy.substr(0, 4);
         return host + "/archive/gnss/data/daily/" + year_str + "/brdc/" + filename;
+    }
+    if (tag == "gim") {
+        // IONEX is archived under /products/ionosphere/YYYY/DOY/ (year + day-of-year).
+        std::string year_str = yyyydoy.substr(0, 4);
+        std::string doy_str  = yyyydoy.substr(4, 3);
+        return host + "/archive/gnss/products/ionosphere/" + year_str + "/" + doy_str + "/" + filename;
     }
     // All other products are under /archive/gnss/products/GPSWEEK/
     return host + "/archive/gnss/products/" + std::to_string(gps_week) + "/" + filename;
@@ -154,7 +164,7 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
     auto log = log_manager_.getLogger("resolver");
     std::vector<std::filesystem::path> resolved;
 
-    if (tag != "orb" && tag != "clk" && tag != "dcb" && tag != "erp" && tag != "brdc") {
+    if (tag != "orb" && tag != "clk" && tag != "dcb" && tag != "erp" && tag != "brdc" && tag != "gim") {
         log->error("Unknown product tag: {}", tag);
         return {};
     }
@@ -485,6 +495,15 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
         }
 
         log->info("Resolved {} product files", resolved.product_paths.size());
+    }
+
+    // --- Resolve the IONEX GIM (gated separately from download_products) ---
+    if (config_.download_gim) {
+        auto gim_paths = resolveProduct("gim", day_dates, day_weeks);
+        const bool got = !gim_paths.empty();
+        for (auto& p : gim_paths) resolved.product_paths.push_back(std::move(p));
+        if (got) log->info("Resolved IONEX GIM for {}", yd_obs);
+        else     log->warn("IONEX GIM not obtained for {}", yd_obs);
     }
 
     // --- Resolve RINEX observation ---

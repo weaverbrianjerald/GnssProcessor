@@ -11,7 +11,7 @@ plot_gf_trace(fname);
 %%
 
 % plot_gf_trace.m
-% Read and visualize gf_slip_trace.csv (UTC time axis)
+% Read and visualize gf_slip_trace.csv (GPS time axis)
 %
 % Expected CSV header (written by GfSlipDetector):
 %   week,tow_s,satellite,system,elevation_deg,
@@ -79,7 +79,7 @@ T.key = string(T.key);
 T.system = categorical(string(T.system));
 
 %% --- Convert GPS week + TOW to datetime (UTC) ---
-gpsEpoch   = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+gpsEpoch   = datetime(1980,1,6,0,0,0);
 gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 T.utc      = gpsEpoch + seconds(gpsSeconds);
 
@@ -131,7 +131,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h; %#ok<AGROW>
     end
 
-    xlabel('UTC'); ylabel('GF  (m)');
+    xlabel('GPS Time'); ylabel('GF  (m)');
     title(sysName);
     legend(lh, 'Location','bestoutside','Interpreter','none','FontSize',7);
     datetick('x','keeplimits');
@@ -197,7 +197,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h; %#ok<AGROW>
     end
 
-    xlabel('UTC'); ylabel('TD2\_GF  (m)');
+    xlabel('GPS Time'); ylabel('TD2\_GF  (m)');
     title(sysName);
     legend(lh, 'Location','bestoutside','Interpreter','none','FontSize',7);
     datetick('x','keeplimits');
@@ -233,7 +233,7 @@ for col = 1:numel(systemList)
             'MarkerFaceAlpha', 0.5);
     end
 
-    xlabel('UTC'); ylabel('MAD \sigma  (m)');
+    xlabel('GPS Time'); ylabel('MAD \sigma  (m)');
     title([sysName ' — MAD \sigma']);
     datetick('x','keeplimits');
     hold off;
@@ -261,7 +261,7 @@ for col = 1:numel(systemList)
             'MarkerFaceAlpha', 0.5);
     end
 
-    xlabel('UTC'); ylabel('Arc Count');
+    xlabel('GPS Time'); ylabel('Arc Count');
     title([sysName ' — Arc Count']);
     datetick('x','keeplimits');
     hold off;
@@ -304,7 +304,7 @@ for col = 1:numel(systemList)
     yline(0.06, 'r--', 'IVI threshold', 'LineWidth', 1, ...
         'LabelHorizontalAlignment','left', 'FontSize', 8);
 
-    xlabel('UTC'); ylabel('IVI  (m)');
+    xlabel('GPS Time'); ylabel('IVI  (m)');
     title([sysName ' — Iono Variability Index']);
     datetick('x','keeplimits');
     hold off;

@@ -14,13 +14,14 @@ fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to UTC datetime ---
-gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+gpsEpoch = datetime(1980,1,6,0,0,0);
 try
     gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 catch
     gpsSeconds = T.week * 7 * 86400 + T.tow;
 end
-T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
+% Trace files carry pure GPS time so timestamps match the RINEX epochs.
+T.utc = gpsEpoch + seconds(gpsSeconds);
 
 %% --- Extract variables ---
 % Core
@@ -37,7 +38,14 @@ catch
     xs = T.sigma_x; ys = T.sigma_y; zs = T.sigma_z;
 end
 
+
+try
 clk  = T.clock_m;
+catch
+    trop  = T.tropo_zwd_m;
+    trops = T.sigma_tropo_m;
+end
+
 try
     clks = T.clock_std_m;
 catch
@@ -90,7 +98,7 @@ end
 % ============================================================
 
 % Reference point for ENU
-x0 = median(x(120:end));  y0 = median(y(120:end));  z0 = median(z(120:end)); % median of post-converged
+x0 = median(x(120:end),'omitmissing');  y0 = median(y(120:end),'omitmissing');  z0 = median(z(120:end),'omitmissing'); % median of post-converged
 %x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
 %x0 = -1248596.4806;  y0 = -4819428.1948;  z0 = 3976505.8949; % AMC4 (NRCAN PPP)
 %x0 = -2493304.6796;  y0 = -4655215.1032;  z0 = 3565497.5918; % JPLM (IGS)
@@ -136,7 +144,7 @@ pos_err = sqrt(E.^2 + N.^2 + U.^2);
 % plot(t, z + zs, '--r');
 % plot(t, z - zs, '--r');
 % ylabel('Z (m)');
-% xlabel('UTC Time');
+% xlabel('GPS Time');
 % grid on;
 
 %% ============================================================
@@ -159,7 +167,7 @@ grid on;
 subplot(3,1,3); hold on;
 plot(t, U, 'm', 'LineWidth', 1.2);
 ylabel('Up (m)');
-xlabel('UTC Time');
+xlabel('GPS Time');
 grid on;
 
 %% ============================================================
@@ -176,13 +184,13 @@ plot(t, E,       'Color', cE, 'LineWidth', 1.2);
 plot(t, N,       'Color', cN, 'LineWidth', 1.2);
 plot(t, U,       'Color', cU, 'LineWidth', 1.2);
 plot(t, pos_err, 'Color', c3, 'LineWidth', 1.4);
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Error (m)');
 title('ENU & 3D Position Error');
 legend({'E','N','U','3D'}, 'Location','best');
 
 convergedIdx = 120;
-E=E(convergedIdx:end); N=N(convergedIdx:end); E=E(convergedIdx:end);
+E=E(convergedIdx:end); N=N(convergedIdx:end); U=U(convergedIdx:end);
 mE = mean(E,'omitnan')*100;       sE = std(E,'omitnan')*100;
 mN = mean(N,'omitnan')*100;       sN = std(N,'omitnan')*100;
 mU = mean(U,'omitnan')*100;       sU = std(U,'omitnan')*100;
@@ -205,7 +213,7 @@ figure('Name','GPS Clock Bias','Color','w'); hold on;
 plot(t, clk, 'k', 'LineWidth', 1.2);
 plot(t, clk + clks, '--r');
 plot(t, clk - clks, '--r');
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Clock Bias (m)');
 title('Receiver Clock Bias with 1σ Uncertainty');
 grid on;
@@ -216,7 +224,7 @@ if ~isempty(galClk)
     plot(t, galClk, 'k', 'LineWidth', 1.2);
     plot(t, galClk + galClk_std, '--r');
     plot(t, galClk - galClk_std, '--r');
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('Clock Bias (m)');
     title('Galileo Clock Bias with 1σ Uncertainty');
     grid on;
@@ -228,7 +236,7 @@ if ~isempty(phasClk)
     plot(t, phasClk, 'k', 'LineWidth', 1.2);
     plot(t, phasClk + phasClk_std, '--r');
     plot(t, phasClk - phasClk_std, '--r');
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('Phase Clock Bias (m)');
     title('Phase Clock Bias with 1σ Uncertainty');
     grid on;
@@ -242,7 +250,7 @@ figure('Name','Troposphere','Color','w'); hold on;
 plot(t, trop, 'g', 'LineWidth', 1.2);
 plot(t, trop + trops, '--r');
 plot(t, trop - trops, '--r');
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Tropo Delay (m)');
 title('Tropospheric Zenith Delay with 1σ Uncertainty');
 grid on;
@@ -256,7 +264,7 @@ if ~isempty(gradN) && ~isempty(gradE)
     plot(t, gradN, 'g', 'LineWidth', 1.2); hold on;
     plot(t, gradN + gradN_std, '--r');
     plot(t, gradN - gradN_std, '--r');
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('North (m)');
     grid on; box on;
 
@@ -264,7 +272,7 @@ if ~isempty(gradN) && ~isempty(gradE)
     plot(t, gradE, 'b', 'LineWidth', 1.2); hold on;
     plot(t, gradE + gradE_std, '--r');
     plot(t, gradE - gradE_std, '--r');
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('East (m)');
     grid on; box on;
 end

@@ -133,7 +133,9 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
 
     const double observed = obs.observed.at(ref_type);
     const double modeled  = obs.modeled.at(ref_type);
-    const double rx_clk   = x(state_manager_.getClockIndex());
+    const double rx_clk   = state_manager_.hasClock()
+                            ? x(state_manager_.getClockIndex())
+                            : 0.0;
     const double zwd      = x(state_manager_.getTropoIndex());
     const double tropo_wet = obs.mf_w * zwd;
 

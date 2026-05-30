@@ -8,7 +8,7 @@ plot_graphic_trace(fname);
 %%
 
 % plot_graphic_trace.m
-% Read and visualize graphic_slip_trace.csv (UTC time axis)
+% Read and visualize graphic_slip_trace.csv (GPS time axis)
 %
 % Expected CSV header (written by GraphicSlipDetector):
 %   week,tow_s,satellite,system,elevation_deg,
@@ -17,7 +17,7 @@ plot_graphic_trace(fname);
 %   slip_cycles,fractional,is_slip
 %
 % Produces three figures:
-%   1. dG (between-epoch GRAPHIC difference) with ±threshold envelope
+%   1. dG (between-epoch GRAPHIC difference) with ï¿½threshold envelope
 %   2. MAD sigma and arc count diagnostics
 %   3. Slip events with estimated integer magnitudes
 %
@@ -71,7 +71,7 @@ T.key = string(T.key);
 T.system = categorical(string(T.system));
 
 %% --- Convert GPS week + TOW to datetime (UTC) ---
-gpsEpoch   = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+gpsEpoch   = datetime(1980,1,6,0,0,0);
 gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 T.utc      = gpsEpoch + seconds(gpsSeconds);
 
@@ -88,7 +88,7 @@ markerList = {'o','s','d','^','v','>','<','p','h','x','+'};
 systemList = categories(T.system);
 
 %% =====================================================================
-%%  Figure 1: dG with ±threshold — one tile per constellation
+%%  Figure 1: dG with ï¿½threshold ï¿½ one tile per constellation
 %% =====================================================================
 figure('Name','GRAPHIC: dG + Threshold','Color','w','Position',[80 400 1400 450]);
 tl1 = tiledlayout(1, numel(systemList), 'TileSpacing','compact','Padding','compact');
@@ -118,7 +118,7 @@ for col = 1:numel(systemList)
             'Marker', m, 'MarkerEdgeColor','none', 'MarkerFaceColor', c, ...
             'MarkerFaceAlpha', 0.5);
 
-        % ±Threshold envelope
+        % ï¿½Threshold envelope
         clite = min(c + 0.4, 1.0);
         plot(T_sys.utc(idx_key),  T_sys.threshold_m(idx_key), ...
             '-', 'Color', [clite 0.3], 'LineWidth', 0.5, 'HandleVisibility','off');
@@ -138,7 +138,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h; %#ok<AGROW>
     end
 
-    xlabel('UTC'); ylabel('dG  (m)');
+    xlabel('GPS Time'); ylabel('dG  (m)');
     title(sysName);
     legend(lh, 'Location','bestoutside','Interpreter','none','FontSize',7);
     datetick('x','keeplimits');
@@ -174,8 +174,8 @@ for col = 1:numel(systemList)
             'MarkerFaceAlpha', 0.5);
     end
 
-    xlabel('UTC'); ylabel('MAD \sigma  (m)');
-    title([sysName ' — MAD \sigma']);
+    xlabel('GPS Time'); ylabel('MAD \sigma  (m)');
+    title([sysName ' ï¿½ MAD \sigma']);
     datetick('x','keeplimits');
     hold off;
 end
@@ -202,8 +202,8 @@ for col = 1:numel(systemList)
             'MarkerFaceAlpha', 0.5);
     end
 
-    xlabel('UTC'); ylabel('Arc Count');
-    title([sysName ' — Arc Count']);
+    xlabel('GPS Time'); ylabel('Arc Count');
+    title([sysName ' ï¿½ Arc Count']);
     datetick('x','keeplimits');
     hold off;
 end
@@ -213,7 +213,7 @@ end
 %% =====================================================================
 figure('Name','GRAPHIC: Slip Events','Color','w','Position',[80 -200 1400 350]);
 tl3 = tiledlayout(1, numel(systemList), 'TileSpacing','compact','Padding','compact');
-title(tl3, 'GRAPHIC Detected Slips — Integer Estimate  dN = round(2 dG / \lambda)');
+title(tl3, 'GRAPHIC Detected Slips ï¿½ Integer Estimate  dN = round(2 dG / \lambda)');
 
 for col = 1:numel(systemList)
     sysName = systemList{col};
@@ -250,7 +250,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h; %#ok<AGROW>
     end
 
-    xlabel('UTC'); ylabel('dN  (cycles)');
+    xlabel('GPS Time'); ylabel('dN  (cycles)');
     title(sysName);
     legend(lh, 'Location','bestoutside','Interpreter','none','FontSize',7);
     datetick('x','keeplimits');

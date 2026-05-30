@@ -46,7 +46,8 @@ namespace GnssProcessor {
         std::map<std::string, double> observed;      /**< Raw observed measurement values keyed by full RINEX-3 code (e.g. "C1C", "L2W") */
         std::map<std::string, double> raw_observed;  /**< All RINEX code+phase observables (L1C, C1W, L5Q, etc.) for cycle slip detection — always contains every available signal regardless of signal_mode */
         std::map<std::string, double> modeled;       /**< Modeled values for the same observables */
-        std::map<std::string, double> variances;     /**< Variance (or sigma^2) for each observable */
+        std::map<std::string, double> variances;     /**< Variance (or sigma^2) for each observable — stochastic-model output with elevation amplification applied */
+        std::map<std::string, double> zenith_variances; /**< Variance (or sigma^2) at zenith for each observable — stochastic-model output evaluated at elevation 90° (sin²=1, no elevation amplification), retaining block/band/attribute/SNR scaling.  Used by MW slip detector as a pair-aware noise floor that doesn't scale with line-of-sight geometry. */
         std::map<std::string, int> lli_flags;        /**< Loss-of-lock indicators keyed by observable name */
         Eigen::Vector3d sat_pos;                     /**< Satellite ECEF position (meters) */
         Eigen::Vector3d sat_vel = Eigen::Vector3d::Zero(); /**< Satellite ECEF velocity (meters/second) */

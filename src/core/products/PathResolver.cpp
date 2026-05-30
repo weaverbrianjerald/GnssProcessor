@@ -345,6 +345,7 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
     }
     append(globByExtension(obs_day_products, {".bia", ".bsx"}));
     append(globByExtension(obs_day_products, {".erp"}));
+    append(globByExtension(obs_day_products, {".inx"}));
 
     // Static (date-less) assets.  Live under a fixed @c static/
     // subtree at the root; every date shares them.
@@ -486,6 +487,7 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     rc.doy               = dl.doy;
     rc.download_rinex    = dl.download_rinex;
     rc.download_products = dl.download_products;
+    rc.download_gim      = dl.download_gim;
     rc.atx_path          = dl.atx_path;
     rc.nc_path           = dl.nc_path;
     rc.crx2rnx_path      = dl.crx2rnx_path;

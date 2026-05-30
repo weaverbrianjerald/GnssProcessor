@@ -98,8 +98,26 @@ public:
     /// Get resolved WL ambiguities (forwarded from MW detector).
     std::map<std::string, int> getResolvedWlAmbiguities() const;
 
+    /// Get fractional residuals of currently-locked WL arcs (forwarded from MW detector).
+    std::map<std::string, double> getResolvedWlFractions() const;
+
     /// Reset satellite state in all detectors.
     void resetSatellite(const std::string& satellite);
+
+    /// Reset MW arc state for a specific (satellite, signal) only.  Arcs on
+    /// signal pairs that don't involve the specified signal are preserved.
+    /// Use when the upstream caller knows precisely which signal slipped
+    /// (e.g. via the KF's per-(sat, signal) outlier dispatch).
+    void resetSatelliteSignal(const std::string& satellite,
+                              const std::string& signal);
+
+    /// Forward a one-shot MW-pivot deprioritization hint to the MW detector.
+    /// Call this when an upstream component (typically @c PivotManager via
+    /// @c requestForcedHandover) flags that the current KF pivot has slipped,
+    /// so the MW pivot picker also avoids the same satellite next epoch.
+    /// See @c MwSlipDetector::notifyPivotForcedHandover for semantics.
+    void notifyPivotForcedHandover(const std::string& satellite,
+                                   const std::string& reason);
 
     /// Provide bias corrections to the MW detector.
     void setCorrections(const GnssCorrections* corrections);
@@ -132,6 +150,64 @@ private:
         StateManager& state_manager,
         const MeasurementModel& meas_model,
         const std::string& epoch_prefix);
+
+    /**
+     * @brief Apply an additive integer cycle slip repair to a single
+     *        (sat, signal) ambiguity, preserving its covariance.
+     *
+     * The textbook alternative to a reset when the integer slip magnitude
+     * is known with high confidence: instead of inflating the variance
+     * and re-seeding from a fresh observation (which loses the converged
+     * ambiguity precision), shift the state by @c slip_cycles · λ_signal
+     * and leave the covariance untouched.  Refuses to act on the BSSD
+     * pivot (its SD ambiguity is frozen at 0; pivot handover is the
+     * proper response there) or when the ambiguity isn't in the state
+     * vector or the signal wavelength can't be resolved.
+     *
+     * @param sat_id       Satellite identifier (e.g. "G01").
+     * @param signal       Signal identifier (e.g. "L1C").
+     * @param slip_cycles  Integer cycle slip in @em this signal's cycles.
+     * @param modeled_obs  Current epoch's modeled observations (for system / wavelength lookup).
+     * @param state_manager Filter state (modified in place on success).
+     * @param meas_model    For BSSD pivot lookup (refusal path).
+     * @param epoch_prefix  Log prefix string.
+     * @return true if the repair was applied; false if the caller should
+     *         fall back to @c resetAmbiguityBssdAware.
+     */
+    bool repairAmbiguityBssdAware(
+        const std::string& sat_id,
+        const std::string& signal,
+        int slip_cycles,
+        const std::vector<PppObservation>& modeled_obs,
+        StateManager& state_manager,
+        const MeasurementModel& meas_model,
+        const std::string& epoch_prefix);
+
+    /**
+     * @brief Resolve per-(culprit signal) integer slip magnitudes from
+     *        the slipped MW pairs.
+     *
+     * For each culprit signal identified by cross-consistency, this
+     * walks the slipped pairs and attributes the WL slip integer to
+     * the culprit alone (since the other signal in the pair is known
+     * clean).  When multiple slipped pairs share the same culprit, the
+     * resulting per-culprit slip integers must agree across pairs;
+     * inconsistency disqualifies repair for that signal (caller should
+     * fall back to reset).
+     *
+     * Pairs without @c slip_wl_known or with both signals identified
+     * as culprits cannot attribute the WL slip to a single signal and
+     * are skipped as contributors.
+     *
+     * @param slipped_pairs Slipped MwSlipResult entries for one satellite.
+     * @param culprits      Culprit signals from @c identifySlippedSignals.
+     * @return Map from culprit signal → integer slip in that signal's
+     *         cycles.  Culprits not present in the map should fall back
+     *         to reset.
+     */
+    std::map<std::string, int> computeCulpritSlipIntegers(
+        const std::vector<MwSlipResult>& slipped_pairs,
+        const std::set<std::string>& culprits) const;
 
     /**
      * @brief Multi-frequency MW cross-consistency analysis.

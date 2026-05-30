@@ -22,6 +22,8 @@
 #include "products/SsrCorrectionStore.hpp"
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <limits>
 #include <numeric>
 #include <fmt/format.h>
 
@@ -270,31 +272,282 @@ namespace GnssProcessor {
         }
 
         // ---------------------------------------------------------------
-        // LAGRANGE MODE — centered window of LAGRANGE_POINTS nodes
+        // LSQ SAT CLOCK MODE — weighted linear LSQ over multi-node window
+        // with explicit rate-observation anchoring at coarse-cadence epochs.
+        //
+        // Fits c(t) ≈ a + b·(t − t_query) locally, where:
+        //   - Value equations:  y_k = a + b·s_k + ν_k       (every node)
+        //   - Rate equations:   m_j = b + μ_j                (rate-bearing nodes)
+        //   - Weights from per-sample sigmas (CLK file) when present, otherwise
+        //     defaults LSQ_DEFAULT_SIG_VAL / LSQ_DEFAULT_SIG_RAT below.
+        //
+        // Window strategy: bracket-centered, sized to span the previous and
+        // next coarse-cadence rate-bearing nodes that contain t_query (~11
+        // nodes for a 30 s file with rates every 5 min).  When t_query is
+        // within LSQ_BOUNDARY_TOL_S of one of those rate nodes, the window
+        // is extended by one rate window on that side — yielding 3 rate
+        // constraints with a window roughly centered on the query.  Capped
+        // at LSQ_MAX_NODES as a runaway guard against data gaps.
+        //
+        // Degrades gracefully to standard 2-node linear interpolation when
+        // fewer than LSQ_MIN_NODES valid nodes are in the window or the
+        // normal equations are singular.  Boundary queries (before first
+        // or after last clock sample) hand off to single-node nearest, same
+        // as the Linear path.
+        //
+        // Trade-off: gives up exact-node-passage (LSQ smooths instead of
+        // interpolating), introducing ~mm-level discontinuities at clock
+        // epochs when the window slides.  In exchange the observation-noise
+        // component of the value estimate at the bracket midpoint drops by
+        // ~√(N/2) versus plain linear — material when σ_observation ≫ σ_
+        // process_per_sample (the typical regime for 30 s IGS Final clocks
+        // in the seconds-to-minutes range).
+        // ---------------------------------------------------------------
+        if (mode == SatelliteClockInterpolationMode::LsqSatClock) {
+            constexpr size_t LSQ_NOMINAL_NODES   = 11;        // 5-min span at 30 s cadence
+            constexpr size_t LSQ_MAX_NODES       = 25;
+            constexpr size_t LSQ_MIN_NODES       = 3;
+            constexpr double LSQ_BOUNDARY_TOL_S  = 60.0;
+            constexpr double LSQ_DEFAULT_SIG_VAL = 30e-12;    // s (IGS Final residual ~30 ps)
+            constexpr double LSQ_DEFAULT_SIG_RAT = 0.5e-12;   // s/s (typical AC rate sigma)
+            constexpr double MAX_BRACKET_GAP_LSQ = 65.0;      // matches Linear-mode guard
+
+            const size_t n_total = sat_clocks.size();
+
+            // Standard 2-node linear at the bracket, no logging here — the
+            // LSQ branch logs the fallback once with full context above.
+            auto linearFallback = [&](size_t lo, size_t hi) -> double {
+                if (lo >= n_total || hi >= n_total) return 0.0;
+                const ClockData* c_lo = sat_clocks[lo];
+                const ClockData* c_hi = sat_clocks[hi];
+                if (!valid_node(c_lo) || !valid_node(c_hi)) return 0.0;
+                const double x0 = TimeUtils::continuousGpsSeconds(c_lo->time);
+                const double x1 = TimeUtils::continuousGpsSeconds(c_hi->time);
+                const double dt = x1 - x0;
+                if (dt < 1e-9) return c_lo->clock_bias;
+                if (dt > MAX_BRACKET_GAP_LSQ) return 0.0;
+                return c_lo->clock_bias + (c_hi->clock_bias - c_lo->clock_bias)
+                                        * (t_query - x0) / dt;
+            };
+
+            // --- Bracket location ---
+            auto upper_bracket_it = std::upper_bound(sat_clocks.begin(), sat_clocks.end(), t_query,
+                [](double t, const ClockData* c) {
+                    return t < TimeUtils::continuousGpsSeconds(c->time);
+                });
+
+            size_t bracket_lo;
+            if (upper_bracket_it == sat_clocks.begin()) {
+                bracket_lo = 0;
+            } else if (upper_bracket_it == sat_clocks.end()) {
+                bracket_lo = n_total - 1;
+            } else {
+                bracket_lo = std::distance(sat_clocks.begin(), upper_bracket_it) - 1;
+            }
+
+            // Exact-node shortcut (same as Linear) — preserves passage
+            // through the exact sample value when t_query coincides.
+            if (upper_bracket_it != sat_clocks.end()) {
+                const double t_node = TimeUtils::continuousGpsSeconds((*upper_bracket_it)->time);
+                if (std::abs(t_node - t_query) < 1e-6 && valid_node(*upper_bracket_it))
+                    return (*upper_bracket_it)->clock_bias;
+            }
+
+            // --- Locate rate-bearing nodes bracketing t_query ---
+            // r_prev: largest index ≤ bracket_lo where has_rate is true
+            // r_next: smallest index > bracket_lo where has_rate is true
+            // Both set to n_total if no such node exists in that direction.
+            auto findRateLeft = [&](size_t from_inclusive) -> size_t {
+                for (size_t i = from_inclusive + 1; i-- > 0; ) {
+                    if (sat_clocks[i]->has_rate) return i;
+                }
+                return n_total;
+            };
+            auto findRateRight = [&](size_t from_inclusive) -> size_t {
+                for (size_t i = from_inclusive; i < n_total; ++i) {
+                    if (sat_clocks[i]->has_rate) return i;
+                }
+                return n_total;
+            };
+
+            const size_t r_prev = findRateLeft(bracket_lo);
+            const size_t r_next = findRateRight(bracket_lo + 1);
+
+            // --- Window selection ---
+            size_t win_start, win_end;
+            const size_t half = LSQ_NOMINAL_NODES / 2;
+
+            if (r_prev == n_total && r_next == n_total) {
+                // No rate-bearing nodes anywhere → value-only LSQ on a
+                // bracket-centered nominal-width window.
+                win_start = (bracket_lo >= half) ? bracket_lo - half : 0;
+                win_end   = std::min(win_start + LSQ_NOMINAL_NODES, n_total);
+            } else {
+                size_t lo_idx = (r_prev != n_total) ? r_prev : 0;
+                size_t hi_idx = (r_next != n_total) ? r_next : (n_total - 1);
+
+                // Boundary proximity: when t_query is within
+                // LSQ_BOUNDARY_TOL_S of a rate node, extend that side
+                // to include the next rate node beyond — gives 3 rate
+                // constraints with a roughly query-centered window.
+                if (r_prev != n_total) {
+                    const double t_prev = TimeUtils::continuousGpsSeconds(sat_clocks[r_prev]->time);
+                    if (std::abs(t_query - t_prev) < LSQ_BOUNDARY_TOL_S && r_prev > 0) {
+                        const size_t r_prev2 = findRateLeft(r_prev - 1);
+                        if (r_prev2 != n_total && r_prev2 < lo_idx) lo_idx = r_prev2;
+                    }
+                }
+                if (r_next != n_total) {
+                    const double t_next = TimeUtils::continuousGpsSeconds(sat_clocks[r_next]->time);
+                    if (std::abs(t_next - t_query) < LSQ_BOUNDARY_TOL_S && r_next + 1 < n_total) {
+                        const size_t r_next2 = findRateRight(r_next + 1);
+                        if (r_next2 != n_total && r_next2 > hi_idx) hi_idx = r_next2;
+                    }
+                }
+
+                win_start = lo_idx;
+                win_end   = std::min(hi_idx + 1, n_total);  // half-open
+            }
+
+            // Runaway cap (data gaps / sparse coverage) — re-center on
+            // bracket and clip to LSQ_MAX_NODES width.
+            if (win_end > win_start && (win_end - win_start) > LSQ_MAX_NODES) {
+                const size_t max_half = LSQ_MAX_NODES / 2;
+                win_start = (bracket_lo >= max_half) ? bracket_lo - max_half : 0;
+                win_end   = std::min(win_start + LSQ_MAX_NODES, n_total);
+            }
+
+            // --- Collect valid nodes within the window ---
+            std::vector<const ClockData*> nodes;
+            nodes.reserve(win_end - win_start);
+            for (size_t i = win_start; i < win_end; ++i) {
+                if (valid_node(sat_clocks[i])) nodes.push_back(sat_clocks[i]);
+            }
+
+            // --- Graceful fallback when too few valid nodes for LSQ ---
+            if (nodes.size() < LSQ_MIN_NODES) {
+                // Boundary cases (before-first or after-last) → nearest
+                // single-node value, same convention as Linear mode.
+                if (upper_bracket_it == sat_clocks.begin() || upper_bracket_it == sat_clocks.end()) {
+                    const ClockData* nearest = (upper_bracket_it == sat_clocks.end())
+                        ? sat_clocks.back() : sat_clocks.front();
+                    if (valid_node(nearest)) {
+                        log->debug(
+                            "Clock interp (LSQ→nearest-fallback) for {} at tow={:.3f}: only {} valid nodes — using nearest",
+                            satellite, time.tow, nodes.size());
+                        return nearest->clock_bias;
+                    }
+                    return 0.0;
+                }
+                const double result = linearFallback(bracket_lo, bracket_lo + 1);
+                log->debug(
+                    "Clock interp (LSQ→linear-fallback) for {} at tow={:.3f}: only {} valid nodes in window, "
+                    "result={:.3e}s ({:.3f}m)",
+                    satellite, time.tow, nodes.size(), result, result * Constants::SPEED_OF_LIGHT);
+                return result;
+            }
+
+            // --- Weighted normal equations (centered at t_query) ---
+            //
+            //   [ Sw      Swx          ] [ a ]   [ Swy           ]
+            //   [ Swx     Swxx + Sm    ] [ b ] = [ Swxy + Smy    ]
+            //
+            // s_k = (t_k − t_query) shift makes the fit value at t_query
+            // equal to `a` directly (no separate evaluation step).  Rate
+            // observations contribute to the slope row only (∂(a+b·t)/∂a = 0).
+            double Sw = 0.0, Swx = 0.0, Swxx = 0.0, Swy = 0.0, Swxy = 0.0;
+            double Sm = 0.0, Smy = 0.0;
+            size_t n_rates = 0;
+
+            for (const ClockData* c : nodes) {
+                const double s = TimeUtils::continuousGpsSeconds(c->time) - t_query;
+                const double y = c->clock_bias;
+                const double sig_y = (c->clock_bias_sigma > 0.0)
+                                     ? c->clock_bias_sigma : LSQ_DEFAULT_SIG_VAL;
+                const double w_y = 1.0 / (sig_y * sig_y);
+                Sw   += w_y;
+                Swx  += w_y * s;
+                Swxx += w_y * s * s;
+                Swy  += w_y * y;
+                Swxy += w_y * s * y;
+
+                if (c->has_rate) {
+                    const double m = c->clock_rate;
+                    const double sig_m = (c->clock_rate_sigma > 0.0)
+                                         ? c->clock_rate_sigma : LSQ_DEFAULT_SIG_RAT;
+                    const double w_m = 1.0 / (sig_m * sig_m);
+                    Sm  += w_m;
+                    Smy += w_m * m;
+                    ++n_rates;
+                }
+            }
+
+            const double det = Sw * (Swxx + Sm) - Swx * Swx;
+            if (!std::isfinite(det) || std::abs(det) < 1e-30) {
+                // Singular normal equations — extremely rare (would imply
+                // all sample times coincide).  Fall back to plain linear.
+                const double fallback_hi = std::min<size_t>(bracket_lo + 1, n_total - 1);
+                const double result = linearFallback(bracket_lo, fallback_hi);
+                log->warn(
+                    "Clock interp (LSQ→linear-fallback) for {} at tow={:.3f}: singular normal eqs (det={:.3e})",
+                    satellite, time.tow, det);
+                return result;
+            }
+
+            const double a = ((Swxx + Sm) * Swy - Swx * (Swxy + Smy)) / det;
+            // const double b_slope = (-Swx * Swy + Sw * (Swxy + Smy)) / det;
+            // ^ slope estimate available if needed downstream (currently unused)
+
+            log->debug(
+                "Clock interp (LSQ) for {} at tow={:.3f}: window=[{}..{}] ({} valid, {} with rates), "
+                "result={:.3e}s ({:.3f}m)",
+                satellite, time.tow, win_start, win_end - 1,
+                nodes.size(), n_rates, a, a * Constants::SPEED_OF_LIGHT);
+
+            return a;
+        }
+
+        // ---------------------------------------------------------------
+        // LAGRANGE MODE — bracket-centered window of LAGRANGE_POINTS nodes
         //
         // Not recommended for standard 30 s IGS CLK files — use Linear instead.
         // Retained for high-rate (1 Hz) products.
+        //
+        // The window is anchored on the bracket [x_a, x_{a+1}] containing
+        // t_query and slides by one node when t_query crosses x_{a+1}.  At
+        // that instant x_{a+1} is a node of both windows so the polynomial
+        // value is identical for both — clock is continuous across the
+        // swap.  Selecting nodes by nearest-to-query instead shifts the
+        // window at the midpoint between epochs, where the two polynomials
+        // disagree, producing a per-epoch sawtooth.
         // ---------------------------------------------------------------
-        auto upper_it = find_upper();
+        const size_t n_total = sat_clocks.size();
 
-        size_t nearest_idx = 0;
-        if (upper_it == sat_clocks.end()) {
-            nearest_idx = sat_clocks.size() - 1;
-        } else if (upper_it == sat_clocks.begin()) {
-            nearest_idx = 0;
+        auto upper_bracket_it = std::upper_bound(sat_clocks.begin(), sat_clocks.end(), t_query,
+            [](double t, const ClockData* c) {
+                return t < TimeUtils::continuousGpsSeconds(c->time);
+            });
+
+        size_t bracket_lo;
+        if (upper_bracket_it == sat_clocks.begin()) {
+            bracket_lo = 0;
+        } else if (upper_bracket_it == sat_clocks.end()) {
+            bracket_lo = n_total - 1;
         } else {
-            size_t hi = std::distance(sat_clocks.begin(), upper_it);
-            size_t lo = hi - 1;
-            double t_lo = TimeUtils::continuousGpsSeconds(sat_clocks[lo]->time);
-            double t_hi = TimeUtils::continuousGpsSeconds(sat_clocks[hi]->time);
-            nearest_idx = (t_query - t_lo <= t_hi - t_query) ? lo : hi;
+            bracket_lo = std::distance(sat_clocks.begin(), upper_bracket_it) - 1;
         }
 
-        const size_t half_before = LAGRANGE_POINTS / 2;
-        size_t start_idx = (nearest_idx > half_before) ? nearest_idx - half_before : 0;
-        if (start_idx + LAGRANGE_POINTS > sat_clocks.size())
-            start_idx = (sat_clocks.size() > LAGRANGE_POINTS) ? sat_clocks.size() - LAGRANGE_POINTS : 0;
-        const size_t end_idx = std::min(start_idx + LAGRANGE_POINTS, sat_clocks.size());
+        const size_t n_win = std::min(LAGRANGE_POINTS, n_total);
+        const size_t half_before = (n_win - 1) / 2;
+        size_t start_idx;
+        if (bracket_lo < half_before) {
+            start_idx = 0;
+        } else if (bracket_lo + (n_win - half_before) > n_total) {
+            start_idx = n_total - n_win;
+        } else {
+            start_idx = bracket_lo - half_before;
+        }
+        const size_t end_idx = start_idx + n_win;
 
         std::vector<const ClockData*> nodes;
         nodes.reserve(LAGRANGE_POINTS);
@@ -468,16 +721,58 @@ namespace GnssProcessor {
             return Eigen::Vector3d::Zero();
         }
 
-        // Find closest ERP entry
+        // Linear interpolation of ERP (xp, yp) bracketing the query time.
+        //
+        // Previously this used std::min_element to pick the single nearest
+        // ERP entry, which produced a discrete step in xp/yp at the midpoint
+        // between consecutive ERP samples.  For typical daily ERP this is a
+        // sub-mm step every 12 h at noon (well below noise), but for any
+        // sub-daily ERP file the artifact grows linearly with the per-sample
+        // polar motion delta.  Linear interpolation matches the Sun/Moon
+        // path in Planetary::interpolateErp and eliminates the step.
         const double t_query = TimeUtils::continuousGpsSeconds(time);
-        auto it = std::min_element(erps_.begin(), erps_.end(),
-            [t_query](const ErpData& a, const ErpData& b) {
-                return std::abs(TimeUtils::continuousGpsSeconds(a.time) - t_query) <
-                    std::abs(TimeUtils::continuousGpsSeconds(b.time) - t_query);
+        auto upper_it = std::upper_bound(erps_.begin(), erps_.end(), t_query,
+            [](double t, const ErpData& e) {
+                return t < TimeUtils::continuousGpsSeconds(e.time);
             });
-        if (it == erps_.end() || !std::isfinite(it->xp) || !std::isfinite(it->yp)) {
-            log->trace("No valid ERP data for pole tide at TOW {:.3f}", time.tow);
-            return Eigen::Vector3d::Zero();
+
+        double xp_arcsec = 0.0, yp_arcsec = 0.0;
+        if (upper_it == erps_.begin()) {
+            // Query before first ERP sample — use first entry (clamped extrap).
+            if (!std::isfinite(upper_it->xp) || !std::isfinite(upper_it->yp)) {
+                log->trace("No valid ERP data for pole tide at TOW {:.3f}: first entry invalid", time.tow);
+                return Eigen::Vector3d::Zero();
+            }
+            xp_arcsec = upper_it->xp;
+            yp_arcsec = upper_it->yp;
+        } else if (upper_it == erps_.end()) {
+            // Query past last ERP sample — use last entry (clamped extrap).
+            auto last = std::prev(erps_.end());
+            if (!std::isfinite(last->xp) || !std::isfinite(last->yp)) {
+                log->trace("No valid ERP data for pole tide at TOW {:.3f}: last entry invalid", time.tow);
+                return Eigen::Vector3d::Zero();
+            }
+            xp_arcsec = last->xp;
+            yp_arcsec = last->yp;
+        } else {
+            // Interior — linear interpolate between the bracketing pair.
+            auto lo_it = std::prev(upper_it);
+            if (!std::isfinite(lo_it->xp) || !std::isfinite(lo_it->yp) ||
+                !std::isfinite(upper_it->xp) || !std::isfinite(upper_it->yp)) {
+                log->trace("ERP bracket invalid for pole tide at TOW {:.3f}", time.tow);
+                return Eigen::Vector3d::Zero();
+            }
+            const double t_lo = TimeUtils::continuousGpsSeconds(lo_it->time);
+            const double t_hi = TimeUtils::continuousGpsSeconds(upper_it->time);
+            const double dt   = t_hi - t_lo;
+            if (dt < 1e-9) {
+                xp_arcsec = lo_it->xp;
+                yp_arcsec = lo_it->yp;
+            } else {
+                const double w = (t_query - t_lo) / dt;
+                xp_arcsec = lo_it->xp + w * (upper_it->xp - lo_it->xp);
+                yp_arcsec = lo_it->yp + w * (upper_it->yp - lo_it->yp);
+            }
         }
 
         const Coordinates::Llh llh = Coordinates::ecefToLlh(rx_pos);
@@ -493,8 +788,8 @@ namespace GnssProcessor {
         constexpr double AS2RAD  = 4.848136811e-6;
         constexpr double MAS2RAD = AS2RAD * 1e-3;
 
-        const double m1 =  (it->xp * AS2RAD) - (xp_mean_mas * MAS2RAD);
-        const double m2 = -(it->yp * AS2RAD) + (yp_mean_mas * MAS2RAD);
+        const double m1 =  (xp_arcsec * AS2RAD) - (xp_mean_mas * MAS2RAD);
+        const double m2 = -(yp_arcsec * AS2RAD) + (yp_mean_mas * MAS2RAD);
 
         // IERS 2010, Eq. 7.26 (simplified Love/Shida)
         const double radial = -0.033 * std::sin(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
@@ -1037,51 +1332,115 @@ namespace GnssProcessor {
         // loses information near 0 and π.
         Eigen::Vector3d Ds_hat = Ds / Ds_norm, Dr_hat = Dr / Dr_norm;
         double windUp_c = std::atan2(k.dot(Ds_hat.cross(Dr_hat)), Ds_hat.dot(Dr_hat));
+        const double wrapped_c = windUp_c;  // raw atan2 angle, pre-accumulation
 
         // Accumulated mode: unwrap relative to previous epoch for continuity.
         // Required for IAR where ambiguities must remain constant integers.
         // Fractional mode (default): raw atan2 angle; float ambiguity absorbs
         // integer-cycle component. See header for full design discussion.
         const double epoch_s = static_cast<double>(time.week) * 604800.0 + time.tow;
+        double gap_s     = std::numeric_limits<double>::quiet_NaN();
+        bool   restarted = false;
         if (accumulate) {
             constexpr double TWO_PI = 2.0 * Constants::PI;
             constexpr double kMaxGapSeconds = 300.0; // 5 minutes
             auto pw_it = prev_windup_.find(satellite);
-            if (pw_it != prev_windup_.end()) {
+            if (pw_it == prev_windup_.end()) {
+                // First epoch this satellite is seen: seed the accumulator
+                // with the raw atan2 angle (nothing to unwrap against yet).
+                prev_windup_[satellite] = { windUp_c, epoch_s };
+            } else if (epoch_s == pw_it->second.epoch_s) {
+                // Same epoch.  computePhaseWindUp() is called once per signal
+                // and once per measurement-rebuild / relinearization pass; the
+                // wind-up angle is a per-epoch geometric quantity, so reuse the
+                // accumulated value produced by this epoch's first call.  Re-
+                // storing here would overwrite prev_windup_ with the still-
+                // wrapped atan2 angle, resetting the accumulator reference and
+                // silently collapsing accumulated mode back to fractional.
+                gap_s = 0.0;
+                windUp_c = pw_it->second.angle;
+            } else {
                 const double gap = epoch_s - pw_it->second.epoch_s;
+                gap_s = gap;
                 if (gap > 0.0 && gap < kMaxGapSeconds) {
                     double diff = windUp_c - pw_it->second.angle;
                     diff -= TWO_PI * std::round(diff / TWO_PI);
                     windUp_c = pw_it->second.angle + diff;
-                } else if (gap >= kMaxGapSeconds) {
+                } else {
+                    // Gap exceeds the continuity threshold (or epochs ran
+                    // backwards): the unwrap reference is no longer reliable,
+                    // so restart accumulation from the raw atan2 angle.
+                    restarted = true;
                     log_manager_.getLogger("ppp_model")->debug(
-                        "Phase wind-up gap {:.0f}s > {:.0f}s for {}: restarting accumulation",
-                        gap, kMaxGapSeconds, satellite);
+                        "Phase wind-up gap {:.0f}s for {} exceeds {:.0f}s "
+                        "continuity threshold: restarting accumulation",
+                        gap, satellite, kMaxGapSeconds);
                 }
+                prev_windup_[satellite] = { windUp_c, epoch_s };
             }
         }
-
-        prev_windup_[satellite] = { windUp_c, epoch_s };
 
         double phi_m = windUp_c * wavelength / (2.0 * Constants::PI);
         log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: {:.6f} m ({:.3f} rad, {})",
             satellite, phi_m, windUp_c, accumulate ? "accumulated" : "fractional");
+
+        // Diagnostic CSV: one row per (satellite, epoch).  computePhaseWindUp
+        // is called once per signal and once per measurement-rebuild pass, so
+        // dedupe on epoch_s to keep the trace at per-epoch granularity.
+        if (windup_trace_.is_open()) {
+            double& last_traced = windup_trace_epoch_[satellite];
+            if (last_traced != epoch_s) {
+                last_traced = epoch_s;
+                const Eigen::Vector3d los = -k;  // receiver -> satellite
+                const Eigen::Vector3d up(std::cos(phi) * std::cos(lam),
+                                         std::cos(phi) * std::sin(lam),
+                                         std::sin(phi));
+                const double el_deg = std::asin(std::clamp(los.dot(up), -1.0, 1.0))
+                                      * 180.0 / Constants::PI;
+                double az_deg = std::atan2(los.dot(y_r), los.dot(x_r))
+                                * 180.0 / Constants::PI;
+                if (az_deg < 0.0) az_deg += 360.0;
+                windup_trace_ << std::fixed << std::setprecision(3)
+                              << time.week << ',' << time.tow << ','
+                              << satellite << ','
+                              << std::setprecision(6)
+                              << el_deg << ',' << az_deg << ','
+                              << (accumulate ? "accumulated" : "fractional") << ','
+                              << wavelength << ','
+                              << wrapped_c << ',' << windUp_c << ','
+                              << windUp_c / (2.0 * Constants::PI) << ','
+                              << phi_m << ',';
+                if (std::isfinite(gap_s)) windup_trace_ << gap_s;
+                windup_trace_ << ',' << (restarted ? 1 : 0) << '\n';
+            }
+        }
         return phi_m;
     }
 
-    void GnssCorrections::resetPhaseWindUp(const std::string& satellite) {
-        auto it = prev_windup_.find(satellite);
-        if (it != prev_windup_.end()) {
-            log_manager_.getLogger("corrections")->debug("Reset phase wind-up for {}: prev={:.3f} rad", satellite, it->second.angle);
-            prev_windup_.erase(it);
-        }
-    }
+    bool GnssCorrections::enableWindUpTracing(const std::filesystem::path& log_dir) {
+        auto logger = log_manager_.getLogger("corrections");
 
-    void GnssCorrections::resetAllPhaseWindUp() {
-        if (!prev_windup_.empty()) {
-            log_manager_.getLogger("corrections")->debug("Reset phase wind-up for all {} satellites", prev_windup_.size());
-            prev_windup_.clear();
+        std::error_code ec;
+        if (!std::filesystem::exists(log_dir)) {
+            std::filesystem::create_directories(log_dir, ec);
+            if (ec && logger) {
+                logger->warn("Failed to create log directory '{}': {}",
+                              log_dir.string(), ec.message());
+            }
         }
+
+        const auto trace_path = log_dir / "windup_trace.csv";
+        windup_trace_.open(trace_path, std::ios::out | std::ios::trunc);
+        if (!windup_trace_.is_open()) {
+            if (logger) logger->warn("Could not open wind-up trace file '{}'", trace_path.string());
+            return false;
+        }
+
+        windup_trace_ << "week,tow_s,satellite,elevation_deg,azimuth_deg,mode,"
+                      << "wavelength_m,wrapped_rad,accumulated_rad,cycles,windup_m,gap_s,restart\n";
+        windup_trace_epoch_.clear();
+        if (logger) logger->info("Phase wind-up CSV trace enabled: {}", trace_path.string());
+        return true;
     }
 
 } // namespace GnssProcessor

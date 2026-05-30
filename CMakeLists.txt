@@ -41,7 +41,13 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
 # Core library
 add_library(gnss_core STATIC
     src/core/atmosphere/Troposphere.cpp
+    src/core/atmosphere/Gpt3.cpp
+    src/core/atmosphere/Vmf3.cpp
     src/core/atmosphere/Ionosphere.cpp
+    src/core/atmosphere/IonexParser.cpp
+    src/core/atmosphere/GlobalIonosphereMap.cpp
+    src/core/atmosphere/MagneticField.cpp
+    src/core/atmosphere/HigherOrderIonosphere.cpp
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
     src/core/logging/LogManager.cpp
@@ -89,6 +95,7 @@ add_library(gnss_core STATIC
 	#src/core/slip/GfSlipDetector.cpp
 	src/core/slip/GraphicSlipDetector.cpp
 	src/core/slip/CycleSlipManager.cpp
+	src/core/slip/IonoVariabilityMonitor.cpp
     src/core/products/DataDownloader.cpp
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
@@ -139,6 +146,10 @@ add_executable(gnss_tests
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
+    tests/test_estimation_core.cpp
+    tests/test_signal_math.cpp
+    tests/test_geometry.cpp
+    tests/test_stochastic_model.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

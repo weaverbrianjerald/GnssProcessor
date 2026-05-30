@@ -8,8 +8,10 @@
   "processing": {
     "mode": "Baseline-Single",
     "active_systems": [ "GPS" ],
-    "signal_mode": "dual",
+    "frequency_mode": "dual",
     "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": true,
     "satellite_interpolation_mode": "lagrange",
@@ -69,7 +71,7 @@
       "sat_bias_q": 1e-10,
       "system_time_offset_q": 1e-12,
       "tropo_gradient_q": 5e-12,
-      "velocity_q": 1e2
+      "acceleration_psd_q": 1e2
     },
     "initial_std": {
       "position": 30.0,

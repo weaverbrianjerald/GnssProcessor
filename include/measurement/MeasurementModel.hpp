@@ -158,12 +158,17 @@ namespace GnssProcessor {
         PivotManager& getPivotManager() { return pivot_manager_; }
         const PivotManager& getPivotManager() const { return pivot_manager_; }
 
-        /// Provide the MW detector to the pivot manager for quality-based scoring.
-        void setMwDetector(const MwSlipDetector* mw) { pivot_manager_.setMwDetector(mw); }
-
         /// Access the state initializer (for shared helpers like resolveReceiverBias).
         StateInitializer& getStateInitializer() { return state_initializer_; }
         const StateInitializer& getStateInitializer() const { return state_initializer_; }
+
+        /// Per-satellite NL reference band map for the
+        /// @c StateAmbiguityBasis::NlWl path.  Used by @c BssdTransform to
+        /// look up the pivot's NL/WL state columns when building the SD
+        /// S-transform.  Empty when basis == PerBand.
+        const std::map<std::string, char>& getNlWlReferenceBands() const {
+            return nlwl_ref_band_;
+        }
 
     private:
         // -------------------------------------------------------------------
@@ -219,13 +224,29 @@ namespace GnssProcessor {
         /// the original pivot to avoid cascading SD-ambiguity invalidation).
         GnssTime last_pivot_epoch_{};
 
-        /// Per-constellation set of frequency bands covered by the BSSD pivot.
-        /// Populated at the start of each computeMeasurementUpdate() call.
-        /// When BSSD is active, measurements on bands not covered by the
-        /// pivot are excluded (they would pass through as undifferenced
-        /// singletons with zeroed clock columns, corrupting the solution).
-        /// Key: constellation (e.g. "GPS"), Value: set of bands (e.g. {"L1","L2","C1","C2"}).
-        mutable std::map<std::string, std::set<std::string>> bssd_pivot_bands_;
+        /// Per-constellation set of full RINEX-3 signal codes covered by the
+        /// BSSD pivot.  Populated at the start of each computeMeasurementUpdate()
+        /// call from the pivot satellite's observed signals.
+        ///
+        /// Per-signal (not per-band) granularity is required by the BSSD
+        /// per-signal grouping in @c BssdTransform: a non-pivot's L1C is
+        /// only SD-eligible if the pivot ALSO tracks L1C, even when the
+        /// pivot tracks L1W on the same band.  A band-level filter would
+        /// admit the non-pivot's L1C, leave it singleton at SD time, and
+        /// strand the ambiguity state with no measurement update.
+        ///
+        /// Key: constellation ("GPS"), Value: set of signals
+        /// ({"L1W","L1C","C1W","C1C","L2W","C2W",...}).
+        mutable std::map<std::string, std::set<std::string>> bssd_pivot_signals_;
+
+        /// Per-satellite NL reference band for the @c StateAmbiguityBasis::NlWl
+        /// path.  Populated by @c ensureRequiredStates each epoch and consumed
+        /// by @c buildJacobianRow (and by @c BssdTransform via a getter) to
+        /// resolve which NL state a satellite's phase observation projects
+        /// onto.  Frozen for the lifetime of the satellite's arc — once a
+        /// reference band is chosen it is not migrated.  Empty when basis ==
+        /// PerBand.  Key: satellite ID; Value: RINEX band digit (e.g. '1').
+        std::map<std::string, char> nlwl_ref_band_;
 
         // Tightly-coupled IMU state (set per-epoch via setImuState())
         Eigen::Matrix3d tc_C_b_e_ = Eigen::Matrix3d::Identity();
@@ -292,7 +313,8 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
 
         void handleBssdPivotHandover(const std::vector<PppObservation>& observations,
-                                      const std::string& epoch_prefix);
+                                      const std::string& epoch_prefix,
+                                      bool forced_only = false);
 
         void freezePivotAmbiguityCovariance();
 

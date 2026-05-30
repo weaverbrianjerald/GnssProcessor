@@ -153,25 +153,92 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Enumeration for signal processing modes.
+     * @brief Frequency bands the Kalman filter estimates.
      *
-     * Specifies the number of signals to use for measurements.
+     * Renamed from @c SignalMode — "frequency" reflects what this enum
+     * actually controls (band scope), leaving "signal" to mean the full
+     * (band, tracking-attribute) tuple.  Pair this with @c ChannelMode
+     * to express the full KF active-signal set.
      */
-    enum class SignalMode { 
-        Dual,   ///< Use dual-frequency signals.
-        Triple, ///< Use triple-frequency signals.
-        All     ///< Use all available signals.
+    enum class FrequencyMode {
+        Dual,   ///< Two bands per constellation (e.g. GPS L1+L2).
+        Triple, ///< Three bands per constellation (e.g. GPS L1+L2+L5).
+        All     ///< Every band a constellation publishes.
     };
 
     /**
-     * @brief Enumeration for MW slip detector signal selection.
+     * @brief Tracking-mode channel selection within an active band.
      *
-     * Controls which frequency bands the Melbourne-Wubbena slip detector
-     * uses to form dual-frequency MW pairs.
+     * @c Single picks one canonical tracking attribute per band via
+     * @c signalAttributePriority (e.g. GPS L1 → L1W); @c All keeps every
+     * tracked channel as an independent ambiguity state (e.g. L1W and
+     * L1C both get their own ambiguity).  State-vector size scales with
+     * the channel count, but the redundancy aids cross-consistency.
      */
-    enum class MwSignalMode {
-        Filter, ///< Use only the bands selected by the KF signal_mode (default).
-        All     ///< Use all available RINEX bands (raw_observed).
+    enum class ChannelMode {
+        Single, ///< Canonical tracking attribute per band (default).
+        All     ///< Every tracking-mode channel present in the band.
+    };
+
+    /**
+     * @brief MW slip detector frequency-band scope.
+     *
+     * Independent of the KF's @c FrequencyMode so the detector can be
+     * tuned for cross-consistency without inflating the state vector.
+     * @c Mirror inherits the KF's @c FrequencyMode; the other values
+     * override it.
+     */
+    enum class MwFrequencyMode {
+        Mirror, ///< Match the KF's @c FrequencyMode (default).
+        Dual,   ///< Override: two bands.
+        Triple, ///< Override: three bands.
+        All     ///< Override: every available band (from @c raw_observed).
+    };
+
+    /**
+     * @brief MW slip detector channel-multiplicity scope.
+     *
+     * Independent of the KF's @c ChannelMode.  @c Mirror inherits the
+     * KF setting; @c Single or @c All overrides it.  A common
+     * combination is KF @c Single + MW @c All — lean state vector but
+     * every tracked channel feeds slip cross-checks.
+     */
+    enum class MwChannelMode {
+        Mirror, ///< Match the KF's @c ChannelMode (default).
+        Single, ///< Override: canonical channel only.
+        All     ///< Override: every tracked channel.
+    };
+
+    /**
+     * @brief Carrier-phase ambiguity parameterization in the Kalman state.
+     *
+     * Selects how phase ambiguities are stored in the state vector — and,
+     * by extension, how the measurement Jacobian is built and how
+     * @c AmbiguityResolver / @c MwSlipDetector interact with the float
+     * solution.
+     *
+     *  - @c PerBand : one ambiguity per (satellite, signal/IF combo), the
+     *    historical layout.  Key format @c "<sat>_<sig>" (e.g. @c "G01_L1C",
+     *    @c "G01_L1C_L5Q").  The MW detector resolves WL integers
+     *    independently and feeds them to AmbiguityResolver as a
+     *    pseudo-observation map.
+     *
+     *  - @c NlWl : one narrow-lane state per (sat, band) plus one
+     *    wide-lane state per (sat, band-pair).  Key formats
+     *    @c "<sat>_NL_<band>" and @c "<sat>_WL_<band_hi>_<band_lo>"
+     *    (e.g. @c "G01_NL_1", @c "G01_WL_1_2").  WL slip-detection
+     *    output writes directly into the WL state covariance, and
+     *    LAMBDA can search the NL sub-vector with WL pre-constrained.
+     *    Halves the integer search dimension and exposes the full WL
+     *    information to the filter rather than only as an
+     *    out-of-band hold update.
+     *
+     * Default is @c PerBand to preserve existing behavior; switch via
+     * @c estimation.state_ambiguity_basis.
+     */
+    enum class StateAmbiguityBasis {
+        PerBand, ///< One ambiguity per (sat, signal) — historical layout.
+        NlWl     ///< Narrow-lane + wide-lane state pair per (sat, band-pair).
     };
 
     /**
@@ -192,8 +259,37 @@ namespace GnssProcessor {
      * Specifies the type of interpolation used for satellite clock computation.
      */
     enum class SatelliteClockInterpolationMode {
-        Linear,   ///< Linear interpolation.
-        Lagrange  ///< Lagrange interpolation.
+        Linear,         ///< 2-node bracket linear interpolation (MMSE-optimal for pure Brownian motion with noise-free samples).
+        Lagrange,       ///< Bracket-centered polynomial Lagrange (overfits noisy random-walk clocks; not recommended for 30 s IGS Final).
+        LsqSatClock     ///< Weighted linear LSQ over multi-node window, anchored by explicit clock-rate observations at the
+                        ///< coarse-cadence epochs (typ. every 5 min in IGS Final).  Reduces observation-noise component by
+                        ///< ~sqrt(N/2) vs Linear at the cost of mm-level RW bias and discontinuity at clock epochs (window
+                        ///< slides → LSQ refit).  Degrades gracefully to Linear when too few nodes are available.
+    };
+
+    /**
+     * @brief Source of a priori pressure and temperature used by the
+     *        Saastamoinen zenith hydrostatic delay.
+     */
+    enum class TroposphereAprioriSource {
+        StandardAtmosphere, ///< Frozen sea-level @c receiver.zhd_pressure_mbar / @c zhd_temp_kelvin reduced by standard lapse.
+        Gpt3                ///< Lookup pressure & temperature from the GPT3 5° grid at the receiver lat/lon/h/doy (Landskron & Boehm 2018).
+    };
+
+    /**
+     * @brief Tropospheric mapping function used to map zenith to slant
+     *        delays.
+     *
+     * @c Vmf3 supplies @c a_h/@c a_w from the GPT3 5° grid (empirical
+     * climatology, no operational 6-hourly product chain) combined with
+     * the published degree/order-12 spherical-harmonic expansion of
+     * @c b/c (Landskron & Boehm 2018).  GPT3 must be loaded — selecting
+     * @c Vmf3 automatically populates the GPT3 grid even when
+     * @c troposphere_apriori_source is left at @c StandardAtmosphere.
+     */
+    enum class TroposphereMappingFunction {
+        Gmf,   ///< Global Mapping Function (Boehm et al. 2006).  No external grid required.
+        Vmf3   ///< VMF3 empirical from GPT3 (Landskron & Boehm 2018).  Requires gpt3_5.grd.
     };
 
     /**
@@ -227,6 +323,129 @@ namespace GnssProcessor {
         double      fraction_threshold = 0.5;   ///< Group-level fraction-of-anomalous-rows threshold for corroborating a spatial pivot-slip request.
     };
 
+    /**
+     * @brief Configuration for the stuck-code-bias detector + reset path.
+     *
+     * The sat-bias estimator can fall into a closed loop where the
+     * code residual on one (satellite, signal) row keeps tripping
+     * the outlier gate: the bias state has over-converged around a
+     * value that no longer matches the truth, every new innovation
+     * shows up as a large residual, the gate excludes the row, and
+     * the bias state never gets the chance to update.  Either or
+     * both of two signals fire the reset:
+     *  - @c min_streak consecutive outlier-rejection epochs on the
+     *    same (sat, signal) — the "already-stuck" case where the
+     *    bias is wrong enough that nothing ever survives the gate.
+     *  - EWMA |mean| of post-fit residuals exceeding @c bias_floor_m
+     *    on a warmed-up row — the slow-drift case where the row
+     *    still survives the gate but its converged bias has drifted.
+     *
+     * On trigger the corresponding sat-bias state is re-seeded
+     * (value snapped by the EWMA mean if available; variance
+     * inflated back to @c initial_std.sat_bias²) via
+     * @c StateManager::resetSatBiasState.  The tracker's history for
+     * that row is also cleared so the next handful of epochs
+     * re-establish the baseline against the fresh state.
+     *
+     * All settings live under
+     * @c estimation.stuck_code_bias.{enabled,min_streak,bias_floor_m}.
+     */
+    struct StuckCodeBiasConfig {
+        bool        enabled       = true; ///< Master toggle.  Default on — cheap to evaluate and protects against a well-known failure mode.
+        std::size_t min_streak    = 5;    ///< Consecutive-rejection epochs that trigger a reset.  0 disables the streak branch.
+        double      bias_floor_m  = 3.0;  ///< EWMA |mean| (m) above which a warmed-up row's bias is considered drifted.  0 disables the drift branch.
+    };
+
+    /**
+     * @brief Configuration for sat-wide state re-inflation after a
+     *        cycle-slip / LLI ambiguity reset.
+     *
+     * In PPP-RTK uncombined mode the per-sat iono state and the
+     * per-(sat, signal) sat-bias states can co-converge to a joint
+     * partition that absorbs slant iono in a non-unique way — the
+     * iono state holds I_true minus some leakage δ/α, and the
+     * sat-bias state holds b_true plus δ.  Phase ambiguities anchor
+     * the partition while they're alive.  When a sat-wide cycle slip
+     * or LLI lock-loss resets *every* phase ambiguity for that
+     * satellite, the new ambiguities reseed against whatever the
+     * current iono/sat-bias state say — baking the (possibly wrong)
+     * pre-reset partition into the rest of the arc.  The residual
+     * on the unanchored-by-phase signals (typically L5 in a
+     * triple-frequency setup) then carries the
+     * elevation-dependent unmodelable component for hundreds of
+     * epochs.
+     *
+     * On sat-wide ambiguity reset the iono state's diagonal is
+     * re-inflated to @c iono_std_m² and every sat-bias state for
+     * that satellite has its diagonal re-inflated to
+     * @c sat_bias_std_m² — values are preserved (slant iono and
+     * hardware delays don't change just because the receiver lost
+     * phase lock), only the cross-state covariance is broken so the
+     * filter can re-partition cleanly via the next several epochs
+     * of measurements.  Pivots are skipped at the StateManager layer
+     * (their frozen (0, 0) row is detected by the diag==0 guard).
+     *
+     * All settings live under
+     * @c estimation.slip_state_reinflation.{enabled,iono_std_m,sat_bias_std_m}.
+     */
+    struct SlipStateReinflationConfig {
+        bool   enabled        = true; ///< Master toggle.  Default on — the partition-baking failure mode is structural to uncombined PPP-RTK with sat-bias estimation.
+        double iono_std_m     = 5.0;  ///< Re-inflated iono diagonal std (m).  0 or negative disables the iono branch (StateManager falls back to initial_std.ionosphere).
+        double sat_bias_std_m = 5.0;  ///< Re-inflated sat-bias diagonal std (m).  0 or negative disables the sat-bias branch (StateManager falls back to initial_std.sat_bias).
+    };
+
+    /**
+     * @brief Configuration for the adaptive ionospheric process-noise scheme.
+     *
+     * In PPP-RTK uncombined mode the per-satellite slant ionospheric state
+     * is driven by a single static process-noise spectral density
+     * (@c ProcessNoise::ionosphere).  When @c enabled, @c IonoVariabilityMonitor
+     * scales that baseline per satellite, per epoch, from a direct measure
+     * of ionospheric disturbance: the running variability of the
+     * geometry-free (L1-L2) carrier-phase second time-difference, a
+     * TEC-acceleration proxy.
+     *
+     * The per-satellite multiplier is the squared ratio of a recent-window
+     * MAD-sigma to a baseline-window MAD-sigma of that satellite's TD2
+     * series, clamped to [1, max_multiplier].  Using the ratio
+     * self-normalizes: the slowly varying geometric (obliquity-curvature)
+     * component sits in both windows and cancels, so quiet conditions
+     * yield a multiplier near 1 at any elevation and the existing
+     * 1/sin^2(el) obliquity scaling is not double-counted.
+     *
+     * JSON: estimation.adaptive_iono_process_noise.{enable,recent_window,
+     * baseline_window,max_multiplier,min_epochs,trace}.
+     */
+    /**
+     * @brief Configuration for GIM-based ionosphere weighting (PPP-RTK).
+     *
+     * When enabled, an external IONEX global ionosphere map is applied
+     * each epoch as a soft pseudo-observation on the per-satellite slant
+     * ionosphere states.  A large per-constellation common-mode variance
+     * leaves the absolute ionospheric level unconstrained (it carries an
+     * un-modellable receiver datum bias), so only the trustworthy
+     * between-satellite structure of the GIM is imposed.
+     *
+     * JSON: estimation.ionosphere_weighting.{enable,common_mode_sigma_m,
+     * std_scale,floor_m,elevation_cutoff_deg}.
+     */
+    struct IonosphereWeightingConfig {
+        bool   enabled = false;             ///< Master toggle.  Default off; opt in via JSON.
+        double common_mode_sigma_m = 50.0;  ///< Per-constellation common-mode std (m); large => absolute level free.
+        double std_scale = 1.0;             ///< Scale on the GIM RMS-derived per-row pseudo-obs std.
+        double floor_m = 0.05;              ///< Lower floor on the per-row pseudo-obs std (m).
+        double elevation_cutoff_deg = 10.0; ///< Satellites below this elevation are not GIM-constrained.
+    };
+
+    struct AdaptiveIonoQConfig {
+        bool   enabled         = false; ///< Master toggle.  Default off; opt in via JSON.
+        int    recent_window   = 20;    ///< Recent-window length (epochs) for the short-term TD2 MAD-sigma.
+        int    baseline_window = 240;   ///< Baseline-window length (epochs) for the long-term TD2 MAD-sigma.
+        double max_multiplier  = 100.0; ///< Upper clamp on the per-satellite process-noise multiplier (lower clamp 1.0).
+        int    min_epochs      = 30;    ///< Min TD2 samples on an arc before its multiplier may deviate from 1.0.
+        bool   trace           = false; ///< Write a per-satellite GF/TD2/variability CSV trace to the log directory.
+    };
+
     enum class StochasticModelType {
         Constant,   ///< Use the a-priori ?� directly, no geometry scaling.
         Elevation,      ///< Classic 1/sin�(el) weighting (default).
@@ -250,6 +469,8 @@ namespace GnssProcessor {
      * Each field is a spectral density in m*m/s. The Kalman filter multiplies
      * by dt (seconds) to obtain the variance (m*m) added per prediction step:
      *   variance_per_epoch = q * dt
+     * Exception: @c acceleration_psd is an acceleration PSD (m*m/s^3) and
+     * expands to the coupled CWNA block, not a simple q*dt term.
      */
     struct ProcessNoise {
         /// Position (m*m/s). Zero for static positioning; use ~100 for kinematic.
@@ -310,16 +531,36 @@ namespace GnssProcessor {
         /// 1e-9 yields ~1 mm/sqrt(hr) drift.
         double phase_clock{ 1e-9 };
 
-        /// Receiver velocity (m*m/s). Models the expected velocity variation
-        /// between epochs.  A large value (~1e2) treats velocity as nearly
-        /// unconstrained, suitable for pedestrian or vehicular dynamics.
-        /// Smaller values smooth the velocity estimate over time.
-        double velocity{ 1e2 };
+        /// White-noise acceleration power spectral density (m*m/s^3).  The
+        /// single CWNA (continuous white-noise acceleration) parameter: when
+        /// velocity is estimated it drives the coupled position+velocity
+        /// process-noise block — Q[pos]=q*dt^3/3, Q[pos,vel]=q*dt^2/2,
+        /// Q[vel]=q*dt — so position and velocity noise derive from one
+        /// physical quantity with the correct cross-covariance.  Unlike the
+        /// other fields it is not a simple q*dt term.  ~1e0-1e2 for
+        /// pedestrian/vehicular dynamics, near 0 for a static receiver.
+        /// Config key: acceleration_psd_q (legacy alias: velocity_q).
+        double acceleration_psd{ 1e2 };
 
         /// Per-satellite signal bias (m*m/s).  Absorbs uncorrected satellite
         /// hardware delays on signals without BIA product coverage.  Nearly
         /// constant over hours; 1e-10 allows ~0.01 mm/sqrt(30 s) drift.
         double sat_bias{ 1e-10 };
+
+        /// Receiver clock-rate spectral density (m*m/s^3).  Under the CWNA
+        /// model on the (clock-bias, clock-rate) pair, clock-bias picks up
+        /// q*dt^3/3, clock-rate picks up q*dt, with q*dt^2/2 cross-covariance.
+        /// 1e-4 is appropriate for a typical TCXO; reduce by a few orders of
+        /// magnitude for OCXO-grade receivers.  Active only when
+        /// @c estimate_velocity is on (Doppler processing).
+        double clock_rate{ 1e-4 };
+
+        /// Inter-system clock-rate offset spectral density (m*m/s^3).  The
+        /// rate counterpart of @c system_time_offset.  Single shared
+        /// oscillator drives all bands, so ISBR is physically near zero —
+        /// the tight default reflects this.  Active only when
+        /// @c estimate_velocity is on.
+        double system_time_rate_offset{ 1e-10 };
     };
 
     /**
@@ -339,6 +580,8 @@ namespace GnssProcessor {
         double tropo_gradient{ 1e-3 };     ///< Initial tropo gradient standard deviation (m).
         double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
         double sat_bias{ 10.0 };              ///< Initial per-satellite signal bias standard deviation (m).
+        double clock_rate{ 1.0 };             ///< Initial receiver clock-rate standard deviation (m/s).
+        double system_time_rate_offset{ 1e-2 }; ///< Initial inter-system clock-rate offset standard deviation (m/s).
     };
 
     /**
@@ -431,29 +674,45 @@ namespace GnssProcessor {
         /// legacy blocks (Block II, GLONASS-M legacy) get 1.0× the
         /// configured baseline; modern hardware (Block III, Galileo
         /// FOC, BeiDou-3) gets 1/3.  Intermediate blocks fall in
-        /// between.  These ratios are intentionally not exposed as
-        /// JSON knobs — the user tunes the *baseline* σ once via
+        /// between.  The user tunes the *baseline* σ once via
         /// @c measurement_noise.{code,phase}_std_m and the per-block
-        /// proportions follow automatically (and consistently between
-        /// code and phase).
+        /// proportions multiply it (consistently between code and phase).
+        ///
+        /// Overridable from JSON under
+        /// @c filter.satellite_block.block_scale_factors as an ordered
+        /// array of [substring, scale] pairs; omitting the JSON key
+        /// keeps these defaults.
         ///
         /// Keys are substrings matched against the ATX type field;
         /// first hit wins.  Ordering matters — specific blocks must
         /// precede their parents (BLOCKIIIA before BLOCKIII before
         /// BLOCKII; BEIDOU-3 before BEIDOU; GLONASS-M+ before
         /// GLONASS-K before GLONASS).
+        /// Defaults tuned for modern IGS-grade receivers (Septentrio,
+        /// Trimble NetR9/Alloy, Javad, Leica GR50, etc).  The range is
+        /// compressed to ~1.33× (best/worst), reflecting the empirical
+        /// reality that block-to-block code-noise differences on a
+        /// good receiver are modest — chip-rate and signal-design
+        /// effects (per-band, per-attribute) dominate over which
+        /// satellite block transmitted them.  The earlier 3× spread
+        /// was extrapolated from legacy / early-2000s receivers and
+        /// no longer reflects production hardware.
         std::vector<std::pair<std::string, double>> block_scale_factors{
-            {"BLOCKIIIA",  1.0 / 3.0},
-            {"BLOCKIII",   1.0 / 3.0},
-            {"BLOCKIIF",   1.0 / 2.0},
-            {"BLOCKIIR",   2.0 / 3.0},
-            {"BLOCKII",    1.0      },
-            {"GALILEO",    1.0 / 3.0},
-            {"BEIDOU-3",   1.0 / 2.0},
-            {"BEIDOU",     5.0 / 6.0},
-            {"GLONASS-K",  1.0 / 2.0},
-            {"GLONASS-M+", 2.0 / 3.0},
-            {"GLONASS",    1.0      }
+            {"BLOCKIIIA",  0.75},  ///< GPS III/IIIA — modern digital payload
+            {"BLOCKIIIF",  0.75},  ///< GPS IIIF — same generation as IIIA
+            {"BLOCKIII",   0.75},  ///< Fallback for unqualified BLOCK III
+            {"BLOCKIIF",   0.80},  ///< GPS IIF — modernized but pre-III
+            {"BLOCKIIR-M", 0.85},  ///< IIR-M — modernized civil L2C/M-code
+            {"BLOCKIIR",   0.90},  ///< IIR — older but capable
+            {"BLOCKII",    1.00},  ///< Legacy reference (mostly retired)
+            {"GALILEO",    0.80},  ///< Modern signal design (BOC, pilots)
+            {"BEIDOU-3",   0.80},  ///< BDS-3 — modern, BOC signals
+            {"BEIDOU",     0.95},  ///< BDS-2 — legacy, multipath-prone
+            {"GLONASS-K",  0.85},  ///< CDMA-capable, modern
+            {"GLONASS-M+", 0.90},  ///< Mid-tier GLONASS-M variants
+            {"GLONASS",    1.00},  ///< Legacy FDMA reference
+            {"QZSS-2",     0.85},  ///< QZSS Block II — modern signals
+            {"QZSS",       0.90}   ///< QZSS fallback
         };
 
         /// Zenith code noise per block type (meters).  **Derived** at
@@ -474,28 +733,212 @@ namespace GnssProcessor {
         /// rather than living in a parallel hand-tuned table.
         std::vector<std::pair<std::string, double>> block_phase_std_m;
 
-        /// Per-frequency-band scale factor applied to the zenith
-        /// noise.  The frequency band digit (second character of the
-        /// RINEX signal code, e.g. '1' in "L1W") determines the
-        /// scale.  Missing bands default to 1.0.
-        std::map<char, double> freq_band_scale{
-            {'1', 1.0},
-            {'2', 1.0},
-            {'5', 0.5},
-            {'6', 0.8},
-            {'7', 0.7},
-            {'8', 0.6}
+        /// Per-observable (code / phase) scale tables.
+        ///
+        /// Wraps the per-band and per-(system, attribute) scale factors
+        /// for a single observable type.  @c SatBlockNoiseParams holds
+        /// two instances: @c code (chip-rate-driven defaults — narrow
+        /// correlator C/A penalty, high-chip-rate band gains) and
+        /// @c phase (carrier-tracking-driven defaults — no chip-rate
+        /// effects, gentler per-band gradient, attribute differences
+        /// largely flat).  Splitting the axis lets each observable use
+        /// physically-motivated defaults instead of forcing one table
+        /// to compromise between the two regimes — the chip-rate-
+        /// driven 1.8× C/A penalty on GPS @c C, for example, has no
+        /// analogue on phase (the carrier is the same physical signal
+        /// regardless of the code attached), so phase keeps GPS @c C
+        /// at 1.0.
+        ///
+        /// Lookup for @c tracking_attr_scale is: (1) @c [system][attr]
+        /// → (2) @c ["default"][attr] → (3) 1.0.  System name matches
+        /// @c PppUtils::getSystemString (e.g. "GPS", "Galileo").
+        /// @c freq_band_scale is keyed by band digit (RINEX signal code
+        /// second character) with 1.0 as the implicit fallback.
+        struct ObservableScale {
+            /// Per-band scale factor keyed by RINEX band digit.
+            std::map<char, double> freq_band_scale;
+            /// Per-system, per-attribute scale factor.  Outer key is
+            /// system name (or "default"); inner key is the RINEX
+            /// attribute character.
+            std::map<std::string, std::map<char, double>> tracking_attr_scale;
+        };
+
+        /// Code-observable scale tables.  Chip-rate-driven calibration.
+        ///
+        /// @c freq_band_scale: anchored at band '1' = 1.0 (L1 C/A and
+        /// P(Y) share this slot, with the C/A penalty captured under
+        /// the attribute axis).  Band '5' family (GPS L5, Galileo
+        /// E5a, BeiDou B2a) and '7' (E5b / B2b) get meaningful chip-
+        /// rate gain; '8' (Galileo E5 alt-BOC wideband) is the cleanest
+        /// code measurement available.
+        ///
+        /// @c tracking_attr_scale: anchored at GPS @c W = 1.0 (semi-
+        /// codeless P(Y) on L1/L2).  GPS @c C/A carries a narrow-
+        /// correlator penalty (~1.2-1.8× depending on receiver
+        /// generation).  Combined I+Q channels (@c X) are cleaner —
+        /// coherent 3 dB carrier-power gain.  Pilot-only channels
+        /// (@c Q, @c L, Galileo @c C, BeiDou B1C @c P) sit between
+        /// W and X.  Data-only channels (@c I, @c S) carry the data-
+        /// modulation tracking penalty.
+        ObservableScale code{
+            // freq_band_scale
+            {
+                {'1', 1.0},   ///< L1 / E1 / B1 (reference)
+                {'2', 1.0},   ///< L2 (semi-codeless tracking overhead offsets chip-rate gain)
+                {'5', 0.6},   ///< L5 / E5a / B2a — high chip rate, modern modulation
+                {'6', 0.7},   ///< E6 / L6 / B3 — mixed chip rates
+                {'7', 0.6},   ///< E5b / B2b — high chip rate, similar to L5
+                {'8', 0.4},   ///< E5 wideband (alt-BOC) — very clean
+            },
+            // tracking_attr_scale
+            {
+                // ---- Cross-system fallback ----
+                {"default", {
+                    {'P', 1.0},  ///< P-code reference (also: B1C pilot — see BeiDou override)
+                    {'W', 1.0},  ///< Semi-codeless P(Y) — reference
+                    {'Y', 1.0},  ///< Explicit Y-code
+                    {'M', 1.0},  ///< Military M-code
+                    {'L', 0.9},  ///< L2C(L) pilot — data-free
+                    {'S', 1.2},  ///< L2C(M+L) data/mixed — data modulation penalty
+                    {'X', 0.8},  ///< Combined I+Q — coherently 3 dB stronger
+                    {'I', 1.2},  ///< Data-only — data modulation penalty
+                    {'Q', 0.9},  ///< Pilot-only — data-free
+                }},
+                // ---- GPS ----
+                {"GPS", {
+                    {'C', 1.2},  ///< C/A (narrow correlator) — noise penalty vs P(Y)
+                }},
+                // ---- Galileo ----
+                // 'C' is the E1C / E5aQ / E5bQ pilot, NOT the noisy GPS C/A.
+                {"Galileo", {
+                    {'A', 1.0},  ///< E1A PRS (placeholder; usually masked)
+                    {'B', 1.0},  ///< E1B OS data (CBOC)
+                    {'C', 0.9},  ///< E1C / E5aQ / E5bQ pilot
+                    {'Z', 1.0},  ///< E6 alt-BOC
+                }},
+                // ---- BeiDou ----
+                // 'P' is the B1C pilot, not the GPS P-code.
+                {"BeiDou", {
+                    {'D', 1.0},  ///< B1C data
+                    {'P', 0.9},  ///< B1C pilot (overrides default P-code reference)
+                }},
+            }
+        };
+
+        /// Phase-observable scale tables.  Carrier-tracking-driven.
+        ///
+        /// Conservative defaults: the phase noise hierarchy on real
+        /// data tracks code in *direction* (high-chip-rate bands
+        /// cleaner, pilots slightly cleaner) but with *smaller spread*
+        /// (chip rate doesn't enter the PLL noise formula at all; the
+        /// observed phase-band differences are signal-strength and
+        /// receiver-tracking artefacts, not 10× chip-rate effects).
+        /// These defaults are deliberately less aggressive than empirical
+        /// observation suggests — measured ratios on a recent IGS day
+        /// show band 7 at ~0.35 and band 8 at ~0.33 of band 1, but
+        /// padding to 0.5 leaves headroom for noisier receivers and
+        /// stronger ionospheric conditions.  Users with calibrated
+        /// data can tighten these via JSON override.
+        ///
+        /// @c freq_band_scale: smoother gradient than code.  Band 2
+        /// distinctly cleaner than band 1 (no semi-codeless tracking
+        /// overhead on phase).  Bands 5/7/8 cleaner still but the gap
+        /// is moderate.
+        ///
+        /// @c tracking_attr_scale: mostly flat by system — chip-rate-
+        /// driven C/A penalty doesn't apply to phase, so GPS @c C is
+        /// 1.0 (not 1.2-1.8 like code).  Pilot-vs-data differences
+        /// are present but small (5-10%, not 20-30%) — phase tracks
+        /// the carrier regardless of data wipe-off success.
+        ObservableScale phase{
+            // freq_band_scale
+            {
+                {'1', 1.0},   ///< L1 / E1 / B1 (reference)
+                {'2', 0.6},   ///< L2 — distinctly cleaner on phase (no codeless overhead)
+                {'5', 0.7},   ///< L5 / E5a / B2a — modern modulation, stronger signal
+                {'6', 0.8},   ///< E6 / L6 / B3 — mid-tier
+                {'7', 0.5},   ///< E5b / B2b — cleaner than band 5 on Galileo FOC
+                {'8', 0.5},   ///< E5 alt-BOC wideband — cleanest phase available
+            },
+            // tracking_attr_scale
+            {
+                // ---- Cross-system fallback ----
+                // Smaller deviations than code: phase carrier-loop noise
+                // is less sensitive to the data-modulation distinction
+                // than code correlator noise.
+                {"default", {
+                    {'P', 1.0},  ///< P-code reference
+                    {'W', 1.0},  ///< Semi-codeless P(Y)
+                    {'Y', 1.0},  ///< Explicit Y-code
+                    {'M', 1.0},  ///< Military M-code
+                    {'L', 0.95}, ///< L2C(L) pilot — light pilot bonus
+                    {'S', 1.05}, ///< L2C(M+L) data/mixed — light data penalty
+                    {'X', 0.9},  ///< Combined I+Q — coherent power gain (smaller than code)
+                    {'I', 1.05}, ///< Data-only — light penalty
+                    {'Q', 0.95}, ///< Pilot-only — light pilot bonus
+                }},
+                // ---- GPS ----
+                // No chip-rate-driven C/A penalty on phase — the carrier
+                // is the same physical signal regardless of code.  GPS C
+                // phase residuals match GPS L (L1C pilot) and Galileo C
+                // (E1C pilot) on real data.
+                {"GPS", {
+                    {'C', 1.0},  ///< C/A — no narrow-correlator penalty on phase
+                }},
+                // ---- Galileo ----
+                {"Galileo", {
+                    {'A', 1.0},
+                    {'B', 1.0},
+                    {'C', 0.95}, ///< E1C / E5aQ / E5bQ pilot — light bonus
+                    {'Z', 1.0},
+                }},
+                // ---- BeiDou ----
+                {"BeiDou", {
+                    {'D', 1.0},
+                    {'P', 0.95}, ///< B1C pilot — light bonus
+                }},
+            }
         };
 
         /// Fallback code noise when no block match is found (meters).
         /// **Derived** at config-load time as
         /// @c measurement_noise.code_std_m (i.e.\ scale factor 1.0,
         /// equivalent to the worst legacy block).
-        double default_code_std_m{ 0.30 };
+        double default_code_std_m{ 0.15 };
         /// Fallback phase noise when no block match is found (meters).
         /// **Derived** at config-load time as
         /// @c measurement_noise.phase_std_m.
-        double default_phase_std_m{ 0.002 };
+        double default_phase_std_m{ 0.001 };
+
+        /// Whether to route phase observations through the
+        /// block × @c phase.freq_band_scale × @c phase.tracking_attr_scale
+        /// × elevation pipeline (@c true, default), or use the simpler
+        /// @c default_phase_std_m × elevation path (@c false).
+        ///
+        /// The flat path was historically the default on a PLL-physics
+        /// argument: per-block carrier-loop noise differential sits
+        /// below the multipath / atmospheric noise floor, and the
+        /// chip-rate-driven freq scaling doesn't apply post-
+        /// correlation.  Real-data phase residuals do show structure
+        /// across bands and tracking attributes — just *different*
+        /// structure than code — so the model keeps the structural
+        /// shape but uses dedicated @c phase tables with carrier-
+        /// tracking-driven defaults (no chip-rate C/A penalty,
+        /// smaller band gradient, near-flat attribute differences).
+        /// See @c ObservableScale doxygen for the per-axis rationale.
+        ///
+        /// When @c true, phase uses the per-block @c block_phase_std_m
+        /// table (populated from @c block_scale_factors ×
+        /// @c measurement_noise.phase_std_m at config load), the
+        /// @c phase.freq_band_scale table, and the
+        /// @c phase.tracking_attr_scale per-system table.  Elevation
+        /// amplification uses @c phase_elevation_power (gentler than
+        /// code's) via @c computeElevation's per-observable dispatch.
+        ///
+        /// Has no effect when the active stochastic model is anything
+        /// other than @c SatelliteBlock — @c Constant / @c Elevation /
+        /// @c SNR models keep their own phase paths unchanged.
+        bool apply_to_phase{ true };
     };
 
     /**
@@ -565,6 +1008,7 @@ namespace GnssProcessor {
         // --- Atmosphere ---
         bool enable_troposphere{ true };               ///< Saastamoinen ZHD + GMF dry mapping (slant hydrostatic delay).
         bool enable_klobuchar_ionosphere{ false };     ///< Klobuchar ionospheric delay model (single-frequency fallback only).  IF combinations and DD short-baselines cancel ionosphere geometrically; PPP-RTK uncombined estimates per-satellite slant iono states.  In all three of those configs the Klobuchar model is a no-op — but constructing the @c Ionosphere instance still pays for an extra @c Model::Geometry load and the Klobuchar coefficient parse.  Default off.  Enable only for single-frequency PPP runs that need a-priori iono.
+        bool enable_higher_order_ionosphere{ false };  ///< Apply second-order (B·cos(θ)·STEC/f³) and third-order (η·STEC²/f⁴) ionospheric delays as a per-signal observation-level correction, evaluated at the GIM-derived IPP using a centered tilted dipole geomagnetic field.  Requires a loaded IONEX GIM as the absolute-STEC source; the engine auto-loads the GIM when this flag is on even if @c estimation.ionosphere_weighting.enabled is false.  No-op when no GIM resolves (warning logged at startup).  Magnitudes: I₂ ~1–2 cm at L1 during high TEC, I₃ ~mm; the IF combination only partially cancels these, so the largest visible benefit is in standard PPP (IF).  For PPP-RTK uncombined and short-baseline DD the higher-order term mostly cancels in the SD / DD differencing, so this flag is closer to a consistency knob than a bias remover.  Default off.
 
         // --- Relativistic / propagation ---
         bool enable_relativistic_correction{ true };  ///< Periodic relativistic clock correction (-2 r�v / c�).
@@ -583,12 +1027,35 @@ namespace GnssProcessor {
         bool enable_receiver_pcv{ true };              ///< Receiver antenna phase centre variation.
         bool enable_atx_frequency_fallback{ true };    ///< When the ATX entry doesn't have PCO/PCV for the requested frequency (common for L5 / E5* / B2a on older satellites or receiver antennas), look up the nearest available frequency on the same antenna and use its values instead of silently skipping the correction.  Cross-frequency PCO drift on a single physical antenna is typically <1 cm — better than the few-cm vertical residual that comes from skipping a frequency entirely.  Set false to revert to the legacy "skip if missing" behavior for A/B comparison.
         bool require_atx_coverage{ false };            ///< When true, drop observations whose (sat, signal) lacks complete ATX coverage on **both** the satellite and receiver entries — i.e., satellite PCO+PCV and receiver PCO+PCV must all resolve to non-empty entries for the row's exact frequency, *without* @c enable_atx_frequency_fallback being used to substitute a neighbouring frequency.  Default false (legacy behaviour: observations are kept and any missing PCO/PCV is silently zeroed).  Set true when you've explicitly chosen `signal_mode: "all"` and want the ATX file to be the authoritative whitelist, dropping rows that would otherwise process without proper antenna calibration.
+        bool require_atx_coverage_for_ar{ false };     ///< When true, AR (WL constraints, LAMBDA NL search) skips (sat, signal) pairs lacking strict ATX coverage even though the underlying observations are still used in the float Kalman update.  Softer counterpart to @c require_atx_coverage: lets you keep "all"-signal float estimation alive while restricting integer fixing to the ATX-curated subset.  Default false (no AR-side gating).
+        bool restrict_ar_for_substituted_atx{ false }; ///< When true, AR additionally skips (sat, signal) pairs whose ATX correction was computed via the frequency-fallback substitution chain (rather than an exact entry).  Targets specifically the cases where the antenna model is approximate; signals lacking ATX entirely (no substitution applied) are still allowed.  Use alongside or instead of @c require_atx_coverage_for_ar depending on which kind of imperfection you want to gate on.  Default false.
+        bool loosen_amb_q_for_substituted_atx{ false }; ///< When true, ambiguity states whose underlying (sat, signal) had their ATX correction frequency-fallback-substituted use a looser process noise (@c ambiguity_q_substituted_atx) instead of the standard @c process_noise.ambiguity.  Compensates for the small but non-zero modeling error introduced by the substituted PCV/PCO.  Default false.
+        double ambiguity_q_substituted_atx{ 1e-12 };   ///< Process noise (m²/s) applied to ambiguity states for substituted-ATX (sat, signal) pairs when @c loosen_amb_q_for_substituted_atx is true.  The PCV/PCO substitution does not inject *random* noise — it introduces a **deterministic, slowly-varying bias** in the LOS direction, driven by the mismatch between the requested-frequency antenna pattern and the substituted-frequency pattern (e.g. L2 standing in for L5).  That mismatch projects onto LOS as the satellite sweeps elevation/azimuth across the arc.  Order-of-magnitude estimate: a ~10 mm PCO_Up substitution mismatch combined with an MEO elevation rate of ~1.5e-4 rad/s yields a LOS bias drift of ~1 μm/s at mid-elevation, i.e. Q ≈ (1 μm/s)² · 1 s ≈ 1e-12 m²/s.  This coincides with the standard @c process_noise.ambiguity default — the correct conclusion that a well-formed substitution adds negligible Q on top of the baseline ambiguity random walk.  The override therefore exists as a deliberate "I've audited the substituted-ATX bias and the standard Q is sized to absorb it" affirmation rather than a noise-injection knob; raise to ~1e-11 only if you have direct evidence (e.g. an arc-correlated residual signature on substituted signals) that the standard Q is too tight.  Values above ~1e-10 will start leaking real estimation strength out of the ambiguity into other states.
+        double ambiguity_std_substituted_atx{ 1e3 };   ///< Initial ambiguity standard deviation (m) for newly-seeded ambiguities whose (sat, signal) had their ATX correction frequency-fallback-substituted.  Replaces @c getAmbiguityStd() at addAmbiguity time when @c loosen_amb_q_for_substituted_atx is true.  Default 1e3 — same scale as the standard ambiguity init; raise to 5e3 or larger if you want the filter to be especially loose on substituted-ATX seeds because the substituted PCV can introduce a per-epoch sub-cycle bias that the float ambiguity has to absorb.
+        bool apply_phase_shifts{ false };              ///< When true, RINEX phase observations have the receiver-applied @c "SYS / PHASE SHIFT" values subtracted at parse time, recovering the unshifted phase convention.  Default false because most modern BIA products (CODE, CAS, GFZ) are calibrated against the receiver-shifted phases as recorded in RINEX, so leaving the shifts in place is the standard PPP convention.  Set true only when your bias product is explicitly calibrated for the unshifted convention, or when running without external BIA and using in-house bias estimation that benefits from a uniform shift-free input.
 
         // --- Carrier-phase ---
         bool enable_phase_windup{ true };              ///< Carrier-phase wind-up correction.
 
         // --- Product biases ---
         bool enable_code_phase_bias{ true };            ///< Code/phase bias corrections from BIA product files.
+
+        // --- Processing strategy ---
+        bool refine_emission_time{ true };              ///< When true, @c Geometry::computeSatelliteGeometry runs a
+                                                        ///< second pass through @c computeEmissionState with the
+                                                        ///< slant tropospheric ZHD and IF-combined satellite + receiver
+                                                        ///< ATX LOS projection subtracted from the seed pseudorange.
+                                                        ///< This drives the residual t_em error from tens of ns (driven
+                                                        ///< by the ~3 m tropo + ~1-7 m PCO content of the raw pseudorange)
+                                                        ///< down to ~ns / ~μm of sat displacement.  Cost: one extra
+                                                        ///< Neville orbit interp + clock interp + 1-2 ATX evaluations
+                                                        ///< per sat per epoch (~15-20% overall per-epoch overhead).
+                                                        ///< Set false to disable the refinement pass entirely — useful
+                                                        ///< for A/B comparison or when chasing artifacts that may be
+                                                        ///< sensitive to the second-pass logic.  Independent of
+                                                        ///< @c enable_troposphere and the antenna model: when this
+                                                        ///< flag is true the refinement only adds whichever components
+                                                        ///< (tropo, ATX) are individually enabled / wired in.
     };
 
     /**
@@ -611,6 +1078,7 @@ namespace GnssProcessor {
         int doy{ 0 };                                ///< Observation day-of-year (0 = auto-detect).
         bool download_rinex{ false };                ///< Download observation RINEX from CDDIS.
         bool download_products{ true };              ///< Download SP3/CLK/BIA/ERP/BRDC.
+        bool download_gim{ false };                  ///< Download the IONEX GIM (global ionosphere map).
         std::filesystem::path atx_path;              ///< Path to local ATX file (not downloaded).
         std::filesystem::path nc_path;               ///< Path to local ocean-loading NC file.
         std::filesystem::path crx2rnx_path;          ///< Path to crx2rnx executable for Hatanaka decompression.
@@ -664,12 +1132,16 @@ namespace GnssProcessor {
         bool enable_state_trace{ true };            ///< logs/state_trace.csv
         bool enable_ambiguity_trace{ true };        ///< logs/ambiguity_trace.csv
         bool enable_ionosphere_trace{ true };       ///< logs/ionosphere_trace.csv
+        bool enable_sat_bias_trace{ true };         ///< logs/sat_bias_trace.csv
+        bool enable_sat_status_trace{ true };       ///< logs/satellite_status_trace.csv
+        bool enable_dop_trace{ true };              ///< logs/dop_trace.csv
         bool enable_residual_trace{ true };         ///< logs/measurement_residuals.csv
         bool enable_wls_trace{ true };              ///< logs/wls_trace.csv
         bool enable_smoother_trace{ true };         ///< logs/smoother_trace.csv
         bool enable_mw_slip_trace{ true };          ///< logs/mwwl_trace.csv
         bool enable_if_slip_trace{ true };          ///< logs/if_slip_trace.csv
         bool enable_gf_slip_trace{ true };          ///< logs/gf_slip_trace.csv
+        bool enable_windup_trace{ false };          ///< logs/windup_trace.csv (phase wind-up diagnostic; off by default)
 
         /**
          * @brief Concise per-epoch logging for the Kalman-filter logger.
@@ -758,26 +1230,156 @@ namespace GnssProcessor {
         double getZhdTemp() const { return zhd_temp_kelvin; }
 
         /**
+         * @brief Gets the troposphere a priori source.
+         *
+         * Controls whether @c Troposphere::computeSaastamoinenZHD uses
+         * the frozen sea-level pressure/temperature pair
+         * (@c StandardAtmosphere) or queries the GPT3 5° grid at the
+         * receiver lat/lon/h/doy (@c Gpt3).
+         */
+        TroposphereAprioriSource getTroposphereAprioriSource() const { return tropo_apriori_source_; }
+
+        /**
+         * @brief Path to the GPT3 5° grid file (@c gpt3_5.grd).
+         *
+         * Empty if not configured.  Required when
+         * @c getTroposphereAprioriSource() == @c TroposphereAprioriSource::Gpt3.
+         */
+        const std::filesystem::path& getGpt3GridPath() const { return gpt3_grid_path_; }
+
+        /**
+         * @brief Set the GPT3 grid path (used by @c PathResolver to inject
+         *        the auto-discovered location in internal mode).
+         */
+        void setGpt3GridPath(const std::filesystem::path& p) { gpt3_grid_path_ = p; }
+
+        /**
+         * @brief Gets the tropospheric mapping function selection.
+         */
+        TroposphereMappingFunction getTroposphereMappingFunction() const { return tropo_mapping_function_; }
+
+        /**
          * @brief Gets the processing mode.
          * @return Current processing mode (PPP or PPP-RTK).
          */
         ProcessingMode getProcessingMode() const { return processing_mode_; }
 
         /**
-         * @brief Gets the signal mode.
-         * @return Current signal mode (Dual, Triple, or All).
+         * @brief Gets the KF frequency mode (band scope).
+         * @return Current FrequencyMode (Dual, Triple, or All).
          */
-        SignalMode getSignalMode() const { return signal_mode_; }
+        FrequencyMode getFrequencyMode() const { return frequency_mode_; }
 
         /**
-         * @brief Gets the MW slip detector signal selection mode.
-         *
-         * Controls whether the MW detector forms pairs from the KF-selected
-         * bands only (Filter, default) or from all available RINEX bands (All).
-         *
-         * @return Current MwSignalMode.
+         * @brief Gets the KF channel mode (tracking-attribute multiplicity).
+         * @return Current ChannelMode (Single or All).
          */
-        MwSignalMode getMwSignalMode() const { return mw_signal_mode_; }
+        ChannelMode getChannelMode() const { return channel_mode_; }
+
+        /**
+         * @brief Gets the MW slip detector frequency mode (raw, including Mirror sentinel).
+         *
+         * Prefer @c getResolvedMwFrequencyMode at call sites that need a
+         * concrete @c FrequencyMode — this raw form is for diagnostics.
+         */
+        MwFrequencyMode getMwFrequencyMode() const { return mw_frequency_mode_; }
+
+        /**
+         * @brief Gets the MW slip detector channel mode (raw, including Mirror sentinel).
+         *
+         * Prefer @c getResolvedMwChannelMode at call sites that need a
+         * concrete @c ChannelMode.
+         */
+        MwChannelMode getMwChannelMode() const { return mw_channel_mode_; }
+
+        /**
+         * @brief Resolve the MW frequency mode against the KF setting.
+         *
+         * Returns the concrete @c FrequencyMode the MW detector should
+         * use this run: if @c mw_frequency_mode_ is @c Mirror, returns
+         * the KF's @c frequency_mode_; otherwise returns the
+         * corresponding @c FrequencyMode for the override value.
+         */
+        FrequencyMode getResolvedMwFrequencyMode() const {
+            switch (mw_frequency_mode_) {
+            case MwFrequencyMode::Dual:   return FrequencyMode::Dual;
+            case MwFrequencyMode::Triple: return FrequencyMode::Triple;
+            case MwFrequencyMode::All:    return FrequencyMode::All;
+            case MwFrequencyMode::Mirror:
+            default:                      return frequency_mode_;
+            }
+        }
+
+        /**
+         * @brief Resolve the MW channel mode against the KF setting.
+         */
+        ChannelMode getResolvedMwChannelMode() const {
+            switch (mw_channel_mode_) {
+            case MwChannelMode::Single: return ChannelMode::Single;
+            case MwChannelMode::All:    return ChannelMode::All;
+            case MwChannelMode::Mirror:
+            default:                    return channel_mode_;
+            }
+        }
+
+        /**
+         * @brief First-epoch sanity-check threshold for BIA-corrected MW
+         *        arcs, in wide-lane cycles.
+         *
+         * On the very first sample of a fresh BIA-corrected arc, the MW
+         * value should land within this distance of an integer × λ_WL —
+         * otherwise the arc is presumed to have been initialized with a
+         * slip already baked in (e.g. a slip occurred during a prior
+         * data gap that triggered the reset) and an immediate ambiguity
+         * reset is forced.
+         *
+         * Default 0.4 cycles is appropriate for low-noise code
+         * observations (e.g. P(Y) tracking, L1W/L2W).  Code-noisier
+         * combinations (e.g. C/A on L1C, ~3× the P(Y) noise) easily
+         * exceed 0.4 cycles on a single sample purely from code noise,
+         * triggering spurious slip detections at every arc start.  For
+         * L1C-heavy runs, raise to 1.0–2.0 cycles to suppress the
+         * false positives; the lock criterion downstream still vets the
+         * arc statistically once enough samples accumulate.  The MW
+         * detector additionally lifts this floor by 3σ of the cross-sat
+         * MAD when one is available for the (constellation × signal-
+         * pair) group.
+         *
+         * @return Threshold in WL cycles.
+         */
+        double getMwInitFracThreshold() const { return mw_init_frac_threshold_; }
+
+        /**
+         * @brief Whether the MW detector estimates per-(sat, signal-pair)
+         *        phase biases in-house when external BIA is unavailable.
+         *
+         * When enabled and an arc reaches a tight statistical confidence
+         * with its running mean within a small fraction of an integer cycle,
+         * the residual is committed as an estimated bias and persisted across
+         * future arcs of the same (satellite, signal-pair).  Subsequent
+         * arcs apply the stored bias to the incoming MW samples and become
+         * eligible for integer locking.  Effectively a self-calibrating
+         * substitute for an external phase BIA product, suitable for
+         * ultra-long EWL pairs (e.g. Galileo L5X/L8X at λ ≈ 19.5 m) whose
+         * inter-satellite bias is small relative to the wavelength.
+         *
+         * Default off.
+         *
+         * @return True if in-house bias estimation is enabled.
+         */
+        bool getInhouseBiasEstimation() const { return enable_inhouse_bias_estimation_; }
+
+        /**
+         * @brief Get the ambiguity-parameterization basis for the Kalman state.
+         *
+         * @c PerBand keeps one ambiguity per (sat, signal/IF combo);
+         * @c NlWl decomposes each dual-frequency ambiguity into a
+         * narrow-lane state and a wide-lane state per band-pair.  See
+         * @c StateAmbiguityBasis for the rationale.
+         *
+         * @return Current basis (default @c PerBand).
+         */
+        StateAmbiguityBasis getStateAmbiguityBasis() const { return state_ambiguity_basis_; }
 
         /**
          * @brief Gets the satellite position and velocity interpolation mode.
@@ -804,6 +1406,40 @@ namespace GnssProcessor {
         double getElevationMaskDeg() const { return elevation_mask_deg_; }
 
         /**
+         * @brief Whether satellites in Earth's umbral shadow should be excluded.
+         *
+         * During eclipse seasons GNSS satellites perform block-specific
+         * midnight / noon-turn yaw manoeuvres that this codebase does not
+         * model (we have no yaw-input data plumbed in).  With this flag
+         * enabled, @c ModelGeometry::computeSatelliteGeometry rejects any
+         * satellite whose ECEF position falls inside the cylindrical
+         * Earth–Sun shadow, surfaced as @c DropReason::Eclipsing in the
+         * satellite-status trace.
+         *
+         * Configured via @c processing.exclude_eclipsing_satellites.
+         * Default false to preserve legacy behavior.
+         *
+         * @return True if eclipsing-satellite exclusion is enabled.
+         */
+        bool excludeEclipsingSatellites() const { return exclude_eclipsing_satellites_; }
+
+        /**
+         * @brief Shadow-cylinder radius multiplier for the eclipse test.
+         *
+         * Multiplier applied to @c Constants::EARTH_RADIUS in
+         * @c Planetary::isSatelliteEclipsing.  A value of 1.0 corresponds
+         * to the purely geometric umbra; values slightly greater than 1.0
+         * widen the rejection region to also catch satellites that are
+         * within the post-shadow yaw-recovery window.
+         *
+         * Configured via @c processing.eclipse_shadow_scale.
+         * Default 1.0.
+         *
+         * @return Shadow-cylinder scale factor (unitless, >0).
+         */
+        double getEclipseShadowScale() const { return eclipse_shadow_scale_; }
+
+        /**
          * @brief Gets the data gap tolerance in seconds.
          *
          * When the elapsed time between consecutive epochs exceeds this
@@ -817,6 +1453,26 @@ namespace GnssProcessor {
          * @return Gap tolerance in seconds (0 = measurement-rate default).
          */
         double getDataGapTolerance() const { return data_gap_tolerance_s_; }
+
+        /**
+         * @brief Gets the long-gap tolerance in seconds.
+         *
+         * Threshold separating "short" from "long" gaps for the gap
+         * recovery policy in @c Application::handleGap.  Short gaps
+         * (between @c getDataGapTolerance and this value) only zero
+         * stale sat-specific cross-covariances; long gaps additionally
+         * drop ionosphere / ambiguity / sat-bias state and force fresh
+         * BSSD/DD pivot election.
+         *
+         * Default 300 s, matching the sat-bias cache warm window
+         * @c getSatBiasCacheWarmAgeS so that "long gap" coincides with
+         * "sat-bias cache no longer trusted at full variance."
+         *
+         * Configured via @c processing.long_gap_tolerance_s.
+         *
+         * @return Long-gap tolerance in seconds.
+         */
+        double getLongGapTolerance() const { return long_gap_tolerance_s_; }
 
         /**
          * @brief Gets the effective GNSS processing rate in seconds.
@@ -839,6 +1495,44 @@ namespace GnssProcessor {
          * @return Processing rate in seconds (0 = disabled).
          */
         double getGnssRate() const { return gnss_rate_s_; }
+
+        /**
+         * @brief Get the enabled RINEX observation-type letters.
+         *
+         * Returns the (uppercase, deduplicated) set of RINEX first-character
+         * observation type codes that the parser will retain.  Codes whose
+         * first character is not in this set are dropped at parse time and
+         * never reach the downstream pipeline.
+         *
+         * The four legal RINEX letters are:
+         *  - @c 'C' : pseudorange (code)
+         *  - @c 'L' : carrier phase
+         *  - @c 'D' : Doppler
+         *  - @c 'S' : signal strength (SNR / C/N0)
+         *
+         * Default is @c "CL" — code + phase only, matching what the PPP /
+         * PPP-RTK / baseline estimators actually consume.  Add @c 'D' to
+         * retain Doppler (needed for @c estimation.estimate_velocity), or
+         * @c 'S' to retain SNR samples (used by the SNR stochastic model
+         * and by some logging traces).
+         *
+         * Configured via @c processing.rinex_types as a string of letters
+         * in any order or case (e.g. @c "CLDS", @c "cl", @c "CLD").
+         *
+         * @return String containing the enabled type letters.
+         */
+        const std::string& getRinexTypes() const { return rinex_types_; }
+
+        /**
+         * @brief Check whether a RINEX observation-type letter is enabled.
+         *
+         * @param t First character of a RINEX 3 observation code
+         *          (case-sensitive uppercase letter).
+         * @return True if @p t is one of the letters in @c getRinexTypes().
+         */
+        bool isRinexTypeEnabled(char t) const {
+            return rinex_types_.find(t) != std::string::npos;
+        }
 
         /**
          * @brief Get the list of satellites excluded from processing.
@@ -1157,10 +1851,11 @@ namespace GnssProcessor {
          * When true, the wind-up angle is accumulated across epochs using 2?
          * unwrapping so that the correction is continuous.  This is required
          * for integer ambiguity resolution (IAR) where the ambiguity must
-         * remain at a constant integer value.  Note: accumulated mode has
-         * known interactions with ambiguity re-seeding and slip-detector
-         * resets that can introduce position biases until those paths are
-         * updated to be accumulation-aware.
+         * remain at a constant integer value.  Accumulation chains
+         * epoch-to-epoch; a data gap exceeding 5 minutes restarts it from
+         * the raw angle.  A restart cannot bias the solution: an absent
+         * satellite's ambiguity is pruned and re-seeded fresh on
+         * re-acquisition, absorbing whatever wind-up value is current.
          *
          * @return True if accumulated phase wind-up is enabled.
          */
@@ -1236,6 +1931,204 @@ namespace GnssProcessor {
         double getBssdPivotMinElevation() const { return bssd_pivot_min_elevation_deg_; }
 
         /**
+         * @brief Minimum |median SD residual|, in cycles of the band's
+         *        wavelength, required to flag a pivot slip.
+         *
+         * The KF post-fit pivot-slip detector finds groups of SD rows
+         * whose residuals share a coherent non-zero median.  Without an
+         * absolute floor, sub-cycle coherent biases from multipath,
+         * PCV miscal, or kinematic position dynamics fire the
+         * handover even though no actual cycle slip occurred.  Real
+         * cycle slips are integer multiples of the wavelength, so a
+         * threshold of @c 0.25 (λ/4) cleanly rejects everything below
+         * the smallest physically meaningful slip while preserving
+         * full detection of 1-cycle-and-larger events.
+         *
+         * Computed per-band: the floor at evaluation time is
+         * (@c pivot_slip_min_cycles × λ_band).  L1 (~0.19 m) → ~4.8 cm;
+         * L2 (~0.24 m) → ~6 cm; L5 (~0.26 m) → ~6.4 cm.
+         *
+         * Set to @c 0.0 to disable the floor (revert to pure coherence
+         * detection — useful when validating the detector against
+         * data with known sub-cycle slips, or in static contexts where
+         * sub-cm coherent offsets are real disturbances worth handling).
+         *
+         * @return Wavelength-fraction threshold (cycles).  Default 0.25.
+         */
+        double getPivotSlipMinCycles() const { return pivot_slip_min_cycles_; }
+
+        /**
+         * @brief Minimum EWMA-mean |residual|, in cycles of the band's
+         *        wavelength, that triggers R-inflation downweighting
+         *        for a phase row's persistent bias.
+         *
+         * Distinct from @c getPivotSlipMinCycles, which gates the
+         * INSTANTANEOUS residual against cycle-slip semantics.  This
+         * gate tracks the *historical* tendency of a particular
+         * (satellite, signal) row to carry a non-zero residual mean
+         * across many epochs — multipath fingerprints, PCV miscal,
+         * inter-channel hardware bias, or any persistent unmodeled
+         * effect.  Sourced from @c ResidualHistoryTracker's EWMA mean.
+         *
+         * When @c |mean| · sign > threshold · λ for a row whose
+         * sample count exceeds @c warmup_n, the row's diagonal R
+         * entry is inflated by @c mean² so the KF stops trusting the
+         * channel as much as its formal stochastic noise suggests.
+         * Inflation is automatic and recovers as the EWMA mean
+         * decays (e.g., once the satellite climbs above a multipath
+         * geometry).
+         *
+         * Default 0.10 (λ/10 ≈ 2 cm on L1) — small enough to catch
+         * persistent biases that the pivot/outlier paths now ignore,
+         * large enough that random per-epoch noise doesn't trip it.
+         * Set to 0 to disable.
+         *
+         * @return Wavelength-fraction threshold (cycles).
+         */
+        double getPersistentBiasMinCycles() const {
+            return persistent_bias_min_cycles_;
+        }
+
+        /**
+         * @brief Stuck-code-bias detector configuration.
+         *
+         * Returned by const-reference; consumers (KalmanFilter's
+         * outlier handler, the post-commit stuck-bias scan) read the
+         * @c enabled flag once per epoch and only touch the
+         * thresholds when firing.
+         *
+         * @return Const ref to the stored config (JSON path
+         *         @c estimation.stuck_code_bias).
+         */
+        const StuckCodeBiasConfig& getStuckCodeBiasConfig() const {
+            return stuck_code_bias_;
+        }
+
+        /**
+         * @brief Sat-wide state re-inflation configuration.
+         *
+         * Read by the cycle-slip orchestration layer
+         * (@c CycleSlipManager::detectAndRepair, @c Application's
+         * sat-wide-reset path) to decide whether and how to call
+         * @c StateManager::reinflateIonosphereVariance and
+         * @c reinflateSatBiasVariancesForSat after every phase
+         * ambiguity for a satellite has been reset.
+         *
+         * @return Const ref to the stored config (JSON path
+         *         @c estimation.slip_state_reinflation).
+         */
+        const SlipStateReinflationConfig& getSlipStateReinflationConfig() const {
+            return slip_state_reinflation_;
+        }
+
+        /**
+         * @brief Huber threshold (standardized residual) above which a
+         *        sub-cycle phase row's measurement variance is inflated
+         *        in-update — no history needed.
+         *
+         * Complements the EWMA-based persistent-bias inflation: the
+         * EWMA mechanism only fires once a row has accumulated enough
+         * samples (~20 epochs at α=0.05), too slow to catch a satellite
+         * whose phase residual is already biased in its first epochs of
+         * tracking.  When a phase row's standardized residual exceeds
+         * this threshold AND its residual is sub-cycle (i.e. below
+         * @c pivot_slip_min_cycles · λ — anything larger is cycle-slip
+         * territory and is left to the post-fit outlier handler), the
+         * row's diagonal @c R is inflated so the row stays in the
+         * update with reduced weight rather than pulling the KF state
+         * toward a persistent sub-cycle bias.  Two schemes are
+         * available, selected by @c enableHuberInnovation(): a post-fit
+         * IRLS that converges the standardized residual to the
+         * threshold over several rebuild passes (default), or an
+         * innovation-based closed-form one-shot.
+         *
+         * Default value: @c 6.0 — the same threshold as the outlier
+         * reset.  The two mechanisms are kept apart by the sub-cycle
+         * gate, not by this threshold: above it, a sub-cycle phase row
+         * is Huber-downweighted (too small to be a slip) while a
+         * non-sub-cycle row is reset by the outlier handler.  Set to 0
+         * to disable.
+         *
+         * @return Threshold on |standardized residual|.  Default 6.0.
+         */
+        double getPhaseHuberSresThreshold() const {
+            return phase_huber_sres_threshold_;
+        }
+
+        /**
+         * @brief Whether the in-update Huber R-inflation uses the
+         *        innovation-based one-shot scheme instead of post-fit IRLS.
+         *
+         * False (default): a flagged sub-cycle phase row has its @c R
+         * inflated by @c (|sres|/k)^2 each rebuild pass, where @c |sres|
+         * is the post-fit residual standardized by the working
+         * @c R(i,i); @c |sres| converges to the threshold @c k
+         * asymptotically over several passes.
+         *
+         * True: the row is standardized by its innovation covariance,
+         * @c |innov|/sqrt(H·P·H' + R), which is monotone in @c R — so
+         * the @c R that lands the standardized residual exactly on @c k
+         * is closed-form (@c R_target = innov^2/k^2 - H·P·H', the prior
+         * variance projected into the row) and applied in a single
+         * rebuild pass.  @c k is @c getPhaseHuberSresThreshold().
+         *
+         * JSON: @c estimation.enable_huber_innovation.  Default false.
+         *
+         * @return True if the innovation-based one-shot scheme is active.
+         */
+        bool enableHuberInnovation() const { return enable_huber_innovation_; }
+
+        /**
+         * @brief Master on/off for the in-update Huber R-inflation pass.
+         *
+         * Independent of @c getPhaseHuberSresThreshold(): when this
+         * returns false, the post-fit Huber pass is skipped entirely
+         * even if the threshold is positive.  Useful for fair
+         * comparison studies where one wants to deactivate the entire
+         * outlier-downweighting branch without also having to set the
+         * threshold to a sentinel value.
+         *
+         * Defaults to true so existing configs that rely on the
+         * threshold-only gate continue to behave identically.
+         *
+         * JSON: @c estimation.enable_huber_r_inflation.
+         *
+         * @return True if the Huber R-inflation pass is active.
+         */
+        bool enableHuberRInflation() const { return enable_huber_r_inflation_; }
+
+        /**
+         * @brief Master on/off for the per-row sub-cycle slip
+         *        suppression in the phase outlier dispatch.
+         *
+         * When true (default), a flagged phase row whose |residual|
+         * is below @c getPivotSlipMinCycles() · λ is treated as a
+         * sub-cycle bias rather than a cycle slip: the row is
+         * excluded from this rebuild but the ambiguity state is
+         * preserved.  When false, every flagged phase outlier
+         * triggers the normal ambiguity-reset path regardless of how
+         * small the residual is — i.e., the λ-fraction floor is
+         * bypassed.
+         *
+         * This is independent of @c getPivotSlipMinCycles(), which
+         * sets the floor's *value*; the bool gates whether the floor
+         * is consulted at all.  Useful for comparing PPP (which
+         * historically resets on any flagged outlier through the
+         * iono-free signal naming) against PPP-RTK (which gets the
+         * suppression on bare per-band codes) on equal terms.
+         *
+         * Defaults to true so existing configs are unchanged.
+         *
+         * JSON: @c estimation.enable_subcycle_slip_suppression.
+         *
+         * @return True if sub-cycle phase outliers should skip the
+         *         ambiguity reset; false to reset unconditionally.
+         */
+        bool enableSubcycleSlipSuppression() const {
+            return enable_subcycle_slip_suppression_;
+        }
+
+        /**
          * @brief Check if receiver inter-frequency bias (IFB) estimation is enabled.
          *
          * When true (default in PPP-RTK uncombined mode), per-system code-bias
@@ -1293,6 +2186,56 @@ namespace GnssProcessor {
         bool estimateSatBiases() const { return estimate_sat_biases_; }
 
         /**
+         * @brief Warm-restore window for the satellite-bias cache (seconds).
+         *
+         * When a sat-bias state is pruned (its satellite/signal isn't
+         * observed in the current epoch), its value and diagonal
+         * variance are stashed in an in-memory cache.  If the same
+         * (sat, signal) reacquires within this many seconds, the
+         * cached state is restored verbatim with the variance aged
+         * forward by @c process_noise.sat_bias_q × gap_s — a "warm
+         * restart" that preserves the converged bias estimate across
+         * brief visibility losses (low-elevation glitches, geometry
+         * holes, masking).
+         *
+         * Beyond this window but within @c getSatBiasCacheMaxAgeS()
+         * the cached value is used as the seed but the variance is
+         * reset to @c initial_std.sat_bias² — a "cold restart from
+         * cached value", useful when the gap is long enough that the
+         * stashed variance is no longer trustworthy but the value
+         * itself is still a better starting point than the WLS
+         * single-epoch seed.
+         *
+         * Default 300 s (5 minutes).  Set equal to
+         * @c getSatBiasCacheMaxAgeS() to skip the cold-restart band
+         * entirely (warm-or-evict).  Configured via
+         * @c estimation.sat_bias_cache.warm_age_s.
+         *
+         * @return Warm-restore window in seconds.
+         */
+        double getSatBiasCacheWarmAgeS() const { return sat_bias_cache_warm_age_s_; }
+
+        /**
+         * @brief Maximum cache lifetime for satellite-bias entries (seconds).
+         *
+         * Cache entries older than this are evicted and never
+         * restored — the next acquisition uses the WLS-derived
+         * single-epoch seed, exactly as if no cache existed.  Caps the
+         * memory footprint and prevents very stale values from
+         * silently re-entering the filter after long outages.
+         *
+         * Must be >= @c getSatBiasCacheWarmAgeS(); if the JSON sets
+         * @c max_age_s lower it is clamped up to @c warm_age_s at load
+         * time and a warning is logged.
+         *
+         * Default 3600 s (1 hour).  Configured via
+         * @c estimation.sat_bias_cache.max_age_s.
+         *
+         * @return Cache lifetime in seconds.
+         */
+        double getSatBiasCacheMaxAgeS() const { return sat_bias_cache_max_age_s_; }
+
+        /**
          * @brief Configuration block for the post-fit residual history
          *        tracker.
          *
@@ -1305,6 +2248,24 @@ namespace GnssProcessor {
          * spatial-only.  See @c filter/ResidualHistoryTracker.hpp.
          */
         const ResidualHistoryConfig& getResidualHistoryConfig() const { return residual_history_; }
+
+        /**
+         * @brief Access the adaptive ionospheric process-noise configuration.
+         *
+         * When @c AdaptiveIonoQConfig::enabled, @c IonoVariabilityMonitor
+         * scales the per-satellite ionospheric process noise from the
+         * geometry-free phase second-time-difference variability.
+         * Default-constructed (disabled) when the JSON block is absent.
+         *
+         * @return Const reference to the adaptive iono-Q configuration.
+         */
+        const AdaptiveIonoQConfig& getAdaptiveIonoQConfig() const { return adaptive_iono_q_; }
+
+        /**
+         * @brief Access the GIM ionosphere-weighting configuration.
+         * @return Const reference to the ionosphere-weighting config.
+         */
+        const IonosphereWeightingConfig& getIonosphereWeightingConfig() const { return iono_weighting_; }
 
         /**
          * @brief Variance multiplier for code measurements without BIA coverage.
@@ -1520,6 +2481,95 @@ namespace GnssProcessor {
         double getArWlOnlyPseudoVar() const { return ar_wl_only_pseudo_var_; }
 
         /**
+         * @brief Maximum *worst-case* fractional residual (cycles) accepted
+         *        for an MW WL integer to enter the AR pseudo-observation update.
+         *
+         * The MW detector reports a per-arc worst-case fractional residual
+         *
+         *     worst_case_frac = |mean/λ_WL − rounded_int| + 3 · σ_mean / λ_WL
+         *
+         * combining the running mean's offset from its rounded integer with
+         * a 3σ bound on the standard error of the mean.  An arc with
+         * worst_case_frac < 0.5 is the same condition that would fire the
+         * lock criterion, so locked arcs always have worst_case < 0.5.
+         *
+         * Default 0.40 cyc — accepts arcs whose 99.7% confidence interval
+         * for the rounded integer leaves at least 10% of a cycle of margin
+         * before the half-cycle boundary.  This gates BOTH locked and
+         * BIA-corrected-but-converging arcs uniformly: arcs whose σ_mean
+         * has shrunk enough are accepted; freshly BIA-corrected arcs with
+         * wide σ_mean wait until they've averaged enough samples.
+         *
+         * Tighten (e.g. 0.30) for stricter AR; loosen (e.g. 0.45) if AR is
+         * starved.  Setting < 0.20 will admit only very mature, clean
+         * locks (which can take many epochs of averaging).
+         */
+        double getArWlMaxFrac() const { return ar_wl_max_frac_; }
+
+        /**
+         * @brief Minimum bootstrap success rate for AR fix acceptance.
+         *
+         * Bootstrap success rate P_s,boot is a closed-form lower bound
+         * on the integer least-squares (ILS) success rate, computed
+         * from the LDL diagonal of the decorrelated DD covariance:
+         *
+         *     P_s,boot = Π_i  erf( 1 / (2·√(2·d_i)) )
+         *
+         * Acts as a Fixed-Failure-Rate (FFR) acceptance criterion: AR
+         * commits a fix only when P_s,boot ≥ this threshold.  Unlike
+         * the ratio test (which uses a fixed threshold regardless of
+         * problem geometry), this threshold is **self-tuning** — it
+         * becomes harder to pass when the search is high-dimensional
+         * or poorly conditioned.
+         *
+         * Default 0.999 → at most 0.1% probability of accepting a
+         * wrong-integer fix.  Tighten to 0.9999 for safety-critical
+         * applications; loosen to 0.99 when integrity is less
+         * critical and acceptance latency matters.
+         */
+        double getArMinSuccessRate() const { return ar_min_success_rate_; }
+
+        /**
+         * @brief Maximum per-NL-pair |float − fixed| residual (cycles)
+         *        for AR acceptance.
+         *
+         * Even when the joint LAMBDA ratio test passes, individual
+         * pairs whose float landed close to the half-cycle boundary
+         * are likely contributing the wrong integer to the joint set
+         * (the marginal fixes that destabilize AR on the next epoch).
+         * Reject the entire fix when any pair's |frac| exceeds this
+         * cap.
+         *
+         * Default 0.15 cyc.  Tighten to 0.10 if you observe wrong-fix
+         * symptoms (ratio collapse on next epoch); loosen to 0.20 if
+         * AR is too aggressive on rejecting otherwise-good fixes.
+         */
+        double getArNlMaxPerPairFrac() const { return ar_nl_max_per_pair_frac_; }
+
+        /**
+         * @brief Get the list of constellations eligible for AR.
+         *
+         * Empty list = all active systems are eligible (current default).
+         * Non-empty = only listed constellations enter the AR candidate
+         * set.  Excluded constellations stay in the float solution
+         * (their phase observations contribute to position/troposphere/
+         * iono estimation and their ambiguities are still float-tracked)
+         * but are skipped by @c buildDdPairs and
+         * @c applyMwWlConstraintsNlWl_.
+         *
+         * Usage: when one constellation has residual model bias
+         * (uncalibrated antenna PCV, mismatched phase wind-up
+         * convention, missing per-attribute BIA entries, etc.) that
+         * drags down the joint LAMBDA ratio test even though its float
+         * contribution is healthy.  Common production strategy when one
+         * system's bias model is less mature than the others.
+         *
+         * Configured via @c estimation.ambiguity_resolution.active_systems
+         * as a JSON list of system names: ["GPS"], ["GPS","Galileo"], etc.
+         */
+        const std::vector<std::string>& getArActiveSystems() const { return ar_active_systems_; }
+
+        /**
          * @brief Get the logging configuration block.
          * @return Const reference to the LoggingConfig struct.
          */
@@ -1592,14 +2642,23 @@ namespace GnssProcessor {
         void logConfigurationSummary_(LogManager& log_manager) const;
 
         ProcessingMode processing_mode_{ ProcessingMode::PPP }; ///< Processing mode (PPP or PPP-RTK).
-        SignalMode signal_mode_{ SignalMode::Dual };            ///< Signal mode (Dual, Triple, All).
-        MwSignalMode mw_signal_mode_{ MwSignalMode::Filter };  ///< MW detector signal selection (Filter or All).
+        FrequencyMode   frequency_mode_{ FrequencyMode::Dual };       ///< KF frequency band scope.
+        ChannelMode     channel_mode_{ ChannelMode::Single };         ///< KF tracking-mode channel multiplicity per band.
+        MwFrequencyMode mw_frequency_mode_{ MwFrequencyMode::Mirror };///< MW detector frequency mode (Mirror inherits KF).
+        MwChannelMode   mw_channel_mode_{ MwChannelMode::Mirror };    ///< MW detector channel mode (Mirror inherits KF).
+        bool enable_inhouse_bias_estimation_{ false };         ///< In-house per-(sat, sig-pair) MW phase bias estimation; default off.
+        double mw_init_frac_threshold_{ 0.4 };                 ///< First-epoch sanity check: max |frac| (WL cycles) before forcing a slip-on-init.  Raise for code-noisy combinations (L1C-based MW).
+        StateAmbiguityBasis state_ambiguity_basis_{ StateAmbiguityBasis::PerBand }; ///< Ambiguity parameterization (PerBand or NlWl).
         SatelliteInterpolationMode satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }; ///< Satellite position/velocity interpolation mode (Lagrange, Finite, Hermite, Spline).
         SatelliteClockInterpolationMode satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }; ///< Satellite clock interpolation mode (Linear, Lagrange).
         bool uncombined_enabled_{ false };                      ///< Enable uncombined processing.
         double elevation_mask_deg_{ 10.0 };                    ///< Elevation mask in degrees.
+        bool exclude_eclipsing_satellites_{ false };           ///< Drop satellites in Earth's umbral shadow at the geometry stage. Default off (legacy behavior); enable to avoid unmodelled yaw manoeuvres during eclipse and recovery.
+        double eclipse_shadow_scale_{ 1.0 };                   ///< Multiplier on Earth's radius for the cylindrical shadow test. 1.0 = pure geometric umbra; >1.0 widens the exclusion margin.
         double data_gap_tolerance_s_{ 0.0 };                     ///< Data gap tolerance (s); 0 = use measurement rate.
+        double long_gap_tolerance_s_{ 300.0 };                   ///< Long-gap threshold (s); separates short vs long gap policy in handleGap.
         double gnss_rate_s_{ 0.0 };                              ///< Effective processing rate (s); 0 = process every RINEX epoch.
+        std::string rinex_types_{ "CL" };                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         ProcessNoise process_noise_;                          ///< Process noise parameters.
         InitialStd initial_std_;                              ///< Initial state uncertainties.
@@ -1614,6 +2673,10 @@ namespace GnssProcessor {
 
         double zhd_pressure_mbar = 1013.25;  ///< Zenith hydrostatic delay pressure (mbar).
         double zhd_temp_kelvin = 288.15;     ///< Zenith hydrostatic delay temperature (Kelvin).
+
+        TroposphereAprioriSource tropo_apriori_source_{ TroposphereAprioriSource::StandardAtmosphere }; ///< P/T source for Saastamoinen ZHD.
+        std::filesystem::path gpt3_grid_path_;     ///< Path to gpt3_5.grd; used when tropo_apriori_source_ == Gpt3 or tropo_mapping_function_ == Vmf3.
+        TroposphereMappingFunction tropo_mapping_function_{ TroposphereMappingFunction::Gmf }; ///< Hydrostatic/wet mapping function selection.
 
         double leap_seconds_tai_ = 37.0;  ///< Number of leap seconds (TAI-UTC=37) since 2017-01-01.
 
@@ -1637,13 +2700,25 @@ namespace GnssProcessor {
         bool enable_between_satellite_sd_{ false };                ///< Between-satellite single-difference operator in measurement model.
         bool enable_glonass_bssd_{ false };                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         double bssd_pivot_min_elevation_deg_{ 45.0 };              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
+        double pivot_slip_min_cycles_{ 0.25 };                     ///< Minimum |median SD residual| in band-wavelength cycles for pivot-slip detection.  0 disables.
+        double persistent_bias_min_cycles_{ 0.10 };                ///< Min EWMA |mean| (in cycles) before a phase row's R is inflated to downweight persistent bias.  0 disables.
+        double phase_huber_sres_threshold_{ 6.0 };                 ///< In-update Huber R-inflation threshold on |sres| for sub-cycle phase rows.  0 disables.
+        bool enable_huber_innovation_{ false };               ///< Use innovation-based closed-form Huber R-inflation instead of post-fit IRLS.
+        bool enable_huber_r_inflation_{ true };               ///< Master on/off for the in-update Huber R-inflation pass.  When false, the pass is skipped regardless of the threshold value.
+        bool enable_subcycle_slip_suppression_{ true };       ///< Master on/off for the per-row λ-fraction floor that suppresses ambiguity resets on sub-cycle phase outliers.
         bool estimate_ifb_{ false };                                    ///< Estimate receiver inter-frequency bias (IFB) for non-reference code bands.
         bool lock_signals_to_clock_ref_{ false };                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.
         bool require_bia_for_signals_{ false };                           ///< Only use signals with BIA product coverage.
         bool estimate_sat_biases_{ false };                               ///< Estimate per-satellite bias for signals without BIA coverage.
+        double sat_bias_cache_warm_age_s_{ 300.0 };                       ///< Sat-bias cache: warm-restore window (sec).  Within this, restore value + aged variance.
+        double sat_bias_cache_max_age_s_{ 3600.0 };                       ///< Sat-bias cache: max entry lifetime (sec).  Beyond this, evict; in [warm, max], restore value with cold-start variance.
         double no_bia_code_downweight_{ 100.0 };                            ///< Variance multiplier for code on signals without BIA coverage.
         bool estimate_velocity_{ false };                           ///< Estimate receiver velocity from Doppler observations.
         ResidualHistoryConfig residual_history_;                    ///< Per-(sat, signal) post-fit residual history tracker config.
+        StuckCodeBiasConfig   stuck_code_bias_;                     ///< Stuck-code-bias detector + reset thresholds.
+        SlipStateReinflationConfig slip_state_reinflation_;         ///< Sat-wide iono + sat-bias variance re-inflation on phase reset.
+        AdaptiveIonoQConfig adaptive_iono_q_;                       ///< Adaptive ionospheric process-noise (GF second-difference) config.
+        IonosphereWeightingConfig iono_weighting_;                  ///< GIM ionosphere-weighting (PPP-RTK soft iono constraint) config.
 
         bool has_reference_position_{ false };                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_{ 0.0, 0.0, 0.0 }; ///< User-supplied reference position ECEF (m).
@@ -1672,6 +2747,10 @@ namespace GnssProcessor {
         double ar_ratio_upper_bound_{ 1e4 };   ///< Reject fixes whose ratio exceeds this (covariance pathology).
         bool   ar_wl_only_{ false };           ///< WL-only AR: apply MW-resolved WL integers as Kalman pseudo-obs, skip LAMBDA NL search.
         double ar_wl_only_pseudo_var_{ 1e-4 }; ///< Pseudo-obs variance (cycles²) for WL-only constraints.
+        double ar_wl_max_frac_{ 0.40 };        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
+        double ar_min_success_rate_{ 0.999 };  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.
+        double ar_nl_max_per_pair_frac_{ 0.15 }; ///< Max per-NL-pair |float − fixed| (cyc); rejects marginal fixes.
+        std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).
 
         LoggingConfig logging_config_;             ///< Logger and trace file enable/disable flags.
     };

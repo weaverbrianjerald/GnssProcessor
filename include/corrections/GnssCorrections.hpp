@@ -21,6 +21,8 @@
 #include "common/PppTypes.hpp"
 #include "corrections/OceanTideModel.hpp"
 #include <array>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -263,22 +265,25 @@ namespace GnssProcessor {
             bool accumulate = false) const;
 
         /**
-         * @brief Reset phase wind-up state for a specific satellite.
-         * @param satellite Satellite identifier string (e.g. "G01").
+         * @brief Enable CSV tracing of per-satellite phase wind-up diagnostics.
          *
-         * Call this when a cycle slip or ambiguity reset is detected for the
-         * satellite to ensure phase wind-up continuity is not falsely maintained
-         * across the discontinuity.
+         * Opens @c windup_trace.csv in @p log_dir.  Once enabled,
+         * @c computePhaseWindUp() writes one row per (satellite, epoch) with
+         * the wrapped atan2 angle, the post-accumulation angle, the implied
+         * cycle count, the applied metres, the inter-epoch gap and the
+         * accumulation-restart flag.  Intended for diagnosing whether the
+         * accumulated (unwrapped) mode tracks geometry correctly.
+         *
+         * @param log_dir Directory where the trace file will be created.
+         * @return True if the trace file was opened successfully.
          */
-        void resetPhaseWindUp(const std::string& satellite);
+        bool enableWindUpTracing(const std::filesystem::path& log_dir);
 
         /**
-         * @brief Reset phase wind-up state for all satellites.
-         *
-         * Call this on a complete filter reset or at the start of a new session
-         * to clear all accumulated phase wind-up history.
+         * @brief Check whether the phase wind-up CSV trace is active.
+         * @return True if @c windup_trace.csv is open and writable.
          */
-        void resetAllPhaseWindUp();
+        bool isWindUpTracingEnabled() const { return windup_trace_.is_open(); }
 
         /**
          * @brief Set station-specific ocean tidal loading coefficients.
@@ -344,6 +349,13 @@ namespace GnssProcessor {
             double epoch_s{ 0.0 };    ///< Continuous GPS seconds of last update.
         };
         mutable std::unordered_map<std::string, WindUpState> prev_windup_;
+
+        // Phase wind-up CSV diagnostic trace.  Opened on demand via
+        // enableWindUpTracing(); written from the const computePhaseWindUp(),
+        // hence mutable.  windup_trace_epoch_ tracks the last epoch traced per
+        // satellite so multi-signal / multi-pass calls emit one row per epoch.
+        mutable std::ofstream windup_trace_;
+        mutable std::unordered_map<std::string, double> windup_trace_epoch_;
 
         OceanTideModel ocean_tide_model_;  ///< Ocean tidal loading model
 

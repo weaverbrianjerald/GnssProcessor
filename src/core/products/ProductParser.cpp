@@ -487,6 +487,47 @@ namespace GnssProcessor {
                     data.start_time = epoch_time;
                     data.end_time = GnssTime{ epoch_time.week, epoch_time.tow + epoch_interval };
                     data.clock_bias = clock_bias;
+
+                    // Optional bias sigma — appears as the 2nd value when NV >= 2
+                    // (NV is the @c num field above, the count of value/sigma pairs).
+                    // Per IGS RINEX-CLK 3.x convention: bias_sigma is on the same
+                    // line as bias.  Missing or non-finite sigma is silently skipped.
+                    if (num >= 2) {
+                        double bias_sigma;
+                        if (parseDouble(sv, bias_sigma) && std::isfinite(bias_sigma) && bias_sigma > 0.0) {
+                            data.clock_bias_sigma = bias_sigma;
+                        }
+                    }
+
+                    // Optional rate + rate_sigma — when NV >= 4, the next two
+                    // values are on a continuation line per RINEX-CLK 3.x.
+                    // Many IGS Final products supply rates only at coarse epochs
+                    // (e.g. every 5 minutes) and emit NV=2 records elsewhere, so
+                    // this path may be exercised on only ~1 in 10 records for a
+                    // 30 s file.  Both rate and rate_sigma must parse cleanly
+                    // and be finite; otherwise has_rate stays false and the
+                    // LSQ clock interpolator treats this node as value-only.
+                    if (num >= 4) {
+                        std::string cont_line;
+                        if (std::getline(file, cont_line)) {
+                            ++line_count;
+                            std::string_view csv(cont_line);
+                            double rate, rate_sigma;
+                            if (parseDouble(csv, rate) && parseDouble(csv, rate_sigma)
+                                && std::isfinite(rate) && std::isfinite(rate_sigma)
+                                && rate_sigma > 0.0) {
+                                data.clock_rate = rate;
+                                data.clock_rate_sigma = rate_sigma;
+                                data.has_rate = true;
+                            } else {
+                                logger->debug(
+                                    "CLK: malformed continuation line for {} at line {} in {} — "
+                                    "rate fields skipped (NV={})",
+                                    sat, line_count, clk_path.string(), num);
+                            }
+                        }
+                    }
+
                     sat_clocks[t_cont] = data;
                     ++file_entries;
                 }

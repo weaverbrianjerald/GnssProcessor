@@ -795,6 +795,90 @@ namespace GnssProcessor {
         return rx_entry->pco.count(atx_freq) > 0;
     }
 
+    bool Antenna::wasAtxSubstituted(const std::string& satellite,
+                                     const std::string& signal,
+                                     System system) const {
+        // Substituted := strict coverage absent AND fallback enabled AND at
+        // least one of the four entries (sat PCO, sat PCV, rx PCO, rx PCV)
+        // resolved via the fallback chain to a non-empty alternate frequency.
+        if (hasFullAtxCoverage(satellite, signal, system)) return false;
+        if (!config_.getModelCorrections().enable_atx_frequency_fallback) return false;
+
+        const std::string atx_freq = signalToAtxFrequencyKey(signal, system);
+        if (atx_freq.empty()) return false;
+
+        // Locate satellite entry (same matching logic as hasFullAtxCoverage).
+        const AntennaData* sat_entry = nullptr;
+        for (const auto& a : antennas_) {
+            if (a.type.find(satellite + "_") == 0 ||
+                a.type.find("_" + satellite + "_") != std::string::npos) {
+                sat_entry = &a;
+                break;
+            }
+        }
+
+        // Locate receiver entry (same matching logic as hasReceiverAtxEntry).
+        const std::string rx_type_raw = rinex_parser_.getReceiverAntennaType();
+        std::string rx_type_sanitized;
+        rx_type_sanitized.reserve(rx_type_raw.size());
+        for (char c : rx_type_raw)
+            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
+        std::string rx_type_underscore;
+        rx_type_underscore.reserve(rx_type_raw.size());
+        for (char c : rx_type_raw) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
+                    rx_type_underscore.push_back('_');
+            } else {
+                rx_type_underscore.push_back(c);
+            }
+        }
+        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
+            rx_type_underscore.pop_back();
+        const AntennaData* rx_entry = nullptr;
+        for (const auto& a : antennas_) {
+            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
+                rx_entry = &a;
+                break;
+            }
+        }
+        if (!rx_entry) {
+            for (const auto& a : antennas_) {
+                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
+                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
+                    rx_entry = &a;
+                    break;
+                }
+            }
+        }
+
+        // Helper: given an entry map and a "good" predicate, return the
+        // resolved frequency key (exact or fallback).  Mirrors the logic
+        // in pickAtxFrequencyKey but inlined here so we can detect the
+        // exact-vs-substituted distinction.
+        auto pcoGood = [](const Eigen::Vector3d& v) { return v.allFinite(); };
+        auto pcvGood = [](const std::vector<std::vector<double>>& v) { return !v.empty(); };
+
+        auto picked = [&](const auto& map, auto good) -> std::string {
+            return pickAtxFrequencyKey(map, atx_freq, true, good);
+        };
+
+        bool any_substituted = false;
+        if (sat_entry) {
+            const std::string k1 = picked(sat_entry->pco, pcoGood);
+            const std::string k2 = picked(sat_entry->pcv, pcvGood);
+            if ((!k1.empty() && k1 != atx_freq) ||
+                (!k2.empty() && k2 != atx_freq)) any_substituted = true;
+        }
+        if (rx_entry) {
+            const std::string k3 = picked(rx_entry->pco, pcoGood);
+            const std::string k4 = picked(rx_entry->pcv, pcvGood);
+            if ((!k3.empty() && k3 != atx_freq) ||
+                (!k4.empty() && k4 != atx_freq)) any_substituted = true;
+        }
+        return any_substituted;
+    }
+
     bool Antenna::hasFullAtxCoverage(const std::string& satellite,
                                       const std::string& signal,
                                       System system) const {
@@ -1041,12 +1125,8 @@ namespace GnssProcessor {
      * @param dzen Zenith spacing in degrees between PCV rows.
      * @return Interpolated PCV value in same units as table (meters if table was in meters; caller scales).
      */
-    void Antenna::resetPhaseWindUp(const std::string& satellite) {
-        gnss_corrections_.resetPhaseWindUp(satellite);
-    }
-
-    void Antenna::resetAllPhaseWindUp() {
-        gnss_corrections_.resetAllPhaseWindUp();
+    bool Antenna::enableWindUpTracing(const std::filesystem::path& log_dir) {
+        return gnss_corrections_.enableWindUpTracing(log_dir);
     }
 
     double Antenna::interpolatePcv(const std::vector<std::vector<double>>& pcv_table,

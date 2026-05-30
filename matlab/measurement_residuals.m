@@ -1,15 +1,93 @@
 %% ============================================================
 %  Script: plot_measurement_residuals.m
-%  Purpose: Read and visualize PPP measurement residuals (UTC time axis)
+%  Purpose: Read and visualize PPP measurement residuals (GPS time axis)
 %           Categorized by system (GPS, Galileo, etc.) and type (code/phase)
 %  ============================================================
 
 clear all; %clc; %close all;
 
+%% --- Plot style switch ---
+% 'lines'   : one line per (satellite, signal) with NaN breaks at gaps;
+%             line style varies by signal/channel, color by satellite.
+% 'scatter' : original behaviour (markers only, one entry per satellite).
+plotStyle = 'lines';
+% A gap is declared whenever dt > gapFactor x median(dt) for that series;
+% NaN is inserted there so plot() draws a break instead of crossing it.
+gapFactor = 3;
+
+%% --- Plot layout switch ---
+% 'per_signal' : (recommended) one figure per (Code|Phase) x (raw|standardized).
+%                Rows = signals (L1C, L1W, L2W, L5X, ...), columns =
+%                constellations.  Each tile holds a single
+%                (signal, constellation) so every line is solid and
+%                satellites are distinguished by color alone -- no
+%                squinting at dashed/dotted styles.
+% 'compact'    : original 2 x nCons grid with all signals stacked per
+%                tile, distinguished by line style.  Use when you want a
+%                single quick-look figure rather than four detail-oriented
+%                ones.
+plotLayout = 'per_signal';
+
+%% --- Content switches ---
+% Set to false to skip the standardized-residual figures (saves figure
+% windows when you only care about raw residuals, or vice versa).
+showStandardizedPlots = true;
+% Set to false to suppress every per-tile legend (handy when satellite
+% counts are large and the legend dominates the tile area).
+showLegend = false;
+
 %% --- Load CSV file ---
 fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\measurement_residuals.csv';
 T = readtable(fname);
+
+%% --- Strip BSSD compound IDs down to the primary satellite ---
+% The C++ residual logger writes "<primary>/<pivot>" for BSSD rows (e.g.
+% "G05/G03").  When the pivot changes mid-run (elevation handover or
+% slip-driven handover), the same physical sat G05 then appears as two
+% different categorical values ("G05/G03" before, "G05/G07" after) and
+% becomes two disconnected lines on the per-satellite plot — looking
+% like a gap even when the CSV has full coverage.  Strip the suffix so
+% G05 is one categorical value across the whole run; keep the pivot in
+% a sidecar column for anyone who wants to inspect which reference was
+% in use on which epoch.
+satRaw = string(T.satellite);
+hasSlash = contains(satRaw, '/');
+T.pivot = strings(height(T), 1);
+T.pivot(hasSlash) = extractAfter(satRaw(hasSlash), '/');
+satRaw(hasSlash) = extractBefore(satRaw(hasSlash), '/');
+T.satellite = cellstr(satRaw);
+
+%% --- Synthesize 0-residual rows for active pivot satellites ---
+% A pivot has no SD residual against itself, so the CSV has no rows for
+% the satellite that's currently the pivot.  A sat that flips pivot
+% status mid-run therefore shows a line that ends (or starts, or has a
+% hole) at every handover.  Insert one synthetic row per unique
+% (week, tow_s, pivot, signal) with residual = 0 so the pivot's line
+% sits on zero during its tenure and is continuous with its real-row
+% values before and after.
+bssdMask = T.pivot ~= "";
+if any(bssdMask)
+    Tb = T(bssdMask, :);
+    [G, ~, ~, pivot_g, ~] = findgroups( ...
+        Tb.week, Tb.tow_s, string(Tb.pivot), string(Tb.signal));
+    firstIdx = splitapply(@(x) x(1), (1:height(Tb))', G);
+    syn = Tb(firstIdx, :);
+    syn.satellite = cellstr(pivot_g);
+    syn.residual_m(:) = 0;
+    if ismember('standardized_residual', syn.Properties.VariableNames)
+        syn.standardized_residual(:) = 0;
+    end
+    if ismember('innovation_m', syn.Properties.VariableNames)
+        syn.innovation_m(:) = 0;
+    end
+    if ismember('residual_std_m', syn.Properties.VariableNames)
+        syn.residual_std_m(:) = NaN;  % no meaningful sigma for the pivot row
+    end
+    syn.pivot = strings(height(syn), 1);
+    T = [T; syn];
+    T = sortrows(T, {'week', 'tow_s'});
+end
 
 %% --- Categorize measurements by type (code/phase) and system ---
 % Determine measurement type from signal column (C* = code, L* = phase)
@@ -35,9 +113,12 @@ satList = categories(T.satellite);
 N = numel(satList);
 
 %% --- Convert GPS week + TOW to UTC datetime ---
-gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+gpsEpoch = datetime(1980,1,6,0,0,0);
 gpsSeconds = T.week*7*86400 + T.tow_s;
-T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
+% Trace files carry pure GPS time (no leap-second conversion in the
+% engine).  Display GPS time directly so timestamps line up with the
+% RINEX epoch records.
+T.utc = gpsEpoch + seconds(gpsSeconds);
 
 %% --- Define markers and colors ---
 markerList = {'o','s','d','^','v','>','<','p','h','x','+'};
@@ -48,6 +129,17 @@ try
 catch
     colors = lines(1e3);
 end
+
+%% --- Per-signal line style map (used when plotStyle = 'lines') ---
+% Each distinct signal in the file (e.g. L1C, L2W, L5Q, C1C, ...) gets a
+% line style; styles cycle if there are more signals than entries in the
+% list.  Built once over the full table so the assignment is stable
+% across every subplot.
+lineStyleList = {'-','--',':','-.'};
+allSignals = unique(string(T.signal));
+allSignals = allSignals(~ismissing(allSignals) & allSignals ~= "");
+sigStyleFor = @(sig) lineStyleList{ ...
+    mod(find(allSignals == string(sig), 1) - 1, numel(lineStyleList)) + 1};
 
 %% --- Get unique systems and measurement types ---
 systemList = categories(T.system);
@@ -64,6 +156,24 @@ end
 nSys = numel(systemsPresent);
 nTypes = numel(measTypeList);
 
+%% --- Per-signal layout (recommended): up to four detail figures ---
+if strcmpi(plotLayout, 'per_signal')
+    plotResidualGrid(T, 'Code',  'residual_m',           'Residual (m)',  ...
+        'Code Residuals by Signal and System', ...
+        systemsPresent, colors, markerList, plotStyle, gapFactor, false, showLegend);
+    plotResidualGrid(T, 'Phase', 'residual_m',           'Residual (m)',  ...
+        'Phase Residuals by Signal and System', ...
+        systemsPresent, colors, markerList, plotStyle, gapFactor, false, showLegend);
+    if showStandardizedPlots
+        plotResidualGrid(T, 'Code',  'standardized_residual','Std. Residual', ...
+            'Code Standardized Residuals by Signal and System', ...
+            systemsPresent, colors, markerList, plotStyle, gapFactor, true, showLegend);
+        plotResidualGrid(T, 'Phase', 'standardized_residual','Std. Residual', ...
+            'Phase Standardized Residuals by Signal and System', ...
+            systemsPresent, colors, markerList, plotStyle, gapFactor, true, showLegend);
+    end
+else
+
 %% --- Tiledlayout: Residuals by System and Type ---
 % Rows = measurement type (Code, Phase), Columns = system (GPS, Galileo, etc.)
 figure('Name','Residuals by System and Type','Color','w','Position',[100 100 1400 600]);
@@ -72,6 +182,7 @@ title(t, 'Measurement Residuals by System and Type');
 
 for row = 1:nTypes
     measType = measTypeList{row};
+    measType = strrep(measType,'_','/');
     for col = 1:nSys
         sysName = systemsPresent{col};
 
@@ -102,12 +213,27 @@ for row = 1:nTypes
             if isempty(globalIdx), globalIdx = k; end
             if globalIdx > size(colors,1), globalIdx = mod(globalIdx-1, size(colors,1)) + 1; end
 
-            scatter(T_sub.utc(idx_sat), T_sub.residual_m(idx_sat), ...
-                10, colors(colorRow,:), 'filled', ...
-                'DisplayName', sat);
+            if strcmpi(plotStyle, 'lines')
+                sigsForSat = unique(string(T_sub.signal(idx_sat)));
+                for s = 1:numel(sigsForSat)
+                    sig = sigsForSat(s);
+                    idx_ss = idx_sat & string(T_sub.signal) == sig;
+                    if ~any(idx_ss), continue; end
+                    [tt, yy] = insertGapBreaks(T_sub.utc(idx_ss), ...
+                        T_sub.residual_m(idx_ss), gapFactor);
+                    plot(tt, yy, ...
+                        'LineStyle', sigStyleFor(sig), ...
+                        'Color', colors(colorRow,:), ...
+                        'DisplayName', sprintf('%s/%s', sat, sig));
+                end
+            else
+                scatter(T_sub.utc(idx_sat), T_sub.residual_m(idx_sat), ...
+                    10, colors(colorRow,:), 'filled', ...
+                    'DisplayName', sat);
+            end
         end
 
-        xlabel('UTC Time');
+        xlabel('GPS Time');
         ylabel('Residual (m)');
         title(sprintf('%s - %s', sysName, measType));
         grid on;
@@ -119,64 +245,84 @@ for row = 1:nTypes
 end
 
 %% --- Tiledlayout: Standardized Residuals by System and Type ---
-figure('Name','Standardized Residuals by System and Type','Color','w','Position',[100 100 1400 600]);
-t2 = tiledlayout(nTypes, nSys, 'TileSpacing', 'compact', 'Padding', 'compact');
-title(t2, 'Standardized Residuals by System and Type');
+if showStandardizedPlots
+    figure('Name','Standardized Residuals by System and Type','Color','w','Position',[100 100 1400 600]);
+    t2 = tiledlayout(nTypes, nSys, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(t2, 'Standardized Residuals by System and Type');
 
-for row = 1:nTypes
-    measType = measTypeList{row};
-    for col = 1:nSys
-        sysName = systemsPresent{col};
-        
-        nexttile;
-        hold on;
-        
-        % Filter data for this system and measurement type
-        idx_sys_type = T.system == sysName & T.meas_type == measType;
-        T_sub = T(idx_sys_type, :);
-        
-        if isempty(T_sub)
-            text(0.5, 0.5, 'No Data', 'HorizontalAlignment', 'center', ...
-                'Units', 'normalized', 'FontSize', 12);
+    for row = 1:nTypes
+        measType = measTypeList{row};
+        measType = strrep(measType,'_','/');
+        for col = 1:nSys
+            sysName = systemsPresent{col};
+
+            nexttile;
+            hold on;
+
+            % Filter data for this system and measurement type
+            idx_sys_type = T.system == sysName & T.meas_type == measType;
+            T_sub = T(idx_sys_type, :);
+
+            if isempty(T_sub)
+                text(0.5, 0.5, 'No Data', 'HorizontalAlignment', 'center', ...
+                    'Units', 'normalized', 'FontSize', 12);
+                title(sprintf('%s - %s', sysName, measType));
+                continue;
+            end
+
+            % Get satellites in this subset
+            satsInSubset = categories(removecats(T_sub.satellite));
+
+            for k = 1:numel(satsInSubset)
+                sat = satsInSubset{k};
+                idx_sat = T_sub.satellite == sat;
+
+                % Find global satellite index for consistent coloring
+                globalIdx = find(strcmp(satList, sat));
+                if isempty(globalIdx), globalIdx = k; end
+
+                if strcmpi(plotStyle, 'lines')
+                    sigsForSat = unique(string(T_sub.signal(idx_sat)));
+                    for s = 1:numel(sigsForSat)
+                        sig = sigsForSat(s);
+                        idx_ss = idx_sat & string(T_sub.signal) == sig;
+                        if ~any(idx_ss), continue; end
+                        [tt, yy] = insertGapBreaks(T_sub.utc(idx_ss), ...
+                            T_sub.standardized_residual(idx_ss), gapFactor);
+                        plot(tt, yy, ...
+                            'LineStyle', sigStyleFor(sig), ...
+                            'Color', colors(globalIdx,:), ...
+                            'DisplayName', sprintf('%s/%s', sat, sig));
+                    end
+                else
+                    plot(T_sub.utc(idx_sat), T_sub.standardized_residual(idx_sat), ...
+                        'LineStyle', 'none', ...
+                        'Marker', markerList{mod(globalIdx-1, numel(markerList))+1}, ...
+                        'MarkerSize', 5, ...
+                        'Color', colors(globalIdx,:), ...
+                        'DisplayName', sat);
+                end
+            end
+
+            yline(3, '--r', '+3\sigma', 'HandleVisibility', 'off');
+            yline(-3, '--r', '-3\sigma', 'HandleVisibility', 'off');
+
+            xlabel('GPS Time');
+            ylabel('Std. Residual');
             title(sprintf('%s - %s', sysName, measType));
-            continue;
+            grid on;
+
+            % Only show legend for first column (and only when enabled)
+            if showLegend && col == 1
+                legend('Location', 'bestoutside', 'FontSize', 7);
+            end
+
+            hold off;
         end
-        
-        % Get satellites in this subset
-        satsInSubset = categories(removecats(T_sub.satellite));
-        
-        for k = 1:numel(satsInSubset)
-            sat = satsInSubset{k};
-            idx_sat = T_sub.satellite == sat;
-            
-            % Find global satellite index for consistent coloring
-            globalIdx = find(strcmp(satList, sat));
-            if isempty(globalIdx), globalIdx = k; end
-            
-            plot(T_sub.utc(idx_sat), T_sub.standardized_residual(idx_sat), ...
-                'LineStyle', 'none', ...
-                'Marker', markerList{mod(globalIdx-1, numel(markerList))+1}, ...
-                'MarkerSize', 5, ...
-                'Color', colors(globalIdx,:), ...
-                'DisplayName', sat);
-        end
-        
-        yline(3, '--r', '+3\sigma', 'HandleVisibility', 'off');
-        yline(-3, '--r', '-3\sigma', 'HandleVisibility', 'off');
-        
-        xlabel('UTC Time');
-        ylabel('Std. Residual');
-        title(sprintf('%s - %s', sysName, measType));
-        grid on;
-        
-        % Only show legend for first column
-        if col == 1
-            legend('Location', 'bestoutside', 'FontSize', 7);
-        end
-        
-        hold off;
     end
 end
+
+end  % plotLayout branch
 
 %% --- Summary Statistics Table ---
 fprintf('\n=== Residual Statistics by System and Type ===\n\n');
@@ -191,5 +337,215 @@ for i = 1:nSys
                 sum(idx), rms(res), mean(res), std(res), ...
                 sum(abs(sres) > 3), 100*sum(abs(sres) > 3)/sum(idx));
         end
+    end
+end
+
+%% --- Local functions ---
+function plotResidualGrid(T, measType, valueColumn, valueLabel, figName, ...
+                          systemsPresent, colors, markerList, plotStyle, ...
+                          gapFactor, addSigmaLines, showLegend)
+% PLOTRESIDUALGRID  One figure: columns = constellations, rows within
+% each column = that constellation's own signals (sorted).  Different
+% constellations can have different row counts -- the GPS column might
+% have 5 signals while BeiDou full-band has 8 -- and there is NO
+% cross-column alignment by signal name, which is what makes the
+% layout compact: no blank tiles for combos like GPS / C7Q that don't
+% exist in real life.  Implementation: outer tiledlayout(1, nCons)
+% with one inner tiledlayout(nSigsForCons, 1) per constellation.
+    Tm = T(T.meas_type == measType, :);
+    if isempty(Tm)
+        fprintf('plotResidualGrid: no %s rows in table, skipping figure ''%s''\n', ...
+                measType, figName);
+        return;
+    end
+
+    % Per-constellation signal list, lexicographically sorted so a typical
+    % L1C, L1W, L2W, L5X, ... reads top-to-bottom in natural order.
+    nSysIn = numel(systemsPresent);
+    sigsPerCons = cell(1, nSysIn);
+    for c = 1:nSysIn
+        rows = Tm.system == systemsPresent{c};
+        if any(rows)
+            s = sort(unique(string(Tm.signal(rows))));
+            sigsPerCons{c} = s(~ismissing(s) & s ~= "");
+        end
+    end
+    activeCons = find(~cellfun(@isempty, sigsPerCons));
+    if isempty(activeCons)
+        fprintf('plotResidualGrid: no populated (signal, system) pairs for %s\n', measType);
+        return;
+    end
+    sigsPerCons = sigsPerCons(activeCons);
+    consActive = systemsPresent(activeCons);
+    nConsActive = numel(consActive);
+    maxSigsPerCons = max(cellfun(@numel, sigsPerCons));
+
+    figWidth  = max(900, 280 * nConsActive + 100);
+    figHeight = max(450, 170 * maxSigsPerCons + 120);
+    fig = figure('Name', figName, 'Color', 'w', ...
+           'Position', [50 50 figWidth figHeight]);
+    fig.Position(4) = fig.Position(4) - 100;  % trim to fit on monitor
+    outerTl = tiledlayout(1, nConsActive, 'TileSpacing', 'tight', 'Padding', 'compact');
+    title(outerTl, figName);
+
+    for c = 1:nConsActive
+        sysName = consActive{c};
+        sigs = sigsPerCons{c};
+        nSigsForCons = numel(sigs);
+
+        innerTl = tiledlayout(outerTl, nSigsForCons, 1, ...
+                              'TileSpacing','tight', 'Padding','tight');
+        innerTl.Layout.Tile = c;
+        innerTl.Layout.TileSpan = [1 1];
+
+        % Collect tile axes per column so the inner stack can share its
+        % x-axis (only the bottom tile keeps tick labels) and zooming
+        % stays synchronized across the column.
+        columnAxes = gobjects(0);
+
+        for r = 1:nSigsForCons
+            sig = sigs(r);
+            ax = nexttile(innerTl);
+            columnAxes(end+1) = ax; %#ok<AGROW>
+            hold(ax, 'on');
+
+            idx = Tm.system == sysName & string(Tm.signal) == sig;
+            T_sub = Tm(idx, :);
+
+            satsInSubset = categories(removecats(T_sub.satellite));
+            for k = 1:numel(satsInSubset)
+                sat = satsInSubset{k};
+                idx_sat = (T_sub.satellite == sat);
+
+                % Color by PRN number (str2double of chars 2-3 of the sat
+                % ID).  Falls back to the loop index if the parse fails
+                % (unexpected sat-id format) so we never crash on plot.
+                colorRow = str2double(sat(2:3));
+                if ~isfinite(colorRow), colorRow = k; end
+                if colorRow > size(colors,1)
+                    colorRow = mod(colorRow-1, size(colors,1)) + 1;
+                end
+
+                if strcmpi(plotStyle, 'lines')
+                    [tt, yy] = insertGapBreaks(T_sub.utc(idx_sat), ...
+                        T_sub.(valueColumn)(idx_sat), gapFactor);
+                    plot(ax, tt, yy, '-', ...
+                        'Color', colors(colorRow,:), ...
+                        'DisplayName', sat);
+                else
+                    if strcmp(valueColumn, 'residual_m')
+                        scatter(ax, T_sub.utc(idx_sat), T_sub.(valueColumn)(idx_sat), ...
+                            10, colors(colorRow,:), 'filled', ...
+                            'DisplayName', sat);
+                    else
+                        plot(ax, T_sub.utc(idx_sat), T_sub.(valueColumn)(idx_sat), ...
+                            'LineStyle', 'none', ...
+                            'Marker', markerList{mod(k-1, numel(markerList))+1}, ...
+                            'MarkerSize', 5, ...
+                            'Color', colors(colorRow,:), ...
+                            'DisplayName', sat);
+                    end
+                end
+            end
+
+            if addSigmaLines
+                yline(ax,  3, '--r', 'HandleVisibility', 'off');
+                yline(ax, -3, '--r', 'HandleVisibility', 'off');
+            end
+
+            % Per-tile mu/sigma annotation in the top-right corner.
+            % Synthetic pivot rows carry residual_std_m = NaN; exclude them
+            % so they don't drag the mean toward zero.
+            if ismember('residual_std_m', T_sub.Properties.VariableNames)
+                realMask = ~isnan(T_sub.residual_std_m);
+            else
+                realMask = true(height(T_sub), 1);
+            end
+            vals = T_sub.(valueColumn)(realMask);
+            vals = vals(isfinite(vals));
+            if ~isempty(vals)
+                text(ax, 0.98, 0.97, ...
+                    sprintf('\\mu=%.3g  \\sigma=%.3g', mean(vals), std(vals)), ...
+                    'Units', 'normalized', ...
+                    'HorizontalAlignment', 'right', ...
+                    'VerticalAlignment', 'top', ...
+                    'FontSize', 8, ...
+                    'BackgroundColor', 'w', ...
+                    'EdgeColor', [0.7 0.7 0.7], ...
+                    'Margin', 1);
+            end
+
+            grid(ax, 'on');
+            sig_title = strrep(sig,'_','/');
+            title(ax, sprintf('%s - %s', sysName, sig_title));
+            % Axis labels only on the outer edges: x on the bottom tile
+            % of each column (column heights differ), y on every tile of
+            % the leftmost column.  All tiles within a column share the
+            % same GPS time range, so non-bottom tiles also drop their
+            % x-tick LABELS -- the bottom tile's labels apply to them
+            % too via the linkaxes call below.
+            if r == nSigsForCons
+                xlabel(ax, 'GPS Time');
+            else
+                ax.XTickLabel = [];
+            end
+            if c == 1, ylabel(ax, valueLabel); end
+            % Legend on the top tile of each column -- one entry per
+            % satellite in that constellation, gated by showLegend.
+            if showLegend && r == 1
+                legend(ax, 'Location', 'bestoutside', 'FontSize', 7);
+            end
+
+            hold(ax, 'off');
+        end
+
+        % Synchronize x-limits across the column so zooming/panning
+        % anywhere updates every tile in this constellation's stack.
+        if numel(columnAxes) > 1
+            linkaxes(columnAxes, 'x');
+        end
+    end
+end
+
+function [tOut, yOut] = insertGapBreaks(tIn, yIn, gapFactor)
+% INSERTGAPBREAKS  Insert NaT/NaN rows where the time series has a gap so
+% that plot() draws a break rather than a line crossing the gap.  A gap is
+% any consecutive dt that exceeds gapFactor x median(dt) for the series.
+    tIn = tIn(:);
+    yIn = yIn(:);
+    if numel(tIn) < 2
+        tOut = tIn;
+        yOut = yIn;
+        return;
+    end
+    [tSorted, idx] = sort(tIn);
+    ySorted = yIn(idx);
+    dtSec = seconds(diff(tSorted));
+    medDt = median(dtSec);
+    if ~isfinite(medDt) || medDt <= 0, medDt = 1; end
+    gapIdx = find(dtSec > gapFactor * medDt);
+    if isempty(gapIdx)
+        tOut = tSorted;
+        yOut = ySorted;
+        return;
+    end
+    nOut = numel(tSorted) + numel(gapIdx);
+    tOut = NaT(nOut, 1);
+    if ~isempty(tSorted.TimeZone), tOut.TimeZone = tSorted.TimeZone; end
+    yOut = NaN(nOut, 1);
+    w = 1;
+    rStart = 1;
+    for g = 1:numel(gapIdx)
+        gIdx = gapIdx(g);
+        chunkLen = gIdx - rStart + 1;
+        tOut(w:w+chunkLen-1) = tSorted(rStart:gIdx);
+        yOut(w:w+chunkLen-1) = ySorted(rStart:gIdx);
+        w = w + chunkLen + 1;  % leave a NaT/NaN row at the gap
+        rStart = gIdx + 1;
+    end
+    chunkLen = numel(tSorted) - rStart + 1;
+    if chunkLen > 0
+        tOut(w:w+chunkLen-1) = tSorted(rStart:end);
+        yOut(w:w+chunkLen-1) = ySorted(rStart:end);
     end
 end

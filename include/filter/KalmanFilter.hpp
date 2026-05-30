@@ -135,6 +135,44 @@ namespace GnssProcessor {
         UpdateResult update(EpochMeasurement& measurement);
 
         /**
+         * @brief Apply a linear pseudo-observation to the filter state.
+         *
+         * Performs a Joseph-form Kalman update of the StateManager-owned
+         * state vector and covariance for a synthetic linear observation
+         * with design matrix @p H, innovation @p innovation and noise
+         * covariance @p R.  Used for soft constraints that are not RINEX
+         * measurements — e.g. the ionosphere-weighting GIM constraint.
+         *
+         * @param H          Design matrix (m x n) over the full state.
+         * @param innovation Observed-minus-predicted vector (m).
+         * @param R          Measurement noise covariance (m x m).
+         */
+        void applyPseudoObservation(const Eigen::MatrixXd& H,
+                                    const Eigen::VectorXd& innovation,
+                                    const Eigen::MatrixXd& R);
+
+        /**
+         * @brief Joseph-form pseudo-observation update kernel (pure, static).
+         *
+         * Applies a linear measurement update — Kalman gain, state
+         * correction and Joseph-form covariance update with explicit
+         * symmetrization — to @p x / @p P, writing the result to
+         * @p x_out / @p P_out.  The outputs may alias the inputs.
+         *
+         * @param x          Prior state vector (n).
+         * @param P          Prior covariance (n x n).
+         * @param H          Design matrix (m x n).
+         * @param innovation Observed-minus-predicted vector (m).
+         * @param R          Measurement noise covariance (m x m).
+         * @param[out] x_out Posterior state vector (n).
+         * @param[out] P_out Posterior covariance (n x n).
+         */
+        static void josephPseudoUpdate(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
+                                       const Eigen::MatrixXd& H, const Eigen::VectorXd& innovation,
+                                       const Eigen::MatrixXd& R,
+                                       Eigen::VectorXd& x_out, Eigen::MatrixXd& P_out);
+
+        /**
          * @brief Validate post-fit residuals to detect outliers and consistency issues.
          *
          * Computes and evaluates standardized residuals (and other metrics)
@@ -156,12 +194,30 @@ namespace GnssProcessor {
          *
          * After a call to update() that returns NeedsMeasurementRebuild, this method
          * returns the list of satellite IDs (e.g., "G01", "E11") that had their
-         * ambiguities reset. The caller can use this to reset phase wind-up state
-         * for those satellites.
+         * ambiguities reset, so the caller can clear dependent per-satellite
+         * state such as cycle-slip detector history.
          *
          * @return Vector of satellite ID strings that were reset.
          */
         const std::vector<std::string>& getLastResetSatellites() const { return last_reset_satellites_; }
+
+        /**
+         * @brief Get the list of (satellite, signal) pairs whose ambiguities were
+         *        reset during the last update.
+         *
+         * Parallel to @c getLastResetSatellites but at signal granularity.
+         * Cleanup of per-(sat, signal) state (e.g. MW arc histories on the
+         * specific signal pair that slipped) should consume this list and
+         * spare arcs whose other-signal didn't slip.  When a path resets an
+         * ambiguity but cannot pin down the signal, it appends only to
+         * @c last_reset_satellites_ and the consumer falls back to a sat-wide
+         * reset.
+         *
+         * @return Vector of (satellite, signal) pairs.
+         */
+        const std::vector<std::pair<std::string, std::string>>& getLastResetSignals() const {
+            return last_reset_signals_;
+        }
 
         /**
          * @brief Check if a complete filter reset occurred during the last update.
@@ -216,6 +272,29 @@ namespace GnssProcessor {
         std::set<std::string> takeRequestedPivotHandovers();
 
         /**
+         * @brief Take ownership of the per-constellation replacement-pivot
+         *        exclusion sets the post-fit detector recorded alongside
+         *        @c takeRequestedPivotHandovers.
+         *
+         * For each flagged constellation the detector records the satellites
+         * that must NOT become the new pivot: the offset pivot itself plus
+         * any non-pivot SD row whose residual disagrees with the coherent
+         * median by more than a robust k·MAD band (those rows are co-disturbed
+         * or independently slipping — electing one merely moves the broken
+         * SD-frame anchor from one offset sat to another, which is the
+         * post-fit handover flip-flop).  The @c Application driver forwards
+         * each set to @c PivotManager::requestForcedHandover so the forced
+         * handover lands on a consensus satellite.
+         *
+         * Returning by value clears the internal map.  Call after (or with)
+         * @c takeRequestedPivotHandovers each rebuild pass.
+         *
+         * @return Map of constellation name -> excluded satellite IDs.
+         */
+        std::map<std::string, std::set<std::string>>
+            takeRequestedPivotHandoverExcludeSats();
+
+        /**
          * @brief Mutable access to the post-fit residual history tracker.
          *
          * Exposed to the @c Application driver so external resets
@@ -259,6 +338,7 @@ namespace GnssProcessor {
         std::unique_ptr<KalmanFilterLogger> logger_;  //!< Optional file logger for Kalman internals (created only in Trace mode).
         
         std::vector<std::string> last_reset_satellites_;  //!< Satellites with ambiguity resets from last update.
+        std::vector<std::pair<std::string, std::string>> last_reset_signals_;  //!< (sat, signal) pairs reset from last update; finer granularity than last_reset_satellites_.
         bool was_complete_reset_ = false;                 //!< True if a complete filter reset occurred.
         CycleSlipManager* cycle_slip_manager_ = nullptr;   //!< Optional access to MW data for outlier tiebreaking.
         Eigen::Matrix3d C_b_e_ = Eigen::Matrix3d::Identity(); //!< Body-to-ECEF rotation matrix (IMU attitude).
@@ -277,6 +357,39 @@ namespace GnssProcessor {
         /// drained by @c takeRequestedPivotHandovers after the KF returns
         /// NeedsMeasurementRebuild. Empty in steady state.
         std::set<std::string> requested_pivot_handovers_;
+
+        /// Per-constellation set of satellites the post-fit pivot-slip
+        /// detector flagged as unfit replacement pivots: the offset pivot
+        /// plus within-group residual outliers that disagree with the
+        /// coherent consensus (co-disturbed / independently-slipping sats).
+        /// Drained by @c takeRequestedPivotHandoverExcludeSats in lockstep
+        /// with @c requested_pivot_handovers_ and forwarded to PivotManager
+        /// as @c exclude_sats so a forced handover lands on a consensus
+        /// satellite instead of bouncing to another offset sat. Empty in
+        /// steady state.
+        std::map<std::string, std::set<std::string>> pivot_handover_exclude_sats_;
+
+        /// Pending Huber R-inflations queued by the post-fit residual
+        /// detector for sub-cycle phase rows whose |sres_post| exceeds
+        /// the @c phase_huber_sres_threshold.  Key is "<primary_sat>|<signal>";
+        /// value is the target R(i,i) (m²) applied at the start of the
+        /// next @c update call.  Persists across rebuild passes within
+        /// the same epoch and is cleared in @c beginEpoch so each epoch
+        /// makes a fresh decision (long-term persistent biases are
+        /// covered by the separate EWMA-based inflation).
+        std::map<std::string, double> pending_r_inflations_;
+
+        /// Pending sat-bias resets queued by the stuck-code-bias
+        /// detector in the clean-commit branch of
+        /// @c validatePostFitResiduals.  Key is "<sat>|<signal>" (the
+        /// sat-bias state key); value is the EWMA mean of post-fit
+        /// residuals for that row at trigger time — added to the
+        /// current bias value to snap it to the corrected estimate.
+        /// Applied immediately after commit in @c update() so the
+        /// next epoch starts with the re-seeded bias state.  Cleared
+        /// by @c beginEpoch as a defensive measure; in normal flow
+        /// the queue is drained the same epoch it's populated.
+        std::map<std::string, double> pending_sat_bias_resets_;
 
         /// Post-fit residual history tracker.  No-op when
         /// @c estimation.residual_history.enabled is false in config;

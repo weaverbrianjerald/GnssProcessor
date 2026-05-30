@@ -479,18 +479,112 @@ namespace GnssProcessor {
                         double second = std::stod(line.substr(30, 13));
                         time_of_first_obs_ = TimeUtils::GnssTimeFromDate(year, month, day, hour, minute, second, header_.time_system);
                     }
+                    else if (label.find("SYS / PHASE SHIFT") != std::string::npos) {
+                        // RINEX 3.x record (cols, 1-based):
+                        //   1     : system letter (G, E, R, C, J, S)
+                        //   2     : blank
+                        //   3-5   : observation code (e.g., "L2W", "L8X")
+                        //   6     : blank
+                        //   7-14  : phase shift in cycles, F8.5 (may be blank → 0)
+                        //   15    : blank
+                        //   16-17 : number of satellites listed (I2; 0 = applies to all)
+                        //   18-58 : satellite list (10 × A4, may continue on next line)
+                        //   60-79 : "SYS / PHASE SHIFT"
+                        //
+                        // We honor only the system-wide shifts (sat list empty
+                        // or zero count); per-sat overrides are uncommon in
+                        // practice and not supported here.  When a record's
+                        // shift field is blank, the receiver did not record a
+                        // shift for that observation code — treat as zero.
+                        if (line.size() >= 5) {
+                            const std::string sys = line.substr(0, 1);
+                            const System sys_enum =
+                                sys == "G" ? System::GPS :
+                                sys == "E" ? System::Galileo :
+                                sys == "R" ? System::GLONASS :
+                                sys == "C" ? System::BeiDou :
+                                sys == "J" ? System::QZSS :
+                                sys == "S" ? System::SBAS : System::Unknown;
+                            std::string obs_code = line.substr(2, 3);
+                            obs_code.erase(obs_code.find_last_not_of(" \t") + 1);
+                            obs_code.erase(0, obs_code.find_first_not_of(" \t"));
+
+                            double shift_cyc = 0.0;
+                            if (line.size() >= 14) {
+                                std::string shift_str = line.substr(6, 8);
+                                shift_str.erase(0, shift_str.find_first_not_of(" \t"));
+                                shift_str.erase(shift_str.find_last_not_of(" \t") + 1);
+                                if (!shift_str.empty()) {
+                                    try {
+                                        shift_cyc = std::stod(shift_str);
+                                    } catch (const std::exception&) {
+                                        log_manager_.getLogger("rinex_parser")->warn(
+                                            "Invalid SYS / PHASE SHIFT value '{}' for {} {}; skipping",
+                                            shift_str, sys, obs_code);
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            int n_sats = 0;
+                            if (line.size() >= 17) {
+                                std::string nsats_str = line.substr(15, 2);
+                                nsats_str.erase(0, nsats_str.find_first_not_of(" \t"));
+                                nsats_str.erase(nsats_str.find_last_not_of(" \t") + 1);
+                                if (!nsats_str.empty()) {
+                                    try {
+                                        n_sats = std::stoi(nsats_str);
+                                    } catch (const std::exception&) {
+                                        n_sats = 0;
+                                    }
+                                }
+                            }
+
+                            if (sys_enum == System::Unknown || obs_code.empty()) {
+                                log_manager_.getLogger("rinex_parser")->debug(
+                                    "Skipping malformed SYS / PHASE SHIFT record: '{}'", line);
+                                // Still consume continuation lines if any.
+                            } else if (n_sats > 0) {
+                                log_manager_.getLogger("rinex_parser")->info(
+                                    "SYS / PHASE SHIFT for {} {} has per-sat list (n={}); "
+                                    "per-sat overrides are not applied (system-wide only).",
+                                    sys, obs_code, n_sats);
+                            } else if (shift_cyc != 0.0) {
+                                header_.phase_shifts[sys_enum][obs_code] = shift_cyc;
+                                log_manager_.getLogger("rinex_parser")->info(
+                                    "SYS / PHASE SHIFT: {} {} = {:+.5f} cyc (will be subtracted from raw phase)",
+                                    sys, obs_code, shift_cyc);
+                            }
+
+                            // Skip any continuation lines: the spec packs 10
+                            // sat IDs per row; if more are listed, additional
+                            // SYS / PHASE SHIFT-labeled records follow with a
+                            // blank system column.  We never use the per-sat
+                            // list, so swallow them rather than mis-parsing.
+                            int remaining_sats = n_sats - 10;
+                            while (remaining_sats > 0 && std::getline(file, line)) {
+                                line.erase(line.find_last_not_of(" \t") + 1);
+                                remaining_sats -= 10;
+                            }
+                        }
+                    }
                     else if (label.find("GLONASS SLOT / FRQ #") != std::string::npos) {
+                        // Header carries up to 8 (sat, freq) pairs per record; for >8 slots,
+                        // continuation records have a blank count column.  Probe iss first
+                        // and refill on extraction failure so we don't lose the first sat
+                        // of each continuation to a stale (non-eof) trailing-whitespace state.
                         std::istringstream iss(line.substr(0, 60));
                         int num_slots;
                         iss >> num_slots;
                         for (int i = 0; i < num_slots; ++i) {
-                            if (iss.eof() && std::getline(file, line)) {
-                                iss.clear();
-                                iss.str(line.substr(0, 60));
-                            }
                             std::string sat;
                             int freq;
-                            iss >> sat >> freq;
+                            if (!(iss >> sat >> freq)) {
+                                iss.clear();
+                                if (!std::getline(file, line)) break;
+                                iss.str(line.substr(0, std::min<size_t>(60, line.length())));
+                                if (!(iss >> sat >> freq)) break;
+                            }
                             if (sat.size() >= 3 && sat[0] == 'R') {
                                 glonass_freq_slots_[sat] = freq;
                             }
@@ -544,6 +638,14 @@ namespace GnssProcessor {
                             auto obs_types = header_.obs_types[system];
                             std::istringstream data_iss(line.substr(3));
                             for (size_t j = 0; j < obs_types.size(); ++j) {
+                                // Apply the processing.rinex_types filter: skip any
+                                // observation whose RINEX-3 type letter (C/L/D/S)
+                                // is not enabled.  Done before field extraction so
+                                // we pay no per-obs decoding cost for filtered types.
+                                if (obs_types[j].empty() ||
+                                    !config_.isRinexTypeEnabled(obs_types[j][0])) {
+                                    continue;
+                                }
                                 // Each observation field is 16 characters (14 for value, 1 for LLI, 1 for SNR)
                                 size_t start_pos = 3 + j * 16;
                                 if (start_pos + 16 > line.length()) {
@@ -567,6 +669,25 @@ namespace GnssProcessor {
                                         value = rescaleGlonassMeasurement(value, obs_types[j], sat_id);
                                     }
                                     */
+                                    // Optionally subtract the receiver-applied SYS / PHASE SHIFT
+                                    // from raw phase observations (cycles).  Off by default —
+                                    // most modern BIA products (CODE, CAS, GFZ) are calibrated
+                                    // against the receiver-shifted phases as recorded in RINEX,
+                                    // so leaving the shifts in place is the standard PPP
+                                    // convention.  Opt in via @c model_corrections.apply_phase_shifts
+                                    // when running with bias products explicitly calibrated for
+                                    // the unshifted convention.  Code observations are unaffected
+                                    // either way.
+                                    if (config_.getModelCorrections().apply_phase_shifts
+                                        && !obs_types[j].empty() && obs_types[j][0] == 'L') {
+                                        auto sys_it = header_.phase_shifts.find(system);
+                                        if (sys_it != header_.phase_shifts.end()) {
+                                            auto code_it = sys_it->second.find(obs_types[j]);
+                                            if (code_it != sys_it->second.end()) {
+                                                value -= code_it->second;
+                                            }
+                                        }
+                                    }
                                     obs.measurements[obs_types[j]] = value;
 
                                     const auto& n = config_.getDefaultMeasurementNoise();
@@ -788,6 +909,18 @@ namespace GnssProcessor {
                             obs.receiver_id = header_.marker_name;
 
                             for (size_t j = 0; j < n_obs_types; ++j) {
+                                // Apply the processing.rinex_types filter.  RINEX 2.x
+                                // pseudoranges flagged as 'P' (encrypted P(Y) or
+                                // GLONASS P) translate to 'C' codes in the v3 form
+                                // the downstream pipeline expects, so map 'P' to
+                                // 'C' before checking the filter; otherwise users
+                                // setting rinex_types="CL" against a v2 file with
+                                // P1/P2 would silently lose all pseudoranges.
+                                if (!shared_obs_types[j].empty()) {
+                                    char tletter = shared_obs_types[j][0];
+                                    if (tletter == 'P') tletter = 'C';
+                                    if (!config_.isRinexTypeEnabled(tletter)) continue;
+                                }
                                 const size_t line_idx = j / 5;
                                 const size_t slot_idx = j % 5;
                                 const size_t base = line_idx * 80 + slot_idx * 16;

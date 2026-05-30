@@ -14,6 +14,7 @@
 
 #include "slip/IfPhaseSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -153,11 +154,10 @@ namespace GnssProcessor {
     // =================================================================
 
     double IfPhaseSlipDetector::computeMedian(std::vector<double>& values) {
-        if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
-        std::sort(values.begin(), values.end());
-        const size_t n = values.size();
-        return (n % 2 == 0) ? 0.5 * (values[n / 2 - 1] + values[n / 2])
-                            : values[n / 2];
+        // Delegates to the shared RobustStats::median.  This no longer sorts
+        // `values` in place; every call site uses only the return value
+        // (verified), so the dropped side effect is immaterial.
+        return RobustStats::median(values);
     }
 
     std::map<std::string, double> IfPhaseSlipDetector::checkOutliers(

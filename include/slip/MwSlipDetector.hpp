@@ -21,6 +21,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -36,10 +37,19 @@ namespace GnssProcessor {
      * When slip_wl_known is true, slip_wl_cycles contains an integer
      * estimate of the WL jump, and slip_frac records how far from integer
      * the raw value was before rounding (0 = exact, up to 0.5 = worst).
+     *
+     * @note slip_wl_cycles is always the satellite's OWN undifferenced
+     *       (zero-differenced) WL slip.  Bias-corrected arcs are detected in a
+     *       single-differenced frame against the detector's internal MW pivot,
+     *       but that pivot's own slip is added back before reporting, so
+     *       consumers may difference two satellites' slips directly without
+     *       knowing (or sharing) the MW pivot.  When the conversion can't be
+     *       made (MW pivot slipped with an unresolved integer) slip_wl_known is
+     *       set false so the consumer falls back to a reset.
      */
     struct MwSlipResult {
         std::string amb_key;           ///< Ambiguity key (e.g. "G01_L1C").
-        int    slip_wl_cycles{ 0 };    ///< WL slip dN_WL in cycles (0 if unknown).
+        int    slip_wl_cycles{ 0 };    ///< Satellite's OWN (zero-differenced) WL slip dN_WL, cycles (0 if unknown).
         bool   slip_wl_known{ false }; ///< True if slip_wl_cycles is a usable integer.
         double lambda_wl{ 0.0 };       ///< Wide-lane wavelength (meters) for this signal pair.
         std::string sig1;              ///< First signal (higher freq, e.g. "L1C").
@@ -111,6 +121,28 @@ namespace GnssProcessor {
         std::map<std::string, int> getResolvedWlAmbiguities() const;
 
         /**
+         * @brief Get the worst-case fractional residual of each
+         *        currently-locked WL arc, in cycles.
+         *
+         * Reports @c |mean/λ_WL − rounded_wl| + 3·σ_mean/λ_WL — the same
+         * worst-case-frac expression the lock criterion uses, capturing
+         * both the observed drift between the live running mean and the
+         * locked integer and the statistical uncertainty of the mean.
+         *
+         * Companion to @c getResolvedWlAmbiguities() used by AR to gate
+         * low-confidence locks (see @c AmbiguityResolverConfig::wl_max_frac).
+         * Only arcs with @c wl_locked=true and a finite @c lambda_wl are
+         * reported.  Frac of 0.0 = mean sits exactly on integer × λ with
+         * zero variance; values approaching @c kWlLockDriftMaxCyc (~0.4)
+         * indicate the arc is close to drift demotion.  Values cannot
+         * exceed @c kWlLockDriftMaxCyc + 3·σ_mean because @c processMwSample
+         * demotes any arc whose live drift crosses that threshold.
+         *
+         * @return Map of stats_key -> worst-case fractional residual (cycles).
+         */
+        std::map<std::string, double> getResolvedWlFractions() const;
+
+        /**
          * @brief Get all mature, non-slipped MW arc keys.
          *
          * Returns every stats key that has an active MW arc with enough
@@ -141,6 +173,47 @@ namespace GnssProcessor {
          * @param satellite Satellite identifier (e.g. "G01").
          */
         void resetSatellite(const std::string& satellite);
+
+        /**
+         * @brief Clear MW arc histories that involve a specific (satellite,
+         *        signal) — leaving arcs on signal pairs that don't include
+         *        this signal intact.
+         *
+         * Finer-grained alternative to @c resetSatellite for the common case
+         * where only one signal slipped on a multi-frequency satellite (e.g.
+         * L1C slipped while L2W and L5X are clean — the L2W/L5X arc should
+         * survive while L1C/L2W and L1C/L5X arcs are cleared).
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @param signal    Signal identifier (e.g. "L1C", "L2W", "L5X").
+         */
+        void resetSatelliteSignal(const std::string& satellite,
+                                   const std::string& signal);
+
+        /**
+         * @brief Hint that a satellite should be deprioritized when picking
+         *        the next MW pivot.
+         *
+         * Consumed by the next @c detectLargeMwResets call: the
+         * elevation-based pivot selector skips listed satellites unless
+         * they are the only candidate in a (constellation, signal-pair)
+         * group.  After consumption the hint set is cleared, so the
+         * caller must re-issue each epoch the deprioritization should
+         * hold.
+         *
+         * Intended use: when an upstream component (typically the KF
+         * post-fit residual detector via @c PivotManager::requestForcedHandover)
+         * flags that the current KF pivot has slipped, it forwards the
+         * same satellite here.  Without this hint the MW pivot picker
+         * (which sees neither the KF residual nor the handover request)
+         * can re-elect the slipped sat and propagate stale arcs into
+         * the next epoch's MW frame.
+         *
+         * @param satellite Satellite identifier (e.g. "G27").
+         * @param reason    Free-text reason logged at info level.
+         */
+        void notifyPivotForcedHandover(const std::string& satellite,
+                                       const std::string& reason);
 
         /**
          * @brief Clear all per-arc state.
@@ -269,10 +342,153 @@ namespace GnssProcessor {
         /** Per-satellite MW arc statistics keyed by satellite identifier. */
         std::map<std::string, MwArcStats> mw_stats_;
 
+        /** Pre-update snapshot of each arc taken at the start of every
+         *  @c processMwSample call (after gap detection, before any
+         *  state-modifying processing).  Keyed identically to
+         *  @c mw_stats_.  Consumed by @c resetSatellite /
+         *  @c resetSatelliteSignal to roll back a single epoch's
+         *  contribution when the KF post-fit residual check identifies
+         *  a slip MW's own detector missed — preserves the arc's pre-
+         *  slip noise statistics (mean, M2, diff_window, count) rather
+         *  than wiping the entire arc and forcing a re-warmup.  On
+         *  rollback we additionally clear @c wl_locked / @c rounded_wl
+         *  since a KF-detected slip means the underlying ambiguity
+         *  changed and the previously-locked integer is no longer
+         *  valid.
+         *
+         *  Cleared at the top of @c detectLargeMwResets each epoch so
+         *  the map only ever holds current-epoch snapshots.  Consumed
+         *  (erased per arc) by reset functions.  Also cleared in
+         *  @c resetAll.  When no snapshot exists for an arc the reset
+         *  falls back to the legacy full-erase behavior. */
+        std::map<std::string, MwArcStats> arc_snapshots_;
+
         /** Current BSSD pivot satellite per (constellation char + signal-pair key).
          *  Example key: "G_L1C_L2W".  When the pivot changes all SD arcs
          *  for that group are reset because the SD ambiguity changes. */
         std::map<std::string, std::string> sd_pivot_sat_;
+
+        /** One-shot deprioritization hints for the next MW pivot pick.
+         *  Populated by @c notifyPivotForcedHandover and consumed/cleared
+         *  by the next call to @c detectLargeMwResets. */
+        std::set<std::string> deprioritized_pivot_sats_;
+
+        /** Cross-satellite MAD σ per (constellation × signal-pair) group,
+         *  keyed by "<system_char>_<sig1>_<sig2>" (e.g. "G_L1C_L2W").
+         *  Updated at the end of each @c detectLargeMwResets call from
+         *  the previous epoch's pool of per-sat MW deviations.  Consumed
+         *  by @c computeAdaptiveThreshold as one of the σ_floor_static
+         *  sources — provides statistical strength even when individual
+         *  arcs are still warming up (cold start: 10 GPS sats at epoch 2
+         *  give MAD with 9 degrees of freedom vs. zero per-arc).
+         *  Persists across epochs (last known value); cleared by
+         *  @c resetAll.  Lags by one epoch — the current epoch's pool
+         *  isn't known until all sats are processed, so the floor uses
+         *  the previous epoch's σ.  Lag is acceptable because the
+         *  noise environment doesn't change epoch-to-epoch. */
+        std::map<std::string, double> cross_sat_sigma_m_;
+
+        /** Per-epoch staging map: collects per-sat MW deviations during
+         *  @c processMwSample, finalized into @c cross_sat_sigma_m_ at
+         *  the end of @c detectLargeMwResets and then cleared.  Keyed
+         *  the same way as @c cross_sat_sigma_m_. */
+        std::map<std::string, std::vector<double>> cross_sat_devs_;
+
+        /** Coarser cross-sat σ tiers for the breadth cascade in
+         *  @c computeAdaptiveThreshold, derived from the same per-epoch
+         *  deviation pool as @c cross_sat_sigma_m_.  @c cross_sat_sigma_cons_
+         *  is keyed by single-char constellation ("G") and pools all
+         *  band-pairs of that constellation; @c cross_sat_sigma_global_ pools
+         *  every constellation EXCEPT GLONASS (its FDMA inter-channel noise is
+         *  the least comparable, so it must not contaminate the estimate the
+         *  clean constellations fall back on).  A sparse band-pair group falls
+         *  back to its constellation tier, then (non-GLONASS only) to the
+         *  global tier, then to the gross-slip gate.  Both persist across
+         *  epochs and are cleared by @c resetAll. */
+        std::map<std::string, double> cross_sat_sigma_cons_;
+        double cross_sat_sigma_global_ = std::numeric_limits<double>::quiet_NaN();
+
+        /** Minimum cross-sat pool size before MAD is statistically
+         *  meaningful.  Below this we leave the previous epoch's σ in
+         *  place (or no entry, if cold start) rather than computing
+         *  from a degenerately small pool. */
+        static constexpr size_t kMinCrossSatSamples = 5;
+
+        /**
+         * @brief Persistent per-(sat, signal-pair) phase-bias estimate.
+         *
+         * Used when @c GnssConfig::getInhouseBiasEstimation() is enabled
+         * for arcs lacking external BIA bias correction.  An arc that
+         * matures with its running mean within @c kBiasCommitMaxFrac of
+         * an integer cycle, AND with σ_mean below @c kBiasCommitMaxSigmaCyc,
+         * commits its residual offset as a stored bias.  The stored bias
+         * is subtracted from incoming MW samples on subsequent arcs of
+         * the same (satellite, signal-pair) so the new arc accumulates
+         * an integer-near mean from epoch one and is eligible for the
+         * normal lock criterion.
+         *
+         * Lifetime is decoupled from @c MwArcStats — the bias survives
+         * arc resets (new arc inherits parent's stored bias), survives
+         * cycle slips (the integer changed but the bias didn't), and is
+         * S-transformed alongside arc means when the MW pivot changes.
+         */
+        struct EstimatedBias {
+            double bias_m{ 0.0 };           /**< Stored bias in meters; subtract from raw mw_m to get integer-near. */
+            double bias_var_m2{ 0.0 };      /**< Uncertainty (variance) in m². */
+            size_t commit_count{ 0 };       /**< Number of arcs that have contributed via EWMA. */
+            double last_update_epoch_s{ 0.0 }; /**< Continuous GPS seconds of the most recent update. */
+        };
+        std::map<std::string, EstimatedBias> sat_pair_bias_;
+
+        /** Minimum arc count before an unbiased arc is eligible to commit
+         *  a bias estimate.  Higher than @c kWlLockMinN because the commit
+         *  is a one-shot integer decision (whereas the lock criterion has
+         *  the k_σ statistical safety net that scales with √n). */
+        static constexpr size_t kBiasCommitMinCount = 20;
+
+        /** Maximum |frac| (in cycles) for an unbiased arc to commit a
+         *  bias.  Tighter than @c kWlMaxFrac because we are deciding
+         *  which integer the arc converged to without external corroboration;
+         *  a sat with frac in the 0.20–0.30 zone may legitimately belong
+         *  to either side and we'd rather wait for more evidence (or skip
+         *  the satellite) than gamble. */
+        static constexpr double kBiasCommitMaxFrac = 0.20;
+
+        /** Maximum σ_mean (cycles) for commit.  Ensures the running mean
+         *  is statistically well-determined before its residual is
+         *  declared a hardware bias. */
+        static constexpr double kBiasCommitMaxSigmaCyc = 0.05;
+
+        /** EWMA blending coefficient for cross-arc bias updates.  A small
+         *  value (slow EWMA) reflects that hardware biases drift on
+         *  hours-to-days timescales, so a single arc shouldn't move the
+         *  estimate much; many arcs aggregating through the EWMA refine it. */
+        static constexpr double kBiasEwmaAlpha = 0.20;
+
+        /**
+         * @brief Apply the stored bias for a (sat, signal-pair) to an
+         *        incoming raw MW sample, if such a bias exists.
+         *
+         * @param[in,out] mw_m            MW value (meters), modified in place.
+         * @param[in,out] bia_corrected   Becomes true when a stored bias is applied.
+         * @param stats_key               "<sat>_<sig1>_<sig2>" key.
+         */
+        void applyEstimatedBias(double& mw_m, bool& bia_corrected,
+                                 const std::string& stats_key) const;
+
+        /**
+         * @brief If the arc is eligible, commit (or update) an estimated
+         *        bias from its current running mean.
+         *
+         * @param stats         Arc statistics (modified: mean re-anchored to integer on commit).
+         * @param stats_key     "<sat>_<sig1>_<sig2>" key.
+         * @param lambda_wl     Wide-lane wavelength (meters).
+         * @param epoch_s       Continuous GPS seconds of this epoch.
+         * @return true if a bias was committed (or updated) this epoch.
+         */
+        bool tryCommitOrUpdateBias(MwArcStats& stats,
+                                    const std::string& stats_key,
+                                    double lambda_wl, double epoch_s);
 
         /** Maximum number of recent MW values kept per satellite for MAD computation. */
         static constexpr size_t kMwWindowSize = 30;
@@ -286,35 +502,43 @@ namespace GnssProcessor {
          *  residual pattern reported in MW time-difference diagnostics. */
         static constexpr size_t kMaxHatchCount = 100;
 
-        /** Multiplier applied to the MAD-derived sigma for the adaptive threshold.
-         *  A value of 4.0 corresponds to ~0.006% false alarm rate for Gaussian
-         *  noise, while keeping the detector sensitive to slips >= 2 WL cycles. */
+        /** Multiplier applied to the σ floor in @c computeAdaptiveThreshold.
+         *  Used in both the pre-MAD warmup and post-MAD branches so the
+         *  detection gate is consistent across the transition at
+         *  @c kMinEpochsForAdaptive — no discontinuity when MAD takes
+         *  over from the cross-sat + Welford floor.  8σ admits
+         *  essentially zero Gaussian false alarms while remaining
+         *  sensitive to multi-cycle slips above the noise level
+         *  represented by @c std::max(σ_MAD, σ_floor_static). */
         static constexpr double kMadSigmaMultiplier = 8.0;
 
         /**
-         * @brief Minimum number of epochs before the adaptive (MAD-based)
-         *        threshold is used.  Until this count is reached a fixed
-         *        fallback threshold of kInitialThresholdCycles is applied. */
-        static constexpr size_t kMinEpochsForAdaptive = 5;
+         * @brief Minimum number of diff_window entries before MAD-σ is
+         *        trusted as the adaptive threshold input.  MAD computed
+         *        from only 5 diffs is statistically marginal — when
+         *        those few diffs happened to be tight by luck the MAD
+         *        collapsed to near-zero, producing the 1-cycle → 0.008-
+         *        cycle threshold transition observed in MWWL traces.
+         *        15 diffs gives MAD enough degrees of freedom to be
+         *        representative.  During the warmup phase
+         *        @c computeAdaptiveThreshold uses a max of the
+         *        cross-sat MAD, the per-arc Welford σ_emp, and the
+         *        absolute @c kMinSigmaMeters floor — none of which
+         *        require external calibration. */
+        static constexpr size_t kMinEpochsForAdaptive = 15;
 
-        /** Fixed slip threshold (in wide-lane cycles) applied during the
-         *  first kMinEpochsForAdaptive epochs before the MAD-based adaptive
-         *  threshold becomes available.  Set at 1.5 WL cycles to reliably
-         *  catch 2-cycle slips on new arcs while staying above the noise
-         *  floor of a single MW sample (~0.5 WL cycles RMS from code). */
-        static constexpr double kInitialThresholdCycles = 1.5;
-
-        /** Minimum slip threshold expressed in wide-lane cycles.
-         *  Prevents the adaptive threshold from becoming unrealistically
-         *  tight when MW noise is very low.  A floor of 0.5 WL cycles
-         *  reliably detects 1-cycle slips on quiet arcs (the deviation
-         *  is ~1.0 * lambda_wl, well above 0.5) while remaining above
-         *  typical epoch-to-epoch MW code noise (~0.15-0.3 WL cycles
-         *  RMS).  Smaller sub-cycle noise fluctuations are never
-         *  flagged; any residual sub-cycle effects are left to the
-         *  post-fit standardized residual check which is more
-         *  sensitive. */
-        static constexpr double kMinThresholdCycles = 0.5;
+        /** Lower bound on the MAD-derived sigma (meters) used in
+         *  @c computeAdaptiveThreshold.  Prevents the threshold from
+         *  collapsing to near-zero when the diff_window happens to be
+         *  unnaturally tight (e.g., a brief stretch of nearly-identical
+         *  samples on a quiet, short arc).  Set to 1 cm — well below
+         *  typical L1/L2 WL MAD (~5–15 cm), so it doesn't change behavior
+         *  for the standard pairs, while keeping the threshold
+         *  wavelength-independent and useful for ultra-long EWL pairs
+         *  (e.g., L5X/L8X at λ ≈ 19.5 m) whose natural MAD can be
+         *  millimeters and whose meaningful anomalies live at the
+         *  centimeter scale. */
+        static constexpr double kMinSigmaMeters = 0.01;
 
         /** Default maximum inter-epoch gap (seconds) before the arc is
          *  reset.  Override at runtime via @c setMaxGapSeconds — typical
@@ -326,41 +550,80 @@ namespace GnssProcessor {
          *  survive 60–120 s outages. */
         static constexpr double kDefaultMaxGapSeconds = 120.0;
 
-        /** Maximum fractional WL cycle on the first sample of a new
-         *  BIA-corrected arc.  A clean phase track on a satellite whose
-         *  hardware bias is removed yields MW values clustered tightly
-         *  around an integer × λ_WL.  When the very first sample of a
-         *  fresh arc lands more than this far from the nearest integer,
-         *  the arc was almost certainly initialized with a slip already
-         *  baked in (e.g., a slip occurred during the data gap that
-         *  triggered the arc reset).  Treat that case as a slip on
-         *  init rather than letting the corrupt value become the new
-         *  running mean. */
-        static constexpr double kInitFracThresh = 0.4;
+        /** Effective first-epoch fractional-residual threshold (WL cycles).
+         *  Initialized from @c GnssConfig::getMwInitFracThreshold (default
+         *  0.4).  Raise it for code-noisy combinations (e.g. L1C-based
+         *  MW) where 0.4 is below the single-sample noise floor.  See
+         *  the config getter's doc for the noise-vs-threshold reasoning. */
+        double init_frac_threshold_;
 
-        /** Minimum number of consecutive epochs in a BIA-corrected arc
-         *  before the WL integer is locked by rounding.  Locking on the
-         *  very first epoch is dangerous because a single MW sample is
-         *  dominated by code noise (especially for EWL pairs with large
-         *  lambda_wl).  Waiting for a short averaging window lets the
-         *  Hatch mean converge to within a fraction of a WL cycle before
-         *  the irreversible rounding decision is made. */
-        static constexpr size_t kMinEpochsForWlLock = 5;
+        // Note: the WL lock criterion is no longer a fixed-N wait.  It's
+        // an adaptive 3σ confidence test on the running mean,
+        //
+        //     |frac| + 3 · σ_mean / λ_WL  <  0.5    AND    |frac| < kWlMaxFrac
+        //
+        // implemented inline in @c processMwSample.  Clean arcs lock as
+        // early as n=3; noisy arcs wait until √n has averaged the noise
+        // down enough.  See the inline kWlLockKSigma / kWlLockMinN
+        // constants there.
+
+        /** Hard cap on raw fractional residual |mean/λ_WL − round(...)|
+         *  for an MW arc to be exposed to AR (or to lock).  The
+         *  statistical 3σ test alone can satisfy itself that a non-
+         *  integer running mean (e.g. 3.33 with σ_mean = 0.05) is
+         *  well-determined and round to a (potentially wrong) integer.
+         *  This cap treats a large raw |frac| as a "real bias" signal
+         *  that disqualifies the arc regardless of statistical
+         *  confidence.  Used both at lock time and as a filter in
+         *  @c getResolvedWlAmbiguities / @c getResolvedWlFractions. */
+        static constexpr double kWlMaxFrac = 0.30;
+
+        /** Live-mean drift threshold (WL cycles) that demotes a locked
+         *  arc back to unlocked.  After lock the Welford / Hatch mean
+         *  is no longer pinned to @c rounded_wl × λ_WL — it keeps
+         *  tracking, so persistent disagreement between the running
+         *  mean and the locked integer manifests as drift.  When
+         *  |mean/λ − rounded_wl| exceeds this threshold the lock is
+         *  no longer supported by accumulated evidence (either the
+         *  initial lock was premature, or the arc has absorbed enough
+         *  slipped samples to migrate); demote and let the arc re-
+         *  resolve.  0.4 cycles is well inside the rounding basin
+         *  (< 0.5) while leaving comfortable headroom over the lock
+         *  criterion's kWlMaxFrac=0.30 ceiling, so a freshly locked
+         *  arc with frac near the lock cap doesn't immediately
+         *  demote itself on the next sample. */
+        static constexpr double kWlLockDriftMaxCyc = 0.4;
 
         /**
-         * @brief Compute the MAD-based adaptive threshold for a satellite arc.
+         * @brief Compute the adaptive slip-detection threshold for an arc.
          *
-         * Uses the rolling window of epoch-to-epoch MW differences to compute
-         * the MAD, then scales it to a Gaussian-equivalent sigma and applies
-         * a multiplier.  If the arc does not yet have enough history a fixed
-         * fallback threshold of kInitialThresholdCycles wide-lane cycles is
-         * returned so that large slips are still caught during arc warm-up.
+         * Threshold = @c kMadSigmaMultiplier × max(σ_MAD, σ_floor_static),
+         * with σ_floor_static = max(@c kMinSigmaMeters, cross-sat σ).  The
+         * cross-sat σ is resolved by a breadth cascade — band-pair →
+         * constellation → global(non-GLONASS) — so a sparse band-pair group
+         * borrows from a broader-but-comparable population; the chosen σ is
+         * zenith-referenced and re-expanded to this arc's elevation.  During
+         * warmup (before the per-arc diff_window has a trustworthy MAD) the
+         * per-arc Welford σ_emp is folded into the floor too.  When NO
+         * cross-sat tier is populated (true cold start), the result is floored
+         * at a gross-slip GATE of min(λ_WL, 1 m) applied directly (not ×k).
+         * No stochastic-model-derived σ sources are consulted — empirically
+         * they saturated the gate at the cap.
          *
-         * @param stats  Current arc statistics for the satellite.
-         * @param lambda_wl Wide-lane wavelength (meters).
-         * @return double Adaptive threshold in meters.
+         * @param stats     Current arc statistics for the satellite.
+         * @param stats_key Per-arc key used to look up the cross-sat σ
+         *                  floor for this (constellation × signal-pair)
+         *                  group via @c makeGroupKey.  Pass empty string
+         *                  to skip the cross-sat lookup.
+         * @param elev_deg  Arc elevation (deg).  Re-expands the
+         *                  zenith-referenced cross-sat σ floor to this arc's
+         *                  elevation via @c mwElevationWeight (low-el arcs get
+         *                  a looser floor, high-el a tighter one).
+         * @return Adaptive threshold in meters.
          */
-        double computeAdaptiveThreshold(const MwArcStats& stats, double lambda_wl) const;
+        double computeAdaptiveThreshold(const MwArcStats& stats,
+                                         const std::string& stats_key,
+                                         double elev_deg) const;
 
         /**
          * @brief Compute the MAD-derived Gaussian-equivalent sigma from an arc's diff window.
@@ -368,6 +631,49 @@ namespace GnssProcessor {
          * @return Sigma in meters, or NaN if insufficient history.
          */
         static double computeMadSigma(const MwArcStats& stats);
+
+        /**
+         * @brief Compute MAD-derived Gaussian-equivalent σ from an
+         *        arbitrary vector of deviations (in meters).
+         *
+         * @param devs  Vector of deviations.  Must have at least
+         *              @c kMinCrossSatSamples entries to return a finite
+         *              value.
+         * @return σ in meters, or NaN if the pool is too small.
+         */
+        static double computeMadOfDevs(std::vector<double> devs);
+
+        /**
+         * @brief Derive the cross-sat group key from a per-arc stats key.
+         *
+         * Reduces the satellite to its constellation prefix AND each signal to
+         * its 2-char frequency band (attribute dropped), so all attribute
+         * combinations on the same frequency pair pool into one statistic:
+         *   "G01_L1C_L2W" → "G_L1_L2"
+         *   "G01_L1L_L2L" → "G_L1_L2"  (same group)
+         * Distinct frequency pairs (L1/L2 vs L1/L5) remain separate.  This
+         * gives sparse attribute combinations enough samples to clear
+         * @c kMinCrossSatSamples instead of collapsing to the σ floor.
+         *
+         * @param stats_key  Per-arc key from @c mw_stats_.
+         * @return Group key, or empty string on malformed input.
+         */
+        static std::string makeGroupKey(const std::string& stats_key);
+
+        /**
+         * @brief Finalize cross-sat σ from this epoch's staging pool.
+         *
+         * Computes MAD × 1.4826 at three breadth tiers from the same staging
+         * pool: per (constellation × band-pair) → @c cross_sat_sigma_m_, per
+         * constellation → @c cross_sat_sigma_cons_, and global (all
+         * constellations except GLONASS) → @c cross_sat_sigma_global_.  Each
+         * tier updates only when it clears @c kMinCrossSatSamples; otherwise
+         * its previous σ persists (or no entry, if cold-start).  Then clears
+         * @c cross_sat_devs_ for the next epoch.
+         *
+         * Called at the end of @c detectLargeMwResets.
+         */
+        void finalizeCrossSatSigmas();
 
         /**
          * @brief Process a single MW sample: update statistics or flag a slip.
@@ -395,6 +701,11 @@ namespace GnssProcessor {
          * @param[out] out_wl_known     If non-null, set to true when out_slip_cycles is reliable.
          * @param[out] out_slip_frac    If non-null, set to |x - round(x)| of the float value
          *                              before rounding (0 = exact, up to 0.5 = worst).
+         * @param pivot_sat      SD pivot satellite for this arc's (constellation,
+         *                       signal-pair) group, recorded in the trace's
+         *                       @c mw_pivot column.  Empty for undifferenced
+         *                       (no-BIA) arcs that are not single-differenced
+         *                       against any pivot.
          * @return True if a slip was detected (caller should generate reset keys).
          */
         bool processMwSample(const PppObservation& obs,
@@ -404,7 +715,8 @@ namespace GnssProcessor {
             bool bia_corrected, double sat_mw_bias,
             int* out_slip_cycles = nullptr,
             bool* out_wl_known = nullptr,
-            double* out_slip_frac = nullptr);
+            double* out_slip_frac = nullptr,
+            const std::string& pivot_sat = {});
 
         /** Output stream for MWWL trace CSV file (mutable for const access). */
         mutable std::ofstream mwwl_trace_;
@@ -544,14 +856,18 @@ namespace GnssProcessor {
          * all dual-frequency pairs that have both a code and a phase
          * observable on each band.
          *
-         * The signal source depends on GnssConfig::getMwSignalMode():
-         *  - Filter (default): uses obs.observed (KF-selected bands only),
-         *    keeping the MW detector aligned with the Kalman filter's
-         *    signal_mode and avoiding noisy EWL pairs the filter does not
-         *    process.
-         *  - All: uses obs.raw_observed (every available RINEX band),
-         *    giving maximum multi-frequency coverage at the cost of
-         *    including noisier wide-lane combinations.
+         * Source and within-band multiplicity are controlled by the two
+         * independent MW knobs @c GnssConfig::getMwFrequencyMode and
+         * @c GnssConfig::getMwChannelMode (each resolves through Mirror
+         * to the KF's setting):
+         *  - mw_frequency_mode = Mirror (default): uses obs.observed
+         *    (the KF's active bands), keeping the MW detector aligned
+         *    with the Kalman filter.
+         *  - mw_frequency_mode = Dual / Triple / All: uses obs.raw_observed
+         *    for cross-frequency cross-consistency.
+         *  - mw_channel_mode controls whether one canonical tracking
+         *    attribute per band (Single) or every tracked channel (All)
+         *    is kept.
          *
          * @param obs Observation to inspect.
          * @return std::vector<UncombinedPair> Viable MW pairs (may be empty).
@@ -587,6 +903,8 @@ namespace GnssProcessor {
          * @param thresh_m Threshold in meters.
          * @param is_slip True if this observation triggered a slip detection.
          * @param is_lli True if loss-of-lock was detected.
+         * @param mw_pivot SD pivot satellite for this row's (constellation,
+         *                 signal-pair) group; empty for undifferenced arcs.
         */
         void writeTraceRecord(const PppObservation& obs,
                             const std::string& sig1,
@@ -603,7 +921,8 @@ namespace GnssProcessor {
                             bool bia_corrected = false,
                             double sat_mw_bias_m = 0.0,
                             int rounded_wl = 0,
-                            bool wl_locked = false) const;
+                            bool wl_locked = false,
+                            const std::string& mw_pivot = {}) const;
         };
 
 } // namespace GnssProcessor

@@ -53,7 +53,10 @@ namespace GnssProcessor {
         /**
          * @brief Get the GLONASS frequency channel for a satellite.
          * @param satellite Satellite identifier (e.g., "R01").
-         * @return Channel number if found, 0 otherwise.
+         * @return FDMA channel k (from the user-provided slot map, else the
+         *         built-in default table). Returns the sentinel -999 if the
+         *         satellite is unknown, which getFrequency() treats as
+         *         out-of-range and skips.
          */
         int getGlonassChannel(const std::string& satellite) const;
 

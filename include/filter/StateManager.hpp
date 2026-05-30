@@ -18,6 +18,7 @@
 #include "config/GnssConfig.hpp"
 #include <Eigen/Dense>
 #include <map>
+#include <optional>
 #include <string>
 #include <set>
 
@@ -91,6 +92,21 @@ namespace GnssProcessor {
         Eigen::MatrixXd getCovariance() const;
 
         /**
+         * @brief Read a single diagonal entry of the covariance matrix.
+         *
+         * Cheap accessor for variance lookups that would otherwise require
+         * copying the entire covariance via @c getCovariance().  Used by
+         * components that need per-state variance for scoring (e.g. the
+         * pivot-fitness check in PivotManager) without paying the O(n²)
+         * copy cost on every query.
+         *
+         * @param idx Zero-based state index.
+         * @return Variance @c covariance_(idx, idx), or 0.0 if @p idx is
+         *         out of range (caller is expected to guard).
+         */
+        double getStateVariance(int idx) const;
+
+        /**
          * @brief Build or retrieve the process noise matrix for prediction.
          *
          * Implementations typically use configuration parameters and the time
@@ -136,9 +152,45 @@ namespace GnssProcessor {
 
         /**
          * @brief Index of the receiver clock bias state within the state vector.
-         * @return Index of the clock bias state.
+         *
+         * Allocated for PPP and PPP-RTK in non-BSSD modes.  Under BSSD the
+         * receiver clock is differenced out by the SD transform — it is
+         * unobservable to code/phase measurements and would only drift on
+         * process noise, so allocation is skipped to keep the state vector
+         * tight.  Baseline (DD) modes also skip it because DD cancels the
+         * receiver clock identically.
+         *
+         * @return Index of the clock bias state, or
+         *         @c std::numeric_limits<size_t>::max() if not present.
          */
         size_t getClockIndex() const;
+
+        /**
+         * @brief Check if the receiver clock-bias state is active.
+         * @return True when a clock-bias state exists in the state vector.
+         */
+        bool hasClock() const;
+
+        /**
+         * @brief Index of the receiver clock-rate state within the state vector.
+         *
+         * The clock-rate state holds @f$ c \cdot d\delta t_r/dt @f$ in m/s and is
+         * the GPS-system reference rate.  Doppler measurements drive it directly
+         * (Jacobian coefficient +1), and it propagates the clock-bias state via
+         * @f$ \delta t_r(k+1) = \delta t_r(k) + dt \cdot \dot{\delta t}_r(k) @f$
+         * in the transition matrix (continuous white-noise acceleration model
+         * mirrors the position/velocity block).  Present only when velocity
+         * estimation is enabled — same gate that opens Doppler processing.
+         *
+         * @return Index, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getClockRateIndex() const;
+
+        /**
+         * @brief Check if the receiver clock-rate state is active.
+         * @return True if a clock-rate state exists in the state vector.
+         */
+        bool hasClockRate() const;
 
         /**
          * @brief Index of the receiver phase clock offset state within the state vector.
@@ -234,6 +286,32 @@ namespace GnssProcessor {
         void pruneIonosphereStatesExcept(const std::set<std::string>& keep_keys);
 
         /**
+         * @brief In-place variance re-inflation of an existing iono state.
+         *
+         * Preserves the current state value, decorrelates by zeroing the
+         * iono row/column, then sets the diagonal to @p new_variance.
+         * Used by the cycle-slip orchestration layer after a sat-wide
+         * phase ambiguity reset to break the stale iono/sat-bias
+         * partition: the pre-reset (iono, sat-bias) pair may have
+         * jointly absorbed slant iono in a non-unique way, and unless
+         * the iono state regains enough variance to re-track real
+         * iono after the ambiguity reseed, the partition stays baked
+         * in for the rest of the arc.
+         *
+         * Refuses to operate on a frozen (pivot) row, identified by
+         * a zero diagonal — the BSSD pivot's iono state is held at
+         * (0, 0) and must not be disturbed.
+         *
+         * @param satellite Satellite identifier.  No-op (debug log)
+         *                  when no iono state exists for @p satellite.
+         * @param new_variance Replacement diagonal (m²).  Falls back
+         *                  to @c initial_std.ionosphere² when
+         *                  non-positive.
+         */
+        void reinflateIonosphereVariance(const std::string& satellite,
+                                          double new_variance);
+
+        /**
          * @brief Store the last-known elevation (degrees) for a per-satellite iono state.
          *
          * Used by the process noise model to apply elevation-dependent spectral
@@ -251,6 +329,27 @@ namespace GnssProcessor {
         const std::map<std::string, double>& getIonosphereElevations() const;
 
         /**
+         * @brief Store the last-known azimuth (degrees) for a per-satellite iono state.
+         *
+         * Kept alongside the elevation map for offline diagnostics: it lets
+         * the ionosphere trace logger emit a sky-plot-ready (el, az) pair per
+         * row without having to plumb the original observation through to
+         * the logger.  Not used by the process-noise model (which only needs
+         * elevation), so the convention is "best-effort, last observation
+         * wins" — same as setIonosphereElevation.
+         *
+         * @param satellite Satellite identifier (e.g. "G01").
+         * @param azimuth_deg Azimuth in degrees (0 = North, increasing East).
+         */
+        void setIonosphereAzimuth(const std::string& satellite, double azimuth_deg);
+
+        /**
+         * @brief Get the stored per-satellite ionosphere azimuth map.
+         * @return Map from satellite ID to last-known azimuth in degrees.
+         */
+        const std::map<std::string, double>& getIonosphereAzimuths() const;
+
+        /**
          * @brief Mark a set of satellites as BSSD pivots (state-freeze).
          *
          * The pivot's per-(sat, signal) states — ionosphere, ambiguities,
@@ -266,6 +365,43 @@ namespace GnssProcessor {
          * @param sats Set of pivot satellite IDs.
          */
         void setFrozenPivotSatellites(const std::set<std::string>& sats);
+
+        /**
+         * @brief Set per-ambiguity-key process noise overrides.
+         *
+         * Replaces the default @c process_noise.ambiguity value for the
+         * specific ambiguity keys in @p overrides during the next Q
+         * matrix build.  Keys not in the map use the default.  Use to
+         * loosen process noise for specific ambiguities (e.g. signals
+         * whose ATX correction was frequency-fallback-substituted) so
+         * the filter can absorb the small modeling error without
+         * leaking it into other states.
+         *
+         * Pass an empty map to clear all overrides.
+         *
+         * @param overrides Map from ambiguity key (e.g. "G05_L5X") to
+         *                  process noise variance rate (m²/s).
+         */
+        void setAmbiguityProcessNoiseOverrides(const std::map<std::string, double>& overrides);
+
+        /**
+         * @brief Set per-satellite ionospheric process-noise overrides.
+         *
+         * Replaces the default @c process_noise.ionosphere zenith spectral
+         * density for the specific satellites in @p overrides during the
+         * next Q matrix build.  Satellites not in the map use the default.
+         * The obliquity factor 1/sin^2(el) and the dt scaling are still
+         * applied on top of the overridden value.
+         *
+         * Used by the adaptive ionospheric process-noise scheme
+         * (@c IonoVariabilityMonitor) to loosen per-satellite iono process
+         * noise during ionospheric disturbance.  Pass an empty map to
+         * clear all overrides.
+         *
+         * @param overrides Map from satellite ID (e.g. "G05") to the zenith
+         *                  ionosphere process-noise variance rate (m^2/s).
+         */
+        void setIonoProcessNoiseOverrides(const std::map<std::string, double>& overrides);
 
         /**
          * @brief Get the set of BSSD pivot satellites whose states are frozen.
@@ -297,10 +433,29 @@ namespace GnssProcessor {
          * Inter-system time biases are estimated relative to the reference system (GPS).
          * This returns the state index for the specified system's time offset.
          *
+         * Allocated for PPP / PPP-RTK in non-BSSD modes.  Under BSSD the ISB
+         * is differenced out alongside the receiver clock (same-system SD
+         * cancels both identically), so the per-system ISB states are not
+         * allocated and this returns the sentinel.
+         *
          * @param system_name Name of the GNSS system (e.g., "Galileo", "GLONASS", "BeiDou").
          * @return Index of the system time bias state, or std::numeric_limits<size_t>::max() if not present.
          */
         size_t getSystemTimeOffsetIndex(const std::string& system_name) const;
+
+        /**
+         * @brief Get the inter-system clock-rate offset state index for a system.
+         *
+         * Mirrors @c getSystemTimeOffsetIndex but for the rate (ISBR).  The
+         * total clock-rate observed on a non-GPS Doppler measurement is
+         * @f$ \dot{\delta t}_r + \dot{\mathrm{ISB}}_\mathrm{sys} @f$ — the GPS-
+         * referenced clock-rate plus this per-system rate offset.  Present
+         * only when velocity estimation is enabled.
+         *
+         * @param system_name Name of the GNSS system (e.g., "Galileo", "GLONASS").
+         * @return Index, or std::numeric_limits<size_t>::max() if not present.
+         */
+        size_t getSystemTimeRateOffsetIndex(const std::string& system_name) const;
 
         /**
          * @brief Get the number of inter-system time bias states.
@@ -341,12 +496,19 @@ namespace GnssProcessor {
          * @brief Add a new ambiguity state and return its index.
          *
          * The ambiguity is appended to the state vector and covariance.
+         * Initial variance is the square of @p initial_std_override when
+         * positive; otherwise @c GnssConfig::getAmbiguityStd() is used.
          *
          * @param key Unique ambiguity key.
          * @param initial_value Initial state value in meters.
+         * @param initial_std_override Per-call override for the initial
+         *        standard deviation (m).  Pass a positive value to
+         *        replace the global @c getAmbiguityStd default; pass
+         *        a non-positive value (default) to use the global.
          * @return Index assigned to the newly-created ambiguity state.
          */
-        size_t addAmbiguity(const std::string& key, double initial_value);
+        size_t addAmbiguity(const std::string& key, double initial_value,
+                             double initial_std_override = -1.0);
 
         /**
          * @brief Reset (or create then reset) a float ambiguity state.
@@ -467,6 +629,10 @@ namespace GnssProcessor {
         /**
          * @brief Add a new per-satellite signal bias state and return its index.
          *
+         * Variance defaults to @c initial_std.sat_bias² (cold start).  Use
+         * @c addSatBiasStateWithVariance to specify an explicit variance,
+         * e.g. when restoring from the @c SatBiasCache.
+         *
          * @param key Unique key "satellite|signal".
          * @param initial_value Initial bias value in meters (typically 0.0).
          * @return Index assigned to the newly-created state.
@@ -474,7 +640,97 @@ namespace GnssProcessor {
         size_t addSatBiasState(const std::string& key, double initial_value);
 
         /**
+         * @brief Add a sat-bias state with an explicit initial variance.
+         *
+         * Mirrors @c addSatBiasState but lets the caller override the
+         * default cold-start variance.  Used by the cache-restore path
+         * to seed a re-acquired (sat, signal) with the aged variance
+         * preserved from before the visibility gap.
+         *
+         * @param key Unique key "satellite|signal".
+         * @param initial_value Initial bias value (meters).
+         * @param initial_variance Initial diagonal P entry (m²).  Must be > 0.
+         * @return Index assigned to the newly-created state.
+         */
+        size_t addSatBiasStateWithVariance(const std::string& key,
+                                            double initial_value,
+                                            double initial_variance);
+
+        /**
+         * @brief In-place reset of an existing sat-bias state.
+         *
+         * Used by the Kalman filter's stuck-bias-detector when a
+         * (sat, signal) code row has been outlier-rejected for
+         * @c estimation.stuck_code_bias.min_streak consecutive epochs
+         * or its EWMA mean has drifted past
+         * @c estimation.stuck_code_bias.bias_floor_m.  In both cases
+         * the bias state has over-converged around a value that no
+         * longer matches the truth and the closed loop
+         * (innovation → outlier-reject → bias never updates) needs
+         * to be broken.
+         *
+         * Operationally:
+         *  - x(idx) ← @p new_value (typically the current value
+         *    plus the EWMA residual mean — snap to the corrected
+         *    estimate signaled by recent residuals).
+         *  - P column and row at @c idx ← 0 (covariance
+         *    decorrelation; the state's relationship to other
+         *    states is no longer trusted after the reset).
+         *  - P(idx, idx) ← @p new_variance (inflate to a value that
+         *    lets the filter absorb new innovations — typically
+         *    cold-start variance @c initial_std.sat_bias²).
+         *
+         * Refuses to operate on a frozen (pivot) row, identified by
+         * a zero diagonal: the BSSD pivot's sat-bias state is held
+         * at (0, 0) by @c PivotManager and must not be disturbed.
+         * Logs a warning in that case rather than silently mangling
+         * the pivot constraint.
+         *
+         * @param key Existing key "satellite|signal".  No-op
+         *            (debug log) when the key is unknown.
+         * @param new_value Replacement value (m).
+         * @param new_variance Replacement diagonal (m²).  Falls back
+         *            to @c initial_std.sat_bias² when non-positive.
+         */
+        void resetSatBiasState(const std::string& key,
+                                double new_value,
+                                double new_variance);
+
+        /**
+         * @brief In-place variance re-inflation of all sat-bias states
+         *        for one satellite.
+         *
+         * Preserves the current state values, decorrelates each
+         * affected row/column, then sets each diagonal to
+         * @p new_variance.  Skips any row whose current diagonal is
+         * zero (frozen pivot) to preserve the BSSD invariant.
+         *
+         * Used by the cycle-slip orchestration layer alongside
+         * @c reinflateIonosphereVariance after a sat-wide phase
+         * ambiguity reset: the bias state may have absorbed iono
+         * leakage pre-reset, and re-inflating its variance gives the
+         * filter room to re-partition.  The bias state's value is
+         * intentionally left in place — hardware delays don't
+         * change, so the converged value is still the best estimate
+         * of the pure-bias component; only the cross-state
+         * correlation needs to be broken.
+         *
+         * @param satellite Satellite identifier.  No-op when the sat
+         *                  has no sat-bias states.
+         * @param new_variance Replacement diagonal (m²).  Falls back
+         *                  to @c initial_std.sat_bias² when
+         *                  non-positive.
+         */
+        void reinflateSatBiasVariancesForSat(const std::string& satellite,
+                                               double new_variance);
+
+        /**
          * @brief Remove all satellite bias states except those listed in keep_keys.
+         *
+         * Pruned (sat, signal) keys are stashed into the internal
+         * @c SatBiasCache (value + diagonal variance + drop time) so that
+         * a subsequent re-acquisition within the configured window can
+         * recover the converged estimate via @c tryRestoreSatBias.
          *
          * @param keep_keys Set of keys to keep.
          */
@@ -485,6 +741,98 @@ namespace GnssProcessor {
          * @return Map from key to state index.
          */
         const std::map<std::string, size_t>& getSatBiasStates() const;
+
+        /**
+         * @brief Snapshot of a previously-pruned sat-bias state, kept in
+         *        the cache so a near-term re-acquisition can skip the
+         *        cold-start re-seed.
+         */
+        struct SatBiasCacheEntry {
+            double   value;       ///< Bias value at drop time (m).
+            double   variance;    ///< Diagonal P at drop time (m²).
+            GnssTime drop_time;   ///< Epoch when the state was pruned.
+        };
+
+        /**
+         * @brief Result of a successful @c tryRestoreSatBias lookup.
+         *
+         * @c value is always the cached bias value.  @c variance is
+         * the diagonal P the caller should seed the new state with:
+         *  - Within @c sat_bias_cache.warm_age_s of the drop time
+         *    (@c is_warm == true), @c variance is the cached value aged
+         *    forward by @c process_noise.sat_bias_q × @c gap_s — a
+         *    "warm restart" that preserves converged precision.
+         *  - Between @c warm_age_s and @c max_age_s
+         *    (@c is_warm == false), @c variance is the cold-start value
+         *    @c initial_std.sat_bias² — the cache supplies a better
+         *    seed than WLS but the variance is reset.
+         *
+         * Beyond @c max_age_s, @c tryRestoreSatBias returns
+         * @c std::nullopt and the caller falls back to a WLS seed.
+         */
+        struct SatBiasRestoration {
+            double value;     ///< Cached bias value (m).
+            double variance;  ///< Variance to seed the new state with (m²).
+            double gap_s;     ///< Elapsed seconds from drop to restore.
+            bool   is_warm;   ///< True for warm restart, false for cold-value restart.
+        };
+
+        /**
+         * @brief Look up a cached sat-bias entry for re-acquisition.
+         *
+         * Computes the elapsed seconds @c gap_s = @c now − @c drop_time
+         * for the cached entry (if any), then:
+         *  - @c gap_s ≤ @c warm_age_s : returns a warm restoration
+         *    (cached variance aged forward by @c sat_bias_q × @c gap_s).
+         *  - @c warm_age_s < @c gap_s ≤ @c max_age_s : returns a
+         *    cold-value restoration (cached value, @c initial_std.sat_bias²
+         *    variance).
+         *  - @c gap_s > @c max_age_s : evicts the entry and returns
+         *    @c std::nullopt.
+         *
+         * Pure lookup — the cache entry is left in place so the caller
+         * can decide whether to consume it (see
+         * @c consumeSatBiasCacheEntry).
+         *
+         * @param key  Sat-bias key "satellite|signal".
+         * @param now  Current epoch time.
+         * @return Restoration parameters, or @c std::nullopt if no usable entry exists.
+         */
+        std::optional<SatBiasRestoration>
+        tryRestoreSatBias(const std::string& key, const GnssTime& now);
+
+        /**
+         * @brief Drop a cache entry after the caller has restored it
+         *        into an active state.
+         *
+         * Called by @c MeasurementModel once a cache lookup has been
+         * applied via @c addSatBiasStateWithVariance.  Keeps the cache
+         * coherent: a key is either in the active state vector or in
+         * the cache, never both.
+         *
+         * @param key Sat-bias key to drop from the cache.
+         */
+        void consumeSatBiasCacheEntry(const std::string& key);
+
+        /**
+         * @brief Drop cache entries older than @c sat_bias_cache.max_age_s
+         *        relative to @c now.
+         *
+         * Idempotent.  Called opportunistically (e.g. on each prune) to
+         * keep the cache from accumulating ancient entries when a
+         * satellite/signal never reacquires.
+         *
+         * @param now Current epoch time.
+         */
+        void evictExpiredSatBiasCache(const GnssTime& now);
+
+        /**
+         * @brief Read-only access to the sat-bias cache (for diagnostics).
+         * @return Map from key to cached entry.
+         */
+        const std::map<std::string, SatBiasCacheEntry>& getSatBiasCache() const {
+            return sat_bias_cache_;
+        }
 
         // -------------------------------------------------------------------
         // Unresolvable ambiguity support
@@ -622,11 +970,89 @@ namespace GnssProcessor {
          */
         size_t getAttitudeIndex() const;
 
+        // -------------------------------------------------------------------
+        // Gap-recovery helpers
+        //
+        // Surgical covariance edits used by @c Application::handleGap when
+        // an inter-epoch outage exceeds @c GnssConfig::getDataGapTolerance.
+        // The diagonal-only process-noise injection in
+        // @c getProcessNoiseMatrix is the right model for short, in-arc
+        // dt steps but is structurally unable to express "the satellite-
+        // specific cross-covariances we built up before the gap no longer
+        // describe the current geometry" — that requires explicitly
+        // touching the off-diagonal blocks, which these helpers do.
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Zero cross-covariances between position and per-satellite states.
+         *
+         * Sets P(pos_i, j) = P(j, pos_i) = 0 for j ∈ {ionosphere,
+         * ambiguity, satellite bias} and i ∈ {x,y,z}.  Leaves the
+         * position diagonal P(pos,pos) and cross-covariances to core
+         * states (clock, clock-rate, troposphere, velocity, IMU biases)
+         * untouched — those represent physically real correlations that
+         * survive an outage; sat-specific correlations do not.
+         *
+         * Called on @c gap_detected for static-short and all other gap
+         * recovery branches.
+         */
+        void zeroPositionCrossCovariancesToSatStates();
+
+        /**
+         * @brief Zero cross-covariances between clock-bias and per-satellite states.
+         *
+         * Mirrors @c zeroPositionCrossCovariancesToSatStates for the
+         * receiver clock-bias row/column.  Used after WLS clock seeding
+         * (which jolts the value) so the stale clock↔sat-state
+         * correlations don't reroute the next measurement residual
+         * along pre-gap error directions.
+         */
+        void zeroClockCrossCovariancesToSatStates();
+
+        /**
+         * @brief Add @p sigma_m² to each diagonal element of the position block.
+         *
+         * Used by @c handleGap to loosen the position prior across a
+         * gap in modes where position can drift (kinematic-no-IMU) or
+         * where the pre-gap converged variance is too tight to allow
+         * the filter to react to new evidence (static-long).
+         *
+         * @param sigma_m Standard-deviation increment in meters.
+         */
+        void inflatePositionDiagonal(double sigma_m);
+
+        /**
+         * @brief Set velocity value to zero and inflate diagonal to @p sigma_mps².
+         *
+         * For kinematic-no-IMU cold-start: with no inertial bridging
+         * the velocity estimate at the post-gap epoch carries no
+         * information and is safest as a loose zero prior.
+         *
+         * @param sigma_mps Standard deviation in m/s.  No-op when
+         *        @c hasVelocity() is false.
+         */
+        void resetVelocityToLoose(double sigma_mps);
+
+        /**
+         * @brief Zero the satellite-bias cache.
+         *
+         * The cache stores (value, variance, drop-time) for sat-bias
+         * states that were pruned, so a near-term re-acquisition can
+         * warm-restart.  This method discards the cache entirely.
+         * Use only when the pre-gap hardware-bias estimates are
+         * deemed untrustworthy (e.g., long gap on a kinematic platform
+         * where the receiver may have power-cycled).
+         */
+        void clearSatBiasCache();
+
 
     private:
         size_t core_state_size_;                    //!< Number of core states (e.g. 5 or 6, +2 if gradients, +1 if phase clock, +3 if velocity).
         size_t base_core_size_;                     //!< Base core size without inter-system time offsets.
+        size_t clock_idx_;                          //!< Index of receiver clock-bias state (max if BSSD / baseline).
+        size_t tropo_idx_;                          //!< Index of troposphere ZWD state (max in baseline).
         size_t velocity_idx_;                       //!< Index of velocity Vx state (max if disabled).
+        size_t clock_rate_idx_;                     //!< Index of receiver clock-rate state (max if disabled).
         size_t phase_clock_idx_;                    //!< Index of phase clock offset (max if disabled).
         size_t gradient_north_idx_;                 //!< Index of tropo north gradient (max if disabled).
         size_t gradient_east_idx_;                  //!< Index of tropo east gradient (max if disabled).
@@ -636,14 +1062,19 @@ namespace GnssProcessor {
         size_t differential_tropo_idx_;             //!< Index of baseline-mode differential ZWD state (max if disabled).
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
+        std::map<std::string, size_t> system_time_rate_offset_indices_; //!< Map system name -> ISBR state index (clock-rate inter-system offset; active when velocity is estimated).
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
         std::set<std::string> unresolvable_ambiguities_; //!< Ambiguity keys excluded from integer AR (incomplete product coverage).
         std::set<std::string> pending_reseed_ambiguities_; //!< Ambiguity keys awaiting re-seeding after reset.
         std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
+        std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
+        std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (PPP-RTK, diagnostics only).
         std::set<std::string> frozen_pivot_sats_; //!< BSSD pivot satellites: iono, ambiguity, and sat-bias states are frozen (Q=0).
+        std::map<std::string, double> amb_q_overrides_; //!< Per-(amb_key) ambiguity process noise (m²/s); replaces process_noise.ambiguity for those keys when building Q.
+        std::map<std::string, double> iono_q_overrides_; //!< Per-satellite zenith iono process noise (m^2/s); replaces process_noise.ionosphere for those sats when building Q.
         GnssTime state_epoch_time_;                 //!< Epoch time associated with the stored state.
         Eigen::VectorXd state_vector_;              //!< Filter state vector (core + ambiguities).
         Eigen::MatrixXd covariance_;                //!< State covariance matrix.

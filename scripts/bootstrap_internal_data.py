@@ -140,6 +140,10 @@ IGS20_ATX_URL = "https://files.igs.org/pub/station/general/igs20.atx"
 #: global-and-regional-reference-systems/ocean-tide-models/ for the
 #: latest link, then update this constant.
 EOT20_LOAD_NC_URL = "https://oceantide.dgfi.tum.de/EOT20/data/ocean_tides/EOT20_load.nc"
+#: GPT3 5° empirical pressure/temperature/mapping-function grid
+#: (Landskron & Boehm 2018).  Used by the troposphere a priori when
+#: ``receiver.troposphere_apriori_source = "gpt3"``.
+GPT3_5_GRID_URL = "https://vmf.geo.tuwien.ac.at/codes/gpt3_5.grd"
 
 # ---------------------------------------------------------------------
 # Shared helpers
@@ -588,6 +592,20 @@ def fetch_static_assets(data_root: Path, *, want_eot20: bool) -> None:
         else:
             print(f"  cached  {nc_path.relative_to(data_root)}")
 
+    gpt3_path = static_dir(data_root, "gpt3") / "gpt3_5.grd"
+    if not gpt3_path.exists():
+        ok = download_file(GPT3_5_GRID_URL, gpt3_path)
+        if not ok:
+            print(
+                "  !! gpt3_5.grd download failed.  Either leave "
+                "receiver.troposphere_apriori_source = \"standard_atmosphere\" "
+                "(default) or update GPT3_5_GRID_URL in this script "
+                "(check https://vmf.geo.tuwien.ac.at/codes/ for the current link).",
+                file=sys.stderr,
+            )
+    else:
+        print(f"  cached  {gpt3_path.relative_to(data_root)}")
+
 # ---------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------
@@ -642,7 +660,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(f"  crx2rnx: {crx2rnx_exe}")
     manual, crx_pending = fetch_observations(data_root, crx2rnx_exe)
 
-    print("\n[3/3] Static assets (igs20.atx, EOT20_load.nc)")
+    print("\n[3/3] Static assets (igs20.atx, EOT20_load.nc, gpt3_5.grd)")
     fetch_static_assets(data_root, want_eot20=not args.no_eot20)
 
     if manual:

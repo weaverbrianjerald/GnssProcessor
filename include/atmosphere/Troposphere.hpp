@@ -12,8 +12,11 @@
 #include "config/GnssConfig.hpp"
 #include "math/TimeUtils.hpp"
 #include <Eigen/Dense>
+#include <memory>
 
 namespace GnssProcessor {
+
+    class Gpt3;
 
     /**
      * @class Troposphere
@@ -32,6 +35,12 @@ namespace GnssProcessor {
          * @param log_mgr Reference to the LogManager for logging (kept by reference).
          */
         Troposphere(const GnssConfig& config, LogManager& log_mgr);
+
+        /**
+         * @brief Destructor (out-of-line so the forward-declared @c Gpt3
+         *        type is complete in the .cpp).
+         */
+        ~Troposphere();
 
         /**
          * @brief Compute tropospheric mapping functions using the Global Mapping Function (GMF).
@@ -54,17 +63,28 @@ namespace GnssProcessor {
         /**
          * @brief Compute Saastamoinen zenith hydrostatic delay (ZHD).
          *
-         * Estimates station pressure from height using a standard atmosphere
-         * approximation (reads sea-level pressure/temperature from the
-         * configuration) and returns the Saastamoinen hydrostatic ZHD in meters.
+         * When the configured a priori source is
+         * @c TroposphereAprioriSource::StandardAtmosphere, station
+         * pressure is reduced from the configured sea-level pair via
+         * the standard-atmosphere lapse formula.  When the source is
+         * @c TroposphereAprioriSource::Gpt3 and the GPT3 grid is
+         * loaded, pressure and temperature are queried from the grid
+         * at the receiver lat/lon/h/doy; on grid failure the call
+         * silently falls back to the standard-atmosphere path so a
+         * single bad query never aborts the run.
          *
          * @param receiver_pos Receiver position in ECEF coordinates (meters).
+         * @param time         GNSS epoch (used to derive day-of-year for the
+         *                     GPT3 harmonics; ignored when the a priori source
+         *                     is the standard atmosphere).
          * @return Zenith hydrostatic delay (ZHD) in meters.
          */
-        double computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos) const;
+        double computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos,
+                                       const GnssTime& time) const;
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
         const GnssConfig& config_;                        /**< Configuration settings (read-only). */
+        std::unique_ptr<Gpt3> gpt3_;                      /**< GPT3 grid (non-null only when source == Gpt3 and load succeeded). */
 
         /**
          * @brief Evaluate the continued-fraction mapping function form.
