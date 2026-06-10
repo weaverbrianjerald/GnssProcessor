@@ -1,0 +1,65 @@
+// SBF file-replay smoke config: drive the engine from a captured Septentrio
+// SBF dump (scripts/sbf_probe.py -> sbf_capture.sbf) to validate the native
+// SBF -> observation -> epoch path off-receiver.  PPP (no corrections, no AR)
+// so it runs with broadcast/live ephemeris only.
+{
+  "app_mode": "real_time",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "PPP",
+    "active_systems": [ "GPS", "Galileo", "BeiDou" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    // Match the AsteRx-U's emitted RINEX codes (GPS C1C/C2L/C2W, GAL C1C/C5Q/C7Q,
+    // BDS C2I).  Without this section signal_priorities is empty and every sat
+    // drops at selectObservationTypes.  The a-priori comes from the stream's
+    // PVTGeodetic (4007) block, so no reference_position is needed.
+    "signal_priorities": {
+      "GPS":     "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "BeiDou":  "IDPXQZ"
+    }
+  },
+
+  "files": { "internal_data_root": "./data" },
+
+  "realtime": {
+    "input_type":   "file",
+    "input_format": "sbf",
+    "input_path":   "C:/GnssProcessor/sbf_capture.sbf",
+    "output_type":  "console",
+    "corrections":  { "enabled": false }
+  },
+
+  "estimation": {
+    "ambiguity_resolution": { "mode": 0 }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 100.0, "clock_bias_q": 1e3, "troposphere_q": 1e-8,
+      "ionosphere_q": 0.03, "acceleration_psd_q": 1e2
+    },
+    "initial_std": {
+      "position": 100.0, "clock": 1000.0, "troposphere": 0.5,
+      "ionosphere": 5.0, "ambiguity": 100.0
+    },
+    "measurement_noise": { "code_std_m": 0.300, "phase_std_m": 0.003, "doppler_std_m": 0.5 },
+    "stochastic_model": "satellite_block"
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_solid_earth_tide": true,
+    "enable_phase_windup": true
+  },
+
+  "data_download": { "enabled": false },
+
+  "logging": { "enable_main_log": true }
+}

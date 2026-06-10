@@ -27,6 +27,8 @@
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/BaselineFixtures.hpp"
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -75,6 +77,50 @@ namespace GnssProcessor {
             }
             loadLoggingSection_(json, log_manager);
 
+            // Cross-section validation.  Runs once after every section is
+            // populated so the checks can mention parsed values from
+            // multiple sections in their error messages.
+            {
+                auto cfg_log = log_manager.getLogger("gnss_config");
+                // Doppler is needed for receiver-velocity estimation; if the
+                // user opts in to estimate_velocity but trimmed 'D' out of
+                // rinex_types, the velocity update would silently have no
+                // observations to drive it.  Warn loudly so the
+                // misconfiguration is obvious.
+                if (estimate_velocity_ &&
+                    rinex_types_.find('D') == std::string::npos) {
+                    cfg_log->warn("estimation.estimate_velocity=true but 'D' is "
+                        "not in processing.rinex_types ('{}'); Doppler "
+                        "observations will be filtered out and velocity will "
+                        "not converge.  Add 'D' to rinex_types.",
+                        rinex_types_);
+                }
+                // SNR stochastic model needs S* observations; same idea.
+                if (stochastic_model_ == StochasticModelType::SNR &&
+                    rinex_types_.find('S') == std::string::npos) {
+                    cfg_log->warn("filter.stochastic_model='snr' but 'S' is "
+                        "not in processing.rinex_types ('{}'); SNR values "
+                        "will be unavailable and the weighting will fall "
+                        "back to default variances.  Add 'S' to rinex_types.",
+                        rinex_types_);
+                }
+            }
+            if (state_ambiguity_basis_ == StateAmbiguityBasis::NlWl) {
+                auto err = log_manager.getLogger("gnss_config");
+                if (!uncombined_enabled_) {
+                    err->error("state_ambiguity_basis=nl_wl requires "
+                        "processing.uncombined_enabled=true.  PPP IF + NlWl "
+                        "is not yet implemented.");
+                    return false;
+                }
+                if (isBaselineMode()) {
+                    err->error("state_ambiguity_basis=nl_wl is not supported "
+                        "in baseline modes (DD ambiguities have their own "
+                        "schema).  Future work.");
+                    return false;
+                }
+            }
+
             logConfigurationSummary_(log_manager);
             return true;
         }
@@ -109,22 +155,119 @@ namespace GnssProcessor {
                                                                        "Baseline-Multi";
             log->info("Processing mode: {}", mode_label);
         }
+        // Legacy "signal_mode: all" used to mean both "all bands" AND
+        // "every tracking-mode channel per band".  The new design splits
+        // those into frequency_mode + channel_mode.  Track whether the
+        // legacy path with "all" was taken so the channel_mode block
+        // below can preserve back-compat by defaulting channel_mode to
+        // "all" when the user didn't set it explicitly.
+        bool legacy_signal_mode_all = false;
+        // ----- KF frequency mode (prefer new name; accept legacy signal_mode) -----
         {
-            std::string raw = jval<std::string>(json, "processing.signal_mode", "signal_mode", "Dual");
+            std::string raw = jval<std::string>(json, "processing.frequency_mode", "frequency_mode", "");
+            bool from_legacy = false;
+            if (raw.empty()) {
+                raw = jval<std::string>(json, "processing.signal_mode", "signal_mode", "");
+                if (!raw.empty()) from_legacy = true;
+            }
+            if (raw.empty()) raw = "Dual";
             std::string low = toLower(raw);
-            if      (low == "dual")   signal_mode_ = SignalMode::Dual;
-            else if (low == "triple") signal_mode_ = SignalMode::Triple;
-            else if (low == "all")    signal_mode_ = SignalMode::All;
-            else { log->warn("Invalid signal_mode '{}', defaulting to Dual", raw); signal_mode_ = SignalMode::Dual; }
-            log->info("Signal mode: {}", raw);
+            if      (low == "dual")        frequency_mode_ = FrequencyMode::Dual;
+            else if (low == "triple")      frequency_mode_ = FrequencyMode::Triple;
+            else if (low == "all")         frequency_mode_ = FrequencyMode::All;
+            else if (low == "independent") frequency_mode_ = FrequencyMode::Independent;
+            else { log->warn("Invalid frequency_mode '{}', defaulting to Dual", raw); frequency_mode_ = FrequencyMode::Dual; }
+            if (from_legacy) {
+                log->warn("Deprecation: 'signal_mode' renamed to 'frequency_mode'; please update config.");
+                if (low == "all") legacy_signal_mode_all = true;
+            }
+            log->info("Frequency mode: {}", raw);
+        }
+        // ----- KF channel mode -----
+        {
+            // Detect absent-vs-explicit via empty sentinel so back-compat can
+            // distinguish "user didn't set channel_mode" from "user set single".
+            std::string raw = jval<std::string>(json, "processing.channel_mode", "channel_mode", "");
+            const bool explicit_channel = !raw.empty();
+            if (raw.empty()) {
+                // Back-compat: legacy "signal_mode: all" implied multi-channel.
+                // Preserve that when the new explicit knob isn't set.
+                raw = legacy_signal_mode_all ? "all" : "single";
+                if (legacy_signal_mode_all) {
+                    log->warn("Back-compat: legacy 'signal_mode: all' implied multi-channel state; "
+                              "defaulting channel_mode to 'all'. Set channel_mode explicitly to silence.");
+                }
+            }
+            std::string low = toLower(raw);
+            if      (low == "single") channel_mode_ = ChannelMode::Single;
+            else if (low == "all")    channel_mode_ = ChannelMode::All;
+            else { log->warn("Invalid channel_mode '{}', defaulting to single", raw); channel_mode_ = ChannelMode::Single; }
+            log->info("Channel mode: {}{}", raw, explicit_channel ? "" : " (defaulted)");
+        }
+        // ----- MW frequency mode (prefer new name; accept legacy mw_signals as filter→mirror, all→all) -----
+        {
+            std::string raw = jval<std::string>(json, "processing.mw_frequency_mode", "mw_frequency_mode", "");
+            bool from_legacy = false;
+            if (raw.empty()) {
+                std::string legacy = jval<std::string>(json, "processing.mw_signals", "mw_signals", "");
+                if (!legacy.empty()) {
+                    from_legacy = true;
+                    std::string llow = toLower(legacy);
+                    if      (llow == "filter") raw = "mirror";
+                    else if (llow == "all")    raw = "all";
+                    else { log->warn("Invalid legacy mw_signals '{}'", legacy); raw = "mirror"; }
+                }
+            }
+            if (raw.empty()) raw = "mirror";
+            std::string low = toLower(raw);
+            if      (low == "mirror" || low == "kf") mw_frequency_mode_ = MwFrequencyMode::Mirror;
+            else if (low == "dual")                  mw_frequency_mode_ = MwFrequencyMode::Dual;
+            else if (low == "triple")                mw_frequency_mode_ = MwFrequencyMode::Triple;
+            else if (low == "all")                   mw_frequency_mode_ = MwFrequencyMode::All;
+            else { log->warn("Invalid mw_frequency_mode '{}', defaulting to mirror", raw); mw_frequency_mode_ = MwFrequencyMode::Mirror; }
+            if (from_legacy)
+                log->warn("Deprecation: 'mw_signals' split into 'mw_frequency_mode' + 'mw_channel_mode'; please update config.");
+            log->info("MW frequency mode: {}", raw);
+        }
+        // ----- MW channel mode (prefer new name; accept legacy mw_signals: filter→mirror, all→all) -----
+        {
+            std::string raw = jval<std::string>(json, "processing.mw_channel_mode", "mw_channel_mode", "");
+            if (raw.empty()) {
+                // Inherit from legacy mw_signals; the deprecation warning was
+                // already emitted by the mw_frequency_mode block above.
+                std::string legacy = jval<std::string>(json, "processing.mw_signals", "mw_signals", "");
+                if (!legacy.empty()) {
+                    std::string llow = toLower(legacy);
+                    if      (llow == "filter") raw = "mirror";
+                    else if (llow == "all")    raw = "all";
+                    else                       raw = "mirror";
+                }
+            }
+            if (raw.empty()) raw = "mirror";
+            std::string low = toLower(raw);
+            if      (low == "mirror" || low == "kf") mw_channel_mode_ = MwChannelMode::Mirror;
+            else if (low == "single")                mw_channel_mode_ = MwChannelMode::Single;
+            else if (low == "all")                   mw_channel_mode_ = MwChannelMode::All;
+            else { log->warn("Invalid mw_channel_mode '{}', defaulting to mirror", raw); mw_channel_mode_ = MwChannelMode::Mirror; }
+            log->info("MW channel mode: {}", raw);
         }
         {
-            std::string raw = jval<std::string>(json, "processing.mw_signals", "mw_signals", "filter");
-            std::string low = toLower(raw);
-            if      (low == "filter") mw_signal_mode_ = MwSignalMode::Filter;
-            else if (low == "all")    mw_signal_mode_ = MwSignalMode::All;
-            else { log->warn("Invalid mw_signals '{}', defaulting to filter", raw); mw_signal_mode_ = MwSignalMode::Filter; }
-            log->info("MW signal mode: {}", raw);
+            enable_inhouse_bias_estimation_ = jval<bool>(json,
+                "processing.inhouse_bias_estimation",
+                "inhouse_bias_estimation", false);
+            log->info("In-house MW bias estimation: {}",
+                enable_inhouse_bias_estimation_ ? "enabled" : "disabled");
+        }
+        {
+            mw_init_frac_threshold_ = jval<double>(json,
+                "processing.mw_init_frac_threshold",
+                "mw_init_frac_threshold", 0.4);
+            if (!(mw_init_frac_threshold_ > 0.0)) {
+                log->warn("Invalid mw_init_frac_threshold {} (must be > 0); "
+                          "reverting to default 0.4",
+                          mw_init_frac_threshold_);
+                mw_init_frac_threshold_ = 0.4;
+            }
         }
         {
             std::string raw = jval<std::string>(json, "processing.satellite_interpolation_mode",
@@ -142,8 +285,10 @@ namespace GnssProcessor {
             std::string raw = jval<std::string>(json, "processing.satellite_clock_interpolation_mode",
                                                  "satellite_clock_interpolation_mode", "Linear");
             std::string low = toLower(raw);
-            if      (low == "linear")   satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
-            else if (low == "lagrange") satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Lagrange;
+            if      (low == "linear")        satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear;
+            else if (low == "lagrange")      satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Lagrange;
+            else if (low == "lsq_sat_clock" || low == "lsqsatclock"
+                  || low == "lsq")           satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::LsqSatClock;
             else { log->warn("Invalid satellite_clock_interpolation_mode '{}', defaulting to Linear", raw);
                    satellite_clock_interpolation_mode_ = SatelliteClockInterpolationMode::Linear; }
             log->info("Satellite Clock interpolation mode: {}", raw);
@@ -167,7 +312,34 @@ namespace GnssProcessor {
             log->info("Baseline mode: forcing uncombined_enabled=true (per-signal DD)");
         }
         elevation_mask_deg_ = jval<double>(json, "processing.elevation_mask_deg", "elevation_mask_deg", 10.0);
+        exclude_eclipsing_satellites_ = jval<bool>(json,
+            "processing.exclude_eclipsing_satellites",
+            "exclude_eclipsing_satellites", false);
+        eclipse_shadow_scale_ = jval<double>(json,
+            "processing.eclipse_shadow_scale",
+            "eclipse_shadow_scale", 1.0);
+        if (eclipse_shadow_scale_ <= 0.0) {
+            log->warn("Non-positive eclipse_shadow_scale ({:.3f}) ignored; reverting to 1.0",
+                      eclipse_shadow_scale_);
+            eclipse_shadow_scale_ = 1.0;
+        }
+        if (exclude_eclipsing_satellites_) {
+            log->info("Eclipse-aware satellite rejection: enabled (shadow_scale={:.3f})",
+                      eclipse_shadow_scale_);
+        }
         data_gap_tolerance_s_ = jval<double>(json, "processing.data_gap_tolerance_s", "data_gap_tolerance_s", 0.0);
+        long_gap_tolerance_s_ = jval<double>(json, "processing.long_gap_tolerance_s", "long_gap_tolerance_s", 300.0);
+        if (long_gap_tolerance_s_ < 0.0) {
+            log->warn("Negative long_gap_tolerance_s ({:.3f}) ignored; reverting to default 300 s",
+                      long_gap_tolerance_s_);
+            long_gap_tolerance_s_ = 300.0;
+        }
+        if (data_gap_tolerance_s_ > 0.0 && long_gap_tolerance_s_ < data_gap_tolerance_s_) {
+            log->warn("long_gap_tolerance_s ({:.1f}) < data_gap_tolerance_s ({:.1f}); "
+                      "clamping long_gap up to data_gap so short-gap band is non-empty",
+                      long_gap_tolerance_s_, data_gap_tolerance_s_);
+            long_gap_tolerance_s_ = data_gap_tolerance_s_;
+        }
         gnss_rate_s_ = jval<double>(json, "processing.gnss_rate_s", "gnss_rate_s", 0.0);
         if (gnss_rate_s_ < 0.0) {
             log->warn("Negative gnss_rate_s ({:.3f}) ignored; decimation disabled", gnss_rate_s_);
@@ -175,6 +347,45 @@ namespace GnssProcessor {
         }
         if (gnss_rate_s_ > 0.0) {
             log->info("GNSS processing rate: {:.1f} s (input epochs will be decimated)", gnss_rate_s_);
+        }
+        // RINEX observation-type filter.  String of letters from the set
+        // {C, L, D, S} selecting which measurement types the parser will
+        // keep.  Default "CL" = code + phase, which is what every
+        // estimator in the pipeline actually consumes.  Add 'D' for
+        // Doppler (estimate_velocity) or 'S' for SNR (SNR stochastic
+        // model).  Case-insensitive; duplicates are collapsed.  An
+        // empty / all-invalid setting is rejected with a warning and
+        // falls back to the default.
+        {
+            std::string raw = jval<std::string>(json,
+                "processing.rinex_types", "rinex_types", "CL");
+            std::string filtered;
+            filtered.reserve(4);
+            std::string invalid;
+            for (char c : raw) {
+                if (std::isspace(static_cast<unsigned char>(c))) continue;
+                char u = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                if (u == 'C' || u == 'L' || u == 'D' || u == 'S') {
+                    if (filtered.find(u) == std::string::npos) filtered.push_back(u);
+                } else {
+                    invalid.push_back(c);
+                }
+            }
+            if (!invalid.empty()) {
+                log->warn("Ignoring unknown rinex_types character(s) '{}'; "
+                          "legal letters are C, L, D, S.", invalid);
+            }
+            if (filtered.empty()) {
+                log->warn("Empty rinex_types '{}'; reverting to default \"CL\".", raw);
+                filtered = "CL";
+            }
+            rinex_types_ = std::move(filtered);
+            log->info("RINEX measurement types retained: {} ({}{}{}{})",
+                rinex_types_,
+                rinex_types_.find('C') != std::string::npos ? "code "    : "",
+                rinex_types_.find('L') != std::string::npos ? "phase "   : "",
+                rinex_types_.find('D') != std::string::npos ? "doppler " : "",
+                rinex_types_.find('S') != std::string::npos ? "snr "     : "");
         }
         leap_seconds_tai_   = jval<double>(json, "processing.leap_seconds_tai", "leap_seconds_tai", 37.0);
 
@@ -283,11 +494,54 @@ namespace GnssProcessor {
                                                  "require_bia_for_signals", false);
         estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
                                                  "estimate_sat_biases", false);
+        // Sat-bias cache thresholds (only meaningful when estimate_sat_biases
+        // is on).  warm_age_s controls full warm restore; max_age_s caps
+        // entry lifetime.  Validate warm<=max; if not, clamp warm down so
+        // both stay positive and the warm band is never empty.
+        sat_bias_cache_warm_age_s_ = jval<double>(json,
+            "estimation.sat_bias_cache.warm_age_s",
+            "sat_bias_cache_warm_age_s", 300.0);
+        sat_bias_cache_max_age_s_  = jval<double>(json,
+            "estimation.sat_bias_cache.max_age_s",
+            "sat_bias_cache_max_age_s",  3600.0);
+        if (sat_bias_cache_warm_age_s_ < 0.0) sat_bias_cache_warm_age_s_ = 0.0;
+        if (sat_bias_cache_max_age_s_  < 0.0) sat_bias_cache_max_age_s_  = 0.0;
+        if (sat_bias_cache_warm_age_s_ > sat_bias_cache_max_age_s_) {
+            log->warn("sat_bias_cache.warm_age_s ({:.1f}) > max_age_s ({:.1f}); "
+                      "clamping warm = max.",
+                      sat_bias_cache_warm_age_s_, sat_bias_cache_max_age_s_);
+            sat_bias_cache_warm_age_s_ = sat_bias_cache_max_age_s_;
+        }
+        if (estimate_sat_biases_) {
+            log->info("Sat-bias cache: warm_age={:.1f} s, max_age={:.1f} s",
+                      sat_bias_cache_warm_age_s_, sat_bias_cache_max_age_s_);
+        }
         no_bia_code_downweight_    = jval<double>(json, "estimation.no_bia_code_downweight",
                                                   "no_bia_code_downweight", 100.0);
         if (no_bia_code_downweight_ < 1.0) no_bia_code_downweight_ = 1.0;
         enable_if_slip_detector_  = jval<bool>(json, "estimation.enable_if_slip_detector",
                                                 "enable_if_slip_detector", false);
+
+        // ----- Cycle-slip detector selection (SlipDetectorRegistry) -----
+        // estimation.cycle_slip.{mw,graphic,ewl,gf,if}.  The Melbourne-Wübbena
+        // detector defaults on (it is the primary and the source of WL integers
+        // for AR / BSSD pivots); the auxiliary detectors default off, preserving
+        // the historical MW-only behavior.  The 'if' selector inherits the
+        // legacy estimation.enable_if_slip_detector flag as its default for
+        // backward compatibility.
+        cycle_slip_.mw      = jval<bool>(json, "estimation.cycle_slip.mw",      "cycle_slip_mw",      true);
+        cycle_slip_.graphic = jval<bool>(json, "estimation.cycle_slip.graphic", "cycle_slip_graphic", false);
+        cycle_slip_.ewl     = jval<bool>(json, "estimation.cycle_slip.ewl",     "cycle_slip_ewl",     false);
+        cycle_slip_.gf      = jval<bool>(json, "estimation.cycle_slip.gf",      "cycle_slip_gf",      false);
+        cycle_slip_.ifp     = jval<bool>(json, "estimation.cycle_slip.if",      "cycle_slip_if",      enable_if_slip_detector_);
+        // turbo_edit is a coordination mode (MW+GF joint per-signal repair), not
+        // a detector kind — high-rate only; see CycleSlipConfig doc.
+        cycle_slip_.turbo_edit = jval<bool>(json, "estimation.cycle_slip.turbo_edit", "cycle_slip_turbo_edit", false);
+        log->info("Cycle-slip detectors: mw={}, graphic={}, ewl={}, gf={}, if={}, turbo_edit={}",
+                  cycle_slip_.mw ? "on" : "off", cycle_slip_.graphic ? "on" : "off",
+                  cycle_slip_.ewl ? "on" : "off", cycle_slip_.gf ? "on" : "off",
+                  cycle_slip_.ifp ? "on" : "off", cycle_slip_.turbo_edit ? "on" : "off");
+
         accumulate_phase_windup_  = jval<bool>(json, "estimation.accumulate_phase_windup",
                                                 "accumulate_phase_windup", false);
 
@@ -298,6 +552,75 @@ namespace GnssProcessor {
                                                    "enable_glonass_bssd", false);
         bssd_pivot_min_elevation_deg_ = jval<double>(json, "estimation.between_satellite_sd.pivot_min_elevation",
                                                       "bssd_pivot_min_elevation", 45.0);
+
+        // Pivot-slip detector wavelength floor.  Suppresses false-positive
+        // handovers from sub-cycle coherent SD residuals (multipath, PCV
+        // miscal, kinematic dynamics) that cannot be real cycle slips.
+        // Default 0.25 (λ/4); 0 disables the floor.
+        pivot_slip_min_cycles_ = jval<double>(json,
+            "estimation.pivot_slip_min_cycles", "pivot_slip_min_cycles", 0.25);
+        if (pivot_slip_min_cycles_ < 0.0) pivot_slip_min_cycles_ = 0.0;
+
+        // Persistent-bias R-inflation threshold (cycles of band λ on the
+        // EWMA mean).  When a (sat, signal)'s residual history shows a
+        // bias > this fraction of λ, the row's R is inflated so the KF
+        // stops absorbing the unmodeled error into position/clock/tropo.
+        // 0 disables.
+        persistent_bias_min_cycles_ = jval<double>(json,
+            "estimation.persistent_bias_min_cycles", "persistent_bias_min_cycles", 0.10);
+        if (persistent_bias_min_cycles_ < 0.0) persistent_bias_min_cycles_ = 0.0;
+
+        // In-update Huber R-inflation threshold (standardized residual).
+        // Acts on a standardized phase residual, no history needed —
+        // catches first-epoch biases that the EWMA persistence detector
+        // is too slow to identify.  Default 6.0 — the same threshold as
+        // the outlier reset (sub-cycle phase rows whose standardized
+        // residual exceeds it get their R inflated toward the
+        // threshold).  0 disables.
+        phase_huber_sres_threshold_ = jval<double>(json,
+            "estimation.phase_huber_sres_threshold", "phase_huber_sres_threshold", 6.0);
+        if (phase_huber_sres_threshold_ < 0.0) phase_huber_sres_threshold_ = 0.0;
+
+        // Huber R-inflation scheme.  Default (false) is the post-fit
+        // IRLS: inflate R by (|sres|/k)^2 per rebuild pass until the
+        // post-fit standardized residual converges to k.  When true,
+        // standardize the pre-fit innovation by its innovation
+        // covariance and set R in closed form so the standardized
+        // residual lands on k in a single rebuild pass.
+        enable_huber_innovation_ = jval<bool>(json,
+            "estimation.enable_huber_innovation", "enable_huber_innovation", false);
+        if (enable_huber_innovation_ && phase_huber_sres_threshold_ > 0.0) {
+            log->info("Huber R-inflation: innovation-based one-shot scheme "
+                      "(estimation.enable_huber_innovation=true)");
+        }
+
+        // Master on/off for the Huber R-inflation pass.  Independent of
+        // the threshold knob above so users can deactivate the entire
+        // pass without setting a sentinel value.  Defaults to true so
+        // existing configs (which only set the threshold) keep working.
+        enable_huber_r_inflation_ = jval<bool>(json,
+            "estimation.enable_huber_r_inflation",
+            "enable_huber_r_inflation", true);
+        if (!enable_huber_r_inflation_) {
+            log->info("Huber R-inflation pass: DISABLED via "
+                      "estimation.enable_huber_r_inflation=false "
+                      "(phase_huber_sres_threshold={} ignored)",
+                      phase_huber_sres_threshold_);
+        }
+
+        // Master on/off for the per-row sub-cycle slip suppression
+        // (λ-fraction floor in the phase outlier dispatch).  Independent
+        // of @c pivot_slip_min_cycles, which sets the floor's value.
+        // Defaults to true to preserve existing behavior.
+        enable_subcycle_slip_suppression_ = jval<bool>(json,
+            "estimation.enable_subcycle_slip_suppression",
+            "enable_subcycle_slip_suppression", true);
+        if (!enable_subcycle_slip_suppression_) {
+            log->info("Sub-cycle phase slip suppression: DISABLED via "
+                      "estimation.enable_subcycle_slip_suppression=false "
+                      "(pivot_slip_min_cycles={} ignored in per-row dispatch)",
+                      pivot_slip_min_cycles_);
+        }
 
         // Residual history tracker (post-fit temporal corroboration of
         // spatial pivot-slip detection).  Defaults are off — opt in
@@ -320,6 +643,148 @@ namespace GnssProcessor {
                 residual_history_.z_threshold, residual_history_.fraction_threshold);
         }
 
+        // Stuck-code-bias detector — breaks the closed loop where an
+        // over-converged sat-bias state keeps causing its own code
+        // rows to be rejected as outliers (innovation → reject →
+        // bias never updates → same innovation next epoch).  Driven
+        // by the residual-history tracker's per-row EWMA mean and
+        // consecutive-rejection streak.  Default-on; cheap when no
+        // row is stuck.  See StuckCodeBiasConfig docs for trigger
+        // semantics.
+        stuck_code_bias_.enabled = jval<bool>(json,
+            "estimation.stuck_code_bias.enabled",     "stuck_code_bias_enabled",     true);
+        stuck_code_bias_.min_streak = static_cast<std::size_t>(std::max<int>(0, jval<int>(json,
+            "estimation.stuck_code_bias.min_streak",  "stuck_code_bias_min_streak",  5)));
+        stuck_code_bias_.bias_floor_m = jval<double>(json,
+            "estimation.stuck_code_bias.bias_floor_m","stuck_code_bias_bias_floor_m", 3.0);
+        if (stuck_code_bias_.bias_floor_m < 0.0) stuck_code_bias_.bias_floor_m = 0.0;
+        if (stuck_code_bias_.enabled && estimate_sat_biases_) {
+            log->info("Stuck-code-bias detector: min_streak={} epochs, bias_floor={:.2f} m "
+                "(streak_branch={}, drift_branch={})",
+                stuck_code_bias_.min_streak, stuck_code_bias_.bias_floor_m,
+                stuck_code_bias_.min_streak > 0 ? "on" : "off",
+                stuck_code_bias_.bias_floor_m > 0.0 ? "on" : "off");
+        }
+
+        // Sat-wide state re-inflation on phase ambiguity reset (LLI
+        // lock loss or sat-wide MW slip).  Re-inflates iono and
+        // sat-bias diagonals so the post-reseed filter can re-find
+        // the (iono, sat-bias) partition rather than baking in the
+        // pre-reset one for the rest of the arc.  See
+        // SlipStateReinflationConfig docs for the partition-locking
+        // failure mode.
+        slip_state_reinflation_.enabled = jval<bool>(json,
+            "estimation.slip_state_reinflation.enabled",         "slip_state_reinflation_enabled",      true);
+        slip_state_reinflation_.iono_std_m = jval<double>(json,
+            "estimation.slip_state_reinflation.iono_std_m",      "slip_state_reinflation_iono_std_m",   5.0);
+        slip_state_reinflation_.sat_bias_std_m = jval<double>(json,
+            "estimation.slip_state_reinflation.sat_bias_std_m",  "slip_state_reinflation_sat_bias_std_m", 5.0);
+        if (slip_state_reinflation_.enabled
+            && (uncombined_enabled_ || estimate_sat_biases_)) {
+            log->info("Slip-state re-inflation: iono_std={:.2f} m, sat_bias_std={:.2f} m "
+                "(iono_branch={}, sat_bias_branch={})",
+                slip_state_reinflation_.iono_std_m,
+                slip_state_reinflation_.sat_bias_std_m,
+                slip_state_reinflation_.iono_std_m > 0.0 ? "on" : "fallback-cold-start",
+                slip_state_reinflation_.sat_bias_std_m > 0.0 ? "on" : "fallback-cold-start");
+        }
+
+        // Real-time startup gate: defer ALL estimation until the SSR
+        // correction stream is ready — every modeled above-mask satellite is
+        // broadcast+SSR (cm-grade clock, phase retained) and a solvable floor
+        // of them is present — so the filter seeds code+phase together instead
+        // of cold-starting code-only on metre-grade broadcast clocks (which
+        // bakes a contaminated iono/bias/ambiguity partition as each sat's SSR
+        // flips it cm-grade mid-arc).  Real-time only; no-op in post-processing
+        // (precise CLK present -> never broadcast_only).  See
+        // CorrectionsReadyGateConfig docs.
+        corrections_ready_gate_.enabled = jval<bool>(json,
+            "estimation.defer_until_corrections_ready.enabled",        "defer_until_corrections_ready_enabled",        false);
+        corrections_ready_gate_.min_satellites = std::max<int>(1, jval<int>(json,
+            "estimation.defer_until_corrections_ready.min_satellites", "defer_until_corrections_ready_min_satellites",  5));
+        corrections_ready_gate_.min_satellites_per_system = jval<int>(json,
+            "estimation.defer_until_corrections_ready.min_satellites_per_system", "defer_until_corrections_ready_min_satellites_per_system", 4);
+        corrections_ready_gate_.timeout_s = std::max<double>(0.0, jval<double>(json,
+            "estimation.defer_until_corrections_ready.timeout_s",      "defer_until_corrections_ready_timeout_s",       0.0));
+        corrections_ready_gate_.require_all_above_mask = jval<bool>(json,
+            "estimation.defer_until_corrections_ready.require_all_above_mask", "defer_until_corrections_ready_require_all_above_mask", false);
+        corrections_ready_gate_.drop_broadcast_grade = jval<bool>(json,
+            "estimation.defer_until_corrections_ready.drop_broadcast_grade", "defer_until_corrections_ready_drop_broadcast_grade", false);
+        if (corrections_ready_gate_.enabled) {
+            const char* mode = corrections_ready_gate_.require_all_above_mask
+                ? "all above-mask broadcast+SSR"
+                : (corrections_ready_gate_.min_satellites_per_system > 0
+                    ? "per-constellation quorum" : "global quorum");
+            log->info("Corrections-ready startup gate ON: {}, >= {} cm-grade total, "
+                ">= {} per constellation, drop_broadcast_grade={}, {}",
+                mode, corrections_ready_gate_.min_satellites,
+                corrections_ready_gate_.min_satellites_per_system,
+                corrections_ready_gate_.drop_broadcast_grade ? "on" : "off",
+                corrections_ready_gate_.timeout_s > 0.0 ? "timeout -> degraded" : "wait indefinitely");
+        }
+
+        // Soft a-priori ZWD constraint — anchors the BSSD [up, ZWD] null space
+        // so a common-mode start error cannot run ZWD/height to ~1000 m.  See
+        // ZwdConstraintConfig docs.  Default off; opt in for real-time BSSD.
+        zwd_constraint_.enabled = jval<bool>(json,
+            "estimation.zwd_constraint.enabled",   "zwd_constraint_enabled",   false);
+        zwd_constraint_.apriori_m = jval<double>(json,
+            "estimation.zwd_constraint.apriori_m", "zwd_constraint_apriori_m", 0.10);
+        zwd_constraint_.sigma_m = jval<double>(json,
+            "estimation.zwd_constraint.sigma_m",   "zwd_constraint_sigma_m",   0.30);
+        if (zwd_constraint_.enabled) {
+            log->info("ZWD soft constraint ON: prior {:.2f} m +/- {:.2f} m",
+                zwd_constraint_.apriori_m, zwd_constraint_.sigma_m);
+        }
+
+        // Adaptive ionospheric process noise (GF second-difference driven).
+        // Defaults off — opt in via JSON.  See AdaptiveIonoQConfig and
+        // IonoVariabilityMonitor for the recent/baseline MAD-sigma ratio scheme.
+        adaptive_iono_q_.enabled = jval<bool>(json,
+            "estimation.adaptive_iono_process_noise.enable", "adaptive_iono_q_enable", false);
+        adaptive_iono_q_.recent_window = std::max<int>(5, jval<int>(json,
+            "estimation.adaptive_iono_process_noise.recent_window", "adaptive_iono_q_recent_window", 20));
+        adaptive_iono_q_.baseline_window = std::max<int>(adaptive_iono_q_.recent_window, jval<int>(json,
+            "estimation.adaptive_iono_process_noise.baseline_window", "adaptive_iono_q_baseline_window", 240));
+        adaptive_iono_q_.max_multiplier = jval<double>(json,
+            "estimation.adaptive_iono_process_noise.max_multiplier", "adaptive_iono_q_max_multiplier", 100.0);
+        if (adaptive_iono_q_.max_multiplier < 1.0) adaptive_iono_q_.max_multiplier = 1.0;
+        adaptive_iono_q_.min_epochs = std::max<int>(5, jval<int>(json,
+            "estimation.adaptive_iono_process_noise.min_epochs", "adaptive_iono_q_min_epochs", 30));
+        adaptive_iono_q_.trace = jval<bool>(json,
+            "estimation.adaptive_iono_process_noise.trace", "adaptive_iono_q_trace", false);
+        if (adaptive_iono_q_.enabled) {
+            log->info("Adaptive iono process noise: recent_window={}, baseline_window={}, "
+                      "max_multiplier={:.1f}, min_epochs={}, trace={}",
+                      adaptive_iono_q_.recent_window, adaptive_iono_q_.baseline_window,
+                      adaptive_iono_q_.max_multiplier, adaptive_iono_q_.min_epochs,
+                      adaptive_iono_q_.trace ? "on" : "off");
+        }
+
+        // GIM ionosphere weighting (PPP-RTK soft iono constraint).
+        // Defaults off — opt in via JSON.  See IonosphereWeightingConfig.
+        iono_weighting_.enabled = jval<bool>(json,
+            "estimation.ionosphere_weighting.enable", "ionosphere_weighting_enable", false);
+        iono_weighting_.common_mode_sigma_m = jval<double>(json,
+            "estimation.ionosphere_weighting.common_mode_sigma_m",
+            "ionosphere_weighting_common_mode_sigma_m", 50.0);
+        iono_weighting_.std_scale = jval<double>(json,
+            "estimation.ionosphere_weighting.std_scale", "ionosphere_weighting_std_scale", 1.0);
+        iono_weighting_.floor_m = jval<double>(json,
+            "estimation.ionosphere_weighting.floor_m", "ionosphere_weighting_floor_m", 0.05);
+        iono_weighting_.elevation_cutoff_deg = jval<double>(json,
+            "estimation.ionosphere_weighting.elevation_cutoff_deg",
+            "ionosphere_weighting_elevation_cutoff_deg", 10.0);
+        if (iono_weighting_.common_mode_sigma_m < 1.0) iono_weighting_.common_mode_sigma_m = 1.0;
+        if (iono_weighting_.std_scale < 0.0) iono_weighting_.std_scale = 1.0;
+        if (iono_weighting_.floor_m < 0.0) iono_weighting_.floor_m = 0.0;
+        if (iono_weighting_.enabled) {
+            log->info("GIM ionosphere weighting: common_mode_sigma={:.1f} m, std_scale={:.2f}, "
+                      "floor={:.3f} m, elevation_cutoff={:.1f} deg",
+                      iono_weighting_.common_mode_sigma_m, iono_weighting_.std_scale,
+                      iono_weighting_.floor_m, iono_weighting_.elevation_cutoff_deg);
+        }
+
         // Ambiguity resolution
         ar_mode_            = jval<int>(json, "estimation.ambiguity_resolution.mode",
                                         "ar_mode", 0);
@@ -329,8 +794,56 @@ namespace GnssProcessor {
                                             "ar_elevation_mask", 20.0);
         ar_hold_variance_   = jval<double>(json, "estimation.ambiguity_resolution.hold_variance",
                                             "ar_hold_variance", 0.001);
+        ar_min_epochs_           = jval<int>(json, "estimation.ambiguity_resolution.min_epochs",
+                                              "ar_min_epochs", 10);
+        ar_max_position_sigma_m_ = jval<double>(json, "estimation.ambiguity_resolution.max_position_sigma_m",
+                                                 "ar_max_position_sigma_m", 0.05);
+        ar_ratio_upper_bound_    = jval<double>(json, "estimation.ambiguity_resolution.ratio_upper_bound",
+                                                 "ar_ratio_upper_bound", 1e4);
+        ar_wl_only_              = jval<bool>(json, "estimation.ambiguity_resolution.wl_only",
+                                               "ar_wl_only", false);
+        ar_wl_only_pseudo_var_   = jval<double>(json, "estimation.ambiguity_resolution.wl_only_pseudo_var",
+                                                 "ar_wl_only_pseudo_var", 1e-4);
+        ar_wl_max_frac_          = jval<double>(json, "estimation.ambiguity_resolution.wl_max_frac",
+                                                 "ar_wl_max_frac", 0.40);
+        ar_min_success_rate_     = jval<double>(json, "estimation.ambiguity_resolution.min_success_rate",
+                                                 "ar_min_success_rate", 0.999);
+        ar_nl_max_per_pair_frac_ = jval<double>(json, "estimation.ambiguity_resolution.nl_max_per_pair_frac",
+                                                 "ar_nl_max_per_pair_frac", 0.15);
 
-        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}",
+        // estimation.ambiguity_resolution.active_systems = ["GPS","Galileo",...]
+        // Empty / missing → all active systems are eligible for AR.
+        ar_active_systems_.clear();
+        {
+            const auto& arr = jsection(json, "estimation.ambiguity_resolution.active_systems",
+                                        "ar_active_systems");
+            if (arr.is_array())
+                ar_active_systems_ = arr.get<std::vector<std::string>>();
+        }
+        if (!ar_active_systems_.empty()) {
+            log->info("AR restricted to constellations: {}", joinStrings(ar_active_systems_));
+        }
+
+        // State-vector ambiguity parameterization.  PerBand is the
+        // historical layout (one state per (sat, signal/IF combo));
+        // NlWl decomposes each dual-frequency ambiguity into NL + WL
+        // states per band-pair.  Default PerBand to preserve behavior.
+        {
+            std::string raw = jval<std::string>(json, "estimation.state_ambiguity_basis",
+                                                 "state_ambiguity_basis", "per_band");
+            std::string low = toLower(raw);
+            for (auto& c : low) if (c == '-') c = '_';
+            if      (low == "per_band")              state_ambiguity_basis_ = StateAmbiguityBasis::PerBand;
+            else if (low == "nl_wl" || low == "nlwl") state_ambiguity_basis_ = StateAmbiguityBasis::NlWl;
+            else {
+                log->warn("Unknown state_ambiguity_basis '{}', defaulting to per_band", raw);
+                state_ambiguity_basis_ = StateAmbiguityBasis::PerBand;
+            }
+        }
+        const char* basis_label =
+            state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
+
+        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -346,7 +859,10 @@ namespace GnssProcessor {
             no_bia_code_downweight_,
             imu_config_.enabled
                 ? (imu_config_.coupling_mode == ImuCouplingMode::TightCoupled ? "tight" : "loose")
-                : "off");
+                : "off",
+            basis_label,
+            adaptive_iono_q_.enabled ? "on" : "off",
+            exclude_eclipsing_satellites_ ? "on" : "off");
     }
 
     // =================================================================
@@ -364,8 +880,22 @@ namespace GnssProcessor {
             process_noise_.code_bias           = pn.value("code_bias_q", 1e-4);
             process_noise_.tropo_gradient      = pn.value("tropo_gradient_q", 5e-12);
             process_noise_.phase_clock         = pn.value("phase_clock_q", 1e-9);
-            process_noise_.velocity            = pn.value("velocity_q", 1e2);
+            // CWNA acceleration power spectral density (m*m/s^3).  Drives the
+            // coupled position+velocity process-noise block.  Legacy alias:
+            // velocity_q (identical units and value).
+            if (pn.contains("acceleration_psd_q")) {
+                process_noise_.acceleration_psd = pn.value("acceleration_psd_q", 1e2);
+            } else if (pn.contains("velocity_q")) {
+                process_noise_.acceleration_psd = pn.value("velocity_q", 1e2);
+                log->warn("Deprecation: 'velocity_q' renamed to 'acceleration_psd_q' "
+                          "(white-noise acceleration PSD); please update config.");
+            } else {
+                process_noise_.acceleration_psd = 1e2;
+            }
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+            process_noise_.clock_rate          = pn.value("clock_rate_q", 1e-4);
+            process_noise_.system_time_rate_offset =
+                pn.value("system_time_rate_offset_q", 1e-10);
             // Ambiguity process noise.  Default 1e-12 is a numerical
             // safety floor — sub-mm accumulation per day, physically
             // indistinguishable from the constant-ambiguity model,
@@ -389,6 +919,9 @@ namespace GnssProcessor {
             initial_std_.tropo_gradient      = is.value("tropo_gradient", 1e-3);
             initial_std_.phase_clock         = is.value("phase_clock", 1e3);
             initial_std_.sat_bias            = is.value("sat_bias", 10.0);
+            initial_std_.clock_rate          = is.value("clock_rate", 1.0);
+            initial_std_.system_time_rate_offset =
+                is.value("system_time_rate_offset", 1e-2);
         }
         {
             const auto& mn = jsection(json, "filter.measurement_noise", "default_measurement_noise");
@@ -410,6 +943,190 @@ namespace GnssProcessor {
         // the code and phase block tables that previously had to be
         // hand-edited in tandem.
         // -----------------------------------------------------------
+        // -----------------------------------------------------------
+        // JSON overrides for sat-block scale tables.  Optional —
+        // each subsection independently merges into / replaces the
+        // hard-coded defaults.  Parsed before the absolute-σ
+        // derivation below so any user override is reflected.
+        // -----------------------------------------------------------
+        {
+            const auto& sb = jsection(json, "filter.satellite_block",
+                                       "satellite_block");
+            if (sb.is_object()) {
+                // block_scale_factors: ordered array of [substring, scale]
+                // pairs (or [{block, scale}] objects).  Order matters
+                // because lookup is first-substring-match-wins.
+                if (sb.contains("block_scale_factors")
+                    && sb["block_scale_factors"].is_array()) {
+                    std::vector<std::pair<std::string, double>> override_factors;
+                    override_factors.reserve(sb["block_scale_factors"].size());
+                    for (const auto& entry : sb["block_scale_factors"]) {
+                        std::string block;
+                        double scale = std::numeric_limits<double>::quiet_NaN();
+                        if (entry.is_array() && entry.size() == 2
+                            && entry[0].is_string() && entry[1].is_number()) {
+                            block = entry[0].get<std::string>();
+                            scale = entry[1].get<double>();
+                        } else if (entry.is_object()
+                                   && entry.contains("block") && entry["block"].is_string()
+                                   && entry.contains("scale") && entry["scale"].is_number()) {
+                            block = entry["block"].get<std::string>();
+                            scale = entry["scale"].get<double>();
+                        }
+                        if (!block.empty() && std::isfinite(scale) && scale > 0.0)
+                            override_factors.emplace_back(std::move(block), scale);
+                        else
+                            log->warn("Invalid block_scale_factors entry; "
+                                "expected [\"BLOCKIIF\", 0.5] or "
+                                "{{\"block\":\"BLOCKIIF\",\"scale\":0.5}}");
+                    }
+                    if (!override_factors.empty()) {
+                        sat_block_noise_params_.block_scale_factors =
+                            std::move(override_factors);
+                        log->info("Sat-block: {} block_scale_factors overrides loaded",
+                                  sat_block_noise_params_.block_scale_factors.size());
+                    }
+                }
+                // freq_band_scale + tracking_attr_scale: now split into
+                // per-observable tables.  Accepted JSON forms (mixable
+                // in the same block — keys are classified by position):
+                //
+                //   1. Nested per-observable (preferred):
+                //        "code":  { "freq_band_scale": {...}, "tracking_attr_scale": {...} },
+                //        "phase": { "freq_band_scale": {...}, "tracking_attr_scale": {...} }
+                //      Each observable maintains its own scales, allowing
+                //      e.g. GPS [code][C] = 1.8 (chip-rate C/A penalty)
+                //      while GPS [phase][C] = 1.0 (no chip-rate effect
+                //      on carrier).
+                //
+                //   2. Legacy top-level (deprecated): old configs may
+                //      have set @c freq_band_scale or
+                //      @c tracking_attr_scale at the top level of
+                //      @c satellite_block.  Those are routed to the
+                //      @c code side with a deprecation warning, because
+                //      the original tables were calibrated for code
+                //      noise.  Phase-side overrides require the
+                //      nested form.
+                //
+                // A shared lambda merges one observable's JSON block
+                // into an ObservableScale.
+
+                using ObservableScale = SatBlockNoiseParams::ObservableScale;
+                auto mergeObservable =
+                    [&](const nlohmann::json& obs_json,
+                        ObservableScale& target,
+                        const std::string& label) -> void {
+                    // freq_band_scale
+                    if (obs_json.contains("freq_band_scale")
+                        && obs_json["freq_band_scale"].is_object()) {
+                        size_t merged = 0;
+                        for (const auto& [k, v] : obs_json["freq_band_scale"].items()) {
+                            if (k.size() == 1 && v.is_number()) {
+                                target.freq_band_scale[k[0]] = v.get<double>();
+                                ++merged;
+                            } else {
+                                log->warn("Sat-block [{}].freq_band_scale: invalid "
+                                          "key/value '{}' (expected single-char band "
+                                          "digit, numeric value)", label, k);
+                            }
+                        }
+                        if (merged > 0)
+                            log->info("Sat-block [{}]: {} freq_band_scale "
+                                      "overrides merged", label, merged);
+                    }
+                    // tracking_attr_scale (per-system nested, with
+                    // intra-block legacy-flat fallback).
+                    if (obs_json.contains("tracking_attr_scale")
+                        && obs_json["tracking_attr_scale"].is_object()) {
+                        size_t merged_nested = 0;
+                        size_t merged_legacy = 0;
+                        for (const auto& [k, v] : obs_json["tracking_attr_scale"].items()) {
+                            if (k.size() == 1 && v.is_number()) {
+                                // Legacy flat key inside an observable block —
+                                // route to the observable's "default" table.
+                                target.tracking_attr_scale["default"][k[0]] =
+                                    v.get<double>();
+                                ++merged_legacy;
+                            } else if (v.is_object()) {
+                                auto& sys_tbl = target.tracking_attr_scale[k];
+                                for (const auto& [attr, scale] : v.items()) {
+                                    if (attr.size() == 1 && scale.is_number()) {
+                                        sys_tbl[attr[0]] = scale.get<double>();
+                                        ++merged_nested;
+                                    } else {
+                                        log->warn("Sat-block [{}].tracking_attr_scale "
+                                                  "under '{}': invalid entry '{}' "
+                                                  "(expected single-char attr key, "
+                                                  "numeric value)", label, k, attr);
+                                    }
+                                }
+                            } else {
+                                log->warn("Sat-block [{}].tracking_attr_scale: invalid "
+                                          "key/value '{}' (expected either single-char "
+                                          "attr with number, or system name with object)",
+                                          label, k);
+                            }
+                        }
+                        if (merged_legacy > 0)
+                            log->warn("Sat-block [{}]: {} tracking_attr_scale entries "
+                                      "from flat form merged into 'default' table — "
+                                      "use nested {{\"GPS\": {{\"C\": 1.8}}}} for "
+                                      "per-system overrides", label, merged_legacy);
+                        if (merged_nested > 0)
+                            log->info("Sat-block [{}]: {} tracking_attr_scale "
+                                      "overrides merged (nested)", label, merged_nested);
+                    }
+                };
+
+                // ---- Preferred form: nested per-observable blocks ----
+                if (sb.contains("code") && sb["code"].is_object())
+                    mergeObservable(sb["code"], sat_block_noise_params_.code, "code");
+                if (sb.contains("phase") && sb["phase"].is_object())
+                    mergeObservable(sb["phase"], sat_block_noise_params_.phase, "phase");
+
+                // ---- Legacy top-level: route to code side ----
+                // Older configs set freq_band_scale / tracking_attr_scale
+                // directly under satellite_block.  Those were calibrated
+                // for code; route them there and warn that phase-side
+                // overrides now require the nested form.
+                const bool has_legacy_band =
+                    sb.contains("freq_band_scale")
+                    && sb["freq_band_scale"].is_object();
+                const bool has_legacy_attr =
+                    sb.contains("tracking_attr_scale")
+                    && sb["tracking_attr_scale"].is_object();
+                if (has_legacy_band || has_legacy_attr) {
+                    // Synthesise an observable-shaped sub-object so the
+                    // shared merge helper can process it uniformly.
+                    nlohmann::json legacy_code;
+                    if (has_legacy_band)
+                        legacy_code["freq_band_scale"] = sb["freq_band_scale"];
+                    if (has_legacy_attr)
+                        legacy_code["tracking_attr_scale"] = sb["tracking_attr_scale"];
+                    mergeObservable(legacy_code, sat_block_noise_params_.code,
+                                     "code(legacy)");
+                    log->warn("Sat-block: top-level freq_band_scale / "
+                              "tracking_attr_scale found — routed to 'code' "
+                              "(legacy form).  To tune phase, use nested "
+                              "'phase': {{ 'freq_band_scale': {{...}}, "
+                              "'tracking_attr_scale': {{...}} }}");
+                }
+                // apply_to_phase: route phase observations through the
+                // full block × freq_band × tracking_attr × elevation
+                // pipeline (true, default) or the simpler
+                // default_phase_std_m × elevation path (false).  See
+                // SatBlockNoiseParams::apply_to_phase doxygen for the
+                // physics-vs-empirical trade-off.
+                if (sb.contains("apply_to_phase")
+                    && sb["apply_to_phase"].is_boolean()) {
+                    sat_block_noise_params_.apply_to_phase =
+                        sb["apply_to_phase"].get<bool>();
+                    log->info("Sat-block: apply_to_phase set to {}",
+                              sat_block_noise_params_.apply_to_phase);
+                }
+            }
+        }
+
         {
             auto& bp = sat_block_noise_params_;
             bp.block_code_std_m.clear();
@@ -428,11 +1145,24 @@ namespace GnssProcessor {
             bp.default_code_std_m  = default_meas_noise_.code_std_m;
             bp.default_phase_std_m = default_meas_noise_.phase_std_m;
 
+            // Compute the actual min/max scale from the (possibly
+            // overridden) factor table for a meaningful range log.
+            double scale_min = 1.0, scale_max = 1.0;
+            if (!bp.block_scale_factors.empty()) {
+                scale_min = bp.block_scale_factors.front().second;
+                scale_max = scale_min;
+                for (const auto& [_, s] : bp.block_scale_factors) {
+                    if (s < scale_min) scale_min = s;
+                    if (s > scale_max) scale_max = s;
+                }
+            }
             log->info("Sat-block noise: derived from measurement_noise "
                 "(code_zen ∈ [{:.3f}, {:.3f}] m, phase_zen ∈ [{:.4f}, {:.4f}] m) "
                 "× per-block scale factors",
-                default_meas_noise_.code_std_m  / 3.0, default_meas_noise_.code_std_m,
-                default_meas_noise_.phase_std_m / 3.0, default_meas_noise_.phase_std_m);
+                default_meas_noise_.code_std_m  * scale_min,
+                default_meas_noise_.code_std_m  * scale_max,
+                default_meas_noise_.phase_std_m * scale_min,
+                default_meas_noise_.phase_std_m * scale_max);
         }
 
         // Stochastic model.  Drives both code and phase weighting,
@@ -497,22 +1227,34 @@ namespace GnssProcessor {
         auto log = log_manager.getLogger("gnss_config");
         {
             const auto& mc = jsection(json, "model_corrections", "model_corrections");
-            model_corrections_.enable_troposphere              = mc.value("enable_troposphere", true);
-            model_corrections_.enable_relativistic_correction = mc.value("enable_relativistic_correction", true);
-            model_corrections_.enable_shapiro_delay           = mc.value("enable_shapiro_delay", true);
-            model_corrections_.enable_solid_earth_tide        = mc.value("enable_solid_earth_tide", true);
-            model_corrections_.enable_ocean_tide_loading      = mc.value("enable_ocean_tide_loading", true);
-            model_corrections_.enable_pole_tide               = mc.value("enable_pole_tide", true);
-            model_corrections_.enable_atmospheric_loading     = mc.value("enable_atmospheric_loading", true);
-            model_corrections_.enable_satellite_pco           = mc.value("enable_satellite_pco", true);
-            model_corrections_.enable_satellite_pcv           = mc.value("enable_satellite_pcv", true);
-            model_corrections_.enable_receiver_pco            = mc.value("enable_receiver_pco", true);
-            model_corrections_.enable_receiver_pcv            = mc.value("enable_receiver_pcv", true);
-            model_corrections_.enable_phase_windup            = mc.value("enable_phase_windup", true);
-            model_corrections_.enable_code_phase_bias        = mc.value("enable_code_phase_bias", true);
-            model_corrections_.enable_atx_frequency_fallback  = mc.value("enable_atx_frequency_fallback", true);
-            model_corrections_.require_atx_coverage           = mc.value("require_atx_coverage",          false);
-            model_corrections_.enable_klobuchar_ionosphere    = mc.value("enable_klobuchar_ionosphere", false);
+            model_corrections_.enable_troposphere               = mc.value("enable_troposphere", true);
+            model_corrections_.enable_relativistic_correction   = mc.value("enable_relativistic_correction", true);
+            model_corrections_.enable_shapiro_delay             = mc.value("enable_shapiro_delay", true);
+            model_corrections_.enable_solid_earth_tide          = mc.value("enable_solid_earth_tide", true);
+            model_corrections_.enable_ocean_tide_loading        = mc.value("enable_ocean_tide_loading", true);
+            model_corrections_.enable_pole_tide                 = mc.value("enable_pole_tide", true);
+            model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", true);
+            model_corrections_.enable_satellite_pco             = mc.value("enable_satellite_pco", true);
+            model_corrections_.enable_satellite_pcv             = mc.value("enable_satellite_pcv", true);
+            model_corrections_.enable_receiver_pco              = mc.value("enable_receiver_pco", true);
+            model_corrections_.enable_receiver_pcv              = mc.value("enable_receiver_pcv", true);
+            model_corrections_.enable_phase_windup              = mc.value("enable_phase_windup", true);
+            model_corrections_.enable_code_phase_bias           = mc.value("enable_code_phase_bias", true);
+            model_corrections_.enable_atx_frequency_fallback    = mc.value("enable_atx_frequency_fallback", true);
+            model_corrections_.require_atx_coverage             = mc.value("require_atx_coverage",          false);
+            model_corrections_.require_atx_coverage_for_ar      = mc.value("require_atx_coverage_for_ar",  false);
+            model_corrections_.restrict_ar_for_substituted_atx  = mc.value("restrict_ar_for_substituted_atx", false);
+            model_corrections_.loosen_amb_q_for_substituted_atx = mc.value("loosen_amb_q_for_substituted_atx", false);
+            model_corrections_.ambiguity_q_substituted_atx      = mc.value("ambiguity_q_substituted_atx",  1e-12);
+            model_corrections_.ambiguity_std_substituted_atx    = mc.value("ambiguity_std_substituted_atx", 1e3);
+            model_corrections_.atx_substitution_phase_std_m     = mc.value("atx_substitution_phase_std_m",  0.0);
+            model_corrections_.apply_phase_shifts               = mc.value("apply_phase_shifts",            false);
+            model_corrections_.receiver_antenna_type_override   = mc.value("receiver_antenna_type_override", std::string{});
+            model_corrections_.enable_receiver_cross_system_atx_fallback =
+                mc.value("enable_receiver_cross_system_atx_fallback", false);
+            model_corrections_.enable_klobuchar_ionosphere      = mc.value("enable_klobuchar_ionosphere", false);
+            model_corrections_.enable_higher_order_ionosphere   = mc.value("enable_higher_order_ionosphere", false);
+            model_corrections_.refine_emission_time             = mc.value("refine_emission_time",         true);
         }
         log->info("Model corrections: tropo={}, rel={}, shapiro={}, set={}, otl={}, pole={}, atm={}, "
             "sat_pco={}, sat_pcv={}, rx_pco={}, rx_pcv={}, windup={}, cpb={}, atx_fallback={}",
@@ -530,9 +1272,41 @@ namespace GnssProcessor {
             model_corrections_.enable_phase_windup            ? "on" : "off",
             model_corrections_.enable_code_phase_bias        ? "on" : "off",
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
+        log->info("Emission-time refinement: {} (second-pass slant-ZHD + IF-ATX subtraction in geometry pipeline)",
+            model_corrections_.refine_emission_time ? "ENABLED" : "disabled");
         if (model_corrections_.require_atx_coverage) {
             log->info("ATX coverage: STRICT — observations without complete sat+rx PCO+PCV "
                 "for the exact signal frequency will be dropped.");
+        }
+        if (model_corrections_.require_atx_coverage_for_ar) {
+            log->info("AR ATX gate (strict): WL constraints skipped for (sat, signal) pairs "
+                "lacking strict ATX coverage; observations stay in float KF.");
+        }
+        if (model_corrections_.restrict_ar_for_substituted_atx) {
+            log->info("AR ATX gate (substituted): WL constraints skipped for (sat, signal) "
+                "pairs whose ATX correction was frequency-fallback-substituted.");
+        }
+        log->info("ATX-substituted ambiguity overrides: {}{}",
+            model_corrections_.loosen_amb_q_for_substituted_atx ? "ENABLED" : "disabled",
+            model_corrections_.loosen_amb_q_for_substituted_atx
+              ? fmt::format(" — q={:.3e} m²/s, init_std={:.3f} m",
+                            model_corrections_.ambiguity_q_substituted_atx,
+                            model_corrections_.ambiguity_std_substituted_atx)
+              : std::string{" (all ambiguities use process_noise.ambiguity and getAmbiguityStd default)"});
+        if (model_corrections_.atx_substitution_phase_std_m > 0.0) {
+            log->info("ATX-substituted phase σ inflation: ENABLED — +({:.1f} mm / sin el)² added "
+                "to substituted-signal phase variance (down-weights common-mode PCV residual that "
+                "aliases into ZWD/height; complements the ambiguity-Q override above)",
+                model_corrections_.atx_substitution_phase_std_m * 1e3);
+        }
+        if (model_corrections_.apply_phase_shifts) {
+            log->info("SYS / PHASE SHIFT subtraction: ENABLED — recorded phase shifts "
+                "will be subtracted from RINEX phase observations at parse time.");
+        }
+        if (model_corrections_.enable_higher_order_ionosphere) {
+            log->info("Higher-order ionosphere (I₂+I₃): ENABLED — GIM-derived STEC + "
+                "dipole B-field, applied per-signal at observation level.  No-op "
+                "when no IONEX GIM resolves.");
         }
     }
 
@@ -549,6 +1323,58 @@ namespace GnssProcessor {
         zhd_pressure_mbar = jval<double>(json, "receiver.zhd_pressure_mbar", "zhd_pressure_mbar", 1013.25);
         zhd_temp_kelvin   = jval<double>(json, "receiver.zhd_temp_kelvin", "zhd_temp_kelvin", 288.15);
         log->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
+
+        // Troposphere a priori source: "standard_atmosphere" (default) or "gpt3".
+        // Troposphere mapping function: "gmf" (default) or "vmf3".
+        {
+            auto to_lower = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(),
+                               [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+                return s;
+            };
+
+            const std::string src = to_lower(
+                jval<std::string>(json, "receiver.troposphere_apriori_source",
+                                  "troposphere_apriori_source", std::string{"standard_atmosphere"}));
+            if (src == "gpt3") {
+                tropo_apriori_source_ = TroposphereAprioriSource::Gpt3;
+            } else {
+                if (src != "standard_atmosphere") {
+                    log->warn("Unknown receiver.troposphere_apriori_source='{}', falling back to standard_atmosphere", src);
+                }
+                tropo_apriori_source_ = TroposphereAprioriSource::StandardAtmosphere;
+            }
+
+            const std::string mf = to_lower(
+                jval<std::string>(json, "receiver.troposphere_mapping_function",
+                                  "troposphere_mapping_function", std::string{"gmf"}));
+            if (mf == "vmf3") {
+                tropo_mapping_function_ = TroposphereMappingFunction::Vmf3;
+            } else {
+                if (mf != "gmf") {
+                    log->warn("Unknown receiver.troposphere_mapping_function='{}', falling back to gmf", mf);
+                }
+                tropo_mapping_function_ = TroposphereMappingFunction::Gmf;
+            }
+
+            const bool need_gpt3 =
+                tropo_apriori_source_   == TroposphereAprioriSource::Gpt3 ||
+                tropo_mapping_function_ == TroposphereMappingFunction::Vmf3;
+
+            std::string gpt3_str = jval<std::string>(json, "receiver.gpt3_grid_path",
+                                                     "gpt3_grid_path", std::string{});
+            if (!gpt3_str.empty()) {
+                gpt3_grid_path_ = gpt3_str;
+            } else if (need_gpt3) {
+                // Default to bundled location under the internal data root.
+                gpt3_grid_path_ = internal_data_root_ / "static" / "gpt3" / "gpt3_5.grd";
+            }
+
+            log->info("Troposphere a priori: source={}, mapping={}, gpt3_grid_path='{}'",
+                      tropo_apriori_source_ == TroposphereAprioriSource::Gpt3 ? "gpt3" : "standard_atmosphere",
+                      tropo_mapping_function_ == TroposphereMappingFunction::Vmf3 ? "vmf3" : "gmf",
+                      gpt3_grid_path_.string());
+        }
 
         // Reference position (optional)
         {
@@ -741,6 +1567,7 @@ namespace GnssProcessor {
             download_config_.doy               = dl.value("doy", 0);
             download_config_.download_rinex    = dl.value("download_rinex", false);
             download_config_.download_products = dl.value("download_products", true);
+            download_config_.download_gim      = dl.value("download_gim", false);
             std::string atx_str = dl.value("atx_path", "");
             if (!atx_str.empty()) download_config_.atx_path = atx_str;
             std::string nc_str = dl.value("nc_path", "");
@@ -800,10 +1627,33 @@ namespace GnssProcessor {
             realtime_config_.nmea_gga           = rt.value("nmea_gga", "");
             realtime_config_.reconnect_delay_s  = rt.value("reconnect_delay_s", 5);
             realtime_config_.input_type         = rt.value("input_type", "ntrip");
+            realtime_config_.input_format       = rt.value("input_format", "rtcm");
             realtime_config_.input_path         = rt.value("input_path", "");
+            realtime_config_.tcp_host           = rt.value("tcp_host", "");
+            realtime_config_.tcp_port           = rt.value("tcp_port", 28784);
             realtime_config_.output_type        = rt.value("output_type", "console");
             realtime_config_.output_path        = rt.value("output_path", "");
             realtime_config_.max_epoch_buffer   = rt.value("max_epoch_buffer", 100U);
+
+            // Optional SSR corrections stream (separate NTRIP mountpoint
+            // or file-replay).  Default: disabled — single-stream behaviour.
+            if (rt.contains("corrections") && rt.at("corrections").is_object()) {
+                const auto& cc = rt.at("corrections");
+                auto& c = realtime_config_.corrections;
+                c.enabled            = cc.value("enabled", false);
+                c.input_type         = cc.value("input_type", std::string{"ntrip"});
+                c.ntrip_host         = cc.value("ntrip_host", std::string{});
+                c.ntrip_port         = cc.value("ntrip_port", 2101);
+                c.ntrip_mountpoint   = cc.value("ntrip_mountpoint", std::string{});
+                c.ntrip_user         = cc.value("ntrip_user", std::string{});
+                c.ntrip_password     = cc.value("ntrip_password", std::string{});
+                c.nmea_gga           = cc.value("nmea_gga", std::string{});
+                c.reconnect_delay_s  = cc.value("reconnect_delay_s", 5);
+                c.input_path         = cc.value("input_path", std::string{});
+                c.tcp_host           = cc.value("tcp_host", std::string{});
+                c.tcp_port           = cc.value("tcp_port", 28784);
+            }
+
             if (app_mode_ == AppMode::RealTime) {
                 log->info("Real-time config: input={}, ntrip={}:{}/{}, output={}",
                     realtime_config_.input_type,
@@ -811,6 +1661,15 @@ namespace GnssProcessor {
                     realtime_config_.ntrip_port,
                     realtime_config_.ntrip_mountpoint,
                     realtime_config_.output_type);
+                if (realtime_config_.corrections.enabled) {
+                    const auto& c = realtime_config_.corrections;
+                    if (c.input_type == "ntrip") {
+                        log->info("Real-time corrections: ntrip={}:{}/{}",
+                                  c.ntrip_host, c.ntrip_port, c.ntrip_mountpoint);
+                    } else {
+                        log->info("Real-time corrections: file={}", c.input_path);
+                    }
+                }
             }
         }
     }
@@ -1093,6 +1952,7 @@ namespace GnssProcessor {
         logging_config_.enable_mw_slip_detector   = lg.value("enable_mw_slip_detector", false);
         logging_config_.enable_if_slip_detector   = lg.value("enable_if_slip_detector", false);
         logging_config_.enable_gf_slip_detector   = lg.value("enable_gf_slip_detector", false);
+        logging_config_.enable_turbo_edit_resolver = lg.value("enable_turbo_edit_resolver", false);
         logging_config_.enable_cycle_slip_manager = lg.value("enable_cycle_slip_manager", false);
         logging_config_.enable_ambiguity_resolver = lg.value("enable_ambiguity_resolver", false);
         logging_config_.enable_corrections        = lg.value("enable_corrections", false);
@@ -1120,12 +1980,17 @@ namespace GnssProcessor {
         logging_config_.enable_state_trace        = lg.value("enable_state_trace", false);
         logging_config_.enable_ambiguity_trace    = lg.value("enable_ambiguity_trace", false);
         logging_config_.enable_ionosphere_trace   = lg.value("enable_ionosphere_trace", false);
+        logging_config_.enable_sat_bias_trace     = lg.value("enable_sat_bias_trace", false);
+        logging_config_.enable_sat_status_trace   = lg.value("enable_sat_status_trace", false);
+        logging_config_.enable_dop_trace          = lg.value("enable_dop_trace", false);
         logging_config_.enable_residual_trace     = lg.value("enable_residual_trace", false);
         logging_config_.enable_wls_trace          = lg.value("enable_wls_trace", false);
         logging_config_.enable_smoother_trace     = lg.value("enable_smoother_trace", false);
         logging_config_.enable_mw_slip_trace      = lg.value("enable_mw_slip_trace", false);
         logging_config_.enable_if_slip_trace      = lg.value("enable_if_slip_trace", false);
         logging_config_.enable_gf_slip_trace      = lg.value("enable_gf_slip_trace", false);
+        logging_config_.enable_turbo_edit_trace   = lg.value("enable_turbo_edit_trace", false);
+        logging_config_.enable_windup_trace       = lg.value("enable_windup_trace", false);
 
         // Concise KF log mode — suppresses intermediate rebuild passes,
         // keeps pass-1 + final-pass output verbatim. Default off (full).

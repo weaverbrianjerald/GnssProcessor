@@ -1,0 +1,235 @@
+// Archived SBF file-replay with PRECISE products (post-processing through the
+// real-time engine).  This is your live realtime_ppp_rtk.json retargeted at a
+// captured Septentrio SBF dump instead of the live socket, using precise
+// SP3/CLK/BIA for the capture's date (2026 DOY 145) INSTEAD of the live IGS-RTS
+// SSR stream.  Rationale: the live caster only serves *current* corrections,
+// which would be ~15 days stale against this archived epoch and rejected by the
+// staleness gate.  With input_type=file + corrections.enabled=false, the engine
+// loads precise SP3/CLK (realtimeUsesLiveOrbitClockSource() == false), so every
+// satellite is cm-grade from epoch 1 and phase stays enabled.
+//
+// PRODUCTS — auto-downloaded from CDDIS (data_source=production).  product_type
+// FIN resolves to COD0MGXFIN = the multi-GNSS FINAL combination (Galileo + BeiDou
+// included; RAP/ULT would be OPS = GPS+GLONASS only and would drop Galileo).
+// CDDIS Basic auth uses ~/.netrc automatically (DataDownloader resolves it).
+// NOTE: CODE final-MGX latency is ~2-3 weeks; this capture is ~15 days old, so
+// COD0MGXFIN for 2026-145 may not be published yet.  If the resolver logs a 404 /
+// "not found" for the SP3/CLK, the final isn't out — fall back to manually staging
+// a rapid multi-GNSS set (GFZ GBM / WUM0MGXRAP / CNES GRG) under
+// data/2026-145/products/ with data_source flipped back to "internal".
+{
+  "app_mode": "real_time",
+  "data_source": "production",
+
+  "processing": {
+    "mode": "PPP",
+    "rinex_types": "CL",
+    "active_systems": [ "GPS", "Galileo" ],
+	//"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
+	//"active_systems": [ "GPS", "Galileo", "BeiDou"],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
+	"relinearize_geometry": true,
+    "leap_seconds_tai": 37.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS":     "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "BeiDou":  "IDPXQZ"
+    }
+  },
+
+  "files": { "internal_data_root": "./data" },
+
+  "receiver": {
+    // The COVL rooftop AsteRx-U is a static LEIAR25 NONE.  This archived capture
+    // is Meas3Ranges-ONLY and carries NO PVTGeodetic (4007), so there is nothing
+    // to seed the a-priori from — without a pin the engine starts at the geographic
+    // pole and every satellite drops below the elevation mask.  Pinned here to the
+    // rooftop ECEF recovered from the live capture's PVTGeodetic (same receiver,
+    // Corvallis OSU 44.5672N / -123.2748W / 68.3 m; ~few-m PVT accuracy, refined by
+    // the filter against the precise products).  Config position always wins.
+    "reference_position_ecef": { "x": -2497215.425, "y": -3805289.764, "z": 4453261.057 }
+  },
+
+  "realtime": {
+    // File replay of the archived SBF capture.  input_format=sbf routes the bytes
+    // to SbfParser; input_type=file makes realtimeUsesLiveOrbitClockSource() false
+    // so precise SP3/CLK are loaded instead of a live broadcast+SSR source.
+    "input_type":   "file",
+    "input_format": "sbf",
+    "input_path":   "C:/GnssProcessor/data/sbf/covl1452.26_",
+
+    "output_type":     "console",
+    "reconnect_delay_s": 5,
+
+    // NO live SSR for archived data.  Precise products (above) supply orbits,
+    // clocks and biases; pointing this at the live caster would feed DOY-160
+    // corrections against DOY-145 observations (all stale-rejected).
+    "corrections": { "enabled": false }
+  },
+
+  "estimation": {
+    "between_satellite_sd": {
+      "enabled": false,
+      "pivot_min_elevation": 25.0
+    },
+    "estimate_sat_biases": true,
+    "ambiguity_resolution": {
+      "mode": 0,
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    },
+    "residual_history": { "enabled": false },
+    "enable_huber_r_inflation": false,
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "enable_subcycle_slip_suppression": false,
+    "lock_signals_to_clock_ref": false,
+    "require_bia_for_signals": false,
+
+    // Cycle-slip detection / repair.  MW (Melbourne-Wubbena) is the primary
+    // detector.  turbo_edit enables the MW+GF joint per-signal repair (Blewitt
+    // TurboEdit): the MW wide-lane integer is paired with the geometry-free
+    // phase jump to resolve dual-frequency slips into per-signal integer
+    // repairs (covariance preserved) and to catch MW's dN1==dN2 blind spot.
+    // Valid here because the SBF stream is high-rate (>=1 Hz) so the
+    // geometry-free jump isolates the slip before the ionospheric residual
+    // contaminates it.  At coarser rates a one-time warning is logged and a
+    // per-epoch ionospheric-variability gate suppresses unsafe repairs.
+    "cycle_slip": {
+      "mw": true,
+      "turbo_edit": true
+    },
+
+    // defer_until_corrections_ready is a LIVE-SSR cold-start guard: it waits for
+    // satellites to flip from broadcast-grade to SSR-cm-grade before estimating.
+    // With precise CLK loaded, broadcast_only is never true, so the gate passes
+    // at epoch 1 — leave it OFF for archived precise runs to avoid confusion.
+    "defer_until_corrections_ready": { "enabled": false },
+
+    "zwd_constraint": {
+      "enabled": true,
+      "apriori_m": 0.10,
+      "sigma_m": 0.30
+    }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 1e2,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-8,
+      "ionosphere_q": 0.03,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-10,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "acceleration_psd_q": 1e2
+    },
+    "initial_std": {
+      "position": 30.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 100.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      // Precise products earn tighter measurement noise than the broadcast-grade
+      // live path (which used 1.0 / 0.003 to absorb metre-level broadcast clocks).
+      "code_std_m": 0.300,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.5
+    },
+    "phase_elevation_power": 1.0,
+    "stochastic_model": "satellite_block",
+    "satellite_block": {
+      "apply_to_phase": true
+    }
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": false,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true,
+    // Same as the live path: the SBF capture carries no RINEX antenna record, so
+    // seed the COVL rooftop LEIAR25 NONE and let Galileo borrow the receiver's GPS
+    // PCO/PCV cross-system.  If this capture is from a DIFFERENT antenna, change it.
+    "receiver_antenna_type_override": "LEIAR25         NONE",
+    "enable_receiver_cross_system_atx_fallback": true,
+    "require_atx_coverage": true
+  },
+
+  // Production auto-download from CDDIS.  year/doy select the product date.
+  //   product_type "FIN" -> COD0MGXFIN (multi-GNSS final: Galileo + BeiDou).
+  //   download_rinex=false: observations come from the SBF capture, not a
+  //     station RINEX, so don't pull (and try to header-seed from) an unrelated
+  //     station's obs file.
+  //   download_products=true: BIA + ERP (+ BRDC, redundant with the SBF nav).
+  //   orbits/clocks download automatically (file replay + corrections off =>
+  //     realtimeUsesLiveOrbitClockSource() is false).
+  //   netrc_path omitted => DataDownloader resolves ~/.netrc automatically.
+  "data_download": {
+    "enabled": true,
+    "year": 2026,
+    "doy": 145,
+    "product_source": "COD",
+    "product_type": "FIN",
+    "download_rinex": false,
+    "download_products": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "atx_path":  "C:/GnssProcessorSupport/products/atx/igs20.atx",
+    "nc_path":   "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
+    "keep_zip_after_unzip": false
+  },
+
+  "logging": {
+    "enable_main_log":          true,
+    "enable_gnss_config":       true,
+    "enable_rt_engine":         false,
+    "enable_ppp_model":         false,
+    "enable_kalman_filter":     false,
+    "enable_corrections":       false,
+    "enable_antenna":           false,
+    "enable_geometry":          false,
+    "enable_resolver":          false,
+    "enable_downloader":        false,
+    "enable_product_parser":    false,
+    "enable_state_trace":       true,
+    "enable_residual_trace":    false,
+    "enable_sat_status_trace":  false,
+    "level": "info",
+    "levels": {
+      "rt_engine":      "info",
+      "ppp_model":      "info",
+      "corrections":    "info",
+      "antenna":        "info",
+      "geometry":       "info",
+      "resolver":       "info",
+      "downloader":     "info",
+      "product_parser": "info",
+      "main_log":       "trace"
+    }
+  }
+}

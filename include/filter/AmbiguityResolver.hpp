@@ -49,6 +49,24 @@ struct AmbiguityResolverConfig {
     double elevation_mask_ar{ 20.0 };  ///< Elevation mask for AR candidates (degrees).
     double hold_variance{ 0.001 };     ///< Pseudo-observation variance for fix-and-hold (m^2).
     int    ar_mode{ 0 };               ///< 0: float-only, 1: continuous, 2: instantaneous, 3: fix-and-hold.
+    int    min_epochs{ 10 };           ///< Convergence guard: skip AR for the first N invocations.
+    double max_position_sigma_m{ 0.05 };  ///< Convergence guard: skip AR when 3D position σ exceeds this (m).
+    double ratio_upper_bound{ 1e4 };   ///< Reject fixes whose ratio exceeds this (degenerate covariance).
+    bool   wl_only{ false };           ///< If true, AR only applies MW-resolved WL integers as Kalman pseudo-observations; no LAMBDA NL search.
+    double wl_only_pseudo_var{ 1e-4 }; ///< Pseudo-observation variance (cycles²) for WL-only constraints.  ~0.01 cycle σ.
+    double wl_max_frac{ 0.40 };        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
+    double min_success_rate{ 0.999 };  ///< Min bootstrap success rate (FFR-style; 0.999 = 0.1% target failure rate).
+    double nl_max_per_pair_frac{ 0.15 }; ///< Max |N_1_float − N_1_fixed| per NL pair / DD; rejects marginal fixes.
+    std::vector<std::string> ar_active_systems;
+        ///< Constellations eligible for AR (e.g. {"GPS"}, {"GPS","Galileo"}).
+        ///< Empty (default) = all active systems.  Use to keep a constellation
+        ///< in the float solution while excluding it from the LAMBDA candidate
+        ///< set — useful when one system's residual model bias is dragging
+        ///< down the ratio test even though its float contribution is healthy.
+    StateAmbiguityBasis state_ambiguity_basis{ StateAmbiguityBasis::PerBand };
+        ///< Ambiguity parameterization in the Kalman state.  Mirrors
+        ///< @c GnssConfig::getStateAmbiguityBasis() and is read by
+        ///< AR entry points to dispatch between per-band and NL/WL paths.
 };
 
 /**
@@ -86,7 +104,8 @@ public:
      */
     AmbiguityResolution resolve(const StateManager& state_manager,
                                 const std::vector<PppObservation>& observations,
-                                const std::map<std::string, int>& wl_ambiguities);
+                                const std::map<std::string, int>& wl_ambiguities,
+                                const std::map<std::string, double>& wl_fractions = {});
 
     /**
      * @brief Attempt to resolve integer ambiguities (no WL constraint).
@@ -161,6 +180,13 @@ public:
     void setConfig(const AmbiguityResolverConfig& config) { config_ = config; }
 
 private:
+    // Test seam: the MLAMBDA unit tests (tests/test_estimation_core.cpp)
+    // exercise the private static numerical kernels below in isolation with
+    // synthetic matrices.  Befriending the access shim grants that access
+    // without widening the public API; it has no effect on production
+    // translation units (the type is only ever defined in the test binary).
+    friend struct MlambdaTestAccess;
+
     // -----------------------------------------------------------------------
     // MLAMBDA core routines
     // -----------------------------------------------------------------------
@@ -204,10 +230,40 @@ private:
      * @param Q     DD ambiguity covariance matrix.
      * @param afix  Output: best integer candidate.
      * @param s     Output: squared distances [s1, s2] for ratio test.
+     * @param d_out Optional output: post-reduction diagonal of the LDL
+     *              decomposition (i.e. the variance of each ambiguity
+     *              in the decorrelated basis).  Used by the caller to
+     *              compute the bootstrap success rate via
+     *              @c computeBootstrapSuccessRate.  Pass nullptr to
+     *              skip.
      * @return True on success.
      */
     static bool mlambda(const Eigen::VectorXd& a, const Eigen::MatrixXd& Q,
-                        Eigen::VectorXd& afix, Eigen::VectorXd& s);
+                        Eigen::VectorXd& afix, Eigen::VectorXd& s,
+                        Eigen::VectorXd* d_out = nullptr);
+
+    /**
+     * @brief Bootstrap-rounding success rate for an ILS problem.
+     *
+     * Given the post-reduction LDL diagonal @p d (one variance per
+     * ambiguity in the decorrelated basis), returns the probability
+     * that simple sequential rounding would land on the correct
+     * integer set:
+     *
+     *     P_s,boot = Π_i  erf( 1 / (2·√(2 · d_i)) )
+     *
+     * This is a strict lower bound on the actual ILS success rate.
+     * Used as a Fixed-Failure-Rate-style acceptance criterion: AR
+     * commits a fix iff @c P_s,boot exceeds a configured threshold
+     * (e.g. 0.999 for 0.1% failure rate target).  Self-tuning: the
+     * threshold reflects actual problem geometry rather than a
+     * heuristic ratio.
+     *
+     * @param d Post-reduction LDL diagonal (positive entries; n entries
+     *          correspond to n decorrelated ambiguities).
+     * @return Bootstrap success rate ∈ [0, 1].  Zero if any d_i ≤ 0.
+     */
+    static double computeBootstrapSuccessRate(const Eigen::VectorXd& d);
 
     // -----------------------------------------------------------------------
     // DD index management
@@ -238,6 +294,13 @@ private:
     AmbiguityResolverConfig config_;
     LogManager& log_manager_;
     PppUtils ppp_utils_;   ///< For frequency/wavelength lookups in NL computation.
+    int      epoch_count_{ 0 };  ///< Counts resolve()/resolveDd() invocations for the min-epochs convergence gate.
+    /// Last DD WL integer applied per (sat_i, sat_ref, sig_hi, sig_lo) key,
+    /// used by resolveWlOnly to detect when MW has re-locked at a different
+    /// integer and the L1/L2 SD ambiguity covariance must be inflated so
+    /// the new constraint can take effect in a single epoch rather than
+    /// drifting toward the new integer slowly.
+    std::map<std::string, int> previous_dd_wl_;
 
     /**
      * @brief Two-step WL/NL resolution using known WL integers.
@@ -261,6 +324,77 @@ private:
         const Eigen::VectorXd& x,
         const Eigen::MatrixXd& P,
         const std::map<std::string, int>& wl_ambiguities,
+        const std::vector<PppObservation>& observations);
+
+    /**
+     * @brief WL-only resolution: apply MW-resolved WL integers as Kalman
+     *        pseudo-observations on the SD ambiguity state, no LAMBDA NL search.
+     *
+     * For each pair of DD ambiguities (L1, L2) on the same satellite pair where
+     * the DD WL integer is known from MW slip detection, constrains the cycle-
+     * domain combination
+     *     (DD_L1 / λ_L1) − (DD_L2 / λ_L2) = WL_int
+     * via a Kalman update with @c wl_only_pseudo_var (cycles²) variance.  The
+     * fixed_state and fixed_covariance returned reflect the WL-constrained
+     * float — *not* a full integer fix.  Useful as a conservative AR mode
+     * before enabling the full WL+NL LAMBDA pipeline: WL via MW is robust
+     * even when float NL covariance hasn't converged enough for safe
+     * integer rounding.
+     *
+     * Skipped under both convergence gates same as the LAMBDA paths.
+     *
+     * @param pairs           DD pairs (from buildDdPairs).
+     * @param x               Full state vector.
+     * @param P               Full covariance matrix.
+     * @param wl_ambiguities  Resolved SD WL integers from the MW detector.
+     * @param observations    Observations for system/frequency lookup.
+     * @return AmbiguityResolution with success=true if at least one WL
+     *         constraint was applied; ratio is set to +∞ as a sentinel
+     *         (no LAMBDA ratio test ran).
+     */
+    AmbiguityResolution resolveWlOnly(
+        const std::vector<DdPair>& pairs,
+        const Eigen::VectorXd& x,
+        const Eigen::MatrixXd& P,
+        const std::map<std::string, int>& wl_ambiguities,
+        const std::vector<PppObservation>& observations);
+
+    /**
+     * @brief Apply MW-resolved WL integers in the @c StateAmbiguityBasis::NlWl
+     *        basis: one Kalman pseudo-observation row per (sat, band-pair).
+     *
+     * The WL state column under NlWl is, by construction, the SD wide-lane
+     * ambiguity (post-BSSD).  For each pair of WL states sharing a
+     * (constellation, band-pair) — picking the highest-elevation eligible
+     * satellite as the AR-internal pivot — this method forms the DD WL
+     * integer @c MW(sat_i) − MW(sat_pivot) and applies the constraint
+     * @code{.unparsed}
+     *     wl_state(sat_i) − wl_state(sat_pivot) = DD_WL_int  cycles
+     * @endcode
+     * with measurement noise @c config_.wl_only_pseudo_var (cycles²) on
+     * a single Kalman row.  When the AR pivot happens to coincide with the
+     * BSSD pivot, that pivot's WL column is zero-covariance and the row
+     * effectively reduces to a single state (the canonical "constrain
+     * the WL diagonal" form the user-visible Phase 4 design called out).
+     *
+     * @param state_manager   Filter state holding NL/WL ambiguity entries.
+     * @param x               Float state vector (working copy).
+     * @param P               Float covariance matrix (working copy).
+     * @param wl_ambiguities  MW-resolved SD WL integers keyed by
+     *                        @c "<sat>_<sig_a>_<sig_b>" stats keys.
+     * @param observations    Per-satellite observations (for elevation
+     *                        and constellation lookup).
+     * @return AmbiguityResolution containing the WL-constrained float
+     *         state and covariance; @c success=true when at least one
+     *         constraint was applied.  @c ratio is set to +∞ as a
+     *         sentinel — no LAMBDA ratio test ran.
+     */
+    AmbiguityResolution applyMwWlConstraintsNlWl_(
+        const StateManager& state_manager,
+        const Eigen::VectorXd& x,
+        const Eigen::MatrixXd& P,
+        const std::map<std::string, int>& wl_ambiguities,
+        const std::map<std::string, double>& wl_fractions,
         const std::vector<PppObservation>& observations);
 };
 

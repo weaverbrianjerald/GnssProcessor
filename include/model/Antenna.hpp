@@ -4,6 +4,7 @@
 #include "common/PppTypes.hpp"
 #include "config/GnssConfig.hpp"
 #include <Eigen/Dense>
+#include <filesystem>
 #include "math/TimeUtils.hpp"
 #include "corrections/GnssCorrections.hpp"
 #include "products/ProductParser.hpp"
@@ -53,6 +54,28 @@ namespace GnssProcessor {
 		Antenna(const GnssConfig& config, ProductParser& product_parser, LogManager& log_mgr, const RinexParser& rinex_parser);
 
 		/**
+		 * @brief Bilinearly interpolate an ANTEX PCV grid at a look direction.
+		 *
+		 * Pure, stateless helper (exposed for unit testing).  The table rows
+		 * are zenith/nadir rings (0-relative — the caller subtracts ZEN1) and
+		 * the columns are azimuth sectors, or a single column for an
+		 * azimuth-independent (NOAZI) table.  Linear in zenith, bilinear in
+		 * (zenith, azimuth) for 2-D tables, with circular azimuth wrap.  A
+		 * query at or beyond the table's largest zenith ring is held flat
+		 * (clamped to the last ring) rather than extrapolated or read out of
+		 * bounds.
+		 *
+		 * @param pcv_table 2-D PCV grid: rows = zenith rings, cols = azimuth sectors (1 = NOAZI).
+		 * @param zenith Zenith/nadir angle in degrees, ZEN1-relative (>= 0).
+		 * @param azimuth Azimuth angle in degrees [0, 360).
+		 * @param dazi Azimuth grid spacing (degrees); ignored for NOAZI tables.
+		 * @param dzen Zenith grid spacing (degrees); must be > 0.
+		 * @return Interpolated PCV value in the table's units (meters).
+		 */
+		static double interpolatePcv(const std::vector<std::vector<double>>& pcv_table,
+			double zenith, double azimuth, double dazi, double dzen);
+
+		/**
 		 * @brief Compute antenna correction for a satellite/receiver observation.
 		 *
 		 * Computes the combined antenna correction (phase center offset (PCO),
@@ -89,21 +112,15 @@ namespace GnssProcessor {
 		std::string getReceiverAntennaType() const;
 
 		/**
-		 * @brief Reset phase wind-up state for a specific satellite.
-		 * @param satellite Satellite identifier string (e.g. "G01").
+		 * @brief Enable the phase wind-up diagnostic CSV trace.
 		 *
-		 * Delegates to the internal GnssCorrections instance that owns the
-		 * wind-up state used by getAntennaCorrection().
-		 */
-		void resetPhaseWindUp(const std::string& satellite);
-
-		/**
-		 * @brief Reset phase wind-up state for all satellites.
+		 * Delegates to the internal GnssCorrections instance that computes
+		 * the wind-up correction applied by getAntennaCorrection().
 		 *
-		 * Delegates to the internal GnssCorrections instance that owns the
-		 * wind-up state used by getAntennaCorrection().
+		 * @param log_dir Directory where windup_trace.csv will be created.
+		 * @return True if the trace file was opened successfully.
 		 */
-		void resetAllPhaseWindUp();
+		bool enableWindUpTracing(const std::filesystem::path& log_dir);
 
 		/**
 		 * @brief Dump the receiver antenna model to trace log for ATX comparison.
@@ -156,6 +173,32 @@ namespace GnssProcessor {
 		                        System system) const;
 
 		/**
+		 * @brief Check whether the ATX correction for this (sat, signal)
+		 *        is being computed via the @c enable_atx_frequency_fallback
+		 *        substitution chain rather than from an exact frequency
+		 *        entry on both sides.
+		 *
+		 * Returns true iff @c hasFullAtxCoverage is false, fallback is
+		 *enabled, and the fallback chain produces a non-empty alternate
+		 * frequency for at least one of the four entries (sat PCO, sat
+		 * PCV, rx PCO, rx PCV).  In that case the antenna correction is
+		 * an approximation derived from a neighbouring frequency — useful
+		 * to know for downstream uncertainty management (looser ambiguity
+		 * process noise, AR exclusion, etc.).
+		 *
+		 * Returns false when the strict coverage holds OR when the
+		 * (sat, signal) has no entries at all (the correction is then
+		 * silently zero, not "substituted").
+		 *
+		 * @param satellite Satellite identifier (e.g. "G05").
+		 * @param signal    RINEX-3 observation code (e.g. "L5Q").
+		 * @param system    GNSS system enum.
+		 */
+		bool wasAtxSubstituted(const std::string& satellite,
+		                       const std::string& signal,
+		                       System system) const;
+
+		/**
 		 * @brief Access the parsed antenna model entries.
 		 * @return Const reference to the antenna data vector.
 		 */
@@ -186,23 +229,6 @@ namespace GnssProcessor {
 		 * computing corrections.
 		 */
 		void loadAntennaData();
-
-		/**
-		 * @brief Interpolate a PCV grid to obtain variation at a given look direction.
-		 *
-		 * Performs interpolation on a PCV table (2-D grid) using provided
-		 * zenith/azimuth coordinates and grid spacings to compute PCV value
-		 * in meters.
-		 *
-		 * @param pcv_table 2-D PCV grid where rows/columns correspond to zenith/azimuth samples.
-		 * @param zenith Zenith angle (degrees) or index depending on table convention.
-		 * @param azimuth Azimuth angle (degrees) or index depending on table convention.
-		 * @param dazi Azimuth grid spacing in degrees.
-		 * @param dzen Zenith grid spacing in degrees.
-		 * @return Interpolated PCV value in meters.
-		 */
-		double interpolatePcv(const std::vector<std::vector<double>>& pcv_table, double zenith,
-			double azimuth, double dazi, double dzen) const;
 
 	};
 

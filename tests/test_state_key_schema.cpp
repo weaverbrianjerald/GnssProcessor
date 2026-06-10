@@ -168,6 +168,96 @@ TEST(StateKeySchemaTest, PivotSeedKeyShape) {
 }
 
 // ============================================================================
+// 1b. NL / WL ambiguity keys — "<sat>_NL_<band>" / "<sat>_WL_<band_a>_<band_b>"
+// ============================================================================
+
+TEST(StateKeySchemaTest, NlAmbiguityRoundTrip) {
+    const std::string key = makeNlAmbiguityKey("G01", '1');
+    EXPECT_EQ(key, "G01_NL_1");
+
+    EXPECT_TRUE(isNlAmbiguityKey(key));
+    auto parts = parseNlAmbiguityKey(key);
+    ASSERT_TRUE(parts.has_value());
+    EXPECT_EQ(parts->satellite, "G01");
+    EXPECT_EQ(parts->band, '1');
+}
+
+TEST(StateKeySchemaTest, NlAmbiguityRejectsMalformed) {
+    EXPECT_FALSE(isNlAmbiguityKey(""));
+    EXPECT_FALSE(isNlAmbiguityKey("G01"));
+    EXPECT_FALSE(isNlAmbiguityKey("G01_NL"));      // No band
+    EXPECT_FALSE(isNlAmbiguityKey("G01_NL_"));     // Empty band
+    EXPECT_FALSE(isNlAmbiguityKey("G01_NL_1A"));   // Trailing junk past band digit
+    EXPECT_FALSE(isNlAmbiguityKey("G01_NX_1"));    // Wrong infix
+    EXPECT_FALSE(isNlAmbiguityKey("_NL_1"));       // Empty satellite
+    EXPECT_FALSE(parseNlAmbiguityKey("G01_L1C").has_value());  // Per-band key
+}
+
+TEST(StateKeySchemaTest, WlAmbiguityRoundTripCanonicalOrder) {
+    // Caller passes bands in any order; the maker normalizes to ascending.
+    const std::string key = makeWlAmbiguityKey("G01", '1', '2');
+    const std::string key_swapped = makeWlAmbiguityKey("G01", '2', '1');
+    EXPECT_EQ(key, "G01_WL_1_2");
+    EXPECT_EQ(key, key_swapped);
+
+    EXPECT_TRUE(isWlAmbiguityKey(key));
+    auto parts = parseWlAmbiguityKey(key);
+    ASSERT_TRUE(parts.has_value());
+    EXPECT_EQ(parts->satellite, "G01");
+    EXPECT_EQ(parts->band_a, '1');
+    EXPECT_EQ(parts->band_b, '2');
+}
+
+TEST(StateKeySchemaTest, WlAmbiguityHandlesMultiCharSatId) {
+    // Galileo IDs are 3 chars; the parser must not assume satellite-length 3.
+    const std::string key = makeWlAmbiguityKey("E11", '1', '7');
+    EXPECT_EQ(key, "E11_WL_1_7");
+
+    auto parts = parseWlAmbiguityKey(key);
+    ASSERT_TRUE(parts.has_value());
+    EXPECT_EQ(parts->satellite, "E11");
+    EXPECT_EQ(parts->band_a, '1');
+    EXPECT_EQ(parts->band_b, '7');
+}
+
+TEST(StateKeySchemaTest, WlAmbiguityRejectsMalformed) {
+    EXPECT_FALSE(isWlAmbiguityKey(""));
+    EXPECT_FALSE(isWlAmbiguityKey("G01_WL_1"));      // Missing second band
+    EXPECT_FALSE(isWlAmbiguityKey("G01_WL_1_"));     // Empty second band
+    EXPECT_FALSE(isWlAmbiguityKey("G01_WL__2"));     // Empty first band
+    EXPECT_FALSE(isWlAmbiguityKey("G01_WL_1_2_3")); // Three bands
+    EXPECT_FALSE(isWlAmbiguityKey("G01_WX_1_2"));   // Wrong infix
+    EXPECT_FALSE(parseWlAmbiguityKey("G01_NL_1").has_value()); // NL key
+}
+
+// NL/WL parsers must not mis-classify per-band keys, and the per-band parser
+// remains a happy round-trip for legacy usage.  Tests guard against future
+// schema collisions when both bases coexist transiently in tooling.
+TEST(StateKeySchemaTest, NlWlVsPerBandDistinguishable) {
+    const std::string nl = makeNlAmbiguityKey("G01", '1');
+    const std::string wl = makeWlAmbiguityKey("G01", '1', '2');
+    const std::string per_band = makeAmbiguityKey("G01", "L1C");
+
+    EXPECT_TRUE(isNlAmbiguityKey(nl));
+    EXPECT_FALSE(isNlAmbiguityKey(wl));
+    EXPECT_FALSE(isNlAmbiguityKey(per_band));
+
+    EXPECT_TRUE(isWlAmbiguityKey(wl));
+    EXPECT_FALSE(isWlAmbiguityKey(nl));
+    EXPECT_FALSE(isWlAmbiguityKey(per_band));
+
+    // A signal label that happens to contain "NL" (none in real RINEX) would
+    // not collide because per-band signals start with 'L' or 'C', not "NL_".
+    // The per-band parser still accepts the NL/WL keys (it splits on the
+    // FIRST '_'), interpreting them as {sat="G01", signal="NL_1"} etc.  This
+    // is documented behavior — callers are expected to consult the basis
+    // before parsing, not rely on the per-band parser to reject.
+    auto pb_from_nl = parseAmbiguityKey(nl);
+    ASSERT_TRUE(pb_from_nl.has_value());
+    EXPECT_EQ(pb_from_nl->signal, "NL_1");
+}
+
+// ============================================================================
 // Cross-category sanity: a DD key must not be mistaken for a PPP ambiguity
 // (and vice-versa). The parsers' first-delimiter rules handle this implicitly,
 // but the assertion is worth making explicit.

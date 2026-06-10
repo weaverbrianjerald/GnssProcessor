@@ -175,7 +175,13 @@ namespace GnssProcessor {
             for (size_t k = 0; k < 6; ++k) {
                 arg += DOODSON_MULTIPLIERS[j][k] * doodson_vars[k];
             }
-            // Normalize to [0, 2?)
+            // Doodson-Warburg species phase bias (a quarter-cycle for the
+            // diurnal band).  Without it the K1/O1/P1/Q1 arguments are 90 deg
+            // out of phase versus the IERS ARG.f / HARDISP convention to which
+            // the BLQ and EOT20/FES phases are referenced.  See
+            // CONSTITUENT_PHASE_BIAS_CYCLES.
+            arg += CONSTITUENT_PHASE_BIAS_CYCLES[j] * 2.0 * Constants::PI;
+            // Normalize to [0, 2*pi)
             arg = std::fmod(arg, 2.0 * Constants::PI);
             if (arg < 0.0) arg += 2.0 * Constants::PI;
             arguments[j] = arg;

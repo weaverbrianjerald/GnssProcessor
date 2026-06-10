@@ -13,6 +13,7 @@
 
 #include "slip/EwlSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
 #include <cmath>
@@ -229,23 +230,7 @@ namespace GnssProcessor {
     double EwlSlipDetector::computeMadSigma(const std::deque<double>& window) {
         if (window.size() < kMinEpochsForAdaptive)
             return std::numeric_limits<double>::quiet_NaN();
-
-        std::vector<double> sorted(window.begin(), window.end());
-        std::sort(sorted.begin(), sorted.end());
-        const size_t n = sorted.size();
-        const double median = (n % 2 == 0)
-            ? 0.5 * (sorted[n / 2 - 1] + sorted[n / 2])
-            : sorted[n / 2];
-
-        std::vector<double> abs_devs(n);
-        for (size_t i = 0; i < n; ++i)
-            abs_devs[i] = std::abs(sorted[i] - median);
-        std::sort(abs_devs.begin(), abs_devs.end());
-        const double mad = (n % 2 == 0)
-            ? 0.5 * (abs_devs[n / 2 - 1] + abs_devs[n / 2])
-            : abs_devs[n / 2];
-
-        return mad * 1.4826; // Gaussian-equivalent sigma
+        return RobustStats::madSigma(window);
     }
 
     double EwlSlipDetector::computeAdaptiveThreshold(const EwlArcStats& stats) const {
@@ -459,6 +444,31 @@ namespace GnssProcessor {
         }
 
         return results;
+    }
+
+    // =================================================================
+    // ISlipDetector contract
+    // =================================================================
+
+    std::vector<SlipEvent> EwlSlipDetector::detect(const SlipEpochContext& context) {
+        const auto raw = detect(context.observations);
+        std::vector<SlipEvent> events;
+        events.reserve(raw.size());
+        for (const auto& r : raw) {
+            SlipEvent ev;
+            ev.satellite   = r.satellite;
+            ev.sig1        = r.sig1;
+            ev.sig2        = r.sig2;
+            ev.amb_key     = r.amb_key;
+            ev.slip_cycles = r.slip_ewl_cycles;
+            ev.slip_known  = r.slip_ewl_known;
+            ev.fractional  = r.fractional;
+            ev.lambda      = r.lambda_ewl;
+            ev.granularity = SlipGranularity::BandDifference;
+            ev.source      = SlipDetectorKind::ExtraWideLane;
+            events.push_back(std::move(ev));
+        }
+        return events;
     }
 
     // =================================================================

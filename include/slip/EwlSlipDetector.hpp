@@ -50,6 +50,7 @@
 #include "config/GnssConfig.hpp"
 #include "corrections/GnssCorrections.hpp"
 #include "logging/LogManager.hpp"
+#include "slip/ISlipDetector.hpp"
 #include <cstddef>
 #include <deque>
 #include <filesystem>
@@ -87,7 +88,7 @@ namespace GnssProcessor {
      * Hatch-filter mean and MAD-based adaptive threshold, following the
      * same architecture as MwSlipDetector.
      */
-    class EwlSlipDetector {
+    class EwlSlipDetector : public ISlipDetector {
     public:
         /**
          * @brief Construct a new EwlSlipDetector.
@@ -108,29 +109,49 @@ namespace GnssProcessor {
          */
         std::vector<EwlSlipResult> detect(const std::vector<PppObservation>& observations);
 
+        // --- ISlipDetector contract -------------------------------------
+
+        /**
+         * @brief Detect slips for one epoch (ISlipDetector entry point).
+         *
+         * Wraps the native per-pair @c detect overload and projects each
+         * @c EwlSlipResult onto a @c SlipGranularity::BandDifference event
+         * (@f$\Delta N_{EWL}=\Delta N_1-\Delta N_2@f$ on the EWL band pair).
+         *
+         * @param context Epoch inputs (only @c observations is consulted).
+         * @return Unified band-difference slip events.
+         */
+        std::vector<SlipEvent> detect(const SlipEpochContext& context) override;
+
+        /// @copydoc ISlipDetector::kind
+        SlipDetectorKind kind() const override { return SlipDetectorKind::ExtraWideLane; }
+
+        /// @copydoc ISlipDetector::name
+        std::string name() const override { return "ExtraWideLane"; }
+
         /**
          * @brief Clear EWL arc history for a specific satellite.
          * @param satellite Satellite identifier (e.g. "G01").
          */
-        void resetSatellite(const std::string& satellite);
+        void resetSatellite(const std::string& satellite) override;
 
         /**
          * @brief Enable CSV tracing for EWL diagnostics.
          * @param log_dir Directory where the trace file will be created.
          * @return true if the file was successfully opened.
          */
-        bool enableTracing(const std::filesystem::path& log_dir);
+        bool enableTracing(const std::filesystem::path& log_dir) override;
 
         /**
          * @brief Check if tracing is currently enabled.
          */
-        bool isTracingEnabled() const { return trace_file_.is_open(); }
+        bool isTracingEnabled() const override { return trace_file_.is_open(); }
 
         /**
          * @brief Provide satellite bias access for EWL bias correction.
          * @param corrections Pointer to GnssCorrections (may be nullptr to disable).
          */
-        void setCorrections(const GnssCorrections* corrections) { corrections_ = corrections; }
+        void setCorrections(const GnssCorrections* corrections) override { corrections_ = corrections; }
 
         /**
          * @brief Get all currently locked EWL integer ambiguities.

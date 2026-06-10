@@ -5,6 +5,7 @@
 
 #include "model/StochasticModel.hpp"
 #include "common/Constants.hpp"
+#include "common/PppUtils.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cctype>
@@ -85,20 +86,24 @@ namespace GnssProcessor {
 
         const char mt = obs_type[0];
         if (mt == 'C') {
-            // Code: full block + freq + 1/sin²(el) pipeline.
+            // Code: full block + freq + tracking-attr + elevation
+            // pipeline (always — code is the canonical SatBlock target).
             return computeSatBlock(obs_type, elevation_deg, default_var, satellite, antennas);
         }
         if (mt == 'L') {
-            // Phase under SatelliteBlock intentionally bypasses the
-            // block table and freq_band_scale.  Per-block carrier-
-            // loop noise differential is below the multipath /
-            // atmospheric noise floor in practice (see
-            // docs/report/observation_equations.tex §4 for the PLL-
-            // physics argument).  The chip-rate freq scaling is
-            // also not applicable to phase post-correlation.  So
-            // phase reduces to just measurement_noise.phase_std_m
-            // (≡ sat_block_params_.default_phase_std_m at config-
-            // load time) amplified by sin^(-2·phase_elevation_power).
+            // Phase: route through the full pipeline when
+            // @c apply_to_phase is on (default), or fall back to the
+            // flat phase σ × elevation path.  See
+            // SatBlockNoiseParams::apply_to_phase for the physics-vs-
+            // empirical justification: PLL noise alone is below the
+            // observed phase residual spread, so the per-block,
+            // per-band, per-attribute structure captures meaningful
+            // variation on real data.  Users with data that doesn't
+            // exhibit that structure can disable the toggle and get
+            // the legacy default_phase_std_m × elevation behavior.
+            if (sat_block_params_.apply_to_phase) {
+                return computeSatBlock(obs_type, elevation_deg, default_var, satellite, antennas);
+            }
             const double phase_zen = sat_block_params_.default_phase_std_m;
             return computeElevation(obs_type, phase_zen * phase_zen, elevation_deg);
         }
@@ -179,14 +184,17 @@ namespace GnssProcessor {
         // Chip-rate-driven scaling reduces code σ on wider-bandwidth
         // signals (L5/E5a at 10× the L1 chip rate get ~√10 less
         // correlator-noise σ).  Reuse the SatelliteBlock model's
-        // freq_band_scale table so both models stay calibrated to
-        // the same per-band factors.  Phase σ has no chip-rate
-        // dependence post-correlation (PLL noise is set by carrier-
-        // loop bandwidth and SNR only) — leave it band-flat.
+        // code-side freq_band_scale so both models stay calibrated
+        // to the same per-band factors.  Phase σ in the SNR model
+        // stays band-flat — PLL noise is set by carrier-loop
+        // bandwidth and SNR only, not chip rate.  (SatBlock has its
+        // own phase-side band table for the empirical per-band
+        // structure observed on real data.)
         if (is_code && obs_type.size() >= 2) {
             const char band = obs_type[1];
-            auto fit = sat_block_params_.freq_band_scale.find(band);
-            if (fit != sat_block_params_.freq_band_scale.end()) {
+            const auto& band_tbl = sat_block_params_.code.freq_band_scale;
+            auto fit = band_tbl.find(band);
+            if (fit != band_tbl.end()) {
                 const double s = fit->second;
                 var *= s * s;
             }
@@ -263,29 +271,76 @@ namespace GnssProcessor {
             }
         }
 
+        // Pick the per-observable scale tables.  Code uses chip-rate-
+        // driven calibration; phase uses carrier-tracking-driven
+        // calibration with smaller band gradient and near-flat
+        // attribute differences.  See SatBlockNoiseParams::ObservableScale.
+        const auto& obs_scale = is_code
+            ? sat_block_params_.code
+            : sat_block_params_.phase;
+
         // --- Frequency band scale factor ---
         double freq_scale = 1.0;
         if (obs_type.size() >= 2) {
             const char band = obs_type[1];
-            auto fit = sat_block_params_.freq_band_scale.find(band);
-            if (fit != sat_block_params_.freq_band_scale.end()) {
+            auto fit = obs_scale.freq_band_scale.find(band);
+            if (fit != obs_scale.freq_band_scale.end()) {
                 freq_scale = fit->second;
             }
         }
 
-        const double scaled_std = zenith_std * freq_scale;
+        // --- Tracking-attribute scale factor ---
+        // Multiplies on top of the band scale.  Lookup is per-system
+        // because RINEX 3 attributes have constellation-specific
+        // meanings — 'C' on GPS is the (code-only) noisy C/A while
+        // 'C' on Galileo is the high-precision E1C pilot.  See
+        // SatBlockNoiseParams::ObservableScale doxygen for the
+        // hierarchy and the code-vs-phase split rationale.
+        //
+        // Lookup order: [system][attr] → [default][attr] → 1.0.  When
+        // the system-specific table has no entry for this attribute we
+        // fall through to the cross-system default; when the default
+        // has no entry either we leave the scale at 1.0.
+        double attr_scale = 1.0;
+        if (obs_type.size() >= 3) {
+            const char attr = obs_type[2];
+            const auto& all_tables = obs_scale.tracking_attr_scale;
+            const std::string system = PppUtils::getSystemString(satellite);
+
+            auto find_in = [&](const std::string& sys_key) -> bool {
+                auto sys_it = all_tables.find(sys_key);
+                if (sys_it == all_tables.end()) return false;
+                auto ait = sys_it->second.find(attr);
+                if (ait == sys_it->second.end()) return false;
+                attr_scale = ait->second;
+                return true;
+            };
+
+            if (!find_in(system)) {
+                find_in("default");
+            }
+        }
+
+        const double scaled_std = zenith_std * freq_scale * attr_scale;
         const double var = scaled_std * scaled_std;
 
         log_manager_.getLogger("stochastic_model")->trace(
-            "SatBlock: sat={}, atx='{}', block='{}', obs={}, zenith_std={:.4f} m, "
-            "freq_scale={:.2f}, scaled_std={:.4f} m",
-            satellite, atx_type, matched_block, obs_type, zenith_std, freq_scale, scaled_std);
+            "SatBlock: sat={} ({}), obs={} [{}], atx='{}', block='{}', "
+            "zenith_std={:.4f} m, freq_scale={:.2f}, attr_scale={:.2f} "
+            "(per-system), scaled_std={:.4f} m",
+            satellite, PppUtils::getSystemString(satellite),
+            obs_type, is_code ? "code" : "phase",
+            atx_type, matched_block,
+            zenith_std, freq_scale, attr_scale, scaled_std);
 
-        // Apply elevation amplification.  Only code reaches
-        // computeSatBlock under the simplified dispatch — phase
-        // takes its own phase_std_m × elevation path in
-        // computeVariance — so the per-observable power applied
-        // here is always code_elevation_power.
+        // Apply elevation amplification.  @c computeElevation dispatches
+        // on @c obs_type[0]: code ('C') gets @c code_elevation_power
+        // (typically 1.0 → 1/sin²(elev) variance), phase ('L') gets
+        // @c phase_elevation_power (typically 0.5 → 1/sin(elev), much
+        // gentler).  Phase only reaches this function when
+        // @c SatBlockNoiseParams::apply_to_phase is true; otherwise the
+        // @c computeVariance dispatch handles phase via the flat
+        // @c default_phase_std_m path before getting here.
         return computeElevation(obs_type, var, elevation_deg);
     }
 

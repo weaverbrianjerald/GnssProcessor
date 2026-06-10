@@ -30,6 +30,12 @@
 
 namespace GnssProcessor {
 
+    // Forward declaration — Antenna lives at the GnssProcessor namespace
+    // scope and is owned externally (typically by PppModel).  Geometry
+    // holds only a non-owning pointer for emission-time pseudorange
+    // refinement; it never constructs or destroys the Antenna instance.
+    class Antenna;
+
     namespace Model {
 
     /**
@@ -104,6 +110,17 @@ namespace GnssProcessor {
          * @param[out] mf_w Wide-lane Melbourne-Wübbena combination factor (if applicable).
          * @param[out] mf_d Narrow-lane / dual-frequency mapping factor (if applicable).
          * @param[out] sat_vel Satellite ECEF velocity (meters/second).
+         * @param[out] broadcast_only  Set true when the satellite range model is
+         *             "broadcast grade" — the clock came from the broadcast
+         *             polynomial with no precise CLK and no SSR clock (metre
+         *             level).  The caller drops carrier phase for such satellites
+         *             (phase at mm precision is meaningless against a metre-level
+         *             clock).  False for precise-product or SSR-corrected runs.
+         * @param[out] drop_reason  On success, set to @c DropReason::None.  On
+         *             failure, set to the specific reason (BelowMask /
+         *             NoProduct / NoModel) so callers can surface it in the
+         *             satellite-status trace.  Defaults to a sink if the
+         *             caller doesn't want it.
          * @return True on success, false if geometry/corrections could not be computed.
          */
         bool computeSatelliteGeometry(const RinexObservation& obs, const PppState& state,
@@ -111,9 +128,23 @@ namespace GnssProcessor {
             double& azimuth, Eigen::Vector3d& los, double& range, double& tropo_delay,
             double& sat_clock, double& shapiro_delay, double& sagnac_corr,
             double& atm_loading_corr, double& relativistic_corr, double& solid_tide,
-            double& mf_w, double& mf_d, Eigen::Vector3d& sat_vel) const;
+            double& mf_w, double& mf_d, Eigen::Vector3d& sat_vel,
+            bool& broadcast_only,
+            DropReason& drop_reason) const;
 
-        Topocentric computeTopocentric(const Eigen::Vector3d& rx_pos_ecef, const Eigen::Vector3d& sat_pos_ecef) const;
+        /**
+         * @brief Topocentric elevation/azimuth of a satellite as seen from a
+         *        receiver, both given in ECEF.
+         *
+         * Pure geometry (no product/orbit state): elevation in [0, 90]°,
+         * azimuth in [0, 360)° measured clockwise from north.  Degenerate
+         * inputs (range < 1 m, or near-zero receiver magnitude) yield {0, 0}.
+         *
+         * @param rx_pos_ecef  Receiver ECEF position (meters).
+         * @param sat_pos_ecef Satellite ECEF position (meters).
+         * @return Topocentric { elevation_deg, azimuth_deg }.
+         */
+        static Topocentric computeTopocentric(const Eigen::Vector3d& rx_pos_ecef, const Eigen::Vector3d& sat_pos_ecef);
 
         /**
          * @brief Get interpolated satellite ECEF position from available orbit products.
@@ -129,53 +160,18 @@ namespace GnssProcessor {
             const std::string& satellite, const GnssTime& time) const;
 
         /**
-         * @brief Compute satellite antenna attitude vectors.
-         * @param system GNSS system identifier (enum).
-         * @param sat_pos Satellite ECEF position (meters).
-         * @param sat_vel Satellite ECEF velocity (meters/second).
-         * @param[out] d_s Satellite body-to-sun unit vector (or satellite-specific boresight).
-         * @param[out] y_s Satellite cross-track unit vector (system-dependent).
-         * @param time Epoch corresponding to satellite state.
-         *
-         * The routine fills attitude-related unit vectors used for antenna
-         * phase center variation (PCV) correction and carrier-phase sign conventions.
-         */
-        void computeSatelliteAttitude(System system, const Eigen::Vector3d& sat_pos,
-            const Eigen::Vector3d& sat_vel, Eigen::Vector3d& d_s,
-            Eigen::Vector3d& y_s, const GnssTime& time) const;
-
-        /**
          * @brief Compute geometric range (meters) between receiver and satellite.
          * @param rx_pos Receiver ECEF position (meters).
          * @param sat_pos Satellite ECEF position (meters).
          * @return Euclidean distance in meters.
          */
-        double computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const;
-
-        /**
-         * @brief Reset phase wind-up state for a specific satellite.
-         * @param satellite Satellite identifier string (e.g. "G01").
-         *
-         * Call this when a cycle slip or ambiguity reset is detected for the
-         * satellite to ensure phase wind-up continuity is not falsely maintained
-         * across the discontinuity.
-         */
-        void resetPhaseWindUp(const std::string& satellite);
-
-        /**
-         * @brief Reset phase wind-up state for all satellites.
-         *
-         * Call this on a complete filter reset or at the start of a new session
-         * to clear all accumulated phase wind-up history.
-         */
-        void resetAllPhaseWindUp();
+        static double computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos);
 
         /**
          * @brief Get mutable reference to the corrections object.
          * @return Reference to the internal GnssCorrections instance.
          *
-         * Allows external components to access correction methods directly,
-         * including phase wind-up reset functionality.
+         * Allows external components to access correction methods directly.
          */
         GnssCorrections& getCorrections() { return corrections_; }
 
@@ -190,11 +186,29 @@ namespace GnssProcessor {
          *
          * Returns the most recently computed rigorous Sun position from the
          * IAU 1976/1980 precession/nutation model. The cache is populated by
-         * computeSatelliteGeometry() and computeSatelliteAttitude().
+         * computeSatelliteGeometry().
          *
          * @return Cached Sun ECEF position (meters). May be zero if no epoch has been processed yet.
          */
         const Eigen::Vector3d& getCachedSunPosition() const { return cached_sun_pos_; }
+
+        /**
+         * @brief Wire in an externally-owned Antenna model for emission-time
+         *        ATX-based pseudorange refinement.
+         *
+         * Without an antenna model, the second-pass refinement in
+         * computeSatelliteGeometry only subtracts the slant tropospheric
+         * ZHD from the pseudorange.  With the model set, it additionally
+         * subtracts the IF-combined satellite + receiver PCO/PCV LOS
+         * projection — driving the t_em residual from tens of ns down to
+         * the code-noise floor (~ns / μm of satellite displacement).
+         *
+         * The pointer is non-owning; the caller (typically PppModel)
+         * retains ownership and must outlive this Geometry instance.
+         *
+         * @param antenna  Reference to a constructed Antenna model.
+         */
+        void setAntennaModel(const Antenna& antenna) { antenna_ = &antenna; }
 
         std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
 
@@ -216,6 +230,11 @@ namespace GnssProcessor {
         std::vector<SunEphemeris> sun_ephemeris_;         /**< Sun ephemeris samples. */
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priorities per GNSS system. */
 
+        /// Non-owning pointer to the Antenna model used for ATX-based
+        /// emission-time pseudorange refinement.  Set via setAntennaModel().
+        /// May be nullptr (then the refinement only applies slant tropo).
+        const Antenna* antenna_ = nullptr;
+
         /** @brief Load product and auxiliary data into internal containers. */
         void loadData();
 
@@ -223,22 +242,33 @@ namespace GnssProcessor {
          * @brief Ensure the Sun/Moon cache is current for the given epoch.
          *
          * Evaluates the rigorous IAU 1976/1980 model only when the epoch has
-         * changed (tolerance 1 ms). Called by computeSatelliteGeometry() and
-         * computeSatelliteAttitude() to avoid redundant evaluations.
+         * changed (tolerance 1 ms). Called by computeSatelliteGeometry() to
+         * avoid redundant evaluations.
          */
         void ensureSunMoonCached(const GnssTime& time) const;
 
         /**
-         * @brief Extract the best available code pseudorange from an observation.
+         * @brief Extract the best available code pseudorange from an
+         *        observation and report the signals used.
          *
-         * If dual-frequency code measurements exist, forms an ionosphere-free
-         * combination; otherwise falls back to a single code pseudorange.
+         * Tries (in order): clock-reference-aligned IF pair, bias-corrected
+         * IF pair, best-effort IF pair, single-frequency fallback.
+         * Reports the chosen signal codes via @p sig1_out and @p sig2_out
+         * so that downstream emission-time refinement can apply matching
+         * ATX corrections on the same pair before subtracting them from
+         * the pseudorange.
          *
-         * @param obs RINEX observation containing raw measurements.
-         * @param[out] pseudorange Extracted (or IF-combined) pseudorange in meters.
+         * @param[in]  obs           RINEX observation containing raw measurements.
+         * @param[out] pseudorange   Extracted (or IF-combined) pseudorange in meters.
+         * @param[out] sig1_out      First code signal used (e.g. "C1W").
+         * @param[out] sig2_out      Second code signal used; empty string
+         *                           when the single-frequency fallback fired.
          * @return True if a valid pseudorange was obtained.
          */
-        bool extractPseudorange(const RinexObservation& obs, double& pseudorange) const;
+        bool extractPseudorange(const RinexObservation& obs,
+                                double& pseudorange,
+                                std::string& sig1_out,
+                                std::string& sig2_out) const;
 
         /**
          * @brief Compute satellite state at signal transmission time.
@@ -259,7 +289,9 @@ namespace GnssProcessor {
         bool computeEmissionState(const RinexObservation& obs,
             const Eigen::Vector3d& rx_pos, double pseudorange,
             Eigen::Vector3d& sat_pos_em, Eigen::Vector3d& sat_vel_em,
-            double& sat_clock, GnssTime& emission_time) const;
+            double& sat_clock, GnssTime& emission_time,
+            bool& broadcast_grade,
+            DropReason& drop_reason) const;
 
         // Per-epoch cache for Sun/Moon ECEF positions.
         // The rigorous IAU 1976/1980 nutation model is epoch-dependent only

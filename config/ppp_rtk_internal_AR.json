@@ -1,0 +1,226 @@
+// PPP-RTK
+{
+  "app_mode": "post",
+  "data_source": "production",
+  "receiver": {
+    "troposphere_apriori_source": "gpt3",
+    "troposphere_mapping_function": "vmf3"
+  },
+
+  "processing": {
+    "mode": "PPP-RTK",
+    "rinex_types": "CL",
+    //"active_systems": [ "GPS" ],
+    "active_systems": [ "GPS", "Galileo" ],
+    //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
+    //"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "gnss_rate_s": 30.0,
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.1,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "inhouse_bias_estimation": false,
+    "mw_frequency_mode": "all",
+    "mw_channel_mode": "all",
+    "eigen_threads": 10,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    //"satellite_clock_interpolation_mode": "lsq_sat_clock",
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CQXBI",
+      "BeiDou": "IDPXQZ",
+      "GLONASS": "PCX"
+    }
+  },
+
+  "files": {
+    "internal_data_root": "./data"
+    //"observation_path": "C:/GnssProcessor/data/rinex/debug/GCGO00USA_R_20241290000_01D_30S_MO.rnx" // A 1-hour RINEX file
+    //"observation_path": "C:/GnssProcessorSupport/rinex/30S/2_hour/GCGO00USA_R_20241290000_01D_30S_MO.rnx" // A 2-hour RINEX file
+    //"observation_path": "C:/GnssProcessor/data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx" // GCGO 24-hour RINEX file
+    //"observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/AMC400USA_R_20241290000_01D_30S_MO.rnx" // AMC4 24-hour RINEX file
+    //"observation_path": "C:/GnssProcessor/data/2024-129/obs/p38900usa/P38900USA_R_20241290000_01D_15S_MO.rnx" // P389 15s 24-hour RINEX file
+    //"observation_path": "C:/GnssProcessor/data/rinex/debug/P38900USA_R_20241290000_01D_15S_MO.rnx" // P389 15s 2-hour RINEX file, simeultaneous pivot and non-pivot slip at 16:02:00
+    //"observation_path": "C:/GnssProcessorSupport/rinex/30S/daily/P38900USA_R_20241300000_01D_30S_MO.rnx" // P389 24-hour RINEX file
+  },
+
+  "estimation": {
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "estimate_sat_biases": true,
+    "enable_huber_r_inflation": false,
+    "enable_subcycle_slip_suppression": false,
+    "lock_signals_to_clock_ref": false, // strict
+    "require_bia_for_signals": false, // strict
+    //"estimate_ifb": true, // GLONASS inter-frequency bias estimation, depricated
+    "between_satellite_sd": {
+      "enabled": true,
+      "enable_glonass": true,
+      "pivot_min_elevation": 35.0
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      //"active_systems": [ "GPS", "Galileo" ],
+      "active_systems": [ "GPS" ],
+      "wl_only": true,
+      //"wl_only_pseudo_var": 1e-6,
+      "ratio_threshold": 3.0,
+      "ratio_upper_bound": 1e4,
+      "min_success_rate": 0.999,
+      "nl_max_per_pair_frac": 0.15,
+      "elevation_mask": 25.0,
+      "min_epochs": 1,
+      "max_position_sigma_m": 10.0,
+      "hold_variance": 0.001,
+      "wl_max_frac": 0.40
+    },
+    "residual_history": { "enabled": false }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 1e2,
+      //"acceleration_psd_q": 1e0,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-9,
+      "ionosphere_q": 1e-3,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-12,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.25,
+      "ionosphere": 25.0,
+      "ambiguity": 1000.0,
+      "code_bias": 100.0,
+      "sat_bias": 100.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.500
+    },
+    "phase_elevation_power": 1.0,
+    "stochastic_model": "satellite_block",
+    "satellite_block": {
+      "apply_to_phase": true
+    }
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": true,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": true,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true,
+    "require_atx_coverage": false, // strict
+    "require_atx_coverage_for_ar": false,
+    "restrict_ar_for_substituted_atx": true,
+    "loosen_amb_q_for_substituted_atx": true,
+    "ambiguity_q_substituted_atx": 1e-9,
+    "apply_phase_shifts": false,
+    "refine_emission_time": false,
+    "enable_higher_order_ionosphere": false
+  },
+
+  "data_download": {
+    "enabled": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "product_source": "COD",
+    "product_type": "FIN",
+    "station": "GCGO",
+    "station_country": "USA",
+    "year": 2026,
+    "doy": 100,
+    "download_rinex": true,
+    "download_products": true,
+    "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",
+    "nc_path": "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
+    "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
+    "keep_zip_after_unzip": false
+  },
+
+  "logging": {
+
+    "enable_main_log": true,
+    "enable_gnss_config": true,
+    "enable_kalman_filter": true,
+    "enable_state_manager": true,
+    "enable_ppp_model": true,
+    "enable_measurement_model": true,
+    "enable_mw_slip_detector": true,
+    "enable_if_slip_detector": false,
+    "enable_gf_slip_detector": false,
+    "enable_cycle_slip_manager": true,
+    "enable_ambiguity_resolver": false,
+    "enable_corrections": false,
+    "enable_state_initializer": true,
+    "enable_bssd_pivot_manager": true,
+    "enable_bssd_transform": true,
+    "enable_geometry": false,
+    "enable_troposphere": false,
+    "enable_ionosphere": false,
+    "enable_antenna": false,
+    "enable_stochastic_model": false,
+    "enable_rinex_parser": false,
+    "enable_product_parser": false,
+
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_ionosphere_trace": true,
+    "enable_sat_bias_trace": true,
+    "enable_sat_status_trace": true,
+    "enable_residual_trace": true,
+    "enable_wls_trace": false,
+    "enable_mw_slip_trace": true,
+    "enable_if_slip_trace": false,
+    "enable_gf_slip_trace": false,
+    "enable_windup_trace": false,
+    "enable_dop_trace": true,
+
+    "kalman_filter_concise_log": false,
+
+    "levels": {
+      "ambiguity_resolver": "info",
+      "measurement_model": "info",
+      "bssd_transform": "info",
+      "mw_slip_detector": "info",
+      "cycle_slip_manager": "info",
+      "state_manager": "info",
+      "kalman_filter": "info",
+      "bssd_pivot_manager": "info",
+      "state_initializer": "warn",
+      "gnss_config": "warn",
+      "ppp_model": "info",
+      "corrections": "warn",
+      "geometry": "warn",
+      "troposphere": "warn",
+      "ionosphere": "warn",
+      "antenna": "warn",
+      "stochastic_model": "warn",
+      "rinex_parser": "warn",
+      "product_parser": "warn",
+      "ppp_utils": "warn"
+    }
+  }
+}

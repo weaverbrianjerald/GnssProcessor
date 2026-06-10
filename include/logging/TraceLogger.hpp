@@ -10,13 +10,17 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <string>
+#include <vector>
 #include "logging/LogManager.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/PppTypes.hpp"
 #include "filter/StateManager.hpp"
 #include "measurement/MeasurementModel.hpp" // for EpochMeasurement
 #include "math/WlsEstimator.hpp"     // for WlsResult
+#include "rinex/RinexParser.hpp"     // for RinexObservation (sat-status logger)
 
 namespace GnssProcessor {
 
@@ -91,6 +95,111 @@ public:
     void logIonosphere(const GnssTime& time, const StateManager& state_manager) const;
 
     /**
+     * @brief Write per-(satellite, signal) hardware code-bias state estimates.
+     *
+     * One row per sat-bias state (key "<sat>|<signal>"):
+     * value, sigma, system, last-known elevation (when available from the
+     * per-sat iono elevation map -- PPP-RTK only), and BSSD pivot flag.
+     * PPP runs that estimate sat biases without iono states write NaN for
+     * elevation.  Pivot satellites' bias states are frozen at value=0,
+     * variance=0 by the BSSD S-transform; the @c is_pivot column makes
+     * those frozen rows distinguishable from a genuine zero estimate.
+     *
+     * @param time Epoch time for the snapshot.
+     * @param state_manager StateManager owning the @c sat_bias_indices_ map.
+     */
+    void logSatBiases(const GnssTime& time, const StateManager& state_manager) const;
+
+    /**
+     * @brief Write a per-satellite epoch-status row for every tracked sat.
+     *
+     * NRCAN PPP-style satellite track summary: one row per satellite that
+     * appeared in @p epoch_obs (the raw RINEX observations).  The
+     * @c status_code column collapses each sat's epoch outcome into a
+     * single integer for direct rendering as a strip chart:
+     *
+     *  | code | label        | meaning                                       |
+     *  |------|--------------|-----------------------------------------------|
+     *  |  0   | Clean        | Used in update, no flags                      |
+     *  |  1   | Pivot        | BSSD pivot (frozen at value/var = 0)          |
+     *  |  2   | Slip         | Cycle slip detected (MW or KF residual reset) |
+     *  |  3   | CodeOutlier  | At least one code signal excluded             |
+     *  |  4   | BelowMask    | Elevation below the configured mask           |
+     *  |  6   | NoProduct    | Missing orbit / clock / ephemeris             |
+     *  |  7   | NoModel      | Signal selection / correction failure         |
+     *
+     * Status precedence on collision (most actionable wins): Slip >
+     * CodeOutlier > Pivot > Clean > (drop_reason).  Code 5 is reserved
+     * (formerly NotUsed) and no longer emitted -- the three-way
+     * drop_reasons split makes the catch-all obsolete.
+     *
+     * "BelowMask" is now an honest label: only sats with elevation
+     * actually below the configured mask receive it.  Sats above the
+     * mask but dropped for other reasons split cleanly into
+     * NoProduct (missing product data) and NoModel (no usable signal
+     * pair after BIA / ATX filtering, unknown system, configured
+     * exclusion, etc.).  BelowMask / NoProduct / NoModel rows all
+     * carry elevation_deg = NaN because elevation isn't preserved on
+     * the geometry-drop path.  Sats absent from @p epoch_obs entirely
+     * produce no row at all (= "not tracked", rendered transparent).
+     *
+     * @param time              Epoch time.
+     * @param epoch_obs         Raw RINEX observations for the epoch.  Sats
+     *                          here but not in @p modeled_obs were dropped
+     *                          upstream; @p drop_reasons distinguishes why.
+     * @param modeled_obs       Geometry-resolved observations for this epoch.
+     * @param drop_reasons      Per-satellite drop reason produced by
+     *                          @c PppModel::computeModels.  Used to split
+     *                          the previously-blanket "BelowMask" bucket
+     *                          into BelowMask / NoProduct / NoModel.
+     * @param applied_meas      The measurement set the filter actually applied.
+     * @param have_applied      True if a Kalman update ran this epoch.
+     * @param state_manager     For BSSD pivot lookup.
+     * @param slipped_sats      Sats with cycle slips detected this epoch.
+     * @param reset_sats        Sats whose ambiguities were reset by the KF.
+     * @param elevation_mask_deg Configured elevation mask in degrees (logged
+     *                          on BelowMask rows in a future schema bump;
+     *                          unused for now but accepted for symmetry).
+     */
+    void logSatelliteStatus(const GnssTime& time,
+                            const std::vector<RinexObservation>& epoch_obs,
+                            const std::vector<PppObservation>& modeled_obs,
+                            const std::map<std::string, DropReason>& drop_reasons,
+                            const EpochMeasurement& applied_meas,
+                            bool have_applied,
+                            const StateManager& state_manager,
+                            const std::set<std::string>& slipped_sats,
+                            const std::set<std::string>& reset_sats,
+                            double elevation_mask_deg) const;
+
+    /**
+     * @brief Write per-epoch satellite counts and DOPs (PDOP/HDOP/VDOP/
+     *        TDOP/GDOP, ADOP).
+     *
+     * One row per epoch.  Per-system counts cover the sats that actually
+     * contributed to the update (those in @c applied_meas.satellite_ids
+     * plus BSSD pivots, which contribute via the S-transform even though
+     * they don't appear as observation rows).  Position DOPs are built
+     * from those used sats' geometry (single-system H with one clock
+     * column).  ADOP is the Teunissen ambiguity DOP computed from the
+     * ambiguity-subblock of the filter covariance, in meters, with
+     * frozen pivot ambiguities excluded -- their variance is zero by
+     * BSSD construction and would collapse the determinant.
+     *
+     * @param time         Epoch time.
+     * @param modeled_obs  Geometry-resolved observations (provides per-sat
+     *                     elevation / azimuth).
+     * @param applied_meas Accepted measurement set (drives "used" set).
+     * @param have_applied True if an update was applied.
+     * @param state_manager Source of ambiguity covariance + pivot set.
+     */
+    void logDops(const GnssTime& time,
+                 const std::vector<PppObservation>& modeled_obs,
+                 const EpochMeasurement& applied_meas,
+                 bool have_applied,
+                 const StateManager& state_manager) const;
+
+    /**
      * @brief Write observation residuals and diagnostics for an epoch.
      *
      * Residuals, standardized residuals, per-observation variances and other
@@ -137,6 +246,9 @@ private:
     mutable std::ofstream ambiguity_trace_; /**< Output stream for ambiguity trace file. */
     mutable std::ofstream residual_trace_;  /**< Output stream for residual trace file. */
     mutable std::ofstream ionosphere_trace_; /**< Output stream for ionosphere trace file. */
+    mutable std::ofstream sat_bias_trace_;   /**< Output stream for per-(sat,signal) hardware bias trace file. */
+    mutable std::ofstream sat_status_trace_; /**< Output stream for per-satellite epoch status trace file. */
+    mutable std::ofstream dop_trace_;        /**< Output stream for per-epoch DOP + sat-count trace file. */
     mutable std::ofstream wls_trace_;       /**< Output stream for WLS trace file. */
     mutable bool state_header_written_{false}; /**< True after dynamic state header columns have been written. */
 };

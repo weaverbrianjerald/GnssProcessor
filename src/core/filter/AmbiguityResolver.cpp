@@ -9,6 +9,7 @@
 
 #include "filter/AmbiguityResolver.hpp"
 #include "filter/StateKeySchema.hpp"
+#include "filter/KalmanFilter.hpp"
 #include "common/Constants.hpp"
 #include <cmath>
 #include <algorithm>
@@ -226,7 +227,8 @@ int AmbiguityResolver::search(const Eigen::MatrixXd& L,
 bool AmbiguityResolver::mlambda(const Eigen::VectorXd& a,
                                 const Eigen::MatrixXd& Q,
                                 Eigen::VectorXd& afix,
-                                Eigen::VectorXd& s) {
+                                Eigen::VectorXd& s,
+                                Eigen::VectorXd* d_out) {
     Eigen::MatrixXd L;
     Eigen::VectorXd d;
     if (!ldlDecompose(Q, L, d)) return false;
@@ -244,6 +246,7 @@ bool AmbiguityResolver::mlambda(const Eigen::VectorXd& a,
     if (found < 2) return false;
 
     s = sq.head(2);
+    if (d_out) *d_out = d;  // post-reduction diagonal — caller may compute P_s,boot
 
     // Back-transform best candidate: afix = inv(Z^T) * E(:,0)
     // Since Z is integer, inv(Z^T) = round(inv(Z^T))
@@ -257,6 +260,24 @@ bool AmbiguityResolver::mlambda(const Eigen::VectorXd& a,
     afix = Zt_inv * E.col(0);
 
     return true;
+}
+
+// ===========================================================================
+// Bootstrap-rounding success rate
+// ===========================================================================
+
+double AmbiguityResolver::computeBootstrapSuccessRate(const Eigen::VectorXd& d) {
+    // P_s,boot = Π_i  erf( 1 / (2·√(2·d_i)) )
+    // Per-dimension: P(|N(0, d_i)| < 0.5) = erf( 0.5 / (√d_i · √2) )
+    if (d.size() == 0) return 0.0;
+    constexpr double kInv2Sqrt2 = 0.353553390593273762200422181052424519;  // 1/(2√2)
+    double p = 1.0;
+    for (int i = 0; i < d.size(); ++i) {
+        if (d(i) <= 0.0) return 0.0;
+        p *= std::erf(kInv2Sqrt2 / std::sqrt(d(i)));
+        if (p <= 0.0) return 0.0;
+    }
+    return p;
 }
 
 // ===========================================================================
@@ -340,6 +361,19 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         // resolved to the correct integer.
         if (state_manager.isAmbiguityUnresolvable(key)) continue;
 
+        // Per-constellation AR filter.  When @c ar_active_systems is
+        // non-empty, ambiguities outside the listed systems are skipped.
+        // They remain in the float Kalman filter; they're just excluded
+        // from the LAMBDA candidate set.
+        if (!config_.ar_active_systems.empty()) {
+            const std::string sys = PppUtils::getSystemString(info.satellite);
+            if (std::find(config_.ar_active_systems.begin(),
+                          config_.ar_active_systems.end(),
+                          sys) == config_.ar_active_systems.end()) {
+                continue;
+            }
+        }
+
         ambs.push_back(std::move(info));
     }
 
@@ -395,7 +429,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
 AmbiguityResolution AmbiguityResolver::resolve(
     const StateManager& state_manager,
     const std::vector<PppObservation>& observations,
-    const std::map<std::string, int>& wl_ambiguities) {
+    const std::map<std::string, int>& wl_ambiguities,
+    const std::map<std::string, double>& wl_fractions) {
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
@@ -403,6 +438,42 @@ AmbiguityResolution AmbiguityResolver::resolve(
     if (config_.ar_mode == 0) {
         log->debug("AR disabled (ar_mode=0)");
         return result;
+    }
+
+    // Convergence guard 1 — minimum-epochs gate.  AR runs LAMBDA on the
+    // float covariance; a marginal fix accepted before the float covariance
+    // has settled tends to lock onto wrong integers, and once a wrong
+    // integer is constrained into the state the next LAMBDA call sees a
+    // degenerate covariance direction and produces inflated "ultra-confident"
+    // ratios that are mathematically pathological.  Skip the first
+    // @c min_epochs invocations.
+    ++epoch_count_;
+    if (epoch_count_ <= config_.min_epochs) {
+        log->debug("AR skipped: epoch {}/{} (min_epochs convergence guard)",
+                   epoch_count_, config_.min_epochs);
+        return result;
+    }
+
+    // NlWl basis: skip the per-band DD-pair / LAMBDA pipeline entirely.
+    // The state vector holds NL/WL ambiguities directly, so there are no
+    // per-(sat, signal) DD pairs to enumerate.  Today we apply MW-resolved
+    // WL integers as 1-row pseudo-observations and stop there — full
+    // LAMBDA NL search with WL pre-constrained is future work (see CLAUDE.md
+    // notes on the WL-fix-with-tight-coupling milestone).
+    if (config_.state_ambiguity_basis == StateAmbiguityBasis::NlWl) {
+        const Eigen::VectorXd x = state_manager.getStateVector();
+        const Eigen::MatrixXd P = state_manager.getCovariance();
+        if (P.rows() >= 3) {
+            const double sigma_3d = std::sqrt(
+                std::max(P(0, 0), 0.0) + std::max(P(1, 1), 0.0) + std::max(P(2, 2), 0.0));
+            if (sigma_3d > config_.max_position_sigma_m) {
+                log->debug("AR (NlWl) skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
+                           sigma_3d, config_.max_position_sigma_m);
+                return result;
+            }
+        }
+        return applyMwWlConstraintsNlWl_(state_manager, x, P,
+                                          wl_ambiguities, wl_fractions, observations);
     }
 
     // Build DD pairs
@@ -417,13 +488,69 @@ AmbiguityResolution AmbiguityResolver::resolve(
     const Eigen::VectorXd x = state_manager.getStateVector();
     const Eigen::MatrixXd P = state_manager.getCovariance();
 
+    // Convergence guard 2 — formal position-σ gate.  Complements the
+    // min-epochs gate by using actual filter confidence rather than wall
+    // time.  When the 3D position σ is wide, the ambiguity covariance is
+    // also typically still wide and the integer search isn't reliable.
+    if (P.rows() >= 3) {
+        const double sigma_3d = std::sqrt(
+            std::max(P(0, 0), 0.0) + std::max(P(1, 1), 0.0) + std::max(P(2, 2), 0.0));
+        if (sigma_3d > config_.max_position_sigma_m) {
+            log->debug("AR skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
+                       sigma_3d, config_.max_position_sigma_m);
+            return result;
+        }
+    }
+
+    // WL-only path: apply MW-resolved WL integers as Kalman pseudo-observations
+    // and return without running any LAMBDA NL search.  Use this as a
+    // conservative first stage to verify the WL pipeline is healthy before
+    // enabling full WL+NL LAMBDA fixes.  No fall-through to LAMBDA paths
+    // when this mode is on — staying WL-only is the whole point.
+    if (config_.wl_only) {
+        if (wl_ambiguities.empty()) {
+            log->debug("WL-only mode: no MW-resolved WL integers available this epoch");
+            return result;
+        }
+        auto wl_only_result = resolveWlOnly(pairs, x, P, wl_ambiguities, observations);
+        wl_only_result.num_candidates = result.num_candidates;
+        return wl_only_result;
+    }
+
     // Try WL-constrained NL resolution first when WL integers are available
     if (!wl_ambiguities.empty()) {
         auto wl_result = resolveWlConstrained(pairs, x, P, wl_ambiguities, observations);
         if (wl_result.success) {
+            // Upper-bound ratio check: a ratio above this indicates a
+            // degenerate covariance direction (often from a previous wrong-
+            // integer hold).  The fix looks ultra-confident but is suspect.
+            if (wl_result.ratio > config_.ratio_upper_bound) {
+                log->warn("AR rejecting WL-constrained fix: ratio={:.3e} > upper bound {:.1e} "
+                          "(degenerate covariance — staying float).",
+                          wl_result.ratio, config_.ratio_upper_bound);
+                wl_result.success = false;
+            }
             wl_result.num_candidates = result.num_candidates;
             return wl_result;
         }
+        // WL-constrained AR failed — stay float.
+        //
+        // Don't fall through to the unconstrained LAMBDA fallback below.
+        // The fallback would search over the full per-band DD set, which
+        // includes DDs whose corresponding WL is NOT in @c wl_ambiguities
+        // (no MW lock, or |frac| above the cap, or BIA gap on the WL
+        // pair-mate).  Searching over those DDs lets LAMBDA pick integer
+        // combinations whose implied (N_1 − N_2) contradicts MW's locked
+        // WL — a wrong-WL fix is worse than no fix.
+        //
+        // The hierarchy is: WL is the easier integer to fix (long λ_WL,
+        // robust under BSSD).  If a sat's WL hasn't been locked, its NL
+        // can't be reliably fixed either — same model dependencies (BIA,
+        // antenna, wind-up).  So "no NL AR for sats whose WL is float" is
+        // the right enforcement, and the unconstrained LAMBDA breaks it.
+        log->debug("WL-constrained AR failed; skipping unconstrained LAMBDA "
+                   "fallback (MW WL info available — won't second-guess it)");
+        return result;
     }
 
     const int nb = static_cast<int>(pairs.size());
@@ -460,10 +587,48 @@ AmbiguityResolution AmbiguityResolver::resolve(
         }
     }
 
-    // Run MLAMBDA
-    Eigen::VectorXd afix;
+    // Convert meters → cycles for MLAMBDA.  Integer ambiguities are
+    // integer-cycle quantities; running MLAMBDA on the meter-domain
+    // floats rounds to integer-meter values that have no carrier-phase
+    // semantics and produces ratios near 1.0 regardless of how well-
+    // converged the float is.  Per-pair λ is looked up from the
+    // observation's system + signal so GLONASS FDMA's per-satellite
+    // wavelength is handled correctly.
+    std::map<std::string, const PppObservation*> obs_map;
+    for (const auto& obs : observations) obs_map[obs.satellite] = &obs;
+
+    std::vector<double> pair_lambda(nb);
+    for (int k = 0; k < nb; ++k) {
+        auto it = obs_map.find(pairs[k].sat_i);
+        if (it == obs_map.end()) {
+            log->debug("MLAMBDA: no obs for sat {}, skipping AR", pairs[k].sat_i);
+            return result;
+        }
+        const double lam = ppp_utils_.getWavelength(it->second->system,
+                                                     pairs[k].signal,
+                                                     pairs[k].sat_i);
+        if (!(std::isfinite(lam) && lam > 0.0)) {
+            log->debug("MLAMBDA: invalid λ for {} {}, skipping AR",
+                       pairs[k].sat_i, pairs[k].signal);
+            return result;
+        }
+        pair_lambda[k] = lam;
+    }
+
+    Eigen::VectorXd y_cycles(nb);
+    Eigen::MatrixXd Qb_cycles(nb, nb);
+    for (int i = 0; i < nb; ++i) {
+        y_cycles(i) = y_dd(i) / pair_lambda[i];
+        for (int j = 0; j < nb; ++j) {
+            Qb_cycles(i, j) = Qb(i, j) / (pair_lambda[i] * pair_lambda[j]);
+        }
+    }
+
+    // Run MLAMBDA on cycle-domain inputs.
+    Eigen::VectorXd afix_cycles;
     Eigen::VectorXd s;
-    if (!mlambda(y_dd, Qb, afix, s)) {
+    Eigen::VectorXd d_lambda;
+    if (!mlambda(y_cycles, Qb_cycles, afix_cycles, s, &d_lambda)) {
         log->debug("MLAMBDA failed (matrix not positive definite or search failed)");
         return result;
     }
@@ -482,28 +647,92 @@ AmbiguityResolution AmbiguityResolver::resolve(
         log->info("AR ratio test failed: {:.2f} < {:.1f}", result.ratio, config_.ratio_threshold);
         return result;
     }
+    if (result.ratio > config_.ratio_upper_bound) {
+        log->warn("AR rejecting fix: ratio={:.3e} > upper bound {:.1e} "
+                  "(degenerate covariance — staying float).",
+                  result.ratio, config_.ratio_upper_bound);
+        return result;
+    }
 
-    // Fix succeeded � compute fixed state and covariance
-    // x_fixed = x - Qab * inv(Qb) * (y_dd - afix)
-    Eigen::VectorXd residual = y_dd - afix;
-    Eigen::MatrixXd Qb_inv = Qb.ldlt().solve(Eigen::MatrixXd::Identity(nb, nb));
-    Eigen::MatrixXd K_fix = Qab * Qb_inv;
+    // FFR gate: bootstrap success rate.
+    const double p_s = computeBootstrapSuccessRate(d_lambda);
+    if (p_s < config_.min_success_rate) {
+        log->info("AR rejecting fix despite passing ratio ({:.2f}): "
+                  "bootstrap P_s={:.5f} < min_success_rate={:.4f}",
+                  result.ratio, p_s, config_.min_success_rate);
+        return result;
+    }
 
-    result.fixed_state = x - K_fix * residual;
-    result.fixed_covariance = P - K_fix * Qab.transpose();
-    result.fixed_covariance = 0.5 * (result.fixed_covariance + result.fixed_covariance.transpose());
+    // Per-DD residual cap: refuse the fix if any individual DD's
+    // |float − fixed| (in cycles) exceeds the cap.
+    double max_dd_frac = 0.0;
+    int    worst_dd_k  = -1;
+    for (int k = 0; k < nb; ++k) {
+        const double per_dd = std::abs(y_cycles(k) - afix_cycles(k));
+        if (per_dd > max_dd_frac) {
+            max_dd_frac = per_dd;
+            worst_dd_k  = k;
+        }
+    }
+    if (max_dd_frac > config_.nl_max_per_pair_frac) {
+        log->info("AR rejecting fix despite passing ratio ({:.2f}) and P_s={:.5f}: "
+                  "DD {}-{} {} has |frac|={:.3f} cyc > nl_max_per_pair_frac={:.3f}",
+                  result.ratio, p_s,
+                  pairs[worst_dd_k].sat_i, pairs[worst_dd_k].sat_ref,
+                  pairs[worst_dd_k].signal,
+                  max_dd_frac, config_.nl_max_per_pair_frac);
+        return result;
+    }
+
+    // Convert the integer fix back to meters for the state-space Kalman
+    // pseudo-observation update (state is in meters; afix_cycles came
+    // from the cycle-domain MLAMBDA above).
+    Eigen::VectorXd afix(nb);
+    for (int k = 0; k < nb; ++k) {
+        afix(k) = afix_cycles(k) * pair_lambda[k];
+    }
+
+    if (log->should_log(spdlog::level::debug)) {
+        for (int k = 0; k < nb; ++k) {
+            log->debug("  DD {}-{} {}: float={:.3f} cyc fixed={} cyc diff={:+.4f} cyc (λ={:.4f} m)",
+                       pairs[k].sat_i, pairs[k].sat_ref, pairs[k].signal,
+                       y_cycles(k), static_cast<int>(std::round(afix_cycles(k))),
+                       y_cycles(k) - afix_cycles(k), pair_lambda[k]);
+        }
+    }
+
+    // Fix succeeded — apply the integer fix as a Kalman pseudo-observation
+    // update rather than via back-substitution.
+    //
+    // The legacy back-sub form
+    //     x_fixed = x − Qab · Qb⁻¹ · (y_dd − afix)
+    //     P_fixed = P  − Qab · Qb⁻¹ · Qab'
+    // is a perfect-measurement (R = 0) update.  Once it succeeds, the
+    // ambiguity rows of P_fixed have ~zero variance and the next epoch's
+    // LAMBDA call sees a near-singular Qb in the integer search,
+    // producing meaningless ratios that drive the filter into the
+    // upper-bound rejection guard from there on.  Joseph-form Kalman
+    // with R = hold_variance keeps the covariance well-conditioned
+    // and lets subsequent epochs either re-confirm the fix (asymptoting
+    // toward the integer) or detect a slip via the residual.
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nb, na);
+    Eigen::VectorXd v = Eigen::VectorXd::Zero(nb);
+    for (int k = 0; k < nb; ++k) {
+        if (pairs[k].state_idx_i   >= 0 && pairs[k].state_idx_i   < na) H(k, pairs[k].state_idx_i)   = +1.0;
+        if (pairs[k].state_idx_ref >= 0 && pairs[k].state_idx_ref < na) H(k, pairs[k].state_idx_ref) = -1.0;
+        v(k) = afix(k) - y_dd(k);
+    }
+
+    Eigen::MatrixXd R   = Eigen::MatrixXd::Identity(nb, nb) * config_.hold_variance;
+    KalmanFilter::josephPseudoUpdate(x, P, H, v, R,
+                                     result.fixed_state, result.fixed_covariance);
 
     result.success = true;
     result.num_fixed = nb;
 
-    log->info("AR succeeded: {} ambiguities fixed, ratio={:.2f}", nb, result.ratio);
-
-    // Log individual fixes
-    for (int k = 0; k < nb; ++k) {
-        log->debug("  DD {}-{} {}: float={:.3f} fixed={:.0f} diff={:.3f}",
-                   pairs[k].sat_i, pairs[k].sat_ref, pairs[k].signal,
-                   y_dd(k), afix(k), y_dd(k) - afix(k));
-    }
+    log->info("AR succeeded (Kalman pseudo-obs, R={:.4f} m²): {} ambiguities fixed, "
+              "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+              config_.hold_variance, nb, result.ratio, p_s, max_dd_frac);
 
     return result;
 }
@@ -548,6 +777,27 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
     if (config_.ar_mode == 0) {
         log->debug("AR (DD) disabled (ar_mode=0)");
         return result;
+    }
+
+    // Convergence gates (mirror the SD path — see resolve() for rationale).
+    ++epoch_count_;
+    if (epoch_count_ <= config_.min_epochs) {
+        log->debug("AR (DD) skipped: epoch {}/{} (min_epochs convergence guard)",
+                   epoch_count_, config_.min_epochs);
+        return result;
+    }
+
+    {
+        const Eigen::MatrixXd P_chk = state_manager.getCovariance();
+        if (P_chk.rows() >= 3) {
+            const double sigma_3d = std::sqrt(
+                std::max(P_chk(0, 0), 0.0) + std::max(P_chk(1, 1), 0.0) + std::max(P_chk(2, 2), 0.0));
+            if (sigma_3d > config_.max_position_sigma_m) {
+                log->debug("AR (DD) skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
+                           sigma_3d, config_.max_position_sigma_m);
+                return result;
+            }
+        }
     }
 
     // Build sat -> elevation lookup so we can apply the elevation mask.
@@ -598,6 +848,14 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
         const std::string pivot    = key.substr(p4 + 1);
 
         if (exclude_keys.count(key)) { ++n_skipped_excluded; continue; }
+
+        // Per-constellation AR filter (mirrors the SD path).
+        if (!config_.ar_active_systems.empty()
+            && std::find(config_.ar_active_systems.begin(),
+                          config_.ar_active_systems.end(),
+                          cons) == config_.ar_active_systems.end()) {
+            continue;
+        }
 
         auto e_it = sat_elev.find(sat_i);
         if (e_it == sat_elev.end()) { ++n_skipped_no_obs; continue; }
@@ -664,7 +922,8 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
 
     Eigen::VectorXd afix_cycles;
     Eigen::VectorXd s;
-    if (!mlambda(y_cycles, Qb_cycles, afix_cycles, s)) {
+    Eigen::VectorXd d_lambda;
+    if (!mlambda(y_cycles, Qb_cycles, afix_cycles, s, &d_lambda)) {
         log->debug("MLAMBDA (DD) failed (covariance not positive definite or search failed)");
         return result;
     }
@@ -683,43 +942,79 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
                   result.ratio, config_.ratio_threshold);
         return result;
     }
+    if (result.ratio > config_.ratio_upper_bound) {
+        log->warn("AR (DD) rejecting fix: ratio={:.3e} > upper bound {:.1e} "
+                  "(degenerate covariance — staying float).",
+                  result.ratio, config_.ratio_upper_bound);
+        return result;
+    }
 
-    // Convert the integer fix back to METERS for the back-substitution.
+    // FFR gate.
+    const double p_s = computeBootstrapSuccessRate(d_lambda);
+    if (p_s < config_.min_success_rate) {
+        log->info("AR (DD) rejecting fix despite passing ratio ({:.2f}): "
+                  "bootstrap P_s={:.5f} < min_success_rate={:.4f}",
+                  result.ratio, p_s, config_.min_success_rate);
+        return result;
+    }
+
+    // Per-DD residual cap.
+    double max_dd_frac = 0.0;
+    int    worst_dd_k  = -1;
+    for (int k = 0; k < nb; ++k) {
+        const double per_dd = std::abs(y_cycles(k) - afix_cycles(k));
+        if (per_dd > max_dd_frac) {
+            max_dd_frac = per_dd;
+            worst_dd_k  = k;
+        }
+    }
+    if (max_dd_frac > config_.nl_max_per_pair_frac) {
+        log->info("AR (DD) rejecting fix despite passing ratio ({:.2f}) and P_s={:.5f}: "
+                  "DD {}-{} {} has |frac|={:.3f} cyc > nl_max_per_pair_frac={:.3f}",
+                  result.ratio, p_s,
+                  entries[worst_dd_k].sat_i, entries[worst_dd_k].sat_p,
+                  entries[worst_dd_k].rov_code,
+                  max_dd_frac, config_.nl_max_per_pair_frac);
+        return result;
+    }
+
+    // Convert the integer fix back to METERS for the constraint.
     Eigen::VectorXd afix_meters(nb);
     for (int i = 0; i < nb; ++i) {
         afix_meters(i) = afix_cycles(i) * entries[i].lambda;
     }
 
-    // Cross-covariance between full state and DD floats (no SD subtraction
-    // — we're picking columns directly because the state IS the DD).
-    Eigen::MatrixXd Qab_meters(na, nb);
-    for (int k = 0; k < na; ++k) {
-        for (int dd = 0; dd < nb; ++dd) {
-            Qab_meters(k, dd) = P_full(k, entries[dd].state_idx);
-        }
+    // Apply the integer fix as a Kalman pseudo-observation update
+    // rather than via back-substitution.  See the equivalent comment
+    // block in resolve() and resolveWlConstrained() for rationale —
+    // the legacy R = 0 form makes the next epoch's LAMBDA degenerate.
+    //
+    // Baseline DD: each row is a single-column constraint (the state
+    // itself IS the DD ambiguity, no SD subtraction).
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nb, na);
+    Eigen::VectorXd v = Eigen::VectorXd::Zero(nb);
+    for (int k = 0; k < nb; ++k) {
+        if (entries[k].state_idx >= 0 && entries[k].state_idx < na)
+            H(k, entries[k].state_idx) = +1.0;
+        v(k) = afix_meters(k) - x_full(entries[k].state_idx);
     }
 
-    // Standard fix-back: x_fixed = x - Qab * Qb^-1 * (y - afix).
-    const Eigen::VectorXd residual = y_meters - afix_meters;
-    const Eigen::MatrixXd Qb_inv =
-        Qb_meters.ldlt().solve(Eigen::MatrixXd::Identity(nb, nb));
-    const Eigen::MatrixXd K_fix = Qab_meters * Qb_inv;
-
-    result.fixed_state      = x_full - K_fix * residual;
-    result.fixed_covariance = P_full - K_fix * Qab_meters.transpose();
-    result.fixed_covariance =
-        0.5 * (result.fixed_covariance + result.fixed_covariance.transpose());
+    Eigen::MatrixXd R   = Eigen::MatrixXd::Identity(nb, nb) * config_.hold_variance;
+    KalmanFilter::josephPseudoUpdate(x_full, P_full, H, v, R,
+                                     result.fixed_state, result.fixed_covariance);
 
     result.success   = true;
     result.num_fixed = nb;
 
-    log->info("AR (DD) succeeded: {} ambiguities fixed, ratio={:.2f}", nb, result.ratio);
+    log->info("AR (DD) succeeded (Kalman pseudo-obs, R={:.4f} m²): {} ambiguities fixed, "
+              "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+              config_.hold_variance, nb, result.ratio, p_s, max_dd_frac);
 
     if (log->should_log(spdlog::level::debug)) {
         for (int k = 0; k < nb; ++k) {
             log->debug("  DD {}-{} {}: float={:.4f} m fixed={:.4f} m diff={:.4f} m (lambda={:.4f} m)",
                        entries[k].sat_i, entries[k].sat_p, entries[k].rov_code,
-                       y_meters(k), afix_meters(k), residual(k), entries[k].lambda);
+                       y_meters(k), afix_meters(k), -v(k), entries[k].lambda);
         }
     }
 
@@ -892,12 +1187,41 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     Q_reduced = 0.5 * (Q_reduced + Q_reduced.transpose());
 
     // Run MLAMBDA on the NL-only set
-    Eigen::VectorXd afix_reduced;
+    // Shift y_reduced so MLAMBDA's integer search aligns with integer N_1.
+    //
+    // The IF-NL combination satisfies
+    //   y_reduced(k) = (f1·N_1 + f2·N_2) / (f1+f2)
+    //                = N_1 − [f2/(f1+f2)] · WL          (substituting N_2 = N_1−WL)
+    //
+    // which is NOT integer-valued in general — for GPS L1/L2 with WL=1 it
+    // sits at N_1 − 0.4379, neither integer is meaningfully closer, and
+    // the ratio test sees s2/s1 ≈ 1.6 regardless of float quality.  By
+    // adding the known-WL offset back in we get a search variable that
+    // IS integer in expectation:
+    //
+    //   y_for_mlambda(k) = y_reduced(k) + [f2/(f1+f2)] · WL_int  =  N_1 + noise
+    //
+    // We then back-shift afix_n1 to the IF-NL form so the existing
+    // back-transform expression (which expects IF-NL) continues to work.
+    // Q_reduced is unchanged: a constant per-row shift doesn't affect the
+    // covariance, only the mean.
+    Eigen::VectorXd nl_shift(n_nl);
+    for (int k = 0; k < n_nl; ++k) {
+        const auto& nlc = nl_candidates[k];
+        nl_shift(k) = nlc.f2 / (nlc.f1 + nlc.f2) * static_cast<double>(nlc.dd_wl);
+    }
+    const Eigen::VectorXd y_for_mlambda = y_reduced + nl_shift;
+
+    Eigen::VectorXd afix_n1;       // integer N_1 candidates (cycles)
     Eigen::VectorXd s;
-    if (!mlambda(y_reduced, Q_reduced, afix_reduced, s)) {
+    Eigen::VectorXd d_lambda;      // post-reduction LDL diagonal (for bootstrap P_s)
+    if (!mlambda(y_for_mlambda, Q_reduced, afix_n1, s, &d_lambda)) {
         log->debug("WL-constrained AR: MLAMBDA failed on NL problem");
         return result;
     }
+    // Convert back to the IF-NL representation expected by the
+    // back-transform code below: afix_reduced = N_1 − [f2/(f1+f2)] · WL_int.
+    Eigen::VectorXd afix_reduced = afix_n1 - nl_shift;
 
     if (s(0) <= 0.0 || s(1) <= 0.0) {
         log->debug("WL-constrained AR: invalid distances s1={:.6f} s2={:.6f}", s(0), s(1));
@@ -911,6 +1235,52 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     if (result.ratio < config_.ratio_threshold) {
         log->info("WL-constrained AR ratio test failed: {:.2f} < {:.1f}",
                   result.ratio, config_.ratio_threshold);
+        return result;
+    }
+    if (result.ratio > config_.ratio_upper_bound) {
+        log->warn("WL-constrained AR rejecting fix: ratio={:.3e} > upper bound {:.1e} "
+                  "(degenerate covariance — staying float).",
+                  result.ratio, config_.ratio_upper_bound);
+        return result;
+    }
+
+    // FFR gate: bootstrap success rate must exceed the configured target
+    // (e.g. 0.999 for 0.1% probability of accepting a wrong-integer fix).
+    // Self-tuning: hard to pass when the search is high-dimensional or
+    // poorly conditioned; easy to pass when the float is well-converged
+    // and the decorrelation is clean.
+    const double p_s = computeBootstrapSuccessRate(d_lambda);
+    if (p_s < config_.min_success_rate) {
+        log->info("WL-constrained AR rejecting fix despite passing ratio "
+                  "({:.2f}): bootstrap P_s={:.5f} < min_success_rate={:.4f}",
+                  result.ratio, p_s, config_.min_success_rate);
+        return result;
+    }
+
+    // Per-NL-pair residual cap: refuse the fix if any individual pair's
+    // |float − fixed| (in cycles) exceeds the cap.  The joint ratio test
+    // can pass on a borderline integer set where one or two pairs are
+    // sitting near a half-cycle boundary; those marginal pairs cause the
+    // ratio to collapse on the next epoch as the state drifts back
+    // toward the "actual" integer.  Catching them up front is the right
+    // defense.
+    double max_pair_frac = 0.0;
+    int    worst_pair_k  = -1;
+    for (int k = 0; k < n_nl; ++k) {
+        const double per_pair = std::abs(y_for_mlambda(k) - afix_n1(k));
+        if (per_pair > max_pair_frac) {
+            max_pair_frac = per_pair;
+            worst_pair_k  = k;
+        }
+    }
+    if (max_pair_frac > config_.nl_max_per_pair_frac) {
+        const auto& nlc = nl_candidates[worst_pair_k];
+        log->info("WL-constrained AR rejecting fix despite passing ratio "
+                  "({:.2f}) and P_s={:.5f}: pair {}-{} has |frac|={:.3f} cyc > "
+                  "nl_max_per_pair_frac={:.3f}",
+                  result.ratio, p_s,
+                  pairs[nlc.dd_idx_1].sat_i, pairs[nlc.dd_idx_1].sat_ref,
+                  max_pair_frac, config_.nl_max_per_pair_frac);
         return result;
     }
 
@@ -929,62 +1299,748 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         afix_orig(nlc.dd_idx_1) = (n_nl_fixed + nlc.f2 / f_sum * nlc.dd_wl) * nlc.lam1;
         afix_orig(nlc.dd_idx_2) = (n_nl_fixed - nlc.f1 / f_sum * nlc.dd_wl) * nlc.lam2;
 
-        log->debug("  NL pair {}-{} {}/{}: n_NL_float={:.3f} n_NL_fixed={:.0f} dd_wl={}, "
+        const double n1_float = y_for_mlambda(k);   // searched as N_1 + noise
+        const int    n1_int   = static_cast<int>(std::lround(afix_n1(k)));
+        log->debug("  NL pair {}-{} {}/{}: N_1_float={:.3f} N_1_fixed={} dd_wl={}, "
                    "DD1={:.3f}m DD2={:.3f}m",
                    pairs[nlc.dd_idx_1].sat_i, pairs[nlc.dd_idx_1].sat_ref,
                    pairs[nlc.dd_idx_1].signal, pairs[nlc.dd_idx_2].signal,
-                   y_reduced(k), n_nl_fixed, nlc.dd_wl,
+                   n1_float, n1_int, nlc.dd_wl,
                    afix_orig(nlc.dd_idx_1), afix_orig(nlc.dd_idx_2));
     }
 
-    // Compute fixed state using only the NL-paired DD ambiguities.
-    // Build the cross-covariance and DD covariance for the consumed DDs only.
+    // Apply the fixed integer DD ambiguities as Kalman pseudo-observations
+    // rather than via direct state/covariance overwrite.
+    //
+    // The original implementation used the back-substitution form
+    //     x_fixed = x − Qab · Qbb⁻¹ · (y_dd − a_int)
+    //     P_fixed = P  − Qab · Qbb⁻¹ · Qab'
+    // which is mathematically equivalent to a "perfect" measurement
+    // (R = 0) of the integer.  Once successfully fixed, the
+    // ambiguity rows of P_fixed have ~zero variance and the next
+    // epoch's LAMBDA call sees a near-singular Qb in the integer
+    // search, producing meaningless ratios (s2 ≈ s1, both huge —
+    // the failure mode that triggers the upper-bound guard with
+    // 1e13-scale ratios).
+    //
+    // The Kalman pseudo-observation form below applies the same
+    // integer values via finite-variance measurement update.  Each
+    // fixed DD becomes a 2-state row (+1 on sat_i, −1 on sat_ref)
+    // with z = integer-fixed DD value in meters and R = hold_variance.
+    // Joseph form keeps the covariance positive-definite, so the
+    // ambiguity columns retain the small but nonzero variance set by
+    // R.  The next epoch's AR sees a well-conditioned Qb and can
+    // either re-confirm the same fix (further tightening, asymptoting
+    // toward the integer) or detect a slip via the residual.
     const int n_fixed_dd = 2 * n_nl;
-    std::vector<int> fixed_dd_indices;
-    fixed_dd_indices.reserve(n_fixed_dd);
+    const int nx = static_cast<int>(x.size());
+
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(n_fixed_dd, nx);
+    Eigen::VectorXd v = Eigen::VectorXd::Zero(n_fixed_dd);
+
     for (int k = 0; k < n_nl; ++k) {
-        fixed_dd_indices.push_back(nl_candidates[k].dd_idx_1);
-        fixed_dd_indices.push_back(nl_candidates[k].dd_idx_2);
+        const auto& nlc = nl_candidates[k];
+        const auto& p1 = pairs[nlc.dd_idx_1];
+        const auto& p2 = pairs[nlc.dd_idx_2];
+
+        // Row 2k: DD_1 = a_i_1 - a_ref_1 = afix_orig(dd_idx_1)
+        if (p1.state_idx_i   >= 0 && p1.state_idx_i   < nx) H(2 * k,     p1.state_idx_i)   = +1.0;
+        if (p1.state_idx_ref >= 0 && p1.state_idx_ref < nx) H(2 * k,     p1.state_idx_ref) = -1.0;
+        v(2 * k)     = afix_orig(nlc.dd_idx_1) - (x(p1.state_idx_i) - x(p1.state_idx_ref));
+
+        // Row 2k+1: DD_2 constraint
+        if (p2.state_idx_i   >= 0 && p2.state_idx_i   < nx) H(2 * k + 1, p2.state_idx_i)   = +1.0;
+        if (p2.state_idx_ref >= 0 && p2.state_idx_ref < nx) H(2 * k + 1, p2.state_idx_ref) = -1.0;
+        v(2 * k + 1) = afix_orig(nlc.dd_idx_2) - (x(p2.state_idx_i) - x(p2.state_idx_ref));
     }
 
-    const int na = static_cast<int>(x.size());
-    Eigen::MatrixXd Qab(na, n_fixed_dd);
-    Eigen::MatrixXd Qbb(n_fixed_dd, n_fixed_dd);
-    Eigen::VectorXd y_fixed(n_fixed_dd);
-    Eigen::VectorXd a_fixed(n_fixed_dd);
-
-    for (int c = 0; c < n_fixed_dd; ++c) {
-        const int dd_c = fixed_dd_indices[c];
-        y_fixed(c) = y_dd(dd_c);
-        a_fixed(c) = afix_orig(dd_c);
-        for (int k = 0; k < na; ++k) {
-            Qab(k, c) = P(k, pairs[dd_c].state_idx_i) - P(k, pairs[dd_c].state_idx_ref);
-        }
-        for (int r = 0; r < n_fixed_dd; ++r) {
-            const int dd_r = fixed_dd_indices[r];
-            int ii = pairs[dd_r].state_idx_i;
-            int ir = pairs[dd_r].state_idx_ref;
-            int ji = pairs[dd_c].state_idx_i;
-            int jr = pairs[dd_c].state_idx_ref;
-            Qbb(r, c) = P(ii, ji) - P(ii, jr) - P(ir, ji) + P(ir, jr);
-        }
-    }
-
-    Qbb = 0.5 * (Qbb + Qbb.transpose());
-    Eigen::VectorXd residual = y_fixed - a_fixed;
-    Eigen::MatrixXd Qbb_inv = Qbb.ldlt().solve(Eigen::MatrixXd::Identity(n_fixed_dd, n_fixed_dd));
-    Eigen::MatrixXd K_fix = Qab * Qbb_inv;
-
-    result.fixed_state = x - K_fix * residual;
-    result.fixed_covariance = P - K_fix * Qab.transpose();
-    result.fixed_covariance = 0.5 * (result.fixed_covariance + result.fixed_covariance.transpose());
+    Eigen::MatrixXd R   = Eigen::MatrixXd::Identity(n_fixed_dd, n_fixed_dd) * config_.hold_variance;
+    KalmanFilter::josephPseudoUpdate(x, P, H, v, R,
+                                     result.fixed_state, result.fixed_covariance);
 
     result.success = true;
     result.num_fixed = n_nl;
 
-    log->info("WL-constrained AR succeeded: {} NL pairs fixed, ratio={:.2f}",
-              n_nl, result.ratio);
+    log->info("WL-constrained AR succeeded (Kalman pseudo-obs, R={:.4f} m²): "
+              "{} NL pairs fixed, ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+              config_.hold_variance, n_nl, result.ratio, p_s, max_pair_frac);
 
+    return result;
+}
+
+// ===========================================================================
+// WL-only resolution
+//
+// Conservative AR mode: take the MW-resolved DD WL integers as-is and
+// apply each one as a Kalman pseudo-observation that constrains the
+// cycle-domain combination
+//     (DD_L1 / λ_L1) − (DD_L2 / λ_L2) = WL_int
+// The state's L1 and L2 SD ambiguities (still floats) get pulled into
+// consistency with the WL integer without any LAMBDA NL search.  No
+// ratio test runs; the MW detector's own quality checks (consistent
+// across epochs, near-integer Hatch mean, threshold-pass) gate which
+// WL integers enter @c wl_ambiguities in the first place.
+//
+// Useful as a first-stage AR validation before turning on the full
+// WL+NL LAMBDA pipeline.  WL has a long wavelength (~86 cm GPS), so
+// MW resolution is robust even when the float NL covariance hasn't
+// converged enough for safe integer rounding.
+// ===========================================================================
+
+AmbiguityResolution AmbiguityResolver::resolveWlOnly(
+    const std::vector<DdPair>& pairs,
+    const Eigen::VectorXd& x,
+    const Eigen::MatrixXd& P,
+    const std::map<std::string, int>& wl_ambiguities,
+    const std::vector<PppObservation>& observations) {
+
+    auto log = log_manager_.getLogger("ambiguity_resolver");
+    AmbiguityResolution result;
+    result.fixed_state      = x;
+    result.fixed_covariance = P;
+
+    // Build sat -> obs map for system/frequency lookup
+    std::map<std::string, const PppObservation*> obs_map;
+    for (const auto& obs : observations)
+        obs_map[obs.satellite] = &obs;
+
+    // Group DD pairs by satellite pair, mirroring resolveWlConstrained
+    struct InfoRow {
+        int idx_i, idx_ref;        // SD ambiguity state indices (non-pivot, pivot)
+        std::string signal;
+        double freq;
+        double wavelength;
+    };
+    std::map<std::string, std::vector<InfoRow>> sat_pair_groups;
+    for (const auto& p : pairs) {
+        auto obs_it = obs_map.find(p.sat_i);
+        if (obs_it == obs_map.end()) continue;
+        const auto& obs = *obs_it->second;
+        const double freq = ppp_utils_.getFrequency(p.signal, obs.system, obs.satellite);
+        const double wl   = ppp_utils_.getWavelength(obs.system, p.signal, obs.satellite);
+        if (!(std::isfinite(freq) && freq > 0.0 && std::isfinite(wl) && wl > 0.0)) continue;
+
+        const std::string spkey = p.sat_i + "|" + p.sat_ref;
+        sat_pair_groups[spkey].push_back({ p.state_idx_i, p.state_idx_ref, p.signal, freq, wl });
+    }
+
+    // Collect WL constraints: one per (sat_pair, dual-frequency) combo with
+    // a known DD WL integer.
+    struct WlConstraint {
+        int idx_L1_i, idx_L1_ref, idx_L2_i, idx_L2_ref;
+        double inv_lam_L1, inv_lam_L2;
+        int wl_int;
+        std::string sat_i, sat_ref, sig_hi, sig_lo;
+    };
+    std::vector<WlConstraint> constraints;
+    for (const auto& [spkey, infos] : sat_pair_groups) {
+        if (infos.size() != 2) continue;  // need exactly two frequencies
+
+        const auto& a = infos[0];
+        const auto& b = infos[1];
+        const bool a_is_hi = a.freq > b.freq;
+        const auto& hi = a_is_hi ? a : b;
+        const auto& lo = a_is_hi ? b : a;
+
+        // Recover the satellite IDs from the spkey.
+        const auto sep = spkey.find('|');
+        if (sep == std::string::npos) continue;
+        const std::string sat_i   = spkey.substr(0, sep);
+        const std::string sat_ref = spkey.substr(sep + 1);
+
+        const std::string wl_key_i   = sat_i   + "_" + hi.signal + "_" + lo.signal;
+        const std::string wl_key_ref = sat_ref + "_" + hi.signal + "_" + lo.signal;
+        auto it_i   = wl_ambiguities.find(wl_key_i);
+        auto it_ref = wl_ambiguities.find(wl_key_ref);
+        if (it_i == wl_ambiguities.end() || it_ref == wl_ambiguities.end()) continue;
+
+        const int dd_wl = it_i->second - it_ref->second;
+        constraints.push_back({
+            hi.idx_i, hi.idx_ref, lo.idx_i, lo.idx_ref,
+            1.0 / hi.wavelength, 1.0 / lo.wavelength,
+            dd_wl, sat_i, sat_ref, hi.signal, lo.signal
+        });
+    }
+
+    if (constraints.empty()) {
+        log->debug("WL-only AR: no dual-frequency pairs with known DD WL integers");
+        return result;
+    }
+
+    // Detect WL integer changes since the last invocation.  A change implies
+    // a slip happened on L1 or L2 (or both) for the affected satellite —
+    // MW's Hatch-mean re-locked at a different integer.  If we just apply
+    // the new constraint with the existing (tight from previous epochs)
+    // covariance, the gain is small relative to the integer-cycle innovation
+    // and the state would drift toward the new integer over many epochs
+    // instead of snapping in one.  Force a covariance reset on the affected
+    // L1 and L2 SD ambiguity states so the new constraint takes full effect
+    // immediately and any future measurement updates can refine from there.
+    constexpr double kAmbResetVar = 100.0;  // (10 m)² — matches handlePhaseOutlier convention.
+
+    Eigen::MatrixXd P_local = P;  // mutable working copy
+    int n_reset = 0;
+    auto inflate_state = [&](int idx) {
+        if (idx < 0 || idx >= P_local.rows()) return;
+        P_local.row(idx).setZero();
+        P_local.col(idx).setZero();
+        P_local(idx, idx) = kAmbResetVar;
+    };
+
+    for (const auto& c : constraints) {
+        const std::string key = c.sat_i + "_" + c.sat_ref + "_" + c.sig_hi + "_" + c.sig_lo;
+        auto prev_it = previous_dd_wl_.find(key);
+        if (prev_it == previous_dd_wl_.end()) continue;     // first time — no reset needed
+        if (prev_it->second == c.wl_int)     continue;      // same integer — no change
+
+        log->warn("WL integer changed for DD {}-{} {}/{}: {} → {} cycles. "
+                  "Inflating L1/L2 SD ambiguity covariance to allow snap.",
+                  c.sat_i, c.sat_ref, c.sig_hi, c.sig_lo,
+                  prev_it->second, c.wl_int);
+
+        // Reset the non-pivot SD ambiguity states on both bands.  The pivot
+        // entries (idx_L1_ref, idx_L2_ref) are frozen at zero by BSSD and
+        // shouldn't be inflated — touching them would unfreeze the pivot.
+        inflate_state(c.idx_L1_i);
+        inflate_state(c.idx_L2_i);
+        ++n_reset;
+    }
+
+    // Build pseudo-observation update.  H is in cycle-domain (so R is also
+    // in cycles²); each row enforces (DD_L1/λ_L1) − (DD_L2/λ_L2) = WL_int.
+    const int nx = static_cast<int>(x.size());
+    const int nv = static_cast<int>(constraints.size());
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nv, nx);
+    Eigen::VectorXd v = Eigen::VectorXd::Zero(nv);
+
+    for (int k = 0; k < nv; ++k) {
+        const auto& c = constraints[k];
+        if (c.idx_L1_i   >= 0 && c.idx_L1_i   < nx) H(k, c.idx_L1_i)   =  c.inv_lam_L1;
+        if (c.idx_L1_ref >= 0 && c.idx_L1_ref < nx) H(k, c.idx_L1_ref) = -c.inv_lam_L1;
+        if (c.idx_L2_i   >= 0 && c.idx_L2_i   < nx) H(k, c.idx_L2_i)   = -c.inv_lam_L2;
+        if (c.idx_L2_ref >= 0 && c.idx_L2_ref < nx) H(k, c.idx_L2_ref) =  c.inv_lam_L2;
+
+        const double dd_wl_pred = (x(c.idx_L1_i) - x(c.idx_L1_ref)) * c.inv_lam_L1
+                                - (x(c.idx_L2_i) - x(c.idx_L2_ref)) * c.inv_lam_L2;
+        v(k) = static_cast<double>(c.wl_int) - dd_wl_pred;
+    }
+
+    // Kalman update with cycle-domain pseudo-obs variance.  P_local has
+    // inflated diagonals for any rows whose WL integer just changed so the
+    // gain on those is high and the state snaps to the new integer.
+    Eigen::MatrixXd R = Eigen::MatrixXd::Identity(nv, nv) * config_.wl_only_pseudo_var;
+    KalmanFilter::josephPseudoUpdate(x, P_local, H, v, R,
+                                     result.fixed_state, result.fixed_covariance);
+
+    result.success   = true;
+    result.num_fixed = nv;
+    result.ratio     = std::numeric_limits<double>::infinity();  // sentinel: no LAMBDA ratio test ran
+
+    // Record the WL integers we just applied so the next call can detect changes.
+    for (const auto& c : constraints) {
+        const std::string key = c.sat_i + "_" + c.sat_ref + "_" + c.sig_hi + "_" + c.sig_lo;
+        previous_dd_wl_[key] = c.wl_int;
+    }
+
+    log->info("WL-only AR: applied {} DD WL constraints{} (no LAMBDA NL search)",
+              nv, n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "");
+    if (log->should_log(spdlog::level::debug)) {
+        for (const auto& c : constraints) {
+            log->debug("  WL DD {}-{} {}/{}: WL_int={} cyc, residual={:+.4f} cyc",
+                       c.sat_i, c.sat_ref, c.sig_hi, c.sig_lo, c.wl_int,
+                       static_cast<double>(c.wl_int) - (
+                           (x(c.idx_L1_i) - x(c.idx_L1_ref)) * c.inv_lam_L1
+                         - (x(c.idx_L2_i) - x(c.idx_L2_ref)) * c.inv_lam_L2));
+        }
+    }
+    return result;
+}
+
+// ===========================================================================
+// MW WL constraints in the NlWl basis
+// ---------------------------------------------------------------------------
+// Counterpart to resolveWlOnly() above.  The per-band path forms 2-row
+// pseudo-observations on (L_hi_i, L_hi_ref, L_lo_i, L_lo_ref) per
+// (sat_i, sat_ref) DD; the NlWl path expresses the same constraint as a
+// linear combination of NL/WL state columns.
+//
+// State convention (per ensureRequiredStates): one NL state per sat
+// (NL_R = N_<ref_band>) plus one WL state per non-ref band (canonical
+// key WL_<min(R,b)>_<max(R,b)> stores N_<min> - N_<max> in cycles).  For
+// any band b on a satellite with reference band R:
+//
+//     N_b = NL_R + alpha(R, b) * WL_<canonical>_state
+//
+// where alpha(R, b) = -1 when R < b (the canonical WL key has R first,
+// so state = N_R - N_b → N_b = NL_R - state) and alpha(R, b) = +1 when
+// R > b (canonical key has b first, so state = N_b - N_R → N_b = NL_R +
+// state); alpha(R, R) = 0 (the band IS the ref, no WL term).
+//
+// MW(hi, lo) returns the SD WL integer N_hi - N_lo in cycles.  Substituting:
+//
+//     MW = (NL_R + alpha(R,hi) * W_hi) - (NL_R + alpha(R,lo) * W_lo)
+//        = alpha(R,hi) * W_hi - alpha(R,lo) * W_lo
+//
+// The NL_R term cancels.  After BSSD differencing against an AR pivot
+// satellite, the structure is the same on both sats and the DD is:
+//
+//   alpha(R,hi) * (W_hi_i - W_hi_pivot) - alpha(R,lo) * (W_lo_i - W_lo_pivot)
+//   = MW_int_i - MW_int_pivot = DD_WL_int
+//
+// This handles every MW arc the detector resolves:
+//
+//   - MW(R, b) for b != R: alpha(hi)=0 or alpha(lo)=0 — collapses to a
+//     single non-zero coefficient on WL_<canonical>.  The classic "L1/L2"
+//     and "L1/L5" cases when ref_band = 1.
+//
+//   - MW(b1, b2) where neither equals R (e.g. GPS L2/L5 EWL with R=1, or
+//     Galileo E5a/E5b EWL with R=1): two non-zero coefficients across
+//     two distinct WL state columns per sat — a 4-state DD row, which
+//     correctly applies the EWL information that the per-band path's
+//     ref-relative-only enumeration would silently drop.
+//
+// Coincidence: when an AR-internal pivot equals the BSSD pivot, that
+// pivot's NL/WL columns are zero-covariance / zero-valued and their
+// contribution drops out of the DD; the row reduces to the sat_i side
+// only.  The Kalman update handles this naturally.
+// ===========================================================================
+
+AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
+    const StateManager& state_manager,
+    const Eigen::VectorXd& x,
+    const Eigen::MatrixXd& P,
+    const std::map<std::string, int>& wl_ambiguities,
+    const std::map<std::string, double>& wl_fractions,
+    const std::vector<PppObservation>& observations) {
+
+    auto log = log_manager_.getLogger("ambiguity_resolver");
+    AmbiguityResolution result;
+    result.fixed_state      = x;
+    result.fixed_covariance = P;
+
+    if (wl_ambiguities.empty()) {
+        log->debug("WL-NlWl: no MW-resolved WL integers this epoch");
+        return result;
+    }
+
+    // Per-satellite lookups.
+    std::map<std::string, double> sat_elev;
+    std::map<std::string, const PppObservation*> obs_map;
+    for (const auto& obs : observations) {
+        sat_elev[obs.satellite] = obs.elevation;
+        obs_map[obs.satellite] = &obs;
+    }
+
+    // Reference band per sat (from existing NL state keys).  Phase 3b
+    // freezes this for the lifetime of the satellite's arc.
+    std::map<std::string, char> ref_band_per_sat;
+    for (const auto& [key, idx] : state_manager.getAmbiguities()) {
+        if (auto p = StateKeys::parseNlAmbiguityKey(key)) {
+            ref_band_per_sat[p->satellite] = p->band;
+        }
+    }
+
+    // wl_state_idx[sat][other_band] = state-vector index of the canonical
+    // WL state coupling (ref_band, other_band).  We map by "the band that
+    // is NOT the ref" so callers can look up by the carrier they care
+    // about, regardless of canonical-min/max ordering.
+    std::map<std::string, std::map<char, int>> wl_state_idx;
+    for (const auto& [key, idx] : state_manager.getAmbiguities()) {
+        auto p = StateKeys::parseWlAmbiguityKey(key);
+        if (!p) continue;
+        auto rbi = ref_band_per_sat.find(p->satellite);
+        if (rbi == ref_band_per_sat.end()) continue;
+        const char R = rbi->second;
+        char other = 0;
+        if (p->band_a == R)      other = p->band_b;
+        else if (p->band_b == R) other = p->band_a;
+        else                     continue;  // non-ref-relative WL — Phase 3b never creates these.
+        wl_state_idx[p->satellite][other] = static_cast<int>(idx);
+    }
+
+    // Per-MW-arc constraint metadata.  Built by parsing the keys of the
+    // wl_ambiguities map (e.g. "G01_L1W_L2W") rather than by enumerating
+    // state WL columns — this is what lets the EWL flow through: the
+    // L2/L5 MW arc is in this map even though the state has no WL_2_5.
+    struct ArcConstraint {
+        std::string sat;
+        char        band_hi;     ///< Higher carrier-frequency band of the pair.
+        char        band_lo;     ///< Lower carrier-frequency band of the pair.
+        char        canon_a;     ///< Canonical-ascending min(band_hi, band_lo).
+        char        canon_b;     ///< Canonical-ascending max(band_hi, band_lo).
+        std::string sig_hi;      ///< Higher-freq signal name (for slip-snap key).
+        std::string sig_lo;
+        int         mw_int;      ///< MW SD-WL integer (cycles, N_hi - N_lo form).
+        double      elevation;
+    };
+    std::map<std::string, std::vector<ArcConstraint>> groups;  // "<cons>|<canon_a>_<canon_b>"
+
+    for (const auto& [stats_key, mw_int] : wl_ambiguities) {
+        const auto u1 = stats_key.find('_');
+        if (u1 == std::string::npos) continue;
+        const auto u2 = stats_key.find('_', u1 + 1);
+        if (u2 == std::string::npos) continue;
+        const std::string sat   = stats_key.substr(0, u1);
+        const std::string sig_a = stats_key.substr(u1 + 1, u2 - u1 - 1);
+        const std::string sig_b = stats_key.substr(u2 + 1);
+        if (sig_a.size() < 2 || sig_b.size() < 2) continue;
+
+        auto eit = sat_elev.find(sat);
+        if (eit == sat_elev.end()) continue;
+        if (eit->second < config_.elevation_mask_ar) continue;
+
+        // Per-constellation AR filter.  Skip arcs from constellations
+        // not in @c ar_active_systems.  The arc continues to be tracked
+        // in the float Kalman filter (its NL/WL state is unaffected);
+        // it just doesn't contribute to the AR pseudo-obs update.
+        if (!config_.ar_active_systems.empty()) {
+            const std::string sys = PppUtils::getSystemString(sat);
+            if (std::find(config_.ar_active_systems.begin(),
+                          config_.ar_active_systems.end(),
+                          sys) == config_.ar_active_systems.end()) {
+                continue;
+            }
+        }
+
+        // Per-fix WL confidence gate.  An MW arc whose running mean is
+        // far from its locked integer (frac ≫ 0) is suspicious — typically
+        // because the arc locked too early, has unmodeled bias contamination,
+        // or sits near a half-cycle boundary.  Rather than committing the
+        // questionable integer to the AR pseudo-obs update (where a wrong
+        // WL would bias every NL fix that depends on it), we stay float
+        // for this arc this epoch.
+        auto fit = wl_fractions.find(stats_key);
+        const double frac = (fit != wl_fractions.end()) ? fit->second : 0.0;
+        if (frac > config_.wl_max_frac) {
+            log->debug("WL-NlWl: skip {} {}/{}: frac={:.3f} cyc > wl_max_frac={:.3f}",
+                       sat, sig_a, sig_b, frac, config_.wl_max_frac);
+            continue;
+        }
+
+        auto rbi = ref_band_per_sat.find(sat);
+        if (rbi == ref_band_per_sat.end()) continue;
+        const char R = rbi->second;
+
+        auto oit = obs_map.find(sat);
+        if (oit == obs_map.end()) continue;
+        const auto& obs = *oit->second;
+
+        const double f_a = ppp_utils_.getFrequency(sig_a, obs.system, sat);
+        const double f_b = ppp_utils_.getFrequency(sig_b, obs.system, sat);
+        if (!(std::isfinite(f_a) && f_a > 0.0
+           && std::isfinite(f_b) && f_b > 0.0)) continue;
+
+        const char b_a = sig_a[1];
+        const char b_b = sig_b[1];
+
+        ArcConstraint c;
+        c.sat = sat;
+        if (f_a > f_b) { c.band_hi = b_a; c.band_lo = b_b; c.sig_hi = sig_a; c.sig_lo = sig_b; }
+        else           { c.band_hi = b_b; c.band_lo = b_a; c.sig_hi = sig_b; c.sig_lo = sig_a; }
+        c.canon_a   = std::min(b_a, b_b);
+        c.canon_b   = std::max(b_a, b_b);
+        c.mw_int    = mw_int;
+        c.elevation = eit->second;
+
+        // Skip arcs for which the satellite lacks the WL state(s) needed
+        // to express the constraint as a state linear combination.
+        auto wsi = wl_state_idx.find(sat);
+        if (wsi == wl_state_idx.end()) continue;
+        auto hasWl = [&](char band) { return wsi->second.count(band) > 0; };
+        const bool need_hi = (c.band_hi != R);
+        const bool need_lo = (c.band_lo != R);
+        if (need_hi && !hasWl(c.band_hi)) continue;
+        if (need_lo && !hasWl(c.band_lo)) continue;
+
+        const std::string cons = PppUtils::getSystemString(sat);
+        const std::string gk =
+            cons + "|" + std::string{ c.canon_a } + "_" + std::string{ c.canon_b };
+        groups[gk].push_back(std::move(c));
+    }
+
+    if (groups.empty()) {
+        log->debug("WL-NlWl: no MW arcs with state-expressible coefficients");
+        return result;
+    }
+
+    // alpha(R, b): coefficient relating N_b to (NL_R, WL_<canonical>_state).
+    auto alpha_coeff = [](char R, char b) -> int {
+        if (R == b)  return 0;
+        return (R < b) ? -1 : +1;
+    };
+
+    // Per-group AR pivot pick (highest elevation), then form DD constraints.
+    // Coefficients are signed integers (∈ {-1, 0, +1}); H rows are 1, 2,
+    // 3, or 4 non-zero entries depending on (band_hi, band_lo, R) and
+    // whether the AR pivot's columns are BSSD-frozen.
+    struct WlConstraint {
+        std::vector<std::pair<int, double>> coeffs;  // (state_idx, coefficient)
+        int          dd_wl_int;
+        double       predicted_dd;
+        std::string  sat_i;
+        std::string  sat_ref;
+        std::string  sig_hi;
+        std::string  sig_lo;
+        std::vector<int> non_pivot_wl_indices;  // for slip-snap inflation
+    };
+    std::vector<WlConstraint> constraints;
+
+    for (const auto& [gk, arcs] : groups) {
+        if (arcs.size() < 2) continue;
+
+        size_t pivot_idx = 0;
+        for (size_t i = 1; i < arcs.size(); ++i) {
+            if (arcs[i].elevation > arcs[pivot_idx].elevation) pivot_idx = i;
+        }
+        const auto& pivot = arcs[pivot_idx];
+
+        for (size_t i = 0; i < arcs.size(); ++i) {
+            if (i == pivot_idx) continue;
+            const auto& a = arcs[i];
+
+            // ref_band must match between the two sats for the
+            // ref-relative state mapping to be consistent.  In a normal
+            // BSSD configuration all sats in a constellation share the
+            // ref_band; defensive skip otherwise.
+            const char R_i   = ref_band_per_sat.at(a.sat);
+            const char R_ref = ref_band_per_sat.at(pivot.sat);
+            if (R_i != R_ref) {
+                log->debug("WL-NlWl: skip {} vs {} on {}/{}: ref_band mismatch ({} vs {})",
+                           a.sat, pivot.sat, a.sig_hi, a.sig_lo, R_i, R_ref);
+                continue;
+            }
+            const char R = R_i;
+
+            const double a_hi = static_cast<double>(alpha_coeff(R, a.band_hi));
+            const double a_lo = static_cast<double>(alpha_coeff(R, a.band_lo));
+
+            auto getIdx = [&](const std::string& sat, char band) -> int {
+                if (band == R) return -1;       // alpha is 0 anyway
+                auto sit = wl_state_idx.find(sat);
+                if (sit == wl_state_idx.end()) return -1;
+                auto bit = sit->second.find(band);
+                return (bit == sit->second.end()) ? -1 : bit->second;
+            };
+            const int idx_hi_i   = getIdx(a.sat,    a.band_hi);
+            const int idx_lo_i   = getIdx(a.sat,    a.band_lo);
+            const int idx_hi_ref = getIdx(pivot.sat, a.band_hi);
+            const int idx_lo_ref = getIdx(pivot.sat, a.band_lo);
+
+            WlConstraint wc;
+            wc.dd_wl_int = a.mw_int - pivot.mw_int;
+            wc.sat_i  = a.sat;       wc.sat_ref = pivot.sat;
+            wc.sig_hi = a.sig_hi;    wc.sig_lo  = a.sig_lo;
+
+            // Coefficients per the derivation in the section header:
+            //   sat_i:    +alpha(hi) on W_hi_i,    -alpha(lo) on W_lo_i
+            //   sat_ref:  -alpha(hi) on W_hi_ref,  +alpha(lo) on W_lo_ref
+            if (a_hi != 0.0 && idx_hi_i   >= 0) {
+                wc.coeffs.push_back({ idx_hi_i,   +a_hi });
+                wc.non_pivot_wl_indices.push_back(idx_hi_i);
+            }
+            if (a_lo != 0.0 && idx_lo_i   >= 0) {
+                wc.coeffs.push_back({ idx_lo_i,   -a_lo });
+                wc.non_pivot_wl_indices.push_back(idx_lo_i);
+            }
+            if (a_hi != 0.0 && idx_hi_ref >= 0) {
+                wc.coeffs.push_back({ idx_hi_ref, -a_hi });
+            }
+            if (a_lo != 0.0 && idx_lo_ref >= 0) {
+                wc.coeffs.push_back({ idx_lo_ref, +a_lo });
+            }
+            if (wc.coeffs.empty()) continue;  // safety: shouldn't happen.
+
+            double pred = 0.0;
+            for (const auto& [idx, coeff] : wc.coeffs) pred += coeff * x(idx);
+            wc.predicted_dd = pred;
+
+            constraints.push_back(std::move(wc));
+        }
+    }
+
+    if (constraints.empty()) {
+        log->debug("WL-NlWl: no usable DD WL constraints");
+        return result;
+    }
+
+    // Cross-frequency DD WL parity (consistency) check.
+    //
+    // For triple-frequency satellites, the three independent WL DDs
+    // covering bands (a, b), (a, c), (b, c) must satisfy
+    //
+    //     dd_canon(a,b) − dd_canon(a,c) + dd_canon(b,c) = 0     (mod 0)
+    //
+    // by construction (telescoping cycle counts), where dd_canon(a,b) is
+    // the SD WL value with N_<min_band> − N_<max_band> sign convention.
+    // A non-zero parity at integer scale means at least one of the three
+    // MW arcs has the wrong integer for this sat-pair this epoch.  We
+    // can't tell which one without more information, so we conservatively
+    // reject all three.
+    //
+    // The MW dd_wl_int is stored with sign convention "N_hi_freq − N_lo_freq"
+    // (whichever band has higher carrier frequency).  Convert to canonical
+    // before checking parity by flipping sign when the higher-frequency
+    // band is NOT the lower-numbered band (e.g. Galileo E5a/E5b: E5b at
+    // band 7 is higher frequency than E5a at band 5).
+    {
+        struct PairKey {
+            std::string sat_i, sat_ref;
+            bool operator<(const PairKey& o) const {
+                return std::tie(sat_i, sat_ref) < std::tie(o.sat_i, o.sat_ref);
+            }
+        };
+        struct CanonEntry {
+            std::size_t constraint_idx;
+            int         canon_dd;        // N_<lower_band> − N_<higher_band>
+        };
+        // Per (sat_i, sat_ref): map of (canon_a, canon_b) → entry
+        std::map<PairKey, std::map<std::pair<char, char>, CanonEntry>> per_pair;
+        for (std::size_t k = 0; k < constraints.size(); ++k) {
+            const auto& c = constraints[k];
+            if (c.sig_hi.size() < 2 || c.sig_lo.size() < 2) continue;
+            const char b_hi = c.sig_hi[1];
+            const char b_lo = c.sig_lo[1];
+            const char a_min = std::min(b_hi, b_lo);
+            const char a_max = std::max(b_hi, b_lo);
+            // canon_dd uses min-band first; if hi-freq is the min band the
+            // sign matches MW directly, otherwise flip.
+            const int sign  = (b_hi == a_min) ? +1 : -1;
+            per_pair[{ c.sat_i, c.sat_ref }]
+                    [{ a_min, a_max }] = { k, sign * c.dd_wl_int };
+        }
+
+        std::set<std::size_t> rejected_idx;
+        int n_parity_rejections = 0;
+        for (const auto& [pk, band_map] : per_pair) {
+            // Need at least 3 entries to even attempt parity.
+            if (band_map.size() < 3) continue;
+
+            // Collect distinct bands present for this sat-pair.
+            std::set<char> bands;
+            for (const auto& [bp, _e] : band_map) {
+                bands.insert(bp.first);
+                bands.insert(bp.second);
+            }
+            std::vector<char> band_list(bands.begin(), bands.end());
+
+            // For each triplet (a < b < c), check if all three pairs
+            // (a,b), (a,c), (b,c) are present and verify parity.
+            for (std::size_t i = 0; i < band_list.size(); ++i)
+            for (std::size_t j = i + 1; j < band_list.size(); ++j)
+            for (std::size_t l = j + 1; l < band_list.size(); ++l) {
+                const char a = band_list[i];
+                const char b = band_list[j];
+                const char d = band_list[l];
+                auto it_ab = band_map.find({ a, b });
+                auto it_ad = band_map.find({ a, d });
+                auto it_bd = band_map.find({ b, d });
+                if (it_ab == band_map.end() || it_ad == band_map.end()
+                    || it_bd == band_map.end()) continue;
+                const int parity = it_ab->second.canon_dd
+                                 - it_ad->second.canon_dd
+                                 + it_bd->second.canon_dd;
+                if (parity != 0) {
+                    log->warn("WL-NlWl: parity mismatch for {}-{} bands {}/{}/{}: "
+                              "DD({},{})={} − DD({},{})={} + DD({},{})={} = {} cyc; "
+                              "rejecting all three constraints this epoch",
+                              pk.sat_i, pk.sat_ref, a, b, d,
+                              a, b, it_ab->second.canon_dd,
+                              a, d, it_ad->second.canon_dd,
+                              b, d, it_bd->second.canon_dd, parity);
+                    rejected_idx.insert(it_ab->second.constraint_idx);
+                    rejected_idx.insert(it_ad->second.constraint_idx);
+                    rejected_idx.insert(it_bd->second.constraint_idx);
+                    ++n_parity_rejections;
+                }
+            }
+        }
+
+        if (!rejected_idx.empty()) {
+            std::vector<WlConstraint> kept;
+            kept.reserve(constraints.size() - rejected_idx.size());
+            for (std::size_t k = 0; k < constraints.size(); ++k) {
+                if (!rejected_idx.count(k)) kept.push_back(std::move(constraints[k]));
+            }
+            constraints = std::move(kept);
+            log->info("WL-NlWl: dropped {} constraints across {} parity-mismatched triplets",
+                      rejected_idx.size(), n_parity_rejections);
+        }
+    }
+
+    if (constraints.empty()) {
+        log->debug("WL-NlWl: all DD WL constraints rejected by parity check");
+        return result;
+    }
+
+    // Slip-snap covariance inflation.  When a DD WL integer changes since
+    // the last invocation, MW has re-locked at a different value — almost
+    // certainly because of a slip on one of the two carriers.  Inflate
+    // every non-pivot WL state column that participates in the new
+    // constraint so the Kalman gain on the affected states is large
+    // enough to snap to the new integer in a single epoch.  The pivot
+    // columns are BSSD-frozen and are left alone.
+    constexpr double kAmbResetVarCycles = 144.0;  // (12 cyc)² — order of magnitude L1/L2 reset.
+    Eigen::MatrixXd P_local = P;
+    int n_reset = 0;
+    auto inflate_state = [&](int idx) {
+        if (idx < 0 || idx >= P_local.rows()) return;
+        P_local.row(idx).setZero();
+        P_local.col(idx).setZero();
+        P_local(idx, idx) = kAmbResetVarCycles;
+    };
+    for (const auto& c : constraints) {
+        const std::string key =
+            c.sat_i + "_" + c.sat_ref + "_" + c.sig_hi + "_" + c.sig_lo;
+        auto prev_it = previous_dd_wl_.find(key);
+        if (prev_it == previous_dd_wl_.end()) continue;
+        if (prev_it->second == c.dd_wl_int) continue;
+        log->warn("WL integer changed for DD {}-{} {}/{}: {} → {} cycles. "
+                  "Inflating non-pivot WL state columns to allow snap.",
+                  c.sat_i, c.sat_ref, c.sig_hi, c.sig_lo,
+                  prev_it->second, c.dd_wl_int);
+        for (int idx : c.non_pivot_wl_indices) inflate_state(idx);
+        ++n_reset;
+    }
+
+    // Build the pseudo-observation Kalman update.  Each row contains
+    // 1–4 non-zero coefficients depending on the (band_hi, band_lo, R)
+    // pattern and whether the AR-pivot's state columns are BSSD-frozen.
+    const int nx = static_cast<int>(x.size());
+    const int nv = static_cast<int>(constraints.size());
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nv, nx);
+    Eigen::VectorXd v = Eigen::VectorXd::Zero(nv);
+    for (int k = 0; k < nv; ++k) {
+        const auto& c = constraints[k];
+        for (const auto& [idx, coeff] : c.coeffs) {
+            if (idx >= 0 && idx < nx) H(k, idx) += coeff;
+        }
+        v(k) = static_cast<double>(c.dd_wl_int) - c.predicted_dd;
+    }
+
+    Eigen::MatrixXd R   = Eigen::MatrixXd::Identity(nv, nv) * config_.wl_only_pseudo_var;
+    KalmanFilter::josephPseudoUpdate(x, P_local, H, v, R,
+                                     result.fixed_state, result.fixed_covariance);
+
+    result.success   = true;
+    result.num_fixed = nv;
+    result.ratio     = std::numeric_limits<double>::infinity();
+
+    for (const auto& c : constraints) {
+        const std::string key =
+            c.sat_i + "_" + c.sat_ref + "_" + c.sig_hi + "_" + c.sig_lo;
+        previous_dd_wl_[key] = c.dd_wl_int;
+    }
+
+    // Bookkeeping for the log: count the constraints that exercise an
+    // EWL-style multi-state coefficient pattern (no band == ref_band on
+    // the non-pivot side, so both alpha(hi) and alpha(lo) are non-zero).
+    int n_ewl = 0;
+    for (const auto& c : constraints) {
+        if (c.non_pivot_wl_indices.size() >= 2) ++n_ewl;
+    }
+    log->info("WL-NlWl: applied {} DD WL constraints ({} EWL-style multi-state){}",
+              nv, n_ewl,
+              n_reset > 0 ? fmt::format(", {} with reset", n_reset) : "");
     return result;
 }
 
@@ -997,6 +2053,16 @@ void AmbiguityResolver::holdAmbiguities(StateManager& state_manager,
     auto log = log_manager_.getLogger("ambiguity_resolver");
 
     if (!resolution.success || config_.ar_mode != 3) return;
+
+    // NlWl basis: fix-and-hold requires LAMBDA-fixed integers from the
+    // (still future) NL search.  Today's MW-WL pseudo-observation already
+    // applies the WL constraint as part of resolve(); a separate hold pass
+    // would just re-apply the same information.  No-op until LAMBDA NL is
+    // wired through @c applyMwWlConstraintsNlWl_'s big sibling.
+    if (config_.state_ambiguity_basis == StateAmbiguityBasis::NlWl) {
+        log->debug("holdAmbiguities skipped: NlWl basis (LAMBDA NL fix not yet implemented)");
+        return;
+    }
 
     auto pairs = buildDdPairs(state_manager, {});
     if (pairs.empty()) return;
@@ -1035,15 +2101,7 @@ void AmbiguityResolver::holdAmbiguities(StateManager& state_manager,
 
     // Kalman update with hold variance
     Eigen::MatrixXd R = Eigen::MatrixXd::Identity(nv, nv) * config_.hold_variance;
-
-    Eigen::MatrixXd PHt = P * H.transpose();
-    Eigen::MatrixXd S = H * PHt + R;
-    Eigen::MatrixXd K = PHt * S.ldlt().solve(Eigen::MatrixXd::Identity(nv, nv));
-
-    x = x + K * v;
-    Eigen::MatrixXd IKH = Eigen::MatrixXd::Identity(nx, nx) - K * H;
-    P = IKH * P * IKH.transpose() + K * R * K.transpose();
-    P = 0.5 * (P + P.transpose());
+    KalmanFilter::josephPseudoUpdate(x, P, H, v, R, x, P);
 
     state_manager.setStateVector(x);
     state_manager.setCovariance(P);
@@ -1099,15 +2157,7 @@ void AmbiguityResolver::holdAmbiguitiesDd(StateManager& state_manager,
     }
 
     Eigen::MatrixXd R = Eigen::MatrixXd::Identity(nb, nb) * config_.hold_variance;
-
-    Eigen::MatrixXd PHt = P * H.transpose();
-    Eigen::MatrixXd S   = H * PHt + R;
-    Eigen::MatrixXd K   = PHt * S.ldlt().solve(Eigen::MatrixXd::Identity(nb, nb));
-
-    x = x + K * v;
-    Eigen::MatrixXd IKH = Eigen::MatrixXd::Identity(nx, nx) - K * H;
-    P = IKH * P * IKH.transpose() + K * R * K.transpose();
-    P = 0.5 * (P + P.transpose());
+    KalmanFilter::josephPseudoUpdate(x, P, H, v, R, x, P);
 
     state_manager.setStateVector(x);
     state_manager.setCovariance(P);

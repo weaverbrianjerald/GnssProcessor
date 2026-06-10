@@ -590,4 +590,40 @@ namespace GnssProcessor {
             xp_as, yp_as, ut1_utc);
     }
 
+    // =====================================================================
+    // Earth-shadow eclipse predicate
+    // =====================================================================
+
+    bool Planetary::isSatelliteEclipsing(const Eigen::Vector3d& sat_pos_ecef,
+                                          const Eigen::Vector3d& sun_pos_ecef,
+                                          double shadow_scale) {
+        // Defensive: a zero Sun vector means the cache hasn't been populated
+        // yet (first call before computeSunMoonPosition).  Return false so we
+        // don't spuriously eclipse every satellite at startup; the elevation
+        // mask remains the operative early filter.
+        const double sun_norm = sun_pos_ecef.norm();
+        if (sun_norm < 1e6 || !sat_pos_ecef.allFinite() || !sun_pos_ecef.allFinite()) {
+            return false;
+        }
+
+        // Direction to the Sun, viewed from Earth's centre.
+        const Eigen::Vector3d sun_dir = sun_pos_ecef / sun_norm;
+
+        // Signed distance of the satellite along the Earth->Sun axis.
+        //   s_along > 0 : satellite sits on the Sun-facing side.
+        //   s_along < 0 : satellite sits on the anti-Sun (shadow) side.
+        const double s_along = sat_pos_ecef.dot(sun_dir);
+        if (s_along >= 0.0) return false;  // sun-side; never eclipsed.
+
+        // Perpendicular distance from the satellite to the Earth->Sun axis.
+        // This is the in-shadow-cylinder test radius.
+        const Eigen::Vector3d perp = sat_pos_ecef - s_along * sun_dir;
+        const double s_perp = perp.norm();
+
+        const double shadow_radius =
+            Constants::EARTH_RADIUS * (shadow_scale > 0.0 ? shadow_scale : 1.0);
+        return s_perp < shadow_radius;
+    }
+
+
 }

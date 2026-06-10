@@ -106,6 +106,11 @@ namespace GnssProcessor {
                                const std::vector<AntennaData>& antennas) const;
 
     private:
+        // Test seam: lets the StochasticModel unit tests call the private
+        // computeElevation kernel directly (tests/test_stochastic_model.cpp),
+        // independent of the configured model-type dispatch.
+        friend struct StochasticModelTestAccess;
+
         /** @brief Compute variance under the Constant model (passthrough). */
         double computeConstant(double default_var) const;
 
@@ -141,9 +146,11 @@ namespace GnssProcessor {
          *       σ² = a² + b²·10^(-CN0/10)
          *     using the (a, b) pair appropriate to code or phase.
          *  4. Apply chip-rate per-band scaling on **code only**
-         *     (reusing @c SatBlockNoiseParams::freq_band_scale).
-         *     Phase σ² is band-flat — chip rate doesn't enter the
-         *     PLL noise formula.
+         *     (reusing @c SatBlockNoiseParams::code::freq_band_scale).
+         *     Phase σ² in this model is band-flat — chip rate doesn't
+         *     enter the PLL noise formula.  Per-band phase structure
+         *     lives in the SatelliteBlock model only, under
+         *     @c SatBlockNoiseParams::phase::freq_band_scale.
          *  5. Apply Wieser hybrid elevation amplification:
          *     σ²_final = σ² / sin²(el), uniformly to code and phase.
          */

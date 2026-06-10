@@ -9,6 +9,7 @@
  */
 
 #include "app/Application.hpp"
+#include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "math/Coordinates.hpp"
@@ -181,6 +182,26 @@ int Application::runBaseline() {
     ref_ppp_model_ = std::make_unique<PppModel>(
         config_, *product_parser_, log_manager_, *ref_parser, *ref_state_manager_);
 
+    // Optional GIM-backed higher-order ionosphere correction.  Baseline
+    // (DD) processing differences the higher-order term between rover
+    // and reference, so the practical benefit is tiny on short baselines —
+    // expose the wiring for consistency with PPP/PPP-RTK and for long
+    // baselines where I₂ stops cancelling cleanly.  The same gim_
+    // instance is shared by ref and per-rover PppModels (set on the
+    // rover model where it's constructed inside the rover loop).
+    if (config_.getModelCorrections().enable_higher_order_ionosphere && !gim_) {
+        gim_ = std::make_unique<GlobalIonosphereMap>(
+            config_.getProductPath("INX").string(), log_manager_);
+        if (!gim_->isLoaded()) {
+            log_manager_.getLogger("ionosphere")->warn(
+                "Baseline mode: higher_order_ionosphere is enabled but no "
+                "usable IONEX GIM was resolved — the correction will be skipped.");
+        }
+    }
+    if (gim_ && gim_->isLoaded()) {
+        ref_ppp_model_->setGim(gim_.get());
+    }
+
     MwSlipDetector mw_ref(config_, log_manager_);
     if (config_.getLoggingConfig().enable_mw_slip_trace) {
         mw_ref.enableTracing(log_dir_);
@@ -207,7 +228,7 @@ int Application::runBaseline() {
     // satellite leaves elevation at zero and the mask drops it — the
     // same outcome the legacy code path produced for missing orbits.
     // Populating both @c observed and @c raw_observed lets either
-    // MwSignalMode (Filter or All) work.  Observations from systems not
+    // @c MwFrequencyMode (Mirror or Dual/Triple/All) work.  Observations from systems not
     // in @c active_systems are dropped here so the MW detector never
     // sees them.  Stateless and shared across all rovers; per-rover /
     // per-reference Geometry handle and active_set are supplied at the
@@ -326,6 +347,9 @@ int Application::runBaseline() {
 
         ppp_model_ = std::make_unique<PppModel>(
             config_, *product_parser_, log_manager_, *rov_parser, *state_manager_);
+        if (gim_ && gim_->isLoaded()) {
+            ppp_model_->setGim(gim_.get());
+        }
 
         // MeasurementModel stores non-owning references to state_manager_
         // and ppp_model_ — must be constructed AFTER both unique_ptrs
@@ -340,14 +364,27 @@ int Application::runBaseline() {
         // its DD ambiguity state set is independent of other rovers'.
         if (config_.getArMode() > 0) {
             AmbiguityResolverConfig ar_config;
-            ar_config.ar_mode = config_.getArMode();
-            ar_config.ratio_threshold = config_.getArRatioThreshold();
-            ar_config.elevation_mask_ar = config_.getArElevationMask();
-            ar_config.hold_variance = config_.getArHoldVariance();
+            ar_config.ar_mode              = config_.getArMode();
+            ar_config.ratio_threshold      = config_.getArRatioThreshold();
+            ar_config.elevation_mask_ar    = config_.getArElevationMask();
+            ar_config.hold_variance        = config_.getArHoldVariance();
+            ar_config.min_epochs           = config_.getArMinEpochs();
+            ar_config.max_position_sigma_m = config_.getArMaxPositionSigma();
+            ar_config.ratio_upper_bound    = config_.getArRatioUpperBound();
+            ar_config.wl_only              = config_.getArWlOnly();
+            ar_config.wl_only_pseudo_var   = config_.getArWlOnlyPseudoVar();
+            ar_config.wl_max_frac          = config_.getArWlMaxFrac();
+            ar_config.min_success_rate     = config_.getArMinSuccessRate();
+            ar_config.nl_max_per_pair_frac = config_.getArNlMaxPerPairFrac();
+            ar_config.ar_active_systems    = config_.getArActiveSystems();
+            ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
             ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
-            log->info("Rover '{}' AR enabled: mode={}, ratio_thresh={:.1f}, elev_mask={:.1f} deg, hold_var={:.4f}",
-                rover_name, ar_config.ar_mode, ar_config.ratio_threshold,
-                ar_config.elevation_mask_ar, ar_config.hold_variance);
+            log->info("Rover '{}' AR enabled: mode={}, wl_only={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+                      "hold_var={:.4f}, min_epochs={}, max_pos_σ={:.3f} m",
+                rover_name, ar_config.ar_mode, ar_config.wl_only ? "on" : "off",
+                ar_config.ratio_threshold, ar_config.ratio_upper_bound,
+                ar_config.elevation_mask_ar, ar_config.hold_variance,
+                ar_config.min_epochs, ar_config.max_position_sigma_m);
         }
         else {
             ambiguity_resolver_.reset();
@@ -496,6 +533,19 @@ int Application::runBaseline() {
 
                 log->info("Baseline: hard-gap reset complete — dropped {} DD ambiguity state(s)",
                     to_drop.size());
+
+                // Layer on the mode-aware position/covariance policy.  The
+                // baseline-specific reset above handled DD-keyed state
+                // (ambiguities, DD pivots, MW arcs); handleGap covers what
+                // it doesn't touch: position cross-covariances and (for
+                // kinematic-no-IMU) position reseeding.  Baseline mode has
+                // no clock / iono / sat-bias / BSSD-pivot state, so the
+                // corresponding helpers inside handleGap are no-ops by
+                // construction.  No WLS is run in baseline mode, so we
+                // pass an empty WlsResult — handleGap warns and leaves
+                // the position VALUE alone, only inflating the variance.
+                const bool long_gap = dt > config_.getLongGapTolerance();
+                handleGap(dt, long_gap, /*epoch_prefix=*/"", WlsResult{});
             }
 
             // --- MW pre-filter slip check on both stations -----------------
@@ -605,8 +655,11 @@ int Application::runBaseline() {
                 log->flush();
             }
 
-            const int max_passes = static_cast<int>(
-                std::max<size_t>(10, state_manager_->getAmbiguities().size() + 3));
+            // Pass budget — shared with the PPP and real-time drivers
+            // (computeRebuildPassBudget) so the sizing can't drift; the rover's
+            // modeled obs supply the measurement count for the DD baseline.
+            const int max_passes =
+                computeRebuildPassBudget(*state_manager_, config_, rov_modeled);
 
             // Constellation lookup used by the post-Applied stats loop.
             auto constellationOfSatPairId = [](const std::string& sid) -> std::string {

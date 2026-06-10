@@ -64,6 +64,19 @@ namespace GnssProcessor {
         std::string marker_number; /**< Marker number (optional station number) */
         double antenna_azimuth_deg{ 0.0 };   /**< Antenna azimuth orientation in degrees (if available) */
         double antenna_elevation_deg{ 0.0 }; /**< Antenna elevation orientation in degrees (if available) */
+
+        /** Per-(system, observation-code) phase shift in cycles, parsed from
+         *  RINEX 3 "SYS / PHASE SHIFT" header records.  The receiver applies
+         *  these shifts to align inter-tracking-mode phase observations to
+         *  a common reference convention.  The parser subtracts the recorded
+         *  shift from the incoming phase value during observation parsing,
+         *  yielding an unshifted phase consistent across receivers (and
+         *  consistent with the convention BIA products are calibrated for).
+         *  Outer key: System (GPS, Galileo, ...).  Inner key: full obs code
+         *  (e.g. "L2W", "L8X").  Value: shift in cycles.  Records with an
+         *  empty satellite list apply system-wide; per-satellite overrides
+         *  are not currently supported (rare in practice). */
+        std::map<System, std::map<std::string, double>> phase_shifts;
     };
 
     /**
@@ -118,6 +131,20 @@ namespace GnssProcessor {
 
         /** @brief Get receiver antenna type string from header. */
         std::string getReceiverAntennaType() const { return header_.antenna_type; }
+
+        /**
+         * @brief Override the receiver antenna type.
+         *
+         * For live streams (SBF/RTCM) that carry no RINEX `ANT # / TYPE`
+         * record, the header antenna type is empty and no receiver ATX entry
+         * can be matched.  This setter seeds the field from configuration so
+         * receiver PCO/PCV (and the `require_atx_coverage` gate) can resolve.
+         * The post-processing path never calls this — the parsed RINEX header
+         * always wins.
+         *
+         * @param type Antenna type string, e.g. "LEIAR25         NONE".
+         */
+        void setReceiverAntennaType(const std::string& type) { header_.antenna_type = type; }
 
         /** @brief Get antenna H/E/N offsets as Eigen vector (meters). */
         Eigen::Vector3d getAntennaDeltaHen() const {

@@ -8,7 +8,7 @@ plot_ambiguities(fname);
 %%
 
 % plot_ambiguities.m
-% Read and visualize ambiguity_trace.csv (UTC time axis)
+% Read and visualize ambiguity_trace.csv (GPS time axis)
 % Expected CSV header: week,tow_s,key,value_m,std_m
 %
 % Usage:
@@ -69,12 +69,11 @@ T.system(startsWith(satStr, 'S')) = categorical("SBAS");
 
 T.signal = categorical(sigCol);
 
-%% --- Convert GPS week + TOW to datetime (UTC axis like residual script) ---
-% GPS epoch 1980-01-06
-gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+%% --- Convert GPS week + TOW to a datetime on the GPS time scale ---
+% Trace files carry pure GPS time so timestamps match RINEX epochs.
+gpsEpoch = datetime(1980,1,6,0,0,0);
 gpsSeconds = double(T.week) * 7 * 86400 + double(T.tow_s);
-% Note: residual example used gpsEpoch + seconds(gpsSeconds)
-T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % Add 18 second offset between GPS and UTC Time
+T.utc = gpsEpoch + seconds(gpsSeconds);
 
 %% --- Prepare plotting settings ---
 uniqueSats = categories(T.satellite);
@@ -153,7 +152,7 @@ for col = 1:nSys
         set(lh, 'Visible', 'off');
     end
 
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('Ambiguity (m)');
     title(sprintf('%s', sysName));
     % Show legend outside
@@ -202,7 +201,7 @@ if nKeys > 1 && nKeys <= maxKeysSingleFig
         set(he, 'Marker', 'none');
         datetick('x','keeplimits');
         title(thisKey, 'Interpreter','none');
-        xlabel('UTC Time'); ylabel('Ambiguity (m)');
+        xlabel('GPS Time'); ylabel('Ambiguity (m)');
         grid on;
         hold off;
     end

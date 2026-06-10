@@ -19,13 +19,17 @@
 #include "common/PppTypes.hpp"
 #include "model/Planetary.hpp"
 #include "atmosphere/Ionosphere.hpp"
+#include "atmosphere/GlobalIonosphereMap.hpp"
+#include "atmosphere/HigherOrderIonosphere.hpp"
 #include "model/Antenna.hpp"
 #include "model/ModelGeometry.hpp"
 #include "model/StochasticModel.hpp"
 #include <Eigen/Dense>
+#include <filesystem>
 #include <optional>
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <deque>
 
@@ -60,6 +64,7 @@ namespace GnssProcessor {
         double solid_tide        = 0.0;
         double mf_w              = 0.0;
         double mf_d              = 0.0;
+        bool   broadcast_only    = false;   ///< Clock is broadcast-grade (metre level) → code-only (phase dropped).
     };
 
     // -----------------------------------------------------------------------
@@ -114,9 +119,19 @@ namespace GnssProcessor {
          * @param observations Vector of RINEX observation records for the epoch.
          * @param state Current PPP state used for geometry and corrections (will not be modified).
          * @param modeled_obs Output vector filled with modeled observations (one entry per processed observable).
+         * @param drop_reasons Optional per-satellite drop-reason map.  When
+         *        non-null, every satellite that fails to make it into
+         *        @p modeled_obs gets an entry naming the reason
+         *        (BelowMask / NoProduct / NoModel) so callers (notably the
+         *        satellite-status trace logger) can surface actionable
+         *        failure modes instead of lumping every drop into a single
+         *        bucket.  Pass @c nullptr if drop tracking isn't needed.
          * @return true if computation succeeded for at least one observation; false on catastrophic failure.
          */
-        bool computeModels(const std::vector<RinexObservation>& observations, PppState& state, std::vector<PppObservation>& modeled_obs);
+        bool computeModels(const std::vector<RinexObservation>& observations,
+                           PppState& state,
+                           std::vector<PppObservation>& modeled_obs,
+                           std::map<std::string, DropReason>* drop_reasons = nullptr);
 
         /**
          * @brief Compute ionospheric delay for a single observation path.
@@ -182,26 +197,23 @@ namespace GnssProcessor {
 
         /**
          * @brief Get mutable access to the internal geometry helper.
-         * @return Reference to the Geometry instance, allowing modifications such as resetting phase wind-up state.
+         * @return Reference to the Geometry instance.
          */
         Model::Geometry& getGeometry() { return geometry_; }
 
         /**
-         * @brief Reset phase wind-up state for a specific satellite.
-         * @param satellite Satellite identifier string (e.g. "G01").
+         * @brief Enable the phase wind-up diagnostic CSV trace.
          *
-         * Convenience method that delegates to the internal Geometry/GnssCorrections.
-         * Call this when a cycle slip or ambiguity reset is detected.
-         */
-        void resetPhaseWindUp(const std::string& satellite) { antenna_.resetPhaseWindUp(satellite); }
-
-        /**
-         * @brief Reset phase wind-up state for all satellites.
+         * Convenience method that delegates to the internal Antenna /
+         * GnssCorrections instance.  Call once at startup when
+         * logging.enable_windup_trace is set.
          *
-         * Convenience method that delegates to the internal Geometry/GnssCorrections.
-         * Call this on a complete filter reset.
+         * @param log_dir Directory where windup_trace.csv will be created.
+         * @return True if the trace file was opened successfully.
          */
-        void resetAllPhaseWindUp() { antenna_.resetAllPhaseWindUp(); }
+        bool enableWindUpTracing(const std::filesystem::path& log_dir) {
+            return antenna_.enableWindUpTracing(log_dir);
+        }
 
         /**
          * @brief Check whether the BIA product has an entry for a satellite+signal pair.
@@ -236,12 +248,90 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Check whether both satellite and receiver ATX entries
+         *        are fully populated for a (sat, signal) pair.
+         *
+         * Forwards to @c Antenna::hasFullAtxCoverage.  Used by the AR
+         * pipeline to gate WL/NL constraints on signals lacking strict
+         * ATX coverage when the user enables
+         * @c require_atx_coverage_for_ar.
+         *
+         * @param satellite Satellite identifier (e.g. "G05").
+         * @param signal    RINEX-3 observation code (e.g. "L5Q").
+         * @param system    GNSS system enum.
+         * @return True iff both sat and rx have finite PCO and PCV.
+         */
+        bool hasFullAtxCoverage(const std::string& satellite,
+                                const std::string& signal,
+                                System system) const {
+            return antenna_.hasFullAtxCoverage(satellite, signal, system);
+        }
+
+        /**
+         * @brief Check whether the ATX correction for a (sat, signal) is
+         *        being computed via the frequency-fallback substitution
+         *        chain rather than from an exact entry on both sides.
+         *
+         * Forwards to @c Antenna::wasAtxSubstituted.  Used by the AR-side
+         * gate (@c restrict_ar_for_substituted_atx) and the per-ambiguity
+         * process noise loosening logic (@c loosen_amb_q_for_substituted_atx).
+         */
+        bool wasAtxSubstituted(const std::string& satellite,
+                                const std::string& signal,
+                                System system) const {
+            return antenna_.wasAtxSubstituted(satellite, signal, system);
+        }
+
+        /**
          * @brief Access the parsed ATX antenna entries.
          * @return Const reference to the antenna data vector.
          */
         const std::vector<AntennaData>& getAntennas() const {
             return antenna_.getAntennas();
         }
+
+        /**
+         * @brief Inject the GIM used for the higher-order ionosphere correction.
+         *
+         * The pointer is held non-owning; the @c GlobalIonosphereMap
+         * lifetime is managed by @c Application (post-processing) or by
+         * the baseline / real-time drivers.  Pass @c nullptr to disable
+         * the correction (returns 0 m from
+         * @c computeHigherOrderIonoCorrection regardless of the config
+         * toggle).
+         *
+         * Safe to call multiple times.  Idempotent.  Has no effect unless
+         * @c model_corrections.enable_higher_order_ionosphere is true.
+         *
+         * @param gim Pointer to a loaded GIM, or @c nullptr.
+         */
+        void setGim(const GlobalIonosphereMap* gim) { gim_ = gim; }
+
+        /**
+         * @brief Compute the per-signal I₂ + I₃ correction (m) to add
+         *        to the modeled observable.
+         *
+         * Returns 0 in any of:
+         *   - @c model_corrections.enable_higher_order_ionosphere is false;
+         *   - no GIM has been injected (or the GIM failed to load);
+         *   - the GIM has no usable VTEC for this line of sight (below
+         *     horizon, sentinel cell, etc.).
+         *
+         * @param time         Epoch time of the observation.
+         * @param rx_pos       Receiver ECEF position (m).
+         * @param sat_pos      Satellite ECEF position (m).
+         * @param frequency_hz Carrier frequency of the signal (Hz).
+         * @param meas_type    @c 'C' for code (positive group delay) or
+         *                     @c 'L' for phase (negative, scaled by 1/2
+         *                     for I₂ and 1/3 for I₃).
+         * @return Signed correction in metres.  Add directly to the
+         *         per-signal modeled value.
+         */
+        double computeHigherOrderIonoCorrection(const GnssTime& time,
+                                                const Eigen::Vector3d& rx_pos,
+                                                const Eigen::Vector3d& sat_pos,
+                                                double frequency_hz,
+                                                char meas_type) const;
 
         /**
          * @brief Default destructor.
@@ -257,6 +347,8 @@ namespace GnssProcessor {
 
         PppUtils ppp_utils_;                   /**< Utility helpers for PPP math and constants. */
         std::optional<Ionosphere> ionosphere_; /**< Klobuchar fallback model.  Constructed only when @c model_corrections.enable_klobuchar_ionosphere is true; std::nullopt otherwise.  Constructing it pulls in another @c Model::Geometry plus a Klobuchar coefficient parse, both of which are wasted in IF / DD / PPP-RTK-uncombined where Klobuchar is never queried. */
+        const GlobalIonosphereMap* gim_{ nullptr }; /**< Non-owning pointer to the GIM that supplies absolute STEC and IPP geometry for the higher-order correction.  Injected via @c setGim() by the Application driver once both the PppModel and the GIM exist.  Nullptr when higher-order ionosphere is disabled or no IONEX product resolved — in which case @c computeHigherOrderIonoCorrection returns 0 m and the modeled values reduce to the first-order-only path. */
+        HigherOrderIonosphere higher_order_iono_; /**< Stateless physics helper for the second- and third-order ionospheric delay formulae.  Always constructed; @c computeHigherOrderIonoCorrection consults @c gim_ and the config toggle to decide whether to evaluate. */
         Model::Geometry geometry_;             /**< Geometry and satellite interpolation helpers. */
         Antenna antenna_;                      /**< Antenna model for receiver and satellite corrections. */
         GnssCorrections gnss_corrections_;     /**< Container for clock/orbit/bias/erp corrections. */
@@ -264,6 +356,46 @@ namespace GnssProcessor {
 
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priority lists (by system). */
         std::vector<double> klobuchar_coeffs_;  /**< Klobuchar coefficients (if available) */
+
+        /// Satellites already logged as phase-gated (broadcast-grade clock →
+        /// code-only).  Without this the info line fires once per epoch per
+        /// satellite for the whole run; we log once per satellite per session.
+        mutable std::set<std::string> sats_phase_gated_;
+
+        /**
+         * @brief Per-constellation canonical signal cache.
+         *
+         * Keyed by constellation name ("GPS", "Galileo", ...) →
+         * (band name, observation-type char {'C','L'}) → canonical signal
+         * code (e.g. "C1W", "L5Q").  Populated by @c decideConstellationCanonicals
+         * on the first epoch that the constellation has observations, then
+         * locked for the rest of the run.  Used by @c buildFrequencyBandMap to
+         * keep the canonical pick stable across epochs — so a brief dropout
+         * of the priority canonical at low elevation doesn't switch the KF to
+         * a different tracking attribute (e.g. L1W → L1C) and leak an
+         * inter-channel-bias-contaminated ambiguity state.
+         */
+        std::map<std::string,
+                 std::map<std::pair<std::string, char>, std::string>>
+                constellation_canonical_;
+        std::set<std::string> constellation_canonical_decided_; /**< Constellations whose canonical set is locked. */
+
+        /**
+         * @brief Decide the per-constellation canonical signal set from
+         *        the first epoch's observations.
+         *
+         * For each constellation present in @p observations that hasn't
+         * been decided yet, counts how many satellites observe each
+         * priority-list signal at this epoch.  For each (band, obs_type)
+         * the signal with the highest observation count wins; ties are
+         * broken by priority order in @c signal_priorities_.  The
+         * result is cached in @c constellation_canonical_ and the
+         * constellation is marked decided so subsequent epochs are
+         * no-ops.
+         *
+         * @param observations Observations for the current epoch.
+         */
+        void decideConstellationCanonicals(const std::vector<RinexObservation>& observations);
 
         // -------------------------------------------------------------------
         // Signal selection helpers (decomposed from selectSignals)
@@ -351,6 +483,39 @@ namespace GnssProcessor {
             const std::string& signal_type) const;
 
         /**
+         * @brief Additive phase-variance term (m²) for a (sat, signal)
+         *        whose receiver ATX correction was frequency-fallback-
+         *        substituted.
+         *
+         * Returns 0 for code rows ('C…'), for non-substituted signals,
+         * or when the feature is disabled
+         * (@c model_corrections.atx_substitution_phase_std_m ≤ 0, the
+         * default).  Otherwise returns @f$(\sigma_\mathrm{atx}/
+         * \sin\,\mathrm{el})^2@f$ — a variance addend (independent error
+         * sources add in variance) summed onto the stochastic-model
+         * phase variance *before* any iono-free combination, so the IF
+         * coefficients propagate it automatically.
+         *
+         * Targets the azimuthally-symmetric, elevation-dependent
+         * receiver-PCV residual left by a substituted antenna pattern:
+         * it is common across satellites and aliases into ZWD / station
+         * height, and is *not* the per-satellite slowly-varying bias the
+         * @c ambiguity_q_substituted_atx random walk already absorbs.
+         * See that field's and @c atx_substitution_phase_std_m's
+         * documentation for the full code-vs-ambiguity rationale.
+         *
+         * @param signal        RINEX-3 code (e.g. "L8X"); 'C…' rows return 0.
+         * @param satellite     Satellite identifier (e.g. "E18").
+         * @param system        GNSS system enum.
+         * @param elevation_deg Satellite elevation (degrees).
+         * @return Additive phase variance (m²), or 0 when not applicable.
+         */
+        double phaseAtxSubstitutionVarInflation(const std::string& signal,
+            const std::string& satellite,
+            System system,
+            double elevation_deg) const;
+
+        /**
          * @brief Compute pole-tide LOS projection shared by iono-free and uncombined paths.
          * @param rx_pos Receiver ECEF position.
          * @param time   Epoch time.
@@ -393,5 +558,21 @@ namespace GnssProcessor {
             const SatGeometry& geom);
 
     };
+
+    /**
+     * @brief RINEX band digits activated by a @c FrequencyMode for a constellation.
+     *
+     * Free function exposed for use by signal-selection logic outside of
+     * @c PppModel (most prominently @c MwSlipDetector when filtering raw
+     * observations by frequency band).  Returns the set of digits that
+     * appear in the second character of RINEX-3 observation codes — e.g.
+     * GPS Dual → {'1', '2'}; Galileo Dual → {'1', '5'} (E1 + E5a); GPS
+     * Triple → {'1', '2', '5'}.
+     *
+     * @param constellation Constellation name ("GPS", "Galileo", ...).
+     * @param mode          Frequency mode (Dual / Triple / All).
+     * @return Set of RINEX band digits; empty if the constellation is unknown.
+     */
+    std::set<char> getAllowedBandDigits(const std::string& constellation, FrequencyMode mode);
 
 } // namespace GnssProcessor

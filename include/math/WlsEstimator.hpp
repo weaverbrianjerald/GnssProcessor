@@ -83,6 +83,11 @@ public:
     WlsResult estimate(const GnssTime& epoch_time, const std::vector<PppObservation>& observations);
 
 private:
+    // Test seam: lets the WlsEstimator unit tests (tests/test_geometry.cpp)
+    // construct the private WlsObs and call the private static predictObs in
+    // isolation.  No public-API change; defined only in the test binary.
+    friend struct WlsEstimatorTestAccess;
+
     const GnssConfig& config_;      /**< Reference to configuration parameters. */
     StateManager& state_manager_;   /**< Reference to the StateManager for state queries/updates. */
     LogManager& log_manager_;       /**< Reference to LogManager for logging. */

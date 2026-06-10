@@ -11,8 +11,9 @@ fname = 'C:\GnssProcessor\build\x64-Release\logs\wls_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\wls_trace.csv';
 T = readtable(fname);
 
-%% --- Convert GPS week + TOW to UTC datetime ---
-gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+%% --- Convert GPS week + TOW to a datetime on the GPS time scale ---
+% Trace files carry pure GPS time so timestamps match RINEX epochs.
+gpsEpoch = datetime(1980,1,6,0,0,0);
 gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 T.utc = gpsEpoch + seconds(gpsSeconds);
 
@@ -78,7 +79,7 @@ grid on;
 subplot(3,1,3); hold on;
 plot(t, z, 'b', 'LineWidth', 1.2);
 ylabel('Z (m)');
-xlabel('UTC Time');
+xlabel('GPS Time');
 grid on;
 
 %% ============================================================
@@ -101,7 +102,7 @@ grid on;
 subplot(3,1,3); hold on;
 plot(t, U, 'm', 'LineWidth', 1.2);
 ylabel('Up (m)');
-xlabel('UTC Time');
+xlabel('GPS Time');
 grid on;
 
 %% ============================================================
@@ -110,7 +111,7 @@ grid on;
 
 figure('Name','WLS Position Error Magnitude','Color','w'); hold on;
 plot(t, pos_err, 'k', 'LineWidth', 1.4);
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Error (m)');
 title('3D Position Error Magnitude (ENU)');
 grid on;
@@ -123,7 +124,7 @@ figure('Name','Clock Estimates','Color','w'); hold on;
 plot(t, wls_clk, 'b', 'LineWidth', 1.2, 'DisplayName','WLS Clock');
 plot(t, kf_clk,  'g', 'LineWidth', 1.2, 'DisplayName','KF Clock');
 plot(t, dclk,    'r', 'LineWidth', 1.2, 'DisplayName','Δ Clock');
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Clock (m)');
 title('Clock Estimates (WLS, KF, Δ)');
 legend('Location','best');
@@ -135,7 +136,7 @@ grid on;
 
 figure('Name','Tropo Estimate','Color','w'); hold on;
 plot(t, trop, 'm', 'LineWidth', 1.2);
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Tropo (m)');
 title('WLS Troposphere Estimate');
 grid on;
@@ -147,7 +148,7 @@ grid on;
 figure('Name','Residual Metrics','Color','w'); hold on;
 plot(t, rms_m, 'b', 'LineWidth', 1.2, 'DisplayName','RMS (m)');
 plot(t, max_abs, 'r', 'LineWidth', 1.2, 'DisplayName','Max Abs (m)');
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Residual (m)');
 title('WLS Residual Metrics');
 legend('Location','best');
@@ -168,5 +169,5 @@ grid on;
 subplot(2,1,2); hold on;
 stem(t, seed, 'k', 'filled');
 ylabel('Seed');
-xlabel('UTC Time');
+xlabel('GPS Time');
 grid on;

@@ -54,6 +54,11 @@ public:
     /// True while the background thread is running and the connection is live.
     bool isConnected() const { return connected_.load(); }
 
+    /// True from start() until stop() — the client's intent-to-run, independent
+    /// of momentary connection state.  Used by the realtime poll loop so a
+    /// not-yet-established or transiently-dropped stream stays "active".
+    bool isRunning() const { return running_.load(); }
+
     /**
      * @brief Read up to @p max_bytes from the internal buffer.
      *
@@ -64,6 +69,16 @@ public:
      * @return Number of bytes placed in @p out (0 if stopped with no data).
      */
     size_t read(std::vector<uint8_t>& out, size_t max_bytes);
+
+    /**
+     * @brief Non-blocking read with a millisecond timeout.
+     *
+     * Used by the multi-stream realtime loop, where blocking on one
+     * stream would starve the other.  Waits up to @p timeout_ms for
+     * data to arrive; returns 0 on timeout, on stop, or when no data
+     * is buffered after the wait.
+     */
+    size_t tryRead(std::vector<uint8_t>& out, size_t max_bytes, int timeout_ms);
 
 private:
     /// libcurl write-callback feeds bytes into the ring buffer.
@@ -78,6 +93,7 @@ private:
     std::thread           thread_;
     std::atomic<bool>     running_{ false };
     std::atomic<bool>     connected_{ false };
+    std::atomic<size_t>   total_rx_bytes_{ 0 };  ///< Cumulative bytes received (stall diagnostics).
 
     // Thread-safe byte buffer.
     std::mutex              buf_mutex_;

@@ -5,7 +5,6 @@
  */
 
 #include "filter/PivotManager.hpp"
-#include "slip/MwSlipDetector.hpp"
 #include <cmath>
 
 namespace GnssProcessor {
@@ -24,6 +23,7 @@ PivotManager::PivotManager(const GnssConfig& config, LogManager& log_manager)
 
 void PivotManager::buildEpochMaps(
     const std::vector<PppObservation>& observations,
+    const StateManager& state_manager,
     std::map<std::string, SatInfo>& sat_info,
     std::map<std::string, ConstellationInfo>& cons_info) {
 
@@ -39,34 +39,57 @@ void PivotManager::buildEpochMaps(
 
         const std::string cons = PppUtils::getSystemString(obs.satellite);
 
-        double rate = 0.0;
-        auto prev_it = prev_elevation_.find(obs.satellite);
-        if (prev_it != prev_elevation_.end())
-            rate = obs.elevation - prev_it->second;
-
         // Count distinct phase signal types for this satellite.
         size_t n_phase = 0;
         for (const auto& [sig, val] : obs.observed)
             if (!sig.empty() && sig[0] == 'L')
                 ++n_phase;
 
-        sat_info[obs.satellite] = { cons, obs.elevation, rate, n_phase };
+        SatInfo info{ cons, obs.elevation, n_phase, -1.0 };
+
+        // Worst-case float-ambiguity variance across this sat's phase signals.
+        // The handover's T·P·T' re-reference inflates every other satellite's
+        // same-signal SD ambiguity by P(pivot_amb, pivot_amb), so a single
+        // poorly-converged signal on the candidate pivot hurts the entire
+        // SD frame — using the worst per-signal variance is the right pivot-
+        // fitness signal.
+        for (const auto& [sig, val] : obs.observed) {
+            if (sig.empty() || sig[0] != 'L') continue;
+            const int aidx = state_manager.getAmbiguityIndex(obs.satellite + "_" + sig);
+            if (aidx < 0) continue;
+            const double v = state_manager.getStateVariance(aidx);
+            if (v > info.max_amb_variance) info.max_amb_variance = v;
+        }
+
+        sat_info[obs.satellite] = info;
 
         auto& ci = cons_info[cons];
         if (n_phase > ci.max_phase_sigs)
             ci.max_phase_sigs = n_phase;
     }
 
-    // Second pass: score candidates now that max_phase_sigs is known.
+    // Second pass: pick the best candidate per constellation using
+    // lexicographic (coverage, score) ordering.  Full signal coverage is
+    // a hard tier — any full-coverage candidate beats any partial-coverage
+    // candidate regardless of score, because under BSSD the pivot must
+    // track every signal a non-pivot tracks (else the non-pivot is
+    // dropped as an orphan).  Within a coverage tier, @c scorePivotCandidate
+    // breaks ties on float-ambiguity convergence and elevation.  Fallback
+    // to highest-available coverage is implicit: when no satellite has
+    // full coverage the comparator naturally selects max-coverage.
     for (auto& [cons_name, ci] : cons_info) {
         for (const auto& [sat, si] : sat_info) {
             if (si.constellation != cons_name) continue;
 
-            const double score = scorePivotCandidate(sat, si, ci.max_phase_sigs);
+            const double score = scorePivotCandidate(sat, si);
 
-            if (score > ci.best_score) {
-                ci.best_sat   = sat;
-                ci.best_score = score;
+            const bool higher_cov  = si.phase_sig_count > ci.best_coverage;
+            const bool same_cov_higher_score =
+                (si.phase_sig_count == ci.best_coverage) && (score > ci.best_score);
+            if (ci.best_sat.empty() || higher_cov || same_cov_higher_score) {
+                ci.best_sat      = sat;
+                ci.best_score    = score;
+                ci.best_coverage = si.phase_sig_count;
             }
             if (si.elevation > ci.highest_el) {
                 ci.highest_sat = sat;
@@ -74,11 +97,6 @@ void PivotManager::buildEpochMaps(
             }
         }
     }
-
-    // Update elevation history for next epoch.
-    prev_elevation_.clear();
-    for (const auto& [sat, si] : sat_info)
-        prev_elevation_[sat] = si.elevation;
 }
 
 std::set<std::string> PivotManager::collectPhaseSignals(
@@ -97,51 +115,39 @@ std::set<std::string> PivotManager::collectPhaseSignals(
 // ===========================================================================
 
 double PivotManager::scorePivotCandidate(
-    const std::string& sat, const SatInfo& si, size_t max_phase_sigs) const {
+    const std::string& /*sat*/, const SatInfo& si) const {
 
     double score = 0.0;
 
-    // Elevation component: normalized 0..1.
+    // State-convergence penalty.  On handover the new pivot's variance is
+    // added to every same-group SD state via P'(i,i) = P(i,i) + P(piv,piv)
+    // − 2·P(i,piv).  Penalising √(worst ambiguity variance) keeps the
+    // selector away from pivots whose own state is still settling.
+    //
+    // Form: smooth penalty saturating at -1.0 (one metre of equivalent
+    // 1-sigma ambiguity uncertainty); flat -1.0 sentinel for "no state
+    // yet" (the candidate would inherit a fresh initial-std state if
+    // elected, which is worse than any established candidate).  On the
+    // first BSSD epoch every candidate within a coverage tier has no
+    // state, so the penalty is constant across the tier and ordering
+    // falls through to elevation — no special initial-election path
+    // needed.
+    if (si.max_amb_variance < 0.0) {
+        score -= 1.0;
+    } else {
+        score -= std::min(1.0, std::sqrt(std::max(0.0, si.max_amb_variance)));
+    }
+
+    // Elevation magnitude (0..1).  Within a tier (same coverage, similar
+    // convergence) the higher-elevation candidate wins.
     score += si.elevation / 90.0;
 
-    // Ascending preference: satellites going up will stay visible longer
-    // and move toward lower-noise zenith geometry.
-    if (si.elev_rate > 0.0 && si.elevation > 20.0)
-        score += 0.3;
-
-    // Low-elevation penalty: satellites below 20 deg are unreliable as
-    // pivots due to troposphere/multipath and imminent setting risk.
+    // Low-elevation guardrail: below 20° the troposphere and multipath
+    // residuals dominate the formal stochastic model, so we keep this
+    // hard penalty regardless of how well-converged the float state
+    // looks numerically.
     if (si.elevation < 20.0)
         score -= 0.5;
-
-    // Signal coverage bonus: prefer satellites that track more phase
-    // signals.  A pivot with fewer signals than the constellation's
-    // maximum leaves orphaned SD ambiguities that cannot be properly
-    // re-referenced, forcing a costly re-seed of those states.
-    if (max_phase_sigs > 0 && si.phase_sig_count > 0) {
-        const double coverage = static_cast<double>(si.phase_sig_count)
-                              / static_cast<double>(max_phase_sigs);
-        score += 0.6 * coverage;
-    }
-
-    // MW arc quality (when available).
-    if (mw_detector_) {
-        const auto mq = mw_detector_->getSatelliteMwQuality(sat);
-        if (mq.num_pairs > 0) {
-            // Mature arc: the slip detector has had enough epochs to
-            // confirm no slip occurred � the arc is clean.
-            if (mq.min_arc_length >= 5)
-                score += 0.5;
-
-            // Low MW noise: well-behaved code/phase tracking.
-            if (mq.worst_sigma < 0.15)
-                score += 0.3;
-
-            // All WL integers locked: strongest quality indicator.
-            if (mq.all_wl_locked)
-                score += 0.4;
-        }
-    }
 
     return score;
 }
@@ -152,24 +158,79 @@ double PivotManager::scorePivotCandidate(
 
 std::map<std::string, std::string> PivotManager::selectPivotCandidates(
     const std::map<std::string, ConstellationInfo>& cons_info,
-    const std::map<std::string, SatInfo>& sat_info) const {
+    const std::map<std::string, SatInfo>& sat_info,
+    const std::set<std::string>& exclude_sats) const {
 
     const double pivot_min_el = config_.getBssdPivotMinElevation();
     std::map<std::string, std::string> candidates;
+
+    // Helper: pick the best (coverage, score) sat in @p cons that isn't
+    // in @p exclude_sats and meets the elevation threshold.  Mirrors the
+    // ranking from buildEpochMaps that populates ci.best_sat, but
+    // applied online with the exclude filter so a sat with a known
+    // current-epoch MW slip can never be selected.  Returns empty when
+    // nothing qualifies (caller falls back).
+    auto pickExclusionAwareBest = [&](const std::string& cons) -> std::string {
+        std::string picked;
+        size_t      best_coverage = 0;
+        double      best_score    = -1e9;
+        double      highest_el    = -1.0;
+        std::string fallback_el_pick;
+        for (const auto& [sat, si] : sat_info) {
+            if (si.constellation != cons) continue;
+            if (exclude_sats.count(sat)) continue;
+            if (si.elevation < pivot_min_el) continue;
+
+            const double score = scorePivotCandidate(sat, si);
+            const bool higher_cov  = si.phase_sig_count > best_coverage;
+            const bool same_cov_higher_score =
+                (si.phase_sig_count == best_coverage) && (score > best_score);
+            if (picked.empty() || higher_cov || same_cov_higher_score) {
+                picked        = sat;
+                best_coverage = si.phase_sig_count;
+                best_score    = score;
+            }
+            if (si.elevation > highest_el) {
+                fallback_el_pick = sat;
+                highest_el       = si.elevation;
+            }
+        }
+        return picked.empty() ? fallback_el_pick : picked;
+    };
 
     for (const auto& [cons, ci] : cons_info) {
         auto prev_it = pivot_sat_.find(cons);
         if (prev_it != pivot_sat_.end()) {
             const std::string& old_pivot = prev_it->second;
             auto si = sat_info.find(old_pivot);
-            if (si != sat_info.end() && si->second.elevation >= pivot_min_el) {
+            // Sticky logic: keep the previous pivot if it's still high
+            // enough AND not in the exclude set.  A pivot whose current
+            // epoch carries an MW slip on the constellation's affected
+            // signal should never be sticky — the forced-handover caller
+            // built exclude_sats precisely to break that stickiness.
+            if (si != sat_info.end()
+                && si->second.elevation >= pivot_min_el
+                && !exclude_sats.count(old_pivot)) {
                 candidates[cons] = old_pivot;
                 continue;
             }
         }
-        // Use the quality-scored best satellite; fall back to highest
-        // elevation when no scores are available.
-        candidates[cons] = ci.best_sat.empty() ? ci.highest_sat : ci.best_sat;
+        // Always use the elevation-gated, coverage(=phase)-preferring online
+        // pick (previously only when an exclude set was active).  pickExclusion-
+        // AwareBest filters on pivot_min_el and ranks by phase_sig_count, so a
+        // cm-grade (phase-carrying) sat always beats a broadcast-grade (phase-
+        // less, coverage-0) one for any constellation that has both — closing
+        // the cold-start hole where the precomputed best_sat/highest_sat (no
+        // elevation gate) could seat a low-el or broadcast-grade pivot and inject
+        // a coherent offset into every SD code row.  Falls back to the
+        // precomputed best/highest only when NO satellite clears the elevation
+        // mask (a genuine code-only-float constellation, where a code-only pivot
+        // is correct).  Broadcast-grade sats are also removed upstream when
+        // drop_broadcast_grade is set, making this belt-and-suspenders there.
+        const std::string picked = pickExclusionAwareBest(cons);
+        candidates[cons] = !picked.empty()
+                         ? picked
+                         : (ci.best_sat.empty() ? ci.highest_sat : ci.best_sat);
     }
     return candidates;
 }
@@ -203,7 +264,8 @@ bool PivotManager::handleDisturbedPivot(
     const StateManager& state_manager,
     Eigen::VectorXd& x,
     Eigen::MatrixXd& P,
-    const std::string& epoch_prefix) {
+    const std::string& epoch_prefix,
+    const std::set<std::string>& exclude_sats) {
 
     auto log = log_manager_.getLogger("bssd_pivot_manager");
 
@@ -211,21 +273,30 @@ bool PivotManager::handleDisturbedPivot(
               "Searching for healthy replacement.",
               epoch_prefix, pivot, cons);
 
-    // Find the best-scored satellite in this constellation
-    // (excluding the current disturbed pivot).
-    size_t max_phase_sigs = 0;
-    for (const auto& [sat, si] : sat_info)
-        if (si.constellation == cons && si.phase_sig_count > max_phase_sigs)
-            max_phase_sigs = si.phase_sig_count;
-
+    // Find the best replacement in this constellation (excluding the
+    // current disturbed pivot AND any sat in @p exclude_sats) using the
+    // same lex (coverage, score) ordering as @c buildEpochMaps: any
+    // full-coverage candidate beats any partial-coverage one, score
+    // breaks ties within a tier.  exclude_sats lets the caller block
+    // sats with known current-epoch issues (e.g. MW slip on the same
+    // signal whose ambiguity reset triggered this handover) from
+    // becoming the replacement, which would just propagate the slip
+    // into the new SD frame.
     std::string best_replacement;
-    double best_score = -1e9;
+    double best_score      = -1e9;
+    size_t best_coverage   = 0;
     for (const auto& [sat, si] : sat_info) {
         if (si.constellation != cons || sat == pivot) continue;
-        const double score = scorePivotCandidate(sat, si, max_phase_sigs);
-        if (score > best_score) {
+        if (exclude_sats.count(sat)) continue;
+        const double score = scorePivotCandidate(sat, si);
+
+        const bool higher_cov  = si.phase_sig_count > best_coverage;
+        const bool same_cov_higher_score =
+            (si.phase_sig_count == best_coverage) && (score > best_score);
+        if (best_replacement.empty() || higher_cov || same_cov_higher_score) {
             best_replacement = sat;
             best_score       = score;
+            best_coverage    = si.phase_sig_count;
         }
     }
 
@@ -420,30 +491,61 @@ void PivotManager::reReferenceSatBiases(
 // ===========================================================================
 
 void PivotManager::requestForcedHandover(const std::string& constellation,
-                                          const std::string& reason) {
+                                          const std::string& reason,
+                                          const std::set<std::string>& exclude_sats,
+                                          const std::set<std::string>& reinflate_sats) {
     auto log = log_manager_.getLogger("bssd_pivot_manager");
     log->warn("Forced pivot handover requested for {} ({}). "
               "Will be processed at next handlePivotHandover call.",
               constellation, reason);
     forced_handover_requests_.insert(constellation);
+    if (!exclude_sats.empty()) {
+        auto& ex = forced_handover_exclude_[constellation];
+        ex.insert(exclude_sats.begin(), exclude_sats.end());
+    }
+    if (!reinflate_sats.empty()) {
+        auto& rf = forced_handover_reinflate_[constellation];
+        rf.insert(reinflate_sats.begin(), reinflate_sats.end());
+    }
 }
 
 void PivotManager::handlePivotHandover(
     const std::vector<PppObservation>& observations,
     StateManager& state_manager,
-    const std::string& epoch_prefix) {
-
-    if (!config_.isUncombinedEnabled()) return;
+    const std::string& epoch_prefix,
+    bool forced_only,
+    const std::set<std::string>& exclude_sats) {
 
     auto log = log_manager_.getLogger("bssd_pivot_manager");
 
     // --- Build epoch snapshot (single pass over observations) ---
     std::map<std::string, SatInfo> sat_info;
     std::map<std::string, ConstellationInfo> cons_info;
-    buildEpochMaps(observations, sat_info, cons_info);
+    buildEpochMaps(observations, state_manager, sat_info, cons_info);
+
+    // Reset the per-epoch retired-pivot guard on each epoch's first-pass
+    // handover (forced_only == false).  Within the epoch's rebuild loop the
+    // forced re-entries (forced_only == true) then accumulate retirements,
+    // so a satellite handed off this epoch can never be bounced back to on a
+    // later pass — the backstop that breaks the post-fit handover flip-flop.
+    if (!forced_only) retired_pivots_this_epoch_.clear();
+
+    // Effective replacement-exclusion set: the caller-supplied set (MW
+    // pre-filter path) unioned with the post-fit detector's per-request
+    // excludes and every satellite already retired as a pivot this epoch.
+    // Satellite IDs are constellation-prefixed, so a single flat set is
+    // safe to share across constellations.
+    std::set<std::string> effective_exclude = exclude_sats;
+    for (const auto& [c, sats] : forced_handover_exclude_)
+        effective_exclude.insert(sats.begin(), sats.end());
+    for (const auto& [c, sats] : retired_pivots_this_epoch_)
+        effective_exclude.insert(sats.begin(), sats.end());
 
     // --- Sticky pivot selection with elevation hysteresis ---
-    auto new_pivot_sat = selectPivotCandidates(cons_info, sat_info);
+    // @c effective_exclude is forwarded so the sticky/fallback selection
+    // skips the disturbed pivot, the detector's co-disturbed outliers, and
+    // any satellite already retired this epoch.
+    auto new_pivot_sat = selectPivotCandidates(cons_info, sat_info, effective_exclude);
 
     // First BSSD epoch: just record pivots, no handover needed.
     if (pivot_sat_.empty()) {
@@ -451,10 +553,8 @@ void PivotManager::handlePivotHandover(
         for (const auto& [cons, sat] : pivot_sat_) {
             auto si_it = sat_info.find(sat);
             const double el = (si_it != sat_info.end()) ? si_it->second.elevation : -1.0;
-            auto ci_it = cons_info.find(cons);
-            const size_t mps = (ci_it != cons_info.end()) ? ci_it->second.max_phase_sigs : 0;
             const double sc = (si_it != sat_info.end())
-                                  ? scorePivotCandidate(sat, si_it->second, mps) : 0.0;
+                                  ? scorePivotCandidate(sat, si_it->second) : 0.0;
             log->info("{}BSSD initial pivot for {}: {} (elev={:.1f}, score={:.2f}, phase_sigs={})",
                       epoch_prefix, cons, sat, el, sc,
                       (si_it != sat_info.end()) ? si_it->second.phase_sig_count : 0);
@@ -471,6 +571,15 @@ void PivotManager::handlePivotHandover(
     bool cov_modified   = false;
 
     const double pivot_min_el = config_.getBssdPivotMinElevation();
+
+    // Code-detected handovers carry a per-constellation set of non-pivot sats
+    // whose iono / sat-bias state absorbed the pivot's code bias.  We capture
+    // them here as the forced request is consumed, but defer the actual
+    // re-inflation until AFTER the lossless re-reference has been written back
+    // (re-inflating the local @c P before the @c T·P·Tᵀ would corrupt the
+    // re-reference; re-inflating after commit lets us reuse StateManager's
+    // value-preserving, pivot-skipping primitive unchanged).
+    std::map<std::string, std::set<std::string>> reinflate_pending;
 
     for (auto& [cons, pivot] : new_pivot_sat) {
         const std::string& old_pivot = pivot_sat_.count(cons)
@@ -499,17 +608,45 @@ void PivotManager::handlePivotHandover(
         // re-referencing block below.  Consume the request whether or not
         // a replacement was found — a fresh request must be re-issued
         // each epoch the detector still wants the handover.
+        // The disturbance check is suppressed in @c forced_only mode
+        // (same-epoch rebuild re-entry): we only want to honour
+        // explicit KF requests there, never re-detect disturbance on
+        // a pivot whose ambiguity was just touched by an in-rebuild
+        // outlier handler — that's the cascading-handover scenario
+        // the same-epoch gate was originally added to prevent.
         const bool forced = forced_handover_requests_.count(cons) > 0;
-        if (pivot == old_pivot &&
-            (forced || isPivotDisturbed(old_pivot, phase_sigs, state_manager, x, P))) {
+        const bool disturbed = !forced_only
+            && isPivotDisturbed(old_pivot, phase_sigs, state_manager, x, P);
+
+        // Consume the forced request (and its stashed exclusions) up front,
+        // the moment we start handling this constellation.  effective_exclude
+        // was snapshotted before the loop, so erasing here does not affect
+        // this pass's selection.  Consuming here — rather than only inside the
+        // sticky disturbance branch below — ensures the request never lingers
+        // when the candidate selection itself already moved the pivot off an
+        // excluded old pivot; otherwise the stale request would re-fire a
+        // spurious handover off the new, healthy pivot on the following pass.
+        // A fresh request must be re-issued each pass the detector still wants
+        // the handover.
+        if (forced) {
+            forced_handover_requests_.erase(cons);
+            forced_handover_exclude_.erase(cons);
+            auto rf_it = forced_handover_reinflate_.find(cons);
+            if (rf_it != forced_handover_reinflate_.end()) {
+                reinflate_pending[cons] = std::move(rf_it->second);
+                forced_handover_reinflate_.erase(rf_it);
+            }
+        }
+
+        if (pivot == old_pivot && (forced || disturbed)) {
             if (forced) {
                 log->warn("{}BSSD pivot {} in {}: forced handover honored "
                           "(KF-detected pivot slip)",
                           epoch_prefix, old_pivot, cons);
             }
-            forced_handover_requests_.erase(cons);
             if (!handleDisturbedPivot(cons, pivot, sat_info, phase_sigs,
-                                      state_manager, x, P, epoch_prefix)) {
+                                      state_manager, x, P, epoch_prefix,
+                                      effective_exclude)) {
                 // Re-zeroed in place, no handover.
                 state_modified = true;
                 cov_modified   = true;
@@ -520,15 +657,17 @@ void PivotManager::handlePivotHandover(
 
         if (pivot == old_pivot) continue;
 
+        // The outgoing pivot is retired for the remainder of this epoch so a
+        // later rebuild pass cannot bounce the SD-frame anchor back to it.
+        retired_pivots_this_epoch_[cons].insert(old_pivot);
+
         // --- Lossless handover ---
         const bool was_disturbed = isPivotDisturbed(old_pivot, phase_sigs,
                                                      state_manager, x, P);
         auto si_old = sat_info.find(old_pivot);
         auto si_new = sat_info.find(pivot);
-        auto ci_it = cons_info.find(cons);
-        const size_t mps = (ci_it != cons_info.end()) ? ci_it->second.max_phase_sigs : 0;
         const double new_score = (si_new != sat_info.end())
-                                     ? scorePivotCandidate(pivot, si_new->second, mps) : 0.0;
+                                     ? scorePivotCandidate(pivot, si_new->second) : 0.0;
         log->info("{}BSSD pivot handover for {}: {} -> {} "
                   "(old elev={:.1f}, new elev={:.1f}, score={:.2f}, threshold={:.1f}, disturbed={})",
                   epoch_prefix, cons, old_pivot, pivot,
@@ -646,6 +785,48 @@ void PivotManager::handlePivotHandover(
     if (cov_modified)   state_manager.setCovariance(P);
 
     pivot_sat_ = new_pivot_sat;
+
+    // --- Post-handover code-domain state scrub --------------------------
+    // Re-inflate the iono / sat-bias covariance of the non-pivot satellites
+    // whose state absorbed a coherent pivot-side CODE bias before this forced
+    // handover.  Done AFTER the re-referenced covariance is committed above so
+    // these StateManager primitives operate on the new SD frame; they preserve
+    // the (re-labelled) state VALUE and break only the covariance partition,
+    // letting the now-clean frame re-estimate the contaminated states over the
+    // next few epochs instead of carrying a converged-but-wrong value under a
+    // tight P — the gap that made code-only pivot outliers recur every epoch.
+    // The primitives skip frozen pivots via their internal diag==0 guard; we
+    // also skip the freshly-elected pivot explicitly to avoid a noisy refusal
+    // log.  No-op when there was no code contamination (reinflate_pending empty)
+    // or the feature is disabled; iono/sat-bias branches self-disable when those
+    // states don't exist (e.g. combined-IF or phase-present runs).
+    const auto& sr_cfg = config_.getSlipStateReinflationConfig();
+    if (sr_cfg.enabled) {
+        for (const auto& [cons, sats] : reinflate_pending) {
+            auto piv_it = pivot_sat_.find(cons);
+            const std::string new_piv =
+                (piv_it != pivot_sat_.end()) ? piv_it->second : std::string();
+            std::string scrubbed;
+            for (const auto& sat : sats) {
+                if (sat == new_piv) continue;  // now the frozen datum
+                if (sr_cfg.iono_std_m > 0.0)
+                    state_manager.reinflateIonosphereVariance(
+                        sat, sr_cfg.iono_std_m * sr_cfg.iono_std_m);
+                if (sr_cfg.sat_bias_std_m > 0.0)
+                    state_manager.reinflateSatBiasVariancesForSat(
+                        sat, sr_cfg.sat_bias_std_m * sr_cfg.sat_bias_std_m);
+                if (!scrubbed.empty()) scrubbed += ",";
+                scrubbed += sat;
+            }
+            if (!scrubbed.empty())
+                log->info("{}Code-handover state scrub for {}: re-inflated "
+                          "iono/sat-bias variance on {} (iono_std={:.2f} m, "
+                          "sb_std={:.2f} m) so the new SD frame re-estimates the "
+                          "absorbed pivot code bias",
+                          epoch_prefix, cons, scrubbed,
+                          sr_cfg.iono_std_m, sr_cfg.sat_bias_std_m);
+        }
+    }
 }
 
 // ===========================================================================
@@ -677,14 +858,21 @@ void PivotManager::freezePivotAmbiguityCovariance(StateManager& state_manager) {
 
 void PivotManager::freezePivotIonoAndBiasCovariance(StateManager& state_manager) {
     if (pivot_sat_.empty()) return;
-    if (!config_.isUncombinedEnabled()) return;
 
-    // Inform StateManager which iono states are frozen so that
-    // getProcessNoiseMatrix() can suppress their process noise.
+    // Always register the pivot list with StateManager so process noise
+    // is suppressed for *all* frozen pivot states (ambiguities, iono,
+    // sat-biases).  This must run in every BSSD mode — the ambiguity
+    // freeze is what prevents the spurious-handover flip-flop, and
+    // pivot ambiguities exist in both PPP IF combined and PPP-RTK
+    // uncombined modes.
     std::set<std::string> frozen_sats;
     for (const auto& [cons, piv] : pivot_sat_)
         frozen_sats.insert(piv);
-    state_manager.setFrozenIonosphereSatellites(frozen_sats);
+    state_manager.setFrozenPivotSatellites(frozen_sats);
+
+    // Iono and sat-bias states only exist in uncombined mode — only
+    // bother zeroing those P entries when those states actually exist.
+    if (!config_.isUncombinedEnabled()) return;
 
     Eigen::MatrixXd Pf = state_manager.getCovariance();
     bool any_frozen = false;
@@ -712,6 +900,29 @@ void PivotManager::freezePivotIonoAndBiasCovariance(StateManager& state_manager)
         }
     }
     if (any_frozen) state_manager.setCovariance(Pf);
+}
+
+// ===========================================================================
+// Gap-recovery: forget all sticky pivots
+// ===========================================================================
+
+void PivotManager::dropAllPivots(StateManager& state_manager) {
+    auto log = log_manager_.getLogger("pivot_manager");
+    const auto n_pivots  = pivot_sat_.size();
+    const auto n_forced  = forced_handover_requests_.size();
+
+    pivot_sat_.clear();
+    forced_handover_requests_.clear();
+    forced_handover_exclude_.clear();
+    forced_handover_reinflate_.clear();
+    retired_pivots_this_epoch_.clear();
+    state_manager.setFrozenPivotSatellites({});
+
+    if (log) {
+        log->info("Dropped all BSSD pivots (was: {} cons, "
+                  "{} forced-handover requests); next epoch will elect fresh pivots",
+                  n_pivots, n_forced);
+    }
 }
 
 } // namespace GnssProcessor

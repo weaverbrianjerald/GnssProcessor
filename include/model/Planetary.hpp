@@ -81,6 +81,37 @@ namespace GnssProcessor {
             Eigen::Vector3d& sun_ecef,
             Eigen::Vector3d& moon_ecef) const;
 
+        /**
+         * @brief Test whether a satellite is in Earth's umbral shadow.
+         *
+         * Standard cylindrical Earth-shadow model: the satellite is eclipsed
+         * iff it sits on the anti-Sun side of Earth (projection of its
+         * geocentric position onto the Sun direction is negative) AND its
+         * perpendicular distance to the Earth–Sun axis is smaller than
+         * Earth's radius scaled by @p shadow_scale.
+         *
+         * During eclipse and the post-shadow recovery window, GNSS satellites
+         * execute block-specific yaw manoeuvres (midnight and noon turns) that
+         * this codebase does not model, so the body-frame attitude — and
+         * therefore satellite PCO/PCV and phase windup — become unreliable.
+         * Use this predicate to skip such satellites at the geometry stage.
+         *
+         * The cylindrical model is conservative (the true Earth shadow is a
+         * narrowing cone), but at GNSS altitudes the difference is sub-degree;
+         * @p shadow_scale > 1.0 provides a configurable safety buffer around
+         * the geometric terminator if a larger margin is desired.
+         *
+         * @param sat_pos_ecef Satellite ECEF position (meters).
+         * @param sun_pos_ecef Sun ECEF position (meters).
+         * @param shadow_scale Multiplier on Earth's radius (default 1.0 =
+         *                     pure geometric shadow; >1.0 = additional buffer).
+         * @return True if the satellite is in (or within the buffered margin of)
+         *         Earth's umbra.
+         */
+        static bool isSatelliteEclipsing(const Eigen::Vector3d& sat_pos_ecef,
+                                         const Eigen::Vector3d& sun_pos_ecef,
+                                         double shadow_scale = 1.0);
+
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
         std::vector<SunEphemeris> sun_ephemeris_;         /**< In-memory Sun ephemeris table. */

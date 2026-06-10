@@ -1,71 +1,146 @@
 #pragma once
-#include "rinex/RinexParser.hpp"
-#include "math/TimeUtils.hpp"
+/**
+ * @file RtcmParser.hpp
+ * @brief Top-level dispatcher for decoded RTCM 3.x messages.
+ *
+ * Accepts framed RTCM3 messages (preamble byte 0xD3 + 10-bit payload length
+ * + payload + 24-bit CRC-Q24) and delegates the payload to per-message
+ * decoders.  Decoded outputs are appended to per-type vectors that the
+ * caller can drain and pass to higher-level consumers (the realtime engine,
+ * the SSR correction store, the reference-station coordinate cache).
+ *
+ * Frame integrity is the framer's job (@c RtcmStreamReader checks CRC).
+ * This parser assumes @p frame is a verified, complete frame.
+ */
+
+#include "rtcm/RtcmTypes.hpp"
+#include "products/BroadcastEphemerisTypes.hpp"   // BroadcastEphemeris
+#include "rinex/RinexParser.hpp"   // RinexObservation
 #include <filesystem>
-#include <string>
 #include <vector>
-#include <map>
+#include <cstdint>
 
 namespace GnssProcessor {
 
-// Structure for RTCM observation data
-struct RtcmObservation {
-    std::string satellite; // Satellite ID (e.g., "G01")
-    System system;        // GNSS system
-    GnssTime time;       // Epoch time
-    std::map<std::string, double> measurements; // Observation types (e.g., "C1C", "L1C")
-    std::map<std::string, double> variances;    // Measurement variances
-};
-
-// Structure for RTCM SSR correction data
-struct RtcmSsrCorrection {
-    std::string satellite; // Satellite ID
-    System system;        // GNSS system
-    GnssTime time;       // Epoch time
-    std::string correction_type; // e.g., "ORBIT", "CLOCK", "CODE_BIAS"
-    double value;        // Correction value (e.g., meters for orbit, seconds for clock)
-    double std_dev;      // Standard deviation
-};
-
-// RtcmParser class for RTCM 3.x messages
+/**
+ * @class RtcmParser
+ * @brief Dispatches RTCM 3.x frames to typed decoders.
+ *
+ * Construction is cheap; instances may be reused across frames.  Outputs
+ * accumulate in per-type vectors until @c clear() is called.  The
+ * realtime path constructs one parser per frame, drains the outputs
+ * into the engine and discards the parser; the file-replay path uses
+ * a single parser for the whole file.
+ */
 class RtcmParser {
 public:
-    explicit RtcmParser(const std::filesystem::path& file_path);
+    /**
+     * @brief Construct a parser.
+     * @param file_path Optional file path used only by @c parse() for the
+     *                  binary-dump replay path.  Leave empty when feeding
+     *                  individual frames via @c parseFrame.
+     */
+    explicit RtcmParser(std::filesystem::path file_path = {});
 
-    // Parse RTCM file or stream
+    /**
+     * @brief Decode a single RTCM3 frame.
+     * @param frame Pointer to the first byte (must equal 0xD3 preamble).
+     * @param len   Total frame length in bytes (header 3 + payload + CRC 3).
+     * @return true if the frame was recognised and decoded; false on bad
+     *         layout, unknown / unsupported message type, or decode error.
+     *         Unsupported message types are NOT errors at the framer level
+     *         — they're logged at @c trace and return false here.
+     */
+    bool parseFrame(const uint8_t* frame, std::size_t len);
+
+    /// Convenience overload accepting std::vector.
+    bool parseFrame(const std::vector<uint8_t>& frame) {
+        return parseFrame(frame.data(), frame.size());
+    }
+
+    /**
+     * @brief Walk a binary RTCM3 dump file frame-by-frame.
+     * @return true if at least one frame produced decoded output.
+     *
+     * Used by tests and by the file-replay realtime mode.  Live streaming
+     * uses @c parseFrame directly per frame returned by @c RtcmStreamReader.
+     */
     bool parse();
 
-    // Parse a single RTCM message (for real-time streaming)
-    bool parseMessage(const std::vector<uint8_t>& message);
+    /// Drop all accumulated decoded outputs.
+    void clear();
 
-    // Get parsed observations
-    const std::vector<RtcmObservation>& getObservations() const;
+    // ---------------------------------------------------------------------
+    // Decoded outputs.  All are append-only across calls to parseFrame()
+    // until clear() is invoked.
+    // ---------------------------------------------------------------------
 
-    // Get parsed SSR corrections
-    const std::vector<RtcmSsrCorrection>& getSsrCorrections() const;
+    const std::vector<RinexObservation>&      getObservations()      const { return observations_; }
+    const std::vector<SsrOrbitCorrection>&    getSsrOrbits()         const { return ssr_orbits_; }
+    const std::vector<SsrClockCorrection>&    getSsrClocks()         const { return ssr_clocks_; }
+    const std::vector<SsrCombinedCorrection>& getSsrCombined()       const { return ssr_combined_; }
+    const std::vector<SsrCodeBias>&           getSsrCodeBiases()     const { return ssr_code_biases_; }
+    const std::vector<SsrPhaseBias>&          getSsrPhaseBiases()    const { return ssr_phase_biases_; }
+    const std::vector<SsrUra>&                getSsrUras()           const { return ssr_uras_; }
+    const std::vector<SsrHighRateClock>&      getSsrHighRateClocks() const { return ssr_hrclocks_; }
+    const std::vector<RtcmStationCoords>&     getStationCoords()     const { return station_coords_; }
+    const std::vector<BroadcastEphemeris>&    getBroadcastEphemeris() const { return broadcast_eph_; }
+
+    /// The message type of the most recently decoded frame, or -1 if none.
+    int lastMessageType() const { return last_msg_type_; }
+
+    /**
+     * @brief The SSR header from the most recently decoded SSR message.
+     *
+     * The realtime path constructs one parser per frame, so after decoding a
+     * single SSR frame this is exactly that message's header (epoch time,
+     * IOD-SSR, provider/solution id).  Default-constructed until an SSR
+     * message has been decoded.
+     */
+    const SsrHeader& getLastSsrHeader() const { return last_ssr_header_; }
+
+    /**
+     * @brief Decode a frame's header.
+     *
+     * Public for unit tests; production callers should go through @c parseFrame.
+     *
+     * Layout (RTCM 10403.x, sec 4.1):
+     *   - byte 0      : preamble 0xD3
+     *   - bytes 1-2   : 6 reserved bits + 10-bit payload length (big-endian)
+     *   - bytes 3..   : payload (first 12 bits = DF002 message number)
+     *   - last 3 bytes: CRC-24Q over header + payload
+     *
+     * @param frame       Frame bytes (length must be ≥ 5 to read both header and msg type).
+     * @param len         Buffer length.
+     * @param payload_len Out: 10-bit payload length from bytes 1-2.
+     * @param msg_type    Out: 12-bit DF002 message type from payload bytes 0-1.
+     * @return true on success, false if the buffer is too short or the preamble byte is wrong.
+     */
+    static bool parseHeader(const uint8_t* frame, std::size_t len,
+                            uint16_t& payload_len, uint16_t& msg_type);
 
 private:
+    // Per-message-type decoders.  Each receives the payload (no header,
+    // no CRC) and the decoded message type.  Implementations live in
+    // RtcmParser.cpp / RtcmSsrDecoder.cpp.
+    bool decodeStationCoords(const uint8_t* payload, std::size_t len, uint16_t msg_type);
+    bool decodeLegacySsr(const uint8_t* payload, std::size_t len, uint16_t msg_type);
+    bool decodeIgsSsr4076(const uint8_t* payload, std::size_t len);
+
     std::filesystem::path file_path_;
-    std::vector<RtcmObservation> observations_;
-    std::vector<RtcmSsrCorrection> ssr_corrections_;
+    int last_msg_type_{-1};
+    SsrHeader last_ssr_header_{};
 
-    // Parse RTCM header
-    bool parseHeader(const std::vector<uint8_t>& message, uint32_t& msg_type, uint32_t& length);
-
-    // Parse MSM4/MSM7 observation message
-    bool parseMsmMessage(const std::vector<uint8_t>& message, uint32_t msg_type);
-
-    // Parse SSR correction message
-    bool parseSsrMessage(const std::vector<uint8_t>& message, uint32_t msg_type);
-
-    GnssTime convertToGpsTime(uint32_t tow_ms, uint16_t week) const;
-
-    // Convert RTCM time to GnssTime
-    GnssTime convertRtcmTime(uint32_t tow_ms, uint16_t week) const;
-
-    // Map RTCM signal ID to RINEX observation type
-    std::string signalIdToObsType(System system, uint8_t signal_id) const;
+    std::vector<RinexObservation>      observations_;
+    std::vector<SsrOrbitCorrection>    ssr_orbits_;
+    std::vector<SsrClockCorrection>    ssr_clocks_;
+    std::vector<SsrCombinedCorrection> ssr_combined_;
+    std::vector<SsrCodeBias>           ssr_code_biases_;
+    std::vector<SsrPhaseBias>          ssr_phase_biases_;
+    std::vector<SsrUra>                ssr_uras_;
+    std::vector<SsrHighRateClock>      ssr_hrclocks_;
+    std::vector<RtcmStationCoords>     station_coords_;
+    std::vector<BroadcastEphemeris>    broadcast_eph_;
 };
 
 } // namespace GnssProcessor
-//#endif // RTCM_PARSER_HPP

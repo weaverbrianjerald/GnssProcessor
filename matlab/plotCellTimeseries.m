@@ -44,9 +44,11 @@ end
 T = cell.state_trace;
 ttl = sprintf('%s %d-%03d', cell.station, cell.year, cell.doy);
 
-% --- GPS week + TOW -> UTC datetime  (matches matlab/state_base_parameters.m)
-gpsEpoch = datetime(1980, 1, 6, 0, 0, 0, 'TimeZone', 'UTC');
-t = gpsEpoch + seconds(T.week * 7 * 86400 + T.tow_s) + seconds(18);
+% --- GPS week + TOW -> datetime on the GPS time scale.  Trace files
+% carry pure GPS time (matches matlab/state_base_parameters.m), so no
+% leap-second adjustment is applied.
+gpsEpoch = datetime(1980, 1, 6, 0, 0, 0);
+t = gpsEpoch + seconds(T.week * 7 * 86400 + T.tow_s);
 
 % --- Reference ECEF for ENU
 if ~isempty(opts.RefEcef)
@@ -75,7 +77,7 @@ switch opts.View
         plot(t, Nrt, 'r', 'LineWidth', 1.2);
         plot(t, U,   'k', 'LineWidth', 1.2);
         ylabel('ENU (m)');
-        xlabel('UTC time');
+        xlabel('GPS time');
         legend('East','North','Up','Location','best');
         title(sprintf('%s — ENU relative to %s', ttl, refLabel), ...
               'Interpreter','none');
@@ -123,7 +125,7 @@ switch opts.View
                  'FontAngle','italic','Color',[0.4 0.4 0.4]);
             set(gca,'YTick',[]);
         end
-        xlabel('UTC time');
+        xlabel('GPS time');
 end
 
 end

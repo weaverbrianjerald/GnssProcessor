@@ -31,8 +31,11 @@ include/              All public headers, organized into subdirs mirroring
   common/             Truly cross-cutting types and identifiers only:
                       Constants, Namespaces, GnssTypes, PppTypes, PppState,
                       PppObservation, EpochMeasurement, PppUtils, SignalBand
-  config/             GnssConfig + GnssConfigJsonHelpers (loader split into
-                      per-section helpers in src/core/config/GnssConfigLoad.cpp)
+  config/             GnssConfig + GnssConfigTypes (the config enums + POD
+                      sub-structs, relocated out of the GnssConfig.hpp header;
+                      GnssConfig.hpp includes it) + GnssConfigJsonHelpers
+                      (loader split into per-section helpers in
+                      src/core/config/GnssConfigLoad.cpp)
   corrections/        GnssCorrections, OceanTideModel
   filter/             KalmanFilter, StateManager, StateKeySchema, Smoother,
                       AmbiguityResolver, ImuIntegrator, PivotManager (PPP-RTK SD),
@@ -42,17 +45,18 @@ include/              All public headers, organized into subdirs mirroring
   measurement/        MeasurementModel, StateInitializer, BssdTransform, BrsdTransform
                       (BSSD: PPP-RTK SD via BssdTransform::apply, baseline DD via
                        BssdTransform::differenceBrsd composed on BrsdTransform output)
-  model/              PppModel, PppRtkModel, StochasticModel, Antenna, Planetary,
-                      ModelGeometry
+  model/              PppModel (also hosts uncombined PPP-RTK, composed with
+                      measurement/BssdTransform), StochasticModel, Antenna,
+                      Planetary, ModelGeometry
   products/           ProductManager, ProductCache, ProductParser, PathResolver,
                       ProductResolver, ProductTypes, DataDownloader
   realtime/           NtripClient, RtcmStreamReader, RealTimeEngine
   rinex/              RinexParser, MultiRinexSync
   rtcm/               RtcmParser
   slip/               CycleSlipManager + detectors: MwSlipDetector,
-                      IfPhaseSlipDetector, GfSlipDetector, EwlSlipDetector,
-                      GraphicSlipDetector
-  sinex/, ssystem/    SinexParser, SSystem (currently disabled in CMakeLists)
+                      GraphicSlipDetector (active); IfPhaseSlipDetector,
+                      GfSlipDetector (STAGED — uncompiled, not wired in; see
+                      their header banners); IonoVariabilityMonitor
 
 src/core/             Implementation files mirror the include/ subdir layout
                       one-to-one (app/, common/, config/, logging/, math/,

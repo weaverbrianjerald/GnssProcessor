@@ -9,6 +9,7 @@
  */
 
 #include "measurement/BssdTransform.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <map>
@@ -40,17 +41,22 @@ if (n < 2) return;
 
 const bool is_uncombined = config_.isUncombinedEnabled();
 
-// In uncombined mode, group measurements by frequency band (first two
-// characters of the signal type, e.g. "L1W" -> "L1") rather than the
-// full signal identifier.  Different tracking attributes on the same
-// band share geometry, troposphere, and clock � exactly the terms that
-// cancel in between-satellite differencing.  This prevents satellites
-// that fall back to a different tracking mode (e.g. L1C instead of L1W
-// at low elevation) from becoming undifferenced singletons.
+// Group measurements by the FULL signal identifier so each tracking
+// attribute on a band (e.g. L1W vs L1C) forms its own SD frame.
+//
+// Earlier this code collapsed L1W and L1C into a shared "GPS|L1" group
+// to keep a non-pivot that fell back to a different tracking mode from
+// becoming an undifferenced singleton.  That rationale no longer holds:
+// the canonical-pick is now arc-stable and constellation-wide (see
+// PppModel::decideConstellationCanonicals), so every satellite in a
+// constellation tracks the same signal set for the entire run — pivot
+// included.  Band-grouping under channel_mode=all instead became
+// actively harmful: the pivot's non-canonical signal (e.g. L1C when L1W
+// is the band's first row) was treated as a non-pivot row inside its
+// own pivot group and got SD'd against the pivot's other signal, giving
+// the inter-channel offset as a permanent "pivot-vs-itself" residual.
 auto bandGroupKey = [&](const std::string& constellation,
                         const std::string& signal_type) -> std::string {
-    if (is_uncombined && signal_type.size() >= 2)
-        return constellation + "|" + signal_type.substr(0, 2);
     return constellation + "|" + signal_type;
 };
 
@@ -79,46 +85,20 @@ for (Eigen::Index i = 0; i < n; ++i) {
     ri.elevation = (it != sat_elev.end()) ? it->second : 0.0;
 }
 
-// ---- Step 2: Pivot selection ---------------------------------------
-std::map<std::string, std::string> cons_pivot_sat;
-    std::map<std::string, double>      cons_pivot_el;
-    if (is_uncombined) {
-        cons_pivot_sat = pivot_manager_.getPivotSatellites();
-        for (const auto& [cons, sat] : cons_pivot_sat) {
-            auto it = sat_elev.find(sat);
-            cons_pivot_el[cons] = (it != sat_elev.end()) ? it->second : 0.0;
-        }
-    } else {
-        for (const auto& ri : rows) {
-            auto it = cons_pivot_el.find(ri.constellation);
-            if (it == cons_pivot_el.end() || ri.elevation > it->second) {
-                cons_pivot_sat[ri.constellation] = ri.satellite;
-                cons_pivot_el[ri.constellation]  = ri.elevation;
-            }
-        }
-    }
+    // ---- Step 2: Pivot selection ---------------------------------------
+    // The pivot map is owned by PivotManager in every BSSD mode — combined
+    // IF and uncombined alike — so the satellite whose ambiguity column is
+    // zeroed here matches the one MeasurementModel seeds and freezes.
+    const std::map<std::string, std::string> cons_pivot_sat =
+        pivot_manager_.getPivotSatellites();
 
-    // Build the per-(constellation, band) pivot_map.
-    // In uncombined mode, the group key uses the frequency band (e.g. "GPS|L1")
-    // so that all tracking attributes on the same band share a single pivot row.
+    // pivot_map: the pivot satellite's row within each full-signal group
+    // key (e.g. "GPS|L1C_L2W").
     std::map<std::string, Eigen::Index> pivot_map;
-    std::map<std::string, double>       pivot_el;
-
-    if (is_uncombined) {
-        for (const auto& ri : rows) {
-            if (ri.satellite == cons_pivot_sat[ri.constellation]) {
-                pivot_map[ri.group_key] = ri.row;
-                pivot_el[ri.group_key]  = ri.elevation;
-            }
-        }
-    } else {
-        for (const auto& ri : rows) {
-            auto it = pivot_el.find(ri.group_key);
-            if (it == pivot_el.end() || ri.elevation > it->second) {
-                pivot_map[ri.group_key] = ri.row;
-                pivot_el[ri.group_key]  = ri.elevation;
-            }
-        }
+    for (const auto& ri : rows) {
+        auto piv_it = cons_pivot_sat.find(ri.constellation);
+        if (piv_it != cons_pivot_sat.end() && ri.satellite == piv_it->second)
+            pivot_map[ri.group_key] = ri.row;
     }
 
     // ---- Step 3: Partition into SD-eligible rows; reject everything else
@@ -228,12 +208,26 @@ std::map<std::string, std::string> cons_pivot_sat;
             new_H.col(static_cast<Eigen::Index>(idx)).setZero();
     };
 
-    // 6a. Receiver clock, phase clock, ISB
+    // 6a. Receiver clock, phase clock, ISB, clock-rate and ISBR.  All
+    // receiver-side states cancel in same-system SD, so their sensitivity
+    // (Jacobian column) must be zeroed after differencing.  Under the
+    // current StateManager gating none of clock / ISB / clock-rate / ISBR
+    // are allocated when BSSD is on — these calls are then no-ops
+    // (zero_col guards on idx < n_cols, and getSystemsWithTimeOffsets()
+    // iterates an empty container).  The calls document intent and remain
+    // robust if any of those states are re-introduced later.  Phase clock,
+    // if enabled, is still allocated under BSSD but receives no measurement
+    // update or process noise — the column-zero here is what makes that so.
     zero_col(state_manager_.getClockIndex());
     if (state_manager_.hasPhaseClock())
         zero_col(state_manager_.getPhaseClockIndex());
     for (const auto& sys : state_manager_.getSystemsWithTimeOffsets())
         zero_col(state_manager_.getSystemTimeOffsetIndex(sys));
+    if (state_manager_.hasClockRate()) {
+        zero_col(state_manager_.getClockRateIndex());
+        for (const auto& sys : state_manager_.getSystemsWithTimeOffsets())
+            zero_col(state_manager_.getSystemTimeRateOffsetIndex(sys));
+    }
 
     // 6b. Receiver DCB / IFB columns
     for (const auto& [key, idx] : state_manager_.getCodeBiasStates())
@@ -260,6 +254,27 @@ std::map<std::string, std::string> cons_pivot_sat;
     // When band-normalized grouping is active, the pivot row's actual signal
     // type (e.g. "L1W") may differ from the non-pivot's (e.g. "L1C").
     // The reference ambiguity to zero is always the *pivot's* signal type.
+    //
+    // Under @c StateAmbiguityBasis::NlWl the pivot's "ambiguity" on band b
+    // is split across two state columns: NL_<ref_band> and (when b !=
+    // ref_band) WL_<min(ref,b)>_<max(ref,b)>.  Both are zeroed by the
+    // S-transform — same mechanism as PerBand, just two columns instead
+    // of one.  The pivot's ref_band is recovered by parsing whichever NL
+    // ambiguity key references the pivot satellite (one per sat, by
+    // construction in @c MeasurementModel::ensureRequiredStates).
+    const bool nlwl = (config_.getStateAmbiguityBasis()
+                       == StateAmbiguityBasis::NlWl);
+    std::map<std::string, char> pivot_ref_band;
+    std::map<std::string, int>  pivot_nl_idx;
+    if (nlwl) {
+        for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
+            auto parts = StateKeys::parseNlAmbiguityKey(key);
+            if (!parts) continue;
+            pivot_ref_band[parts->satellite] = parts->band;
+            pivot_nl_idx[parts->satellite]   = static_cast<int>(idx);
+        }
+    }
+
     std::set<Eigen::Index> ref_amb_cols;
     for (size_t k = 0; k < n_sd; ++k) {
         const auto& entry = sd_entries[k];
@@ -268,10 +283,34 @@ std::map<std::string, std::string> cons_pivot_sat;
         if (pivot_sig.empty() || pivot_sig[0] != 'L') continue;
 
         const std::string ref_sat = update.satellite_ids[static_cast<size_t>(r_row)];
-        const std::string ref_amb_key = ref_sat + "_" + pivot_sig;
-        const int ref_amb_idx = state_manager_.getAmbiguityIndex(ref_amb_key);
-        if (ref_amb_idx >= 0)
-            ref_amb_cols.insert(static_cast<Eigen::Index>(ref_amb_idx));
+
+        if (!nlwl) {
+            const std::string ref_amb_key = ref_sat + "_" + pivot_sig;
+            const int ref_amb_idx = state_manager_.getAmbiguityIndex(ref_amb_key);
+            if (ref_amb_idx >= 0)
+                ref_amb_cols.insert(static_cast<Eigen::Index>(ref_amb_idx));
+        } else {
+            auto rb_it = pivot_ref_band.find(ref_sat);
+            if (rb_it == pivot_ref_band.end()) continue;
+            const char ref_band = rb_it->second;
+
+            // NL column always zeroed.
+            auto nl_it = pivot_nl_idx.find(ref_sat);
+            if (nl_it != pivot_nl_idx.end())
+                ref_amb_cols.insert(static_cast<Eigen::Index>(nl_it->second));
+
+            // WL column zeroed when this row is on a non-ref band.
+            if (pivot_sig.size() >= 2) {
+                const char band = pivot_sig[1];
+                if (band != ref_band) {
+                    const std::string wl_key = StateKeys::makeWlAmbiguityKey(
+                        ref_sat, ref_band, band);
+                    const int wl_idx = state_manager_.getAmbiguityIndex(wl_key);
+                    if (wl_idx >= 0)
+                        ref_amb_cols.insert(static_cast<Eigen::Index>(wl_idx));
+                }
+            }
+        }
     }
     for (const Eigen::Index col : ref_amb_cols)
         new_H.col(col).setZero();

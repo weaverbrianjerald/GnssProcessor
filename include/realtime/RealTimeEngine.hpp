@@ -23,11 +23,14 @@
 #include "filter/KalmanFilter.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "slip/MwSlipDetector.hpp"
+#include "slip/TurboEditResolver.hpp"
+#include "filter/AmbiguityResolver.hpp"
 #include "model/PppModel.hpp"
 #include "common/PppTypes.hpp"
 #include "products/ProductParser.hpp"
 #include "rinex/RinexParser.hpp"
 #include "rtcm/RtcmParser.hpp"
+#include "sbf/SubframeAssembler.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/TraceLogger.hpp"
 #include "math/WlsEstimator.hpp"
@@ -75,11 +78,34 @@ public:
     void feedRtcmFrame(const std::vector<uint8_t>& frame);
 
     /**
+     * @brief Feed a complete Septentrio SBF block for decoding.
+     *
+     * The SBF analogue of @c feedRtcmFrame: a MeasEpoch block carries a full
+     * epoch of observations and is processed immediately; broadcast-ephemeris
+     * blocks (GPSNav/GALNav/BDSNav/QZSNav/GLONav) are pushed into the live
+     * ephemeris store.  SSR corrections still arrive via the RTCM corrections
+     * stream — SBF carries only the rover observations and nav.
+     *
+     * @param block  Complete SBF block (Sync + CRC + ID + Length + body).
+     */
+    void feedSbfFrame(const std::vector<uint8_t>& block);
+
+    /**
      * @brief Feed a set of observations directly (e.g. from RTCM replay file).
      *
      * @param observations  Observations for one epoch.
      */
     void feedObservations(const std::vector<RinexObservation>& observations);
+
+    /**
+     * @brief Process any epoch still buffered for assembly.
+     *
+     * Epoch flushing in @c feedRtcmFrame is edge-triggered: a buffered epoch
+     * is only submitted when the next epoch's first observation arrives.  On
+     * stream stop / disconnect the final buffered epoch would otherwise be
+     * dropped.  Call this once after the stream(s) end to process it.
+     */
+    void flush();
 
     /**
      * @brief Process a single epoch of observations through the PPP pipeline.
@@ -123,13 +149,31 @@ private:
     std::unique_ptr<KalmanFilter>        kalman_filter_;
     std::unique_ptr<WlsEstimator>        wls_estimator_;
     std::unique_ptr<MwSlipDetector>      mw_slip_detector_;
+    /// TurboEdit MW+GF joint slip-repair resolver (estimation.cycle_slip.turbo_edit);
+    /// nullptr unless the toggle is set.  Pairs the MW wide-lane integer with the
+    /// geometry-free phase jump to repair dual-frequency slips per signal.
+    std::unique_ptr<TurboEditResolver>   turbo_edit_resolver_;
+    std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
     std::unique_ptr<TraceLogger>         trace_logger_;
+
+    /// Assembles broadcast ephemeris from raw SBF nav subframes (GPSRawCA/
+    /// GALRawINAV/BDSRaw) — persistent across blocks, feeds LiveEphemerisStore.
+    SubframeAssembler                    subframe_assembler_;
 
     PppState ppp_state_{};
     Eigen::Vector3d initial_position_{ 0.0, 0.0, 0.0 };
 
     uint64_t  epoch_count_{ 0 };
     bool      first_epoch_{ true };
+
+    // Corrections-ready startup gate (estimation.defer_until_corrections_ready).
+    // While armed and unsatisfied, processEpoch defers ALL estimation (no
+    // predict/update) until every modeled above-mask sat is broadcast+SSR.
+    bool      estimation_started_{ false }; ///< Gate satisfied — estimation has begun (latched).
+    uint64_t  warmup_epochs_{ 0 };          ///< Count of deferred epochs (throttled progress logging).
+    GnssTime  warmup_start_time_{ 0, 0.0 }; ///< First deferred epoch time (optional timeout fallback).
+
+    bool      apriori_seeded_from_pvt_{ false };  ///< Logged once when the a-priori is taken from PVTGeodetic.
     double    prev_tow_{ 0.0 };
     GnssTime  prev_epoch_time_{ 0, 0.0 };
 

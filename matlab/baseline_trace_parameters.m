@@ -21,13 +21,14 @@ fname = 'C:\GnssProcessor\build\x64-Release\logs\baseline_trace.csv';
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to UTC datetime ---
-gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+gpsEpoch = datetime(1980,1,6,0,0,0);
 try
     gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 catch
     gpsSeconds = T.week * 7 * 86400 + T.tow;
 end
-T.utc = gpsEpoch + seconds(gpsSeconds) + seconds(18); % GPS->UTC leap-second offset
+% Trace files carry pure GPS time so timestamps match RINEX epochs.
+T.utc = gpsEpoch + seconds(gpsSeconds);
 
 %% --- Extract variables ---
 t  = T.utc;
@@ -145,7 +146,7 @@ plot(t, z, 'b', 'LineWidth', 1.2);
 plot(t, z + zs, '--r');
 plot(t, z - zs, '--r');
 ylabel('Z (m)');
-xlabel('UTC Time');
+xlabel('GPS Time');
 grid on;
 
 %% ============================================================
@@ -168,7 +169,7 @@ grid on;
 subplot(3,1,3); hold on;
 plot(t, U, 'm', 'LineWidth', 1.2);
 ylabel('Up (m)');
-xlabel('UTC Time');
+xlabel('GPS Time');
 grid on;
 
 %% ============================================================
@@ -177,7 +178,7 @@ grid on;
 
 figure('Name','Convergence to late-arc mean','Color','w'); hold on;
 plot(t, conv_err, 'k', 'LineWidth', 1.4);
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Distance to late-arc mean (m)');
 title('3D Position Error vs. Late-Arc Mean Position');
 set(gca, 'YScale', 'log');
@@ -191,7 +192,7 @@ figure('Name','Position 1σ','Color','w'); hold on;
 plot(t, xs, 'b', 'LineWidth', 1.2);
 plot(t, ys, 'g', 'LineWidth', 1.2);
 plot(t, zs, 'r', 'LineWidth', 1.2);
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('1σ (m)');
 title('Position Uncertainty (Filter Covariance Diagonal)');
 legend('σ_x','σ_y','σ_z','Location','best');
@@ -212,7 +213,7 @@ if ~isempty(ddsApplied) || ~isempty(ddsBuilt)
         plot(t, ddsApplied, '-b', 'LineWidth', 1.2, ...
              'DisplayName','DDs applied (post-rebuild)');
     end
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('DD count / epoch');
     title('Double-Difference Measurement Throughput');
     legend('Location','best');
@@ -226,7 +227,7 @@ end
 if ~isempty(nAmbs) && any(nAmbs > 0)
     figure('Name','DD Ambiguity States','Color','w'); hold on;
     plot(t, nAmbs, 'k', 'LineWidth', 1.2);
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('# DD ambiguity states');
     title('Active DD Phase Ambiguities (state vector size minus position)');
     grid on;
@@ -242,7 +243,7 @@ end
 
 figure('Name','Baseline Length','Color','w'); hold on;
 plot(t, baseline_len/1000, 'b', 'LineWidth', 1.2);
-xlabel('UTC Time');
+xlabel('GPS Time');
 ylabel('Baseline length (km)');
 title('Rover-to-Reference Baseline Length per Epoch');
 grid on;

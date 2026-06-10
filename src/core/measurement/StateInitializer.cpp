@@ -133,7 +133,9 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
 
     const double observed = obs.observed.at(ref_type);
     const double modeled  = obs.modeled.at(ref_type);
-    const double rx_clk   = x(state_manager_.getClockIndex());
+    const double rx_clk   = state_manager_.hasClock()
+                            ? x(state_manager_.getClockIndex())
+                            : 0.0;
     const double zwd      = x(state_manager_.getTropoIndex());
     const double tropo_wet = obs.mf_w * zwd;
 
@@ -208,17 +210,27 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
 // Ionosphere seed
 // ===========================================================================
 
-double StateInitializer::computeIonosphereSeed(const PppObservation& obs) const {
+std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservation& obs) const {
     struct CodeObs { std::string key; double value; double freq; char band; };
     std::vector<CodeObs> codes;
     for (const auto& [key, val] : obs.observed) {
         if (key.size() < 2 || key[0] != 'C') continue;
         if (!obs.modeled.count(key)) continue;
+        // Only use code signals with valid BIA coverage.  Otherwise
+        // (P - mod) carries the raw satellite hardware bias, which
+        // shows up after differencing as (bias_band1 - bias_band2)
+        // divided by (alpha1 - alpha2).  For BeiDou MGEX products
+        // that ship zero-valued C2I/C6I entries (now treated as
+        // missing by buildBiasIndex), this would inject 30–60 m
+        // of error into the iono seed and propagate via the per-row
+        // predicted into every sat-bias and ambiguity seed for the
+        // satellite.
+        if (!ppp_model_.hasBiasEntry(obs.satellite, key)) continue;
         const double freq = ppp_utils_.getFrequency(key, obs.system, obs.satellite);
         if (freq <= 0.0) continue;
         codes.push_back({key, val, freq, key[1]});
     }
-    if (codes.size() < 2) return 0.0;
+    if (codes.size() < 2) return std::nullopt;
 
     for (size_t i = 0; i < codes.size(); ++i) {
         for (size_t j = i + 1; j < codes.size(); ++j) {
@@ -248,7 +260,7 @@ double StateInitializer::computeIonosphereSeed(const PppObservation& obs) const 
             }
         }
     }
-    return 0.0;
+    return std::nullopt;
 }
 
 // ===========================================================================

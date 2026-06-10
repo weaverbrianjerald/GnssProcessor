@@ -50,6 +50,52 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Reason a satellite was dropped before reaching the Kalman update.
+     *
+     * Produced by @c ModelGeometry::computeSatelliteGeometry and aggregated
+     * per-satellite by @c PppModel::computeModels; consumed by the
+     * @c satellite_status_trace logger so the per-epoch strip chart can
+     * distinguish actionable failure modes from each other.
+     *
+     * Ordering choice: @c None as 0 lets callers default-construct a reason
+     * variable that means "no failure yet".  The non-success values are
+     * ranked roughly by how much user effort it takes to fix:
+     *   @c BelowMask  -> turn a config knob;
+     *   @c NoProduct  -> improve the product chain;
+     *   @c NoModel    -> tighten or loosen ATX/BIA/signal-selection rules;
+     *   @c Eclipsing  -> unavoidable until a yaw-attitude model is wired in.
+     */
+    enum class DropReason {
+        None = 0,    /**< Satellite passed all geometry / model checks. */
+        BelowMask,   /**< Elevation below @c processing.elevation_mask_deg. */
+        NoProduct,   /**< Missing or invalid orbit / clock / ephemeris at emission. */
+        NoModel,     /**< Signal selection or correction failure (no usable
+                          code/phase pair, no BIA / ATX coverage, unknown
+                          system, configured exclusion list, etc.). */
+        Eclipsing    /**< Satellite is in Earth's umbral shadow.  The yaw
+                          attitude during eclipse and post-eclipse recovery
+                          is block-specific and not modelled here, so the
+                          antenna PCO/PCV and phase windup become unreliable.
+                          Gated by @c processing.exclude_eclipsing_satellites. */
+    };
+
+    /**
+     * @brief Human-readable label for a @c DropReason value.
+     * @param r Drop reason.
+     * @return Stable short label suitable for CSV logging.
+     */
+    inline const char* dropReasonLabel(DropReason r) {
+        switch (r) {
+            case DropReason::None:      return "None";
+            case DropReason::BelowMask: return "BelowMask";
+            case DropReason::NoProduct: return "NoProduct";
+            case DropReason::NoModel:   return "NoModel";
+            case DropReason::Eclipsing: return "Eclipsing";
+        }
+        return "None";
+    }
+
+    /**
      * @brief Classify a RINEX-style observable key into a MeasurementType.
      *
      * The classification is based on the first character of @p key:

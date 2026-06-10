@@ -70,6 +70,11 @@ namespace GnssProcessor {
         const std::string key = makeKey(sat, signal);
         Entry& e = entries_[key];
 
+        // A row that has a post-fit residual was kept this epoch, so
+        // it breaks any previously-running rejection streak.  Cleared
+        // up front so the cold-start return path below still wipes it.
+        e.consecutive_rejections = 0;
+
         if (e.n == 0) {
             e.mean = residual_m;
             e.var  = 0.0;
@@ -81,6 +86,20 @@ namespace GnssProcessor {
         e.mean = e.mean + cfg_.alpha * delta;
         e.var  = (1.0 - cfg_.alpha) * (e.var + cfg_.alpha * delta * delta);
         ++e.n;
+    }
+
+    // -----------------------------------------------------------------
+    // recordRejection(): bump consecutive-rejection streak
+    // -----------------------------------------------------------------
+    void ResidualHistoryTracker::recordRejection(const std::string& sat,
+                                                   const std::string& signal) {
+        if (!cfg_.enabled) return;
+        // Creates the entry on first sight so a stuck row that has
+        // never had a kept measurement still accumulates a streak.
+        // The EWMA fields stay at (0, 0, n=0); evaluateStuckBias
+        // handles the "warmed_up == false but streak high" case.
+        Entry& e = entries_[makeKey(sat, signal)];
+        ++e.consecutive_rejections;
     }
 
     // -----------------------------------------------------------------
@@ -175,7 +194,45 @@ namespace GnssProcessor {
         s.n = e.n;
         s.mean = e.mean;
         s.std_dev = (e.n >= 2) ? std::sqrt(std::max(e.var, 0.0)) : 0.0;
+        s.consecutive_rejections = e.consecutive_rejections;
         return s;
+    }
+
+    // -----------------------------------------------------------------
+    // evaluateStuckBias(): combined streak + drift trigger
+    // -----------------------------------------------------------------
+    ResidualHistoryTracker::StuckBiasEvaluation
+    ResidualHistoryTracker::evaluateStuckBias(const std::string& sat,
+                                                const std::string& signal,
+                                                double      floor_m,
+                                                std::size_t min_streak) const {
+        StuckBiasEvaluation out;
+        if (!cfg_.enabled) return out;
+
+        const auto it = entries_.find(makeKey(sat, signal));
+        if (it == entries_.end()) return out;
+
+        const Entry& e = it->second;
+        out.streak    = e.consecutive_rejections;
+        out.warmed_up = (e.n >= cfg_.warmup_n);
+        if (out.warmed_up) {
+            out.ewma_mean = e.mean;
+            out.ewma_std  = std::sqrt(std::max(e.var, 0.0));
+        }
+
+        // Trigger A: persistent rejection streak.  A non-positive
+        // @c min_streak disables this branch — callers can opt into
+        // the EWMA-only mode.
+        const bool streak_trigger =
+            (min_streak > 0) && (e.consecutive_rejections >= min_streak);
+
+        // Trigger B: warmed-up EWMA mean drift past floor_m.  A
+        // non-positive @c floor_m disables this branch.
+        const bool drift_trigger =
+            out.warmed_up && (floor_m > 0.0) && (std::abs(e.mean) > floor_m);
+
+        out.stuck = streak_trigger || drift_trigger;
+        return out;
     }
 
     ResidualHistoryTracker::Summary ResidualHistoryTracker::summarize() const {

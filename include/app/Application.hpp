@@ -16,9 +16,11 @@
 #include "filter/StateManager.hpp"
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
+#include "atmosphere/GlobalIonosphereMap.hpp"
 #include "filter/KalmanFilter.hpp"
 #include "math/WlsEstimator.hpp"
 #include "slip/CycleSlipManager.hpp"
+#include "slip/IonoVariabilityMonitor.hpp"
 #include "logging/TraceLogger.hpp"
 #include "filter/ImuIntegrator.hpp"
 #include "realtime/RealTimeEngine.hpp"
@@ -139,11 +141,82 @@ private:
      * @param epoch_prefix  Log prefix string (e.g. "[Week 2345, TOW 123.00] ").
      * @param modeled_obs   Modeled observations for this epoch.
      * @param gap_detected  True if a data gap was detected before this epoch.
+     * @return The WLS result (state, covariance, metrics).  Empty when
+     *         WLS fails — caller checks @c WlsResult::success.  The
+     *         result is also consumed by @c handleGap when a gap is
+     *         flagged (kinematic-no-IMU reseeds position from it).
      */
-    void handleWlsSeeding(const GnssTime& current_time,
-                          const std::string& epoch_prefix,
-                          const std::vector<PppObservation>& modeled_obs,
-                          bool gap_detected);
+    WlsResult handleWlsSeeding(const GnssTime& current_time,
+                               const std::string& epoch_prefix,
+                               const std::vector<PppObservation>& modeled_obs,
+                               bool gap_detected);
+
+    /**
+     * @brief Dynamics-mode classification used by @c handleGap.
+     *
+     * Inferred from existing config + state flags (Option B): no
+     * standalone "is_kinematic" toggle.  See @c classifyDynamicsMode
+     * for the threshold logic.
+     */
+    enum class DynamicsMode {
+        Static,           ///< Position pinned: no velocity state and pn.position below kinematic threshold.
+        KinematicIMU,     ///< Velocity state present AND IMU integration enabled (IMU bridges the gap).
+        KinematicNoImu    ///< Velocity state present OR pn.position above kinematic threshold; no IMU bridging.
+    };
+
+    /**
+     * @brief Classify the current dynamics mode from config + state.
+     *
+     * Rules (Option B inference):
+     *   - hasVelocity() && enableImu()       → KinematicIMU
+     *   - hasVelocity() && !enableImu()      → KinematicNoImu
+     *   - !hasVelocity() && pn.position >= 1e-6  → KinematicNoImu (quasi-kinematic)
+     *   - !hasVelocity() && pn.position <  1e-6  → Static
+     *
+     * The 1e-6 m²/s threshold separates a numeric-stability epsilon
+     * (e.g. 1e-12 m²/s, producing ~0.7 mm σ over a 7-min gap) from
+     * any spectral density that represents real motion.
+     */
+    DynamicsMode classifyDynamicsMode() const;
+
+    /**
+     * @brief Apply the gap-recovery policy to filter state.
+     *
+     * Runs after @c handleWlsSeeding (which has already jolted the
+     * clock value from WLS) and before the cycle-slip / measurement
+     * update phase.  Per-mode actions:
+     *
+     *   - Common to all modes on @c gap_detected: zero clock cross-
+     *     covariances to per-satellite states (the WLS-clock jolt
+     *     would otherwise leak along stale correlations).
+     *
+     *   - Static-short (gap_detected && !long_gap):
+     *       zero P(pos, sat-specific) cross-covariances.
+     *
+     *   - Static-long (long_gap):
+     *       all of the above + mild position σ inflation, drop all
+     *       iono/ambiguity/sat-bias states, drop BSSD pivots.
+     *
+     *   - KinematicNoImu (gap_detected):
+     *       cold-start position to WLS solution with loose σ,
+     *       reset velocity to zero with loose σ,
+     *       drop all sat-specific states + pivots + sat-bias cache.
+     *
+     *   - KinematicIMU (gap_detected):
+     *       no-op (IMU integration bridges; the predict step has
+     *       already propagated position/velocity with realistic Q).
+     *
+     * @param dt            Inter-epoch gap in seconds.
+     * @param long_gap      True when @c dt exceeds the long-gap threshold.
+     * @param epoch_prefix  Log prefix.
+     * @param wls           WLS result from @c handleWlsSeeding.  Used
+     *                      only in KinematicNoImu mode to reseed
+     *                      position; ignored otherwise.
+     */
+    void handleGap(double dt,
+                   bool long_gap,
+                   const std::string& epoch_prefix,
+                   const WlsResult& wls);
 
     /**
      * @brief Detect MW and IF phase cycle slips and reset affected ambiguities.
@@ -178,7 +251,18 @@ private:
 
     /**
      * @brief Optionally re-run geometry modelling at the updated position and
-     *        perform one additional KF measurement update.
+     *        refine the estimate with an iterated-EKF (IEKF) pass.
+     *
+     * Gated by @c config_.relinearizeGeometry(), the |Δpos| thresholds, and the
+     * per-run cap.  On the non-tightly-coupled path this iterates
+     * computeModels → @c KalmanFilter::updateFromPrior, anchoring every
+     * Gauss–Newton step on the epoch prior (x⁻, P⁻) captured at the top of
+     * runFilterUpdateLoop and holding the measurement set fixed to the one the
+     * primary update converged on; the posterior covariance is therefore
+     * (I−KH)·P⁻ committed once, with no double-counting.  Tightly-coupled IMU
+     * mode delegates to @ref runGeometryRelinearizationNaive (see that method
+     * and @c KalmanFilter::updateFromPrior for why the IEKF is not applied
+     * there).
      *
      * @param epoch_prefix      Log prefix string.
      * @param epoch_obs         Raw RINEX observations for the epoch.
@@ -189,6 +273,42 @@ private:
                                     const std::vector<RinexObservation>& epoch_obs,
                                     EpochMeasurement& applied_meas,
                                     bool have_applied);
+
+    /**
+     * @brief Legacy single-pass geometry relinearization (one extra full
+     *        @c KalmanFilter::update on top of the primary posterior).
+     *
+     * Retained only for the tightly-coupled IMU path, where re-deriving the
+     * posterior from the epoch prior would conflict with the error-state
+     * attitude/bias nominal feedback @ref KalmanFilter::update already applied.
+     * Statistically this re-applies the same measurement information against an
+     * already-tightened covariance (mild over-confidence).  Gates (|Δpos|,
+     * per-run cap) are evaluated by @ref runGeometryRelinearization before this
+     * is called.
+     *
+     * @param epoch_prefix      Log prefix string.
+     * @param epoch_obs         Raw RINEX observations for the epoch.
+     * @param[in,out] applied_meas The accepted measurement set (updated if the pass succeeds).
+     */
+    void runGeometryRelinearizationNaive(const std::string& epoch_prefix,
+                                         const std::vector<RinexObservation>& epoch_obs,
+                                         EpochMeasurement& applied_meas);
+
+    /**
+     * @brief Apply the GIM ionosphere-weighting pseudo-observation update.
+     *
+     * Post-processing only.  When ionosphere weighting is enabled and an
+     * IONEX GIM is loaded, constrains the per-satellite slant-iono states
+     * toward the GIM's between-satellite structure (the per-constellation
+     * common mode is left free — see IonosphereWeightingConfig).  Called
+     * after the measurement-update loop and before the smoother posterior
+     * capture / AR.  No-op when disabled or no GIM is available.
+     *
+     * @param current_time Epoch time (GPS scale).
+     * @param modeled_obs  Modeled observations for this epoch.
+     */
+    void applyGimIonoUpdate(const GnssTime& current_time,
+                            const std::vector<PppObservation>& modeled_obs);
 
     /**
      * @brief Update the stored 3D position sigma from the posterior covariance.
@@ -237,15 +357,34 @@ private:
     void logEpochSummary(const std::string& epoch_prefix);
 
     /**
-     * @brief Write per-epoch CSV trace records (state, ambiguities, residuals).
+     * @brief Write per-epoch CSV trace records (state, ambiguities, residuals,
+     *        sat-bias, satellite status).
      *
-     * @param current_time  GPS epoch time (converted to UTC internally).
-     * @param applied_meas  Accepted measurement set (residuals are logged from this).
-     * @param have_applied  Whether an update was applied.
+     * @param current_time      GPS epoch time (converted to UTC internally).
+     * @param epoch_obs         Raw RINEX observations for this epoch.  Sats
+     *                          here but absent from @p modeled_obs were
+     *                          dropped by ModelGeometry (below mask /
+     *                          missing ephemeris / etc.) -- the status
+     *                          trace surfaces them as "BelowMask" rows.
+     * @param modeled_obs       Geometry-resolved observations for this epoch
+     *                          (drives the per-sat status trace's used set
+     *                          + elevation/azimuth/n_signals_total).
+     * @param applied_meas      Accepted measurement set (residuals are logged
+     *                          from this; excluded_measurements drives the
+     *                          "code outlier" status category).
+     * @param have_applied      Whether an update was applied.
+     * @param reset_satellites  Sats whose ambiguities were reset by the
+     *                          Kalman update loop -- contributes to the
+     *                          "slip" status category alongside the
+     *                          CycleSlipManager's MW detector results.
      */
     void writeEpochTraces(const GnssTime& current_time,
+                          const std::vector<RinexObservation>& epoch_obs,
+                          const std::vector<PppObservation>& modeled_obs,
+                          const std::map<std::string, DropReason>& drop_reasons,
                           const EpochMeasurement& applied_meas,
-                          bool have_applied);
+                          bool have_applied,
+                          const std::set<std::string>& reset_satellites);
 
     /**
      * @brief Convert a GPS-scale GnssTime to a UTC-scale GnssTime.
@@ -296,9 +435,11 @@ private:
     std::unique_ptr<KalmanFilter>        kalman_filter_;
     std::unique_ptr<WlsEstimator>        wls_estimator_;
     std::unique_ptr<CycleSlipManager>     cycle_slip_manager_;
+    std::unique_ptr<IonoVariabilityMonitor> iono_variability_monitor_;
     std::unique_ptr<TraceLogger>         trace_logger_;
     std::unique_ptr<ImuIntegrator>       imu_integrator_;
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
+    std::unique_ptr<GlobalIonosphereMap> gim_;  /**< IONEX global ionosphere map for PPP-RTK ionosphere weighting (post-processing). */
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */
     Eigen::Vector3d initial_position_;        /**< Position used for sanity-check reversion. */
@@ -312,15 +453,18 @@ private:
     std::unique_ptr<PppModel>     ref_ppp_model_;     /**< PppModel instance bound to the reference station. */
     PppState                      ref_ppp_state_;     /**< Reference-station PppState (fixed position, zero clock/tropo). */
 
-    bool first_epoch_{true};                  /**< True until first WLS seeding completes. */
+    bool first_epoch_{true};                  /**< True until the first processed epoch completes; gates the initial-dt assumption, decimation skip, IMU-aided predict, and WLS clock seeding. */
     double prev_tow_{0.0};                    /**< Previous epoch TOW for dt computation. */
     double last_processed_tow_{std::numeric_limits<double>::lowest()}; /**< TOW of the most recently PROCESSED epoch; lags prev_tow_ when downsampling via getGnssRate(). */
     GnssTime prev_epoch_time_{0, 0.0};        /**< Previous epoch full GnssTime for IMU integration. */
     double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 
     /// Pre-update position captured at the top of each runFilterUpdateLoop;
-    /// used by runGeometryRelinearization to compute |Δpos| against the
-    /// post-update state and decide whether relinearization is needed.
+    /// used by runGeometryRelinearization for its |Δpos| gate on BOTH the IEKF
+    /// and the legacy naive path.  The IEKF's full-state anchor (x⁻, P⁻) comes
+    /// instead from KalmanFilter::getLastUpdatePriorX/P, which is dimension-
+    /// matched to the post-augmentation state (position alone never changes
+    /// dimension, so it is safe to snapshot up front here).
     Eigen::Vector3d relinearize_pre_update_pos_{ Eigen::Vector3d::Zero() };
     /// Total relinearization passes applied this run; capped by
     /// config_.relinearizeMaxCount() when that value is non-negative.

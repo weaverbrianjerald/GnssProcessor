@@ -28,6 +28,7 @@ namespace GnssProcessor {
         {"R13", -2}, {"R14", -7}, {"R15",  0}, {"R16", -1},
         {"R17",  4}, {"R18", -3}, {"R19",  3}, {"R20",  2},
         {"R21",  4}, {"R22", -3}, {"R23",  3}, {"R24",  2},
+        {"R25", -5}, {"R26", -6},
     };
 
     /**
@@ -57,7 +58,9 @@ namespace GnssProcessor {
      * Looks up in user-provided slots first, then falls back to defaults.
      *
      * @param satellite Satellite identifier (e.g., "R01").
-     * @return Channel number if found, 0 otherwise.
+     * @return FDMA channel k from the slot map or the default table; the
+     *         sentinel -999 if the satellite is unknown (getFrequency()
+     *         treats -999 as out-of-range and skips the satellite).
      */
     int PppUtils::getGlonassChannel(const std::string& satellite) const {
         // Check user-provided slots first

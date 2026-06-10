@@ -15,6 +15,8 @@
 
 #include "config/GnssConfig.hpp"
 #include "atmosphere/Troposphere.hpp"
+#include "atmosphere/Gpt3.hpp"
+#include "atmosphere/Vmf3.hpp"
 #include "common/Constants.hpp"
 #include "math/Coordinates.hpp"
 #include <Eigen/Dense>
@@ -57,9 +59,32 @@ namespace GnssProcessor {
 
     Troposphere::Troposphere(const GnssConfig& config, LogManager& log_mgr)
         : config_(config), log_manager_(log_mgr) {
-        log_manager_.getLogger("troposphere")->info("Troposphere model initialized (GMF): mode={}, elev_mask={}°",
-            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK", config_.getElevationMaskDeg());
+        auto logger = log_manager_.getLogger("troposphere");
+        const bool want_vmf3 =
+            config_.getTroposphereMappingFunction() == TroposphereMappingFunction::Vmf3;
+        const bool want_gpt3_apriori =
+            config_.getTroposphereAprioriSource() == TroposphereAprioriSource::Gpt3;
+        logger->info("Troposphere model initialized (mapping={}, apriori={}): mode={}, elev_mask={}°",
+            want_vmf3 ? "VMF3" : "GMF",
+            want_gpt3_apriori ? "GPT3" : "stdatm",
+            config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
+            config_.getElevationMaskDeg());
+
+        if (want_vmf3 || want_gpt3_apriori) {
+            const auto& grid_path = config_.getGpt3GridPath();
+            if (grid_path.empty()) {
+                logger->warn("GPT3 grid required (mapping=VMF3 or apriori=GPT3) but gpt3_grid_path is empty; falling back to GMF/stdatm");
+            } else {
+                gpt3_ = std::make_unique<Gpt3>();
+                if (!gpt3_->load(grid_path, log_manager_)) {
+                    logger->warn("GPT3 grid load failed ('{}'); falling back to GMF/stdatm", grid_path.string());
+                    gpt3_.reset();
+                }
+            }
+        }
     }
+
+    Troposphere::~Troposphere() = default;
 
     /**
      * @brief Evaluate the Marini continued-fraction mapping function form.
@@ -141,30 +166,75 @@ namespace GnssProcessor {
         // Day-of-year for annual variation (phase reference: Jan 28 for NH)
         double doy = getDayOfYear(time);
 
+        // --- VMF3 path (empirical from GPT3): early-out before GMF fallthrough ---
+        // Uses a_h/a_w bilinearly interpolated from the GPT3 grid and b/c
+        // synthesized from the degree/order-12 spherical-harmonic expansion in
+        // Vmf3Coefficients.hpp.  On any GPT3 query failure we silently fall
+        // through to GMF so the engine never aborts on a single bad sample.
+        if (config_.getTroposphereMappingFunction() == TroposphereMappingFunction::Vmf3 && gpt3_) {
+            const double lat_deg = lat * 180.0 / Constants::PI;
+            const double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
+            Gpt3::Result r{};
+            if (gpt3_->query(lat_deg, lon_deg, llh.h_m, doy, r)) {
+                Vmf3::computeMapping(lat, llh.lon_rad, doy, el_rad, r.a_h, r.a_w, mf_d, mf_w);
+
+                // Niell height correction for the hydrostatic mapping is the
+                // same formula GMF uses; VMF3's a coefficient lives at the
+                // grid's orthometric height so applying the correction here
+                // brings it down to the station height.
+                static constexpr double a_ht = 2.53e-5;
+                static constexpr double b_ht = 5.49e-3;
+                static constexpr double c_ht = 1.14e-3;
+                const double ht_corr_coeff = 1.0 / sin_el - mariniMapping(sin_el, a_ht, b_ht, c_ht);
+                mf_d += ht_corr_coeff * h_km;
+
+                if (!std::isfinite(mf_d) || !std::isfinite(mf_w) || mf_d < 1.0 || mf_w < 1.0) {
+                    log_manager_.getLogger("ppp_model")->warn(
+                        "Invalid VMF3 mappings: mf_d={:.3f}, mf_w={:.3f}, elevation={:.3f} deg",
+                        mf_d, mf_w, elevation);
+                    mf_d = std::max(mf_d, 1.0);
+                    mf_w = std::max(mf_w, 1.0);
+                }
+                log_manager_.getLogger("ppp_model")->trace(
+                    "VMF3 mappings: elevation={:.3f} deg, lat={:.3f} deg, h={:.1f} m, doy={:.1f}, a_h={:.6e}, a_w={:.6e}, mf_d={:.6f}, mf_w={:.6f}",
+                    elevation, lat_deg, llh.h_m, doy, r.a_h, r.a_w, mf_d, mf_w);
+                return;
+            }
+            // GPT3 query failed — fall through to GMF below.
+        }
+
         // Phase offset: DOY 28 for northern hemisphere, DOY 28 + 182.625 for southern
         double doy_phase = (lat >= 0.0) ? 28.0 : 28.0 + 182.625;
         double cos_annual = std::cos(2.0 * Constants::PI * (doy - doy_phase) / 365.25);
 
         double abs_lat = std::abs(lat); // radians
 
-        // === GMF coefficients (Boehm et al. 2006, Table 1) ===
-        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°
+        // === Niell Mapping Function coefficients (Niell 1996, NMF) ===
+        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°.  (Despite the
+        // historical "GMF" naming on this method, these are the NMF tables;
+        // the spherical-harmonic GMF/VMF3 path lives in the Vmf3 branch.)
+        //
+        // The hydrostatic seasonal AMPLITUDE is zero at 15° and grows poleward,
+        // so amplitude[0] = 0.0.  Verified against POINT (Troposphere.cpp NMF
+        // abc_amp), cssrlib (gnss.py tropmapfNiell) and RTKLIB (tropmapf) — all
+        // three carry the leading 0.0.  (A prior version dropped it and shifted
+        // every amplitude one latitude bin toward the equator.)
         //
         // Hydrostatic: mean and annual amplitude
         static constexpr double ah_mean[] = { 1.2769934e-3, 1.2683230e-3, 1.2465397e-3,
                                                1.2196049e-3, 1.2045996e-3 };
-        static constexpr double ah_amp[]  = { 1.2709626e-5, 2.6523662e-5,
-                                               3.4000452e-5, 4.1202191e-5, 4.1202191e-5 };
+        static constexpr double ah_amp[]  = { 0.0, 1.2709626e-5, 2.6523662e-5,
+                                               3.4000452e-5, 4.1202191e-5 };
 
         static constexpr double bh_mean[] = { 2.9153695e-3, 2.9152299e-3, 2.9288445e-3,
                                                2.9022565e-3, 2.9024912e-3 };
-        static constexpr double bh_amp[]  = { 2.1414979e-5, 3.0160779e-5,
-                                               7.2562722e-5, 11.723375e-5, 11.723375e-5 };
+        static constexpr double bh_amp[]  = { 0.0, 2.1414979e-5, 3.0160779e-5,
+                                               7.2562722e-5, 11.723375e-5 };
 
         static constexpr double ch_mean[] = { 62.610505e-3, 62.837393e-3, 63.721774e-3,
                                                63.824265e-3, 64.258455e-3 };
-        static constexpr double ch_amp[]  = { 9.0128400e-5, 4.3497037e-5,
-                                               84.795348e-5, 170.37206e-5, 170.37206e-5 };
+        static constexpr double ch_amp[]  = { 0.0, 9.0128400e-5, 4.3497037e-5,
+                                               84.795348e-5, 170.37206e-5 };
 
         // Wet: mean only (no annual variation in GMF wet)
         static constexpr double aw_mean[] = { 5.8021897e-4, 5.6794847e-4, 5.8118019e-4,
@@ -190,9 +260,15 @@ namespace GnssProcessor {
             return arr[i] * (1.0 - f) + arr[i + 1] * f;
         };
 
-        double a_h = lerp(ah_mean, idx, frac) + lerp(ah_amp, idx, frac) * cos_annual;
-        double b_h = lerp(bh_mean, idx, frac) + lerp(bh_amp, idx, frac) * cos_annual;
-        double c_h = lerp(ch_mean, idx, frac) + lerp(ch_amp, idx, frac) * cos_annual;
+        // Niell seasonal combination is avg − amp·cos(2π(doy − 28)/365.25)
+        // (MINUS).  cos_annual already folds the southern-hemisphere half-year
+        // shift into its phase (doy_phase = 28 + 182.625 for the SH), so the
+        // single minus sign is correct for both hemispheres.  Verified against
+        // POINT, cssrlib and RTKLIB — all use the minus.  (A prior version used
+        // a plus, putting the seasonal variation in anti-phase.)
+        double a_h = lerp(ah_mean, idx, frac) - lerp(ah_amp, idx, frac) * cos_annual;
+        double b_h = lerp(bh_mean, idx, frac) - lerp(bh_amp, idx, frac) * cos_annual;
+        double c_h = lerp(ch_mean, idx, frac) - lerp(ch_amp, idx, frac) * cos_annual;
 
         // Interpolate wet coefficients (no annual variation in GMF wet)
         double a_w = lerp(aw_mean, idx, frac);
@@ -224,14 +300,29 @@ namespace GnssProcessor {
             elevation, lat * 180.0 / Constants::PI, llh.h_m, doy, mf_d, mf_w);
     }
 
-    double Troposphere::computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos) const {
+    double Troposphere::computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos,
+                                                const GnssTime& time) const {
         const Coordinates::Llh llh = Coordinates::ecefToLlh(receiver_pos);
         const double lat_rad = llh.lat_rad;
         const double h_m = llh.h_m;
 
-        const double P0 = config_.getZhdPressure(); // mbar (sea-level default)
-        const double T0 = config_.getZhdTemp();     // K (sea-level default)
-        const double P = pressureFromHeightStdAtm(P0, T0, h_m);
+        // Default: standard-atmosphere reduction from configured sea-level pair.
+        double P = pressureFromHeightStdAtm(config_.getZhdPressure(), config_.getZhdTemp(), h_m);
+        const char* source = "stdatm";
+
+        // GPT3 path: query the grid at this lat/lon/h/doy.  On any failure
+        // we silently keep the standard-atmosphere fallback already in P.
+        if (gpt3_ && gpt3_->isLoaded()) {
+            const double lat_deg = lat_rad * 180.0 / Constants::PI;
+            const double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
+            const double doy = getDayOfYear(time);
+            Gpt3::Result r{};
+            if (gpt3_->query(lat_deg, lon_deg, h_m, doy, r) &&
+                std::isfinite(r.pressure_mbar) && r.pressure_mbar > 0.0) {
+                P = r.pressure_mbar;
+                source = "gpt3";
+            }
+        }
 
         // Saastamoinen hydrostatic (ZHD) [m]
         const double f_lat = 1.0 - 0.00266 * std::cos(2.0 * lat_rad) - 0.00028 * h_m / 1000.0;
@@ -245,8 +336,8 @@ namespace GnssProcessor {
         const double zhd = (0.0022768 * P) / f_use;
 
         log_manager_.getLogger("ppp_model")->trace(
-            "ZHD: lat={:.6f} rad, h={:.1f} m, P0={:.1f} mbar, T0={:.2f} K, P(h)={:.1f} mbar, zhd={:.3f} m",
-            lat_rad, h_m, P0, T0, P, zhd);
+            "ZHD: lat={:.6f} rad, h={:.1f} m, P(h)={:.1f} mbar [{}], zhd={:.3f} m",
+            lat_rad, h_m, P, source, zhd);
 
         return zhd;
     }

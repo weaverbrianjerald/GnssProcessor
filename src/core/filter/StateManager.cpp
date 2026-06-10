@@ -19,6 +19,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "common/Constants.hpp"
+#include "math/TimeUtils.hpp"
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -170,7 +171,10 @@ namespace GnssProcessor {
     StateManager::StateManager(size_t core_state_size, LogManager& log_manager, const GnssConfig& config)
         : base_core_size_(core_state_size), state_epoch_time_{ 0, 0.0 }, log_manager_(log_manager), config_(config),
           is_baseline_(config.isBaselineMode()),
+          clock_idx_(std::numeric_limits<size_t>::max()),
+          tropo_idx_(std::numeric_limits<size_t>::max()),
           velocity_idx_(std::numeric_limits<size_t>::max()),
+          clock_rate_idx_(std::numeric_limits<size_t>::max()),
           phase_clock_idx_(std::numeric_limits<size_t>::max()),
           gradient_north_idx_(std::numeric_limits<size_t>::max()),
           gradient_east_idx_(std::numeric_limits<size_t>::max()),
@@ -188,6 +192,7 @@ namespace GnssProcessor {
             core_state_size_ = base_core_size_;   // just position (3)
             systems_with_time_offsets_.clear();
             system_time_offset_indices_.clear();
+            system_time_rate_offset_indices_.clear();
 
             // Optional differential ZWD state for long-baseline mode.
             // Slotted right after position so the layout stays simple
@@ -225,10 +230,44 @@ namespace GnssProcessor {
             return;
         }
 
+        // Core PPP / PPP-RTK layout:
+        //   position(3) → [optional clock(1)] → tropo(1) → ...
+        //
+        // The receiver clock-bias state is gated on non-BSSD mode.  Under BSSD
+        // same-system SD cancels the receiver clock identically, so the bias
+        // is unobservable from code/phase measurements; allocating it would
+        // only let it drift on process noise without ever receiving a
+        // measurement update.  Skipping allocation keeps the BSSD philosophy
+        // intact — no receiver-side state survives the SD transform — and
+        // shrinks the state vector + covariance by one row/col.
+        //
+        // The caller-supplied @c core_state_size assumes pos + clk + tropo
+        // (=5); we drop one slot when the clock is gated off so the index
+        // accounting (velocity, ISBs, etc.) stays self-consistent.
+        base_core_size_ = 3;                            // position
+        if (!config_.enableBetweenSatelliteSd()) {
+            clock_idx_ = base_core_size_;
+            ++base_core_size_;
+        }
+        tropo_idx_ = base_core_size_;
+        ++base_core_size_;
+
         // Optional velocity states (Vx, Vy, Vz) right after position + clock + tropo.
+        // The receiver clock-rate state is gated on estimateVelocity AND non-BSSD
+        // mode.  Under BSSD, Doppler measurements are SD-transformed alongside
+        // code/phase (same-system SD cancels the receiver clock-rate identically),
+        // so the clock-rate state is unobservable and unnecessary — skipping
+        // allocation keeps the BSSD philosophy intact: no receiver-side state
+        // survives the SD transform.  Slotted immediately after velocity so any
+        // consumer that locates the clock-rate by inspecting the layout sees
+        // position-velocity-clock-rate as a single motion-related block.
         if (config_.estimateVelocity()) {
             velocity_idx_ = base_core_size_;
             base_core_size_ += 3;
+            if (!config_.enableBetweenSatelliteSd()) {
+                clock_rate_idx_ = base_core_size_;
+                base_core_size_ += 1;
+            }
         }
 
         // Optional phase clock offset state.
@@ -255,23 +294,47 @@ namespace GnssProcessor {
             base_core_size_ += 3;
         }
 
-        // Determine which systems need inter-system time bias states
-        // GPS is the reference system, so we add time offset states for all other active systems
+        // Determine which systems need inter-system time bias states.  GPS is
+        // the reference system, so non-GPS active systems would normally each
+        // get an ISB state.
+        //
+        // BSSD gating: same-system BSSD cancels the per-system clock identically
+        // (the ISB is just the difference between two cancelled per-system
+        // clocks), so under BSSD the ISBs are unobservable from code/phase.
+        // Skipping allocation keeps the receiver-side state vector empty
+        // post-SD and shrinks the state by one slot per non-GPS active system.
         const auto& active_systems = config_.getActiveSystems();
         systems_with_time_offsets_.clear();
         system_time_offset_indices_.clear();
-        
+        system_time_rate_offset_indices_.clear();
+
         size_t time_offset_idx = base_core_size_;
-        for (const auto& sys : active_systems) {
-            if (sys != "GPS") {
-                systems_with_time_offsets_.push_back(sys);
-                system_time_offset_indices_[sys] = time_offset_idx;
+        if (!config_.enableBetweenSatelliteSd()) {
+            for (const auto& sys : active_systems) {
+                if (sys != "GPS") {
+                    systems_with_time_offsets_.push_back(sys);
+                    system_time_offset_indices_[sys] = time_offset_idx;
+                    ++time_offset_idx;
+                }
+            }
+        }
+
+        // Per-system clock-rate offset states (ISBR), appended after the
+        // existing ISBs.  Gated identically to the global clock-rate state:
+        // only allocated when Doppler is being processed AND BSSD is off.
+        // Under BSSD same-system SD-Doppler cancels the ISBR identically;
+        // skipping allocation keeps the receiver-side states empty after SD.
+        if (config_.estimateVelocity() && !config_.enableBetweenSatelliteSd()) {
+            for (const auto& sys : systems_with_time_offsets_) {
+                system_time_rate_offset_indices_[sys] = time_offset_idx;
                 ++time_offset_idx;
             }
         }
-        
+
         // Total core state size includes base states plus inter-system time offsets
-        core_state_size_ = base_core_size_ + systems_with_time_offsets_.size();
+        // (and the matching rate offsets when velocity is estimated).
+        core_state_size_ = base_core_size_ + systems_with_time_offsets_.size()
+                         + system_time_rate_offset_indices_.size();
         
         state_vector_ = Eigen::VectorXd::Zero(core_state_size_);
         covariance_ = Eigen::MatrixXd::Identity(core_state_size_, core_state_size_);
@@ -284,13 +347,23 @@ namespace GnssProcessor {
         double time_offset_var = init.system_time_offset * init.system_time_offset;
         
         covariance_.block(0, 0, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
-        covariance_(3, 3) = clock_var;
-        covariance_(4, 4) = tropo_var;
+        if (hasClock())
+            covariance_(clock_idx_, clock_idx_) = clock_var;
+        covariance_(tropo_idx_, tropo_idx_) = tropo_var;
 
         // Initialize velocity covariance if enabled
         if (config_.estimateVelocity()) {
             double vel_var = init.velocity * init.velocity;
             covariance_.block(velocity_idx_, velocity_idx_, 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
+
+            // Clock-rate initial variance (only when the state was actually
+            // allocated — see gating above; skipped under BSSD where the
+            // state is unobservable after SD).  Sized for typical TCXO drift
+            // uncertainty at startup (a few m/s in c*df_r/dt is roomy).
+            if (hasClockRate()) {
+                const double clock_rate_var = init.clock_rate * init.clock_rate;
+                covariance_(clock_rate_idx_, clock_rate_idx_) = clock_rate_var;
+            }
         }
         
         // Initialize phase clock offset covariance if enabled
@@ -321,15 +394,32 @@ namespace GnssProcessor {
         for (const auto& [sys_name, idx] : system_time_offset_indices_) {
             covariance_(idx, idx) = time_offset_var;
         }
+
+        // Initialize inter-system clock-rate offset (ISBR) covariances —
+        // typically very small (sub-mm/s) but seeded at the configured
+        // init.system_time_rate_offset for filter freedom.
+        const double time_rate_offset_var =
+            init.system_time_rate_offset * init.system_time_rate_offset;
+        for (const auto& [sys_name, idx] : system_time_rate_offset_indices_) {
+            covariance_(idx, idx) = time_rate_offset_var;
+        }
         
         // Log initialization using LogManager-provided logger
         auto logger = log_manager_.getLogger("state_manager");
-        logger->info("StateManager initialized with core state size: {} (base={}, velocity={}, phase_clock={}, gradients={}, imu={}, time_offsets={})",
-            core_state_size_, base_core_size_, config_.estimateVelocity() ? 3 : 0,
+        logger->info("StateManager initialized with core state size: {} (base={}, clock={}, velocity={}, clock_rate={}, phase_clock={}, gradients={}, imu={}, time_offsets={}, time_rate_offsets={})",
+            core_state_size_, base_core_size_,
+            hasClock() ? 1 : 0,
+            config_.estimateVelocity() ? 3 : 0,
+            hasClockRate() ? 1 : 0,
             config_.estimatePhaseClock() ? 1 : 0,
             config_.estimateTropoGradients() ? 2 : 0,
             config_.enableImu() ? 9 : 0,
-            systems_with_time_offsets_.size());
+            systems_with_time_offsets_.size(),
+            system_time_rate_offset_indices_.size());
+        if (config_.enableBetweenSatelliteSd()) {
+            logger->info("BSSD active — receiver clock + ISB states omitted "
+                         "(receiver-side states cancel in SD)");
+        }
         
         if (!systems_with_time_offsets_.empty()) {
             std::string offset_systems;
@@ -401,6 +491,11 @@ namespace GnssProcessor {
         return covariance_;
     }
 
+    double StateManager::getStateVariance(int idx) const {
+        if (idx < 0 || idx >= covariance_.rows()) return 0.0;
+        return covariance_(idx, idx);
+    }
+
     // ===================================================================
     // Process noise / transition
     // ===================================================================
@@ -421,9 +516,30 @@ namespace GnssProcessor {
 
         size_t posIdx = getPositionIndex();
 
-        // Position noise applies in every mode (static: pn.position=0, kinematic: ~100 m²/s).
-        double pos_var = pn.position * dt;
-        Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * pos_var;
+        // Position / velocity process noise.
+        if (hasVelocity()) {
+            // Continuous white-noise acceleration (CWNA) model: one
+            // acceleration PSD q (m*m/s^3) drives the coupled block.  The
+            // same unmodeled acceleration perturbs velocity (single integral)
+            // and position (double integral), so the block carries the
+            // dt^3/3, dt^2/2, dt structure with a non-zero pos/vel
+            // cross-covariance.  pn.position is unused here.
+            const size_t velIdx = getVelocityIndex();
+            const double q    = pn.acceleration_psd;
+            const double dt2  = dt * dt;
+            const double q_pp = q * dt2 * dt / 3.0;
+            const double q_pv = q * dt2 / 2.0;
+            const double q_vv = q * dt;
+            Q.block(posIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * q_pp;
+            Q.block(posIdx, velIdx, 3, 3) = Eigen::Matrix3d::Identity() * q_pv;
+            Q.block(velIdx, posIdx, 3, 3) = Eigen::Matrix3d::Identity() * q_pv;
+            Q.block(velIdx, velIdx, 3, 3) = Eigen::Matrix3d::Identity() * q_vv;
+        } else {
+            // Position-only random walk: pn.position is the spectral density
+            // (m*m/s) of the position drift.
+            Q.block(posIdx, posIdx, 3, 3) =
+                Eigen::Matrix3d::Identity() * (pn.position * dt);
+        }
 
         // Baseline mode: no clock / tropo / iono / system-offset / bias states
         // in the state vector.  Apply ambiguity process noise below (if any),
@@ -434,7 +550,9 @@ namespace GnssProcessor {
         if (is_baseline_) {
             if (state_size > core_state_size_) {
                 for (const auto& [key, idx] : ambiguity_indices_) {
-                    Q(idx, idx) = pn.ambiguity * dt;
+                    auto ov = amb_q_overrides_.find(key);
+                    const double q = (ov != amb_q_overrides_.end()) ? ov->second : pn.ambiguity;
+                    Q(idx, idx) = q * dt;
                 }
             }
             if (hasDifferentialTropo()) {
@@ -451,17 +569,40 @@ namespace GnssProcessor {
         size_t tropoIdx = getTropoIndex();
 
         // Velocity noise (m�/s� per s)
-        if (hasVelocity()) {
-            double vel_var = pn.velocity * dt;
-            Q.block(getVelocityIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * vel_var;
-        }
+        // Velocity process noise is set above, in the CWNA position/velocity block.
 
-        // Clock noise - typically very large spectral density for white noise clock.
-        // When BSSD is active the clock column is zeroed in H, so the clock
-        // receives no measurement update.  Skip process noise to prevent
-        // unbounded variance growth; the WLS seeder maintains the clock value.
-        if (!config_.enableBetweenSatelliteSd()) {
-            double clock_var = pn.clock * dt;
+        // Clock noise.
+        //
+        // Two regimes:
+        //   (a) Clock-rate state active (Doppler being processed) — apply a
+        //       continuous white-noise acceleration (CWNA) model with spectral
+        //       density pn.clock_rate (m²/s³).  Clock-bias picks up dt³/3,
+        //       clock-rate picks up dt, with dt²/2 cross-covariance.
+        //   (b) Clock-rate state inactive — use the legacy random-walk Q on
+        //       clock-bias with spectral density pn.clock (m²/s).
+        //
+        // BSSD handling: when BSSD is active the clock-bias column of H is
+        // zeroed for code/phase measurements (clock cancels in SD), so the
+        // bias receives no measurement update — suppress its Q to prevent
+        // unbounded variance growth.  Doppler is BSSD-exempt, so the
+        // clock-rate state still gets a measurement update and must keep
+        // its Q regardless (otherwise its variance freezes at 0 and the
+        // filter rejects every Doppler).
+        if (hasClockRate()) {
+            const size_t crIdx = getClockRateIndex();
+            const double q_cr  = pn.clock_rate;
+            const double dt2   = dt * dt;
+            const double q_cc  = q_cr * dt2 * dt / 3.0;
+            const double q_x   = q_cr * dt2 / 2.0;
+            const double q_rr  = q_cr * dt;
+            if (!config_.enableBetweenSatelliteSd()) {
+                Q(clockIdx, clockIdx) = q_cc;
+                Q(clockIdx, crIdx)    = q_x;
+                Q(crIdx, clockIdx)    = q_x;
+            }
+            Q(crIdx, crIdx) = q_rr;
+        } else if (!config_.enableBetweenSatelliteSd()) {
+            const double clock_var = pn.clock * dt;
             Q(clockIdx, clockIdx) = clock_var;
         }
 
@@ -487,10 +628,18 @@ namespace GnssProcessor {
         // Per-satellite ionospheric noise (PPP-RTK uncombined)
         // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin�(el)
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
-            const double q_zenith = pn.ionosphere;
+            const double q_zenith_default = pn.ionosphere;
             for (const auto& [sat, idx] : ionosphere_indices_) {
                 // Suppress process noise for BSSD pivot iono states (unobservable).
-                if (frozen_ionosphere_sats_.count(sat)) continue;
+                if (frozen_pivot_sats_.count(sat)) continue;
+
+                // Per-satellite override from the adaptive iono process-noise
+                // scheme (IonoVariabilityMonitor) when present; otherwise the
+                // static config zenith spectral density.  Mirrors the
+                // amb_q_overrides_ pattern used for ambiguities above.
+                auto q_ov = iono_q_overrides_.find(sat);
+                const double q_zenith =
+                    (q_ov != iono_q_overrides_.end()) ? q_ov->second : q_zenith_default;
 
                 double sin2_el = 1.0; // default: zenith (no scaling)
                 auto el_it = ionosphere_elevations_.find(sat);
@@ -524,15 +673,40 @@ namespace GnssProcessor {
                 // helper preserves the lenient "no pipe -> whole key"
                 // fallback the original loop relied on.
                 const std::string sat = StateKeys::satelliteFromSatBiasKey(key);
-                if (frozen_ionosphere_sats_.count(sat)) continue;
+                if (frozen_pivot_sats_.count(sat)) continue;
                 Q(idx, idx) = sb_var;
             }
         }
 
-        // Inter-system time offset noise (very small for slow drift).
-        // Suppressed under BSSD: ISB columns are zeroed in the SD H-matrix.
-        if (!config_.enableBetweenSatelliteSd()) {
-            double time_offset_var = pn.system_time_offset * dt;
+        // Inter-system time offset noise (and rate offset, when present).
+        //
+        // Mirrors the clock-bias / clock-rate handling above on a per-system
+        // basis.  When the ISBR (rate offset) state is present we use a CWNA
+        // pair with spectral density pn.system_time_rate_offset; otherwise we
+        // fall back to the legacy random walk on the bias with
+        // pn.system_time_offset.  Under BSSD the ISB column is zeroed for
+        // code/phase (no measurement update on the bias), but Doppler is
+        // BSSD-exempt and updates the ISBR, so its Q stays active.
+        if (!system_time_rate_offset_indices_.empty()) {
+            const double q_isbr = pn.system_time_rate_offset;
+            const double dt2    = dt * dt;
+            const double q_bb   = q_isbr * dt2 * dt / 3.0;
+            const double q_x    = q_isbr * dt2 / 2.0;
+            const double q_rr   = q_isbr * dt;
+            const bool bssd     = config_.enableBetweenSatelliteSd();
+            for (const auto& [sys_name, isb_idx] : system_time_offset_indices_) {
+                auto rit = system_time_rate_offset_indices_.find(sys_name);
+                if (rit == system_time_rate_offset_indices_.end()) continue;
+                const size_t isbr_idx = rit->second;
+                if (!bssd) {
+                    Q(isb_idx, isb_idx)  = q_bb;
+                    Q(isb_idx, isbr_idx) = q_x;
+                    Q(isbr_idx, isb_idx) = q_x;
+                }
+                Q(isbr_idx, isbr_idx) = q_rr;
+            }
+        } else if (!config_.enableBetweenSatelliteSd()) {
+            const double time_offset_var = pn.system_time_offset * dt;
             for (const auto& [sys_name, idx] : system_time_offset_indices_) {
                 Q(idx, idx) = time_offset_var;
             }
@@ -540,11 +714,22 @@ namespace GnssProcessor {
 
         // Ambiguity process noise (zero for constant ambiguities).
         // Ambiguities missing BIA/ATX phase coverage absorb a time-constant
-        // satellite bias into the float value � no extra process noise needed.
+        // satellite bias into the float value — no extra process noise needed.
         // They are excluded from integer AR via the unresolvable-ambiguity set.
+        // BSSD pivot ambiguities are also frozen (value=0, variance=0 by S-
+        // transform construction); applying Q would grow their variance past
+        // PivotManager::isPivotDisturbed's 1e-12 threshold every epoch and
+        // trigger spurious handovers.
         if (state_size > core_state_size_) {
             for (const auto& [key, idx] : ambiguity_indices_) {
-                Q(idx, idx) = pn.ambiguity * dt;
+                const auto us = key.find('_');
+                if (us != std::string::npos) {
+                    const std::string sat = key.substr(0, us);
+                    if (frozen_pivot_sats_.count(sat)) continue;
+                }
+                auto ov = amb_q_overrides_.find(key);
+                const double q = (ov != amb_q_overrides_.end()) ? ov->second : pn.ambiguity;
+                Q(idx, idx) = q * dt;
             }
         }
 
@@ -562,9 +747,25 @@ namespace GnssProcessor {
             F.block(getPositionIndex(), getVelocityIndex(), 3, 3) = Eigen::Matrix3d::Identity() * dt;
         }
 
+        // Clock-bias / clock-rate coupling: δt_r(k+1) = δt_r(k) + dt · ḋt_r(k).
+        // Skipped under BSSD because the clock-bias is unobservable from
+        // code/phase (SD cancels it) — propagating a value into it via the
+        // rate would drift it unboundedly without observability.  Same logic
+        // for the per-system ISB / ISBR pairs.
+        if (hasClockRate() && !config_.enableBetweenSatelliteSd()) {
+            F(getClockIndex(), getClockRateIndex()) = dt;
+            for (const auto& [sys_name, isb_idx] : system_time_offset_indices_) {
+                auto rit = system_time_rate_offset_indices_.find(sys_name);
+                if (rit == system_time_rate_offset_indices_.end()) continue;
+                F(isb_idx, rit->second) = dt;
+            }
+        }
+
         auto logger = log_manager_.getLogger("state_manager");
-        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s, velocity_coupling={}",
-            F.rows(), F.cols(), dt, hasVelocity() ? "on" : "off");
+        logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s, velocity_coupling={}, clock_rate_coupling={}",
+            F.rows(), F.cols(), dt,
+            hasVelocity() ? "on" : "off",
+            (hasClockRate() && !config_.enableBetweenSatelliteSd()) ? "on" : "off");
         return F;
     }
 
@@ -575,16 +776,13 @@ namespace GnssProcessor {
     size_t StateManager::getPositionIndex() const { return 0; }
     size_t StateManager::getVelocityIndex() const { return velocity_idx_; }
     bool   StateManager::hasVelocity() const { return velocity_idx_ != std::numeric_limits<size_t>::max(); }
-    size_t StateManager::getClockIndex() const {
-        // In baseline mode the clock cancels via DD and has no state.
-        return is_baseline_ ? std::numeric_limits<size_t>::max() : 3;
-    }
+    size_t StateManager::getClockIndex() const { return clock_idx_; }
+    bool   StateManager::hasClock() const { return clock_idx_ != std::numeric_limits<size_t>::max(); }
+    size_t StateManager::getClockRateIndex() const { return clock_rate_idx_; }
+    bool   StateManager::hasClockRate() const { return clock_rate_idx_ != std::numeric_limits<size_t>::max(); }
     size_t StateManager::getPhaseClockIndex() const { return phase_clock_idx_; }
     bool   StateManager::hasPhaseClock() const { return phase_clock_idx_ != std::numeric_limits<size_t>::max(); }
-    size_t StateManager::getTropoIndex() const {
-        // In baseline mode (short baseline) tropo cancels via DD and has no state.
-        return is_baseline_ ? std::numeric_limits<size_t>::max() : 4;
-    }
+    size_t StateManager::getTropoIndex() const { return tropo_idx_; }
     size_t StateManager::getDifferentialTropoIndex() const {
         return differential_tropo_idx_;
     }
@@ -613,6 +811,12 @@ namespace GnssProcessor {
         return it != system_time_offset_indices_.end() ? it->second : std::numeric_limits<size_t>::max();
     }
 
+    size_t StateManager::getSystemTimeRateOffsetIndex(const std::string& system_name) const {
+        auto it = system_time_rate_offset_indices_.find(system_name);
+        return it != system_time_rate_offset_indices_.end()
+             ? it->second : std::numeric_limits<size_t>::max();
+    }
+
     size_t StateManager::getNumSystemTimeOffsets() const {
         return systems_with_time_offsets_.size();
     }
@@ -634,17 +838,22 @@ namespace GnssProcessor {
         return ambiguity_indices_;
     }
 
-    size_t StateManager::addAmbiguity(const std::string& key, double initial_value) {
+    size_t StateManager::addAmbiguity(const std::string& key, double initial_value,
+                                        double initial_std_override) {
         auto logger = log_manager_.getLogger("state_manager");
         if (ambiguity_indices_.count(key)) {
             logger->trace("Ambiguity {} already exists at index {}", key, ambiguity_indices_[key]);
             return ambiguity_indices_[key];
         }
-        const double amb_std = config_.getAmbiguityStd();
+        const double amb_std = (initial_std_override > 0.0)
+                                ? initial_std_override
+                                : config_.getAmbiguityStd();
         const size_t index = appendState(initial_value, amb_std * amb_std);
         ambiguity_indices_[key] = index;
 
-        logger->info("Added ambiguity {} at index {} with initial value {:.3f}", key, index, initial_value);
+        logger->info("Added ambiguity {} at index {} with initial value {:.3f}, std={:.3f} m{}",
+                     key, index, initial_value, amb_std,
+                     initial_std_override > 0.0 ? " (override)" : "");
         return index;
     }
 
@@ -654,7 +863,9 @@ namespace GnssProcessor {
 
     void StateManager::updatePppStateFromVector(const Eigen::VectorXd& current_state, PppState& ppp_state, const StateManager& state_manager) const {
         ppp_state.position         = current_state.segment<3>(state_manager.getPositionIndex());
-        ppp_state.clock_bias       = current_state(state_manager.getClockIndex());
+        ppp_state.clock_bias       = state_manager.hasClock()
+                                     ? current_state(state_manager.getClockIndex())
+                                     : 0.0;
         ppp_state.troposphere_zwd  = current_state(state_manager.getTropoIndex());
 
         if (state_manager.hasVelocity())
@@ -689,7 +900,8 @@ namespace GnssProcessor {
     void StateManager::syncPppStateToStateVector(const PppState& ppp_state) {
         Eigen::VectorXd sv = state_vector_;
         sv.segment<3>(getPositionIndex()) = ppp_state.position;
-        sv(getClockIndex()) = ppp_state.clock_bias;
+        if (hasClock())
+            sv(getClockIndex()) = ppp_state.clock_bias;
         sv(getTropoIndex()) = ppp_state.troposphere_zwd;
 
         if (hasVelocity())
@@ -719,6 +931,19 @@ namespace GnssProcessor {
         setStateVector(sv);
     }
 
+    bool StateManager::noteSsrDiscontinuity(const std::string& key, int counter) {
+        auto it = last_ssr_discontinuity_.find(key);
+        if (it == last_ssr_discontinuity_.end()) {
+            last_ssr_discontinuity_.emplace(key, counter);   // first sighting: record only
+            return false;
+        }
+        if (it->second != counter) {                         // changed (any direction) -> bump
+            it->second = counter;
+            return true;
+        }
+        return false;
+    }
+
     bool StateManager::resetAmbiguity(const std::string& key, double std_m) {
         auto logger = log_manager_.getLogger("state_manager");
 
@@ -731,13 +956,26 @@ namespace GnssProcessor {
             return false;
         }
 
-        int idx_i = getAmbiguityIndex(key);
+        const int idx_i = getAmbiguityIndex(key);
         if (idx_i < 0) {
-            addAmbiguity(key, 0.0);
-            idx_i = getAmbiguityIndex(key);
-        }
-        if (idx_i < 0) {
-            logger->error("Failed to add ambiguity for key {}", key);
+            // Refuse to auto-create the state for an unknown key.
+            //
+            // Slip detectors iterate @c obs.raw_observed (which preserves
+            // every RINEX-tracked signal) but the state vector only holds
+            // ambiguities that pass the @c signal_mode band filter
+            // (typically L1/L2 for Dual, +L5 for Triple, etc.).  Without
+            // this guard, a slip detector reporting a reset for L5X on a
+            // Dual-mode run would have @c addAmbiguity called here,
+            // sneaking a band-filtered signal into the state vector.
+            //
+            // The "create-on-reset" semantic was originally intended for
+            // first-epoch state creation, but @c ensureRequiredStates now
+            // owns that responsibility and seeds new ambiguities with a
+            // proper geometry-derived value.  Slip-detector reset keys
+            // for non-existent ambiguities are no-ops here.
+            logger->debug("resetAmbiguity ignoring unknown key {} "
+                          "(slip detector referenced signal not in current state — "
+                          "likely band-filtered out by signal_mode)", key);
             return false;
         }
 
@@ -820,8 +1058,11 @@ namespace GnssProcessor {
             const double modeled_m  = obs.modeled.at(ref_type);
             const double tropo_wet  = obs.mf_w * x(getTropoIndex());
 
-            // Receiver clock (+ phase clock delta when enabled)
-            double clk_term = x(getClockIndex());
+            // Receiver clock (+ phase clock delta when enabled).  Under BSSD
+            // the clock cancels in SD and is not in the state vector — the
+            // ambiguity seed sees a 0 clock term, which is exactly what the
+            // SD residual expects.
+            double clk_term = hasClock() ? x(getClockIndex()) : 0.0;
             if (hasPhaseClock())
                 clk_term += x(getPhaseClockIndex());
 
@@ -906,15 +1147,17 @@ namespace GnssProcessor {
         return ionosphere_indices_;
     }
 
-    size_t StateManager::addIonosphereState(const std::string& satellite, double initial_value) {
+    size_t StateManager::addIonosphereState(const std::string& satellite, double initial_value,
+                                             double std_scale) {
         auto logger = log_manager_.getLogger("state_manager");
         if (ionosphere_indices_.count(satellite)) {
             logger->trace("Ionosphere state for {} already exists at index {}", satellite, ionosphere_indices_[satellite]);
             return ionosphere_indices_[satellite];
         }
 
-        // Scale initial variance by obliquity factor 1/sin�(el) when elevation is available
-        const double iono_std = config_.getInitialStd().ionosphere;
+        // Scale initial variance by obliquity factor 1/sin²(el) when elevation is available.
+        // std_scale applies on top to inflate uncertainty when the seed value is unreliable.
+        const double iono_std = config_.getInitialStd().ionosphere * std_scale;
         double init_var = iono_std * iono_std;
         auto el_it = ionosphere_elevations_.find(satellite);
         if (el_it != ionosphere_elevations_.end() && el_it->second > 0.0) {
@@ -957,9 +1200,64 @@ namespace GnssProcessor {
             removeStateAtIndex(rem_idx);
             ionosphere_indices_.erase(sat);
             ionosphere_elevations_.erase(sat);
+            ionosphere_azimuths_.erase(sat);
 
             logger->debug("Removed ionosphere state for {} at former index {}", sat, rem_idx);
         }
+    }
+
+    void StateManager::reinflateIonosphereVariance(const std::string& satellite,
+                                                    double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const auto it = ionosphere_indices_.find(satellite);
+        if (it == ionosphere_indices_.end()) {
+            logger->debug("reinflateIonosphereVariance: no iono state for {}", satellite);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("reinflateIonosphereVariance index out of bounds for {}: idx={}, state_size={}, cov={}x{}",
+                satellite, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return;
+        }
+
+        // Refuse to disturb a frozen pivot row — the BSSD pivot's
+        // iono state is held at (0, 0) by PivotManager and must not
+        // be re-inflated.  Caller (CycleSlipManager / Application)
+        // should already skip pivots, but the guard prevents subtle
+        // BSSD-frame corruption if a future call site forgets.
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("reinflateIonosphereVariance refused on frozen pivot {} "
+                          "(idx={}, P_diag={:.3e}); BSSD invariant preserved",
+                          satellite, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double io_std = config_.getInitialStd().ionosphere;
+            logger->warn("reinflateIonosphereVariance: non-positive variance {} for {}; "
+                          "falling back to initial_std.ionosphere² = {}",
+                          new_variance, satellite, io_std * io_std);
+            new_variance = io_std * io_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        // Value intentionally preserved: slant iono doesn't change
+        // due to the receiver losing phase lock — only the joint
+        // (iono, sat-bias) covariance partition needs to be broken.
+
+        logger->info("Reinflated iono state for {} at index {}: "
+                      "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m",
+                      satellite, idx, prev_value,
+                      std::sqrt(std::max(prev_diag, 0.0)),
+                      std::sqrt(new_variance));
     }
 
     void StateManager::setIonosphereElevation(const std::string& satellite, double elevation_deg) {
@@ -970,12 +1268,30 @@ namespace GnssProcessor {
         return ionosphere_elevations_;
     }
 
-    void StateManager::setFrozenIonosphereSatellites(const std::set<std::string>& sats) {
-        frozen_ionosphere_sats_ = sats;
+    void StateManager::setIonosphereAzimuth(const std::string& satellite, double azimuth_deg) {
+        ionosphere_azimuths_[satellite] = azimuth_deg;
     }
 
-    const std::set<std::string>& StateManager::getFrozenIonosphereSatellites() const {
-        return frozen_ionosphere_sats_;
+    const std::map<std::string, double>& StateManager::getIonosphereAzimuths() const {
+        return ionosphere_azimuths_;
+    }
+
+    void StateManager::setFrozenPivotSatellites(const std::set<std::string>& sats) {
+        frozen_pivot_sats_ = sats;
+    }
+
+    void StateManager::setAmbiguityProcessNoiseOverrides(
+        const std::map<std::string, double>& overrides) {
+        amb_q_overrides_ = overrides;
+    }
+
+    void StateManager::setIonoProcessNoiseOverrides(
+        const std::map<std::string, double>& overrides) {
+        iono_q_overrides_ = overrides;
+    }
+
+    const std::set<std::string>& StateManager::getFrozenPivotSatellites() const {
+        return frozen_pivot_sats_;
     }
 
     // ===================================================================
@@ -1049,23 +1365,165 @@ namespace GnssProcessor {
     }
 
     size_t StateManager::addSatBiasState(const std::string& key, double initial_value) {
+        const double sb_std = config_.getInitialStd().sat_bias;
+        return addSatBiasStateWithVariance(key, initial_value, sb_std * sb_std);
+    }
+
+    size_t StateManager::addSatBiasStateWithVariance(const std::string& key,
+                                                     double initial_value,
+                                                     double initial_variance) {
         auto logger = log_manager_.getLogger("state_manager");
         if (sat_bias_indices_.count(key)) {
             logger->trace("Sat bias state for {} already exists at index {}", key, sat_bias_indices_[key]);
             return sat_bias_indices_[key];
         }
+        if (!(initial_variance > 0.0)) {
+            const double sb_std = config_.getInitialStd().sat_bias;
+            logger->warn("addSatBiasStateWithVariance: non-positive variance {} for {}; "
+                         "falling back to initial_std.sat_bias² = {}",
+                         initial_variance, key, sb_std * sb_std);
+            initial_variance = sb_std * sb_std;
+        }
 
-        const double sb_std = config_.getInitialStd().sat_bias;
-        const size_t index = appendState(initial_value, sb_std * sb_std);
+        const size_t index = appendState(initial_value, initial_variance);
         sat_bias_indices_[key] = index;
 
-        logger->info("Added sat bias state for {} at index {}, initial={:.3f} m, std={:.1f} m",
-            key, index, initial_value, sb_std);
+        logger->info("Added sat bias state for {} at index {}, initial={:.3f} m, std={:.3f} m",
+            key, index, initial_value, std::sqrt(initial_variance));
         return index;
+    }
+
+    void StateManager::resetSatBiasState(const std::string& key,
+                                          double new_value,
+                                          double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const auto it = sat_bias_indices_.find(key);
+        if (it == sat_bias_indices_.end()) {
+            logger->debug("resetSatBiasState: unknown key {}", key);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("resetSatBiasState index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
+                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return;
+        }
+
+        // Defensive: refuse to disturb a frozen pivot row.  The BSSD
+        // pivot's sat-bias is held at (value=0, variance=0) by
+        // PivotManager — re-inflating its variance here would let it
+        // drift away from 0 on the next update and break the BSSD
+        // frame for every other sat in the constellation/band group.
+        // Callers should already screen pivots via
+        // getFrozenPivotSatellites(), but a hard guard here prevents
+        // subtle frame corruption if a future call site forgets.
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("resetSatBiasState refused on frozen pivot row {} "
+                          "(idx={}, P_diag={:.3e}); BSSD invariant preserved",
+                          key, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double sb_std = config_.getInitialStd().sat_bias;
+            logger->warn("resetSatBiasState: non-positive variance {} for {}; "
+                          "falling back to initial_std.sat_bias² = {}",
+                          new_variance, key, sb_std * sb_std);
+            new_variance = sb_std * sb_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+
+        // Same surgery as resetAmbiguity: decorrelate (zero row/col)
+        // and seed a fresh diagonal.  Off-diagonals are wiped because
+        // the prior covariance was learned under the assumption that
+        // the bias state was correct; that assumption no longer
+        // holds, so its cross-correlations to position / clock /
+        // other biases are now misleading.
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        state_vector_(idx)    = new_value;
+
+        logger->info("Reset sat bias state {} at index {}: "
+                      "value {:+.4f} -> {:+.4f} m, std {:.4f} -> {:.4f} m",
+                      key, idx,
+                      prev_value, new_value,
+                      std::sqrt(std::max(prev_diag, 0.0)),
+                      std::sqrt(new_variance));
+    }
+
+    void StateManager::reinflateSatBiasVariancesForSat(const std::string& satellite,
+                                                         double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        if (sat_bias_indices_.empty()) return;
+
+        if (!(new_variance > 0.0)) {
+            const double sb_std = config_.getInitialStd().sat_bias;
+            logger->warn("reinflateSatBiasVariancesForSat: non-positive variance {} for {}; "
+                          "falling back to initial_std.sat_bias² = {}",
+                          new_variance, satellite, sb_std * sb_std);
+            new_variance = sb_std * sb_std;
+        }
+
+        // Walk the key map; the keys are "satellite|signal" so we
+        // can prefix-match without parsing.  Skipping pivots is
+        // delegated to the per-state diag==0 guard below — the same
+        // mechanism resetSatBiasState uses.
+        const std::string prefix = satellite + "|";
+        std::vector<std::pair<std::string, Eigen::Index>> touched;
+        std::vector<std::string> frozen;
+        for (const auto& [key, raw_idx] : sat_bias_indices_) {
+            if (key.compare(0, prefix.size(), prefix) != 0) continue;
+            const auto idx = static_cast<Eigen::Index>(raw_idx);
+            if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+                logger->error("reinflateSatBiasVariancesForSat: idx {} out of bounds for {}",
+                               idx, key);
+                continue;
+            }
+            const double current_diag = covariance_(idx, idx);
+            if (!(current_diag > 0.0)) {
+                // Frozen pivot row — leave it alone (the BSSD pivot
+                // bias is held at (0, 0); reinflating would let it
+                // drift on the next update and break the BSSD frame
+                // for the whole constellation/band group).
+                frozen.push_back(key);
+                continue;
+            }
+            covariance_.row(idx).setZero();
+            covariance_.col(idx).setZero();
+            covariance_(idx, idx) = new_variance;
+            // Value preserved — hardware delay is constant.
+            touched.emplace_back(key, idx);
+        }
+
+        if (!touched.empty()) {
+            std::string joined;
+            for (size_t i = 0; i < touched.size(); ++i) {
+                if (i) joined += ", ";
+                joined += touched[i].first;
+            }
+            logger->info("Reinflated {} sat-bias state(s) for {} to std={:.4f} m: {}",
+                          touched.size(), satellite,
+                          std::sqrt(new_variance), joined);
+        }
+        if (!frozen.empty()) {
+            logger->debug("reinflateSatBiasVariancesForSat: skipped {} frozen pivot row(s) for {}",
+                           frozen.size(), satellite);
+        }
     }
 
     void StateManager::pruneSatBiasStatesExcept(const std::set<std::string>& keep_keys) {
         auto logger = log_manager_.getLogger("state_manager");
+        // Always run an eviction sweep so cache entries don't accumulate
+        // indefinitely on satellites that never re-acquire.  Cheap when
+        // the cache is small and a no-op when it's empty.
+        evictExpiredSatBiasCache(state_epoch_time_);
+
         if (sat_bias_indices_.empty()) return;
 
         std::vector<std::string> to_remove;
@@ -1074,7 +1532,8 @@ namespace GnssProcessor {
                 to_remove.push_back(key);
         if (to_remove.empty()) return;
 
-        logger->info("Pruning {} sat bias states (keeping {})", to_remove.size(), keep_keys.size());
+        logger->info("Pruning {} sat bias states (keeping {}; cache holds {} stale entries pre-prune)",
+            to_remove.size(), keep_keys.size(), sat_bias_cache_.size());
         for (const auto& key : to_remove) {
             auto it = sat_bias_indices_.find(key);
             if (it == sat_bias_indices_.end()) continue;
@@ -1085,10 +1544,95 @@ namespace GnssProcessor {
                 continue;
             }
 
+            // Stash the value + diagonal variance before removal so a
+            // near-term re-acquisition can warm-restart instead of
+            // paying the cold-start re-seed cost.  Overwrites any
+            // pre-existing cache entry for the same key (most recent
+            // drop wins — older estimate would have been worse anyway).
+            const double cached_value    = state_vector_(static_cast<Eigen::Index>(rem_idx));
+            const double cached_variance = covariance_(static_cast<Eigen::Index>(rem_idx),
+                                                       static_cast<Eigen::Index>(rem_idx));
+            sat_bias_cache_[key] = SatBiasCacheEntry{
+                cached_value, cached_variance, state_epoch_time_
+            };
+
             removeStateAtIndex(rem_idx);
             sat_bias_indices_.erase(key);
 
-            logger->debug("Removed sat bias state for {} at former index {}", key, rem_idx);
+            logger->debug("Removed sat bias state for {} at former index {} "
+                          "(cached value={:+.4f} m, std={:.4f} m for potential restore)",
+                          key, rem_idx, cached_value, std::sqrt(std::max(cached_variance, 0.0)));
+        }
+    }
+
+    namespace {
+        /**
+         * @brief Seconds elapsed from @p earlier to @p later.
+         *
+         * Works across GPS-week rollovers because GnssTime carries the
+         * absolute GPS week.  Negative result indicates @p later is
+         * actually earlier than @p earlier — callers treat that as a
+         * malformed gap (effectively zero).
+         */
+        double gnssTimeDiffSeconds(const GnssTime& later, const GnssTime& earlier) {
+            return static_cast<double>(later.week - earlier.week)
+                       * static_cast<double>(TimeUtils::SECONDS_IN_WEEK)
+                 + (later.tow - earlier.tow);
+        }
+    }
+
+    std::optional<StateManager::SatBiasRestoration>
+    StateManager::tryRestoreSatBias(const std::string& key, const GnssTime& now) {
+        auto it = sat_bias_cache_.find(key);
+        if (it == sat_bias_cache_.end()) return std::nullopt;
+
+        const double gap_s = std::max(0.0, gnssTimeDiffSeconds(now, it->second.drop_time));
+        const double warm_age = config_.getSatBiasCacheWarmAgeS();
+        const double max_age  = config_.getSatBiasCacheMaxAgeS();
+
+        if (gap_s > max_age) {
+            // Entry is too stale to be trustworthy as either value or
+            // variance; evict and tell the caller to use a cold WLS seed.
+            sat_bias_cache_.erase(it);
+            return std::nullopt;
+        }
+
+        SatBiasRestoration r{};
+        r.value  = it->second.value;
+        r.gap_s  = gap_s;
+        if (gap_s <= warm_age) {
+            // Warm restart: preserve the cached variance, aged forward
+            // by the configured random-walk PSD so the filter sees the
+            // appropriate "uncertainty grew during the outage" inflation.
+            const double q = config_.getProcessNoise().sat_bias;
+            r.variance = it->second.variance + std::max(0.0, q) * gap_s;
+            r.is_warm  = true;
+        } else {
+            // Cold-value restart: stashed variance no longer trustworthy
+            // (gap too long).  Reuse the seed value but reset variance
+            // to the cold-start initial.  Still strictly better than a
+            // WLS single-epoch seed when the value is correct.
+            const double sb_std = config_.getInitialStd().sat_bias;
+            r.variance = sb_std * sb_std;
+            r.is_warm  = false;
+        }
+        return r;
+    }
+
+    void StateManager::consumeSatBiasCacheEntry(const std::string& key) {
+        sat_bias_cache_.erase(key);
+    }
+
+    void StateManager::evictExpiredSatBiasCache(const GnssTime& now) {
+        const double max_age = config_.getSatBiasCacheMaxAgeS();
+        if (sat_bias_cache_.empty()) return;
+        for (auto it = sat_bias_cache_.begin(); it != sat_bias_cache_.end(); ) {
+            const double gap_s = gnssTimeDiffSeconds(now, it->second.drop_time);
+            if (gap_s > max_age || gap_s < 0.0) {
+                it = sat_bias_cache_.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
@@ -1118,6 +1662,118 @@ namespace GnssProcessor {
 
     void StateManager::markAmbiguityPendingReseed(const std::string& amb_key) {
         pending_reseed_ambiguities_.insert(amb_key);
+    }
+
+    // ===================================================================
+    // Gap-recovery helpers
+    // ===================================================================
+
+    namespace {
+        // Collect the state indices that are "per-satellite" — iono,
+        // ambiguity, sat bias.  These are the ones whose cross-cov
+        // with position/clock is structurally invalidated by a gap
+        // (different geometry, different multipath, possibly different
+        // satellite set).  Code bias is receiver-side hardware and is
+        // intentionally excluded — it's near-constant and its cross-cov
+        // to position is physically meaningful.
+        std::vector<Eigen::Index>
+        collectSatSpecificIndices(const StateManager& sm) {
+            std::vector<Eigen::Index> out;
+            out.reserve(sm.getIonosphereStates().size()
+                      + sm.getAmbiguities().size()
+                      + sm.getSatBiasStates().size());
+            for (const auto& [_, idx] : sm.getIonosphereStates())
+                out.push_back(static_cast<Eigen::Index>(idx));
+            for (const auto& [_, idx] : sm.getAmbiguities())
+                out.push_back(static_cast<Eigen::Index>(idx));
+            for (const auto& [_, idx] : sm.getSatBiasStates())
+                out.push_back(static_cast<Eigen::Index>(idx));
+            return out;
+        }
+    }
+
+    void StateManager::zeroPositionCrossCovariancesToSatStates() {
+        auto logger = log_manager_.getLogger("state_manager");
+        const auto sat_idx = collectSatSpecificIndices(*this);
+        if (sat_idx.empty()) {
+            logger->trace("zeroPositionCrossCov: no sat-specific states; no-op");
+            return;
+        }
+        const Eigen::Index pos = static_cast<Eigen::Index>(getPositionIndex());
+        for (Eigen::Index k = 0; k < 3; ++k) {
+            for (Eigen::Index j : sat_idx) {
+                covariance_(pos + k, j) = 0.0;
+                covariance_(j, pos + k) = 0.0;
+            }
+        }
+        logger->info("Zeroed position cross-covariances to {} sat-specific states",
+                     sat_idx.size());
+    }
+
+    void StateManager::zeroClockCrossCovariancesToSatStates() {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (!hasClock()) {
+            logger->trace("zeroClockCrossCov: no clock state (BSSD/baseline); no-op");
+            return;
+        }
+        const auto sat_idx = collectSatSpecificIndices(*this);
+        if (sat_idx.empty()) {
+            logger->trace("zeroClockCrossCov: no sat-specific states; no-op");
+            return;
+        }
+        const Eigen::Index clk = static_cast<Eigen::Index>(getClockIndex());
+        for (Eigen::Index j : sat_idx) {
+            covariance_(clk, j) = 0.0;
+            covariance_(j, clk) = 0.0;
+        }
+        logger->info("Zeroed clock cross-covariances to {} sat-specific states",
+                     sat_idx.size());
+    }
+
+    void StateManager::inflatePositionDiagonal(double sigma_m) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (!(std::isfinite(sigma_m) && sigma_m > 0.0)) {
+            logger->warn("inflatePositionDiagonal: invalid sigma_m={}, skipping", sigma_m);
+            return;
+        }
+        const double var_add = sigma_m * sigma_m;
+        const Eigen::Index pos = static_cast<Eigen::Index>(getPositionIndex());
+        for (Eigen::Index k = 0; k < 3; ++k) {
+            covariance_(pos + k, pos + k) += var_add;
+        }
+        logger->info("Inflated position diagonal by sigma={:.3f} m (var+={:.3e} m²)",
+                     sigma_m, var_add);
+    }
+
+    void StateManager::resetVelocityToLoose(double sigma_mps) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (!hasVelocity()) {
+            logger->trace("resetVelocityToLoose: no velocity state; no-op");
+            return;
+        }
+        if (!(std::isfinite(sigma_mps) && sigma_mps > 0.0)) {
+            logger->warn("resetVelocityToLoose: invalid sigma_mps={}, skipping", sigma_mps);
+            return;
+        }
+        const Eigen::Index vel = static_cast<Eigen::Index>(getVelocityIndex());
+        const double var = sigma_mps * sigma_mps;
+        for (Eigen::Index k = 0; k < 3; ++k) {
+            // Zero value, zero cross-cov, then set diagonal — same
+            // pattern as resetAmbiguity for symmetry.
+            state_vector_(vel + k) = 0.0;
+            covariance_.row(vel + k).setZero();
+            covariance_.col(vel + k).setZero();
+            covariance_(vel + k, vel + k) = var;
+        }
+        logger->info("Reset velocity to 0 with sigma={:.3f} m/s (var={:.3e})",
+                     sigma_mps, var);
+    }
+
+    void StateManager::clearSatBiasCache() {
+        auto logger = log_manager_.getLogger("state_manager");
+        const auto n = sat_bias_cache_.size();
+        sat_bias_cache_.clear();
+        if (n) logger->info("Cleared sat-bias cache ({} entries dropped)", n);
     }
 
 } // namespace GnssProcessor

@@ -339,12 +339,20 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
         for (auto& p : v) resolved.product_paths.push_back(std::move(p));
     };
 
-    for (const auto& d : { prev_day_products, obs_day_products, next_day_products }) {
-        append(globByExtension(d, {".sp3"}));
-        append(globByExtension(d, {".clk"}));
+    // Precise orbits/clocks are not inputs when a live broadcast+SSR source
+    // drives real-time geometry — skip discovery so a stale fixture can't
+    // shadow today's live PRNs (see GnssConfig::realtimeUsesLiveOrbitClockSource).
+    if (!config_.realtimeUsesLiveOrbitClockSource()) {
+        for (const auto& d : { prev_day_products, obs_day_products, next_day_products }) {
+            append(globByExtension(d, {".sp3"}));
+            append(globByExtension(d, {".clk"}));
+        }
+    } else {
+        log->info("Real-time live source: skipping SP3/CLK product discovery");
     }
     append(globByExtension(obs_day_products, {".bia", ".bsx"}));
     append(globByExtension(obs_day_products, {".erp"}));
+    append(globByExtension(obs_day_products, {".inx"}));
 
     // Static (date-less) assets.  Live under a fixed @c static/
     // subtree at the root; every date shares them.
@@ -486,6 +494,10 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     rc.doy               = dl.doy;
     rc.download_rinex    = dl.download_rinex;
     rc.download_products = dl.download_products;
+    // In a live real-time session orbits/clocks come from broadcast+SSR — don't
+    // waste a CDDIS round-trip pulling daily SP3/CLK that would only be shadowed.
+    rc.download_orbits_clocks = !config_.realtimeUsesLiveOrbitClockSource();
+    rc.download_gim      = dl.download_gim;
     rc.atx_path          = dl.atx_path;
     rc.nc_path           = dl.nc_path;
     rc.crx2rnx_path      = dl.crx2rnx_path;

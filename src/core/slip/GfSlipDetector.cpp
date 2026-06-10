@@ -13,6 +13,7 @@
 
 #include "slip/GfSlipDetector.hpp"
 #include "math/TimeUtils.hpp"
+#include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -141,23 +142,7 @@ namespace GnssProcessor {
     double GfSlipDetector::computeMadSigma(const std::deque<double>& window) {
         if (window.size() < kMinEpochsForAdaptive)
             return std::numeric_limits<double>::quiet_NaN();
-
-        std::vector<double> sorted(window.begin(), window.end());
-        std::sort(sorted.begin(), sorted.end());
-        const size_t n = sorted.size();
-        const double median = (n % 2 == 0)
-            ? 0.5 * (sorted[n / 2 - 1] + sorted[n / 2])
-            : sorted[n / 2];
-
-        std::vector<double> abs_devs(n);
-        for (size_t i = 0; i < n; ++i)
-            abs_devs[i] = std::abs(sorted[i] - median);
-        std::sort(abs_devs.begin(), abs_devs.end());
-        const double mad = (n % 2 == 0)
-            ? 0.5 * (abs_devs[n / 2 - 1] + abs_devs[n / 2])
-            : abs_devs[n / 2];
-
-        return mad * 1.4826; // Gaussian-equivalent sigma
+        return RobustStats::madSigma(window);
     }
 
     double GfSlipDetector::computeAdaptiveThreshold(const GfArcStats& stats) const {
@@ -172,28 +157,14 @@ namespace GnssProcessor {
         if (constellation_td2.size() < 3)
             return 0.0;
 
-        // MAD of absolute TD2 values across satellites
+        // IVI = median(|TD2|) + 1.4826·MAD(|TD2|): a robust measure of the
+        // typical ionospheric second-difference level plus its spread.
         std::vector<double> abs_vals;
         abs_vals.reserve(constellation_td2.size());
         for (const double v : constellation_td2)
             abs_vals.push_back(std::abs(v));
 
-        std::sort(abs_vals.begin(), abs_vals.end());
-        const size_t n = abs_vals.size();
-        const double median = (n % 2 == 0)
-            ? 0.5 * (abs_vals[n / 2 - 1] + abs_vals[n / 2])
-            : abs_vals[n / 2];
-
-        std::vector<double> devs(n);
-        for (size_t i = 0; i < n; ++i)
-            devs[i] = std::abs(abs_vals[i] - median);
-        std::sort(devs.begin(), devs.end());
-        const double mad = (n % 2 == 0)
-            ? 0.5 * (devs[n / 2 - 1] + devs[n / 2])
-            : devs[n / 2];
-
-        // IVI = median + MAD*1.4826 (robust measure of typical level + spread)
-        return median + mad * 1.4826;
+        return RobustStats::median(abs_vals) + RobustStats::madSigma(abs_vals);
     }
 
     // =================================================================

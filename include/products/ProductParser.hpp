@@ -134,8 +134,17 @@ namespace GnssProcessor {
          * @details This is a convenience method that queries @c GnssConfig for product
          * paths and attempts to parse each required product. Parsing errors are logged
          * via the configured @c LogManager.
+         *
+         * @param load_precise_orbits_clocks When true (default), precise SP3 orbit
+         *        and CLK clock products are parsed into the cache.  Pass false in
+         *        real-time when a live broadcast+SSR orbit/clock source supplants
+         *        them (see @c GnssConfig::realtimeUsesLiveOrbitClockSource): the
+         *        SP3/CLK parse is skipped while the static products (ATX, BIA, ERP,
+         *        Klobuchar, Sun ephemeris) still load.  Leaving the orbit/clock
+         *        caches empty makes @c Geometry::getSatellitePV resolve directly
+         *        through the live store instead of routing around a stale fixture.
          */
-        void loadProducts();
+        void loadProducts(bool load_precise_orbits_clocks = true);
 
         /**
          * @brief Get parsed satellite clock entries.

@@ -8,7 +8,7 @@ plot_if_slip(fname);
 %%
 
 % plot_if_slip.m
-% Read and visualize if_slip_trace.csv (UTC time axis)
+% Read and visualize if_slip_trace.csv (GPS time axis)
 % Expected CSV header:
 % week,tow_s,satellite,system,elevation_deg,
 % phase_if_key,phi_if_omc_m,
@@ -73,7 +73,7 @@ T.key = string(T.key);
 T.system = categorical(string(T.system));
 
 %% --- Convert GPS week + TOW to datetime (UTC) ---
-gpsEpoch = datetime(1980,1,6,0,0,0,'TimeZone','UTC');
+gpsEpoch = datetime(1980,1,6,0,0,0);
 gpsSeconds = T.week * 7 * 86400 + T.tow_s;
 T.utc = gpsEpoch + seconds(gpsSeconds);
 
@@ -171,7 +171,7 @@ for col = 1:numel(systemList)
             'Color',[0.5 0.5 0.5], 'LineWidth', 0.8, 'LabelHorizontalAlignment','left');
     end
 
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('\Delta\nabla\phi_{IF} (m)');
     title(sprintf('%s', sysName));
     legend(lh, 'Location','bestoutside','Interpreter','none');
@@ -228,7 +228,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h_slip; %#ok<AGROW>
     end
 
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('\phi_{IF} OMC (m)');
     title(sprintf('%s', sysName));
     legend(lh, 'Location','bestoutside','Interpreter','none');
@@ -285,7 +285,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h_slip; %#ok<AGROW>
     end
 
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('\nabla\phi_{IF} (m)');
     title(sprintf('%s', sysName));
     legend(lh, 'Location','bestoutside','Interpreter','none');
@@ -356,7 +356,7 @@ for col = 1:numel(systemList)
         lh(end+1) = h_chg; %#ok<AGROW>
     end
 
-    xlabel('UTC Time');
+    xlabel('GPS Time');
     ylabel('Ref Elevation (deg)');
     title(sprintf('%s', sysName));
     legend(lh, 'Location','bestoutside','Interpreter','none');

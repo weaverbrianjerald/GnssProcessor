@@ -12,10 +12,14 @@
  */
 
 #include "model/ModelGeometry.hpp"
+#include "model/Antenna.hpp"
 #include "products/ProductParser.hpp"
 #include "common/Constants.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
+#include "products/SsrCorrectionStore.hpp"
+#include "products/LiveEphemerisStore.hpp"
+#include "math/TimeUtils.hpp"
 #include "math/Interpolate.hpp"
 #include <algorithm>
 #include <cmath>
@@ -142,7 +146,7 @@ namespace GnssProcessor {
         // Simple accessors
         // =================================================================
 
-        double Geometry::computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) const {
+        double Geometry::computeGeometricRange(const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos) {
             return (sat_pos - rx_pos).norm(); // meters
         }
 
@@ -161,27 +165,161 @@ namespace GnssProcessor {
             }
         }
 
-        bool Geometry::extractPseudorange(const RinexObservation& obs, double& pseudorange) const {
-            // Collect available code observations (keys starting with 'C')
+        bool Geometry::extractPseudorange(const RinexObservation& obs, double& pseudorange,
+                                          std::string& sig1_out, std::string& sig2_out) const {
+            auto log = log_manager_.getLogger("geometry");
+
+            // Reset out-params so early-return paths don't leave stale strings
+            // visible to callers.  Each priority branch sets them on success.
+            sig1_out.clear();
+            sig2_out.clear();
+
+            // Collect available code observations (keys starting with 'C').
+            // Used for the empty-observation early-return guard and as the
+            // single-frequency fallback path at the end.
             std::vector<std::pair<std::string, double>> code_obs;
             for (const auto& [key, val] : obs.measurements)
                 if (!key.empty() && key[0] == 'C' && std::isfinite(val) && val > 1e6)
                     code_obs.emplace_back(key, val);
 
             if (code_obs.empty()) {
-                log_manager_.getLogger("geometry")->warn(
+                log->warn(
                     "No code pseudorange available for {} at TOW {:.3f} — skipping observation",
                     obs.satellite, obs.time.tow);
                 return false;
             }
 
-            // Attempt ionosphere-free combination from two code signals on different bands
+            // Build an ionosphere-free combination from (sig1, sig2) on
+            // different bands.  Optionally applies BIA code-bias corrections
+            // before combining so the result aligns with the clock-reference
+            // scale.  Returns false unless both signals are present, finite,
+            // distinct-band, and the combination is finite.
+            //
+            //   P_IF = (f1²·P1 − f2²·P2) / (f1² − f2²)
+            //
+            // The IF combination cancels the first-order ionospheric delay
+            // exactly, leaving only (tropo + code noise + residual bias) as
+            // the non-geometric content of the pseudorange.  Driving the
+            // (I+ε)/c residual in t_em from ~30-90 ns to ~ns level (sub-μm
+            // satellite displacement) is the whole purpose of using IF here
+            // for the emission-time seed.
+            PppUtils utils(log_manager_);
+            auto buildIf = [&](const std::string& sig1, const std::string& sig2,
+                               bool apply_bias, double& if_pr) -> bool {
+                auto it1 = obs.measurements.find(sig1);
+                auto it2 = obs.measurements.find(sig2);
+                if (it1 == obs.measurements.end() || it2 == obs.measurements.end()) return false;
+                const double p1_raw = it1->second;
+                const double p2_raw = it2->second;
+                if (!std::isfinite(p1_raw) || !std::isfinite(p2_raw)) return false;
+                if (p1_raw < 1e6 || p2_raw < 1e6) return false;
+
+                const double f1 = utils.getFrequency(sig1, obs.system, obs.satellite);
+                const double f2 = utils.getFrequency(sig2, obs.system, obs.satellite);
+                if (!(f1 > 0.0) || !(f2 > 0.0) || std::abs(f1 - f2) < 1e6) return false;
+
+                double p1 = p1_raw, p2 = p2_raw;
+                if (apply_bias) {
+                    if (corrections_.hasBiasEntry(obs.satellite, sig1))
+                        p1 -= corrections_.getBiasCorrection(obs.satellite, sig1, obs.time);
+                    if (corrections_.hasBiasEntry(obs.satellite, sig2))
+                        p2 -= corrections_.getBiasCorrection(obs.satellite, sig2, obs.time);
+                }
+
+                const double f1sq = f1 * f1, f2sq = f2 * f2;
+                const double pr = (f1sq * p1 - f2sq * p2) / (f1sq - f2sq);
+                if (!std::isfinite(pr) || pr < 1e6) return false;
+
+                if_pr = pr;
+                return true;
+            };
+
+            // ===== PRIORITY 1: clock-reference-aligned IF pair =====
+            // The precise clock product δt_s is calibrated against a specific
+            // signal pair per system (e.g. C1W+C2W for IGS Final GPS, parsed
+            // from the BIA DESCRIPTION block into ProductCache::clock_ref_
+            // signals_).  When the emission-time seed uses the IF combination
+            // of those exact signals, the (c·δt_s) term cancels EXACTLY
+            // against sat_clk in Step 3 of computeEmissionState — no DCB
+            // adjustment is needed and any per-signal bias is structurally
+            // absent.  This is the cleanest possible path.
+            {
+                const auto& clock_refs = product_cache_.getClockRefSignals();
+                const char sys_char = obs.satellite.empty() ? '\0' : obs.satellite[0];
+                auto it_ref = clock_refs.find(sys_char);
+                if (it_ref != clock_refs.end()) {
+                    const std::string& s1 = it_ref->second.sig1;
+                    const std::string& s2 = it_ref->second.sig2;
+                    double pr_if;
+                    if (buildIf(s1, s2, /*apply_bias=*/false, pr_if)) {
+                        pseudorange = pr_if;
+                        sig1_out = s1;
+                        sig2_out = s2;
+                        log->trace(
+                            "Emission seed (IF clock-ref) {} {}/{} = {:.3f} m",
+                            obs.satellite, s1, s2, pseudorange);
+                        return true;
+                    }
+                }
+            }
+
+            // ===== PRIORITY 2: bias-aligned IF pair (DCB applied) =====
+            // Walk the configured signal priority list and pick the first
+            // pair on different bands where BOTH signals have BIA coverage.
+            // Applying DCBs brings each raw pseudorange onto the clock-
+            // reference scale before combining, so any per-signal bias
+            // collapses into combination noise instead of an uncancelled
+            // offset in t_em.
             if (code_obs.size() >= 2) {
                 const std::string sys_str = PppUtils::getSystemString(obs.system);
                 auto prio_it = signal_priorities_.find(sys_str);
-                std::string sig1, sig2;
-
                 if (prio_it != signal_priorities_.end()) {
+                    std::string sig1, sig2;
+                    char band1 = '\0';
+                    for (const auto& sig : prio_it->second) {
+                        if (sig.empty() || sig[0] != 'C') continue;
+                        if (obs.measurements.count(sig) == 0) continue;
+                        if (!corrections_.hasBiasEntry(obs.satellite, sig)) continue;
+                        const double v = obs.measurements.at(sig);
+                        if (!std::isfinite(v) || v < 1e6) continue;
+                        const char band = sig.size() > 1 ? sig[1] : '0';
+                        if (sig1.empty()) {
+                            sig1 = sig;
+                            band1 = band;
+                        } else if (band != band1) {
+                            sig2 = sig;
+                            break;
+                        }
+                    }
+                    if (!sig1.empty() && !sig2.empty()) {
+                        double pr_if;
+                        if (buildIf(sig1, sig2, /*apply_bias=*/true, pr_if)) {
+                            pseudorange = pr_if;
+                            sig1_out = sig1;
+                            sig2_out = sig2;
+                            log->trace(
+                                "Emission seed (IF bias-aligned) {} {}/{} = {:.3f} m",
+                                obs.satellite, sig1, sig2, pseudorange);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // ===== PRIORITY 3: best-effort IF pair (no BIA filter) =====
+            // Same priority walk as Priority 2 but without requiring BIA
+            // coverage.  Used when the satellite has no usable BIA entries
+            // (typical for some MGEX sats with sparse bias coverage).
+            // Uncancelled per-signal bias introduces up to a few meters of
+            // offset in the IF (~10 ns t_em error → ~40 μm sat displacement)
+            // — well below the KF noise floor but the best we can do
+            // without bias coverage.  This is the pre-existing behavior.
+            if (code_obs.size() >= 2) {
+                const std::string sys_str = PppUtils::getSystemString(obs.system);
+                auto prio_it = signal_priorities_.find(sys_str);
+                if (prio_it != signal_priorities_.end()) {
+                    std::string sig1, sig2;
+                    char band1 = '\0';
                     for (const auto& sig : prio_it->second) {
                         if (sig.empty() || sig[0] != 'C') continue;
                         if (obs.measurements.count(sig) == 0) continue;
@@ -190,48 +328,52 @@ namespace GnssProcessor {
                         const char band = sig.size() > 1 ? sig[1] : '0';
                         if (sig1.empty()) {
                             sig1 = sig;
-                        } else {
-                            if (band != (sig1.size() > 1 ? sig1[1] : '0')) {
-                                sig2 = sig;
-                                break;
-                            }
+                            band1 = band;
+                        } else if (band != band1) {
+                            sig2 = sig;
+                            break;
                         }
                     }
-                }
-
-                if (!sig1.empty() && !sig2.empty()) {
-                    PppUtils utils(log_manager_);
-                    const double f1 = utils.getFrequency(sig1, obs.system, obs.satellite);
-                    const double f2 = utils.getFrequency(sig2, obs.system, obs.satellite);
-                    if (f1 > 0.0 && f2 > 0.0 && std::abs(f1 - f2) > 1e6) {
-                        const double p1 = obs.measurements.at(sig1);
-                        const double p2 = obs.measurements.at(sig2);
-                        const double f1sq = f1 * f1, f2sq = f2 * f2;
-                        const double pr_if = (f1sq * p1 - f2sq * p2) / (f1sq - f2sq);
-                        if (std::isfinite(pr_if) && pr_if > 1e6) {
+                    if (!sig1.empty() && !sig2.empty()) {
+                        double pr_if;
+                        if (buildIf(sig1, sig2, /*apply_bias=*/false, pr_if)) {
                             pseudorange = pr_if;
-                            log_manager_.getLogger("geometry")->trace(
-                                "Using IF pseudorange for {} TOF seed: {:.3f} m ({}={:.3f}, {}={:.3f})",
-                                obs.satellite, pseudorange, sig1, p1, sig2, p2);
+                            sig1_out = sig1;
+                            sig2_out = sig2;
+                            log->trace(
+                                "Emission seed (IF best-effort) {} {}/{} = {:.3f} m",
+                                obs.satellite, sig1, sig2, pseudorange);
                             return true;
                         }
                     }
                 }
             }
 
-            // Fallback: first valid code pseudorange
+            // ===== FALLBACK: first valid single-frequency pseudorange =====
+            // Carries full iono delay → ~30-90 ns t_em error → ~100-400 μm
+            // satellite displacement at the seed.  Used only when no IF
+            // pair can be formed (e.g. GEO sats with single-band coverage
+            // in the obs set, or constellations where signal_mode excludes
+            // both bands).  Step 3 + Step 5 of computeEmissionState still
+            // get the receiver-clock and satellite-clock cancellation right
+            // — only the iono residual is uncancelled here.
             pseudorange = code_obs.front().second;
-            log_manager_.getLogger("geometry")->trace(
-                "Using single pseudorange for {} TOF seed: {:.3f} m ({})",
-                obs.satellite, pseudorange, code_obs.front().first);
+            sig1_out = code_obs.front().first;
+            sig2_out.clear();
+            log->trace(
+                "Emission seed (single-freq fallback) {} {} = {:.3f} m",
+                obs.satellite, code_obs.front().first, pseudorange);
             return true;
         }
 
         bool Geometry::computeEmissionState(const RinexObservation& obs,
             const Eigen::Vector3d& rx_pos, double pseudorange,
             Eigen::Vector3d& sat_pos_em, Eigen::Vector3d& sat_vel_em,
-            double& sat_clock_out, GnssTime& emission_time) const {
+            double& sat_clock_out, GnssTime& emission_time,
+            bool& broadcast_grade,
+            DropReason& drop_reason) const {
 
+            broadcast_grade = false;
             const double c = Constants::SPEED_OF_LIGHT;
             const double tof = pseudorange / c;
 
@@ -255,10 +397,25 @@ namespace GnssProcessor {
                         "Satellite {} has zero/invalid clock product; observations from this satellite will be skipped this session",
                         obs.satellite);
                 }
+                drop_reason = DropReason::NoProduct;
                 return false;
             }
 
-            // Step 3: Corrected GPS transmission time
+            // Step 3: Corrected GPS transmission time.
+            //
+            // Critical: we use the PSEUDORANGE here (not the geometric range)
+            // so that the receiver clock bias δt_r cancels.  obs.time.tow is
+            // the receiver's local clock time = t_rcv^GPS + δt_r, and the
+            // pseudorange contains +c·δt_r, so subtracting P/c removes δt_r
+            // without ever needing to know its value.  Subtracting sat_clk
+            // then removes the satellite clock bias δt_s.  The residual
+            // error is (I+T+ε)/c ≈ 30-60 ns ≈ sub-mm satellite displacement,
+            // already below any precision threshold that matters for PPP.
+            //
+            // DO NOT replace this with a "true" iteration using the geometric
+            // range — that re-introduces an uncancelled δt_r that drives a
+            // positive-feedback loop through the Kalman filter's receiver
+            // clock estimate, causing severe outliers and instability.
             emission_time = obs.time;
             emission_time.tow -= (tof + sat_clk);
             if (emission_time.tow < 0) {
@@ -276,20 +433,26 @@ namespace GnssProcessor {
                 log_manager_.getLogger("geometry")->warn(
                     "Invalid satellite position at emission time for {} at TOW {:.3f}: norm={:.3e} m",
                     obs.satellite, emission_time.tow, pos_em.norm());
+                drop_reason = DropReason::NoProduct;
                 return false;
             }
             sat_pos_em = pos_em;
             sat_vel_em = vel_em;
 
-            // Step 5: Re-evaluate satellite clock at corrected emission time
-            sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time);
+            // Step 5: Re-evaluate satellite clock at corrected emission time.
+            // Capture clock provenance here (the final, authoritative clock) so
+            // the caller can drop carrier phase when only a broadcast clock backs
+            // this satellite.
+            sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time, &broadcast_grade);
             if (std::abs(sat_clk) < 1e-12) {
                 log_manager_.getLogger("geometry")->warn(
                     "Satellite clock is zero/invalid for {} at corrected emission TOW {:.3f} - skipping",
                     obs.satellite, emission_time.tow);
+                drop_reason = DropReason::NoProduct;
                 return false;
             }
             sat_clock_out = sat_clk;
+            drop_reason = DropReason::None;
             return true;
         }
 
@@ -313,10 +476,26 @@ namespace GnssProcessor {
             double& solid_tide,
             double& mf_w,
             double& mf_d,
-            Eigen::Vector3d& sat_vel) const
+            Eigen::Vector3d& sat_vel,
+            bool& broadcast_only,
+            DropReason& drop_reason) const
         {
+            drop_reason = DropReason::None;
+            broadcast_only = false;
+
+            // Tracks whether the satellite's clock is broadcast-grade (metre
+            // level: no precise CLK, no SSR clock).  Set by computeEmissionState
+            // from the final clock evaluation; surfaced via broadcast_only so the
+            // measurement model can fall back to code-only for this satellite.
+            bool broadcast_grade = false;
+
             // Reject user-configured excluded satellites (e.g. E14/E18 eccentric orbit).
-            if (config_.isSatelliteExcluded(obs.satellite)) return false;
+            // Categorised as NoModel: the user has told us not to model this
+            // satellite, which functionally is a modelling refusal.
+            if (config_.isSatelliteExcluded(obs.satellite)) {
+                drop_reason = DropReason::NoModel;
+                return false;
+            }
 
             const double c = Constants::SPEED_OF_LIGHT;
             const double omegaE = Constants::EARTH_ANGULAR_VELOCITY;
@@ -326,35 +505,221 @@ namespace GnssProcessor {
             if (rx_pos.norm() < 1e3 || !rx_pos.allFinite()) {
                 log_manager_.getLogger("geometry")->warn("Invalid receiver position for {} at TOW {:.3f}",
                     obs.satellite, obs.time.tow);
+                // Pathological: receiver isn't initialised yet.  Charge to
+                // NoModel since it isn't a per-sat issue per se but does
+                // mean we can't model this observation.
+                drop_reason = DropReason::NoModel;
                 return false;
             }
 
-            // --- Extract pseudorange ---
+            // --- Extract pseudorange + identify IF signals used ---
+            // The chosen sig1/sig2 are needed by the refinement step below
+            // so that matching ATX corrections can be applied on the same
+            // pair and IF-combined to align with the pseudorange.
             double pseudorange = 0.0;
-            if (!extractPseudorange(obs, pseudorange))
+            std::string seed_sig1, seed_sig2;
+            if (!extractPseudorange(obs, pseudorange, seed_sig1, seed_sig2)) {
+                // No usable code pseudorange in this epoch's signal set.
+                drop_reason = DropReason::NoModel;
                 return false;
+            }
 
-            // --- Emission-time computation ---
+            // --- Emission-time computation (first pass) ---
             Eigen::Vector3d sat_pos_em = Eigen::Vector3d::Zero();
             Eigen::Vector3d sat_vel_em = Eigen::Vector3d::Zero();
             double sat_clock_em = 0.0;
             GnssTime emission_time{};
 
-            if (!computeEmissionState(obs, rx_pos, pseudorange, sat_pos_em, sat_vel_em, sat_clock_em, emission_time))
+            // computeEmissionState owns its own NoProduct annotations.
+            if (!computeEmissionState(obs, rx_pos, pseudorange, sat_pos_em, sat_vel_em,
+                                      sat_clock_em, emission_time, broadcast_grade, drop_reason))
                 return false;
 
-            // --- Earth rotation correction (Sagnac) ---
-            {
-                const double geom_tof = (sat_pos_em - rx_pos).norm() / c;
+            // --- Earth rotation + receiver-frame geometry (lambda reused
+            //     for seed and refined passes) ---
+            // Applies the Sagnac-equivalent rotation of sat_pos_em into the
+            // reception-time ECEF frame, then computes range, LOS unit
+            // vector, elevation, and azimuth — all the receiver-frame
+            // quantities the refinement and downstream corrections need.
+            auto rotateAndComputeTopo = [&](const Eigen::Vector3d& s_em) {
+                const double geom_tof = (s_em - rx_pos).norm() / c;
                 const double theta = omegaE * geom_tof;
                 Eigen::Matrix3d R_earth;
                 R_earth <<  std::cos(theta), std::sin(theta), 0.0,
                            -std::sin(theta), std::cos(theta), 0.0,
                             0.0,             0.0,             1.0;
-                sat_pos = R_earth * sat_pos_em;
+                sat_pos = R_earth * s_em;
+                range   = (sat_pos - rx_pos).norm();
+                los     = (sat_pos - rx_pos) / range;
+                const Topocentric t = computeTopocentric(rx_pos, sat_pos);
+                elevation = t.elevation_deg;
+                azimuth   = t.azimuth_deg;
+            };
+
+            rotateAndComputeTopo(sat_pos_em);
+
+            // --- Elevation mask check (seed) ---
+            // The refinement below may shift elevation by sub-degree
+            // (refined t_em differs from seed t_em by tens of ns → sat_pos
+            // shifts by ~100 μm → elev shifts by ~arcsecond), so the gate
+            // is essentially invariant to the refinement.  We re-check
+            // after refinement only as a safety net for borderline sats.
+            if (elevation < elevation_threshold_) {
+                log_manager_.getLogger("geometry")->debug(
+                    "Satellite {} below elevation threshold (seed): {:.3f} deg < {:.3f} deg",
+                    obs.satellite, elevation, elevation_threshold_);
+                drop_reason = DropReason::BelowMask;
+                return false;
             }
 
-            // --- Relativistic periodic correction ---
+            // --- Eclipse exclusion (seed) ---
+            // Drop satellites in Earth's umbral shadow when the user has
+            // opted in via processing.exclude_eclipsing_satellites.  Yaw
+            // attitude during eclipse and post-shadow recovery is block-
+            // specific and not modelled here; with no yaw-input data the
+            // antenna PCO/PCV and phase windup become unreliable for these
+            // satellites.  The geometric shadow test is sub-meter sensitive
+            // to sat_pos, so the seed-pass position is sufficient — the
+            // sub-degree refinement-induced shift cannot flip an eclipsing
+            // satellite to non-eclipsing or vice versa.
+            if (config_.excludeEclipsingSatellites()) {
+                ensureSunMoonCached(obs.time);
+                if (Planetary::isSatelliteEclipsing(sat_pos, cached_sun_pos_,
+                                                    config_.getEclipseShadowScale())) {
+                    log_manager_.getLogger("geometry")->debug(
+                        "Satellite {} excluded: in Earth's umbral shadow (shadow_scale={:.3f})",
+                        obs.satellite, config_.getEclipseShadowScale());
+                    drop_reason = DropReason::Eclipsing;
+                    return false;
+                }
+            }
+
+            // --- Emission-time refinement: slant tropo + IF-combined ATX ---
+            //
+            // Gated by @c model_corrections.refine_emission_time (default
+            // true).  When disabled, the function exits with the seed-pass
+            // emission state and behaves as the pre-refinement single-pass
+            // pipeline did — useful for A/B comparison or when isolating
+            // artifacts that may be sensitive to second-pass logic.
+            //
+            // Subtract from the seed pseudorange:
+            //   (a) the slant tropospheric hydrostatic delay (ZHD × mf_d),
+            //       which removes ~2-13 m of T from the seed (zenith → 10°)
+            //   (b) the IF-combined satellite + receiver ATX LOS projection
+            //       (PCO + PCV; no wind-up since these are code signals),
+            //       which removes ~1-7 m of antenna-phase-center offset
+            //       (sat PCO 0.5-2.5 m, IF amplification ~3×)
+            //
+            // Then re-run computeEmissionState with the cleaner pseudorange.
+            // This drives the t_em residual from (T + ATX + ε)/c ≈ tens of
+            // ns down to ε/c ≈ ns — sub-μm satellite displacement.
+            //
+            // The ATX call uses (sat_pos, sat_vel_em, elevation, azimuth)
+            // from the seed pass; the refinement-induced changes to these
+            // are sub-percent and below the ATX/tropo derivative scale, so
+            // a single refinement pass is sufficient (no iteration needed).
+            if (config_.getModelCorrections().refine_emission_time) {
+                double mf_d_seed = 1.0;
+                double mf_w_seed = 1.0;
+                troposphere_.getTroposphereMapping(elevation, rx_pos, obs.time, mf_d_seed, mf_w_seed);
+
+                double slant_zhd_seed = 0.0;
+                if (config_.getModelCorrections().enable_troposphere) {
+                    slant_zhd_seed = troposphere_.computeSaastamoinenZHD(rx_pos, obs.time) * mf_d_seed;
+                }
+
+                double pco_los_seed = 0.0;
+                if (antenna_ != nullptr && !seed_sig1.empty()) {
+                    ensureSunMoonCached(obs.time);
+                    const std::string rx_ant_type = rinex_parser_.getReceiverAntennaType();
+                    const double atx_1 = antenna_->getAntennaCorrection(
+                        obs.satellite, seed_sig1, obs.system,
+                        rx_pos, sat_pos, sat_vel_em, elevation, azimuth,
+                        rx_ant_type, obs.time, cached_sun_pos_);
+
+                    if (!seed_sig2.empty()) {
+                        const double atx_2 = antenna_->getAntennaCorrection(
+                            obs.satellite, seed_sig2, obs.system,
+                            rx_pos, sat_pos, sat_vel_em, elevation, azimuth,
+                            rx_ant_type, obs.time, cached_sun_pos_);
+                        PppUtils utils(log_manager_);
+                        const double f1 = utils.getFrequency(seed_sig1, obs.system, obs.satellite);
+                        const double f2 = utils.getFrequency(seed_sig2, obs.system, obs.satellite);
+                        if (f1 > 0.0 && f2 > 0.0 && std::abs(f1 - f2) > 1e6) {
+                            const double f1sq = f1 * f1, f2sq = f2 * f2;
+                            pco_los_seed = (f1sq * atx_1 - f2sq * atx_2) / (f1sq - f2sq);
+                        } else {
+                            // Frequency lookup failed or bands coincide; fall
+                            // back to single-band ATX (still removes most of
+                            // the per-band offset, no IF amplification).
+                            pco_los_seed = atx_1;
+                        }
+                    } else {
+                        // Single-frequency fallback in extractPseudorange —
+                        // apply that signal's ATX directly.
+                        pco_los_seed = atx_1;
+                    }
+                }
+
+                // Periodic relativistic clock correction `dtr = −2(r·v)/c²`.
+                //
+                // By IGS convention the CLK product carries only the constant
+                // + drift terms of δt_s — the periodic relativistic term is
+                // computed separately and applied downstream in the observation
+                // model.  That means the seed pseudorange contains an
+                // uncancelled `−c·dtr` contribution (sign: dtr is negative
+                // near satellite perigee, positive near apogee).  Without
+                // accounting for it here, the seed t_em is biased by exactly
+                // `+dtr` — up to ~14 m / 47 ns for GPS at peak eccentricity,
+                // typically 3-7 m / 10-20 ns for IIR/IIF.
+                //
+                // The seed pseudorange contains `−c·dtr`, so removing it means
+                // adding `+c·dtr` (equivalently: subtracting `−c·dtr`).  Note
+                // the sign is opposite the tropo/ATX terms, which is correct —
+                // those enter the pseudorange with positive sign whereas the
+                // relativistic clock effect enters with negative sign via the
+                // `−c·δt_s` term.
+                //
+                // dtr is recomputed downstream against the REFINED sat state
+                // for the actual observation-model contribution; the value
+                // computed here is purely for the seed-refinement subtraction.
+                double dtr_los_seed = 0.0;
+                if (config_.getModelCorrections().enable_relativistic_correction) {
+                    const double dtr_seed_s = corrections_.computeRelativisticCorrection(
+                        obs.satellite, sat_pos_em, sat_vel_em);
+                    dtr_los_seed = dtr_seed_s * c;
+                }
+
+                if (std::abs(slant_zhd_seed) > 1e-12 ||
+                    std::abs(pco_los_seed)   > 1e-12 ||
+                    std::abs(dtr_los_seed)   > 1e-12) {
+                    const double pseudorange_refined =
+                        pseudorange - slant_zhd_seed - pco_los_seed + dtr_los_seed;
+                    if (!computeEmissionState(obs, rx_pos, pseudorange_refined,
+                                              sat_pos_em, sat_vel_em,
+                                              sat_clock_em, emission_time, broadcast_grade, drop_reason))
+                        return false;
+
+                    // Re-rotate + re-topocentric with refined sat state.
+                    rotateAndComputeTopo(sat_pos_em);
+
+                    // Safety re-check on elevation in case the refinement
+                    // pushed a borderline sat across the mask threshold.
+                    if (elevation < elevation_threshold_) {
+                        log_manager_.getLogger("geometry")->debug(
+                            "Satellite {} below elevation threshold (refined): {:.3f} deg < {:.3f} deg",
+                            obs.satellite, elevation, elevation_threshold_);
+                        drop_reason = DropReason::BelowMask;
+                        return false;
+                    }
+
+                    log_manager_.getLogger("geometry")->trace(
+                        "Refined seed for {}: -slant_zhd={:.3f} m, -pco_los_if={:.3f} m, +dtr_los={:.3f} m",
+                        obs.satellite, slant_zhd_seed, pco_los_seed, dtr_los_seed);
+                }
+            }
+
+            // --- Relativistic periodic correction (uses refined sat state) ---
             relativistic_corr = config_.getModelCorrections().enable_relativistic_correction
                 ? corrections_.computeRelativisticCorrection(obs.satellite, sat_pos_em, sat_vel_em)
                 : 0.0;
@@ -369,24 +734,10 @@ namespace GnssProcessor {
                 sat_clock_em, relativistic_corr,
                 sat_pos_em.dot(sat_vel_em), sat_vel_em.norm());
 
-            // --- Final geometry (reception-time ECEF frame) ---
-            range = (sat_pos - rx_pos).norm();
-            los = (sat_pos - rx_pos) / range;
-            Topocentric topo = computeTopocentric(rx_pos, sat_pos);
-            elevation = topo.elevation_deg;
-            azimuth = topo.azimuth_deg;
-
-            if (elevation < elevation_threshold_) {
-                log_manager_.getLogger("geometry")->debug(
-                    "Satellite {} below elevation threshold: {:.3f} deg < {:.3f} deg",
-                    obs.satellite, elevation, elevation_threshold_);
-                return false;
-            }
-
             // --- Propagation corrections ---
             troposphere_.getTroposphereMapping(elevation, rx_pos, obs.time, mf_d, mf_w);
             tropo_delay = config_.getModelCorrections().enable_troposphere
-                ? troposphere_.computeSaastamoinenZHD(rx_pos)
+                ? troposphere_.computeSaastamoinenZHD(rx_pos, obs.time)
                 : 0.0;
             shapiro_delay = config_.getModelCorrections().enable_shapiro_delay
                 ? corrections_.computeShapiroDelay(obs.satellite, rx_pos, sat_pos)
@@ -409,14 +760,18 @@ namespace GnssProcessor {
 
             sat_vel = sat_vel_em;
 
+            // Surface the clock provenance captured during emission-time solve:
+            // when the clock is broadcast-grade the caller drops carrier phase.
+            broadcast_only = broadcast_grade;
+
             log_manager_.getLogger("geometry")->trace(
                 "Satellite geometry for {} at TOW {:.3f}: range={:.3f} m, elev={:.3f} deg, az={:.3f} deg, "
                 "tropo={:.3f} m, sat_clock={:.3e} s ({:.3f} m), shapiro={:.3e} m, sagnac={:.3f} m, "
-                "atm_load={:.3f} m, relativistic={:.3e} s ({:.3f} m), solid_tide={:.3f} m",
+                "atm_load={:.3f} m, relativistic={:.3e} s ({:.3f} m), solid_tide={:.3f} m, broadcast_only={}",
                 obs.satellite, obs.time.tow, range, elevation, azimuth,
                 tropo_delay, sat_clock, sat_clock * c,
                 shapiro_delay, sagnac_corr, atm_loading_corr,
-                relativistic_corr, relativistic_corr * c, solid_tide);
+                relativistic_corr, relativistic_corr * c, solid_tide, broadcast_only);
 
             return true;
         }
@@ -448,9 +803,36 @@ namespace GnssProcessor {
                 return zero_result;
             }
 
+            // Broadcast (live) ephemeris fallback: decode the satellite PV from
+            // the receiver's RTCM/SBF nav stream and overlay the IODE-gated SSR
+            // orbit correction — the same path the SP3 branch uses below.
+            // Factored into a lambda so it serves EVERY case where the loaded
+            // SP3 cannot describe this query epoch: (a) no SP3 entry at all,
+            // (b) too few valid nodes, and (c) the query epoch lies outside the
+            // SP3's time coverage (a stale fixture shadowing today's live PRNs
+            // in real-time rooftop mode).  In post-processing the live store is
+            // empty (only RealTimeEngine ever inserts), so this returns nullopt
+            // and the SP3 path runs exactly as before.
+            auto liveFallback = [&]() -> std::optional<std::pair<Eigen::Vector3d, Eigen::Vector3d>> {
+                auto bc = LiveEphemerisStore::getInstance().computeSatellitePV(satellite, time);
+                if (!bc) return std::nullopt;
+                Eigen::Vector3d pos = bc->position;
+                Eigen::Vector3d vel = bc->velocity;
+                if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+                    ssr && ssr->has_orbit
+                    && SsrCorrectionStore::iodeMatches(bc->iode, ssr->iode)) {
+                    const double dt = TimeUtils::continuousGpsSeconds(time)
+                                    - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+                    pos = SsrCorrectionStore::applyOrbitToPosition(
+                        pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
+                }
+                return std::make_pair(pos, vel);
+            };
+
             // O(1) index lookup
             auto it = orbit_index_.find(satellite);
             if (it == orbit_index_.end()) {
+                if (auto r = liveFallback()) return *r;
                 log_manager_.getLogger("geometry")->warn("getSatellitePV: no orbit data for {}", satellite);
                 return zero_result;
             }
@@ -496,41 +878,92 @@ namespace GnssProcessor {
             }
 
             if (valid_nodes.size() < MIN_POINTS) {
+                if (auto r = liveFallback()) return *r;
                 log_manager_.getLogger("geometry")->warn(
                     "getSatellitePV: insufficient valid nodes ({}) for {} at week {} tow {:.3f}",
                     valid_nodes.size(), satellite, time.week, time.tow);
                 return zero_result;
             }
 
-            // === STEP 2: Select the IGS_POINTS nearest nodes to the query time ===
-            // Use partial_sort to efficiently find the closest nodes without fully
-            // sorting the entire valid_nodes vector.
-            const size_t n_select = std::min(valid_nodes.size(), IGS_POINTS);
-
-            std::partial_sort(valid_nodes.begin(), valid_nodes.begin() + n_select, valid_nodes.end(),
-                [t_query](const NodeEntry& a, const NodeEntry& b) {
-                    return std::abs(a.t - t_query) < std::abs(b.t - t_query);
-                });
-
-            std::vector<NodeEntry> nodes(valid_nodes.begin(), valid_nodes.begin() + n_select);
-
-            if (nodes.size() < MIN_POINTS) {
-                log_manager_.getLogger("geometry")->warn(
-                    "getSatellitePV: insufficient nearest nodes ({}) for {} at week {} tow {:.3f}",
-                    nodes.size(), satellite, time.week, time.tow);
-                return zero_result;
+            // === Coverage gate (stale-SP3 shadowing) ===
+            // valid_nodes is in ascending epoch order (sat_orbits was sorted in
+            // loadData()).  If the query epoch lies outside the loaded SP3's time
+            // span by more than one node interval, the SP3 does not describe this
+            // epoch — typically a stale fixture shadowing today's live PRNs in
+            // real-time rooftop mode.  Prefer the broadcast ephemeris (which IS
+            // current) over extrapolating a years-stale polynomial into a
+            // position the norm-gate below would only reject.  The one-interval
+            // tolerance is strictly more permissive than the half-interval
+            // extrapolation guard further down, so no legitimate post-processing
+            // edge is newly diverted here; and in post-processing the live store
+            // is empty, so liveFallback() returns nullopt and the existing SP3
+            // path (including its own gap/extrapolation handling) runs unchanged.
+            {
+                const double t_cov_first = valid_nodes.front().t;
+                const double t_cov_last  = valid_nodes.back().t;
+                if (t_query < t_cov_first - sp3_interval || t_query > t_cov_last + sp3_interval) {
+                    if (auto r = liveFallback()) {
+                        log_manager_.getLogger("geometry")->debug(
+                            "getSatellitePV: {} query tow {:.3f} outside SP3 span "
+                            "[{:.1f}, {:.1f}]s (continuous); using broadcast ephemeris",
+                            satellite, time.tow, t_cov_first, t_cov_last);
+                        return *r;
+                    }
+                }
             }
 
-            // === STEP 3: Gap and extrapolation checks (chronological order) ===
-            // Sort nodes chronologically for gap/extrapolation validation
-            std::sort(nodes.begin(), nodes.end(), [](const NodeEntry& a, const NodeEntry& b) {
-                return a.t < b.t;
-            });
+            // === STEP 2: Bracket-centered window selection ===
+            // Find the bracket [x_a, x_{a+1}] containing t_query, then pick the
+            // IGS_POINTS consecutive nodes anchored on it (half_before nodes
+            // left of the bracket, the bracket itself, the rest right).  The
+            // window shifts by exactly one node when t_query crosses an SP3
+            // epoch — and at that instant t_query lies on a node shared by
+            // both windows, so the Neville polynomial value is identical for
+            // both.  Position is continuous across the swap.
+            //
+            // Selecting by nearest-N distance instead swaps a node at the
+            // midpoint between SP3 epochs (every 900/2 s for IGS Final), where
+            // the two polynomials disagree by a few mm — producing the
+            // well-known synchronous-across-constellation 15-min sawtooth in
+            // PPP position.
+            const size_t n_total = valid_nodes.size();
+            const size_t n_win = std::min(IGS_POINTS, n_total);
 
+            auto upper_it = std::upper_bound(valid_nodes.begin(), valid_nodes.end(), t_query,
+                [](double t, const NodeEntry& n) { return t < n.t; });
+
+            size_t bracket_lo;
+            if (upper_it == valid_nodes.begin()) {
+                bracket_lo = 0;
+            } else if (upper_it == valid_nodes.end()) {
+                bracket_lo = n_total - 1;
+            } else {
+                bracket_lo = std::distance(valid_nodes.begin(), upper_it) - 1;
+            }
+
+            // Build a centered window of `width` consecutive indices anchored
+            // on the bracket, clipped at the file boundaries.
+            auto centered_window = [&](size_t width) -> std::pair<size_t, size_t> {
+                const size_t half = (width - 1) / 2;
+                size_t s;
+                if (bracket_lo < half) {
+                    s = 0;
+                } else if (bracket_lo + (width - half) > n_total) {
+                    s = n_total - width;
+                } else {
+                    s = bracket_lo - half;
+                }
+                return { s, s + width };
+            };
+
+            auto [win_start, win_end] = centered_window(n_win);
+            std::vector<NodeEntry> nodes(valid_nodes.begin() + win_start,
+                                         valid_nodes.begin() + win_end);
+
+            // === STEP 3: Extrapolation and gap checks (chronological order) ===
             const double t_first = nodes.front().t;
-            const double t_last = nodes.back().t;
+            const double t_last  = nodes.back().t;
 
-            // Check for extrapolation
             if (t_query < t_first || t_query > t_last) {
                 const double extrap_dist = (t_query < t_first) ? (t_first - t_query) : (t_query - t_last);
                 if (extrap_dist > sp3_interval / 2.0) {
@@ -541,21 +974,14 @@ namespace GnssProcessor {
                 }
             }
 
-            // Check for data gaps — if the span is too large, trim to MIN_POINTS closest
+            // Gap check: if the window span exceeds MAX_SPAN there is a hole
+            // in the data.  Re-pick a MIN_POINTS-wide centered window and
+            // re-check before giving up.
             const double span = t_last - t_first;
             if (span > MAX_SPAN) {
-                std::sort(nodes.begin(), nodes.end(), [t_query](const NodeEntry& a, const NodeEntry& b) {
-                    return std::abs(a.t - t_query) < std::abs(b.t - t_query);
-                    });
-                if (nodes.size() > MIN_POINTS) {
-                    nodes.resize(MIN_POINTS);
-                }
-                std::sort(nodes.begin(), nodes.end(), [](const NodeEntry& a, const NodeEntry& b) {
-                    return a.t < b.t;
-                    });
+                auto [s2, e2] = centered_window(std::min(MIN_POINTS, n_total));
+                nodes.assign(valid_nodes.begin() + s2, valid_nodes.begin() + e2);
 
-                // Re-check span after trimming — a large gap in the middle could
-                // still leave the trimmed set spanning an unreasonable range.
                 const double trimmed_span = nodes.back().t - nodes.front().t;
                 if (trimmed_span > MAX_SPAN) {
                     log_manager_.getLogger("geometry")->warn(
@@ -575,19 +1001,51 @@ namespace GnssProcessor {
                 return std::abs(a.t - t_query) < std::abs(b.t - t_query);
             });
 
+            // Earth-rotation pre-correction (RTKLIB / cssrlib / IGS convention):
+            // rotate each SP3 node's (X, Y) into the ECEF frame at @c t_query
+            // before interpolating.  Without this step the polynomial is fitting
+            // a function that carries the sidereal ω-frequency oscillation of
+            // ECEF relative to the satellite's inertial trajectory, and a degree-
+            // 10 fit can't capture that perfectly — the residual is sub-mm in the
+            // window interior but grows to ~mm near SP3 boundaries.  With the
+            // pre-correction the polynomial fits a near-inertial smooth function.
+            //
+            // The rotation: ECEF(t_query) = R_z(ω·(t_node − t_query)) · ECEF(t_node).
+            // Evaluated at t = t_query the rotation angle is 0, so the
+            // interpolated value is directly the ECEF position at the query
+            // epoch — no post-rotation needed.
+            const double omegaE_interp = Constants::EARTH_ANGULAR_VELOCITY;
             std::vector<double> x(n);
             std::vector<double> yx(n), yy(n), yz(n);
             for (size_t i = 0; i < n; ++i) {
                 x[i] = nodes[i].t;
-                yx[i] = nodes[i].ptr->position.x();
-                yy[i] = nodes[i].ptr->position.y();
+                const double dt_node = nodes[i].t - t_query;
+                const double alpha = omegaE_interp * dt_node;
+                const double cs = std::cos(alpha);
+                const double sn = std::sin(alpha);
+                const double px = nodes[i].ptr->position.x();
+                const double py = nodes[i].ptr->position.y();
+                yx[i] = cs * px - sn * py;
+                yy[i] = sn * px + cs * py;
                 yz[i] = nodes[i].ptr->position.z();
             }
 
             Eigen::Vector3d pos = Eigen::Vector3d::Zero();
             Eigen::Vector3d vel = Eigen::Vector3d::Zero();
 
-            // Neville's algorithm: simultaneous position and velocity interpolation
+            // Neville's algorithm: simultaneous position and velocity interpolation.
+            // The polynomial derivative at t_query gives the velocity in the
+            // ECEF-at-t_query frame, which is an inertial frame snapshot — so
+            // the raw derivative is the satellite's INERTIAL velocity.
+            // Downstream consumers (Doppler line-of-sight rate, BeiDou orbit-
+            // normal yaw, relativistic r·v) expect ECEF-frame velocity; recover
+            // it via  v_ecef = v_inertial − ω × pos, i.e. for ω = (0,0,ω):
+            //   v_ecef.x = v_inertial.x + ω · pos.y
+            //   v_ecef.y = v_inertial.y − ω · pos.x
+            //   v_ecef.z = v_inertial.z
+            // (Note: relativity r·v is invariant to this conversion because
+            //  r · (ω×r) = 0; only Doppler / cross-product attitude paths see
+            //  the difference.)
             try {
                 double px, vx, py, vy, pz, vz;
                 Interpolate::nevilleInterpDeriv(x, yx, t_query, px, vx);
@@ -595,7 +1053,9 @@ namespace GnssProcessor {
                 Interpolate::nevilleInterpDeriv(x, yz, t_query, pz, vz);
 
                 pos = Eigen::Vector3d(px, py, pz);
-                vel = Eigen::Vector3d(vx, vy, vz);
+                vel = Eigen::Vector3d(vx + omegaE_interp * py,
+                                      vy - omegaE_interp * px,
+                                      vz);
             }
             catch (const std::exception& ex) {
                 log_manager_.getLogger("geometry")->warn(
@@ -626,6 +1086,40 @@ namespace GnssProcessor {
                 vel = Eigen::Vector3d::Zero();
             }
 
+            // Apply SSR orbit correction if a fresh record is available
+            // AND the SSR's IODE matches the broadcast-nav baseline our
+            // closest interpolation node was generated from.  When the
+            // baseline has no IODE (SP3-derived: iode=-1) the gate is
+            // permissive — the comparison no-ops, preserving the existing
+            // post-processing behaviour.  Once a broadcast-nav parser
+            // populates iode on OrbitData, the gate becomes meaningful
+            // and rejects corrections that would land on the wrong
+            // ephemeris baseline.
+            int brdc_iode = -1;
+            {
+                const auto it_idx = orbit_index_.find(satellite);
+                if (it_idx != orbit_index_.end() && !it_idx->second.empty()) {
+                    const double t_query = TimeUtils::continuousGpsSeconds(time);
+                    const OrbitData* closest = nullptr;
+                    double best_dt = std::numeric_limits<double>::max();
+                    for (const OrbitData* nd : it_idx->second) {
+                        const double dt_abs = std::abs(
+                            TimeUtils::continuousGpsSeconds(nd->time) - t_query);
+                        if (dt_abs < best_dt) { best_dt = dt_abs; closest = nd; }
+                    }
+                    if (closest) brdc_iode = closest->iode;
+                }
+            }
+
+            if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+                ssr && ssr->has_orbit
+                && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
+                const double dt = TimeUtils::continuousGpsSeconds(time)
+                                - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+                pos = SsrCorrectionStore::applyOrbitToPosition(
+                    pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
+            }
+
             // Find chronological window bounds for debug logging without re-sorting
             auto [t_min_it, t_max_it] = std::minmax_element(x.begin(), x.end());
             // Map back to node indices for TOW display
@@ -648,19 +1142,17 @@ namespace GnssProcessor {
         // =================================================================
 
         Topocentric Geometry::computeTopocentric(const Eigen::Vector3d& rx_pos_ecef,
-            const Eigen::Vector3d& sat_pos_ecef) const {
+            const Eigen::Vector3d& sat_pos_ecef) {
+            // Pure geometry — static, no logger dependency.  Degenerate inputs
+            // (satellite essentially at the receiver, or an uninitialized
+            // receiver at the Earth's centre) return a zeroed Topocentric,
+            // which the caller reads as elevation 0 (below any mask).
             Topocentric out;
 
             Eigen::Vector3d delta = sat_pos_ecef - rx_pos_ecef;
             double range = delta.norm();
-            if (range < 1.0) {
-                log_manager_.getLogger("geometry")->warn("Degenerate range in topocentric computation: range={:.3f} m", range);
-                return out;
-            }
-            if (rx_pos_ecef.norm() < 1e-6) {
-                log_manager_.getLogger("geometry")->warn("Invalid receiver ECEF magnitude in topocentric computation");
-                return out;
-            }
+            if (range < 1.0) return out;
+            if (rx_pos_ecef.norm() < 1e-6) return out;
 
             Coordinates::Llh ref_llh = Coordinates::ecefToLlh(rx_pos_ecef);
             Eigen::Vector3d los_enu = Coordinates::ecefToEnu(delta, ref_llh) / range;
@@ -673,43 +1165,7 @@ namespace GnssProcessor {
 
             out.elevation_deg = elev_deg;
             out.azimuth_deg = az_deg;
-
-            log_manager_.getLogger("geometry")->trace("Topocentric: elev={:.3f}°, az={:.3f}° (lat≈{:.6f}°)",
-                elev_deg, az_deg, ref_llh.lat_rad * 180.0 / Constants::PI);
             return out;
-        }
-
-        void Geometry::computeSatelliteAttitude(System system,
-            const Eigen::Vector3d& sat_pos,
-            const Eigen::Vector3d& sat_vel,
-            Eigen::Vector3d& d_s,
-            Eigen::Vector3d& y_s,
-            const GnssTime& time) const {
-
-            ensureSunMoonCached(time);
-            Eigen::Vector3d sun_pos = cached_sun_pos_;
-
-            if (sun_pos.norm() < 1e6) {
-                sun_pos = Eigen::Vector3d(1.496e11, 0.0, 0.0); // 1 AU fallback
-                log_manager_.getLogger("geometry")->warn("No Sun ephemeris for time TOW {0}", time.tow);
-            }
-
-            Eigen::Vector3d e = (sun_pos - sat_pos).normalized();
-
-            // Yaw-steering attitude
-            Eigen::Vector3d y = sat_vel.normalized().cross(e);
-            if (y.norm() < 1e-6)
-                y = Eigen::Vector3d(0.0, 1.0, 0.0); // collinearity fallback
-            y_s = y.normalized();
-            d_s = y_s.cross(-sat_pos.normalized()).normalized();
-        }
-
-        void Geometry::resetPhaseWindUp(const std::string& satellite) {
-            corrections_.resetPhaseWindUp(satellite);
-        }
-
-        void Geometry::resetAllPhaseWindUp() {
-            corrections_.resetAllPhaseWindUp();
         }
 
     } // namespace Model
