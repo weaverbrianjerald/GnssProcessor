@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "corrections/GnssCorrections.hpp"
 #include "logging/LogManager.hpp"
+#include "slip/ISlipDetector.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <deque>
@@ -82,7 +83,7 @@ namespace GnssProcessor {
      * and flags ambiguities for reset when the MW change exceeds a configured
      * threshold (in wide-lane cycles).
      */
-    class MwSlipDetector {
+    class MwSlipDetector : public ISlipDetector {
     public:
         /**
          * @brief Construct a new MwSlipDetector.
@@ -90,6 +91,37 @@ namespace GnssProcessor {
          * @param log_manager Log manager used to emit diagnostic messages.
          */
         MwSlipDetector(const GnssConfig& config, LogManager& log_manager);
+
+        // --- ISlipDetector contract -------------------------------------
+
+        /**
+         * @brief Detect slips for one epoch (ISlipDetector entry point).
+         *
+         * Runs @c detectLargeMwResets on @c context.observations and returns
+         * the unified @c SlipEvent projection.  Each MW result is a band
+         * difference (@f$\Delta N_{WL}=\Delta N_1-\Delta N_2@f$), so its event
+         * carries @c SlipGranularity::BandDifference with both signals
+         * populated.
+         *
+         * @note @c CycleSlipManager does not call this — its specialized
+         *       BSSD-aware pipeline consumes @c detectLargeMwResets directly
+         *       for the full @c MwSlipResult WL-pair semantics the projection
+         *       does not preserve.  This override exists for the polymorphic
+         *       @c ISlipDetector contract.
+         *
+         * @param context Epoch inputs (only @c observations is consulted).
+         * @return Unified slip events for this epoch.
+         */
+        std::vector<SlipEvent> detect(const SlipEpochContext& context) override;
+
+        /// @copydoc ISlipDetector::kind
+        SlipDetectorKind kind() const override { return SlipDetectorKind::MelbourneWubbena; }
+
+        /// @copydoc ISlipDetector::name
+        std::string name() const override { return "MelbourneWubbena"; }
+
+        /// @copydoc ISlipDetector::asMelbourneWubbena
+        MwSlipDetector* asMelbourneWubbena() override { return this; }
 
         /**
          * @brief Detect large MW resets for the provided epoch observations.
@@ -172,7 +204,7 @@ namespace GnssProcessor {
          *
          * @param satellite Satellite identifier (e.g. "G01").
          */
-        void resetSatellite(const std::string& satellite);
+        void resetSatellite(const std::string& satellite) override;
 
         /**
          * @brief Clear MW arc histories that involve a specific (satellite,
@@ -188,7 +220,7 @@ namespace GnssProcessor {
          * @param signal    Signal identifier (e.g. "L1C", "L2W", "L5X").
          */
         void resetSatelliteSignal(const std::string& satellite,
-                                   const std::string& signal);
+                                   const std::string& signal) override;
 
         /**
          * @brief Hint that a satellite should be deprioritized when picking
@@ -226,7 +258,7 @@ namespace GnssProcessor {
          * The next call to @c detectLargeMwResets() then begins fresh
          * arcs with no slip flags fired against pre-gap history.
          */
-        void resetAll();
+        void resetAll() override;
 
         /**
          * @brief Enable CSV tracing for MWWL diagnostics.
@@ -238,13 +270,13 @@ namespace GnssProcessor {
          * @param log_dir Directory where the trace file will be created.
          * @return true if the file was successfully opened, false otherwise.
          */
-        bool enableTracing(const std::filesystem::path& log_dir);
+        bool enableTracing(const std::filesystem::path& log_dir) override;
 
         /**
          * @brief Check if tracing is currently enabled.
          * @return true if the trace file is open and writable.
          */
-        bool isTracingEnabled() const { return mwwl_trace_.is_open(); }
+        bool isTracingEnabled() const override { return mwwl_trace_.is_open(); }
 
         /**
          * @brief Provide satellite bias access for WL bias correction.
@@ -256,7 +288,7 @@ namespace GnssProcessor {
          *
          * @param corrections Pointer to GnssCorrections (may be nullptr to disable).
          */
-        void setCorrections(const GnssCorrections* corrections) { corrections_ = corrections; }
+        void setCorrections(const GnssCorrections* corrections) override { corrections_ = corrections; }
 
         /**
          * @brief Override the inter-epoch gap tolerance for arc resets.

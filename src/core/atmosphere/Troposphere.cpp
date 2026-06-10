@@ -209,24 +209,32 @@ namespace GnssProcessor {
 
         double abs_lat = std::abs(lat); // radians
 
-        // === GMF coefficients (Boehm et al. 2006, Table 1) ===
-        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°
+        // === Niell Mapping Function coefficients (Niell 1996, NMF) ===
+        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°.  (Despite the
+        // historical "GMF" naming on this method, these are the NMF tables;
+        // the spherical-harmonic GMF/VMF3 path lives in the Vmf3 branch.)
+        //
+        // The hydrostatic seasonal AMPLITUDE is zero at 15° and grows poleward,
+        // so amplitude[0] = 0.0.  Verified against POINT (Troposphere.cpp NMF
+        // abc_amp), cssrlib (gnss.py tropmapfNiell) and RTKLIB (tropmapf) — all
+        // three carry the leading 0.0.  (A prior version dropped it and shifted
+        // every amplitude one latitude bin toward the equator.)
         //
         // Hydrostatic: mean and annual amplitude
         static constexpr double ah_mean[] = { 1.2769934e-3, 1.2683230e-3, 1.2465397e-3,
                                                1.2196049e-3, 1.2045996e-3 };
-        static constexpr double ah_amp[]  = { 1.2709626e-5, 2.6523662e-5,
-                                               3.4000452e-5, 4.1202191e-5, 4.1202191e-5 };
+        static constexpr double ah_amp[]  = { 0.0, 1.2709626e-5, 2.6523662e-5,
+                                               3.4000452e-5, 4.1202191e-5 };
 
         static constexpr double bh_mean[] = { 2.9153695e-3, 2.9152299e-3, 2.9288445e-3,
                                                2.9022565e-3, 2.9024912e-3 };
-        static constexpr double bh_amp[]  = { 2.1414979e-5, 3.0160779e-5,
-                                               7.2562722e-5, 11.723375e-5, 11.723375e-5 };
+        static constexpr double bh_amp[]  = { 0.0, 2.1414979e-5, 3.0160779e-5,
+                                               7.2562722e-5, 11.723375e-5 };
 
         static constexpr double ch_mean[] = { 62.610505e-3, 62.837393e-3, 63.721774e-3,
                                                63.824265e-3, 64.258455e-3 };
-        static constexpr double ch_amp[]  = { 9.0128400e-5, 4.3497037e-5,
-                                               84.795348e-5, 170.37206e-5, 170.37206e-5 };
+        static constexpr double ch_amp[]  = { 0.0, 9.0128400e-5, 4.3497037e-5,
+                                               84.795348e-5, 170.37206e-5 };
 
         // Wet: mean only (no annual variation in GMF wet)
         static constexpr double aw_mean[] = { 5.8021897e-4, 5.6794847e-4, 5.8118019e-4,
@@ -252,9 +260,15 @@ namespace GnssProcessor {
             return arr[i] * (1.0 - f) + arr[i + 1] * f;
         };
 
-        double a_h = lerp(ah_mean, idx, frac) + lerp(ah_amp, idx, frac) * cos_annual;
-        double b_h = lerp(bh_mean, idx, frac) + lerp(bh_amp, idx, frac) * cos_annual;
-        double c_h = lerp(ch_mean, idx, frac) + lerp(ch_amp, idx, frac) * cos_annual;
+        // Niell seasonal combination is avg − amp·cos(2π(doy − 28)/365.25)
+        // (MINUS).  cos_annual already folds the southern-hemisphere half-year
+        // shift into its phase (doy_phase = 28 + 182.625 for the SH), so the
+        // single minus sign is correct for both hemispheres.  Verified against
+        // POINT, cssrlib and RTKLIB — all use the minus.  (A prior version used
+        // a plus, putting the seasonal variation in anti-phase.)
+        double a_h = lerp(ah_mean, idx, frac) - lerp(ah_amp, idx, frac) * cos_annual;
+        double b_h = lerp(bh_mean, idx, frac) - lerp(bh_amp, idx, frac) * cos_annual;
+        double c_h = lerp(ch_mean, idx, frac) - lerp(ch_amp, idx, frac) * cos_annual;
 
         // Interpolate wet coefficients (no annual variation in GMF wet)
         double a_w = lerp(aw_mean, idx, frac);

@@ -54,6 +54,11 @@ public:
     /// True while the background thread is running and the connection is live.
     bool isConnected() const { return connected_.load(); }
 
+    /// True from start() until stop() — the client's intent-to-run, independent
+    /// of momentary connection state.  Used by the realtime poll loop so a
+    /// not-yet-established or transiently-dropped stream stays "active".
+    bool isRunning() const { return running_.load(); }
+
     /**
      * @brief Read up to @p max_bytes from the internal buffer.
      *
@@ -88,6 +93,7 @@ private:
     std::thread           thread_;
     std::atomic<bool>     running_{ false };
     std::atomic<bool>     connected_{ false };
+    std::atomic<size_t>   total_rx_bytes_{ 0 };  ///< Cumulative bytes received (stall diagnostics).
 
     // Thread-safe byte buffer.
     std::mutex              buf_mutex_;

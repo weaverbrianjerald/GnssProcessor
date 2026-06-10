@@ -447,6 +447,31 @@ namespace GnssProcessor {
     }
 
     // =================================================================
+    // ISlipDetector contract
+    // =================================================================
+
+    std::vector<SlipEvent> EwlSlipDetector::detect(const SlipEpochContext& context) {
+        const auto raw = detect(context.observations);
+        std::vector<SlipEvent> events;
+        events.reserve(raw.size());
+        for (const auto& r : raw) {
+            SlipEvent ev;
+            ev.satellite   = r.satellite;
+            ev.sig1        = r.sig1;
+            ev.sig2        = r.sig2;
+            ev.amb_key     = r.amb_key;
+            ev.slip_cycles = r.slip_ewl_cycles;
+            ev.slip_known  = r.slip_ewl_known;
+            ev.fractional  = r.fractional;
+            ev.lambda      = r.lambda_ewl;
+            ev.granularity = SlipGranularity::BandDifference;
+            ev.source      = SlipDetectorKind::ExtraWideLane;
+            events.push_back(std::move(ev));
+        }
+        return events;
+    }
+
+    // =================================================================
     // External reset
     // =================================================================
 

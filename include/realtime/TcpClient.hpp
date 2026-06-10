@@ -55,6 +55,13 @@ public:
     /// True while the connection is established.
     bool isConnected() const { return connected_.load(); }
 
+    /// True from start() until stop() — the client's intent-to-run, independent
+    /// of momentary connection state.  The realtime poll loop treats a socket
+    /// source as "active" while running (drops are handled by internal
+    /// auto-reconnect), so a transient disconnect or a not-yet-established
+    /// connection at startup does not tear the session down.
+    bool isRunning() const { return running_.load(); }
+
     /**
      * @brief Non-blocking buffered read with millisecond timeout.
      *

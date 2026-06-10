@@ -85,6 +85,32 @@ namespace GnssProcessor {
     }
 
     // =================================================================
+    // ISlipDetector contract
+    // =================================================================
+
+    std::vector<SlipEvent> MwSlipDetector::detect(const SlipEpochContext& context) {
+        const std::vector<MwSlipResult> raw = detectLargeMwResets(context.observations);
+        std::vector<SlipEvent> events;
+        events.reserve(raw.size());
+        for (const auto& r : raw) {
+            SlipEvent ev;
+            ev.satellite   = r.satellite;
+            ev.sig1        = r.sig1;
+            ev.sig2        = r.sig2;
+            ev.amb_key     = r.amb_key;
+            ev.slip_cycles = r.slip_wl_cycles;
+            ev.slip_known  = r.slip_wl_known;
+            ev.fractional  = r.slip_frac;
+            ev.lambda      = r.lambda_wl;
+            ev.granularity = r.sig2.empty() ? SlipGranularity::PerSignal
+                                            : SlipGranularity::BandDifference;
+            ev.source      = SlipDetectorKind::MelbourneWubbena;
+            events.push_back(std::move(ev));
+        }
+        return events;
+    }
+
+    // =================================================================
     // Per-satellite MW quality query
     // =================================================================
 

@@ -63,6 +63,33 @@ namespace GnssProcessor {
             return chain;
         }
 
+        // Receiver-ONLY cross-system fallback (nearest GPS band by carrier
+        // frequency), walked AFTER atxFallbackChain() is exhausted.  The
+        // receiver phase pattern is a function of frequency on shared
+        // hardware, so substituting the nearest GPS band for a missing
+        // non-GPS key is physically valid for the RECEIVER antenna.  It is
+        // NEVER used for the satellite antenna — E01 and G01 are different
+        // spacecraft, so this chain is deliberately kept separate from
+        // atxFallbackChain() (which the satellite path shares).
+        //
+        // The load-bearing mappings are exact-carrier-frequency matches
+        // (E1->G01, E5a->G05, B1C->G01, B2a->G05 = 1575.42 / 1176.45 MHz);
+        // the remainder are ~10-70 MHz approximations.
+        const std::map<std::string, std::vector<std::string>>& atxReceiverCrossSystemChain() {
+            static const std::map<std::string, std::vector<std::string>> chain = {
+                { "E01", { "G01" } },          // E1  1575.42 == L1 (exact)
+                { "E05", { "G05", "G02" } },   // E5a 1176.45 == L5 (exact)
+                { "E07", { "G02", "G05" } },   // E5b 1207.14 ~ L2 (approx)
+                { "E06", { "G02" } },          // E6  1278.75 ~ L2 (approx)
+                { "C01", { "G01" } },          // B1I 1561.098 ~ L1 (~14 MHz)
+                { "C02", { "G01" } },          // B1C 1575.42 == L1 (exact)
+                { "C05", { "G05", "G02" } },   // B2a 1176.45 == L5 (exact)
+                { "C06", { "G02" } },          // B3I 1268.52 ~ L2 (approx)
+                // QZSS/SBAS already share GPS frequencies — no entry needed.
+            };
+            return chain;
+        }
+
         /// Pick an effective ATX frequency key from @p entry_map.  Returns
         /// @p requested when present and the @p good predicate accepts the
         /// stored value; otherwise walks the per-system fallback chain
@@ -80,6 +107,39 @@ namespace GnssProcessor {
             if (it != entry_map.end() && good(it->second)) return requested;
             if (!enable_fallback) return {};
             const auto& chain = atxFallbackChain();
+            auto cit = chain.find(requested);
+            if (cit == chain.end()) return {};
+            for (const auto& alt : cit->second) {
+                auto ait = entry_map.find(alt);
+                if (ait != entry_map.end() && good(ait->second)) return alt;
+            }
+            return {};
+        }
+
+        /// Receiver-only variant of @c pickAtxFrequencyKey.  First runs the
+        /// identical exact-then-in-system-fallback resolution (so the
+        /// receiver path matches the satellite path when the requested key
+        /// exists on the antenna), and ONLY when that yields nothing AND
+        /// @p cross_system is true does it walk @c atxReceiverCrossSystemChain()
+        /// — the nearest-GPS-band substitution.  Returns the first alternate
+        /// present and accepted by @p good, else empty (caller skips the
+        /// correction = legacy behavior).
+        ///
+        /// MUST NOT be called for the satellite antenna: the cross-system
+        /// chain would borrow another constellation's spacecraft entry.
+        template <typename Map, typename GoodPred>
+        std::string pickReceiverAtxFrequencyKey(const Map& entry_map,
+                                                const std::string& requested,
+                                                bool enable_fallback,
+                                                bool cross_system,
+                                                GoodPred good) {
+            // 1) exact key + in-system frequency-proximity chain.
+            const std::string in_system =
+                pickAtxFrequencyKey(entry_map, requested, enable_fallback, good);
+            if (!in_system.empty()) return in_system;
+            // 2) receiver-only cross-system nearest-GPS-band fallback.
+            if (!cross_system || requested.empty()) return {};
+            const auto& chain = atxReceiverCrossSystemChain();
             auto cit = chain.find(requested);
             if (cit == chain.end()) return {};
             for (const auto& alt : cit->second) {
@@ -474,6 +534,10 @@ namespace GnssProcessor {
         // vice versa), and the fallback chains are walked independently.
         const bool atx_fallback_on =
             config_.getModelCorrections().enable_atx_frequency_fallback;
+        // Satellite antenna: intra-system fallback ONLY — never borrow
+        // another constellation's entry (E01 and G01 are different
+        // spacecraft).  A missing satellite key keeps the legacy behavior:
+        // same-satellite frequency fallback (atxFallbackChain), else 0.
         const std::string sat_pco_freq = sat_entry
             ? pickAtxFrequencyKey(sat_entry->pco, atx_freq, atx_fallback_on,
                                   [](const Eigen::Vector3d& v) { return v.allFinite(); })
@@ -624,13 +688,19 @@ namespace GnssProcessor {
 
         // === Receiver ===
         // Independent fallback walks for PCO and PCV (same rationale as
-        // the satellite side above).
+        // the satellite side above).  Unlike the satellite, the receiver
+        // may additionally cross to the nearest GPS band (E1->G01, E5a->G05,
+        // ...) when enable_receiver_cross_system_atx_fallback is set — the
+        // receiver phase pattern is a function of frequency on shared
+        // hardware, so the substitution is physical.
+        const bool rx_xsys =
+            config_.getModelCorrections().enable_receiver_cross_system_atx_fallback;
         const std::string rx_pco_freq = rx_entry
-            ? pickAtxFrequencyKey(rx_entry->pco, atx_freq, atx_fallback_on,
+            ? pickReceiverAtxFrequencyKey(rx_entry->pco, atx_freq, atx_fallback_on, rx_xsys,
                                   [](const Eigen::Vector3d& v) { return v.allFinite(); })
             : std::string{};
         const std::string rx_pcv_freq = rx_entry
-            ? pickAtxFrequencyKey(rx_entry->pcv, atx_freq, atx_fallback_on,
+            ? pickReceiverAtxFrequencyKey(rx_entry->pcv, atx_freq, atx_fallback_on, rx_xsys,
                                   [](const std::vector<std::vector<double>>& t) { return !t.empty(); })
             : std::string{};
         if (rx_entry && (!rx_pco_freq.empty() || !rx_pcv_freq.empty())) {
@@ -662,9 +732,12 @@ namespace GnssProcessor {
                     correction += rx_pco_corr;
 
                     if (rx_pco_freq != atx_freq) {
+                        const bool xsys = !atx_freq.empty() && atx_freq[0] != 'G'
+                                          && !rx_pco_freq.empty() && rx_pco_freq[0] == 'G';
                         log_manager_.getLogger("antenna")->debug(
-                            "RX PCO fallback for {} '{}': requested freq={} missing, using {}",
-                            satellite, rx_entry->type, atx_freq, rx_pco_freq);
+                            "RX PCO fallback for {} '{}': requested freq={} missing, using {}{}",
+                            satellite, rx_entry->type, atx_freq, rx_pco_freq,
+                            xsys ? " [cross-system]" : "");
                     }
                     log_manager_.getLogger("antenna")->trace(
                         "RX PCO {} freq={} type='{}': neu_mm=({:.4f},{:.4f},{:.4f}) neu_m=({:.6f},{:.6f},{:.6f}) "
@@ -688,9 +761,12 @@ namespace GnssProcessor {
                 && !rx_pcv_freq.empty()) {
                 const auto& pcv_table = rx_entry->pcv.at(rx_pcv_freq);
                 if (rx_pcv_freq != atx_freq) {
+                    const bool xsys = !atx_freq.empty() && atx_freq[0] != 'G'
+                                      && !rx_pcv_freq.empty() && rx_pcv_freq[0] == 'G';
                     log_manager_.getLogger("antenna")->debug(
-                        "RX PCV fallback for {} '{}': requested freq={} missing, using {}",
-                        satellite, rx_entry->type, atx_freq, rx_pcv_freq);
+                        "RX PCV fallback for {} '{}': requested freq={} missing, using {}{}",
+                        satellite, rx_entry->type, atx_freq, rx_pcv_freq,
+                        xsys ? " [cross-system]" : "");
                 }
                 double zenith = 90.0 - elevation;
                 double dazi = rx_entry->dazi > 0.0 ? rx_entry->dazi : 5.0;
@@ -792,7 +868,19 @@ namespace GnssProcessor {
             }
         }
         if (!rx_entry) return false;
-        return rx_entry->pco.count(atx_freq) > 0;
+        if (rx_entry->pco.count(atx_freq) > 0) return true;
+        // Receiver-only cross-system fallback: the nearest GPS band stands in
+        // for a missing non-GPS key (E1->G01, E5a->G05, ...).  Gated on the
+        // opt-in toggle; the satellite antenna is NEVER loosened this way.
+        if (config_.getModelCorrections().enable_receiver_cross_system_atx_fallback) {
+            const auto& xs = atxReceiverCrossSystemChain();
+            auto it = xs.find(atx_freq);
+            if (it != xs.end()) {
+                for (const auto& alt : it->second)
+                    if (rx_entry->pco.count(alt) > 0) return true;
+            }
+        }
+        return false;
     }
 
     bool Antenna::wasAtxSubstituted(const std::string& satellite,
@@ -890,14 +978,19 @@ namespace GnssProcessor {
         const std::string atx_freq = signalToAtxFrequencyKey(signal, system);
         if (atx_freq.empty()) return false;
 
-        auto entryHasPcoAndPcv = [&atx_freq](const AntennaData& a) -> bool {
-            const auto pco_it = a.pco.find(atx_freq);
+        auto entryHasPcoAndPcvFor = [](const AntennaData& a,
+                                       const std::string& key) -> bool {
+            const auto pco_it = a.pco.find(key);
             if (pco_it == a.pco.end()) return false;
             if (!pco_it->second.allFinite()) return false;
-            const auto pcv_it = a.pcv.find(atx_freq);
+            const auto pcv_it = a.pcv.find(key);
             if (pcv_it == a.pcv.end()) return false;
             if (pcv_it->second.empty()) return false;
             return true;
+        };
+        auto entryHasPcoAndPcv = [&atx_freq, &entryHasPcoAndPcvFor](
+                                     const AntennaData& a) -> bool {
+            return entryHasPcoAndPcvFor(a, atx_freq);
         };
 
         // --- Satellite entry: ATX type strings are typically of the
@@ -949,9 +1042,21 @@ namespace GnssProcessor {
                 }
             }
         }
-        if (!rx_entry || !entryHasPcoAndPcv(*rx_entry)) return false;
-
-        return true;
+        if (!rx_entry) return false;
+        if (entryHasPcoAndPcv(*rx_entry)) return true;   // strict, exact freq
+        // Receiver-only cross-system fallback: the nearest GPS band supplies
+        // the missing non-GPS key when the opt-in toggle is set.  The
+        // satellite half above stays strict — never loosened this way, so a
+        // missing satellite entry still fails coverage as before.
+        if (config_.getModelCorrections().enable_receiver_cross_system_atx_fallback) {
+            const auto& xs = atxReceiverCrossSystemChain();
+            auto it = xs.find(atx_freq);
+            if (it != xs.end()) {
+                for (const auto& alt : it->second)
+                    if (entryHasPcoAndPcvFor(*rx_entry, alt)) return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1133,7 +1238,7 @@ namespace GnssProcessor {
                                    double zenith,
                                    double azimuth,
                                    double dazi,
-                                   double dzen) const {
+                                   double dzen) {
         if (pcv_table.empty() || pcv_table[0].empty()) return 0.0;
         if (dzen <= 0.0) return 0.0;
         size_t cols = pcv_table[0].size();
@@ -1155,14 +1260,6 @@ namespace GnssProcessor {
             if (zen_idx + 1 < pcv_table.size())
                 pcv_hi = pcv_table[zen_idx + 1][0];
             double pcv = pcv_lo + zen_frac * (pcv_hi - pcv_lo);
-
-            log_manager_.getLogger("antenna")->trace(
-                "interpolatePcv(NOAZ): zen_in={:.4f} zen_idx={} zen_frac={:.6f} "
-                "pcv[{}]={:.4f} pcv[{}]={:.4f} => interp={:.4f}",
-                zenith, zen_idx, zen_frac,
-                zen_idx, pcv_lo,
-                zen_idx + 1, pcv_hi,
-                pcv);
             return pcv;
         }
 
@@ -1174,10 +1271,18 @@ namespace GnssProcessor {
         }
         size_t az_next = (az_idx + 1) % cols;
 
+        // Bilinear corners.  The next-zenith-ring rows default to the
+        // current ring so that a query in the last ring (zen_idx + 1 ==
+        // size, i.e. zenith >= the table's largest angle) holds the value
+        // flat instead of reading past the table.  The next-ring rows are
+        // only read when that ring actually exists.  (Previously these two
+        // rows were dereferenced unconditionally with the bounds check
+        // placed AFTER the access — a dead guard and an out-of-bounds read
+        // at the table's zenith edge.)
         double pcv00 = pcv_table[zen_idx][az_idx];
         double pcv01 = pcv_table[zen_idx][az_next];
-        double pcv10 = pcv_table[zen_idx + 1][az_idx];
-        double pcv11 = pcv_table[zen_idx + 1][az_next];
+        double pcv10 = pcv00;
+        double pcv11 = pcv01;
         if (zen_idx + 1 < pcv_table.size()) {
             pcv10 = pcv_table[zen_idx + 1][az_idx];
             pcv11 = pcv_table[zen_idx + 1][az_next];
@@ -1188,14 +1293,6 @@ namespace GnssProcessor {
             pcv10 * zen_frac * (1 - az_frac) +
             pcv01 * (1 - zen_frac) * az_frac +
             pcv11 * zen_frac * az_frac;
-
-        log_manager_.getLogger("antenna")->trace(
-            "interpolatePcv(2D): zen_in={:.4f} az_in={:.4f} zen_idx={} az_idx={} az_next={} "
-            "zen_frac={:.6f} az_frac={:.6f} "
-            "pcv00={:.4f} pcv01={:.4f} pcv10={:.4f} pcv11={:.4f} => interp={:.4f}",
-            zenith, azimuth, zen_idx, az_idx, az_next,
-            zen_frac, az_frac,
-            pcv00, pcv01, pcv10, pcv11, pcv);
         return pcv;
     }
 

@@ -64,6 +64,7 @@ namespace GnssProcessor {
         double solid_tide        = 0.0;
         double mf_w              = 0.0;
         double mf_d              = 0.0;
+        bool   broadcast_only    = false;   ///< Clock is broadcast-grade (metre level) → code-only (phase dropped).
     };
 
     // -----------------------------------------------------------------------
@@ -356,6 +357,11 @@ namespace GnssProcessor {
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priority lists (by system). */
         std::vector<double> klobuchar_coeffs_;  /**< Klobuchar coefficients (if available) */
 
+        /// Satellites already logged as phase-gated (broadcast-grade clock →
+        /// code-only).  Without this the info line fires once per epoch per
+        /// satellite for the whole run; we log once per satellite per session.
+        mutable std::set<std::string> sats_phase_gated_;
+
         /**
          * @brief Per-constellation canonical signal cache.
          *
@@ -475,6 +481,39 @@ namespace GnssProcessor {
             const PppObservation& ppp_obs,
             const SatGeometry& geom,
             const std::string& signal_type) const;
+
+        /**
+         * @brief Additive phase-variance term (m²) for a (sat, signal)
+         *        whose receiver ATX correction was frequency-fallback-
+         *        substituted.
+         *
+         * Returns 0 for code rows ('C…'), for non-substituted signals,
+         * or when the feature is disabled
+         * (@c model_corrections.atx_substitution_phase_std_m ≤ 0, the
+         * default).  Otherwise returns @f$(\sigma_\mathrm{atx}/
+         * \sin\,\mathrm{el})^2@f$ — a variance addend (independent error
+         * sources add in variance) summed onto the stochastic-model
+         * phase variance *before* any iono-free combination, so the IF
+         * coefficients propagate it automatically.
+         *
+         * Targets the azimuthally-symmetric, elevation-dependent
+         * receiver-PCV residual left by a substituted antenna pattern:
+         * it is common across satellites and aliases into ZWD / station
+         * height, and is *not* the per-satellite slowly-varying bias the
+         * @c ambiguity_q_substituted_atx random walk already absorbs.
+         * See that field's and @c atx_substitution_phase_std_m's
+         * documentation for the full code-vs-ambiguity rationale.
+         *
+         * @param signal        RINEX-3 code (e.g. "L8X"); 'C…' rows return 0.
+         * @param satellite     Satellite identifier (e.g. "E18").
+         * @param system        GNSS system enum.
+         * @param elevation_deg Satellite elevation (degrees).
+         * @return Additive phase variance (m²), or 0 when not applicable.
+         */
+        double phaseAtxSubstitutionVarInflation(const std::string& signal,
+            const std::string& satellite,
+            System system,
+            double elevation_deg) const;
 
         /**
          * @brief Compute pole-tide LOS projection shared by iono-free and uncombined paths.

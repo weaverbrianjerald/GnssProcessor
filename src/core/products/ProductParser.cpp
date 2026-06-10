@@ -637,6 +637,20 @@ namespace GnssProcessor {
                 current_az_rows.clear();
             };
 
+            // std::from_chars' floating-point overload accepts a leading '-'
+            // but NOT a leading '+'.  Some ATX calibration labs (e.g. Geo++
+            // robot files — the LEIAR25 NONE / LEIT type-means in igs20.atx)
+            // prefix EVERY PCV value with '+', which made the hot-loop parser
+            // below stop at the first value and store an EMPTY PCV grid for
+            // that antenna — silently zeroing its phase-centre variation and,
+            // under require_atx_coverage, dropping all its signals.  This
+            // wrapper tolerates the '+'; ptr is measured from the original
+            // `first`, so existing `ptr - fp` advances stay correct.
+            auto fromCharsPcv = [](const char* first, const char* last, double& v) {
+                if (first < last && *first == '+') ++first;
+                return std::from_chars(first, last, v);
+            };
+
             auto finalize_frequency = [&]() {
                 if (current_freq.empty()) return;
 
@@ -865,7 +879,7 @@ namespace GnssProcessor {
                         const char* fp = sv.data();
                         const char* lp = fp + sv.size();
                         double v;
-                        auto [ptr, ec] = std::from_chars(fp, lp, v);
+                        auto [ptr, ec] = fromCharsPcv(fp, lp, v);
                         if (ec != std::errc{}) break;
                         if (std::isfinite(v)) current_noazi.push_back(v);
                         sv.remove_prefix(static_cast<size_t>(ptr - fp));
@@ -878,7 +892,7 @@ namespace GnssProcessor {
                 {
                     const char* fp = first_tok.data();
                     const char* lp = fp + first_tok.size();
-                    auto [ptr, ec] = std::from_chars(fp, lp, first_val);
+                    auto [ptr, ec] = fromCharsPcv(fp, lp, first_val);
                     if (ec != std::errc{} || !std::isfinite(first_val)) continue;
                 }
                 std::vector<double> vals;
@@ -889,7 +903,7 @@ namespace GnssProcessor {
                     const char* fp = sv.data();
                     const char* lp = fp + sv.size();
                     double v;
-                    auto [ptr, ec] = std::from_chars(fp, lp, v);
+                    auto [ptr, ec] = fromCharsPcv(fp, lp, v);
                     if (ec != std::errc{}) break;
                     if (std::isfinite(v)) vals.push_back(v);
                     sv.remove_prefix(static_cast<size_t>(ptr - fp));
@@ -1195,7 +1209,13 @@ namespace GnssProcessor {
                     std::istringstream iss(line);
                     std::string type;
                     iss >> type;
-                    if (type == "GPSA" || type == "GAL") parse_coeffs("alpha", iss);
+                    // GPS Klobuchar α/β only.  A RINEX 3 "GAL" IONOSPHERIC CORR
+                    // line carries Galileo NeQuick-G coefficients (ai0..ai2),
+                    // NOT Klobuchar α — feeding those into the half-cosine
+                    // polynomial is physically meaningless, and in a mixed
+                    // GPS+GAL nav file GPSA+GAL+GPSB yields 12 values (≠ 8) and
+                    // discards everything.  Galileo broadcasts no Klobuchar set.
+                    if (type == "GPSA") parse_coeffs("alpha", iss);
                     else if (type == "GPSB") parse_coeffs("beta", iss);
                 }
             }
@@ -1222,7 +1242,7 @@ namespace GnssProcessor {
     // Product loading orchestration
     // =================================================================
 
-    void ProductParser::loadProducts() {
+    void ProductParser::loadProducts(bool load_precise_orbits_clocks) {
         auto ppp_log = log_manager_.getLogger("ppp_model");
 
         // Helper: load a multi-file product (SP3, CLK)
@@ -1245,8 +1265,16 @@ namespace GnssProcessor {
                 ppp_log->error("Failed to load {} file: {}", label, path.string());
         };
 
-        loadMulti("SP3",  &ProductParser::getOrbitPaths, &ProductParser::parseSp3, orbits_);
-        loadMulti("CLK",  &ProductParser::getClockPaths, &ProductParser::parseClk, clocks_);
+        // Precise orbits/clocks are skipped when a live broadcast+SSR source
+        // drives the geometry (real-time live mode); orbits_/clocks_ then stay
+        // empty so Geometry::getSatellitePV resolves through the live store.
+        if (load_precise_orbits_clocks) {
+            loadMulti("SP3",  &ProductParser::getOrbitPaths, &ProductParser::parseSp3, orbits_);
+            loadMulti("CLK",  &ProductParser::getClockPaths, &ProductParser::parseClk, clocks_);
+        } else {
+            ppp_log->info("Skipping precise SP3/CLK load — live broadcast+SSR "
+                          "orbit/clock source in use");
+        }
         loadSingle("ATX", "ATX", &ProductParser::parseAtx, antennas_);
 
         // BIA: special case  parseBia also extracts the clock reference map

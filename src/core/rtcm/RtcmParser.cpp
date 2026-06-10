@@ -18,6 +18,7 @@
 #include "rtcm/RtcmParser.hpp"
 #include "rtcm/RtcmSsrDecoder.hpp"
 #include "rtcm/RtcmMsmDecoder.hpp"
+#include "rtcm/RtcmNavDecoder.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <fstream>
@@ -98,6 +99,14 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
     if (isLegacySsrType(msg_type)) {
         return decodeLegacySsr(payload, pl, msg_type);
     }
+    if (RtcmNav::isBroadcastEphemerisType(msg_type)) {
+        const int week = currentGpsWeekFromSystem();
+        const auto res = RtcmNav::decodeBroadcast(payload, pl, msg_type, week, broadcast_eph_);
+        if (!res.ok) {
+            spdlog::warn("RTCM {}: broadcast-ephemeris decode incomplete (truncated payload?)", msg_type);
+        }
+        return res.ok;
+    }
     if (isMsm7Type(msg_type)) {
         const int week = currentGpsWeekFromSystem();
         const auto res = RtcmMsm::decodeMsm7(payload, pl, msg_type, week, observations_);
@@ -135,6 +144,7 @@ bool RtcmParser::decodeLegacySsr(const uint8_t* payload, std::size_t len, uint16
         payload, len, msg_type, week,
         ssr_orbits_, ssr_clocks_, ssr_combined_, ssr_code_biases_,
         ssr_phase_biases_, ssr_uras_, ssr_hrclocks_);
+    last_ssr_header_ = result.header;
     if (!result.ok) {
         spdlog::warn("RTCM {}: legacy SSR decode incomplete (truncated payload?)", msg_type);
     }
@@ -147,6 +157,7 @@ bool RtcmParser::decodeIgsSsr4076(const uint8_t* payload, std::size_t len) {
         payload, len, week,
         ssr_orbits_, ssr_clocks_, ssr_combined_, ssr_code_biases_,
         ssr_phase_biases_, ssr_uras_, ssr_hrclocks_);
+    last_ssr_header_ = result.header;
     if (!result.ok) {
         spdlog::trace("RTCM 4076: IGS-SSR decode incomplete or unsupported sub-type");
     }
@@ -202,6 +213,7 @@ void RtcmParser::clear() {
     ssr_uras_.clear();
     ssr_hrclocks_.clear();
     station_coords_.clear();
+    broadcast_eph_.clear();
 }
 
 } // namespace GnssProcessor

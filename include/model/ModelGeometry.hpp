@@ -110,6 +110,12 @@ namespace GnssProcessor {
          * @param[out] mf_w Wide-lane Melbourne-Wübbena combination factor (if applicable).
          * @param[out] mf_d Narrow-lane / dual-frequency mapping factor (if applicable).
          * @param[out] sat_vel Satellite ECEF velocity (meters/second).
+         * @param[out] broadcast_only  Set true when the satellite range model is
+         *             "broadcast grade" — the clock came from the broadcast
+         *             polynomial with no precise CLK and no SSR clock (metre
+         *             level).  The caller drops carrier phase for such satellites
+         *             (phase at mm precision is meaningless against a metre-level
+         *             clock).  False for precise-product or SSR-corrected runs.
          * @param[out] drop_reason  On success, set to @c DropReason::None.  On
          *             failure, set to the specific reason (BelowMask /
          *             NoProduct / NoModel) so callers can surface it in the
@@ -123,6 +129,7 @@ namespace GnssProcessor {
             double& sat_clock, double& shapiro_delay, double& sagnac_corr,
             double& atm_loading_corr, double& relativistic_corr, double& solid_tide,
             double& mf_w, double& mf_d, Eigen::Vector3d& sat_vel,
+            bool& broadcast_only,
             DropReason& drop_reason) const;
 
         /**
@@ -283,6 +290,7 @@ namespace GnssProcessor {
             const Eigen::Vector3d& rx_pos, double pseudorange,
             Eigen::Vector3d& sat_pos_em, Eigen::Vector3d& sat_vel_em,
             double& sat_clock, GnssTime& emission_time,
+            bool& broadcast_grade,
             DropReason& drop_reason) const;
 
         // Per-epoch cache for Sun/Moon ECEF positions.

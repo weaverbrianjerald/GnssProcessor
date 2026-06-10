@@ -70,11 +70,11 @@ add_library(gnss_core STATIC
     src/core/filter/AmbiguityResolver.cpp
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
+    src/core/measurement/MeasurementBuilder.cpp
     src/core/measurement/StateInitializer.cpp
     src/core/measurement/BssdTransform.cpp
     src/core/measurement/BrsdTransform.cpp
     src/core/model/PppModel.cpp
-    src/core/model/PppRtkModel.cpp
     src/core/model/StochasticModel.cpp
     src/core/model/Antenna.cpp
     src/core/rinex/RinexParser.cpp
@@ -83,23 +83,40 @@ add_library(gnss_core STATIC
     src/core/rtcm/RtcmSsrDecoder.cpp
     src/core/rtcm/RtcmSignalMap.cpp
     src/core/rtcm/RtcmMsmDecoder.cpp
-    #src/core/sinex/SinexParser.cpp
-    #src/core/ssystem/SSystem.cpp
+    src/core/rtcm/RtcmNavDecoder.cpp
+    src/core/sbf/SbfSignalMap.cpp
+    src/core/sbf/SbfStreamReader.cpp
+    src/core/sbf/SbfParser.cpp
+    src/core/sbf/Meas3Decoder.cpp
+    src/core/sbf/SubframeAssembler.cpp
     src/core/model/ModelGeometry.cpp
     src/core/model/Planetary.cpp
     src/core/app/Application.cpp
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
+    src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
+	# STAGED (not abandoned) — see header banners in include/slip/.
+	#   IfPhaseSlipDetector: DD IF-phase pre-fit residuals; only valid for
+	#     static sites with a precise a priori position. Development incomplete.
+	#   GfSlipDetector: 2nd-order time-differenced GF; intended for high-rate
+	#     (>=1 Hz) real-time slip *repair* alongside the MW detector, where
+	#     ionospheric residual contamination of GF is small enough. Not yet
+	#     wired in; the MW detector currently covers slip detection.
+	# Both .cpp are intentionally excluded from the build until finished.
 	#src/core/slip/IfPhaseSlipDetector.cpp
 	#src/core/slip/GfSlipDetector.cpp
 	src/core/slip/GraphicSlipDetector.cpp
+	src/core/slip/EwlSlipDetector.cpp
+	src/core/slip/SlipDetectorRegistry.cpp
 	src/core/slip/CycleSlipManager.cpp
 	src/core/slip/IonoVariabilityMonitor.cpp
+	src/core/slip/TurboEditResolver.cpp
     src/core/products/DataDownloader.cpp
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
     src/core/products/SsrCorrectionStore.cpp
+    src/core/products/LiveEphemerisStore.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
@@ -138,6 +155,18 @@ target_link_libraries(gnss_processor PRIVATE gnss_core pybind11::pybind11)
 add_executable(gnss_rtcm_diag src/tools/rtcm_diag.cpp)
 target_link_libraries(gnss_rtcm_diag PRIVATE gnss_core)
 
+# SBF capture inspector — block histogram + decoded MeasEpoch observation dump.
+add_executable(gnss_sbf_diag src/tools/sbf_diag.cpp)
+target_link_libraries(gnss_sbf_diag PRIVATE gnss_core)
+
+# Meas3Ranges (4109) vs MeasEpoch (4027) cross-check on a dual-logged capture.
+add_executable(gnss_meas3_xcheck src/tools/meas3_xcheck.cpp)
+target_link_libraries(gnss_meas3_xcheck PRIVATE gnss_core)
+
+# ATX coverage inspector — dump parsed PCO/PCV freq keys for a type pattern.
+add_executable(gnss_atx_diag src/tools/atx_diag.cpp)
+target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
+
 # Unit tests
 enable_testing()
 add_executable(gnss_tests
@@ -146,6 +175,7 @@ add_executable(gnss_tests
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
+    tests/test_sbf.cpp
     tests/test_estimation_core.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
@@ -160,7 +190,7 @@ target_compile_definitions(gnss_tests PRIVATE
 
 # Python bindings module (only bindings source; link core)
 add_library(gnss_processor_module MODULE
-    src/bindings/rinex_binding.cpp
+    src/bindings/gnss_module.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_processor_module PRIVATE ${CMAKE_SOURCE_DIR}/include ${Python_INCLUDE_DIRS})
 target_link_directories(gnss_processor_module PRIVATE ${Python_LIBRARY_DIRS})

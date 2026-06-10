@@ -19,11 +19,13 @@
 #include "realtime/NtripClient.hpp"
 #include "realtime/TcpClient.hpp"
 #include "realtime/RtcmStreamReader.hpp"
+#include "sbf/SbfStreamReader.hpp"
 #include "filter/AmbiguityResolver.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
 #include "slip/MwSlipDetector.hpp"
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <memory>
@@ -31,9 +33,74 @@
 #include <vector>
 #include <fmt/format.h>
 
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX            // keep windows.h from clobbering std::min/std::max (Eigen)
+#  endif
+#  include <windows.h>
+#else
+#  include <csignal>
+#endif
+
 namespace GnssProcessor {
 
 namespace {
+
+// Cooperative stop flag for the real-time poll loop.  A live TCP/NTRIP stream
+// never reaches EOF, so the only way to end the session is an interrupt; this
+// lets Ctrl+C unwind the loop normally (flush the final epoch, close trace
+// files, shut down logging) instead of hard-killing the process.  Set from an
+// async handler, so it must stay a plain atomic — nothing else.
+std::atomic<bool> g_stop_requested{ false };
+
+#ifdef _WIN32
+// Console control handler (runs on its own OS-spawned thread).  Catches Ctrl+C,
+// Ctrl+Break AND console-window close / logoff / shutdown — std::signal would
+// miss the close case, which is a common way to stop a console app and would
+// otherwise lose the trace tail.  Returning TRUE marks the event handled so the
+// default terminator doesn't fire; a SECOND Ctrl+C/Break (flag already set)
+// returns FALSE to let the default force-kill, preserving the usual escalation.
+BOOL WINAPI realtimeConsoleHandler(DWORD ctrl_type) {
+    switch (ctrl_type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+        return g_stop_requested.exchange(true) ? FALSE : TRUE;
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        g_stop_requested.store(true, std::memory_order_relaxed);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+#else
+// POSIX: the only async-signal-safe action is the atomic store.
+void realtimeSignalHandler(int /*sig*/) {
+    g_stop_requested.store(true, std::memory_order_relaxed);
+}
+#endif
+
+// Install/remove the cooperative-stop handler around the poll loop.
+void installStopHandler() {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(realtimeConsoleHandler, TRUE);
+#else
+    std::signal(SIGINT,  realtimeSignalHandler);
+    std::signal(SIGTERM, realtimeSignalHandler);
+#endif
+}
+void removeStopHandler() {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(realtimeConsoleHandler, FALSE);
+#else
+    std::signal(SIGINT,  SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+#endif
+}
 
 /**
  * @brief Uniform byte-stream source backing an RTCM3 framer.
@@ -74,8 +141,13 @@ public:
     bool active() const {
         switch (kind_) {
         case Kind::File:  return !file_eof_;
-        case Kind::Ntrip: return ntrip_ && ntrip_->isConnected();
-        case Kind::Tcp:   return tcp_   && tcp_->isConnected();
+        // A socket source is active while its client is running, NOT only
+        // while momentarily connected: the client auto-reconnects internally,
+        // and at startup isConnected() is briefly false until the background
+        // thread dials in.  Gating on isConnected() here would let the poll
+        // loop exit before the first byte (0 epochs) or on any transient drop.
+        case Kind::Ntrip: return ntrip_ && ntrip_->isRunning();
+        case Kind::Tcp:   return tcp_   && tcp_->isRunning();
         }
         return false;
     }
@@ -198,18 +270,20 @@ std::unique_ptr<RealtimeStream> openCorrections(
     return nullptr;
 }
 
-/// Drain a stream chunk into its framer, then dispatch every complete
-/// frame to the engine.  Returns the number of frames handed off.
-std::size_t pumpFrames(RealtimeStream& src, RtcmStreamReader& framer,
-                       RealTimeEngine& engine, std::vector<uint8_t>& scratch,
-                       int timeout_ms) {
+/// Drain a stream chunk into its framer, then dispatch every complete frame
+/// to @p feed.  Generic over the framer (RtcmStreamReader / SbfStreamReader),
+/// which share the feed()/nextFrame() contract, and over the per-frame sink so
+/// the primary stream can route to feedRtcmFrame or feedSbfFrame by format.
+template <typename Framer, typename FeedFn>
+std::size_t pumpFrames(RealtimeStream& src, Framer& framer, FeedFn&& feed,
+                       std::vector<uint8_t>& scratch, int timeout_ms) {
     constexpr std::size_t kChunk = 4096;
     const std::size_t n = src.read(scratch, kChunk, timeout_ms);
     if (n == 0) return 0;
     framer.feed(scratch.data(), n);
     std::size_t handled = 0;
     while (auto frame = framer.nextFrame()) {
-        engine.feedRtcmFrame(*frame);
+        feed(*frame);
         ++handled;
     }
     return handled;
@@ -242,9 +316,21 @@ int Application::runRealTime() {
         }
     }
 
-    RtcmStreamReader   primary_framer;
+    // Primary stream wire format: RTCM3 (default) or Septentrio SBF.  The
+    // corrections stream (IGS-SSR) is always RTCM.
+    const bool primary_sbf = (rt_config.input_format == "sbf");
+    log->info("Real-time primary format: {}", primary_sbf ? "SBF" : "RTCM3");
+
+    RtcmStreamReader   primary_rtcm;
+    SbfStreamReader    primary_sbf_framer;
     RtcmStreamReader   corr_framer;
     std::vector<uint8_t> scratch;
+
+    // Install the Ctrl+C / termination handler so a live stream can be ended
+    // cleanly.  Reset the flag first in case runRealTime is ever re-entered.
+    g_stop_requested.store(false, std::memory_order_relaxed);
+    installStopHandler();
+    log->info("Real-time session running — press Ctrl+C to stop");
 
     const auto wall_start = std::chrono::high_resolution_clock::now();
 
@@ -252,25 +338,47 @@ int Application::runRealTime() {
     // chunk from each active source, frames it, and dispatches frames
     // to the engine.  When neither source produces any bytes this turn
     // we yield briefly to avoid a busy spin (file replay: streams are
-    // exhausted; NTRIP: tryRead has already waited internally).
-    while (primary->active() || (corrections && corrections->active())) {
+    // exhausted; NTRIP/TCP: tryRead has already waited internally).  A
+    // stop request (Ctrl+C) breaks the loop so the flush/stop below runs.
+    while (!g_stop_requested.load(std::memory_order_relaxed)
+           && (primary->active() || (corrections && corrections->active()))) {
         std::size_t produced = 0;
 
         if (primary->active()) {
-            // File replay benefits from polling with no extra delay
-            // (read returns immediately on EOF).  NTRIP polls with a
-            // short timeout so the corrections side gets serviced.
+            // File replay polls with no extra delay (read returns
+            // immediately on EOF); sockets poll with a short timeout so the
+            // corrections side gets serviced.
             const int timeout_ms = (rt_config.input_type == "file") ? 0 : 50;
-            produced += pumpFrames(*primary, primary_framer, engine, scratch, timeout_ms);
+            if (primary_sbf) {
+                produced += pumpFrames(*primary, primary_sbf_framer,
+                    [&](const std::vector<uint8_t>& f) { engine.feedSbfFrame(f); },
+                    scratch, timeout_ms);
+            } else {
+                produced += pumpFrames(*primary, primary_rtcm,
+                    [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
+                    scratch, timeout_ms);
+            }
         }
         if (corrections && corrections->active()) {
             const int timeout_ms = (rt_config.corrections.input_type == "file") ? 0 : 50;
-            produced += pumpFrames(*corrections, corr_framer, engine, scratch, timeout_ms);
+            produced += pumpFrames(*corrections, corr_framer,
+                [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
+                scratch, timeout_ms);
         }
         if (produced == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
+
+    // Either a stream went inactive (file EOF / disconnect) or the user asked
+    // to stop.  Restore the default signal disposition (a second Ctrl+C during
+    // teardown then force-kills) and submit the final buffered epoch before
+    // tearing down so the last observations and trace rows aren't lost.
+    removeStopHandler();
+    if (g_stop_requested.load(std::memory_order_relaxed))
+        log->info("Stop requested (Ctrl+C) — flushing and shutting down cleanly");
+
+    engine.flush();
 
     primary->stop();
     if (corrections) corrections->stop();
@@ -278,10 +386,14 @@ int Application::runRealTime() {
     const auto wall_end = std::chrono::high_resolution_clock::now();
     const auto dur_ms   = std::chrono::duration_cast<std::chrono::milliseconds>(
                             wall_end - wall_start).count();
+    const uint64_t pframes    = primary_sbf ? primary_sbf_framer.framesExtracted()
+                                            : primary_rtcm.framesExtracted();
+    const uint64_t pdiscarded = primary_sbf ? primary_sbf_framer.bytesDiscarded()
+                                            : primary_rtcm.bytesDiscarded();
     log->info("Real-time session ended: {} epochs, {} ms wall, primary frames={}/discarded={}, "
               "corrections frames={}/discarded={}",
               engine.epochCount(), dur_ms,
-              primary_framer.framesExtracted(), primary_framer.bytesDiscarded(),
+              pframes, pdiscarded,
               corr_framer.framesExtracted(),    corr_framer.bytesDiscarded());
 
     return 0;

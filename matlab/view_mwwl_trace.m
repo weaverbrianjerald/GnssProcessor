@@ -39,7 +39,8 @@ showLegend             = false;  % per-tile satellite legend on top tile of each
 hideSlipEpochs         = true;
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\mwwl_trace.csv';
+fname = 'C:\GnssProcessor\logs\mwwl_trace.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\mwwl_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\mwwl_trace.csv';
 if ~isfile(fname)
     error('mwwl CSV not found: %s', fname);
@@ -72,6 +73,7 @@ T.threshold_cycles     = double(T.threshold_cycles);
 % mu/sigma annotation, summary statistics) sees the same row set.
 % Guarded against missing column for back-compat with older traces.
 if hideSlipEpochs && ismember('is_slip', T.Properties.VariableNames)
+    T.is_slip(isnan(T.is_slip)) = 0;
     slipMask  = logical(double(T.is_slip));   % cast handles int/bool/string
     nDropped  = nnz(slipMask);
     if nDropped > 0

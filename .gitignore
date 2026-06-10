@@ -5,6 +5,10 @@ build/
 *.o
 *.exe
 *.pyc
+# pybind11 module is copied into python/ on every build (CMake)
+*.pyd
+# MATLAB editor autosave backups
+*.asv
 __pycache__/
 reference_software/
 

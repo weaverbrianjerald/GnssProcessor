@@ -214,6 +214,30 @@ namespace GnssProcessor {
         };
 
         /**
+         * @brief Doodson-Warburg species phase bias per constituent (cycles).
+         *
+         * The astronomical argument assembled from DOODSON_MULTIPLIERS must
+         * carry an additional species-dependent quarter-cycle term: the
+         * Cartwright-Tayler-Edden / Schwiderski tide-generating potential refers
+         * to a SINE rather than a COSINE when (degree + n1) is odd — i.e. +pi/2
+         * for the diurnal band.  Both the standard BLQ Greenwich phase lags and
+         * the EOT20/FES complex load coefficients are referenced to this
+         * canonical argument, so omitting the bias leaves the diurnal
+         * constituents (K1/O1/P1/Q1) a full 90 deg out of phase and mismodels
+         * the entire diurnal OTL contribution.
+         *
+         * Values are the IERS ARG.f / Schwiderski angfac(4,.) quarter-cycle
+         * column (cycles; multiplied by 2*pi when added to the argument):
+         *   M2  S2  N2  K2   K1     O1     P1     Q1    Mf  Mm  Ssa
+         *    0   0   0   0  +0.25  -0.25  -0.25  -0.25   0   0   0
+         *
+         * Order matches DOODSON_MULTIPLIERS: M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa.
+         */
+        static constexpr double CONSTITUENT_PHASE_BIAS_CYCLES[11] = {
+            0.0, 0.0, 0.0, 0.0, 0.25, -0.25, -0.25, -0.25, 0.0, 0.0, 0.0
+        };
+
+        /**
          * @brief Angular speeds of the 11 constituents (degrees per hour).
          *
          * Used for the approximate model when Doodson arguments are not needed.

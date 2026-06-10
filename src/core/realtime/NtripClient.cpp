@@ -96,6 +96,7 @@ size_t NtripClient::curlWriteCallback(void* data, size_t size, size_t nmemb, voi
         auto* bytes = static_cast<const uint8_t*>(data);
         self->buf_.insert(self->buf_.end(), bytes, bytes + total);
     }
+    self->total_rx_bytes_.fetch_add(total);
     self->buf_cv_.notify_one();
 
     // Returning 0 tells curl to abort  honour the running flag.
@@ -149,17 +150,45 @@ void NtripClient::receiveLoop() {
         }
 
         connected_.store(true);
+        const size_t bytes_before = total_rx_bytes_.load();
         CURLcode res = curl_easy_perform(curl);
         connected_.store(false);
+
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        const size_t bytes_this = total_rx_bytes_.load() - bytes_before;
 
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
-        if (res != CURLE_OK && running_.load()) {
-            log->warn("NTRIP connection lost ({}), reconnecting in {} s",
+        if (!running_.load()) break;   // stop() requested during the transfer
+
+        // Classify the outcome so a misconfiguration is an actionable error
+        // rather than a silent stall: the realtime poll loop now runs as long
+        // as the client is "running" (so it can auto-reconnect), which means a
+        // bad mountpoint or credential would otherwise spin invisibly with the
+        // engine reporting 0 epochs.  ALWAYS back off before retrying.
+        if (res != CURLE_OK) {
+            log->warn("NTRIP transport error ({}); reconnecting in {} s",
                       curl_easy_strerror(res), config_.reconnect_delay_s);
-            std::this_thread::sleep_for(std::chrono::seconds(config_.reconnect_delay_s));
+        } else if (http_code != 200 && http_code != 0) {
+            // NTRIP v1 casters may answer "ICY 200 OK" (reported as 0); only a
+            // genuine non-200 HTTP status is an error here.
+            const char* hint = (http_code == 401) ? " — check NTRIP user/password"
+                             : (http_code == 403) ? " — credentials valid but mountpoint access denied"
+                             : (http_code == 404) ? " — unknown mountpoint name"
+                             : "";
+            log->error("NTRIP caster returned HTTP {}{}; retrying in {} s",
+                       http_code, hint, config_.reconnect_delay_s);
+        } else if (bytes_this == 0) {
+            log->warn("NTRIP connected to {}/{} but received 0 bytes — mountpoint idle, "
+                      "or it requires a GGA position (VRS)?  Retrying in {} s",
+                      config_.host, config_.mountpoint, config_.reconnect_delay_s);
+        } else {
+            log->info("NTRIP stream {}/{} ended after {} bytes; reconnecting in {} s",
+                      config_.host, config_.mountpoint, bytes_this, config_.reconnect_delay_s);
         }
+        std::this_thread::sleep_for(std::chrono::seconds(config_.reconnect_delay_s));
     }
 
     log->info("NTRIP receive loop exited");

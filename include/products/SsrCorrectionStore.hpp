@@ -108,11 +108,30 @@ public:
     std::optional<SsrPhaseBiasEntry> getPhaseBias(
         const std::string& sat, const std::string& rinex_obs_code) const;
 
+    /// SSR reference epoch of the most recent record pushed for @p sat
+    /// (from the message header), or @c std::nullopt if none.
+    std::optional<GnssTime> getSsrEpoch(const std::string& sat) const;
+
+    /// IOD-SSR of the most recent record pushed for @p sat, or -1 if none.
+    int getSsrIod(const std::string& sat) const;
+
     /// True iff no records have been pushed.
     bool isEmpty() const;
 
     /// Number of satellites with at least one SSR record.
     std::size_t size() const;
+
+    /**
+     * @brief Compact per-constellation census of cached records, for diagnostics.
+     *
+     * Returns a string like @c "G[o8 c8 cb8 pb8] E[o4 c4 cb4 pb4] C[o4 c4 cb0 pb4]"
+     * where each constellation letter is followed by the count of satellites
+     * carrying an orbit (or combined), a clock (or combined), a code bias, and a
+     * phase bias record respectively.  Used by the realtime startup gate to
+     * localise an SSR problem to decode/store (counts are zero) vs. application
+     * (counts are non-zero but clocks still don't apply — an IODE-match issue).
+     */
+    std::string censusSummary() const;
 
     /// Drop every record.
     void clear();
@@ -182,6 +201,7 @@ private:
         std::optional<SsrHighRateClock>      hrclock;
         std::optional<SsrCodeBias>           code_bias;
         std::optional<SsrPhaseBias>          phase_bias;
+        SsrHeader                            header{};   ///< Header of the most recent push (epoch/IOD-SSR).
     };
 
     mutable std::mutex                       mutex_;

@@ -16,7 +16,9 @@
 #include "filter/DdPivotManager.hpp"
 #include "measurement/StateInitializer.hpp"
 #include "measurement/BssdTransform.hpp"
+#include "measurement/MeasurementBuilder.hpp"
 #include <Eigen/Dense>
+#include <memory>
 #include <vector>
 #include <string>
 #include <set>
@@ -212,6 +214,18 @@ namespace GnssProcessor {
         /// set.
         std::set<std::string> non_integer_capable_dd_ambiguity_keys_;
 
+        /// Measurement-differencing strategy (None / BetweenSatellite /
+        /// DoubleDifference), selected once from config via
+        /// @c MeasurementBuilderFactory.  Drives the mode-specific pre/post
+        /// passes through polymorphic hooks instead of inline config-flag
+        /// branches.  The strategies call back into the (private) building
+        /// blocks of this class, so they are declared @c friend below.
+        std::unique_ptr<MeasurementDifferencingStrategy> differencing_;
+
+        friend class UndifferencedMeasurementBuilder;
+        friend class BssdMeasurementBuilder;
+        friend class DdMeasurementBuilder;
+
         // -------------------------------------------------------------------
         // Per-instance helpers
         // -------------------------------------------------------------------
@@ -319,6 +333,27 @@ namespace GnssProcessor {
         void freezePivotAmbiguityCovariance();
 
         void freezePivotIonoAndBiasCovariance();
+
+        // -------------------------------------------------------------------
+        // Double-difference (baseline) assembly
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Assemble the double-differenced measurement (baseline mode).
+         *
+         * Builds DD rows: @c BrsdTransform::apply per shared (sat, band,
+         * obs_type) → @c BssdTransform::differenceBrsd over the
+         * @c DdPivotManager pivots.  Invoked via
+         * @c DdMeasurementBuilder::buildDoubleDifference; the public two-vector
+         * @c computeMeasurementUpdate delegates here through the differencing
+         * strategy.  See that overload's documentation for parameter/return
+         * semantics.
+         */
+        EpochMeasurement buildDdMeasurement(
+            const std::vector<PppObservation>& rov_modeled,
+            const std::vector<PppObservation>& ref_modeled,
+            const Eigen::VectorXd& current_state,
+            const std::set<std::string>& excluded_measurements);
 
         // DD pivot selection and S-transform handover live on
         // @c DdPivotManager (member @c dd_pivot_manager_).  See its

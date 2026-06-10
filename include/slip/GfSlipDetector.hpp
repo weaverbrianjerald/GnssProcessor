@@ -5,6 +5,18 @@
  * @file GfSlipDetector.hpp
  * @brief Geometry-free (GF) cycle slip detector using second-order time-differencing.
  *
+ * @note STATUS: STAGED / INCOMPLETE — not compiled or wired into the pipeline.
+ *       This detector is intentionally excluded from the build (see
+ *       CMakeLists.txt) and has no instantiation path in Application. It is
+ *       kept (not abandoned) for a planned use: high-rate (>=1 Hz) real-time
+ *       cycle-slip *repair* alongside the MW detector. The high-rate
+ *       requirement is intrinsic — at low rates the slowly varying
+ *       ionospheric residual contaminates the GF combination and the
+ *       second-order time difference no longer isolates the slip. The MW
+ *       detector currently provides slip detection with good performance, so
+ *       this remains future work. The GF math here has also been reused by
+ *       slip/IonoVariabilityMonitor (which IS compiled and active).
+ *
  * The GF observable (L1 - L2 in meters) is geometry-free but contains the
  * ionospheric delay, which varies slowly over time.  A second-order time
  * difference eliminates linear and quadratic trends:

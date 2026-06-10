@@ -8,23 +8,38 @@
 namespace GnssProcessor {
 
     namespace {
-        // Second-order group-delay coefficient (Petrie et al. 2010, Eq. 2;
-        // Hernández-Pajares et al. 2007):
-        //   I_2^code = (7527 · c / 2) · STEC[el/m²] · B[T] · cos(θ_B) / f^3[Hz]
-        // with the result in metres.
-        constexpr double kI2CodeCoeff = 7527.0 * Constants::SPEED_OF_LIGHT / 2.0;
+        // Second-order GROUP-delay (code) coefficient.  Derived from the
+        // quasi-longitudinal Appleton-Hartree phase index
+        //   n_ph = 1 − X/2 − (1/2)·X·Y_L − …,   X = A·N_e/f²,  Y_L = (e·B·cosθ)/(2π·m_e·f)
+        // whose 2nd-order phase delay is −(A·e/(4π·m_e·f³))·B·cosθ·STEC.
+        // The group delay is (1−k)=−2× the phase term (k=3, the f⁻³ power),
+        // giving the code coefficient
+        //   I_2^code = (A·e/(2π·m_e)) · STEC[el/m²] · B[T]·cosθ / f³[Hz]
+        //            = (7527 · c) · STEC · B·cosθ / f³           [metres].
+        // NOTE: it is 7527·c for the code (group) delay, NOT 7527·c/2 — the
+        // latter is the *phase* coefficient (the phase term is −½ of code, see
+        // slantHigherOrderComponents).  Matches POINT Iono_Second_Order
+        // (const1 = e·A/(2π·m_e·f³), no factor of ½) and Hernández-Pajares
+        // et al. 2007 / Petrie et al. 2010.  e·A/(2π·m_e) = 2.2564e12 ≈ 7527·c.
+        constexpr double kI2CodeCoeff = 7527.0 * Constants::SPEED_OF_LIGHT;
 
         // 1 TECU in electrons per square metre.
         constexpr double kTecuToElectrons = 1.0e16;
 
-        // Third-order group-delay shape factor (Hoque & Jakowski 2008):
-        //   I_3^code = (2437 · η) · STEC²[el/m²]² / f^4[Hz]
-        // with η ≈ 0.66 a fixed factor capturing the integrated profile
-        // of N_e² along the ray (independent of solar activity to within
-        // a few tens of percent; sub-mm contribution at GPS L1 in any
-        // case, so the simplification is benign).
-        constexpr double kI3CodeBase = 2437.0;
-        constexpr double kI3ShapeEta = 0.66;
+        // Third-order GROUP-delay (code) coefficient (Hoque & Jakowski 2008;
+        // POINT Iono_Third_Order):
+        //   I_3^code = (2437 · η) · ∫N_e² dl / f⁴ ,   ∫N_e² dl = η·N_max·STEC
+        // i.e. the third-order term depends on ∫N_e² dl (units el²·m⁻⁵), which
+        // the shape factor η≈0.66 relates to N_max·STEC — it is NOT proportional
+        // to STEC².  N_max (the F2-layer peak electron density, el/m³) is taken
+        // from the Hoque-Jakowski linear fit N_max = (14e12 / 3.17e18)·STEC
+        // (the two anchor points TEC=1.38e18↔6e12 and TEC=4.55e18↔20e12).
+        // 2437 = 3·A²/8.  Sub-mm at GPS L1; the STEC-vs-VTEC choice inside the
+        // N_max fit is negligible at that level, so slant STEC is used to match
+        // the POINT reference exactly.
+        constexpr double kI3CodeBase  = 2437.0;
+        constexpr double kI3ShapeEta  = 0.66;
+        constexpr double kNmaxPerStec = (20.0 - 6.0) * 1.0e12 / ((4.55 - 1.38) * 1.0e18);
     } // namespace
 
     HigherOrderIonosphere::Components
@@ -68,9 +83,10 @@ namespace GnssProcessor {
         const double f3 = f2 * frequency_hz;
         const double f4 = f2 * f2;
 
-        // Code (group delay): both I₂ and I₃ positive, additive to modeled.
+        // Code (group delay): I₂ signed by B·cosθ; I₃ positive; additive to modeled.
+        const double ne_max  = kNmaxPerStec * stec_el;        // F2-peak density, el/m³
         const double i2_code = kI2CodeCoeff * stec_el * B_dot_k / f3;
-        const double i3_code = kI3CodeBase * kI3ShapeEta * stec_el * stec_el / f4;
+        const double i3_code = kI3CodeBase * kI3ShapeEta * ne_max * stec_el / f4;
 
         if (meas_type == 'C') {
             out.i2_m = i2_code;

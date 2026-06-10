@@ -17,7 +17,7 @@
     "frequency_mode": "all",
     "channel_mode": "all",
     "gnss_rate_s": 30.0,
-    "elevation_mask_deg": 5.0,
+    "elevation_mask_deg": 10.0,
     "exclude_eclipsing_satellites": true,
     "eclipse_shadow_scale": 1.1,
     "leap_seconds_tai": 37.0,
@@ -108,7 +108,7 @@
       "tropo_gradient": 0.001
     },
     "measurement_noise": {
-      "code_std_m": 0.200,
+      "code_std_m": 0.300,
       "phase_std_m": 0.001,
       "doppler_std_m": 0.500
     },
@@ -148,10 +148,10 @@
     "data_root": "C:/GnssProcessorSupport/products",
     "product_source": "COD",
     "product_type": "FIN",
-    "station": "P389",
+    "station": "GCGO",
     "station_country": "USA",
-    "year": 2025,
-    "doy": 200,
+    "year": 2026,
+    "doy": 100,
     "download_rinex": true,
     "download_products": true,
     "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",

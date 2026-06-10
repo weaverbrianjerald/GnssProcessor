@@ -283,6 +283,29 @@ namespace GnssProcessor {
     }
 
     // =================================================================
+    // ISlipDetector contract
+    // =================================================================
+
+    std::vector<SlipEvent> GraphicSlipDetector::detect(const SlipEpochContext& context) {
+        const auto raw = detect(context.observations);
+        std::vector<SlipEvent> events;
+        events.reserve(raw.size());
+        for (const auto& r : raw) {
+            SlipEvent ev;
+            ev.satellite   = r.satellite;
+            ev.sig1        = r.signal;
+            ev.amb_key     = r.amb_key;
+            ev.slip_cycles = r.slip_cycles;
+            ev.slip_known  = r.slip_known;
+            ev.fractional  = r.fractional;
+            ev.granularity = SlipGranularity::PerSignal;
+            ev.source      = SlipDetectorKind::Graphic;
+            events.push_back(std::move(ev));
+        }
+        return events;
+    }
+
+    // =================================================================
     // External reset
     // =================================================================
 

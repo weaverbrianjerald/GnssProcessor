@@ -81,6 +81,18 @@ TEST(StateManagerTest, ConstructionSizesStateVectorAndCovariance) {
               StateManagerHarness::kExpectedInitialSize);
 }
 
+TEST(StateManagerTest, SsrDiscontinuityBumpDetection) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    EXPECT_FALSE(sm.noteSsrDiscontinuity("G01|L1C", 3));   // first sighting: record only
+    EXPECT_FALSE(sm.noteSsrDiscontinuity("G01|L1C", 3));   // unchanged
+    EXPECT_TRUE (sm.noteSsrDiscontinuity("G01|L1C", 4));   // incremented -> bump
+    EXPECT_FALSE(sm.noteSsrDiscontinuity("G01|L1C", 4));   // steady at new value
+    EXPECT_TRUE (sm.noteSsrDiscontinuity("G01|L1C", 0));   // any change (4-bit wrap) -> bump
+    EXPECT_FALSE(sm.noteSsrDiscontinuity("G02|L1C", 7));   // independent key, first sighting
+}
+
 TEST(StateManagerTest, CoreIndicesArePositionClockTropo) {
     StateManagerHarness h;
     EXPECT_EQ(h.state_manager.getPositionIndex(), 0u);

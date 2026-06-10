@@ -465,8 +465,16 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
 
     // --- Resolve products ---
     if (config_.download_products) {
-        auto orb_paths = resolveProduct("orb", orb_dates, orb_weeks);
-        auto clk_paths = resolveProduct("clk", clk_dates, clk_weeks);
+        // Orbits/clocks are gated separately: a live real-time session sources
+        // them from broadcast+SSR, so skip the SP3/CLK fetch while still pulling
+        // the obs-day BIA/ERP/BRDC the engine needs.
+        std::vector<std::filesystem::path> orb_paths, clk_paths;
+        if (config_.download_orbits_clocks) {
+            orb_paths = resolveProduct("orb", orb_dates, orb_weeks);
+            clk_paths = resolveProduct("clk", clk_dates, clk_weeks);
+        } else {
+            log->info("Real-time live source: skipping orbit/clock download");
+        }
         auto bia_paths = resolveProduct("dcb", day_dates, day_weeks);
         auto erp_paths = resolveProduct("erp", day_dates, day_weeks);
 

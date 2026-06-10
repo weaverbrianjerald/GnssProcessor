@@ -172,9 +172,10 @@ namespace GnssProcessor {
             }
             if (raw.empty()) raw = "Dual";
             std::string low = toLower(raw);
-            if      (low == "dual")   frequency_mode_ = FrequencyMode::Dual;
-            else if (low == "triple") frequency_mode_ = FrequencyMode::Triple;
-            else if (low == "all")    frequency_mode_ = FrequencyMode::All;
+            if      (low == "dual")        frequency_mode_ = FrequencyMode::Dual;
+            else if (low == "triple")      frequency_mode_ = FrequencyMode::Triple;
+            else if (low == "all")         frequency_mode_ = FrequencyMode::All;
+            else if (low == "independent") frequency_mode_ = FrequencyMode::Independent;
             else { log->warn("Invalid frequency_mode '{}', defaulting to Dual", raw); frequency_mode_ = FrequencyMode::Dual; }
             if (from_legacy) {
                 log->warn("Deprecation: 'signal_mode' renamed to 'frequency_mode'; please update config.");
@@ -520,6 +521,27 @@ namespace GnssProcessor {
         if (no_bia_code_downweight_ < 1.0) no_bia_code_downweight_ = 1.0;
         enable_if_slip_detector_  = jval<bool>(json, "estimation.enable_if_slip_detector",
                                                 "enable_if_slip_detector", false);
+
+        // ----- Cycle-slip detector selection (SlipDetectorRegistry) -----
+        // estimation.cycle_slip.{mw,graphic,ewl,gf,if}.  The Melbourne-Wübbena
+        // detector defaults on (it is the primary and the source of WL integers
+        // for AR / BSSD pivots); the auxiliary detectors default off, preserving
+        // the historical MW-only behavior.  The 'if' selector inherits the
+        // legacy estimation.enable_if_slip_detector flag as its default for
+        // backward compatibility.
+        cycle_slip_.mw      = jval<bool>(json, "estimation.cycle_slip.mw",      "cycle_slip_mw",      true);
+        cycle_slip_.graphic = jval<bool>(json, "estimation.cycle_slip.graphic", "cycle_slip_graphic", false);
+        cycle_slip_.ewl     = jval<bool>(json, "estimation.cycle_slip.ewl",     "cycle_slip_ewl",     false);
+        cycle_slip_.gf      = jval<bool>(json, "estimation.cycle_slip.gf",      "cycle_slip_gf",      false);
+        cycle_slip_.ifp     = jval<bool>(json, "estimation.cycle_slip.if",      "cycle_slip_if",      enable_if_slip_detector_);
+        // turbo_edit is a coordination mode (MW+GF joint per-signal repair), not
+        // a detector kind — high-rate only; see CycleSlipConfig doc.
+        cycle_slip_.turbo_edit = jval<bool>(json, "estimation.cycle_slip.turbo_edit", "cycle_slip_turbo_edit", false);
+        log->info("Cycle-slip detectors: mw={}, graphic={}, ewl={}, gf={}, if={}, turbo_edit={}",
+                  cycle_slip_.mw ? "on" : "off", cycle_slip_.graphic ? "on" : "off",
+                  cycle_slip_.ewl ? "on" : "off", cycle_slip_.gf ? "on" : "off",
+                  cycle_slip_.ifp ? "on" : "off", cycle_slip_.turbo_edit ? "on" : "off");
+
         accumulate_phase_windup_  = jval<bool>(json, "estimation.accumulate_phase_windup",
                                                 "accumulate_phase_windup", false);
 
@@ -665,6 +687,54 @@ namespace GnssProcessor {
                 slip_state_reinflation_.sat_bias_std_m,
                 slip_state_reinflation_.iono_std_m > 0.0 ? "on" : "fallback-cold-start",
                 slip_state_reinflation_.sat_bias_std_m > 0.0 ? "on" : "fallback-cold-start");
+        }
+
+        // Real-time startup gate: defer ALL estimation until the SSR
+        // correction stream is ready — every modeled above-mask satellite is
+        // broadcast+SSR (cm-grade clock, phase retained) and a solvable floor
+        // of them is present — so the filter seeds code+phase together instead
+        // of cold-starting code-only on metre-grade broadcast clocks (which
+        // bakes a contaminated iono/bias/ambiguity partition as each sat's SSR
+        // flips it cm-grade mid-arc).  Real-time only; no-op in post-processing
+        // (precise CLK present -> never broadcast_only).  See
+        // CorrectionsReadyGateConfig docs.
+        corrections_ready_gate_.enabled = jval<bool>(json,
+            "estimation.defer_until_corrections_ready.enabled",        "defer_until_corrections_ready_enabled",        false);
+        corrections_ready_gate_.min_satellites = std::max<int>(1, jval<int>(json,
+            "estimation.defer_until_corrections_ready.min_satellites", "defer_until_corrections_ready_min_satellites",  5));
+        corrections_ready_gate_.min_satellites_per_system = jval<int>(json,
+            "estimation.defer_until_corrections_ready.min_satellites_per_system", "defer_until_corrections_ready_min_satellites_per_system", 4);
+        corrections_ready_gate_.timeout_s = std::max<double>(0.0, jval<double>(json,
+            "estimation.defer_until_corrections_ready.timeout_s",      "defer_until_corrections_ready_timeout_s",       0.0));
+        corrections_ready_gate_.require_all_above_mask = jval<bool>(json,
+            "estimation.defer_until_corrections_ready.require_all_above_mask", "defer_until_corrections_ready_require_all_above_mask", false);
+        corrections_ready_gate_.drop_broadcast_grade = jval<bool>(json,
+            "estimation.defer_until_corrections_ready.drop_broadcast_grade", "defer_until_corrections_ready_drop_broadcast_grade", false);
+        if (corrections_ready_gate_.enabled) {
+            const char* mode = corrections_ready_gate_.require_all_above_mask
+                ? "all above-mask broadcast+SSR"
+                : (corrections_ready_gate_.min_satellites_per_system > 0
+                    ? "per-constellation quorum" : "global quorum");
+            log->info("Corrections-ready startup gate ON: {}, >= {} cm-grade total, "
+                ">= {} per constellation, drop_broadcast_grade={}, {}",
+                mode, corrections_ready_gate_.min_satellites,
+                corrections_ready_gate_.min_satellites_per_system,
+                corrections_ready_gate_.drop_broadcast_grade ? "on" : "off",
+                corrections_ready_gate_.timeout_s > 0.0 ? "timeout -> degraded" : "wait indefinitely");
+        }
+
+        // Soft a-priori ZWD constraint — anchors the BSSD [up, ZWD] null space
+        // so a common-mode start error cannot run ZWD/height to ~1000 m.  See
+        // ZwdConstraintConfig docs.  Default off; opt in for real-time BSSD.
+        zwd_constraint_.enabled = jval<bool>(json,
+            "estimation.zwd_constraint.enabled",   "zwd_constraint_enabled",   false);
+        zwd_constraint_.apriori_m = jval<double>(json,
+            "estimation.zwd_constraint.apriori_m", "zwd_constraint_apriori_m", 0.10);
+        zwd_constraint_.sigma_m = jval<double>(json,
+            "estimation.zwd_constraint.sigma_m",   "zwd_constraint_sigma_m",   0.30);
+        if (zwd_constraint_.enabled) {
+            log->info("ZWD soft constraint ON: prior {:.2f} m +/- {:.2f} m",
+                zwd_constraint_.apriori_m, zwd_constraint_.sigma_m);
         }
 
         // Adaptive ionospheric process noise (GF second-difference driven).
@@ -1177,7 +1247,11 @@ namespace GnssProcessor {
             model_corrections_.loosen_amb_q_for_substituted_atx = mc.value("loosen_amb_q_for_substituted_atx", false);
             model_corrections_.ambiguity_q_substituted_atx      = mc.value("ambiguity_q_substituted_atx",  1e-12);
             model_corrections_.ambiguity_std_substituted_atx    = mc.value("ambiguity_std_substituted_atx", 1e3);
+            model_corrections_.atx_substitution_phase_std_m     = mc.value("atx_substitution_phase_std_m",  0.0);
             model_corrections_.apply_phase_shifts               = mc.value("apply_phase_shifts",            false);
+            model_corrections_.receiver_antenna_type_override   = mc.value("receiver_antenna_type_override", std::string{});
+            model_corrections_.enable_receiver_cross_system_atx_fallback =
+                mc.value("enable_receiver_cross_system_atx_fallback", false);
             model_corrections_.enable_klobuchar_ionosphere      = mc.value("enable_klobuchar_ionosphere", false);
             model_corrections_.enable_higher_order_ionosphere   = mc.value("enable_higher_order_ionosphere", false);
             model_corrections_.refine_emission_time             = mc.value("refine_emission_time",         true);
@@ -1219,6 +1293,12 @@ namespace GnssProcessor {
                             model_corrections_.ambiguity_q_substituted_atx,
                             model_corrections_.ambiguity_std_substituted_atx)
               : std::string{" (all ambiguities use process_noise.ambiguity and getAmbiguityStd default)"});
+        if (model_corrections_.atx_substitution_phase_std_m > 0.0) {
+            log->info("ATX-substituted phase σ inflation: ENABLED — +({:.1f} mm / sin el)² added "
+                "to substituted-signal phase variance (down-weights common-mode PCV residual that "
+                "aliases into ZWD/height; complements the ambiguity-Q override above)",
+                model_corrections_.atx_substitution_phase_std_m * 1e3);
+        }
         if (model_corrections_.apply_phase_shifts) {
             log->info("SYS / PHASE SHIFT subtraction: ENABLED — recorded phase shifts "
                 "will be subtracted from RINEX phase observations at parse time.");
@@ -1547,6 +1627,7 @@ namespace GnssProcessor {
             realtime_config_.nmea_gga           = rt.value("nmea_gga", "");
             realtime_config_.reconnect_delay_s  = rt.value("reconnect_delay_s", 5);
             realtime_config_.input_type         = rt.value("input_type", "ntrip");
+            realtime_config_.input_format       = rt.value("input_format", "rtcm");
             realtime_config_.input_path         = rt.value("input_path", "");
             realtime_config_.tcp_host           = rt.value("tcp_host", "");
             realtime_config_.tcp_port           = rt.value("tcp_port", 28784);
@@ -1871,6 +1952,7 @@ namespace GnssProcessor {
         logging_config_.enable_mw_slip_detector   = lg.value("enable_mw_slip_detector", false);
         logging_config_.enable_if_slip_detector   = lg.value("enable_if_slip_detector", false);
         logging_config_.enable_gf_slip_detector   = lg.value("enable_gf_slip_detector", false);
+        logging_config_.enable_turbo_edit_resolver = lg.value("enable_turbo_edit_resolver", false);
         logging_config_.enable_cycle_slip_manager = lg.value("enable_cycle_slip_manager", false);
         logging_config_.enable_ambiguity_resolver = lg.value("enable_ambiguity_resolver", false);
         logging_config_.enable_corrections        = lg.value("enable_corrections", false);
@@ -1907,6 +1989,7 @@ namespace GnssProcessor {
         logging_config_.enable_mw_slip_trace      = lg.value("enable_mw_slip_trace", false);
         logging_config_.enable_if_slip_trace      = lg.value("enable_if_slip_trace", false);
         logging_config_.enable_gf_slip_trace      = lg.value("enable_gf_slip_trace", false);
+        logging_config_.enable_turbo_edit_trace   = lg.value("enable_turbo_edit_trace", false);
         logging_config_.enable_windup_trace       = lg.value("enable_windup_trace", false);
 
         // Concise KF log mode — suppresses intermediate rebuild passes,

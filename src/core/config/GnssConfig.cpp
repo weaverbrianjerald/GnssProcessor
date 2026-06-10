@@ -32,6 +32,7 @@ namespace GnssProcessor {
         if (name == "mw_slip_detector")      return enable_mw_slip_detector;
         if (name == "if_slip_detector")      return enable_if_slip_detector;
         if (name == "gf_slip_detector")      return enable_gf_slip_detector;
+        if (name == "turbo_edit_resolver")   return enable_turbo_edit_resolver;
         if (name == "cycle_slip_manager")    return enable_cycle_slip_manager;
         if (name == "ambiguity_resolver")    return enable_ambiguity_resolver;
         if (name == "corrections")           return enable_corrections;
@@ -76,6 +77,90 @@ namespace GnssProcessor {
         }
         if (type == "RNX") return navigation_path_;
         return {};
+    }
+
+    // =================================================================
+    // Construction (defaults relocated from the header member block)
+    // =================================================================
+    // Defaults relocated out of the GnssConfig.hpp member block so that
+    // tuning a default no longer recompiles every includer of the header.
+    // Generated from the former in-class initializers (values verbatim).
+    GnssConfig::GnssConfig()
+        : processing_mode_{ ProcessingMode::PPP }
+        , frequency_mode_{ FrequencyMode::Dual }
+        , channel_mode_{ ChannelMode::Single }
+        , mw_frequency_mode_{ MwFrequencyMode::Mirror }
+        , mw_channel_mode_{ MwChannelMode::Mirror }
+        , enable_inhouse_bias_estimation_{ false }
+        , mw_init_frac_threshold_{ 0.4 }
+        , state_ambiguity_basis_{ StateAmbiguityBasis::PerBand }
+        , satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }
+        , satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }
+        , uncombined_enabled_{ false }
+        , elevation_mask_deg_{ 10.0 }
+        , exclude_eclipsing_satellites_{ false }
+        , eclipse_shadow_scale_{ 1.0 }
+        , data_gap_tolerance_s_{ 0.0 }
+        , long_gap_tolerance_s_{ 300.0 }
+        , gnss_rate_s_{ 0.0 }
+        , rinex_types_{ "CL" }
+        , active_systems_{ "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS" }
+        , zhd_pressure_mbar{ 1013.25 }
+        , zhd_temp_kelvin{ 288.15 }
+        , tropo_apriori_source_{ TroposphereAprioriSource::StandardAtmosphere }
+        , tropo_mapping_function_{ TroposphereMappingFunction::Gmf }
+        , leap_seconds_tai_{ 37.0 }
+        , residual_threshold_{ 6.0 }
+        , bad_meas_percent_{ 0.5 }
+        , ambiguity_std_{ 1e3 }
+        , code_noise_amplify_{ 1e4 }
+        , estimate_tropo_gradients_{ false }
+        , relinearize_geometry_{ false }
+        , relinearize_dpos_threshold_phase_m_{ 1.0 }
+        , relinearize_dpos_threshold_code_only_m_{ 100.0 }
+        , relinearize_max_count_{ -1 }
+        , eigen_threads_{ 1 }
+        , run_smoother_{ false }
+        , estimate_phase_clock_{ false }
+        , enable_if_slip_detector_{ false }
+        , accumulate_phase_windup_{ false }
+        , enable_between_satellite_sd_{ false }
+        , enable_glonass_bssd_{ false }
+        , bssd_pivot_min_elevation_deg_{ 45.0 }
+        , pivot_slip_min_cycles_{ 0.25 }
+        , persistent_bias_min_cycles_{ 0.10 }
+        , phase_huber_sres_threshold_{ 6.0 }
+        , enable_huber_innovation_{ false }
+        , enable_huber_r_inflation_{ true }
+        , enable_subcycle_slip_suppression_{ true }
+        , estimate_ifb_{ false }
+        , lock_signals_to_clock_ref_{ false }
+        , require_bia_for_signals_{ false }
+        , estimate_sat_biases_{ false }
+        , sat_bias_cache_warm_age_s_{ 300.0 }
+        , sat_bias_cache_max_age_s_{ 3600.0 }
+        , no_bia_code_downweight_{ 100.0 }
+        , estimate_velocity_{ false }
+        , has_reference_position_{ false }
+        , reference_position_ecef_{ 0.0, 0.0, 0.0 }
+        , stochastic_model_{ StochasticModelType::Elevation }
+        , code_elevation_power_{ 1.0 }
+        , phase_elevation_power_{ 0.5 }
+        , data_source_{ DataSource::Internal }
+        , app_mode_{ AppMode::PostProcessing }
+        , ar_mode_{ 0 }
+        , ar_ratio_threshold_{ 3.0 }
+        , ar_elevation_mask_{ 20.0 }
+        , ar_hold_variance_{ 0.001 }
+        , ar_min_epochs_{ 10 }
+        , ar_max_position_sigma_m_{ 0.05 }
+        , ar_ratio_upper_bound_{ 1e4 }
+        , ar_wl_only_{ false }
+        , ar_wl_only_pseudo_var_{ 1e-4 }
+        , ar_wl_max_frac_{ 0.40 }
+        , ar_min_success_rate_{ 0.999 }
+        , ar_nl_max_per_pair_frac_{ 0.15 }
+    {
     }
 
 } // namespace GnssProcessor

@@ -9,6 +9,7 @@
  */
 
 #include "app/Application.hpp"
+#include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "math/Coordinates.hpp"
@@ -654,8 +655,11 @@ int Application::runBaseline() {
                 log->flush();
             }
 
-            const int max_passes = static_cast<int>(
-                std::max<size_t>(10, state_manager_->getAmbiguities().size() + 3));
+            // Pass budget — shared with the PPP and real-time drivers
+            // (computeRebuildPassBudget) so the sizing can't drift; the rover's
+            // modeled obs supply the measurement count for the DD baseline.
+            const int max_passes =
+                computeRebuildPassBudget(*state_manager_, config_, rov_modeled);
 
             // Constellation lookup used by the post-Applied stats loop.
             auto constellationOfSatPairId = [](const std::string& sid) -> std::string {

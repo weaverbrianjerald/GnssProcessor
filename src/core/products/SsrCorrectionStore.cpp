@@ -7,7 +7,10 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/Constants.hpp"
+#include <array>
 #include <cmath>
+#include <cstdio>
+#include <map>
 
 namespace GnssProcessor {
 
@@ -41,39 +44,39 @@ SsrCorrectionStore& SsrCorrectionStore::getInstance() {
 // Push API
 // ---------------------------------------------------------------------------
 
-void SsrCorrectionStore::pushOrbit(const SsrOrbitCorrection& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushOrbit(const SsrOrbitCorrection& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].orbit = rec;
+    auto& r = by_sat_[rec.sat]; r.orbit = rec; r.header = header;
 }
 
-void SsrCorrectionStore::pushClock(const SsrClockCorrection& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushClock(const SsrClockCorrection& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].clock = rec;
+    auto& r = by_sat_[rec.sat]; r.clock = rec; r.header = header;
 }
 
-void SsrCorrectionStore::pushCombined(const SsrCombinedCorrection& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushCombined(const SsrCombinedCorrection& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].combined = rec;
+    auto& r = by_sat_[rec.sat]; r.combined = rec; r.header = header;
 }
 
-void SsrCorrectionStore::pushCodeBias(const SsrCodeBias& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushCodeBias(const SsrCodeBias& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].code_bias = rec;
+    auto& r = by_sat_[rec.sat]; r.code_bias = rec; r.header = header;
 }
 
-void SsrCorrectionStore::pushPhaseBias(const SsrPhaseBias& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushPhaseBias(const SsrPhaseBias& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].phase_bias = rec;
+    auto& r = by_sat_[rec.sat]; r.phase_bias = rec; r.header = header;
 }
 
-void SsrCorrectionStore::pushUra(const SsrUra& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushUra(const SsrUra& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].ura = rec;
+    auto& r = by_sat_[rec.sat]; r.ura = rec; r.header = header;
 }
 
-void SsrCorrectionStore::pushHighRateClock(const SsrHighRateClock& rec, const SsrHeader& /*header*/) {
+void SsrCorrectionStore::pushHighRateClock(const SsrHighRateClock& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    by_sat_[rec.sat].hrclock = rec;
+    auto& r = by_sat_[rec.sat]; r.hrclock = rec; r.header = header;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +157,22 @@ SsrCorrectionStore::getPhaseBias(const std::string& sat,
     return sit->second;
 }
 
+std::optional<GnssTime> SsrCorrectionStore::getSsrEpoch(const std::string& sat) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(sat);
+    if (it == by_sat_.end()) return std::nullopt;
+    const GnssTime& e = it->second.header.epoch_time;
+    if (e.week == 0 && e.tow == 0.0) return std::nullopt;   // header never set
+    return e;
+}
+
+int SsrCorrectionStore::getSsrIod(const std::string& sat) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(sat);
+    if (it == by_sat_.end()) return -1;
+    return it->second.header.iod_ssr;
+}
+
 bool SsrCorrectionStore::isEmpty() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return by_sat_.empty();
@@ -162,6 +181,29 @@ bool SsrCorrectionStore::isEmpty() const {
 std::size_t SsrCorrectionStore::size() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return by_sat_.size();
+}
+
+std::string SsrCorrectionStore::censusSummary() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Per system-letter counts: [orbit|combined, clock|combined, code-bias, phase-bias].
+    std::map<char, std::array<int, 4>> by_sys;
+    for (const auto& [sat, rec] : by_sat_) {
+        if (sat.empty()) continue;
+        auto& c = by_sys[sat.front()];
+        if (rec.orbit || rec.combined) ++c[0];
+        if (rec.clock || rec.combined) ++c[1];
+        if (rec.code_bias)             ++c[2];
+        if (rec.phase_bias)            ++c[3];
+    }
+    std::string out;
+    for (const auto& [sys, c] : by_sys) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%c[o%d c%d cb%d pb%d] ",
+                      sys, c[0], c[1], c[2], c[3]);
+        out += buf;
+    }
+    if (!out.empty()) out.pop_back();   // trim trailing space
+    return out.empty() ? "(empty)" : out;
 }
 
 void SsrCorrectionStore::clear() {

@@ -16,10 +16,11 @@
  *    so IF removes ~85% of I₂ but leaves a residual proportional to
  *    @c f₁²/(f₁²-f₂²) · I₂(f₁) − @c f₂²/(f₁²-f₂²) · I₂(f₂).
  *
- *  - Third order (TEC-shape-dependent): @c I₃ ∝ STEC²·η/f⁴, typically
- *    sub-mm to 5 mm at L1.  The shape factor η depends on the integrated
- *    profile of @c N_e² along the ray; here we use the conventional
- *    fixed value of @c η = 0.66 from Hoque & Jakowski (2008).
+ *  - Third order (TEC-shape-dependent): @c I₃ ∝ η·N_max·STEC/f⁴, typically
+ *    sub-mm to a few mm at L1.  It scales with @c ∫N_e²dl, which the shape
+ *    factor @c η = 0.66 (Hoque & Jakowski 2008) relates to @c N_max·STEC —
+ *    @e not to @c STEC². @c N_max (F2-layer peak density) follows the
+ *    Hoque-Jakowski linear fit in STEC.
  *
  * Sign convention (matching the rest of the engine):
  *  - For code observables, the correction is added to the modeled

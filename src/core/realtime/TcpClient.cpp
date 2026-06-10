@@ -53,6 +53,35 @@ void ensureWsaInit() {
 void ensureWsaInit() {}
 #endif
 
+// Apply a receive timeout so recv() returns periodically: the loop can then
+// re-check running_ (responsive shutdown within one timeout instead of
+// blocking until the peer sends or closes) and a silent receiver no longer
+// wedges the thread until the multi-hour OS keepalive default.
+void setRecvTimeout(SOCKET sock, int timeout_ms) {
+#ifdef _WIN32
+    DWORD tv = static_cast<DWORD>(timeout_ms);
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&tv), sizeof(tv));
+#else
+    timeval tv{};
+    tv.tv_sec  = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+}
+
+// True when a negative recv() return is merely the SO_RCVTIMEO firing (no data
+// this interval) rather than a real error or peer close — the caller should
+// retry on the same socket rather than tearing down and reconnecting.
+bool recvTimedOut() {
+#ifdef _WIN32
+    const int e = WSAGetLastError();
+    return e == WSAETIMEDOUT || e == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+#endif
+}
+
 // Resolve host:port and connect.  Returns INVALID_SOCKET on failure.
 SOCKET dialTcp(const std::string& host, int port, LogManager& lm) {
     auto log = lm.getLogger("tcp");
@@ -159,12 +188,18 @@ void TcpClient::receiveLoop() {
 
         connected_.store(true);
 
-        constexpr int kRecvBufBytes = 4096;
+        constexpr int kRecvBufBytes   = 4096;
+        constexpr int kRecvTimeoutMs  = 1000;   // bound shutdown latency + detect a silent peer
+        setRecvTimeout(sock, kRecvTimeoutMs);
         std::vector<char> tmp(kRecvBufBytes);
 
         while (running_.load()) {
             const int n = recv(sock, tmp.data(), kRecvBufBytes, 0);
-            if (n <= 0) break;       // 0 = peer closed; <0 = error
+            if (n == 0) break;                       // peer closed -> reconnect
+            if (n < 0) {
+                if (recvTimedOut()) continue;        // no data this interval -> re-check running_
+                break;                               // real error -> reconnect
+            }
 
             std::lock_guard<std::mutex> lock(buf_mutex_);
             // Drop oldest if buffer would exceed cap (back-pressure).

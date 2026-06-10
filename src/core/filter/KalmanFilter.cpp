@@ -929,6 +929,17 @@ namespace GnssProcessor {
         }
 
         // --- Commit ---
+        // Stash the prior (x, P) this update read so
+        // Application::runGeometryRelinearization can anchor its IEKF passes on
+        // it.  This is the correct anchor: it is the very prior the converged
+        // measurement update operated on, so it matches the post-update state
+        // dimension (this epoch's ambiguity augmentation and any outlier resets
+        // already applied).  Gated to the relinearization path to avoid the
+        // ~1 MB P copy when the feature is off or under tightly-coupled IMU.
+        if (config_.relinearizeGeometry() && !config_.tightlyCoupledImu()) {
+            last_update_prior_x_ = x;
+            last_update_prior_P_ = P;
+        }
         state_manager_.setStateVector(x_new);
         state_manager_.setCovariance(P_new);
         state_manager_.setStateEpochTime(measurement.time);
@@ -1008,6 +1019,101 @@ namespace GnssProcessor {
         if (logger_) logger_->logStateVector(x, "Updated State Vector", epoch_tag);
         if (logger_) logger_->logCovarianceMatrix(P, "Updated Covariance Matrix", epoch_tag);
 
+        return UpdateResult::Applied;
+    }
+
+    // ===================================================================
+    // Iterated-EKF (Gauss–Newton) update from an explicit prior
+    // ===================================================================
+
+    KalmanFilter::UpdateResult KalmanFilter::updateFromPrior(
+        EpochMeasurement& measurement,
+        const Eigen::VectorXd& x_prior,
+        const Eigen::MatrixXd& P_prior) {
+        auto klogger = log_manager_.getLogger("kalman_filter");
+
+        // --- Input validation ---
+        const Eigen::Index m = measurement.innovations.size();
+        if (m == 0 || measurement.H.rows() != m || measurement.R_v.size() != m) {
+            klogger->warn("IEKF relinearization: invalid measurement (innovations {}, H {}x{}, R_v {})",
+                m, measurement.H.rows(), measurement.H.cols(), measurement.R_v.size());
+            return UpdateResult::Skipped;
+        }
+        const Eigen::Index n = static_cast<Eigen::Index>(state_manager_.getStateSize());
+        if (measurement.H.cols() != n || x_prior.size() != n ||
+            P_prior.rows() != n || P_prior.cols() != n) {
+            klogger->error("IEKF relinearization: dimension mismatch "
+                "(H {}x{}, x_prior {}, P_prior {}x{}, state {})",
+                measurement.H.rows(), measurement.H.cols(), x_prior.size(),
+                P_prior.rows(), P_prior.cols(), n);
+            return UpdateResult::Skipped;
+        }
+
+        // --- Build R (full if provided, else diagonal from R_v) ---
+        Eigen::MatrixXd R;
+        if (measurement.R_full.rows() == m && measurement.R_full.cols() == m) {
+            R = measurement.R_full;
+        } else {
+            R = measurement.R_v.asDiagonal();
+        }
+
+        // Linearization point xᵢ: the current committed state, where
+        // `measurement` was linearized (its innovations are z − h(xᵢ) and
+        // H = ∂h/∂x|xᵢ).  For the first IEKF pass this is the posterior the
+        // primary update() converged on; for later passes it is the previous
+        // iterate.
+        const Eigen::VectorXd x_lin = state_manager_.getStateVector();
+
+        // Gauss–Newton (IEKF) innovation against the FIXED prior x⁻:
+        //   ν = (z − h(xᵢ)) − H·(x⁻ − xᵢ) = innovations + H·(xᵢ − x⁻).
+        // The offset term makes the step independent of the linearization
+        // point in the linear limit, so josephPseudoUpdate(x⁻, P⁻, …, ν)
+        // yields the proper MAP update x⁺ = x⁻ + K·ν with K and (I−KH)P⁻ both
+        // formed from the prior — no double-counting of measurement
+        // information across passes.
+        const Eigen::VectorXd nu =
+            measurement.innovations + measurement.H * (x_lin - x_prior);
+
+        Eigen::VectorXd x_new;
+        Eigen::MatrixXd P_new;
+        josephPseudoUpdate(x_prior, P_prior, measurement.H, nu, R, x_new, P_new);
+
+        if (!x_new.allFinite() || !P_new.allFinite()) {
+            klogger->warn("IEKF relinearization: non-finite result; skipping commit "
+                "(StateManager state left unchanged)");
+            return UpdateResult::Skipped;
+        }
+
+        // --- Post-fit residuals about x_new (for the residual trace) ---
+        //   r = (z − h(xᵢ)) − H·(x_new − xᵢ).
+        measurement.residuals =
+            measurement.innovations - measurement.H * (x_new - x_lin);
+
+        // Standardized residuals with Sr = R − H·P_new·Hᵀ, denominator floored
+        // at the working R(i,i) — identical convention to update() so the
+        // residual trace is directly comparable across the two paths.
+        const Eigen::MatrixXd HP_new = measurement.H * P_new;   // m×n
+        Eigen::VectorXd sr_diag(m);
+        Eigen::VectorXd sres(m);
+        for (Eigen::Index i = 0; i < m; ++i) {
+            const double hph = HP_new.row(i).dot(measurement.H.row(i));
+            const double sii = R(i, i) - hph;
+            sr_diag(i) = sii;
+            const double r_floor = (R(i, i) > 0.0) ? R(i, i) : 0.0;
+            const double denom = std::sqrt(std::max({ sii, r_floor, 1e-12 }));
+            const double val = measurement.residuals(i);
+            sres(i) = (std::isfinite(val) && denom > 0.0) ? (val / denom) : 0.0;
+        }
+        measurement.residuals_standardized = sres;
+        measurement.residuals_covariance = sr_diag.asDiagonal();
+
+        // --- Commit ---
+        state_manager_.setStateVector(x_new);
+        state_manager_.setCovariance(P_new);
+        state_manager_.setStateEpochTime(measurement.time);
+
+        klogger->debug("IEKF relinearization: dx.norm={:.3e}, step|Δpos|={:.4f} m",
+            (x_new - x_prior).norm(), (x_new.head<3>() - x_lin.head<3>()).norm());
         return UpdateResult::Applied;
     }
 
@@ -1451,6 +1557,23 @@ namespace GnssProcessor {
             return { false, false };
         }
 
+        // Stable denominator for the complete-reset fraction further below: the
+        // number of measurements this epoch STARTED with, reconstructed as the
+        // current usable rows plus everything earlier rebuild passes already
+        // excluded.  @c excluded_measurements is seeded from the carried set by
+        // computeMeasurementUpdate, so at this point — before this pass's own
+        // dispatch adds to it — it holds exactly the prior exclusions; the sum
+        // is therefore the original pre-peel count, invariant across passes.
+        //
+        // Using the per-pass (shrinking) @c num_obs as the denominator made the
+        // reset trip after excluding only ~p/(1+p) of the original set (e.g.
+        // ~37% at p=0.5, not the configured 50%), aborting an otherwise-
+        // converging one-at-a-time peel and re-inflating the filter every epoch
+        // — the persistent-code-outlier signature.  The original count keeps the
+        // backstop firing only at the genuinely-configured bad fraction.
+        const size_t total_obs_count =
+            num_obs + measurement.excluded_measurements.size();
+
         const size_t meta_n = std::min({ num_obs, measurement.satellite_ids.size(), measurement.signal_types.size() });
 
         // --- Per-measurement diagnostic log ---
@@ -1731,6 +1854,25 @@ namespace GnssProcessor {
                     const auto [prim, _piv] =
                         splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
                     if (!prim.empty()) ex.insert(prim);
+                }
+            };
+
+            // Record EVERY non-pivot member of a firing group for post-handover
+            // ionosphere / sat-bias re-inflation (the code-detector path only —
+            // see takeRequestedPivotHandoverIonoReinflateSats).  This is the
+            // COMPLEMENT of recordHandoverExcludes: the excludes are the pivot
+            // plus the few deviators that fall OUTSIDE the coherent band, whereas
+            // the satellites that actually absorbed the pivot's code bias are the
+            // coherent majority INSIDE the band.  Re-inflating the contaminated
+            // majority (not the deviators) is what lets the post-handover clean
+            // frame re-estimate the states the lossless re-reference can't fix.
+            auto recordIonoReinflate = [&](const Group& grp,
+                                           const std::string& cons) {
+                auto& reinf = pivot_handover_reinflate_sats_[cons];
+                for (size_t k = 0; k < grp.indices.size(); ++k) {
+                    const auto [prim, _piv] =
+                        splitBssdSatId(measurement.satellite_ids[grp.indices[k]]);
+                    if (!prim.empty()) reinf.insert(prim);
                 }
             };
 
@@ -2101,6 +2243,7 @@ namespace GnssProcessor {
 
                     requested_pivot_handovers_.insert(cons);
                     recordHandoverExcludes(g, med, mad, pivot_sat, cons);
+                    recordIonoReinflate(g, cons);
                     for (size_t row_idx : g.indices) {
                         const auto& sat_id = measurement.satellite_ids[row_idx];
                         const auto& sig_t  = measurement.signal_types[row_idx];
@@ -2156,6 +2299,7 @@ namespace GnssProcessor {
 
                     requested_pivot_handovers_.insert(cons);
                     recordHandoverExcludes(pp, med, mad, pivot_sat, cons);
+                    recordIonoReinflate(pp, cons);
                     for (size_t row_idx : pp.indices) {
                         const auto& sat_id = measurement.satellite_ids[row_idx];
                         const auto& sig_t  = measurement.signal_types[row_idx];
@@ -2511,10 +2655,11 @@ namespace GnssProcessor {
                 }
 
                 if (candidates.size() > 1) {
-                    // Query MW scores.
-                    const auto& mw = cycle_slip_manager_->mwDetector();
-                    for (auto& c : candidates)
-                        c.mw_score = mw.getWorstMwScore(c.sat);
+                    // Query MW scores (skip if the MW detector is disabled).
+                    if (const auto* mw = cycle_slip_manager_->mwDetector()) {
+                        for (auto& c : candidates)
+                            c.mw_score = mw->getWorstMwScore(c.sat);
+                    }
 
                     // Pick the candidate with the highest MW score.
                     auto best = std::max_element(candidates.begin(),
@@ -2666,10 +2811,13 @@ namespace GnssProcessor {
         }
 
         // --- Complete reset if too many outliers accumulated ---
-        if (measurement.bad_residual_count > static_cast<size_t>(bad_meas_percent * num_obs)) {
+        // Denominator is the ORIGINAL pre-peel measurement count (see
+        // total_obs_count above), so the backstop fires at the configured
+        // bad-measurement fraction rather than aborting the peel early.
+        if (measurement.bad_residual_count > static_cast<size_t>(bad_meas_percent * total_obs_count)) {
             klogger->warn("{}Resetting filter: too many outliers ({}/{}), limit={:.3f}*n={}",
-                epoch_prefix, measurement.bad_residual_count, num_obs,
-                bad_meas_percent, static_cast<size_t>(bad_meas_percent * num_obs));
+                epoch_prefix, measurement.bad_residual_count, total_obs_count,
+                bad_meas_percent, static_cast<size_t>(bad_meas_percent * total_obs_count));
 
             resetFilterCovariance(P, epoch_prefix);
 
@@ -2790,6 +2938,13 @@ namespace GnssProcessor {
     KalmanFilter::takeRequestedPivotHandoverExcludeSats() {
         std::map<std::string, std::set<std::string>> out;
         out.swap(pivot_handover_exclude_sats_);
+        return out;
+    }
+
+    std::map<std::string, std::set<std::string>>
+    KalmanFilter::takeRequestedPivotHandoverIonoReinflateSats() {
+        std::map<std::string, std::set<std::string>> out;
+        out.swap(pivot_handover_reinflate_sats_);
         return out;
     }
 

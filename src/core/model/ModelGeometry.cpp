@@ -18,6 +18,7 @@
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "products/LiveEphemerisStore.hpp"
 #include "math/TimeUtils.hpp"
 #include "math/Interpolate.hpp"
 #include <algorithm>
@@ -369,8 +370,10 @@ namespace GnssProcessor {
             const Eigen::Vector3d& rx_pos, double pseudorange,
             Eigen::Vector3d& sat_pos_em, Eigen::Vector3d& sat_vel_em,
             double& sat_clock_out, GnssTime& emission_time,
+            bool& broadcast_grade,
             DropReason& drop_reason) const {
 
+            broadcast_grade = false;
             const double c = Constants::SPEED_OF_LIGHT;
             const double tof = pseudorange / c;
 
@@ -436,8 +439,11 @@ namespace GnssProcessor {
             sat_pos_em = pos_em;
             sat_vel_em = vel_em;
 
-            // Step 5: Re-evaluate satellite clock at corrected emission time
-            sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time);
+            // Step 5: Re-evaluate satellite clock at corrected emission time.
+            // Capture clock provenance here (the final, authoritative clock) so
+            // the caller can drop carrier phase when only a broadcast clock backs
+            // this satellite.
+            sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time, &broadcast_grade);
             if (std::abs(sat_clk) < 1e-12) {
                 log_manager_.getLogger("geometry")->warn(
                     "Satellite clock is zero/invalid for {} at corrected emission TOW {:.3f} - skipping",
@@ -471,9 +477,17 @@ namespace GnssProcessor {
             double& mf_w,
             double& mf_d,
             Eigen::Vector3d& sat_vel,
+            bool& broadcast_only,
             DropReason& drop_reason) const
         {
             drop_reason = DropReason::None;
+            broadcast_only = false;
+
+            // Tracks whether the satellite's clock is broadcast-grade (metre
+            // level: no precise CLK, no SSR clock).  Set by computeEmissionState
+            // from the final clock evaluation; surfaced via broadcast_only so the
+            // measurement model can fall back to code-only for this satellite.
+            bool broadcast_grade = false;
 
             // Reject user-configured excluded satellites (e.g. E14/E18 eccentric orbit).
             // Categorised as NoModel: the user has told us not to model this
@@ -518,7 +532,7 @@ namespace GnssProcessor {
 
             // computeEmissionState owns its own NoProduct annotations.
             if (!computeEmissionState(obs, rx_pos, pseudorange, sat_pos_em, sat_vel_em,
-                                      sat_clock_em, emission_time, drop_reason))
+                                      sat_clock_em, emission_time, broadcast_grade, drop_reason))
                 return false;
 
             // --- Earth rotation + receiver-frame geometry (lambda reused
@@ -683,7 +697,7 @@ namespace GnssProcessor {
                         pseudorange - slant_zhd_seed - pco_los_seed + dtr_los_seed;
                     if (!computeEmissionState(obs, rx_pos, pseudorange_refined,
                                               sat_pos_em, sat_vel_em,
-                                              sat_clock_em, emission_time, drop_reason))
+                                              sat_clock_em, emission_time, broadcast_grade, drop_reason))
                         return false;
 
                     // Re-rotate + re-topocentric with refined sat state.
@@ -746,14 +760,18 @@ namespace GnssProcessor {
 
             sat_vel = sat_vel_em;
 
+            // Surface the clock provenance captured during emission-time solve:
+            // when the clock is broadcast-grade the caller drops carrier phase.
+            broadcast_only = broadcast_grade;
+
             log_manager_.getLogger("geometry")->trace(
                 "Satellite geometry for {} at TOW {:.3f}: range={:.3f} m, elev={:.3f} deg, az={:.3f} deg, "
                 "tropo={:.3f} m, sat_clock={:.3e} s ({:.3f} m), shapiro={:.3e} m, sagnac={:.3f} m, "
-                "atm_load={:.3f} m, relativistic={:.3e} s ({:.3f} m), solid_tide={:.3f} m",
+                "atm_load={:.3f} m, relativistic={:.3e} s ({:.3f} m), solid_tide={:.3f} m, broadcast_only={}",
                 obs.satellite, obs.time.tow, range, elevation, azimuth,
                 tropo_delay, sat_clock, sat_clock * c,
                 shapiro_delay, sagnac_corr, atm_loading_corr,
-                relativistic_corr, relativistic_corr * c, solid_tide);
+                relativistic_corr, relativistic_corr * c, solid_tide, broadcast_only);
 
             return true;
         }
@@ -785,9 +803,36 @@ namespace GnssProcessor {
                 return zero_result;
             }
 
+            // Broadcast (live) ephemeris fallback: decode the satellite PV from
+            // the receiver's RTCM/SBF nav stream and overlay the IODE-gated SSR
+            // orbit correction — the same path the SP3 branch uses below.
+            // Factored into a lambda so it serves EVERY case where the loaded
+            // SP3 cannot describe this query epoch: (a) no SP3 entry at all,
+            // (b) too few valid nodes, and (c) the query epoch lies outside the
+            // SP3's time coverage (a stale fixture shadowing today's live PRNs
+            // in real-time rooftop mode).  In post-processing the live store is
+            // empty (only RealTimeEngine ever inserts), so this returns nullopt
+            // and the SP3 path runs exactly as before.
+            auto liveFallback = [&]() -> std::optional<std::pair<Eigen::Vector3d, Eigen::Vector3d>> {
+                auto bc = LiveEphemerisStore::getInstance().computeSatellitePV(satellite, time);
+                if (!bc) return std::nullopt;
+                Eigen::Vector3d pos = bc->position;
+                Eigen::Vector3d vel = bc->velocity;
+                if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+                    ssr && ssr->has_orbit
+                    && SsrCorrectionStore::iodeMatches(bc->iode, ssr->iode)) {
+                    const double dt = TimeUtils::continuousGpsSeconds(time)
+                                    - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+                    pos = SsrCorrectionStore::applyOrbitToPosition(
+                        pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
+                }
+                return std::make_pair(pos, vel);
+            };
+
             // O(1) index lookup
             auto it = orbit_index_.find(satellite);
             if (it == orbit_index_.end()) {
+                if (auto r = liveFallback()) return *r;
                 log_manager_.getLogger("geometry")->warn("getSatellitePV: no orbit data for {}", satellite);
                 return zero_result;
             }
@@ -833,10 +878,38 @@ namespace GnssProcessor {
             }
 
             if (valid_nodes.size() < MIN_POINTS) {
+                if (auto r = liveFallback()) return *r;
                 log_manager_.getLogger("geometry")->warn(
                     "getSatellitePV: insufficient valid nodes ({}) for {} at week {} tow {:.3f}",
                     valid_nodes.size(), satellite, time.week, time.tow);
                 return zero_result;
+            }
+
+            // === Coverage gate (stale-SP3 shadowing) ===
+            // valid_nodes is in ascending epoch order (sat_orbits was sorted in
+            // loadData()).  If the query epoch lies outside the loaded SP3's time
+            // span by more than one node interval, the SP3 does not describe this
+            // epoch — typically a stale fixture shadowing today's live PRNs in
+            // real-time rooftop mode.  Prefer the broadcast ephemeris (which IS
+            // current) over extrapolating a years-stale polynomial into a
+            // position the norm-gate below would only reject.  The one-interval
+            // tolerance is strictly more permissive than the half-interval
+            // extrapolation guard further down, so no legitimate post-processing
+            // edge is newly diverted here; and in post-processing the live store
+            // is empty, so liveFallback() returns nullopt and the existing SP3
+            // path (including its own gap/extrapolation handling) runs unchanged.
+            {
+                const double t_cov_first = valid_nodes.front().t;
+                const double t_cov_last  = valid_nodes.back().t;
+                if (t_query < t_cov_first - sp3_interval || t_query > t_cov_last + sp3_interval) {
+                    if (auto r = liveFallback()) {
+                        log_manager_.getLogger("geometry")->debug(
+                            "getSatellitePV: {} query tow {:.3f} outside SP3 span "
+                            "[{:.1f}, {:.1f}]s (continuous); using broadcast ephemeris",
+                            satellite, time.tow, t_cov_first, t_cov_last);
+                        return *r;
+                    }
+                }
             }
 
             // === STEP 2: Bracket-centered window selection ===

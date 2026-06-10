@@ -123,10 +123,19 @@ public:
      *                      exclusion so the forced handover lands on a
      *                      consensus satellite rather than bouncing to
      *                      another offset sat.  Consumed with the request.
+     * @param reinflate_sats Non-pivot satellites whose ionosphere / sat-bias
+     *                      state absorbed a coherent pivot-side CODE bias and
+     *                      must have their covariance re-inflated AFTER the
+     *                      lossless re-reference (the re-reference conserves the
+     *                      filter's information and cannot evict the absorbed
+     *                      offset on its own).  This is the code-only analogue
+     *                      of the phase path's @c was_disturbed re-seed.  Unioned
+     *                      per constellation and consumed with the request.
      */
     void requestForcedHandover(const std::string& constellation,
                                 const std::string& reason,
-                                const std::set<std::string>& exclude_sats = {});
+                                const std::set<std::string>& exclude_sats = {},
+                                const std::set<std::string>& reinflate_sats = {});
 
     /**
      * @brief Freeze pivot ambiguity covariances to zero.
@@ -415,6 +424,16 @@ private:
     /// and erased when the matching request is consumed.  This is what stops
     /// the forced handover from re-anchoring on another offset satellite.
     std::map<std::string, std::set<std::string>> forced_handover_exclude_;
+
+    /// Per-constellation non-pivot satellites whose ionosphere / sat-bias
+    /// state must be re-inflated after a CODE-detected forced handover, carried
+    /// alongside @c forced_handover_requests_.  Applied in @c handlePivotHandover
+    /// AFTER the lossless re-reference (and after the re-referenced covariance is
+    /// committed) via @c StateManager::reinflateIonosphereVariance /
+    /// @c reinflateSatBiasVariancesForSat, so the post-handover clean SD frame
+    /// can re-estimate the states the information-conserving re-reference cannot
+    /// fix.  Empty unless a code-only-style coherent pivot code bias was detected.
+    std::map<std::string, std::set<std::string>> forced_handover_reinflate_;
 
     /// Satellites already retired as a pivot during the current epoch's
     /// handover sequence, keyed by constellation.  Reset at each epoch's

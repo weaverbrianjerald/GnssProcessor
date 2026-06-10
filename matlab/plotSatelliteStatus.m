@@ -32,7 +32,8 @@ showSummary          = true;   % per-sat fraction-of-status table
 showLegend           = true;   % discrete colorbar on each figure
 
 %% --- Load CSV ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\satellite_status_trace.csv';
+fname = 'C:\GnssProcessor\logs\satellite_status_trace.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\satellite_status_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\satellite_status_trace.csv';
 
 if ~isfile(fname)

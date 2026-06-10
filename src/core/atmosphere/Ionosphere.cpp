@@ -80,7 +80,10 @@ namespace GnssProcessor {
                 std::istringstream iss(line);
                 std::string type;
                 iss >> type;
-                if (type == "GPSA" || type == "GAL") { // alpha
+                // GPS Klobuchar α only.  A RINEX 3 "GAL" line is Galileo
+                // NeQuick-G (ai0..ai2), not Klobuchar α — see the matching
+                // note in ProductParser::parseKlobuchar.
+                if (type == "GPSA") { // alpha
                     double a0, a1, a2, a3;
                     if (iss >> a0 >> a1 >> a2 >> a3) {
                         if (std::isfinite(a0) && std::isfinite(a1) && std::isfinite(a2) && std::isfinite(a3)) {

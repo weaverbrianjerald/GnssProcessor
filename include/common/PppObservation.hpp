@@ -58,6 +58,7 @@ namespace GnssProcessor {
         double range;                                /**< Geometric range (meters) */
         double mf_w;                                 /**< Wide-lane combination frequency value (Hz) or coefficient */
         double mf_d;                                 /**< Narrow-lane / difference combination frequency value (Hz) or coefficient */
+        bool broadcast_only = false;                 /**< True when the range model is broadcast-grade (metre level): phase observables have been dropped and only code is used for this satellite. */
     };
 
 } // namespace GnssProcessor

@@ -14,6 +14,7 @@
  */
 
 #include "rtcm/RtcmTypes.hpp"
+#include "products/BroadcastEphemerisTypes.hpp"   // BroadcastEphemeris
 #include "rinex/RinexParser.hpp"   // RinexObservation
 #include <filesystem>
 #include <vector>
@@ -83,9 +84,20 @@ public:
     const std::vector<SsrUra>&                getSsrUras()           const { return ssr_uras_; }
     const std::vector<SsrHighRateClock>&      getSsrHighRateClocks() const { return ssr_hrclocks_; }
     const std::vector<RtcmStationCoords>&     getStationCoords()     const { return station_coords_; }
+    const std::vector<BroadcastEphemeris>&    getBroadcastEphemeris() const { return broadcast_eph_; }
 
     /// The message type of the most recently decoded frame, or -1 if none.
     int lastMessageType() const { return last_msg_type_; }
+
+    /**
+     * @brief The SSR header from the most recently decoded SSR message.
+     *
+     * The realtime path constructs one parser per frame, so after decoding a
+     * single SSR frame this is exactly that message's header (epoch time,
+     * IOD-SSR, provider/solution id).  Default-constructed until an SSR
+     * message has been decoded.
+     */
+    const SsrHeader& getLastSsrHeader() const { return last_ssr_header_; }
 
     /**
      * @brief Decode a frame's header.
@@ -117,6 +129,7 @@ private:
 
     std::filesystem::path file_path_;
     int last_msg_type_{-1};
+    SsrHeader last_ssr_header_{};
 
     std::vector<RinexObservation>      observations_;
     std::vector<SsrOrbitCorrection>    ssr_orbits_;
@@ -127,6 +140,7 @@ private:
     std::vector<SsrUra>                ssr_uras_;
     std::vector<SsrHighRateClock>      ssr_hrclocks_;
     std::vector<RtcmStationCoords>     station_coords_;
+    std::vector<BroadcastEphemeris>    broadcast_eph_;
 };
 
 } // namespace GnssProcessor

@@ -68,25 +68,92 @@ const std::map<std::string, std::vector<std::pair<std::string, std::string>>>& g
 
 /// Maps system name + FrequencyMode to the target frequency bands for pair formation.
 const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>>& getBandMap() {
-    static const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>> table = {
-        {"GPS",     {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5"}}}},
-        {"Galileo", {{FrequencyMode::Dual, {"E1", "E5a"}}, {FrequencyMode::Triple, {"E1", "E5a", "E5b"}}, {FrequencyMode::All, {"E1", "E5a", "E5b", "E6", "E5"}}}},
-        {"GLONASS", {{FrequencyMode::Dual, {"G1", "G2"}}, {FrequencyMode::Triple, {"G1", "G2", "G3"}}, {FrequencyMode::All, {"G1", "G2", "G3", "G1a", "G2a"}}}},
-        {"BeiDou",  {{FrequencyMode::Dual, {"B1I", "B3"}}, {FrequencyMode::Triple, {"B1I", "B3", "B2a"}}, {FrequencyMode::All, {"B1C", "B1I", "B2a", "B2b", "B2ab", "B3"}}}},
-        {"QZSS",    {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5", "L6"}}}},
-        {"SBAS",    {{FrequencyMode::Dual, {"L1", "L5"}}, {FrequencyMode::Triple, {"L1", "L5"}}, {FrequencyMode::All, {"L1", "L5"}}}}
-    };
+    // FrequencyMode::Independent shares All's candidate band list — the two
+    // differ only in the per-satellite sideband pruning that
+    // activeFrequencyBands() applies downstream.  Deriving Independent from All
+    // here (rather than duplicating the lists) keeps them structurally
+    // identical and is what the static coarse-filter consumers
+    // (getAllowedBandDigits) read for the band-digit superset.
+    static const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>> table = [] {
+        std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>> t = {
+            {"GPS",     {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5"}}}},
+            {"Galileo", {{FrequencyMode::Dual, {"E1", "E5a"}}, {FrequencyMode::Triple, {"E1", "E5a", "E5b"}}, {FrequencyMode::All, {"E1", "E5a", "E5b", "E6", "E5"}}}},
+            {"GLONASS", {{FrequencyMode::Dual, {"G1", "G2"}}, {FrequencyMode::Triple, {"G1", "G2", "G3"}}, {FrequencyMode::All, {"G1", "G2", "G3", "G1a", "G2a"}}}},
+            {"BeiDou",  {{FrequencyMode::Dual, {"B1I", "B3"}}, {FrequencyMode::Triple, {"B1I", "B3", "B2a"}}, {FrequencyMode::All, {"B1C", "B1I", "B2a", "B2b", "B2ab", "B3"}}}},
+            {"QZSS",    {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5", "L6"}}}},
+            {"SBAS",    {{FrequencyMode::Dual, {"L1", "L5"}}, {FrequencyMode::Triple, {"L1", "L5"}}, {FrequencyMode::All, {"L1", "L5"}}}}
+        };
+        for (auto& kv : t) kv.second[FrequencyMode::Independent] = kv.second[FrequencyMode::All];
+        return t;
+    }();
     return table;
 }
 
 /// Human-readable label for a FrequencyMode value.
 const char* frequencyModeLabel(FrequencyMode m) {
     switch (m) {
-    case FrequencyMode::Dual:   return "Dual";
-    case FrequencyMode::Triple: return "Triple";
-    case FrequencyMode::All:    return "All";
-    default:                 return "Unknown";
+    case FrequencyMode::Dual:        return "Dual";
+    case FrequencyMode::Triple:      return "Triple";
+    case FrequencyMode::All:         return "All";
+    case FrequencyMode::Independent: return "Independent";
+    default:                         return "Unknown";
     }
+}
+
+/// Drop the E5/B2 *sidebands* from @p bands when this satellite also reports
+/// the coherent **wideband** (RINEX band 8: Galileo E5 alt-BOC, BeiDou
+/// B2(a+b)).  Realises FrequencyMode::Independent: the wideband is the joint
+/// coherent processing of those same sidebands, so keeping all three feeds
+/// correlated rows to the diagonal-R filter as if independent — over-counting
+/// the band.  When the wideband is NOT observed for this satellite the
+/// sidebands are retained (graceful fallback: no band is lost).  No-op for
+/// systems without a band-8 wideband (GPS, GLONASS, QZSS, SBAS).
+void pruneRedundantSidebands(const std::string& system_str,
+                             std::vector<std::string>& bands,
+                             const std::map<std::string, double>& measurements) {
+    // Logical sideband band-names superseded by the band-8 wideband, per system.
+    static const std::map<std::string, std::vector<std::string>> kSidebands = {
+        {"Galileo", {"E5a", "E5b"}},   // superseded by "E5"   (alt-BOC, band 8)
+        {"BeiDou",  {"B2a", "B2b"}},   // superseded by "B2ab" (band 8)
+    };
+    const auto sit = kSidebands.find(system_str);
+    if (sit == kSidebands.end()) return;
+
+    // Require the wideband *phase* (band-8 L-observable).  Phase is the
+    // precision- and ambiguity-critical observable this redundancy concerns,
+    // and AltBOC being "available" as a replacement for the sidebands means
+    // its carrier is tracked.  If only band-8 code (C8) were present we keep
+    // the sidebands so the E5/B2 carrier is not lost.
+    bool wideband_observed = false;
+    for (const auto& kv : measurements) {
+        const std::string& sig = kv.first;            // e.g. "L8Q", "L8X"
+        if (sig.size() >= 2 && sig[0] == 'L' && sig[1] == '8') {
+            wideband_observed = true;
+            break;
+        }
+    }
+    if (!wideband_observed) return;                    // fallback: retain sidebands
+
+    for (const auto& sb : sit->second)
+        bands.erase(std::remove(bands.begin(), bands.end(), sb), bands.end());
+}
+
+/// Active frequency bands for (system, mode): the static band-map list with
+/// FrequencyMode::Independent's per-satellite sideband pruning applied.  The
+/// single source of truth used by every band-selection path so the uncombined
+/// and iono-free flows stay consistent.
+std::vector<std::string> activeFrequencyBands(
+        const std::string& system_str, FrequencyMode mode,
+        const std::map<std::string, double>& measurements) {
+    const auto& band_map = getBandMap();
+    const auto it = band_map.find(system_str);
+    if (it == band_map.end()) return {};
+    const auto mit = it->second.find(mode);
+    if (mit == it->second.end()) return {};
+    std::vector<std::string> bands = mit->second;      // copy
+    if (mode == FrequencyMode::Independent)
+        pruneRedundantSidebands(system_str, bands, measurements);
+    return bands;
 }
 
 } // anonymous namespace
@@ -410,6 +477,7 @@ const char* frequencyModeLabel(FrequencyMode m) {
                 geom.sat_clock, geom.shapiro_delay, geom.sagnac_corr,
                 geom.atm_loading_corr, geom.relativistic_corr, geom.solid_tide,
                 geom.mf_w, geom.mf_d, geom.sat_vel,
+                geom.broadcast_only,
                 drop_reason);
 
             if (!geom_ok) {
@@ -550,6 +618,35 @@ const char* frequencyModeLabel(FrequencyMode m) {
                     log_manager_.getLogger("ppp_model")->trace(
                         "Doppler {} for {}: obs_rr={:.4f} m/s, mod_rr={:.4f} m/s, var={:.6f}",
                         key, obs.satellite, observed_rr, range_rate_sat, var);
+                }
+            }
+
+            // --- Broadcast-grade gate: code-only ---
+            // When the satellite's range model is metre-level — a broadcast
+            // clock with no precise CLK and no SSR clock — carrier phase is
+            // meaningless: at mm precision the float ambiguity cannot be
+            // separated from the metre-level clock/orbit error, so phase cannot
+            // improve the position and modelling it at phase noise corrupts the
+            // float filter.  Drop every phase observable (raw "L1C" and IF
+            // "L1C_L2W") so the KF sees code only and no phase ambiguity states
+            // are created (ensureRequiredStates and isUsableMeasurement both
+            // iterate observed).  raw_observed is left intact for the MW slip
+            // detector's bookkeeping.
+            ppp_obs.broadcast_only = geom.broadcast_only;
+            if (geom.broadcast_only) {
+                for (std::map<std::string, double>* m :
+                         { &ppp_obs.observed, &ppp_obs.modeled,
+                           &ppp_obs.variances, &ppp_obs.zenith_variances }) {
+                    for (auto it = m->begin(); it != m->end(); ) {
+                        if (!it->first.empty() && it->first[0] == 'L') it = m->erase(it);
+                        else ++it;
+                    }
+                }
+                if (sats_phase_gated_.insert(obs.satellite).second) {
+                    log_manager_.getLogger("ppp_model")->info(
+                        "Broadcast-grade clock for {} — using code-only (carrier phase "
+                        "excluded; phase at mm precision is inconsistent with metre-level "
+                        "broadcast products)", obs.satellite);
                 }
             }
 
@@ -702,8 +799,10 @@ const char* frequencyModeLabel(FrequencyMode m) {
         // or when no clock-ref info was available for this system.
         // Respect the configured signal_mode so the user can control how many
         // frequency bands enter the filter (dual, triple or all).
+        std::vector<std::string> resolved_bands;  // owns the Independent-pruned set when the band-map fallback is used
         if (!allowed_bands_ptr) {
-            allowed_bands_ptr = &band_map.at(system_str).at(config_.getFrequencyMode());
+            resolved_bands = activeFrequencyBands(system_str, config_.getFrequencyMode(), measurements);
+            allowed_bands_ptr = &resolved_bands;
         }
 
         const auto& allowed_bands = *allowed_bands_ptr;
@@ -889,7 +988,7 @@ const char* frequencyModeLabel(FrequencyMode m) {
         const auto& band_map = getBandMap();
         if (!band_map.count(system_str)) return false;
 
-        auto target_bands = band_map.at(system_str).at(config_.getFrequencyMode());
+        auto target_bands = activeFrequencyBands(system_str, config_.getFrequencyMode(), obs.measurements);
         std::vector<std::pair<std::string, std::string>> candidate_pairs;
 
         // Reject IF pairs whose noise amplification factor exceeds this cap.
@@ -912,7 +1011,7 @@ const char* frequencyModeLabel(FrequencyMode m) {
 
                 // Anchor policy: in triple/all modes, at least one band must be the anchor (first band).
                 const auto sm = config_.getFrequencyMode();
-                const bool use_anchor = (sm == FrequencyMode::Triple || sm == FrequencyMode::All) && target_bands.size() >= 2;
+                const bool use_anchor = (sm == FrequencyMode::Triple || sm == FrequencyMode::All || sm == FrequencyMode::Independent) && target_bands.size() >= 2;
                 if (use_anchor && b1 != target_bands.front() && b2 != target_bands.front()) {
                     log_manager_.getLogger("ppp_model")->trace(
                         "Skipping non-anchor band pair for {} {}: {} / {} (anchor={})",
@@ -1228,6 +1327,25 @@ const char* frequencyModeLabel(FrequencyMode m) {
         return pole_tide_ecef.dot(-los);
     }
 
+    double PppModel::phaseAtxSubstitutionVarInflation(const std::string& signal,
+        const std::string& satellite,
+        System system,
+        double elevation_deg) const {
+        const double s = config_.getModelCorrections().atx_substitution_phase_std_m;
+        if (s <= 0.0) return 0.0;                                 // feature disabled (default)
+        if (signal.empty() || signal.front() != 'L') return 0.0;  // carrier-phase rows only
+        if (!antenna_.wasAtxSubstituted(satellite, signal, system)) return 0.0;
+        // 1/sin² elevation amplification, matching the phase thermal term so the
+        // inflation stays meaningful relative to the (also 1/sin²-scaled) thermal
+        // variance at low elevation — where the substituted-PCV residual and its
+        // ZWD/height aliasing are worst.  Clamp sin(el) below ~2.9° (the elevation
+        // mask filters these rows upstream anyway) to avoid blow-up.
+        double sin_el = std::sin(elevation_deg * Constants::PI / 180.0);
+        constexpr double kMinSin = 0.05;
+        if (sin_el < kMinSin) sin_el = kMinSin;
+        return (s * s) / (sin_el * sin_el);
+    }
+
     double PppModel::computeBaseModeledValue(const RinexObservation& obs,
         const PppObservation& ppp_obs,
         const SatGeometry& geom,
@@ -1315,6 +1433,10 @@ const char* frequencyModeLabel(FrequencyMode m) {
                 : (meas_type == 'C' ? n.code_std_m * n.code_std_m : n.phase_std_m * n.phase_std_m);
             variances[j] = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, fallback_var,
                 obs.satellite, antenna_.getAntennas());
+            // Inflate (phase only) for a substituted receiver ATX before the IF
+            // combination below, so the c₁²/c₂² propagation carries it into the
+            // combined variance.  No-op unless atx_substitution_phase_std_m > 0.
+            //variances[j] += phaseAtxSubstitutionVarInflation(type, obs.satellite, obs.system, geom.elevation); // not needed
             // Per-signal zenith variance — stashed for MwSlipDetector even though the
             // iono-free aggregation below only stores the combined variance under
             // ref_type.  Without this stash, MW slip detection in iono-free PPP mode
@@ -1562,9 +1684,15 @@ const char* frequencyModeLabel(FrequencyMode m) {
             const double zenith_variance = stochastic_model_.computeVariance(
                 type, obs.measurements, 90.0, fallback_var,
                 obs.satellite, antenna_.getAntennas());
-            const double variance = stochastic_model_.computeVariance(
+            double variance = stochastic_model_.computeVariance(
                 type, obs.measurements, geom.elevation, fallback_var,
                 obs.satellite, antenna_.getAntennas());
+            // Phase-only inflation for a substituted receiver ATX (no-op unless
+            // atx_substitution_phase_std_m > 0).  Applied to the elevation-scaled
+            // KF variance only — the zenith variance feeding MwSlipDetector is left
+            // untouched, since the slowly-varying PCV bias cancels in epoch
+            // differencing and must not desensitise slip detection.
+            variance += phaseAtxSubstitutionVarInflation(type, obs.satellite, obs.system, geom.elevation);
 
             ppp_obs.observed[type] = observed_value;
             ppp_obs.modeled[type] = modeled_value;

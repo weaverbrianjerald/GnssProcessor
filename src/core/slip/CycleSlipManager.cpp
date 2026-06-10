@@ -8,7 +8,9 @@
 */
 
 #include "slip/CycleSlipManager.hpp"
+#include "slip/SlipDetectorRegistry.hpp"
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 namespace GnssProcessor {
@@ -32,8 +34,31 @@ static std::string signalFromAmbiguityKey(const std::string& key) {
 CycleSlipManager::CycleSlipManager(const GnssConfig& config, LogManager& log_manager)
     : config_(config),
       log_manager_(log_manager),
-      ppp_utils_(log_manager),
-      mw_detector_(config, log_manager) {
+      ppp_utils_(log_manager) {
+    // Build the config-selected detector set (MW-first, then auxiliaries).
+    detectors_ = SlipDetectorRegistry::createEnabled(config, log_manager);
+    // Recover a typed handle to the MW detector for its rich API (WL locks,
+    // quality scoring, pivot hints) — nullptr if MW is disabled in config.
+    for (const auto& d : detectors_) {
+        if (auto* mw = d->asMelbourneWubbena()) { mw_ = mw; break; }
+    }
+
+    // TurboEdit MW+GF joint repair: requires the MW detector (its source of
+    // wide-lane integers).  Build the resolver only when both the toggle and
+    // the MW detector are active; otherwise warn and stay in the MW-only path.
+    const auto& cs = config.getCycleSlipConfig();
+    if (cs.turbo_edit) {
+        if (mw_) {
+            turbo_ = std::make_unique<TurboEditResolver>(config, log_manager);
+            log_manager.getLogger("cycle_slip_manager")->info(
+                "TurboEdit MW+GF joint cycle-slip repair ENABLED (high-rate only).");
+        } else {
+            log_manager.getLogger("cycle_slip_manager")->warn(
+                "turbo_edit requested but the MW detector (estimation.cycle_slip.mw) "
+                "is disabled — TurboEdit needs the MW wide-lane integers; staying "
+                "MW-only (TurboEdit OFF).");
+        }
+    }
 }
 
 // ===========================================================================
@@ -41,33 +66,55 @@ CycleSlipManager::CycleSlipManager(const GnssConfig& config, LogManager& log_man
 // ===========================================================================
 
 std::map<std::string, int> CycleSlipManager::getResolvedWlAmbiguities() const {
-    return mw_detector_.getResolvedWlAmbiguities();
+    return mw_ ? mw_->getResolvedWlAmbiguities() : std::map<std::string, int>{};
 }
 
 std::map<std::string, double> CycleSlipManager::getResolvedWlFractions() const {
-    return mw_detector_.getResolvedWlFractions();
+    return mw_ ? mw_->getResolvedWlFractions() : std::map<std::string, double>{};
 }
 
 void CycleSlipManager::resetSatellite(const std::string& satellite) {
-    mw_detector_.resetSatellite(satellite);
+    // Reset the arc state in every detector so an externally-driven reset
+    // (e.g. the KF outlier handler) clears all of them, not just MW.
+    for (const auto& d : detectors_) d->resetSatellite(satellite);
+    // The TurboEdit resolver holds its own GF jump arcs (it is not an
+    // ISlipDetector in detectors_), so clear them too — otherwise a stale
+    // pre-reset GF value would corrupt the next time-difference.
+    if (turbo_) turbo_->resetSatellite(satellite);
 }
 
 void CycleSlipManager::resetSatelliteSignal(const std::string& satellite,
                                               const std::string& signal) {
-    mw_detector_.resetSatelliteSignal(satellite, signal);
+    for (const auto& d : detectors_) d->resetSatelliteSignal(satellite, signal);
+    if (turbo_) turbo_->resetSatelliteSignal(satellite, signal);
 }
 
 void CycleSlipManager::notifyPivotForcedHandover(const std::string& satellite,
                                                   const std::string& reason) {
-    mw_detector_.notifyPivotForcedHandover(satellite, reason);
+    if (mw_) mw_->notifyPivotForcedHandover(satellite, reason);
 }
 
 void CycleSlipManager::setCorrections(const GnssCorrections* corrections) {
-    mw_detector_.setCorrections(corrections);
+    // MW and EWL consume biases; the others ignore it via the default no-op.
+    for (const auto& d : detectors_) d->setCorrections(corrections);
+    if (turbo_) turbo_->setCorrections(corrections);
 }
 
 bool CycleSlipManager::enableMwTracing(const std::filesystem::path& log_dir) {
-    return mw_detector_.enableTracing(log_dir);
+    return mw_ ? mw_->enableTracing(log_dir) : false;
+}
+
+bool CycleSlipManager::enableTurboEditTracing(const std::filesystem::path& log_dir) {
+    return turbo_ ? turbo_->enableTracing(log_dir) : false;
+}
+
+void CycleSlipManager::setSampleInterval(double interval_s) {
+    sample_interval_s_ = interval_s;
+    // Tighten the TurboEdit GF-arc gap tolerance to ~1.5× the cadence so a
+    // brief outage restarts the arc rather than absorbing a slip-during-gap
+    // into a stale GF reference (mirrors the MW detector's gap handling).
+    if (turbo_ && interval_s > 0.0)
+        turbo_->setMaxGapSeconds(interval_s * 1.5);
 }
 
 // ===========================================================================
@@ -395,10 +442,47 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
     CycleSlipEpochResult result;
     last_mw_slips_.clear();
 
+    // Run the auxiliary detectors through the polymorphic contract and gather
+    // their unified SlipEvents (applied as BSSD-aware resets after the MW
+    // pass).  The MW detector is consumed below via its concrete
+    // detectLargeMwResets: its specialized BSSD-aware pipeline needs the full
+    // MwSlipResult WL-pair semantics that the unified SlipEvent projection
+    // does not preserve, so calling detect() on it would only build a
+    // projection the manager discards.
+    SlipEpochContext slip_ctx(modeled_obs);
+    std::vector<SlipEvent> aux_events;
+    for (const auto& d : detectors_) {
+        if (d->kind() == SlipDetectorKind::MelbourneWubbena) continue;
+        std::vector<SlipEvent> ev = d->detect(slip_ctx);
+        aux_events.insert(aux_events.end(),
+                          std::make_move_iterator(ev.begin()),
+                          std::make_move_iterator(ev.end()));
+    }
+
     // --- MW / LLI detection (all dual-frequency pairs including EWL) ---
     std::set<std::string> reset_sats;
+
+    // TurboEdit (MW+GF joint repair) resolution for this epoch.  Declared at
+    // function scope because it is consumed in two places: the MW per-satellite
+    // loop (where it supplies per-signal integers for the dual-frequency case
+    // cross-consistency cannot split) and the GF-only pass after the loop (the
+    // MW dN1==dN2 blind spot).  resolve() also rolls the GF jump arcs forward,
+    // so it must run every epoch — even when there are no MW slips.
+    TurboEditResolver::EpochResolution te;
+    std::map<std::string, std::set<std::string>>  te_culprits_by_sat; // sat -> culprit signals
+    std::map<std::string, std::map<std::string, int>> te_slips_by_sat; // sat -> signal -> dN
     {
-        const auto slip_results = mw_detector_.detectLargeMwResets(modeled_obs);
+        const std::vector<MwSlipResult> slip_results =
+            mw_ ? mw_->detectLargeMwResets(modeled_obs)
+                : std::vector<MwSlipResult>{};
+
+        if (turbo_) {
+            te = turbo_->resolve(slip_results, modeled_obs, sample_interval_s_);
+            for (const auto& r : te.repairs) {
+                te_culprits_by_sat[r.satellite].insert(r.signal);
+                te_slips_by_sat[r.satellite][r.signal] = r.dN;
+            }
+        }
 
         // Group ALL MW results (slipped and non-slipped) by satellite for
         // cross-consistency analysis.
@@ -445,7 +529,8 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
             // MW arcs.  An active arc that didn't produce a slip result means
             // dN_i - dN_j = 0 for that pair  a crucial reference for
             // cross-consistency analysis.
-            for (const auto& stats_key : mw_detector_.getActiveArcKeys()) {
+            for (const auto& stats_key :
+                 (mw_ ? mw_->getActiveArcKeys() : std::vector<std::string>{})) {
                 // stats_key = "G01_L1C_L2W" -> sat="G01", sig1="L1C", sig2="L2W"
                 const auto first_us = stats_key.find('_');
                 if (first_us == std::string::npos) continue;
@@ -525,9 +610,18 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
                     // slipped MW pairs.  Identify which signal(s) of the
                     // pivot are culprits — those are the (cons, signal)
                     // pairs that get the deferred-repair-after-handover
-                    // treatment.
-                    const auto pivot_culprits = identifySlippedSignals(
-                        slips, all_pairs_by_sat[sat_id]);
+                    // treatment.  Cross-consistency handles 3+ frequencies;
+                    // for the dual-frequency case it returns nothing, so fall
+                    // back to TurboEdit's MW+GF resolution so a common-mode
+                    // dual-frequency pivot slip still drives the in-place /
+                    // handover machinery (rather than a blind full reset).
+                    std::set<std::string> pivot_culprits =
+                        identifySlippedSignals(slips, all_pairs_by_sat[sat_id]);
+                    if (pivot_culprits.empty()) {
+                        auto tcit = te_culprits_by_sat.find(sat_id);
+                        if (tcit != te_culprits_by_sat.end())
+                            pivot_culprits = tcit->second;
+                    }
                     for (const auto& sig : pivot_culprits) {
                         pivot_affected_cons_sig.emplace(cons, sig);
                         log->info("{}Pivot slip detected on {} {}: deferring integer repair "
@@ -559,24 +653,42 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
                 const bool has_pair_slips = slips_it != slips_by_sat.end()
                                          && !slips_it->second.empty();
 
-                // --- Multi-frequency cross-consistency analysis ---
-                // If this satellite has 3+ MW pairs (slipped + clean), try to
-                // identify which individual signal slipped rather than resetting all.
+                // --- Per-signal culprit resolution ---
+                // (1) Multi-frequency MW cross-consistency: when a satellite
+                //     has 3+ MW pairs (slipped + clean), overlapping pairs
+                //     isolate which individual signal slipped.  When the slipped
+                //     pair was wl_locked with a known integer, the lone-culprit
+                //     interpretation gives an unambiguous signal-level shift.
+                // (2) Dual-frequency TurboEdit fallback: when cross-consistency
+                //     cannot split (only a single MW pair exists), pair the MW
+                //     wide-lane integer with the geometry-free phase jump to
+                //     recover the per-signal integers (MW+GF joint solve).
+                // Both paths yield (culprit_signals, per_signal_slips) and feed
+                // the identical repair + BSSD pivot-deferral machinery below;
+                // culprits with a cross-consistent integer are repaired
+                // (additive, covariance preserved), the rest reset.
+                std::set<std::string> culprit_signals;
+                std::map<std::string, int> per_signal_slips;
                 if (has_pair_slips && sat_all_pairs.size() >= 2
                     && slips_it->second.size() < sat_all_pairs.size()) {
-                    const auto culprit_signals = identifySlippedSignals(
+                    culprit_signals = identifySlippedSignals(
                         slips_it->second, sat_all_pairs);
-                    if (!culprit_signals.empty()) {
-                        // Compute per-(culprit signal) integer slips: when the
-                        // slipped pair was wl_locked AND has a known integer,
-                        // the lone-culprit interpretation gives an unambiguous
-                        // signal-level shift.  Pairs with cross-consistent
-                        // candidates qualify for repair (additive integer
-                        // adjustment, covariance preserved); the rest fall
-                        // back to reset.
-                        const auto per_signal_slips = computeCulpritSlipIntegers(
+                    if (!culprit_signals.empty())
+                        per_signal_slips = computeCulpritSlipIntegers(
                             slips_it->second, culprit_signals);
-
+                }
+                if (culprit_signals.empty()) {
+                    auto tcit = te_culprits_by_sat.find(sat_id);
+                    if (tcit != te_culprits_by_sat.end() && !tcit->second.empty()) {
+                        culprit_signals  = tcit->second;
+                        per_signal_slips = te_slips_by_sat[sat_id];
+                        log->info("{}TurboEdit dual-freq resolution for {}: {} "
+                                  "culprit signal(s) from MW+GF joint solve",
+                                  epoch_prefix, sat_id, culprit_signals.size());
+                    }
+                }
+                if (!culprit_signals.empty()) {
+                    {
                         for (const auto& culprit : culprit_signals) {
                             const std::string targeted_key = sat_id + "_" + culprit;
                             const std::string cons = PppUtils::getSystemString(sat_id);
@@ -1101,7 +1213,152 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
         }
     }
 
+    // --- TurboEdit GF-only detections (MW dN1==dN2 blind spot) ---
+    // The dual-frequency MW-flagged case was already resolved inside the MW
+    // per-satellite loop above (routed through the BSSD pivot-deferral
+    // machinery).  This pass applies TurboEdit's remaining resolutions for
+    // satellites the MW detector reported nothing on — slips where the
+    // wide-lane is unchanged and only the geometry-free jump moved.  Satellites
+    // already handled this epoch (in reset_sats) are skipped.
+    if (turbo_) {
+        applyTurboEditGfOnlyResolutions(te, reset_sats, modeled_obs,
+                                        state_manager, meas_model, epoch_prefix, result);
+    }
+
+    // --- Auxiliary detectors (GRAPHIC / EWL / ...): reset on detection ---
+    if (!aux_events.empty()) {
+        applyAuxiliarySlipEvents(aux_events, reset_sats, modeled_obs,
+                                 state_manager, meas_model, epoch_prefix, result);
+    }
+
     return result;
+}
+
+// ===========================================================================
+// Auxiliary (non-MW) detector slip handling
+// ===========================================================================
+
+void CycleSlipManager::applyAuxiliarySlipEvents(
+    const std::vector<SlipEvent>& events,
+    std::set<std::string>& handled_sats,
+    const std::vector<PppObservation>& modeled_obs,
+    StateManager& state_manager,
+    const MeasurementModel& meas_model,
+    const std::string& epoch_prefix,
+    CycleSlipEpochResult& result) {
+
+    auto log = log_manager_.getLogger("cycle_slip_manager");
+
+    for (const auto& ev : events) {
+        const std::string sat = ev.satellite.empty()
+            ? satIdFromAmbiguityKey(ev.amb_key) : ev.satellite;
+        if (sat.empty()) continue;
+
+        // Skip satellites the MW pipeline already handled this epoch — its
+        // targeted, covariance-preserving per-signal repairs are authoritative;
+        // stacking an auxiliary reset on top would throw away that precision.
+        if (handled_sats.count(sat)) continue;
+
+        auto resetSignal = [&](const std::string& signal) {
+            if (signal.empty()) return;
+            const std::string key = sat + "_" + signal;
+            if (state_manager.getAmbiguityIndex(key) < 0) return;
+            resetAmbiguityBssdAware(key, sat, signal, modeled_obs,
+                                    state_manager, meas_model, epoch_prefix);
+            ++result.n_reset;
+            result.state_modified = true;
+            log->info("{}{} slip: BSSD-aware reset {} (auxiliary detector)",
+                      epoch_prefix, toString(ev.source), key);
+        };
+
+        if (ev.granularity == SlipGranularity::BandDifference) {
+            // A band-difference detector (EWL) cannot, on its own, attribute
+            // the jump to a single signal — reset both members of the pair.
+            resetSignal(ev.sig1);
+            resetSignal(ev.sig2);
+        } else {
+            resetSignal(ev.sig1.empty()
+                            ? signalFromAmbiguityKey(ev.amb_key) : ev.sig1);
+        }
+
+        handled_sats.insert(sat);  // de-dupe across multiple auxiliary detectors
+    }
+}
+
+// ===========================================================================
+// TurboEdit GF-only (MW blind-spot) slip handling
+// ===========================================================================
+
+void CycleSlipManager::applyTurboEditGfOnlyResolutions(
+    const TurboEditResolver::EpochResolution& te,
+    std::set<std::string>& handled_sats,
+    const std::vector<PppObservation>& modeled_obs,
+    StateManager& state_manager,
+    const MeasurementModel& meas_model,
+    const std::string& epoch_prefix,
+    CycleSlipEpochResult& result) {
+
+    auto log = log_manager_.getLogger("cycle_slip_manager");
+
+    // Group confident per-signal repairs by satellite so all of a satellite's
+    // signals are applied before it is marked handled.
+    std::map<std::string, std::vector<const TurboEditResolver::SignalRepair*>> by_sat;
+    for (const auto& r : te.repairs) by_sat[r.satellite].push_back(&r);
+
+    for (const auto& [sat, reps] : by_sat) {
+        if (handled_sats.count(sat)) continue;  // MW pipeline already acted on this sat
+        bool any = false;
+        for (const auto* r : reps) {
+            const std::string key = sat + "_" + r->signal;
+            if (state_manager.getAmbiguityIndex(key) < 0) continue;
+            // Covariance-preserving additive integer repair; repairAmbiguityBssdAware
+            // refuses the BSSD pivot (and bails when the sat is unobserved / λ is
+            // bad), in which case we reset that ambiguity instead.
+            const bool ok = repairAmbiguityBssdAware(
+                sat, r->signal, r->dN, modeled_obs, state_manager, meas_model, epoch_prefix);
+            if (ok) {
+                ++result.n_repaired;
+                log->info("{}TurboEdit GF-only REPAIR {} {}: dN={:+d} cyc (MW blind spot; "
+                          "covariance preserved)", epoch_prefix, sat, r->signal, r->dN);
+            } else {
+                resetAmbiguityBssdAware(key, sat, r->signal, modeled_obs,
+                                        state_manager, meas_model, epoch_prefix);
+                ++result.n_reset;
+                log->info("{}TurboEdit GF-only repair refused for {} {} (pivot / unobserved); "
+                          "reset instead", epoch_prefix, sat, r->signal);
+            }
+            any = true;
+        }
+        if (any) { result.state_modified = true; handled_sats.insert(sat); }
+    }
+
+    // Satellites the GF jump flagged but could not resolve confidently (iono
+    // disturbed, non-integer split): reset every observed phase ambiguity.
+    for (const auto& sat : te.reset_sats) {
+        if (handled_sats.count(sat)) continue;
+        const PppObservation* obs = nullptr;
+        for (const auto& o : modeled_obs)
+            if (o.satellite == sat) { obs = &o; break; }
+        if (!obs) continue;
+        bool any = false;
+        for (const auto& [sig, val] : obs->observed) {
+            (void)val;
+            if (sig.empty() || sig[0] != 'L') continue;          // phase only
+            if (sig.find('_') != std::string::npos) continue;     // raw signal only
+            const std::string key = sat + "_" + sig;
+            if (state_manager.getAmbiguityIndex(key) < 0) continue;
+            resetAmbiguityBssdAware(key, sat, sig, modeled_obs,
+                                    state_manager, meas_model, epoch_prefix);
+            ++result.n_reset;
+            any = true;
+        }
+        if (any) {
+            result.state_modified = true;
+            handled_sats.insert(sat);
+            log->info("{}TurboEdit GF-only reset for {} (GF jump unresolved — "
+                      "iono disturbed or non-integer split)", epoch_prefix, sat);
+        }
+    }
 }
 
 } // namespace GnssProcessor

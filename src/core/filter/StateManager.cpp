@@ -931,6 +931,19 @@ namespace GnssProcessor {
         setStateVector(sv);
     }
 
+    bool StateManager::noteSsrDiscontinuity(const std::string& key, int counter) {
+        auto it = last_ssr_discontinuity_.find(key);
+        if (it == last_ssr_discontinuity_.end()) {
+            last_ssr_discontinuity_.emplace(key, counter);   // first sighting: record only
+            return false;
+        }
+        if (it->second != counter) {                         // changed (any direction) -> bump
+            it->second = counter;
+            return true;
+        }
+        return false;
+    }
+
     bool StateManager::resetAmbiguity(const std::string& key, double std_m) {
         auto logger = log_manager_.getLogger("state_manager");
 

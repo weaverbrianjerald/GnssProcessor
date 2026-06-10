@@ -37,8 +37,9 @@ showStandardizedPlots = true;
 showLegend = false;
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\measurement_residuals.csv';
+fname = 'C:\GnssProcessor\logs\measurement_residuals.csv';
 T = readtable(fname);
 
 %% --- Strip BSSD compound IDs down to the primary satellite ---
@@ -388,6 +389,11 @@ function plotResidualGrid(T, measType, valueColumn, valueLabel, figName, ...
     outerTl = tiledlayout(1, nConsActive, 'TileSpacing', 'tight', 'Padding', 'compact');
     title(outerTl, figName);
 
+    % Collect every tile's axes across all constellation columns so the
+    % whole figure can share one x/y link (see the linkaxes call after the
+    % loop): changing the limits on any tile then updates all the others.
+    allAxes = gobjects(0);
+
     for c = 1:nConsActive
         sysName = consActive{c};
         sigs = sigsPerCons{c};
@@ -398,15 +404,10 @@ function plotResidualGrid(T, measType, valueColumn, valueLabel, figName, ...
         innerTl.Layout.Tile = c;
         innerTl.Layout.TileSpan = [1 1];
 
-        % Collect tile axes per column so the inner stack can share its
-        % x-axis (only the bottom tile keeps tick labels) and zooming
-        % stays synchronized across the column.
-        columnAxes = gobjects(0);
-
         for r = 1:nSigsForCons
             sig = sigs(r);
             ax = nexttile(innerTl);
-            columnAxes(end+1) = ax; %#ok<AGROW>
+            allAxes(end+1) = ax; %#ok<AGROW>
             hold(ax, 'on');
 
             idx = Tm.system == sysName & string(Tm.signal) == sig;
@@ -480,10 +481,10 @@ function plotResidualGrid(T, measType, valueColumn, valueLabel, figName, ...
             title(ax, sprintf('%s - %s', sysName, sig_title));
             % Axis labels only on the outer edges: x on the bottom tile
             % of each column (column heights differ), y on every tile of
-            % the leftmost column.  All tiles within a column share the
-            % same GPS time range, so non-bottom tiles also drop their
-            % x-tick LABELS -- the bottom tile's labels apply to them
-            % too via the linkaxes call below.
+            % the leftmost column.  Every tile in the figure shares the
+            % same GPS time range (linked below), so non-bottom tiles also
+            % drop their x-tick LABELS -- the bottom tile's labels apply to
+            % them too.
             if r == nSigsForCons
                 xlabel(ax, 'GPS Time');
             else
@@ -499,11 +500,17 @@ function plotResidualGrid(T, measType, valueColumn, valueLabel, figName, ...
             hold(ax, 'off');
         end
 
-        % Synchronize x-limits across the column so zooming/panning
-        % anywhere updates every tile in this constellation's stack.
-        if numel(columnAxes) > 1
-            linkaxes(columnAxes, 'x');
-        end
+    end
+
+    % Synchronize BOTH x- and y-limits across every tile in the figure
+    % (all constellation columns).  After this call every tile shares one
+    % starting range (linkaxes expands x and y to span all tiles' data),
+    % and from then on changing the limits on any single tile -- e.g.
+    % tightening the residual (y) range to inspect the noise floor --
+    % snaps every other tile to those same limits for apples-to-apples
+    % comparison.
+    if numel(allAxes) > 1
+        linkaxes(allAxes, 'xy');
     end
 end
 

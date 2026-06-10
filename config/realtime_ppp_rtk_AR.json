@@ -1,0 +1,273 @@
+// Real-time PPP-RTK + AR — same processing/estimation/filter/model/logging as
+// config/ppp_rtk_internal_AR.json, with ONLY the I/O changed for real-time.
+//
+// What changed from ppp_rtk_internal_AR.json (the "real-time parts"):
+//   app_mode  post -> real_time
+//   data_source production -> internal        (no downloads; static ATX/EOT/gpt3 from data/static)
+//   data_download.enabled true -> false
+//   files.observation_path removed             (observations arrive from the stream)
+//   processing.gnss_rate_s removed             (post-only decimation; guarded off in real-time)
+//   + realtime { ... } block                   (primary obs stream + SSR corrections stream)
+//   + logging.enable_rt_engine = true          (so per-epoch [RT] lines print)
+// Everything else (processing toggles, estimation/BSSD/AR, filter, model_corrections,
+// logging traces) is byte-identical to the AR config.
+//
+// *** IMPORTANT — PPP-RTK/AR needs corrections to do anything. ***
+// This config is PPP-RTK (uncombined + BSSD + sat-bias + AR).  All of that is
+// only meaningful with cm-grade orbits/clocks/biases, i.e. an SSR stream
+// ("corrections" below) or precise products.  With corrections.enabled = false
+// and no precise products, every satellite is BROADCAST-GRADE, so the engine
+// auto-drops carrier phase to code-only (see the broadcast-grade gate) and the
+// BSSD/AR/sat-bias machinery is inert — you get broadcast-only code positioning.
+// Enable the IGS-SSR corrections stream to actually run PPP-RTK / AR.
+{
+  "app_mode": "real_time",
+  "data_source": "internal",
+  "receiver": {
+    "troposphere_apriori_source": "gpt3",
+    "troposphere_mapping_function": "vmf3",
+    // Absolute path required: the default (internal_data_root/static/gpt3/...)
+    // resolves before internal_data_root is applied and comes out relative, so
+    // the grid isn't found and tropo silently falls back to GMF/stdatm.
+    "gpt3_grid_path": "C:/GnssProcessor/data/static/gpt3/gpt3_5.grd"
+  },
+
+  "processing": {
+    "mode": "PPP-RTK",
+    "rinex_types": "CL",
+    "active_systems": [ "GPS", "Galileo" ],
+    //"active_systems": [ "GPS", "Galileo", "BeiDou" ],  // capture also has BeiDou (many C2I single-freq)
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.1,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": true,
+    "inhouse_bias_estimation": false,
+    "mw_frequency_mode": "all",
+    "mw_channel_mode": "all",
+    "eigen_threads": 10,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    // Covers the AsteRx-U codes: GPS C1C/C2L/C2W (W,C,L), GAL C1C/C5Q/C7Q (C,Q),
+    // BDS C2I (I).  Without this, signal_priorities is empty and every sat drops
+    // at selectObservationTypes.
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CQXBI",
+      "BeiDou": "IDPXQZ",
+      "GLONASS": "PCX"
+    }
+  },
+
+  "files": {
+    // Absolute so it resolves regardless of working directory (you run from the
+    // build tree).  Holds static/atx/igs20.atx, static/nc/EOT20_load.nc,
+    // static/gpt3_5.grd plus the date-first fixtures.
+    "internal_data_root": "C:/GnssProcessor/data"
+  },
+
+  // ---- Real-time I/O (the only block not present in the post-processing AR config) ----
+  "realtime": {
+    // Primary stream = rover observations.  Default below is FILE replay of the
+    // captured SBF (immediately runnable).  For the LIVE receiver, set
+    // input_type = "tcp" (AsteRx-U SBF on IPS1:28785).
+    "input_type":   "file",
+    "input_format": "sbf",
+    "input_path":   "C:/GnssProcessor/sbf_capture.sbf",
+
+    // Live AsteRx-U (S/N 3013924, rover-only → SBF, not RTCM): MeasEpoch 4027 +
+    // PVTGeodetic 4007 + raw nav, @1 Hz on IPS1 port 28785.  The a-priori is
+    // seeded automatically from PVTGeodetic.
+    "tcp_host":     "10.214.154.211",
+    "tcp_port":     28785,
+
+    "output_type":      "console",
+    "reconnect_delay_s": 5,
+
+    // SSR corrections stream (IGS-SSR 4076, SSRA00IGS0).  Enable this to turn the
+    // broadcast orbits/clocks into cm-grade and actually run PPP-RTK / AR.  Fill
+    // in your IGS-IP credentials; until then the engine is broadcast-only float.
+    "corrections": {
+      "enabled":          false,
+      "input_type":       "ntrip",
+      "ntrip_host":       "products.igs-ip.net",
+      "ntrip_port":       2101,
+      "ntrip_mountpoint": "SSRA00IGS0",
+      "ntrip_user":       "",
+      "ntrip_password":   "",
+      "reconnect_delay_s": 5,
+      "input_path":       "",
+      "tcp_host":         "",
+      "tcp_port":         28785
+    }
+  },
+
+  "estimation": {
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "estimate_sat_biases": true,
+    "enable_huber_r_inflation": false,
+    "enable_subcycle_slip_suppression": false,
+    "lock_signals_to_clock_ref": false,
+    "require_bia_for_signals": false,
+    "between_satellite_sd": {
+      "enabled": true,
+      "enable_glonass": true,
+      "pivot_min_elevation": 35.0
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      "active_systems": [ "GPS" ],
+      "wl_only": true,
+      "ratio_threshold": 3.0,
+      "ratio_upper_bound": 1e4,
+      "min_success_rate": 0.999,
+      "nl_max_per_pair_frac": 0.15,
+      "elevation_mask": 25.0,
+      "min_epochs": 1,
+      "max_position_sigma_m": 10.0,
+      "hold_variance": 0.001,
+      "wl_max_frac": 0.40
+    },
+    "residual_history": { "enabled": false }
+  },
+
+  "filter": {
+    "process_noise": {
+      // position_q = 1e2 is the AR config's KINEMATIC value.  The rooftop is
+      // STATIC — for a static run prefer position_q = 0.0 (as realtime_ppp_rtk.json
+      // uses).  Left at the AR-config value for parity; change if static.
+      "position_q": 1e2,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-9,
+      "ionosphere_q": 1e-3,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-12,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.25,
+      "ionosphere": 25.0,
+      "ambiguity": 1000.0,
+      "code_bias": 100.0,
+      "sat_bias": 100.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.500
+    },
+    "phase_elevation_power": 1.0,
+    "stochastic_model": "satellite_block",
+    "satellite_block": {
+      "apply_to_phase": true
+    }
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": true,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": true,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true,
+    "require_atx_coverage": false,
+    "require_atx_coverage_for_ar": false,
+    "restrict_ar_for_substituted_atx": true,
+    "loosen_amb_q_for_substituted_atx": true,
+    "ambiguity_q_substituted_atx": 1e-9,
+    "apply_phase_shifts": false,
+    "refine_emission_time": false,
+    "enable_higher_order_ionosphere": false
+  },
+
+  "data_download": {
+    "enabled": false,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",
+    "nc_path": "C:/GnssProcessorSupport/products/nc/EOT20_load.nc"
+  },
+
+  "logging": {
+
+    "enable_main_log": true,
+    "enable_rt_engine": true,
+    "enable_gnss_config": true,
+    "enable_kalman_filter": true,
+    "enable_state_manager": true,
+    "enable_ppp_model": true,
+    "enable_measurement_model": true,
+    "enable_mw_slip_detector": true,
+    "enable_if_slip_detector": false,
+    "enable_gf_slip_detector": false,
+    "enable_cycle_slip_manager": true,
+    "enable_ambiguity_resolver": false,
+    "enable_corrections": false,
+    "enable_state_initializer": true,
+    "enable_bssd_pivot_manager": true,
+    "enable_bssd_transform": true,
+    "enable_geometry": false,
+    "enable_troposphere": false,
+    "enable_ionosphere": false,
+    "enable_antenna": false,
+    "enable_stochastic_model": false,
+    "enable_rinex_parser": false,
+    "enable_product_parser": false,
+
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_ionosphere_trace": true,
+    "enable_sat_bias_trace": true,
+    "enable_sat_status_trace": true,
+    "enable_residual_trace": true,
+    "enable_wls_trace": false,
+    "enable_mw_slip_trace": true,
+    "enable_if_slip_trace": false,
+    "enable_gf_slip_trace": false,
+    "enable_windup_trace": false,
+    "enable_dop_trace": true,
+
+    "kalman_filter_concise_log": false,
+
+    "levels": {
+      "rt_engine": "info",
+      "ambiguity_resolver": "info",
+      "measurement_model": "info",
+      "bssd_transform": "info",
+      "mw_slip_detector": "info",
+      "cycle_slip_manager": "info",
+      "state_manager": "info",
+      "kalman_filter": "info",
+      "bssd_pivot_manager": "info",
+      "state_initializer": "warn",
+      "gnss_config": "warn",
+      "ppp_model": "info",
+      "corrections": "warn",
+      "geometry": "warn",
+      "troposphere": "warn",
+      "ionosphere": "warn",
+      "antenna": "warn",
+      "stochastic_model": "warn",
+      "rinex_parser": "warn",
+      "product_parser": "warn",
+      "ppp_utils": "warn"
+    }
+  }
+}

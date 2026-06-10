@@ -135,6 +135,65 @@ namespace GnssProcessor {
         UpdateResult update(EpochMeasurement& measurement);
 
         /**
+         * @brief Single iterated-EKF (Gauss–Newton) measurement update anchored
+         *        on an explicit, fixed prior.
+         *
+         * Unlike @ref update — which treats the current StateManager (x, P) as
+         * the prior and therefore cannot be reapplied to the same measurement
+         * information without the covariance contracting a second time — this
+         * performs one Gauss–Newton step against a FIXED prior
+         * (@p x_prior, @p P_prior):
+         *
+         *   - gain        K = P⁻·Hᵀ·(H·P⁻·Hᵀ + R)⁻¹              (from the prior)
+         *   - innovation  ν = (z − h(xᵢ)) − H·(x⁻ − xᵢ)          (offset-corrected)
+         *   - state       x⁺ = x⁻ + K·ν
+         *   - covariance  P⁺ = (I − K·H)·P⁻·(…)ᵀ + K·R·Kᵀ        (Joseph, once)
+         *
+         * where xᵢ is the current StateManager state — the point at which
+         * @p measurement was linearized (its @c innovations are z − h(xᵢ) and
+         * @c H is ∂h/∂x|xᵢ).  The −H·(x⁻ − xᵢ) term makes the step a proper
+         * Gauss–Newton iteration toward the MAP estimate (independent of the
+         * linearization point in the linear limit) rather than a naive
+         * re-update.  Iterating — recompute the model about x⁺, call again with
+         * the SAME (@p x_prior, @p P_prior) — converges to the IEKF fixed point;
+         * because every pass derives its covariance from P⁻, there is no
+         * accumulation/over-confidence.
+         *
+         * No outlier handling or measurement-rebuild requests: the caller must
+         * supply an already-cleaned, fixed measurement set (the one the primary
+         * @ref update converged on).  Performs no IMU nominal (attitude/bias)
+         * feedback — intended for the non-tightly-coupled path; the
+         * tightly-coupled case keeps the legacy second pass.
+         *
+         * @param[in,out] measurement Cleaned measurement set; @c residuals,
+         *        @c residuals_standardized and @c residuals_covariance are
+         *        filled (for the residual trace) on a committed update.
+         * @param x_prior Epoch-entry prior state x⁻ (post-predict, pre-update).
+         * @param P_prior Epoch-entry prior covariance P⁻.
+         * @return @c Applied on a committed update; @c Skipped on a degenerate
+         *         or non-finite solve (StateManager state left unchanged).
+         */
+        UpdateResult updateFromPrior(EpochMeasurement& measurement,
+                                     const Eigen::VectorXd& x_prior,
+                                     const Eigen::MatrixXd& P_prior);
+
+        /**
+         * @brief Pre-update prior (x⁻) read by the most recent Applied @ref
+         *        update, for use as an @ref updateFromPrior anchor.
+         *
+         * Captured only when geometry relinearization is enabled on the
+         * non-tightly-coupled path.  Because it is the very state the primary
+         * update operated on, it already reflects this epoch's ambiguity
+         * augmentation and outlier resets — so its dimension matches the
+         * post-update state the IEKF relinearizes.  Empty until the first such
+         * Applied update; callers must gate on @c have_applied.
+         */
+        const Eigen::VectorXd& getLastUpdatePriorX() const { return last_update_prior_x_; }
+
+        /** @brief Pre-update prior covariance (P⁻) paired with @ref getLastUpdatePriorX. */
+        const Eigen::MatrixXd& getLastUpdatePriorP() const { return last_update_prior_P_; }
+
+        /**
          * @brief Apply a linear pseudo-observation to the filter state.
          *
          * Performs a Joseph-form Kalman update of the StateManager-owned
@@ -295,6 +354,34 @@ namespace GnssProcessor {
             takeRequestedPivotHandoverExcludeSats();
 
         /**
+         * @brief Take ownership of the per-constellation sets of non-pivot
+         *        satellites whose ionosphere / sat-bias state must be
+         *        re-inflated after a CODE-detected pivot handover.
+         *
+         * In code-only uncombined PPP-RTK a coherent pivot-side code bias is
+         * absorbed (over the pre-detection epochs) into the weakly-observable
+         * per-satellite ionosphere states of the *coherent majority* of the
+         * firing SD-code group — not the pivot (its iono is frozen) and not the
+         * exclude-set deviators.  The pivot handover's @c T·P·Tᵀ re-reference
+         * is information-conserving and therefore cannot evict that absorbed
+         * offset, and the phase scrub path (@c was_disturbed re-seed +
+         * @c getLastResetSatellites → @c reinflateIonosphereVariance) is dead
+         * with no carrier phase.  These sat sets let @c PivotManager re-inflate
+         * the contaminated states *after* re-referencing so the post-handover
+         * clean frame can re-estimate them, breaking the converged-but-wrong
+         * lock that makes the outliers recur every epoch.
+         *
+         * Populated ONLY by the code-side pivot-disturbance detector (the phase
+         * detectors keep their own ambiguity-domain scrub).  Returning by value
+         * clears the internal map.  Drain in lockstep with
+         * @c takeRequestedPivotHandovers.
+         *
+         * @return Map of constellation name -> satellite IDs to re-inflate.
+         */
+        std::map<std::string, std::set<std::string>>
+            takeRequestedPivotHandoverIonoReinflateSats();
+
+        /**
          * @brief Mutable access to the post-fit residual history tracker.
          *
          * Exposed to the @c Application driver so external resets
@@ -343,6 +430,14 @@ namespace GnssProcessor {
         CycleSlipManager* cycle_slip_manager_ = nullptr;   //!< Optional access to MW data for outlier tiebreaking.
         Eigen::Matrix3d C_b_e_ = Eigen::Matrix3d::Identity(); //!< Body-to-ECEF rotation matrix (IMU attitude).
 
+        /// Pre-update prior (x, P) the most recent Applied update() read.
+        /// Stashed only when geometry relinearization is active on the
+        /// non-tightly-coupled path; anchors runGeometryRelinearization's IEKF
+        /// so the prior always matches the post-update state dimension.  See
+        /// getLastUpdatePriorX / updateFromPrior.
+        Eigen::VectorXd last_update_prior_x_;
+        Eigen::MatrixXd last_update_prior_P_;
+
         // -------------------------------------------------------------------
         // Concise-log state (kalman_filter logger gate). All only used when
         // logging.kalman_filter_concise_log = true; otherwise gate_ is null
@@ -368,6 +463,18 @@ namespace GnssProcessor {
         /// satellite instead of bouncing to another offset sat. Empty in
         /// steady state.
         std::map<std::string, std::set<std::string>> pivot_handover_exclude_sats_;
+
+        /// Per-constellation set of non-pivot satellites whose ionosphere /
+        /// sat-bias state absorbed a coherent pivot-side CODE bias and must be
+        /// re-inflated after the forced handover re-references the SD frame.
+        /// Populated ONLY by the code-side pivot-disturbance detector (the
+        /// coherent firing-group members, NOT the exclude-set deviators);
+        /// drained by @c takeRequestedPivotHandoverIonoReinflateSats in lockstep
+        /// with @c requested_pivot_handovers_ and forwarded to PivotManager.
+        /// The phase detectors do not use this — their bias sink is the
+        /// ambiguity, scrubbed by the @c was_disturbed re-seed path. Empty in
+        /// steady state and in any config carrying carrier phase.
+        std::map<std::string, std::set<std::string>> pivot_handover_reinflate_sats_;
 
         /// Pending Huber R-inflations queued by the post-fit residual
         /// detector for sub-cycle phase rows whose |sres_post| exceeds

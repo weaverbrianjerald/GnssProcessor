@@ -33,7 +33,7 @@
  * StateManager::setIonoProcessNoiseOverrides().
  *
  * This is a measurement-domain monitor: it owns per-arc GF history only,
- * never filter state.  The GF math is adapted from the (retired,
+ * never filter state.  The GF math is adapted from the (staged,
  * uncompiled) GfSlipDetector.
  */
 

@@ -105,12 +105,20 @@ namespace GnssProcessor {
          * @brief Get satellite clock correction in seconds.
          * @param satellite Satellite identifier string (e.g. "G01", "E11").
          * @param time Epoch at which the correction is requested.
+         * @param[out] broadcast_grade Optional. Set true when the returned clock
+         *        came from the broadcast polynomial with NO precise CLK sample
+         *        and NO SSR clock delta — i.e. it is only metre-level accurate.
+         *        Carrier phase is meaningless against such a clock (the ambiguity
+         *        cannot be separated from the product error), so callers use this
+         *        to fall back to code-only for that satellite. Always false when a
+         *        precise CLK product or a fresh IODE-matched SSR clock backs it.
          * @return Clock correction in seconds (bias + interpolation).
          *
          * This routine uses available CLK data to provide a best-effort clock
          * correction for the requested satellite and epoch.
          */
-        double getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time) const;
+        double getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time,
+            bool* broadcast_grade = nullptr) const;
 
         /**
          * @brief Interpolate clock values from clock samples.
@@ -183,15 +191,37 @@ namespace GnssProcessor {
          * @return LOS displacement in meters to apply to the geometric range.
          *
          * Implements the IERS 2010 solid Earth tide displacement model
-         * (Section 7.1.1, Steps 1+2) producing **conventional tide-free**
-         * coordinates. This is consistent with IGS products (SP3/CLK/ITRF),
-         * IERS 2010 Conventions, and RTKLIB. Step 2 includes long-period (m=0),
-         * diurnal (m=1), and semi-diurnal (m=2) corrections from Tables 7.3a/b,
-         * with the permanent tide handled by the 055.555 zero-frequency constituent.
+         * (Section 7.1.1) producing **conventional tide-free** coordinates,
+         * consistent with IGS products (SP3/CLK/ITRF). Internally a faithful
+         * port of the IERS dehanttideinel routine (Step 1 in-phase degree 2/3,
+         * Step 1 out-of-phase diurnal/semidiurnal + L1, Step 2 diurnal
+         * Table 7.3a and long-period Table 7.3b); the permanent tide is
+         * retained (not removed), matching the IGS/ITRF convention.
          */
         double computeSolidEarthTide(const Eigen::Vector3d& receiver_pos, const Eigen::Vector3d& sat_pos,
             const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& moon_pos,
             const GnssTime& time) const;
+
+        /**
+         * @brief IERS 2010 solid Earth tide station displacement (ECEF vector).
+         *
+         * Faithful port of the IERS Conventions dehanttideinel routine,
+         * returning the geocentric ECEF displacement (meters) of the station.
+         * Exposed as a static method so it can be validated directly against
+         * the official IERS dehanttideinel test vector (see SolidEarthTideTest)
+         * independently of the ephemeris and the line-of-sight projection.
+         *
+         * @param xSta Station ECEF position (meters).
+         * @param xSun Sun ECEF position (meters).
+         * @param xMon Moon ECEF position (meters).
+         * @param jc   Julian centuries from J2000 (TT≈UT at tide precision),
+         *             including the intra-day fraction.
+         * @param fhr  UT fractional hour of day (supplies the diurnal τ term).
+         * @return Station displacement vector in ECEF (meters).
+         */
+        static Eigen::Vector3d computeSolidEarthTideDisplacement(
+            const Eigen::Vector3d& xSta, const Eigen::Vector3d& xSun,
+            const Eigen::Vector3d& xMon, double jc, double fhr);
 
         /**
          * @brief Compute ocean tide correction (ECEF displacement).
@@ -358,41 +388,6 @@ namespace GnssProcessor {
         mutable std::unordered_map<std::string, double> windup_trace_epoch_;
 
         OceanTideModel ocean_tide_model_;  ///< Ocean tidal loading model
-
-        /**
-         * @brief Compute Delaunay fundamental arguments and GMST for solid Earth tide Step 2.
-         *
-         * Returns [l, l', F, D, Omega, GMST] in radians, using the IERS 2010
-         * polynomial expressions (same formulation as OceanTideModel).
-         *
-         * @param t_centuries Julian centuries of TT from J2000.0.
-         * @return Array of 6 fundamental arguments in radians.
-         */
-        static std::array<double, 6> computeFundamentalArguments(double t_centuries);
-
-        /**
-         * @brief Compute IERS 2010 Step 2 frequency-dependent solid Earth tide corrections.
-         *
-         * Evaluates the per-constituent displacement corrections from IERS 2010
-         * Tables 7.3a (diurnal) and 7.3b (semi-diurnal) in the geocentric
-         * spherical (radial, north, east) frame and returns the ECEF displacement vector.
-         *
-         * Geocentric latitude is derived internally from the unit vector @p u
-         * so that the latitude factors and local-frame basis vectors are
-         * consistent with the geocentric radial direction required by the
-         * IERS 2010 spherical harmonic formulas (Eq. 7.12).
-         *
-         * @param fund_args Delaunay arguments + GMST [l, l', F, D, Omega, GMST] (radians).
-         * @param lat Geodetic latitude (radians). Retained for API compatibility;
-         *            geocentric latitude is derived from @p u internally.
-         * @param lon Geodetic longitude (radians). Identical to geocentric longitude;
-         *            used in the tidal argument (m·?) for diurnal/semi-diurnal bands.
-         * @param u   Unit vector from geocenter to station (ECEF). Used to derive
-         *            geocentric latitude and as the radial basis vector.
-         * @return ECEF displacement vector (meters).
-         */
-        static Eigen::Vector3d computeStep2Corrections(const std::array<double, 6>& fund_args,
-            double lat, double lon, const Eigen::Vector3d& u);
 
     };
 

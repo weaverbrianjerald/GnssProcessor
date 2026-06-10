@@ -419,23 +419,24 @@ DecodeResult decodeLegacy(
 namespace {
 
 // Map IGS Message Number to (system descriptor, body type).
-// Returns false for reserved / unsupported IM values (NavIC IM 81-87,
-// VTEC IM 201, anything not in the standard 11-77 grid with valid
-// system/offset).
+// IGS-SSR encodes the constellation in the TENS digit and the body in the ONES
+// digit: GPS 21-27, GLONASS 41-47, Galileo 61-67, QZSS 81-87, BeiDou 101-107,
+// SBAS 121-127  (so im/10 = 2,4,6,8,10,12 respectively); ones digit 1=Orbit …
+// 7=URA.  Returns false for unsupported IM (NavIC 141-147, VTEC 201, etc.).
 bool classifyIgsIm(int im, const SystemDescriptor*& sys_out, LegacyBody& body_out) {
-    if (im < 11) return false;
+    if (im < 21) return false;
     const int sys_idx  = im / 10;
     const int body_off = im % 10;
     if (body_off < 1 || body_off > 7) return false;
 
     switch (sys_idx) {
-    case 1: sys_out = &kGps;     break;
-    case 2: sys_out = &kGlonass; break;
-    case 4: sys_out = &kGalileo; break;
-    case 5: sys_out = &kQzss;    break;
-    case 6: sys_out = &kBeidou;  break;
-    case 7: sys_out = &kSbas;    break;
-    default: return false;       // 3, 8 (NavIC), 9, 20 (VTEC), etc.
+    case 2:  sys_out = &kGps;     break;   // IM 21-27
+    case 4:  sys_out = &kGlonass; break;   // IM 41-47
+    case 6:  sys_out = &kGalileo; break;   // IM 61-67
+    case 8:  sys_out = &kQzss;    break;   // IM 81-87
+    case 10: sys_out = &kBeidou;  break;   // IM 101-107
+    case 12: sys_out = &kSbas;    break;   // IM 121-127
+    default: return false;                 // 14 = NavIC/IRNSS, 20 = VTEC (IM 201), etc.
     }
 
     // IGS-SSR offset within each per-system block:
@@ -480,7 +481,29 @@ DecodeResult decodeIgs4076(
     const SystemDescriptor* sys_ptr = nullptr;
     LegacyBody body = LegacyBody::Unknown;
     if (!classifyIgsIm(im, sys_ptr, body)) return result;
-    const SystemDescriptor& sys = *sys_ptr;
+
+    // IGS-SSR (RTCM 4076) uses a UNIFORM per-satellite layout for every
+    // constellation, which differs from the legacy per-system SSR widths
+    // transcribed into the SystemDescriptor table.  Per IGS-SSR Format v1.00
+    // (cross-checked against RTKLIB's subtype>0 override and cssrlib's
+    // msgtype==4076 path):
+    //   IDF011 GNSS Satellite ID = uint6   (6 bits for ALL; legacy GLO=5/QZS=4),
+    //   IDF012 GNSS IOD          = bit(8)   (8 bits for ALL; legacy GAL=10/BDS=10/
+    //                                        SBAS=9) and there is NO IODCRC field —
+    //                                        the 24-bit IODCRC is a legacy-RTCM-only
+    //                                        BDS/SBAS field, absent from 4076,
+    //   IDF003 SSR Epoch Time    = uint20 GPS-aligned TOW for ALL systems,
+    //                              including GLONASS (no 17-bit TOD path).
+    // Reusing the legacy widths here over-read the Galileo/BeiDou IOD by 2 bits,
+    // corrupting the IOD AND shifting every subsequent orbit/clock field, so the
+    // GAL/BDS SSR clock never IODE-matched and those constellations were stuck at
+    // broadcast grade.  Apply the 4076 widths on a LOCAL copy so the legacy path
+    // (decodeLegacy) keeps the per-system widths it still needs.
+    SystemDescriptor sys = *sys_ptr;
+    sys.sat_id_bits  = 6;
+    sys.iode_bits    = 8;
+    sys.epoch_bits   = 20;
+    sys.uses_glo_tod = false;
 
     const bool is_orbit_msg = (body == LegacyBody::Orbit ||
                                body == LegacyBody::Combined);

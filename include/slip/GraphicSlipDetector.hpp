@@ -40,6 +40,7 @@
 #include "common/PppTypes.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
+#include "slip/ISlipDetector.hpp"
 #include <cstddef>
 #include <deque>
 #include <filesystem>
@@ -71,7 +72,7 @@ namespace GnssProcessor {
      * A MAD-based adaptive threshold flags outliers as slips, and the slip
      * magnitude is estimated by rounding.
      */
-    class GraphicSlipDetector {
+    class GraphicSlipDetector : public ISlipDetector {
     public:
         /**
          * @brief Construct a new GraphicSlipDetector.
@@ -87,23 +88,42 @@ namespace GnssProcessor {
          */
         std::vector<GraphicSlipResult> detect(const std::vector<PppObservation>& observations);
 
+        // --- ISlipDetector contract -------------------------------------
+
+        /**
+         * @brief Detect slips for one epoch (ISlipDetector entry point).
+         *
+         * Wraps the native per-signal @c detect overload and projects each
+         * @c GraphicSlipResult onto a @c SlipGranularity::PerSignal event.
+         *
+         * @param context Epoch inputs (only @c observations is consulted).
+         * @return Unified per-signal slip events.
+         */
+        std::vector<SlipEvent> detect(const SlipEpochContext& context) override;
+
+        /// @copydoc ISlipDetector::kind
+        SlipDetectorKind kind() const override { return SlipDetectorKind::Graphic; }
+
+        /// @copydoc ISlipDetector::name
+        std::string name() const override { return "GRAPHIC"; }
+
         /**
          * @brief Clear GRAPHIC arc history for a specific satellite.
          * @param satellite Satellite identifier (e.g. "G01").
          */
-        void resetSatellite(const std::string& satellite);
+        void resetSatellite(const std::string& satellite) override;
 
         /**
          * @brief Enable CSV tracing for GRAPHIC diagnostics.
          * @param log_dir Directory where the trace file will be created.
          * @return true if the file was successfully opened.
          */
-        bool enableTracing(const std::filesystem::path& log_dir);
+        bool enableTracing(const std::filesystem::path& log_dir) override;
 
         /**
          * @brief Check if tracing is currently enabled.
          */
-        bool isTracingEnabled() const { return trace_file_.is_open(); }
+        bool isTracingEnabled() const override { return trace_file_.is_open(); }
 
     private:
         const GnssConfig& config_;

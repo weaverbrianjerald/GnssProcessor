@@ -23,6 +23,7 @@
 #include "common/PppTypes.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "products/ProductCache.hpp"
+#include "products/SsrCorrectionStore.hpp"
 #include "rinex/RinexParser.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/SignalBand.hpp"
@@ -82,6 +83,9 @@ namespace GnssProcessor {
           bssd_transform_(config, state_manager, pivot_manager_, log_manager),
           dd_pivot_manager_(config, log_manager),
           ppp_utils_(log_manager) {
+        // Select the measurement-differencing strategy once from config.
+        differencing_ = MeasurementBuilderFactory::create(
+            differencingModeFor(config_), log_manager_);
         log_manager_.getLogger("measurement_model")->info("MeasurementModel initialized with {} signal priority sets, mode={}",
             config_.getSignalPriorities().size(), modeLabel(config_));
     }
@@ -534,9 +538,10 @@ namespace GnssProcessor {
         if (!nlwl) {
             int expected_bands = 0;
             switch (config_.getFrequencyMode()) {
-                case FrequencyMode::Dual:   expected_bands = 2; break;
-                case FrequencyMode::Triple: expected_bands = 3; break;
-                case FrequencyMode::All:    expected_bands = 0; break;  // 0 = no cap
+                case FrequencyMode::Dual:        expected_bands = 2; break;
+                case FrequencyMode::Triple:      expected_bands = 3; break;
+                case FrequencyMode::All:         expected_bands = 0; break;  // 0 = no cap
+                case FrequencyMode::Independent: expected_bands = 0; break;  // per-sat variable → no cap
             }
             if (expected_bands > 0) {
                 std::map<std::string, std::set<char>> per_sat_bands;
@@ -685,7 +690,67 @@ namespace GnssProcessor {
                                   static_cast<size_t>(x_now.size()),
                                   jac_unused, predicted))
                 return 0.0;
-            return observed - predicted;
+            double seed = observed - predicted;
+
+            // BSSD frame consistency.  The raw seed above zeroes this
+            // satellite's UNDIFFERENCED innovation.  Because BSSD allocates no
+            // receiver-clock state (it cancels in the SD measurement), that
+            // innovation absorbs the FULL receiver clock at the current epoch.
+            // A satellite that first appears later than the incumbents then
+            // bakes a different clock epoch into its bias than the pivot it is
+            // differenced against; the gap (= receiver-clock drift between the
+            // two seeding epochs) is a permanent SD offset that pins the row as
+            // an outlier and, once the per-row handler excludes it, never gets
+            // a measurement update to recover.  Re-reference the seed to the
+            // pivot's CURRENT undifferenced innovation so the new bias lands in
+            // the same frame as the established states (seed -> clock(t0)+dcb,
+            // SD residual ~0).  This is the code-bias analogue of pivot-relative
+            // ambiguity seeding (N_sd = N_abs(i) - N_abs(pivot)).  Applied only
+            // when the pivot already carries a same-band bias state — that is
+            // the signal that a frame exists to reference; otherwise the raw
+            // (frame-defining) seed is correct.
+            if (config_.enableBetweenSatelliteSd()) {
+                const std::string cons = PppUtils::getSystemString(obs.satellite);
+                const auto& pivots = pivot_manager_.getPivotSatellites();
+                auto piv_it = pivots.find(cons);
+                if (piv_it != pivots.end() && piv_it->second != obs.satellite) {
+                    const std::string& pivot_sat = piv_it->second;
+                    const std::string band =
+                        ref_type.size() >= 2 ? ref_type.substr(0, 2) : ref_type;
+                    const PppObservation* piv_obs = nullptr;
+                    for (const auto& o : observations) {
+                        if (o.satellite == pivot_sat) { piv_obs = &o; break; }
+                    }
+                    if (piv_obs) {
+                        // Band-match the pivot's code signal (it may track a
+                        // different attribute on the same band, e.g. C1X vs C1C)
+                        // and require it to already have a bias state.
+                        std::string piv_sig;
+                        for (const auto& [s, v] : piv_obs->observed) {
+                            if (s.size() >= 2 && s[0] == 'C'
+                                && s.find('_') == std::string::npos
+                                && s.substr(0, 2) == band
+                                && piv_obs->modeled.count(s)
+                                && state_manager_.getSatBiasIndex(pivot_sat + "|" + s) >= 0) {
+                                piv_sig = s;
+                                break;
+                            }
+                        }
+                        if (!piv_sig.empty()) {
+                            Eigen::VectorXd jac_p;
+                            double pred_p = 0.0;
+                            if (buildJacobianRow(*piv_obs, piv_sig, x_now,
+                                                 static_cast<size_t>(x_now.size()),
+                                                 jac_p, pred_p)) {
+                                const double innov_pivot =
+                                    piv_obs->observed.at(piv_sig) - pred_p;
+                                seed -= innov_pivot;
+                            }
+                        }
+                    }
+                }
+            }
+            return seed;
         };
 
         // Band-gate helper: when BSSD is active, only signals whose band(s)
@@ -1022,6 +1087,30 @@ namespace GnssProcessor {
             }
         }
 
+        // SSR satellite biases (PPP-RTK): a KNOWN correction added to the
+        // predicted observable (no state, no Jacobian).  getCodeBias /
+        // getPhaseBias return the per-(sat, signal) value in metres; combined
+        // iono-free keys like "C1W_C5X" return 0/nullopt and are skipped — SSR
+        // biases are per raw signal.  No-op in post-processing (empty store).
+        //
+        // SIGN CONVENTION: the decoded bias is the satellite signal bias
+        // PRESENT in the observation, so it is added to the clean model.  This
+        // is the one convention that can only be confirmed empirically against
+        // the provider's stream — if the float ambiguity fractions cluster near
+        // 0.5 instead of 0, flip the corresponding sign constant and rebuild.
+        double ssr_bias_term = 0.0;
+        {
+            constexpr double kSsrCodeBiasSign  = +1.0;
+            constexpr double kSsrPhaseBiasSign = +1.0;
+            auto& ssr_store = SsrCorrectionStore::getInstance();
+            if (is_phase) {
+                if (auto pb = ssr_store.getPhaseBias(obs.satellite, ref_type))
+                    ssr_bias_term = kSsrPhaseBiasSign * pb->bias_m;
+            } else {
+                ssr_bias_term = kSsrCodeBiasSign * ssr_store.getCodeBias(obs.satellite, ref_type);
+            }
+        }
+
         // Assemble predicted observable
         const double modeled = obs.modeled.at(ref_type);
         const double zwd = x(state_manager_.getTropoIndex());
@@ -1032,7 +1121,7 @@ namespace GnssProcessor {
 
         predicted = modeled + range_correction + rx_clk + phase_clk_value
             + tropo_wet_term + tropo_grad_term + time_offset_value
-            + iono_term + code_bias_term + sat_bias_term;
+            + iono_term + code_bias_term + sat_bias_term + ssr_bias_term;
 
         // Ambiguity (phase only)
         if (is_phase) {
@@ -1117,57 +1206,16 @@ namespace GnssProcessor {
             state_initializer_.markPhaseClockInitialized();
         }
 
-        // --- BSSD pivot handover ---
-        // First pass of each epoch: run handover normally (forced and
-        // disturbance-detection paths both active).
-        //
-        // Rebuild passes within the same epoch: skipped by default to
-        // keep the pivot fixed so SD ambiguities stay consistent — an
-        // in-rebuild ambiguity reset can otherwise look like pivot
-        // disturbance and cascade into a spurious handover.
-        //
-        // Exception: when a forced-handover request is pending from
-        // the KF post-fit residual detector, re-enter the handover in
-        // @c forced_only mode so the same epoch's measurement rebuild
-        // runs against the NEW pivot.  Without this re-entry the
-        // detected slip stays smeared across the epoch's update and
-        // only gets re-referenced one epoch late, which is what
-        // produces the kinematic position spike at the detection
-        // epoch.  forced_only mode suppresses the implicit disturbance
-        // check so cascading is impossible — only the constellations
-        // the KF explicitly named get handed over.
-        if (config_.enableBetweenSatelliteSd()) {
-            const bool first_pass = !(update.time == last_pivot_epoch_);
-            const bool has_forced = pivot_manager_.hasPendingForcedHandover();
-            if (first_pass || has_forced) {
-                const bool forced_only = !first_pass && has_forced;
-                handleBssdPivotHandover(observations, epoch_prefix, forced_only);
-                last_pivot_epoch_ = update.time;
-            }
-        }
-
-        // --- Build BSSD pivot signal coverage map ---
-        // When BSSD is active, only measurements on signals tracked by the
-        // pivot satellite may enter the update — BssdTransform groups SD
-        // pairs per full signal type, so a non-pivot's L1C with no L1C row
-        // on the pivot would become an undifferenced singleton.  Built
-        // before ensureRequiredStates so that ambiguity states for
-        // pivot-uncovered signals are not created or retained.
+        // --- Differencing pre-pass: pivot handover + signal-coverage map ---
+        // Delegated to the differencing strategy's preparePivots hook (no-op
+        // for undifferenced PPP; BssdMeasurementBuilder runs the pivot handover
+        // and builds the pivot signal-coverage map).  Invoked after the
+        // bssd_pivot_signals_ reset and before ensureRequiredStates so that
+        // ambiguity states for pivot-uncovered signals are never created.  The
+        // handover's first-pass-vs-rebuild and forced-only semantics now live
+        // in BssdMeasurementBuilder::preparePivots.
         bssd_pivot_signals_.clear();
-        if (config_.enableBetweenSatelliteSd()) {
-            const auto& pivot_sats = pivot_manager_.getPivotSatellites();
-            for (const auto& obs : observations) {
-                const std::string cons = PppUtils::getSystemString(obs.satellite);
-                auto piv_it = pivot_sats.find(cons);
-                if (piv_it == pivot_sats.end() || piv_it->second != obs.satellite)
-                    continue;
-                auto& sigs = bssd_pivot_signals_[cons];
-                for (const auto& [sig, val] : obs.observed) {
-                    if (sig.size() >= 2)
-                        sigs.insert(sig);
-                }
-            }
-        }
+        differencing_->preparePivots(*this, observations, epoch_prefix, update.time);
 
         // --- State pre-pass ---
         ensureRequiredStates(observations, epoch_prefix);
@@ -1178,11 +1226,8 @@ namespace GnssProcessor {
             state_initializer_.markCodeBiasInitialized();
         }
 
-        // --- Freeze pivot covariances ---
-        if (config_.enableBetweenSatelliteSd()) {
-            freezePivotAmbiguityCovariance();
-            freezePivotIonoAndBiasCovariance();
-        }
+        // --- Freeze pivot covariances (differencing strategy) ---
+        differencing_->freezePivotCovariances(*this);
 
         // --- Validate state vector ---
         const Eigen::VectorXd x = state_manager_.getStateVector();
@@ -1321,10 +1366,8 @@ namespace GnssProcessor {
         log_manager_.getLogger("measurement_model")->info("{}Computed measurement update: {} valid innovations, H ({}x{}), mode={}",
             epoch_prefix, row, update.H.rows(), update.H.cols(), modeLabel(config_));
 
-        // --- BSSD S-transformation ---
-        if (config_.enableBetweenSatelliteSd()) {
-            bssd_transform_.apply(update, epoch_prefix);
-        }
+        // --- Differencing S-transformation (strategy) ---
+        differencing_->applyDifferencing(*this, update, epoch_prefix);
 
         return update;
     }
@@ -1478,6 +1521,18 @@ namespace GnssProcessor {
     } // anonymous namespace
 
     EpochMeasurement MeasurementModel::computeMeasurementUpdate(
+        const std::vector<PppObservation>& rov_modeled,
+        const std::vector<PppObservation>& ref_modeled,
+        const Eigen::VectorXd& current_state,
+        const std::set<std::string>& excluded_measurements) {
+        // Baseline DD is dispatched through the differencing strategy so the
+        // build path is uniform with PPP / PPP-RTK; DdMeasurementBuilder calls
+        // back into buildDdMeasurement (below) to assemble the rows.
+        return differencing_->buildDoubleDifference(
+            *this, rov_modeled, ref_modeled, current_state, excluded_measurements);
+    }
+
+    EpochMeasurement MeasurementModel::buildDdMeasurement(
         const std::vector<PppObservation>& rov_modeled,
         const std::vector<PppObservation>& ref_modeled,
         const Eigen::VectorXd& current_state,

@@ -26,12 +26,18 @@
 #include <gtest/gtest.h>
 
 #include "atmosphere/Gpt3.hpp"
+#include "atmosphere/HigherOrderIonosphere.hpp"
+#include "atmosphere/Troposphere.hpp"
 #include "atmosphere/Vmf3.hpp"
 #include "common/Constants.hpp"
+#include "config/GnssConfig.hpp"
+#include "corrections/GnssCorrections.hpp"
 #include "logging/LogManager.hpp"
 #include "math/Coordinates.hpp"
 #include "math/Interpolate.hpp"
 #include "math/TimeUtils.hpp"
+#include "model/Antenna.hpp"
+#include "products/ProductParser.hpp"
 
 #include <Eigen/Dense>
 #include <algorithm>
@@ -805,6 +811,255 @@ TEST(OrbitInterpTest, EarthRotationPreCorrectionGivesCorrectECEFState) {
     //     downstream conversion formula.
     const double err_vel = (vel_interp - vel_truth).norm();
     EXPECT_LT(err_vel, 1e-3) << "pre-rotated vel err: " << err_vel << " m/s";
+}
+
+// ============================================================================
+// Solid Earth tide (IERS 2010) — official dehanttideinel test vector
+// ============================================================================
+//
+// GnssCorrections::computeSolidEarthTideDisplacement is a faithful port of the
+// IERS Conventions dehanttideinel routine (Step 1 in-phase degree 2/3, Step 1
+// out-of-phase diurnal/semidiurnal + L1, Step 2 diurnal Table 7.3a and long-
+// period Table 7.3b).  It is pinned here against the OFFICIAL published test
+// vector from the IERS dehanttideinel.f header — a genuine external oracle,
+// not a re-derivation of our own tables.  (The prior test parsed the Step-2
+// table out of the C++ source and so was structurally blind to table-value
+// errors; a transcription bug that zeroed K1 and inflated P1 — a ~1 cm diurnal
+// radial error — slipped past it.  This vector test catches that class of bug:
+// the displacement is sensitive to every band, including the sub-mm Step-1
+// out-of-phase terms, at the 1e-4 m tolerance below.)
+//
+// Inputs and expected output are verbatim from the IERS reference:
+//   XSTA = (4075578.385, 931852.890, 4801570.154) m            (φ≈49°)
+//   XSUN = (137859926952.015, 54228127881.4350, 23509422341.6896) m
+//   XMON = (-179996231.920342, -312468450.131567, -169288918.592160) m
+//   2009-04-13 00:00 UT  →  T = (MJD 54934 − 51544.5)/36525,  FHR = 0
+//   DXTIDE = (0.07700420357, 0.06304056322, 0.05516568153) m
+TEST(SolidEarthTideTest, MatchesIersOfficialVector) {
+    const Eigen::Vector3d xsta(4075578.385, 931852.890, 4801570.154);
+    const Eigen::Vector3d xsun(137859926952.015, 54228127881.4350, 23509422341.6896);
+    const Eigen::Vector3d xmon(-179996231.920342, -312468450.131567, -169288918.592160);
+    const double jc  = (54934.0 - 51544.5) / 36525.0;  // 2009-04-13 0h UT
+    const double fhr = 0.0;
+
+    const Eigen::Vector3d dx =
+        GnssCorrections::computeSolidEarthTideDisplacement(xsta, xsun, xmon, jc, fhr);
+
+    const Eigen::Vector3d expected(0.07700420357108126,
+                                   0.06304056321824968,
+                                   0.05516568152597247);
+    // The port reproduces the official vector to ~6e-5 m — within
+    // dehanttideinel's own ~0.1 mm accuracy and ~200x below the ~12 mm
+    // corruption it replaces. The residual is a constant/rounding-lineage
+    // difference vs the reference Fortran, not a band omission (each band,
+    // incl. the sub-mm Step-1 out-of-phase terms, is exercised here).
+    EXPECT_NEAR(dx.x(), expected.x(), 1e-4) << "dx, got " << dx.x();
+    EXPECT_NEAR(dx.y(), expected.y(), 1e-4) << "dy, got " << dx.y();
+    EXPECT_NEAR(dx.z(), expected.z(), 1e-4) << "dz, got " << dx.z();
+}
+
+// ============================================================================
+// Niell Mapping Function (default "GMF"/NMF tropo path) — convention lock
+// ============================================================================
+//
+// Troposphere::getTroposphereMapping in its default (non-VMF3) mode is the
+// Niell Mapping Function.  It is pinned against an independent Python port
+// (scripts/nmf_reference.py) that mirrors cssrlib tropmapfNiell — itself a
+// port of RTKLIB tropmapf, and matching POINT's NMF table.
+//
+// This locks the two May-2026 fixes:
+//   1. the hydrostatic seasonal amplitude arrays carry a leading 0.0 at 15°
+//      (the prior code dropped it, shifting every amplitude one bin), and
+//   2. the seasonal combination is avg − amp·cos (the prior code used +).
+// Either regression shifts the low-elevation hydrostatic mapping by ~1e-2,
+// far above this test's 1e-6 tolerance.
+TEST(NiellMappingTest, MatchesCanonicalReference) {
+    LogManager log_mgr;          // bare — see SolidEarthTideTest note
+    GnssConfig config;           // default → Gmf/NMF mapping, no GPT3 grid
+    Troposphere tropo(config, log_mgr);
+
+    // doy 129.25 → 2024-05-08 06:00 GPS ; doy 210.0 → 2024-07-28 00:00 GPS.
+    const GnssTime t_129{ 2313, 280800.0 };
+    const GnssTime t_210{ 2325, 0.0 };
+
+    struct Case {
+        const char* label;
+        double lat_deg, lon_deg, h_m, el_deg, mfd, mfw;
+        const GnssTime* time;
+    };
+    const std::vector<Case> cases = {
+        { "mid45_doy129_el10",   45.0, -75.0, 200.0, 10.0, 5.5517428493167635, 5.657127344716983,  &t_129 },
+        { "high70_doy129_el15",  70.0,  10.0, 100.0, 15.0, 3.8018203160938526, 3.8318732264095114, &t_129 },
+        { "mid45_doy210_el5",    45.0, -75.0,   0.0,  5.0, 10.105663915673498, 10.750884210392691, &t_210 },
+        { "south40_doy210_el20",-40.0, 150.0,  50.0, 20.0, 2.897534032127845,  2.9112923615249278, &t_210 },
+        { "trop15_doy210_el8",   15.0, 100.0,   0.0,  8.0, 6.7889522601127394, 6.9911693990787045, &t_210 },
+    };
+
+    constexpr double DEG2RAD = Constants::PI / 180.0;
+    for (const auto& c : cases) {
+        const Eigen::Vector3d rx =
+            Coordinates::llhToEcef(c.lat_deg * DEG2RAD, c.lon_deg * DEG2RAD, c.h_m);
+        double mf_d = 0.0, mf_w = 0.0;
+        tropo.getTroposphereMapping(c.el_deg, rx, *c.time, mf_d, mf_w);
+
+        EXPECT_NEAR(mf_d, c.mfd, 1e-6) << "case " << c.label << " (mf_d)";
+        EXPECT_NEAR(mf_w, c.mfw, 1e-6) << "case " << c.label << " (mf_w)";
+    }
+}
+
+// ============================================================================
+// Antenna PCV interpolation — bilinear, NOAZI, and the last-ring edge
+// ============================================================================
+//
+// Antenna::interpolatePcv is a pure ANTEX PCV grid interpolator.  These cases
+// pin the bilinear math, the NOAZI (azimuth-independent) path, the azimuth
+// wrap, and — the May-2026 fix — the last-zenith-ring boundary, which
+// previously dereferenced pcv_table[zen_idx + 1] out of bounds (the bounds
+// check was placed AFTER the access).  A query at zenith == the table's
+// largest ring must hold the value flat, not read past the table.
+//
+// Synthetic 4×5 grid (zenith rings 0/30/60/90, azimuth cols 0/90/180/270/360):
+// value = 10·row + col, so every corner is identifiable by inspection.
+TEST(AntennaPcvTest, BilinearNoaziAndLastRingClamp) {
+    const std::vector<std::vector<double>> grid = {
+        {  0,  1,  2,  3,  4 },   // zenith 0°
+        { 10, 11, 12, 13, 14 },   // zenith 30°
+        { 20, 21, 22, 23, 24 },   // zenith 60°
+        { 30, 31, 32, 33, 34 },   // zenith 90°
+    };
+    constexpr double dzen = 30.0, dazi = 90.0;
+
+    // (a) Interior bilinear at zen=15, az=45 (frac 0.5/0.5 in both):
+    //     mean of corners 0,1,10,11 = 5.5.
+    EXPECT_NEAR(Antenna::interpolatePcv(grid, 15.0, 45.0, dazi, dzen), 5.5, 1e-12);
+
+    // (b) Last-ring edge (the fix): zen=90 sits exactly on the last ring.
+    //     zen_frac=0, so the result is the last-ring value at az=45:
+    //     (30 + 31)/2 = 30.5.  Pre-fix this read pcv_table[4] out of bounds.
+    EXPECT_NEAR(Antenna::interpolatePcv(grid, 90.0, 45.0, dazi, dzen), 30.5, 1e-12);
+
+    // (c) Beyond the last ring (zen=120) clamps to the last ring — same 30.5,
+    //     and again no out-of-bounds access.
+    EXPECT_NEAR(Antenna::interpolatePcv(grid, 120.0, 45.0, dazi, dzen), 30.5, 1e-12);
+
+    // (d) Azimuth wrap: az=360 → az_idx=4, az_next=(4+1)%5=0, az_frac=0 →
+    //     returns column 4 of row 0 = 4.0 (and exercises the %cols wrap path
+    //     without going out of bounds).
+    EXPECT_NEAR(Antenna::interpolatePcv(grid, 0.0, 360.0, dazi, dzen), 4.0, 1e-12);
+
+    // (e) NOAZI (single column) path with its own last-ring clamp.
+    const std::vector<std::vector<double>> noazi = { {0}, {10}, {20}, {30} };
+    EXPECT_NEAR(Antenna::interpolatePcv(noazi, 15.0, 0.0, dazi, dzen),  5.0, 1e-12); // mid 0→30
+    EXPECT_NEAR(Antenna::interpolatePcv(noazi, 90.0, 0.0, dazi, dzen), 30.0, 1e-12); // last ring
+    EXPECT_NEAR(Antenna::interpolatePcv(noazi, 120.0, 0.0, dazi, dzen), 30.0, 1e-12); // clamp
+}
+
+// Regression: std::from_chars' float overload accepts '-' but rejects a leading
+// '+'.  Some IGS calibration labs (Geo++ robot files — e.g. the LEIAR25 NONE /
+// LEIT type-means in igs20.atx) prefix EVERY PCV value with '+', so the parser's
+// from_chars-based PCV hot-loop stopped at the first value and stored an EMPTY
+// PCV grid.  That silently zeroed receiver PCV and, under require_atx_coverage,
+// dropped all of that antenna's signals (e.g. "Skipping C2W … no strict ATX
+// coverage").  This ATX uses '+'-signed NOAZI + azimuth PCV; the grid must parse.
+TEST(AntennaPcvTest, AtxPlusSignedPcvGridParses) {
+    auto col60 = [](std::string body, const std::string& tag) {
+        if (body.size() < 60) body.resize(60, ' ');
+        return body + tag + "\n";
+    };
+    std::string atx;
+    atx += col60("",                               "START OF ANTENNA");
+    atx += col60("TESTANT         NONE",            "TYPE / SERIAL NO");
+    atx += col60("    90.0",                        "DAZI");
+    atx += col60("     0.0  10.0   5.0",            "ZEN1 / ZEN2 / DZEN");
+    atx += col60("     1",                          "# OF FREQUENCIES");
+    atx += col60("   G01",                          "START OF FREQUENCY");
+    atx += col60("     +1.41     +1.00   +155.34",  "NORTH / EAST / UP");
+    atx += "   NOAZI   +0.00   +0.50   +1.00\n";
+    atx += "     0.0   +0.00   +0.50   +1.00\n";   // azimuth rows (DAZI 90°): 0,90,180,270,360
+    atx += "    90.0   +0.10   +0.60   +1.10\n";
+    atx += "   180.0   +0.20   +0.70   +1.20\n";
+    atx += "   270.0   +0.30   +0.80   +1.30\n";
+    atx += "   360.0   +0.00   +0.50   +1.00\n";
+    atx += col60("   G01",                          "END OF FREQUENCY");
+    atx += col60("",                                "END OF ANTENNA");
+
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / "gnss_test_plus_signed.atx";
+    { std::ofstream o(tmp); o << atx; }
+
+    GnssConfig    config;
+    LogManager    lm;
+    ProductParser pp(config, lm);
+    std::vector<AntennaData> ants;
+    ASSERT_TRUE(pp.parseAtx(tmp, ants));
+    fs::remove(tmp);
+
+    const AntennaData* e = nullptr;
+    for (const auto& a : ants) if (a.type == "TESTANT_NONE") { e = &a; break; }
+    ASSERT_NE(e, nullptr) << "receiver entry not parsed";
+
+    // PCO (+-signed) parses via parseDouble — always worked.
+    ASSERT_EQ(e->pco.count("G01"), 1u);
+    EXPECT_NEAR(e->pco.at("G01").z(), 155.34, 1e-9);
+
+    // PCV grid must be NON-EMPTY (the bug) — 3 zenith (0,5,10) × 5 azimuth.
+    ASSERT_EQ(e->pcv.count("G01"), 1u);
+    const auto& grid = e->pcv.at("G01");
+    ASSERT_FALSE(grid.empty()) << "PCV grid empty — '+'-signed values failed to parse";
+    ASSERT_EQ(grid.size(), 3u);
+    ASSERT_EQ(grid.front().size(), 5u);
+    // grid[zen][az]: zenith 10° (idx 2), azimuth 90° (idx 1) row value = +1.10.
+    EXPECT_NEAR(grid[2][1], 1.10, 1e-9);
+}
+
+// ============================================================================
+// Higher-order ionosphere (I₂ + I₃) — coefficient + convention lock
+// ============================================================================
+//
+// HigherOrderIonosphere::slantHigherOrderComponents is pinned against an
+// independent Python oracle (scripts/higher_order_iono_reference.py) that
+// derives the coefficients from first principles and the POINT reference
+// (higher_order_iono/Class_Iono.cpp).  The dipole B-field constants are shared
+// with the engine (MagneticField, audited clean); the I₂/I₃ coefficients are
+// derived independently, so this locks the two May-2026 fixes:
+//
+//   1. I₂ (group/code) coefficient is 7527·c, NOT 7527·c/2.  The /2 form is
+//      the *phase* coefficient — using it for code made both code and phase
+//      I₂ a factor of two too small.  This case's I₂ would halve on regression
+//      (~4e-3 m at L1), thousands× this 1e-9 m tolerance.
+//   2. I₃ (group/code) scales with ∫N_e²dl = η·N_max·STEC, NOT η·STEC².  The
+//      old STEC² form was ~2.3e5× too large (hundreds of metres, not ~mm).
+//
+// Internal consistency the goldens also encode: phase = −½·I₂code and
+// −⅓·I₃code; L2/L1 ratios are (f₁/f₂)³ for I₂ and (f₁/f₂)⁴ for I₃.
+TEST(HigherOrderIonosphereTest, MatchesCanonicalReference) {
+    const HigherOrderIonosphere hoi;  // stateless
+
+    // Same fixed geometry as the Python oracle (explicit ECEF literals so the
+    // test does not depend on the WGS84 conversion matching Python's).
+    const Eigen::Vector3d rx(4.6e6, 0.8e6, 4.3e6);
+    const Eigen::Vector3d sat(1.5e7, 1.0e7, 2.0e7);
+    const double ipp_lat = 0.70;                       // rad
+    const double ipp_lon = 0.18;                       // rad
+    const double ipp_radius = (6371.0 + 450.0) * 1.0e3;  // m
+    const double f_l1 = Constants::GPS_L1_FREQ;
+    const double f_l2 = Constants::GPS_L2_FREQ;
+
+    struct Case { const char* band; char meas; double freq; double stec; double i2; double i3; };
+    const std::vector<Case> cases = {
+        { "L1", 'C', f_l1,  50.0, -0.007714137670442714,  0.000288285519644309   },
+        { "L1", 'L', f_l1,  50.0,  0.003857068835221357, -9.609517321476967e-05  },
+        { "L2", 'C', f_l2,  50.0, -0.016304437097686218,  0.0007819531397965047  },
+        { "L1", 'C', f_l1, 120.0, -0.018513930409062514,  0.00166052459315122    },
+    };
+
+    for (const auto& c : cases) {
+        const auto comp = hoi.slantHigherOrderComponents(
+            rx, sat, ipp_lat, ipp_lon, ipp_radius, c.stec, c.freq, c.meas);
+        ASSERT_TRUE(comp.valid) << "case " << c.band << "/" << c.meas;
+        EXPECT_NEAR(comp.i2_m, c.i2, 1e-9) << "case " << c.band << "/" << c.meas << " (I2)";
+        EXPECT_NEAR(comp.i3_m, c.i3, 1e-9) << "case " << c.band << "/" << c.meas << " (I3)";
+    }
 }
 
 }  // namespace

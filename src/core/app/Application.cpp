@@ -26,6 +26,7 @@
  */
 
 #include "app/Application.hpp"
+#include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "math/Coordinates.hpp"
@@ -629,12 +630,18 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     reset_satellites.clear();
     was_complete_reset = false;
 
-    // Snapshot the pre-update position so runGeometryRelinearization can
-    // gate its second pass on |Δpos|.  Captured before any KF update so
-    // outlier-rebuild loops inside this function don't mask the true epoch
-    // displacement.
-    relinearize_pre_update_pos_ =
-        state_manager_->getStateVector().head<3>();
+    // Snapshot the pre-update position for runGeometryRelinearization's |Δpos|
+    // gate.  Captured before any KF update so the outlier-rebuild loop below
+    // doesn't mask the true epoch displacement.  The IEKF's full-state anchor
+    // (x⁻, P⁻) is NOT captured here — it comes from the prior the primary
+    // update() stashes (KalmanFilter::getLastUpdatePriorX/P), which is
+    // dimension-matched to the post-augmentation state.
+    relinearize_pre_update_pos_ = state_manager_->getStateVector().head<3>();
+    // When the proper IEKF relinearization is active (non-tightly-coupled),
+    // suppress the in-loop linear relinearization below so all relinearization
+    // routes through the prior-anchored IEKF in runGeometryRelinearization.
+    const bool use_iekf_relinear =
+        config_.relinearizeGeometry() && !config_.tightlyCoupledImu();
     // Choose a relinearization threshold based on whether phase measurements are present.
     auto has_phase = [&modeled_obs]() {
         for (const auto& obs : modeled_obs) {
@@ -644,14 +651,22 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
         }
         return false;
     };
-    const double kPosRelinearThreshM = has_phase() ? 100.0 : 1000.0;
+    // When the proper IEKF relinearization is active, suppress the in-loop
+    // linear relinearization (the pos_jump gate below) entirely: all
+    // relinearization is then handled by runGeometryRelinearization — anchored
+    // on the prior, single covariance commit.  An in-loop pass here would only
+    // double-update a posterior the IEKF subsequently discards.  When the IEKF
+    // path is off (feature disabled, or tightly-coupled IMU using the legacy
+    // naive pass), keep the original thresholds.
+    const double kPosRelinearThreshM =
+        use_iekf_relinear ? std::numeric_limits<double>::infinity()
+                          : (has_phase() ? 100.0 : 1000.0);
 
-    // The maximum number of passes must accommodate one rebuild per
-    // outlier/ambiguity-reset plus a few geometry-relinearization passes.
-    // For PPP-RTK the number of individual ambiguity states can be large
-    // (satellites × frequencies), so a fixed cap of 10 is insufficient.
-    const int max_passes = static_cast<int>(
-        std::max<size_t>(10, state_manager_->getAmbiguities().size() + 3));
+    // Pass budget — sized so the complete-reset backstop, not the pass cap,
+    // terminates a pathological epoch (see computeRebuildPassBudget; shared with
+    // the baseline and real-time drivers so the sizing can't drift between them).
+    const int max_passes =
+        computeRebuildPassBudget(*state_manager_, config_, modeled_obs);
 
     int relinear_pass = 0;
     bool need_relinear = true;
@@ -719,112 +734,21 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                 "{}KF requested measurement rebuild (pass {}): recalculating innovations after ambiguity reset/outlier handling",
                 epoch_prefix, relinear_pass);
 
-            // Pivot-slip handover requests from the KF post-fit residual
-            // detector.  Forward each constellation's request to the
-            // MeasurementModel's PivotManager — the next pass's
-            // computeMeasurementUpdate calls handlePivotHandover, which
-            // honors the request, picks a healthy replacement pivot, and
-            // re-references all SD ambiguities / iono / sat biases
-            // losslessly to the new pivot.  Take-and-clear semantics so
-            // the same request doesn't re-fire on subsequent passes if
-            // the detector doesn't fire again.
-            auto handover_cons = kalman_filter_->takeRequestedPivotHandovers();
-            auto handover_excludes =
-                kalman_filter_->takeRequestedPivotHandoverExcludeSats();
+            // Forward the KF post-fit detector's forced pivot-handover requests
+            // (drained take-and-clear) to the PivotManager, notify the MW pivot
+            // picker, reset per-constellation residual history, and release the
+            // handled constellations' carried exclusions so their SD rows re-form
+            // against the new pivot.  Shared with the real-time driver via
+            // EpochUpdateSupport so the two paths can never drift on this — the
+            // exact divergence that once left real-time without any handover at all.
+            forwardKfPivotHandovers(
+                *kalman_filter_, *meas_model_,
+                cycle_slip_manager_ ? cycle_slip_manager_->mwDetector() : nullptr,
+                log_manager_, epoch_prefix, carry_excluded_measurements);
+
+            // Residual-history tracker, shared by the MW arc-history reset below
+            // (the per-constellation handover reset is done inside the helper).
             auto& res_hist = kalman_filter_->getResidualHistoryTracker();
-            const auto& current_pivots =
-                meas_model_->getPivotManager().getPivotSatellites();
-            for (const auto& cons : handover_cons) {
-                // Replacement-pivot exclusions the post-fit detector recorded
-                // for this constellation (the offset pivot + co-disturbed
-                // within-group outliers).  Forwarded so the forced handover
-                // lands on a consensus satellite instead of bouncing to
-                // another offset sat (the handover flip-flop).
-                static const std::set<std::string> kNoExcludes;
-                const auto ex_it = handover_excludes.find(cons);
-                const std::set<std::string>& ex_sats =
-                    ex_it != handover_excludes.end() ? ex_it->second : kNoExcludes;
-
-                if (!ex_sats.empty()) {
-                    std::string joined;
-                    for (const auto& s : ex_sats) {
-                        if (!joined.empty()) joined += ",";
-                        joined += s;
-                    }
-                    log_manager_.getLogger("main_log")->info(
-                        "{}Forwarding KF-detected pivot slip on {} to PivotManager "
-                        "for handover next pass (exclude replacements: {})",
-                        epoch_prefix, cons, joined);
-                } else {
-                    log_manager_.getLogger("main_log")->info(
-                        "{}Forwarding KF-detected pivot slip on {} to PivotManager for handover next pass",
-                        epoch_prefix, cons);
-                }
-                const char* kHandoverReason =
-                    "KF post-fit residual detector flagged coherent pivot offset";
-                meas_model_->getPivotManager().requestForcedHandover(
-                    cons, kHandoverReason, ex_sats);
-
-                // Propagate the handover to the MW pivot picker so it
-                // doesn't re-elect the slipped sat for its (per-signal-pair)
-                // pivot next epoch.  Without this hint MwSlipDetector and
-                // PivotManager pick independently and can disagree on which
-                // sat to retire after a KF-detected pivot slip.
-                auto piv_it = current_pivots.find(cons);
-                if (piv_it != current_pivots.end() && !piv_it->second.empty()) {
-                    cycle_slip_manager_->notifyPivotForcedHandover(
-                        piv_it->second, kHandoverReason);
-                }
-                // Reset residual-history entries whose constellation
-                // matches the handover.  After re-referencing to a new
-                // pivot the BSSD residuals are no longer comparable to
-                // the pre-handover EWMA statistics, so clearing them
-                // forces a fresh warm-up.  No-op when the tracker is
-                // disabled.
-                const char cons_prefix =
-                    cons == "GPS"     ? 'G' :
-                    cons == "Galileo" ? 'E' :
-                    cons == "BeiDou"  ? 'C' :
-                    cons == "GLONASS" ? 'R' :
-                    cons == "QZSS"    ? 'J' :
-                    cons == "SBAS"    ? 'S' : '\0';
-                if (cons_prefix != '\0' && res_hist.isEnabled()) {
-                    res_hist.resetConstellationSignal(cons_prefix, /*signal=*/"");
-                }
-
-                // Release the carry-excluded measurements for this
-                // constellation so the rebuild pass can re-form the SD
-                // rows against the new pivot.  Without this, every row
-                // the spatial detector swept into its group stays
-                // suppressed on the handover epoch — the residual log
-                // shows nothing for them, and (more importantly) the
-                // KF's per-row outlier dispatch never gets a chance to
-                // catch an independent slip that may have coincided
-                // with the pivot's.  After the handover lands those
-                // rows are referenced to a clean pivot; they either
-                // come back small or trip per-row dispatch, which is
-                // the right response once the pivot is no longer the
-                // confounder.
-                if (cons_prefix != '\0') {
-                    size_t cleared = 0;
-                    for (auto it = carry_excluded_measurements.begin();
-                         it != carry_excluded_measurements.end(); ) {
-                        if (!it->empty() && (*it)[0] == cons_prefix) {
-                            it = carry_excluded_measurements.erase(it);
-                            ++cleared;
-                        } else {
-                            ++it;
-                        }
-                    }
-                    if (cleared > 0) {
-                        log_manager_.getLogger("main_log")->debug(
-                            "{}Released {} carry-excluded measurement(s) "
-                            "for {} so the post-handover rebuild pass "
-                            "re-includes its SD rows and re-runs outlier checks",
-                            epoch_prefix, cleared, cons);
-                    }
-                }
-            }
 
             // Reset MW slip detector history for satellites that had ambiguities reset.
             // Phase wind-up is NOT reset: it is a continuous geometric quantity,
@@ -873,43 +797,18 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
                     log_manager_.getLogger("main_log")->debug(
                         "{}Reset MW history for {} (KF ambiguity reset, per-sat fallback)",
                         epoch_prefix, sat_id);
-
-                    // Sat-wide state re-inflation — mirror of the
-                    // CycleSlipManager::detectAndRepair full-reset
-                    // path.  The KF reached this branch by resetting
-                    // every phase ambiguity for the sat, so the same
-                    // (iono, sat-bias) partition-baking risk applies:
-                    // without re-inflating iono and bias variances,
-                    // the reseeded ambiguities lock in whatever
-                    // partition was current at the moment of reset.
-                    // Skips BSSD pivots — their (0, 0) frozen rows are
-                    // already protected by the diag==0 guard inside
-                    // StateManager, but checking here avoids a noisy
-                    // warn log line per skipped pivot.
-                    const auto& sr_cfg = config_.getSlipStateReinflationConfig();
-                    if (sr_cfg.enabled) {
-                        bool is_pivot = false;
-                        if (config_.enableBetweenSatelliteSd()) {
-                            const auto& pivots_now = meas_model_->getBssdPivotSatellites();
-                            const std::string cons = PppUtils::getSystemString(sat_id);
-                            auto pit = pivots_now.find(cons);
-                            is_pivot = (pit != pivots_now.end() && pit->second == sat_id);
-                        }
-                        if (!is_pivot) {
-                            const double io_std = sr_cfg.iono_std_m;
-                            const double sb_std = sr_cfg.sat_bias_std_m;
-                            if (io_std > 0.0) {
-                                state_manager_->reinflateIonosphereVariance(
-                                    sat_id, io_std * io_std);
-                            }
-                            if (sb_std > 0.0) {
-                                state_manager_->reinflateSatBiasVariancesForSat(
-                                    sat_id, sb_std * sb_std);
-                            }
-                        }
-                    }
                 }
             }
+
+            // Sat-wide (iono, sat-bias) re-inflation for satellites whose phase
+            // ambiguities were fully reset this pass — mirror of the
+            // CycleSlipManager full-reset path, lifted into EpochUpdateSupport so
+            // the real-time engine performs the identical partition-baking guard
+            // (it previously did not — the known PP/RT asymmetry).  No-op on a
+            // complete reset (checked inside) and when slip_state_reinflation is
+            // disabled.
+            reinflateResetSatStates(*kalman_filter_, *state_manager_,
+                                    *meas_model_, config_);
 
             need_update = true;
             continue;
@@ -996,6 +895,132 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
         return;
     }
 
+    // ---- Tightly-coupled IMU: legacy single naive second pass ----------
+    // Re-deriving the posterior from the epoch prior conflicts with the
+    // error-state attitude/bias nominal feedback the primary update already
+    // folded into C_b_e_ (and zeroed).  Doing it properly there needs
+    // deferred nominal feedback; until a tightly-coupled config actually
+    // exercises relinearization, keep the original behavior on that path.
+    if (config_.tightlyCoupledImu()) {
+        runGeometryRelinearizationNaive(epoch_prefix, epoch_obs, applied_meas);
+        return;
+    }
+
+    // ---- Proper IEKF: iterate computeModels → updateFromPrior ----------
+    // Anchor every Gauss–Newton step on the captured epoch prior (x⁻, P⁻),
+    // holding the measurement set FIXED to the one the primary update
+    // converged on (same outlier exclusions).  The step is then a clean
+    // Gauss–Newton iteration on the MAP estimate and the covariance is
+    // (I−KH)·P⁻ committed once — no double-counting.  GNSS geometry is nearly
+    // linear, so this converges in a single pass except after large
+    // cold-start / post-gap jumps.
+    // Anchor the IEKF on the prior the primary update() stashed this epoch.
+    // It already reflects this epoch's ambiguity augmentation and outlier
+    // resets, so its dimension matches the post-update state and updateFromPrior
+    // never hits a dimension mismatch.  have_applied (checked above) guarantees
+    // it is fresh.  The references stay valid across the loop — updateFromPrior
+    // does not touch the stash (only update() writes it).
+    const Eigen::VectorXd& prior_x = kalman_filter_->getLastUpdatePriorX();
+    const Eigen::MatrixXd& prior_P = kalman_filter_->getLastUpdatePriorP();
+    if (prior_x.size() == 0 || prior_P.size() == 0) {
+        log_manager_.getLogger("main_log")->debug(
+            "{}Geometry relinearization (IEKF): no stashed prior; skipping", epoch_prefix);
+        return;
+    }
+
+    // Copy (not reference) the converged exclusion set: applied_meas is
+    // reassigned inside the loop, which would otherwise mutate the set out
+    // from under the iteration.
+    const std::set<std::string> fixed_excludes = applied_meas.excluded_measurements;
+    constexpr int    kMaxIekfIters = 5;
+    constexpr double kIekfPosTolM  = 1e-4;   // 0.1 mm: geometry change is sub-noise
+    bool any_applied = false;
+
+    for (int iter = 0; iter < kMaxIekfIters; ++iter) {
+        // Sync ppp_state_ to the current iterate so computeModels recomputes
+        // the geometry (sat positions, LOS, troposphere, corrections) about it.
+        try {
+            state_manager_->updatePppStateFromVector(
+                state_manager_->getStateVector(), ppp_state_, *state_manager_);
+        } catch (const std::exception& e) {
+            log_manager_.getLogger("main_log")->error(
+                "{}Relinearize(IEKF): failed to sync ppp_state: {}", epoch_prefix, e.what());
+            break;
+        }
+
+        std::vector<PppObservation> relinear_obs;
+        if (!ppp_model_->computeModels(epoch_obs, ppp_state_, relinear_obs) ||
+            relinear_obs.empty()) {
+            log_manager_.getLogger("main_log")->debug(
+                "{}Geometry relinearization (IEKF): computeModels failed or empty (iter {})",
+                epoch_prefix, iter);
+            break;
+        }
+
+        EpochMeasurement relinear_meas = meas_model_->computeMeasurementUpdate(
+            relinear_obs, state_manager_->getStateVector(), fixed_excludes);
+        if (relinear_meas.innovations.size() == 0 ||
+            !meas_model_->validateMeasurementUpdate(relinear_meas)) {
+            log_manager_.getLogger("main_log")->debug(
+                "{}Geometry relinearization (IEKF): empty/invalid measurement (iter {})",
+                epoch_prefix, iter);
+            break;
+        }
+
+        const Eigen::Vector3d pos_before = state_manager_->getStateVector().head<3>();
+        const auto res = kalman_filter_->updateFromPrior(
+            relinear_meas, prior_x, prior_P);
+        if (res != KalmanFilter::UpdateResult::Applied) {
+            log_manager_.getLogger("main_log")->debug(
+                "{}Geometry relinearization (IEKF): updateFromPrior not applied (iter {}, result={})",
+                epoch_prefix, iter, static_cast<int>(res));
+            break;
+        }
+        any_applied = true;
+        applied_meas = relinear_meas;
+
+        const Eigen::Vector3d pos_after = state_manager_->getStateVector().head<3>();
+        const double step = (pos_after - pos_before).norm();
+        if (step < kIekfPosTolM) {
+            log_manager_.getLogger("main_log")->debug(
+                "{}Geometry relinearization (IEKF) converged at iter {} (step={:.2e} m)",
+                epoch_prefix, iter, step);
+            break;
+        }
+        if (iter + 1 == kMaxIekfIters) {
+            log_manager_.getLogger("main_log")->debug(
+                "{}Geometry relinearization (IEKF) hit iter cap {} (last step={:.4f} m)",
+                epoch_prefix, kMaxIekfIters, step);
+        }
+    }
+
+    if (any_applied) {
+        ++relinearize_count_;
+        try {
+            state_manager_->updatePppStateFromVector(
+                state_manager_->getStateVector(), ppp_state_, *state_manager_);
+        } catch (const std::exception& e) {
+            log_manager_.getLogger("main_log")->error(
+                "{}Relinearize(IEKF): failed to sync after update: {}", epoch_prefix, e.what());
+        }
+        log_manager_.getLogger("main_log")->debug(
+            "{}Geometry relinearization (IEKF) applied", epoch_prefix);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Epoch helper: Geometry relinearization — legacy naive second pass
+// ---------------------------------------------------------------------------
+
+void Application::runGeometryRelinearizationNaive(const std::string& epoch_prefix,
+                                                  const std::vector<RinexObservation>& epoch_obs,
+                                                  EpochMeasurement& applied_meas) {
+    // A single extra full update() layered on top of the primary posterior.
+    // Statistically this re-applies the same measurement information against
+    // an already-tightened covariance (mild over-confidence); it is retained
+    // ONLY for the tightly-coupled IMU path, where the proper prior-anchored
+    // IEKF would conflict with the error-state nominal feedback.  The |Δpos|
+    // and per-run-cap gates are evaluated by the caller.
     try {
         state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
     } catch (const std::exception& e) {
@@ -1341,14 +1366,19 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     // Honor processing.gnss_rate_s if the user opted into epoch
     // decimation — the effective inter-epoch spacing in MW is the
     // decimated cadence, not the underlying RINEX interval.
-    if (!config_.enableImu()) {
+    {
         const double rinex_interval = rinex_parser_->getHeader().interval.value_or(0.0);
         const double effective_interval = (config_.getGnssRate() > 0.0)
                                               ? config_.getGnssRate()
                                               : rinex_interval;
-        if (effective_interval > 5.0) {
-            cycle_slip_manager_->mwDetector().setMaxGapSeconds(effective_interval * 1.5);
+        if (!config_.enableImu() && effective_interval > 5.0) {
+            if (auto* mw = cycle_slip_manager_->mwDetector())
+                mw->setMaxGapSeconds(effective_interval * 1.5);
         }
+        // TurboEdit needs the cadence regardless of IMU mode: it gates the
+        // GF-based repair on the high-rate (≤1 s) requirement and tightens its
+        // own GF-arc gap tolerance to the cadence.
+        cycle_slip_manager_->setSampleInterval(effective_interval);
     }
 
     // Provide MW data to the KF outlier handler for tiebreaking.
@@ -1357,6 +1387,9 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     const auto& logging_cfg = config_.getLoggingConfig();
     if (logging_cfg.enable_mw_slip_trace) {
         cycle_slip_manager_->enableMwTracing(log_dir_);
+    }
+    if (logging_cfg.enable_turbo_edit_trace) {
+        cycle_slip_manager_->enableTurboEditTracing(log_dir_);
     }
     if (logging_cfg.enable_windup_trace && ppp_model_) {
         ppp_model_->enableWindUpTracing(log_dir_);

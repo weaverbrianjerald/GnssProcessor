@@ -132,6 +132,20 @@ namespace GnssProcessor {
         /** @brief Get receiver antenna type string from header. */
         std::string getReceiverAntennaType() const { return header_.antenna_type; }
 
+        /**
+         * @brief Override the receiver antenna type.
+         *
+         * For live streams (SBF/RTCM) that carry no RINEX `ANT # / TYPE`
+         * record, the header antenna type is empty and no receiver ATX entry
+         * can be matched.  This setter seeds the field from configuration so
+         * receiver PCO/PCV (and the `require_atx_coverage` gate) can resolve.
+         * The post-processing path never calls this — the parsed RINEX header
+         * always wins.
+         *
+         * @param type Antenna type string, e.g. "LEIAR25         NONE".
+         */
+        void setReceiverAntennaType(const std::string& type) { header_.antenna_type = type; }
+
         /** @brief Get antenna H/E/N offsets as Eigen vector (meters). */
         Eigen::Vector3d getAntennaDeltaHen() const {
             return Eigen::Vector3d(header_.antenna_delta_hen[0], header_.antenna_delta_hen[1], header_.antenna_delta_hen[2]);

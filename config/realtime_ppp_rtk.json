@@ -16,7 +16,10 @@
 
   "processing": {
     "mode": "PPP-RTK",
-    "active_systems": [ "GPS", "Galileo", "BeiDou" ],
+	"rinex_types": "CL",
+	//"active_systems": [ "GPS" ],
+	"active_systems": [ "GPS", "Galileo" ],
+    //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "elevation_mask_deg": 10.0,
@@ -50,18 +53,31 @@
     //   "tcp"   — direct socket to a receiver, e.g. a Septentrio
     //             configured to push RTCMv3 to "IPS1, port 28784".
     //             No NTRIP wrapper, no auth — raw bytes only.
-    "input_type":      "file",
+    "input_type":      "tcp",
+    // SBF, not RTCM: this receiver is rover-only and streams Septentrio Binary
+    // Format on IPS1:28785.  input_format routes the raw TCP bytes to SbfParser
+    // (the native SBF decoder), not RtcmParser.  Required for the live feed.
+    "input_format":    "sbf",
     "input_path":      "C:/GnssProcessor/data/rtcm/rover_obs.rtcm3",
 
-    // For input_type="tcp" — Septentrio rooftop direct connection example:
-    "tcp_host":        "rooftop.local",
-    "tcp_port":        28784,
+    // Active rover feed: AsteRx-U SBF over raw TCP (IP-server port IPS1).  This
+    // unit (S/N 3013924) is licensed rover-only (no RTK/DGPS Base permission)
+    // so it CANNOT emit RTCM3 — it streams SBF instead.  SBF "Rinex" group
+    // (MeasEpoch 4027 + GPSNav/GLONav/GALNav/BDSNav/QZSNav decoded eph) @1Hz on
+    // IPS1 port 28785 (MeasEpoch verified on the wire 2026-06-04).  Framing is
+    // SBF ($@), routed to the SBF parser in the SBF-decoder session, NOT RtcmParser.
+    "tcp_host":        "10.214.154.211",
+    "tcp_port":        28785,
 
-    // Optional NTRIP fields (used when input_type="ntrip").
-    "ntrip_host":      "",
+    // NTRIP caster path is DEAD on this unit: AsteRx-U S/N 3013924 lacks the
+    // RTK/DGPS Base permission, so it cannot generate RTCMv3 and the internal
+    // caster mountpoint has nothing to feed it (confirmed 2026-06-04 via the
+    // permission file: rtkbase=0, dgpsbase=0).  Fields kept for a future
+    // permissioned unit; re-enable by purchasing RTK Base from Septentrio.
+    "ntrip_host":      "10.214.154.211",
     "ntrip_port":      2101,
-    "ntrip_mountpoint":"",
-    "ntrip_user":      "",
+    "ntrip_mountpoint":"rtcm3_restricted",
+    "ntrip_user":      "weaverb",
     "ntrip_password":  "",
 
     // Output and reconnect knobs.
@@ -72,14 +88,17 @@
     // enabled=true to activate; the realtime engine will spin up a
     // separate NtripClient thread alongside the primary one and route
     // decoded SSR records into SsrCorrectionStore.
+    // IGS-SSR 4076 corrections (SSRC03IGS1).  Set enabled=true and fill in
+    // your IGS-IP / provider credentials once you have them; until then the
+    // engine runs broadcast-only float (the receiver's 1019/1042/1046 nav).
     "corrections": {
-      "enabled":          false,
+      "enabled":          true,
       "input_type":       "ntrip",
       "ntrip_host":       "products.igs-ip.net",
       "ntrip_port":       2101,
-      "ntrip_mountpoint": "IGS01",
-      "ntrip_user":       "",
-      "ntrip_password":   "",
+      "ntrip_mountpoint": "SSRC03IGS1",
+      "ntrip_user":       "weaverb",
+      "ntrip_password":   "OsuGeomatics26!",
       "reconnect_delay_s": 5,
 
       // For replay testing: dump a few minutes of an IGS-RTS feed to
@@ -98,11 +117,32 @@
       "enabled": true,
       "pivot_min_elevation": 25.0
     },
+	"estimate_sat_biases": true,
     "ambiguity_resolution": {
       "mode": 0,
       "ratio_threshold": 3.0,
       "elevation_mask": 20.0,
       "hold_variance": 0.001
+    },
+	"residual_history": { "enabled": false },
+	"enable_huber_r_inflation": false,
+	"accumulate_phase_windup": true,
+    "estimate_velocity": false,
+	"enable_subcycle_slip_suppression": false,
+    "lock_signals_to_clock_ref": false,
+    "require_bia_for_signals": false,
+    "defer_until_corrections_ready": {
+      "enabled": true,
+      "min_satellites": 5,
+      "min_satellites_per_system": 0,
+      "require_all_above_mask": false,
+      "drop_broadcast_grade": true,
+      "timeout_s": 120
+    },
+    "zwd_constraint": {
+      "enabled": true,
+      "apriori_m": 0.10,
+      "sigma_m": 0.30
     }
   },
 
@@ -132,11 +172,17 @@
       "tropo_gradient": 0.001
     },
     "measurement_noise": {
-      "code_std_m": 0.300,
-      "phase_std_m": 0.001,
+      //"code_std_m": 0.300,
+      //"phase_std_m": 0.001,
+	  "code_std_m": 1.000,
+	  "phase_std_m": 0.003,
       "doppler_std_m": 0.5
     },
-    "stochastic_model": "satellite_block"
+    "phase_elevation_power": 1.0,
+    "stochastic_model": "satellite_block",
+    "satellite_block": {
+      "apply_to_phase": true
+    }
   },
 
   "model_corrections": {
@@ -145,14 +191,23 @@
     "enable_shapiro_delay": true,
     "enable_solid_earth_tide": true,
     "enable_ocean_tide_loading": false,
-    "enable_pole_tide": true,
+    "enable_pole_tide": false,
     "enable_atmospheric_loading": false,
     "enable_satellite_pco": true,
     "enable_satellite_pcv": true,
     "enable_receiver_pco": true,
     "enable_receiver_pcv": true,
     "enable_phase_windup": true,
-    "enable_code_phase_bias": true
+    "enable_code_phase_bias": true,
+	// Live SBF stream carries no RINEX antenna record — seed the rooftop
+	// LEIAR25 NONE so the receiver ATX entry matches (post-processing's RINEX
+	// header always wins, so this is inert there).  The cross-system fallback
+	// lets Galileo E1/E5a borrow the receiver's GPS L1/L5 PCO/PCV (same
+	// hardware, frequency-dependent pattern); the satellite antenna never
+	// borrows across constellations.
+	"receiver_antenna_type_override": "LEIAR25         NONE",
+	"enable_receiver_cross_system_atx_fallback": true,
+	"require_atx_coverage": false
   },
 
   "data_download": {
@@ -163,8 +218,80 @@
   },
 
   "logging": {
-    "enable_main_log": true,
-    "enable_state_trace": true,
-    "enable_residual_trace": true
+    "//": "--- console loggers (enable + level) ---",
+    "enable_main_log":          true,
+    "enable_gnss_config":       true,
+    "enable_rt_engine":         true,
+    "enable_ppp_model":         true,
+    "enable_measurement_model": true,
+    "enable_kalman_filter":     true,
+    "enable_state_manager":     true,
+    "enable_state_initializer": true,
+    "enable_corrections":       true,
+    "enable_ambiguity_resolver":true,
+    "enable_cycle_slip_manager":true,
+    "enable_mw_slip_detector":  true,
+    "enable_bssd_pivot_manager":true,
+    "enable_bssd_transform":    true,
+    "enable_ntrip":             true,
+    "enable_geometry":          true,
+    "enable_troposphere":       true,
+    "enable_ionosphere":        true,
+    "enable_antenna":           true,
+    "enable_stochastic_model":  true,
+
+    "//1": "--- quiet / off (peripheral or staged) ---",
+    "enable_smoother":          false,
+    "enable_if_slip_detector":  false,
+    "enable_gf_slip_detector":  false,
+    "enable_rinex_parser":      false,
+    "enable_product_parser":    false,
+    "enable_product_cache":     false,
+    "enable_resolver":          false,
+    "enable_ppp_utils":         false,
+    "enable_downloader":        false,
+    "enable_imu":               false,
+
+    "//2": "--- CSV trace files (written to logs\\, no console cost) ---",
+    "enable_state_trace":       true,
+    "enable_ambiguity_trace":   true,
+    "enable_ionosphere_trace":  true,
+    "enable_sat_bias_trace":    true,
+    "enable_sat_status_trace":  true,
+    "enable_residual_trace":    true,
+    "enable_dop_trace":         true,
+    "enable_mw_slip_trace":     true,
+    "enable_wls_trace":         true,
+    "enable_windup_trace":      false,
+    "enable_if_slip_trace":     false,
+    "enable_gf_slip_trace":     false,
+    "enable_smoother_trace":    false,
+
+    "kalman_filter_concise_log": false,
+
+    "//3": "--- per-logger levels (no trace) ---",
+    "level": "info",
+    "levels": {
+      "rt_engine":          "debug",
+      "ppp_model":          "info",
+      "measurement_model":  "info",
+      "kalman_filter":      "info",
+      "state_manager":      "debug",
+      "corrections":        "info",
+      "ambiguity_resolver": "debug",
+      "cycle_slip_manager": "debug",
+      "mw_slip_detector":   "info",
+      "bssd_pivot_manager": "debug",
+      "bssd_transform":     "debug",
+      "ntrip":              "trace",
+      "state_initializer":  "info",
+      "gnss_config":        "info",
+      "geometry":           "info",
+      "troposphere":        "info",
+      "ionosphere":         "info",
+      "antenna":            "info",
+      "stochastic_model":   "info",
+      "main_log":           "info"
+    }
   }
 }

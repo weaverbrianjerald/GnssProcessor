@@ -7,8 +7,9 @@
 clear all; clc; %close all;
 
 %% --- Load CSV file ---
+fname = 'C:\GnssProcessor\logs\state_trace.csv';
 %fname = 'C:\GnssProcessor\batch_results_GE_Dual\JLPM_week_2025_200_215\2025-200\JPLM\logs\state_trace.csv';
-fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\state_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Release\logs\smoother_trace.csv';
 T = readtable(fname);
@@ -101,7 +102,10 @@ end
 % ============================================================
 
 % Reference point for ENU
-x0 = median(x(120:end),'omitmissing');  y0 = median(y(120:end),'omitmissing');  z0 = median(z(120:end),'omitmissing'); % median of post-converged
+lxyz = min([length(x),length(y),length(z)]);
+x0 = median(x(lxyz-round(lxyz/2,0):end),'omitmissing');  y0 = median(y(lxyz-round(lxyz/2,0):end),'omitmissing');  z0 = median(z(lxyz-round(lxyz/2,0):end),'omitmissing'); % median of post-converged
+%x0 = median(x(120:end),'omitmissing');  y0 = median(y(120:end),'omitmissing');  z0 = median(z(120:end),'omitmissing'); % median of post-converged
+%x0 = x(end-1);  y0 = y(end-1); z0 = z(end-1); % end epoch
 %x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
 %x0 = -1248596.4806;  y0 = -4819428.1948;  z0 = 3976505.8949; % AMC4 (NRCAN PPP)
 %x0 = -2493304.6796;  y0 = -4655215.1032;  z0 = 3565497.5918; % JPLM (IGS)

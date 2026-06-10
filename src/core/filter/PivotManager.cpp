@@ -215,15 +215,22 @@ std::map<std::string, std::string> PivotManager::selectPivotCandidates(
                 continue;
             }
         }
-        // Prefer the exclude-aware online pick when an exclude set is
-        // active; fall back to the pre-computed best_sat/highest_sat
-        // when there's nothing to exclude (preserves the original
-        // O(constellations) fast path for the common case).
-        if (!exclude_sats.empty()) {
-            const std::string picked = pickExclusionAwareBest(cons);
-            if (!picked.empty()) { candidates[cons] = picked; continue; }
-        }
-        candidates[cons] = ci.best_sat.empty() ? ci.highest_sat : ci.best_sat;
+        // Always use the elevation-gated, coverage(=phase)-preferring online
+        // pick (previously only when an exclude set was active).  pickExclusion-
+        // AwareBest filters on pivot_min_el and ranks by phase_sig_count, so a
+        // cm-grade (phase-carrying) sat always beats a broadcast-grade (phase-
+        // less, coverage-0) one for any constellation that has both — closing
+        // the cold-start hole where the precomputed best_sat/highest_sat (no
+        // elevation gate) could seat a low-el or broadcast-grade pivot and inject
+        // a coherent offset into every SD code row.  Falls back to the
+        // precomputed best/highest only when NO satellite clears the elevation
+        // mask (a genuine code-only-float constellation, where a code-only pivot
+        // is correct).  Broadcast-grade sats are also removed upstream when
+        // drop_broadcast_grade is set, making this belt-and-suspenders there.
+        const std::string picked = pickExclusionAwareBest(cons);
+        candidates[cons] = !picked.empty()
+                         ? picked
+                         : (ci.best_sat.empty() ? ci.highest_sat : ci.best_sat);
     }
     return candidates;
 }
@@ -485,7 +492,8 @@ void PivotManager::reReferenceSatBiases(
 
 void PivotManager::requestForcedHandover(const std::string& constellation,
                                           const std::string& reason,
-                                          const std::set<std::string>& exclude_sats) {
+                                          const std::set<std::string>& exclude_sats,
+                                          const std::set<std::string>& reinflate_sats) {
     auto log = log_manager_.getLogger("bssd_pivot_manager");
     log->warn("Forced pivot handover requested for {} ({}). "
               "Will be processed at next handlePivotHandover call.",
@@ -494,6 +502,10 @@ void PivotManager::requestForcedHandover(const std::string& constellation,
     if (!exclude_sats.empty()) {
         auto& ex = forced_handover_exclude_[constellation];
         ex.insert(exclude_sats.begin(), exclude_sats.end());
+    }
+    if (!reinflate_sats.empty()) {
+        auto& rf = forced_handover_reinflate_[constellation];
+        rf.insert(reinflate_sats.begin(), reinflate_sats.end());
     }
 }
 
@@ -560,6 +572,15 @@ void PivotManager::handlePivotHandover(
 
     const double pivot_min_el = config_.getBssdPivotMinElevation();
 
+    // Code-detected handovers carry a per-constellation set of non-pivot sats
+    // whose iono / sat-bias state absorbed the pivot's code bias.  We capture
+    // them here as the forced request is consumed, but defer the actual
+    // re-inflation until AFTER the lossless re-reference has been written back
+    // (re-inflating the local @c P before the @c T·P·Tᵀ would corrupt the
+    // re-reference; re-inflating after commit lets us reuse StateManager's
+    // value-preserving, pivot-skipping primitive unchanged).
+    std::map<std::string, std::set<std::string>> reinflate_pending;
+
     for (auto& [cons, pivot] : new_pivot_sat) {
         const std::string& old_pivot = pivot_sat_.count(cons)
                                      ? pivot_sat_.at(cons) : pivot;
@@ -610,6 +631,11 @@ void PivotManager::handlePivotHandover(
         if (forced) {
             forced_handover_requests_.erase(cons);
             forced_handover_exclude_.erase(cons);
+            auto rf_it = forced_handover_reinflate_.find(cons);
+            if (rf_it != forced_handover_reinflate_.end()) {
+                reinflate_pending[cons] = std::move(rf_it->second);
+                forced_handover_reinflate_.erase(rf_it);
+            }
         }
 
         if (pivot == old_pivot && (forced || disturbed)) {
@@ -759,6 +785,48 @@ void PivotManager::handlePivotHandover(
     if (cov_modified)   state_manager.setCovariance(P);
 
     pivot_sat_ = new_pivot_sat;
+
+    // --- Post-handover code-domain state scrub --------------------------
+    // Re-inflate the iono / sat-bias covariance of the non-pivot satellites
+    // whose state absorbed a coherent pivot-side CODE bias before this forced
+    // handover.  Done AFTER the re-referenced covariance is committed above so
+    // these StateManager primitives operate on the new SD frame; they preserve
+    // the (re-labelled) state VALUE and break only the covariance partition,
+    // letting the now-clean frame re-estimate the contaminated states over the
+    // next few epochs instead of carrying a converged-but-wrong value under a
+    // tight P — the gap that made code-only pivot outliers recur every epoch.
+    // The primitives skip frozen pivots via their internal diag==0 guard; we
+    // also skip the freshly-elected pivot explicitly to avoid a noisy refusal
+    // log.  No-op when there was no code contamination (reinflate_pending empty)
+    // or the feature is disabled; iono/sat-bias branches self-disable when those
+    // states don't exist (e.g. combined-IF or phase-present runs).
+    const auto& sr_cfg = config_.getSlipStateReinflationConfig();
+    if (sr_cfg.enabled) {
+        for (const auto& [cons, sats] : reinflate_pending) {
+            auto piv_it = pivot_sat_.find(cons);
+            const std::string new_piv =
+                (piv_it != pivot_sat_.end()) ? piv_it->second : std::string();
+            std::string scrubbed;
+            for (const auto& sat : sats) {
+                if (sat == new_piv) continue;  // now the frozen datum
+                if (sr_cfg.iono_std_m > 0.0)
+                    state_manager.reinflateIonosphereVariance(
+                        sat, sr_cfg.iono_std_m * sr_cfg.iono_std_m);
+                if (sr_cfg.sat_bias_std_m > 0.0)
+                    state_manager.reinflateSatBiasVariancesForSat(
+                        sat, sr_cfg.sat_bias_std_m * sr_cfg.sat_bias_std_m);
+                if (!scrubbed.empty()) scrubbed += ",";
+                scrubbed += sat;
+            }
+            if (!scrubbed.empty())
+                log->info("{}Code-handover state scrub for {}: re-inflated "
+                          "iono/sat-bias variance on {} (iono_std={:.2f} m, "
+                          "sb_std={:.2f} m) so the new SD frame re-estimates the "
+                          "absorbed pivot code bias",
+                          epoch_prefix, cons, scrubbed,
+                          sr_cfg.iono_std_m, sr_cfg.sat_bias_std_m);
+        }
+    }
 }
 
 // ===========================================================================
@@ -846,6 +914,7 @@ void PivotManager::dropAllPivots(StateManager& state_manager) {
     pivot_sat_.clear();
     forced_handover_requests_.clear();
     forced_handover_exclude_.clear();
+    forced_handover_reinflate_.clear();
     retired_pivots_this_epoch_.clear();
     state_manager.setFrozenPivotSatellites({});
 

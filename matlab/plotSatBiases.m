@@ -82,7 +82,8 @@ biasReferenceMode = 'firstPivot';   % 'firstPivot' | 'rawBssd'
 showHandoverLines = true; % true for PPP-RTK (BSSD)
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\sat_bias_trace.csv';
+fname = 'C:\GnssProcessor\logs\sat_bias_trace.csv';
+%fname = 'C:\GnssProcessor\build\x64-Release\logs\sat_bias_trace.csv';
 %fname = 'C:\GnssProcessor\build\x64-Debug\logs\sat_bias_trace.csv';
 
 if ~isfile(fname)

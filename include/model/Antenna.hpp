@@ -54,6 +54,28 @@ namespace GnssProcessor {
 		Antenna(const GnssConfig& config, ProductParser& product_parser, LogManager& log_mgr, const RinexParser& rinex_parser);
 
 		/**
+		 * @brief Bilinearly interpolate an ANTEX PCV grid at a look direction.
+		 *
+		 * Pure, stateless helper (exposed for unit testing).  The table rows
+		 * are zenith/nadir rings (0-relative — the caller subtracts ZEN1) and
+		 * the columns are azimuth sectors, or a single column for an
+		 * azimuth-independent (NOAZI) table.  Linear in zenith, bilinear in
+		 * (zenith, azimuth) for 2-D tables, with circular azimuth wrap.  A
+		 * query at or beyond the table's largest zenith ring is held flat
+		 * (clamped to the last ring) rather than extrapolated or read out of
+		 * bounds.
+		 *
+		 * @param pcv_table 2-D PCV grid: rows = zenith rings, cols = azimuth sectors (1 = NOAZI).
+		 * @param zenith Zenith/nadir angle in degrees, ZEN1-relative (>= 0).
+		 * @param azimuth Azimuth angle in degrees [0, 360).
+		 * @param dazi Azimuth grid spacing (degrees); ignored for NOAZI tables.
+		 * @param dzen Zenith grid spacing (degrees); must be > 0.
+		 * @return Interpolated PCV value in the table's units (meters).
+		 */
+		static double interpolatePcv(const std::vector<std::vector<double>>& pcv_table,
+			double zenith, double azimuth, double dazi, double dzen);
+
+		/**
 		 * @brief Compute antenna correction for a satellite/receiver observation.
 		 *
 		 * Computes the combined antenna correction (phase center offset (PCO),
@@ -207,23 +229,6 @@ namespace GnssProcessor {
 		 * computing corrections.
 		 */
 		void loadAntennaData();
-
-		/**
-		 * @brief Interpolate a PCV grid to obtain variation at a given look direction.
-		 *
-		 * Performs interpolation on a PCV table (2-D grid) using provided
-		 * zenith/azimuth coordinates and grid spacings to compute PCV value
-		 * in meters.
-		 *
-		 * @param pcv_table 2-D PCV grid where rows/columns correspond to zenith/azimuth samples.
-		 * @param zenith Zenith angle (degrees) or index depending on table convention.
-		 * @param azimuth Azimuth angle (degrees) or index depending on table convention.
-		 * @param dazi Azimuth grid spacing in degrees.
-		 * @param dzen Zenith grid spacing in degrees.
-		 * @return Interpolated PCV value in meters.
-		 */
-		double interpolatePcv(const std::vector<std::vector<double>>& pcv_table, double zenith,
-			double azimuth, double dazi, double dzen) const;
 
 	};
 

@@ -64,7 +64,7 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Signal / GF helpers  (adapted from the retired GfSlipDetector)
+    // Signal / GF helpers  (adapted from the staged, uncompiled GfSlipDetector)
     // =================================================================
 
     bool IonoVariabilityMonitor::selectPrimaryPair(const PppObservation& obs,

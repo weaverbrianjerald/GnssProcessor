@@ -530,6 +530,24 @@ namespace GnssProcessor {
         bool resetAmbiguity(const std::string& key, double std_m);
 
         /**
+         * @brief Record an SSR phase-bias discontinuity counter and report a bump.
+         *
+         * The IGS-SSR phase-bias discontinuity counter increments whenever the
+         * satellite phase bias for a signal jumps, which breaks the integer
+         * property of that signal's ambiguity.  The caller queries the SSR
+         * store per (sat, signal) and passes the counter here; this method
+         * tracks the last-seen value per @p key and returns true exactly when
+         * the counter CHANGED from a previously-recorded value (any change, to
+         * handle the 4-bit field's wrap), signalling that the corresponding
+         * ambiguity should be reset.  The first sighting records and returns false.
+         *
+         * @param key     Stable per-(sat, signal) key (e.g. "G01|L1C").
+         * @param counter Current discontinuity counter from the SSR phase bias.
+         * @return true iff the counter changed since the last recorded value.
+         */
+        bool noteSsrDiscontinuity(const std::string& key, int counter);
+
+        /**
          * @brief Compute an approximate ambiguity seed value from an observation.
          *
          * The seed is computed as:
@@ -1082,6 +1100,7 @@ namespace GnssProcessor {
         const GnssConfig& config_;                  //!< Read-only configuration reference.
         bool is_baseline_{ false };                 //!< True when configured for baseline (DD) mode: no clock/tropo/iono/system-offset states.
         std::map<std::string, double> meas_var_scale_; //!< Per-measurement variance scale map (key -> multiplier).
+        std::map<std::string, int> last_ssr_discontinuity_; //!< Last-seen SSR phase-bias discontinuity counter per "sat|signal" key.
 
         // -------------------------------------------------------------------
         // Internal state vector / covariance manipulation helpers

@@ -251,7 +251,18 @@ private:
 
     /**
      * @brief Optionally re-run geometry modelling at the updated position and
-     *        perform one additional KF measurement update.
+     *        refine the estimate with an iterated-EKF (IEKF) pass.
+     *
+     * Gated by @c config_.relinearizeGeometry(), the |Δpos| thresholds, and the
+     * per-run cap.  On the non-tightly-coupled path this iterates
+     * computeModels → @c KalmanFilter::updateFromPrior, anchoring every
+     * Gauss–Newton step on the epoch prior (x⁻, P⁻) captured at the top of
+     * runFilterUpdateLoop and holding the measurement set fixed to the one the
+     * primary update converged on; the posterior covariance is therefore
+     * (I−KH)·P⁻ committed once, with no double-counting.  Tightly-coupled IMU
+     * mode delegates to @ref runGeometryRelinearizationNaive (see that method
+     * and @c KalmanFilter::updateFromPrior for why the IEKF is not applied
+     * there).
      *
      * @param epoch_prefix      Log prefix string.
      * @param epoch_obs         Raw RINEX observations for the epoch.
@@ -262,6 +273,26 @@ private:
                                     const std::vector<RinexObservation>& epoch_obs,
                                     EpochMeasurement& applied_meas,
                                     bool have_applied);
+
+    /**
+     * @brief Legacy single-pass geometry relinearization (one extra full
+     *        @c KalmanFilter::update on top of the primary posterior).
+     *
+     * Retained only for the tightly-coupled IMU path, where re-deriving the
+     * posterior from the epoch prior would conflict with the error-state
+     * attitude/bias nominal feedback @ref KalmanFilter::update already applied.
+     * Statistically this re-applies the same measurement information against an
+     * already-tightened covariance (mild over-confidence).  Gates (|Δpos|,
+     * per-run cap) are evaluated by @ref runGeometryRelinearization before this
+     * is called.
+     *
+     * @param epoch_prefix      Log prefix string.
+     * @param epoch_obs         Raw RINEX observations for the epoch.
+     * @param[in,out] applied_meas The accepted measurement set (updated if the pass succeeds).
+     */
+    void runGeometryRelinearizationNaive(const std::string& epoch_prefix,
+                                         const std::vector<RinexObservation>& epoch_obs,
+                                         EpochMeasurement& applied_meas);
 
     /**
      * @brief Apply the GIM ionosphere-weighting pseudo-observation update.
@@ -429,8 +460,11 @@ private:
     double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 
     /// Pre-update position captured at the top of each runFilterUpdateLoop;
-    /// used by runGeometryRelinearization to compute |Δpos| against the
-    /// post-update state and decide whether relinearization is needed.
+    /// used by runGeometryRelinearization for its |Δpos| gate on BOTH the IEKF
+    /// and the legacy naive path.  The IEKF's full-state anchor (x⁻, P⁻) comes
+    /// instead from KalmanFilter::getLastUpdatePriorX/P, which is dimension-
+    /// matched to the post-augmentation state (position alone never changes
+    /// dimension, so it is safe to snapshot up front here).
     Eigen::Vector3d relinearize_pre_update_pos_{ Eigen::Vector3d::Zero() };
     /// Total relinearization passes applied this run; capped by
     /// config_.relinearizeMaxCount() when that value is non-negative.
