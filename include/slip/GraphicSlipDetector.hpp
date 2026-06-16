@@ -150,8 +150,9 @@ namespace GnssProcessor {
         /** Minimum epochs before adaptive threshold is used. */
         static constexpr size_t kMinEpochsForAdaptive = 5;
 
-        /** MAD sigma multiplier for adaptive threshold. */
-        static constexpr double kMadSigmaMultiplier = 6.0;
+        /** kσ multiplier for the adaptive threshold, from
+         *  @c GnssConfig::getCycleSlipConfig().graphic_sigma_multiplier (default 6.0). */
+        double sigma_multiplier_;
 
         /** Minimum slip threshold in meters.
          *  Code noise at ~0.3 m means dG noise is ~0.21 m (0.3/sqrt(2)),

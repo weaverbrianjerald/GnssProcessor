@@ -201,11 +201,12 @@ namespace GnssProcessor {
         /** Minimum epochs before adaptive threshold is used. */
         static constexpr size_t kMinEpochsForAdaptive = 3;
 
-        /** MAD sigma multiplier for adaptive threshold.
-         *  The EWL is so long-wavelength that the per-epoch noise in
-         *  EWL cycles is very small (~0.05).  A multiplier of 5.0 gives
-         *  tight detection while avoiding false alarms. */
-        static constexpr double kMadSigmaMultiplier = 5.0;
+        /** kσ multiplier for the adaptive threshold, from
+         *  @c GnssConfig::getCycleSlipConfig().ewl_sigma_multiplier (default 5.0).
+         *  The EWL is so long-wavelength that the per-epoch noise in EWL cycles
+         *  is very small (~0.05); 5.0 gives tight detection while avoiding false
+         *  alarms. */
+        double sigma_multiplier_;
 
         /** Minimum slip threshold in EWL cycles.
          *  With ~0.05-cycle noise, a floor of 0.5 cycles catches all

@@ -11,9 +11,9 @@
     "mode": "PPP-RTK",
     "rinex_types": "CL",
     //"active_systems": [ "GPS" ],
-    "active_systems": [ "GPS", "Galileo" ],
+    //"active_systems": [ "GPS", "Galileo" ],
     //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
-    //"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
+    "active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "gnss_rate_s": 30.0,
@@ -78,7 +78,31 @@
       "hold_variance": 0.001,
       "wl_max_frac": 0.40
     },
-    "residual_history": { "enabled": false }
+    "residual_history": { "enabled": false },
+
+    // Cycle-slip detection / repair (from sbf_replay_covl145.json — under
+    // validation against post-processing test data).  MW is the primary
+    // detector; turbo_edit enables the MW+GF joint per-signal repair.
+    // mw_detect_reference "time_difference" + mw_td_order "first" gates the
+    // MW TD1 against the MAD of its own time-difference history (memoryless,
+    // trend- and quadratic-immune; sqrt(2) noise amplification).
+    // turbo_edit_mw_only_veto: MW flag with affirmatively flat GF => code
+    // artifact, phase reset skipped (KF residual gate is the backstop).
+    // turbo_edit_max_gap_s: gap-spanning GF bridge for post-gap attribution.
+    // NOTE: TurboEdit repairs are high-rate gated; at 30 s sampling the IVI
+    // gate suppresses unsafe repairs and a one-time warning is logged.
+    "cycle_slip": {
+      "mw": true,
+      "turbo_edit": false,
+      "turbo_edit_mw_only_veto": true,
+      "turbo_edit_max_gap_s": 60.0,
+      "turbo_edit_bridge_lli": true,
+      "mw_sigma_multiplier":         8.0,
+      "turbo_edit_sigma_multiplier":  8.0,
+      "mw_detect_reference": "time_difference",
+      "mw_td_order": "first",
+      "mw_local_window": 20
+    }
   },
 
   "filter": {
@@ -109,7 +133,7 @@
     },
     "measurement_noise": {
       "code_std_m": 0.300,
-      "phase_std_m": 0.001,
+      "phase_std_m": 0.0015,
       "doppler_std_m": 0.500
     },
     "phase_elevation_power": 1.0,
@@ -160,67 +184,84 @@
     "keep_zip_after_unzip": false
   },
 
+  // Logging block adopted from sbf_replay_covl145.json (realtime loggers
+  // rt_engine / ntrip disabled — irrelevant in post mode).
   "logging": {
-
-    "enable_main_log": true,
-    "enable_gnss_config": true,
-    "enable_kalman_filter": true,
-    "enable_state_manager": true,
-    "enable_ppp_model": true,
-    "enable_measurement_model": true,
-    "enable_mw_slip_detector": true,
-    "enable_if_slip_detector": false,
-    "enable_gf_slip_detector": false,
-    "enable_cycle_slip_manager": true,
-    "enable_ambiguity_resolver": false,
-    "enable_corrections": false,
+    "//": "--- console loggers (enable + level) ---",
+    "enable_main_log":          true,
+    "enable_gnss_config":       true,
+    "enable_ppp_model":         true,
+    "enable_measurement_model": false,
+    "enable_kalman_filter":     true,
+    "enable_state_manager":     true,
     "enable_state_initializer": true,
-    "enable_bssd_pivot_manager": true,
-    "enable_bssd_transform": true,
-    "enable_geometry": false,
-    "enable_troposphere": false,
-    "enable_ionosphere": false,
-    "enable_antenna": false,
-    "enable_stochastic_model": false,
-    "enable_rinex_parser": false,
-    "enable_product_parser": false,
+    "enable_corrections":       true,
+    "enable_ambiguity_resolver":true,
+    "enable_cycle_slip_manager":true,
+    "enable_mw_slip_detector":  true,
+    "enable_turbo_edit_resolver":true,
+    "enable_bssd_pivot_manager":true,
+    "enable_bssd_transform":    true,
+    "enable_geometry":          true,
+    "enable_troposphere":       true,
+    "enable_ionosphere":        true,
+    "enable_antenna":           false,
+    "enable_stochastic_model":  true,
 
-    "enable_state_trace": true,
-    "enable_ambiguity_trace": true,
-    "enable_ionosphere_trace": true,
-    "enable_sat_bias_trace": true,
-    "enable_sat_status_trace": true,
-    "enable_residual_trace": true,
-    "enable_wls_trace": false,
-    "enable_mw_slip_trace": true,
-    "enable_if_slip_trace": false,
-    "enable_gf_slip_trace": false,
-    "enable_windup_trace": false,
-    "enable_dop_trace": true,
+    "//1": "--- quiet / off (peripheral, staged, or realtime-only) ---",
+    "enable_rt_engine":         false,
+    "enable_ntrip":             false,
+    "enable_smoother":          false,
+    "enable_if_slip_detector":  false,
+    "enable_gf_slip_detector":  false,
+    "enable_rinex_parser":      false,
+    "enable_product_parser":    false,
+    "enable_product_cache":     false,
+    "enable_resolver":          false,
+    "enable_ppp_utils":         false,
+    "enable_downloader":        false,
+    "enable_imu":               false,
+
+    "//2": "--- CSV trace files (written to logs\\, no console cost) ---",
+    "enable_state_trace":       true,
+    "enable_ambiguity_trace":   true,
+    "enable_ionosphere_trace":  true,
+    "enable_sat_bias_trace":    true,
+    "enable_sat_status_trace":  true,
+    "enable_residual_trace":    true,
+    "enable_dop_trace":         true,
+    "enable_mw_slip_trace":     true,
+    "enable_turbo_edit_trace":  true,
+    "enable_wls_trace":         true,
+    "enable_windup_trace":      false,
+    "enable_if_slip_trace":     false,
+    "enable_gf_slip_trace":     false,
+    "enable_smoother_trace":    false,
 
     "kalman_filter_concise_log": false,
 
+    "//3": "--- per-logger levels (no trace) ---",
+    "level": "info",
     "levels": {
-      "ambiguity_resolver": "info",
-      "measurement_model": "info",
-      "bssd_transform": "info",
-      "mw_slip_detector": "info",
-      "cycle_slip_manager": "info",
-      "state_manager": "info",
-      "kalman_filter": "info",
-      "bssd_pivot_manager": "info",
-      "state_initializer": "warn",
-      "gnss_config": "warn",
-      "ppp_model": "info",
-      "corrections": "warn",
-      "geometry": "warn",
-      "troposphere": "warn",
-      "ionosphere": "warn",
-      "antenna": "warn",
-      "stochastic_model": "warn",
-      "rinex_parser": "warn",
-      "product_parser": "warn",
-      "ppp_utils": "warn"
+      "ppp_model":          "info",
+      "measurement_model":  "info",
+      "kalman_filter":      "info",
+      "state_manager":      "debug",
+      "corrections":        "error",
+      "ambiguity_resolver": "debug",
+      "cycle_slip_manager": "debug",
+      "mw_slip_detector":   "info",
+      "turbo_edit_resolver":"debug",
+      "bssd_pivot_manager": "debug",
+      "bssd_transform":     "debug",
+      "state_initializer":  "info",
+      "gnss_config":        "info",
+      "geometry":           "info",
+      "troposphere":        "info",
+      "ionosphere":         "info",
+      "antenna":            "info",
+      "stochastic_model":   "info",
+      "main_log":           "info"
     }
   }
 }

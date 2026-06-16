@@ -814,12 +814,19 @@ namespace GnssProcessor {
             // empty (only RealTimeEngine ever inserts), so this returns nullopt
             // and the SP3 path runs exactly as before.
             auto liveFallback = [&]() -> std::optional<std::pair<Eigen::Vector3d, Eigen::Vector3d>> {
-                auto bc = LiveEphemerisStore::getInstance().computeSatellitePV(satellite, time);
+                // Fetch the SSR first so the broadcast PV is taken from the
+                // ephemeris VERSION the orbit delta was computed for (iode_ssr):
+                // across a cutover the receiver may be a version ahead of the SSR
+                // stream, so re-reference to the retained previous record instead
+                // of dropping the satellite to broadcast-grade.
+                const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+                const int ssr_iode = (ssr && ssr->has_orbit) ? ssr->iode : -1;
+                auto bc = LiveEphemerisStore::getInstance()
+                              .computeSatellitePV(satellite, time, ssr_iode);
                 if (!bc) return std::nullopt;
                 Eigen::Vector3d pos = bc->position;
                 Eigen::Vector3d vel = bc->velocity;
-                if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
-                    ssr && ssr->has_orbit
+                if (ssr && ssr->has_orbit
                     && SsrCorrectionStore::iodeMatches(bc->iode, ssr->iode)) {
                     const double dt = TimeUtils::continuousGpsSeconds(time)
                                     - TimeUtils::continuousGpsSeconds(ssr->epoch_time);

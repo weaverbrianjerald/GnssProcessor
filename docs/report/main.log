@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.2) (preloaded format=pdflatex 2026.5.1)  1 MAY 2026 17:02
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.2) (preloaded format=pdflatex 2026.5.1)  15 JUN 2026 12:13
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -244,7 +244,9 @@ Package: array 2025/09/25 v2.6n Tabular extension package (FMi)
 \extratabsurround=\skip61
 \backup@length=\skip62
 \ar@cellbox=\box67
-))
+)) (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/base\textcomp.sty
+Package: textcomp 2024/04/24 v2.1b Standard LaTeX package
+)
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/geometry\geometry.sty
 Package: geometry 2026/03/07 v6.0 Page Geometry
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/generic/iftex\ifvtex.sty
@@ -464,7 +466,7 @@ Package uniquecounter Info: New unique counter `rerunfilecheck' on input line 2
 )
 \Hy@SectionHShift=\skip65
 )
-Package hyperref Info: Option `colorlinks' set `true' on input line 35.
+Package hyperref Info: Option `colorlinks' set `true' on input line 36.
 
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/cleveref\cleveref.sty
 Package: cleveref 2018/03/27 v0.21.4 Intelligent cross-referencing
@@ -487,12 +489,13 @@ Package cleveref Info: always capitalise cross-reference names on input line 78
 Package cleveref Info: no abbreviation of names on input line 7852.
 )
 ==> First Aid for cleveref.sty applied!
+\c@remark=\count341
 
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/biblatex\biblatex.sty
 Package: biblatex 2025/07/10 v3.21 programmable bibliographies (PK/MW)
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/logreq\logreq.sty
 Package: logreq 2010/08/04 v1.0 xml request logger
-\lrq@indent=\count341
+\lrq@indent=\count342
 
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/logreq\logreq.def
 File: logreq.def 2010/08/04 v1.0 logreq spec v1.0
@@ -500,49 +503,49 @@ File: logreq.def 2010/08/04 v1.0 logreq spec v1.0
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/base\ifthen.sty
 Package: ifthen 2024/03/16 v1.1e Standard LaTeX ifthen package (DPC)
 )
-\c@tabx@nest=\count342
-\c@listtotal=\count343
-\c@listcount=\count344
-\c@liststart=\count345
-\c@liststop=\count346
-\c@citecount=\count347
-\c@citetotal=\count348
-\c@multicitecount=\count349
-\c@multicitetotal=\count350
-\c@instcount=\count351
-\c@maxnames=\count352
-\c@minnames=\count353
-\c@maxitems=\count354
-\c@minitems=\count355
-\c@citecounter=\count356
-\c@maxcitecounter=\count357
-\c@savedcitecounter=\count358
-\c@uniquelist=\count359
-\c@uniquename=\count360
-\c@refsection=\count361
-\c@refsegment=\count362
-\c@maxextratitle=\count363
-\c@maxextratitleyear=\count364
-\c@maxextraname=\count365
-\c@maxextradate=\count366
-\c@maxextraalpha=\count367
-\c@abbrvpenalty=\count368
-\c@highnamepenalty=\count369
-\c@lownamepenalty=\count370
-\c@maxparens=\count371
-\c@parenlevel=\count372
-\blx@tempcnta=\count373
-\blx@tempcntb=\count374
-\blx@tempcntc=\count375
-\c@blx@maxsection=\count376
-\blx@maxsegment@0=\count377
-\blx@notetype=\count378
-\blx@parenlevel@text=\count379
-\blx@parenlevel@foot=\count380
-\blx@sectionciteorder@0=\count381
-\blx@sectionciteorderinternal@0=\count382
-\blx@entrysetcounter=\count383
-\blx@biblioinstance=\count384
+\c@tabx@nest=\count343
+\c@listtotal=\count344
+\c@listcount=\count345
+\c@liststart=\count346
+\c@liststop=\count347
+\c@citecount=\count348
+\c@citetotal=\count349
+\c@multicitecount=\count350
+\c@multicitetotal=\count351
+\c@instcount=\count352
+\c@maxnames=\count353
+\c@minnames=\count354
+\c@maxitems=\count355
+\c@minitems=\count356
+\c@citecounter=\count357
+\c@maxcitecounter=\count358
+\c@savedcitecounter=\count359
+\c@uniquelist=\count360
+\c@uniquename=\count361
+\c@refsection=\count362
+\c@refsegment=\count363
+\c@maxextratitle=\count364
+\c@maxextratitleyear=\count365
+\c@maxextraname=\count366
+\c@maxextradate=\count367
+\c@maxextraalpha=\count368
+\c@abbrvpenalty=\count369
+\c@highnamepenalty=\count370
+\c@lownamepenalty=\count371
+\c@maxparens=\count372
+\c@parenlevel=\count373
+\blx@tempcnta=\count374
+\blx@tempcntb=\count375
+\blx@tempcntc=\count376
+\c@blx@maxsection=\count377
+\blx@maxsegment@0=\count378
+\blx@notetype=\count379
+\blx@parenlevel@text=\count380
+\blx@parenlevel@foot=\count381
+\blx@sectionciteorder@0=\count382
+\blx@sectionciteorderinternal@0=\count383
+\blx@entrysetcounter=\count384
+\blx@biblioinstance=\count385
 \labelnumberwidth=\skip66
 \labelalphawidth=\skip67
 \biblabelsep=\skip68
@@ -554,9 +557,9 @@ Package: ifthen 2024/03/16 v1.1e Standard LaTeX ifthen package (DPC)
 \blx@bcfin=\read2
 \blx@bcfout=\write3
 \blx@langwohyphens=\language79
-\c@mincomprange=\count385
-\c@maxcomprange=\count386
-\c@mincompwidth=\count387
+\c@mincomprange=\count386
+\c@maxcomprange=\count387
+\c@mincompwidth=\count388
 Package biblatex Info: Trying to load biblatex default data model...
 Package biblatex Info: ... file 'blx-dm.def' found.
 
@@ -567,74 +570,74 @@ Package biblatex Info: Trying to load biblatex style data model...
 Package biblatex Info: ... file 'numeric-comp.dbx' not found.
 Package biblatex Info: Trying to load biblatex custom data model...
 Package biblatex Info: ... file 'biblatex-dm.cfg' not found.
-\c@afterword=\count388
-\c@savedafterword=\count389
-\c@annotator=\count390
-\c@savedannotator=\count391
-\c@author=\count392
-\c@savedauthor=\count393
-\c@bookauthor=\count394
-\c@savedbookauthor=\count395
-\c@commentator=\count396
-\c@savedcommentator=\count397
-\c@editor=\count398
-\c@savededitor=\count399
-\c@editora=\count400
-\c@savededitora=\count401
-\c@editorb=\count402
-\c@savededitorb=\count403
-\c@editorc=\count404
-\c@savededitorc=\count405
-\c@foreword=\count406
-\c@savedforeword=\count407
-\c@holder=\count408
-\c@savedholder=\count409
-\c@introduction=\count410
-\c@savedintroduction=\count411
-\c@namea=\count412
-\c@savednamea=\count413
-\c@nameb=\count414
-\c@savednameb=\count415
-\c@namec=\count416
-\c@savednamec=\count417
-\c@translator=\count418
-\c@savedtranslator=\count419
-\c@shortauthor=\count420
-\c@savedshortauthor=\count421
-\c@shorteditor=\count422
-\c@savedshorteditor=\count423
-\c@labelname=\count424
-\c@savedlabelname=\count425
-\c@institution=\count426
-\c@savedinstitution=\count427
-\c@lista=\count428
-\c@savedlista=\count429
-\c@listb=\count430
-\c@savedlistb=\count431
-\c@listc=\count432
-\c@savedlistc=\count433
-\c@listd=\count434
-\c@savedlistd=\count435
-\c@liste=\count436
-\c@savedliste=\count437
-\c@listf=\count438
-\c@savedlistf=\count439
-\c@location=\count440
-\c@savedlocation=\count441
-\c@organization=\count442
-\c@savedorganization=\count443
-\c@origlocation=\count444
-\c@savedoriglocation=\count445
-\c@origpublisher=\count446
-\c@savedorigpublisher=\count447
-\c@publisher=\count448
-\c@savedpublisher=\count449
-\c@language=\count450
-\c@savedlanguage=\count451
-\c@origlanguage=\count452
-\c@savedoriglanguage=\count453
-\c@pageref=\count454
-\c@savedpageref=\count455
+\c@afterword=\count389
+\c@savedafterword=\count390
+\c@annotator=\count391
+\c@savedannotator=\count392
+\c@author=\count393
+\c@savedauthor=\count394
+\c@bookauthor=\count395
+\c@savedbookauthor=\count396
+\c@commentator=\count397
+\c@savedcommentator=\count398
+\c@editor=\count399
+\c@savededitor=\count400
+\c@editora=\count401
+\c@savededitora=\count402
+\c@editorb=\count403
+\c@savededitorb=\count404
+\c@editorc=\count405
+\c@savededitorc=\count406
+\c@foreword=\count407
+\c@savedforeword=\count408
+\c@holder=\count409
+\c@savedholder=\count410
+\c@introduction=\count411
+\c@savedintroduction=\count412
+\c@namea=\count413
+\c@savednamea=\count414
+\c@nameb=\count415
+\c@savednameb=\count416
+\c@namec=\count417
+\c@savednamec=\count418
+\c@translator=\count419
+\c@savedtranslator=\count420
+\c@shortauthor=\count421
+\c@savedshortauthor=\count422
+\c@shorteditor=\count423
+\c@savedshorteditor=\count424
+\c@labelname=\count425
+\c@savedlabelname=\count426
+\c@institution=\count427
+\c@savedinstitution=\count428
+\c@lista=\count429
+\c@savedlista=\count430
+\c@listb=\count431
+\c@savedlistb=\count432
+\c@listc=\count433
+\c@savedlistc=\count434
+\c@listd=\count435
+\c@savedlistd=\count436
+\c@liste=\count437
+\c@savedliste=\count438
+\c@listf=\count439
+\c@savedlistf=\count440
+\c@location=\count441
+\c@savedlocation=\count442
+\c@organization=\count443
+\c@savedorganization=\count444
+\c@origlocation=\count445
+\c@savedoriglocation=\count446
+\c@origpublisher=\count447
+\c@savedorigpublisher=\count448
+\c@publisher=\count449
+\c@savedpublisher=\count450
+\c@language=\count451
+\c@savedlanguage=\count452
+\c@origlanguage=\count453
+\c@savedoriglanguage=\count454
+\c@pageref=\count455
+\c@savedpageref=\count456
 \shorthandwidth=\skip74
 \shortjournalwidth=\skip75
 \shortserieswidth=\skip76
@@ -661,19 +664,19 @@ Package biblatex Info: ... file 'biblatex.def' found.
 
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/biblatex\biblatex.def
 File: biblatex.def 2025/07/10 v3.21 biblatex compatibility (PK/MW)
-\c@textcitecount=\count456
-\c@textcitetotal=\count457
-\c@textcitemaxnames=\count458
-\c@biburlbigbreakpenalty=\count459
-\c@biburlbreakpenalty=\count460
-\c@biburlnumpenalty=\count461
-\c@biburlucpenalty=\count462
-\c@biburllcpenalty=\count463
+\c@textcitecount=\count457
+\c@textcitetotal=\count458
+\c@textcitemaxnames=\count459
+\c@biburlbigbreakpenalty=\count460
+\c@biburlbreakpenalty=\count461
+\c@biburlnumpenalty=\count462
+\c@biburlucpenalty=\count463
+\c@biburllcpenalty=\count464
 \biburlbigskip=\muskip19
 \biburlnumskip=\muskip20
 \biburlucskip=\muskip21
 \biburllcskip=\muskip22
-\c@smartand=\count464
+\c@smartand=\count465
 )
 Package biblatex Info: Trying to load bibliography style 'numeric-comp'...
 Package biblatex Info: ... file 'numeric-comp.bbx' found.
@@ -693,8 +696,8 @@ Package biblatex Info: ... file 'standard.bbx' found.
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/biblatex/bbx\standard
 .bbx
 File: standard.bbx 2025/07/10 v3.21 biblatex bibliography style (PK/MW)
-\c@bbx:relatedcount=\count465
-\c@bbx:relatedtotal=\count466
+\c@bbx:relatedcount=\count466
+\c@bbx:relatedtotal=\count467
 )))
 Package biblatex Info: Trying to load citation style 'numeric-comp'...
 Package biblatex Info: ... file 'numeric-comp.cbx' found.
@@ -702,10 +705,10 @@ Package biblatex Info: ... file 'numeric-comp.cbx' found.
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/biblatex/cbx\numeric-
 comp.cbx
 File: numeric-comp.cbx 2025/07/10 v3.21 biblatex citation style (PK/MW)
-\c@cbx@tempcnta=\count467
-\c@cbx@tempcntb=\count468
-\c@cbx@tempcntc=\count469
-\c@cbx@tempcntd=\count470
+\c@cbx@tempcnta=\count468
+\c@cbx@tempcntb=\count469
+\c@cbx@tempcntc=\count470
+\c@cbx@tempcntd=\count471
 Package biblatex Info: Redefining '\cite'.
 Package biblatex Info: Redefining '\parencite'.
 Package biblatex Info: Redefining '\footcite'.
@@ -732,7 +735,7 @@ Package: expl3 2026-03-20 L3 programming layer (loader)
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/l3backend\l3backend-p
 dftex.def
 File: l3backend-pdftex.def 2026-02-18 L3 backend support: PDF output (pdfTeX)
-\l__color_backend_stack_int=\count471
+\l__color_backend_stack_int=\count472
 ))
 Package biblatex Info: ... and expl3
 (biblatex)             2026-03-20 L3 programming layer (loader) 
@@ -748,31 +751,30 @@ Package: xparse 2025-10-09 L3 Experimental document command parser
 Package: blx-case-expl3 2025/07/10 v3.21 expl3 case changing code for biblatex
 ))
 Package translations Info: No language package found. I am going to use `englis
-h' as default language. on input line 77.
-\@quotelevel=\count472
-\@quotereset=\count473
-
-No file main.aux.
+h' as default language. on input line 152.
+\@quotelevel=\count473
+\@quotereset=\count474
+ (main.aux)
 \openout1 = `main.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 77.
-LaTeX Font Info:    ... okay on input line 77.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 152.
+LaTeX Font Info:    ... okay on input line 152.
 
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/graphics\graphicx.sty
 Package: graphicx 2024/12/31 v1.2e Enhanced LaTeX Graphics (DPC,SPQR)
@@ -797,7 +799,7 @@ File: translations-basic-dictionary-english.trsl (english translation file `tra
 nslations-basic-dictionary')
 )
 Package translations Info: loading dictionary `translations-basic-dictionary' f
-or `english'. on input line 77.
+or `english'. on input line 152.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -833,13 +835,13 @@ or `english'. on input line 77.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-LaTeX Info: Redefining \microtypecontext on input line 77.
-Package microtype Info: Applying patch `item' on input line 77.
-Package microtype Info: Applying patch `toc' on input line 77.
-Package microtype Info: Applying patch `eqnum' on input line 77.
-Package microtype Info: Applying patch `footnote' on input line 77.
-Package microtype Info: Applying patch `verbatim' on input line 77.
-LaTeX Info: Redefining \microtypesetup on input line 77.
+LaTeX Info: Redefining \microtypecontext on input line 152.
+Package microtype Info: Applying patch `item' on input line 152.
+Package microtype Info: Applying patch `toc' on input line 152.
+Package microtype Info: Applying patch `eqnum' on input line 152.
+Package microtype Info: Applying patch `footnote' on input line 152.
+Package microtype Info: Applying patch `verbatim' on input line 152.
+LaTeX Info: Redefining \microtypesetup on input line 152.
 Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
@@ -857,16 +859,16 @@ File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/context/base/mkii\supp-pdf.
 mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count474
+\scratchcounter=\count475
 \scratchdimen=\dimen272
 \scratchbox=\box70
-\nofMPsegments=\count475
-\nofMParguments=\count476
+\nofMPsegments=\count476
+\nofMParguments=\count477
 \everyMPshowfont=\toks34
-\MPscratchCnt=\count477
+\MPscratchCnt=\count478
 \MPscratchDim=\dimen273
-\MPnumerator=\count478
-\makeMPintoPDFobject=\count479
+\MPnumerator=\count479
+\makeMPintoPDFobject=\count480
 \everyMPtoPDFconversion=\toks35
 )
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/epstopdf-pkg\epstopdf
@@ -879,7 +881,8 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 .cfg
 File: epstopdf-sys.cfg 2021/03/18 v2.0 Configuration of epstopdf for MiKTeX
 ))
-Package hyperref Info: Link coloring ON on input line 77.
+Package hyperref Info: Link coloring ON on input line 152.
+ (main.out) (main.out)
 \@outlinefile=\write4
 \openout4 = `main.out'.
 
@@ -896,12 +899,12 @@ Package biblatex Info: Automatic encoding selection.
 \openout3 = `main.bcf'.
 
 Package biblatex Info: Trying to load bibliographic data...
-Package biblatex Info: ... file 'main.bbl' not found.
-
-No file main.bbl.
-Package biblatex Info: Reference section=0 on input line 77.
-Package biblatex Info: Reference segment=0 on input line 77.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 79.
+Package biblatex Info: ... file 'main.bbl' found.
+ (main.bbl)
+Package biblatex Info: Reference section=0 on input line 152.
+Package biblatex Info: Reference segment=0 on input line 152.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 154
+.
 
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/amsfonts\umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
@@ -909,106 +912,28 @@ File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 79.
-
+LaTeX Font Info:    Trying to load font information for U+msb on input line 154
+.
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/amsfonts\umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
 (C:\Users\weaverb\AppData\Local\Programs\MiKTeX\tex/latex/microtype\mt-msb.cfg
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
-)
-No file main.toc.
+) (main.toc [1
+
+{C:/Users/weaverb/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map}])
 \tf@toc=\write5
 \openout5 = `main.toc'.
 
-
-LaTeX Warning: Reference `sec:state' on page 1 undefined on input line 89.
-
-
-LaTeX Warning: Reference `sec:obs' on page 1 undefined on input line 91.
-
-
-LaTeX Warning: Reference `sec:diff' on page 1 undefined on input line 94.
-
-
-LaTeX Warning: Citation 'subirana2013gnss' on page 1 undefined on input line 10
-8.
-
-
-LaTeX Warning: Citation 'teunissen2017handbook' on page 1 undefined on input li
-ne 108.
-
-
-LaTeX Warning: Reference `sec:notation' on page 1 undefined on input line 109.
-
-
-Overfull \hbox (41.51575pt too wide) in paragraph at lines 107--110
-[]\OT1/cmr/m/n/10.95 (-20) The no-ta-tion fol-lows the IGS con-ven-tions adopte
-d by [] and [];
+ [2] (notation.tex [3]) (state_vector.tex [4] [5]
+Overfull \hbox (35.04262pt too wide) in paragraph at lines 135--142
+\OT1/cmr/m/n/10.95 (-20) ven-tion does not ref-er-ence to zero. They are \OT1/c
+mr/m/it/10.95 (-20) not \OT1/cmr/m/n/10.95 (-20) one per sig-nal: \OT1/cmtt/m/n
+/10.95 StateInitializer::resolveReceiverBias
  []
 
-(notation.tex
-
-LaTeX Warning: Reference `sec:diff' on page 1 undefined on input line 16.
-
-[1
-
-{C:/Users/weaverb/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map}]
-
-LaTeX Warning: Reference `eq:obs-phase' on page 1 undefined on input line 73.
-
-
-LaTeX Warning: Reference `eq:obs-code' on page 1 undefined on input line 73.
-
-) (state_vector.tex [2]
-
-LaTeX Warning: Reference `sec:obs-geometry' on page 1 undefined on input line 5
-3.
-
-[3]
-
-LaTeX Warning: Citation 'saastamoinen1972atmospheric' on page 4 undefined on in
-put line 78.
-
-
-Overfull \hbox (43.52579pt too wide) in paragraph at lines 76--80
-\OT1/cmr/m/n/10.95 (-20) com-po-nent $[][]$ is treated de-ter-min-is-ti-cally v
-ia the Saas-ta-moinen model [[]].
- []
-
-
-LaTeX Warning: Reference `eq:iono-scaling' on page 1 undefined on input line 97
-.
-
-
-LaTeX Warning: Citation 'teunissen1995lambda' on page 4 undefined on input line
- 108.
-
-
-LaTeX Warning: Reference `sec:diff' on page 1 undefined on input line 140.
-
-) (observation_equations.tex [4]
-
-LaTeX Warning: Reference `eq:obs-phase' on page 1 undefined on input line 50.
-
-
-LaTeX Warning: Reference `eq:obs-code' on page 1 undefined on input line 50.
-
-
-LaTeX Warning: Reference `sec:diff' on page 1 undefined on input line 63.
-
-
-LaTeX Warning: Reference `eq:obs-phase' on page 1 undefined on input line 78.
-
-
-LaTeX Warning: Reference `eq:obs-code' on page 1 undefined on input line 78.
-
-[5]
-
-LaTeX Warning: Reference `sec:diff' on page 1 undefined on input line 128.
-
-)
-Overfull \hbox (0.27109pt too wide) in paragraph at lines 119--119
+[6]) (observation_equations.tex [7])
+Overfull \hbox (0.27109pt too wide) in paragraph at lines 121--210
 \OT1/cmr/m/n/10.95 (-20) dependent down-weighting fac-tor $\OML/cmm/m/it/10.95 
 w\OT1/cmr/m/n/10.95 (-20) (\OML/cmm/m/it/10.95 ^^R\OT1/cmr/m/n/10.95 (-20) ) \O
 MS/cmsy/m/n/10.95 2 f\OT1/cmr/m/n/10.95 (-20) 1\OML/cmm/m/it/10.95 ; [] ^^R; []
@@ -1016,100 +941,436 @@ MS/cmsy/m/n/10.95 2 f\OT1/cmr/m/n/10.95 (-20) 1\OML/cmm/m/it/10.95 ; [] ^^R; []
 tt/m/n/10.95 filter.stochastic[]model\OT1/cmr/m/n/10.95 (-20) ,
  []
 
-(bssd_dd.tex
+(bssd_dd.tex [8] [9]
+Overfull \hbox (92.88596pt too wide) in paragraph at lines 147--171
+\OT1/cmtt/m/n/10.95 BrsdTransform::apply \OT1/cmr/m/n/10.95 (-20) fol-lowed by 
+\OT1/cmtt/m/n/10.95 BssdTransform::differenceBrsd \OT1/cmr/m/n/10.95 (-20) (\OT
+1/cmtt/m/n/10.95 include/measurement/BssdTransform.hpp\OT1/cmr/m/n/10.95 (-20) 
+).
+ []
 
-LaTeX Warning: Reference `eq:obs-phase' on page 1 undefined on input line 6.
+) [10] (kalman_smoother.tex [11]
+Overfull \hbox (53.80801pt too wide) in paragraph at lines 110--120
+\OT1/cmr/m/n/10.95 (-20) differential-ZWD en-try $\OML/cmm/b/it/10.95 Q[] \OT1/
+cmr/m/n/10.95 (-20) = \OML/cmm/m/it/10.95 ^^[[]\OT1/cmr/m/n/10.95 (-20) ^^A\OML
+/cmm/m/it/10.95 t$ \OT1/cmr/m/n/10.95 (-20) gov-erned by \OT1/cmtt/m/n/10.95 ba
+seline.differential[]tropo[]process[]noise[]m[]per[]sqrt[]s\OT1/cmr/m/n/10.95 (
+-20) . 
+ []
+
+[12]
+Overfull \hbox (11.0348pt too wide) in paragraph at lines 231--238
+\OT1/cmr/m/n/10.95 (-20) mary Equa-tions ([][]17[][]) and ([][]24[][]) read, ca
+p-tured only when re-lin-eari-sa-tion is armed (\OT1/cmtt/m/n/10.95 getLastUpda
+tePriorX
+ []
+
+[13]
+Overfull \hbox (75.6841pt too wide) in paragraph at lines 265--268
+ []\OT1/cmr/bx/n/10.95 (-20) Firing con-di-tion.[] \OT1/cmr/m/n/10.95 (-20) The
+ driver \OT1/cmtt/m/n/10.95 Application::runGeometryRelinearization \OT1/cmr/m/
+n/10.95 (-20) (\OT1/cmtt/m/n/10.95 src/core/app/Application.cpp\OT1/cmr/m/n/10.
+95 (-20) )
+ []
 
 
-LaTeX Warning: Reference `eq:obs-code' on page 1 undefined on input line 6.
+Overfull \hbox (121.38217pt too wide) in paragraph at lines 271--276
+[]\OT1/cmr/m/n/10.95 (-20) the po-si-tion change since the pri-mary up-date ex-
+ceeds a data-dependent thresh-old --- \OT1/cmtt/m/n/10.95 relinearize[]dpos[]th
+reshold[]phase[]m
+ []
 
 
-LaTeX Warning: Reference `eq:obs-phase' on page 1 undefined on input line 26.
+Overfull \hbox (87.416pt too wide) in paragraph at lines 293--303
+\OT1/cmr/m/n/10.95 (-20) The en-gine per-forms \OT1/cmr/m/it/10.95 (-20) no $\O
+ML/cmm/m/it/10.95 ^^_[]$ \OT1/cmr/m/n/10.95 (-20) innovation-covariance test. O
+ut-lier re-jec-tion (\OT1/cmtt/m/n/10.95 KalmanFilter::validatePostFitResiduals
+\OT1/cmr/m/n/10.95 (-20) )
+ []
 
 
-LaTeX Warning: Reference `eq:obs-code' on page 1 undefined on input line 26.
+Overfull \hbox (41.11108pt too wide) in paragraph at lines 312--317
+ []\OT1/cmr/bx/n/10.95 (-20) Complete-reset back-stop.[] \OT1/cmr/m/n/10.95 (-2
+0) If the count of re-jected rows ex-ceeds $0\OML/cmm/m/it/10.95 :\OT1/cmr/m/n/
+10.95 (-20) 5 \OMS/cmsy/m/n/10.95 ^^B \OT1/cmr/m/n/10.95 (-20) ([])$,
+ []
 
-[6]
+[14]
+Overfull \hbox (116.0274pt too wide) in paragraph at lines 343--350
+\OT1/cmr/m/n/10.95 (-20) Striebel re-cur-sion [[][]7[][]] over the stored for-w
+ard tra-jec-tory (\OT1/cmtt/m/n/10.95 include/filter/Smoother.hpp\OT1/cmr/m/n/1
+0.95 (-20) , \OT1/cmtt/m/n/10.95 src/core/filter/Smoother.cpp\OT1/cmr/m/n/10.95
+ (-20) ).
+ []
 
-LaTeX Warning: Reference `eq:dd-phase' on page 1 undefined on input line 100.
+[15]
+Overfull \hbox (18.80162pt too wide) in paragraph at lines 419--425
+[]\OT1/cmr/m/n/10.95 (-20) A \OT1/cmr/m/it/10.95 (-20) com-plete \OT1/cmr/m/n/1
+0.95 (-20) fil-ter re-set at $\OML/cmm/m/it/10.95 k[]\OT1/cmr/m/n/10.95 (-20) 1
+$ (the co-vari-ance re-inflation of Sec-tion [][]6.4[][], recorded as \OT1/cmtt
+/m/n/10.95 is[]discontinuity\OT1/cmr/m/n/10.95 (-20) )
+ []
+
+) (slip_detection.tex
+Overfull \hbox (84.85999pt too wide) in paragraph at lines 11--30
+\OT1/cmr/m/n/10.95 (-20) (\OT1/cmtt/m/n/10.95 src/core/slip/GraphicSlipDetector
+.cpp\OT1/cmr/m/n/10.95 (-20) ); the extra-wide-lane de-tec-tor (\OT1/cmtt/m/n/1
+0.95 src/core/slip/EwlSlipDetector.cpp\OT1/cmr/m/n/10.95 (-20) )
+ []
+
+[16] [17]
+Overfull \hbox (83.2817pt too wide) in paragraph at lines 145--147
+\OT1/cmr/m/n/10.95 (-20) The GRAPHIC com-bi-na-tion av-er-ages the code and pha
+se on a \OT1/cmr/m/it/10.95 (-20) sin-gle \OT1/cmr/m/n/10.95 (-20) band (\OT1/c
+mtt/m/n/10.95 GraphicSlipDetector::computeGraphic\OT1/cmr/m/n/10.95 (-20) ): 
+ []
 
 
-LaTeX Warning: Reference `eq:dd-phase' on page 1 undefined on input line 107.
+Overfull \hbox (142.50507pt too wide) in paragraph at lines 218--230
+\OT1/cmr/m/n/10.95 (-20) giving $^^H[] = \OML/cmm/m/it/10.95 c[]\OT1/cmr/m/n/10
+.95 (-20) ^^H[] \OMS/cmsy/m/n/10.95 ^^@ \OML/cmm/m/it/10.95 c[]\OT1/cmr/m/n/10.
+95 (-20) ^^H[]$ and the ef-fec-tive wave-length $\OML/cmm/m/it/10.95 ^^U[] \OT1
+/cmr/m/n/10.95 (-20) = []\OML/cmm/m/it/10.95 c[]^^U[] \OMS/cmsy/m/n/10.95 ^^@ \
+OML/cmm/m/it/10.95 c[]^^U[][]$ \OT1/cmr/m/n/10.95 (-20) (\OT1/cmtt/m/n/10.95 If
+PhaseSlipDetector::computeIfWavelengthMeters\OT1/cmr/m/n/10.95 (-20) );
+ []
+
+[18]
+Overfull \hbox (49.9497pt too wide) in paragraph at lines 248--256
+\OT1/cmr/m/n/10.95 (-20) The Tur-boEdit re-solver (\OT1/cmtt/m/n/10.95 src/core
+/slip/TurboEditResolver.cpp\OT1/cmr/m/n/10.95 (-20) , \OT1/cmtt/m/n/10.95 inclu
+de/slip/TurboEditResolver.hpp\OT1/cmr/m/n/10.95 (-20) )
+ []
 
 
-LaTeX Warning: Citation 'teunissen1985generalised' on page 7 undefined on input
- line 157.
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 257.
 
 
-LaTeX Warning: Citation 'deJonge1998processing' on page 7 undefined on input li
-ne 158.
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\times' on input line 257.
 
-) [7]
 
-LaTeX Warning: Empty bibliography on input line 123.
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 257.
 
-[8] (main.aux)
+[19]
+Overfull \hbox (9.18193pt too wide) in paragraph at lines 343--351
+\OT1/cmr/m/n/10.95 (-20) A can-di-date is \OT1/cmr/m/it/10.95 (-20) ac-cepted \
+OT1/cmr/m/n/10.95 (-20) as a re-pair only if the round-ing is clean ($\OML/cmm/
+m/it/10.95 f \OMS/cmsy/m/n/10.95 ^^T \OT1/cmr/m/n/10.95 (-20) 0\OML/cmm/m/it/10
+.95 :\OT1/cmr/m/n/10.95 (-20) 30$, the con-stant \OT1/cmtt/m/n/10.95 kMaxFracti
+onal\OT1/cmr/m/n/10.95 (-20) ;
+ []
+
+
+Overfull \hbox (137.47372pt too wide) in paragraph at lines 363--380
+\OT1/cmr/m/n/10.95 (-20) fails by de-sign --- ``no es-ti-mate'' is not ev-i-den
+ce of sharp-ness). The de-fault \OT1/cmtt/m/n/10.95 estimation.cycle[]slip.turb
+o[]edit[]split[]max[]sigma
+ []
+
+[20]
+Overfull \hbox (15.9046pt too wide) detected at line 416
+[][][][]\OMS/cmsy/m/n/10.95 j[]j ^^T []  ^ [] ^^T []\OML/cmm/m/it/10.95 ;
+ []
+
+
+Overfull \hbox (16.6441pt too wide) in paragraph at lines 464--478
+[]\OT1/cmr/m/n/10.95 (-20) An MW-flagged pair across the gap is at-tributed thr
+ee ways. (i) A \OT1/cmr/m/it/10.95 (-20) code event \OT1/cmr/m/n/10.95 (-20) (\
+OT1/cmtt/m/n/10.95 action="code[]event"\OT1/cmr/m/n/10.95 (-20) )
+ []
+
+[21]) (ambiguity_resolution.tex [22]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 107.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 107.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 107.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 107.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 107.
+
+[23]
+Overfull \hbox (15.80197pt too wide) in paragraph at lines 216--219
+\OT1/cmr/m/n/10.95 (-20) enced di-rectly from the MW de-tec-tor's single-differ
+ence WL in-te-gers (\OT1/cmtt/m/n/10.95 src/core/slip/MwSlipDetector\OT1/cmr/m/
+n/10.95 (-20) ),
+ []
+
+[24] [25]
+Overfull \hbox (4.15308pt too wide) in paragraph at lines 354--362
+\OT1/cmr/m/n/10.95 (-20) where the $\OML/cmm/m/it/10.95 d[]$ \OT1/cmr/m/n/10.95
+ (-20) are the post-reduction $\OML/cmm/m/it/10.95 LDL[]$ \OT1/cmr/m/n/10.95 (-
+20) con-di-tional vari-ances of [] and $\OML/cmm/m/it/10.95 P[]$ \OT1/cmr/m/n/1
+0.95 (-20) is \OT1/cmtt/m/n/10.95 min[]success[]rate\OT1/cmr/m/n/10.95 (-20) .
+ []
+
+[26]
+Overfull \hbox (12.753pt too wide) in paragraph at lines 397--409
+\OT1/cmr/m/n/10.95 (-20) but via a \OT1/cmr/m/it/10.95 (-20) finite-variance Jo
+seph-form pseudo-observation \OT1/cmr/m/n/10.95 (-20) (\OT1/cmtt/m/n/10.95 src/
+core/filter/AmbiguityResolver.cpp\OT1/cmr/m/n/10.95 (-20) ;
+ []
+
+
+Overfull \hbox (9.77528pt too wide) in paragraph at lines 437--443
+\OT1/cmtt/m/n/10.95 src/core/config/GnssConfigLoad.cpp \OT1/cmr/m/n/10.95 (-20)
+ with de-faults in \OT1/cmtt/m/n/10.95 include/filter/AmbiguityResolver.hpp\OT1
+/cmr/m/n/10.95 (-20) .
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 451--452
+[]|\OT1/cmr/m/n/10.95 (+20) degenerate-covariance re-ject
+ []
+
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `cmtt' (encoding: TS1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+
+Underfull \hbox (badness 10000) in paragraph at lines 459--460
+[]|\OT1/cmr/m/n/10.95 (+20) constellation sub-set (Sec-
+ []
+
+) (imu_aiding.tex
+Overfull \hbox (79.92113pt too wide) in paragraph at lines 14--26
+\OT1/cmr/m/n/10.95 (-20) dict path routes through \OT1/cmtt/m/n/10.95 Applicati
+on::run $\OMS/cmsy/m/n/10.95 !$ \OT1/cmtt/m/n/10.95 AidingSourceManager $\OMS/c
+msy/m/n/10.95 !$ \OT1/cmtt/m/n/10.95 src/core/aiding/ImuAidingSource.cpp\OT1/cm
+r/m/n/10.95 (-20) . 
+ []
+
+[27]
+Overfull \hbox (80.07343pt too wide) in paragraph at lines 99--101
+[]\OT1/cmr/m/n/10.95 (-20) The grav-ity vec-tor is a point-mass ra-dial model p
+lus the cen-trifu-gal term (\OT1/cmtt/m/n/10.95 ImuIntegrator::computeGravityEc
+ef\OT1/cmr/m/n/10.95 (-20) ): 
+ []
+
+[28]
+LaTeX Font Info:    Trying to load font information for OMS+cmtt on input line 
+164.
+LaTeX Font Info:    No file OMScmtt.fd. on input line 164.
+
+
+LaTeX Font Warning: Font shape `OMS/cmtt/m/n' undefined
+(Font)              using `OMS/cmsy/m/n' instead
+(Font)              for symbol `textbraceleft' on input line 164.
+
+
+Overfull \hbox (10.00873pt too wide) in paragraph at lines 161--170
+\OT1/cmr/m/n/10.95 (-20) with the spec-tral den-si-ties $\OML/cmm/m/it/10.95 ^^
+[[]; ^^[[]; ^^[[]; ^^[[]$ \OT1/cmr/m/n/10.95 (-20) read from \OT1/cmtt/m/n/10.9
+5 imu.\OMS/cmtt/m/n/10.95 f\OT1/cmtt/m/n/10.95 accel[]noise[]density\OT1/cmr/m/
+n/10.95 (-20) , \OT1/cmtt/m/n/10.95 gyro[]noise[]density\OT1/cmr/m/n/10.95 (-20
+) ,
+ []
+
+[29]
+Overfull \hbox (25.41411pt too wide) in paragraph at lines 209--211
+\OT1/cmr/m/n/10.95 (-20) How the GNSS ob-ser-va-tions cor-rect the in-er-tial e
+r-rors de-pends on the cou-pling mode (\OT1/cmtt/m/n/10.95 imu.coupling[]mode\O
+T1/cmr/m/n/10.95 (-20) ). 
+ []
+
+) (ssr_corrections.tex
+Overfull \hbox (24.90002pt too wide) in paragraph at lines 17--28
+\OT1/cmr/m/n/10.95 (-20) con-sumers (\OT1/cmtt/m/n/10.95 model/ModelGeometry\OT
+1/cmr/m/n/10.95 (-20) , \OT1/cmtt/m/n/10.95 corrections/GnssCorrections\OT1/cmr
+/m/n/10.95 (-20) , \OT1/cmtt/m/n/10.95 measurement/MeasurementModel\OT1/cmr/m/n
+/10.95 (-20) )
+ []
+
+[30]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 29.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 29.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 29.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 29.
+
+
+Overfull \hbox (62.67683pt too wide) in paragraph at lines 57--71
+\OT1/cmr/m/n/10.95 (-20) The \OT1/cmr/m/it/10.95 (-20) sub-trac-tion \OT1/cmr/m
+/n/10.95 (-20) fol-lows the RTCM sign con-ven-tion $\OML/cmm/b/it/10.95 ^^N \OT
+1/cmr/m/n/10.95 (-20) = [] \OMS/cmtt/m/n/10.95 ^^@ []$ \OT1/cmr/m/n/10.95 (-20)
+ (\OT1/cmtt/m/n/10.95 products/SsrCorrectionStore.cpp\OT1/cmr/m/n/10.95 (-20) )
+.
+ []
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\leavevmode@ifvmode' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                \kern 1.8254pt
+(hyperref)                removed on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 72.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 72.
+
+[31]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 132.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 132.
+
+
+Overfull \hbox (8.41359pt too wide) in paragraph at lines 159--172
+\OT1/cmr/m/n/10.95 (-20) +1$, \OT1/cmtt/m/n/10.95 measurement/MeasurementModel.
+cpp\OT1/cmr/m/n/10.95 (-20) ); the pre-dicted ob-serv-able ac-cu-mu-lates it as
+ \OT1/cmtt/m/n/10.95 ssr[]bias[]term
+ []
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 202.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 202.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 202.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 202.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 202.
+
+[32])
+Overfull \hbox (35.58601pt too wide) in paragraph at lines 236--228
+\OT1/cmtt/m/n/10.95 applyOrbitToPosition \OT1/cmr/m/n/10.95 (-20) / \OT1/cmtt/m
+/n/10.95 applyClockToBias \OT1/cmr/m/n/10.95 (-20) / \OT1/cmtt/m/n/10.95 iodeMa
+tches \OT1/cmr/m/n/10.95 (-20) mem-bers of \OT1/cmtt/m/n/10.95 products/SsrCorr
+ectionStore\OT1/cmr/m/n/10.95 (-20) .
+ []
+
+[33]
+Overfull \hbox (8.32246pt too wide) in paragraph at lines 230--230
+[]\OT1/cmr/m/n/10.95 (-20) P. J. G. Te-u-nis-sen. ``Gen-er-al-ized in-verses, a
+d-just-ment, the da-tum prob-lem and S-transformations''.
+ []
+
+[34] (main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-03-20>
  ***********
 
 
-LaTeX Warning: There were undefined references.
+LaTeX Font Warning: Some font shapes were not available, defaults substituted.
 
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
-
-Package rerunfilecheck Warning: File `main.out' has changed.
-(rerunfilecheck)                Rerun to get outlines right
-(rerunfilecheck)                or use package `bookmark'.
-
-Package rerunfilecheck Info: Checksums for `main.out':
-(rerunfilecheck)             Before: <no file>
-(rerunfilecheck)             After:  90830788B2D9249D7E2C390BB1844A89;2948.
-
-Package biblatex Warning: Please (re)run Biber on the file:
-(biblatex)                main
-(biblatex)                and rerun LaTeX afterwards.
-
+Package rerunfilecheck Info: File `main.out' has not changed.
+(rerunfilecheck)             Checksum: 00059B060231F56105FCAA70D2A72376;11727.
 Package logreq Info: Writing requests to 'main.run.xml'.
 \openout1 = `main.run.xml'.
 
  ) 
 Here is how much of TeX's memory you used:
- 27370 strings out of 467691
- 541324 string characters out of 5414020
- 1398071 words of memory out of 5000000
- 55964 multiletter control sequences out of 15000+600000
- 644297 words of font info for 157 fonts, out of 8000000 for 9000
+ 28291 strings out of 467691
+ 556189 string characters out of 5414020
+ 1415846 words of memory out of 5000000
+ 56501 multiletter control sequences out of 15000+600000
+ 654369 words of font info for 238 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,17n,80p,1003b,1156s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,24n,93p,1003b,2105s stack positions out of 10000i,1000n,20000p,200000b,200000s
  <C:\Users\weaverb\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\tc
-rm1095.pk><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/am
-sfonts/cm/cmbx10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type
-1/public/amsfonts/cm/cmbx12.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX
-/fonts/type1/public/amsfonts/cm/cmcsc10.pfb><C:/Users/weaverb/AppData/Local/Pro
-grams/MiKTeX/fonts/type1/public/amsfonts/cm/cmex10.pfb><C:/Users/weaverb/AppDat
-a/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmmi10.pfb><C:/Users/wea
-verb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmmi6.pfb><C:
-/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmm
-i8.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfo
-nts/cm/cmmib10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/
-public/amsfonts/cm/cmr10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fo
-nts/type1/public/amsfonts/cm/cmr12.pfb><C:/Users/weaverb/AppData/Local/Programs
-/MiKTeX/fonts/type1/public/amsfonts/cm/cmr6.pfb><C:/Users/weaverb/AppData/Local
-/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmr8.pfb><C:/Users/weaverb/AppD
-ata/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy10.pfb><C:/Users/w
-eaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy8.pfb><
-C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/c
-mti10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/am
-sfonts/cm/cmtt10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type
-1/public/amsfonts/symbols/msam10.pfb><C:/Users/weaverb/AppData/Local/Programs/M
-iKTeX/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on main.pdf (8 pages, 280768 bytes).
+tt1095.pk> <C:\Users\weaverb\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/d
+pi600\tcrm1095.pk><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/p
+ublic/amsfonts/cm/cmbx10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fo
+nts/type1/public/amsfonts/cm/cmbx12.pfb><C:/Users/weaverb/AppData/Local/Program
+s/MiKTeX/fonts/type1/public/amsfonts/cm/cmcsc10.pfb><C:/Users/weaverb/AppData/L
+ocal/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmex10.pfb><C:/Users/weaver
+b/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmmi10.pfb><C:/U
+sers/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmmi1
+2.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfon
+ts/cm/cmmi6.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/pub
+lic/amsfonts/cm/cmmi8.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts
+/type1/public/amsfonts/cm/cmmib10.pfb><C:/Users/weaverb/AppData/Local/Programs/
+MiKTeX/fonts/type1/public/amsfonts/cmextra/cmmib8.pfb><C:/Users/weaverb/AppData
+/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmr10.pfb><C:/Users/weave
+rb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmr12.pfb><C:/U
+sers/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmr6.
+pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts
+/cm/cmr8.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public
+/amsfonts/cm/cmr9.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/typ
+e1/public/amsfonts/cm/cmsy10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTe
+X/fonts/type1/public/amsfonts/cm/cmsy6.pfb><C:/Users/weaverb/AppData/Local/Prog
+rams/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy8.pfb><C:/Users/weaverb/AppData/
+Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmti10.pfb><C:/Users/weave
+rb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmtt10.pfb><C:/
+Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmtt
+9.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfon
+ts/symbols/msam10.pfb><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/typ
+e1/public/amsfonts/symbols/msbm10.pfb>
+Output written on main.pdf (34 pages, 611685 bytes).
 PDF statistics:
- 204 PDF objects out of 1000 (max. 8388607)
- 64 named destinations out of 1000 (max. 500000)
- 31233 words of extra memory for PDF output out of 35830 (max. 10000000)
+ 1000 PDF objects out of 1000 (max. 8388607)
+ 285 named destinations out of 1000 (max. 500000)
+ 46009 words of extra memory for PDF output out of 51595 (max. 10000000)
 

@@ -1,7 +1,7 @@
-clear all; clc; %close all;
+clear all; %clc; %close all;
 
-fname = 'C:\GnssProcessor\build\x64-Release\logs\ambiguity_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\ambiguity_trace.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('ambiguity_trace.csv');
 
 plot_ambiguities(fname);
 
@@ -17,10 +17,7 @@ plot_ambiguities(fname);
 function plot_ambiguities(fname)
 
 if nargin < 1 || isempty(fname)
-    % Adjust this path to your build/logs location if different
-    fname = fullfile('C:','GnssProcessor','build','x64-Release','logs','ambiguity_trace.csv');
-    % Alternate debug path example:
-    % fname = fullfile('C:','GnssProcessor','build','x64-Debug','logs','ambiguity_trace.csv');
+    fname = gnssTracePath('ambiguity_trace.csv');
 end
 
 if ~isfile(fname)

@@ -23,6 +23,7 @@
 #include "slip/IonoVariabilityMonitor.hpp"
 #include "logging/TraceLogger.hpp"
 #include "filter/ImuIntegrator.hpp"
+#include "aiding/AidingSourceManager.hpp"
 #include "realtime/RealTimeEngine.hpp"
 #include "filter/AmbiguityResolver.hpp"
 #include "common/PppTypes.hpp"
@@ -437,7 +438,7 @@ private:
     std::unique_ptr<CycleSlipManager>     cycle_slip_manager_;
     std::unique_ptr<IonoVariabilityMonitor> iono_variability_monitor_;
     std::unique_ptr<TraceLogger>         trace_logger_;
-    std::unique_ptr<ImuIntegrator>       imu_integrator_;
+    std::unique_ptr<AidingSourceManager> aiding_manager_;   //!< Owns the config-selected aiding sources (IMU first client). Replaces the bespoke ImuIntegrator member.
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
     std::unique_ptr<GlobalIonosphereMap> gim_;  /**< IONEX global ionosphere map for PPP-RTK ionosphere weighting (post-processing). */
 
@@ -456,6 +457,7 @@ private:
     bool first_epoch_{true};                  /**< True until the first processed epoch completes; gates the initial-dt assumption, decimation skip, IMU-aided predict, and WLS clock seeding. */
     double prev_tow_{0.0};                    /**< Previous epoch TOW for dt computation. */
     double last_processed_tow_{std::numeric_limits<double>::lowest()}; /**< TOW of the most recently PROCESSED epoch; lags prev_tow_ when downsampling via getGnssRate(). */
+    double max_duration_anchor_s_{0.0};       /**< Continuous GPS seconds of the first processed epoch; the processing.max_duration_s cutoff measures elapsed data time from here. Only meaningful once first_epoch_ has cleared. */
     GnssTime prev_epoch_time_{0, 0.0};        /**< Previous epoch full GnssTime for IMU integration. */
     double prev_pos_sigma_3d_{std::numeric_limits<double>::max()}; /**< Post-update 3D position sigma. */
 

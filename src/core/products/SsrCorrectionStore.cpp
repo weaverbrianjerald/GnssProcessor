@@ -7,10 +7,12 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/Constants.hpp"
+#include <spdlog/spdlog.h>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <string>
 
 namespace GnssProcessor {
 
@@ -62,6 +64,22 @@ void SsrCorrectionStore::pushCombined(const SsrCombinedCorrection& rec, const Ss
 void SsrCorrectionStore::pushCodeBias(const SsrCodeBias& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& r = by_sat_[rec.sat]; r.code_bias = rec; r.header = header;
+
+    // Diagnostic (trace): the code-bias signal keys the SSR stream actually
+    // carries per Galileo satellite.  getCodeBias() matches the receiver's exact
+    // RINEX obs code, so if a sat shows only "C1C" (stream omits E5a/E5b) or
+    // "C5X"/"C5I" where the receiver tracks C5Q (sig-id mismatch), the E5a/E5b
+    // lookup returns 0 and the sat-bias state must cover it.  "corrections" is
+    // registered in the global spdlog registry by LogManager.
+    if (!rec.sat.empty() && rec.sat[0] == 'E') {
+        if (auto lg = spdlog::get("corrections");
+            lg && lg->should_log(spdlog::level::trace)) {
+            std::string keys;
+            for (const auto& kv : rec.bias_per_signal)
+                keys += kv.first + "=" + std::to_string(kv.second) + " ";
+            lg->trace("SSR-CBIAS-KEYS {}: {}", rec.sat, keys);
+        }
+    }
 }
 
 void SsrCorrectionStore::pushPhaseBias(const SsrPhaseBias& rec, const SsrHeader& header) {
@@ -181,6 +199,30 @@ bool SsrCorrectionStore::isEmpty() const {
 std::size_t SsrCorrectionStore::size() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return by_sat_.size();
+}
+
+SsrCorrectionStore::Coverage
+SsrCorrectionStore::coverageFor(const std::vector<std::string>& sats,
+                                const GnssTime& time, double max_age_s) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Coverage cov;
+    for (const auto& sat : sats) {
+        ++cov.total;
+        const auto it = by_sat_.find(sat);
+        if (it == by_sat_.end()) continue;
+        const SatRecord& rec = it->second;
+        // Orbit/clock are high-rate: gate on freshness (combined wins, as in
+        // getOrbitClock).  Biases update slowly — presence is enough.
+        const bool comb = rec.combined && freshEnough(rec.combined->received_time, time, max_age_s);
+        if (comb || (rec.orbit && freshEnough(rec.orbit->received_time, time, max_age_s)))
+            ++cov.orbit;
+        if (comb || (rec.clock && freshEnough(rec.clock->received_time, time, max_age_s))
+                 || (rec.hrclock && freshEnough(rec.hrclock->received_time, time, max_age_s)))
+            ++cov.clock;
+        if (rec.code_bias)  ++cov.code_bias;
+        if (rec.phase_bias) ++cov.phase_bias;
+    }
+    return cov;
 }
 
 std::string SsrCorrectionStore::censusSummary() const {

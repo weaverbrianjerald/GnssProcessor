@@ -1,0 +1,250 @@
+% ============================================================
+%  Real-time corrections: the SSR-to-observation mapping
+% ============================================================
+
+The real-time engine consumes network corrections in \emph{State Space
+Representation} (SSR): per-satellite, per-signal refinements to the
+broadcast orbit, clock, and hardware biases, streamed as RTCM~3.x
+messages (legacy 1057--1068 / 1240--1270) or as their IGS-SSR
+\texttt{4076} repackaging \cite{rtcm10403,igsssr}.  Each SSR quantity
+refines \emph{exactly one} term already present in
+\Cref{eq:obs-code,eq:obs-phase}; none introduces a new state.  This is
+what separates the precise real-time mode from broadcast-only
+operation: with SSR applied, $\sLight\,\mathrm{d}t^\sat$ and $\satpos$
+are centimetre-grade and the satellite biases $B^\sat_\sigl,
+b^\sat_\sigl$ are \emph{known} rather than absorbed into the ambiguity.
+
+Decoded records are cached per satellite in the singleton
+\texttt{products/SsrCorrectionStore}; the consumers
+(\texttt{model/ModelGeometry}, \texttt{corrections/GnssCorrections},
+\texttt{measurement/MeasurementModel}) query the store and fall through
+to broadcast-only when it is empty, so every equation below collapses to
+\Cref{eq:obs-code,eq:obs-phase} in post-processing.  The streaming and
+decoding plumbing --- RTCM frame parse, the per-satellite mutex-guarded
+cache, the real-time push loop --- is deliberately separated from this
+invariant correction math; see the code pointer in
+\Cref{sec:ssr-plumbing}.  There is no \texttt{enable\_ssr} flag: SSR
+application is implicit and store-driven.
+
+\subsection{Orbit correction --- refines $\geomrange^\sat_\rx$}
+
+The orbit message carries a delta in the satellite's
+radial / along-track / cross-track (RAC) frame, anchored to the
+broadcast ephemeris of issue $\mathrm{IODE}$.  The frame is built from
+the broadcast position $\satpos_{\mathrm{brdc}}$ and velocity
+$\satvel_{\mathrm{brdc}}$ (\texttt{products/SsrCorrectionStore.cpp}):
+\begin{equation}
+\racA = \frac{\satvel_{\mathrm{brdc}}}{\lVert\satvel_{\mathrm{brdc}}\rVert},
+\quad
+\racC = \frac{\satpos_{\mathrm{brdc}}\times\satvel_{\mathrm{brdc}}}
+             {\lVert\satpos_{\mathrm{brdc}}\times\satvel_{\mathrm{brdc}}\rVert},
+\quad
+\racR = \racA\times\racC .
+\label{eq:ssr-rac-frame}
+\end{equation}
+The RAC delta is propagated to the query epoch with its rate term and
+rotated into ECEF.  With $\delta t = t - t_{\mathrm{SSR}}$ the age of the
+correction, $\bm{\delta}_{\mathrm{rac}} = (\delta_r,\delta_a,\delta_c)^\Tr$
+its components and $\dot{\bm{\delta}}_{\mathrm{rac}}$ their rate,
+\begin{empheq}[box=\fbox]{equation}
+\satpos
+\;=\;
+\satpos_{\mathrm{brdc}}
+\;-\;
+\big[\,\racR\;\;\racA\;\;\racC\,\big]
+\big(\bm{\delta}_{\mathrm{rac}} + \dot{\bm{\delta}}_{\mathrm{rac}}\,\delta t\big).
+\label{eq:ssr-orbit}
+\end{empheq}
+The \emph{subtraction} follows the RTCM sign convention
+$\bm{\delta} = \text{broadcast} - \text{precise}$
+(\texttt{products/SsrCorrectionStore.cpp}).  The corrected $\satpos$
+then enters $\geomrange^\sat_\rx = \lVert\satpos - \rxpos_\rx\rVert$ and
+the line-of-sight $\los^\sat_{\hat{\rx}}$ of \Cref{eq:los} unchanged: the
+orbit correction never touches an observation equation directly, only the
+geometry (\Cref{sec:obs-geometry}) that feeds it.  Because the clock is
+queried against the same broadcast ephemeris, the broadcast clock's
+\emph{radial} component cancels consistently against
+\Cref{eq:ssr-clock}.  The decoded RAC scale factors are fixed by
+RTCM~10403.3 (radial $\delta_r$ a $22$-bit two's-complement field at
+$0.1$\,mm, along/cross at $0.4$\,mm, rates at $1$ and $4\,\mu$m/s
+respectively; \texttt{rtcm/RtcmSsrDecoder.cpp}).
+
+\subsection{Clock correction --- refines $-\sLight\,\mathrm{d}t^\sat$}
+
+The clock message carries a quadratic polynomial in time-from-epoch,
+optionally augmented by a high-rate additive delta $\delta
+C_{\mathrm{hr}}$.  The total satellite-clock correction, in metres, is
+\begin{equation}
+\Delta C^\sat(t)
+\;=\;
+C_0 + C_1\,\delta t + C_2\,\delta t^{2} + \delta C_{\mathrm{hr}},
+\qquad \delta t = t - t_{\mathrm{SSR}},
+\label{eq:ssr-clock-poly}
+\end{equation}
+converted to seconds and \emph{added} to the baseline clock
+(\texttt{products/SsrCorrectionStore.cpp}):
+\begin{empheq}[box=\fbox]{equation}
+\sLight\,\mathrm{d}t^\sat
+\;=\;
+\sLight\,\mathrm{d}t^\sat_{\mathrm{base}}
+\;+\;
+\Delta C^\sat(t),
+\label{eq:ssr-clock}
+\end{empheq}
+where $\mathrm{d}t^\sat_{\mathrm{base}}$ is the precise CLK sample
+(post-processing) or the broadcast clock polynomial (live rooftop mode,
+\texttt{products/LiveEphemerisStore}).  This term enters
+\Cref{eq:obs-code,eq:obs-phase} through $-\sLight\,\mathrm{d}t^\sat$,
+identically on code and phase.  The high-rate clock is additive
+\emph{on top of} the polynomial, not a replacement
+(\texttt{corrections/GnssCorrections.cpp}); the $C_2$ field is a
+$27$-bit two's-complement quantity at $2\times10^{-8}$\,m/s$^2$.
+
+\subsection{IOD gate at correction-set boundaries}\label{sec:ssr-iod}
+
+Orbit and clock corrections are deltas against a \emph{specific}
+broadcast ephemeris, so they are applied only when the SSR record's
+$\mathrm{IODE}$ matches that of the broadcast ephemeris from which the
+baseline orbit/clock was evaluated:
+\begin{equation}
+\text{apply}
+\;\Longleftrightarrow\;
+\big(\mathrm{IODE}_{\mathrm{brdc}} < 0\big)
+\;\vee\;
+\big(\mathrm{IODE}_{\mathrm{SSR}} < 0\big)
+\;\vee\;
+\big(\mathrm{IODE}_{\mathrm{brdc}} = \mathrm{IODE}_{\mathrm{SSR}}\big),
+\label{eq:ssr-iode-gate}
+\end{equation}
+the gate being permissive when either side is unknown
+(\texttt{SsrCorrectionStore::iodeMatches},
+\texttt{products/SsrCorrectionStore.hpp}).  A combined orbit+clock
+record (RTCM 1060/1066, IGS-SSR sub-type~3) is preferred over separate
+messages because it guarantees a single shared $\mathrm{IODE}$
+(\texttt{products/SsrCorrectionStore.cpp}).  At a correction-set
+boundary --- the provider issuing a new ephemeris reference, hence a new
+$\mathrm{IODE}$ --- the gate \eqref{eq:ssr-iode-gate} simply declines the
+mismatched record until the matching broadcast ephemeris is in hand,
+avoiding a discontinuous jump in $\satpos$ or $\sLight\,\mathrm{d}t^\sat$.
+Records older than \texttt{max\_age\_s} (default $60$\,s, the IGS-RTS
+update interval) are treated as absent.
+
+\subsection{Satellite biases --- refine $-B^\sat_\sigl$ and $-b^\sat_\sigl$}
+
+SSR delivers \emph{observable-specific biases} (OSB): one value per
+(satellite, RINEX-3 signal) pair, in metres.  They are applied as a
+\emph{known} additive correction to the modelled observable, with no
+state and no Jacobian row
+(\texttt{measurement/MeasurementModel.cpp}).  The code OSB refines
+$B^\sat_\sigl$ in \Cref{eq:obs-code}:
+\begin{empheq}[box=\fbox]{equation}
+\code^\sat_{\rx,\sigl}
+=
+\geomrange^\sat_\rx + \sLight(\mathrm{d}t_\rx - \mathrm{d}t^\sat)
++ \sLight\,\delta t^{(g)}_\rx + T^\sat_\rx + \mu_\sigl I^\sat_{\rx,1}
++ B_{\rx,\sigl} \underbrace{-\,B^\sat_\sigl}_{\text{SSR OSB}}
++ \varepsilon^\code,
+\label{eq:ssr-code-bias}
+\end{empheq}
+and the phase OSB refines $b^\sat_\sigl$ in \Cref{eq:obs-phase}:
+\begin{empheq}[box=\fbox]{equation}
+\phaseo^\sat_{\rx,\sigl}
+=
+\geomrange^\sat_\rx + \sLight(\mathrm{d}t_\rx - \mathrm{d}t^\sat)
++ \sLight\,\delta t^{(g)}_\rx + T^\sat_\rx - \mu_\sigl I^\sat_{\rx,1}
++ \lambda_\sigl N^\sat_{\rx,\sigl}
++ b_{\rx,\sigl} \underbrace{-\,b^\sat_\sigl}_{\text{SSR OSB}}
++ \varepsilon^\phaseo .
+\label{eq:ssr-phase-bias}
+\end{empheq}
+The bias decoded from the stream is the satellite bias \emph{present in}
+the observation, so it is removed from the clean model prediction with a
+$+1$ sign convention
+(\texttt{kSsrCodeBiasSign}\,$=$\,\texttt{kSsrPhaseBiasSign}\,$=+1$,
+\texttt{measurement/MeasurementModel.cpp}); the predicted observable
+accumulates it as \texttt{ssr\_bias\_term}
+(\texttt{MeasurementModel.cpp}).  Biases are queried per
+\emph{raw} signal only --- an ionosphere-free composite key such as
+\texttt{C1W\_C5X} returns zero and is skipped, consistent with the
+uncombined parameterisation of \Cref{eq:obs-code,eq:obs-phase}.  The code
+OSB is a $14$-bit field at $0.01$\,m, the phase OSB a $20$-bit field at
+$0.1$\,mm (\texttt{rtcm/RtcmSsrDecoder.cpp}).
+
+\paragraph{Integer recoverability via consistent phase biases.}
+Removing $b^\sat_\sigl$ is precisely what restores the integer property
+of $N^\sat_{\rx,\sigl}$ promised in remark~1 of
+\Cref{eq:obs-phase}.  Once the satellite phase bias is known, the
+residual non-integer part of the ambiguity is the receiver phase bias
+$b_{\rx,\sigl}$ \emph{alone}, which cancels under between-satellite
+single differencing $\bsd{\,\cdot\,}$ (\Cref{sec:diff}), leaving an
+integer single-difference ambiguity admissible to AR.  This is the
+operational content of a \emph{consistent} phase-bias product: the
+provider must generate $b^\sat_\sigl$ on the same network datum whose
+integer property the rover then exploits.  The phase-bias message
+therefore carries three AR-critical metadata fields per signal
+(\texttt{rtcm/RtcmTypes.hpp}): an integer-preservation indicator, a
+two-bit wide-lane integer indicator, and a four-bit \emph{discontinuity
+counter}.
+
+\paragraph{Discontinuity handling.}
+An incremented discontinuity counter signals that the provider's phase
+bias jumped between correction sets, breaking the integer connection of
+that arc.  The engine treats this as an ambiguity-arc boundary: the
+affected $N^\sat_{\rx,\sigl}$ is reset before the Kalman update
+(\texttt{realtime/RealTimeEngine.cpp}, via
+\texttt{StateManager::noteSsrDiscontinuity}), so the post-jump phase is
+re-initialised rather than fixed against a stale integer offset.  This is
+the phase-bias analogue of the orbit/clock IOD gate
+\eqref{eq:ssr-iode-gate}: both protect state continuity across
+correction-set boundaries, one by declining a mismatched delta, the other
+by resetting the dependent ambiguity.
+
+\subsection{Ionosphere --- $\mu_\sigl I^\sat_{\rx,1}$ is not SSR-fed}
+
+For completeness, and to forestall a natural misreading of the term:
+although the SSR standard defines a global VTEC spherical-harmonic
+message (IGS-SSR IM\,$=201$) and regional STEC products, \emph{neither is
+decoded by this engine}.  The IGS-SSR classifier rejects IM\,$=201$ as
+unsupported (\texttt{rtcm/RtcmSsrDecoder.cpp}), and there is no SSR
+path that writes the slant-iono state $I^\sat_{\rx,1}$.  Consequently the
+ionospheric term $\mu_\sigl I^\sat_{\rx,1}$ of
+\Cref{eq:obs-code,eq:obs-phase} is informed only by (i) the per-satellite
+iono \emph{state} estimated by the filter itself and (ii) the optional
+GIM/IONEX deterministic prior (\texttt{atmosphere/GlobalIonosphereMap},
+an independent VTEC$\to$STEC mapping unrelated to the SSR stream).
+Closing this gap --- a regional STEC overlay feeding $I^\sat_{\rx,1}$ as a
+pseudo-observation, restoring the iono-weighted constraint that makes
+single-epoch AR feasible --- is the natural extension of the
+network-side workstream and is not yet implemented.
+
+\subsection{Provenance and streaming code pointer}\label{sec:ssr-plumbing}
+
+Both transports map onto the same internal correction structs
+(\texttt{rtcm/RtcmTypes.hpp}) through a single decoder
+(\texttt{rtcm/RtcmSsrDecoder.cpp}).  Legacy RTCM uses per-constellation
+six-message blocks (orbit, clock, code bias, combined orbit+clock, URA,
+high-rate clock) plus a separate phase-bias block (1265--1270);
+IGS-SSR~\texttt{4076} repackages the same payloads under a message-indicator
+$\mathrm{IM} = 10\,g + \text{offset}$, with a uniform $6$-bit satellite
+ID, $8$-bit IODE, and $20$-bit GPS-TOW epoch for all constellations
+(\texttt{RtcmSsrDecoder.cpp}).  Note that the \texttt{4076} body
+ordering differs from the legacy ordering and that VTEC (IM\,$201$) and
+NavIC (IM\,$141$--$147$) are rejected by the message-indicator
+classifier \emph{before} the header is parsed, so they return
+\texttt{ok = false} with an empty header.
+
+The invariant correction definitions of
+\Cref{eq:ssr-orbit,eq:ssr-clock,eq:ssr-iode-gate} live in the static,
+deterministic \texttt{applyOrbitToPosition} / \texttt{applyClockToBias} /
+\texttt{iodeMatches} members of \texttt{products/SsrCorrectionStore}.
+The stateful streaming layer --- the mutex-guarded per-satellite cache
+with wall-clock freshness gating, and the
+\texttt{RealTimeEngine::feedRtcmFrame} push loop
+(\texttt{realtime/RealTimeEngine.cpp}) that fans decoded vectors into
+the store --- is kept separate so the correction math can be reasoned
+about (and tested) in isolation.  The only user-facing SSR-related config
+is the warm-up gate \texttt{estimation.defer\_until\_corrections\_ready}
+(\texttt{config/GnssConfigLoad.cpp}), which defers estimation until a
+solvable floor of satellites is broadcast-plus-SSR centimetre-grade, so
+the filter seeds code and phase together rather than cold-starting a
+contaminated partition on metre-grade broadcast clocks.

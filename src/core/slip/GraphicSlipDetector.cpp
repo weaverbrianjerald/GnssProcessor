@@ -29,10 +29,11 @@ namespace GnssProcessor {
     GraphicSlipDetector::GraphicSlipDetector(const GnssConfig& config, LogManager& log_manager)
         : config_(config),
           log_manager_(log_manager),
-          ppp_utils_(log_manager) {
+          ppp_utils_(log_manager),
+          sigma_multiplier_(config.getCycleSlipConfig().graphic_sigma_multiplier) {
         log_manager_.getLogger("cycle_slip_manager")->info(
             "GraphicSlipDetector initialized (MAD-based, k={:.1f}, floor={:.3f} m, min_epochs={})",
-            kMadSigmaMultiplier, kMinThresholdM, kMinEpochsForAdaptive);
+            sigma_multiplier_, kMinThresholdM, kMinEpochsForAdaptive);
     }
 
     // =================================================================
@@ -144,7 +145,7 @@ namespace GnssProcessor {
         if (!std::isfinite(sigma))
             return std::numeric_limits<double>::quiet_NaN();
 
-        return std::max(kMadSigmaMultiplier * sigma, kMinThresholdM);
+        return std::max(sigma_multiplier_ * sigma, kMinThresholdM);
     }
 
     // =================================================================

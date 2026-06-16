@@ -8,9 +8,9 @@ parameterisation is uncombined: per-signal pseudorange and carrier
 phase are consumed directly, without forming ionosphere-free or
 wide-lane combinations as a preprocessing step.  Combinations
 (\textsc{IF}, \textsc{MW}, \textsc{GF}) are still computed for
-diagnostic and slip-detection purposes (see
-\texttt{slip/MwSlipDetector}, \texttt{slip/GfSlipDetector}) but they
-do not enter the measurement update path.
+diagnostic and slip-detection purposes (\Cref{sec:slip}; see
+\texttt{slip/MwSlipDetector}, \texttt{slip/GraphicSlipDetector}) but
+they do not enter the measurement update path.
 
 \subsection{Code (pseudorange) observation}
 
@@ -62,9 +62,11 @@ $-\mu_\sigl I$ on phase.  Three additional remarks:
       Fractional Cycle Bias (FCB) products or differencing
       (\Cref{sec:diff}), which cancels common-mode bias terms.
 \item The clock product $\sLight\,\mathrm{d}t^\sat$ is read from the
-      analysis-centre CLK file and treated as deterministic in the
-      filter; any error in the product appears as residual on the
-      observation and is absorbed by the receiver clock state.
+      analysis-centre CLK file (post-processing) or refined from the
+      broadcast clock by a streamed SSR correction (real-time,
+      \Cref{sec:ssr}) and treated as deterministic in the filter; any
+      residual product error appears on the observation and is absorbed
+      by the receiver clock state.
 \item The system time offset $\sLight\,\delta t^{(g(\sat))}_\rx$ is
       zero by construction when $g(\sat)$ is the reference
       constellation (default GPS).  Together with the receiver clock

@@ -267,7 +267,7 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
 // First-epoch ISB initialization
 // ===========================================================================
 
-void StateInitializer::initializeInterSystemBiases(const std::vector<PppObservation>& observations,
+bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservation>& observations,
     const std::string& epoch_prefix) {
 
     std::map<std::string, std::vector<double>> system_residuals;
@@ -298,7 +298,7 @@ void StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
         system_residuals["GPS"].empty()) {
         log_manager_.getLogger("state_initializer")->warn(
             "{}Cannot initialize ISB: no GPS code observations", epoch_prefix);
-        return;
+        return false;   // retry next epoch — do NOT latch as initialized
     }
 
     double gps_median = computeMedian(system_residuals["GPS"]);
@@ -320,6 +320,7 @@ void StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
     }
 
     state_manager_.setStateVector(x_updated);
+    return true;   // GPS reference present — ISB seeds are final
 }
 
 // ===========================================================================

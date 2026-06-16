@@ -78,7 +78,7 @@ public:
      * and reused for the RAC orbit-frame basis.
      */
     std::optional<SatelliteState> computeSatellitePV(
-        const std::string& sat, const GnssTime& time) const;
+        const std::string& sat, const GnssTime& time, int ssr_iode = -1) const;
 
     /// Broadcast satellite-clock evaluated from the polynomial elements.
     struct SatelliteClock {
@@ -104,7 +104,7 @@ public:
      * drop-in baseline for the SSR clock delta to add onto.
      */
     std::optional<SatelliteClock> computeSatelliteClock(
-        const std::string& sat, const GnssTime& time) const;
+        const std::string& sat, const GnssTime& time, int ssr_iode = -1) const;
 
     /// True iff no ephemeris has been inserted.
     bool isEmpty() const;
@@ -126,6 +126,14 @@ private:
 
     /// Pick current vs previous by reference-epoch proximity to @p time.
     static const BroadcastEphemeris& pick(const SatRecord& rec, const GnssTime& time);
+
+    /// Pick the retained version (current or previous) whose SSR-convention IODE
+    /// equals @p ssr_iode, so an SSR delta re-references to the ephemeris version
+    /// it was computed for across a cutover desync.  Falls back to @c pick() when
+    /// @p ssr_iode < 0 or neither held version matches (the caller's IODE gate
+    /// then drops the satellite).
+    static const BroadcastEphemeris& pickForSsr(const SatRecord& rec,
+                                                const GnssTime& time, int ssr_iode);
 
     /// Keplerian ECEF position (GPS/Galileo/BeiDou/QZSS) at @p time.
     static Eigen::Vector3d keplerPosition(const BroadcastEphemeris& eph, const GnssTime& time);

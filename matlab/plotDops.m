@@ -38,9 +38,8 @@ showSummary   = true;
 pdopThreshold = 6.0;
 
 %% --- Load CSV ---
-fname = 'C:\GnssProcessor\logs\dop_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\dop_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\dop_trace.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('dop_trace.csv');
 
 if ~isfile(fname)
     error('dop_trace.csv not found: %s', fname);

@@ -59,9 +59,13 @@ S-transformation $\stateV^{\mathrm{new}} = \bm{S}\,\stateV^{\mathrm{old}}$
 with $\bm{S}$ chosen so that
 $\bsd{N^{\piv{g}^{\mathrm{new}},\piv{g}^{\mathrm{old}}}_{\rx,\sigl}}$
 becomes the new reference (zero).  The covariance transforms as
-$\covM^{\mathrm{new}} = \bm{S}\,\covM^{\mathrm{old}}\,\bm{S}^{\Tr}$;
-see \texttt{filter/PivotManager} for the implementation and
-\texttt{baseline.enable\_pivot\_handover} for the governing config flag.
+$\covM^{\mathrm{new}} = \bm{S}\,\covM^{\mathrm{old}}\,\bm{S}^{\Tr}$.
+These are two distinct code paths sharing the algebra above: in PPP-RTK
+the pivot re-election and the ``sticky-pivot'' retention policy live in
+\texttt{filter/PivotManager}, whereas the baseline DD path performs the
+analogous re-reference through the ambiguity-rename S-transform in
+\texttt{filter/DdPivotManager}, governed by the
+\texttt{baseline.enable\_pivot\_handover} flag.
 
 \subsection{Between-receiver single difference (BRSD)}\label{sec:brsd}
 
@@ -142,10 +146,18 @@ $(|\satset{g}|-1) \times |\satset{g}|$ matrix of the form
 \end{bmatrix},
 \end{equation}
 where the column of $-1$'s sits at the index of the pivot
-$\piv{g}$.  The DD case stacks BSSD on top of an analogous
-between-receiver $\bm{S}_{\mathrm{BRSD}}$, yielding
-$\bm{S}_{\mathrm{DD}} = \bm{S}_{\mathrm{BSSD}} \otimes \bm{S}_{\mathrm{BRSD}}$
-when the satellite and receiver dimensions are factorisable.  The
+$\piv{g}$.  The DD operator is the \emph{composition} of the two
+single-difference operators applied in sequence,
+$\bm{S}_{\mathrm{DD}} = \bm{S}_{\mathrm{BSSD}}\,\bm{S}_{\mathrm{BRSD}}$,
+realised in code as \texttt{BrsdTransform::apply} followed by
+\texttt{BssdTransform::differenceBrsd}
+(\texttt{include/measurement/BssdTransform.hpp}).  Only on a fully
+populated satellite\,$\times$\,receiver observation grid does this
+composition coincide with the Kronecker product
+$\mathbf{D}_{\mathrm{sat}} \otimes \mathbf{D}_{\mathrm{rx}}$ of the
+between-satellite and between-receiver differencing matrices acting on
+the vectorised observations --- a useful mental model, but not what the
+non-rectangular real-data case computes.  The
 transformed covariance is $\covM_{\mathrm{diff}} = \bm{S}\,\covM_{\mathrm{undiff}}\,\bm{S}^{\Tr}$,
 a generally dense matrix even when $\covM_{\mathrm{undiff}}$ is
 diagonal (because each differenced row borrows from the same pivot
@@ -156,3 +168,19 @@ what unlocks integer ambiguity recovery via the LAMBDA decorrelation.
 The general theory and a thorough catalogue of admissible
 S-transforms is given in \textcite{teunissen1985generalised} and in
 the rank-defect treatment of \textcite{deJonge1998processing}.
+
+\paragraph{Implementation notes.}
+Two facts about how \texttt{GnssProcessor} realises the transforms above
+are worth stating explicitly.  First, the chosen S-system is never
+materialised as an explicit minimum-constraint $\bm{S}$-basis matrix; it
+is realised \emph{implicitly} through the pivot-differencing operator
+(\texttt{measurement/BssdTransform}), a faithful, S-basis-invariant
+realisation of the uncombined parameterisation of
+\textcite{odijk2003fast}.  The three regimes --- undifferenced, BSSD,
+and DD --- are dispatched polymorphically by a \texttt{DifferencingMode}
+strategy in \texttt{measurement/MeasurementBuilder}, not by inline
+config branches.  Second, integer recovery on a DD row requires that all
+four contributing observations share the same RINEX signal code;
+\emph{cross-attribute aliased} rows (rover code $\neq$ reference code,
+flagged \texttt{brsd\_aliased} and not \texttt{integer\_capable}) are
+carried as float and excluded from ambiguity resolution.

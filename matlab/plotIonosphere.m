@@ -51,7 +51,7 @@ showPivotMarkers = true;
 showLegend       = false;
 
 %% --- BSSD pivot re-reference mode ---
-% In PPP-RTK BSSD, each non-pivot sat's iono state is Î_X = I_X - I_pivot.
+% In PPP-RTK BSSD, each non-pivot sat's iono state is ï¿½_X = I_X - I_pivot.
 % When the pivot rotates from A to B, every non-pivot sat's stored value
 % jumps by I_A - I_B (a per-handover constant, not real iono).  The pivot
 % row snaps to zero on both sides.  Two display modes are offered:
@@ -76,9 +76,8 @@ ionoReferenceMode = 'firstPivot';   % 'firstPivot' | 'rawBssd'
 showHandoverLines = true;
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\logs\ionosphere_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\ionosphere_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\ionosphere_trace.csv';
+% Folder resolved via gnssVizLogDir() â€” set once per session or via view_all.m.
+fname = gnssTracePath('ionosphere_trace.csv');
 
 if ~isfile(fname)
     error('ionosphere trace CSV not found: %s', fname);
@@ -667,7 +666,7 @@ end
 function T = reReferenceIonoToFirstPivot(T)
 % RE-REFERENCE BSSD iono states to the first pivot seen per constellation.
 %
-% In BSSD, the iono state for non-pivot sat X is Î_X = I_X - I_pivot.
+% In BSSD, the iono state for non-pivot sat X is ï¿½_X = I_X - I_pivot.
 % When the pivot rotates from A to B, every non-pivot row's value jumps
 % by I_A - I_B and the pivot row snaps from one sat to another.  Both
 % are presentation artefacts of the moving reference, not real iono.

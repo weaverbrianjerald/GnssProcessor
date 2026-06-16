@@ -22,6 +22,11 @@ namespace GnssProcessor {
         log_manager_.getLogger("imu")->info("ImuIntegrator created");
     }
 
+    void ImuIntegrator::addSample(const ImuSample& sample) {
+        // Streaming counterpart to loadData: append in arrival (time) order.
+        samples_.push_back(sample);
+    }
+
     // ===================================================================
     // Data loading
     // ===================================================================

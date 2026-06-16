@@ -270,6 +270,17 @@ namespace GnssProcessor {
             }
         }
         {
+            mw_cross_sat_ewma_alpha_ = jval<double>(json,
+                "processing.mw_cross_sat_ewma_alpha",
+                "mw_cross_sat_ewma_alpha", 0.1);
+            if (!(mw_cross_sat_ewma_alpha_ > 0.0 && mw_cross_sat_ewma_alpha_ <= 1.0)) {
+                log->warn("Invalid mw_cross_sat_ewma_alpha {} (must be in (0, 1]); "
+                          "reverting to default 0.1",
+                          mw_cross_sat_ewma_alpha_);
+                mw_cross_sat_ewma_alpha_ = 0.1;
+            }
+        }
+        {
             std::string raw = jval<std::string>(json, "processing.satellite_interpolation_mode",
                                                  "satellite_interpolation_mode", "Lagrange");
             std::string low = toLower(raw);
@@ -347,6 +358,15 @@ namespace GnssProcessor {
         }
         if (gnss_rate_s_ > 0.0) {
             log->info("GNSS processing rate: {:.1f} s (input epochs will be decimated)", gnss_rate_s_);
+        }
+        max_duration_s_ = jval<double>(json, "processing.max_duration_s", "max_duration_s", 0.0);
+        if (max_duration_s_ < 0.0) {
+            log->warn("Negative max_duration_s ({:.3f}) ignored; processing not time-limited", max_duration_s_);
+            max_duration_s_ = 0.0;
+        }
+        if (max_duration_s_ > 0.0) {
+            log->info("Max processing duration: {:.1f} s of data (epoch time relative to first obs; "
+                      "stops once this span is reached)", max_duration_s_);
         }
         // RINEX observation-type filter.  String of letters from the set
         // {C, L, D, S} selecting which measurement types the parser will
@@ -535,12 +555,159 @@ namespace GnssProcessor {
         cycle_slip_.gf      = jval<bool>(json, "estimation.cycle_slip.gf",      "cycle_slip_gf",      false);
         cycle_slip_.ifp     = jval<bool>(json, "estimation.cycle_slip.if",      "cycle_slip_if",      enable_if_slip_detector_);
         // turbo_edit is a coordination mode (MW+GF joint per-signal repair), not
-        // a detector kind — high-rate only; see CycleSlipConfig doc.
+        // a detector kind — rate-adaptive via the split gate; see CycleSlipConfig doc.
         cycle_slip_.turbo_edit = jval<bool>(json, "estimation.cycle_slip.turbo_edit", "cycle_slip_turbo_edit", false);
-        log->info("Cycle-slip detectors: mw={}, graphic={}, ewl={}, gf={}, if={}, turbo_edit={}",
+        // MW-only code-domain veto: an MW flag with an affirmatively stable
+        // GF is classified as a code artifact and the phase reset is skipped
+        // (KF residual gate backstops).  Default on — it only fires inside
+        // turbo_edit's own trust gates; see CycleSlipConfig doc.
+        cycle_slip_.turbo_edit_mw_only_veto =
+            jval<bool>(json, "estimation.cycle_slip.turbo_edit_mw_only_veto",
+                       "cycle_slip_turbo_edit_mw_only_veto", true);
+        // Gap-spanning GF bridge cap (s); 0 disables.  Negative values are
+        // clamped to 0 with a warning (a negative coherence bound is
+        // meaningless).  See CycleSlipConfig doc.
+        {
+            double cap = jval<double>(json, "estimation.cycle_slip.turbo_edit_max_gap_s",
+                                      "cycle_slip_turbo_edit_max_gap_s",
+                                      cycle_slip_.turbo_edit_max_gap_s);
+            if (cap < 0.0) {
+                log->warn("estimation.cycle_slip.turbo_edit_max_gap_s {} < 0; "
+                          "clamping to 0 (bridge disabled)", cap);
+                cap = 0.0;
+            }
+            cycle_slip_.turbo_edit_max_gap_s = cap;
+        }
+        // Soft-LLI bridge: hold AR-able dual-freq ambiguities across a short
+        // LLI gap and let the bridge integer-repair them instead of an
+        // immediate full reset.  Default off (baseline unchanged); see
+        // CycleSlipConfig doc + docs/turbo_edit_lli_bridge_design.md.
+        cycle_slip_.turbo_edit_bridge_lli =
+            jval<bool>(json, "estimation.cycle_slip.turbo_edit_bridge_lli",
+                       "cycle_slip_turbo_edit_bridge_lli", false);
+        // WL-settle deferral cap (s) for ambiguous bridged solves; 0
+        // disables (an ambiguous solve resets immediately).  Negative
+        // clamps to 0 with a warning.  See CycleSlipConfig doc.
+        {
+            double cap = jval<double>(json, "estimation.cycle_slip.turbo_edit_wl_settle_max_s",
+                                      "cycle_slip_turbo_edit_wl_settle_max_s",
+                                      cycle_slip_.turbo_edit_wl_settle_max_s);
+            if (cap < 0.0) {
+                log->warn("estimation.cycle_slip.turbo_edit_wl_settle_max_s {} < 0; "
+                          "clamping to 0 (WL-settle deferral disabled)", cap);
+                cap = 0.0;
+            }
+            cycle_slip_.turbo_edit_wl_settle_max_s = cap;
+        }
+        // Split-capability gate (cycles): the rate-adaptive lever — the joint
+        // solve emits per-signal integers only when the arc's measured GF
+        // noise satisfies σ_TD2 ≤ this × |λ1−λ2|.  Must be > 0; an invalid
+        // override warns and keeps the default.  See CycleSlipConfig doc.
+        {
+            const double v = jval<double>(
+                json, "estimation.cycle_slip.turbo_edit_split_max_sigma",
+                "cycle_slip_turbo_edit_split_max_sigma",
+                cycle_slip_.turbo_edit_split_max_sigma);
+            if (v > 0.0) {
+                cycle_slip_.turbo_edit_split_max_sigma = v;
+            } else {
+                log->warn("Invalid estimation.cycle_slip.turbo_edit_split_max_sigma "
+                          "{} (must be > 0); keeping default {:.2f}",
+                          v, cycle_slip_.turbo_edit_split_max_sigma);
+            }
+        }
+        log->info("Cycle-slip detectors: mw={}, graphic={}, ewl={}, gf={}, if={}, "
+                  "turbo_edit={} (mw_only_veto={}, gap_bridge={:.1f} s, bridge_lli={}, "
+                  "wl_settle={:.1f} s, split_max_sigma={:.2f} cyc)",
                   cycle_slip_.mw ? "on" : "off", cycle_slip_.graphic ? "on" : "off",
                   cycle_slip_.ewl ? "on" : "off", cycle_slip_.gf ? "on" : "off",
-                  cycle_slip_.ifp ? "on" : "off", cycle_slip_.turbo_edit ? "on" : "off");
+                  cycle_slip_.ifp ? "on" : "off", cycle_slip_.turbo_edit ? "on" : "off",
+                  cycle_slip_.turbo_edit_mw_only_veto ? "on" : "off",
+                  cycle_slip_.turbo_edit_max_gap_s,
+                  cycle_slip_.turbo_edit_bridge_lli ? "on" : "off",
+                  cycle_slip_.turbo_edit_wl_settle_max_s,
+                  cycle_slip_.turbo_edit_split_max_sigma);
+
+        // Per-detector MAD threshold scale factors (kσ gate multipliers).  Each
+        // defaults to the detector's historical value (already in cycle_slip_);
+        // a non-positive override warns and keeps the default.
+        auto load_sigma_mult = [&](const char* path, const char* alias, double& dst) {
+            const double v = jval<double>(json, path, alias, dst);
+            if (v > 0.0) {
+                dst = v;
+            } else {
+                log->warn("Invalid {} {} (must be > 0); keeping default {:.2f}", path, v, dst);
+            }
+        };
+        load_sigma_mult("estimation.cycle_slip.mw_sigma_multiplier",
+                        "cycle_slip_mw_sigma_multiplier",         cycle_slip_.mw_sigma_multiplier);
+        load_sigma_mult("estimation.cycle_slip.turbo_edit_sigma_multiplier",
+                        "cycle_slip_turbo_edit_sigma_multiplier", cycle_slip_.turbo_edit_sigma_multiplier);
+        load_sigma_mult("estimation.cycle_slip.graphic_sigma_multiplier",
+                        "cycle_slip_graphic_sigma_multiplier",    cycle_slip_.graphic_sigma_multiplier);
+        load_sigma_mult("estimation.cycle_slip.ewl_sigma_multiplier",
+                        "cycle_slip_ewl_sigma_multiplier",        cycle_slip_.ewl_sigma_multiplier);
+        log->info("Cycle-slip σ multipliers (kσ gate): mw={:.1f}, turbo_edit={:.1f}, graphic={:.1f}, ewl={:.1f}",
+                  cycle_slip_.mw_sigma_multiplier, cycle_slip_.turbo_edit_sigma_multiplier,
+                  cycle_slip_.graphic_sigma_multiplier, cycle_slip_.ewl_sigma_multiplier);
+
+        // MW detection reference: which statistic the slip gate tests.
+        // "hatch_mean" (legacy slow recursive mean, TD1-MAD spread),
+        // "local_median" (short causal window median with a matching
+        // window-MAD spread — trend-immune), or "time_difference" (the
+        // deviation IS the MW time-difference, order per mw_td_order —
+        // trend- AND curvature-immune; see MwDetectReference doc).
+        {
+            const std::string raw = jval<std::string>(json, "estimation.cycle_slip.mw_detect_reference",
+                                                      "cycle_slip_mw_detect_reference", "hatch_mean");
+            std::string low = toLower(raw);
+            for (auto& c : low) if (c == '-') c = '_';
+            if      (low == "hatch_mean")      cycle_slip_.mw_detect_reference = MwDetectReference::HatchMean;
+            else if (low == "local_median")    cycle_slip_.mw_detect_reference = MwDetectReference::LocalMedian;
+            else if (low == "time_difference") cycle_slip_.mw_detect_reference = MwDetectReference::TimeDifference;
+            else {
+                log->warn("Invalid estimation.cycle_slip.mw_detect_reference '{}' "
+                          "(expected 'hatch_mean', 'local_median', or 'time_difference'); "
+                          "defaulting to hatch_mean", raw);
+                cycle_slip_.mw_detect_reference = MwDetectReference::HatchMean;
+            }
+
+            // Differencing order for the time_difference reference.
+            const std::string raw_ord = jval<std::string>(json, "estimation.cycle_slip.mw_td_order",
+                                                          "cycle_slip_mw_td_order", "first");
+            std::string low_ord = toLower(raw_ord);
+            if      (low_ord == "first")  cycle_slip_.mw_td_order = MwTdOrder::First;
+            else if (low_ord == "second") cycle_slip_.mw_td_order = MwTdOrder::Second;
+            else {
+                log->warn("Invalid estimation.cycle_slip.mw_td_order '{}' "
+                          "(expected 'first' or 'second'); defaulting to first", raw_ord);
+                cycle_slip_.mw_td_order = MwTdOrder::First;
+            }
+
+            // Window length for the local-median reference.  Bounds match the
+            // detector: ≥ 15 (MwSlipDetector::kMinEpochsForAdaptive — shorter
+            // windows give a statistically marginal MAD and would retire the
+            // warmup floors early) and ≤ 64 (fixed per-arc ring capacity).
+            int win = jval<int>(json, "estimation.cycle_slip.mw_local_window",
+                                "cycle_slip_mw_local_window", cycle_slip_.mw_local_window);
+            constexpr int kMinLocalWindow = 15;
+            constexpr int kMaxLocalWindow = 64;
+            if (win < kMinLocalWindow || win > kMaxLocalWindow) {
+                log->warn("estimation.cycle_slip.mw_local_window {} out of range [{}, {}]; clamping",
+                          win, kMinLocalWindow, kMaxLocalWindow);
+                win = std::clamp(win, kMinLocalWindow, kMaxLocalWindow);
+            }
+            cycle_slip_.mw_local_window = win;
+
+            const char* ref_name =
+                cycle_slip_.mw_detect_reference == MwDetectReference::LocalMedian    ? "local_median"
+              : cycle_slip_.mw_detect_reference == MwDetectReference::TimeDifference ? "time_difference"
+                                                                                     : "hatch_mean";
+            log->info("MW detection reference: {} (td_order={}, local window {} epochs)",
+                      ref_name,
+                      cycle_slip_.mw_td_order == MwTdOrder::Second ? "second" : "first",
+                      cycle_slip_.mw_local_window);
+        }
 
         accumulate_phase_windup_  = jval<bool>(json, "estimation.accumulate_phase_windup",
                                                 "accumulate_phase_windup", false);
@@ -1546,6 +1713,31 @@ namespace GnssProcessor {
                 estimate_velocity_ = true;
                 log->info("Tightly-coupled IMU: forcing estimate_velocity=true");
             }
+        }
+
+        // --- estimation.aiding.{imu,zupt,nhc,wheel,baro,vision} ---------------
+        // Aiding-source selection (AidingSourceRegistry / AidingSourceManager,
+        // the navigation-aiding analog of estimation.cycle_slip).  Loaded HERE,
+        // at the tail of the IMU section, rather than in loadEstimationSection_,
+        // because `imu` back-compat-defaults to the already-parsed imu.enabled
+        // (enableImu()) and the estimation section runs first.  An explicit
+        // estimation.aiding.imu always wins.  Behaviorally inert until
+        // AidingSourceManager is wired into the epoch loop (see
+        // docs/aiding_source_abstraction_design.md).
+        {
+            aiding_.imu    = jval<bool>(json, "estimation.aiding.imu",    "aiding_imu",    imu_config_.enabled);
+            aiding_.zupt   = jval<bool>(json, "estimation.aiding.zupt",   "aiding_zupt",   false);
+            aiding_.nhc    = jval<bool>(json, "estimation.aiding.nhc",    "aiding_nhc",    false);
+            aiding_.wheel  = jval<bool>(json, "estimation.aiding.wheel",  "aiding_wheel",  false);
+            aiding_.baro   = jval<bool>(json, "estimation.aiding.baro",   "aiding_baro",   false);
+            aiding_.vision = jval<bool>(json, "estimation.aiding.vision", "aiding_vision", false);
+            aiding_.zupt_sigma_mps = jval<double>(json, "estimation.aiding.zupt_sigma_mps",
+                                                  "aiding_zupt_sigma_mps", aiding_.zupt_sigma_mps);
+            log->info("Aiding sources: imu={}, zupt={}, nhc={}, wheel={}, baro={}, vision={} (zupt_sigma={:.3f} m/s)",
+                      aiding_.imu ? "on" : "off", aiding_.zupt ? "on" : "off",
+                      aiding_.nhc ? "on" : "off", aiding_.wheel ? "on" : "off",
+                      aiding_.baro ? "on" : "off", aiding_.vision ? "on" : "off",
+                      aiding_.zupt_sigma_mps);
         }
     }
 

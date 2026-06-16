@@ -341,6 +341,7 @@ int Application::runRealTime() {
     // exhausted; NTRIP/TCP: tryRead has already waited internally).  A
     // stop request (Ctrl+C) breaks the loop so the flush/stop below runs.
     while (!g_stop_requested.load(std::memory_order_relaxed)
+           && !engine.maxDurationReached()
            && (primary->active() || (corrections && corrections->active()))) {
         std::size_t produced = 0;
 
@@ -377,6 +378,8 @@ int Application::runRealTime() {
     removeStopHandler();
     if (g_stop_requested.load(std::memory_order_relaxed))
         log->info("Stop requested (Ctrl+C) — flushing and shutting down cleanly");
+    else if (engine.maxDurationReached())
+        log->info("Max processing duration reached — flushing and shutting down cleanly");
 
     engine.flush();
 

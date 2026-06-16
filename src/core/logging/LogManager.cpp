@@ -205,6 +205,27 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief Default ("gnss_processor") logger accessor.
+     *
+     * Returns the registered default logger when initialized; before
+     * initialize(), returns a transient console-only fallback — see the
+     * header doc for the rationale (pre-initialization call sites such as
+     * GnssConfig::loadFromJson must degrade, not throw).
+     */
+    std::shared_ptr<spdlog::logger> LogManager::getLogger() const {
+        const auto it = loggers_.find("gnss_processor");
+        if (it != loggers_.end()) return it->second;
+        // Uninitialized: transient console-only fallback, mirroring the named
+        // overload below.  Deliberately NOT registered with spdlog, so
+        // repeated calls cannot collide in the global registry.
+        auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
+        logger->set_level(spdlog::level::info);
+        logger->error("LogManager not initialized, returning console-only default logger");
+        return logger;
+    }
+
+    /**
      * @brief Retrieve or create a module-specific logger.
      *
      * If the manager is not initialized, returns a console-only logger with the requested

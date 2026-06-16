@@ -12,6 +12,7 @@
 
 #include "products/LiveEphemerisStore.hpp"
 #include "common/Constants.hpp"
+#include <spdlog/spdlog.h>
 #include <array>
 #include <cmath>
 
@@ -115,6 +116,18 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph) {
     // Demote the current record to "previous" only when the IODE changes, so
     // an IODE transition keeps the orbit valid just before the cutover.
     if (it->second.current.iode != eph.iode) {
+        // Diagnostic: a broadcast-ephemeris cutover.  The SSR orbit/clock delta
+        // is referenced to a specific broadcast version (iode_ssr); each cutover
+        // steps the broadcast baseline the delta is applied to, so a residual
+        // saw-tooth that lines up with these events is the ephemeris-turnover
+        // mechanism.  Galileo I/NAV cuts over every few minutes vs GPS ~2 h, so
+        // expect far more EPH-IODE-CHANGE lines for E# than G#.  rt_engine is
+        // registered in the global spdlog registry by LogManager (debug level);
+        // guard the get() since a cutover can arrive before logging is wired up.
+        if (auto lg = spdlog::get("rt_engine"))
+            lg->debug("EPH-IODE-CHANGE {} iode {} -> {} (toe tow {:.0f} -> {:.0f})",
+                      eph.satellite, it->second.current.iode, eph.iode,
+                      it->second.current.kepler.toe.tow, eph.kepler.toe.tow);
         it->second.previous = it->second.current;
     }
     it->second.current = eph;
@@ -131,6 +144,21 @@ const BroadcastEphemeris& LiveEphemerisStore::pick(const SatRecord& rec,
     const double d_cur = std::abs(q - toeGpsContinuous(rec.current));
     const double d_prv = std::abs(q - toeGpsContinuous(*rec.previous));
     return (d_prv < d_cur) ? *rec.previous : rec.current;
+}
+
+const BroadcastEphemeris& LiveEphemerisStore::pickForSsr(const SatRecord& rec,
+                                                         const GnssTime& time,
+                                                         int ssr_iode) {
+    // Re-reference: when the SSR delta names a version we still hold, return THAT
+    // record (current or the retained previous) so orbit and clock are applied
+    // against the ephemeris the correction was computed for.  Across a cutover
+    // the receiver can be a version ahead of the SSR stream; without this the
+    // current-vs-SSR IODE mismatch would drop the satellite to broadcast-grade.
+    if (ssr_iode >= 0) {
+        if (ssrMatchIode(rec.current) == ssr_iode) return rec.current;
+        if (rec.previous && ssrMatchIode(*rec.previous) == ssr_iode) return *rec.previous;
+    }
+    return pick(rec, time);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,13 +288,13 @@ LiveEphemerisStore::glonassState(const BroadcastEphemeris& eph, const GnssTime& 
 // ---------------------------------------------------------------------------
 
 std::optional<LiveEphemerisStore::SatelliteState>
-LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& time) const {
+LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& time, int ssr_iode) const {
     BroadcastEphemeris eph;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) return std::nullopt;
-        eph = pick(it->second, time);     // copy under lock; integrate outside
+        eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; integrate outside
     }
 
     if (eph.system == System::GLONASS) {
@@ -294,13 +322,13 @@ LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& t
 // ---------------------------------------------------------------------------
 
 std::optional<LiveEphemerisStore::SatelliteClock>
-LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime& time) const {
+LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime& time, int ssr_iode) const {
     BroadcastEphemeris eph;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) return std::nullopt;
-        eph = pick(it->second, time);     // copy under lock; evaluate outside
+        eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; evaluate outside
     }
 
     SatelliteClock out;

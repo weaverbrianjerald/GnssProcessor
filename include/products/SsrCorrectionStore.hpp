@@ -133,6 +133,27 @@ public:
      */
     std::string censusSummary() const;
 
+    /**
+     * @brief Per-epoch SSR coverage for a specific set of satellites.
+     *
+     * Unlike censusSummary() (which tallies the WHOLE store), this counts only
+     * @p sats — the satellites actually being modeled this epoch — so the
+     * realtime engine can log how many sats in the solution have a FRESH SSR
+     * orbit / clock and a code / phase bias available.  "Available" means a
+     * record is present within @p max_age_s; whether the orbit/clock additionally
+     * *applies* depends on the IODE gate (see getSatelliteClockCorrection), so
+     * the engine pairs this with the true clock-applied (cm-grade) count.
+     */
+    struct Coverage {
+        int total      = 0;   ///< Satellites queried.
+        int orbit      = 0;   ///< With a fresh SSR orbit (or combined) record.
+        int clock      = 0;   ///< With a fresh SSR clock (or combined / high-rate) record.
+        int code_bias  = 0;   ///< With a code-bias record.
+        int phase_bias = 0;   ///< With a phase-bias record.
+    };
+    Coverage coverageFor(const std::vector<std::string>& sats,
+                         const GnssTime& time, double max_age_s = 60.0) const;
+
     /// Drop every record.
     void clear();
 
