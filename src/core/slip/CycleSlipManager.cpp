@@ -136,6 +136,12 @@ void CycleSlipManager::resetAmbiguityBssdAware(
 
     const double reset_std_m = config_.getAmbiguityStd();
 
+    // Smoother segmentation: every branch below either re-seeds the value with
+    // a large variance, inflates the pivot variance, or defers the reseed — none
+    // carry information backward, so record the satellite for the smoother to
+    // exclude this epoch's boundary (audit F1).
+    epoch_reset_sats_.insert(sat_id);
+
     if (!config_.enableBetweenSatelliteSd()) {
         state_manager.resetAmbiguity(amb_key, reset_std_m);
         return;
@@ -314,6 +320,13 @@ bool CycleSlipManager::repairAmbiguityBssdAware(
     x(amb_idx) += delta_m;
     state_manager.setStateVector(x);
 
+    // Smoother compensation: this is a deterministic, covariance-preserving
+    // state jump applied in the SAME (pre-update) frame the smoother captured
+    // x_pred in, so it can be folded into the a-priori as a control input
+    // rather than absorbed as an innovation (audit F1).  Recorded only on the
+    // confirmed-applied path — a refused / skipped repair returns earlier.
+    epoch_repairs_.emplace_back(amb_key, delta_m);
+
     log->info("{}MW slip REPAIR for {}: dN={:+d} cyc, lambda={:.4f} m, "
               "delta={:+.4f} m, x: {:.4f} -> {:.4f} (covariance preserved)",
               epoch_prefix, amb_key, slip_cycles, lambda_sig, delta_m,
@@ -445,6 +458,9 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
     auto log = log_manager_.getLogger("cycle_slip_manager");
     CycleSlipEpochResult result;
     last_mw_slips_.clear();
+    // Per-epoch smoother-action accumulators (see CycleSlipEpochResult docs).
+    epoch_reset_sats_.clear();
+    epoch_repairs_.clear();
 
     // Continuous GPS seconds of this epoch (for soft-LLI hold bookkeeping).
     double epoch_now_s = 0.0;
@@ -596,6 +612,11 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
                                    result.n_repaired, result.n_reset, reset_fn);
             if (!soft_lli_repaired.empty()) result.state_modified = true;
             reset_sats.insert(soft_lli_repaired.begin(), soft_lli_repaired.end());
+            // Soft-LLI bridge "repair" is an ABSOLUTE value overwrite with the
+            // covariance rebuilt from the pre-gap anchor (SoftLliBridge::
+            // applyRestore) — not an additive, covariance-preserving repair.  The
+            // smoother must SEGMENT these, not compensate them (audit F1 / C2).
+            epoch_reset_sats_.insert(soft_lli_repaired.begin(), soft_lli_repaired.end());
         }
 
         // Group ALL MW results (slipped and non-slipped) by satellite for
@@ -1571,6 +1592,15 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
                     x(amb_idx) += delta_m;
                     state_manager.setStateVector(x);
 
+                    // This +delta lands in the NEW (post-forced-handover) SD
+                    // frame, while the smoother's x_pred is the OLD frame; folding
+                    // it into x_pred would leave a residual pivot offset.  The
+                    // forced handover itself is disturbance-triggered (the pivot
+                    // slipped) so the smoother segments this constellation anyway;
+                    // record the sat as a reset so it is segmented even if the
+                    // handover classification missed it (audit F1 / R4).
+                    epoch_reset_sats_.insert(dr.sat_id);
+
                     log->info("{}Post-handover MW REPAIR for {}_{}: dN={} cyc, "
                               "lambda={:.4f} m, delta={:+.4f} m, x: {:.4f} -> {:.4f} "
                               "(new pivot={}, covariance preserved)",
@@ -1619,6 +1649,13 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
 
     // Advance the previous-epoch marker for the soft-LLI measured-spacing gate.
     soft_lli_.advanceEpoch(epoch_now_s);
+
+    // Hand the slip-phase frame actions to the smoother via the result: reset
+    // sats are segmented, covariance-preserving repairs are compensated into
+    // the stored a-priori (audit F1).  Accumulated across the MW loop, the
+    // GF-only pass, the aux pass, and the helper functions.
+    result.reset_satellites = epoch_reset_sats_;
+    result.ambiguity_repairs = epoch_repairs_;
 
     return result;
 }

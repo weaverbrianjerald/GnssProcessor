@@ -46,6 +46,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -64,6 +65,25 @@ struct CycleSlipEpochResult {
     /// See TurboEditResolver's "code-domain veto" header note.
     int n_code_events{ 0 };
     bool state_modified{ false }; ///< True if any filter state was changed.
+
+    /// Satellites whose ambiguity state was RESET / reseeded this epoch by the
+    /// slip phase — SD-aware reset, pivot-disturbance variance inflation, or a
+    /// soft-LLI bridge restore (absolute value overwrite).  These carry a fresh,
+    /// large-variance (or covariance-rebuilt) prior that holds no information
+    /// backward, so the RTS smoother SEGMENTS them: their ambiguities are
+    /// excluded from the backward common subspace at this epoch boundary.
+    /// See @c Smoother and the slip-repair audit finding F1.
+    std::set<std::string> reset_satellites;
+
+    /// Covariance-preserving additive integer repairs applied this epoch, as
+    /// (ambiguity_key, delta_metres) with @c delta = dN·λ.  A repair is a
+    /// deterministic, known state jump — not a measurement event — so the
+    /// smoother folds @c delta into the stored a-priori @c x_pred (a control
+    /// input) instead of letting the backward pass absorb it as an innovation
+    /// (audit F1).  Only the PRE-handover repair site is recorded here; the
+    /// post-handover deferred repair lands in the new SD frame and is surfaced
+    /// as a @c reset_satellites entry (segmented) instead.
+    std::vector<std::pair<std::string, double>> ambiguity_repairs;
 };
 
 /**
@@ -384,6 +404,15 @@ private:
 
     /// Cached MW slip results from the last detectAndRepair() call.
     std::map<std::string, MwSlipResult> last_mw_slips_;
+
+    /// Per-epoch slip-action accumulators for the RTS smoother, cleared at the
+    /// top of @c detectAndRepair and copied into the returned
+    /// @c CycleSlipEpochResult before it returns.  Written by
+    /// @c resetAmbiguityBssdAware (reset sats), @c repairAmbiguityBssdAware
+    /// (compensatable repairs), the inline post-handover repair (recorded as a
+    /// reset — new SD frame), and the soft-LLI bridge restore path (reset).
+    std::set<std::string> epoch_reset_sats_;
+    std::vector<std::pair<std::string, double>> epoch_repairs_;
 
     /// Shared soft-LLI gap-bridge orchestration (snapshot / hold / restore).
     /// Inert unless @c estimation.cycle_slip.turbo_edit_bridge_lli.  The same

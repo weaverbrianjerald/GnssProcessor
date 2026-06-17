@@ -41,6 +41,17 @@ struct MsmDecodeResult {
     int       n_satellites{0};
     int       n_signals{0};
     int       n_cells{0};                ///< popcount of the cell mask.
+
+    /// Bits consumed by the decoder from the payload (i.e. the bit reader
+    /// position at decode end).  A structurally-correct MSM frame consumes
+    /// every defined field; the only slack is the 0-7 trailing pad bits that
+    /// round the message to a byte boundary.  If @c payload_len*8 exceeds this
+    /// by >= 8 bits the decoder under-consumed — a width / field-order / MSM
+    /// subtype mismatch shifted the per-cell block — even though @c ok stays
+    /// true (the bit reader only flags over-read, never under-read).  Callers
+    /// can assert @c (payload_len*8 - bits_consumed) < 8 as a framing-integrity
+    /// guard that @c ok() alone does not provide.
+    std::size_t bits_consumed{0};
 };
 
 /**

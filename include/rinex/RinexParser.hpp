@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <climits>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -42,6 +43,10 @@ namespace GnssProcessor {
         std::map<std::string, double> variances;   /**< Map of observation code -> variance (m^2) */
         std::map<std::string, int> lli_flags;      /**< Map of observation code -> loss-of-lock indicator */
         std::string receiver_id;                   /**< Receiver identifier (useful in network files) */
+        int glonass_freq_channel{ INT_MIN };       /**< GLONASS FDMA frequency-channel number k (-7..+6),
+                                                        carried from RTCM DF419 / 1020 DF039 so the FDMA
+                                                        wavelength can be resolved per satellite.  INT_MIN
+                                                        means "unknown" (non-GLONASS, or FCN not supplied). */
     };
 
     /**

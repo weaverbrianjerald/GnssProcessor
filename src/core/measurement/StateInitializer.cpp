@@ -100,8 +100,14 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     const char band_2 = (ref.sig2.size() >= 2) ? ref.sig2[1] : '\0';
     if (band_j == '\0' || band_1 == '\0' || band_2 == '\0') return result;
 
-    // Non-reference band: independent IFB state
+    // Non-reference band: independent IFB state.  GLONASS is excluded (v1):
+    // its FDMA per-channel receiver delay cannot be captured by a single
+    // per-band IFB state shared across slots — that would be unphysical and
+    // bias every channel — so a non-reference GLONASS band carries no IFB
+    // state and its delay is absorbed by the per-(sat,signal) bias path /
+    // residual de-weighting.  Per-slot GLONASS IFB is a v2 refinement.
     if (band_j != band_1 && band_j != band_2) {
+        if (system == System::GLONASS) return result;   // no FDMA per-band IFB
         result.state_key   = sys + "_IFB" + band_j;
         result.coefficient = 1.0;
         return result;

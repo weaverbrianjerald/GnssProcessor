@@ -536,13 +536,14 @@ namespace {
 // Epoch helper: Detect and repair cycle slips
 // ---------------------------------------------------------------------------
 
-void Application::detectCycleSlips(const std::string& epoch_prefix,
+CycleSlipEpochResult Application::detectCycleSlips(const std::string& epoch_prefix,
                                const std::vector<PppObservation>& modeled_obs) {
     auto result = cycle_slip_manager_->detectAndRepair(
         epoch_prefix, modeled_obs, *state_manager_, *meas_model_);
     if (result.state_modified) {
         state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
     }
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,6 +1184,15 @@ void Application::capturePosteriorSnapshot(const std::set<std::string>& reset_sa
 
     snap.reset_satellites = reset_satellites;
     snap.is_discontinuity = was_complete_reset;
+
+    // BSSD frame metadata for the backward pass (audit P2-1).  getBssdPivot-
+    // Satellites is the FINAL per-epoch pivot map (after routine, forced-rebuild,
+    // and slip-phase handovers); getCleanHandovers reports the undisturbed,
+    // losslessly-invertible legs.  Both empty when BSSD is inactive.
+    if (meas_model_) {
+        snap.pivot_satellites = meas_model_->getBssdPivotSatellites();
+        snap.clean_handovers  = meas_model_->getPivotManager().getCleanHandovers();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1718,7 +1728,31 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         // 4g. Cycle slip detection & ambiguity resets.
-        detectCycleSlips(epoch_prefix, modeled_obs);
+        const CycleSlipEpochResult slip_result =
+            detectCycleSlips(epoch_prefix, modeled_obs);
+
+        // Smoother: fold covariance-preserving repairs into the just-captured
+        // a-priori as a deterministic control input (audit F1).  A repair shifts
+        // the ambiguity by a known dN·λ in the SAME (pre-update) frame x_pred was
+        // captured in; adding it to x_pred prevents the backward pass from
+        // absorbing the jump as a spurious measurement innovation.  Indices
+        // resolve against the live layout, which still equals x_pred's layout
+        // here (predict + slip detection do not reindex existing keys; state
+        // growth happens later inside the update loop).  A key also RESET this
+        // epoch is segmented, not compensated (R6).
+        if (config_.runSmoother() && !smoother_buffer_.empty()
+            && !slip_result.ambiguity_repairs.empty()) {
+            SmootherEpochSnapshot& snap = smoother_buffer_.back();
+            for (const auto& [amb_key, delta_m] : slip_result.ambiguity_repairs) {
+                const auto us = amb_key.find('_');
+                const std::string sat = (us != std::string::npos)
+                                            ? amb_key.substr(0, us) : amb_key;
+                if (slip_result.reset_satellites.count(sat)) continue;  // segmented
+                const int idx = state_manager_->getAmbiguityIndex(amb_key);
+                if (idx >= 0 && static_cast<Eigen::Index>(idx) < snap.x_pred.size())
+                    snap.x_pred(idx) += delta_m;
+            }
+        }
 
         // 4h. Iterative KF measurement update loop.
         EpochMeasurement applied_meas{};
@@ -1738,6 +1772,12 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
             epoch_reset_sats.insert(sat_id);
         }
+        // Merge the slip-phase resets (SD-aware resets, pivot-disturbance
+        // inflations, soft-LLI bridge restores, post-handover deferred repairs)
+        // so the smoother segments them too — previously only KF-internal resets
+        // reached the snapshot (audit F1).
+        epoch_reset_sats.insert(slip_result.reset_satellites.begin(),
+                                slip_result.reset_satellites.end());
 
         // 4h2. Ionosphere weighting: apply the GIM as a between-satellite
         // soft constraint on the slant-iono states.  Post-processing path

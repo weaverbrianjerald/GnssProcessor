@@ -90,6 +90,21 @@ int ssrMatchIode(const BroadcastEphemeris& eph) {
     }
 }
 
+// Max usable |t − toe| per system ≈ the broadcast fit interval × ~2 margin.
+// Beyond this an extrapolated orbit/clock is junk; reject (sat skipped) rather
+// than emit a silently-wrong position.  Sized so a legitimately old record
+// (GPS toe can be ~2 h out just before the next upload) is NEVER rejected.
+double maxEphAgeForSystem(System s) {
+    switch (s) {
+    case System::GPS:
+    case System::QZSS:    return 4.0 * 3600.0;
+    case System::Galileo: return 2.0 * 3600.0;
+    case System::BeiDou:  return 2.0 * 3600.0;
+    case System::GLONASS: return 0.5 * 3600.0;
+    default:              return 4.0 * 3600.0;
+    }
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -297,6 +312,28 @@ LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& t
         eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; integrate outside
     }
 
+    // Staleness guard + EPH-PICK diagnostic.  Computed AFTER pickForSsr so the
+    // IODE current/previous re-referencing is preserved.  age = query − toe with
+    // BOTH operands on GPS-continuous seconds.  The BDT offset does NOT cancel
+    // automatically: `time` is GPS-scale but BeiDou's kepler.toe is stored on
+    // its native BDT week (BDT week 0 = GPS week 1356), so toeGpsContinuous must
+    // lift it to GPS scale first — otherwise every BeiDou sat reads ~1356 weeks
+    // (~26 years) stale and is wrongly skipped.  Reject an ephemeris extrapolated
+    // beyond its fit window (never-refreshed sat / obs desync) rather than emit a
+    // silently-wrong orbit.
+    const double toe_c = toeGpsContinuous(eph);
+    const double age = continuousSeconds(time) - toe_c;
+    if (!std::isfinite(age) || std::abs(age) > maxEphAgeForSystem(eph.system)) {
+        if (auto lg = spdlog::get("rt_engine"))
+            lg->warn("EPH-STALE {} REJECTED: age={:+.0f}s ({:+.2f}h from toe) exceeds {:.1f}h "
+                     "fit window — sat skipped", sat, age, age / 3600.0,
+                     maxEphAgeForSystem(eph.system) / 3600.0);
+        return std::nullopt;
+    }
+    if (auto lg = spdlog::get("rt_engine"); lg && lg->should_log(spdlog::level::trace))
+        lg->trace("EPH-PICK {} iode={} ssr_iode={} age={:+.0f}s ({:+.2f}h from toe)",
+                  sat, eph.iode, ssr_iode, age, age / 3600.0);
+
     if (eph.system == System::GLONASS) {
         return glonassState(eph, time);
     }
@@ -329,6 +366,20 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
         auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) return std::nullopt;
         eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; evaluate outside
+    }
+
+    // Staleness guard (mirrors computeSatellitePV; no warn here to avoid
+    // double-logging the same sat/epoch the PV path already flagged): an
+    // ephemeris beyond its fit window yields no clock so the satellite drops
+    // rather than carrying an extrapolated wrong value.
+    {
+        // GPS-continuous on both sides — toeGpsContinuous lifts BeiDou's BDT toe
+        // (see computeSatellitePV); a raw kepler.toe here would read ~1356 weeks
+        // stale and silently drop every BeiDou clock.
+        const double toe_c = toeGpsContinuous(eph);
+        const double age = continuousSeconds(time) - toe_c;
+        if (!std::isfinite(age) || std::abs(age) > maxEphAgeForSystem(eph.system))
+            return std::nullopt;
     }
 
     SatelliteClock out;
@@ -374,6 +425,16 @@ std::size_t LiveEphemerisStore::size() const {
 void LiveEphemerisStore::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     by_sat_.clear();
+}
+
+std::map<std::string, int> LiveEphemerisStore::glonassFreqChannels() const {
+    std::map<std::string, int> out;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [sat, rec] : by_sat_) {
+        if (rec.current.system == System::GLONASS)
+            out[sat] = rec.current.glonass.freq_channel;
+    }
+    return out;
 }
 
 } // namespace GnssProcessor

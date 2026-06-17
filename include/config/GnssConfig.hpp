@@ -372,6 +372,32 @@ namespace GnssProcessor {
         double getMaxDuration() const { return max_duration_s_; }
 
         /**
+         * @brief Real-time obs skip-to-latest master toggle.
+         *
+         * When true (real-time only; post-processing ignores it), the engine
+         * drops observation epochs that trail wall-clock GPS time by more than
+         * @c obsSkipMaxLagS, fast-forwarding the filter to the freshest epoch so
+         * a lagging obs stream cannot be processed against fresher
+         * orbit/clock/SSR corrections.  Default off — opt-in, and assumes an
+         * NTP-synced host (the lag is measured against the system clock).
+         * Configured via @c processing.enable_obs_skip_to_latest.
+         */
+        bool enableObsSkipToLatest() const { return enable_obs_skip_to_latest_; }
+
+        /// @brief Max obs lag (s) behind wall-clock GPS before skip-to-latest
+        ///        drops the epoch (real-time only).  Config @c processing.obs_skip_max_lag_s.
+        double obsSkipMaxLagS() const { return obs_skip_max_lag_s_; }
+
+        /// @brief Warn-only real-time obs-backlog threshold (s); ≤0 disables the
+        ///        warning (e.g. deliberate file replay).  Config @c processing.rt_backlog_warn_s.
+        double rtBacklogWarnSeconds() const { return rt_backlog_warn_s_; }
+
+        /// @brief Max |obs − SSR-record| age (s) before the SSR orbit/clock
+        ///        overlay is rejected and the satellite falls back to
+        ///        broadcast-grade (real-time).  Config @c processing.ssr_max_age_s.
+        double getSsrMaxAge() const { return ssr_max_age_s_; }
+
+        /**
          * @brief Get the enabled RINEX observation-type letters.
          *
          * Returns the (uppercase, deduplicated) set of RINEX first-character
@@ -1619,6 +1645,10 @@ namespace GnssProcessor {
         double long_gap_tolerance_s_;                   ///< Long-gap threshold (s); separates short vs long gap policy in handleGap.
         double gnss_rate_s_;                              ///< Effective processing rate (s); 0 = process every RINEX epoch.
         double max_duration_s_;                           ///< Max data-time span to process (s); 0 = unlimited. Measured as epoch GPS time relative to the first processed obs.
+        bool   enable_obs_skip_to_latest_{ false };       ///< RT-only: skip obs epochs far behind wall-clock GPS (drop backlog, process freshest).
+        double obs_skip_max_lag_s_{ 5.0 };                ///< RT-only: drop an obs epoch lagging wall-clock GPS by more than this (s).
+        double rt_backlog_warn_s_{ 5.0 };                 ///< RT-only: warn-only obs-backlog threshold (s); ≤0 disables.
+        double ssr_max_age_s_{ 30.0 };                    ///< RT-only: max |obs − SSR-record| age (s) before SSR overlay rejected to broadcast-grade.
         std::string rinex_types_;                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         ProcessNoise process_noise_;                          ///< Process noise parameters.

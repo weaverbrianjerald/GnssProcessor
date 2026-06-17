@@ -226,9 +226,11 @@ private:
      *
      * @param epoch_prefix  Log prefix string.
      * @param modeled_obs   Modeled observations for this epoch.
+     * @return The epoch's slip result (repair / reset identities included), so
+     *         the caller can forward them to the RTS smoother snapshot.
      */
-    void detectCycleSlips(const std::string& epoch_prefix,
-                          const std::vector<PppObservation>& modeled_obs);
+    CycleSlipEpochResult detectCycleSlips(const std::string& epoch_prefix,
+                                          const std::vector<PppObservation>& modeled_obs);
 
     /**
      * @brief Run the iterative Kalman filter update / relinearization loop.

@@ -143,7 +143,23 @@ namespace GnssProcessor {
         // references the prior one, this RE-REFERENCES to the retained previous
         // record (LiveEphemerisStore keeps current+previous across a cutover)
         // instead of dropping the satellite to broadcast-grade.
-        const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+        // Reject an SSR record desynced from the obs epoch (live corrections vs a
+        // lagging obs stream): getOrbitClock's freshness gate now also drops a
+        // record far in the FUTURE relative to the obs (the −1.5 h desync), so a
+        // stale/mis-timed SSR no longer detonates applyClockToBias.  Surface the
+        // drop loudly (rate-limited by spdlog level) so it never hides again.
+        const double ssr_max_age = config_ ? config_->getSsrMaxAge() : 60.0;
+        const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, ssr_max_age);
+        if (!ssr) {
+            if (auto se = SsrCorrectionStore::getInstance().getSsrEpoch(satellite)) {
+                const double age = TimeUtils::continuousGpsSeconds(time)
+                                 - TimeUtils::continuousGpsSeconds(*se);
+                if (std::abs(age) > ssr_max_age)
+                    log->warn("SSR for {} ({}) REJECTED stale: |age|={:.1f}s > {:.1f}s "
+                              "(obs↔SSR desync) — falling back to broadcast-grade",
+                              satellite, PppUtils::getSystemString(satellite), age, ssr_max_age);
+            }
+        }
         const int  ssr_iode = (ssr && ssr->has_clock) ? ssr->iode : -1;
 
         // Live broadcast SV clock, version-matched to the SSR.  Its IODE ALWAYS

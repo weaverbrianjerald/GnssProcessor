@@ -368,6 +368,31 @@ namespace GnssProcessor {
             log->info("Max processing duration: {:.1f} s of data (epoch time relative to first obs; "
                       "stops once this span is reached)", max_duration_s_);
         }
+        // Real-time obs/correction synchronization (loop-level; inert in
+        // post-processing).  skip-to-latest keeps the obs stream pinned to real
+        // time; ssr_max_age rejects an SSR overlay whose record is desynced from
+        // the obs epoch (the live-corrections-vs-lagging-obs failure mode).
+        enable_obs_skip_to_latest_ = jval<bool>(json,
+            "processing.enable_obs_skip_to_latest", "enable_obs_skip_to_latest", false);
+        obs_skip_max_lag_s_ = jval<double>(json,
+            "processing.obs_skip_max_lag_s", "obs_skip_max_lag_s", 5.0);
+        if (obs_skip_max_lag_s_ <= 0.0) {
+            log->warn("Non-positive obs_skip_max_lag_s ({:.1f}) → 5 s default", obs_skip_max_lag_s_);
+            obs_skip_max_lag_s_ = 5.0;
+        }
+        rt_backlog_warn_s_ = jval<double>(json,
+            "processing.rt_backlog_warn_s", "rt_backlog_warn_s", 5.0);
+        ssr_max_age_s_ = jval<double>(json,
+            "processing.ssr_max_age_s", "ssr_max_age_s", 30.0);
+        if (ssr_max_age_s_ <= 0.0) {
+            log->warn("Non-positive ssr_max_age_s ({:.1f}) → 30 s default", ssr_max_age_s_);
+            ssr_max_age_s_ = 30.0;
+        }
+        if (enable_obs_skip_to_latest_) {
+            log->info("Real-time obs skip-to-latest ON: drop epochs >{:.1f}s behind wall-clock GPS "
+                      "(backlog warn at {:.1f}s); SSR overlay max age {:.1f}s",
+                      obs_skip_max_lag_s_, rt_backlog_warn_s_, ssr_max_age_s_);
+        }
         // RINEX observation-type filter.  String of letters from the set
         // {C, L, D, S} selecting which measurement types the parser will
         // keep.  Default "CL" = code + phase, which is what every
@@ -1846,6 +1871,27 @@ namespace GnssProcessor {
                 c.tcp_port           = cc.value("tcp_port", 28784);
             }
 
+            // Optional third RTCM stream: dedicated broadcast ephemeris (nav),
+            // for an obs-only station mountpoint that carries no 1019/1020/etc.
+            // Default disabled — a self-contained obs+nav station needs only
+            // primary + corrections.  Same transport descriptor as corrections.
+            if (rt.contains("ephemeris") && rt.at("ephemeris").is_object()) {
+                const auto& ec = rt.at("ephemeris");
+                auto& e = realtime_config_.ephemeris;
+                e.enabled            = ec.value("enabled", false);
+                e.input_type         = ec.value("input_type", std::string{"ntrip"});
+                e.ntrip_host         = ec.value("ntrip_host", std::string{});
+                e.ntrip_port         = ec.value("ntrip_port", 2101);
+                e.ntrip_mountpoint   = ec.value("ntrip_mountpoint", std::string{});
+                e.ntrip_user         = ec.value("ntrip_user", std::string{});
+                e.ntrip_password     = ec.value("ntrip_password", std::string{});
+                e.nmea_gga           = ec.value("nmea_gga", std::string{});
+                e.reconnect_delay_s  = ec.value("reconnect_delay_s", 5);
+                e.input_path         = ec.value("input_path", std::string{});
+                e.tcp_host           = ec.value("tcp_host", std::string{});
+                e.tcp_port           = ec.value("tcp_port", 28784);
+            }
+
             if (app_mode_ == AppMode::RealTime) {
                 log->info("Real-time config: input={}, ntrip={}:{}/{}, output={}",
                     realtime_config_.input_type,
@@ -1860,6 +1906,15 @@ namespace GnssProcessor {
                                   c.ntrip_host, c.ntrip_port, c.ntrip_mountpoint);
                     } else {
                         log->info("Real-time corrections: file={}", c.input_path);
+                    }
+                }
+                if (realtime_config_.ephemeris.enabled) {
+                    const auto& e = realtime_config_.ephemeris;
+                    if (e.input_type == "ntrip") {
+                        log->info("Real-time ephemeris (nav): ntrip={}:{}/{}",
+                                  e.ntrip_host, e.ntrip_port, e.ntrip_mountpoint);
+                    } else {
+                        log->info("Real-time ephemeris (nav): file={}", e.input_path);
                     }
                 }
             }

@@ -333,6 +333,36 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Convert a GLONASS time-of-day to full GPS time, anchored on a known epoch.
+         *
+         * GLONASS broadcasts time on the UTC(SU)+3h ("Moscow") day.  Several RTCM
+         * fields carry only the seconds-of-day within that Moscow day with no
+         * year/week: the MSM epoch @c tk (DF034) and the legacy/IGS SSR GLONASS
+         * epoch (DF389).  This reconstructs the full @c GnssTime on the GPS scale
+         * by framing the time-of-day in the Moscow day nearest
+         * @p anchor_gps_seconds (resolving the midnight wrap to within ±12 h),
+         * then carrying it back through UTC to GPS time (applying the
+         * epoch-dependent GPS-UTC leap-second offset).  Mirrors RTKLIB's
+         * @c adjday_glot.
+         *
+         * The leap-second offset is looked up once at the anchor epoch and reused
+         * for the forward (GPS→UTC) and return (UTC→GPS) legs, so it cancels
+         * exactly except across a leap-second insertion boundary, where the
+         * single-epoch error self-corrects on the next epoch.
+         *
+         * @param tod_glonass_s      Seconds since the start of the GLONASS (Moscow)
+         *                           day, i.e. RTCM @c tk (MSM) or the SSR GLONASS
+         *                           epoch field, nominally in [0, 86400).
+         * @param anchor_gps_seconds Continuous GPS seconds (week·604800 + tow) of a
+         *                           known nearby epoch — the rover's current time —
+         *                           used to resolve which GLONASS day the
+         *                           time-of-day falls in.
+         * @return GnssTime{week, tow} on the GPS time scale.  Returns {0, 0} if
+         *         @p anchor_gps_seconds is non-positive (anchor unavailable).
+         */
+        static GnssTime glonassTodToGpsTime(double tod_glonass_s, double anchor_gps_seconds);
+
+        /**
          * @brief Convert a GNSS time to continuous GPS seconds for sorting / interpolation.
          *
          * Builds a monotonic scalar time value by converting the GPS week + time-of-week
@@ -343,6 +373,19 @@ namespace GnssProcessor {
          * @return Continuous GPS seconds as a double.
          */
         static double continuousGpsSeconds(const GnssTime& t);
+
+        /**
+         * @brief Current system wall-clock time as continuous GPS seconds.
+         *
+         * Reads the host clock (UTC/POSIX) and converts to continuous GPS
+         * seconds (week·604800 + tow), adding @c LEAP_SECONDS for the UTC→GPS
+         * offset.  Used by the real-time engine to measure how far an
+         * observation epoch lags real time (obs-backlog / skip-to-latest); also
+         * the single source of truth behind @c currentGpsWeekFromSystem.
+         *
+         * @return Continuous GPS seconds for "now" (≤ 0 if before the GPS epoch).
+         */
+        static double nowContinuousGpsSeconds();
 
         // -----------------------------------------------------------------------
         // Time system constants

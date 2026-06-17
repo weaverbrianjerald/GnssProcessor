@@ -19,6 +19,7 @@
 #include "rtcm/RtcmSsrDecoder.hpp"
 #include "rtcm/RtcmMsmDecoder.hpp"
 #include "rtcm/RtcmNavDecoder.hpp"
+#include "math/TimeUtils.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <fstream>
@@ -32,14 +33,11 @@ namespace {
 // pass this should come from the rover's most-recently-known time so the
 // SSR epoch and the rover epoch share a clock.
 int currentGpsWeekFromSystem() {
-    using namespace std::chrono;
-    const auto now      = system_clock::now();
-    const auto since    = duration_cast<seconds>(now.time_since_epoch()).count();
-    constexpr int64_t kGpsEpochUnix = 315964800; // Jan 6 1980 00:00:00 UTC
-    constexpr int     kSecPerWeek   = 7 * 24 * 3600;
-    const int64_t since_gps = since - kGpsEpochUnix;
-    if (since_gps <= 0) return 0;
-    return static_cast<int>(since_gps / kSecPerWeek);
+    // Single source of truth for the UTC→GPS (leap-corrected) wall-clock math is
+    // TimeUtils::nowContinuousGpsSeconds(); this is just its week index.
+    const double gps_s = TimeUtils::nowContinuousGpsSeconds();
+    if (gps_s <= 0.0) return 0;
+    return static_cast<int>(gps_s / static_cast<double>(TimeUtils::SECONDS_IN_WEEK));
 }
 
 bool isLegacySsrType(uint16_t mt) {
@@ -57,6 +55,28 @@ bool isMsm4Type(uint16_t mt) {
     // 1074 GPS, 1084 GLO, 1094 GAL, 1104 SBAS, 1114 QZS, 1124 BDS, 1134 NavIC.
     if (mt < 1071 || mt > 1137) return false;
     return ((mt - 1071) % 10) == 3;  // MSM4 sits at offset 3 within each per-system block.
+}
+
+// Framing-integrity guard the MSM decoder's ok() flag does NOT provide.  The
+// bit reader only flags OVER-read; a structurally-wrong decode (wrong MSM
+// subtype width table, an off-by-N field offset, a misframed payload) can
+// UNDER-consume the payload — leaving the per-cell block read from the wrong
+// bits — yet still report ok()==true because the running offset never passed
+// the end.  A correct MSM frame consumes every defined field; the only legal
+// slack is the 0-7 trailing bits that pad the message to a byte boundary.  So
+// payload_bits - bits_consumed >= 8 means the decode is silently misaligned —
+// a likely culprit for plausible-but-wrong observations (e.g. an L1/L2 split
+// that survives ok()).  Warn loudly so it is not mistaken for clean data.
+void warnIfUnderConsumed(uint16_t mt, const char* label, std::size_t payload_bytes,
+                         std::size_t bits_consumed, bool ok) {
+    if (!ok) return;  // truncation already reported by the caller
+    const std::size_t payload_bits = payload_bytes * 8u;
+    if (payload_bits >= bits_consumed + 8u) {
+        spdlog::warn("RTCM {}: {} under-consumed payload — read {} of {} bits "
+                     "({} unread; MSM subtype / field-width / framing mismatch?)",
+                     mt, label, bits_consumed, payload_bits,
+                     payload_bits - bits_consumed);
+    }
 }
 
 } // namespace
@@ -113,6 +133,7 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
         if (!res.ok) {
             spdlog::warn("RTCM {}: MSM7 decode incomplete (truncated payload?)", msg_type);
         }
+        warnIfUnderConsumed(msg_type, "MSM7", pl, res.bits_consumed, res.ok);
         return res.ok;
     }
     if (isMsm4Type(msg_type)) {
@@ -121,6 +142,7 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
         if (!res.ok) {
             spdlog::warn("RTCM {}: MSM4 decode incomplete (truncated payload?)", msg_type);
         }
+        warnIfUnderConsumed(msg_type, "MSM4", pl, res.bits_consumed, res.ok);
         return res.ok;
     }
 

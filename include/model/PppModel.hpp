@@ -235,6 +235,22 @@ namespace GnssProcessor {
         const GnssCorrections& getCorrections() const { return gnss_corrections_; }
 
         /**
+         * @brief Update the GLONASS FDMA frequency-slot map (satellite → channel k).
+         *
+         * Mirrors the constructor's one-shot seed from the RINEX "GLONASS SLOT /
+         * FRQ #" header, but for the real-time path where slot assignments arrive
+         * incrementally from the broadcast stream (RTCM 1020 DF039 / SBF GLONav).
+         * Forwards to @c PppUtils so per-satellite GLONASS wavelengths resolve
+         * from the live channel assignments instead of the hard-coded default
+         * table.  Idempotent; safe to call whenever fresh ephemeris arrives.
+         *
+         * @param slots Map of GLONASS satellite id ("R01") to FDMA channel k (-7..+6).
+         */
+        void setGlonassSlots(const std::map<std::string, int>& slots) {
+            ppp_utils_.setGlonassSlots(slots);
+        }
+
+        /**
          * @brief Check whether the receiver antenna has ATX coverage for a signal.
          *
          * Delegates to Antenna::hasReceiverAtxEntry().

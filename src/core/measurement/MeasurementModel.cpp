@@ -1227,9 +1227,11 @@ namespace GnssProcessor {
             }
         }
 
-        // CODE-DECOMP diagnostic (trace, "measurement_model"): for Galileo code,
-        // break the zero-difference predicted observable into its terms so a
-        // hundreds-of-metre C5/C7 residual can be attributed.  rx_clk is the
+        // CODE-DECOMP diagnostic (trace, "measurement_model"): for ANY code
+        // signal, break the zero-difference predicted observable into its terms
+        // so a hundreds-of-metre / kilometre residual can be attributed (GPS
+        // IF-code km residuals on the live IGS-station path motivated lifting
+        // this off the original Galileo-only gate).  rx_clk is the
         // receiver-clock STATE (0 in BSSD, where the between-sat SD removes the
         // physical clock — so zd_innov here still CARRIES it, equally on every
         // signal, and it cancels only after differencing); iono is the per-sat
@@ -1237,7 +1239,7 @@ namespace GnssProcessor {
         // matched by EXACT RINEX obs code (0 if the provider's set lacks this
         // code); sat_bias is the estimated per-(sat,signal) state; bia_cbias is
         // the external .BIA term (0 unless enable_code_phase_bias).
-        if (!is_phase && !obs.satellite.empty() && obs.satellite[0] == 'E') {
+        if (!is_phase && !obs.satellite.empty()) {
             if (auto lg = log_manager_.getLogger("measurement_model");
                 lg->should_log(spdlog::level::trace)) {
                 const double observed_val =

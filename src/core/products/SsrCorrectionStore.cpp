@@ -27,7 +27,16 @@ bool freshEnough(const GnssTime& record, const GnssTime& query, double max_age_s
     if (record.week == 0 && record.tow == 0.0) return false; // never set
     if (query.week == 0 && query.tow == 0.0)   return true;  // caller doesn't know time; trust the record
     const double age = secondsBetween(query, record);
-    if (age < 0.0) return true;          // record arrived "after" query (clock drift); accept
+    // Symmetric tolerance.  A mildly-negative age (record stamped a touch after
+    // the query — sub-second clock drift, frame jitter) is fine.  But a record
+    // from far in the FUTURE relative to the query is NOT a correction for this
+    // observation: it is the live-corrections-vs-lagging-obs desync (obs ~1.5 h
+    // behind fresh SSR → age ≈ −5400 s).  Applying it extrapolates the SSR
+    // clock backward over that gap and detonates (c1·dt + c2·dt² → "zero/invalid
+    // clock product" on every satellite).  Reject it so the satellite falls back
+    // to its (self-consistent, obs-time) broadcast clock instead.
+    if (age < -max_age_s) return false;  // record far in the future vs query → REJECT
+    if (age < 0.0) return true;          // mild negative (drift/jitter) → accept
     return age <= max_age_s;
 }
 

@@ -25,6 +25,45 @@
 
 namespace GnssProcessor {
 
+namespace {
+
+/// Config-section name for a constellation, or nullptr if not user-selectable.
+const char* systemConfigName(System sys) {
+    switch (sys) {
+    case System::GPS:     return "GPS";
+    case System::Galileo: return "Galileo";
+    case System::GLONASS: return "GLONASS";
+    case System::BeiDou:  return "BeiDou";
+    case System::QZSS:    return "QZSS";
+    case System::SBAS:    return "SBAS";
+    default:              return nullptr;
+    }
+}
+
+/// True iff @p sys appears in the configured active-systems list.
+bool isSystemActive(System sys, const std::vector<std::string>& active) {
+    const char* name = systemConfigName(sys);
+    if (!name) return false;
+    return std::find(active.begin(), active.end(), name) != active.end();
+}
+
+/// Push the live store's GLONASS FDMA channel map (R## → k) into PppModel
+/// whenever this frame delivered GLONASS broadcast ephemeris.  Shared by the
+/// RTCM and SBF ingest paths so both seed per-satellite GLONASS wavelengths
+/// identically — from the live 1020 / GLONav @c freq_channel, not the
+/// hard-coded default table.  No-op when the frame carried no GLONASS nav.
+void refreshGlonassSlots(const std::vector<BroadcastEphemeris>& fresh,
+                         LiveEphemerisStore& store, PppModel& model) {
+    for (const auto& e : fresh) {
+        if (e.system == System::GLONASS) {
+            model.setGlonassSlots(store.glonassFreqChannels());
+            return;
+        }
+    }
+}
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
@@ -262,7 +301,17 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
     // Observations: buffer until a new epoch is detected, then submit the
     // previous epoch.  MSM4/MSM7 decode is a follow-up phase — until then
     // getObservations() is empty and this loop is a no-op.
+    // Drop disabled constellations BEFORE the epoch-boundary test (not just in
+    // processEpoch): a mis-tagged clock — notably GLONASS, carried as week-0
+    // seconds-of-day until full GPS-week promotion lands — emits a wildly
+    // different tow that would split a coherent epoch in two.  The leading
+    // systems get submitted early (without the trailing ones), and the trailing
+    // systems then arrive at the same tow as the just-submitted epoch and are
+    // dropped by processEpoch's dt==0 duplicate guard.  That silently starved
+    // GPS+Galileo of Galileo whenever GLONASS was present-but-disabled.
+    const auto& active = config_.getActiveSystems();
     for (const auto& obs : parser.getObservations()) {
+        if (!isSystemActive(obs.system, active)) continue;
         if (pending_obs_.empty()) {
             pending_epoch_time_ = obs.time;
         } else if (std::abs(obs.time.tow - pending_epoch_time_.tow) > 0.5) {
@@ -293,6 +342,7 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
     // Geometry::getSatellitePV resolve satellite orbits with no SP3 file loaded.
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph);
+    refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
 
     const std::size_t n_ssr =
         parser.getSsrOrbits().size()      + parser.getSsrClocks().size() +
@@ -312,12 +362,45 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
             parser.lastMessageType(), parser.getBroadcastEphemeris().size(),
             eph_store.size());
     }
+    // Reference-station coordinate (RTCM 1005/1006).  Seed the filter a-priori
+    // from the antenna reference point until the KF has bootstrapped — the RTCM
+    // analogue of the PVTGeodetic seed in feedSbfFrame.  A live RTCM obs stream
+    // carries no RINEX APPROX POSITION, so without this the a-priori is the
+    // coarse Earth-centred fallback (geographic pole) from which almost every
+    // satellite sits below the elevation mask and the filter can never converge.
+    // A configured reference_position always wins; once first_epoch_ clears the
+    // KF owns the position and we stop overwriting it.  The startup defer gate
+    // keeps first_epoch_ true through warmup, so a 1005/1006 arriving a few
+    // seconds into the stream (they come less often than the 1 Hz obs) still
+    // seeds before the first estimation epoch.
     if (!parser.getStationCoords().empty()) {
         const auto& s = parser.getStationCoords().front();
-        log_manager_.getLogger("rt_engine")->info(
-            "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
-            parser.lastMessageType(), s.reference_station_id,
-            s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+        if (first_epoch_ && !config_.hasReferencePosition()
+            && s.arp_ecef.allFinite() && s.arp_ecef.norm() > 1e3) {
+            const size_t pidx = state_manager_->getPositionIndex();
+            Eigen::VectorXd sv = state_manager_->getStateVector();
+            if (sv.size() >= static_cast<Eigen::Index>(pidx + 3)) {
+                sv.segment<3>(pidx) = s.arp_ecef;
+                state_manager_->setStateVector(sv);
+                ppp_state_.position = s.arp_ecef;
+                if (!apriori_seeded_from_station_) {
+                    log_manager_.getLogger("rt_engine")->info(
+                        "RTCM {}: seeded a-priori from station {} ARP "
+                        "({:.3f}, {:.3f}, {:.3f}) m",
+                        parser.lastMessageType(), s.reference_station_id,
+                        s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+                    apriori_seeded_from_station_ = true;
+                }
+            }
+        } else {
+            // A-priori already pinned (config reference_position) or already
+            // owned by the KF — just surface the broadcast ARP so it can be
+            // eyeballed against the configured/estimated position.
+            log_manager_.getLogger("rt_engine")->info(
+                "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
+                parser.lastMessageType(), s.reference_station_id,
+                s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+        }
     }
 }
 
@@ -358,6 +441,7 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
     // the receiver's DECODED nav blocks, emitted only on ephemeris change.
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph);
+    refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
     if (!parser.getBroadcastEphemeris().empty()) {
         log_manager_.getLogger("rt_engine")->trace(
             "SBF block {}: cached {} broadcast ephemeris ({} sats in live store)",
@@ -418,6 +502,34 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // "[RT] " distinguishes realtime-engine output from post-processing
     // when both modes share a console.
     const std::string epoch_prefix = "[RT] ";
+
+    // --- Real-time obs/wall-clock lag: backlog warn + skip-to-latest ---
+    // A live obs stream that lags real time gets processed against FRESHER
+    // orbit/clock/SSR corrections → desync garbage ("zero/invalid clock" on
+    // every sat).  Measure the lag once against wall-clock GPS time; warn on a
+    // backlog, and (opt-in) DROP stale epochs so the filter fast-forwards to the
+    // freshest one.  The skip returns BEFORE any continuity state (prev_tow_,
+    // prev_epoch_time_, first_epoch_, the KF) is touched — exactly like the
+    // duplicate-epoch early-return below — so dt/gap/cycle-slip semantics are
+    // preserved: on resume the large dt correctly trips the gap path (WLS clock
+    // re-seed).  setStateEpochTime/setCurrentEpochTime above only stamp the log
+    // tag, never continuity state, so running them first is harmless.
+    {
+        const double lag_s = TimeUtils::nowContinuousGpsSeconds()
+                           - TimeUtils::continuousGpsSeconds(current_time);
+        if (config_.rtBacklogWarnSeconds() > 0.0 && lag_s > config_.rtBacklogWarnSeconds()) {
+            if ((backlog_warn_ctr_++ % 30) == 0)
+                log->warn("{}obs backlog: epoch wk{} tow{:.1f} is {:.1f}s behind wall-clock GPS "
+                          "(corrections will be fresher than these obs)",
+                          epoch_prefix, current_time.week, current_time.tow, lag_s);
+        }
+        if (config_.enableObsSkipToLatest() && !first_epoch_
+            && lag_s > config_.obsSkipMaxLagS()) {
+            log->debug("{}Skipping stale obs epoch TOW {:.3f} ({:.1f}s behind real-time)",
+                       epoch_prefix, current_time.tow, lag_s);
+            return false;
+        }
+    }
 
     // --- Max-duration cutoff (processing.max_duration_s) ---
     // Once the data-time span from the first processed epoch reaches the
@@ -496,19 +608,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     {
         const auto& active = config_.getActiveSystems();
         for (const auto& obs : epoch_obs) {
-            std::string sys_str;
-            switch (obs.system) {
-            case System::GPS:     sys_str = "GPS";     break;
-            case System::Galileo: sys_str = "Galileo"; break;
-            case System::GLONASS: sys_str = "GLONASS"; break;
-            case System::BeiDou:  sys_str = "BeiDou";  break;
-            case System::QZSS:    sys_str = "QZSS";    break;
-            case System::SBAS:    sys_str = "SBAS";    break;
-            default: continue;
-            }
-            if (std::find(active.begin(), active.end(), sys_str) != active.end()) {
-                filtered_obs.push_back(obs);
-            }
+            if (isSystemActive(obs.system, active)) filtered_obs.push_back(obs);
         }
     }
     if (filtered_obs.empty()) {

@@ -528,7 +528,13 @@ void PivotManager::handlePivotHandover(
     // forced re-entries (forced_only == true) then accumulate retirements,
     // so a satellite handed off this epoch can never be bounced back to on a
     // later pass — the backstop that breaks the post-fit handover flip-flop.
-    if (!forced_only) retired_pivots_this_epoch_.clear();
+    if (!forced_only) {
+        retired_pivots_this_epoch_.clear();
+        // Smoother handover log is per-epoch; the first-pass handover marks the
+        // epoch boundary (handlePivotHandover runs every BSSD epoch via
+        // preparePivots).  Cleared here, populated by clean legs below.
+        clean_handovers_.clear();
+    }
 
     // Effective replacement-exclusion set: the caller-supplied set (MW
     // pre-filter path) unioned with the post-fit detector's per-request
@@ -674,6 +680,16 @@ void PivotManager::handlePivotHandover(
                   (si_old != sat_info.end()) ? si_old->second.elevation : -1.0,
                   (si_new != sat_info.end()) ? si_new->second.elevation : -1.0,
                   new_score, pivot_min_el, was_disturbed ? "yes" : "no");
+
+        // Record CLEAN handovers (undisturbed, non-forced datum change) for the
+        // RTS smoother.  Only these are losslessly invertible back to the old
+        // pivot: a forced / disturbed handover fires precisely because the old
+        // pivot's ambiguity slipped (discontinuous across the epoch), so the
+        // smoother must segment it instead.  old_pivot is captured by value here
+        // (the reference is rebound when pivot_sat_ is overwritten below).  P2-1.
+        if (!forced && !disturbed && !was_disturbed) {
+            clean_handovers_[cons] = { old_pivot, pivot };
+        }
 
         reReferenceAmbiguities(cons, pivot, phase_sigs,
                                state_manager, x, P, epoch_prefix);
@@ -916,6 +932,7 @@ void PivotManager::dropAllPivots(StateManager& state_manager) {
     forced_handover_exclude_.clear();
     forced_handover_reinflate_.clear();
     retired_pivots_this_epoch_.clear();
+    clean_handovers_.clear();
     state_manager.setFrozenPivotSatellites({});
 
     if (log) {

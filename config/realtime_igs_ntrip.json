@@ -3,19 +3,23 @@
 // Unlike realtime_ppp_rtk.json (rover = local AsteRx-U SBF over TCP), the
 // primary feed here is an IGS Real-Time Service station broadcasting RTCM3
 // over NTRIP — i.e. the station's own code + phase (MSM7) measurements pulled
-// straight off the IGS-IP caster.  Two concurrent NTRIP streams:
+// straight off the IGS-IP caster.  Up to THREE concurrent NTRIP streams:
 //
-//   - Primary     : IGS station observations + broadcast nav (RTCM3 MSM7)
-//                   from igs-ip.net.  The station's "0" stream bundles MSM7
-//                   obs (1077/1087/1097/1127), broadcast ephemeris
-//                   (1019/1020/1042/1044/1046) AND its reference coordinate
-//                   (1006), so it is a self-contained obs+nav source — no SP3/
-//                   CLK and no separate nav stream are needed.  RtcmParser
-//                   decodes all of these; broadcast eph feeds LiveEphemerisStore
-//                   and orbits/clocks are then corrected by the SSR overlay.
+//   - Primary     : IGS station observations (RTCM3 MSM7) from igs-ip.net.
+//                   A self-contained station's "0" stream ALSO bundles
+//                   broadcast ephemeris (1019/1020/1042/1044/1046) AND its
+//                   reference coordinate (1006).  An OBS-ONLY mountpoint (e.g.
+//                   the configured P38900USA0) streams only MSM obs + 1006 and
+//                   NO broadcast nav — it then needs the ephemeris stream below.
 //   - corrections : IGS-RTS SSR (IGS-SSR 4076) over NTRIP from
 //                   products.igs-ip.net.  Corrects the broadcast orbits/clocks
 //                   and supplies code/phase biases for PPP-RTK.
+//   - ephemeris   : OPTIONAL dedicated broadcast-nav stream (e.g. BCEP00BKG0 on
+//                   products.igs-ip.net).  Required when the primary is obs-only
+//                   so LiveEphemerisStore has the orbit/clock baseline the SSR
+//                   overlay corrects.  Disable it for a self-contained obs+nav
+//                   primary.  RtcmParser decodes nav from whichever stream
+//                   carries it; all feed the same LiveEphemerisStore.
 //
 // CONFIGURED STATION — BRUX00BEL0 (Brussels, Royal Observatory of Belgium).
 // Flagship multi-GNSS reference (Septentrio PolaRx5).  Its live sourcetable
@@ -39,14 +43,36 @@
 
   "processing": {
     "mode": "PPP-RTK",
-    "max_duration_s": 600.0,
+    "max_duration_s": 900.0,
     "rinex_types": "CL",
-    // BRUX streams GPS/GLO/GAL/BDS/QZS/SBAS, but GLONASS is intentionally OFF:
-    // the RTCM nav path defers GLONASS (MSM time-of-day -> GPS-week promotion is
-    // not yet plumbed).  GPS+Galileo is the proven set; add BeiDou if the SSR
-    // mountpoint corrects it.
+
+    // Real-time obs/correction synchronization.  A live obs stream that lags
+    // real time (high-rate obs backing up faster than they're consumed) gets
+    // processed against FRESHER orbit/clock/SSR -> the SSR clock is extrapolated
+    // backward across the gap and detonates ("zero/invalid clock product" on
+    // every sat).  enable_obs_skip_to_latest drops obs epochs more than
+    // obs_skip_max_lag_s behind wall-clock GPS so the filter fast-forwards to
+    // the freshest epoch (assumes an NTP-synced host — the lag is vs the system
+    // clock).  ssr_max_age_s rejects an SSR overlay whose record is desynced
+    // from the obs epoch (incl. a future-stamped record), falling back to
+    // broadcast-grade rather than emitting garbage.  rt_backlog_warn_s emits a
+    // throttled warning when a backlog is detected (<=0 disables; set <=0 for
+    // deliberate file replay where obs is hours behind wall-clock by design).
+    "enable_obs_skip_to_latest": true,
+    "obs_skip_max_lag_s": 5.0,
+    "rt_backlog_warn_s": 5.0,
+    "ssr_max_age_s": 30.0,
+
+    // BRUX streams GPS/GLO/GAL/BDS/QZS/SBAS.  GLONASS is now supported: the MSM
+    // time-of-day -> GPS-week promotion is plumbed (TimeUtils::glonassTodToGpsTime,
+    // wired through promoteEpoch / the 1020 toe / the GLONASS SSR epoch), and the
+    // FDMA per-satellite wavelength is seeded from the live 1020 freq_channel.
+    // GLONASS runs FLOAT-ONLY (excluded from MW/TurboEdit/AR by FDMA).  Add
+    // BeiDou if the SSR mountpoint corrects it.
+	//"active_systems": [ "GPS" ],
     "active_systems": [ "GPS", "Galileo" ],
-    //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
+    //"active_systems": [ "GPS", "Galileo", "GLONASS" ],
+    //"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "elevation_mask_deg": 10.0,
@@ -87,7 +113,12 @@
   // (IGS station log).  Config position always wins; the filter refines it and
   // the converged solution should sit on these coordinates.
   "receiver": {
+	// BRUX //
     "reference_position_ecef": { "x": 4027881.628, "y": 306998.537, "z": 4919498.984 }
+	// P389 //
+	//"reference_position_ecef": { "x": -2347407.253, "y": -3968720.228, "z": 4394008.589 }
+	// AMC4 //
+	//"reference_position_ecef": { "x": -1248596.452, "y": -4819428.103, "z": 3976506.044 }
   },
 
   "realtime": {
@@ -103,6 +134,8 @@
     "ntrip_host":      "igs-ip.net",
     "ntrip_port":      2101,
     "ntrip_mountpoint":"BRUX00BEL0",
+	//"ntrip_mountpoint":"P38900USA0",
+	//"ntrip_mountpoint":"AMC400USA0",
     "ntrip_user":      "weaverb",
     "ntrip_password":  "OsuGeomatics26!",
 
@@ -124,8 +157,7 @@
     // Second stream: IGS-RTS SSR corrections (IGS-SSR 4076).  Same BKG account
     // as the obs stream.  The corrections stream is ALWAYS parsed as RTCM (no
     // input_format field) and also feeds feedRtcmFrame, so any broadcast eph it
-    // carries lands in the live store too.  A station that did NOT bundle nav
-    // could instead pair the dedicated ephemeris stream BCEP00BKG0 here.
+    // carries lands in the live store too.
     "corrections": {
       "enabled":          true,
       "input_type":       "ntrip",
@@ -145,12 +177,47 @@
       // stream to a local TCP port.
       "tcp_host":         "",
       "tcp_port":         28785
+    },
+
+    // Third stream: dedicated broadcast ephemeris (nav).  REQUIRED for an
+    // obs-only station mountpoint — one that streams MSM observations but no
+    // broadcast nav (1019/1020/1042/1044/1046).  P38900USA0 (the primary above)
+    // is obs-only: a 49 s capture cached exactly one GLONASS 1020 and zero GPS
+    // 1019, so LiveEphemerisStore stayed empty, every GPS sat was
+    // unpositionable, computeModels failed for the whole epoch, and the session
+    // produced 0 epochs (corrections.log: eph_iode=-2 / brdc_iode=-1).  This
+    // stream supplies the broadcast orbit/clock baseline the SSR 4076 overlay
+    // corrects.  Same transport + parsing as corrections (routes to
+    // feedRtcmFrame -> LiveEphemerisStore).  BCEP00BKG0 broadcasts the full
+    // multi-GNSS nav set globally on products.igs-ip.net, same BKG account.
+    // DISABLE this (enabled=false) when the primary is a self-contained obs+nav
+    // station such as BRUX00BEL0 — then primary + corrections suffice.
+    "ephemeris": {
+      "enabled":          true,
+      "input_type":       "ntrip",
+      "ntrip_host":       "products.igs-ip.net",
+      "ntrip_port":       2101,
+      "ntrip_mountpoint": "BCEP00BKG0",
+      "ntrip_user":       "weaverb",
+      "ntrip_password":   "OsuGeomatics26!",
+      "reconnect_delay_s": 5,
+
+      // For replay testing: dump a few minutes of a nav feed to a binary file
+      // and switch input_type to "file".
+      "input_path":       "",
+      "tcp_host":         "",
+      "tcp_port":         28786
     }
   },
 
   "estimation": {
     "between_satellite_sd": {
       "enabled": true,
+      // GLONASS participates in BSSD with FLOAT ambiguities (FDMA inter-channel
+      // bias makes its phase integers unresolvable, so they are held float).
+      // Required for GLONASS to enter the SD solution at all — with this false
+      // GLONASS is decoded/modelled but SKIPPED at the measurement stage.
+      "enable_glonass": true,
       "pivot_min_elevation": 25.0
     },
     "estimate_sat_biases": true,
@@ -207,17 +274,17 @@
     },
     "zwd_constraint": {
       "enabled": true,
-      "apriori_m": 0.10,
-      "sigma_m": 0.20
+      "apriori_m": 0.15,
+      "sigma_m": 0.30
     }
   },
 
   "filter": {
     "process_noise": {
-      "position_q": 0.0,
+      "position_q": 1e2,
       "clock_bias_q": 1e3,
       "phase_clock_q": 1e-9,
-      "troposphere_q": 1e-8,
+      "troposphere_q": 1e-9,
       "ionosphere_q": 0.03,
       "code_bias_q": 1e-4,
       "sat_bias_q": 1e-10,
@@ -229,7 +296,7 @@
       "position": 30.0,
       "velocity": 100.0,
       "clock": 1000.0,
-      "troposphere": 0.2,
+      "troposphere": 0.5,
       "ionosphere": 5.0,
       "ambiguity": 100.0,
       "code_bias": 10.0,
@@ -271,7 +338,10 @@
     // "JAVRINGANT_DM   SCIS" (IGS station log).  Update it when you change the
     // mountpoint (see the alternatives in the header).  The cross-system
     // fallback lets Galileo E1/E5a borrow the receiver's GPS L1/L5 PCO/PCV.
+	// BRUX
     "receiver_antenna_type_override": "JAVRINGANT_DM   SCIS",
+	// P389
+	//"receiver_antenna_type_override": "TRM59800.80 SCIT",
     "enable_receiver_cross_system_atx_fallback": true,
     "refine_emission_time": false,
     "require_atx_coverage": true
@@ -305,7 +375,7 @@
     "enable_geometry":          true,
     "enable_troposphere":       true,
     "enable_ionosphere":        true,
-    "enable_antenna":           false,
+    "enable_antenna":           true,
     "enable_stochastic_model":  true,
 
     "//1": "--- quiet / off (peripheral or staged) ---",
@@ -343,10 +413,10 @@
     "levels": {
       "rt_engine":          "debug",
       "ppp_model":          "info",
-      "measurement_model":  "warn",
+      "measurement_model":  "debug",
       "kalman_filter":      "info",
       "state_manager":      "debug",
-      "corrections":        "error",
+      "corrections":        "debug",
       "ambiguity_resolver": "debug",
       "cycle_slip_manager": "debug",
       "mw_slip_detector":   "info",
@@ -354,14 +424,14 @@
       "bssd_pivot_manager": "debug",
       "bssd_transform":     "warn",
       "ntrip":              "warn",
-      "state_initializer":  "info",
+      "state_initializer":  "debug",
       "gnss_config":        "info",
       "geometry":           "info",
       "troposphere":        "info",
       "ionosphere":         "info",
       "antenna":            "info",
       "stochastic_model":   "info",
-      "main_log":           "info"
+      "main_log":           "warn"
     }
   }
 }

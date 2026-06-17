@@ -30,6 +30,7 @@
 #include "products/BroadcastEphemerisTypes.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include "common/Constants.hpp"
+#include "math/TimeUtils.hpp"
 
 #include <Eigen/Dense>
 #include <cmath>
@@ -421,8 +422,11 @@ static std::vector<uint8_t> buildMsm7GpsPayload(
     // Cell mask: 1×1 = 1 bit, present.
     pw.put(1, 1);
 
-    // Per-sat block (no GLONASS ext info on GPS).
+    // Per-sat block.  DF419 (extended satellite info, 4 bits) is present for
+    // EVERY system in MSM7 — written here as reserved 0 so the frame is
+    // spec-correct and the decoder's DF419 consumption stays byte-aligned.
     pw.put(8,  rough_range_int);
+    pw.put(4,  0);                             // DF419 extended satellite info
     pw.put(10, rough_range_mod);
     pw.putSigned(14, rough_range_rate);
 
@@ -495,6 +499,84 @@ TEST(RtcmParserDecodeTest, Msm7GpsSnrFromCnrField) {
     auto it = obs.measurements.find("S1C");
     ASSERT_NE(it, obs.measurements.end());
     EXPECT_NEAR(it->second, 720.0 / 16.0, 1e-9);   // 1/16 dB-Hz units
+}
+
+// Build a GPS MSM7 payload for G05 with TWO signals — 1C (id 2) and 2W (id 10) —
+// including DF419, so the multi-cell per-band reconstruction path is exercised.
+// Cell order is sat-major, signal-ascending → cell 0 = 1C (L1), cell 1 = 2W (L2).
+static std::vector<uint8_t> buildMsm7GpsTwoSignal(
+    int rough_range_int, int fine_pr_1c, int fine_pr_2w)
+{
+    BitWriter pw;
+    pw.put(12, 1077);                          // DF002 GPS MSM7
+    pw.put(12, 100);                           // DF003 station id
+    pw.put(30, 100000);                        // DF004 GPS epoch ms
+    pw.put(1, 0); pw.put(3, 0); pw.put(7, 0);  // multi-msg + IODS + reserved
+    pw.put(2, 0); pw.put(2, 0); pw.put(1, 0); pw.put(3, 0); // clk/ext/smooth
+
+    pw.put(64, 1ull << (63 - 4));              // Sat mask: G05 = bit 4
+    pw.put(32, (1u << (31 - 1)) | (1u << (31 - 9))); // Sig mask: id2 (1C) + id10 (2W)
+    pw.put(2, 0x3);                            // Cell mask 1×2, both present
+
+    // Per-sat block: DF397, DF419 (present!), DF398, DF399.
+    pw.put(8,  rough_range_int);
+    pw.put(4,  0);                             // DF419
+    pw.put(10, 0);                             // DF398
+    pw.putSigned(14, 0);                       // DF399
+
+    // Per-cell block, field-major across the 2 cells (1C then 2W).
+    pw.putSigned(20, fine_pr_1c);  pw.putSigned(20, fine_pr_2w);   // DF405
+    pw.putSigned(24, 0);           pw.putSigned(24, 0);            // DF406
+    pw.put(10, 64);                pw.put(10, 64);                 // DF407 lock
+    pw.put(1, 0);                  pw.put(1, 0);                   // DF420 half
+    pw.put(10, 720);               pw.put(10, 720);                // DF408 cnr
+    pw.putSigned(15, 0);           pw.putSigned(15, 0);            // DF404 rate
+
+    while (pw.bitCount() % 8) pw.put(1, 0);
+    return pw.bytes();
+}
+
+// Regression test for the DF419 omission: pre-fix the decoder skipped DF419
+// (4 bits/sat) for non-GLONASS systems, reading the per-cell block 4 bits early
+// and scrambling the L1/L2 split (the live stream's +124 m ionospherically-
+// impossible geometry-free).  With DF419 consumed, the two bands reconstruct to
+// the encoded values and the geometry-free is the small NEGATIVE value we set.
+TEST(RtcmParserDecodeTest, Msm7GpsTwoSignalDf419Alignment) {
+    const int fine_2w = 8953;  // ~ +5.0 m on L2 → C2W sits ABOVE C1C (physical)
+    const auto payload = buildMsm7GpsTwoSignal(/*rough_int=*/67,
+                                               /*fine_1c=*/0, /*fine_2w=*/fine_2w);
+
+    std::vector<RinexObservation> obs;
+    const auto res = RtcmMsm::decodeMsm7(payload.data(), payload.size(), 1077, 0, obs);
+
+    ASSERT_TRUE(res.ok);
+    EXPECT_EQ(res.n_satellites, 1);
+    EXPECT_EQ(res.n_signals, 2);
+    EXPECT_EQ(res.n_cells, 2);
+    // DF419 alignment invariant: the decode consumes the whole payload bar the
+    // 0-7 trailing byte-pad bits.  Pre-fix this under-consumed by 4·Nsat bits.
+    EXPECT_LT(payload.size() * 8 - res.bits_consumed, 8u);
+
+    ASSERT_EQ(obs.size(), 1u);
+    const auto& o = obs.front();
+    EXPECT_EQ(o.satellite, "G05");
+
+    const double c     = Constants::SPEED_OF_LIGHT;
+    const double scale = 1.0 / (1ull << 29);   // DF405 2^-29 ms
+    const double exp_c1c = 67e-3 * c;
+    const double exp_c2w = (67e-3 + fine_2w * scale * 1e-3) * c;
+
+    auto it_c1 = o.measurements.find("C1C");
+    auto it_c2 = o.measurements.find("C2W");
+    ASSERT_NE(it_c1, o.measurements.end());
+    ASSERT_NE(it_c2, o.measurements.end());
+    EXPECT_NEAR(it_c1->second, exp_c1c, 1e-3);
+    EXPECT_NEAR(it_c2->second, exp_c2w, 1e-3);
+
+    // Decisive guard: geometry-free C1-C2 is the small NEGATIVE value encoded,
+    // never the +124 m garbage the DF419 mis-alignment produced live.
+    EXPECT_NEAR(it_c1->second - it_c2->second, -fine_2w * scale * 1e-3 * c, 1e-3);
+    EXPECT_LT(it_c1->second - it_c2->second, 0.0);
 }
 
 // ============================================================================
@@ -906,9 +988,14 @@ TEST(LiveEphemerisStoreTest, SsrMatchIodeConventionPerConstellation) {
     EXPECT_EQ(gal->iode, 44);
 
     // BeiDou: toe_sow = 7200 -> mod(7200/720, 240) = 10, NOT the raw AODE (21).
+    // toe.week is the NATIVE BDT week; the query is GPS week 2300, so the toe
+    // must sit at BDT week 2300 - 1356 = 944 (BDT week 0 = GPS week 1356) for the
+    // epochs to coincide.  This also guards the staleness path: it lifts the
+    // BeiDou toe to GPS scale via toeGpsContinuous, so a raw-week comparison
+    // would read ~1356 weeks stale and drop the clock (has_value() == false).
     BroadcastEphemeris c;
     c.satellite = "C08"; c.system = System::BeiDou; c.iode = 21;   // raw AODE, must be ignored
-    c.kepler.toe = GnssTime{900, 7200.0}; c.kepler.toc = GnssTime{900, 7200.0};
+    c.kepler.toe = GnssTime{944, 7200.0}; c.kepler.toc = GnssTime{944, 7200.0};
     store.insert(c);
     const auto bds = store.computeSatelliteClock("C08", GnssTime{2300, 7200.0});
     ASSERT_TRUE(bds.has_value());
@@ -961,6 +1048,76 @@ TEST(SsrCorrectionStoreTest, HeaderEpochAndIodCached) {
     EXPECT_EQ(store.getSsrIod("G31"), -1);                 // unknown sat
     EXPECT_FALSE(store.getSsrEpoch("G31").has_value());
     store.clear();
+}
+
+// ============================================================================
+// GLONASS time-of-day -> GPS time conversion (TimeUtils::glonassTodToGpsTime).
+//
+// The two correctness gates the real-time GLONASS path depends on: the GPS-UTC
+// leap-second offset, and reconstruction of the full GPS week/day from a bare
+// time-of-day anchored on the rover clock.  Expected values are produced by the
+// same UTC->GPS path the RINEX "GLO" reader uses (gregorianToGpsTime), so a
+// mismatch flags the converter, not the table.
+// ============================================================================
+
+// GLONASS (Moscow = UTC+3h) seconds-of-day for a given UTC time-of-day.
+static double gloTodFromUtc(int h, int m, double s) {
+    double sod = (h * 3600.0 + m * 60.0 + s) + 3.0 * 3600.0;   // shift to Moscow day
+    while (sod >= 86400.0) sod -= 86400.0;
+    return sod;
+}
+// Anchor (continuous GPS seconds) for a UTC instant.
+static double anchorOfUtc(int y, int mo, int d, int h, int m, double s) {
+    return TimeUtils::continuousGpsSeconds(TimeUtils::gregorianToGpsTime(y, mo, d, h, m, s));
+}
+
+TEST(GlonassTodToGps, MiddayRoundTripWithLeapSeconds) {
+    // UTC 2026-06-16 12:00:00 -> Moscow 15:00 -> tod 54000.  Anchored at the
+    // same instant.  A converter that dropped the 18 s leap offset would miss
+    // the expected tow by exactly 18 s.
+    const GnssTime expected = TimeUtils::gregorianToGpsTime(2026, 6, 16, 12, 0, 0);
+    const double   anchor   = TimeUtils::continuousGpsSeconds(expected);
+    const GnssTime got = TimeUtils::glonassTodToGpsTime(gloTodFromUtc(12, 0, 0.0), anchor);
+    EXPECT_EQ(got.week, expected.week);
+    EXPECT_NEAR(got.tow, expected.tow, 1e-3);   // 1 ms: well under any time-tag need; JD round-trip noise ~1e-5 s
+}
+
+TEST(GlonassTodToGps, MoscowDayBoundaryAfterUtcEvening) {
+    // UTC 22:00 is already the NEXT Moscow day (01:00).  The Moscow-day framing
+    // must still land on the correct UTC instant.
+    const GnssTime expected = TimeUtils::gregorianToGpsTime(2026, 6, 16, 22, 0, 0);
+    const double   anchor   = TimeUtils::continuousGpsSeconds(expected);
+    const GnssTime got = TimeUtils::glonassTodToGpsTime(gloTodFromUtc(22, 0, 0.0), anchor);
+    EXPECT_EQ(got.week, expected.week);
+    EXPECT_NEAR(got.tow, expected.tow, 1e-3);   // 1 ms: well under any time-tag need; JD round-trip noise ~1e-5 s
+}
+
+TEST(GlonassTodToGps, AnchorJitterDoesNotShiftResult) {
+    // The result is the time-of-day's instant, not the anchor's; a +120 s anchor
+    // error within the same day must not move it.
+    const GnssTime expected = TimeUtils::gregorianToGpsTime(2026, 6, 16, 8, 30, 0);
+    const double   anchor   = anchorOfUtc(2026, 6, 16, 8, 32, 0);   // +120 s
+    const GnssTime got = TimeUtils::glonassTodToGpsTime(gloTodFromUtc(8, 30, 0.0), anchor);
+    EXPECT_EQ(got.week, expected.week);
+    EXPECT_NEAR(got.tow, expected.tow, 1e-3);   // 1 ms: well under any time-tag need; JD round-trip noise ~1e-5 s
+}
+
+TEST(GlonassTodToGps, WrapResolvesToNearestMoscowDay) {
+    // tod = 23:25 Moscow (84300 s) with an anchor 1 h later that has already
+    // crossed Moscow midnight (00:25).  The +/-12 h wrap must place the tod in
+    // the PREVIOUS Moscow day, i.e. ~1 h before the anchor instant.
+    const GnssTime expected = TimeUtils::gregorianToGpsTime(2026, 6, 16, 20, 25, 0);
+    const double   anchor   = anchorOfUtc(2026, 6, 16, 21, 25, 0);
+    const GnssTime got = TimeUtils::glonassTodToGpsTime(gloTodFromUtc(20, 25, 0.0), anchor);
+    EXPECT_EQ(got.week, expected.week);
+    EXPECT_NEAR(got.tow, expected.tow, 1e-3);   // 1 ms: well under any time-tag need; JD round-trip noise ~1e-5 s
+    EXPECT_LT(TimeUtils::continuousGpsSeconds(got), anchor);   // resolved into the past
+}
+
+TEST(GlonassTodToGps, NoAnchorReturnsZero) {
+    const GnssTime got = TimeUtils::glonassTodToGpsTime(54000.0, 0.0);
+    EXPECT_EQ(got.week, 0);
+    EXPECT_NEAR(got.tow, 0.0, 1e-12);
 }
 
 } // namespace

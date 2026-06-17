@@ -16,6 +16,7 @@
 #include "rtcm/RtcmNavDecoder.hpp"
 #include "rtcm/RtcmBitReader.hpp"
 #include "common/Constants.hpp"
+#include "math/TimeUtils.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -315,9 +316,15 @@ bool decodeGlonass1020(RtcmBitReader& r, int current_week, std::vector<Broadcast
     eph.iode      = -1;                                // GLONASS has no IODE; gate stays permissive
     eph.received_time = nowReceiveTime();
     GlonassEphemeris& g = eph.glonass;
-    // Best-effort epoch: tb indexes 15-minute marks in the GLONASS day; full
-    // date plumbing is deferred with the MSM week=0 work.
-    g.toe = GnssTime{current_week, static_cast<double>(tb) * 900.0};
+    // tb indexes 15-minute marks in the GLONASS (UTC(SU)+3h) day, i.e. a
+    // time-of-day with no date.  Promote it to a full GPS-week toe by anchoring
+    // on the rover's current GPS time (same wall-clock anchor the MSM obs path
+    // uses) so the PZ-90 RK4 integration window (toe → query) stays small.
+    // current_week is no longer needed for GLONASS (the converter resolves the
+    // day); it remains the week source for the Keplerian decoders.
+    (void)current_week;
+    g.toe = TimeUtils::glonassTodToGpsTime(static_cast<double>(tb) * 900.0,
+                                           TimeUtils::nowContinuousGpsSeconds());
     g.pos = Eigen::Vector3d{x, y, z};
     g.vel = Eigen::Vector3d{vx, vy, vz};
     g.acc = Eigen::Vector3d{ax, ay, az};

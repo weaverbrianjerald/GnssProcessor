@@ -3,8 +3,8 @@
 * @brief Implementation of planetary utilities: Sun & Moon positions and ephemeris handling.
 *
 * Provides the rigorous IAU 1976/1980 Sun/Moon model with enhanced solar
-* longitude series, GAST, polar motion from ERP data, and a pre-computed
-* Sun ephemeris table for observation epochs.
+* longitude series, GAST, and polar motion from ERP data, evaluated on
+* demand per epoch.
 *
 * All principal-axis rotations use the static Rxyz() helper for consistency.
 * All returned position vectors are ECEF Cartesian vectors in meters.
@@ -19,8 +19,8 @@ namespace GnssProcessor {
     /**
      * @brief Construct a Planetary helper.
      */
-    Planetary::Planetary(LogManager& log_mgr) : log_manager_(log_mgr), sun_ephemeris_{} {
-        log_manager_.getLogger("planetary_model")->info("Planetary model initialized: {} sun ephemeris entries", sun_ephemeris_.size());
+    Planetary::Planetary(LogManager& log_mgr) : log_manager_(log_mgr) {
+        log_manager_.getLogger("planetary_model")->info("Planetary model initialized");
     }
 
     /**
@@ -31,63 +31,6 @@ namespace GnssProcessor {
      */
     double Planetary::gpsTimeToMjd(const GnssTime& time) {
         return TimeUtils::gpsTimeToMjd(time);
-    }
-
-    /**
-     * @brief Build Sun ephemeris for observation epochs using the rigorous model.
-     *
-     * Computes Sun ECEF positions via sunMoonPosEci() + eci2ecef() for each
-     * epoch, without requiring ERP data (zero polar motion assumed for the
-     * ephemeris table — the per-epoch rigorous call in computeSunMoonPosition
-     * uses actual ERP values at evaluation time).
-     */
-    bool Planetary::parseSunEphemeris(const std::vector<GnssTime>& epoch_times, std::vector<SunEphemeris>& sun_ephemeris) const {
-        try {
-            sun_ephemeris.clear();
-            if (epoch_times.empty()) {
-                log_manager_.getLogger("ppp_model")->error("No epoch times provided for Sun ephemeris computation");
-                return false;
-            }
-
-            // Use the rigorous model with empty ERPs (zero polar motion)
-            // for the ephemeris table. The per-epoch computeSunMoonPosition()
-            // call in the main processing loop uses actual ERP data.
-            const std::vector<ErpData> empty_erps;
-
-            for (const auto& epoch_time : epoch_times) {
-                if (epoch_time.week < 0 || epoch_time.tow < 0 || epoch_time.tow >= TimeUtils::SECONDS_IN_WEEK) {
-                    log_manager_.getLogger("ppp_model")->warn("Invalid epoch time: week {}, tow {:.3f}", epoch_time.week, epoch_time.tow);
-                    continue;
-                }
-
-                Eigen::Vector3d sun_pos = Eigen::Vector3d::Zero();
-                Eigen::Vector3d moon_pos = Eigen::Vector3d::Zero();
-                computeSunMoonPosition(epoch_time, empty_erps, sun_pos, moon_pos);
-
-                if (!sun_pos.allFinite() || sun_pos.norm() < 1e6) {
-                    log_manager_.getLogger("ppp_model")->warn("Non-finite/invalid Sun position at TOW {:.3f}: ({:.3e}, {:.3e}, {:.3e})",
-                        epoch_time.tow, sun_pos.x(), sun_pos.y(), sun_pos.z());
-                    continue;
-                }
-
-                SunEphemeris data;
-                data.time = epoch_time;
-                data.position = sun_pos;
-                sun_ephemeris.push_back(data);
-            }
-
-            if (sun_ephemeris.empty()) {
-                log_manager_.getLogger("ppp_model")->error("No valid Sun ephemeris entries computed");
-                return false;
-            }
-            log_manager_.getLogger("ppp_model")->info("Computed {} Sun ephemeris entries for observation epochs", sun_ephemeris.size());
-            return true;
-        }
-        catch (const std::exception& e) {
-            log_manager_.getLogger("ppp_model")->error("Exception computing Sun ephemeris: {}", e.what());
-            sun_ephemeris.clear();
-            return false;
-        }
     }
 
     // =====================================================================

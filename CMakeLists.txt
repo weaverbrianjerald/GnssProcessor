@@ -188,6 +188,7 @@ add_executable(gnss_tests
     tests/test_turbo_edit_resolver.cpp
     tests/test_soft_lli_bridge.cpp
     tests/test_aiding_source.cpp
+    tests/test_smoother_frame.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

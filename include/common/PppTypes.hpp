@@ -19,7 +19,7 @@
  *   - @c common/EpochMeasurement.hpp — EpochMeasurement struct
  *   - @c common/ProductTypes.hpp     — OrbitData, ClockData, AntennaData, BiasData,
  *                                      ClockRefSignals, ClockRefMap, ErpData,
- *                                      OceanTideData, SunEphemeris
+ *                                      OceanTideData
  *   - @c common/PppUtils.hpp         — PppUtils class
  *
  * New code should @c #include the focused header directly.  This

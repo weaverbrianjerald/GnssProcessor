@@ -234,7 +234,6 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
         clock_ref_signals_ = parser.moveClockRefSignals();
         erps_ = parser.moveErps();
         klobuchar_coeffs_ = parser.moveKlobucharCoeffs();
-        sun_ephemeris_ = parser.moveSunEphemeris();
 
         // Validate essential products
         if (orbits_.empty()) {
@@ -252,10 +251,10 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
 
         log_manager.getLogger("product_cache")->info(
             "Product cache loaded in {} ms (move semantics): "
-            "{} orbits, {} clocks, {} antennas, {} biases, {} ERPs, {} Klobuchar coeffs, {} sun ephemeris",
+            "{} orbits, {} clocks, {} antennas, {} biases, {} ERPs, {} Klobuchar coeffs",
             duration.count(),
             orbits_.size(), clocks_.size(), antennas_.size(),
-            biases_.size(), erps_.size(), klobuchar_coeffs_.size(), sun_ephemeris_.size()
+            biases_.size(), erps_.size(), klobuchar_coeffs_.size()
         );
 
         return true;
@@ -290,9 +289,6 @@ void ProductCache::clearCache() {
 
     klobuchar_coeffs_.clear();
     klobuchar_coeffs_.shrink_to_fit();
-
-    sun_ephemeris_.clear();
-    sun_ephemeris_.shrink_to_fit();
 
     loaded_.store(false, std::memory_order_release);
 }

@@ -231,15 +231,19 @@ std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
     return nullptr;
 }
 
-/// Build the optional SSR corrections stream.
-std::unique_ptr<RealtimeStream> openCorrections(
-    const RealTimeConfig::Corrections& cc,
-    LogManager& lm) {
+/// Build an optional auxiliary RTCM stream (SSR corrections or broadcast
+/// ephemeris).  Both share the @c RealTimeConfig::Corrections transport
+/// descriptor and route to @c feedRtcmFrame; only the @p label (used for the
+/// stream tag and log lines) distinguishes them.  Templated on the config so
+/// the @c Ephemeris alias resolves without an extra overload.
+template <typename AuxCfg>
+std::unique_ptr<RealtimeStream> openAuxRtcmStream(
+    const char* label, const AuxCfg& cc, LogManager& lm) {
     auto log = lm.getLogger("main_log");
     if (cc.input_type == "file") {
-        log->info("Realtime corrections: file replay from {}", cc.input_path);
-        auto s = RealtimeStream::openFile("corrections", cc.input_path);
-        if (!s) log->error("Failed to open corrections RTCM file: {}", cc.input_path);
+        log->info("Realtime {}: file replay from {}", label, cc.input_path);
+        auto s = RealtimeStream::openFile(label, cc.input_path);
+        if (!s) log->error("Failed to open {} RTCM file: {}", label, cc.input_path);
         return s;
     }
     if (cc.input_type == "ntrip") {
@@ -251,9 +255,9 @@ std::unique_ptr<RealtimeStream> openCorrections(
         cfg.password          = cc.ntrip_password;
         cfg.nmea_gga          = cc.nmea_gga;
         cfg.reconnect_delay_s = cc.reconnect_delay_s;
-        log->info("Realtime corrections: NTRIP {}:{}/{}", cfg.host, cfg.port, cfg.mountpoint);
-        auto s = RealtimeStream::openNtrip("corrections", cfg, lm);
-        if (!s) log->error("Failed to start corrections NTRIP client");
+        log->info("Realtime {}: NTRIP {}:{}/{}", label, cfg.host, cfg.port, cfg.mountpoint);
+        auto s = RealtimeStream::openNtrip(label, cfg, lm);
+        if (!s) log->error("Failed to start {} NTRIP client", label);
         return s;
     }
     if (cc.input_type == "tcp") {
@@ -261,12 +265,12 @@ std::unique_ptr<RealtimeStream> openCorrections(
         cfg.host              = cc.tcp_host;
         cfg.port              = cc.tcp_port;
         cfg.reconnect_delay_s = cc.reconnect_delay_s;
-        log->info("Realtime corrections: TCP {}:{}", cfg.host, cfg.port);
-        auto s = RealtimeStream::openTcp("corrections", cfg, lm);
-        if (!s) log->error("Failed to start corrections TCP client");
+        log->info("Realtime {}: TCP {}:{}", label, cfg.host, cfg.port);
+        auto s = RealtimeStream::openTcp(label, cfg, lm);
+        if (!s) log->error("Failed to start {} TCP client", label);
         return s;
     }
-    log->error("Unsupported corrections input_type: '{}'", cc.input_type);
+    log->error("Unsupported {} input_type: '{}'", label, cc.input_type);
     return nullptr;
 }
 
@@ -276,15 +280,29 @@ std::unique_ptr<RealtimeStream> openCorrections(
 /// the primary stream can route to feedRtcmFrame or feedSbfFrame by format.
 template <typename Framer, typename FeedFn>
 std::size_t pumpFrames(RealtimeStream& src, Framer& framer, FeedFn&& feed,
-                       std::vector<uint8_t>& scratch, int timeout_ms) {
+                       std::vector<uint8_t>& scratch, int timeout_ms,
+                       std::size_t max_drain_bytes = (1u << 20)) {
+    // Bounded drain: empty whatever is already buffered this iteration instead of
+    // a single 4 KB chunk, so a high-rate obs stream can't accumulate a backlog
+    // faster than it is consumed (the root of the live-obs-lagging-corrections
+    // bug).  The FIRST read honours the caller's timeout; subsequent reads use
+    // timeout 0 so we drain only what's present without stalling the poll loop.
+    // max_drain_bytes caps one burst so the obs drain never monopolizes the
+    // iteration and starves the sparse SSR/nav streams.
     constexpr std::size_t kChunk = 4096;
-    const std::size_t n = src.read(scratch, kChunk, timeout_ms);
-    if (n == 0) return 0;
-    framer.feed(scratch.data(), n);
-    std::size_t handled = 0;
-    while (auto frame = framer.nextFrame()) {
-        feed(*frame);
-        ++handled;
+    std::size_t handled = 0, drained = 0;
+    int to = timeout_ms;
+    for (;;) {
+        const std::size_t n = src.read(scratch, kChunk, to);
+        if (n == 0) break;
+        framer.feed(scratch.data(), n);
+        while (auto frame = framer.nextFrame()) {
+            feed(*frame);
+            ++handled;
+        }
+        drained += n;
+        if (n < kChunk || drained >= max_drain_bytes) break;  // buffer drained, or budget hit
+        to = 0;
     }
     return handled;
 }
@@ -310,20 +328,34 @@ int Application::runRealTime() {
 
     std::unique_ptr<RealtimeStream> corrections;
     if (rt_config.corrections.enabled) {
-        corrections = openCorrections(rt_config.corrections, log_manager_);
+        corrections = openAuxRtcmStream("corrections", rt_config.corrections, log_manager_);
         if (!corrections) {
             log->warn("Corrections stream failed to start; continuing with obs-only mode");
         }
     }
 
+    // Optional third stream: dedicated broadcast ephemeris (nav) for an
+    // obs-only station that carries no 1019/1020/etc.  Routes to feedRtcmFrame
+    // like corrections — decoded nav lands in LiveEphemerisStore.  Without it,
+    // an obs-only primary yields 0 epochs (no orbit/clock baseline for SSR).
+    std::unique_ptr<RealtimeStream> ephemeris;
+    if (rt_config.ephemeris.enabled) {
+        ephemeris = openAuxRtcmStream("ephemeris", rt_config.ephemeris, log_manager_);
+        if (!ephemeris) {
+            log->warn("Ephemeris stream failed to start; broadcast orbits/clocks "
+                      "will be unavailable unless the primary carries nav");
+        }
+    }
+
     // Primary stream wire format: RTCM3 (default) or Septentrio SBF.  The
-    // corrections stream (IGS-SSR) is always RTCM.
+    // corrections (IGS-SSR) and ephemeris (nav) streams are always RTCM.
     const bool primary_sbf = (rt_config.input_format == "sbf");
     log->info("Real-time primary format: {}", primary_sbf ? "SBF" : "RTCM3");
 
     RtcmStreamReader   primary_rtcm;
     SbfStreamReader    primary_sbf_framer;
     RtcmStreamReader   corr_framer;
+    RtcmStreamReader   eph_framer;
     std::vector<uint8_t> scratch;
 
     // Install the Ctrl+C / termination handler so a live stream can be ended
@@ -342,7 +374,8 @@ int Application::runRealTime() {
     // stop request (Ctrl+C) breaks the loop so the flush/stop below runs.
     while (!g_stop_requested.load(std::memory_order_relaxed)
            && !engine.maxDurationReached()
-           && (primary->active() || (corrections && corrections->active()))) {
+           && (primary->active() || (corrections && corrections->active())
+                                 || (ephemeris   && ephemeris->active()))) {
         std::size_t produced = 0;
 
         if (primary->active()) {
@@ -362,9 +395,19 @@ int Application::runRealTime() {
         }
         if (corrections && corrections->active()) {
             const int timeout_ms = (rt_config.corrections.input_type == "file") ? 0 : 50;
+            // Single-chunk (max_drain_bytes=4096): SSR is sparse but critical;
+            // serviced every iteration, never throttled by the obs drain.
             produced += pumpFrames(*corrections, corr_framer,
                 [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
-                scratch, timeout_ms);
+                scratch, timeout_ms, 4096);
+        }
+        if (ephemeris && ephemeris->active()) {
+            const int timeout_ms = (rt_config.ephemeris.input_type == "file") ? 0 : 50;
+            // Single-chunk like corrections: broadcast nav is sparse; serviced
+            // every iteration so the obs drain never starves it.
+            produced += pumpFrames(*ephemeris, eph_framer,
+                [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
+                scratch, timeout_ms, 4096);
         }
         if (produced == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -385,6 +428,7 @@ int Application::runRealTime() {
 
     primary->stop();
     if (corrections) corrections->stop();
+    if (ephemeris)   ephemeris->stop();
 
     const auto wall_end = std::chrono::high_resolution_clock::now();
     const auto dur_ms   = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -394,10 +438,11 @@ int Application::runRealTime() {
     const uint64_t pdiscarded = primary_sbf ? primary_sbf_framer.bytesDiscarded()
                                             : primary_rtcm.bytesDiscarded();
     log->info("Real-time session ended: {} epochs, {} ms wall, primary frames={}/discarded={}, "
-              "corrections frames={}/discarded={}",
+              "corrections frames={}/discarded={}, ephemeris frames={}/discarded={}",
               engine.epochCount(), dur_ms,
               pframes, pdiscarded,
-              corr_framer.framesExtracted(),    corr_framer.bytesDiscarded());
+              corr_framer.framesExtracted(), corr_framer.bytesDiscarded(),
+              eph_framer.framesExtracted(),  eph_framer.bytesDiscarded());
 
     return 0;
 }

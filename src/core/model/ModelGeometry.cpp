@@ -189,6 +189,22 @@ namespace GnssProcessor {
                 return false;
             }
 
+            // RAWOBS diagnostic (trace, "geometry"): every raw decoded code
+            // pseudorange per satellite BEFORE any IF combination, with its
+            // implied light-millisecond rough range (pr / c·1e-3).  A healthy
+            // MEO GPS pseudorange is ~1.9e7–2.7e7 m ≈ 64–87 light-ms, and the
+            // codes for one satellite must agree to within the ionospheric
+            // delay (~tens of m).  Pair this against the geometric "range="
+            // line below (computed at the known a-priori) to catch a corrupt
+            // MSM-decoded pseudorange — motivated by the live IGS-station MSM
+            // path producing ~hundreds-of-km per-satellite closure errors that
+            // the geometry and clock paths were exhaustively cleared of.
+            if (log->should_log(spdlog::level::trace)) {
+                for (const auto& [k, v] : code_obs)
+                    log->trace("RAWOBS {} {} tow={:.3f}: pr={:.3f} m ({:.2f} light-ms)",
+                               obs.satellite, k, obs.time.tow, v, v / 299792.458);
+            }
+
             // Build an ionosphere-free combination from (sig1, sig2) on
             // different bands.  Optionally applies BIA code-bias corrections
             // before combining so the result aligns with the clock-reference
@@ -224,6 +240,27 @@ namespace GnssProcessor {
                         p1 -= corrections_.getBiasCorrection(obs.satellite, sig1, obs.time);
                     if (corrections_.hasBiasEntry(obs.satellite, sig2))
                         p2 -= corrections_.getBiasCorrection(obs.satellite, sig2, obs.time);
+                }
+
+                // Geometry-free plausibility gate.  For CODE the lower-frequency
+                // signal carries MORE ionospheric delay, so P(low-freq) must exceed
+                // P(high-freq) to within a small DCB margin — i.e. (P_hi − P_lo) is
+                // negative-ish, never strongly positive.  A decoded pair that
+                // inverts this (e.g. a live IGS-station MSM frame where G05's C2W
+                // sat 124 m BELOW C1W) is physically impossible; amplified ~2.5× by
+                // the IF combination it poisons the emission-time seed, the WLS and
+                // the filter (one such satellite dragged the standalone WLS ~600 km
+                // off with 119 km RMS).  Reject so extractPseudorange falls through
+                // to the next pair / single-frequency rather than combining garbage.
+                constexpr double kMaxGeomFreeMeters = 30.0;  // DCB+noise headroom; iono only makes GF more negative
+                const double p_hi = (f1 > f2) ? p1 : p2;     // higher-frequency code
+                const double p_lo = (f1 > f2) ? p2 : p1;     // lower-frequency code
+                if (p_hi - p_lo > kMaxGeomFreeMeters) {
+                    log->warn("Rejecting IF pair {}/{} for {}: geometry-free {:+.1f} m is "
+                              "ionospherically impossible (high-freq code above low-freq) "
+                              "— corrupt MSM decode/signal for this satellite",
+                              sig1, sig2, obs.satellite, p_hi - p_lo);
+                    return false;
                 }
 
                 const double f1sq = f1 * f1, f2sq = f2 * f2;
@@ -819,7 +856,7 @@ namespace GnssProcessor {
                 // across a cutover the receiver may be a version ahead of the SSR
                 // stream, so re-reference to the retained previous record instead
                 // of dropping the satellite to broadcast-grade.
-                const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+                const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, config_.getSsrMaxAge());
                 const int ssr_iode = (ssr && ssr->has_orbit) ? ssr->iode : -1;
                 auto bc = LiveEphemerisStore::getInstance()
                               .computeSatellitePV(satellite, time, ssr_iode);
@@ -1118,7 +1155,7 @@ namespace GnssProcessor {
                 }
             }
 
-            if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
+            if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, config_.getSsrMaxAge());
                 ssr && ssr->has_orbit
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)

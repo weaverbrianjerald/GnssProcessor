@@ -169,9 +169,6 @@ namespace GnssProcessor {
      * @details
      * - Initializes internal header/state members to sensible defaults.
      * - Emits an initialization log entry including the selected processing mode.
-     * - Registers this RinexParser instance with @p product_parser via
-     *   `product_parser.setRinexParser(*this)` so the ProductParser can query
-     *   epoch times and other parsed information later.
      *
      * Note: the constructor does not parse any files. Call `parse()` to read the
      * configured RINEX observation file.
@@ -188,8 +185,6 @@ namespace GnssProcessor {
         header_.antenna_elevation_deg = 0.0;
         log_manager_.getLogger("rinex_parser")->info("RinexParser initialized for mode: {}",
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK");
-        // Register this RinexParser with the ProductParser so ProductParser can access epoch times later
-        product_parser.setRinexParser(*this);
     }
 
     /**
@@ -227,14 +222,13 @@ namespace GnssProcessor {
         if (filename.find("BRDC") != std::string::npos || filename.find("_MN.rnx") != std::string::npos) {
             log_manager_.getLogger("rinex_parser")->debug("Detected navigation RINEX file: {}, delegating to ProductParser", rinex_path.string());
             std::vector<double> klobuchar_coeffs;
-            std::vector<SunEphemeris> sun_ephemeris;
             bool success = product_parser_.parseKlobuchar(rinex_path, klobuchar_coeffs);
             if (!success) {
                 log_manager_.getLogger("rinex_parser")->error("Failed to parse navigation RINEX file: {}", rinex_path.string());
                 return false;
             }
-            log_manager_.getLogger("rinex_parser")->info("Parsed navigation RINEX file: {}, Klobuchar coeffs: {}, Sun ephemeris: {}",
-                rinex_path.string(), klobuchar_coeffs.size(), sun_ephemeris.size());
+            log_manager_.getLogger("rinex_parser")->info("Parsed navigation RINEX file: {}, Klobuchar coeffs: {}",
+                rinex_path.string(), klobuchar_coeffs.size());
             return true;
         }
 

@@ -18,8 +18,9 @@
     "mode": "PPP-RTK",
 	"max_duration_s": 600.0,
 	"rinex_types": "CL",
-	"active_systems": [ "GPS" ],
-	//"active_systems": [ "GPS", "Galileo" ],
+	"active_systems": [ "GPS", "GLONASS" ],
+	//"active_systems": [ "GPS" ],
+	//"active_systems": [ "GPS", "Galileo", "GLONASS" ],
     //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
     "frequency_mode": "all",
     "channel_mode": "all",
@@ -118,6 +119,11 @@
   "estimation": {
     "between_satellite_sd": {
       "enabled": true,
+      // GLONASS participates in BSSD with FLOAT ambiguities (FDMA inter-channel
+      // bias makes its phase integers unresolvable, so they are held float).
+      // Required for GLONASS to enter the SD solution at all — with this false
+      // GLONASS is decoded/modelled but SKIPPED at the measurement stage.
+      "enable_glonass": true,
       "pivot_min_elevation": 25.0
     },
 	"estimate_sat_biases": true,

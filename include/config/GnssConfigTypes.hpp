@@ -150,6 +150,31 @@ namespace GnssProcessor {
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
         };
         Corrections corrections;                   ///< Optional SSR corrections stream.
+
+        /**
+         * @brief Optional third RTCM stream carrying broadcast ephemeris (nav).
+         *
+         * For an observation-only station mountpoint — one that streams MSM
+         * obs but no broadcast nav (1019/1020/1042/1044/1046) — this supplies
+         * the broadcast orbits/clocks that the SSR overlay corrects.  Without
+         * it, @c LiveEphemerisStore stays empty for the obs constellations and
+         * every satellite is unpositionable, so @c PppModel::computeModels
+         * fails for the whole epoch ("No valid PPP observations modeled") and
+         * the session yields 0 epochs.  Point this at a dedicated broadcast-
+         * ephemeris caster mountpoint (e.g. @c BCEP00BKG0 on
+         * products.igs-ip.net).  Frames route to
+         * @c RealTimeEngine::feedRtcmFrame exactly like the corrections stream,
+         * so decoded nav lands in the live store transparently.
+         *
+         * Independent of @c corrections: a PPP-RTK run off an obs-only station
+         * needs all three sources (obs / nav / SSR).  Disabled by default — a
+         * station that bundles its own nav (e.g. BRUX00BEL0) needs only the
+         * primary + corrections streams.  Reuses the @c Corrections transport
+         * descriptor (host/port/mountpoint/file/tcp); the two streams differ
+         * only in payload (SSR vs broadcast nav), not transport.
+         */
+        using Ephemeris = Corrections;
+        Ephemeris ephemeris;                       ///< Optional broadcast-ephemeris (nav) stream.
     };
 
     /**

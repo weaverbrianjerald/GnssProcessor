@@ -210,6 +210,10 @@ turbo_edit:true}` → PP runs neither, RT runs both.
 
 ## F. RTS smoother
 
+> **FIXED 2026-06-15 (uncommitted).** Smoother frame/slip compensation landed
+> together with P2-1/P2-2 below — see the "Smoother frame fix (2026-06-15)" note
+> at the end of this file.
+
 ### F1. [major ✓1/1] Smoother is blind to all slip-phase repairs and resets
 `Application.cpp:1652` captures the prior **before** `detectCycleSlips` (`:1662`);
 `epoch_reset_sats` (`:1667`) is filled only from KF-internal resets (`:762/779/795` +
@@ -355,6 +359,9 @@ registered tests across 45 suites exist, none covering the slip chain.
 
 ## Pass-2 confirmed findings
 
+> **FIXED 2026-06-15 (uncommitted).** See "Smoother frame fix (2026-06-15)" at
+> the end of this file (P2-1 and P2-2 addressed together with F1).
+
 ### P2-1. [critical→major(calibrated), 3/3] RTS smoother blind to routine BSSD pivot handovers
 `capturePriorSnapshot` (Application.cpp:1676) precedes the update loop in which the
 ROUTINE first-pass handover re-references every SD ambiguity/iono/sat-bias of a
@@ -479,7 +486,52 @@ handlePhaseOutlier convention" — off by 10⁴.
 Build clean (all 19 targets); `gnss_tests` 189/190 (1 fixture skip) — unchanged from the
 pre-patch baseline measured by the critic.
 
-**Still open after both passes:** P2-1/P2-2 (smoother/snapshot frame rework — fold in F1),
-P2-8/P2-9/P2-10/P2-11, the six critic gaps above, and the Pass-1 open list (A3 intra-E5
-denominator floor, A5/A6, D1/D2 reinflation on TE/aux/RT-slip resets, E3 decoder lock-time
-— amended by critic gap 1, E4, G1–G4, H1–H9).
+**Still open after both passes:** ~~P2-1/P2-2 (smoother/snapshot frame rework — fold in F1)~~
+**(FIXED 2026-06-15, see below)**, P2-8/P2-9/P2-10/P2-11, the six critic gaps above, and the
+Pass-1 open list (A3 intra-E5 denominator floor, A5/A6, D1/D2 reinflation on TE/aux/RT-slip
+resets, E3 decoder lock-time — amended by critic gap 1, E4, G1–G4, H1–H9).
+
+---
+
+# Smoother frame fix (2026-06-15) — F1 + P2-1 + P2-2 (uncommitted)
+
+The RTS smoother no longer eats slip repairs, slip resets, or BSSD pivot handovers as
+spurious backward innovations.  Design (multi-agent design + implementation review,
+~16 agents, build clean, 6 new tests in `tests/test_smoother_frame.cpp`, full suite 256/257):
+
+- **Repairs → compensate.** A covariance-preserving integer repair (`x += dN·λ`) is a
+  deterministic control input.  `CycleSlipManager` reports `(amb_key, delta_m)` in
+  `CycleSlipEpochResult::ambiguity_repairs`; `Application` folds `delta_m` into the captured
+  `x_pred` right after `detectCycleSlips` (same pre-update frame; layout still matches), so the
+  backward pass sees no innovation.  Recorded only on the confirmed-applied path; a key also
+  reset this epoch is segmented instead (not double-handled).
+
+- **Resets → segment.** `CycleSlipManager::reset_satellites` now carries every slip-phase reset
+  (SD-aware reset, pivot-disturbance inflation, **soft-LLI bridge restore** [absolute overwrite,
+  not additive], post-handover deferred repair [lands in the new SD frame]).  These merge into
+  the snapshot's `reset_satellites` so the smoother excludes them — previously only KF-internal
+  resets reached the snapshot.  `ambSatWasReset` tightened to an exact satellite-key-boundary
+  match (a reset of "G2" no longer segments "G21").
+
+- **Handovers → inverse-reference (clean) or segment (disturbed).** Each snapshot records the
+  final BSSD pivot map and the set of *clean* (undisturbed, non-forced) handovers
+  (`PivotManager::getCleanHandovers`).  When a constellation's pivot changed `p0→p1` and the leg
+  was clean, the smoother inverse-references the affected ambiguity signal groups of the
+  *backward-flowing* smoothed estimate back to `p0` — the exact inverse of PivotManager's forward
+  re-reference, on the **full** state/covariance (preserving ambiguity↔position coupling) — so the
+  whole backward step stays in epoch k's frame with no change to `x_pred`/`P_pred`/`F`/`P_post`.
+  Disturbed/forced handovers (the old pivot slipped → discontinuous) and the constellation's
+  iono/sat-bias states are segmented.  Multiple chained handovers collapse to a single net datum
+  change and are segmented unless exactly one clean leg matches `p0→p1`.
+
+- **Gap-teardown guard (pre-existing latent OOB, found in review).** `Application::handleGap`
+  prunes ambiguity/iono/sat-bias states *before* predict, so the post-gap `x_pred` is captured
+  smaller than the previous posterior while the rebuilt posterior is larger — the backward pass
+  would read `x_pred` out of bounds (Debug assert / Release UB).  The smoother now treats any
+  `x_pred.size() != prev x_post.size()` as a forward discontinuity (a long-gap teardown is one).
+
+Touchpoints: `Smoother.{hpp,cpp}`, `CycleSlipManager.{hpp,cpp}`, `PivotManager.{hpp,cpp}`,
+`Application.{hpp,cpp}`, `tests/test_smoother_frame.cpp`, `CMakeLists.txt`.  No PivotManager /
+MeasurementModel *write*-path changes (clean-handover recording is additive instrumentation).
+Numerical validation still pending a replay run with `run_smoother` enabled over gappy /
+handover-rich PPP-RTK data + smoother-trace inspection.

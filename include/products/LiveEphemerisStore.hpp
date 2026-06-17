@@ -25,6 +25,7 @@
 
 #include "products/BroadcastEphemerisTypes.hpp"
 #include <Eigen/Dense>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -114,6 +115,14 @@ public:
 
     /// Drop every record.
     void clear();
+
+    /// Snapshot of the GLONASS FDMA channel assignments currently held
+    /// (satellite id "R01" → channel k, -7..+6) from each stored GLONASS
+    /// record's broadcast @c freq_channel.  The real-time engine feeds this to
+    /// @c PppModel so per-satellite GLONASS wavelengths resolve from the live
+    /// stream rather than the hard-coded default table.  Empty when no GLONASS
+    /// ephemeris is held.
+    std::map<std::string, int> glonassFreqChannels() const;
 
 private:
     LiveEphemerisStore() = default;
