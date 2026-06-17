@@ -1,7 +1,5 @@
-
-
-fname = 'C:\GnssProcessor\build\x64-Release\logs\graphic_slip_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\graphic_slip_trace.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('graphic_slip_trace.csv');
 
 plot_graphic_trace(fname);
 
@@ -27,7 +25,7 @@ plot_graphic_trace(fname);
 function plot_graphic_trace(fname)
 
 if nargin < 1 || isempty(fname)
-    fname = fullfile('C:','GnssProcessor','build','x64-Release','logs','graphic_slip_trace.csv');
+    fname = gnssTracePath('graphic_slip_trace.csv');
 end
 
 if ~isfile(fname)

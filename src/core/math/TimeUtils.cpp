@@ -13,6 +13,7 @@
 
 #include "math/TimeUtils.hpp"
 #include <cmath>
+#include <chrono>
 #include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <sstream>
@@ -122,6 +123,37 @@ namespace GnssProcessor {
         return GnssTime{ week, tow };
     }
 
+    GnssTime TimeUtils::glonassTodToGpsTime(double tod_glonass_s, double anchor_gps_seconds) {
+        // No usable anchor → leave the epoch unpromoted (caller falls back).
+        if (anchor_gps_seconds <= 0.0) return GnssTime{ 0, 0.0 };
+
+        constexpr double MOSCOW_OFFSET = 3.0 * 3600.0;   // GLONASS time = UTC(SU) + 3 h
+        const double day_s    = static_cast<double>(SECONDS_IN_DAY);
+        const double half_day = 0.5 * day_s;
+
+        // Anchor: continuous GPS seconds → GPS JD → leap seconds → continuous UTC.
+        const double gps_jd     = GPS_EPOCH_JD + anchor_gps_seconds / day_s;
+        const double ls         = leapSecondsGpsUtc(gps_jd);
+        const double utc_anchor = anchor_gps_seconds - ls;
+
+        // Move the anchor into the Moscow-day frame and find that day's midnight.
+        const double moscow_anchor = utc_anchor + MOSCOW_OFFSET;
+        const double day_start     = std::floor(moscow_anchor / day_s) * day_s;
+        const double anchor_tod    = moscow_anchor - day_start;
+
+        // Place the reported time-of-day in the anchor's day, resolving the
+        // midnight wrap toward the nearest match (±12 h).
+        double tod = tod_glonass_s;
+        if      (tod < anchor_tod - half_day) tod += day_s;
+        else if (tod > anchor_tod + half_day) tod -= day_s;
+
+        // Full Moscow seconds → UTC → GPS (re-add leap seconds at this epoch).
+        const double moscow_full = day_start + tod;
+        const double utc_full    = moscow_full - MOSCOW_OFFSET;
+        const double gps_full    = utc_full + ls;
+        return gpsSecondsToGnssTime(gps_full);
+    }
+
     GnssTime TimeUtils::gregorianToGpsTime(int year, int month, int day,
         int hour, int minute, double second) {
         if (!isValidGregorianDate(year, month, day, hour, minute, second))
@@ -228,6 +260,16 @@ namespace GnssProcessor {
 
     double TimeUtils::continuousGpsSeconds(const GnssTime& t) {
         return static_cast<double>(t.week) * static_cast<double>(SECONDS_IN_WEEK) + t.tow;
+    }
+
+    double TimeUtils::nowContinuousGpsSeconds() {
+        using namespace std::chrono;
+        // POSIX system_clock is UTC (no leap seconds); GPS time runs ahead of UTC
+        // by LEAP_SECONDS (added exactly once, matching the rest of the codebase's
+        // UTC→GPS convention).  Returns continuous GPS seconds since the GPS epoch.
+        const auto since = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
+        constexpr int64_t kGpsEpochUnix = 315964800; // Jan 6 1980 00:00:00 UTC
+        return static_cast<double>(since - kGpsEpochUnix) + LEAP_SECONDS;
     }
 
     // =================================================================

@@ -4,11 +4,11 @@
 %           + ENU conversion + position error magnitude
 %  ============================================================
 
-clear; clc; %close all;
+clear; %clc; %close all;
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\wls_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\wls_trace.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('wls_trace.csv');
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to a datetime on the GPS time scale ---

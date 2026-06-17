@@ -42,7 +42,12 @@ docs/report/
   state_vector.tex          Kalman filter state vector layout.
   observation_equations.tex Uncombined PPP observation model.
   bssd_dd.tex               BSSD and DD differencing transformations.
-  references.bib            Starter bibliography (BibLaTeX).
+  kalman_smoother.tex       KF time/measurement update, IEKF, RTS smoother.
+  slip_detection.tex        MW/GF/GRAPHIC/EWL combinations + TurboEdit repair.
+  ambiguity_resolution.tex  MLAMBDA ILS, WL/NL decomposition, validation.
+  imu_aiding.tex            Strapdown mechanisation + 15-state INS error model.
+  ssr_corrections.tex       Real-time SSR-to-observation correction mapping.
+  references.bib            Bibliography (BibLaTeX).
   README.md                 This file.
 ```
 
@@ -51,14 +56,23 @@ the others, and `main.tex` glues them together.
 
 ## Scope
 
-This document is restricted to **invariant** material:
+This document covers the estimation mathematics and design rationale —
+the material that ages slowly because it is settled theory or algebra,
+not churning code:
 
 - State vector layout (rarely changes).
 - Observation equations (settled GNSS theory).
 - Differencing transformations (algebraic, code-independent).
-- Filter equations (KF predict/update, RTS smoother).
+- Filter equations (KF predict/update, IEKF, RTS smoother).
+- Cycle-slip combinations and the TurboEdit integer repair.
+- Integer ambiguity resolution (MLAMBDA, WL/NL, validation).
+- Inertial aiding (strapdown mechanisation, INS error state).
+- Real-time SSR-to-observation correction mapping.
 
-Implementation notes that mirror evolving code — call signatures,
+Empirical thresholds and tuning (MAD/Welford/EWMA gates, per-arc
+calibration) are deliberately left to the code and cited, not
+reproduced. Implementation notes that mirror evolving code — call
+signatures,
 configuration field reference, per-class responsibilities — belong
 in the headers under `include/` and are rendered via Doxygen.
 Cross-references between the two are explicit:

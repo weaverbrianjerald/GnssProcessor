@@ -32,9 +32,8 @@ showSummary          = true;   % per-sat fraction-of-status table
 showLegend           = true;   % discrete colorbar on each figure
 
 %% --- Load CSV ---
-fname = 'C:\GnssProcessor\logs\satellite_status_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\satellite_status_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\satellite_status_trace.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('satellite_status_trace.csv');
 
 if ~isfile(fname)
     error('satellite_status_trace.csv not found: %s', fname);

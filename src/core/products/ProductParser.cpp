@@ -139,13 +139,8 @@ namespace GnssProcessor {
     // =================================================================
 
     ProductParser::ProductParser(const GnssConfig& config, LogManager& log_manager)
-        : config_(config), log_manager_(log_manager), rinex_parser_(nullptr), planetary_(log_manager) {
+        : config_(config), log_manager_(log_manager) {
         log_manager_.getLogger("product_parser")->info("ProductParser initialized.");
-    }
-
-    void ProductParser::setRinexParser(RinexParser& rinex) {
-        rinex_parser_ = &rinex;
-        log_manager_.getLogger("product_parser")->trace("RinexParser set for ProductParser");
     }
 
     // =================================================================
@@ -1296,14 +1291,8 @@ namespace GnssProcessor {
             else
                 ppp_log->error("Failed to load Klobuchar coefficients from RNX file: {}", rnx_path.string());
         } else {
-            ppp_log->warn("No RNX file path provided for Klobuchar or Sun ephemeris");
+            ppp_log->warn("No RNX file path provided for Klobuchar coefficients");
         }
-
-        std::vector<GnssTime> epoch_times = rinex_parser_->getEpochTimes();
-        if (planetary_.parseSunEphemeris(epoch_times, sun_ephemeris_))
-            ppp_log->info("Computed Sun ephemeris for {} observation epochs", sun_ephemeris_.size());
-        else
-            ppp_log->error("Failed to compute Sun ephemeris for observation epochs");
     }
 
 } // namespace GnssProcessor

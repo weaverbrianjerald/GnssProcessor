@@ -1,0 +1,465 @@
+% ============================================================
+%  Integer ambiguity resolution
+%  MLAMBDA over a between-satellite-differenced ambiguity sub-problem
+%  (BSSD in single-receiver modes, true DD in baseline) extracted from
+%  the float Kalman state, with WL/NL
+%  decomposition, partial/subset acceptance, ratio + FFR
+%  validation, and constrained pseudo-observation feedback.
+%  Impl: src/core/filter/AmbiguityResolver.{hpp,cpp}
+% ============================================================
+
+Integer ambiguity resolution (AR) converts the real-valued,
+bias-contaminated phase ambiguities of the float solution into the
+integer carrier-cycle counts they represent.  The engine implements
+\textsc{MLAMBDA}~\cite{teunissen1995lambda} over a
+between-satellite-differenced ambiguity sub-problem extracted from the
+filter state and covariance.  The operative quantity is the ambiguity
+differenced against a per-constellation pivot $\piv{g}$
+(\Cref{sec:diff}); the same integer-estimation machinery serves both
+the single-receiver and the baseline modes, but \emph{what makes that
+differenced ambiguity an integer differs by mode}.  The undifferenced
+ambiguity $N^\sat_{\rx,\sigl}$ of \Cref{eq:obs-phase} carries a
+receiver phase bias $b_{\rx,\sigl}$ and a satellite phase bias
+$b^\sat_\sigl$.  In single-receiver PPP / PPP-RTK the pivot difference
+is a \emph{between-satellite single difference} $\bsd{\,\cdot\,}$
+(\Cref{sec:bssd}), which cancels the receiver bias $b_{\rx,\sigl}$
+(common to every tracked satellite) but \emph{not} the satellite bias;
+the residual $\bsd N^{\sat,\piv{g}}_{\rx,\sigl}$ is integer only once
+$b^\sat_\sigl$ has been removed by a consistent external phase-bias
+product (BIA / SSR, \Cref{sec:ssr}).  In baseline mode the state
+already holds true double differences $\dd{\,\cdot\,}$ (\Cref{sec:dd}),
+where the additional between-receiver difference cancels the satellite
+bias as well, so $\dd N$ is integer intrinsically.  We retain the
+resolver's internal label $\dd{}$ for the differenced ambiguity in the
+equations below --- the algebra is identical either way --- with the
+understanding that it denotes the between-satellite single difference
+$\bsd{}$ in the single-receiver case and the full double difference
+only in baseline mode.  The implementation lives in
+\texttt{src/core/filter/AmbiguityResolver.cpp} (driver, search kernel,
+WL/NL decomposition, acceptance) with configuration under the JSON path
+\texttt{estimation.ambiguity\_resolution.*}.
+
+\subsection{The integer least-squares problem}\label{sec:ar-ils}
+
+The float solution delivers a real-valued ambiguity estimate
+$\ambfloat$ (in cycles) with covariance $\ambcov$, both obtained by
+sub-vector extraction from the filter state $\stateV$ and covariance
+$\covM$.  Integer ambiguity resolution is the weighted
+closest-lattice-point problem
+
+\begin{empheq}[box=\fbox]{equation}
+\ambfix
+\;=\;
+\arg\min_{\bm{a}\,\in\,\mathbb{Z}^{n}}
+\;\bigl(\ambfloat-\bm{a}\bigr)^{\Tr}\,
+\ambcov^{-1}\,
+\bigl(\ambfloat-\bm{a}\bigr),
+\label{eq:ils}
+\end{empheq}
+
+i.e.\ minimisation of the squared Mahalanobis distance from $\ambfloat$
+to a lattice point $\bm{a}$ in the metric of $\ambcov^{-1}$.  This is an
+NP-hard integer least-squares (ILS) program; \textsc{LAMBDA} and its
+\textsc{MLAMBDA} variant make it tractable in three invariant stages ---
+(i) an $LDL^{\Tr}$ factorisation of $\ambcov$, (ii) a decorrelating
+integer $\Zmat$-transform (lattice reduction), and (iii) a depth-first
+shrinking-ellipsoid search over the reduced lattice --- none of which
+carries a tuning parameter.  We follow the hat/check convention of the
+notation block: $\ambfloat$ is the float estimate, $\ambfix$ the
+integer-fixed solution.
+
+\paragraph{Float extraction and rescaling to cycles.}
+The filter state stores per-band ambiguity states in \emph{metres}
+($\lambda_\sigl N$, one per tracked (satellite, signal)), not cycles,
+so the resolver first forms the between-satellite-differenced float and
+covariance by explicit differencing against the pivot $\piv{g}$ and
+then rescales by wavelength.  (In baseline mode the state already holds
+the double difference and the differencing step below collapses to a
+direct selection; see \Cref{sec:ar-feedback}.)  For a differenced pair
+$k$ with satellite index $i(k)$ and pivot index $p(k)$
+(\texttt{src/core/filter/AmbiguityResolver.cpp}):
+\begin{align}
+y^{\dd{}}_k &= \stateV_{\,i(k)} - \stateV_{\,p(k)},
+  &&\text{(DD float, m)} \label{eq:dd-float}\\[2pt]
+\bm{Q}^{\dd{}}_{kl} &=
+  \covM_{i_k i_l} - \covM_{i_k p_l}
+  - \covM_{p_k i_l} + \covM_{p_k p_l},
+  &&\text{(DD covariance, m}^2\text{)} \label{eq:dd-cov}\\[2pt]
+\ambfloat_k = y^{\dd{}}_k / \lambda_k,
+\qquad
+(\ambcov)_{kl} &= \bm{Q}^{\dd{}}_{kl} \big/ (\lambda_k \lambda_l).
+  &&\text{(cycle domain)} \label{eq:m2c}
+\end{align}
+The rescaling \eqref{eq:m2c} is load-bearing: running \textsc{MLAMBDA}
+on metre-domain floats would round toward integer-\emph{metre} values
+with no carrier-cycle semantics, and the ratio test
+(\Cref{sec:ar-accept}) would degenerate to $\approx 1$ irrespective of
+float quality.  The per-pair wavelength $\lambda_k$ is resolved with
+GLONASS FDMA per-satellite frequencies where applicable, and
+$\bm{Q}^{\dd{}}$ is symmetrised, $\bm{Q}^{\dd{}} \leftarrow
+\tfrac12(\bm{Q}^{\dd{}} + \bm{Q}^{\dd{}\Tr})$, before factorisation.
+The DD pivot $\piv{g}$ is the highest-elevation satellite within each
+$(\text{constellation},\,\text{signal})$ group, consistent with the
+BSSD pivot of \Cref{sec:diff}; all remaining satellites in the group
+are differenced against it.
+
+\subsection{Decorrelation: $LDL^{\Tr}$ factorisation and the integer
+$\Zmat$-transform}\label{sec:ar-lambda}
+
+\paragraph{Factorisation.}
+\textsc{MLAMBDA} factorises the symmetric positive-definite ambiguity
+covariance as
+\begin{equation}
+\ambcov \;=\; \Lmat^{\Tr}\,\Dmat\,\Lmat,
+\qquad
+\Lmat \text{ unit lower-triangular},\;\;
+\Dmat = \operatorname{diag}(d_1,\dots,d_n),\;\; d_i > 0,
+\label{eq:ldlt}
+\end{equation}
+factored in reverse index order (the Chang--Yang \textsc{mlambda}
+convention).  A non-positive pivot
+$d_i \le 0$ aborts the fix, since it signals a non-PD covariance.
+After reduction, $d_i$ is the \emph{conditional variance} of the
+$i$-th decorrelated ambiguity given the later ones; it feeds the
+success-rate gate of \Cref{sec:ar-accept} directly.
+
+\paragraph{The $\Zmat$-transform.}
+The central device of \textsc{LAMBDA}~\cite{teunissen1995lambda} is a
+unimodular integer transform $\Zmat \in \mathbb{Z}^{n\times n}$,
+$|\det\Zmat| = 1$, that re-parameterises
+\begin{equation}
+\bm{z} = \Zmat^{\Tr}\ambfloat,
+\qquad
+\bm{Q}_{\hat z} = \Zmat^{\Tr}\,\ambcov\,\Zmat,
+\label{eq:ztransform}
+\end{equation}
+so that the transformed ambiguities are nearly decorrelated (small
+off-diagonal $\Lmat$ entries) and their conditional variances are
+ordered.  Because $\Zmat$ is unimodular the integer minimiser maps back
+exactly, $\ambfix = (\Zmat^{\Tr})^{-1}\check{\bm{z}}$ with
+$(\Zmat^{\Tr})^{-1}$ also integer; decorrelation therefore does not
+alter the solution of \eqref{eq:ils} --- it only makes the search
+ellipsoid closer to spherical, collapsing the enumeration count by
+orders of magnitude.  The reduction interleaves two operations sweeping
+$j = n-2$ downward.
+
+\emph{Integer Gauss transformations} zero the magnitude of sub-diagonal
+$\Lmat$ entries by integer column operations,
+\begin{equation}
+\mu = \lceil L_{ij} \rfloor,
+\qquad
+\Lmat_{(:,j)} \mathrel{-}= \mu\,\Lmat_{(:,i)},
+\qquad
+\Zmat_{(:,j)} \mathrel{-}= \mu\,\Zmat_{(:,i)},
+\label{eq:gauss}
+\end{equation}
+where $\lceil\cdot\rfloor$ is round-to-nearest, keeping every
+$|L_{ij}| \le \tfrac12$.
+
+\emph{Permutations} (conditional adjacent swaps) reorder ambiguities
+when doing so reduces the later conditional variance.  With
+$\bar{d}_j = d_j + L_{j+1,j}^2\,d_{j+1}$, the swap fires when
+\begin{equation}
+\bar{d}_j + \varepsilon \;<\; d_{j+1},
+\qquad \varepsilon = 10^{-6},
+\label{eq:perm-test}
+\end{equation}
+after which $d_j,\,d_{j+1}$, the affected rows/columns of $\Lmat$ and
+the columns of $\Zmat$ are updated by the standard rank-one formulas
+($\eta = d_j/\bar{d}_j$, $\lambda = d_{j+1}L_{j+1,j}/\bar{d}_j$,
+$d_j \leftarrow \eta\,d_{j+1}$, $d_{j+1} \leftarrow \bar{d}_j$), and the
+sweep restarts from $j = n-2$.  The guard $\varepsilon = 10^{-6}$
+prevents thrashing on near-equal variances and is a numerical
+safeguard, not an estimator knob; it has no config exposure.
+
+\paragraph{The shrinking-ellipsoid search.}
+The reduced problem is solved by depth-first enumeration of lattice
+points inside the ellipsoid $\sum_i (z_i - \hat{z}_i)^2 / d_i \le
+\chi^2$, in \mbox{Schnorr--Euchner} order (nearest integer first, then
+zig-zagging outward).  Recursing from the last level $k = n-1$ down to
+$0$,
+\begin{align}
+\hat{z}_k &= \ambfloat_k + \sum_{i>k}(z_i - \hat{z}_i)\,L_{ik},
+  &&\text{(conditional centre)} \label{eq:cond}\\
+z_k = \lceil \hat{z}_k \rfloor,
+\qquad
+\mathrm{dist}_k &= \mathrm{dist}_{k+1}
+  + \frac{(\hat{z}_k - z_k)^2}{d_k}.
+  &&\text{(partial distance)} \label{eq:dist}
+\end{align}
+When a complete integer vector reaches level $0$ with cumulative
+distance below the current bound $\chi^2$, it is recorded and the bound
+shrinks to the worst retained candidate, contracting the ellipsoid as
+better candidates are found.  The search retains the
+$m = 2$ best candidates (for the ratio test) sorted by ascending
+squared distance, under a hard iteration cap (\texttt{kMaxIter} $=
+10\,000$).  Its outputs are the two smallest objective values
+$s_1 \le s_2$ of \eqref{eq:ils} and the best integer vector
+$\check{\bm{z}}$, back-transformed via
+$\ambfix = (\Zmat^{\Tr})^{-1}\check{\bm{z}}$.
+
+\subsection{Wide-lane / narrow-lane decomposition (PPP
+path)}\label{sec:ar-wlnl}
+
+Standard PPP and PPP-RTK AR use a \emph{wide-lane-first} decomposition
+when Melbourne--W\"ubbena (MW)-resolved wide-lane (WL) integers are
+available, halving the search dimension and exploiting the long WL
+wavelength~\cite{laurichesse2009integer}.  The driver attempts the
+WL-constrained narrow-lane (NL) fix before any unconstrained
+\textsc{LAMBDA} and --- critically --- does \emph{not} fall through to
+an unconstrained search when WL information exists but the constrained
+fix fails: a wrong-WL fix is worse than no fix, so ``no NL AR for
+satellites whose WL is float'' is the enforced hierarchy
+(\texttt{src/core/filter/AmbiguityResolver.cpp}).
+
+\paragraph{WL from Melbourne--W\"ubbena (integer by contract).}
+The DD wide-lane integer is differenced directly from the MW detector's
+single-difference WL integers (\texttt{src/core/slip/MwSlipDetector}),
+not searched:
+\begin{equation}
+\dd N_{\mathrm{WL}} = N^{\,\sat}_{\mathrm{WL}} - N^{\,\piv{g}}_{\mathrm{WL}}
+  \in \mathbb{Z},
+\qquad
+\lambda_{\mathrm{WL}} = \frac{\sLight}{f_1 - f_2}.
+\label{eq:dd-wl}
+\end{equation}
+
+\paragraph{NL search variable.}
+For each dual-frequency DD pair the float narrow-lane ambiguity
+(ionosphere-free phase combination, in NL cycles) is formed by the
+transform $\bm{T}$,
+\begin{equation}
+\hat{n}_{\mathrm{NL}}
+= \frac{f_1\,\dd N_1 + f_2\,\dd N_2}{f_1 + f_2}
+= \frac{1}{f_1 + f_2}\!\left(
+    \frac{f_1}{\lambda_1}\,\dd{}_1 + \frac{f_2}{\lambda_2}\,\dd{}_2
+  \right),
+\qquad
+\lambda_{\mathrm{NL}} = \frac{\sLight}{f_1 + f_2},
+\label{eq:nl-float}
+\end{equation}
+with reduced covariance $\bm{Q}_{\mathrm{NL}} = \bm{T}\,\bm{Q}^{\dd{}}\,
+\bm{T}^{\Tr}$.  Only NL-paired DDs enter \textsc{LAMBDA}; unpaired
+single-signal DDs are excluded so they cannot contaminate the ratio
+test.
+
+\paragraph{Integer-recentring shift.}
+The float $\hat{n}_{\mathrm{NL}}$ is \emph{not} integer-valued in
+general: substituting $N_2 = N_1 - \mathrm{WL}$ gives
+$\hat{n}_{\mathrm{NL}} = N_1 - \tfrac{f_2}{f_1+f_2}\,\mathrm{WL}$, which
+for GPS L1/L2 with $\mathrm{WL} = 1$ sits at $N_1 - 0.4379$ --- neither
+integer is meaningfully closer and the ratio test degenerates near
+$1.6$ regardless of float quality.  The resolver therefore adds the
+known-WL offset so the search variable is integer in expectation,
+\begin{equation}
+\tilde{n}_k
+= \hat{n}_{\mathrm{NL},k} + \frac{f_2}{f_1 + f_2}\,\dd N_{\mathrm{WL},k}
+\;\approx\; N_{1,k} \;\in\; \mathbb{Z} + \text{noise},
+\label{eq:nl-shift}
+\end{equation}
+runs \textsc{MLAMBDA} on $\tilde{\bm{n}}$ (a constant per-row shift
+leaves $\bm{Q}_{\mathrm{NL}}$ unchanged), then back-shifts
+$\check{n}_{\mathrm{NL}} = \check{N}_1 -
+\tfrac{f_2}{f_1+f_2}\,\mathrm{WL}$.
+
+\paragraph{Back-transform to per-signal DDs.}
+The fixed integers map back to the two original signal DDs in metres,
+\begin{equation}
+\dd{}_1^{\mathrm{fix}}
+  = \Bigl(\check{n}_{\mathrm{NL}}
+    + \tfrac{f_2}{f_1+f_2}\,\dd N_{\mathrm{WL}}\Bigr)\lambda_1,
+\qquad
+\dd{}_2^{\mathrm{fix}}
+  = \Bigl(\check{n}_{\mathrm{NL}}
+    - \tfrac{f_1}{f_1+f_2}\,\dd N_{\mathrm{WL}}\Bigr)\lambda_2,
+\label{eq:nl-back}
+\end{equation}
+which re-enter the filter through the constrained update of
+\Cref{sec:ar-feedback}.
+
+\paragraph{State-basis variants.}
+When \texttt{estimation.state\_ambiguity\_basis} $=$ \texttt{nl\_wl} the
+state holds NL/WL ambiguities directly and there are no per-band DD
+pairs to enumerate; today only the MW-resolved WL integers are applied
+as constraint rows (a full NL \textsc{LAMBDA} search with WL
+pre-constrained is future work in this basis).  The complementary
+WL-only mode (\texttt{estimation.ambiguity\_resolution.wl\_only}, in the
+\texttt{per\_band} basis) applies the cycle-domain constraint
+$\dd{}_{1}/\lambda_1 - \dd{}_{2}/\lambda_2 = \dd N_{\mathrm{WL}}$ as a
+single pseudo-observation per pair without any NL search, with
+covariance inflation on the affected single-difference states when MW
+re-locks at a new integer so the state snaps within one epoch.  A
+cross-frequency parity check rejects all WL DDs of a triple-frequency
+satellite when the telescoping cycle-count consistency
+$\dd{}_{ab} - \dd{}_{ac} + \dd{}_{bc} \ne 0$ fails.
+
+\subsection{Partial / subset ambiguity resolution}\label{sec:ar-partial}
+
+There is no \textsc{LAMBDA}-internal partial search; subset selection
+happens \emph{upstream} by candidate gating when the DD pairs are
+built (\texttt{src/core/filter/AmbiguityResolver.cpp}).  A
+satellite/signal ambiguity is admitted to the integer set only if it
+passes every filter:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item \textbf{Initialised} --- the state entry is non-zero (seeded by
+      data), and \textbf{non-frozen} --- its variance is non-zero
+      (excludes a BSSD-frozen pivot).
+\item \textbf{Elevation} --- $\theta^\sat_\rx \ge \theta_{\mathrm{AR}}$
+      (\texttt{elevation\_mask}).
+\item \textbf{Resolvable} --- the satellite is not flagged
+      unresolvable for want of bias/ATX (BIA, ATX) coverage.
+\item \textbf{Constellation} --- $g(\sat) \in$
+      \texttt{active\_systems}, when that list is non-empty.
+\item \textbf{Pairable} --- the $(\text{constellation},\,\text{signal})$
+      group holds $\ge 2$ satellites, so a pivot difference exists.
+\end{itemize}
+The constellation filter keeps a system in the \emph{float} solution
+while excluding it from the candidate set --- useful when one
+constellation's residual model bias would drag down the ratio test.
+Together these realise a static partial-AR: the search runs only over
+the high-confidence subset, and acceptance (\Cref{sec:ar-accept}) is
+all-or-nothing on that subset.
+
+\subsection{Validation: ratio test and fixed-failure-rate
+gate}\label{sec:ar-accept}
+
+A fix is committed only if it passes all three of the following gates
+(a logical \textsc{and}).  The ratio and fixed-failure-rate (FFR) gates
+are theoretically distinct: one bounds the discrimination between the
+two best candidates, the other bounds the absolute success probability.
+
+\paragraph{Ratio test (discrimination).}
+\begin{empheq}[box=\fbox]{equation}
+\mathrm{ratio} = \frac{s_2}{s_1} \;\ge\; \tau_{\mathrm{ratio}},
+\qquad s_1 \le s_2 \text{ the two smallest ILS objectives},
+\label{eq:ratio}
+\end{empheq}
+with $s_1, s_2$ from the search of \Cref{sec:ar-lambda} and threshold
+$\tau_{\mathrm{ratio}}$ (\texttt{ratio\_threshold}).  A second
+upper-bound rejection $\mathrm{ratio} > \tau_{\mathrm{ratio}}^{\max}$
+(\texttt{ratio\_upper\_bound}) catches the pathological case of a
+degenerate covariance direction --- a near-zero $s_1$ left by a previous
+wrong-integer hold --- that would otherwise produce ultra-confident but
+meaningless ratios.
+
+\paragraph{Fixed-failure-rate gate (bootstrap success rate).}
+A geometry-driven, self-tuning lower bound on the ILS success
+probability,
+\begin{empheq}[box=\fbox]{equation}
+P_{s,\mathrm{boot}}
+= \prod_{i=1}^{n}
+  \operatorname{erf}\!\left(\frac{1}{2\sqrt{2\,d_i}}\right)
+\;\ge\; P_s^{\min},
+\label{eq:ffr}
+\end{empheq}
+where the $d_i$ are the post-reduction $LDL^{\Tr}$ conditional variances
+of \eqref{eq:ldlt} and $P_s^{\min}$ is \texttt{min\_success\_rate}.  Per
+dimension the factor is $\Pr\bigl(|\mathcal{N}(0,d_i)| < \tfrac12\bigr)$
+--- the probability that sequential bootstrapped rounding lands on the
+correct integer --- and the product is the standard Teunissen lower
+bound on the true ILS success rate.  This ties the acceptance threshold
+to the actual problem geometry rather than to a fixed ratio alone.
+
+\paragraph{Per-pair residual backstop.}
+The joint ratio test can pass on a borderline set in which one pair sits
+near a half-cycle boundary; the fix is rejected if any single DD's
+fractional residual exceeds a cap,
+\begin{equation}
+\max_k \bigl|\ambfloat_k - \ambfix_k\bigr|
+  \;\le\; \kappa_{\mathrm{frac}}
+\quad\text{(cycles)},
+\label{eq:perpair}
+\end{equation}
+with $\kappa_{\mathrm{frac}}$ = \texttt{nl\_max\_per\_pair\_frac}.
+
+\paragraph{Convergence guards.}
+Before any search the resolver short-circuits AR while the float is
+immature --- if the epoch count is below \texttt{min\_epochs} or the
+position standard deviation $\sqrt{\covM_{00} + \covM_{11} +
+\covM_{22}}$ exceeds \texttt{max\_position\_sigma\_m} --- because a
+marginal fix accepted before the covariance settles can lock onto wrong
+integers and then poison every subsequent epoch.
+
+\subsection{Feedback: constrained pseudo-observation
+update}\label{sec:ar-feedback}
+
+Accepted integers are \emph{not} fed back by the classical perfect
+back-substitution (the $R = 0$ conditioning form)
+\begin{equation}
+\stateV_{\mathrm{fix}}
+  = \stateV - \bm{Q}_{\bm{a}\bm{a}}\,\bm{Q}^{\dd{}-1}
+    \bigl(y^{\dd{}} - \ambfix\bigr),
+\qquad
+\covM_{\mathrm{fix}}
+  = \covM - \bm{Q}_{\bm{a}\bm{a}}\,\bm{Q}^{\dd{}-1}
+    \bm{Q}_{\bm{a}\bm{a}}^{\Tr},
+\label{eq:backsub}
+\end{equation}
+but via a \emph{finite-variance Joseph-form pseudo-observation}
+(\texttt{src/core/filter/AmbiguityResolver.cpp}; kernel
+\texttt{KalmanFilter::josephPseudoUpdate} in
+\texttt{include/filter/KalmanFilter.hpp}).  The reason is structural:
+\eqref{eq:backsub} drives the fixed ambiguity rows of $\covM$ to
+$\approx 0$ variance, so the next epoch's \textsc{LAMBDA} sees a
+near-singular $\bm{Q}^{\dd{}}$ and emits meaningless inflated ratios
+that trip the upper-bound guard of \eqref{eq:ratio} indefinitely.  A
+finite-variance pseudo-observation instead keeps $\covM$
+well-conditioned and lets subsequent epochs re-confirm the integer
+(asymptoting toward it) or detect a slip through its residual.
+
+For each accepted DD pair $k$ the constraint row, innovation and noise
+are
+\begin{empheq}[box=\fbox]{equation}
+\jacH_{(k,\,i)} = +1,\quad
+\jacH_{(k,\,p)} = -1,
+\qquad
+v_k = \ambfix_k - \bigl(\stateV_i - \stateV_p\bigr),
+\qquad
+\bm{R} = \sigma^2_{\mathrm{hold}}\,\bm{I},
+\label{eq:pseudo}
+\end{empheq}
+followed by
+$(\stateV_{\mathrm{fix}}, \covM_{\mathrm{fix}}) =
+\textsc{JosephUpdate}(\stateV, \covM, \jacH, \bm{v}, \bm{R})$, with
+$\sigma^2_{\mathrm{hold}}$ = \texttt{hold\_variance}.  The DD/baseline
+path uses a single-column selector $\jacH_{(k,\,\mathrm{idx})} = +1$
+since the corresponding state value already \emph{is} the double
+difference.  Fix-and-hold mode
+(\texttt{estimation.ambiguity\_resolution.mode} $= 3$) re-applies the
+same constraint each epoch to suppress float drift.  This
+pseudo-observation feedback is the resolution of the mode-3
+destabilisation that the earlier $R = 0$ form \eqref{eq:backsub}
+induced; \eqref{eq:backsub} survives in the code only as the documented,
+rejected legacy approach.
+
+\subsection{Configuration summary}\label{sec:ar-config}
+
+All tunable thresholds live under the JSON path
+\texttt{estimation.ambiguity\_resolution.*}, parsed in
+\texttt{src/core/config/GnssConfigLoad.cpp} with defaults in
+\texttt{include/filter/AmbiguityResolver.hpp}.  The invariant estimator
+theory of \Crefrange{sec:ar-ils}{sec:ar-feedback} carries no knobs ---
+changing it changes the mathematics, not a policy.
+
+\begin{center}
+\begin{tabular}{@{}lllp{0.32\linewidth}@{}}
+\toprule
+Symbol & Config key (\texttt{...ambiguity\_resolution.}) & Default & Role \\
+\midrule
+---                       & \texttt{mode}                 & \texttt{0}      & 0 float / 1 continuous / 2 instantaneous / 3 fix-and-hold \\
+$\tau_{\mathrm{ratio}}$   & \texttt{ratio\_threshold}     & \texttt{3.0}    & ratio-test acceptance \eqref{eq:ratio} \\
+$\tau_{\mathrm{ratio}}^{\max}$ & \texttt{ratio\_upper\_bound} & \texttt{1e4} & degenerate-covariance reject \eqref{eq:ratio} \\
+$P_s^{\min}$              & \texttt{min\_success\_rate}   & \texttt{0.999}  & FFR gate \eqref{eq:ffr} \\
+$\kappa_{\mathrm{frac}}$  & \texttt{nl\_max\_per\_pair\_frac} & \texttt{0.15} & per-pair residual cap \eqref{eq:perpair} \\
+$\theta_{\mathrm{AR}}$    & \texttt{elevation\_mask}  & \texttt{20\textdegree} & candidate elevation mask \\
+$\sigma^2_{\mathrm{hold}}$ & \texttt{hold\_variance}      & \texttt{0.001} m$^2$ & pseudo-obs $\bm{R}$ \eqref{eq:pseudo} \\
+$n_{\min}^{\text{ep}}$    & \texttt{min\_epochs}          & \texttt{10}     & convergence guard \\
+$\sigma_{\mathrm{pos}}^{\max}$ & \texttt{max\_position\_sigma\_m} & \texttt{0.05} m & convergence guard \\
+---                       & \texttt{wl\_only}             & \texttt{false}  & MW-WL-only, no NL search \\
+---                       & \texttt{active\_systems}  & \texttt{[]} (all) & constellation subset (\Cref{sec:ar-partial}) \\
+---                       & \texttt{state\_ambiguity\_basis}\,$^{\dagger}$ & \texttt{per\_band} & \texttt{per\_band} vs \texttt{nl\_wl} dispatch \\
+\bottomrule
+\end{tabular}
+
+{\footnotesize $^{\dagger}$\,Path is \texttt{estimation.state\_ambiguity\_basis} --- one level above the \texttt{ambiguity\_resolution} block.}
+\end{center}

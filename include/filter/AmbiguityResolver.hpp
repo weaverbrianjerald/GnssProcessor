@@ -343,10 +343,19 @@ private:
      *
      * Skipped under both convergence gates same as the LAMBDA paths.
      *
+     * Each DD WL integer combines two zero-difference MW arcs (N_i − N_ref);
+     * the per-fix confidence gate @c wl_max_frac is applied to *both* arcs, so
+     * a pair is left float this epoch if either arc's running fractional
+     * residual exceeds the cap.  This mirrors the gate in
+     * @c applyMwWlConstraintsNlWl_ but is stronger by construction (the NlWl
+     * counterpart gates a single arc).
+     *
      * @param pairs           DD pairs (from buildDdPairs).
      * @param x               Full state vector.
      * @param P               Full covariance matrix.
      * @param wl_ambiguities  Resolved SD WL integers from the MW detector.
+     * @param wl_fractions    Per-arc WL fractional residuals (same keys as
+     *                        @p wl_ambiguities); used by the @c wl_max_frac gate.
      * @param observations    Observations for system/frequency lookup.
      * @return AmbiguityResolution with success=true if at least one WL
      *         constraint was applied; ratio is set to +∞ as a sentinel
@@ -357,6 +366,7 @@ private:
         const Eigen::VectorXd& x,
         const Eigen::MatrixXd& P,
         const std::map<std::string, int>& wl_ambiguities,
+        const std::map<std::string, double>& wl_fractions,
         const std::vector<PppObservation>& observations);
 
     /**

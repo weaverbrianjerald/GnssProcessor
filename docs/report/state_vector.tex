@@ -42,6 +42,12 @@ where
       lacks a satellite OSB and a state-space estimate is therefore
       created (see \texttt{estimation.estimate\_sat\_biases}).
 \end{itemize}
+For brevity the schematic suppresses three conditional refinements
+detailed below: the rate states that accompany velocity (a receiver
+clock-rate and one inter-system clock-rate offset per non-reference
+constellation), the nine-state inertial augmentation of \Cref{sec:imu},
+and the fact that the entire receiver-side clock and inter-system-offset
+block is removed under the BSSD parameterisation (\Cref{sec:bssd}).
 
 \subsection{Component-by-component description}
 
@@ -54,17 +60,27 @@ linearisation radius of the geometric range model
 
 \paragraph{Velocity $\bm{v}_\rx \in \mathbb{R}^3$.}
 Optional.  Enabled by \texttt{estimation.estimate\_velocity = true}, or
-forced on by tightly-coupled IMU integration.  When present, the
-position-velocity block evolves as a discrete-time integrated random
-walk under the kinematic process model with spectral densities
-\texttt{position\_q} and \texttt{velocity\_q} respectively.
+forced on by tightly-coupled IMU integration.  When present, position
+and velocity form a coupled continuous-white-noise-acceleration (CWNA,
+integrated-random-walk) block driven by a \emph{single} acceleration
+spectral density \texttt{process\_noise.acceleration\_psd}
+(\Cref{eq:kf-Q-cwna}); the scalar \texttt{position\_q} of the
+velocity-free case is then unused.  Enabling velocity also introduces a
+receiver clock-rate state $\sLight\,\dot{\mathrm{d}t}_\rx$, and one
+inter-system clock-rate offset per non-reference constellation, each
+CWNA-coupled to its bias counterpart (\texttt{clock\_rate\_q},
+\texttt{system\_time\_rate\_offset\_q}).
 
 \paragraph{Receiver clock $\sLight\,\mathrm{d}t_\rx$.}
 Single state, in metres.  Process noise is large
 (\texttt{clock\_bias\_q} $\sim 10^3\,\text{m}^2$ per second) so the
 state is effectively re-estimated each epoch; this captures
 oscillator drift without imposing a stochastic model that may not
-match the receiver's actual oscillator.
+match the receiver's actual oscillator.  Under the BSSD
+(between-satellite single-difference) parameterisation
+(\Cref{sec:bssd}) the receiver clock is unobservable and the state is
+dropped entirely --- as are the inter-system offsets below --- so the
+whole receiver-side clock block vanishes in PPP-RTK SD mode.
 
 \paragraph{Inter-system time offsets $\sLight\,\delta t^{(g)}_\rx$.}
 One per active constellation other than the chosen reference (default
@@ -96,10 +112,14 @@ optional.
 PPP-RTK-only.  One state per visible satellite, expressed at the L1
 frequency; signal-specific delays follow \Cref{eq:iono-scaling}.
 Initial value seeded from the Klobuchar broadcast model when no
-external ionospheric product is available.  Modelling these per-sat
-states explicitly is what permits PPP-RTK to retain integer ambiguity
-recovery without forming the ionosphere-free combination (which
-amplifies code noise by a factor of $\sim 3$).
+external ionospheric product is available.  Its process noise is a
+random walk whose zenith spectral density \texttt{ionosphere\_q} is
+projected onto the slant by the squared obliquity factor
+$1/\sin^2\theta^\sat_\rx$ (\Cref{eq:kf-Q-iono}), letting low-elevation
+states vary faster.  Modelling these per-sat states explicitly is what
+permits PPP-RTK to retain integer ambiguity recovery without forming
+the ionosphere-free combination (which amplifies code noise by a factor
+of $\sim 3$).
 
 \paragraph{Carrier-phase ambiguities $N^\sat_{\rx,\sigl}$.}
 One state per phase-tracked $(\sat, \sigl)$ pair, in cycles.  Treated
@@ -112,9 +132,13 @@ covariance entry while preserving the cross-state correlations that
 permit a consistent re-fix.
 
 \paragraph{Receiver code biases $B_{\rx,\sigl}$.}
-One per signal in $\sigset$.  These absorb the receiver-side
-inter-frequency biases that the OSB convention does not reference to
-zero.
+These absorb the receiver-side inter-frequency biases that the OSB
+convention does not reference to zero.  They are \emph{not} one per
+signal: \texttt{StateInitializer::resolveReceiverBias} keys them per
+(system, frequency band) as inter-frequency biases
+(\texttt{"<system>\_IFB<band>"}) plus, in the alternative scheme, a
+single per-system differential code bias (\texttt{"<system>\_DCB"}).
+Like the receiver clock they are suppressed under BSSD.
 
 \paragraph{Satellite code biases $B^\sat_\sigl$.}
 Per (satellite, signal) pair, but \emph{only when the BIA file does
@@ -124,18 +148,53 @@ weakly stochastic (\texttt{sat\_bias\_q} $\sim 10^{-10}$) since the
 underlying physical biases are nearly stationary on the daily
 timescale.
 
+\paragraph{Inertial augmentation.}
+When a tightly-coupled IMU is active the core state grows by nine
+further entries --- a three-axis attitude error and the accelerometer
+and gyroscope biases --- propagated by the strapdown mechanisation
+rather than the random-walk process model.  These are treated in full
+in \Cref{sec:imu}.
+
+\paragraph{Baseline differential troposphere.}
+In baseline mode the per-station tropospheric, clock, ionosphere, and
+bias states are absent; an optional single differential zenith-wet-delay
+state $\Delta\zwd_{\rx_{\mathrm{rov}}\rx_{\mathrm{ref}}}$ may be carried
+(\texttt{baseline.estimate\_differential\_tropo}, \Cref{sec:dd}).
+
 \subsection{Dynamic indexing}\label{sec:state-indexing}
 
-The variable-dimension blocks ($I, N, B^\sat$) are addressed via key
-maps maintained by \texttt{StateManager}.  The canonical key formats
-are defined once in \texttt{include/filter/StateKeySchema.hpp}:
+The variable-dimension blocks are addressed via key$\to$index maps
+maintained by \texttt{StateManager}.  The canonical key formats are
+defined once in \texttt{include/filter/StateKeySchema.hpp}, each with a
+\texttt{make}/\texttt{parse} pair:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
-\item iono key: \texttt{"<sys><prn>"}, e.g.\ \texttt{"G05"} for GPS PRN~5;
-\item ambiguity key: \texttt{"<sys><prn>\_<signal>"}, e.g.\ \texttt{"G05\_L1C"};
-\item satellite-bias key: \texttt{"<sys><prn>\_<signal>"}, sharing the
-      ambiguity-key namespace but stored under a distinct map.
+\item iono key: \texttt{"<sys><prn>"}, e.g.\ \texttt{"G05"} (delimiter-free);
+\item ambiguity key: \texttt{"<sys><prn>\_<signal>"}, e.g.\ \texttt{"G05\_L1C"}
+      --- split on the \emph{first} underscore, so an iono-free combination
+      \texttt{"G05\_L1C\_L5Q"} retains its compound signal;
+\item satellite signal-bias key: \texttt{"<sys><prn>|<signal>"}, e.g.\
+      \texttt{"G05|C1W"} --- a \emph{pipe} delimiter and a distinct map,
+      \emph{not} the underscore ambiguity namespace;
+\item receiver code-bias key: \texttt{"<system>\_IFB<band>"} or
+      \texttt{"<system>\_DCB"};
+\item inter-system time-offset key: the bare system name
+      (\texttt{"Galileo"}, \dots; GPS is the reference and never appears);
+\item double-difference ambiguity key (baseline):
+      \texttt{"DD|<cons>|<sat>|<code>|<pivot>"}.
 \end{itemize}
 This single source of truth eliminates the off-by-one errors that
 plague hand-managed dynamic state vectors and makes the BSSD/DD
-S-transforms (\Cref{sec:diff}) implementable as block operations on
-the relevant key sets.
+S-transforms (\Cref{sec:diff}) implementable as block operations on the
+relevant key sets.
+
+\paragraph{Ambiguity basis.}
+By default the ambiguity block carries one per-band float ambiguity per
+tracked (satellite, signal) in metres.  Setting
+\texttt{estimation.state\_ambiguity\_basis = "nl\_wl"} switches the
+whole run to a narrow-lane\,/\,wide-lane parameterisation: per satellite
+a narrow-lane state (key \texttt{"<sat>\_NL\_<band>"}) and one wide-lane
+state per band pair (\texttt{"<sat>\_WL\_<a>\_<b>"}, semantically
+$N_a - N_b$), both in \emph{cycles} rather than metres so the wide-lane
+and \textsc{lambda} arithmetic stays native to integers, with the
+wavelength scaling moved into the Jacobian.  The two bases never coexist
+in a single state vector.

@@ -1,0 +1,512 @@
+% ============================================================
+%  Cycle-slip detection and repair
+%  Linear combinations as test statistics + TurboEdit 2x2 repair.
+%  Combination algebra only -- empirical thresholds (MAD / Welford /
+%  EWMA cross-sat sigma) are pointers to code, not reproduced here.
+%  Sources: src/core/slip/{MwSlipDetector,EwlSlipDetector,
+%  GraphicSlipDetector,GfSlipDetector,IfPhaseSlipDetector,
+%  TurboEditResolver}.cpp and the matching include/slip headers.
+% ============================================================
+
+The uncombined filter (\Cref{sec:obs}) never forms a linear combination
+on the measurement-update path: per-signal $\code^\sat_{\rx,\sigl}$ and
+$\phaseo^\sat_{\rx,\sigl}$ enter \Cref{eq:obs-code,eq:obs-phase}
+directly.  Cycle slips are instead screened by a bank of
+\emph{diagnostic} combinations, each constructed so that the geometric
+range $\geomrange^\sat_\rx$, the clocks $\sLight(\mathrm{d}t_\rx -
+\mathrm{d}t^\sat)$ and the troposphere $T^\sat_\rx$ cancel, leaving an
+observable whose only between-epoch variation is measurement noise plus
+any integer carrier discontinuity.  The active detectors are
+Melbourne--W\"ubbena (\texttt{src/core/slip/MwSlipDetector.cpp}, the
+primary) and GRAPHIC (\texttt{src/core/slip/GraphicSlipDetector.cpp});
+the extra-wide-lane detector (\texttt{src/core/slip/EwlSlipDetector.cpp})
+runs when a third frequency is present.  The geometry-free and
+ionosphere-free phase detectors
+(\texttt{src/core/slip/GfSlipDetector.cpp},
+\texttt{src/core/slip/IfPhaseSlipDetector.cpp}) are staged --- present
+in the tree but not compiled into the current build --- and their
+algebra is recorded here for completeness.  The slip bank is enabled
+per detector under the config key \texttt{estimation.cycle\_slip}.
+
+Throughout this section we suppress the receiver index $\rx$
+(single-receiver PPP / PPP-RTK) and write $f_1 > f_2$ for the two
+carriers of a band pair, sorted by frequency so that $f_1 - f_2 > 0$
+and $\lambda_1 < \lambda_2$
+(\texttt{src/core/slip/MwSlipDetector.cpp}, the band-frequency sort).
+Carrier phase is read from RINEX in cycles and scaled by
+$\lambda_\sigl = \sLight / f_\sigl$ before combining, so
+$\phaseo^\sat_\sigl$ below is always in metres, consistent with
+\Cref{eq:obs-phase}.  We reserve the operator $\slipd{\,\cdot\,}$ for a
+\emph{temporal} integer slip step (e.g.\ $\slipd N_\sigl$ is the change
+in the ambiguity on signal $\sigl$ across the slip epoch); this is
+deliberately distinct from the between-satellite single difference
+$\bsd{\cdot}$ of \Cref{sec:diff}, which also uses $\Delta$.
+
+\subsection{Test-statistic combinations}\label{sec:slip-combos}
+
+\subsubsection{Melbourne--W\"ubbena (wide-lane)}\label{sec:slip-mw}
+
+The Melbourne--W\"ubbena (MW) observable is the wide-lane carrier phase
+minus the narrow-lane code.  Introducing the wide- and narrow-lane
+wavelengths
+\begin{equation}
+\lamwl \;:=\; \frac{\sLight}{f_1 - f_2},
+\qquad
+\lamnl \;:=\; \frac{\sLight}{f_1 + f_2},
+\label{eq:wl-nl-wavelength}
+\end{equation}
+the engine forms (\texttt{MwSlipDetector::computeMwMeters})
+\begin{empheq}[box=\fbox]{equation}
+\mwc^\sat
+\;=\;
+\underbrace{\frac{f_1\,\phaseo^\sat_{1} - f_2\,\phaseo^\sat_{2}}{f_1 - f_2}}_{\text{wide-lane phase}}
+\;-\;
+\underbrace{\frac{f_1\,\code^\sat_{1} + f_2\,\code^\sat_{2}}{f_1 + f_2}}_{\text{narrow-lane code}}.
+\label{eq:mw}
+\end{empheq}
+The range-additive terms common to \Cref{eq:obs-code,eq:obs-phase} ---
+geometry, clocks, troposphere --- cancel between the two bracketed
+combinations.  The slant ionosphere also cancels: the wide-lane phase
+carries the ionospheric coefficient $-(f_1\mu_1 - f_2\mu_2)/(f_1-f_2)$
+and the narrow-lane code carries $+(f_1\mu_1 + f_2\mu_2)/(f_1+f_2)$,
+and with $\mu_\sigl = f_1^2/f_\sigl^2$ (\Cref{eq:iono-scaling}) these
+two coefficients are equal, so the difference \eqref{eq:mw} removes the
+ionosphere exactly to first order.  What remains is a near-constant
+equal to the wide-lane ambiguity plus hardware bias,
+\begin{equation}
+\mwc^\sat
+\;\approx\;
+\lamwl\,\Nwl^\sat \;+\; b_{\mathrm{MW}}^\sat \;+\; \varepsilon_{\mathrm{MW}},
+\qquad
+\Nwl^\sat = N^\sat_{1} - N^\sat_{2},
+\label{eq:mw-content}
+\end{equation}
+so a wide-lane slip $\slipd \Nwl = \slipd N_1 - \slipd N_2$ appears as a
+step of $\lamwl\,\slipd \Nwl$.  For GPS L1/L2,
+$\lamwl \approx \SI{0.861}{m}$ while the dominant error is the
+metre-level narrow-lane \emph{code} noise; with code noise
+$\sigma_\code \sim \SI{0.3}{m}$ the MW noise is
+$\sigma_{\mathrm{MW}} \approx \sigma_\code / (\sqrt{2}\,\lamwl) \sim
+0.25$ wide-lane cycles, i.e.\ code-noise-limited.  The integer-ready
+(BIA-corrected) variant subtracts the satellite MW bias
+$b_{\mathrm{MW}}^\sat$, which has the same algebra as \Cref{eq:mw}
+applied to the OSB phase and code biases of \Cref{eq:obs-code,eq:obs-phase}.
+
+The level series $\mwc^\sat(k)$ is screened against a robust adaptive
+gate whose deviation statistic is configurable via
+\texttt{estimation.cycle\_slip.mw\_detect\_reference}.  The
+recommended --- and replay-default --- choice is the first time
+difference $\mathrm{TD1}(k) = \mwc^\sat(k) - \mwc^\sat(k-1)$, gated
+against the median-absolute-deviation of its own history; the second
+time difference $\mathrm{TD2}(k) = \mwc^\sat(k) - 2\,\mwc^\sat(k-1) +
+\mwc^\sat(k-2)$ is available (\texttt{mw\_td\_order}) for curvature
+immunity at a $\sqrt{6}$ noise penalty versus the $\sqrt{2}$ of TD1 (the
+white-noise scaling of each statistic is the single source of truth in
+\texttt{MwSlipDetector::activeStatScale}).  A windowed local median and
+the legacy Hatch-mean reference are retained for A/B comparison
+(\texttt{local\_median}, \texttt{hatch\_mean}).  The threshold itself is
+fully data-driven --- no stochastic-model $\sigma$ enters --- combining
+a per-arc MAD, an EWMA-smoothed cross-satellite MAD floor and an
+elevation $1/\sin\theta$ shape, with a breadth cascade (band-pair
+$\rightarrow$ constellation $\rightarrow$ global-no-GLONASS) for sparse
+or cold-start arcs; the empirical construction lives in
+\texttt{MwSlipDetector::computeAdaptiveThreshold} and is intentionally
+not reproduced here.
+
+\subsubsection{Extra-wide-lane (EWL)}\label{sec:slip-ewl}
+
+For three-or-more frequency satellites the same MW algebra
+(\Cref{eq:mw}) is applied to a pair of \emph{non-L1} carriers
+(\texttt{EwlSlipDetector::computeEwlMwMeters}; band digit $\ge 2$).
+Because the two carriers are spectrally close --- $f_1 - f_2$ small ---
+the extra-wide-lane wavelength
+\begin{equation}
+\lamewl \;=\; \frac{\sLight}{f_1 - f_2}
+\label{eq:ewl-wavelength}
+\end{equation}
+is very long: GPS L2/L5 gives $\lamewl \approx \SI{5.86}{m}$ and Galileo
+E5a/E5b $\approx \SI{9.77}{m}$.  Metre-level code noise then maps to
+$\lesssim 0.05$ EWL cycles, so the EWL integer $N_{\mathrm{EWL}} = N_2 -
+N_5$ resolves in a single epoch and a slip $\slipd N_{\mathrm{EWL}}$ is
+sized with near-certainty.  Together with the L1/L2 wide-lane
+(\Cref{eq:mw-content}) this yields two independent band-difference
+constraints,
+\begin{equation}
+\slipd \Nwl = \slipd N_1 - \slipd N_2,
+\qquad
+\slipd N_{\mathrm{EWL}} = \slipd N_2 - \slipd N_5,
+\label{eq:wl-ewl-system}
+\end{equation}
+narrowing the per-signal triple $(\slipd N_1, \slipd N_2, \slipd N_5)$
+to a single remaining degree of freedom \cite{geng2013triple}.
+
+\subsubsection{GRAPHIC (single-frequency half-sum)}\label{sec:slip-graphic}
+
+The GRAPHIC combination averages the code and phase on a \emph{single}
+band (\texttt{GraphicSlipDetector::computeGraphic}):
+\begin{equation}
+\graphicc^\sat_{\sigl}
+\;=\;
+\tfrac{1}{2}\bigl(\code^\sat_{\sigl} + \phaseo^\sat_{\sigl}\bigr),
+\label{eq:graphic}
+\end{equation}
+with $\phaseo^\sat_\sigl$ in metres.  Because the slant ionosphere
+enters $+\mu_\sigl I^\sat_{\rx,1}$ on the code and $-\mu_\sigl
+I^\sat_{\rx,1}$ on the phase of the \emph{same} signal
+(\Cref{eq:obs-code,eq:obs-phase}), the half-sum cancels it to first
+order --- GRAPHIC is ionosphere-free without a second frequency, at the
+cost of retaining half the code noise.  The combination still contains
+the geometric range, clocks and troposphere plus the constant
+half-ambiguity $\tfrac12 \lambda_\sigl N^\sat_\sigl$, so the
+between-epoch first difference
+\begin{equation}
+\mathrm{d}\graphicc^\sat_\sigl(k)
+\;=\;
+\graphicc^\sat_\sigl(k) - \graphicc^\sat_\sigl(k-1)
+\label{eq:graphic-diff}
+\end{equation}
+removes the constant ambiguity (and cancels range and clocks down to
+receiver-motion / code-noise level).  A $\slipd N$-cycle slip on signal
+$\sigl$ therefore produces a jump of $\tfrac12 \lambda_\sigl\,\slipd N$,
+and the integer estimate is $\slipd N = \operatorname{round}\!\bigl(2\,
+\mathrm{d}\graphicc / \lambda_\sigl\bigr)$.  With $\sigma_\code \sim
+\SI{0.3}{m}$ the post-difference noise is $\sim\SI{0.3}{m}$, so
+sensitivity is noise-limited to a few L1 cycles; in practice a hard
+floor \texttt{kMinThresholdM} $= \SI{0.5}{m}$ governs on quiet arcs
+($\approx 5$ L1 cycles), keeping GRAPHIC a coarse backstop rather than a
+sub-cycle detector \cite{yunck1993coping,banville2013mitigating}.
+
+\subsubsection{Geometry-free phase (staged)}\label{sec:slip-gf}
+
+The geometry-free (GF) observable is the between-band phase difference
+\begin{equation}
+\gfc^\sat \;=\; \phaseo^\sat_{1} - \phaseo^\sat_{2}
+\;\approx\;
+(\mu_2 - \mu_1)\,I^\sat_{\rx,1}
+\;+\; (\lambda_1 N^\sat_1 - \lambda_2 N^\sat_2),
+\label{eq:gf}
+\end{equation}
+which removes geometry, clocks and troposphere exactly but retains the
+\emph{difference} of the two ionospheric delays.  Since $I^\sat_{\rx,1}$
+varies smoothly, a second-order time difference
+\begin{equation}
+\mathrm{TD2}_{\gfc}(k)
+\;=\;
+\gfc^\sat(k) - 2\,\gfc^\sat(k-1) + \gfc^\sat(k-2)
+\label{eq:gf-td2}
+\end{equation}
+cancels the ionospheric trend up to quadratic order over the sampling
+interval, leaving noise plus slip
+(\texttt{GfSlipDetector::computeGfMeters} for \Cref{eq:gf}; the TD2
+update is the level-jump test statistic).  The detector is intrinsically
+high-rate ($\ge \SI{1}{Hz}$): at coarse rate the residual ionospheric
+curvature defeats \eqref{eq:gf-td2}.  It is present in the tree but
+excluded from the build; the same algebra backs the active
+\texttt{src/core/slip/IonoVariabilityMonitor.cpp}.
+
+\subsubsection{Ionosphere-free phase (staged)}\label{sec:slip-if}
+
+The dual-frequency ionosphere-free (IF) phase combination uses the
+coefficients
+\begin{equation}
+c_1 = \frac{f_1^{2}}{f_1^{2} - f_2^{2}},
+\qquad
+c_2 = \frac{f_2^{2}}{f_1^{2} - f_2^{2}},
+\qquad
+c_1 - c_2 = 1,
+\label{eq:if-coeffs}
+\end{equation}
+giving $\phaseo^\sat_{\mathrm{IF}} = c_1 \phaseo^\sat_1 - c_2
+\phaseo^\sat_2$ and the effective wavelength $\lamif = \bigl|c_1
+\lambda_1 - c_2 \lambda_2\bigr|$
+(\texttt{IfPhaseSlipDetector::computeIfWavelengthMeters}); for GPS L1/L2
+$\lamif \approx \SI{0.107}{m}$.  Rather than screen the raw combination,
+the staged detector forms the IF observed-minus-computed (OMC),
+differences it between satellites against a high-elevation pivot
+$\piv{g}$ to remove the receiver clock, the inter-system offset
+$\sLight\,\delta t^{(g)}_\rx$ and the satellite phase clock, then
+between epochs to remove the slowly-varying wet troposphere and the
+constant ambiguity:
+\begin{equation}
+\dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}}(k)
+=
+\bigl[\phaseo^\sat_{\mathrm{IF}}(k) - \phaseo^{\piv{g}}_{\mathrm{IF}}(k)\bigr]
+-
+\bigl[\phaseo^\sat_{\mathrm{IF}}(k-1) - \phaseo^{\piv{g}}_{\mathrm{IF}}(k-1)\bigr],
+\label{eq:if-dd}
+\end{equation}
+which is near zero for a clean arc and jumps by $\sim \slipd N\,\lamif$
+on a slip.  The between-satellite step does not cancel the differential
+geometric error $(\los^\sat - \los^{\piv{g}})^{\Tr} \delta\rxpos$, so
+flagging must be gated by the filter's 3D position sigma; this restricts
+the staged detector to a static site with a precise a priori position,
+which is why \texttt{estimation.enable\_if\_slip\_detector}
+is currently inert.
+
+\subsection{TurboEdit dual-frequency resolution}\label{sec:slip-turboedit}
+
+The TurboEdit resolver
+(\texttt{src/core/slip/TurboEditResolver.cpp},
+\texttt{include/slip/TurboEditResolver.hpp}) is a \emph{pure} MW+GF
+joint integer solver.  It owns the per-arc geometry-free jump history
+and the integer arithmetic, and returns per-signal integer repairs plus
+a reset-fallback set without mutating filter state; it is wired into
+both the post-processing \texttt{CycleSlipManager} and the real-time
+engine, and enabled by \texttt{estimation.cycle\_slip.turbo\_edit}.
+
+\subsubsection{The 2$\times$2 system}\label{sec:slip-te-system}
+
+For a dual-frequency phase pair $(\sigl_1, \sigl_2)$ on satellite
+$\sat$, ordered higher-frequency first ($f_{\sigl_1} > f_{\sigl_2}$,
+hence $\lambda_{\sigl_1} < \lambda_{\sigl_2}$), the resolver pairs two
+scalar slip observables.  The first is the MW wide-lane integer of
+\Cref{eq:mw-content}, taken \emph{as input} from the MW detector and
+never recomputed (the empirically tuned MW path of
+\Cref{sec:slip-mw} is the single source of $\slipd \Nwl$):
+\begin{equation}
+\slipd \Nwl \;=\; \slipd N_{\sigl_1} - \slipd N_{\sigl_2}
+\qquad\text{(one equation, two unknowns).}
+\label{eq:te-mw}
+\end{equation}
+The second is the GF phase jump in metres.  Writing the GF level as
+$\gfc(t) = \lambda_{\sigl_1} L_{\sigl_1}(t) - \lambda_{\sigl_2}
+L_{\sigl_2}(t)$ (carrier in cycles), a simultaneous slip steps its
+ambiguity content by
+\begin{equation}
+\slipd \gfc
+\;=\;
+\lambda_{\sigl_1}\,\slipd N_{\sigl_1} - \lambda_{\sigl_2}\,\slipd N_{\sigl_2},
+\label{eq:te-gf}
+\end{equation}
+estimated in-arc by the second-order time difference $\mathrm{TD2}(t) =
+\gfc(t) - 2\,\gfc(t-1) + \gfc(t-2)$ of \Cref{eq:gf-td2}, which cancels
+the ionospheric delay up to quadratic order so that at the slip epoch it
+equals the integer jump plus phase noise only.  The TD2 chain requires
+three \emph{consecutive} epochs; non-consecutive history forces a chain
+re-seed (\Cref{sec:slip-te-bridge}).
+
+Stacking \Cref{eq:te-mw,eq:te-gf} gives the linear map from the integer
+slip pair to the two observed jumps:
+\begin{empheq}[box=\fbox]{equation}
+\begin{pmatrix} \slipd \Nwl \\[2pt] \slipd \gfc \end{pmatrix}
+\;=\;
+\underbrace{\begin{pmatrix} 1 & -1 \\[2pt] \lambda_{\sigl_1} & -\lambda_{\sigl_2} \end{pmatrix}}_{\bm A}
+\begin{pmatrix} \slipd N_{\sigl_1} \\[2pt] \slipd N_{\sigl_2} \end{pmatrix}.
+\label{eq:te-2x2}
+\end{empheq}
+The determinant $\det \bm A = \lambda_{\sigl_1} - \lambda_{\sigl_2}$ is
+non-zero for any genuine cross-band pair --- it is the cm-scale quantity
+\texttt{denom} of \Cref{eq:te-solve}, $\approx \SI{-0.0539}{m}$ for GPS
+L1/L2, \emph{not} the $\sim\!\SI{0.86}{m}$ wide-lane wavelength --- so
+the system is always invertible:
+\begin{equation}
+\bm A^{-1}
+=
+\frac{1}{\lambda_{\sigl_1} - \lambda_{\sigl_2}}
+\begin{pmatrix} -\lambda_{\sigl_2} & 1 \\[2pt] -\lambda_{\sigl_1} & 1 \end{pmatrix}.
+\label{eq:te-inv}
+\end{equation}
+The implementation does not invert the full matrix; it solves the second
+row for $\slipd N_{\sigl_2}$ and back-substitutes the first
+(\texttt{TurboEditResolver.cpp}):
+\begin{equation}
+\slipd N_{\sigl_2}
+\;=\;
+\frac{\slipd \gfc - \lambda_{\sigl_1}\,\slipd \Nwl}{\lambda_{\sigl_1} - \lambda_{\sigl_2}},
+\qquad
+\slipd N_{\sigl_1}
+\;=\;
+\slipd N_{\sigl_2} + \slipd \Nwl,
+\label{eq:te-solve}
+\end{equation}
+with $\slipd \gfc$ instantiated either by the in-arc TD2 or, across a
+data gap, by the bridged jump of \Cref{sec:slip-te-bridge}.  The
+denominator $\lambda_{\sigl_1} - \lambda_{\sigl_2}$ (the variable
+\texttt{denom} in the source) equals $\approx \SI{-0.0539}{m}$ for GPS
+L1/L2, so the amplification factor on the wide-lane integer is
+$\lambda_{\sigl_1} / (\lambda_{\sigl_1} - \lambda_{\sigl_2}) \approx
+-3.53$: the GF equation must localise $\slipd N_{\sigl_2}$ to well
+within $\pm 0.5$ cycle despite that lever, which is what the
+split-capability gate below enforces.
+
+\subsubsection{Integer rounding and validation}\label{sec:slip-te-round}
+
+The float $\slipd N_{\sigl_2}$ from \Cref{eq:te-solve} is rounded and
+its residual recorded:
+\begin{equation}
+d_2 = \operatorname{round}\!\bigl(\slipd N_{\sigl_2}\bigr),
+\quad
+f = \bigl|\slipd N_{\sigl_2} - d_2\bigr|,
+\quad
+d_1 = d_2 + \slipd \Nwl.
+\label{eq:te-round}
+\end{equation}
+A candidate is \emph{accepted} as a repair only if the rounding is clean
+($f \le 0.30$, the constant \texttt{kMaxFractional}; a $1 - 0.30 = 0.70$
+cycle margin to the nearest wrong integer), the magnitudes are sane
+($|d_1|, |d_2| \le \texttt{kMaxSlipCycles}$), and the pair is non-trivial
+($d_1 \neq 0 \lor d_2 \neq 0$).  A non-trivial accepted candidate yields
+\texttt{action="repair"}; $(d_1, d_2) = (0, 0)$ is resolved as no-slip
+and the arc keeps rolling; otherwise the satellite is reset.
+
+Before the joint solve is \emph{trusted}, the GF evidence must be sharp
+enough to discriminate the integer lattice.  The float $\slipd
+N_{\sigl_2}$ carries $\sigma_{\mathrm{TD2}} / |\lambda_{\sigl_1} -
+\lambda_{\sigl_2}|$ cycles of noise, so the solve is permitted only when
+\begin{equation}
+\sigma_{\mathrm{TD2}}
+\;\le\;
+\texttt{turbo\_edit\_split\_max\_sigma}\,\cdot\,
+\bigl|\lambda_{\sigl_1} - \lambda_{\sigl_2}\bigr|
+\qquad(\texttt{splitCapable}),
+\label{eq:te-split}
+\end{equation}
+with $\sigma_{\mathrm{TD2}}$ the arc's own MAD-derived $\sigma$ when
+mature, else the cross-satellite tier floor, else NaN (NaN fails by
+design --- ``no estimate'' is not evidence of sharpness).  The default
+\texttt{estimation.cycle\_slip.turbo\_edit\_split\_max\_sigma} is
+$0.2$ cycles.  This gate is the single mechanism making the resolver
+rate-adaptive: millimetric $\SI{1}{s}$ noise passes trivially, while
+coarse-rate ($\SI{30}{s}$) ionospheric residual passes only while the
+arc is quiet.  On an MW-flagged pair failing the gate the resolver falls
+back to a satellite reset; a GF-only exceedance on a split-incapable arc
+is \emph{ignored}, not reset.  When $\slipd \Nwl = 0$ (an equal slip
+$\slipd N_{\sigl_1} = \slipd N_{\sigl_2}$, to which MW is blind) a
+GF-only flag fires on $|\mathrm{TD2}|$ exceeding an adaptive threshold
+$\tau = \max(k_\sigma \hat\sigma_{\mathrm{TD2}}, \SI{0.04}{m})$, with
+$k_\sigma$ the \texttt{turbo\_edit\_sigma\_multiplier}; the floor sits
+just below $|\lambda_{\sigl_1} - \lambda_{\sigl_2}| \approx
+\SI{0.054}{m}$ so a $\pm 1$-cycle equal slip remains detectable.
+
+\subsubsection{MW-only / code-event null line}\label{sec:slip-te-codeevent}
+
+The asymmetric case is MW flagged but the GF jump \emph{affirmatively
+zero}.  For a fixed $\slipd \Nwl = k$, every integer pair $(\slipd
+N_{\sigl_1}, \slipd N_{\sigl_1} - k)$ predicts, via \Cref{eq:te-gf}, a GF
+jump
+\begin{equation}
+\slipd \gfc
+\;=\;
+\lambda_{\sigl_2} k - (\lambda_{\sigl_2} - \lambda_{\sigl_1})\,\slipd N_{\sigl_1},
+\label{eq:te-nullline}
+\end{equation}
+whose zero crossing sits at $\slipd N_{\sigl_1} = \lambda_{\sigl_2} k /
+(\lambda_{\sigl_2} - \lambda_{\sigl_1}) \approx 4.53\,k$ for GPS L1/L2
+($\approx 3.95\,k$ for L1/L5).  Every small pair $|\slipd N_{\sigl_1}|
+\le 3$ then predicts $|\slipd \gfc| \ge \SI{8}{cm}$ --- orders above
+phase noise --- so a flat GF leaves only \emph{null-line} pairs of
+$(4,3)$ / $(9,7)$-class magnitude: implausible multi-cycle simultaneous
+slips on both signals with no loss of lock.  The Occam-simpler
+explanation is a narrow-lane \emph{code} excursion (multipath, NLOS, DLL
+re-lock), since $\mwc = \phaseo_{\mathrm{WL}} - \code_{\mathrm{NL}}$ and
+one wide-lane cycle $\approx \SI{0.86}{m}$ of narrow-lane code.
+
+Accordingly the pair is classified a code-domain artifact --- and the
+caller \emph{skips} the phase reset --- when the GF jump is affirmatively
+zero within a discrimination-bounded gate,
+\begin{equation}
+|\mathrm{TD2}|
+\le
+\underbrace{\texttt{kCodeEventZeroSigma}\cdot\hat\sigma_{\mathrm{MAD}}}_{\text{zero gate}}
+\quad\wedge\quad
+\text{zero gate}
+\le
+\underbrace{\texttt{kVetoZeroGateMaxLambdaFrac}\cdot|\lambda_{\sigl_1} - \lambda_{\sigl_2}|}_{\text{discrimination cap}},
+\label{eq:te-codeevent}
+\end{equation}
+with $\texttt{kCodeEventZeroSigma} = 3.5$ ($\approx 99.95\%$ two-sided)
+and $\texttt{kVetoZeroGateMaxLambdaFrac} = 0.5$.  The cap is the
+rate-adaptive safeguard: a zero gate wider than half the smallest
+GF-visible quantum cannot distinguish stillness from a small slip, so
+the veto stands down and the MW mandate governs.  The classification is
+further trust-gated --- veto enabled, MW flagged, GF not exceeding, no
+post-slip cooldown, ionospherically stable constellation, no LLI on
+either signal, and MAD maturity $\ge 10$ samples (stricter than
+detection's $5$, because affirming stillness is a state-\emph{preserving}
+decision).  The implied null-line pair is computed for the trace only,
+never applied; \texttt{did\_slip} stays false so the GF chain keeps
+rolling.  A genuine null-line slip is not lost: it jumps that signal's
+Kalman phase innovation by $\ge |4\lambda_{\sigl_1}| \approx \SI{0.76}{m}$
+this very epoch, far beyond any residual gate, so the residual-driven
+reset corrects it one epoch late.  The behaviour is toggled by
+\texttt{estimation.cycle\_slip.turbo\_edit\_mw\_only\_veto} (default on).
+
+\subsubsection{Gap-spanning GF bridge}\label{sec:slip-te-bridge}
+
+The TD2 chain needs three consecutive epochs; any per-signal dropout or
+receiver gap re-seeds the chain, making the post-gap TD2 \emph{blind} to
+a re-lock slip whose GF level jump lives \emph{between} the two chains.
+When a chain break occurs within
+\texttt{estimation.cycle\_slip.turbo\_edit\_max\_gap\_s}, the resolver
+stashes the pre-gap GF level $\gfc_{\mathrm{ref}}$, its timestamp, the
+arc's EWMA GF rate $\dot{\gfc}$ and the pre-gap spacing $dt_0$, and on
+return forms the drift-corrected across-gap jump
+\begin{empheq}[box=\fbox]{equation}
+\slipd \gfc_{\mathrm{gap}}
+\;=\;
+\gfc_{\mathrm{now}} - \gfc_{\mathrm{ref}} - \dot{\gfc}\,\Delta t,
+\qquad
+\Delta t = t_{\mathrm{now}} - t_{\mathrm{ref}},
+\label{eq:te-bridge}
+\end{empheq}
+which then plays the role of $\slipd \gfc$ in \Cref{eq:te-solve}.  Here
+$\dot{\gfc}$ is an EWMA ($\alpha = 0.1$) of the per-epoch GF rate, chosen
+so its noise does not amplify when projected over the gap.  Because the
+un-cancelled ionospheric residual is random-walk over the gap, the
+detection threshold and the code-event zero gate are widened by the
+factor $w = \sqrt{\Delta t / dt_0}$ (for $\Delta t > dt_0$), and the
+split-capability $\sigma$ becomes $\sigma_{\mathrm{bridge}} =
+\hat\sigma_{\mathrm{MAD}}\,w$; the zero-gate \emph{discrimination cap}
+stays un-widened, since the integer lattice of \Cref{eq:te-2x2} does not
+stretch with the gap.  The bridge cap default is $\SI{15}{s}$ in code,
+raised to $\SI{60}{s}$ in the bundled real-time and replay configs.
+
+An MW-flagged pair across the gap is attributed three ways.  (i) A
+\emph{code event} (\texttt{action="code\_event"}) when $\slipd
+\gfc_{\mathrm{gap}}$ is affirmatively zero within the widened gate ---
+the same null-line logic as \Cref{eq:te-codeevent}, applied across the
+gap --- preserving phase through a re-acquisition DLL transient.
+(ii) A \emph{repair} or \emph{moot} when the joint solve runs with
+$\slipd \gfc = \slipd \gfc_{\mathrm{gap}}$; per signal it is dispatched
+by observation-domain continuity, a signal observed at every epoch
+through the gap kept its ambiguity (its nonzero $\slipd N$ is a genuine
+\emph{repair}), whereas a signal that missed an epoch was
+pruned-and-reseeded on return (its nonzero $\slipd N$ is \emph{moot} ---
+already absorbed, mandate suppressed).  (iii) A \emph{reset} when the
+across-gap $\sigma$ is too coarse for the split, or the candidate set
+fits zero or two integers with no deferral.
+
+Because the GF equation alone is degenerate along the null-line lattice
+of \Cref{eq:te-nullline} --- $+\SI{0.735}{m}$ fits both $(0,-3)$ and
+$(9,4)$ at millimetre level; only the integer $k$ separates them --- the
+bridged solve demands a \emph{unique} surviving candidate after three
+guards: the fractional gate of \Cref{eq:te-round}; a GF-separation guard
+requiring the candidate's own predicted jump to clear the zero gate,
+$|\lambda_{\sigl_1} d_1 - \lambda_{\sigl_2} d_2| > \texttt{zero\_gate}$,
+lest a marginal noise exceedance mint a multi-cycle repair from noise;
+and a sibling-pair zero affirmation, whereby a satellite's \emph{other}
+GF arc that stayed chain-continuous and unflagged through the bridged
+interval affirms $\slipd N = 0$ for both its signals and prunes any
+candidate demanding a nonzero integer on an affirmed signal.  The
+wide-lane integer feeding the bridged solve is taken in trust order: the
+published MW integer $k$; failing that, at the flag epoch,
+$\operatorname{round}(f) \pm 3$ around the (NL-code-biased) instantaneous
+re-acquisition float; and on deferral epochs the settled across-gap MW
+Hatch mean.  When the float wide-lane evidence is unsettled or the
+lattice is ambiguous (two or more acceptable integers), the solve is
+\emph{deferred} rather than guessed
+(\texttt{estimation.cycle\_slip.turbo\_edit\_wl\_settle\_max\_s}),
+terminating in a later repair, reset or timeout-reset.
+
+\subsubsection{Atomic reconciliation}\label{sec:slip-te-atomic}
+
+Per-satellite candidates are reconciled atomically: a cross-pair integer
+disagreement on a shared signal demotes the whole satellite to reset,
+and a satellite ending in the reset set has its code-event, moot, clean
+and pending classifications \emph{withdrawn} --- contradictory evidence
+always resolves to the conservative outcome.  Arc bookkeeping keeps the
+TD2 validity precondition honest: a non-consecutive update partially
+resets the chain but preserves the slowly-varying MAD calibration
+window, an absolute gap beyond the configured maximum wipes the arc, and
+an accepted slip re-seeds with a short cooldown to suppress the TD2 echo;
+only clean (non-exceeding, non-bridged) TD2 samples feed the MAD window.

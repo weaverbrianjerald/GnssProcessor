@@ -129,12 +129,4 @@ namespace GnssProcessor {
         Eigen::Vector3d displacement;                /**< Displacement vector to apply (meters) */
     };
 
-    /**
-     * @brief Sun ephemeris (position) at a given epoch.
-     */
-    struct SunEphemeris {
-        GnssTime time;                               /**< Epoch of the Sun position */
-        Eigen::Vector3d position;                    /**< Sun position in ECEF or chosen frame (meters) */
-    };
-
 } // namespace GnssProcessor

@@ -26,6 +26,7 @@
  */
 
 #include "app/Application.hpp"
+#include "aiding/ImuAidingSource.hpp"   // full type for aiding_manager_->imu() wiring
 #include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
@@ -449,6 +450,12 @@ void Application::handleGap(double dt,
     state_manager_->pruneAmbiguitiesExcept({});
     state_manager_->pruneSatBiasStatesExcept({});
 
+    // The ambiguity teardown above invalidates every soft-LLI / gap-bridge
+    // hold and snapshot — a hold outliving its state would later "restore"
+    // a pre-gap value onto a freshly rebuilt ambiguity.
+    if (cycle_slip_manager_) cycle_slip_manager_->resetSoftLliBridge();
+    if (meas_model_) meas_model_->setProtectedAmbiguityKeys({});
+
     if (config_.enableBetweenSatelliteSd() && meas_model_) {
         meas_model_->getPivotManager().dropAllPivots(*state_manager_);
     }
@@ -529,13 +536,14 @@ namespace {
 // Epoch helper: Detect and repair cycle slips
 // ---------------------------------------------------------------------------
 
-void Application::detectCycleSlips(const std::string& epoch_prefix,
+CycleSlipEpochResult Application::detectCycleSlips(const std::string& epoch_prefix,
                                const std::vector<PppObservation>& modeled_obs) {
     auto result = cycle_slip_manager_->detectAndRepair(
         epoch_prefix, modeled_obs, *state_manager_, *meas_model_);
     if (result.state_modified) {
         state_manager_->updatePppStateFromVector(state_manager_->getStateVector(), ppp_state_, *state_manager_);
     }
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,10 +568,28 @@ void Application::applyGimIonoUpdate(const GnssTime& current_time,
     std::vector<double> var;    // per-row pseudo-obs variance (m^2)
     std::vector<System> cons;   // constellation, for the common-mode block structure
 
+    // BSSD pivot satellites hold their slant-iono state frozen (value 0,
+    // variance 0) as the rank-fixing datum; they must be excluded from the
+    // pseudo-observation entirely (see the per-row guard below).
+    const std::set<std::string>& frozen_pivots =
+        state_manager_->getFrozenPivotSatellites();
+
     for (const auto& obs : modeled_obs) {
         if (obs.elevation < iw.elevation_cutoff_deg) continue;
         const int iono_idx = state_manager_->getIonosphereIndex(obs.satellite);
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
+        // Skip BSSD pivot / any frozen-datum iono row.  A zero-variance state
+        // receives zero Kalman gain, so it cannot benefit from the GIM; but
+        // because it shares the per-constellation common-mode block in R, its
+        // spurious innovation (GIM_STEC - 0 ~ 5-30 m) would otherwise leak into
+        // every other same-constellation iono state through the off-diagonal
+        // S^-1.  The pivot's datum offset is exactly what the common-mode block
+        // is meant to absorb from the *remaining* rows, so it must not appear
+        // as a row itself.
+        if (frozen_pivots.count(obs.satellite) ||
+            state_manager_->getStateVariance(iono_idx) <= 0.0) {
+            continue;
+        }
         // The slant-iono state is referenced to GPS L1 for every
         // constellation (see the MeasurementModel iono Jacobian).
         const GimQuery q = gim_->slantIonoDelay(current_time, rx, obs.sat_pos,
@@ -673,6 +699,20 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     bool need_update = true;
     size_t carry_bad_residual_count = 0;
     std::set<std::string> carry_excluded_measurements;
+    // Soft-LLI bridge: phase signals currently held across a receiver LLI gap
+    // pending a TurboEdit integer repair are excluded from the KF update so
+    // their still-slipped ambiguities cannot contaminate shared states across
+    // the MW one-epoch confirmation delay.  Empty unless turbo_edit_bridge_lli.
+    if (cycle_slip_manager_) {
+        auto held = cycle_slip_manager_->getHeldPendingBridgeKeys();
+        carry_excluded_measurements.insert(held.begin(), held.end());
+        // The held ambiguity STATES must also survive the measurement
+        // model's prune-on-first-miss for the duration of the outage —
+        // deleting them would destroy the pre-gap state the bridge repair
+        // restores.  Same source set as the exclusion above, so protection
+        // and exclusion cannot diverge; empty when nothing is held.
+        meas_model_->setProtectedAmbiguityKeys(std::move(held));
+    }
 
     // Concise-log gate: marks the start of a new epoch's update loop. When
     // logging.kalman_filter_concise_log is on, pass-1 messages emit live
@@ -687,21 +727,9 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
 
         // In tightly-coupled mode, provide current INS attitude and specific
         // force to the measurement model so Doppler Jacobian rows include
-        // attitude-error and accelerometer-bias partials.
-        if (config_.tightlyCoupledImu() && imu_integrator_ && kalman_filter_) {
-            const Eigen::VectorXd x = state_manager_->getStateVector();
-            Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
-            if (state_manager_->hasImuBiases())
-                accel_bias = x.segment<3>(state_manager_->getAccelBiasIndex());
-            // Use a nominal gravity-subtracted specific force in body frame.
-            // At rest, f_b ≈ C^T * (-g).  For moving platforms the last IMU
-            // sample is a good approximation over the GNSS epoch interval.
-            const Eigen::Vector3d g_e = ImuIntegrator::computeGravityEcef(
-                x.segment<3>(state_manager_->getPositionIndex()));
-            const Eigen::Matrix3d C = kalman_filter_->getAttitude();
-            const Eigen::Vector3d f_b = C.transpose() * (-g_e) - accel_bias;
-            meas_model_->setImuState(C, f_b);
-        }
+        // attitude-error and accelerometer-bias partials.  (Relocated into
+        // ImuAidingSource; the setImuState arithmetic is unchanged.)
+        if (aiding_manager_) aiding_manager_->applyTcJacobianInputs(*meas_model_);
 
         EpochMeasurement meas_update = meas_model_->computeMeasurementUpdate(
             modeled_obs, state_manager_->getStateVector(), carry_excluded_measurements);
@@ -713,6 +741,19 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
 
         // Carry forward the bad-residual count so the full-reset safety net accumulates across passes.
         meas_update.bad_residual_count = carry_bad_residual_count;
+
+        // Append composable aiding measurement rows (ZUPT/baro/...) into the
+        // finalized measurement before the KF consumes it.  Row sources are
+        // restricted to undifferenced PPP for now; appendAidingRow hard-errors
+        // if R_full is populated (BSSD/DD active).  The state vector is held in
+        // a local so the context's reference outlives collectMeasurement.
+        if (aiding_manager_ && !aiding_manager_->empty()) {
+            const Eigen::VectorXd aiding_meas_x = state_manager_->getStateVector();
+            const AidingEpochContext aiding_meas_ctx{
+                aiding_meas_x, prev_epoch_time_, meas_update.time, false };
+            for (const auto& row : aiding_manager_->collectMeasurement(aiding_meas_ctx))
+                MeasurementModel::appendAidingRow(meas_update, row);
+        }
 
         const Eigen::Vector3d old_pos = ppp_state_.position;
 
@@ -901,7 +942,7 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
     // folded into C_b_e_ (and zeroed).  Doing it properly there needs
     // deferred nominal feedback; until a tightly-coupled config actually
     // exercises relinearization, keep the original behavior on that path.
-    if (config_.tightlyCoupledImu()) {
+    if (aiding_manager_ && aiding_manager_->anySourceRequiresNaiveRelinearization()) {
         runGeometryRelinearizationNaive(epoch_prefix, epoch_obs, applied_meas);
         return;
     }
@@ -1034,18 +1075,9 @@ void Application::runGeometryRelinearizationNaive(const std::string& epoch_prefi
         return;
     }
 
-    // Set IMU state for tightly-coupled Jacobian partials.
-    if (config_.tightlyCoupledImu() && imu_integrator_ && kalman_filter_) {
-        const Eigen::VectorXd x = state_manager_->getStateVector();
-        Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
-        if (state_manager_->hasImuBiases())
-            accel_bias = x.segment<3>(state_manager_->getAccelBiasIndex());
-        const Eigen::Vector3d g_e = ImuIntegrator::computeGravityEcef(
-            x.segment<3>(state_manager_->getPositionIndex()));
-        const Eigen::Matrix3d C = kalman_filter_->getAttitude();
-        const Eigen::Vector3d f_b = C.transpose() * (-g_e) - accel_bias;
-        meas_model_->setImuState(C, f_b);
-    }
+    // Set IMU state for tightly-coupled Jacobian partials (relocated into
+    // ImuAidingSource; the setImuState arithmetic is unchanged).
+    if (aiding_manager_) aiding_manager_->applyTcJacobianInputs(*meas_model_);
 
     EpochMeasurement relinear_meas = meas_model_->computeMeasurementUpdate(
         relinear_obs, state_manager_->getStateVector());
@@ -1152,6 +1184,15 @@ void Application::capturePosteriorSnapshot(const std::set<std::string>& reset_sa
 
     snap.reset_satellites = reset_satellites;
     snap.is_discontinuity = was_complete_reset;
+
+    // BSSD frame metadata for the backward pass (audit P2-1).  getBssdPivot-
+    // Satellites is the FINAL per-epoch pivot map (after routine, forced-rebuild,
+    // and slip-phase handovers); getCleanHandovers reports the undisturbed,
+    // losslessly-invertible legs.  Both empty when BSSD is inactive.
+    if (meas_model_) {
+        snap.pivot_satellites = meas_model_->getBssdPivotSatellites();
+        snap.clean_handovers  = meas_model_->getPivotManager().getCleanHandovers();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1375,9 +1416,10 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
             if (auto* mw = cycle_slip_manager_->mwDetector())
                 mw->setMaxGapSeconds(effective_interval * 1.5);
         }
-        // TurboEdit needs the cadence regardless of IMU mode: it gates the
-        // GF-based repair on the high-rate (≤1 s) requirement and tightens its
-        // own GF-arc gap tolerance to the cadence.
+        // TurboEdit needs the cadence regardless of IMU mode: it tightens its
+        // own GF-arc gap tolerance to the cadence and logs the coarse-rate
+        // advisory (GF trust itself is evidence-gated per arc — see the
+        // TurboEditResolver header's "Rate adaptivity" note).
         cycle_slip_manager_->setSampleInterval(effective_interval);
     }
 
@@ -1398,26 +1440,22 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         iono_variability_monitor_->enableTracing(log_dir_);
     }
 
-    // IMU integrator (GNSS/INS coupled mode)
-    if (config_.enableImu()) {
-        imu_integrator_ = std::make_unique<ImuIntegrator>(config_, log_manager_);
-        const auto& imu_path = config_.getImuConfig().imu_file_path;
-        if (!imu_path.empty()) {
-            if (!imu_integrator_->loadData(imu_path)) {
-                log_manager_.getLogger("main_log")->warn(
-                    "IMU enabled but failed to load data from {}; falling back to GNSS-only",
-                    imu_path.string());
-                imu_integrator_.reset();
-            } else {
-                const char* mode_str = config_.tightlyCoupledImu()
-                    ? "tightly-coupled" : "loosely-coupled";
-                log_manager_.getLogger("main_log")->info(
-                    "IMU integration enabled ({}): {} samples loaded",
-                    mode_str, imu_integrator_->sampleCount());
-            }
-        } else {
-            log_manager_.getLogger("main_log")->warn("IMU enabled but no imu_file_path configured");
-            imu_integrator_.reset();
+    // Aiding sources (GNSS/INS coupling; the IMU is the first client, with
+    // ZUPT/NHC/baro/... composing later via AidingSourceRegistry).  The
+    // AidingSourceManager owns the config-selected set; ImuAidingSource wraps
+    // the integrator (load + graceful GNSS-only fallback on failure, logged in
+    // its ctor).  state_manager_ and kalman_filter_ are already constructed
+    // above, so the IMU source can be wired immediately.
+    aiding_manager_ = std::make_unique<AidingSourceManager>(config_, log_manager_);
+    aiding_manager_->reserveAllStates(*state_manager_);   // every source stashes StateManager / reserves blocks
+    if (auto* imu = aiding_manager_->imu()) {
+        imu->attachFilter(*kalman_filter_);    // IMU-only: nominal-attitude owner handle (C_b_e_)
+        if (imu->hasData() && imu->integrator()) {
+            const char* mode_str = config_.tightlyCoupledImu()
+                ? "tightly-coupled" : "loosely-coupled";
+            log_manager_.getLogger("main_log")->info(
+                "IMU integration enabled ({}): {} samples loaded",
+                mode_str, imu->integrator()->sampleCount());
         }
     }
 
@@ -1481,6 +1519,30 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
             const double since_last = current_time.tow - last_processed_tow_;
             if (since_last + 1e-3 < config_.getGnssRate()) {
                 continue;
+            }
+        }
+
+        // 4a3. Optional max-duration cutoff (processing.max_duration_s).
+        // Stop the run once the data-time span from the first processed
+        // epoch reaches the configured limit — measured as epoch GPS time
+        // relative to the first processed obs (e.g. 3600 s => one hour, or
+        // ~3600 epochs of 1 s data), independent of replay speed.  The
+        // first epoch anchors the window; it is reached only after any
+        // leading decimation skip above, so the budget is not spent on
+        // skipped epochs.  0 (default) = no limit.  Real-time uses its own
+        // copy in RealTimeEngine::processEpoch.
+        if (config_.getMaxDuration() > 0.0) {
+            if (first_epoch_) {
+                max_duration_anchor_s_ = TimeUtils::continuousGpsSeconds(current_time);
+            } else {
+                const double span = TimeUtils::continuousGpsSeconds(current_time)
+                                  - max_duration_anchor_s_;
+                if (span >= config_.getMaxDuration()) {
+                    log_manager_.getLogger("main_log")->info(
+                        "Reached max processing duration: {:.1f} s of data processed "
+                        "(limit {:.1f} s); stopping epoch loop", span, config_.getMaxDuration());
+                    break;
+                }
             }
         }
 
@@ -1634,9 +1696,16 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         // 4f. Kalman prediction.
-        if (imu_integrator_ && imu_integrator_->hasData() && !first_epoch_) {
-            // IMU-aided prediction: use strapdown mechanization.
-            kalman_filter_->predictImu(prev_epoch_time_, current_time, *imu_integrator_);
+        if (aiding_manager_ && !aiding_manager_->empty() && !first_epoch_) {
+            // Aiding-augmented prediction (IMU strapdown today).  predictAided
+            // delegates to predict(dt) when no source contributes this interval
+            // (e.g. no IMU samples), matching the legacy GNSS-only fallback.
+            // The state vector is held in a local so the context's reference
+            // outlives collectPredict.
+            const Eigen::VectorXd aiding_x = state_manager_->getStateVector();
+            const AidingEpochContext aiding_ctx{
+                aiding_x, prev_epoch_time_, current_time, first_epoch_ };
+            kalman_filter_->predictAided(dt, aiding_manager_->collectPredict(aiding_ctx));
         } else {
             kalman_filter_->predict(dt);
         }
@@ -1659,7 +1728,31 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
 
         // 4g. Cycle slip detection & ambiguity resets.
-        detectCycleSlips(epoch_prefix, modeled_obs);
+        const CycleSlipEpochResult slip_result =
+            detectCycleSlips(epoch_prefix, modeled_obs);
+
+        // Smoother: fold covariance-preserving repairs into the just-captured
+        // a-priori as a deterministic control input (audit F1).  A repair shifts
+        // the ambiguity by a known dN·λ in the SAME (pre-update) frame x_pred was
+        // captured in; adding it to x_pred prevents the backward pass from
+        // absorbing the jump as a spurious measurement innovation.  Indices
+        // resolve against the live layout, which still equals x_pred's layout
+        // here (predict + slip detection do not reindex existing keys; state
+        // growth happens later inside the update loop).  A key also RESET this
+        // epoch is segmented, not compensated (R6).
+        if (config_.runSmoother() && !smoother_buffer_.empty()
+            && !slip_result.ambiguity_repairs.empty()) {
+            SmootherEpochSnapshot& snap = smoother_buffer_.back();
+            for (const auto& [amb_key, delta_m] : slip_result.ambiguity_repairs) {
+                const auto us = amb_key.find('_');
+                const std::string sat = (us != std::string::npos)
+                                            ? amb_key.substr(0, us) : amb_key;
+                if (slip_result.reset_satellites.count(sat)) continue;  // segmented
+                const int idx = state_manager_->getAmbiguityIndex(amb_key);
+                if (idx >= 0 && static_cast<Eigen::Index>(idx) < snap.x_pred.size())
+                    snap.x_pred(idx) += delta_m;
+            }
+        }
 
         // 4h. Iterative KF measurement update loop.
         EpochMeasurement applied_meas{};
@@ -1679,6 +1772,12 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         for (const auto& sat_id : kalman_filter_->getLastResetSatellites()) {
             epoch_reset_sats.insert(sat_id);
         }
+        // Merge the slip-phase resets (SD-aware resets, pivot-disturbance
+        // inflations, soft-LLI bridge restores, post-handover deferred repairs)
+        // so the smoother segments them too — previously only KF-internal resets
+        // reached the snapshot (audit F1).
+        epoch_reset_sats.insert(slip_result.reset_satellites.begin(),
+                                slip_result.reset_satellites.end());
 
         // 4h2. Ionosphere weighting: apply the GIM as a between-satellite
         // soft constraint on the slant-iono states.  Post-processing path
@@ -1691,6 +1790,15 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         // operates on float ambiguities (v1 policy).  AR-fixed states
         // are applied below for the forward solution only.
         capturePosteriorSnapshot(epoch_reset_sats, epoch_complete_reset, have_applied);
+
+        // Soft-LLI bridge: roll the "last good" ambiguity snapshot from the
+        // converged FLOAT posterior (before AR fix-and-hold tightens the
+        // covariance).  Only converged keys update it, so it holds the pre-gap
+        // anchor a later LLI hold repairs against.  No-op unless
+        // turbo_edit_bridge_lli.
+        if (cycle_slip_manager_)
+            cycle_slip_manager_->recordAmbiguitySnapshot(
+                *state_manager_, TimeUtils::continuousGpsSeconds(current_time));
 
         // 4i2. Integer ambiguity resolution (MLAMBDA).
         if (ambiguity_resolver_ && have_applied) {

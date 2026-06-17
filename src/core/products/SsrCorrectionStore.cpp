@@ -7,10 +7,12 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/Constants.hpp"
+#include <spdlog/spdlog.h>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <string>
 
 namespace GnssProcessor {
 
@@ -25,7 +27,16 @@ bool freshEnough(const GnssTime& record, const GnssTime& query, double max_age_s
     if (record.week == 0 && record.tow == 0.0) return false; // never set
     if (query.week == 0 && query.tow == 0.0)   return true;  // caller doesn't know time; trust the record
     const double age = secondsBetween(query, record);
-    if (age < 0.0) return true;          // record arrived "after" query (clock drift); accept
+    // Symmetric tolerance.  A mildly-negative age (record stamped a touch after
+    // the query — sub-second clock drift, frame jitter) is fine.  But a record
+    // from far in the FUTURE relative to the query is NOT a correction for this
+    // observation: it is the live-corrections-vs-lagging-obs desync (obs ~1.5 h
+    // behind fresh SSR → age ≈ −5400 s).  Applying it extrapolates the SSR
+    // clock backward over that gap and detonates (c1·dt + c2·dt² → "zero/invalid
+    // clock product" on every satellite).  Reject it so the satellite falls back
+    // to its (self-consistent, obs-time) broadcast clock instead.
+    if (age < -max_age_s) return false;  // record far in the future vs query → REJECT
+    if (age < 0.0) return true;          // mild negative (drift/jitter) → accept
     return age <= max_age_s;
 }
 
@@ -62,6 +73,22 @@ void SsrCorrectionStore::pushCombined(const SsrCombinedCorrection& rec, const Ss
 void SsrCorrectionStore::pushCodeBias(const SsrCodeBias& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& r = by_sat_[rec.sat]; r.code_bias = rec; r.header = header;
+
+    // Diagnostic (trace): the code-bias signal keys the SSR stream actually
+    // carries per Galileo satellite.  getCodeBias() matches the receiver's exact
+    // RINEX obs code, so if a sat shows only "C1C" (stream omits E5a/E5b) or
+    // "C5X"/"C5I" where the receiver tracks C5Q (sig-id mismatch), the E5a/E5b
+    // lookup returns 0 and the sat-bias state must cover it.  "corrections" is
+    // registered in the global spdlog registry by LogManager.
+    if (!rec.sat.empty() && rec.sat[0] == 'E') {
+        if (auto lg = spdlog::get("corrections");
+            lg && lg->should_log(spdlog::level::trace)) {
+            std::string keys;
+            for (const auto& kv : rec.bias_per_signal)
+                keys += kv.first + "=" + std::to_string(kv.second) + " ";
+            lg->trace("SSR-CBIAS-KEYS {}: {}", rec.sat, keys);
+        }
+    }
 }
 
 void SsrCorrectionStore::pushPhaseBias(const SsrPhaseBias& rec, const SsrHeader& header) {
@@ -181,6 +208,30 @@ bool SsrCorrectionStore::isEmpty() const {
 std::size_t SsrCorrectionStore::size() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return by_sat_.size();
+}
+
+SsrCorrectionStore::Coverage
+SsrCorrectionStore::coverageFor(const std::vector<std::string>& sats,
+                                const GnssTime& time, double max_age_s) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Coverage cov;
+    for (const auto& sat : sats) {
+        ++cov.total;
+        const auto it = by_sat_.find(sat);
+        if (it == by_sat_.end()) continue;
+        const SatRecord& rec = it->second;
+        // Orbit/clock are high-rate: gate on freshness (combined wins, as in
+        // getOrbitClock).  Biases update slowly — presence is enough.
+        const bool comb = rec.combined && freshEnough(rec.combined->received_time, time, max_age_s);
+        if (comb || (rec.orbit && freshEnough(rec.orbit->received_time, time, max_age_s)))
+            ++cov.orbit;
+        if (comb || (rec.clock && freshEnough(rec.clock->received_time, time, max_age_s))
+                 || (rec.hrclock && freshEnough(rec.hrclock->received_time, time, max_age_s)))
+            ++cov.clock;
+        if (rec.code_bias)  ++cov.code_bias;
+        if (rec.phase_bias) ++cov.phase_bias;
+    }
+    return cov;
 }
 
 std::string SsrCorrectionStore::censusSummary() const {

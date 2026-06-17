@@ -4,14 +4,14 @@
 %           + ENU conversion + position error magnitude
 %  ============================================================
 
-clear all; clc; %close all;
+clear all; %clc; %close all;
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\logs\state_trace.csv';
-%fname = 'C:\GnssProcessor\batch_results_GE_Dual\JLPM_week_2025_200_215\2025-200\JPLM\logs\state_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\state_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\state_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\smoother_trace.csv';
+% Folder resolved via gnssVizLogDir() — set it once per session (directly
+% or through view_all.m) instead of editing a hardcoded path here, e.g.:
+%   gnssVizLogDir('D:\GnssProcessor_Testing\sbf_replay\precise\ppp_rtk\static');
+fname = gnssTracePath('state_trace.csv');
+%fname = gnssTracePath('smoother_trace.csv');   % RTS smoother trace instead
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to UTC datetime ---
@@ -103,7 +103,8 @@ end
 
 % Reference point for ENU
 lxyz = min([length(x),length(y),length(z)]);
-x0 = median(x(lxyz-round(lxyz/2,0):end),'omitmissing');  y0 = median(y(lxyz-round(lxyz/2,0):end),'omitmissing');  z0 = median(z(lxyz-round(lxyz/2,0):end),'omitmissing'); % median of post-converged
+halfIdx = lxyz-round(lxyz/2,0);
+x0 = median(x(halfIdx:end),'omitmissing');  y0 = median(y(halfIdx:end),'omitmissing');  z0 = median(z(halfIdx:end),'omitmissing'); % median of post-converged
 %x0 = median(x(120:end),'omitmissing');  y0 = median(y(120:end),'omitmissing');  z0 = median(z(120:end),'omitmissing'); % median of post-converged
 %x0 = x(end-1);  y0 = y(end-1); z0 = z(end-1); % end epoch
 %x0 = -2281621.777;  y0 = -1453585.151;  z0 = 5756964.848; % GCGO (gnss-qc)
@@ -158,24 +159,24 @@ pos_err = sqrt(E.^2 + N.^2 + U.^2);
 %  ENU Components
 % ============================================================
 
-figure('Name','ENU Components','Color','w');
-
-subplot(3,1,1); hold on;
-plot(t, E, 'm', 'LineWidth', 1.2);
-ylabel('East (m)');
-title('ENU Position Components');
-grid on;
-
-subplot(3,1,2); hold on;
-plot(t, N, 'm', 'LineWidth', 1.2);
-ylabel('North (m)');
-grid on;
-
-subplot(3,1,3); hold on;
-plot(t, U, 'm', 'LineWidth', 1.2);
-ylabel('Up (m)');
-xlabel('GPS Time');
-grid on;
+% figure('Name','ENU Components','Color','w');
+% 
+% subplot(3,1,1); hold on;
+% plot(t, E, 'm', 'LineWidth', 1.2);
+% ylabel('East (m)');
+% title('ENU Position Components');
+% grid on;
+% 
+% subplot(3,1,2); hold on;
+% plot(t, N, 'm', 'LineWidth', 1.2);
+% ylabel('North (m)');
+% grid on;
+% 
+% subplot(3,1,3); hold on;
+% plot(t, U, 'm', 'LineWidth', 1.2);
+% ylabel('Up (m)');
+% xlabel('GPS Time');
+% grid on;
 
 %% ============================================================
 %  Position Error: E / N / U / 3D combined
@@ -196,8 +197,8 @@ ylabel('Error (m)');
 title('ENU & 3D Position Error');
 legend({'E','N','U','3D'}, 'Location','best');
 
-convergedIdx = 120;
-E=E(convergedIdx:end); N=N(convergedIdx:end); U=U(convergedIdx:end);
+convergedIdx = halfIdx;
+E=E(convergedIdx:end); N=N(convergedIdx:end); U=U(convergedIdx:end); pos_err = pos_err(convergedIdx:end);
 mE = mean(E,'omitnan')*100;       sE = std(E,'omitnan')*100;
 mN = mean(N,'omitnan')*100;       sN = std(N,'omitnan')*100;
 mU = mean(U,'omitnan')*100;       sU = std(U,'omitnan')*100;
@@ -290,8 +291,8 @@ end
 %  Optional: 3D Trajectory
 % ============================================================
 
-figure('Name','3D Position','Color','w');
-plot3(x, y, z, '-b', 'LineWidth', 1.2);
-xlabel('X (m)'); ylabel('Y (m)'); zlabel('Z (m)');
-title('3D Receiver Trajectory');
-grid on; axis equal;
+% figure('Name','3D Position','Color','w');
+% plot3(x, y, z, '-b', 'LineWidth', 1.2);
+% xlabel('X (m)'); ylabel('Y (m)'); zlabel('Z (m)');
+% title('3D Receiver Trajectory');
+% grid on; axis equal;

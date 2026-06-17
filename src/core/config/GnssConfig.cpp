@@ -93,6 +93,7 @@ namespace GnssProcessor {
         , mw_channel_mode_{ MwChannelMode::Mirror }
         , enable_inhouse_bias_estimation_{ false }
         , mw_init_frac_threshold_{ 0.4 }
+        , mw_cross_sat_ewma_alpha_{ 0.1 }
         , state_ambiguity_basis_{ StateAmbiguityBasis::PerBand }
         , satellite_interpolation_mode_{ SatelliteInterpolationMode::Lagrange }
         , satellite_clock_interpolation_mode_{ SatelliteClockInterpolationMode::Linear }
@@ -103,6 +104,7 @@ namespace GnssProcessor {
         , data_gap_tolerance_s_{ 0.0 }
         , long_gap_tolerance_s_{ 300.0 }
         , gnss_rate_s_{ 0.0 }
+        , max_duration_s_{ 0.0 }
         , rinex_types_{ "CL" }
         , active_systems_{ "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS" }
         , zhd_pressure_mbar{ 1013.25 }

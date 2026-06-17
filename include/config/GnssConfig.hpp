@@ -176,6 +176,30 @@ namespace GnssProcessor {
         double getMwInitFracThreshold() const { return mw_init_frac_threshold_; }
 
         /**
+         * @brief EWMA smoothing factor for the MW cross-satellite σ floor.
+         *
+         * The cross-satellite MAD that floors the MW slip-detection threshold
+         * during arc warmup is recomputed every epoch from a thin
+         * cross-section (one deviation per satellite per band-pair group), so
+         * the raw per-epoch estimate is statistically jumpy. Because the MW
+         * noise *envelope* varies slowly, each cross-sat tier is updated as an
+         * exponentially-weighted moving average instead of overwritten:
+         * @f$\sigma_t = \alpha\,\mathrm{MAD}_{epoch} + (1-\alpha)\,\sigma_{t-1}@f$,
+         * with the first finite MAD as the bootstrap.
+         *
+         * Smaller @f$\alpha@f$ = heavier smoothing / slower adaptation; the
+         * default 0.1 (~10-sample memory) suppresses the per-epoch jitter while
+         * still tracking real noise-level drift over a session. Must lie in
+         * (0, 1]; 1.0 disables smoothing (raw per-epoch MAD). Only affects the
+         * warmup floor — mature arcs gate on their own per-arc MAD regardless.
+         *
+         * Configured via @c processing.mw_cross_sat_ewma_alpha.
+         *
+         * @return EWMA factor in (0, 1].
+         */
+        double getMwCrossSatEwmaAlpha() const { return mw_cross_sat_ewma_alpha_; }
+
+        /**
          * @brief Whether the MW detector estimates per-(sat, signal-pair)
          *        phase biases in-house when external BIA is unavailable.
          *
@@ -321,6 +345,57 @@ namespace GnssProcessor {
          * @return Processing rate in seconds (0 = disabled).
          */
         double getGnssRate() const { return gnss_rate_s_; }
+
+        /**
+         * @brief Gets the maximum processing duration in seconds.
+         *
+         * When greater than zero, the epoch loop stops once the data-time
+         * span from the first processed epoch reaches this value.  The span
+         * is measured as GPS epoch time relative to the first processed
+         * observation, NOT wall-clock time — so a 3600 s limit on 1 s data
+         * yields one hour (≈3600 epochs) regardless of how fast the file
+         * replays or the stream arrives.  Anchored on the first processed
+         * epoch, so any leading decimation skip (post-processing) or
+         * corrections-ready warmup defer (real-time) does not count against
+         * the budget.
+         *
+         * A value of 0 (the default) disables the cutoff: processing runs to
+         * RINEX EOF (post-processing) or until the stream ends / the user
+         * interrupts (real-time).  Honoured by post-processing PPP/PPP-RTK
+         * (@c Application::run), baseline (@c Application::runBaseline), and
+         * the real-time engine (@c RealTimeEngine::processEpoch).
+         *
+         * Configured via @c processing.max_duration_s.
+         *
+         * @return Maximum processing duration in seconds (0 = unlimited).
+         */
+        double getMaxDuration() const { return max_duration_s_; }
+
+        /**
+         * @brief Real-time obs skip-to-latest master toggle.
+         *
+         * When true (real-time only; post-processing ignores it), the engine
+         * drops observation epochs that trail wall-clock GPS time by more than
+         * @c obsSkipMaxLagS, fast-forwarding the filter to the freshest epoch so
+         * a lagging obs stream cannot be processed against fresher
+         * orbit/clock/SSR corrections.  Default off — opt-in, and assumes an
+         * NTP-synced host (the lag is measured against the system clock).
+         * Configured via @c processing.enable_obs_skip_to_latest.
+         */
+        bool enableObsSkipToLatest() const { return enable_obs_skip_to_latest_; }
+
+        /// @brief Max obs lag (s) behind wall-clock GPS before skip-to-latest
+        ///        drops the epoch (real-time only).  Config @c processing.obs_skip_max_lag_s.
+        double obsSkipMaxLagS() const { return obs_skip_max_lag_s_; }
+
+        /// @brief Warn-only real-time obs-backlog threshold (s); ≤0 disables the
+        ///        warning (e.g. deliberate file replay).  Config @c processing.rt_backlog_warn_s.
+        double rtBacklogWarnSeconds() const { return rt_backlog_warn_s_; }
+
+        /// @brief Max |obs − SSR-record| age (s) before the SSR orbit/clock
+        ///        overlay is rejected and the satellite falls back to
+        ///        broadcast-grade (real-time).  Config @c processing.ssr_max_age_s.
+        double getSsrMaxAge() const { return ssr_max_age_s_; }
 
         /**
          * @brief Get the enabled RINEX observation-type letters.
@@ -888,6 +963,20 @@ namespace GnssProcessor {
          */
         const CycleSlipConfig& getCycleSlipConfig() const {
             return cycle_slip_;
+        }
+
+        /**
+         * @brief Gets the navigation aiding-source selection.
+         *
+         * Consumed by @c AidingSourceRegistry::createEnabled to compose the
+         * @c AidingSourceManager source set.  @c imu back-compat-defaults to
+         * @c enableImu() when @c estimation.aiding.imu is not set explicitly.
+         *
+         * @return Const ref to the stored config (JSON path
+         *         @c estimation.aiding).
+         */
+        const AidingConfig& getAidingConfig() const {
+            return aiding_;
         }
 
         /**
@@ -1544,6 +1633,7 @@ namespace GnssProcessor {
         MwChannelMode   mw_channel_mode_;    ///< MW detector channel mode (Mirror inherits KF).
         bool enable_inhouse_bias_estimation_;         ///< In-house per-(sat, sig-pair) MW phase bias estimation; default off.
         double mw_init_frac_threshold_;                 ///< First-epoch sanity check: max |frac| (WL cycles) before forcing a slip-on-init.  Raise for code-noisy combinations (L1C-based MW).
+        double mw_cross_sat_ewma_alpha_;                 ///< EWMA factor (0,1] for smoothing the MW cross-sat σ warmup floor; smaller = smoother. Default 0.1.
         StateAmbiguityBasis state_ambiguity_basis_; ///< Ambiguity parameterization (PerBand or NlWl).
         SatelliteInterpolationMode satellite_interpolation_mode_; ///< Satellite position/velocity interpolation mode (Lagrange, Finite, Hermite, Spline).
         SatelliteClockInterpolationMode satellite_clock_interpolation_mode_; ///< Satellite clock interpolation mode (Linear, Lagrange).
@@ -1554,6 +1644,11 @@ namespace GnssProcessor {
         double data_gap_tolerance_s_;                     ///< Data gap tolerance (s); 0 = use measurement rate.
         double long_gap_tolerance_s_;                   ///< Long-gap threshold (s); separates short vs long gap policy in handleGap.
         double gnss_rate_s_;                              ///< Effective processing rate (s); 0 = process every RINEX epoch.
+        double max_duration_s_;                           ///< Max data-time span to process (s); 0 = unlimited. Measured as epoch GPS time relative to the first processed obs.
+        bool   enable_obs_skip_to_latest_{ false };       ///< RT-only: skip obs epochs far behind wall-clock GPS (drop backlog, process freshest).
+        double obs_skip_max_lag_s_{ 5.0 };                ///< RT-only: drop an obs epoch lagging wall-clock GPS by more than this (s).
+        double rt_backlog_warn_s_{ 5.0 };                 ///< RT-only: warn-only obs-backlog threshold (s); ≤0 disables.
+        double ssr_max_age_s_{ 30.0 };                    ///< RT-only: max |obs − SSR-record| age (s) before SSR overlay rejected to broadcast-grade.
         std::string rinex_types_;                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         ProcessNoise process_noise_;                          ///< Process noise parameters.
@@ -1616,6 +1711,7 @@ namespace GnssProcessor {
         CorrectionsReadyGateConfig corrections_ready_gate_;         ///< Real-time: defer estimation until all above-mask sats are broadcast+SSR.
         ZwdConstraintConfig    zwd_constraint_;                     ///< Soft a-priori ZWD constraint (anchors the BSSD [up,ZWD] null space).
         CycleSlipConfig        cycle_slip_;                         ///< Which cycle-slip detectors run (SlipDetectorRegistry selection).
+        AidingConfig           aiding_;                             ///< Which aiding sources run (AidingSourceRegistry selection).
         AdaptiveIonoQConfig adaptive_iono_q_;                       ///< Adaptive ionospheric process-noise (GF second-difference) config.
         IonosphereWeightingConfig iono_weighting_;                  ///< GIM ionosphere-weighting (PPP-RTK soft iono constraint) config.
 

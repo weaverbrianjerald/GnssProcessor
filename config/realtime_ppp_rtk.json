@@ -16,15 +16,18 @@
 
   "processing": {
     "mode": "PPP-RTK",
+	"max_duration_s": 600.0,
 	"rinex_types": "CL",
+	"active_systems": [ "GPS", "GLONASS" ],
 	//"active_systems": [ "GPS" ],
-	"active_systems": [ "GPS", "Galileo" ],
+	//"active_systems": [ "GPS", "Galileo", "GLONASS" ],
     //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "elevation_mask_deg": 10.0,
     "exclude_eclipsing_satellites": true,
     "eclipse_shadow_scale": 1.0,
+    "relinearize_geometry": true,
     "leap_seconds_tai": 37.0,
     "satellite_interpolation_mode": "lagrange",
     "satellite_clock_interpolation_mode": "linear",
@@ -97,6 +100,7 @@
       "ntrip_host":       "products.igs-ip.net",
       "ntrip_port":       2101,
       "ntrip_mountpoint": "SSRC03IGS1",
+	  //"ntrip_mountpoint": "SSRC01CAS1",
       "ntrip_user":       "weaverb",
       "ntrip_password":   "OsuGeomatics26!",
       "reconnect_delay_s": 5,
@@ -115,6 +119,11 @@
   "estimation": {
     "between_satellite_sd": {
       "enabled": true,
+      // GLONASS participates in BSSD with FLOAT ambiguities (FDMA inter-channel
+      // bias makes its phase integers unresolvable, so they are held float).
+      // Required for GLONASS to enter the SD solution at all — with this false
+      // GLONASS is decoded/modelled but SKIPPED at the measurement stage.
+      "enable_glonass": true,
       "pivot_min_elevation": 25.0
     },
 	"estimate_sat_biases": true,
@@ -124,6 +133,11 @@
       "elevation_mask": 20.0,
       "hold_variance": 0.001
     },
+	"stuck_code_bias": {
+		"enabled": false,        // default true
+		"min_streak": 5,        // consecutive rejection epochs → reset (0 disables this branch)
+		"bias_floor_m": 3.0     // warmed-up EWMA |mean| (m) → reset (0 disables this branch)
+	},
 	"residual_history": { "enabled": false },
 	"enable_huber_r_inflation": false,
 	"accumulate_phase_windup": true,
@@ -131,10 +145,44 @@
 	"enable_subcycle_slip_suppression": false,
     "lock_signals_to_clock_ref": false,
     "require_bia_for_signals": false,
+
+    // Cycle-slip detection / repair (same block as sbf_replay_covl145.json).
+    // MW is the primary detector; turbo_edit enables the MW+GF joint
+    // per-signal repair (Blewitt TurboEdit) — valid here because the live
+    // SBF stream is 1 Hz, so the geometry-free jump isolates the slip
+    // before the ionospheric residual contaminates it.
+    // mw_detect_reference "time_difference" + mw_td_order "first" gates the
+    // MW TD1 against the MAD of its own time-difference history (memoryless,
+    // trend- and quadratic-immune; sqrt(2) noise amplification).
+    // turbo_edit_mw_only_veto: an MW flag whose geometry-free phase is
+    // affirmatively flat is classified as a code-domain artifact (multipath /
+    // NLOS / DLL stress) and the phase reset is SKIPPED; the KF
+    // phase-innovation gate is the backstop if it really was a slip.
+    // turbo_edit_max_gap_s: gap-spanning GF bridge — across-gap ΔGF + MW k
+    // attributes post-gap flags per-signal instead of blanket resets.
+    "cycle_slip": {
+      "mw": true,
+      "turbo_edit": true,
+      "turbo_edit_mw_only_veto": true,
+      "turbo_edit_max_gap_s": 60.0,
+      "turbo_edit_bridge_lli": true,
+      "mw_sigma_multiplier":         8.0,
+      "turbo_edit_sigma_multiplier":  8.0,
+      "mw_detect_reference": "time_difference",
+      "mw_td_order": "first",
+      "mw_local_window": 20
+    },
+
     "defer_until_corrections_ready": {
       "enabled": true,
       "min_satellites": 5,
-      "min_satellites_per_system": 0,
+      // Per-constellation cm-grade quorum: hold the startup gate until EVERY
+      // configured active_system (GPS and Galileo here) fields this many SSR-
+      // cm-grade sats — capped by what each can field, floored at 2.  Prevents
+      // the single-constellation start (Galileo-only while GPS ephemeris is
+      // still assembling) that perturbs the filter when GPS joins mid-run.
+      // The timeout_s below still forces a degraded start if one never arrives.
+      "min_satellites_per_system": 4,
       "require_all_above_mask": false,
       "drop_broadcast_grade": true,
       "timeout_s": 120
@@ -142,7 +190,7 @@
     "zwd_constraint": {
       "enabled": true,
       "apriori_m": 0.10,
-      "sigma_m": 0.30
+      "sigma_m": 0.20
     }
   },
 
@@ -163,7 +211,7 @@
       "position": 30.0,
       "velocity": 100.0,
       "clock": 1000.0,
-      "troposphere": 0.5,
+      "troposphere": 0.2,
       "ionosphere": 5.0,
       "ambiguity": 100.0,
       "code_bias": 10.0,
@@ -172,10 +220,10 @@
       "tropo_gradient": 0.001
     },
     "measurement_noise": {
-      //"code_std_m": 0.300,
-      //"phase_std_m": 0.001,
-	  "code_std_m": 1.000,
-	  "phase_std_m": 0.003,
+      "code_std_m": 0.300,
+      "phase_std_m": 0.001,
+	  //"code_std_m": 0.500,
+	  //"phase_std_m": 0.002,
       "doppler_std_m": 0.5
     },
     "phase_elevation_power": 1.0,
@@ -198,7 +246,7 @@
     "enable_receiver_pco": true,
     "enable_receiver_pcv": true,
     "enable_phase_windup": true,
-    "enable_code_phase_bias": true,
+    "enable_code_phase_bias": false,
 	// Live SBF stream carries no RINEX antenna record — seed the rooftop
 	// LEIAR25 NONE so the receiver ATX entry matches (post-processing's RINEX
 	// header always wins, so this is inert there).  The cross-system fallback
@@ -207,7 +255,8 @@
 	// borrows across constellations.
 	"receiver_antenna_type_override": "LEIAR25         NONE",
 	"enable_receiver_cross_system_atx_fallback": true,
-	"require_atx_coverage": false
+	"refine_emission_time": false,
+	"require_atx_coverage": true
   },
 
   "data_download": {
@@ -231,13 +280,14 @@
     "enable_ambiguity_resolver":true,
     "enable_cycle_slip_manager":true,
     "enable_mw_slip_detector":  true,
+    "enable_turbo_edit_resolver":true,
     "enable_bssd_pivot_manager":true,
     "enable_bssd_transform":    true,
     "enable_ntrip":             true,
     "enable_geometry":          true,
     "enable_troposphere":       true,
     "enable_ionosphere":        true,
-    "enable_antenna":           true,
+    "enable_antenna":           false,
     "enable_stochastic_model":  true,
 
     "//1": "--- quiet / off (peripheral or staged) ---",
@@ -261,6 +311,7 @@
     "enable_residual_trace":    true,
     "enable_dop_trace":         true,
     "enable_mw_slip_trace":     true,
+    "enable_turbo_edit_trace":  true,
     "enable_wls_trace":         true,
     "enable_windup_trace":      false,
     "enable_if_slip_trace":     false,
@@ -274,16 +325,17 @@
     "levels": {
       "rt_engine":          "debug",
       "ppp_model":          "info",
-      "measurement_model":  "info",
+      "measurement_model":  "warn",
       "kalman_filter":      "info",
       "state_manager":      "debug",
-      "corrections":        "info",
+      "corrections":        "error",
       "ambiguity_resolver": "debug",
       "cycle_slip_manager": "debug",
       "mw_slip_detector":   "info",
+      "turbo_edit_resolver":"debug",
       "bssd_pivot_manager": "debug",
-      "bssd_transform":     "debug",
-      "ntrip":              "trace",
+      "bssd_transform":     "warn",
+      "ntrip":              "warn",
       "state_initializer":  "info",
       "gnss_config":        "info",
       "geometry":           "info",

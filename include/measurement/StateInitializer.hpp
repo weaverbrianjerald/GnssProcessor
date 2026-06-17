@@ -57,8 +57,15 @@ public:
      * @brief Initialize inter-system biases from first-epoch code observations.
      *
      * Computes the median code residual per system relative to GPS.
+     *
+     * @return @c true if initialization completed (GPS reference present, so the
+     *         ISB seeds are final); @c false if it bailed because no GPS code
+     *         observation was available this epoch.  The caller must only latch
+     *         "ISB initialized" on @c true — otherwise a run whose GPS joins
+     *         after the first estimating epoch marks the bias done-but-unseeded
+     *         and never retries, pinning every non-GPS ISB at 0 for the session.
      */
-    void initializeInterSystemBiases(const std::vector<PppObservation>& observations,
+    bool initializeInterSystemBiases(const std::vector<PppObservation>& observations,
                                       const std::string& epoch_prefix);
 
     /**

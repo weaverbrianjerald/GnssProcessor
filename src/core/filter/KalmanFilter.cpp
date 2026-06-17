@@ -407,6 +407,18 @@ namespace GnssProcessor {
     // ===================================================================
 
     void KalmanFilter::predict(double dt) {
+        if (dt <= 0.0) {
+            // A non-positive time step has no propagation: the transition is
+            // identity and the process-noise increment is zero, so predict() is a
+            // no-op.  Returning here — rather than calling getProcessNoiseMatrix /
+            // getTransitionMatrix, which hard-throw on dt<=0 — keeps the public
+            // KF API robust to duplicate / non-advancing epochs (e.g. a real-time
+            // stream delivering the same TOW twice).  The engine already skips
+            // such epochs upstream; this is the belt-and-suspenders backstop.
+            log_manager_.getLogger("kalman_filter")->debug(
+                "predict: non-positive time step dt={:.6f} — skipping propagation (no-op)", dt);
+            return;
+        }
         Eigen::VectorXd x = state_manager_.getStateVector();
         Eigen::MatrixXd P = state_manager_.getCovariance();
         if (x.size() == 0 || P.rows() == 0 || P.cols() == 0) {
@@ -588,6 +600,79 @@ namespace GnssProcessor {
 
         if (logger_) logger_->logStateVector(x, "IMU Predicted State Vector");
         if (logger_) logger_->logCovarianceMatrix(P, "IMU Predicted Covariance Matrix");
+    }
+
+    // ===================================================================
+    // Aiding-source-aided prediction (composable generalization of predictImu)
+    // ===================================================================
+
+    void KalmanFilter::spliceAndPropagate(Eigen::VectorXd& x, Eigen::MatrixXd& P,
+                                          Eigen::MatrixXd& Q_full, std::size_t state_size,
+                                          const std::vector<PredictContribution>& contributions) {
+        // Identity-seeded transition: non-owned (non-INS) state means are NOT
+        // propagated, matching predictImu's F_full = I seed.
+        Eigen::MatrixXd F_full = Eigen::MatrixXd::Identity(state_size, state_size);
+
+        for (const auto& c : contributions) {
+            if (!c.valid) continue;
+
+            // Nominal write-backs (pos/vel/att-zero for the IMU), out-of-range
+            // / sentinel indices skipped exactly as predictImu skips them.
+            for (size_t k = 0; k < c.nominal_indices.size(); ++k) {
+                const size_t idx = c.nominal_indices[k];
+                if (idx < state_size)
+                    x(static_cast<Eigen::Index>(idx)) =
+                        c.nominal_values(static_cast<Eigen::Index>(k));
+            }
+
+            // Inject the contribution's Phi/Q over the full-state indices it
+            // owns — ASSIGNMENT, not accumulation (the same reason predictImu
+            // uses = : avoid double-counting the baseline process noise on owned
+            // rows).
+            const size_t n = c.indices.size();
+            for (size_t i = 0; i < n; ++i) {
+                if (c.indices[i] >= state_size) continue;
+                const auto ri = static_cast<Eigen::Index>(c.indices[i]);
+                for (size_t j = 0; j < n; ++j) {
+                    if (c.indices[j] >= state_size) continue;
+                    const auto cj = static_cast<Eigen::Index>(c.indices[j]);
+                    F_full(ri, cj) = c.Phi(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j));
+                    Q_full(ri, cj) = c.Q(static_cast<Eigen::Index>(i), static_cast<Eigen::Index>(j));
+                }
+            }
+        }
+
+        P = F_full * P * F_full.transpose() + Q_full;
+        P = 0.5 * (P + P.transpose());
+    }
+
+    void KalmanFilter::predictAided(double dt,
+                                    const std::vector<PredictContribution>& contributions) {
+        // Empty / all-invalid => byte-identical GNSS-only predict.  Delegating
+        // (rather than reimplementing) inherits x=F*x, the BSSD freeze-state
+        // surgery, and the dt<=0 guard for free.
+        double baseline_dt = 0.0;
+        bool any_valid = false;
+        for (const auto& c : contributions) {
+            if (c.valid) { any_valid = true; baseline_dt = std::max(baseline_dt, c.dt_total); }
+        }
+        if (!any_valid) { predict(dt); return; }
+
+        Eigen::VectorXd x = state_manager_.getStateVector();
+        Eigen::MatrixXd P = state_manager_.getCovariance();
+        const size_t state_size = state_manager_.getStateSize();
+
+        // Baseline Q over the contribution's integrated interval (dt_total) — as
+        // predictImu does (NOT the GNSS dt): the non-owned rows keep their config
+        // random-walk process noise scaled by the same interval the INS used.
+        Eigen::MatrixXd Q_full = state_manager_.getProcessNoiseMatrix(baseline_dt);
+        spliceAndPropagate(x, P, Q_full, state_size, contributions);
+
+        state_manager_.setStateVector(x);
+        state_manager_.setCovariance(P);
+
+        if (logger_) logger_->logStateVector(x, "Aided Predicted State Vector");
+        if (logger_) logger_->logCovarianceMatrix(P, "Aided Predicted Covariance Matrix");
     }
 
     // ===================================================================
@@ -2468,6 +2553,17 @@ namespace GnssProcessor {
                         }
                         state_manager_.markAmbiguityPendingReseed(amb_key);
                     }
+                    // Record the reset at SATELLITE granularity only (no
+                    // per-signal entries): every phase ambiguity of the sat
+                    // was reset, which is exactly the sat-wide signature
+                    // reinflateResetSatStates keys on for the iono/sat-bias
+                    // partition guard, and the per-sat fallback in the
+                    // callers' arc-clearing loops then drops the whole MW /
+                    // TurboEdit arc history for the sat (a multi-band
+                    // common-integer slip invalidates all of it).  Without
+                    // this push the reset was invisible to arc clearing,
+                    // reinflation, and smoother segmentation alike.
+                    last_reset_satellites_.push_back(sat);
                     any_pivot_slip = true;
                 }
             }

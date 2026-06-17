@@ -12,6 +12,7 @@
 
 #include "products/LiveEphemerisStore.hpp"
 #include "common/Constants.hpp"
+#include <spdlog/spdlog.h>
 #include <array>
 #include <cmath>
 
@@ -89,6 +90,21 @@ int ssrMatchIode(const BroadcastEphemeris& eph) {
     }
 }
 
+// Max usable |t − toe| per system ≈ the broadcast fit interval × ~2 margin.
+// Beyond this an extrapolated orbit/clock is junk; reject (sat skipped) rather
+// than emit a silently-wrong position.  Sized so a legitimately old record
+// (GPS toe can be ~2 h out just before the next upload) is NEVER rejected.
+double maxEphAgeForSystem(System s) {
+    switch (s) {
+    case System::GPS:
+    case System::QZSS:    return 4.0 * 3600.0;
+    case System::Galileo: return 2.0 * 3600.0;
+    case System::BeiDou:  return 2.0 * 3600.0;
+    case System::GLONASS: return 0.5 * 3600.0;
+    default:              return 4.0 * 3600.0;
+    }
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -115,6 +131,18 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph) {
     // Demote the current record to "previous" only when the IODE changes, so
     // an IODE transition keeps the orbit valid just before the cutover.
     if (it->second.current.iode != eph.iode) {
+        // Diagnostic: a broadcast-ephemeris cutover.  The SSR orbit/clock delta
+        // is referenced to a specific broadcast version (iode_ssr); each cutover
+        // steps the broadcast baseline the delta is applied to, so a residual
+        // saw-tooth that lines up with these events is the ephemeris-turnover
+        // mechanism.  Galileo I/NAV cuts over every few minutes vs GPS ~2 h, so
+        // expect far more EPH-IODE-CHANGE lines for E# than G#.  rt_engine is
+        // registered in the global spdlog registry by LogManager (debug level);
+        // guard the get() since a cutover can arrive before logging is wired up.
+        if (auto lg = spdlog::get("rt_engine"))
+            lg->debug("EPH-IODE-CHANGE {} iode {} -> {} (toe tow {:.0f} -> {:.0f})",
+                      eph.satellite, it->second.current.iode, eph.iode,
+                      it->second.current.kepler.toe.tow, eph.kepler.toe.tow);
         it->second.previous = it->second.current;
     }
     it->second.current = eph;
@@ -131,6 +159,21 @@ const BroadcastEphemeris& LiveEphemerisStore::pick(const SatRecord& rec,
     const double d_cur = std::abs(q - toeGpsContinuous(rec.current));
     const double d_prv = std::abs(q - toeGpsContinuous(*rec.previous));
     return (d_prv < d_cur) ? *rec.previous : rec.current;
+}
+
+const BroadcastEphemeris& LiveEphemerisStore::pickForSsr(const SatRecord& rec,
+                                                         const GnssTime& time,
+                                                         int ssr_iode) {
+    // Re-reference: when the SSR delta names a version we still hold, return THAT
+    // record (current or the retained previous) so orbit and clock are applied
+    // against the ephemeris the correction was computed for.  Across a cutover
+    // the receiver can be a version ahead of the SSR stream; without this the
+    // current-vs-SSR IODE mismatch would drop the satellite to broadcast-grade.
+    if (ssr_iode >= 0) {
+        if (ssrMatchIode(rec.current) == ssr_iode) return rec.current;
+        if (rec.previous && ssrMatchIode(*rec.previous) == ssr_iode) return *rec.previous;
+    }
+    return pick(rec, time);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,14 +303,36 @@ LiveEphemerisStore::glonassState(const BroadcastEphemeris& eph, const GnssTime& 
 // ---------------------------------------------------------------------------
 
 std::optional<LiveEphemerisStore::SatelliteState>
-LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& time) const {
+LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& time, int ssr_iode) const {
     BroadcastEphemeris eph;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) return std::nullopt;
-        eph = pick(it->second, time);     // copy under lock; integrate outside
+        eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; integrate outside
     }
+
+    // Staleness guard + EPH-PICK diagnostic.  Computed AFTER pickForSsr so the
+    // IODE current/previous re-referencing is preserved.  age = query − toe with
+    // BOTH operands on GPS-continuous seconds.  The BDT offset does NOT cancel
+    // automatically: `time` is GPS-scale but BeiDou's kepler.toe is stored on
+    // its native BDT week (BDT week 0 = GPS week 1356), so toeGpsContinuous must
+    // lift it to GPS scale first — otherwise every BeiDou sat reads ~1356 weeks
+    // (~26 years) stale and is wrongly skipped.  Reject an ephemeris extrapolated
+    // beyond its fit window (never-refreshed sat / obs desync) rather than emit a
+    // silently-wrong orbit.
+    const double toe_c = toeGpsContinuous(eph);
+    const double age = continuousSeconds(time) - toe_c;
+    if (!std::isfinite(age) || std::abs(age) > maxEphAgeForSystem(eph.system)) {
+        if (auto lg = spdlog::get("rt_engine"))
+            lg->warn("EPH-STALE {} REJECTED: age={:+.0f}s ({:+.2f}h from toe) exceeds {:.1f}h "
+                     "fit window — sat skipped", sat, age, age / 3600.0,
+                     maxEphAgeForSystem(eph.system) / 3600.0);
+        return std::nullopt;
+    }
+    if (auto lg = spdlog::get("rt_engine"); lg && lg->should_log(spdlog::level::trace))
+        lg->trace("EPH-PICK {} iode={} ssr_iode={} age={:+.0f}s ({:+.2f}h from toe)",
+                  sat, eph.iode, ssr_iode, age, age / 3600.0);
 
     if (eph.system == System::GLONASS) {
         return glonassState(eph, time);
@@ -294,13 +359,27 @@ LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& t
 // ---------------------------------------------------------------------------
 
 std::optional<LiveEphemerisStore::SatelliteClock>
-LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime& time) const {
+LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime& time, int ssr_iode) const {
     BroadcastEphemeris eph;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) return std::nullopt;
-        eph = pick(it->second, time);     // copy under lock; evaluate outside
+        eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; evaluate outside
+    }
+
+    // Staleness guard (mirrors computeSatellitePV; no warn here to avoid
+    // double-logging the same sat/epoch the PV path already flagged): an
+    // ephemeris beyond its fit window yields no clock so the satellite drops
+    // rather than carrying an extrapolated wrong value.
+    {
+        // GPS-continuous on both sides — toeGpsContinuous lifts BeiDou's BDT toe
+        // (see computeSatellitePV); a raw kepler.toe here would read ~1356 weeks
+        // stale and silently drop every BeiDou clock.
+        const double toe_c = toeGpsContinuous(eph);
+        const double age = continuousSeconds(time) - toe_c;
+        if (!std::isfinite(age) || std::abs(age) > maxEphAgeForSystem(eph.system))
+            return std::nullopt;
     }
 
     SatelliteClock out;
@@ -346,6 +425,16 @@ std::size_t LiveEphemerisStore::size() const {
 void LiveEphemerisStore::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     by_sat_.clear();
+}
+
+std::map<std::string, int> LiveEphemerisStore::glonassFreqChannels() const {
+    std::map<std::string, int> out;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [sat, rec] : by_sat_) {
+        if (rec.current.system == System::GLONASS)
+            out[sat] = rec.current.glonass.freq_channel;
+    }
+    return out;
 }
 
 } // namespace GnssProcessor

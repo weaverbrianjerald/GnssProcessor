@@ -1,34 +1,111 @@
-\contentsline {section}{\numberline {1}Introduction}{1}{section.1}%
-\contentsline {section}{\numberline {2}Notation and conventions}{1}{section.2}%
-\contentsline {paragraph}{Indices and sets.}{1}{section*.2}%
-\contentsline {paragraph}{Vectors and matrices.}{2}{section*.3}%
-\contentsline {paragraph}{Observables.}{2}{section*.4}%
-\contentsline {paragraph}{Frequencies and wavelengths.}{2}{section*.5}%
-\contentsline {paragraph}{Differencing operators.}{2}{section*.6}%
-\contentsline {paragraph}{Sign conventions.}{2}{section*.7}%
-\contentsline {paragraph}{Symbol table.}{2}{section*.8}%
-\contentsline {section}{\numberline {3}State vector layout}{3}{section.3}%
-\contentsline {subsection}{\numberline {3.1}Schematic layout}{3}{subsection.3.1}%
-\contentsline {subsection}{\numberline {3.2}Component-by-component description}{3}{subsection.3.2}%
-\contentsline {paragraph}{Position $\bm {r}_r\in \mathbb {R}^3$.}{3}{section*.9}%
-\contentsline {paragraph}{Velocity $\bm {v}_r\in \mathbb {R}^3$.}{3}{section*.10}%
-\contentsline {paragraph}{Receiver clock $c\,\mathrm {d}t_r$.}{3}{section*.11}%
-\contentsline {paragraph}{Inter-system time offsets $c\,\delta t^{(g)}_r$.}{4}{section*.12}%
-\contentsline {paragraph}{Tropospheric ZWD and gradients.}{4}{section*.13}%
-\contentsline {paragraph}{Per-satellite slant ionosphere $I^i_{r,1}$.}{4}{section*.14}%
-\contentsline {paragraph}{Carrier-phase ambiguities $N^i_{r,s}$.}{4}{section*.15}%
-\contentsline {paragraph}{Receiver code biases $B_{r,s}$.}{4}{section*.16}%
-\contentsline {paragraph}{Satellite code biases $B^i_s$.}{4}{section*.17}%
-\contentsline {subsection}{\numberline {3.3}Dynamic indexing}{4}{subsection.3.3}%
-\contentsline {section}{\numberline {4}Observation equations}{5}{section.4}%
-\contentsline {subsection}{\numberline {4.1}Code (pseudorange) observation}{5}{subsection.4.1}%
-\contentsline {subsection}{\numberline {4.2}Carrier-phase observation}{5}{subsection.4.2}%
-\contentsline {subsection}{\numberline {4.3}Geometric range and linearisation}{5}{subsection.4.3}%
-\contentsline {subsection}{\numberline {4.4}Stochastic model}{6}{subsection.4.4}%
-\contentsline {section}{\numberline {5}Differencing transformations}{6}{section.5}%
-\contentsline {subsection}{\numberline {5.1}Between-satellite single difference (BSSD)}{6}{subsection.5.1}%
-\contentsline {paragraph}{Pivot transitions.}{6}{section*.21}%
-\contentsline {subsection}{\numberline {5.2}Between-receiver single difference (BRSD)}{7}{subsection.5.2}%
-\contentsline {subsection}{\numberline {5.3}Double difference (DD)}{7}{subsection.5.3}%
-\contentsline {paragraph}{Short vs.\ long baselines.}{7}{section*.22}%
-\contentsline {subsection}{\numberline {5.4}S-transform structure}{7}{subsection.5.4}%
+\contentsline {section}{\numberline {1}Introduction}{2}{section.1}%
+\contentsline {section}{\numberline {2}Notation and conventions}{3}{section.2}%
+\contentsline {paragraph}{Indices and sets.}{3}{section*.2}%
+\contentsline {paragraph}{Vectors and matrices.}{3}{section*.3}%
+\contentsline {paragraph}{Observables.}{3}{section*.4}%
+\contentsline {paragraph}{Frequencies and wavelengths.}{3}{section*.5}%
+\contentsline {paragraph}{Differencing operators.}{4}{section*.6}%
+\contentsline {paragraph}{Sign conventions.}{4}{section*.7}%
+\contentsline {paragraph}{Symbol table.}{4}{section*.8}%
+\contentsline {section}{\numberline {3}State vector layout}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Schematic layout}{5}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Component-by-component description}{5}{subsection.3.2}%
+\contentsline {paragraph}{Position $\bm {r}_r\in \mathbb {R}^3$.}{5}{section*.9}%
+\contentsline {paragraph}{Velocity $\bm {v}_r\in \mathbb {R}^3$.}{5}{section*.10}%
+\contentsline {paragraph}{Receiver clock $c\,\mathrm {d}t_r$.}{5}{section*.11}%
+\contentsline {paragraph}{Inter-system time offsets $c\,\delta t^{(g)}_r$.}{6}{section*.12}%
+\contentsline {paragraph}{Tropospheric ZWD and gradients.}{6}{section*.13}%
+\contentsline {paragraph}{Per-satellite slant ionosphere $I^i_{r,1}$.}{6}{section*.14}%
+\contentsline {paragraph}{Carrier-phase ambiguities $N^i_{r,s}$.}{6}{section*.15}%
+\contentsline {paragraph}{Receiver code biases $B_{r,s}$.}{6}{section*.16}%
+\contentsline {paragraph}{Satellite code biases $B^i_s$.}{6}{section*.17}%
+\contentsline {paragraph}{Inertial augmentation.}{6}{section*.18}%
+\contentsline {paragraph}{Baseline differential troposphere.}{6}{section*.19}%
+\contentsline {subsection}{\numberline {3.3}Dynamic indexing}{7}{subsection.3.3}%
+\contentsline {paragraph}{Ambiguity basis.}{7}{section*.20}%
+\contentsline {section}{\numberline {4}Observation equations}{7}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Code (pseudorange) observation}{7}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Carrier-phase observation}{7}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Geometric range and linearisation}{8}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}Stochastic model}{8}{subsection.4.4}%
+\contentsline {section}{\numberline {5}Differencing transformations}{9}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Between-satellite single difference (BSSD)}{9}{subsection.5.1}%
+\contentsline {paragraph}{Pivot transitions.}{9}{section*.24}%
+\contentsline {subsection}{\numberline {5.2}Between-receiver single difference (BRSD)}{9}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Double difference (DD)}{10}{subsection.5.3}%
+\contentsline {paragraph}{Short vs.\ long baselines.}{10}{section*.25}%
+\contentsline {subsection}{\numberline {5.4}S-transform structure}{10}{subsection.5.4}%
+\contentsline {paragraph}{Implementation notes.}{11}{section*.26}%
+\contentsline {section}{\numberline {6}Estimation engine: the Kalman filter and RTS smoother}{11}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Time update}{11}{subsection.6.1}%
+\contentsline {paragraph}{State transition.}{11}{section*.27}%
+\contentsline {paragraph}{Process-noise model.}{12}{section*.29}%
+\contentsline {paragraph}{Aided time update.}{12}{section*.30}%
+\contentsline {subsection}{\numberline {6.2}Measurement update}{12}{subsection.6.2}%
+\contentsline {paragraph}{Joseph-form covariance update.}{13}{section*.31}%
+\contentsline {paragraph}{Post-fit residuals.}{13}{section*.33}%
+\contentsline {subsection}{\numberline {6.3}Iterated relinearisation (IEKF)}{13}{subsection.6.3}%
+\contentsline {paragraph}{Anchor.}{14}{section*.34}%
+\contentsline {paragraph}{Gauss--Newton step.}{14}{section*.35}%
+\contentsline {paragraph}{Firing condition.}{14}{section*.37}%
+\contentsline {subsection}{\numberline {6.4}Innovation and residual gating}{14}{subsection.6.4}%
+\contentsline {paragraph}{Per-row rejection.}{14}{section*.38}%
+\contentsline {paragraph}{Complete-reset backstop.}{15}{section*.39}%
+\contentsline {paragraph}{Robust pivot-slip detectors (BSSD).}{15}{section*.40}%
+\contentsline {paragraph}{Down-weighting (not gating).}{15}{section*.41}%
+\contentsline {subsection}{\numberline {6.5}Backward RTS smoother}{15}{subsection.6.5}%
+\contentsline {paragraph}{Forward-pass capture.}{15}{section*.42}%
+\contentsline {paragraph}{Recursion.}{15}{section*.43}%
+\contentsline {paragraph}{Variable-dimension reconciliation.}{16}{section*.45}%
+\contentsline {paragraph}{Segment boundaries at ambiguity resets.}{16}{section*.46}%
+\contentsline {paragraph}{Static-position degeneracy.}{16}{section*.47}%
+\contentsline {section}{\numberline {7}Cycle-slip detection and repair}{16}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Test-statistic combinations}{17}{subsection.7.1}%
+\contentsline {subsubsection}{\numberline {7.1.1}Melbourne--W\"ubbena (wide-lane)}{17}{subsubsection.7.1.1}%
+\contentsline {subsubsection}{\numberline {7.1.2}Extra-wide-lane (EWL)}{17}{subsubsection.7.1.2}%
+\contentsline {subsubsection}{\numberline {7.1.3}GRAPHIC (single-frequency half-sum)}{18}{subsubsection.7.1.3}%
+\contentsline {subsubsection}{\numberline {7.1.4}Geometry-free phase (staged)}{18}{subsubsection.7.1.4}%
+\contentsline {subsubsection}{\numberline {7.1.5}Ionosphere-free phase (staged)}{19}{subsubsection.7.1.5}%
+\contentsline {subsection}{\numberline {7.2}TurboEdit dual-frequency resolution}{19}{subsection.7.2}%
+\contentsline {subsubsection}{\numberline {7.2.1}The 2$\times $2 system}{19}{subsubsection.7.2.1}%
+\contentsline {subsubsection}{\numberline {7.2.2}Integer rounding and validation}{20}{subsubsection.7.2.2}%
+\contentsline {subsubsection}{\numberline {7.2.3}MW-only / code-event null line}{20}{subsubsection.7.2.3}%
+\contentsline {subsubsection}{\numberline {7.2.4}Gap-spanning GF bridge}{21}{subsubsection.7.2.4}%
+\contentsline {subsubsection}{\numberline {7.2.5}Atomic reconciliation}{22}{subsubsection.7.2.5}%
+\contentsline {section}{\numberline {8}Integer ambiguity resolution}{22}{section.8}%
+\contentsline {subsection}{\numberline {8.1}The integer least-squares problem}{23}{subsection.8.1}%
+\contentsline {paragraph}{Float extraction and rescaling to cycles.}{23}{section*.52}%
+\contentsline {subsection}{\numberline {8.2}Decorrelation: $LDL^{\mathrm {T}}$ factorisation and the integer $\bm {Z}$-transform}{23}{subsection.8.2}%
+\contentsline {paragraph}{Factorisation.}{23}{section*.53}%
+\contentsline {paragraph}{The $\bm {Z}$-transform.}{23}{section*.54}%
+\contentsline {paragraph}{The shrinking-ellipsoid search.}{24}{section*.55}%
+\contentsline {subsection}{\numberline {8.3}Wide-lane / narrow-lane decomposition (PPP path)}{24}{subsection.8.3}%
+\contentsline {paragraph}{WL from Melbourne--W\"ubbena (integer by contract).}{24}{section*.56}%
+\contentsline {paragraph}{NL search variable.}{25}{section*.57}%
+\contentsline {paragraph}{Integer-recentring shift.}{25}{section*.58}%
+\contentsline {paragraph}{Back-transform to per-signal DDs.}{25}{section*.59}%
+\contentsline {paragraph}{State-basis variants.}{25}{section*.60}%
+\contentsline {subsection}{\numberline {8.4}Partial / subset ambiguity resolution}{25}{subsection.8.4}%
+\contentsline {subsection}{\numberline {8.5}Validation: ratio test and fixed-failure-rate gate}{26}{subsection.8.5}%
+\contentsline {paragraph}{Ratio test (discrimination).}{26}{equation.69}%
+\contentsline {paragraph}{Fixed-failure-rate gate (bootstrap success rate).}{26}{section*.63}%
+\contentsline {paragraph}{Per-pair residual backstop.}{26}{section*.65}%
+\contentsline {paragraph}{Convergence guards.}{26}{section*.66}%
+\contentsline {subsection}{\numberline {8.6}Feedback: constrained pseudo-observation update}{27}{subsection.8.6}%
+\contentsline {subsection}{\numberline {8.7}Configuration summary}{27}{subsection.8.7}%
+\contentsline {section}{\numberline {9}Inertial aiding}{28}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Strapdown mechanization}{28}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}INS error-state dynamics}{29}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Covariance splice and attitude feedback}{29}{subsection.9.3}%
+\contentsline {subsection}{\numberline {9.4}Coupling modes and the GNSS update}{30}{subsection.9.4}%
+\contentsline {paragraph}{Loosely coupled (default).}{30}{section*.71}%
+\contentsline {paragraph}{Tightly coupled.}{30}{section*.72}%
+\contentsline {section}{\numberline {10}Real-time SSR corrections}{30}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Orbit correction --- refines $\rho ^i_r$}{31}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Clock correction --- refines $-c\,\mathrm {d}t^i$}{31}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}IOD gate at correction-set boundaries}{31}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}Satellite biases --- refine $-B^i_s$ and $-b^i_s$}{32}{subsection.10.4}%
+\contentsline {paragraph}{Integer recoverability via consistent phase biases.}{32}{section*.78}%
+\contentsline {paragraph}{Discontinuity handling.}{32}{section*.79}%
+\contentsline {subsection}{\numberline {10.5}Ionosphere --- $\mu _sI^i_{r,1}$ is not SSR-fed}{33}{subsection.10.5}%
+\contentsline {subsection}{\numberline {10.6}Provenance and streaming code pointer}{33}{subsection.10.6}%

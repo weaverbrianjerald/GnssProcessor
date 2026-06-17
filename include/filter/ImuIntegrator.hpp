@@ -104,6 +104,21 @@ namespace GnssProcessor {
         size_t sampleCount() const { return samples_.size(); }
 
         /**
+         * @brief Append one streaming IMU sample (real-time ingest).
+         *
+         * The incremental counterpart to @c loadData: pushes @p sample onto the
+         * sample buffer so a subsequent @c integrate over an interval ending at
+         * or after it consumes it.  Assumes monotonically non-decreasing sample
+         * time (the binary search in @c integrate relies on sorted samples); a
+         * live receiver delivers samples in order.  Equivalent to the per-row
+         * @c push_back @c loadData performs, so streaming and batch loading yield
+         * the same buffer (and the same @c integrate result).
+         *
+         * @param sample IMU sample (body-frame specific force + angular rate).
+         */
+        void addSample(const ImuSample& sample);
+
+        /**
          * @brief Perform strapdown integration between two GNSS epochs.
          *
          * Integrates all IMU samples in the interval (t_start, t_end] using

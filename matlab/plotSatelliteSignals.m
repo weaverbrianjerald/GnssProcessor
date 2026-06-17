@@ -67,9 +67,8 @@
 clear all; %clc; %close all;
 
 %% --- Data file ---
-fname = 'C:\GnssProcessor\logs\measurement_residuals.csv';
-%fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\measurement_residuals.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('measurement_residuals.csv');
 
 %% --- Layout switch ---
 % 'per_system' : one figure per constellation (mirrors plotSatelliteStatus).

@@ -34,6 +34,7 @@
 #include "slip/ISlipDetector.hpp"
 #include "slip/MwSlipDetector.hpp"
 #include "slip/TurboEditResolver.hpp"
+#include "slip/SoftLliBridge.hpp"
 #include "filter/StateManager.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "config/GnssConfig.hpp"
@@ -45,6 +46,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -55,7 +57,33 @@ namespace GnssProcessor {
 struct CycleSlipEpochResult {
     int n_repaired{ 0 };       ///< Slips handled by targeted single-signal reset.
     int n_reset{ 0 };          ///< Slips handled by full ambiguity reset.
+    /// SATELLITES whose MW mandates were suppressed via the dedicated
+    /// code-event veto branch (GF affirmatively stable; no state touched
+    /// for the adjudicated signals).  Counted per satellite, not per pair,
+    /// and only for the veto branch — a code-event sat that the culprit
+    /// branch handled via clean_signals adjudication is not counted here.
+    /// See TurboEditResolver's "code-domain veto" header note.
+    int n_code_events{ 0 };
     bool state_modified{ false }; ///< True if any filter state was changed.
+
+    /// Satellites whose ambiguity state was RESET / reseeded this epoch by the
+    /// slip phase — SD-aware reset, pivot-disturbance variance inflation, or a
+    /// soft-LLI bridge restore (absolute value overwrite).  These carry a fresh,
+    /// large-variance (or covariance-rebuilt) prior that holds no information
+    /// backward, so the RTS smoother SEGMENTS them: their ambiguities are
+    /// excluded from the backward common subspace at this epoch boundary.
+    /// See @c Smoother and the slip-repair audit finding F1.
+    std::set<std::string> reset_satellites;
+
+    /// Covariance-preserving additive integer repairs applied this epoch, as
+    /// (ambiguity_key, delta_metres) with @c delta = dN·λ.  A repair is a
+    /// deterministic, known state jump — not a measurement event — so the
+    /// smoother folds @c delta into the stored a-priori @c x_pred (a control
+    /// input) instead of letting the backward pass absorb it as an innovation
+    /// (audit F1).  Only the PRE-handover repair site is recorded here; the
+    /// post-handover deferred repair lands in the new SD frame and is surfaced
+    /// as a @c reset_satellites entry (segmented) instead.
+    std::vector<std::pair<std::string, double>> ambiguity_repairs;
 };
 
 /**
@@ -159,6 +187,45 @@ public:
      * @return Map from satellite ID to its MwSlipResult.
      */
     const std::map<std::string, MwSlipResult>& getLastMwSlips() const { return last_mw_slips_; }
+
+    /**
+     * @brief Record a rolling "last good" snapshot of every ambiguity value /
+     *        variance — the pre-gap anchor for the soft-LLI bridge repair.
+     *
+     * Call once per epoch AFTER the Kalman measurement update (so it captures
+     * the converged post-update values).  Only ambiguities whose variance is
+     * below a converged threshold update the snapshot, so a fresh reset /
+     * pending-reseed does NOT overwrite the last genuinely-converged value —
+     * which is exactly the anchor a later soft-LLI hold needs (the value from
+     * the epoch BEFORE the signal dropped).  No-op unless
+     * @c estimation.cycle_slip.turbo_edit_bridge_lli is set.
+     *
+     * @param state_manager Filter state to snapshot from.
+     * @param epoch_now_s   Continuous GPS seconds of this epoch (recency stamp).
+     */
+    void recordAmbiguitySnapshot(const StateManager& state_manager, double epoch_now_s);
+
+    /**
+     * @brief Phase-measurement keys ("G03_L2W") currently HELD across a soft
+     *        LLI gap pending a TurboEdit bridge repair.
+     *
+     * The caller (@c Application / @c RealTimeEngine) seeds the Kalman update's
+     * @c excluded_measurements with these so the held — still-slipped —
+     * ambiguities never contaminate shared states across the MW one-epoch
+     * confirmation delay.  Empty unless @c turbo_edit_bridge_lli.
+     */
+    std::set<std::string> getHeldPendingBridgeKeys() const;
+
+    /**
+     * @brief Drop all soft-LLI / gap-bridge hold and snapshot state.
+     *
+     * Call alongside any HARD filter reset that deletes ambiguity states
+     * outside the measurement model's protected prune (e.g. the long-gap
+     * state teardown in @c Application::handleGap): a hold that outlives
+     * the state it anchors would later "restore" a pre-gap value onto a
+     * freshly rebuilt ambiguity.  No-op when nothing is held.
+     */
+    void resetSoftLliBridge();
 
 private:
     /**
@@ -337,6 +404,20 @@ private:
 
     /// Cached MW slip results from the last detectAndRepair() call.
     std::map<std::string, MwSlipResult> last_mw_slips_;
+
+    /// Per-epoch slip-action accumulators for the RTS smoother, cleared at the
+    /// top of @c detectAndRepair and copied into the returned
+    /// @c CycleSlipEpochResult before it returns.  Written by
+    /// @c resetAmbiguityBssdAware (reset sats), @c repairAmbiguityBssdAware
+    /// (compensatable repairs), the inline post-handover repair (recorded as a
+    /// reset — new SD frame), and the soft-LLI bridge restore path (reset).
+    std::set<std::string> epoch_reset_sats_;
+    std::vector<std::pair<std::string, double>> epoch_repairs_;
+
+    /// Shared soft-LLI gap-bridge orchestration (snapshot / hold / restore).
+    /// Inert unless @c estimation.cycle_slip.turbo_edit_bridge_lli.  The same
+    /// type backs the real-time path so the two cannot diverge.
+    SoftLliBridge soft_lli_;
 };
 
 } // namespace GnssProcessor

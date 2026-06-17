@@ -13,11 +13,11 @@
 %  the reference point below if running against a different dataset.
 %  ============================================================
 
-clear all; clc; %close all;
+clear all; %clc; %close all;
 
 %% --- Load CSV file ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\baseline_trace.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\baseline_trace.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('baseline_trace.csv');
 T = readtable(fname);
 
 %% --- Convert GPS week + TOW to UTC datetime ---

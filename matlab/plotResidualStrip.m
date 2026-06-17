@@ -57,8 +57,8 @@ useDiscreteColors = false;
 showSummary = true;
 
 %% --- Load CSV ---
-fname = 'C:\GnssProcessor\build\x64-Release\logs\measurement_residuals.csv';
-%fname = 'C:\GnssProcessor\build\x64-Debug\logs\measurement_residuals.csv';
+% Folder resolved via gnssVizLogDir() — set once per session or via view_all.m.
+fname = gnssTracePath('measurement_residuals.csv');
 
 if ~isfile(fname)
     error('measurement_residuals.csv not found: %s', fname);

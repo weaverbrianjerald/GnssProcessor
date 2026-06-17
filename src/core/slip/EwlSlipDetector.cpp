@@ -30,10 +30,11 @@ namespace GnssProcessor {
     EwlSlipDetector::EwlSlipDetector(const GnssConfig& config, LogManager& log_manager)
         : config_(config),
           log_manager_(log_manager),
-          ppp_utils_(log_manager) {
+          ppp_utils_(log_manager),
+          sigma_multiplier_(config.getCycleSlipConfig().ewl_sigma_multiplier) {
         log_manager_.getLogger("cycle_slip_manager")->info(
             "EwlSlipDetector initialized (MAD-based, k={:.1f}, floor={:.1f} EWL-cyc, min_epochs={})",
-            kMadSigmaMultiplier, kMinThresholdCycles, kMinEpochsForAdaptive);
+            sigma_multiplier_, kMinThresholdCycles, kMinEpochsForAdaptive);
     }
 
     // =================================================================
@@ -240,7 +241,7 @@ namespace GnssProcessor {
 
         const double lambda_ewl = stats.lambda_ewl;
         const double floor_m = (lambda_ewl > 0.0) ? kMinThresholdCycles * lambda_ewl : 0.5;
-        return std::max(kMadSigmaMultiplier * sigma, floor_m);
+        return std::max(sigma_multiplier_ * sigma, floor_m);
     }
 
     // =================================================================

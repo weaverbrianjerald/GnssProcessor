@@ -22,8 +22,8 @@ namespace GnssProcessor {
      * @brief Compute and manage planetary ephemerides used by GNSS models.
      *
      * The `Planetary` class provides the rigorous IAU 1976/1980 Sun/Moon
-     * model (`computeSunMoonPosition`) and manages an in-memory Sun
-     * ephemeris table for pre-computed positions.
+     * model (`computeSunMoonPosition`) used to evaluate celestial body
+     * positions on demand per epoch.
      *
      * All positions are represented as ECEF Cartesian vectors in meters.
      * All principal-axis rotations use the static `Rxyz()` helper.
@@ -35,17 +35,6 @@ namespace GnssProcessor {
          * @param log_mgr Reference to the LogManager used for logging.
          */
         explicit Planetary(LogManager& log_mgr);
-
-        /**
-         * @brief Build Sun ephemeris for observation epochs.
-         *
-         * Computes Sun ephemeris entries for each epoch in `epoch_times`.
-         *
-         * @param epoch_times Input vector of GNSS epochs for which ephemeris is required.
-         * @param[out] sun_ephemeris Output vector filled with Sun ephemeris entries.
-         * @return true if at least one valid entry was computed; false otherwise.
-         */
-        bool parseSunEphemeris(const std::vector<GnssTime>& epoch_times, std::vector<SunEphemeris>& sun_ephemeris) const;
 
         /**
          * @brief Convert a GnssTime to Modified Julian Date (GPS time scale).
@@ -114,7 +103,6 @@ namespace GnssProcessor {
 
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
-        std::vector<SunEphemeris> sun_ephemeris_;         /**< In-memory Sun ephemeris table. */
 
         /**
          * @brief Compute Sun and Moon positions in the ECI (J2000) frame.

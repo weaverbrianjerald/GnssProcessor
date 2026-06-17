@@ -227,7 +227,6 @@ namespace GnssProcessor {
         std::vector<BiasData> biases_;                    /**< Receiver/satellite bias entries. */
         std::vector<ErpData> erps_;                       /**< Earth rotation parameter samples. */
         std::vector<double> klobuchar_coeffs_;            /**< Klobuchar ionospheric coefficients. */
-        std::vector<SunEphemeris> sun_ephemeris_;         /**< Sun ephemeris samples. */
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priorities per GNSS system. */
 
         /// Non-owning pointer to the Antenna model used for ATX-based

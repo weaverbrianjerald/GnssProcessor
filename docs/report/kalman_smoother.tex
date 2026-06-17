@@ -1,0 +1,441 @@
+% ============================================================
+%  Estimation engine: the Kalman filter and RTS smoother
+% ============================================================
+
+This section documents the recursive estimator at the core of the
+engine: a variable-dimension extended Kalman filter (EKF) with an
+optional prior-anchored iterated (IEKF) relinearisation pass, robust
+post-fit residual gating, and a backward Rauch--Tung--Striebel (RTS)
+smoother for post-processing modes.  The state vector $\stateV$ is the
+uncombined PPP / PPP-RTK parameterisation of
+\Cref{sec:diff}: receiver position (and optionally velocity),
+receiver clock and per-system time offsets, zenith wet troposphere and
+gradients, per-satellite slant ionosphere, receiver/satellite code and
+phase biases, and one float ambiguity per tracked carrier.  Its
+dimension changes epoch to epoch as satellites rise and set and as
+ambiguities are reset; the layout and the dynamic key$\to$index maps
+are owned exclusively by \texttt{filter/StateManager}, and the filter
+operates on that state without any fixed-index assumptions
+(\texttt{src/core/filter/KalmanFilter.cpp}).
+
+Throughout we write $\Fmat$ for the state-transition matrix, $\Qmat$
+for the discrete process-noise covariance, $\Rmat$ for the
+measurement-noise covariance, $\Smat$ for the innovation covariance,
+$\Kgain$ for the Kalman gain, and $\innov$ for the innovation
+(measurement minus predicted measurement).  Predicted (a-priori) and
+updated (a-posteriori) quantities use the tilde/hat and $k|k{-}1$ /
+$k|k$ conditioning convention fixed in \Cref{sec:notation}.
+
+\subsection{Time update}\label{sec:kf-predict}
+
+\paragraph{State transition.}
+The transition matrix $\Fmat(\dt)$ for epoch interval
+$\dt = t_k - t_{k-1}$ is identity plus a small number of coupling
+blocks, assembled by \texttt{StateManager::getTransitionMatrix}
+(\texttt{src/core/filter/StateManager.cpp}).  The only off-diagonal
+couplings are the kinematic integrators
+\begin{equation}
+\Fmat[\,\rxpos,\bm{v}\,] = \dt\,\bm{I}_3,
+\qquad
+\Fmat[\,\sLight\mathrm{d}t,\;\sLight\dot{\mathrm{d}t}\,] = \dt,
+\qquad
+\Fmat[\,\sLight\delta t^{(g)},\;\sLight\dot{\delta t}^{(g)}\,] = \dt,
+\label{eq:kf-F-blocks}
+\end{equation}
+present only when the corresponding rate state exists
+(\texttt{hasVelocity()}, clock-rate, per-system rate).  Every remaining
+state --- ambiguities, per-satellite ionosphere, zenith wet delay,
+gradients, code and satellite biases, and any rate-free inter-system
+offset --- has $\Fmat = \bm{I}$ and is propagated as a pure random walk
+with its mean held constant.  Under the BSSD (single-difference)
+parameterisation the clock and inter-system-offset rows are
+unobservable; their position rows in \Cref{eq:kf-F-blocks} are
+suppressed and the corresponding cross-covariances are zeroed in place
+after propagation while the diagonal variance is preserved
+(\texttt{src/core/filter/KalmanFilter.cpp}).
+
+The propagation itself is the standard EKF time update
+\begin{empheq}[box=\fbox]{align}
+\tilde{\stateV}_{k|k-1} &= \Fmat(\dt)\,\hat{\stateV}_{k-1|k-1}, \\
+\tilde{\covM}_{k|k-1}    &= \Fmat(\dt)\,\covM_{k-1|k-1}\,\Fmat(\dt)^{\Tr}
+                            + \Qmat(\dt),
+\label{eq:kf-predict}
+\end{empheq}
+implemented in \texttt{KalmanFilter::predict}.  A non-positive $\dt$ is
+treated as a no-op (duplicate or out-of-order epoch), short-circuiting
+before \Cref{eq:kf-predict}.
+
+\paragraph{Process-noise model.}
+The discrete process noise $\Qmat(\dt)$ is built from continuous
+spectral densities by \texttt{StateManager::getProcessNoiseMatrix}.
+Two block structures appear.  Pure random-walk states have a scalar
+discrete variance increment
+\begin{equation}
+\Qmat_{ii} = \spd{i}\,\dt,
+\label{eq:kf-Q-rw}
+\end{equation}
+where $\spd{i}$ is the continuous variance rate
+($\mathrm{m}^2/\mathrm{s}$) read from \texttt{filter.process\_noise.*}.
+Representative entries are zenith wet troposphere
+(\texttt{troposphere\_q}), the receiver code bias
+(\texttt{code\_bias\_q}), satellite phase bias (\texttt{sat\_bias\_q}),
+phase clock (\texttt{phase\_clock\_q}), and the float ambiguity
+(\texttt{ambiguity\_q}).  The ambiguity density defaults to a numerical
+safety floor ($10^{-12}$) rather than a physical value, and per-key
+overrides are supported for arc-specific reseeding.  The per-satellite
+slant ionosphere uses a random walk whose zenith density is mapped to
+the slant by the squared obliquity factor,
+\begin{equation}
+\Qmat_{ii}
+  = \frac{\spd{\mathrm{iono}}}{\sin^2\theta^{\sat}}\,\dt,
+\qquad
+\sin^2\theta^{\sat} \ \text{floored at } 10^{-2}\ (\theta\!\approx\!5.7^\circ),
+\label{eq:kf-Q-iono}
+\end{equation}
+with $\spd{\mathrm{iono}} = $ \texttt{ionosphere\_q} and optional
+per-satellite overrides driven by the adaptive-iono scheme.
+
+Coupled position/velocity, clock/clock-rate, and inter-system
+offset/rate pairs use the continuous white-noise-acceleration (CWNA,
+integrated-random-walk) discretisation.  For a coupled pair $(\xi,
+\dot\xi)$ driven by acceleration PSD $q$,
+\begin{equation}
+\Qmat_{[\xi,\dot\xi]}
+  =
+  \begin{bmatrix}
+    \tfrac{1}{3}\,q\,\dt^{3} & \tfrac{1}{2}\,q\,\dt^{2} \\[2pt]
+    \tfrac{1}{2}\,q\,\dt^{2} & q\,\dt
+  \end{bmatrix},
+\label{eq:kf-Q-cwna}
+\end{equation}
+with $q$ given by \texttt{acceleration\_psd\_q} (position/velocity, the
+$3\times3$ block-diagonal extension of \Cref{eq:kf-Q-cwna} over the ECEF
+axes), \texttt{clock\_rate\_q}, and \texttt{system\_time\_rate\_offset\_q}
+respectively.  When the velocity state is present the rate-free
+position density \texttt{position\_q} is unused.  Baseline
+(double-difference) mode reduces $\Qmat$ to the position block, a
+per-ambiguity random-walk term, and an optional differential-ZWD entry
+$\Qmat_{ii} = \sigma^2\dt$ governed by
+\texttt{baseline.differential\_tropo\_process\_noise\_m\_per\_sqrt\_s}.
+
+\paragraph{Aided time update.}
+When inertial aiding is active, \texttt{KalmanFilter::predictImu}
+performs a strapdown mechanisation of the nominal position, velocity,
+and attitude and splices a $15\times15$ INS error-state transition
+$\bm{\Phi}$ and noise $\Qmat_{\mathrm{ins}}$ --- with error order
+$[\delta\bm{p},\,\delta\bm{v},\,\delta\bm{\psi},\,\delta\bm{b}_a,\,
+\delta\bm{b}_g]$ --- into the GNSS-dimensioned $\Fmat$ and $\Qmat$ over
+the integrated interval, after which \Cref{eq:kf-predict} runs on the
+full state with explicit symmetrisation
+$\covM \leftarrow \tfrac12(\covM + \covM^{\Tr})$.  The generalised
+\texttt{predictAided} path applies the same splice for arbitrary aiding
+sources and delegates byte-identically to the GNSS-only
+\Cref{eq:kf-predict} when no aiding payload is present.
+
+\subsection{Measurement update}\label{sec:kf-update}
+
+The measurement update (\texttt{KalmanFilter::update}) is a
+\emph{batch} update: all observation rows of the epoch are processed
+simultaneously, not sequentially/scalar.  A sparse-$\jacH$ optimisation
+accelerates the four design-matrix products ($\jacH\covM$,
+$\jacH\covM\jacH^{\Tr}$, $\Kgain\jacH$, and the $\jacH$-touching parts
+of the gain), and is numerically identical to the dense computation to
+within a $10^{-12}$ structural threshold
+(\texttt{src/core/filter/KalmanFilter.cpp}).
+
+Given the design matrix $\jacH$ from the linearisation of
+\Cref{eq:obs-code,eq:obs-phase} (position rows
+$-(\los^\sat_{\hat{\rx}})^{\Tr}$, \Cref{eq:geom-linear}), the
+innovation $\innov$ (\texttt{measurement.innovations}), and the
+measurement-noise covariance $\Rmat$ --- a full matrix when supplied,
+otherwise the diagonal $\Rmat = \operatorname{diag}(\sigma^2_{\rx,\sat,\sigl})$
+of \Cref{eq:noise-model} --- the innovation covariance and gain are
+\begin{align}
+\Smat   &= \jacH\,\tilde{\covM}_{k|k-1}\,\jacH^{\Tr} + \Rmat,
+\label{eq:kf-S}\\
+\Kgain  &= \tilde{\covM}_{k|k-1}\,\jacH^{\Tr}\,\Smat^{-1}.
+\label{eq:kf-gain}
+\end{align}
+The gain is never formed by explicitly inverting $\Smat$.  Exploiting
+the symmetry of $\Smat$, the engine factorises it once with an
+$\mathrm{LDL}^{\Tr}$ decomposition and recovers
+$\Kgain = \big(\Smat^{-1}\jacH\tilde{\covM}\big)^{\Tr}$ from a single
+solve against $\jacH\tilde{\covM}$ (\texttt{ldlt.solve(HP).transpose()});
+on factorisation failure it falls back to a complete-orthogonal
+(pseudo-inverse) solve.  The state update is
+\begin{equation}
+\delta\stateV = \Kgain\,\innov,
+\qquad
+\hat{\stateV}_{k|k} = \tilde{\stateV}_{k|k-1} + \delta\stateV.
+\label{eq:kf-state-update}
+\end{equation}
+
+\paragraph{Joseph-form covariance update.}
+The covariance is updated in the numerically stabilised \emph{Joseph}
+form, never the short form $(\bm{I} - \Kgain\jacH)\tilde{\covM}$:
+\begin{empheq}[box=\fbox]{equation}
+\covM_{k|k}
+  = (\bm{I} - \Kgain\jacH)\,\tilde{\covM}_{k|k-1}\,
+    (\bm{I} - \Kgain\jacH)^{\Tr}
+    + \Kgain\,\Rmat\,\Kgain^{\Tr}.
+\label{eq:kf-joseph}
+\end{empheq}
+The Joseph form preserves symmetry and positive semi-definiteness for
+any gain, which matters because the engine deliberately departs from
+the optimal gain in its robust paths (\Cref{sec:kf-gating}); the result
+is symmetrised once more, $\covM \leftarrow \tfrac12(\covM +
+\covM^{\Tr})$, to clear round-off.  The factor $(\bm{I} -
+\Kgain\jacH)$ is assembled from the sparse $\Kgain\jacH$ product with a
+unit shift on the diagonal.  The same Joseph kernel, with the explicit
+gain $\Kgain = \covM\jacH^{\Tr}\Smat^{-1}$, is exposed as the pure
+static routine \texttt{josephPseudoUpdate} and reused for scalar
+pseudo-observation constraints (e.g.\ the GIM ionosphere prior via
+\texttt{applyPseudoObservation}) and for the IEKF pass of
+\Cref{sec:kf-iekf}.
+
+\paragraph{Post-fit residuals.}
+After the update the post-fit residuals and their (diagonal) covariance
+are
+\begin{equation}
+\bm{r} = \innov - \jacH\,\delta\stateV,
+\qquad
+S_{r,ii} = R_{ii} - \big(\jacH\,\covM_{k|k}\,\jacH^{\Tr}\big)_{ii},
+\label{eq:kf-postfit}
+\end{equation}
+of which only the diagonal of $S_r$ is materialised.  The standardised
+residual that drives gating (\Cref{sec:kf-gating}) is
+\begin{equation}
+\sres_i
+  = \frac{r_i}{\sqrt{\max\!\big\{\,S_{r,ii},\,R_{ii},\,10^{-12}\,\big\}}}.
+\label{eq:kf-sres}
+\end{equation}
+The denominator floor at the \emph{working} $R_{ii}$ (the inflated
+noise actually used in $\Rmat$, not the formal noise) is a deliberate
+robustness compromise: in ambiguity-absorption cases --- double-differenced
+phase with an ambiguity gain near unity --- the rigorous denominator
+$S_{r,ii}$ collapses toward $R\,\Smat^{-1}R$, which would register
+near-zero residuals as many-$\sigma$ outliers.  The strictly correct
+standardisation uses $S_{r,ii}$ alone; the floor trades that rigour for
+stability and is documented as such in source.
+
+\subsection{Iterated relinearisation (IEKF)}\label{sec:kf-iekf}
+
+For long initial position offsets a single linearisation of
+\Cref{eq:geom-linear} per epoch can be insufficient.  When
+\texttt{processing.relinearize\_geometry} is enabled (and the run is not
+tightly-coupled IMU), the engine performs a prior-anchored iterated
+update --- a Gauss--Newton / iterated EKF step --- after the primary
+update.
+
+\paragraph{Anchor.}
+The iteration is anchored to the \emph{stashed pre-update prior}
+$(\stateV^{-}, \covM^{-})$ that the converged primary
+\Cref{eq:kf-predict,eq:kf-joseph} read, captured only when relinearisation
+is armed (\texttt{getLastUpdatePriorX} / \texttt{getLastUpdatePriorP}).
+This is the prior \emph{after} any in-epoch ambiguity augmentation and
+outlier reset, so it is dimension-matched to the posterior; it is not a
+top-of-loop snapshot.
+
+\paragraph{Gauss--Newton step.}
+Let $\stateV_i$ be the current linearisation iterate (the committed
+state at which \texttt{measurement} was linearised, with innovations
+$\bm{z} - h(\stateV_i)$ and $\jacH = \partial h / \partial \stateV
+\big|_{\stateV_i}$).  The prior-anchored iterate
+(\texttt{KalmanFilter::updateFromPrior}, via \texttt{josephPseudoUpdate})
+is
+\begin{empheq}[box=\fbox]{align}
+\innov &= \big(\bm{z} - h(\stateV_i)\big) - \jacH(\stateV^{-} - \stateV_i),
+\label{eq:iekf-innov}\\
+\Kgain &= \covM^{-}\jacH^{\Tr}\big(\jacH\covM^{-}\jacH^{\Tr} + \Rmat\big)^{-1},
+\qquad
+\stateV^{+} = \stateV^{-} + \Kgain\,\innov,
+\label{eq:iekf-gain}\\
+\covM^{+} &= (\bm{I} - \Kgain\jacH)\,\covM^{-}\,(\bm{I} - \Kgain\jacH)^{\Tr}
+            + \Kgain\,\Rmat\,\Kgain^{\Tr}.
+\label{eq:iekf-cov}
+\end{empheq}
+The offset term $-\jacH(\stateV^{-} - \stateV_i)$ in
+\Cref{eq:iekf-innov} re-expresses the innovation about the fixed prior
+and is what makes this a proper MAP / Gauss--Newton iteration: because
+$\Kgain$ and $(\bm{I} - \Kgain\jacH)\covM^{-}$ are always derived from
+the same fixed prior $(\stateV^{-}, \covM^{-})$, the covariance does
+\emph{not} contract a second time and no information is double-counted.
+
+\paragraph{Firing condition.}
+The driver \texttt{Application::runGeometryRelinearization}
+(\texttt{src/core/app/Application.cpp}) fires the iteration when all of
+the following hold:
+\begin{enumerate}[leftmargin=*, itemsep=0pt]
+\item \texttt{processing.relinearize\_geometry} is on and a prior was
+      stashed at the primary update;
+\item the position change since the primary update exceeds a
+      data-dependent threshold --- \texttt{relinearize\_dpos\_threshold\_phase\_m}
+      (default $1\,\mathrm{m}$) when phase is present, or
+      \texttt{relinearize\_dpos\_threshold\_code\_only\_m} (default
+      $100\,\mathrm{m}$) for code-only epochs;
+\item the per-run cap \texttt{relinearize\_max\_count}
+      ($-1 =$ unlimited) is not exhausted.
+\end{enumerate}
+The inner loop recomputes geometry and re-applies
+\Cref{eq:iekf-innov,eq:iekf-gain,eq:iekf-cov} against the
+\emph{fixed} converged exclusion set, for at most five iterations,
+declaring convergence when the position step falls below
+$10^{-4}\,\mathrm{m}$.  Because GNSS geometry is nearly linear at the
+metre level, convergence is typically reached in a single pass and the
+threshold of item~2 means the iteration rarely fires at all.  The
+tightly-coupled IMU configuration instead takes a single legacy
+\emph{naive} second pass (re-applying the measurement against the
+posterior), since error-state attitude/bias feedback conflicts with a
+clean prior re-derivation.
+
+\subsection{Innovation and residual gating}\label{sec:kf-gating}
+
+The engine performs \emph{no} $\chi^2$ innovation-covariance test.
+Outlier rejection (\texttt{KalmanFilter::validatePostFitResiduals})
+operates on the standardised \emph{post-fit} residuals $\sres_i$ of
+\Cref{eq:kf-sres} against a fixed scalar threshold, supplemented by
+robust median-based spatial detectors for pivot slips.  The two
+top-level thresholds are compile-time constants, \emph{not} JSON-tunable:
+the per-row rejection threshold is
+$\sres_{\max} = 6.0$ (\texttt{getResidualThreshold}) and the
+complete-reset trigger fraction is $0.5$ (\texttt{getBadMeasPercent});
+readers should not search for config keys for these.
+
+\paragraph{Per-row rejection.}
+If $\max_i |\sres_i| > 6.0$, the worst row is dispatched by type: a
+phase outlier triggers an ambiguity reset (with BSSD pivot handling and
+a sub-cycle $\lambda$-fraction floor), while a code outlier is excluded
+from the epoch.  Correlated same-satellite phase rows on other bands
+are reset alongside it.
+
+\paragraph{Complete-reset backstop.}
+If the count of rejected rows exceeds
+$0.5 \times (\text{original pre-peel observation count})$, the filter
+covariance is re-inflated (\texttt{resetFilterCovariance}) --- a hard
+reset that, in the smoother, marks a segment boundary
+(\Cref{sec:kf-smoother}).
+
+\paragraph{Robust pivot-slip detectors (BSSD).}
+Before the per-row gate, single-difference phase rows are grouped by
+(pivot, signal) and screened for a coherent pivot slip using
+median / median-absolute-deviation (MAD) statistics: a forced pivot
+handover fires when a group is large enough, a majority of its rows
+exceed threshold, the group median exceeds a metre-scale floor, and the
+MAD-to-median ratio is small (a tight cluster indicating a common-mode
+shift rather than scattered noise).  Cross-band pooled and code-side
+variants apply analogous tests with their own floors, and non-pivot
+multi-band slips are confirmed by integer-cycle consistency
+($|r|/\lambda_{\mathrm{band}}$ rounding to the same nonzero integer
+across bands).
+
+\paragraph{Down-weighting (not gating).}
+Two paths inflate $\Rmat$ rather than reject: a persistent EWMA-bias
+term adds the squared mean bias to $R_{ii}$ once an arc has warmed up,
+and a Huber post-fit scheme inflates $R$ for sub-cycle rows whose
+$|\sres_i|$ exceeds the Huber knee (innovation one-shot or post-fit
+IRLS variants, toggled by \texttt{enable\_huber\_r\_inflation} and
+\texttt{enable\_huber\_innovation}).  These modify the working $\Rmat$
+that feeds \Cref{eq:kf-S,eq:kf-sres}, and are the reason the standardised
+residual floors at the working noise rather than the formal noise.
+
+\subsection{Backward RTS smoother}\label{sec:kf-smoother}
+
+In post-processing modes, enabling \texttt{processing.run\_smoother}
+runs a fixed-interval Rauch--Tung--Striebel recursion
+\cite{rauch1965} over the stored forward trajectory
+(\texttt{include/filter/Smoother.hpp},
+\texttt{src/core/filter/Smoother.cpp}).  The flag is force-disabled
+under \texttt{AppMode::RealTime}, since smoothing is non-causal and
+inherently a post-processing operation.
+
+\paragraph{Forward-pass capture.}
+Rather than reconstruct the a-priori from $\Fmat$ and $\Qmat$ on the
+backward pass, the forward pass caches, per epoch, both the one-step
+prediction $\tilde{\stateV}_{k|k-1}, \tilde{\covM}_{k|k-1}$ and the
+posterior $\hat{\stateV}_{k|k}, \covM_{k|k}$, together with $\Fmat_k$
+and the full set of core and dynamic key$\to$index maps
+(\texttt{capturePriorSnapshot} / \texttt{capturePosteriorSnapshot} in
+\texttt{src/core/app/Application.cpp}).  A capture-ordering invariant
+makes the stored prior exactly $\Fmat_k\hat{\stateV}_{k-1|k-1}$: the
+a-priori is recorded immediately after \texttt{predict()} and before
+any cycle-slip reseeding or measurement update, and the a-posteriori is
+recorded \emph{before} integer ambiguity resolution, so the smoother
+consumes \emph{float} ambiguities only.
+
+\paragraph{Recursion.}
+Initialised at the terminal posterior
+$\smooth{\hat{\stateV}}{N} = \hat{\stateV}_{N|N}$,
+$\smooth{\covM}{N} = \covM_{N|N}$, the backward recursion is
+\begin{empheq}[box=\fbox]{align}
+\gainS_k
+  &= \covM_{k|k}\,\Fmat_{k+1}^{\Tr}\,\tilde{\covM}_{k+1|k}^{-1},
+\label{eq:rts-gain}\\
+\smooth{\hat{\stateV}}{k}
+  &= \hat{\stateV}_{k|k}
+     + \gainS_k\big(\smooth{\hat{\stateV}}{k+1} - \tilde{\stateV}_{k+1|k}\big),
+\label{eq:rts-state}\\
+\smooth{\covM}{k}
+  &= \covM_{k|k}
+     + \gainS_k\big(\smooth{\covM}{k+1} - \tilde{\covM}_{k+1|k}\big)
+       \gainS_k^{\Tr}.
+\label{eq:rts-cov}
+\end{empheq}
+The smoother gain $\gainS_k$ is realised as an $\mathrm{LDL}^{\Tr}$
+solve --- the predicted covariance is symmetrised, then
+$\gainS_k = \big(\tilde{\covM}_{k+1|k}^{-1}(\covM_{k|k}\Fmat^{\Tr})^{\Tr}\big)^{\Tr}$
+via \texttt{ldlt.solve(...).transpose()} --- never an explicit
+inverse, and the smoothed covariance \Cref{eq:rts-cov} is symmetrised
+after the update.  If the factorisation fails, the step is abandoned
+and epoch $k$ keeps its forward posterior.
+
+\paragraph{Variable-dimension reconciliation.}
+Because $\dim\stateV_k \neq \dim\stateV_{k+1}$ in general,
+\Cref{eq:rts-gain,eq:rts-state,eq:rts-cov} are restricted at each step
+to the \emph{common-key subspace} --- the states present at both $k$
+and $k{+}1$, found by intersecting the dynamic key$\to$index maps
+(\texttt{collectCommonIndices}).  Let $\bm{\Pi}_k$ and $\bm{\Pi}_{k+1}$
+select the common rows in each epoch's state space; the implemented
+state update is then
+\begin{equation}
+\smooth{\hat{\stateV}}{k}
+  = \hat{\stateV}_{k|k}
+    + \bm{\Pi}_k^{\Tr}\,\gainS_{k,C}
+      \big(\bm{\Pi}_{k+1}\smooth{\hat{\stateV}}{k+1}
+           - \bm{\Pi}_k\tilde{\stateV}_{k+1|k}\big),
+\label{eq:rts-subspace}
+\end{equation}
+with the analogous projection on \Cref{eq:rts-cov}.  States outside the
+subspace retain their forward a-posteriori value.  A subtle indexing
+invariant: $\tilde{\stateV}_{k+1|k}$, $\tilde{\covM}_{k+1|k}$ and
+$\Fmat_{k+1}$ are sized for epoch $k$'s layout (the predict step does
+not grow the state), so they are addressed with epoch $k$'s common
+indices, whereas $\smooth{\hat{\stateV}}{k+1}$,
+$\smooth{\covM}{k+1}$ live in epoch $k{+}1$'s layout.
+
+\paragraph{Segment boundaries at ambiguity resets.}
+Two mechanisms of differing severity terminate or trim backward
+information flow at ambiguity resets:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item A \emph{complete} filter reset at $k{+}1$ (the covariance
+      re-inflation of \Cref{sec:kf-gating}, recorded as
+      \texttt{is\_discontinuity}) is a hard segment boundary: it severs
+      the dynamic link $\tilde{\stateV}_{k+1|k} = \Fmat\hat{\stateV}_{k|k}$,
+      so no $\gainS_k$ is meaningful and backward flow is terminated ---
+      epoch $k$ keeps its forward posterior.
+\item A \emph{single-satellite} ambiguity reset is handled softly: that
+      satellite's ambiguities are excluded from the common subspace for
+      the $k\!\to\!k{+}1$ step, because the re-seeded large-variance
+      prior at $k{+}1$ carries no information backward and smoothing it
+      would only inject noise.  The exclusion matches by satellite
+      prefix and is intentionally slightly over-broad, always erring
+      toward the safe forward fallback.
+\end{itemize}
+
+\paragraph{Static-position degeneracy.}
+In static PPP the receiver position is a (near-)constant state, so the
+position-block smoother gain propagates essentially the same correction
+to every epoch and the smoothed position is degenerate --- constant
+across epochs --- \emph{by construction}.  This is expected, not a
+defect: the smoother's value accrues on the non-position states
+(troposphere, ionosphere, float ambiguities) and on kinematic runs
+where position carries genuine epoch-to-epoch dynamics.

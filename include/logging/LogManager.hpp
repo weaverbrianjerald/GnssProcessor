@@ -112,10 +112,18 @@ namespace GnssProcessor {
          *
          * The default logger is named \"gnss_processor\" and is created during initialize().
          *
-         * @return shared_ptr to the default spdlog::logger instance.
-         * @throws std::out_of_range if the default logger does not exist (i.e., initialize() was not called).
+         * Before initialize() the default logger does not exist; a transient
+         * console-only logger is returned instead — mirroring the named
+         * getLogger(name) overload's uninitialized fallback — so call sites
+         * that may legitimately run before logging is configured (most
+         * notably GnssConfig::loadFromJson, whose catch handler logs through
+         * this accessor) degrade to console output rather than throwing
+         * std::out_of_range out of the very handler that wanted to log.
+         *
+         * @return shared_ptr to the default spdlog::logger instance, or a
+         *         transient console-only logger when initialize() has not run.
          */
-        std::shared_ptr<spdlog::logger> getLogger() const { return loggers_.at("gnss_processor"); }
+        std::shared_ptr<spdlog::logger> getLogger() const;
 
         /**
          * @brief Retrieve or create a module-specific logger.

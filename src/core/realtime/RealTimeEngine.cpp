@@ -7,6 +7,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "aiding/ImuAidingSource.hpp"   // full type for aiding_manager_->imu() wiring
 #include "app/EpochUpdateSupport.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -23,6 +24,45 @@
 #include <fmt/format.h>
 
 namespace GnssProcessor {
+
+namespace {
+
+/// Config-section name for a constellation, or nullptr if not user-selectable.
+const char* systemConfigName(System sys) {
+    switch (sys) {
+    case System::GPS:     return "GPS";
+    case System::Galileo: return "Galileo";
+    case System::GLONASS: return "GLONASS";
+    case System::BeiDou:  return "BeiDou";
+    case System::QZSS:    return "QZSS";
+    case System::SBAS:    return "SBAS";
+    default:              return nullptr;
+    }
+}
+
+/// True iff @p sys appears in the configured active-systems list.
+bool isSystemActive(System sys, const std::vector<std::string>& active) {
+    const char* name = systemConfigName(sys);
+    if (!name) return false;
+    return std::find(active.begin(), active.end(), name) != active.end();
+}
+
+/// Push the live store's GLONASS FDMA channel map (R## → k) into PppModel
+/// whenever this frame delivered GLONASS broadcast ephemeris.  Shared by the
+/// RTCM and SBF ingest paths so both seed per-satellite GLONASS wavelengths
+/// identically — from the live 1020 / GLONav @c freq_channel, not the
+/// hard-coded default table.  No-op when the frame carried no GLONASS nav.
+void refreshGlonassSlots(const std::vector<BroadcastEphemeris>& fresh,
+                         LiveEphemerisStore& store, PppModel& model) {
+    for (const auto& e : fresh) {
+        if (e.system == System::GLONASS) {
+            model.setGlonassSlots(store.glonassFreqChannels());
+            return;
+        }
+    }
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -123,6 +163,17 @@ bool RealTimeEngine::initialize() {
     ppp_model_       = std::make_unique<PppModel>(config_, *product_parser_, log_manager_, *rinex_parser_, *state_manager_);
     meas_model_      = std::make_unique<MeasurementModel>(*state_manager_, *ppp_model_, config_, log_manager_);
     kalman_filter_   = std::make_unique<KalmanFilter>(*state_manager_, config_, log_manager_, *ppp_model_);
+
+    // Aiding sources (GNSS/INS coupling).  Same manager type as Application::run,
+    // so real-time and post-processing share ONE predict path (predictAided).
+    // For a GNSS-only stream the set is empty and predictAided delegates to
+    // predict(dt), byte-identical to before.  RT IMU samples arrive via
+    // feedImuSample.
+    aiding_manager_  = std::make_unique<AidingSourceManager>(config_, log_manager_);
+    aiding_manager_->reserveAllStates(*state_manager_);   // every source stashes StateManager / reserves blocks
+    if (auto* imu = aiding_manager_->imu())
+        imu->attachFilter(*kalman_filter_);    // IMU-only: nominal-attitude owner handle (C_b_e_)
+
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
     mw_slip_detector_  = std::make_unique<MwSlipDetector>(config_, log_manager_);
 
@@ -131,7 +182,34 @@ bool RealTimeEngine::initialize() {
     // free jump used to split a dual-frequency slip per signal is valid here.
     if (config_.getCycleSlipConfig().turbo_edit) {
         turbo_edit_resolver_ = std::make_unique<TurboEditResolver>(config_, log_manager_);
-        log->info("Real-time TurboEdit MW+GF joint cycle-slip repair ENABLED.");
+        // Tighten the GF-arc gap tolerance to ~1.5× the nominal cadence,
+        // mirroring CycleSlipManager::setSampleInterval on the
+        // post-processing side.  Left at the resolver's 120 s default, a
+        // 2–120 s stream outage (NTRIP/TCP hiccup) bridges the second
+        // difference: TD2 then mixes a gap-length leg with 1 s legs and
+        // carries the un-cancelled ionospheric drift across the outage,
+        // either mass-resetting converged ambiguities (IVI trip) or
+        // aliasing into a false integer repair.  A live stream has no
+        // RINEX INTERVAL header, so use the configured rate and fall back
+        // to the 1 Hz high-rate design assumption (TurboEdit is
+        // high-rate-only by design).
+        const double rate_s = config_.getGnssRate() > 0.0 ? config_.getGnssRate() : 1.0;
+        turbo_edit_resolver_->setMaxGapSeconds(rate_s * 1.5);
+        log->info("Real-time TurboEdit MW+GF joint cycle-slip repair ENABLED "
+                  "(GF-arc gap tolerance {:.1f} s).", rate_s * 1.5);
+
+        // Soft-LLI gap bridge (shared with the post-processing path): hold an
+        // AR-capable dual-frequency sat's ambiguities across a short receiver
+        // LLI gap and let the bridge integer-repair them instead of an
+        // immediate reset.  Inert unless turbo_edit_bridge_lli.  A live stream
+        // has no interval header, so seed the declared rate (the high-rate
+        // gate else falls back to the measured epoch spacing).
+        soft_lli_ = std::make_unique<SoftLliBridge>(config_, log_manager_);
+        soft_lli_->setSampleInterval(rate_s);
+        if (config_.getCycleSlipConfig().turbo_edit_bridge_lli)
+            log->info("Real-time soft-LLI bridge ENABLED (hold + bridge-repair "
+                      "across LLI gaps ≤ {:.1f} s).",
+                      config_.getCycleSlipConfig().turbo_edit_max_gap_s);
     }
 
     // Higher-order ionosphere is not yet wired into the real-time path:
@@ -223,7 +301,17 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
     // Observations: buffer until a new epoch is detected, then submit the
     // previous epoch.  MSM4/MSM7 decode is a follow-up phase — until then
     // getObservations() is empty and this loop is a no-op.
+    // Drop disabled constellations BEFORE the epoch-boundary test (not just in
+    // processEpoch): a mis-tagged clock — notably GLONASS, carried as week-0
+    // seconds-of-day until full GPS-week promotion lands — emits a wildly
+    // different tow that would split a coherent epoch in two.  The leading
+    // systems get submitted early (without the trailing ones), and the trailing
+    // systems then arrive at the same tow as the just-submitted epoch and are
+    // dropped by processEpoch's dt==0 duplicate guard.  That silently starved
+    // GPS+Galileo of Galileo whenever GLONASS was present-but-disabled.
+    const auto& active = config_.getActiveSystems();
     for (const auto& obs : parser.getObservations()) {
+        if (!isSystemActive(obs.system, active)) continue;
         if (pending_obs_.empty()) {
             pending_epoch_time_ = obs.time;
         } else if (std::abs(obs.time.tow - pending_epoch_time_.tow) > 0.5) {
@@ -254,6 +342,7 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
     // Geometry::getSatellitePV resolve satellite orbits with no SP3 file loaded.
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph);
+    refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
 
     const std::size_t n_ssr =
         parser.getSsrOrbits().size()      + parser.getSsrClocks().size() +
@@ -273,12 +362,45 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
             parser.lastMessageType(), parser.getBroadcastEphemeris().size(),
             eph_store.size());
     }
+    // Reference-station coordinate (RTCM 1005/1006).  Seed the filter a-priori
+    // from the antenna reference point until the KF has bootstrapped — the RTCM
+    // analogue of the PVTGeodetic seed in feedSbfFrame.  A live RTCM obs stream
+    // carries no RINEX APPROX POSITION, so without this the a-priori is the
+    // coarse Earth-centred fallback (geographic pole) from which almost every
+    // satellite sits below the elevation mask and the filter can never converge.
+    // A configured reference_position always wins; once first_epoch_ clears the
+    // KF owns the position and we stop overwriting it.  The startup defer gate
+    // keeps first_epoch_ true through warmup, so a 1005/1006 arriving a few
+    // seconds into the stream (they come less often than the 1 Hz obs) still
+    // seeds before the first estimation epoch.
     if (!parser.getStationCoords().empty()) {
         const auto& s = parser.getStationCoords().front();
-        log_manager_.getLogger("rt_engine")->info(
-            "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
-            parser.lastMessageType(), s.reference_station_id,
-            s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+        if (first_epoch_ && !config_.hasReferencePosition()
+            && s.arp_ecef.allFinite() && s.arp_ecef.norm() > 1e3) {
+            const size_t pidx = state_manager_->getPositionIndex();
+            Eigen::VectorXd sv = state_manager_->getStateVector();
+            if (sv.size() >= static_cast<Eigen::Index>(pidx + 3)) {
+                sv.segment<3>(pidx) = s.arp_ecef;
+                state_manager_->setStateVector(sv);
+                ppp_state_.position = s.arp_ecef;
+                if (!apriori_seeded_from_station_) {
+                    log_manager_.getLogger("rt_engine")->info(
+                        "RTCM {}: seeded a-priori from station {} ARP "
+                        "({:.3f}, {:.3f}, {:.3f}) m",
+                        parser.lastMessageType(), s.reference_station_id,
+                        s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+                    apriori_seeded_from_station_ = true;
+                }
+            }
+        } else {
+            // A-priori already pinned (config reference_position) or already
+            // owned by the KF — just surface the broadcast ARP so it can be
+            // eyeballed against the configured/estimated position.
+            log_manager_.getLogger("rt_engine")->info(
+                "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
+                parser.lastMessageType(), s.reference_station_id,
+                s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+        }
     }
 }
 
@@ -319,6 +441,7 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
     // the receiver's DECODED nav blocks, emitted only on ephemeris change.
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph);
+    refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
     if (!parser.getBroadcastEphemeris().empty()) {
         log_manager_.getLogger("rt_engine")->trace(
             "SBF block {}: cached {} broadcast ephemeris ({} sats in live store)",
@@ -349,6 +472,12 @@ void RealTimeEngine::feedObservations(const std::vector<RinexObservation>& obser
     processEpoch(observations);
 }
 
+void RealTimeEngine::feedImuSample(const AidingSample& sample) {
+    // Buffer into the IMU aiding source (no-op when no IMU source is active);
+    // consumed by the next epoch's predictAided.
+    if (aiding_manager_) aiding_manager_->ingestSample(sample);
+}
+
 void RealTimeEngine::flush() {
     if (!pending_obs_.empty()) {
         processEpoch(pending_obs_);
@@ -374,6 +503,53 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // when both modes share a console.
     const std::string epoch_prefix = "[RT] ";
 
+    // --- Real-time obs/wall-clock lag: backlog warn + skip-to-latest ---
+    // A live obs stream that lags real time gets processed against FRESHER
+    // orbit/clock/SSR corrections → desync garbage ("zero/invalid clock" on
+    // every sat).  Measure the lag once against wall-clock GPS time; warn on a
+    // backlog, and (opt-in) DROP stale epochs so the filter fast-forwards to the
+    // freshest one.  The skip returns BEFORE any continuity state (prev_tow_,
+    // prev_epoch_time_, first_epoch_, the KF) is touched — exactly like the
+    // duplicate-epoch early-return below — so dt/gap/cycle-slip semantics are
+    // preserved: on resume the large dt correctly trips the gap path (WLS clock
+    // re-seed).  setStateEpochTime/setCurrentEpochTime above only stamp the log
+    // tag, never continuity state, so running them first is harmless.
+    {
+        const double lag_s = TimeUtils::nowContinuousGpsSeconds()
+                           - TimeUtils::continuousGpsSeconds(current_time);
+        if (config_.rtBacklogWarnSeconds() > 0.0 && lag_s > config_.rtBacklogWarnSeconds()) {
+            if ((backlog_warn_ctr_++ % 30) == 0)
+                log->warn("{}obs backlog: epoch wk{} tow{:.1f} is {:.1f}s behind wall-clock GPS "
+                          "(corrections will be fresher than these obs)",
+                          epoch_prefix, current_time.week, current_time.tow, lag_s);
+        }
+        if (config_.enableObsSkipToLatest() && !first_epoch_
+            && lag_s > config_.obsSkipMaxLagS()) {
+            log->debug("{}Skipping stale obs epoch TOW {:.3f} ({:.1f}s behind real-time)",
+                       epoch_prefix, current_time.tow, lag_s);
+            return false;
+        }
+    }
+
+    // --- Max-duration cutoff (processing.max_duration_s) ---
+    // Once the data-time span from the first processed epoch reaches the
+    // limit, latch max_duration_reached_ and stop processing.  The poll loop
+    // in Application::runRealTime watches the latch and ends the session
+    // cleanly (flush + teardown).  The window is anchored below where
+    // first_epoch_ clears, so warmup-deferred epochs don't burn the budget.
+    if (config_.getMaxDuration() > 0.0 && max_duration_anchored_) {
+        const double span = TimeUtils::continuousGpsSeconds(current_time)
+                          - max_duration_anchor_s_;
+        if (span >= config_.getMaxDuration()) {
+            if (!max_duration_reached_)
+                log->info("{}Reached max processing duration: {:.1f} s of data processed "
+                          "(limit {:.1f} s); ending session", epoch_prefix, span,
+                          config_.getMaxDuration());
+            max_duration_reached_ = true;
+            return false;
+        }
+    }
+
     // --- Time step / gap detection ---
     double dt;
     bool gap_detected = false;
@@ -383,11 +559,37 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     } else {
         dt = current_time.tow - prev_tow_;
         if (dt < 0.0) dt += TimeUtils::SECONDS_IN_WEEK; // week rollover
+        if (dt <= 0.0) {
+            // Non-advancing TOW: this is the SAME physical epoch arriving a
+            // second time, not a new time step.  A single GNSS epoch reaches the
+            // engine as more than one observation-bearing SBF block whenever the
+            // receiver co-logs MeasEpoch (4027) AND Meas3Ranges (4109): both
+            // decode to observations at the identical TOW (SbfParser::parseFrame)
+            // and each independently drives processEpoch via feedSbfFrame.  A
+            // retransmitted frame looks the same.  Folding the duplicate in would
+            // (a) double-count its measurements in the KF update and (b) feed
+            // dt=0 into KalmanFilter::predict -> StateManager::getProcessNoiseMatrix,
+            // which hard-throws "Invalid time step: 0" and aborts the session.
+            // Skip it cleanly — leave prev_tow_ / state untouched so the next
+            // genuinely-advancing epoch steps off the last accepted one.
+            log->debug("{}Skipping duplicate epoch at TOW {:.3f} (no time advance; "
+                       "second co-timestamped SBF block or retransmit)",
+                       epoch_prefix, current_time.tow);
+            return false;
+        }
         const double gap_tol = config_.getDataGapTolerance() > 0.0
                              ? config_.getDataGapTolerance()
                              : 1.0;  // default: 1 s (typical RT rate)
         gap_detected = dt > gap_tol;
     }
+    // Capture the pre-update epoch boundary + first-epoch flag for aiding-source
+    // prediction below: prev_epoch_time_ and first_epoch_ are both clobbered
+    // before the predict site, but predictAided needs the (prev, current]
+    // integration interval and the first-epoch skip.  Unused on the GNSS-only
+    // path (empty aiding manager).
+    const GnssTime aiding_t_prev = prev_epoch_time_;
+    const bool     aiding_first  = first_epoch_;
+
     prev_tow_ = current_time.tow;
     prev_epoch_time_ = current_time;
 
@@ -406,19 +608,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     {
         const auto& active = config_.getActiveSystems();
         for (const auto& obs : epoch_obs) {
-            std::string sys_str;
-            switch (obs.system) {
-            case System::GPS:     sys_str = "GPS";     break;
-            case System::Galileo: sys_str = "Galileo"; break;
-            case System::GLONASS: sys_str = "GLONASS"; break;
-            case System::BeiDou:  sys_str = "BeiDou";  break;
-            case System::QZSS:    sys_str = "QZSS";    break;
-            case System::SBAS:    sys_str = "SBAS";    break;
-            default: continue;
-            }
-            if (std::find(active.begin(), active.end(), sys_str) != active.end()) {
-                filtered_obs.push_back(obs);
-            }
+            if (isSystemActive(obs.system, active)) filtered_obs.push_back(obs);
         }
     }
     if (filtered_obs.empty()) {
@@ -457,20 +647,36 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
             else { ++n_cm; ++cm_per_cons[cons]; }
         }
 
-        // Per-constellation quorum: every constellation that can contribute SD
-        // geometry (>=2 above-mask sats) must have at least min(per_system, its
-        // above-mask count) cm-grade sats.  This guarantees MULTI-constellation
-        // phase geometry at start — without it the gate latches on GPS-only
-        // phase while Galileo/BeiDou are still broadcast-only, which drives the
-        // ZWD<->height null-space runaway and flags all Galileo code.  per_system
-        // <= 0 disables the per-system check (flat global floor only).
+        // Per-constellation quorum: every CONFIGURED constellation must field a
+        // cm-grade SD quorum before estimation starts — not just the ones that
+        // happen to be present this epoch.  Iterating active_systems (rather than
+        // total_per_cons) is the crux: a constellation whose broadcast ephemeris
+        // is still assembling contributes ZERO satellites, so it is absent from
+        // total_per_cons and the old present-only loop waved it through.  That
+        // let the gate latch single-constellation (Galileo-only while GPS had no
+        // orbit yet); GPS then joined mid-run and perturbed an already-converging
+        // filter, driving the ZWD<->height null-space runaway and flagging code.
+        // Holding the gate for the absent constellation forces a multi-system
+        // start — or the timeout below forces a degraded one.  per_system <= 0
+        // disables the per-system check (flat global floor only).
         bool per_system_ok = true;
         std::vector<std::string> cons_waiting;
         if (gate.min_satellites_per_system > 0) {
-            for (const auto& [cons, total] : total_per_cons) {
-                if (total < 2) continue;   // a lone sat contributes no SD row
-                const int need = std::min(gate.min_satellites_per_system, total);
-                const int have = cm_per_cons.count(cons) ? cm_per_cons[cons] : 0;
+            for (const auto& cons : config_.getActiveSystems()) {
+                // GLONASS yields no SD rows when BSSD is active without the
+                // GLONASS-BSSD opt-in, so it can never reach cm-grade quorum;
+                // requiring it would stall every startup to the timeout.
+                if (cons == "GLONASS" && config_.enableBetweenSatelliteSd()
+                    && !config_.enableGlonassBssd()) continue;
+
+                const int total = total_per_cons.count(cons) ? total_per_cons[cons] : 0;
+                const int have  = cm_per_cons.count(cons)    ? cm_per_cons[cons]    : 0;
+                // Smaller of the configured floor and what the constellation can
+                // currently field, but never below 2 (an SD pair): an absent or
+                // single-sat constellation (total < 2) still demands 2 cm-grade
+                // sats and holds the gate until it shows up.
+                const int need = std::min(gate.min_satellites_per_system,
+                                          std::max(total, 2));
                 if (have < need) {
                     per_system_ok = false;
                     cons_waiting.push_back(cons + " " + std::to_string(have) + "/" + std::to_string(need));
@@ -527,6 +733,30 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
                       "starting estimation (code+phase together){}",
                       epoch_prefix, n_cm, cm_per_cons.size(),
                       not_ready.empty() ? "" : " (broadcast-only stragglers join as SSR arrives)");
+    }
+
+    // --- SSR coverage summary (per epoch, info) ---
+    // One glanceable line answering "are corrections flowing AND applying?".
+    // clk-applied is the TRUE signal: a sat is cm-grade only when its SSR clock
+    // cleared the IODE gate (getSatelliteClockCorrection) — i.e. !broadcast_only.
+    // The in-store counts are what the SSR store holds fresh for these SAME sats;
+    // a gap between in-store clk and clk-applied localises an IODE-match problem
+    // (present but rejected) vs a decode/stream gap (not present at all).  Live
+    // broadcast+SSR path only — the precise-product replay carries no SSR.
+    if (config_.realtimeUsesLiveOrbitClockSource()) {
+        std::vector<std::string> sats;
+        sats.reserve(modeled_obs.size());
+        size_t n_cm = 0;
+        for (const auto& o : modeled_obs) {
+            sats.push_back(o.satellite);
+            if (!o.broadcast_only) ++n_cm;
+        }
+        const auto cov = SsrCorrectionStore::getInstance().coverageFor(sats, current_time);
+        log->info("{}SSR coverage: {} sats | clk-applied {}/{} | in-store orb {}/{} "
+                  "clk {}/{} cbias {}/{} pbias {}/{}",
+                  epoch_prefix, cov.total, n_cm, cov.total,
+                  cov.orbit, cov.total, cov.clock, cov.total,
+                  cov.code_bias, cov.total, cov.phase_bias, cov.total);
     }
 
     // --- Drop broadcast-grade satellites (precise SSR PPP-RTK) ---
@@ -647,8 +877,27 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // means this epoch produced a usable measurement set.
     first_epoch_ = false;
 
+    // Anchor the max-duration window on this first fully-processed epoch (epoch
+    // GPS time relative to first obs).  Deferred warmup epochs return before
+    // here, so the budget starts at real estimation rather than cold start.
+    if (config_.getMaxDuration() > 0.0 && !max_duration_anchored_) {
+        max_duration_anchor_s_ = TimeUtils::continuousGpsSeconds(current_time);
+        max_duration_anchored_ = true;
+    }
+
     // --- KF predict ---
-    kalman_filter_->predict(dt);
+    // Aiding-augmented prediction, shared with post-processing.  GNSS-only
+    // stream => empty manager => predictAided delegates to predict(dt),
+    // byte-identical.  IMU samples (fed via feedImuSample) are integrated over
+    // (aiding_t_prev, current_time].
+    if (aiding_manager_ && !aiding_manager_->empty() && !aiding_first) {
+        const Eigen::VectorXd aiding_x = state_manager_->getStateVector();
+        const AidingEpochContext aiding_ctx{
+            aiding_x, aiding_t_prev, current_time, aiding_first };
+        kalman_filter_->predictAided(dt, aiding_manager_->collectPredict(aiding_ctx));
+    } else {
+        kalman_filter_->predict(dt);
+    }
     state_manager_->updatePppStateFromVector(
         state_manager_->getStateVector(), ppp_state_, *state_manager_);
 
@@ -656,6 +905,37 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     {
         const auto slip_results = mw_slip_detector_->detectLargeMwResets(modeled_obs);
         const double reset_std = config_.getAmbiguityStd();
+        const double epoch_now_s = TimeUtils::continuousGpsSeconds(current_time);
+
+        // Whether a satellite is the BSSD pivot for its constellation (its SD
+        // ambiguity is frozen at 0 — a soft-LLI in-frame integer shift is
+        // meaningless there; a pivot LLI needs a handover).  Hoisted so both
+        // the TurboEdit block and the default LLI loop can consult it.
+        auto isBssdPivot = [&](const std::string& sat) -> bool {
+            if (!config_.enableBetweenSatelliteSd()) return false;
+            const auto& pivots = meas_model_->getBssdPivotSatellites();
+            auto it = pivots.find(PppUtils::getSystemString(sat));
+            return it != pivots.end() && it->second == sat;
+        };
+
+        // --- Gap-hold registration (pre-pass) ---
+        // A phase signal that DROPPED this epoch (no observation, no LLI)
+        // with a recent converged snapshot is held rather than left to the
+        // measurement model's prune-on-first-miss: the held key is
+        // prune-protected and KF-excluded until the TurboEdit gap bridge
+        // adjudicates the outage on the signal's return (mirrors
+        // CycleSlipManager::detectAndRepair).  Must run before resolve() so
+        // the resolver sees the signal held-continuous from the first
+        // missing epoch.  No-op unless turbo_edit_bridge_lli.
+        if (soft_lli_ && turbo_edit_resolver_ && soft_lli_->enabled())
+            soft_lli_->registerGapHolds(modeled_obs, *state_manager_,
+                                        isBssdPivot, *turbo_edit_resolver_,
+                                        epoch_now_s, epoch_prefix);
+
+        // Satellites whose soft-LLI-held ambiguities the bridge integer-repaired
+        // this epoch (snapshot+dN·λ in the pre-pass below): both the TurboEdit
+        // repair loop and the default reset loop skip them.
+        std::set<std::string> soft_lli_repaired;
 
         // TurboEdit MW+GF joint repair (high-rate): pair the MW wide-lane
         // integer with the geometry-free phase jump to split a dual-frequency
@@ -664,21 +944,77 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         // by the default reset loop below; everything else falls back to a
         // plain ambiguity reset (the original real-time behavior).
         std::set<std::string> turbo_handled_sats;
+        // MW-only code-domain events (GF affirmatively stable): per-sat phase
+        // signals the resolver adjudicated clean.  The default reset loop
+        // below skips a non-LLI MW mandate when the mandate's OWN signal
+        // (the amb_key suffix) is adjudicated — per-mandate-signal, exactly
+        // the post-processing CycleSlipManager rule, so a mandate on a pair
+        // outside the GF solve (arc in warm-up / per-signal dropout) still
+        // takes its un-adjudicated signal's reset.
+        std::map<std::string, std::set<std::string>> code_clean_signals;
+        // Satellites with a WL-settle deferral pending (bridged adjudication
+        // waiting on the post-restart MW mean): mandates suppressed, holds
+        // kept alive.  Filled inside the turbo block, consumed by the
+        // default reset loop below.
+        std::set<std::string> te_pending;
         if (turbo_edit_resolver_) {
-            const auto te = turbo_edit_resolver_->resolve(slip_results, modeled_obs, dt);
+            // The clean-pair set gates the resolver's GF-only equal-slip
+            // split on affirmative MW evidence rather than mere MW silence
+            // (a wl-locked arc absorbs real slips without emitting a result);
+            // the across-gap WL evidence feeds the bridged solve's WL-settle
+            // deferral.
+            const auto te = turbo_edit_resolver_->resolve(
+                slip_results, mw_slip_detector_->getEpochCleanPairs(),
+                modeled_obs, dt,
+                mw_slip_detector_->getAcrossGapWlEvidence(epoch_now_s));
+            te_pending = te.pending_sats;
 
-            auto isBssdPivot = [&](const std::string& sat) -> bool {
-                if (!config_.enableBetweenSatelliteSd()) return false;
-                const auto& pivots = meas_model_->getBssdPivotSatellites();
-                auto it = pivots.find(PppUtils::getSystemString(sat));
-                return it != pivots.end() && it->second == sat;
-            };
+            // WL-settle deferral: a pending satellite's still-slipped phase
+            // must stay out of the filter while the resolver waits — register
+            // holds for its recently converged phase signals (idempotent;
+            // the held keys feed the KF exclusion and prune protection).
+            // Pivots are excluded as everywhere else; their deferral runs to
+            // the resolver's timeout-reset.
+            if (soft_lli_) {
+                for (const auto& psat : te.pending_sats) {
+                    if (isBssdPivot(psat)) {
+                        log->warn("{}TurboEdit WL-settle pending for BSSD "
+                                  "pivot {} — holds unavailable for a pivot; "
+                                  "deferral will run to its timeout-reset",
+                                  epoch_prefix, psat);
+                        continue;
+                    }
+                    soft_lli_->registerHold(psat, {}, *turbo_edit_resolver_,
+                                            epoch_now_s, epoch_prefix);
+                }
+            }
+
+            // Soft-LLI bridge resolution (pre-pass): apply snapshot+dN·λ
+            // covariance-restoring repairs to any held ambiguities the bridge
+            // resolved this epoch, BEFORE the per-signal repair loop — a held
+            // sat's reset value would otherwise make x += dN·λ wrong.  Repaired
+            // sats are skipped by both loops below.  No-op unless something is
+            // held (turbo_edit_bridge_lli).
+            if (soft_lli_ && !soft_lli_->empty()) {
+                int n_rep = 0, n_res = 0;
+                const SoftLliBridge::ResetFn reset_fn =
+                    [&](const std::string& key, const std::string& /*sat*/,
+                        const std::string& /*sig*/) {
+                        state_manager_->resetAmbiguity(key, reset_std);
+                    };
+                soft_lli_->resolveHolds(te, *turbo_edit_resolver_, modeled_obs,
+                                        *state_manager_, epoch_now_s, epoch_prefix,
+                                        soft_lli_repaired, n_rep, n_res, reset_fn);
+                turbo_handled_sats.insert(soft_lli_repaired.begin(),
+                                          soft_lli_repaired.end());
+            }
 
             // Confident per-signal integer repairs (additive, covariance preserved).
             // The BSSD pivot's SD ambiguity is frozen at 0, so an integer shift is
             // meaningless there — reset instead and let the KF coherent-disturbance
             // detector / forwardKfPivotHandovers drive the re-referencing.
             for (const auto& r : te.repairs) {
+                if (soft_lli_repaired.count(r.satellite)) continue;  // restored above
                 const std::string key = r.satellite + "_" + r.signal;
                 const int idx = state_manager_->getAmbiguityIndex(key);
                 if (idx < 0) continue;
@@ -720,12 +1056,56 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
                 }
                 turbo_handled_sats.insert(sat);
             }
+
+            // MW-only code-domain events: MW flagged but the GF phase was
+            // affirmatively stable under trusted conditions — the event
+            // lives in the code observable (multipath / NLOS / DLL stress),
+            // not the phase.  Record the adjudicated-clean signals so the
+            // default loop below SKIPS the mandated phase reset; nothing is
+            // touched here.  A wrongly vetoed real slip is a null-line pair
+            // that lands ≥ |4·λ1| ≈ 0.76 m in the phase innovation at this
+            // epoch's update — the KF residual-gate reset (plus the
+            // MW/TurboEdit arc-clear that follows it below) is the backstop.
+            for (const auto& ce : te.code_events) {
+                code_clean_signals[ce.satellite].insert(ce.sig1);
+                code_clean_signals[ce.satellite].insert(ce.sig2);
+                log->info("{}TurboEdit code-domain event {} {}/{}: MW flagged "
+                          "(dN_WL={:+d}{}) but GF stable (|TD2|={:.4f} m <= "
+                          "{:.4f} m) — phase reset suppressed (KF residual "
+                          "gate is the backstop)",
+                          epoch_prefix, ce.satellite, ce.sig1, ce.sig2,
+                          ce.dN_wl, ce.wl_known ? "" : ", integer unknown",
+                          ce.td2_m, ce.zero_gate_m);
+            }
+
+            // Gap-bridge moot attributions (across-gap slip already absorbed
+            // by the prune-and-reseed on the signal's return) and clean
+            // adjudications (dN == 0 partners) share the code-event caller
+            // semantic: suppress the mandate, touch nothing.
+            for (const auto& [msat, sigs] : te.moot_signals) {
+                code_clean_signals[msat].insert(sigs.begin(), sigs.end());
+                for (const auto& s : sigs)
+                    log->info("{}TurboEdit bridged moot adjudication {} {}: "
+                              "across-gap slip already absorbed by the fresh "
+                              "reseed — phase reset suppressed",
+                              epoch_prefix, msat, s);
+            }
+            for (const auto& [csat, sigs] : te.clean_signals)
+                code_clean_signals[csat].insert(sigs.begin(), sigs.end());
         }
 
         // Default reset path for everything TurboEdit did not handle.  LLI
         // resets (empty signal pair) always reset — a loss-of-lock is
         // authoritative; pair slips on a TurboEdit-handled satellite are
-        // skipped to preserve its targeted per-signal repair.
+        // skipped to preserve its targeted per-signal repair, and a mandate
+        // whose OWN signal the code-domain veto adjudicated clean is
+        // skipped to preserve the (believed-unslipped) phase ambiguity.
+        // The per-mandate-signal test matches CycleSlipManager's
+        // signalFromAmbiguityKey rule exactly: a mandate from a pair
+        // OUTSIDE the GF solve still resets its un-adjudicated signal, and
+        // a combined-IF amb_key (suffix "L1C_L2W") never matches the
+        // raw-signal clean set, so the IF ambiguity resets — identical to
+        // the post-processing behavior.
         for (const auto& sr : slip_results) {
             const bool is_lli = sr.sig1.empty() || sr.sig2.empty();
             std::string sat = sr.satellite;
@@ -733,9 +1113,57 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
                 const auto p = sr.amb_key.find('_');
                 sat = (p != std::string::npos) ? sr.amb_key.substr(0, p) : sr.amb_key;
             }
+            // Bridge-restored this epoch (snapshot+dN·λ in the pre-pass) — its
+            // ambiguities are already correct; do not reset them.
+            if (soft_lli_repaired.count(sat)) continue;
             if (!is_lli && turbo_handled_sats.count(sat)) continue;
+            // WL-settle deferral pending: mandate suppressed (the holds keep
+            // the affected phase out of the filter), GF/MW arcs preserved,
+            // until the deferral resolves in a later epoch.
+            if (!is_lli && te_pending.count(sat)) {
+                log->info("{}MW mandate for {} suppressed: TurboEdit WL-settle "
+                          "deferral pending (holds active)", epoch_prefix, sat);
+                continue;
+            }
+            if (!is_lli) {
+                const auto cit = code_clean_signals.find(sat);
+                if (cit != code_clean_signals.end()) {
+                    const auto p = sr.amb_key.find('_');
+                    if (p != std::string::npos &&
+                        cit->second.count(sr.amb_key.substr(p + 1)))
+                        continue;  // mandate's own signal adjudicated clean: keep the phase
+                }
+            }
             state_manager_->resetAmbiguity(sr.amb_key, reset_std);
+            // A receiver-declared loss of lock also invalidates the
+            // TurboEdit GF arc levels for the sat: a slip baked into
+            // prev_gf would echo into the next epoch's TD2 (sign-flipped)
+            // exactly when MW flags the pair with the true integer, and
+            // the joint solve would corrupt the just-reseeded ambiguity.
+            // The MW EWMA is deliberately preserved across LLI
+            // (observation-domain history; see the detector's LLI branch).
+            //
+            // EXCEPTION — soft-LLI bridge: for an AR-capable, non-pivot sat at
+            // high rate, HOLD the ambiguities across the (short) LLI gap and
+            // let the bridge integer-repair them at gap return.  That needs the
+            // GF arc's pre-gap level to SURVIVE, so do NOT reset it here; the
+            // hold snapshots the pre-gap values and marks the signals
+            // held-continuous in the resolver.
+            if (is_lli && turbo_edit_resolver_) {
+                if (soft_lli_ && !isBssdPivot(sat) &&
+                    soft_lli_->qualifies(sat, epoch_now_s)) {
+                    soft_lli_->registerHold(sat, { sr.amb_key },
+                                            *turbo_edit_resolver_, epoch_now_s,
+                                            epoch_prefix);
+                    // GF arc intentionally PRESERVED (no resetSatellite).
+                } else {
+                    turbo_edit_resolver_->resetSatellite(sat);
+                }
+            }
         }
+
+        // Advance the soft-LLI measured-spacing marker for the high-rate gate.
+        if (soft_lli_) soft_lli_->advanceEpoch(epoch_now_s);
     }
 
     // --- SSR phase-bias discontinuity -> ambiguity reset ---
@@ -786,6 +1214,19 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
             computeRebuildPassBudget(*state_manager_, config_, modeled_obs);
 
         std::set<std::string> carry_excluded;
+        // Soft-LLI bridge: phase signals held across a receiver LLI gap pending
+        // a bridge repair are excluded from the update so their still-slipped
+        // ambiguities cannot contaminate shared states across the MW one-epoch
+        // confirmation delay.  Empty unless turbo_edit_bridge_lli holds.
+        if (soft_lli_) {
+            auto held = soft_lli_->heldKeys();
+            carry_excluded.insert(held.begin(), held.end());
+            // The held ambiguity STATES must also survive the measurement
+            // model's prune-on-first-miss for the duration of the outage —
+            // deleting them would destroy the pre-gap state the bridge
+            // repair restores.  Same source set as the exclusion above.
+            meas_model_->setProtectedAmbiguityKeys(std::move(held));
+        }
         size_t carry_bad = 0;
         for (int pass = 0; pass < max_passes; ++pass) {
             meas_update = meas_model_->computeMeasurementUpdate(
@@ -817,8 +1258,47 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
             // No-op on a complete reset / when slip_state_reinflation is off.
             reinflateResetSatStates(*kalman_filter_, *state_manager_,
                                     *meas_model_, config_);
+
+            // Clear MW / TurboEdit arc history for everything the KF just
+            // reset, mirroring Application::runFilterUpdateLoop.  Per the
+            // MwSlipDetector contract (resetSatellite docs), an externally
+            // reset ambiguity must drop its arc: a stale pre-reset MW mean
+            // or GF level otherwise flags against the reseeded state on the
+            // next epoch, and the TurboEdit joint solve can convert that
+            // echo into a confident wrong integer repair on top of a state
+            // the KF already corrected.
+            if (kalman_filter_->wasCompleteReset()) {
+                for (const auto& obs : modeled_obs) {
+                    mw_slip_detector_->resetSatellite(obs.satellite);
+                    if (turbo_edit_resolver_)
+                        turbo_edit_resolver_->resetSatellite(obs.satellite);
+                }
+            } else {
+                std::set<std::string> covered_sats;
+                for (const auto& [sat_id, sig] :
+                     kalman_filter_->getLastResetSignals()) {
+                    mw_slip_detector_->resetSatelliteSignal(sat_id, sig);
+                    if (turbo_edit_resolver_)
+                        turbo_edit_resolver_->resetSatelliteSignal(sat_id, sig);
+                    covered_sats.insert(sat_id);
+                }
+                for (const auto& sat_id :
+                     kalman_filter_->getLastResetSatellites()) {
+                    if (covered_sats.count(sat_id)) continue;
+                    mw_slip_detector_->resetSatellite(sat_id);
+                    if (turbo_edit_resolver_)
+                        turbo_edit_resolver_->resetSatellite(sat_id);
+                }
+            }
         }
     }
+
+    // Soft-LLI bridge: roll the "last good" ambiguity snapshot from the
+    // converged post-update state (the pre-gap anchor a later LLI hold repairs
+    // against).  Only converged keys update it.  No-op unless turbo_edit_bridge_lli.
+    if (soft_lli_)
+        soft_lli_->recordSnapshot(*state_manager_,
+                                  TimeUtils::continuousGpsSeconds(current_time));
 
     // --- Soft a-priori ZWD constraint ---
     // Anchors the BSSD [up, ZWD] near-null subspace each epoch so a common-mode

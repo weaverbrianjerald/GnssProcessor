@@ -101,6 +101,17 @@ for (Eigen::Index i = 0; i < n; ++i) {
             pivot_map[ri.group_key] = ri.row;
     }
 
+    // Diagnostic (trace): the per-(constellation|signal) pivot rows.  A C5/C7
+    // residual mystery is usually visible here — if "Galileo|C5Q" (etc.) is
+    // ABSENT, the Galileo pivot does not track that signal, so every C5/C7 row
+    // is rejected (BSSD purity rule below) rather than single-differenced.
+    if (auto lg = log_manager_.getLogger("bssd_transform");
+        lg->should_log(spdlog::level::trace)) {
+        for (const auto& [gk, prow] : pivot_map)
+            lg->trace("{}BSSD-PIVOT group={} pivot={}", epoch_prefix, gk,
+                      rows[static_cast<size_t>(prow)].satellite);
+    }
+
     // ---- Step 3: Partition into SD-eligible rows; reject everything else
     // BSSD purity rule: a row that cannot be paired with a same-group pivot
     // is REJECTED, not passed through.  Letting an undifferenced row
@@ -123,16 +134,29 @@ for (Eigen::Index i = 0; i < n; ++i) {
     size_t n_rejected_singleton = 0;
     size_t n_pivot_consumed = 0;
 
+    auto bssd_pair_lg = log_manager_.getLogger("bssd_transform");
+    const bool trace_pairs = bssd_pair_lg->should_log(spdlog::level::trace);
     for (const auto& ri : rows) {
+        const char* fate;
         if (!pivot_map.count(ri.group_key)) {
-            ++n_rejected_no_pivot;
+            ++n_rejected_no_pivot;  fate = "reject-no-pivot";
         } else if (grp_cnt[ri.group_key] <= 1) {
-            ++n_rejected_singleton;
+            ++n_rejected_singleton; fate = "reject-singleton";
         } else if (pivot_map[ri.group_key] == ri.row) {
-            ++n_pivot_consumed;
+            ++n_pivot_consumed;     fate = "pivot";
         } else {
-            sd_entries.push_back({ri.row, ri.group_key});
+            sd_entries.push_back({ri.row, ri.group_key}); fate = "sd-paired";
         }
+        // Per-row fate + the ZERO-difference innovation entering BSSD.  The
+        // physical receiver clock is common to every row and cancels ONLY for
+        // sd-paired/pivot rows; a reject-* row is dropped (never differenced),
+        // so it cannot leak the rx clock into the filter.  If C5/C7 show up
+        // sd-paired with a small post-SD residual in measurement_residuals.csv,
+        // the rx clock is being removed correctly.
+        if (trace_pairs)
+            bssd_pair_lg->trace("{}BSSD-PAIR {} {} group={} fate={} zd_innov={:+.3f}m",
+                                epoch_prefix, ri.satellite, ri.signal_type,
+                                ri.group_key, fate, update.innovations(ri.row));
     }
 
     const size_t n_sd = sd_entries.size();

@@ -17,6 +17,7 @@
 #include "rtcm/RtcmSsrDecoder.hpp"
 #include "rtcm/RtcmBitReader.hpp"
 #include "rtcm/RtcmSignalMap.hpp"
+#include "math/TimeUtils.hpp"
 #include <chrono>
 #include <cstdio>
 
@@ -123,15 +124,16 @@ GnssTime promoteGpsEpoch(int current_week, uint32_t tow_s) {
     return GnssTime{current_week, static_cast<double>(tow_s)};
 }
 
-// Promote a GLONASS time-of-day field (seconds since GLONASS midnight) into
-// a GnssTime on the GPS scale.  This requires knowing the current calendar
-// day (to compute the GPS-week + day-of-week offset) and the GPS-GLONASS
-// offset (3 hours - cumulative leap-second drift).  V1 implementation:
-// approximate using the system clock; a follow-up will plumb the rover
-// time through.  Reference comment kept here so future work has a hook.
-GnssTime promoteGloTod(int /*current_week*/, uint32_t /*tod_s*/) {
-    // TODO(realtime): full GLO->GPS time conversion once rover time is plumbed.
-    return GnssTime{0, 0.0};
+// Promote a GLONASS time-of-day field (DF389, seconds since the start of the
+// GLONASS UTC(SU)+3h day) into a GnssTime on the GPS scale.  Anchors on the
+// rover's current GPS time (the same wall-clock anchor the MSM observation and
+// 1020-ephemeris paths use) and carries the time-of-day back through UTC with
+// the epoch's leap seconds — see TimeUtils::glonassTodToGpsTime.  Without this
+// the SSR epoch lands at {0,0} and every GLONASS SSR record is dropped from the
+// store as stale / IOD-mismatched.
+GnssTime promoteGloTod(int /*current_week*/, uint32_t tod_s) {
+    return TimeUtils::glonassTodToGpsTime(static_cast<double>(tod_s),
+                                          TimeUtils::nowContinuousGpsSeconds());
 }
 
 // ---------------------------------------------------------------------------

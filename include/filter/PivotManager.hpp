@@ -30,6 +30,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -157,6 +158,29 @@ public:
     /// Get the current pivot satellite map (constellation name -> satellite ID).
     const std::map<std::string, std::string>& getPivotSatellites() const {
         return pivot_sat_;
+    }
+
+    /**
+     * @brief Clean (elevation / quality) pivot handovers performed this epoch.
+     *
+     * Maps constellation name -> {old_pivot, new_pivot} for handovers that were
+     * pure datum changes on an UNDISTURBED, continuous old pivot — i.e. neither
+     * forced (KF post-fit / slip-phase) nor triggered by a disturbed pivot.
+     * For exactly these the SD re-reference is a lossless, invertible frame
+     * change, so the RTS smoother can inverse-reference the affected ambiguity
+     * states back to the old pivot instead of segmenting them (audit P2-1).
+     *
+     * Disturbed / forced handovers (where the old pivot's own ambiguity slipped
+     * and is therefore discontinuous across the epoch) are deliberately NOT
+     * recorded here, so the smoother defaults to segmentation for them.
+     *
+     * Reset at the start of each epoch's first-pass handover
+     * (@c forced_only == false) and populated as clean legs fire; read by
+     * @c Application at posterior-snapshot time.
+     */
+    const std::map<std::string, std::pair<std::string, std::string>>&
+    getCleanHandovers() const {
+        return clean_handovers_;
     }
 
     /// Check if BSSD pivots have been initialized.
@@ -443,6 +467,13 @@ private:
     /// handover terminates: a satellite handed off this epoch can never be
     /// bounced back to, so the anchor is forced onto a fresh satellite.
     std::map<std::string, std::set<std::string>> retired_pivots_this_epoch_;
+
+    /// Clean (undisturbed, non-forced) pivot handovers performed this epoch,
+    /// constellation -> {old_pivot, new_pivot}.  Reset on each epoch's
+    /// first-pass handover (@c forced_only == false), populated as clean legs
+    /// fire, and read by the RTS smoother via @c getCleanHandovers to decide
+    /// inverse-reference vs. segmentation across a handover boundary (P2-1).
+    std::map<std::string, std::pair<std::string, std::string>> clean_handovers_;
 };
 
 } // namespace GnssProcessor

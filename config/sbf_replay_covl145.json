@@ -22,7 +22,8 @@
   "data_source": "production",
 
   "processing": {
-    "mode": "PPP",
+    "mode": "PPP-RTK",
+	"max_duration_s": 3600.0,
     "rinex_types": "CL",
     "active_systems": [ "GPS", "Galileo" ],
 	//"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
@@ -75,7 +76,7 @@
 
   "estimation": {
     "between_satellite_sd": {
-      "enabled": false,
+      "enabled": true,
       "pivot_min_elevation": 25.0
     },
     "estimate_sat_biases": true,
@@ -102,9 +103,46 @@
     // geometry-free jump isolates the slip before the ionospheric residual
     // contaminates it.  At coarser rates a one-time warning is logged and a
     // per-epoch ionospheric-variability gate suppresses unsafe repairs.
+    // mw_detect_reference selects the statistic the MW slip gate tests.
+    // "time_difference" gates the MW time-difference itself (order set by
+    // mw_td_order: "first" = mw[k]-mw[k-1], "second" = double difference)
+    // against the MAD of the same time-difference history -- memoryless, so
+    // both linear trends AND the soft quadratic signals that walk a level
+    // reference away from its window are invisible to the gate; the cost is
+    // sqrt(2) (first) / sqrt(6) (second) noise amplification.  The earlier
+    // modes remain available for A/B: "local_median" (windowed level test,
+    // trend-immune but curvature-sensitive) and "hatch_mean" (legacy).
+    // mw_sigma_multiplier keeps its TD1-equivalent scale in all modes
+    // (local-median MAD is sqrt(2)-scaled internally; td1 is native).
+    // turbo_edit_mw_only_veto: an MW flag whose geometry-free phase is
+    // affirmatively stable (|TD2| within the arc's own MAD noise, under
+    // high rate / quiet iono / mature arc / no LLI) is classified as a
+    // code-domain artifact (multipath / NLOS / DLL stress) and the phase
+    // ambiguity reset is SKIPPED -- no integer pair of plausible size is
+    // consistent with a flat GF (null-line pairs start at (4,3)/(9,7)),
+    // while a NL code excursion of ~0.86 m/WL-cycle needs nothing exotic.
+    // The KF phase-innovation (residual) gate is the backstop if the event
+    // really was a slip.  Set false to restore the pre-veto reset behavior.
+    // turbo_edit_max_gap_s: gap-spanning GF bridge.  When a GF arc's chain
+    // breaks for at most this many seconds (per-signal dropout like the
+    // G03 L2W event at 109833-109839, or a full receiver gap), the pre-gap
+    // GF level is stashed and the drift-corrected ACROSS-GAP jump
+    // adjudicates the post-gap MW flag: lambda-quantized jump -> per-signal
+    // attribution (dropped signal = moot, already reseeded; continuous
+    // signal = integer repair); flat jump -> code artifact (re-acquisition
+    // DLL transient).  Either way the surviving signal's ambiguity is
+    // spared.  0 disables (post-gap flags fall back to blanket resets).
     "cycle_slip": {
       "mw": true,
-      "turbo_edit": true
+      "turbo_edit": true,
+      "turbo_edit_mw_only_veto": true,
+      "turbo_edit_max_gap_s": 60.0,
+      "turbo_edit_bridge_lli": true,
+	  "mw_sigma_multiplier":         8.0,
+	  "turbo_edit_sigma_multiplier":  8.0,
+      "mw_detect_reference": "time_difference",
+      "mw_td_order": "first",
+      "mw_local_window": 20
     },
 
     // defer_until_corrections_ready is a LIVE-SSR cold-start guard: it waits for
@@ -173,6 +211,7 @@
     "enable_receiver_pcv": true,
     "enable_phase_windup": true,
     "enable_code_phase_bias": true,
+	"refine_emission_time": false,
     // Same as the live path: the SBF capture carries no RINEX antenna record, so
     // seed the COVL rooftop LEIAR25 NONE and let Galileo borrow the receiver's GPS
     // PCO/PCV cross-system.  If this capture is from a DIFFERENT antenna, change it.
@@ -205,31 +244,83 @@
   },
 
   "logging": {
+    "//": "--- console loggers (enable + level) ---",
     "enable_main_log":          true,
     "enable_gnss_config":       true,
-    "enable_rt_engine":         false,
-    "enable_ppp_model":         false,
-    "enable_kalman_filter":     false,
-    "enable_corrections":       false,
+    "enable_rt_engine":         true,
+    "enable_ppp_model":         true,
+    "enable_measurement_model": false,
+    "enable_kalman_filter":     true,
+    "enable_state_manager":     true,
+    "enable_state_initializer": true,
+    "enable_corrections":       true,
+    "enable_ambiguity_resolver":true,
+    "enable_cycle_slip_manager":true,
+    "enable_mw_slip_detector":  true,
+    "enable_turbo_edit_resolver":true,
+    "enable_bssd_pivot_manager":true,
+    "enable_bssd_transform":    true,
+    "enable_ntrip":             true,
+    "enable_geometry":          true,
+    "enable_troposphere":       true,
+    "enable_ionosphere":        true,
     "enable_antenna":           false,
-    "enable_geometry":          false,
-    "enable_resolver":          false,
-    "enable_downloader":        false,
+    "enable_stochastic_model":  true,
+
+    "//1": "--- quiet / off (peripheral or staged) ---",
+    "enable_smoother":          false,
+    "enable_if_slip_detector":  false,
+    "enable_gf_slip_detector":  false,
+    "enable_rinex_parser":      false,
     "enable_product_parser":    false,
+    "enable_product_cache":     false,
+    "enable_resolver":          false,
+    "enable_ppp_utils":         false,
+    "enable_downloader":        false,
+    "enable_imu":               false,
+
+    "//2": "--- CSV trace files (written to logs\\, no console cost) ---",
     "enable_state_trace":       true,
-    "enable_residual_trace":    false,
-    "enable_sat_status_trace":  false,
+    "enable_ambiguity_trace":   true,
+    "enable_ionosphere_trace":  true,
+    "enable_sat_bias_trace":    true,
+    "enable_sat_status_trace":  true,
+    "enable_residual_trace":    true,
+    "enable_dop_trace":         true,
+    "enable_mw_slip_trace":     true,
+    "enable_turbo_edit_trace":  true,
+    "enable_wls_trace":         true,
+    "enable_windup_trace":      false,
+    "enable_if_slip_trace":     false,
+    "enable_gf_slip_trace":     false,
+    "enable_smoother_trace":    false,
+
+    "kalman_filter_concise_log": false,
+
+    "//3": "--- per-logger levels (no trace) ---",
     "level": "info",
     "levels": {
-      "rt_engine":      "info",
-      "ppp_model":      "info",
-      "corrections":    "info",
-      "antenna":        "info",
-      "geometry":       "info",
-      "resolver":       "info",
-      "downloader":     "info",
-      "product_parser": "info",
-      "main_log":       "trace"
+      "rt_engine":          "debug",
+      "ppp_model":          "info",
+      "measurement_model":  "info",
+      "kalman_filter":      "info",
+      "state_manager":      "debug",
+      "corrections":        "error",
+      "ambiguity_resolver": "debug",
+      "cycle_slip_manager": "debug",
+      "mw_slip_detector":   "info",
+      "turbo_edit_resolver":"debug",
+      "bssd_pivot_manager": "debug",
+      "bssd_transform":     "debug",
+      "ntrip":              "trace",
+      "state_initializer":  "info",
+      "gnss_config":        "info",
+      "geometry":           "info",
+      "troposphere":        "info",
+      "ionosphere":         "info",
+      "antenna":            "info",
+      "stochastic_model":   "info",
+      "main_log":           "info"
     }
   }
 }

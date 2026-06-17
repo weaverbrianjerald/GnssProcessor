@@ -17,6 +17,7 @@
 #include "measurement/StateInitializer.hpp"
 #include "measurement/BssdTransform.hpp"
 #include "measurement/MeasurementBuilder.hpp"
+#include "aiding/AidingTypes.hpp"
 #include <Eigen/Dense>
 #include <memory>
 #include <vector>
@@ -150,6 +151,54 @@ namespace GnssProcessor {
                          const Eigen::Vector3d& f_b_corrected);
 
         /**
+         * @brief Append one independent aiding measurement row (ZUPT/baro/...).
+         *
+         * Grows the finalized @p update's innovation/R_v/H by one row and
+         * push-backs the row's @c label / @c signal into satellite_ids /
+         * signal_types so the dimension invariant holds and KF outlier keys
+         * never collide with GNSS rows.  The row's jacobian must be over the
+         * FULL state (size == H columns / state size).
+         *
+         * HARD-ERRORS (throws) if @p update.R_full is populated (BSSD/DD active):
+         * a diagonal append after R_full is set would silently drop the SD
+         * cross-covariance via the KF's R_v fallback.  Row-contributing aiding
+         * sources are therefore restricted to undifferenced PPP / loosely-coupled
+         * GNSS until a block-diagonal R_full augmentation is added.
+         *
+         * @param update Finalized epoch measurement (grown in place).
+         * @param row    Aiding row (jacobian over full state, innovation, variance, label).
+         */
+        static void appendAidingRow(EpochMeasurement& update,
+                                    const AidingMeasurementRow& row);
+
+        /**
+         * @brief Register ambiguity keys that must survive the per-epoch
+         *        prune even when their signal produced no observation.
+         *
+         * @c ensureRequiredStates deletes any ambiguity state whose key is
+         * absent from this epoch's observations (prune-on-first-miss).  A
+         * phase ambiguity HELD across a short tracking outage by the
+         * soft-LLI / gap bridge (@c SoftLliBridge) pending a TurboEdit
+         * @c snapshot + dN·λ repair must be exempt: deleting it (and
+         * reseeding from the post-gap — possibly slipped — carrier on
+         * return) destroys exactly the pre-gap state the repair restores.
+         * The protected keys are unioned into the prune keep-set, and their
+         * satellites into the ionosphere-state keep-set (uncombined mode),
+         * each epoch until the hold resolves.
+         *
+         * The caller refreshes this set every epoch from
+         * @c SoftLliBridge::heldKeys() — the same source that seeds the KF
+         * measurement exclusion — so protection and exclusion can never
+         * diverge.  An empty set (the default, and whenever nothing is
+         * held) restores the plain prune behavior.
+         *
+         * @param keys Ambiguity keys (e.g. @c "G03_L2W") to protect.
+         */
+        void setProtectedAmbiguityKeys(std::set<std::string> keys) {
+            protected_ambiguity_keys_ = std::move(keys);
+        }
+
+        /**
          * @brief Get the current BSSD pivot satellite for each constellation.
          */
         const std::map<std::string, std::string>& getBssdPivotSatellites() const {
@@ -213,6 +262,13 @@ namespace GnssProcessor {
         /// to keep these ambiguities out of the integer-fixing candidate
         /// set.
         std::set<std::string> non_integer_capable_dd_ambiguity_keys_;
+
+        /// Ambiguity keys exempt from the @c ensureRequiredStates prune
+        /// while their signal is in a tracking outage — held by the
+        /// soft-LLI / gap bridge pending a TurboEdit integer repair.
+        /// Refreshed each epoch via @c setProtectedAmbiguityKeys; empty
+        /// unless something is held.
+        std::set<std::string> protected_ambiguity_keys_;
 
         /// Measurement-differencing strategy (None / BetweenSatellite /
         /// DoubleDifference), selected once from config via

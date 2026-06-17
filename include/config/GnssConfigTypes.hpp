@@ -150,6 +150,31 @@ namespace GnssProcessor {
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
         };
         Corrections corrections;                   ///< Optional SSR corrections stream.
+
+        /**
+         * @brief Optional third RTCM stream carrying broadcast ephemeris (nav).
+         *
+         * For an observation-only station mountpoint — one that streams MSM
+         * obs but no broadcast nav (1019/1020/1042/1044/1046) — this supplies
+         * the broadcast orbits/clocks that the SSR overlay corrects.  Without
+         * it, @c LiveEphemerisStore stays empty for the obs constellations and
+         * every satellite is unpositionable, so @c PppModel::computeModels
+         * fails for the whole epoch ("No valid PPP observations modeled") and
+         * the session yields 0 epochs.  Point this at a dedicated broadcast-
+         * ephemeris caster mountpoint (e.g. @c BCEP00BKG0 on
+         * products.igs-ip.net).  Frames route to
+         * @c RealTimeEngine::feedRtcmFrame exactly like the corrections stream,
+         * so decoded nav lands in the live store transparently.
+         *
+         * Independent of @c corrections: a PPP-RTK run off an obs-only station
+         * needs all three sources (obs / nav / SSR).  Disabled by default — a
+         * station that bundles its own nav (e.g. BRUX00BEL0) needs only the
+         * primary + corrections streams.  Reuses the @c Corrections transport
+         * descriptor (host/port/mountpoint/file/tcp); the two streams differ
+         * only in payload (SSR vs broadcast nav), not transport.
+         */
+        using Ephemeris = Corrections;
+        Ephemeris ephemeris;                       ///< Optional broadcast-ephemeris (nav) stream.
     };
 
     /**
@@ -479,6 +504,80 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Reference level the MW detector measures slip deviations against.
+     *
+     * The MW slip test is |mw[k] − reference| > kσ·spread.  The choice of
+     * reference determines what "deviation" means and which spread estimate
+     * is statistically consistent with it:
+     *
+     *  - @c HatchMean — legacy behavior.  Reference is the slow Hatch
+     *    (recursive) mean (α = 1/100 at maturity, ~100-epoch memory), spread
+     *    is the MAD of first time-differences.  Under a smooth MW trend of
+     *    slope s/epoch the lag offset settles at ≈ 99·s while the TD1 MAD
+     *    stays at the noise floor — the statistics are mismatched, and mild
+     *    drifts (≲ 1 mm/epoch) produce persistent false slips on mature
+     *    arcs; steeper drifts (~7–9 mm/epoch) can even pass the repair
+     *    fractional gate and publish a confident wrong integer.
+     *
+     *  - @c LocalMedian — reference is the median of a short causal window
+     *    of recent accepted MW values (length @c mw_local_window), spread is
+     *    the MAD of the same window (×√2 so the configured
+     *    @c mw_sigma_multiplier keeps its legacy TD1-equivalent scale).
+     *    Deviation and spread now measure the same quantity, so a trend
+     *    lifts both and cancels to first order, while a genuine step still
+     *    spikes the deviation.  Causal — no future data; the current epoch
+     *    is excluded from its own reference.  Residual weakness: a smooth
+     *    QUADRATIC signal (curvature) still walks the level away from the
+     *    window median faster than the window forgets, leaking into the
+     *    deviation as a soft ramp.
+     *
+     *  - @c TimeDifference — no level reference at all: the deviation IS
+     *    the time-difference of the MW series (order selected by
+     *    @c mw_td_order), gated by the MAD of the same time-difference
+     *    history.  Memoryless, hence immune to trends AND curvature: a
+     *    linear drift contributes a near-constant offset (first order) or
+     *    exactly zero (second order) that the matching MAD absorbs, while
+     *    a slip still spikes by dN·λ_WL for one epoch.  The price is
+     *    noise amplification (σ_TD1 = √2·σ_MW, σ_TD2 = √6·σ_MW) — smaller
+     *    real slips sit closer to the gate.  Second order additionally
+     *    echoes a real slip with opposite sign one epoch later; the echo
+     *    is contained by the erase-on-slip arc restart (unlocked arcs)
+     *    or absorbed (locked arcs).
+     *
+     * In every mode the Hatch mean and the WL integer/lock machinery are
+     * unaffected by this selection.
+     *
+     * Configured via @c estimation.cycle_slip.mw_detect_reference
+     * ("hatch_mean" | "local_median" | "time_difference").
+     */
+    enum class MwDetectReference {
+        HatchMean,      ///< Legacy: deviation from the slow Hatch mean, TD1-MAD spread.
+        LocalMedian,    ///< Deviation from a short causal window median, window-MAD spread.
+        TimeDifference  ///< Deviation IS the MW time-difference (order per MwTdOrder), TD-MAD spread.
+    };
+
+    /**
+     * @brief Differencing order for @c MwDetectReference::TimeDifference.
+     *
+     *  - @c First  — dev = mw[k] − mw[k−1].  A linear MW trend of slope s
+     *    per epoch appears as a constant ≈ s (millimeters — far below the
+     *    √2-amplified noise), a quadratic as a slow ramp the matching TD1
+     *    MAD tracks.  The default and the recommended starting point.
+     *  - @c Second — dev = mw[k] − 2·mw[k−1] + mw[k−2].  Exactly zero for
+     *    any linear trend and a tiny constant for a quadratic, at the cost
+     *    of √3 further noise amplification over first order and a
+     *    sign-flipped echo of every real slip one epoch later.  Reserve
+     *    for data where curvature defeats the first-order statistic.
+     *
+     * Configured via @c estimation.cycle_slip.mw_td_order
+     * ("first" | "second").
+     */
+    enum class MwTdOrder {
+        First,   ///< mw[k] − mw[k−1] (default).
+        Second   ///< mw[k] − 2·mw[k−1] + mw[k−2].
+    };
+
+    /**
      * @brief Selects which cycle-slip detectors run.
      *
      * Drives config-driven composition of the @c CycleSlipManager detector
@@ -503,18 +602,165 @@ namespace GnssProcessor {
      * TurboEdit).  This resolves a dual-frequency slip into a targeted
      * covariance-preserving per-signal repair — which MW alone cannot do
      * (one equation, two unknowns) — and catches MW's @f$\Delta N_1=\Delta N_2@f$
-     * blind spot.  It is only valid at high rate (≤1 s); at coarser rates the
-     * ionospheric residual contaminates the GF jump (a one-time warning is
-     * logged, and a per-epoch cross-satellite IVI gate suppresses repair when
-     * the ionosphere is disturbed regardless of rate).
+     * blind spot.  It is RATE-ADAPTIVE: at high rate (≤1 s) the GF jump is
+     * essentially iono-free and the full repair machinery engages; at coarser
+     * rates (e.g. 30 s RINEX) the un-cancelled ionospheric residual honestly
+     * inflates the measured GF noise, and every GF-backed decision is gated
+     * on that noise against the integer lattice it must discriminate
+     * (@c turbo_edit_split_max_sigma) — large MW-detected slips still split
+     * and repair under quiet ionosphere, and flagged satellites fall back to
+     * the conservative reset as activity rises.  A per-epoch cross-satellite
+     * IVI gate additionally suppresses repair when the ionosphere is
+     * disturbed, regardless of rate.  See the @c TurboEditResolver header's
+     * "Rate adaptivity" note.
      */
+    /**
+     * @brief Which navigation aiding sources participate in the estimator.
+     *
+     * Selection tokens consumed by @c AidingSourceRegistry::createEnabled to
+     * compose the @c AidingSourceManager source set — the navigation-aiding
+     * analog of @c CycleSlipConfig / @c SlipDetectorRegistry.  Each flag maps to
+     * an @c AidingSourceKind; the IMU is the primary (built first).  For
+     * back-compatibility, @c imu defaults to the existing @c imu.enabled
+     * (@c enableImu()) when @c estimation.aiding.imu is not set explicitly.
+     * @c vision is STAGED (its .cpp is excluded from the build; the registry
+     * warns and skips it if selected).
+     *
+     * @see docs/aiding_source_abstraction_design.md
+     */
+    struct AidingConfig {
+        bool imu    = false;  ///< IMU INS error-state aiding (primary; default = enableImu()).
+        bool zupt   = false;  ///< Zero-velocity update pseudo-measurement.
+        bool nhc    = false;  ///< Non-holonomic constraint (lateral/vertical body velocity ~ 0).
+        bool wheel  = false;  ///< Wheel/odometer speed.
+        bool baro   = false;  ///< Barometric height.
+        bool vision = false;  ///< Visual odometry / landmarks (STAGED — registry skips with a warning).
+
+        /// ZUPT pseudo-measurement std (m/s) per velocity axis: the assumed
+        /// uncertainty of the "velocity == 0 while stationary" constraint.
+        /// Smaller => stronger pull to zero.  Via estimation.aiding.zupt_sigma_mps.
+        double zupt_sigma_mps = 0.05;
+    };
+
     struct CycleSlipConfig {
         bool mw         = true;   ///< Melbourne-Wübbena wide-lane detector (primary; default on).
         bool graphic    = false;  ///< GRAPHIC code+phase per-signal detector.
         bool ewl        = false;  ///< Extra-wide-lane MW detector (3+ frequency satellites).
         bool gf         = false;  ///< Geometry-free detector (STAGED — registry skips with a warning if set).
         bool ifp        = false;  ///< Ionosphere-free phase detector (STAGED — registry skips with a warning if set).
-        bool turbo_edit = false;  ///< MW+GF joint per-signal slip repair (TurboEdit); high-rate only. See struct doc.
+        bool turbo_edit = false;  ///< MW+GF joint per-signal slip repair (TurboEdit); rate-adaptive. See struct doc.
+        /// MW-only code-domain veto (effective only with @c turbo_edit): an MW
+        /// flag whose geometry-free phase is affirmatively stable (|TD2| within
+        /// the arc's own MAD noise — with the zero gate sharp enough to
+        /// discriminate the slip lattice — under quiet iono / mature arc /
+        /// no LLI) is classified as a code-domain artifact (multipath, NLOS,
+        /// DLL stress) and the mandated phase ambiguity reset is SKIPPED — no
+        /// integer pair of plausible size is consistent with a flat GF, and the
+        /// KF phase-innovation (residual) gate backstops the residual
+        /// null-line-pair risk.  See the TurboEditResolver header's
+        /// "code-domain veto" note.  Via
+        /// @c estimation.cycle_slip.turbo_edit_mw_only_veto.
+        bool turbo_edit_mw_only_veto = true;
+        /// Gap-spanning GF bridge (effective only with @c turbo_edit): when a
+        /// GF arc's chain breaks for at most this many seconds (per-signal
+        /// dropout or full receiver gap), the pre-gap GF level is stashed and
+        /// the ACROSS-GAP GF jump — drift-corrected by the arc's own EWMA GF
+        /// rate — serves as the joint-solve evidence at the first post-gap
+        /// epochs, instead of being blind until three consecutive epochs
+        /// rebuild a TD2.  A λ-quantized jump attributes the re-lock slip per
+        /// signal (continuous signal → integer repair; dropped signal → its
+        /// ambiguity was pruned-and-reseeded on return, so the slip is moot
+        /// and the mandate is suppressed); a flat jump classifies the MW flag
+        /// as a code artifact (re-acquisition DLL transient).  Bounded by
+        /// ionospheric coherence: beyond ~15 s even quiet-iono drift
+        /// approaches the integer-pair spacing.  0 disables (pre-bridge
+        /// behavior: post-gap MW flags are unadjudicated → reset).  Via
+        /// @c estimation.cycle_slip.turbo_edit_max_gap_s.
+        double turbo_edit_max_gap_s = 15.0;
+        /// Soft-LLI bridge (effective only with @c turbo_edit + a non-zero
+        /// @c turbo_edit_max_gap_s, high-rate only): when a receiver-declared
+        /// loss of lock (LLI) on an AR-capable dual-frequency satellite would
+        /// otherwise trigger an immediate full ambiguity reset, instead HOLD
+        /// the satellite's phase ambiguities across the (short) LLI gap — keep
+        /// the GF arc, snapshot the pre-gap values, exclude the held phase
+        /// measurements from the KF update across the MW one-epoch confirmation
+        /// delay — and let the gap bridge apply a covariance-preserving integer
+        /// REPAIR at gap return (@c snapshot + dN·λ) rather than discarding the
+        /// converged ambiguity precision and AR continuity.  This bets that the
+        /// carrier loop held phase coherence across the LLI; if it instead
+        /// re-acquired (arbitrary integer), the KF phase-innovation gate resets
+        /// the wrong held-repair one epoch late — the same cost as the
+        /// re-acquisition reset path.  Beyond @c turbo_edit_max_gap_s the
+        /// classic full reset stands.  Default OFF (baseline unchanged).  Via
+        /// @c estimation.cycle_slip.turbo_edit_bridge_lli.  See
+        /// docs/turbo_edit_lli_bridge_design.md.
+        bool turbo_edit_bridge_lli = false;
+        /// WL-settle deferral cap (s) for the gap-bridge joint solve
+        /// (effective only with @c turbo_edit + @c turbo_edit_bridge_lli +
+        /// a non-zero @c turbo_edit_max_gap_s): when the across-gap GF jump
+        /// is solid but the MW wide-lane evidence is float-only and
+        /// AMBIGUOUS (two or more integer candidates fit the GF lattice —
+        /// candidates k and k±2 differ by a null-line pair only a few mm
+        /// apart in GF), the adjudication is DEFERRED instead of guessed:
+        /// the soft-LLI holds stay in place (measurements excluded, states
+        /// prune-protected), the pre-gap GF level stays stashed, and each
+        /// subsequent epoch the post-restart MW arc's Hatch mean
+        /// re-estimates the across-gap WL step with √n-averaged code noise
+        /// (the instantaneous float at re-acquisition is NL-code-biased by
+        /// up to several cycles).  The joint solve re-runs once that
+        /// estimate is confidently roundable (the WL-lock criterion:
+        /// |frac| + 3·σ_mean < 0.5 cycles, n ≥ 10); at this cap with no
+        /// settle — or if the post-gap GF chain flags a new event — the
+        /// satellite falls back to the conservative reset.  0 disables
+        /// deferral (an ambiguous bridged solve resets immediately).  Via
+        /// @c estimation.cycle_slip.turbo_edit_wl_settle_max_s.
+        double turbo_edit_wl_settle_max_s = 45.0;
+        /// Split-capability gate (effective only with @c turbo_edit): the
+        /// maximum 1σ uncertainty, in CYCLES, of the float per-signal integer
+        /// the TurboEdit joint solve rounds (σ_TD2 / |λ1−λ2|).  This is the
+        /// lever that makes the resolver rate-adaptive: the per-signal split
+        /// (and the bridged across-gap attribution) emits integers only when
+        /// the arc's measured GF noise satisfies
+        /// σ_TD2 ≤ this × |λ1−λ2| — at the 0.2 default a 3.5σ GF error still
+        /// lands inside the rounding well of the true integer (the
+        /// wrong-integer acceptance distance is 1 − frac_max = 0.7 cycles).
+        /// Millimetric 1 s phase noise passes trivially (historical high-rate
+        /// behavior unchanged); at 30 s the un-cancelled iono residual passes
+        /// only while quiet, demoting MW-flagged satellites to the
+        /// conservative reset otherwise.  Raising this admits repairs from
+        /// noisier GF evidence (more repairs, more wrong-integer risk);
+        /// lowering it tightens toward reset-always.  Via
+        /// @c estimation.cycle_slip.turbo_edit_split_max_sigma.
+        double turbo_edit_split_max_sigma = 0.2;
+
+        // --- Per-detector MAD threshold scale factors (kσ gate multipliers) ---
+        // Each adaptive slip threshold is `multiplier × max(σ_MAD, floor)`,
+        // where σ_MAD is the robust (MAD×1.4826) noise estimate.  Raising the
+        // multiplier widens the gate (fewer detections, fewer false resets, but
+        // smaller real slips can slip through); lowering it tightens detection.
+        // Defaults preserve the historical hardcoded values; each must be > 0.
+        // Configured via @c estimation.cycle_slip.<name>_sigma_multiplier.
+        double mw_sigma_multiplier         = 8.0;  ///< MW (Melbourne-Wübbena) wide-lane gate.
+        double turbo_edit_sigma_multiplier = 6.0;  ///< TurboEdit GF-only (MW blind-spot) gate.
+        double graphic_sigma_multiplier    = 6.0;  ///< GRAPHIC code+phase gate.
+        double ewl_sigma_multiplier        = 5.0;  ///< Extra-wide-lane gate.
+
+        // --- MW detection-reference selection (see MwDetectReference doc) ---
+        /// Reference the MW slip deviation is measured against.
+        /// "hatch_mean" (legacy) | "local_median" (trend-immune level test) |
+        /// "time_difference" (trend- AND curvature-immune jump test).  Via
+        /// @c estimation.cycle_slip.mw_detect_reference.
+        MwDetectReference mw_detect_reference = MwDetectReference::HatchMean;
+        /// Differencing order for the "time_difference" reference:
+        /// "first" (default) | "second".  Ignored in the other modes.  Via
+        /// @c estimation.cycle_slip.mw_td_order.
+        MwTdOrder mw_td_order = MwTdOrder::First;
+        /// Length (epochs) of the causal local-median window used when
+        /// @c mw_detect_reference is @c LocalMedian.  Must be ≥ 15 (the
+        /// detector's MAD-maturity floor, MwSlipDetector::kMinEpochsForAdaptive)
+        /// and ≤ 64 (the fixed per-arc ring capacity); the loader clamps with
+        /// a warning.  Via @c estimation.cycle_slip.mw_local_window.
+        int mw_local_window = 20;
     };
 
     /**

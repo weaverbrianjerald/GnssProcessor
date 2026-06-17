@@ -82,7 +82,6 @@ public:
     const std::vector<BiasData>& getBiases() const { return biases_; }
     const std::vector<ErpData>& getErps() const { return erps_; }
     const std::vector<double>& getKlobucharCoeffs() const { return klobuchar_coeffs_; }
-    const std::vector<SunEphemeris>& getSunEphemeris() const { return sun_ephemeris_; }
     const ClockRefMap& getClockRefSignals() const { return clock_ref_signals_; }
 
     // Get product counts for diagnostics
@@ -114,7 +113,6 @@ private:
     std::vector<BiasData> biases_;
     std::vector<ErpData> erps_;
     std::vector<double> klobuchar_coeffs_;
-    std::vector<SunEphemeris> sun_ephemeris_;
     ClockRefMap clock_ref_signals_;
 
     //

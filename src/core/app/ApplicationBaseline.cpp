@@ -468,6 +468,12 @@ int Application::runBaseline() {
         double prev_tow = -1.0;
         int    prev_week = -1;
 
+        // processing.max_duration_s cutoff: anchor the data-time window on the
+        // first synced epoch and stop once the span reaches the limit (epoch
+        // GPS time relative to the first obs).  0 = unlimited.
+        double max_dur_anchor_s = 0.0;
+        bool   max_dur_anchored = false;
+
         size_t n_slips_ref = 0, n_slips_rov = 0, n_amb_resets = 0;
 
         // Note: the epoch loop body below is intentionally left at the
@@ -480,6 +486,23 @@ int Application::runBaseline() {
             // RINEX-aligned TOW.  The thread-local context is consumed
             // by the [%T] field in makeGpsFormatter().
             LogManager::setCurrentEpochTime(se.time);
+
+            // --- Optional max-duration cutoff (processing.max_duration_s) --
+            // Anchor on the first synced epoch, then stop once the elapsed
+            // data-time span reaches the limit.  Mirrors the PPP / real-time
+            // cutoff so all three modes share the same semantics.
+            if (config_.getMaxDuration() > 0.0) {
+                const double now_s = TimeUtils::continuousGpsSeconds(se.time);
+                if (!max_dur_anchored) {
+                    max_dur_anchor_s = now_s;
+                    max_dur_anchored = true;
+                } else if (now_s - max_dur_anchor_s >= config_.getMaxDuration()) {
+                    log->info("Baseline: reached max processing duration: {:.1f} s of data "
+                              "(limit {:.1f} s); stopping epoch loop",
+                              now_s - max_dur_anchor_s, config_.getMaxDuration());
+                    break;
+                }
+            }
 
             // --- Station presence + dt =====================================
             // Compute station presence and dt up front so hard-gap detection

@@ -112,6 +112,11 @@ add_library(gnss_core STATIC
 	src/core/slip/CycleSlipManager.cpp
 	src/core/slip/IonoVariabilityMonitor.cpp
 	src/core/slip/TurboEditResolver.cpp
+	src/core/slip/SoftLliBridge.cpp
+    src/core/aiding/AidingSourceRegistry.cpp
+    src/core/aiding/ImuAidingSource.cpp
+    src/core/aiding/ZuptAidingSource.cpp
+    src/core/aiding/AidingSourceManager.cpp
     src/core/products/DataDownloader.cpp
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
@@ -180,6 +185,10 @@ add_executable(gnss_tests
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
     tests/test_stochastic_model.cpp
+    tests/test_turbo_edit_resolver.cpp
+    tests/test_soft_lli_bridge.cpp
+    tests/test_aiding_source.cpp
+    tests/test_smoother_frame.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

@@ -10,7 +10,6 @@
 #include "logging/LogManager.hpp"
 #include "rinex/RinexParser.hpp" // for GnssTime, System
 #include "common/PppTypes.hpp"
-#include "model/Planetary.hpp"
 
 /// @file ProductParser.hpp
 /// @brief Product file loader and parsers (SP3, CLK, ATX, BIA, ERP, ionosphere).
@@ -34,9 +33,7 @@ namespace GnssProcessor {
      * - Klobuchar ionospheric coefficients
      *
      * The class stores parsed product data in member containers which can be
-     * accessed through const accessors. A pointer to a @c RinexParser can be
-     * supplied after construction using @c setRinexParser to avoid circular
-     * dependencies at construction time.
+     * accessed through const accessors.
      */
     class ProductParser {
     public:
@@ -46,13 +43,6 @@ namespace GnssProcessor {
          * @param log_manager Log manager used for logging parsing and load operations.
          */
         ProductParser(const GnssConfig& config, LogManager& log_manager);
-
-        /**
-         * @brief Allow supplying a RinexParser after construction.
-         * @param rinex Reference to an existing @c RinexParser used elsewhere in the application.
-         * @note This setter breaks the circular dependency between ProductParser and RinexParser.
-         */
-        void setRinexParser(RinexParser& rinex);
 
         /**
          * @brief Get list of orbit product file paths defined in configuration.
@@ -219,11 +209,6 @@ namespace GnssProcessor {
         std::vector<double> moveKlobucharCoeffs() { return std::move(klobuchar_coeffs_); }
 
         /**
-         * @brief Move Sun ephemeris out of parser.
-         */
-        std::vector<SunEphemeris> moveSunEphemeris() { return std::move(sun_ephemeris_); }
-
-        /**
          * @brief Default destructor.
          */
         ~ProductParser() = default;
@@ -231,8 +216,6 @@ namespace GnssProcessor {
     private:
         const GnssConfig& config_;         ///< Reference to configuration (not owned).
         LogManager& log_manager_;          ///< Reference to log manager (not owned).
-        RinexParser* rinex_parser_ = nullptr; ///< Optional pointer to RinexParser (set via setRinexParser).
-        Planetary planetary_;              ///< Planetary utilities (sun/moon models).
 
         std::vector<OrbitData> orbits_;    ///< Parsed satellite orbit data (SP3).
         std::vector<ClockData> clocks_;    ///< Parsed satellite clock data (CLK).
@@ -241,7 +224,6 @@ namespace GnssProcessor {
         ClockRefMap clock_refs_;              ///< Per-system satellite clock reference observables from BIA DESCRIPTION.
         std::vector<ErpData> erps_;        ///< Parsed Earth rotation parameters (ERP).
         std::vector<double> klobuchar_coeffs_; ///< Parsed Klobuchar ionospheric coefficients.
-        std::vector<SunEphemeris> sun_ephemeris_; ///< Computed or parsed Sun ephemeris for epochs.
 
         /** @brief Filter configured product paths by file extension. */
         std::vector<std::filesystem::path> getPathsByExtension(const std::string& ext) const;

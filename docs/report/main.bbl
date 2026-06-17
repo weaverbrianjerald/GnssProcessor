@@ -1,0 +1,524 @@
+% $ biblatex auxiliary file $
+% $ biblatex bbl format version 3.3 $
+% Do not modify the above lines!
+%
+% This is an auxiliary file used by the 'biblatex' package.
+% This file may safely be deleted. It will be recreated by
+% biber as required.
+%
+\begingroup
+\makeatletter
+\@ifundefined{ver@biblatex.sty}
+  {\@latex@error
+     {Missing 'biblatex' package}
+     {The bibliography requires the 'biblatex' package.}
+      \aftergroup\endinput}
+  {}
+\endgroup
+
+
+\refsection{0}
+  \datalist[entry]{nyt/global//global/global/global}
+    \entry{banville2013mitigating}{article}{}{}
+      \name{author}{2}{}{%
+        {{hash=a40e5d135b26a59fe49cd6198c002fc8}{%
+           family={Banville},
+           familyi={B\bibinitperiod},
+           given={Simon},
+           giveni={S\bibinitperiod}}}%
+        {{hash=f017e75b126d881cd4840c19d0b57899}{%
+           family={Langley},
+           familyi={L\bibinitperiod},
+           given={Richard\bibnamedelima B.},
+           giveni={R\bibinitperiod\bibinitdelim B\bibinitperiod}}}%
+      }
+      \strng{namehash}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{fullhash}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{fullhashraw}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{bibnamehash}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{authorbibnamehash}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{authornamehash}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{authorfullhash}{35ca623a5bc4ed96b3453dada9256b2e}
+      \strng{authorfullhashraw}{35ca623a5bc4ed96b3453dada9256b2e}
+      \field{sortinit}{B}
+      \field{sortinithash}{d7095fff47cda75ca2589920aae98399}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Journal of Geodesy}
+      \field{number}{2}
+      \field{title}{Mitigating the impact of ionospheric cycle slips in {GNSS} observations}
+      \field{volume}{87}
+      \field{year}{2013}
+      \field{pages}{179\bibrangedash 193}
+      \range{pages}{15}
+      \verb{doi}
+      \verb 10.1007/s00190-012-0604-1
+      \endverb
+    \endentry
+    \entry{geng2013triple}{article}{}{}
+      \name{author}{2}{}{%
+        {{hash=40f3963208f130767ee0984c8e6f256f}{%
+           family={Geng},
+           familyi={G\bibinitperiod},
+           given={Jianghui},
+           giveni={J\bibinitperiod}}}%
+        {{hash=8d7bb34a8e5b4b28fb2fb4f0b0dd1003}{%
+           family={Bock},
+           familyi={B\bibinitperiod},
+           given={Yehuda},
+           giveni={Y\bibinitperiod}}}%
+      }
+      \strng{namehash}{b604194049a1f7955babdd90d247793d}
+      \strng{fullhash}{b604194049a1f7955babdd90d247793d}
+      \strng{fullhashraw}{b604194049a1f7955babdd90d247793d}
+      \strng{bibnamehash}{b604194049a1f7955babdd90d247793d}
+      \strng{authorbibnamehash}{b604194049a1f7955babdd90d247793d}
+      \strng{authornamehash}{b604194049a1f7955babdd90d247793d}
+      \strng{authorfullhash}{b604194049a1f7955babdd90d247793d}
+      \strng{authorfullhashraw}{b604194049a1f7955babdd90d247793d}
+      \field{sortinit}{G}
+      \field{sortinithash}{32d67eca0634bf53703493fb1090a2e8}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Journal of Geodesy}
+      \field{number}{5}
+      \field{title}{Triple-frequency {GPS} precise point positioning with rapid ambiguity resolution}
+      \field{volume}{87}
+      \field{year}{2013}
+      \field{pages}{449\bibrangedash 460}
+      \range{pages}{12}
+      \verb{doi}
+      \verb 10.1007/s00190-013-0619-2
+      \endverb
+    \endentry
+    \entry{igsssr}{report}{}{}
+      \name{author}{1}{}{%
+        {{hash=3c67d25ecf08e697c3af73e95e2e6d92}{%
+           family={{International GNSS Service Real-Time Working Group}},
+           familyi={I\bibinitperiod}}}%
+      }
+      \list{institution}{1}{%
+        {International GNSS Service (IGS)}%
+      }
+      \strng{namehash}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{fullhash}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{fullhashraw}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{bibnamehash}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{authorbibnamehash}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{authornamehash}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{authorfullhash}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \strng{authorfullhashraw}{3c67d25ecf08e697c3af73e95e2e6d92}
+      \field{sortinit}{I}
+      \field{sortinithash}{8d291c51ee89b6cd86bf5379f0b151d8}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{note}{RTCM message 4076 IGS-SSR sub-types}
+      \field{title}{{IGS} State Space Representation ({SSR}) Format, Version 1.00}
+      \field{type}{Format specification}
+      \field{year}{2020}
+    \endentry
+    \entry{deJonge1998processing}{thesis}{}{}
+      \name{author}{1}{}{%
+        {{hash=a7e4be415961d4cc8a965552a37b8913}{%
+           family={Jonge},
+           familyi={J\bibinitperiod},
+           given={P.\bibnamedelimi J.},
+           giveni={P\bibinitperiod\bibinitdelim J\bibinitperiod},
+           prefix={de},
+           prefixi={d\bibinitperiod}}}%
+      }
+      \list{institution}{1}{%
+        {Delft University of Technology}%
+      }
+      \list{location}{1}{%
+        {Delft, The Netherlands}%
+      }
+      \strng{namehash}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{fullhash}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{fullhashraw}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{bibnamehash}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{authorbibnamehash}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{authornamehash}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{authorfullhash}{a7e4be415961d4cc8a965552a37b8913}
+      \strng{authorfullhashraw}{a7e4be415961d4cc8a965552a37b8913}
+      \field{sortinit}{J}
+      \field{sortinithash}{b2f54a9081ace9966a7cb9413811edb4}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{A processing strategy for the application of the {GPS} in networks}
+      \field{type}{{PhD} thesis}
+      \field{year}{1998}
+    \endentry
+    \entry{laurichesse2009integer}{article}{}{}
+      \name{author}{5}{}{%
+        {{hash=b63b544d0cf1833220935b1c8f865482}{%
+           family={Laurichesse},
+           familyi={L\bibinitperiod},
+           given={D.},
+           giveni={D\bibinitperiod}}}%
+        {{hash=8d66ed6c59dd84e72280d1c529c38e41}{%
+           family={Mercier},
+           familyi={M\bibinitperiod},
+           given={F.},
+           giveni={F\bibinitperiod}}}%
+        {{hash=05cf5bbf6755fb9721e57b3a6d055c62}{%
+           family={Berthias},
+           familyi={B\bibinitperiod},
+           given={J.-P.},
+           giveni={J\bibinithyphendelim P\bibinitperiod}}}%
+        {{hash=d2fa5537f740fe5d4e96157a06f7e949}{%
+           family={Broca},
+           familyi={B\bibinitperiod},
+           given={P.},
+           giveni={P\bibinitperiod}}}%
+        {{hash=3e34a87ddf5bd9848f4804cfd8cfcf36}{%
+           family={Cerri},
+           familyi={C\bibinitperiod},
+           given={L.},
+           giveni={L\bibinitperiod}}}%
+      }
+      \strng{namehash}{2d0ca90a2fe35521ca4a4387d164feab}
+      \strng{fullhash}{b718e6324242fb237d8ec6fdaa2bc178}
+      \strng{fullhashraw}{b718e6324242fb237d8ec6fdaa2bc178}
+      \strng{bibnamehash}{2d0ca90a2fe35521ca4a4387d164feab}
+      \strng{authorbibnamehash}{2d0ca90a2fe35521ca4a4387d164feab}
+      \strng{authornamehash}{2d0ca90a2fe35521ca4a4387d164feab}
+      \strng{authorfullhash}{b718e6324242fb237d8ec6fdaa2bc178}
+      \strng{authorfullhashraw}{b718e6324242fb237d8ec6fdaa2bc178}
+      \field{sortinit}{L}
+      \field{sortinithash}{7c47d417cecb1f4bd38d1825c427a61a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Navigation}
+      \field{number}{2}
+      \field{title}{Integer ambiguity resolution on undifferenced {GPS} phase measurements and its application to {PPP} and satellite precise orbit determination}
+      \field{volume}{56}
+      \field{year}{2009}
+      \field{pages}{135\bibrangedash 149}
+      \range{pages}{15}
+      \verb{doi}
+      \verb 10.1002/j.2161-4296.2009.tb01750.x
+      \endverb
+    \endentry
+    \entry{odijk2003fast}{article}{}{}
+      \name{author}{1}{}{%
+        {{hash=50f286bce8d28ee1c79a98ace2f23ad7}{%
+           family={Odijk},
+           familyi={O\bibinitperiod},
+           given={D.},
+           giveni={D\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Netherlands Geodetic Commission}%
+      }
+      \strng{namehash}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{fullhash}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{fullhashraw}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{bibnamehash}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{authorbibnamehash}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{authornamehash}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{authorfullhash}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \strng{authorfullhashraw}{50f286bce8d28ee1c79a98ace2f23ad7}
+      \field{sortinit}{O}
+      \field{sortinithash}{2cd7140a07aea5341f9e2771efe90aae}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Publications on Geodesy}
+      \field{number}{52}
+      \field{title}{Fast precise {GPS} positioning in the presence of ionospheric delays}
+      \field{year}{2003}
+    \endentry
+    \entry{rauch1965}{article}{}{}
+      \name{author}{3}{}{%
+        {{hash=0139dbca851ae9ed793fe59a0aa40f3d}{%
+           family={Rauch},
+           familyi={R\bibinitperiod},
+           given={H.\bibnamedelimi E.},
+           giveni={H\bibinitperiod\bibinitdelim E\bibinitperiod}}}%
+        {{hash=47fde12459e7254adeb6a7284883b11a}{%
+           family={Tung},
+           familyi={T\bibinitperiod},
+           given={F.},
+           giveni={F\bibinitperiod}}}%
+        {{hash=45f4a83a80195332e772c696dd628989}{%
+           family={Striebel},
+           familyi={S\bibinitperiod},
+           given={C.\bibnamedelimi T.},
+           giveni={C\bibinitperiod\bibinitdelim T\bibinitperiod}}}%
+      }
+      \strng{namehash}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{fullhash}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{fullhashraw}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{bibnamehash}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{authorbibnamehash}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{authornamehash}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{authorfullhash}{738a4db0d21af2530a7742f5e5dbe13b}
+      \strng{authorfullhashraw}{738a4db0d21af2530a7742f5e5dbe13b}
+      \field{sortinit}{R}
+      \field{sortinithash}{5e1c39a9d46ffb6bebd8f801023a9486}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{AIAA Journal}
+      \field{number}{8}
+      \field{title}{Maximum likelihood estimates of linear dynamic systems}
+      \field{volume}{3}
+      \field{year}{1965}
+      \field{pages}{1445\bibrangedash 1450}
+      \range{pages}{6}
+      \verb{doi}
+      \verb 10.2514/3.3166
+      \endverb
+    \endentry
+    \entry{rtcm10403}{manual}{}{}
+      \list{location}{1}{%
+        {Arlington, VA, USA}%
+      }
+      \list{organization}{1}{%
+        {Radio Technical Commission for Maritime Services}%
+      }
+      \field{sortinit}{R}
+      \field{sortinithash}{5e1c39a9d46ffb6bebd8f801023a9486}
+      \field{labeltitlesource}{title}
+      \field{note}{Special Committee No.~104; State Space Representation messages 1057--1068, 1240--1270, 4076}
+      \field{title}{{RTCM} Standard 10403.3: Differential {GNSS} Services -- Version 3}
+      \field{year}{2016}
+    \endentry
+    \entry{saastamoinen1972atmospheric}{incollection}{}{}
+      \name{author}{1}{}{%
+        {{hash=77da37fae501da659003186eff785bba}{%
+           family={Saastamoinen},
+           familyi={S\bibinitperiod},
+           given={J.},
+           giveni={J\bibinitperiod}}}%
+      }
+      \name{editor}{3}{}{%
+        {{hash=a6ccb03cd0d81f12b03a4c64358044c5}{%
+           family={Henriksen},
+           familyi={H\bibinitperiod},
+           given={S.\bibnamedelimi W.},
+           giveni={S\bibinitperiod\bibinitdelim W\bibinitperiod}}}%
+        {{hash=baca449fffd520f0a8bf2f83f021b841}{%
+           family={Mancini},
+           familyi={M\bibinitperiod},
+           given={A.},
+           giveni={A\bibinitperiod}}}%
+        {{hash=6e88f2ac2217ee3f73214e001cf674d2}{%
+           family={Chovitz},
+           familyi={C\bibinitperiod},
+           given={B.\bibnamedelimi H.},
+           giveni={B\bibinitperiod\bibinitdelim H\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Washington, D.C.}%
+      }
+      \list{publisher}{1}{%
+        {American Geophysical Union}%
+      }
+      \strng{namehash}{77da37fae501da659003186eff785bba}
+      \strng{fullhash}{77da37fae501da659003186eff785bba}
+      \strng{fullhashraw}{77da37fae501da659003186eff785bba}
+      \strng{bibnamehash}{77da37fae501da659003186eff785bba}
+      \strng{authorbibnamehash}{77da37fae501da659003186eff785bba}
+      \strng{authornamehash}{77da37fae501da659003186eff785bba}
+      \strng{authorfullhash}{77da37fae501da659003186eff785bba}
+      \strng{authorfullhashraw}{77da37fae501da659003186eff785bba}
+      \strng{editorbibnamehash}{a0b3833a496fe0ec9940b0426e85bd33}
+      \strng{editornamehash}{a0b3833a496fe0ec9940b0426e85bd33}
+      \strng{editorfullhash}{a0b3833a496fe0ec9940b0426e85bd33}
+      \strng{editorfullhashraw}{a0b3833a496fe0ec9940b0426e85bd33}
+      \field{sortinit}{S}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{The Use of Artificial Satellites for Geodesy}
+      \field{series}{Geophysical Monograph Series}
+      \field{title}{Atmospheric correction for the troposphere and stratosphere in radio ranging of satellites}
+      \field{volume}{15}
+      \field{year}{1972}
+      \field{pages}{247\bibrangedash 251}
+      \range{pages}{5}
+      \verb{doi}
+      \verb 10.1029/GM015p0247
+      \endverb
+    \endentry
+    \entry{subirana2013gnss}{book}{}{}
+      \name{author}{3}{}{%
+        {{hash=19f6aa895fd2afeeb590f8f315ed9442}{%
+           family={Subirana},
+           familyi={S\bibinitperiod},
+           given={J.\bibnamedelimi Sanz},
+           giveni={J\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=ea7c2f66c4d63542d99596077e12657a}{%
+           family={Zornoza},
+           familyi={Z\bibinitperiod},
+           given={J.\bibnamedelimi M.\bibnamedelimi Juan},
+           giveni={J\bibinitperiod\bibinitdelim M\bibinitperiod\bibinitdelim J\bibinitperiod}}}%
+        {{hash=b7fce4f4e48bb6e994cc8050c65f1f54}{%
+           family={Hernández-Pajares},
+           familyi={H\bibinithyphendelim P\bibinitperiod},
+           given={M.},
+           giveni={M\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Noordwijk, The Netherlands}%
+      }
+      \list{publisher}{1}{%
+        {ESA Communications}%
+      }
+      \strng{namehash}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{fullhash}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{fullhashraw}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{bibnamehash}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{authorbibnamehash}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{authornamehash}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{authorfullhash}{bcf96134e8acfcc4f813a256d4848220}
+      \strng{authorfullhashraw}{bcf96134e8acfcc4f813a256d4848220}
+      \field{sortinit}{S}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{series}{{ESA TM-23/I}}
+      \field{title}{{GNSS} Data Processing, Volume {I}: Fundamentals and Algorithms}
+      \field{year}{2013}
+    \endentry
+    \entry{teunissen1985generalised}{article}{}{}
+      \name{author}{1}{}{%
+        {{hash=6af362ae6ace8756ecbadb34132d2fa0}{%
+           family={Teunissen},
+           familyi={T\bibinitperiod},
+           given={P.\bibnamedelimi J.\bibnamedelimi G.},
+           giveni={P\bibinitperiod\bibinitdelim J\bibinitperiod\bibinitdelim G\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Berlin, Heidelberg}%
+      }
+      \list{publisher}{1}{%
+        {Springer}%
+      }
+      \strng{namehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{fullhash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{fullhashraw}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{bibnamehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authorbibnamehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authornamehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authorfullhash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authorfullhashraw}{6af362ae6ace8756ecbadb34132d2fa0}
+      \field{extraname}{1}
+      \field{sortinit}{T}
+      \field{sortinithash}{9af77f0292593c26bde9a56e688eaee9}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Optimization and Design of Geodetic Networks}
+      \field{title}{Generalized inverses, adjustment, the datum problem and {S}-transformations}
+      \field{year}{1985}
+      \field{pages}{11\bibrangedash 55}
+      \range{pages}{45}
+    \endentry
+    \entry{teunissen1995lambda}{article}{}{}
+      \name{author}{1}{}{%
+        {{hash=6af362ae6ace8756ecbadb34132d2fa0}{%
+           family={Teunissen},
+           familyi={T\bibinitperiod},
+           given={P.\bibnamedelimi J.\bibnamedelimi G.},
+           giveni={P\bibinitperiod\bibinitdelim J\bibinitperiod\bibinitdelim G\bibinitperiod}}}%
+      }
+      \strng{namehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{fullhash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{fullhashraw}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{bibnamehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authorbibnamehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authornamehash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authorfullhash}{6af362ae6ace8756ecbadb34132d2fa0}
+      \strng{authorfullhashraw}{6af362ae6ace8756ecbadb34132d2fa0}
+      \field{extraname}{2}
+      \field{sortinit}{T}
+      \field{sortinithash}{9af77f0292593c26bde9a56e688eaee9}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Journal of Geodesy}
+      \field{number}{1--2}
+      \field{title}{The least-squares ambiguity decorrelation adjustment: a method for fast {GPS} integer ambiguity estimation}
+      \field{volume}{70}
+      \field{year}{1995}
+      \field{pages}{65\bibrangedash 82}
+      \range{pages}{18}
+      \verb{doi}
+      \verb 10.1007/BF00863419
+      \endverb
+    \endentry
+    \entry{teunissen2017handbook}{book}{}{}
+      \name{editor}{2}{}{%
+        {{hash=6af362ae6ace8756ecbadb34132d2fa0}{%
+           family={Teunissen},
+           familyi={T\bibinitperiod},
+           given={P.\bibnamedelimi J.\bibnamedelimi G.},
+           giveni={P\bibinitperiod\bibinitdelim J\bibinitperiod\bibinitdelim G\bibinitperiod}}}%
+        {{hash=7b2860cad0944fd99cdbd545c723679c}{%
+           family={Montenbruck},
+           familyi={M\bibinitperiod},
+           given={O.},
+           giveni={O\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Cham, Switzerland}%
+      }
+      \list{publisher}{1}{%
+        {Springer}%
+      }
+      \strng{namehash}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{fullhash}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{fullhashraw}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{bibnamehash}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{editorbibnamehash}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{editornamehash}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{editorfullhash}{5d83945f6a26cef8000f0fae7cb29325}
+      \strng{editorfullhashraw}{5d83945f6a26cef8000f0fae7cb29325}
+      \field{sortinit}{T}
+      \field{sortinithash}{9af77f0292593c26bde9a56e688eaee9}
+      \field{labelnamesource}{editor}
+      \field{labeltitlesource}{title}
+      \field{isbn}{978-3-319-42926-7}
+      \field{title}{Springer Handbook of Global Navigation Satellite Systems}
+      \field{year}{2017}
+      \verb{doi}
+      \verb 10.1007/978-3-319-42928-1
+      \endverb
+    \endentry
+    \entry{yunck1993coping}{article}{}{}
+      \name{author}{1}{}{%
+        {{hash=152219270307607e58aaedfc6f650e77}{%
+           family={Yunck},
+           familyi={Y\bibinitperiod},
+           given={Thomas\bibnamedelima P.},
+           giveni={T\bibinitperiod\bibinitdelim P\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {American Geophysical Union}%
+      }
+      \strng{namehash}{152219270307607e58aaedfc6f650e77}
+      \strng{fullhash}{152219270307607e58aaedfc6f650e77}
+      \strng{fullhashraw}{152219270307607e58aaedfc6f650e77}
+      \strng{bibnamehash}{152219270307607e58aaedfc6f650e77}
+      \strng{authorbibnamehash}{152219270307607e58aaedfc6f650e77}
+      \strng{authornamehash}{152219270307607e58aaedfc6f650e77}
+      \strng{authorfullhash}{152219270307607e58aaedfc6f650e77}
+      \strng{authorfullhashraw}{152219270307607e58aaedfc6f650e77}
+      \field{sortinit}{Y}
+      \field{sortinithash}{fd67ad5a9ef0f7456bdd9aab10fe1495}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Environmental Effects on Spacecraft Positioning and Trajectories}
+      \field{series}{Geophysical Monograph Series}
+      \field{title}{Coping with the atmosphere and ionosphere in precise satellite and ground positioning}
+      \field{volume}{73}
+      \field{year}{1993}
+      \field{pages}{1\bibrangedash 16}
+      \range{pages}{16}
+      \verb{doi}
+      \verb 10.1029/GM073p0001
+      \endverb
+    \endentry
+  \enddatalist
+\endrefsection
+\endinput
+

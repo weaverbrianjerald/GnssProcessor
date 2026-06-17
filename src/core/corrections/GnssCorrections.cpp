@@ -137,42 +137,44 @@ namespace GnssProcessor {
         // and it returns 0.0, so the broadcast fallback below can still fire.)
         double clock_corr = interpolateClock(satellite, time, clocks_);
 
-        // Broadcast-clock fallback (live rooftop mode): no precise CLK sample
-        // covered this epoch, so evaluate the SV clock polynomial decoded from
-        // the RTCM/SBF nav stream.  In post-processing the live store is empty
-        // and this no-ops.  When the fallback supplies the baseline, the SSR
-        // clock delta below MUST gate against the BROADCAST ephemeris IODE —
-        // the stale CLK index reports iode=-1 (permissive), which would let a
-        // mismatched SSR delta land on the wrong broadcast baseline.
-        int  brdc_iode      = -1;
-        bool used_broadcast = false;
-        if (std::abs(clock_corr) < 1e-12) {
-            if (auto bc = LiveEphemerisStore::getInstance().computeSatelliteClock(satellite, time)) {
-                clock_corr     = bc->bias;
-                brdc_iode      = bc->iode;
-                used_broadcast = true;
+        // SSR record up front so the broadcast baseline + IODE gate can select
+        // the ephemeris VERSION the SSR clock delta was computed for (iode_ssr).
+        // When the receiver has cut over to a newer ephemeris but the SSR still
+        // references the prior one, this RE-REFERENCES to the retained previous
+        // record (LiveEphemerisStore keeps current+previous across a cutover)
+        // instead of dropping the satellite to broadcast-grade.
+        // Reject an SSR record desynced from the obs epoch (live corrections vs a
+        // lagging obs stream): getOrbitClock's freshness gate now also drops a
+        // record far in the FUTURE relative to the obs (the −1.5 h desync), so a
+        // stale/mis-timed SSR no longer detonates applyClockToBias.  Surface the
+        // drop loudly (rate-limited by spdlog level) so it never hides again.
+        const double ssr_max_age = config_ ? config_->getSsrMaxAge() : 60.0;
+        const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, ssr_max_age);
+        if (!ssr) {
+            if (auto se = SsrCorrectionStore::getInstance().getSsrEpoch(satellite)) {
+                const double age = TimeUtils::continuousGpsSeconds(time)
+                                 - TimeUtils::continuousGpsSeconds(*se);
+                if (std::abs(age) > ssr_max_age)
+                    log->warn("SSR for {} ({}) REJECTED stale: |age|={:.1f}s > {:.1f}s "
+                              "(obs↔SSR desync) — falling back to broadcast-grade",
+                              satellite, PppUtils::getSystemString(satellite), age, ssr_max_age);
             }
         }
+        const int  ssr_iode = (ssr && ssr->has_clock) ? ssr->iode : -1;
 
-        // For the precise-CLK baseline, derive the SSR IODE gate from the
-        // closest clock sample.  CLK-derived ClockData carries iode=-1
-        // (unknown), in which case the gate is permissive and the existing
-        // behaviour stands; a future broadcast-nav clock parser will populate
-        // it and make the gate meaningful.  Skipped when the broadcast fallback
-        // already supplied a real IODE above.
-        if (!used_broadcast) {
-            const auto it_idx = clock_index_.find(satellite);
-            if (it_idx != clock_index_.end() && !it_idx->second.empty()) {
-                const double t_query = TimeUtils::continuousGpsSeconds(time);
-                const ClockData* closest = nullptr;
-                double best_dt = std::numeric_limits<double>::max();
-                for (const ClockData* nd : it_idx->second) {
-                    const double dt_abs = std::abs(
-                        TimeUtils::continuousGpsSeconds(nd->time) - t_query);
-                    if (dt_abs < best_dt) { best_dt = dt_abs; closest = nd; }
-                }
-                if (closest) brdc_iode = closest->iode;
-            }
+        // Live broadcast SV clock, version-matched to the SSR.  Its IODE ALWAYS
+        // drives the gate — so a precise-CLK baseline no longer forces the gate
+        // permissive (the CLK product carries no usable IODE).  It supplies the
+        // clock BASELINE only when no precise CLK sample covered this epoch.  In
+        // post-processing the live store is empty (bc == nullopt), so brdc_iode
+        // stays -1 (permissive) and the prior SP3/CLK behaviour stands.
+        const auto bc = LiveEphemerisStore::getInstance()
+                            .computeSatelliteClock(satellite, time, ssr_iode);
+        int  brdc_iode      = bc ? bc->iode : -1;
+        bool used_broadcast = false;
+        if (std::abs(clock_corr) < 1e-12 && bc) {
+            clock_corr     = bc->bias;
+            used_broadcast = true;
         }
 
         // SSR clock overlay (IGS-SSR): a delta to ADD to the broadcast/CLK
@@ -181,8 +183,45 @@ namespace GnssProcessor {
         // broadcast-grade even when the baseline came from the broadcast
         // polynomial.
         bool ssr_clock_applied = false;
-        if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time);
-            ssr && ssr->has_clock) {
+        if (ssr && ssr->has_clock) {
+            // SSR diagnostic (trace, "corrections" logger) — one line per
+            // (sat, epoch).  Exposes (1) the orbit/clock RATE terms the
+            // between-update propagation depends on (delta_rac + delta_rac_dot*dt,
+            // c0 + c1*dt + c2*dt^2) and the age dt; (2) the clock BASELINE the SSR
+            // delta is stacked on (baseline_clk is SECONDS — the broadcast SV
+            // clock — plus used_broadcast); (3) the IODE bookkeeping:
+            //   eph_iode  = CURRENT live broadcast ephemeris IODE (steps at a cutover)
+            //   iode_ssr  = the ephemeris version the SSR delta was computed for
+            //   brdc_iode = the version the gate USED (re-referenced to match
+            //               iode_ssr — current or retained previous — when possible)
+            // eph_iode != brdc_iode == iode_ssr with iode_match=true means a
+            // cutover desync was re-referenced (not dropped); iode_match=false
+            // means no held version matched and the satellite is dropped.  Inert
+            // unless "corrections" is at trace.
+            if (auto clog = log_manager_.getLogger("corrections");
+                clog->should_log(spdlog::level::trace)) {
+                int eph_iode = -2;   // CURRENT version (no SSR target); -2 = no live clock
+                if (auto cur = LiveEphemerisStore::getInstance()
+                                  .computeSatelliteClock(satellite, time))
+                    eph_iode = cur->iode;
+                clog->trace(
+                    "SSR-RATE {} sys={} has_orbit={} has_clock={} dt={:.1f}s "
+                    "rac(r,a,c)=[{:+.4f},{:+.4f},{:+.4f}]m "
+                    "racdot(r,a,c)=[{:+.3e},{:+.3e},{:+.3e}]m/s "
+                    "c0={:+.4f}m c1={:+.3e}m/s c2={:+.3e}m/s2 hr={:+.4f}m "
+                    "baseline_clk={:+.6f}s used_broadcast={} "
+                    "eph_iode={} iode_ssr={} brdc_iode={} iode_match={}",
+                    satellite, PppUtils::getSystemString(satellite),
+                    ssr->has_orbit, ssr->has_clock,
+                    TimeUtils::continuousGpsSeconds(time)
+                        - TimeUtils::continuousGpsSeconds(ssr->epoch_time),
+                    ssr->delta_rac.x(), ssr->delta_rac.y(), ssr->delta_rac.z(),
+                    ssr->delta_rac_dot.x(), ssr->delta_rac_dot.y(), ssr->delta_rac_dot.z(),
+                    ssr->c0, ssr->c1, ssr->c2, ssr->hr_clock,
+                    clock_corr, used_broadcast,
+                    eph_iode, ssr->iode, brdc_iode,
+                    SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode));
+            }
             if (std::isfinite(clock_corr)
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
@@ -237,7 +276,14 @@ namespace GnssProcessor {
 
         auto idx_it = clock_index_.find(satellite);
         if (idx_it == clock_index_.end() || idx_it->second.empty()) {
-            log_manager_.getLogger("corrections")->debug("Clock interp for {}: no data in index", satellite);
+            // Only worth flagging when a precise CLK product IS loaded but this
+            // satellite is missing from it.  In live broadcast+SSR mode the whole
+            // clock index is empty by design (no SP3/CLK), so this would fire for
+            // EVERY satellite EVERY epoch — pure noise that buries the log while
+            // the broadcast+SSR fallback in getSatelliteClockCorrection does the
+            // real work.  Suppress it when there is no precise product at all.
+            if (!clock_index_.empty())
+                log_manager_.getLogger("corrections")->debug("Clock interp for {}: no data in index", satellite);
             return 0.0;
         }
 

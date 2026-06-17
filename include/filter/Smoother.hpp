@@ -15,6 +15,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -95,6 +96,25 @@ namespace GnssProcessor {
         /// same satellite), but it errs on the side of falling back to the
         /// forward solution for those states — which is always safe.
         std::set<std::string> reset_satellites;
+
+        /// BSSD pivot satellite map (constellation name -> satellite ID) in
+        /// effect at the END of this epoch's processing (after all routine,
+        /// forced-rebuild, and slip-phase handovers).  Empty when BSSD is
+        /// inactive.  The backward pass compares this against the previous
+        /// epoch's map: a per-constellation change means the SD datum moved
+        /// (a pivot handover), so the affected ambiguity states are in a
+        /// different frame than the previous epoch's a-priori.
+        std::map<std::string, std::string> pivot_satellites;
+
+        /// CLEAN (undisturbed, non-forced) pivot handovers performed during
+        /// this epoch, constellation -> {old_pivot, new_pivot}, as reported by
+        /// PivotManager::getCleanHandovers.  For these the SD re-reference is a
+        /// lossless, invertible datum change, so the backward pass inverse-
+        /// references the affected ambiguities back to the old pivot rather
+        /// than segmenting them.  A constellation whose pivot changed but is
+        /// absent here (disturbed / forced handover, slipped old pivot) is
+        /// segmented instead.  See slip-repair audit P2-1.
+        std::map<std::string, std::pair<std::string, std::string>> clean_handovers;
 
         /// True if the update at this epoch performed a complete filter
         /// reset.  Treated as a hard segment boundary: smoother recursion
@@ -179,6 +199,40 @@ namespace GnssProcessor {
          */
         const std::vector<SmoothedEpoch>& results() const { return smoothed_; }
 
+        /**
+         * @brief Inverse BSSD re-reference of a group of state indices back to
+         *        a datum index — the exact inverse of PivotManager's forward
+         *        re-reference, anchored on the OLD pivot instead of the new one.
+         *
+         * Mirrors @c PivotManager::applyCovarianceReReference (plus the state
+         * subtract) but with @p datum = the OLD pivot's index:
+         * @code
+         *   x'(i) = x(i) - x(datum)   for group members i != datum
+         *   x'(datum) = 0
+         *   P'(i,:) = P(i,:) - P(datum,:),  P'(:,i) = P(:,i) - P(:,datum)
+         *   P'(datum,:) = 0,  P'(:,datum) = 0
+         * @endcode
+         * Operating on the FULL rows/columns of @p P (not a group-local block)
+         * is required: the forward transform coupled the group to every other
+         * state (position, troposphere, cross-constellation), so the inverse
+         * must too, or the ambiguity<->position cross-covariance is dropped
+         * (audit P2-1 / R1).  For a single group this exactly recovers the
+         * pre-handover (old-pivot) frame; see the unit tests.
+         *
+         * Public and static so the backward pass and the characterization
+         * tests share one implementation.
+         *
+         * @param group_indices All state indices in the group (incl. @p datum).
+         * @param datum         The OLD pivot's state index (becomes the frozen datum).
+         * @param[in,out] x     State vector (modified in place).
+         * @param[in,out] P     Covariance matrix (modified in place).
+         */
+        static void inverseReReferenceGroup(
+            const std::vector<Eigen::Index>& group_indices,
+            Eigen::Index datum,
+            Eigen::VectorXd& x,
+            Eigen::MatrixXd& P);
+
     private:
         std::vector<SmootherEpochSnapshot> snapshots_;
         std::vector<SmoothedEpoch> smoothed_;
@@ -192,11 +246,47 @@ namespace GnssProcessor {
          * @param sk1   Epoch k+1 snapshot (post-update; its \c x_pred / \c F share k's indexing).
          * @param[out] idx_k  Indices in epoch k's state space.
          * @param[out] idx_k1 Parallel indices in epoch k+1's state space.
+         * @param exclude_keys Dynamic-state keys (ambiguity / ionosphere /
+         *                     sat-bias) to EXCLUDE from the common subspace at
+         *                     this boundary — the handover-segmentation set
+         *                     computed by the backward pass (constellations
+         *                     whose frame changed but cannot be inverse-
+         *                     referenced, plus orphaned signal groups).
          */
         void collectCommonIndices(const SmootherEpochSnapshot& sk,
                                   const SmootherEpochSnapshot& sk1,
                                   std::vector<size_t>& idx_k,
-                                  std::vector<size_t>& idx_k1) const;
+                                  std::vector<size_t>& idx_k1,
+                                  const std::set<std::string>& exclude_keys) const;
+
+        /**
+         * @brief Reconcile the BSSD frame across a handover boundary (epoch k
+         *        to k+1) for the backward step.
+         *
+         * Compares the per-epoch pivot maps.  For each constellation whose
+         * pivot changed:
+         *   - CLEAN handover (recorded in @c sk1.clean_handovers, old/new
+         *     pivots matching): inverse-references each re-referenced ambiguity
+         *     signal group of @p x_adj / @p P_adj (copies of the k+1 smoothed
+         *     estimate) back to the OLD pivot — exactly undoing the forward
+         *     re-reference so the estimate re-enters epoch k's frame.  Orphaned
+         *     signal groups (the new pivot lacked the signal) are segmented.
+         *   - Otherwise (disturbed / forced / appeared-or-vanished): the whole
+         *     constellation's ambiguities are segmented.
+         * Ionosphere and satellite-bias states of any handover constellation
+         * are always segmented (their re-references are not inverted here).
+         *
+         * @param sk    Epoch k snapshot (its pivot map is the OLD datum).
+         * @param sk1   Epoch k+1 snapshot (NEW datum + clean-handover record).
+         * @param[in,out] x_adj  Copy of the k+1 smoothed state (inverse-referenced in place).
+         * @param[in,out] P_adj  Copy of the k+1 smoothed covariance (inverse-referenced in place).
+         * @return Dynamic-state keys to exclude from the common subspace.
+         */
+        std::set<std::string> prepareHandoverFrame(
+            const SmootherEpochSnapshot& sk,
+            const SmootherEpochSnapshot& sk1,
+            Eigen::VectorXd& x_adj,
+            Eigen::MatrixXd& P_adj) const;
     };
 
 } // namespace GnssProcessor

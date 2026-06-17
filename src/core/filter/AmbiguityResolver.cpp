@@ -512,7 +512,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
             log->debug("WL-only mode: no MW-resolved WL integers available this epoch");
             return result;
         }
-        auto wl_only_result = resolveWlOnly(pairs, x, P, wl_ambiguities, observations);
+        auto wl_only_result = resolveWlOnly(pairs, x, P, wl_ambiguities,
+                                            wl_fractions, observations);
         wl_only_result.num_candidates = result.num_candidates;
         return wl_only_result;
     }
@@ -1392,6 +1393,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     const Eigen::VectorXd& x,
     const Eigen::MatrixXd& P,
     const std::map<std::string, int>& wl_ambiguities,
+    const std::map<std::string, double>& wl_fractions,
     const std::vector<PppObservation>& observations) {
 
     auto log = log_manager_.getLogger("ambiguity_resolver");
@@ -1453,6 +1455,29 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
         auto it_i   = wl_ambiguities.find(wl_key_i);
         auto it_ref = wl_ambiguities.find(wl_key_ref);
         if (it_i == wl_ambiguities.end() || it_ref == wl_ambiguities.end()) continue;
+
+        // Per-fix WL confidence gate (mirrors applyMwWlConstraintsNlWl_).  The
+        // DD WL integer combines two zero-difference MW arcs (N_i − N_ref); if
+        // EITHER arc's running fractional residual sits far from its locked
+        // integer (frac ≫ 0 — locked too early, bias-contaminated, or near a
+        // half-cycle boundary) the DD WL is suspicious.  Rather than committing
+        // the questionable integer to the pseudo-obs update (where a wrong WL
+        // biases the whole SD ambiguity block), stay float for this pair this
+        // epoch.  Gating both arcs makes this stronger than the NlWl gate,
+        // which only sees one arc per constraint.
+        const auto frac_of = [&](const std::string& k) {
+            auto it = wl_fractions.find(k);
+            return it != wl_fractions.end() ? it->second : 0.0;
+        };
+        const double frac_i   = frac_of(wl_key_i);
+        const double frac_ref = frac_of(wl_key_ref);
+        if (frac_i > config_.wl_max_frac || frac_ref > config_.wl_max_frac) {
+            log->debug("WL-only AR: skip DD {}-{} {}/{}: frac_i={:.3f}, frac_ref={:.3f} cyc "
+                       "> wl_max_frac={:.3f}",
+                       sat_i, sat_ref, hi.signal, lo.signal,
+                       frac_i, frac_ref, config_.wl_max_frac);
+            continue;
+        }
 
         const int dd_wl = it_i->second - it_ref->second;
         constraints.push_back({

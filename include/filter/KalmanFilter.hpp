@@ -7,6 +7,7 @@
 #include "measurement/MeasurementModel.hpp"
 #include "filter/ImuIntegrator.hpp"
 #include "filter/ResidualHistoryTracker.hpp"
+#include "aiding/AidingTypes.hpp"
 #include "common/Constants.hpp"
 #include "logging/KalmanFilterLogger.hpp"
 #include <Eigen/Dense>
@@ -104,6 +105,34 @@ namespace GnssProcessor {
          */
         void predictImu(const GnssTime& t_start, const GnssTime& t_end,
                         const ImuIntegrator& imu);
+
+        /**
+         * @brief Predict augmented by aiding-source predict contributions.
+         *
+         * The composable generalization of @c predictImu: each
+         * @c PredictContribution supplies a Phi/Q sub-block over the full-state
+         * indices it owns plus an optional nominal write-back.  The contributions
+         * are spliced (ASSIGNED, never accumulated) onto an Identity-seeded
+         * transition and the StateManager process-noise baseline, then P is
+         * propagated once.
+         *
+         * Invariance contract (see docs/aiding_source_abstraction_design.md):
+         *   - If no contribution is valid, this DELEGATES to @c predict(dt) —
+         *     byte-identical GNSS-only behavior (inherits x=F*x, the BSSD
+         *     freeze-state surgery, and the dt<=0 guard).
+         *   - With an INS contribution present, the assembly mirrors
+         *     @c predictImu exactly: Identity-seeded F (non-INS state means are
+         *     NOT propagated), baseline Q over the contribution's integrated
+         *     interval (@c dt_total, not the GNSS dt), assignment-not-accumulation
+         *     over the ins_map, and a single symmetrized P = F·P·Fᵀ + Q.
+         *
+         * The nominal attitude (C_b_e_) is written by the IMU source through its
+         * owner handle (this filter) during contribution assembly, not here.
+         *
+         * @param dt            GNSS interval (used only for the delegated path).
+         * @param contributions Per-source predict contributions for this epoch.
+         */
+        void predictAided(double dt, const std::vector<PredictContribution>& contributions);
 
         /**
          * @brief Get the current body-to-ECEF attitude matrix.
@@ -416,6 +445,12 @@ namespace GnssProcessor {
         void endEpoch();
 
     private:
+        // Test seam: KalmanFilterTestAccess (tests/test_aiding_source.cpp)
+        // forwards to the private spliceAndPropagate kernel so the aided-predict
+        // assembly is unit-testable without constructing a full KalmanFilter
+        // (which requires a PppModel + parser chain). Defined only in gnss_tests.
+        friend struct KalmanFilterTestAccess;
+
         StateManager& state_manager_;         //!< Reference to external state manager for state storage and access.
         const GnssConfig& config_;            //!< Reference to GNSS configuration (read-only).
         LogManager& log_manager_;             //!< Reference to logging manager for diagnostic output.
@@ -525,6 +560,28 @@ namespace GnssProcessor {
          * a deliberate "fixed state" choice.
          */
         void seedCovarianceDiagonals(Eigen::MatrixXd& P, size_t state_size) const;
+
+        /**
+         * @brief Splice aiding predict contributions onto an Identity-seeded
+         *        transition and propagate the covariance (the @c predictImu
+         *        assembly, factored as a pure kernel for reuse + testing).
+         *
+         * For each valid contribution: writes its nominal values into @p x
+         * (sentinel / out-of-range indices skipped), ASSIGNS (never accumulates)
+         * its Phi/Q sub-block over the full-state @c indices it owns into the
+         * Identity-seeded F and the supplied @p Q_full, then propagates
+         * @c P = F·P·Fᵀ + Q_full and symmetrizes.  Pure and static so it carries
+         * no KalmanFilter state and is exercised directly by the test seam.
+         *
+         * @param x            State vector (nominal write-backs applied in place).
+         * @param P            Covariance (propagated in place).
+         * @param Q_full       Baseline process noise (contribution Q assigned in place).
+         * @param state_size   Full state dimension (skip guard for owned indices).
+         * @param contributions Predict contributions to splice.
+         */
+        static void spliceAndPropagate(Eigen::VectorXd& x, Eigen::MatrixXd& P,
+                                       Eigen::MatrixXd& Q_full, std::size_t state_size,
+                                       const std::vector<PredictContribution>& contributions);
 
         // -------------------------------------------------------------------
         // Outlier handling helpers (decomposed from validatePostFitResiduals)

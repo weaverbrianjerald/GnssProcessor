@@ -17,6 +17,7 @@
 \usepackage{amsmath, amssymb, amsthm, mathtools, bm}
 \usepackage{empheq}                 % boxed equations via \begin{empheq}[box=\fbox]{...}
 \usepackage{siunitx}                % \SI{10}{km} etc. for typeset units
+\usepackage{textcomp}               % \textdegree and friends
 
 % --- Layout
 \usepackage[margin=1in]{geometry}
@@ -33,7 +34,26 @@
     citecolor=blue!50!black,
     urlcolor=blue!50!black,
 }
+% Some section titles carry math (e.g. $\Zmat$, $\geomrange^\sat_\rx$).
+% Neutralise the macros for the PDF-bookmark strings so hyperref does not
+% choke on \bm and renders readable plain-text bookmarks.
+\pdfstringdefDisableCommands{%
+  \def\bm#1{#1}%
+  \def\mathrm#1{#1}%
+  \def\Tr{T}%
+  \def\Zmat{Z}%
+  \def\geomrange{rho}%
+  \def\sLight{c}%
+  \def\sat{i}%
+  \def\rx{r}%
+  \def\sigl{s}%
+  \def\mu{mu}%
+}
 \usepackage[capitalize, noabbrev]{cleveref}
+
+% --- Lightweight remark environment (used in the inertial-aiding section)
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
 
 % --- Bibliography
 \usepackage[backend=biber, style=numeric-comp, sorting=nyt]{biblatex}
@@ -70,6 +90,61 @@
 \newcommand{\geomrange}{\rho}                        % geometric range
 \newcommand{\sLight}{c}                              % speed of light
 
+% --- Estimation: Kalman filter, RTS smoother, ambiguity resolution.
+%     Introduced for the post-May-2026 estimation chapters; keep here so
+%     all sections render the symbols consistently.
+\newcommand{\Fmat}{\bm{F}}                           % state-transition matrix
+\newcommand{\Qmat}{\bm{Q}}                            % discrete process-noise covariance
+\newcommand{\Rmat}{\bm{R}}                            % measurement-noise covariance
+\newcommand{\Smat}{\bm{S}}                            % innovation covariance H P H^T + R
+\newcommand{\Kgain}{\bm{K}}                           % Kalman gain
+\newcommand{\gainS}{\bm{G}}                           % RTS smoother gain
+\newcommand{\innov}{\bm{\nu}}                         % innovation (measurement - prediction)
+\newcommand{\dt}{\Delta t}                            % epoch interval
+\newcommand{\spd}[1]{q_{#1}}                          % process-noise spectral density (variance rate)
+\newcommand{\sres}{s}                                 % standardised post-fit residual (s_i)
+\newcommand{\smooth}[2]{#1_{#2|N}}                    % fixed-interval smoothed estimate (epoch | all N)
+\newcommand{\ambfloat}{\hat{\bm{N}}}                  % float ambiguity vector (cycles)
+\newcommand{\ambfix}{\check{\bm{N}}}                  % integer-fixed ambiguity vector
+\newcommand{\ambcov}{\bm{Q}_{\hat N}}                 % float ambiguity covariance
+\newcommand{\Zmat}{\bm{Z}}                            % unimodular integer (decorrelating) transform
+\newcommand{\Dmat}{\bm{D}}                            % LDL^T diagonal (conditional variances)
+\newcommand{\Lmat}{\bm{L}}                            % LDL^T unit-lower-triangular factor
+
+% --- Cycle-slip combinations ---
+\newcommand{\slipd}[1]{\delta #1}                    % temporal integer slip step (distinct from \bsd's \Delta)
+\newcommand{\mwc}{\mathrm{MW}}                        % Melbourne-Wubbena combination
+\newcommand{\gfc}{\mathrm{GF}}                        % geometry-free combination
+\newcommand{\graphicc}{\mathrm{GR}}                   % GRAPHIC combination (\mathcal{G} is taken by \sysset)
+\newcommand{\Nwl}{N_{\mathrm{WL}}}                    % wide-lane ambiguity N_1 - N_2
+\newcommand{\lamwl}{\lambda_{\mathrm{WL}}}            % wide-lane wavelength c/(f1-f2)
+\newcommand{\lamnl}{\lambda_{\mathrm{NL}}}            % narrow-lane wavelength c/(f1+f2)
+\newcommand{\lamewl}{\lambda_{\mathrm{EWL}}}          % extra-wide-lane wavelength
+\newcommand{\lamif}{\lambda_{\mathrm{IF}}}            % ionosphere-free effective wavelength
+
+% --- Inertial aiding (IMU) ---
+\newcommand{\Cbe}{\bm{C}_b^e}                         % body-to-ECEF direction-cosine matrix
+\newcommand{\imuvel}{\bm{v}}                          % ECEF velocity (INS nominal state)
+\newcommand{\imupsi}{\delta\bm{\psi}}                 % attitude-error state (small angle)
+\newcommand{\biasa}{\bm{b}_a}                         % accelerometer bias state
+\newcommand{\biasg}{\bm{b}_g}                         % gyroscope bias state
+\newcommand{\imuf}{\bm{f}_b}                          % bias-corrected specific force (body frame)
+\newcommand{\imuw}{\bm{\omega}_b}                     % bias-corrected angular rate (body frame)
+\newcommand{\imufe}{\bm{f}^e}                         % specific force in ECEF (= C_b^e f_b)
+\newcommand{\earthrate}{\bm{\omega}_{ie}^e}           % ECEF Earth-rotation vector
+\newcommand{\gravec}{\bm{g}^e}                        % ECEF plumb-bob gravity vector
+\newcommand{\skewm}[1]{[#1]_\times}                   % skew-symmetric / cross-product matrix
+\newcommand{\insF}{\bm{F}_{\mathrm{ins}}}             % 15x15 continuous INS error transition
+\newcommand{\insG}{\bm{G}_{\mathrm{ins}}}             % INS noise-input matrix
+\newcommand{\insQ}{\bm{Q}_{\mathrm{ins}}}             % INS discrete process noise
+\newcommand{\insPhi}{\bm{\Phi}_{\mathrm{ins}}}        % discrete INS transition
+
+% --- Real-time SSR corrections ---
+\newcommand{\satvel}{\dot{\bm{r}}^{\sat}}             % broadcast satellite velocity
+\newcommand{\racR}{\hat{\bm{e}}_r}                    % SSR orbit radial basis vector
+\newcommand{\racA}{\hat{\bm{e}}_a}                    % SSR orbit along-track basis vector
+\newcommand{\racC}{\hat{\bm{e}}_c}                    % SSR orbit cross-track basis vector
+
 \title{\bfseries GnssProcessor: Mathematical Reference}
 \author{}
 \date{Revision date: \today}
@@ -83,8 +158,9 @@
 
 This document is the mathematical companion to \texttt{GnssProcessor}, a
 C\texttt{++}17 post-processing and real-time GNSS engine implementing
-PPP, PPP-RTK, and double-differenced baseline modes.  Its scope is
-deliberately narrow:
+PPP, PPP-RTK, and double-differenced baseline modes.  Its scope is the
+estimation mathematics and design rationale, in roughly the order the
+engine applies them:
 \begin{itemize}[leftmargin=*]
 \item State vector layout (\Cref{sec:state}) --- which states the
       filter carries and when each is enabled.
@@ -96,6 +172,21 @@ deliberately narrow:
       the double-difference (DD) used in baseline modes, including
       the S-transform structure that maps undifferenced parameters
       to differenced ones.
+\item The estimation engine (\Cref{sec:kf}) --- the variable-dimension
+      Kalman filter (Joseph-form update, prior-anchored iterated
+      relinearisation, robust gating) and the backward RTS smoother.
+\item Cycle-slip detection and repair (\Cref{sec:slip}) --- the
+      linear-combination test statistics (Melbourne--W\"ubbena,
+      geometry-free, GRAPHIC, extra-wide-lane) and the TurboEdit
+      $2\times2$ integer repair.
+\item Integer ambiguity resolution (\Cref{sec:ar}) --- the
+      \textsc{MLAMBDA} integer least-squares search, wide-lane /
+      narrow-lane decomposition, validation, and constrained feedback.
+\item Inertial aiding (\Cref{sec:imu}) --- the strapdown mechanisation
+      and 15-state INS error model of the tightly-coupled IMU path.
+\item Real-time SSR corrections (\Cref{sec:ssr}) --- how State Space
+      Representation orbit, clock, and bias corrections refine the
+      undifferenced observation model.
 \end{itemize}
 
 Implementation details (function signatures, class responsibilities,
@@ -119,6 +210,21 @@ see \Cref{sec:notation} for the symbol table this document depends on.
 
 \section{Differencing transformations}\label{sec:diff}
 \input{bssd_dd}
+
+\section{Estimation engine: the Kalman filter and RTS smoother}\label{sec:kf}
+\input{kalman_smoother}
+
+\section{Cycle-slip detection and repair}\label{sec:slip}
+\input{slip_detection}
+
+\section{Integer ambiguity resolution}\label{sec:ar}
+\input{ambiguity_resolution}
+
+\section{Inertial aiding}\label{sec:imu}
+\input{imu_aiding}
+
+\section{Real-time SSR corrections}\label{sec:ssr}
+\input{ssr_corrections}
 
 \printbibliography
 

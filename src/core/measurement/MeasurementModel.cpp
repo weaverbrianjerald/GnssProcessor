@@ -100,6 +100,41 @@ namespace GnssProcessor {
         tc_f_b_ = f_b_corrected;
     }
 
+    void MeasurementModel::appendAidingRow(EpochMeasurement& update,
+                                           const AidingMeasurementRow& row) {
+        // Guard: a diagonal append after BSSD/DD populated R_full would silently
+        // drop the SD cross-covariance (the KF falls back to R_v.asDiagonal()
+        // only when R_full's dims don't match innovations).  Fail loudly instead.
+        if (update.R_full.size() != 0) {
+            throw std::runtime_error(
+                "appendAidingRow: R_full is populated (BSSD/DD active); a diagonal "
+                "aiding row would drop SD cross-covariance. Row-contributing aiding "
+                "sources are restricted to undifferenced PPP / loosely-coupled GNSS.");
+        }
+
+        const Eigen::Index n    = update.innovations.size();
+        const Eigen::Index ncol = (update.H.cols() > 0)
+                                ? update.H.cols()
+                                : static_cast<Eigen::Index>(row.jacobian.size());
+        if (row.jacobian.size() != ncol) {
+            throw std::invalid_argument(
+                "appendAidingRow: jacobian size does not match the state dimension "
+                "(H columns).");
+        }
+
+        update.innovations.conservativeResize(n + 1);
+        update.innovations(n) = row.innovation;
+
+        update.R_v.conservativeResize(n + 1);
+        update.R_v(n) = row.variance;
+
+        update.H.conservativeResize(n + 1, ncol);
+        update.H.row(n) = row.jacobian.transpose();
+
+        update.satellite_ids.push_back(row.label);
+        update.signal_types.push_back(row.signal);
+    }
+
     // ===================================================================
     // Product coverage checks
     // ===================================================================
@@ -194,6 +229,25 @@ namespace GnssProcessor {
                 } else {
                     required_ambiguities.insert(obs.satellite + "_" + ref_type);
                 }
+            }
+        }
+
+        // --- Hold-protected keys (soft-LLI / gap bridge) ---
+        // An ambiguity held across a short tracking outage pending a
+        // TurboEdit snapshot+dN·λ repair has no observation this epoch by
+        // definition, so it never enters required_ambiguities above and the
+        // prune below would delete exactly the pre-gap state the repair
+        // restores.  Union the held keys into the keep-set (and their
+        // satellites into the iono keep-set, so a whole-satellite outage
+        // does not strand the repaired ambiguity against a reseeded iono
+        // state).  The seeding loops are observation-driven and therefore
+        // never touch these keys — the held state passes through unchanged.
+        for (const auto& key : protected_ambiguity_keys_) {
+            required_ambiguities.insert(key);
+            if (is_uncombined) {
+                const auto p = key.find('_');
+                if (p != std::string::npos)
+                    required_iono_sats.insert(key.substr(0, p));
             }
         }
 
@@ -1173,6 +1227,32 @@ namespace GnssProcessor {
             }
         }
 
+        // CODE-DECOMP diagnostic (trace, "measurement_model"): for ANY code
+        // signal, break the zero-difference predicted observable into its terms
+        // so a hundreds-of-metre / kilometre residual can be attributed (GPS
+        // IF-code km residuals on the live IGS-station path motivated lifting
+        // this off the original Galileo-only gate).  rx_clk is the
+        // receiver-clock STATE (0 in BSSD, where the between-sat SD removes the
+        // physical clock — so zd_innov here still CARRIES it, equally on every
+        // signal, and it cancels only after differencing); iono is the per-sat
+        // slant-iono term (+alpha*I on code); ssr_cbias is the SSR code bias
+        // matched by EXACT RINEX obs code (0 if the provider's set lacks this
+        // code); sat_bias is the estimated per-(sat,signal) state; bia_cbias is
+        // the external .BIA term (0 unless enable_code_phase_bias).
+        if (!is_phase && !obs.satellite.empty()) {
+            if (auto lg = log_manager_.getLogger("measurement_model");
+                lg->should_log(spdlog::level::trace)) {
+                const double observed_val =
+                    obs.observed.count(ref_type) ? obs.observed.at(ref_type) : 0.0;
+                lg->trace("CODE-DECOMP {} {} tow={:.1f} observed={:.3f} predicted={:.3f} "
+                          "zd_innov={:+.3f}m | rx_clk={:+.3f} iono={:+.3f} ssr_cbias={:+.3f} "
+                          "sat_bias={:+.3f} bia_cbias={:+.3f}",
+                          obs.satellite, ref_type, obs.time.tow, observed_val, predicted,
+                          observed_val - predicted, rx_clk, iono_term, ssr_bias_term,
+                          sat_bias_term, code_bias_term);
+            }
+        }
+
         return true;
     }
 
@@ -1197,9 +1277,13 @@ namespace GnssProcessor {
         }
 
         // --- First-epoch initialization (delegated to StateInitializer) ---
+        // Latch "ISB initialized" ONLY when the seed actually succeeded.  If GPS
+        // (the ISB reference) is absent this epoch the call bails and returns
+        // false; marking it done anyway would freeze every non-GPS ISB at 0 for
+        // the whole session when GPS joins later.  Retry until GPS is present.
         if (!state_initializer_.isIsbInitialized()) {
-            state_initializer_.initializeInterSystemBiases(observations, epoch_prefix);
-            state_initializer_.markIsbInitialized();
+            if (state_initializer_.initializeInterSystemBiases(observations, epoch_prefix))
+                state_initializer_.markIsbInitialized();
         }
         if (!state_initializer_.isPhaseClockInitialized() && config_.estimatePhaseClock()) {
             state_initializer_.initializePhaseClockOffset(observations, epoch_prefix);
