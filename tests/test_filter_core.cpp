@@ -165,6 +165,58 @@ TEST(StateManagerTest, AddAmbiguityGrowsStateAndAssignsIndex) {
     EXPECT_NEAR(x(static_cast<Eigen::Index>(idx)), 12.5, 1e-12);
 }
 
+// removeStateAtIndex must decrement the indices of EVERY dynamic map sitting
+// above the removed slot — ambiguity, code-bias, sat-bias, sat-PHASE-bias (W2),
+// and ionosphere.  A missing decrement loop silently corrupts the
+// survivor->index mapping.  Seed each map with a distinct sentinel value,
+// remove the FIRST dynamic state (forcing every other dynamic state to shift
+// down by one), and assert each survivor's key still resolves to the slot
+// holding its sentinel.
+TEST(StateManagerTest, RemovalDecrementsAllFiveDynamicMaps) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    const size_t base = sm.getStateSize();
+
+    // Add the to-be-removed phase-bias state FIRST so removing it shifts all
+    // four other dynamic maps (and the surviving phase-bias entry) downward.
+    const size_t victim = sm.addSatPhaseBiasState("G05|L1C|PB", 500.0);
+    EXPECT_EQ(victim, base);
+
+    sm.addAmbiguity("G01_L1C", 100.0);
+    sm.addIonosphereState("G05", 200.0);
+    sm.addCodeBiasState("GPS_C2W", 300.0);
+    sm.addSatBiasState("G05|C1W", 400.0);
+    const size_t survivor_pb = sm.addSatPhaseBiasState("G07|L1C|PB", 600.0);
+
+    EXPECT_EQ(sm.getStateSize(), base + 6);
+    EXPECT_EQ(survivor_pb, base + 5);
+
+    // Remove the first dynamic state via the public phase-bias prune.
+    sm.pruneSatPhaseBiasStatesExcept({ "G07|L1C|PB" });
+
+    EXPECT_EQ(sm.getStateSize(), base + 5);
+    EXPECT_EQ(sm.getSatPhaseBiasIndex("G05|L1C|PB"), -1);
+
+    // Every survivor's key must now resolve to the slot holding its sentinel.
+    const Eigen::VectorXd x = sm.getStateVector();
+    auto valAt = [&](int idx) { return x(static_cast<Eigen::Index>(idx)); };
+
+    ASSERT_GE(sm.getAmbiguityIndex("G01_L1C"), 0);
+    EXPECT_NEAR(valAt(sm.getAmbiguityIndex("G01_L1C")), 100.0, 1e-12);
+    ASSERT_GE(sm.getIonosphereIndex("G05"), 0);
+    EXPECT_NEAR(valAt(sm.getIonosphereIndex("G05")), 200.0, 1e-12);
+    ASSERT_GE(sm.getCodeBiasIndex("GPS_C2W"), 0);
+    EXPECT_NEAR(valAt(sm.getCodeBiasIndex("GPS_C2W")), 300.0, 1e-12);
+    ASSERT_GE(sm.getSatBiasIndex("G05|C1W"), 0);
+    EXPECT_NEAR(valAt(sm.getSatBiasIndex("G05|C1W")), 400.0, 1e-12);
+    ASSERT_GE(sm.getSatPhaseBiasIndex("G07|L1C|PB"), 0);
+    EXPECT_NEAR(valAt(sm.getSatPhaseBiasIndex("G07|L1C|PB")), 600.0, 1e-12);
+
+    // The surviving phase-bias state shifted down by exactly one slot.
+    EXPECT_EQ(sm.getSatPhaseBiasIndex("G07|L1C|PB"), static_cast<int>(survivor_pb - 1));
+}
+
 TEST(StateManagerTest, AddAmbiguityIndependentKeysGetDistinctIndices) {
     StateManagerHarness h;
     auto& sm = h.state_manager;

@@ -9,6 +9,7 @@
 
 #include "filter/DdPivotManager.hpp"
 #include "filter/StateKeySchema.hpp"
+#include "filter/CovarianceReReference.hpp"
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
 #include <algorithm>
@@ -199,26 +200,10 @@ namespace GnssProcessor {
             }
         }
 
-        // Symmetrize defensively, then check PSD via LDLT.  Symmetrization
-        // alone fixes asymmetry from FP rounding; it does NOT guarantee
-        // positive-semi-definiteness if P was already ill-conditioned or
-        // a near-rank-deficient pivot row crept through.  Log when the
-        // LDLT reports any non-positive pivot so the issue surfaces in
-        // logs rather than poisoning the filter silently.
-        P = 0.5 * (P + P.transpose());
-        {
-            Eigen::LDLT<Eigen::MatrixXd> ldlt(P);
-            const auto& d = ldlt.vectorD();
-            double min_d = d.minCoeff();
-            if (ldlt.info() != Eigen::Success || min_d <= 0.0) {
-                log_manager_.getLogger("main_log")->warn(
-                    "DD pivot handover: P not PSD after T·P·Tᵀ (min LDLT "
-                    "diagonal = {:.3e}); applying epsilon regularization",
-                    min_d);
-                const double eps = std::max(1e-12, std::abs(min_d) + 1e-9);
-                P.diagonal().array() += eps;
-            }
-        }
+        // Symmetrize + LDLT min-pivot PSD check + epsilon ridge, via the shared
+        // guard (also used by the network producer's pivot handover).  Behaviour
+        // is unchanged from the previous inline block; only its home moved.
+        CovReReference::enforcePsd(P, log_manager_, "DD pivot handover");
 
         state_manager.setStateVector(x);
         state_manager.setCovariance(P);

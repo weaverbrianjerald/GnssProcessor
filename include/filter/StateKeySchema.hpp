@@ -445,6 +445,72 @@ inline std::string satelliteFromSatBiasKey(std::string_view key) {
 }
 
 // ===========================================================================
+// 5b. Per-satellite signal PHASE-bias keys — "<satellite>|<signal>|PB"
+// ---------------------------------------------------------------------------
+// Examples: "G01|L1C|PB", "E11|L5Q|PB"
+//
+// The network producer (PPP_RTK_Network) estimates an EXPLICIT per-(satellite,
+// signal) satellite phase bias (Odijk Eq. 4 — it carries the network pivot-
+// receiver ambiguity lump).  Stored in StateManager::sat_phase_bias_indices_, a
+// map kept DISTINCT from sat_bias_indices_ (CODE bias, section 5).  The trailing
+// "|PB" segment is the discriminator that keeps the two namespaces disjoint:
+//   - satelliteFromSatBiasKey / satelliteFromSatPhaseBiasKey both split on the
+//     FIRST pipe, so either returns the satellite correctly;
+//   - a phase-bias key is NEVER stored in sat_bias_indices_, so parseSatBiasKey
+//     (which would otherwise read "L1C|PB" as the signal) is never invoked on it.
+//
+// Constructed in:  MeasurementModel, the network estimator
+// Stored in:       StateManager::sat_phase_bias_indices_
+// Parsed in:       StateManager::getProcessNoiseMatrix (pivot-freeze check reads
+//                  only the satellite prefix — see satelliteFromSatPhaseBiasKey).
+// ===========================================================================
+
+/// Trailing discriminator separating a phase-bias key from a code-bias key.
+inline constexpr std::string_view kSatPhaseBiasSuffix = "|PB";
+
+/// Build a per-satellite signal PHASE-bias key.
+inline std::string makeSatPhaseBiasKey(std::string_view satellite,
+                                       std::string_view signal) {
+    std::string out;
+    out.reserve(satellite.size() + 1 + signal.size() + kSatPhaseBiasSuffix.size());
+    out.append(satellite);
+    out.push_back(kPipeDelimiter);
+    out.append(signal);
+    out.append(kSatPhaseBiasSuffix);
+    return out;
+}
+
+/// True iff @p key is a satellite phase-bias key (cheap trailing-suffix test).
+inline bool isSatPhaseBiasKey(std::string_view key) {
+    return key.size() > kSatPhaseBiasSuffix.size()
+        && key.substr(key.size() - kSatPhaseBiasSuffix.size()) == kSatPhaseBiasSuffix;
+}
+
+/// Parse a per-satellite signal PHASE-bias key.  Returns @c std::nullopt unless
+/// the key has the form "<sat>|<signal>|PB" with non-empty satellite and signal.
+inline std::optional<SatBiasKeyParts>
+parseSatPhaseBiasKey(std::string_view key) {
+    if (!isSatPhaseBiasKey(key)) return std::nullopt;
+    const std::string_view body = key.substr(0, key.size() - kSatPhaseBiasSuffix.size());
+    const auto bar = body.find(kPipeDelimiter);
+    if (bar == std::string_view::npos) return std::nullopt;
+    if (bar == 0 || bar + 1 >= body.size()) return std::nullopt;
+    return SatBiasKeyParts{
+        std::string(body.substr(0, bar)),
+        std::string(body.substr(bar + 1)),
+    };
+}
+
+/// Extract just the satellite prefix from a sat-phase-bias key (first-pipe split,
+/// matching satelliteFromSatBiasKey's lenient fallback).
+inline std::string satelliteFromSatPhaseBiasKey(std::string_view key) {
+    const auto bar = key.find(kPipeDelimiter);
+    return std::string(bar != std::string_view::npos
+                           ? key.substr(0, bar)
+                           : key);
+}
+
+// ===========================================================================
 // 6. System-time-offset keys — "<system>"
 // ---------------------------------------------------------------------------
 // Just the system name string ("Galileo", "GLONASS", "BeiDou", "QZSS",

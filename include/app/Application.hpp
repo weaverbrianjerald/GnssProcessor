@@ -421,6 +421,26 @@ private:
      */
     int runBaseline();
 
+    /**
+     * @brief Run the minimum-constraint S-system PPP-RTK NETWORK producer.
+     *
+     * Dispatched from @c run() when @c ProcessingMode is @c PPP_RTK_Network.
+     * The network is a joint multi-station estimator (per-station local normals
+     * reduced onto a shared satellite-parameter block via an exact Schur
+     * complement) that estimates the estimable satellite clock, satellite
+     * phase/code bias, and atmosphere under an explicitly declared S-basis, and
+     * emits them in IGS-SSR convention for the companion @c PPP_RTK_User
+     * consumer.  Implemented in @c ApplicationNetwork.cpp.
+     *
+     * v1 scaffold: logs a "not yet implemented" error and returns non-zero.
+     * Subsequent slices fill in multi-station RINEX ingestion, the joint
+     * estimator, the explicit S-basis, the product emitter, and the closed-loop
+     * validation harness.
+     *
+     * @return 0 on clean shutdown, non-zero on error.
+     */
+    int runNetwork();
+
     // -----------------------------------------------------------------------
     // Data members
     // -----------------------------------------------------------------------

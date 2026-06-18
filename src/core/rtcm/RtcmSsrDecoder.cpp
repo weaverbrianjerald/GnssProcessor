@@ -213,6 +213,7 @@ void decodeOrbitBody(RtcmBitReader& r, const SystemDescriptor& sys,
     o.delta_rac      = Eigen::Vector3d{dr, da, dc};
     o.delta_rac_dot  = Eigen::Vector3d{drd, dad, dcd};
     o.received_time  = rx;
+    o.epoch_time     = hdr.epoch_time;     // content reference epoch (orbit dt base)
     o.iod_ssr        = hdr.iod_ssr;
     out.push_back(std::move(o));
 }
@@ -232,6 +233,7 @@ void decodeClockBody(RtcmBitReader& r, const SystemDescriptor& sys,
     c.c1             = c1;
     c.c2             = c2;
     c.received_time  = rx;
+    c.epoch_time     = hdr.epoch_time;     // content reference epoch (clock polynomial dt base)
     c.iod_ssr        = hdr.iod_ssr;
     out.push_back(std::move(c));
 }
@@ -261,6 +263,7 @@ void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
     cb.c1             = c1;
     cb.c2             = c2;
     cb.received_time  = rx;
+    cb.epoch_time     = hdr.epoch_time;    // content reference epoch (orbit + clock dt base)
     cb.iod_ssr        = hdr.iod_ssr;
     out.push_back(std::move(cb));
 }

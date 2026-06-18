@@ -144,6 +144,8 @@ namespace GnssProcessor {
             else if (norm == "ppp-rtk")          processing_mode_ = ProcessingMode::PPP_RTK;
             else if (norm == "baseline-single")  processing_mode_ = ProcessingMode::BaselineSingle;
             else if (norm == "baseline-multi")   processing_mode_ = ProcessingMode::BaselineMulti;
+            else if (norm == "ppp-rtk-network")  processing_mode_ = ProcessingMode::PPP_RTK_Network;
+            else if (norm == "ppp-rtk-user")     processing_mode_ = ProcessingMode::PPP_RTK_User;
             else {
                 log->warn("Unknown processing mode '{}', defaulting to PPP", mode);
                 processing_mode_ = ProcessingMode::PPP;
@@ -152,6 +154,9 @@ namespace GnssProcessor {
                 processing_mode_ == ProcessingMode::PPP              ? "PPP"             :
                 processing_mode_ == ProcessingMode::PPP_RTK          ? "PPP-RTK"         :
                 processing_mode_ == ProcessingMode::BaselineSingle   ? "Baseline-Single" :
+                processing_mode_ == ProcessingMode::BaselineMulti    ? "Baseline-Multi"  :
+                processing_mode_ == ProcessingMode::PPP_RTK_Network  ? "PPP-RTK-Network" :
+                processing_mode_ == ProcessingMode::PPP_RTK_User     ? "PPP-RTK-User"    :
                                                                        "Baseline-Multi";
             log->info("Processing mode: {}", mode_label);
         }
@@ -306,9 +311,16 @@ namespace GnssProcessor {
         }
 
         uncombined_enabled_ = jval<bool>(json, "processing.uncombined_enabled", "uncombined_enabled", false);
-        if (processing_mode_ == ProcessingMode::PPP_RTK) {
+        if (processing_mode_ == ProcessingMode::PPP_RTK
+         || processing_mode_ == ProcessingMode::PPP_RTK_Network
+         || processing_mode_ == ProcessingMode::PPP_RTK_User) {
+            // The PPP-RTK family (single-receiver user, network producer, and
+            // network-product consumer) all operate on the undifferenced +
+            // uncombined L1/L2 substrate.  The network producer additionally
+            // runs DifferencingMode::None (no receiver-side BSSD) and estimates
+            // the satellite-side bias lumps explicitly (see runNetwork).
             uncombined_enabled_ = true;
-            log->info("PPP-RTK mode: forcing uncombined_enabled=true");
+            log->info("PPP-RTK family mode: forcing uncombined_enabled=true");
         }
         if (processing_mode_ == ProcessingMode::BaselineSingle
          || processing_mode_ == ProcessingMode::BaselineMulti) {
@@ -388,10 +400,27 @@ namespace GnssProcessor {
             log->warn("Non-positive ssr_max_age_s ({:.1f}) → 30 s default", ssr_max_age_s_);
             ssr_max_age_s_ = 30.0;
         }
+        // obs↔SSR sync: hold obs epochs newer than (freshest SSR content epoch +
+        // ssr_max_age) so PPP-RTK consumes obs time-aligned with the corrections
+        // rather than pinned to wall clock; a stalled SSR feed is bounded by the
+        // max-hold liveness budget before degraded fallback.
+        enable_obs_ssr_sync_ = jval<bool>(json,
+            "processing.enable_obs_ssr_sync", "enable_obs_ssr_sync", false);
+        obs_ssr_sync_max_hold_s_ = jval<double>(json,
+            "processing.obs_ssr_sync_max_hold_s", "obs_ssr_sync_max_hold_s", 30.0);
+        if (obs_ssr_sync_max_hold_s_ <= 0.0) {
+            log->warn("Non-positive obs_ssr_sync_max_hold_s ({:.1f}) → 30 s default", obs_ssr_sync_max_hold_s_);
+            obs_ssr_sync_max_hold_s_ = 30.0;
+        }
         if (enable_obs_skip_to_latest_) {
             log->info("Real-time obs skip-to-latest ON: drop epochs >{:.1f}s behind wall-clock GPS "
                       "(backlog warn at {:.1f}s); SSR overlay max age {:.1f}s",
                       obs_skip_max_lag_s_, rt_backlog_warn_s_, ssr_max_age_s_);
+        }
+        if (enable_obs_ssr_sync_) {
+            log->info("Real-time obs↔SSR sync ON: hold obs newer than (freshest SSR content +{:.1f}s); "
+                      "max hold {:.1f}s before degraded fallback",
+                      ssr_max_age_s_, obs_ssr_sync_max_hold_s_);
         }
         // RINEX observation-type filter.  String of letters from the set
         // {C, L, D, S} selecting which measurement types the parser will
@@ -539,6 +568,13 @@ namespace GnssProcessor {
                                                  "require_bia_for_signals", false);
         estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
                                                  "estimate_sat_biases", false);
+        // Network producer (PPP_RTK_Network) toggles.  Both default false so the
+        // single-receiver user / baseline paths are byte-identical; they only
+        // take effect once the network estimator (W4) creates the shared states.
+        estimate_sat_phase_biases_ = jval<bool>(json, "estimation.estimate_sat_phase_biases",
+                                                 "estimate_sat_phase_biases", false);
+        promote_sat_code_bias_     = jval<bool>(json, "estimation.promote_sat_code_bias",
+                                                 "promote_sat_code_bias", false);
         // Sat-bias cache thresholds (only meaningful when estimate_sat_biases
         // is on).  warm_age_s controls full warm restore; max_age_s caps
         // entry lifetime.  Validate warm<=max; if not, clamp warm down so
@@ -1085,6 +1121,7 @@ namespace GnssProcessor {
                 process_noise_.acceleration_psd = 1e2;
             }
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+            process_noise_.sat_phase_bias      = pn.value("sat_phase_bias_q", 1e-12);
             process_noise_.clock_rate          = pn.value("clock_rate_q", 1e-4);
             process_noise_.system_time_rate_offset =
                 pn.value("system_time_rate_offset_q", 1e-10);
@@ -1111,6 +1148,7 @@ namespace GnssProcessor {
             initial_std_.tropo_gradient      = is.value("tropo_gradient", 1e-3);
             initial_std_.phase_clock         = is.value("phase_clock", 1e3);
             initial_std_.sat_bias            = is.value("sat_bias", 10.0);
+            initial_std_.sat_phase_bias      = is.value("sat_phase_bias", 10.0);
             initial_std_.clock_rate          = is.value("clock_rate", 1.0);
             initial_std_.system_time_rate_offset =
                 is.value("system_time_rate_offset", 1e-2);

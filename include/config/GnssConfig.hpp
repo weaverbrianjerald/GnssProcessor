@@ -398,6 +398,29 @@ namespace GnssProcessor {
         double getSsrMaxAge() const { return ssr_max_age_s_; }
 
         /**
+         * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
+         *
+         * When true the engine HOLDS observation epochs newer than the freshest
+         * SSR content epoch + @c getSsrMaxAge — epochs no SSR can yet correct —
+         * draining them once the SSR stream advances.  This keeps the obs stream
+         * time-ALIGNED with the corrections instead of pinned to wall clock;
+         * PPP-RTK needs alignment, not freshness.  Unlike @c enableObsSkipToLatest
+         * (which fast-forwards obs to the bleeding edge, maximising the
+         * obs-ahead-of-SSR gap), this bounds the obs front by the corrections.
+         * A stalled SSR feed is bounded by @c getObsSsrSyncMaxHoldS, after which
+         * the engine processes degraded (broadcast-grade) epochs so a dead feed
+         * can never starve the filter.  Default off; opt-in via
+         * @c processing.enable_obs_ssr_sync.  Inert unless the run uses a live
+         * orbit/clock source (@c realtimeUsesLiveOrbitClockSource).
+         */
+        bool enableObsSsrSync() const { return enable_obs_ssr_sync_; }
+
+        /// @brief Max seconds to hold an obs epoch waiting for SSR before falling
+        ///        back to degraded (broadcast-grade) processing — the obs↔SSR
+        ///        sync liveness bound.  Config @c processing.obs_ssr_sync_max_hold_s.
+        double getObsSsrSyncMaxHoldS() const { return obs_ssr_sync_max_hold_s_; }
+
+        /**
          * @brief Get the enabled RINEX observation-type letters.
          *
          * Returns the (uppercase, deduplicated) set of RINEX first-character
@@ -1144,6 +1167,34 @@ namespace GnssProcessor {
         bool estimateSatBiases() const { return estimate_sat_biases_; }
 
         /**
+         * @brief Whether the network producer estimates explicit per-(satellite,
+         *        signal) PHASE-bias states.
+         *
+         * PPP_RTK_Network only.  When true, the network estimates the estimable
+         * satellite phase bias (Odijk Eq. 4 — it carries the network pivot-
+         * receiver ambiguity lump) on undifferenced phase rows instead of
+         * importing it as an SSR correction.  Inert in every other mode.
+         *
+         * @return True if satellite phase-bias estimation is enabled.
+         */
+        bool estimateSatPhaseBiases() const { return estimate_sat_phase_biases_; }
+
+        /**
+         * @brief Whether the satellite CODE-bias state is promoted to first-class
+         *        (always estimated) rather than created only on missing BIA/SSR
+         *        coverage.
+         *
+         * The network producer must estimate its own satellite code bias on every
+         * uncombined code row regardless of product coverage (to produce the
+         * network's own bias product and detect product-side errors).  Defaults
+         * false so the single-receiver user side keeps its fallback-only
+         * behaviour byte-identical.
+         *
+         * @return True if the satellite code-bias state is always-on.
+         */
+        bool promoteSatCodeBias() const { return promote_sat_code_bias_; }
+
+        /**
          * @brief Warm-restore window for the satellite-bias cache (seconds).
          *
          * When a sat-bias state is pruned (its satellite/signal isn't
@@ -1649,6 +1700,8 @@ namespace GnssProcessor {
         double obs_skip_max_lag_s_{ 5.0 };                ///< RT-only: drop an obs epoch lagging wall-clock GPS by more than this (s).
         double rt_backlog_warn_s_{ 5.0 };                 ///< RT-only: warn-only obs-backlog threshold (s); ≤0 disables.
         double ssr_max_age_s_{ 30.0 };                    ///< RT-only: max |obs − SSR-record| age (s) before SSR overlay rejected to broadcast-grade.
+        bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.
+        double obs_ssr_sync_max_hold_s_{ 30.0 };          ///< RT-only: max seconds to hold obs for SSR before degraded fallback (obs↔SSR sync liveness bound).
         std::string rinex_types_;                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
         ProcessNoise process_noise_;                          ///< Process noise parameters.
@@ -1701,6 +1754,8 @@ namespace GnssProcessor {
         bool lock_signals_to_clock_ref_;                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.
         bool require_bia_for_signals_;                           ///< Only use signals with BIA product coverage.
         bool estimate_sat_biases_;                               ///< Estimate per-satellite bias for signals without BIA coverage.
+        bool estimate_sat_phase_biases_{false};                  ///< PPP_RTK_Network: estimate explicit per-(sat,signal) phase-bias states.
+        bool promote_sat_code_bias_{false};                      ///< PPP_RTK_Network: estimate satellite code bias on every code row (not fallback-only).
         double sat_bias_cache_warm_age_s_;                       ///< Sat-bias cache: warm-restore window (sec).  Within this, restore value + aged variance.
         double sat_bias_cache_max_age_s_;                       ///< Sat-bias cache: max entry lifetime (sec).  Beyond this, evict; in [warm, max], restore value with cold-start variance.
         double no_bia_code_downweight_;                            ///< Variance multiplier for code on signals without BIA coverage.

@@ -1,22 +1,11 @@
 // Archived SBF file-replay with PRECISE products (post-processing through the
-// real-time engine).  This is your live realtime_ppp_rtk.json retargeted at a
-// captured Septentrio SBF dump instead of the live socket, using precise
-// SP3/CLK/BIA for the capture's date (2026 DOY 145) INSTEAD of the live IGS-RTS
-// SSR stream.  Rationale: the live caster only serves *current* corrections,
-// which would be ~15 days stale against this archived epoch and rejected by the
-// staleness gate.  With input_type=file + corrections.enabled=false, the engine
-// loads precise SP3/CLK (realtimeUsesLiveOrbitClockSource() == false), so every
-// satellite is cm-grade from epoch 1 and phase stays enabled.
+// real-time engine).
 //
 // PRODUCTS — auto-downloaded from CDDIS (data_source=production).  product_type
 // FIN resolves to COD0MGXFIN = the multi-GNSS FINAL combination (Galileo + BeiDou
 // included; RAP/ULT would be OPS = GPS+GLONASS only and would drop Galileo).
 // CDDIS Basic auth uses ~/.netrc automatically (DataDownloader resolves it).
-// NOTE: CODE final-MGX latency is ~2-3 weeks; this capture is ~15 days old, so
-// COD0MGXFIN for 2026-145 may not be published yet.  If the resolver logs a 404 /
-// "not found" for the SP3/CLK, the final isn't out — fall back to manually staging
-// a rapid multi-GNSS set (GFZ GBM / WUM0MGXRAP / CNES GRG) under
-// data/2026-145/products/ with data_source flipped back to "internal".
+// NOTE: CODE final-MGX latency is ~2-3 weeks
 {
   "app_mode": "real_time",
   "data_source": "production",
@@ -47,13 +36,6 @@
   "files": { "internal_data_root": "./data" },
 
   "receiver": {
-    // The COVL rooftop AsteRx-U is a static LEIAR25 NONE.  This archived capture
-    // is Meas3Ranges-ONLY and carries NO PVTGeodetic (4007), so there is nothing
-    // to seed the a-priori from — without a pin the engine starts at the geographic
-    // pole and every satellite drops below the elevation mask.  Pinned here to the
-    // rooftop ECEF recovered from the live capture's PVTGeodetic (same receiver,
-    // Corvallis OSU 44.5672N / -123.2748W / 68.3 m; ~few-m PVT accuracy, refined by
-    // the filter against the precise products).  Config position always wins.
     "reference_position_ecef": { "x": -2497215.425, "y": -3805289.764, "z": 4453261.057 }
   },
 
@@ -68,9 +50,7 @@
     "output_type":     "console",
     "reconnect_delay_s": 5,
 
-    // NO live SSR for archived data.  Precise products (above) supply orbits,
-    // clocks and biases; pointing this at the live caster would feed DOY-160
-    // corrections against DOY-145 observations (all stale-rejected).
+    // NO live SSR for archived data.
     "corrections": { "enabled": false }
   },
 
@@ -94,44 +74,6 @@
     "lock_signals_to_clock_ref": false,
     "require_bia_for_signals": false,
 
-    // Cycle-slip detection / repair.  MW (Melbourne-Wubbena) is the primary
-    // detector.  turbo_edit enables the MW+GF joint per-signal repair (Blewitt
-    // TurboEdit): the MW wide-lane integer is paired with the geometry-free
-    // phase jump to resolve dual-frequency slips into per-signal integer
-    // repairs (covariance preserved) and to catch MW's dN1==dN2 blind spot.
-    // Valid here because the SBF stream is high-rate (>=1 Hz) so the
-    // geometry-free jump isolates the slip before the ionospheric residual
-    // contaminates it.  At coarser rates a one-time warning is logged and a
-    // per-epoch ionospheric-variability gate suppresses unsafe repairs.
-    // mw_detect_reference selects the statistic the MW slip gate tests.
-    // "time_difference" gates the MW time-difference itself (order set by
-    // mw_td_order: "first" = mw[k]-mw[k-1], "second" = double difference)
-    // against the MAD of the same time-difference history -- memoryless, so
-    // both linear trends AND the soft quadratic signals that walk a level
-    // reference away from its window are invisible to the gate; the cost is
-    // sqrt(2) (first) / sqrt(6) (second) noise amplification.  The earlier
-    // modes remain available for A/B: "local_median" (windowed level test,
-    // trend-immune but curvature-sensitive) and "hatch_mean" (legacy).
-    // mw_sigma_multiplier keeps its TD1-equivalent scale in all modes
-    // (local-median MAD is sqrt(2)-scaled internally; td1 is native).
-    // turbo_edit_mw_only_veto: an MW flag whose geometry-free phase is
-    // affirmatively stable (|TD2| within the arc's own MAD noise, under
-    // high rate / quiet iono / mature arc / no LLI) is classified as a
-    // code-domain artifact (multipath / NLOS / DLL stress) and the phase
-    // ambiguity reset is SKIPPED -- no integer pair of plausible size is
-    // consistent with a flat GF (null-line pairs start at (4,3)/(9,7)),
-    // while a NL code excursion of ~0.86 m/WL-cycle needs nothing exotic.
-    // The KF phase-innovation (residual) gate is the backstop if the event
-    // really was a slip.  Set false to restore the pre-veto reset behavior.
-    // turbo_edit_max_gap_s: gap-spanning GF bridge.  When a GF arc's chain
-    // breaks for at most this many seconds (per-signal dropout like the
-    // G03 L2W event at 109833-109839, or a full receiver gap), the pre-gap
-    // GF level is stashed and the drift-corrected ACROSS-GAP jump
-    // adjudicates the post-gap MW flag: lambda-quantized jump -> per-signal
-    // attribution (dropped signal = moot, already reseeded; continuous
-    // signal = integer repair); flat jump -> code artifact (re-acquisition
-    // DLL transient).  Either way the surviving signal's ambiguity is
-    // spared.  0 disables (post-gap flags fall back to blanket resets).
     "cycle_slip": {
       "mw": true,
       "turbo_edit": true,
@@ -145,10 +87,6 @@
       "mw_local_window": 20
     },
 
-    // defer_until_corrections_ready is a LIVE-SSR cold-start guard: it waits for
-    // satellites to flip from broadcast-grade to SSR-cm-grade before estimating.
-    // With precise CLK loaded, broadcast_only is never true, so the gate passes
-    // at epoch 1 — leave it OFF for archived precise runs to avoid confusion.
     "defer_until_corrections_ready": { "enabled": false },
 
     "zwd_constraint": {
@@ -184,8 +122,6 @@
       "tropo_gradient": 0.001
     },
     "measurement_noise": {
-      // Precise products earn tighter measurement noise than the broadcast-grade
-      // live path (which used 1.0 / 0.003 to absorb metre-level broadcast clocks).
       "code_std_m": 0.300,
       "phase_std_m": 0.001,
       "doppler_std_m": 0.5
@@ -212,23 +148,12 @@
     "enable_phase_windup": true,
     "enable_code_phase_bias": true,
 	"refine_emission_time": false,
-    // Same as the live path: the SBF capture carries no RINEX antenna record, so
-    // seed the COVL rooftop LEIAR25 NONE and let Galileo borrow the receiver's GPS
-    // PCO/PCV cross-system.  If this capture is from a DIFFERENT antenna, change it.
     "receiver_antenna_type_override": "LEIAR25         NONE",
     "enable_receiver_cross_system_atx_fallback": true,
     "require_atx_coverage": true
   },
 
-  // Production auto-download from CDDIS.  year/doy select the product date.
-  //   product_type "FIN" -> COD0MGXFIN (multi-GNSS final: Galileo + BeiDou).
-  //   download_rinex=false: observations come from the SBF capture, not a
-  //     station RINEX, so don't pull (and try to header-seed from) an unrelated
-  //     station's obs file.
-  //   download_products=true: BIA + ERP (+ BRDC, redundant with the SBF nav).
-  //   orbits/clocks download automatically (file replay + corrections off =>
-  //     realtimeUsesLiveOrbitClockSource() is false).
-  //   netrc_path omitted => DataDownloader resolves ~/.netrc automatically.
+  // Production auto-download from CDDIS.
   "data_download": {
     "enabled": true,
     "year": 2026,

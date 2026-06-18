@@ -1141,6 +1141,27 @@ namespace GnssProcessor {
             }
         }
 
+        // Per-satellite signal PHASE bias (network producer only).  On the
+        // single-receiver user side the satellite phase bias is imported as a
+        // known SSR correction (below) or absorbed into the float ambiguity; the
+        // network ESTIMATES it as an explicit per-(sat,signal) state on
+        // undifferenced phase rows (Odijk Eq. 4 — it carries the network pivot-
+        // receiver ambiguity lump).  Co-linear with the per-receiver float
+        // ambiguity on a single row — separable only ACROSS stations (W4).  This
+        // only CONSUMES an already-present column (creation/ownership is the
+        // network estimator's); gated on estimateSatPhaseBiases() (default off),
+        // so it is inert in every other mode.
+        double sat_phase_bias_term = 0.0;
+        if (config_.estimateSatPhaseBiases() && is_phase && is_uncombined
+            && ref_type.find('_') == std::string::npos) {
+            const std::string spb_key = StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
+            const int spb_idx = state_manager_.getSatPhaseBiasIndex(spb_key);
+            if (spb_idx >= 0 && spb_idx < static_cast<int>(state_size)) {
+                jacobian(spb_idx) = 1.0;
+                sat_phase_bias_term = x(spb_idx);
+            }
+        }
+
         // SSR satellite biases (PPP-RTK): a KNOWN correction added to the
         // predicted observable (no state, no Jacobian).  getCodeBias /
         // getPhaseBias return the per-(sat, signal) value in metres; combined
@@ -1152,8 +1173,12 @@ namespace GnssProcessor {
         // is the one convention that can only be confirmed empirically against
         // the provider's stream — if the float ambiguity fractions cluster near
         // 0.5 instead of 0, flip the corresponding sign constant and rebuild.
+        //
+        // NETWORK PRODUCER: gated OFF — the network estimates the satellite
+        // code/phase bias as states above, so importing the same quantity here
+        // would double-count and render those bias states unobservable.
         double ssr_bias_term = 0.0;
-        {
+        if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
             constexpr double kSsrCodeBiasSign  = +1.0;
             constexpr double kSsrPhaseBiasSign = +1.0;
             auto& ssr_store = SsrCorrectionStore::getInstance();
@@ -1175,7 +1200,7 @@ namespace GnssProcessor {
 
         predicted = modeled + range_correction + rx_clk + phase_clk_value
             + tropo_wet_term + tropo_grad_term + time_offset_value
-            + iono_term + code_bias_term + sat_bias_term + ssr_bias_term;
+            + iono_term + code_bias_term + sat_bias_term + sat_phase_bias_term + ssr_bias_term;
 
         // Ambiguity (phase only)
         if (is_phase) {

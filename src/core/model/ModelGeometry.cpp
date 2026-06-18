@@ -866,7 +866,7 @@ namespace GnssProcessor {
                 if (ssr && ssr->has_orbit
                     && SsrCorrectionStore::iodeMatches(bc->iode, ssr->iode)) {
                     const double dt = TimeUtils::continuousGpsSeconds(time)
-                                    - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+                                    - TimeUtils::continuousGpsSeconds(ssr->orbit_epoch_time);
                     pos = SsrCorrectionStore::applyOrbitToPosition(
                         pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
                 }
@@ -1159,7 +1159,7 @@ namespace GnssProcessor {
                 ssr && ssr->has_orbit
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
-                                - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
+                                - TimeUtils::continuousGpsSeconds(ssr->orbit_epoch_time);
                 pos = SsrCorrectionStore::applyOrbitToPosition(
                     pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
             }

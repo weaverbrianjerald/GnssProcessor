@@ -29,6 +29,7 @@
 #include "measurement/MeasurementModel.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
+#include "products/LiveEphemerisStore.hpp"
 #include <algorithm>
 #include <fstream>
 #include <set>
@@ -633,6 +634,12 @@ std::vector<std::string> activeFrequencyBands(
             // iterate observed).  raw_observed is left intact for the MW slip
             // detector's bookkeeping.
             ppp_obs.broadcast_only = geom.broadcast_only;
+            // Ephemeris freshness for the real-time BSSD pivot selector (inert /
+            // 0 in post-processing, where the live store is empty so this returns
+            // nullopt).  Signed age (obs epoch − toe); the selector takes |age| as
+            // the broadcast extrapolation magnitude.
+            if (auto age = LiveEphemerisStore::getInstance().toeAgeSeconds(obs.satellite, obs.time))
+                ppp_obs.eph_toe_age_s = *age;
             if (geom.broadcast_only) {
                 for (std::map<std::string, double>* m :
                          { &ppp_obs.observed, &ppp_obs.modeled,

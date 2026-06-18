@@ -59,6 +59,7 @@ namespace GnssProcessor {
         double mf_w;                                 /**< Wide-lane combination frequency value (Hz) or coefficient */
         double mf_d;                                 /**< Narrow-lane / difference combination frequency value (Hz) or coefficient */
         bool broadcast_only = false;                 /**< True when the range model is broadcast-grade (metre level): phase observables have been dropped and only code is used for this satellite. */
+        double eph_toe_age_s = 0.0;                   /**< Signed age (s, obs epoch − ephemeris toe) of the broadcast ephemeris used for this satellite; |value| is the extrapolation magnitude. Real-time BSSD pivot selection avoids seating a much-staler-than-peers satellite as the pivot. 0 when no live ephemeris (post-processing / SP3). */
     };
 
 } // namespace GnssProcessor

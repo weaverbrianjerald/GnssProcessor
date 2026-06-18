@@ -94,6 +94,7 @@ add_library(gnss_core STATIC
     src/core/app/Application.cpp
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
+    src/core/app/ApplicationNetwork.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
@@ -121,6 +122,7 @@ add_library(gnss_core STATIC
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
     src/core/products/SsrCorrectionStore.cpp
+    src/core/products/NetworkProductEmitter.cpp
     src/core/products/LiveEphemerisStore.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
@@ -128,6 +130,7 @@ add_library(gnss_core STATIC
     src/core/realtime/RealTimeEngine.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
+    src/core/filter/CovarianceReReference.cpp
     src/core/common/SignalBand.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
@@ -177,6 +180,8 @@ enable_testing()
 add_executable(gnss_tests
     tests/test_main.cpp
     tests/test_state_key_schema.cpp
+    tests/test_covariance_rereference.cpp
+    tests/test_network_emit.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp

@@ -1325,6 +1325,13 @@ if (config_.isBaselineMode()) {
     return runBaseline();
 }
 
+// --- Branch on processing mode: the network PRODUCER takes the joint
+//     multi-station pipeline.  PPP_RTK_User flows through the normal PPP
+//     path below as an uncombined PPP-RTK consumer. ---
+if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
+    return runNetwork();
+}
+
 // --- Phase 1b: Resolve (download/cache) product and RINEX data ---
 if (!resolveData()) return 1;
 

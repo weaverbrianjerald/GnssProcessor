@@ -5,7 +5,10 @@
  */
 
 #include "filter/PivotManager.hpp"
+#include "filter/CovarianceReReference.hpp"
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace GnssProcessor {
 
@@ -46,6 +49,7 @@ void PivotManager::buildEpochMaps(
                 ++n_phase;
 
         SatInfo info{ cons, obs.elevation, n_phase, -1.0 };
+        info.eph_toe_age_s = obs.eph_toe_age_s;   // broadcast extrapolation magnitude (|age|) for pivot freshness
 
         // Worst-case float-ambiguity variance across this sat's phase signals.
         // The handover's T·P·T' re-reference inflates every other satellite's
@@ -164,6 +168,28 @@ std::map<std::string, std::string> PivotManager::selectPivotCandidates(
     const double pivot_min_el = config_.getBssdPivotMinElevation();
     std::map<std::string, std::string> candidates;
 
+    // Ephemeris-freshness guardrail for pivot election.  A satellite whose
+    // broadcast ephemeris is much staler (by |obs − toe|) than its
+    // constellation's freshest qualified peer is barred from being the PIVOT:
+    // a stale-eph pivot's extrapolated orbit/clock steps every SD row it
+    // anchors (observed live as a Galileo pivot pinned to a 1 h-old I/NAV that
+    // detonated the whole SD frame while its peers were minutes fresh).  Gated
+    // on SPREAD: when every candidate is within kPivotToeSpreadMaxS of the
+    // freshest, ranking is unchanged — only an outlier-stale candidate is
+    // displaced.  It is still used as a NON-pivot; the freshest peer always
+    // survives the gate (diff 0), so the candidate set is never emptied.
+    constexpr double kPivotToeSpreadMaxS = 1200.0;   // 20 min
+    auto freshestToeAgeAbs = [&](const std::string& cons) -> double {
+        double best = std::numeric_limits<double>::max();
+        for (const auto& [sat, si] : sat_info) {
+            if (si.constellation != cons) continue;
+            if (exclude_sats.count(sat)) continue;
+            if (si.elevation < pivot_min_el) continue;
+            best = std::min(best, std::abs(si.eph_toe_age_s));
+        }
+        return best;
+    };
+
     // Helper: pick the best (coverage, score) sat in @p cons that isn't
     // in @p exclude_sats and meets the elevation threshold.  Mirrors the
     // ranking from buildEpochMaps that populates ci.best_sat, but
@@ -176,10 +202,14 @@ std::map<std::string, std::string> PivotManager::selectPivotCandidates(
         double      best_score    = -1e9;
         double      highest_el    = -1.0;
         std::string fallback_el_pick;
+        const double fresh_abs = freshestToeAgeAbs(cons);   // constellation's freshest |toe age|
         for (const auto& [sat, si] : sat_info) {
             if (si.constellation != cons) continue;
             if (exclude_sats.count(sat)) continue;
             if (si.elevation < pivot_min_el) continue;
+            // Bar an outlier-stale-ephemeris candidate from pivot election (still
+            // usable as a non-pivot); the freshest peer always passes (diff 0).
+            if (std::abs(si.eph_toe_age_s) > fresh_abs + kPivotToeSpreadMaxS) continue;
 
             const double score = scorePivotCandidate(sat, si);
             const bool higher_cov  = si.phase_sig_count > best_coverage;
@@ -210,7 +240,9 @@ std::map<std::string, std::string> PivotManager::selectPivotCandidates(
             // built exclude_sats precisely to break that stickiness.
             if (si != sat_info.end()
                 && si->second.elevation >= pivot_min_el
-                && !exclude_sats.count(old_pivot)) {
+                && !exclude_sats.count(old_pivot)
+                && std::abs(si->second.eph_toe_age_s)
+                       <= freshestToeAgeAbs(cons) + kPivotToeSpreadMaxS) {
                 candidates[cons] = old_pivot;
                 continue;
             }
@@ -335,20 +367,12 @@ void PivotManager::applyCovarianceReReference(
     const std::vector<Eigen::Index>& group_indices,
     Eigen::Index pivot_idx,
     Eigen::MatrixXd& P) {
-
-    // Row operations: T * P
-    for (const Eigen::Index gi : group_indices) {
-        if (gi == pivot_idx) continue;
-        P.row(gi) -= P.row(pivot_idx);
-    }
-    // Column operations: (T * P) * T'
-    for (const Eigen::Index gi : group_indices) {
-        if (gi == pivot_idx) continue;
-        P.col(gi) -= P.col(pivot_idx);
-    }
-    // Freeze the pivot row/col
-    P.row(pivot_idx).setZero();
-    P.col(pivot_idx).setZero();
+    // Delegate to the shared BSSD transform (single source of truth, reused by
+    // the network producer).  The user-side path stays UNGUARDED — at user
+    // scale the groups are small and handovers rare, so no PSD guard is applied
+    // here (see CovarianceReReference.hpp / conformance doc §8.7).  The network
+    // producer pairs applyBssd with CovReReference::enforcePsd.
+    CovReReference::applyBssd(group_indices, pivot_idx, P);
 }
 
 // ===========================================================================
