@@ -2,6 +2,9 @@
 .vs/
 build/
 .venv/
+# Python virtualenv checked into the tree by mistake; untrack with
+# `git rm -r --cached venv` (the working copy is left in place).
+venv/
 *.o
 *.exe
 *.pyc
@@ -56,3 +59,34 @@ logs/
 # cache lives at C:/GnssProcessorSupport/products/ per the configs;
 # nothing references this in-tree directory anymore.
 data_production/
+
+# -------------------------------------------------------------------
+# Runtime debug dumps written to the repo root by gnss_processor.exe
+# (e.g. kalman_debug.log, a 90+ MB Kalman trace).  The logs/ dir is
+# already ignored above; this also covers docs/report/main.log.
+# -------------------------------------------------------------------
+*.log
+
+# -------------------------------------------------------------------
+# LaTeX build artifacts (docs/report).  The source is main.tex + *.bib
+# plus the curated wrappers pipeline_diagrams.tex and generated_tables.tex
+# (the latter \input's the code-generated fragments below); everything
+# here is regenerable by latexmk/biber.  main.pdf is left TRACKED as the
+# rendered deliverable — add docs/report/main.pdf here to drop the binary.
+# -------------------------------------------------------------------
+docs/report/*.aux
+docs/report/*.bbl
+docs/report/*.bcf
+docs/report/*.blg
+docs/report/*.fdb_latexmk
+docs/report/*.fls
+docs/report/*.out
+docs/report/*.run.xml
+docs/report/*.toc
+docs/report/*.synctex.gz
+# Code-generated table fragments (scripts/gen_report_tables.py); the
+# authored generated_tables.tex wrapper that \input's them is kept.
+docs/report/generated/
+
+# CTest scratch output (Testing/Temporary/LastTest.log, CTestCostData.txt).
+Testing/
