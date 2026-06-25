@@ -111,6 +111,21 @@ namespace GnssProcessor {
         void resetBaselinePivots() { dd_pivot_manager_.reset(); }
 
         /**
+         * @brief Force a DD pivot re-rank for one constellation (KF slip).
+         *
+         * Routed from the baseline driver when @c KalmanFilter's coherent
+         * pivot-slip detector flags @p cons.  The next @c buildDdMeasurement
+         * re-ranks that constellation's pivot, excluding @p exclude_sats (the
+         * offset pivot plus any co-disturbed satellites) so the new pivot is
+         * clean; existing DD ambiguities are S-transformed onto it by
+         * @c DdPivotManager (integer cycles preserved).  No-op for PPP / PPP-RTK.
+         */
+        void requestBaselinePivotRerank(const std::string& cons,
+                                        const std::set<std::string>& exclude_sats) {
+            dd_pivot_manager_.requestForcedRerank(cons, exclude_sats);
+        }
+
+        /**
          * @brief DD ambiguity keys whose float will not round to integer.
          *
          * A DD ambiguity is integer-cycle only when all four observations
@@ -332,6 +347,28 @@ namespace GnssProcessor {
          */
         bool ifCombHasFullBia(const std::string& satellite,
                               const std::string& if_key) const;
+
+        /**
+         * @brief Whether the live SSR stream supplies a code bias for this exact
+         *        (satellite, raw signal) — i.e. whether @c ssr_bias_term will
+         *        correct the row in @c buildJacobianRow.
+         *
+         * Mirrors the apply-site activation exactly: false in the network
+         * producer mode (which ESTIMATES satellite biases as states rather than
+         * importing them), and a pure presence check via
+         * @c SsrCorrectionStore::hasCodeBias otherwise.  Used to suppress
+         * redundant per-(satellite, signal) sat-bias STATE allocation for
+         * signals the stream already corrects.  Post-processing leaves the SSR
+         * store empty, so this is always false there and the state layout is
+         * byte-identical.
+         *
+         * @note Raw signals only.  IF-combined rows (key contains '_') get
+         *       @c ssr_bias_term = 0 (SSR code biases are per raw signal), so
+         *       their sat-bias state stays the only correction and must NOT be
+         *       suppressed — pass raw signal keys here.
+         */
+        bool ssrCoversCodeSignal(const std::string& satellite,
+                                 const std::string& signal) const;
 
         /**
          * @brief Check whether both component signals of an IF combination

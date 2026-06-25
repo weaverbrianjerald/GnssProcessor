@@ -118,6 +118,56 @@ TEST(StateKeySchemaTest, DcbKeyShape) {
 }
 
 // ============================================================================
+// 4b. Per-FCN-slot GLONASS IFB keys — "GLONASS_IFB<band>_k<±slot>"
+// ============================================================================
+
+TEST(StateKeySchemaTest, GlonassPerSlotIfbKeyShape) {
+    EXPECT_EQ(makeGlonassPerSlotIfbKey("GLONASS", '1', 5),  "GLONASS_IFB1_k+5");
+    EXPECT_EQ(makeGlonassPerSlotIfbKey("GLONASS", '2', -4), "GLONASS_IFB2_k-4");
+    EXPECT_EQ(makeGlonassPerSlotIfbKey("GLONASS", '1', 0),  "GLONASS_IFB1_k+0");
+}
+
+TEST(StateKeySchemaTest, GlonassPerSlotIfbRoundTrip) {
+    for (int k = -7; k <= 6; ++k) {
+        for (const char band : {'1', '2'}) {
+            const std::string key = makeGlonassPerSlotIfbKey("GLONASS", band, k);
+            EXPECT_TRUE(isGlonassPerSlotIfbKey(key)) << key;
+            auto parts = parseGlonassPerSlotIfbKey(key);
+            ASSERT_TRUE(parts.has_value()) << key;
+            EXPECT_EQ(parts->band, band) << key;
+            EXPECT_EQ(parts->fcn_slot, k) << key;
+        }
+    }
+}
+
+// THE load-bearing invariant for byte-identical flag-off behavior: the per-slot
+// predicate must NOT match any receiver-common code-bias key.  BssdTransform and
+// StateManager use isGlonassPerSlotIfbKey() to decide which code-bias columns
+// survive single differencing / keep process noise; a false positive on a
+// per-band IFB or DCB key would silently change the BSSD solution for
+// GPS/Galileo/BeiDou (and break the flag-off byte-identical guarantee).
+TEST(StateKeySchemaTest, GlonassPerSlotIfbPredicateRejectsReceiverCommonKeys) {
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GPS", '5')));       // GPS_IFB5
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GPS", '2')));       // GPS_IFB2
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("Galileo", '7')));   // Galileo_IFB7
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GLONASS", '3')));   // per-band GLONASS_IFB3
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeDcbKey("GPS")));            // GPS_DCB
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeDcbKey("GLONASS")));        // GLONASS_DCB
+    // ...and it DOES match a genuine per-slot key.
+    EXPECT_TRUE(isGlonassPerSlotIfbKey(makeGlonassPerSlotIfbKey("GLONASS", '1', -4)));
+}
+
+TEST(StateKeySchemaTest, GlonassPerSlotIfbParseRejectsMalformed) {
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("").has_value());
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1").has_value());      // No _k slot
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_DCB").has_value());       // DCB, no IFB
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB12_k+5").has_value()); // Multi-char band
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1_k").has_value());    // Empty slot
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1_k+").has_value());   // Sign only
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1_kx").has_value());   // Non-numeric slot
+}
+
+// ============================================================================
 // 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
 // ============================================================================
 

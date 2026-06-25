@@ -1,3 +1,7 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Estimation engine: the Kalman filter and RTS smoother}\label{sec:kf}
 % ============================================================
 %  Estimation engine: the Kalman filter and RTS smoother
 % ============================================================
@@ -8,7 +12,8 @@ optional prior-anchored iterated (IEKF) relinearisation pass, robust
 post-fit residual gating, and a backward Rauch--Tung--Striebel (RTS)
 smoother for post-processing modes.  The state vector $\stateV$ is the
 uncombined PPP / PPP-RTK parameterisation of
-\Cref{sec:diff}: receiver position (and optionally velocity),
+\dcref{sec:diff}{the differencing-transformations section of the
+Foundations document}: receiver position (and optionally velocity),
 receiver clock and per-system time offsets, zenith wet troposphere and
 gradients, per-satellite slant ionosphere, receiver/satellite code and
 phase biases, and one float ambiguity per tracked carrier.  Its
@@ -24,7 +29,8 @@ measurement-noise covariance, $\Smat$ for the innovation covariance,
 $\Kgain$ for the Kalman gain, and $\innov$ for the innovation
 (measurement minus predicted measurement).  Predicted (a-priori) and
 updated (a-posteriori) quantities use the tilde/hat and $k|k{-}1$ /
-$k|k$ conditioning convention fixed in \Cref{sec:notation}.
+$k|k$ conditioning convention fixed in \dcref{sec:notation}{the
+notation-and-conventions section of the Foundations document}.
 
 \subsection{Time update}\label{sec:kf-predict}
 
@@ -143,13 +149,16 @@ of the gain), and is numerically identical to the dense computation to
 within a $10^{-12}$ structural threshold
 (\texttt{src/core/filter/KalmanFilter.cpp}).
 
-Given the design matrix $\jacH$ from the linearisation of
-\Cref{eq:obs-code,eq:obs-phase} (position rows
-$-(\los^\sat_{\hat{\rx}})^{\Tr}$, \Cref{eq:geom-linear}), the
+Given the design matrix $\jacH$ from the linearisation of the
+\dcref{eq:obs-code}{code observation equation} and
+\dcref{eq:obs-phase}{phase observation equation} of the Foundations
+document (position rows $-(\los^\sat_{\hat{\rx}})^{\Tr}$, the
+\dcref{eq:geom-linear}{linearised geometric range there}), the
 innovation $\innov$ (\texttt{measurement.innovations}), and the
 measurement-noise covariance $\Rmat$ --- a full matrix when supplied,
 otherwise the diagonal $\Rmat = \operatorname{diag}(\sigma^2_{\rx,\sat,\sigl})$
-of \Cref{eq:noise-model} --- the innovation covariance and gain are
+of the \dcref{eq:noise-model}{stochastic noise model there} --- the
+innovation covariance and gain are
 \begin{align}
 \Smat   &= \jacH\,\tilde{\covM}_{k|k-1}\,\jacH^{\Tr} + \Rmat,
 \label{eq:kf-S}\\
@@ -220,8 +229,9 @@ stability and is documented as such in source.
 
 \subsection{Iterated relinearisation (IEKF)}\label{sec:kf-iekf}
 
-For long initial position offsets a single linearisation of
-\Cref{eq:geom-linear} per epoch can be insufficient.  When
+For long initial position offsets a single linearisation of the
+\dcref{eq:geom-linear}{geometric-range relation of the Foundations
+document} per epoch can be insufficient.  When
 \texttt{processing.relinearize\_geometry} is enabled (and the run is not
 tightly-coupled IMU), the engine performs a prior-anchored iterated
 update --- a Gauss--Newton / iterated EKF step --- after the primary
@@ -439,3 +449,6 @@ across epochs --- \emph{by construction}.  This is expected, not a
 defect: the smoother's value accrues on the non-position states
 (troposphere, ionosphere, float ambiguities) and on kinematic runs
 where position carries genuine epoch-to-epoch dynamics.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

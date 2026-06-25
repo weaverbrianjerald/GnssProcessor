@@ -45,7 +45,8 @@ where
 For brevity the schematic suppresses three conditional refinements
 detailed below: the rate states that accompany velocity (a receiver
 clock-rate and one inter-system clock-rate offset per non-reference
-constellation), the nine-state inertial augmentation of \Cref{sec:imu},
+constellation), the nine-state inertial augmentation of
+\dcref{sec:imu}{the inertial-aiding document},
 and the fact that the entire receiver-side clock and inter-system-offset
 block is removed under the BSSD parameterisation (\Cref{sec:bssd}).
 
@@ -64,7 +65,8 @@ forced on by tightly-coupled IMU integration.  When present, position
 and velocity form a coupled continuous-white-noise-acceleration (CWNA,
 integrated-random-walk) block driven by a \emph{single} acceleration
 spectral density \texttt{process\_noise.acceleration\_psd}
-(\Cref{eq:kf-Q-cwna}); the scalar \texttt{position\_q} of the
+(\dcref{eq:kf-Q-cwna}{the CWNA process-noise model in the estimation
+document}); the scalar \texttt{position\_q} of the
 velocity-free case is then unused.  Enabling velocity also introduces a
 receiver clock-rate state $\sLight\,\dot{\mathrm{d}t}_\rx$, and one
 inter-system clock-rate offset per non-reference constellation, each
@@ -115,7 +117,8 @@ Initial value seeded from the Klobuchar broadcast model when no
 external ionospheric product is available.  Its process noise is a
 random walk whose zenith spectral density \texttt{ionosphere\_q} is
 projected onto the slant by the squared obliquity factor
-$1/\sin^2\theta^\sat_\rx$ (\Cref{eq:kf-Q-iono}), letting low-elevation
+$1/\sin^2\theta^\sat_\rx$ (\dcref{eq:kf-Q-iono}{the ionospheric
+process-noise model in the estimation document}), letting low-elevation
 states vary faster.  Modelling these per-sat states explicitly is what
 permits PPP-RTK to retain integer ambiguity recovery without forming
 the ionosphere-free combination (which amplifies code noise by a factor
@@ -138,7 +141,29 @@ signal: \texttt{StateInitializer::resolveReceiverBias} keys them per
 (system, frequency band) as inter-frequency biases
 (\texttt{"<system>\_IFB<band>"}) plus, in the alternative scheme, a
 single per-system differential code bias (\texttt{"<system>\_DCB"}).
-Like the receiver clock they are suppressed under BSSD.
+Like the receiver clock they are receiver-common and so are suppressed
+under BSSD.
+
+\paragraph{Per-slot GLONASS inter-frequency bias $B^{(g,b)}_{\rx,k}$.}
+Optional, off by default.  GLONASS FDMA assigns each slot $k\in[-7,+6]$
+a distinct carrier frequency $f = f_{\mathrm{base}} + k\,\Delta f$, so
+the receiver group delay differs \emph{per slot} and a single per-band
+IFB state cannot represent it.  When
+\texttt{estimation.glonass\_ifb.enable = true} (and the prerequisite
+\texttt{estimation.estimate\_ifb}; the loader warns and the flag is inert
+otherwise), \texttt{resolveReceiverBias} instead emits one state per
+(FDMA band $b\in\{$G1,\,G2$\}$, slot $k$) with unit measurement
+coefficient, keyed \texttt{"GLONASS\_IFB<band>\_k<$\pm$slot>"}.  The
+central channel $k=0$ is the held datum and produces no state; its
+constant is absorbed by the GLONASS inter-system time offset.  CDMA
+bands (G3/G4/G6) have a slot-independent frequency and retain the
+ordinary per-band treatment above.  Crucially, unlike the
+receiver-common biases these columns \emph{survive} between-satellite
+single differencing --- two GLONASS satellites on different slots do not
+cancel --- so \texttt{BssdTransform} and \texttt{StateManager}
+special-case them (via \texttt{isGlonassPerSlotIfbKey}) to exempt them
+from the receiver-block zeroing; only the inter-slot \emph{differences}
+remain estimable in SD.
 
 \paragraph{Satellite code biases $B^\sat_\sigl$.}
 Per (satellite, signal) pair, but \emph{only when the BIA file does
@@ -148,12 +173,31 @@ weakly stochastic (\texttt{sat\_bias\_q} $\sim 10^{-10}$) since the
 underlying physical biases are nearly stationary on the daily
 timescale.
 
+\paragraph{Satellite phase biases $\bar b^\sat_\sigl$ (network mode).}
+Present only in the network producer
+(\texttt{ProcessingMode::PPP\_RTK\_Network}) and gated by
+\texttt{estimation.estimate\_sat\_phase\_biases} (default off, inert in
+every other mode).  The user side imports the satellite phase bias as a
+known SSR correction (\dcref{sec:ssr}{the SSR-corrections document}) or
+absorbs it into the float
+ambiguity; the network instead carries an \emph{explicit}
+per-(satellite, signal) phase-bias state on the undifferenced phase rows
+(the estimable bias of \textcite{odijk2003fast}, lumping the network
+pivot-receiver ambiguity).  On a single station's row it is co-linear
+with the per-receiver float ambiguity and is separable only \emph{across}
+stations in the joint network estimator (\dcref{sec:net}{the network-mode
+document}).  It lives in a
+\emph{distinct} state map from the satellite \emph{code} biases above
+(\texttt{StateManager::sat\_phase\_bias\_indices\_}), keyed
+\texttt{"<sat>|<signal>|PB"}, and carries near-stationary process noise
+(\texttt{sat\_phase\_bias\_q} $\sim 10^{-12}$).
+
 \paragraph{Inertial augmentation.}
 When a tightly-coupled IMU is active the core state grows by nine
 further entries --- a three-axis attitude error and the accelerometer
 and gyroscope biases --- propagated by the strapdown mechanisation
 rather than the random-walk process model.  These are treated in full
-in \Cref{sec:imu}.
+in \dcref{sec:imu}{the inertial-aiding document}.
 
 \paragraph{Baseline differential troposphere.}
 In baseline mode the per-station tropospheric, clock, ionosphere, and
@@ -172,11 +216,17 @@ defined once in \texttt{include/filter/StateKeySchema.hpp}, each with a
 \item ambiguity key: \texttt{"<sys><prn>\_<signal>"}, e.g.\ \texttt{"G05\_L1C"}
       --- split on the \emph{first} underscore, so an iono-free combination
       \texttt{"G05\_L1C\_L5Q"} retains its compound signal;
-\item satellite signal-bias key: \texttt{"<sys><prn>|<signal>"}, e.g.\
-      \texttt{"G05|C1W"} --- a \emph{pipe} delimiter and a distinct map,
-      \emph{not} the underscore ambiguity namespace;
+\item satellite signal-bias key (code): \texttt{"<sys><prn>|<signal>"},
+      e.g.\ \texttt{"G05|C1W"} --- a \emph{pipe} delimiter and a distinct
+      map, \emph{not} the underscore ambiguity namespace;
+\item satellite phase-bias key (network): \texttt{"<sys><prn>|<signal>|PB"},
+      e.g.\ \texttt{"G05|L1C|PB"} --- the trailing \texttt{|PB} keeps it
+      disjoint from the code-bias namespace, in its own map
+      (\texttt{sat\_phase\_bias\_indices\_});
 \item receiver code-bias key: \texttt{"<system>\_IFB<band>"} or
-      \texttt{"<system>\_DCB"};
+      \texttt{"<system>\_DCB"}; the per-slot GLONASS variant appends an
+      FCN marker, \texttt{"GLONASS\_IFB<band>\_k<$\pm$slot>"} (e.g.\
+      \texttt{"GLONASS\_IFB1\_k-4"});
 \item inter-system time-offset key: the bare system name
       (\texttt{"Galileo"}, \dots; GPS is the reference and never appears);
 \item double-difference ambiguity key (baseline):

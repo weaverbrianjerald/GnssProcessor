@@ -654,12 +654,17 @@ namespace GnssProcessor {
             }
         }
 
-        // Receiver code bias (IFB) noise (PPP-RTK uncombined)
-        // Suppressed under BSSD: receiver DCB/IFB columns are zeroed in
-        // the SD H-matrix, so these states are unobservable.
-        if (!code_bias_indices_.empty() && !config_.enableBetweenSatelliteSd()) {
-            double cb_var = pn.code_bias * dt;
+        // Receiver code bias (IFB) noise (PPP-RTK uncombined).
+        // Normally suppressed under BSSD: receiver DCB/IFB columns are zeroed
+        // in the SD H-matrix, so those states are unobservable.  The per-FCN-
+        // slot GLONASS IFB states are the exception — they survive SD (their
+        // columns are NOT zeroed in BssdTransform), so they must keep their
+        // random walk even when BSSD is on.
+        if (!code_bias_indices_.empty()) {
+            const double cb_var = pn.code_bias * dt;
+            const bool sd = config_.enableBetweenSatelliteSd();
             for (const auto& [key, idx] : code_bias_indices_) {
+                if (sd && !StateKeys::isGlonassPerSlotIfbKey(key)) continue;
                 Q(idx, idx) = cb_var;
             }
         }
@@ -836,6 +841,64 @@ namespace GnssProcessor {
 
     size_t StateManager::getNumSystemTimeOffsets() const {
         return systems_with_time_offsets_.size();
+    }
+
+    std::vector<std::string> StateManager::getStateLabels() const {
+        const size_t n = getStateSize();
+        std::vector<std::string> labels(n);
+        for (size_t i = 0; i < n; ++i) labels[i] = "STATE_" + std::to_string(i);
+
+        constexpr size_t kNone = std::numeric_limits<size_t>::max();
+        auto put = [&](size_t idx, const std::string& name) {
+            if (idx < n) labels[idx] = name;
+        };
+
+        // --- Fixed-core block.  Core states carry no stored name strings, so
+        //     synthesize labels from the index getters (guarded by their
+        //     has*()/sentinel checks; the layout is mode-dependent). ---
+        put(0, "POS_X");
+        put(1, "POS_Y");
+        put(2, "POS_Z");
+        if (hasClock())               put(getClockIndex(), "CLK");
+        if (getTropoIndex() != kNone) put(getTropoIndex(), "ZWD");
+        if (hasVelocity()) {
+            put(getVelocityIndex() + 0, "VEL_X");
+            put(getVelocityIndex() + 1, "VEL_Y");
+            put(getVelocityIndex() + 2, "VEL_Z");
+        }
+        if (hasClockRate())  put(getClockRateIndex(),  "CLK_RATE");
+        if (hasPhaseClock()) put(getPhaseClockIndex(), "PHASE_CLK");
+        if (hasTropoGradients()) {
+            put(getTropoGradientNorthIndex(), "TGRAD_N");
+            put(getTropoGradientEastIndex(),  "TGRAD_E");
+        }
+        if (hasImuBiases()) {
+            for (size_t k = 0; k < 3; ++k) {
+                put(getAttitudeIndex()  + k, "ATT_"  + std::to_string(k));
+                put(getAccelBiasIndex() + k, "BACC_" + std::to_string(k));
+                put(getGyroBiasIndex()  + k, "BGYR_" + std::to_string(k));
+            }
+        }
+        if (hasDifferentialTropo()) put(getDifferentialTropoIndex(), "DZWD");
+
+        // Inter-system time / rate offsets (ISB / ISBR), keyed by system name.
+        for (const auto& sys : systems_with_time_offsets_) {
+            const size_t oi = getSystemTimeOffsetIndex(sys);
+            if (oi != kNone) put(oi, "ISB_" + sys);
+            const size_t ri = getSystemTimeRateOffsetIndex(sys);
+            if (ri != kNone) put(ri, "ISBR_" + sys);
+        }
+
+        // --- Dynamic key->index maps.  The keys ARE the stable labels
+        //     (StateKeySchema); prefix a category tag so the disjoint maps
+        //     never alias (e.g. iono "G01" vs sat-bias prefix "G01|C1W"). ---
+        for (const auto& kv : getAmbiguities())        put(kv.second, "AMB:"   + kv.first);
+        for (const auto& kv : getIonosphereStates())   put(kv.second, "IONO:"  + kv.first);
+        for (const auto& kv : getCodeBiasStates())     put(kv.second, "CBIAS:" + kv.first);
+        for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
+        for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
+
+        return labels;
     }
 
     const std::vector<std::string>& StateManager::getSystemsWithTimeOffsets() const {

@@ -43,7 +43,7 @@ namespace GnssProcessor {
             const RinexParser& rinex, LogManager& log_mgr)
             : corrections_(log_mgr, config, cache.getClocks(), cache.getErps(), cache.getBiases(), rinex),
             config_(config),
-            planetary_(log_mgr),
+            planetary_(log_mgr, config.enableCioFrame()),
             troposphere_(config, log_mgr),
             product_cache_(cache),
             log_manager_(log_mgr),
@@ -1092,9 +1092,37 @@ namespace GnssProcessor {
             //  the difference.)
             try {
                 double px, vx, py, vy, pz, vz;
-                Interpolate::nevilleInterpDeriv(x, yx, t_query, px, vx);
-                Interpolate::nevilleInterpDeriv(x, yy, t_query, py, vy);
-                Interpolate::nevilleInterpDeriv(x, yz, t_query, pz, vz);
+                if (config_.enableTrigSp3Interp()) {
+                    // Sidereal-trig SVD fit on the SAME derotated channels and time
+                    // base the Neville path uses (yx/yy/yz vs continuous GPS seconds
+                    // x).  The window is up to IGS_POINTS nodes, so with a 9-term
+                    // basis this is an N-point LEAST-SQUARES SMOOTHER (does NOT pass
+                    // through the nodes for N>9) — a deliberate divergence from the
+                    // M-PAGES 9-point exact fit, kept so the trig branch reuses the
+                    // existing derotated window verbatim (see trigSvdInterp doc).
+                    // Per-node sigmas come from the SP3 '++' accuracy codes; those
+                    // are a single value per satellite, so the sigma set is uniform
+                    // and the fit is effectively unweighted — matching M-PAGES,
+                    // whose per-satellite SVsig is likewise inert.  An empty vector
+                    // forces the unweighted fast path.
+                    std::vector<double> sig;
+                    sig.reserve(n);
+                    bool any_sigma = false;
+                    for (size_t i = 0; i < n; ++i) {
+                        const float a = nodes[i].ptr->accuracy_sigma_m;
+                        sig.push_back(a > 0.0f ? static_cast<double>(a) : 0.0);
+                        if (a > 0.0f) any_sigma = true;
+                    }
+                    if (!any_sigma) sig.clear();
+
+                    Interpolate::trigSvdInterp(x, yx, sig, t_query, px, vx);
+                    Interpolate::trigSvdInterp(x, yy, sig, t_query, py, vy);
+                    Interpolate::trigSvdInterp(x, yz, sig, t_query, pz, vz);
+                } else {
+                    Interpolate::nevilleInterpDeriv(x, yx, t_query, px, vx);
+                    Interpolate::nevilleInterpDeriv(x, yy, t_query, py, vy);
+                    Interpolate::nevilleInterpDeriv(x, yz, t_query, pz, vz);
+                }
 
                 pos = Eigen::Vector3d(px, py, pz);
                 vel = Eigen::Vector3d(vx + omegaE_interp * py,

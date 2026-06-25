@@ -9,7 +9,7 @@
 	"max_duration_s": 900.0,
 	"rinex_types": "CL",
 	//"active_systems": [ "GPS" ],
-	//"active_systems": [ "GPS", "Galileo" ],
+	"active_systems": [ "GPS", "Galileo" ],
 	//"active_systems": [ "GPS", "GLONASS" ],
 	//"active_systems": [ "GPS", "Galileo", "GLONASS" ],
     //"active_systems": [ "GPS", "Galileo", "BeiDou" ],

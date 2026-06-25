@@ -290,6 +290,7 @@ int Application::runBaseline() {
     const bool multi_rover = (bc.rovers.size() > 1);
     size_t total_rover_updates = 0;
     size_t total_rover_dd_obs  = 0;
+    size_t rovers_with_data    = 0;  // rovers that overlap the reference on >=1 epoch
 
     for (size_t rover_idx = 0; rover_idx < bc.rovers.size(); ++rover_idx) {
         const auto& rover_cfg = bc.rovers[rover_idx];
@@ -316,6 +317,34 @@ int Application::runBaseline() {
         if (!rov_parser) {
             log->error("Baseline: rover '{}' parser unavailable; skipping", rover_name);
             continue;
+        }
+
+        // Zero-overlap guard: count synced epochs where BOTH this rover and the
+        // reference are present.  If zero, the two RINEX files do not overlap
+        // within epoch_sync_tolerance_s (disjoint time windows, a sample-rate
+        // mismatch, or clock-steered epoch tags).  Without this, the epoch loop
+        // runs to completion with both_present always false: n_with_dd stays 0,
+        // the 20-epoch early-abort (gated on n_with_dd==20) never fires, and the
+        // run ends with a silent "0/0" instead of a clear diagnosis.  Skip the
+        // rover loudly here instead.
+        {
+            size_t overlap = 0;
+            for (const auto& se : synced) {
+                if (se.by_station.count(rover_name)
+                 && se.by_station.count(bc.reference.name)) ++overlap;
+            }
+            if (overlap == 0) {
+                log->error("Baseline: rover '{}' has ZERO epochs overlapping reference "
+                    "'{}' within epoch_sync_tolerance_s={:.3f}s (of {} synced epochs). "
+                    "Check that the two RINEX files cover the same time window and "
+                    "sample rate; nothing to process for this rover.",
+                    rover_name, bc.reference.name,
+                    bc.epoch_sync_tolerance_s, synced.size());
+                continue;
+            }
+            ++rovers_with_data;
+            log->info("Baseline: rover '{}' overlaps reference on {}/{} synced epochs",
+                rover_name, overlap, synced.size());
         }
 
         // Rover a-priori position: config-supplied > RINEX header approx > zero fallback.
@@ -376,12 +405,13 @@ int Application::runBaseline() {
             ar_config.wl_max_frac          = config_.getArWlMaxFrac();
             ar_config.min_success_rate     = config_.getArMinSuccessRate();
             ar_config.nl_max_per_pair_frac = config_.getArNlMaxPerPairFrac();
+            ar_config.enable_partial_ar    = config_.getArEnablePartialAr();
             ar_config.ar_active_systems    = config_.getArActiveSystems();
             ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
             ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
-            log->info("Rover '{}' AR enabled: mode={}, wl_only={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+            log->info("Rover '{}' AR enabled: mode={}, wl_only={}, partial_ar={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
                       "hold_var={:.4f}, min_epochs={}, max_pos_σ={:.3f} m",
-                rover_name, ar_config.ar_mode, ar_config.wl_only ? "on" : "off",
+                rover_name, ar_config.ar_mode, ar_config.wl_only ? "on" : "off", ar_config.enable_partial_ar ? "on" : "off",
                 ar_config.ratio_threshold, ar_config.ratio_upper_bound,
                 ar_config.elevation_mask_ar, ar_config.hold_variance,
                 ar_config.min_epochs, ar_config.max_position_sigma_m);
@@ -754,6 +784,40 @@ int Application::runBaseline() {
                 }
 
                 const auto result = kalman_filter_->update(em);
+
+                // Consume the KF's coherent-pivot-slip request, if any.  The
+                // detector keys on the "sat_i-pivot" DD ids and DOES fire in
+                // baseline mode, but there is no SD-PivotManager path here to
+                // drain it (forwardKfPivotHandovers is only wired into the PPP /
+                // real-time drivers).  Left undrained, requested_pivot_handovers_
+                // accumulates for the rover's lifetime and permanently mutes the
+                // cross-band detectors after the first fire.  Drain all three
+                // lockstep accumulators and force a DD pivot re-rank on each
+                // flagged constellation, excluding the KF's replacement-exclusion
+                // sats so the re-rank lands on a clean pivot and existing DD
+                // ambiguities are S-transformed (not reset) onto it on the next
+                // rebuild pass.
+                {
+                    auto ho_cons = kalman_filter_->takeRequestedPivotHandovers();
+                    if (!ho_cons.empty()) {
+                        auto ho_excl =
+                            kalman_filter_->takeRequestedPivotHandoverExcludeSats();
+                        // Baseline has no iono / sat-bias state; drain to honour
+                        // the lockstep contract and bound memory, then discard.
+                        kalman_filter_->takeRequestedPivotHandoverIonoReinflateSats();
+                        static const std::set<std::string> kNoExcl;
+                        for (const auto& cons : ho_cons) {
+                            const auto eit = ho_excl.find(cons);
+                            const auto& excl =
+                                (eit != ho_excl.end()) ? eit->second : kNoExcl;
+                            meas_model_->requestBaselinePivotRerank(cons, excl);
+                            log->info("Baseline: KF flagged DD pivot slip on '{}'; forcing "
+                                "pivot re-rank (excluding {} replacement sat(s))",
+                                cons, excl.size());
+                        }
+                    }
+                }
+
                 if (result == KalmanFilter::UpdateResult::Applied) {
                     applied = static_cast<size_t>(em.innovations.size());
                     ++n_updates;
@@ -956,6 +1020,17 @@ int Application::runBaseline() {
 
     } // end per-rover loop
 
+    // If no rover overlapped the reference on any epoch, that's a hard failure
+    // for the whole run (not just a per-rover skip) — surface it as a nonzero
+    // exit so callers and scripts don't mistake a silent no-solution run for
+    // success.  Per-rover diagnostics were already logged above.
+    if (rovers_with_data == 0) {
+        log->error("Baseline: no rover overlapped the reference on any synced epoch; "
+                   "no solution produced. See per-rover errors above for the cause "
+                   "(non-overlapping time windows, sample-rate, or epoch-tag mismatch).");
+        return 1;
+    }
+
     // ===================================================================
     // AGGREGATE SUMMARY (multi-rover only adds value here)
     // ===================================================================
@@ -971,6 +1046,19 @@ int Application::runBaseline() {
               "shared KalmanFilter. Inspect logs/kalman_filter.log and "
               "logs/measurement_residuals.csv for the standard diagnostic surface.");
     if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
+
+    // Optional end-of-run HTML report.  Multi-rover traces live in per-rover
+    // subdirs, so generate one report per rover dir; single-rover is flat.
+    if (config_.autoReport()) {
+        if (trace_logger_) trace_logger_->flush();   // last rover (earlier ones flushed on reconstruction)
+        if (multi_rover) {
+            for (const auto& rv : bc.rovers)
+                generateReportFor_(std::filesystem::absolute(log_dir_ / ("rover_" + rv.name)));
+        } else {
+            generateReportFor_(std::filesystem::absolute(log_dir_));
+        }
+    }
+
     return 0;
 }
 

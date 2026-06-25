@@ -1,4 +1,5 @@
 #include "math/Interpolate.hpp"
+#include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -691,6 +692,93 @@ namespace GnssProcessor {
 
         val = P[0];
         deriv = D[0];
+    }
+
+    void Interpolate::trigSvdInterp(const std::vector<double>& x,
+        const std::vector<double>& y,
+        const std::vector<double>& sigmas,
+        double xq,
+        double& val,
+        double& deriv) {
+        val = 0.0;
+        deriv = 0.0;
+        const size_t n = x.size();
+        if (n == 0 || y.size() != n) return;
+
+        // 9-term sidereal trig basis: constant + 4 (sin, cos) harmonic pairs.
+        // P0 is expressed PER SECOND so the basis argument tau = (x - x0) is in
+        // the caller's seconds and the analytic derivative comes out per second
+        // (M-PAGES uses rad/day then divides the velocity by 86400 — identical).
+        constexpr int kNumTerms = 9;
+        constexpr double kPi = 3.14159265358979;            // M-PAGES TrigExt literal
+        constexpr double kSiderealDaySec = 0.99726956634 * 86400.0;
+        const double P0 = 2.0 * kPi / kSiderealDaySec;       // rad/s
+
+        // Fit origin = first node; the constant term absorbs the offset and the
+        // sin/cos pairs absorb the phase shift, so the fitted curve is invariant
+        // to this choice while the small tau keeps the design matrix well-conditioned.
+        const double t0 = x[0];
+
+        // Detect an inert weight set (empty / all<=0 / all-equal): a uniform sigma
+        // cancels from the normal equations, so fall back to unit weights (the
+        // M-PAGES per-satellite SVsig case, and the numerically identical fit).
+        bool uniform_weight = true;
+        if (sigmas.size() == n) {
+            double first = 0.0;
+            bool have_first = false;
+            for (size_t i = 0; i < n; ++i) {
+                const double s = sigmas[i];
+                if (s > 0.0) {
+                    if (!have_first) { first = s; have_first = true; }
+                    else if (s != first) { uniform_weight = false; break; }
+                }
+            }
+        }
+
+        Eigen::MatrixXd A(static_cast<Eigen::Index>(n), kNumTerms);
+        Eigen::VectorXd b(static_cast<Eigen::Index>(n));
+
+        for (size_t i = 0; i < n; ++i) {
+            const double tau = x[i] - t0;
+            double w = 1.0;
+            if (!uniform_weight && sigmas.size() == n) {
+                const double s = sigmas[i];
+                w = (s > 0.0) ? (1.0 / s) : 1.0;
+            }
+            const Eigen::Index ri = static_cast<Eigen::Index>(i);
+            A(ri, 0) = 1.0 * w;                                 // constant term
+            for (int f = 1; f <= (kNumTerms - 1) / 2; ++f) {    // harmonics 1..4
+                const double arg = tau * static_cast<double>(f) * P0;
+                A(ri, 2 * f - 1) = std::sin(arg) * w;
+                A(ri, 2 * f)     = std::cos(arg) * w;
+            }
+            b(ri) = y[i] * w;
+        }
+
+        // SVD least-squares solve with a relative singular-value cutoff.  Eigen's
+        // setThreshold is RELATIVE to the largest singular value, so 1e-15 zeroes
+        // singular values below 1e-15 * sigma_max in the min-norm pseudoinverse —
+        // the Numerical-Recipes svbksb convention M-PAGES' svdfit uses.
+        Eigen::JacobiSVD<Eigen::MatrixXd> svd(A,
+            Eigen::ComputeThinU | Eigen::ComputeThinV);
+        svd.setThreshold(1.0e-15);
+        const Eigen::VectorXd coef = svd.solve(b);              // length kNumTerms
+
+        // Evaluate fitted value + analytic derivative at the query.
+        const double tau_q = xq - t0;
+        double value = coef(0);                                 // d/dtau(const) = 0
+        double dvalue = 0.0;
+        for (int f = 1; f <= (kNumTerms - 1) / 2; ++f) {
+            const double wf = static_cast<double>(f) * P0;
+            const double arg = tau_q * wf;
+            const double s = std::sin(arg);
+            const double c = std::cos(arg);
+            value  += coef(2 * f - 1) * s + coef(2 * f) * c;
+            dvalue += coef(2 * f - 1) * (wf * c) + coef(2 * f) * (-wf * s);
+        }
+
+        val = value;
+        deriv = dvalue;     // per x-unit (per second, since tau is in seconds)
     }
 
 } // namespace GnssProcessor

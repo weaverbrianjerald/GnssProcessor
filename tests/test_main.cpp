@@ -41,6 +41,7 @@
 
 #include <Eigen/Dense>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -859,6 +860,49 @@ TEST(SolidEarthTideTest, MatchesIersOfficialVector) {
 }
 
 // ============================================================================
+// Ocean pole tide (IERS 2010 Sec. 7.1.5 / Desai 2002)
+// ============================================================================
+//
+// GnssCorrections::computeOceanPoleTideDisplacement evaluates the closed-form
+// ocean pole tide site displacement from the station's six interpolated load
+// coefficients and the polar-motion wobble.  It is pinned here against the
+// independent Python oracle scripts/ocean_pole_tide_reference.py (a separate
+// reimplementation of the same IERS expression / NGS M-PAGES PoleTide.cpp), so
+// a transcription error in the C++ constants (Kappa = sqrt(8pi/15)*Omega^2*a^4
+// /GM scaled by 4*pi*G*a*rho_sw/(3*g_E)*AS2RAD), the gammaR/gammaI mixing, or
+// the North/East/radial coefficient ordering would surface here.
+//
+// Inputs: the first data row of the IERS opole grid opoleloadcoefcmcor.txt,
+// grid point (lon=0.25, lat=-89.75), file columns u_r^R u_r^I u_n^R u_n^I
+// u_e^R u_e^I = 0.022015 0.040741 -0.021861 -0.029058 -0.025845 -0.055643,
+// reordered to optCoeffs [u_n^R, u_n^I, u_e^R, u_e^I, u_r^R, u_r^I], with a
+// wobble of m1 = 0.1, m2 = 0.2 arcsec.
+TEST(OceanPoleTideTest, MatchesReferenceVector) {
+    const std::array<double, 6> coeffs = {
+        -0.021861, -0.029058,   // u_n^R, u_n^I
+        -0.025845, -0.055643,   // u_e^R, u_e^I
+         0.022015,  0.040741    // u_r^R, u_r^I
+    };
+    const double m1 = 0.1, m2 = 0.2;  // arcseconds
+
+    const Eigen::Vector3d enu =
+        GnssCorrections::computeOceanPoleTideDisplacement(m1, m2, coeffs);  // (E, N, U)
+
+    // Verbatim from scripts/ocean_pole_tide_reference.py.
+    EXPECT_NEAR(enu.x(), -2.438808776832272e-04, 1e-12) << "East, got "  << enu.x();
+    EXPECT_NEAR(enu.y(), -1.423934108645533e-04, 1e-12) << "North, got " << enu.y();
+    EXPECT_NEAR(enu.z(),  1.841228931876922e-04, 1e-12) << "Up, got "    << enu.z();
+
+    // Sanity: ocean pole tide is a sub-millimetre-to-millimetre site effect.
+    EXPECT_LT(enu.norm(), 5e-3);
+
+    // Zero wobble => zero displacement (purely wobble-driven).
+    const Eigen::Vector3d zero =
+        GnssCorrections::computeOceanPoleTideDisplacement(0.0, 0.0, coeffs);
+    EXPECT_NEAR(zero.norm(), 0.0, 1e-15);
+}
+
+// ============================================================================
 // Niell Mapping Function (default "GMF"/NMF tropo path) — convention lock
 // ============================================================================
 //
@@ -952,6 +996,32 @@ TEST(AntennaPcvTest, BilinearNoaziAndLastRingClamp) {
     EXPECT_NEAR(Antenna::interpolatePcv(noazi, 15.0, 0.0, dazi, dzen),  5.0, 1e-12); // mid 0→30
     EXPECT_NEAR(Antenna::interpolatePcv(noazi, 90.0, 0.0, dazi, dzen), 30.0, 1e-12); // last ring
     EXPECT_NEAR(Antenna::interpolatePcv(noazi, 120.0, 0.0, dazi, dzen), 30.0, 1e-12); // clamp
+}
+
+// ============================================================================
+// Receiver antenna orientation — azimuth correction
+// ============================================================================
+//
+// Antenna::correctAzimuth rotates a measured azimuth (CW from North) into the
+// antenna frame by subtracting the mounting orientation, wrapping into
+// [0, 360).  Ported from M-PAGES NGS::RxAntenna::correctAzimuth.  Pins the
+// reference vector from the Item-5 verify steps plus the two wrap branches and
+// the orientation==0 identity (which keeps orientation-off runs byte-identical).
+TEST(AntennaOrientationTest, CorrectAzimuthMatchesMpagesReference) {
+    // Reference vector: 10 - 90 = -80 -> +360 -> 280.
+    EXPECT_NEAR(GnssProcessor::Antenna::correctAzimuth(10.0, 90.0), 280.0, 1e-12);
+
+    // orientation == 0 is the identity (off-path bit-identical).
+    EXPECT_NEAR(GnssProcessor::Antenna::correctAzimuth(123.456, 0.0), 123.456, 1e-12);
+
+    // No wrap needed when az >= orientation.
+    EXPECT_NEAR(GnssProcessor::Antenna::correctAzimuth(200.0, 50.0), 150.0, 1e-12);
+
+    // Negative branch wraps up by 360.
+    EXPECT_NEAR(GnssProcessor::Antenna::correctAzimuth(0.0, 270.0), 90.0, 1e-12);
+
+    // A negative orientation (az - (-x) = az + x) wraps down past 360.
+    EXPECT_NEAR(GnssProcessor::Antenna::correctAzimuth(350.0, -20.0), 10.0, 1e-12);
 }
 
 // Regression: std::from_chars' float overload accepts '-' but rejects a leading

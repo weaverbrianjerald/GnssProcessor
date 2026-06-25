@@ -212,7 +212,10 @@ std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
         cfg.password          = rt.ntrip_password;
         cfg.nmea_gga          = rt.nmea_gga;
         cfg.reconnect_delay_s = rt.reconnect_delay_s;
-        log->info("Realtime primary: NTRIP {}:{}/{}", cfg.host, cfg.port, cfg.mountpoint);
+        cfg.use_tls           = rt.ntrip_use_tls;
+        cfg.tls_insecure      = rt.ntrip_tls_insecure;
+        log->info("Realtime primary: NTRIP {}://{}:{}/{}",
+                  cfg.use_tls ? "https" : "http", cfg.host, cfg.port, cfg.mountpoint);
         auto s = RealtimeStream::openNtrip("primary", cfg, lm);
         if (!s) log->error("Failed to start primary NTRIP client");
         return s;
@@ -255,7 +258,10 @@ std::unique_ptr<RealtimeStream> openAuxRtcmStream(
         cfg.password          = cc.ntrip_password;
         cfg.nmea_gga          = cc.nmea_gga;
         cfg.reconnect_delay_s = cc.reconnect_delay_s;
-        log->info("Realtime {}: NTRIP {}:{}/{}", label, cfg.host, cfg.port, cfg.mountpoint);
+        cfg.use_tls           = cc.ntrip_use_tls;
+        cfg.tls_insecure      = cc.ntrip_tls_insecure;
+        log->info("Realtime {}: NTRIP {}://{}:{}/{}", label,
+                  cfg.use_tls ? "https" : "http", cfg.host, cfg.port, cfg.mountpoint);
         auto s = RealtimeStream::openNtrip(label, cfg, lm);
         if (!s) log->error("Failed to start {} NTRIP client", label);
         return s;

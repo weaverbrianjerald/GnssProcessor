@@ -1,0 +1,59 @@
+"""Run dispatch -- the Python analogue of ``view_all.m``.
+
+Holds the viewer registry, decides which viewers run for a given trace folder
+(skipping any whose required CSV is missing/empty, exactly like ``view_all``),
+and returns the results.  Rendering / report assembly is left to the caller, so
+the same dispatch feeds both the offline HTML report and (later) an interactive
+or real-time front-end.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from .trace_paths import TraceContext
+from .viewers import REGISTRY
+from .viewers.base import Viewer, ViewerResult
+
+
+@dataclass
+class RunOutput:
+    ran: List[Tuple[Viewer, ViewerResult]] = field(default_factory=list)
+    skipped: List[Tuple[str, str]] = field(default_factory=list)   # (name, reason)
+    failed: List[Tuple[str, str]] = field(default_factory=list)    # (name, error)
+
+
+def run_viewers(
+    ctx: TraceContext,
+    *,
+    only: Optional[Sequence[str]] = None,
+    registry: Sequence[Viewer] = REGISTRY,
+) -> RunOutput:
+    """Build every applicable viewer for the run at ``ctx``.
+
+    Parameters
+    ----------
+    only:
+        Optional whitelist of viewer names to run (others skipped silently).
+    """
+    out = RunOutput()
+    wanted = set(only) if only is not None else None
+
+    for viewer in registry:
+        if wanted is not None and viewer.name not in wanted:
+            continue
+        missing = [c for c in viewer.required_csvs if not ctx.has_data(c)]
+        if missing:
+            out.skipped.append((viewer.name, f"missing/empty {', '.join(missing)}"))
+            continue
+        try:
+            result = viewer.build(ctx)
+            out.ran.append((viewer, result))
+        except Exception as exc:  # match view_all: report + continue
+            out.failed.append((viewer.name, f"{type(exc).__name__}: {exc}"))
+    return out
+
+
+def registry_by_name() -> Dict[str, Viewer]:
+    return {v.name: v for v in REGISTRY}

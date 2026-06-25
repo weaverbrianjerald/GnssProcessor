@@ -1,0 +1,34 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Generated reference tables}\label{sec:gentables}
+% ============================================================
+%  Wrapper for the machine-generated reference tables.
+%
+%  Every \input below is produced by scripts/gen_report_tables.py
+%  directly from the C++ source tree, so the tables track the code
+%  rather than drift from it.  DO NOT edit the generated/*.tex files
+%  by hand -- edit the source (or the generator) and re-run:
+%
+%      python scripts/gen_report_tables.py            # regenerate
+%      python scripts/gen_report_tables.py --check    # CI drift guard
+% ============================================================
+
+The tables in this appendix are generated from the source tree by
+\texttt{scripts/gen\_report\_tables.py}.  They are not maintained by hand: a
+renamed flag, a new cycle-slip detector, or a changed state-key delimiter
+appears here on the next run of the generator.  Run the generator with
+\texttt{-{}-check} in CI to fail the build if the committed tables are stale.
+
+\input{generated/processing_modes}
+
+\input{generated/config_toggles}
+
+\subsection{Cycle-slip detector registry}
+\input{generated/slip_detectors}
+
+\subsection{State-vector key schema}
+\input{generated/state_keys}
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

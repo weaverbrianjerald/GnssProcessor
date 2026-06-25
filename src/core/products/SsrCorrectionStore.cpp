@@ -180,6 +180,15 @@ double SsrCorrectionStore::getCodeBias(const std::string& sat,
     return (sit == m.end()) ? 0.0 : sit->second;
 }
 
+bool SsrCorrectionStore::hasCodeBias(const std::string& sat,
+                                     const std::string& rinex_obs_code) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(sat);
+    if (it == by_sat_.end() || !it->second.code_bias) return false;
+    const auto& m = it->second.code_bias->bias_per_signal;
+    return m.find(rinex_obs_code) != m.end();
+}
+
 std::optional<SsrPhaseBiasEntry>
 SsrCorrectionStore::getPhaseBias(const std::string& sat,
                                  const std::string& rinex_obs_code) const {

@@ -1,3 +1,7 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Cycle-slip detection and repair}\label{sec:slip}
 % ============================================================
 %  Cycle-slip detection and repair
 %  Linear combinations as test statistics + TurboEdit 2x2 repair.
@@ -8,7 +12,8 @@
 %  TurboEditResolver}.cpp and the matching include/slip headers.
 % ============================================================
 
-The uncombined filter (\Cref{sec:obs}) never forms a linear combination
+The uncombined filter (\dcref{sec:obs}{the observation-equations
+section of the Foundations document}) never forms a linear combination
 on the measurement-update path: per-signal $\code^\sat_{\rx,\sigl}$ and
 $\phaseo^\sat_{\rx,\sigl}$ enter \Cref{eq:obs-code,eq:obs-phase}
 directly.  Cycle slips are instead screened by a bank of
@@ -25,8 +30,9 @@ ionosphere-free phase detectors
 (\texttt{src/core/slip/GfSlipDetector.cpp},
 \texttt{src/core/slip/IfPhaseSlipDetector.cpp}) are staged --- present
 in the tree but not compiled into the current build --- and their
-algebra is recorded here for completeness.  The slip bank is enabled
-per detector under the config key \texttt{estimation.cycle\_slip}.
+algebra is recorded here for completeness.  The bank is composed at
+run time from the config block \texttt{estimation.cycle\_slip}
+(\Cref{sec:slip-registry}).
 
 Throughout this section we suppress the receiver index $\rx$
 (single-receiver PPP / PPP-RTK) and write $f_1 > f_2$ for the two
@@ -40,7 +46,55 @@ $\phaseo^\sat_\sigl$ below is always in metres, consistent with
 \emph{temporal} integer slip step (e.g.\ $\slipd N_\sigl$ is the change
 in the ambiguity on signal $\sigl$ across the slip epoch); this is
 deliberately distinct from the between-satellite single difference
-$\bsd{\cdot}$ of \Cref{sec:diff}, which also uses $\Delta$.
+$\bsd{\cdot}$ of \dcref{sec:diff}{the differencing section of the
+Foundations document}, which also uses $\Delta$.
+
+\subsection{Detector registry and composition}\label{sec:slip-registry}
+
+The detectors are not hard-wired.  Each implements a narrow polymorphic
+contract \texttt{ISlipDetector} (\texttt{include/slip/ISlipDetector.hpp})
+--- a single per-epoch entry point
+\begin{equation*}
+\texttt{detect}(\text{SlipEpochContext}) \;\longrightarrow\; \{\,\text{SlipEvent}\,\},
+\end{equation*}
+plus lifecycle hooks (\texttt{resetSatellite},
+\texttt{resetSatelliteSignal}, \texttt{enableTracing},
+\texttt{setCorrections}).  A \texttt{SlipEvent} is the union of the
+legacy per-detector result structs; its \texttt{granularity} field
+distinguishes a \emph{per-signal} flag (GRAPHIC, GF, IF: one carrier)
+from a \emph{band-difference} flag (MW, EWL: a wide-lane integer
+$\slipd \Nwl = \slipd N_1 - \slipd N_2$ that, on its own, cannot
+attribute the jump to one signal --- the two-unknown problem
+\Cref{eq:te-mw} resolves downstream).  Inputs are bundled in
+\texttt{SlipEpochContext} so the signature is uniform even though only
+the staged IF detector consumes the extra 3D position sigma and
+receiver ECEF it carries.
+
+\texttt{SlipDetectorRegistry::createEnabled}
+(\texttt{src/core/slip/SlipDetectorRegistry.cpp}) builds the
+config-selected set from
+\texttt{estimation.cycle\_slip.\{mw,graphic,ewl,gf,if\}} in a
+deterministic order --- MW first (it is the primary and the sole source
+of the wide-lane integers consumed by ambiguity resolution
+(\dcref{sec:ar}{the ambiguity-resolution document}) and the BSSD pivot
+machinery (\texttt{src/core/filter/PivotManager.cpp})), then
+the auxiliaries.  MW defaults on; the auxiliary detectors default off,
+preserving the historical MW-only behaviour.  A kind that is enabled in
+config but \emph{unavailable} in this build --- the staged \texttt{gf}
+and \texttt{if} detectors, whose \texttt{.cpp} is not compiled --- is
+skipped with a warning rather than aborting, so a forward-looking config
+degrades gracefully.  \texttt{CycleSlipManager} drives the whole set
+through one loop and recovers the MW detector's richer API (WL-lock
+queries, pivot-handover hints, per-satellite quality scoring) through a
+typed down-cast (\texttt{asMelbourneWubbena}) rather than widening the
+base interface.
+
+\texttt{turbo\_edit} (\Cref{sec:slip-turboedit}) sits a level above the
+registry: it is \emph{not} a detector kind but a \emph{coordination
+mode} that, when the MW detector is enabled, pairs the MW wide-lane
+integer with the geometry-free phase jump to recover per-signal
+integers.  It is therefore documented separately from the detector bank
+below.
 
 \subsection{Test-statistic combinations}\label{sec:slip-combos}
 
@@ -510,3 +564,6 @@ resets the chain but preserves the slowly-varying MAD calibration
 window, an absolute gap beyond the configured maximum wipes the arc, and
 an accepted slip re-seeds with a short cooldown to suppress the TD2 echo;
 only clean (non-exceeding, non-bridged) TD2 samples feed the MAD window.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

@@ -64,6 +64,9 @@ inline constexpr std::string_view kDdAmbiguityPrefix = "DD";
 /// Receiver inter-frequency-bias infix in code-bias keys ("GPS_IFB5").
 inline constexpr std::string_view kIfbInfix = "IFB";
 
+/// FCN-slot marker in per-slot GLONASS IFB keys ("GLONASS_IFB1_k-4").
+inline constexpr std::string_view kGlonassFcnMarker = "_k";
+
 /// Receiver differential code bias infix in code-bias keys ("GPS_DCB").
 inline constexpr std::string_view kDcbInfix = "DCB";
 
@@ -386,6 +389,88 @@ inline std::string makeDcbKey(std::string_view system) {
     out.push_back(kCodeBiasDelimiter);
     out.append(kDcbInfix);
     return out;
+}
+
+// ===========================================================================
+// 4b. Per-FCN-slot GLONASS receiver IFB keys — "GLONASS_IFB<band>_k<±slot>"
+// ---------------------------------------------------------------------------
+// Examples: "GLONASS_IFB1_k-4", "GLONASS_IFB2_k+5"
+//
+//   system : system name string (always "GLONASS" in practice).
+//   band   : FDMA band digit — '1' (G1) or '2' (G2).  CDMA bands keep the
+//            per-band makeIfbKey form (their frequency is slot-independent).
+//   slot   : GLONASS FDMA channel number k ∈ [-7,+6], printed with an
+//            explicit sign ("+5" / "-4").  The central channel k=0 is the
+//            held datum and never produces a key.
+//
+// Unlike the per-band IFB/DCB keys above, these are NOT receiver-common: two
+// GLONASS satellites on different slots see different group delays, so the
+// columns SURVIVE between-satellite single differencing.  BssdTransform
+// (receiver-block zeroing) and StateManager (process-noise suppression)
+// special-case them via isGlonassPerSlotIfbKey().
+//
+// Constructed in:  StateInitializer (resolveReceiverBias, GLONASS branch)
+// Stored in:       StateManager::code_bias_indices_
+// ===========================================================================
+
+/// Decomposed per-slot GLONASS IFB key.
+struct GlonassPerSlotIfbKeyParts {
+    char band;       ///< FDMA band digit ('1' or '2').
+    int  fcn_slot;   ///< GLONASS FDMA channel number k ∈ [-7,+6].
+};
+
+/// Build a per-FCN-slot GLONASS receiver IFB key, e.g. "GLONASS_IFB1_k-4".
+inline std::string makeGlonassPerSlotIfbKey(std::string_view system,
+                                            char band, int fcn_slot) {
+    std::string out;
+    out.reserve(system.size() + 1 + kIfbInfix.size() + 1
+                + kGlonassFcnMarker.size() + 3);
+    out.append(system);
+    out.push_back(kCodeBiasDelimiter);
+    out.append(kIfbInfix);
+    out.push_back(band);
+    out.append(kGlonassFcnMarker);             // "_k"
+    if (fcn_slot >= 0) out.push_back('+');     // std::to_string keeps '-' for negatives
+    out.append(std::to_string(fcn_slot));
+    return out;
+}
+
+/// Cheap predicate: is @p key a per-slot GLONASS IFB key (carries the IFB
+/// infix AND the "_k" FCN marker)?  The per-band IFB/DCB keys lack "_k", so
+/// they return false — which is exactly what lets BssdTransform / StateManager
+/// distinguish the SD-surviving per-slot columns from receiver-common ones.
+inline bool isGlonassPerSlotIfbKey(std::string_view key) {
+    const auto ifb = key.find(kIfbInfix);
+    if (ifb == std::string_view::npos) return false;
+    return key.find(kGlonassFcnMarker, ifb + kIfbInfix.size())
+           != std::string_view::npos;
+}
+
+/// Parse a per-slot GLONASS IFB key.  Returns @c std::nullopt unless the shape
+/// is exactly "<system>_IFB<band>_k<±slot>" with a single band char.
+inline std::optional<GlonassPerSlotIfbKeyParts>
+parseGlonassPerSlotIfbKey(std::string_view key) {
+    const auto ifb = key.find(kIfbInfix);
+    if (ifb == std::string_view::npos) return std::nullopt;
+    const auto band_pos = ifb + kIfbInfix.size();
+    const auto kpos = key.find(kGlonassFcnMarker, band_pos);
+    if (kpos == std::string_view::npos || kpos != band_pos + 1)
+        return std::nullopt;                       // exactly one band char before "_k"
+    const char band = key[band_pos];
+    std::string_view num = key.substr(kpos + kGlonassFcnMarker.size());
+    if (num.empty()) return std::nullopt;
+    bool neg = false;
+    if (num.front() == '+' || num.front() == '-') {
+        neg = (num.front() == '-');
+        num.remove_prefix(1);
+    }
+    if (num.empty()) return std::nullopt;
+    int mag = 0;
+    for (const char c : num) {
+        if (c < '0' || c > '9') return std::nullopt;
+        mag = mag * 10 + (c - '0');
+    }
+    return GlonassPerSlotIfbKeyParts{ band, neg ? -mag : mag };
 }
 
 // ===========================================================================

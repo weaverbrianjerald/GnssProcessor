@@ -80,6 +80,27 @@ namespace GnssProcessor {
         size_t getStateSize() const;
 
         /**
+         * @brief Build a stable human-readable label for every state index.
+         *
+         * Returns one string per state vector index (size == getStateSize()),
+         * unioning synthesized labels for the fixed-core block (position,
+         * clock, ZWD, velocity, clock-rate, phase-clock, tropo gradients, IMU
+         * attitude/biases, differential ZWD, inter-system time/rate offsets)
+         * with the category-prefixed keys of the dynamic key→index maps
+         * (ambiguities, per-sat iono, receiver code biases, satellite code /
+         * phase biases).  The dynamic keys come straight from
+         * StateKeySchema, so they are stable across epochs even as state rows
+         * are appended or pruned (which shifts the raw indices).  This is the
+         * label set used to combine normal equations across epochs / sessions
+         * (see NeqAccumulator) where indexing by raw position would be
+         * incorrect.  Any index not otherwise covered falls back to
+         * "STATE_<i>".
+         *
+         * @return Vector of stable labels, indexed by state position.
+         */
+        std::vector<std::string> getStateLabels() const;
+
+        /**
          * @brief Get a copy of the current state vector.
          * @return State vector as Eigen::VectorXd.
          */

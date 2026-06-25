@@ -113,6 +113,28 @@ public:
     double getCodeBias(const std::string& sat, const std::string& rinex_obs_code) const;
 
     /**
+     * @brief Test whether the stream supplies a code bias for a (sat, signal).
+     *
+     * Presence check mirroring @c getCodeBias's lookup: true iff the satellite
+     * has a code-bias record whose @c bias_per_signal map contains the EXACT
+     * RINEX obs code.  A present-but-zero entry counts as covered — the
+     * provider's bias set defines that signal's datum frame regardless of the
+     * numeric value, so an estimator must not also estimate it.  Distinct from
+     * @c getCodeBias != 0.0, which cannot tell a genuine-zero bias from an
+     * absent signal.
+     *
+     * Used by @c MeasurementModel to suppress redundant per-(sat, signal)
+     * sat-bias STATE allocation for signals the live stream already corrects;
+     * it must agree exactly with @c getCodeBias so a covered signal is never
+     * both estimated AND SSR-corrected on the same row.
+     *
+     * @param sat            Satellite ID (e.g. "G01").
+     * @param rinex_obs_code Exact RINEX obs code (e.g. "C1C", "C5Q").
+     * @return true if the stream carries a code bias for this exact pair.
+     */
+    bool hasCodeBias(const std::string& sat, const std::string& rinex_obs_code) const;
+
+    /**
      * @brief Look up the phase bias entry for a (sat, signal) pair.
      */
     std::optional<SsrPhaseBiasEntry> getPhaseBias(

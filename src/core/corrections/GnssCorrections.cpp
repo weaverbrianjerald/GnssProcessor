@@ -22,10 +22,14 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <numeric>
+#include <sstream>
+#include <vector>
 #include <fmt/format.h>
 
 namespace GnssProcessor {
@@ -799,6 +803,51 @@ namespace GnssProcessor {
     // Geophysical site displacements
     // =================================================================
 
+    // -----------------------------------------------------------------------
+    // Ocean pole tide (IERS 2010 Sec. 7.1.5, Desai 2002) physical constants.
+    //
+    // Verbatim NGS M-PAGES values (Lib/Gnss/{Grs80,Iers}.hpp) so this port
+    // reproduces M-PAGES Lib/Station/PoleTide.cpp::computeOceanPoleTide — and
+    // the independent Python oracle scripts/ocean_pole_tide_reference.py — to
+    // ~1e-12.  The Kappa scale bakes in AS2RAD so the wobble m1,m2 are passed in
+    // arcseconds (consistent with computePoleTideCorrection above).
+    // -----------------------------------------------------------------------
+    namespace {
+        constexpr double kOptOmega     = 7.292115e-5;       // grs80::OMEGA   [rad/s]
+        constexpr double kOptAEarth    = 6378136.6;         // iers::A_EARTH  [m]
+        constexpr double kOptGmEarth   = 3.986004418e14;    // iers::GM_EARTH [m^3/s^2]
+        constexpr double kOptGNewton   = 6.67428e-11;       // iers::G        [m^3/kg/s^2]
+        constexpr double kOptGE        = 9.7803278;         // iers::G_E      [m/s^2] mean equatorial gravity
+        constexpr double kOptRhoSeawat = 1025.0;            // sea-water density [kg/m^3]
+        constexpr double kOptGammaReal = 0.6870;            // Desai gamma_2^R
+        constexpr double kOptGammaImag = 0.0036;            // Desai gamma_2^I
+
+        // Kappa = 4*pi*G*a*rho_sw*Hp/(3*g_E) * AS2RAD, Hp = sqrt(8pi/15)*Omega^2*a^4/GM.
+        // Evaluated once; constexpr so there is zero per-epoch cost.
+        inline double oceanPoleTideKappa() {
+            const double Hp = std::sqrt(8.0 * Constants::PI / 15.0)
+                            * kOptOmega * kOptOmega
+                            * kOptAEarth * kOptAEarth * kOptAEarth * kOptAEarth
+                            / kOptGmEarth;
+            const double K = 4.0 * Constants::PI * kOptGNewton * kOptAEarth
+                           * kOptRhoSeawat * Hp / (3.0 * kOptGE);
+            const double AS2RAD = Constants::PI / 648000.0;   // arcsec -> rad
+            return K * AS2RAD;                                 // [m / arcsec]
+        }
+    }
+
+    Eigen::Vector3d GnssCorrections::computeOceanPoleTideDisplacement(
+        double m1_arcsec, double m2_arcsec, const std::array<double, 6>& opt_coeffs) {
+        // opt_coeffs = [u_n^R, u_n^I, u_e^R, u_e^I, u_r^R, u_r^I]
+        const double kappa = oceanPoleTideKappa();
+        const double cR = m1_arcsec * kOptGammaReal + m2_arcsec * kOptGammaImag;
+        const double cI = m2_arcsec * kOptGammaReal - m1_arcsec * kOptGammaImag;
+        const double east  = kappa * (cR * opt_coeffs[2] + cI * opt_coeffs[3]);
+        const double north = kappa * (cR * opt_coeffs[0] + cI * opt_coeffs[1]);
+        const double up    = kappa * (cR * opt_coeffs[4] + cI * opt_coeffs[5]);
+        return Eigen::Vector3d(east, north, up);  // (East, North, Up) metres
+    }
+
     Eigen::Vector3d GnssCorrections::computePoleTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
         auto log = log_manager_.getLogger("ppp_model");
 
@@ -900,11 +949,39 @@ namespace GnssProcessor {
         const double m1 =  xp_arcsec - xp_mean_mas * 1.0e-3;
         const double m2 = -(yp_arcsec - yp_mean_mas * 1.0e-3);
 
-        // IERS 2010 Eq. 7.24 pole-tide displacement (radial/north/east, metres).
-        // Component formulae identical to RTKLIB tide_pole.
-        const double radial = -0.033 * std::sin(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
-        const double north  = -0.009 * std::cos(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
-        const double east   =  0.009 * std::cos(phi)        * (m1 * std::sin(lambda) - m2 * std::cos(lambda));
+        // IERS 2010 Eq. 7.24 rotational-deformation pole tide (radial/north/east,
+        // metres), written in geodetic latitude phi.  IERS gives the components in
+        // colatitude theta = 90deg - phi: S_r = -33 sin(2 theta)(m1 cosL + m2 sinL),
+        // S_theta = -9 cos(2 theta)(m1 cosL + m2 sinL), S_lambda = +9 cos(theta)
+        // (m1 sinL - m2 cosL), with north = -S_theta.  Substituting theta = 90-phi
+        // (sin 2theta = sin 2phi, cos 2theta = -cos 2phi, cos theta = sin phi):
+        //   radial = -33 sin(2 phi)(m1 cosL + m2 sinL)
+        //   north  = -9  cos(2 phi)(m1 cosL + m2 sinL)
+        //   east   = +9  sin(phi)  (m1 sinL - m2 cosL)
+        // FIXED 2026-06-24: the east term previously used cos(phi); the IERS
+        // (and RTKLIB tide_pole) factor is sin(phi) = cos(colatitude).  The
+        // radial/north terms were already in the geodetic-phi convention, so
+        // cos(phi) on east was internally inconsistent (~1.48x scale at mid-lat
+        // and the wrong latitude dependence — vanishing at the equator instead of
+        // the pole), a sub-mm-to-mm east bias.
+        double radial = -0.033 * std::sin(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
+        double north  = -0.009 * std::cos(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
+        double east   =  0.009 * std::sin(phi)        * (m1 * std::sin(lambda) - m2 * std::cos(lambda));
+
+        // Ocean pole tide (IERS 2010 Sec. 7.1.5, Desai 2002): add the load
+        // displacement on top of the Sec. 7.1.4 rotational-deformation term when
+        // the station's grid coefficients are available.  Default runs (no
+        // coefficients loaded -> enable_ocean_pole_tide off) are byte-identical;
+        // only the rot-def term above contributes.  Magnitude ~0.1-2 mm, well
+        // inside the 5 cm guard below.
+        if (has_opt_coeffs_) {
+            const Eigen::Vector3d opt = computeOceanPoleTideDisplacement(m1, m2, opt_coeffs_);  // (E,N,U)
+            east   += opt.x();
+            north  += opt.y();
+            radial += opt.z();
+            log->trace("Ocean pole tide at TOW {:.3f}: E={:.3e} N={:.3e} U={:.3e} m",
+                       time.tow, opt.x(), opt.y(), opt.z());
+        }
 
         // Local (r,n,e) -> ECEF
         const double cp = std::cos(phi), sp = std::sin(phi);
@@ -953,6 +1030,113 @@ namespace GnssProcessor {
 
     bool GnssCorrections::hasOceanTideCoefficients() const {
         return ocean_tide_model_.hasStationCoefficients();
+    }
+
+    void GnssCorrections::setOceanPoleTideCoefficients(const std::array<double, 6>& coeffs) {
+        opt_coeffs_ = coeffs;
+        has_opt_coeffs_ = true;
+    }
+
+    bool GnssCorrections::loadOceanPoleTideFromGrid(const std::string& grid_path,
+                                                    const Eigen::Vector3d& station_ecef) {
+        auto log = log_manager_.getLogger("ppp_model");
+
+        if (!station_ecef.allFinite() || station_ecef.norm() < 1e6) {
+            log->warn("OPT: invalid station ECEF for grid interpolation (norm={:.3e})",
+                      station_ecef.norm());
+            return false;
+        }
+
+        std::ifstream file(grid_path);
+        if (!file.is_open()) {
+            log->error("OPT: cannot open opole grid '{}'", grid_path);
+            return false;
+        }
+
+        // Grid geometry (IERS Conventions 2010 chapter 7, opoleloadcoefcmcor.txt):
+        //   720 longitudes:  lon[i] = 0.25  + 0.5*i, i = 0..719  (0.25 .. 359.75)
+        //   360 latitudes:   lat[j] = -89.75 + 0.5*j, j = 0..359 (-89.75 .. 89.75)
+        //   14 header lines, then nlat*nlon data rows, lat-major / lon-minor.
+        //   Each row: lon lat u_r^R u_r^I u_n^R u_n^I u_e^R u_e^I.
+        constexpr int kNlon = 720, kNlat = 360;
+        constexpr double kLon0 = 0.25, kLat0 = -89.75, kStep = 0.5;
+
+        std::string line;
+        for (int i = 0; i < 14; ++i) {
+            if (!std::getline(file, line)) {
+                log->error("OPT: grid '{}' truncated in header", grid_path);
+                return false;
+            }
+        }
+
+        // Six coefficient planes (radial/north/east real & imag) flattened as
+        // [j*nlon + i].  ~12 MB transient; freed when this method returns.
+        std::vector<float> urR(static_cast<size_t>(kNlon) * kNlat), urI(urR.size()),
+                           unR(urR.size()), unI(urR.size()),
+                           ueR(urR.size()), ueI(urR.size());
+        for (int j = 0; j < kNlat; ++j) {
+            for (int i = 0; i < kNlon; ++i) {
+                double lon_d, lat_d, rR, rI, nR, nI, eR, eI;
+                if (!(file >> lon_d >> lat_d >> rR >> rI >> nR >> nI >> eR >> eI)) {
+                    log->error("OPT: grid '{}' truncated at lat row {} lon col {}",
+                               grid_path, j, i);
+                    return false;
+                }
+                const size_t idx = static_cast<size_t>(j) * kNlon + i;
+                urR[idx] = static_cast<float>(rR); urI[idx] = static_cast<float>(rI);
+                unR[idx] = static_cast<float>(nR); unI[idx] = static_cast<float>(nI);
+                ueR[idx] = static_cast<float>(eR); ueI[idx] = static_cast<float>(eI);
+            }
+        }
+
+        // Station geodetic position; longitude wrapped to [0, 360).
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(station_ecef);
+        const double lat_deg = llh.lat_rad * 180.0 / Constants::PI;
+        double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
+        if (lon_deg < 0.0) lon_deg += 360.0;
+
+        // Bilinear interpolation indices.  Longitude wraps across the 360/0 seam;
+        // latitude clamps at the polar grid edges (weights computed after the
+        // clamp so the boundary rows interpolate correctly).
+        const double fi = (lon_deg - kLon0) / kStep;
+        double fj = (lat_deg - kLat0) / kStep;
+        if (fj < 0.0) fj = 0.0;
+        if (fj > kNlat - 1) fj = kNlat - 1;
+        int j0 = static_cast<int>(std::floor(fj));
+        if (j0 < 0) j0 = 0;
+        if (j0 > kNlat - 2) j0 = kNlat - 2;      // keep j0+1 in range
+        const int j1 = j0 + 1;
+        const double wj = fj - j0;
+        const int i0 = static_cast<int>(std::floor(fi));
+        const double wi = fi - std::floor(fi);
+        const int i0w = ((i0 % kNlon) + kNlon) % kNlon;
+        const int i1w = (i0w + 1) % kNlon;
+
+        auto bilerp = [&](const std::vector<float>& g) -> double {
+            const double v00 = g[static_cast<size_t>(j0) * kNlon + i0w];
+            const double v10 = g[static_cast<size_t>(j0) * kNlon + i1w];
+            const double v01 = g[static_cast<size_t>(j1) * kNlon + i0w];
+            const double v11 = g[static_cast<size_t>(j1) * kNlon + i1w];
+            const double v0 = v00 * (1.0 - wi) + v10 * wi;
+            const double v1 = v01 * (1.0 - wi) + v11 * wi;
+            return v0 * (1.0 - wj) + v1 * wj;
+        };
+
+        // Store in optCoeffs order [u_n^R, u_n^I, u_e^R, u_e^I, u_r^R, u_r^I].
+        opt_coeffs_[0] = bilerp(unR);
+        opt_coeffs_[1] = bilerp(unI);
+        opt_coeffs_[2] = bilerp(ueR);
+        opt_coeffs_[3] = bilerp(ueI);
+        opt_coeffs_[4] = bilerp(urR);
+        opt_coeffs_[5] = bilerp(urI);
+        has_opt_coeffs_ = true;
+
+        log->info("OPT: interpolated opole coeffs at ({:.4f},{:.4f}) deg lon/lat: "
+                  "uN=({:.5f},{:.5f}) uE=({:.5f},{:.5f}) uR=({:.5f},{:.5f})",
+                  lon_deg, lat_deg,
+                  opt_coeffs_[0], opt_coeffs_[1], opt_coeffs_[2],
+                  opt_coeffs_[3], opt_coeffs_[4], opt_coeffs_[5]);
+        return true;
     }
 
     double GnssCorrections::computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos,

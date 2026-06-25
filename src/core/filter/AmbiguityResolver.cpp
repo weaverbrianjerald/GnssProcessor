@@ -281,6 +281,93 @@ double AmbiguityResolver::computeBootstrapSuccessRate(const Eigen::VectorXd& d) 
 }
 
 // ===========================================================================
+// Partial ambiguity resolution (greedy backward elimination)
+// ===========================================================================
+
+AmbiguityResolver::PartialFix AmbiguityResolver::selectFixableSubset_(
+    const Eigen::VectorXd& y_cycles,
+    const Eigen::MatrixXd& Q_cycles) const {
+
+    PartialFix out;
+    const int nb = static_cast<int>(y_cycles.size());
+    if (nb <= 0) return out;
+
+    // Active = indices (into the caller's full set) still in contention.
+    std::vector<int> active(nb);
+    std::iota(active.begin(), active.end(), 0);
+
+    // Each iteration strictly shrinks `active`, so the loop terminates.  We
+    // allow the subset to shrink to a single entry: the ratio/bootstrap/frac
+    // gates remain meaningful for one ambiguity and reject all but the most
+    // confident lone fixes.
+    while (static_cast<int>(active.size()) >= 1) {
+        const int m = static_cast<int>(active.size());
+
+        Eigen::VectorXd y_sub(m);
+        Eigen::MatrixXd Q_sub(m, m);
+        for (int a = 0; a < m; ++a) {
+            y_sub(a) = y_cycles(active[a]);
+            for (int b = 0; b < m; ++b) {
+                Q_sub(a, b) = Q_cycles(active[a], active[b]);
+            }
+        }
+        // No-op on the already-symmetric inputs (bit-identical), but keeps the
+        // sub-block robust to any caller that passes a not-quite-symmetric Q.
+        Q_sub = 0.5 * (Q_sub + Q_sub.transpose());
+
+        // Drop the entry with the largest formal float variance (cycles²) —
+        // the least precise ambiguity, whose removal most improves the
+        // bootstrap success rate and search conditioning.
+        auto drop_worst_variance = [&]() {
+            int worst = 0;
+            double worst_var = -1.0;
+            for (int a = 0; a < m; ++a) {
+                if (Q_sub(a, a) > worst_var) { worst_var = Q_sub(a, a); worst = a; }
+            }
+            active.erase(active.begin() + worst);
+        };
+
+        Eigen::VectorXd afix_sub, s_sub, d_sub;
+        if (!mlambda(y_sub, Q_sub, afix_sub, s_sub, &d_sub)) { drop_worst_variance(); continue; }
+        if (s_sub(0) <= 0.0 || s_sub(1) <= 0.0)               { drop_worst_variance(); continue; }
+
+        const double ratio = s_sub(1) / s_sub(0);
+        if (ratio < config_.ratio_threshold || ratio > config_.ratio_upper_bound) {
+            drop_worst_variance();
+            continue;
+        }
+
+        const double p_s = computeBootstrapSuccessRate(d_sub);
+        if (p_s < config_.min_success_rate) { drop_worst_variance(); continue; }
+
+        // Per-entry fractional cap: when this is the failing gate, drop the
+        // specific entry sitting nearest a half-cycle boundary rather than the
+        // highest-variance one.
+        double max_frac = 0.0;
+        int    worst_frac = 0;
+        for (int a = 0; a < m; ++a) {
+            const double f = std::abs(y_sub(a) - afix_sub(a));
+            if (f > max_frac) { max_frac = f; worst_frac = a; }
+        }
+        if (max_frac > config_.nl_max_per_pair_frac) {
+            active.erase(active.begin() + worst_frac);
+            continue;
+        }
+
+        // Subset passes the full acceptance battery — accept it.
+        out.success     = true;
+        out.kept        = active;
+        out.afix_cycles = afix_sub;
+        out.ratio       = ratio;
+        out.p_s         = p_s;
+        out.max_frac    = max_frac;
+        return out;
+    }
+
+    return out;  // success == false: no subset down to size 1 cleared the gates
+}
+
+// ===========================================================================
 // DD pair construction
 // ===========================================================================
 
@@ -644,44 +731,91 @@ AmbiguityResolution AmbiguityResolver::resolve(
     log->info("MLAMBDA: {} DD ambs, ratio={:.2f} (threshold={:.1f}), s1={:.4f} s2={:.4f}",
               nb, result.ratio, config_.ratio_threshold, s(0), s(1));
 
+    // Full-set acceptance battery.  Each failing gate logs its reason exactly
+    // as before and sets full_ok=false; on failure we either attempt a
+    // partial-subset fix (when enabled) or stay float.  p_s / max_dd_frac are
+    // hoisted so the full-set success log below can reuse them.
+    double p_s         = 0.0;
+    double max_dd_frac = 0.0;
+    int    worst_dd_k  = -1;
+    bool   full_ok     = true;
+
     if (result.ratio < config_.ratio_threshold) {
         log->info("AR ratio test failed: {:.2f} < {:.1f}", result.ratio, config_.ratio_threshold);
-        return result;
-    }
-    if (result.ratio > config_.ratio_upper_bound) {
+        full_ok = false;
+    } else if (result.ratio > config_.ratio_upper_bound) {
         log->warn("AR rejecting fix: ratio={:.3e} > upper bound {:.1e} "
                   "(degenerate covariance — staying float).",
                   result.ratio, config_.ratio_upper_bound);
-        return result;
-    }
-
-    // FFR gate: bootstrap success rate.
-    const double p_s = computeBootstrapSuccessRate(d_lambda);
-    if (p_s < config_.min_success_rate) {
-        log->info("AR rejecting fix despite passing ratio ({:.2f}): "
-                  "bootstrap P_s={:.5f} < min_success_rate={:.4f}",
-                  result.ratio, p_s, config_.min_success_rate);
-        return result;
-    }
-
-    // Per-DD residual cap: refuse the fix if any individual DD's
-    // |float − fixed| (in cycles) exceeds the cap.
-    double max_dd_frac = 0.0;
-    int    worst_dd_k  = -1;
-    for (int k = 0; k < nb; ++k) {
-        const double per_dd = std::abs(y_cycles(k) - afix_cycles(k));
-        if (per_dd > max_dd_frac) {
-            max_dd_frac = per_dd;
-            worst_dd_k  = k;
+        full_ok = false;
+    } else {
+        // FFR gate: bootstrap success rate.
+        p_s = computeBootstrapSuccessRate(d_lambda);
+        if (p_s < config_.min_success_rate) {
+            log->info("AR rejecting fix despite passing ratio ({:.2f}): "
+                      "bootstrap P_s={:.5f} < min_success_rate={:.4f}",
+                      result.ratio, p_s, config_.min_success_rate);
+            full_ok = false;
+        } else {
+            // Per-DD residual cap: refuse the fix if any individual DD's
+            // |float − fixed| (in cycles) exceeds the cap.
+            for (int k = 0; k < nb; ++k) {
+                const double per_dd = std::abs(y_cycles(k) - afix_cycles(k));
+                if (per_dd > max_dd_frac) {
+                    max_dd_frac = per_dd;
+                    worst_dd_k  = k;
+                }
+            }
+            if (max_dd_frac > config_.nl_max_per_pair_frac) {
+                log->info("AR rejecting fix despite passing ratio ({:.2f}) and P_s={:.5f}: "
+                          "DD {}-{} {} has |frac|={:.3f} cyc > nl_max_per_pair_frac={:.3f}",
+                          result.ratio, p_s,
+                          pairs[worst_dd_k].sat_i, pairs[worst_dd_k].sat_ref,
+                          pairs[worst_dd_k].signal,
+                          max_dd_frac, config_.nl_max_per_pair_frac);
+                full_ok = false;
+            }
         }
     }
-    if (max_dd_frac > config_.nl_max_per_pair_frac) {
-        log->info("AR rejecting fix despite passing ratio ({:.2f}) and P_s={:.5f}: "
-                  "DD {}-{} {} has |frac|={:.3f} cyc > nl_max_per_pair_frac={:.3f}",
-                  result.ratio, p_s,
-                  pairs[worst_dd_k].sat_i, pairs[worst_dd_k].sat_ref,
-                  pairs[worst_dd_k].signal,
-                  max_dd_frac, config_.nl_max_per_pair_frac);
+
+    if (!full_ok) {
+        if (!config_.enable_partial_ar) return result;
+
+        // Partial AR — the full set failed its gates, so retry on the largest
+        // subset that clears the same battery.  Survivors map straight back to
+        // DD pairs and are applied as SD pseudo-observations, identical to the
+        // full-set path below (just fewer rows).
+        PartialFix pf = selectFixableSubset_(y_cycles, Qb_cycles);
+        if (!pf.success) {
+            log->info("Partial AR: no fixable subset found ({} DD candidates); staying float", nb);
+            return result;
+        }
+
+        const int m = static_cast<int>(pf.kept.size());
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, na);
+        Eigen::VectorXd v = Eigen::VectorXd::Zero(m);
+        for (int a = 0; a < m; ++a) {
+            const int k = pf.kept[a];
+            const double afix_m = pf.afix_cycles(a) * pair_lambda[k];
+            if (pairs[k].state_idx_i   >= 0 && pairs[k].state_idx_i   < na) H(a, pairs[k].state_idx_i)   = +1.0;
+            if (pairs[k].state_idx_ref >= 0 && pairs[k].state_idx_ref < na) H(a, pairs[k].state_idx_ref) = -1.0;
+            v(a) = afix_m - y_dd(k);
+            if (log->should_log(spdlog::level::debug)) {
+                log->debug("  [PAR] DD {}-{} {}: float={:.3f} cyc fixed={} cyc diff={:+.4f} cyc (λ={:.4f} m)",
+                           pairs[k].sat_i, pairs[k].sat_ref, pairs[k].signal,
+                           y_cycles(k), static_cast<int>(std::round(pf.afix_cycles(a))),
+                           y_cycles(k) - pf.afix_cycles(a), pair_lambda[k]);
+            }
+        }
+        Eigen::MatrixXd R = Eigen::MatrixXd::Identity(m, m) * config_.hold_variance;
+        KalmanFilter::josephPseudoUpdate(x, P, H, v, R,
+                                         result.fixed_state, result.fixed_covariance);
+        result.success   = true;
+        result.num_fixed = m;
+        result.ratio     = pf.ratio;
+        log->info("Partial AR succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} ambiguities fixed, "
+                  "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+                  config_.hold_variance, m, nb, pf.ratio, pf.p_s, pf.max_frac);
         return result;
     }
 
@@ -938,44 +1072,86 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
     log->info("MLAMBDA (DD): {} ambs, ratio={:.2f} (threshold={:.1f}), s1={:.4f} s2={:.4f}",
               nb, result.ratio, config_.ratio_threshold, s(0), s(1));
 
+    // Full-set acceptance battery (see resolve() for the rationale of the
+    // hoisted p_s / max_dd_frac and the partial-AR fallback).
+    double p_s         = 0.0;
+    double max_dd_frac = 0.0;
+    int    worst_dd_k  = -1;
+    bool   full_ok     = true;
+
     if (result.ratio < config_.ratio_threshold) {
         log->info("AR (DD) ratio test failed: {:.2f} < {:.1f}",
                   result.ratio, config_.ratio_threshold);
-        return result;
-    }
-    if (result.ratio > config_.ratio_upper_bound) {
+        full_ok = false;
+    } else if (result.ratio > config_.ratio_upper_bound) {
         log->warn("AR (DD) rejecting fix: ratio={:.3e} > upper bound {:.1e} "
                   "(degenerate covariance — staying float).",
                   result.ratio, config_.ratio_upper_bound);
-        return result;
-    }
-
-    // FFR gate.
-    const double p_s = computeBootstrapSuccessRate(d_lambda);
-    if (p_s < config_.min_success_rate) {
-        log->info("AR (DD) rejecting fix despite passing ratio ({:.2f}): "
-                  "bootstrap P_s={:.5f} < min_success_rate={:.4f}",
-                  result.ratio, p_s, config_.min_success_rate);
-        return result;
-    }
-
-    // Per-DD residual cap.
-    double max_dd_frac = 0.0;
-    int    worst_dd_k  = -1;
-    for (int k = 0; k < nb; ++k) {
-        const double per_dd = std::abs(y_cycles(k) - afix_cycles(k));
-        if (per_dd > max_dd_frac) {
-            max_dd_frac = per_dd;
-            worst_dd_k  = k;
+        full_ok = false;
+    } else {
+        // FFR gate.
+        p_s = computeBootstrapSuccessRate(d_lambda);
+        if (p_s < config_.min_success_rate) {
+            log->info("AR (DD) rejecting fix despite passing ratio ({:.2f}): "
+                      "bootstrap P_s={:.5f} < min_success_rate={:.4f}",
+                      result.ratio, p_s, config_.min_success_rate);
+            full_ok = false;
+        } else {
+            // Per-DD residual cap.
+            for (int k = 0; k < nb; ++k) {
+                const double per_dd = std::abs(y_cycles(k) - afix_cycles(k));
+                if (per_dd > max_dd_frac) {
+                    max_dd_frac = per_dd;
+                    worst_dd_k  = k;
+                }
+            }
+            if (max_dd_frac > config_.nl_max_per_pair_frac) {
+                log->info("AR (DD) rejecting fix despite passing ratio ({:.2f}) and P_s={:.5f}: "
+                          "DD {}-{} {} has |frac|={:.3f} cyc > nl_max_per_pair_frac={:.3f}",
+                          result.ratio, p_s,
+                          entries[worst_dd_k].sat_i, entries[worst_dd_k].sat_p,
+                          entries[worst_dd_k].rov_code,
+                          max_dd_frac, config_.nl_max_per_pair_frac);
+                full_ok = false;
+            }
         }
     }
-    if (max_dd_frac > config_.nl_max_per_pair_frac) {
-        log->info("AR (DD) rejecting fix despite passing ratio ({:.2f}) and P_s={:.5f}: "
-                  "DD {}-{} {} has |frac|={:.3f} cyc > nl_max_per_pair_frac={:.3f}",
-                  result.ratio, p_s,
-                  entries[worst_dd_k].sat_i, entries[worst_dd_k].sat_p,
-                  entries[worst_dd_k].rov_code,
-                  max_dd_frac, config_.nl_max_per_pair_frac);
+
+    if (!full_ok) {
+        if (!config_.enable_partial_ar) return result;
+
+        // Partial AR — retry on the largest subset that clears the battery.
+        // Baseline DD rows are single-column (the state IS the DD ambiguity).
+        PartialFix pf = selectFixableSubset_(y_cycles, Qb_cycles);
+        if (!pf.success) {
+            log->info("Partial AR (DD): no fixable subset found ({} DD candidates); staying float", nb);
+            return result;
+        }
+
+        const int m = static_cast<int>(pf.kept.size());
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, na);
+        Eigen::VectorXd v = Eigen::VectorXd::Zero(m);
+        for (int a = 0; a < m; ++a) {
+            const int k = pf.kept[a];
+            const double afix_m = pf.afix_cycles(a) * entries[k].lambda;
+            if (entries[k].state_idx >= 0 && entries[k].state_idx < na)
+                H(a, entries[k].state_idx) = +1.0;
+            v(a) = afix_m - x_full(entries[k].state_idx);
+            if (log->should_log(spdlog::level::debug)) {
+                log->debug("  [PAR] DD {}-{} {}: float={:.4f} m fixed={:.4f} m diff={:.4f} m (lambda={:.4f} m)",
+                           entries[k].sat_i, entries[k].sat_p, entries[k].rov_code,
+                           x_full(entries[k].state_idx), afix_m, v(a), entries[k].lambda);
+            }
+        }
+        Eigen::MatrixXd R = Eigen::MatrixXd::Identity(m, m) * config_.hold_variance;
+        KalmanFilter::josephPseudoUpdate(x_full, P_full, H, v, R,
+                                         result.fixed_state, result.fixed_covariance);
+        result.success   = true;
+        result.num_fixed = m;
+        result.ratio     = pf.ratio;
+        log->info("Partial AR (DD) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} ambiguities fixed, "
+                  "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+                  config_.hold_variance, m, nb, pf.ratio, pf.p_s, pf.max_frac);
         return result;
     }
 
@@ -1233,55 +1409,100 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     log->info("WL-constrained AR: {} NL ambs, ratio={:.2f} (threshold={:.1f})",
               n_nl, result.ratio, config_.ratio_threshold);
 
+    // Full-set acceptance battery (see resolve() for rationale).  p_s /
+    // max_pair_frac are hoisted for the success log; on failure we attempt a
+    // partial-subset NL fix (when enabled) or stay float.  The bootstrap FFR
+    // gate must exceed the configured target (e.g. 0.999 for 0.1% probability
+    // of accepting a wrong-integer fix); the per-pair frac cap catches a
+    // borderline integer set where one pair sits near a half-cycle boundary.
+    double p_s           = 0.0;
+    double max_pair_frac = 0.0;
+    int    worst_pair_k  = -1;
+    bool   full_ok       = true;
+
     if (result.ratio < config_.ratio_threshold) {
         log->info("WL-constrained AR ratio test failed: {:.2f} < {:.1f}",
                   result.ratio, config_.ratio_threshold);
-        return result;
-    }
-    if (result.ratio > config_.ratio_upper_bound) {
+        full_ok = false;
+    } else if (result.ratio > config_.ratio_upper_bound) {
         log->warn("WL-constrained AR rejecting fix: ratio={:.3e} > upper bound {:.1e} "
                   "(degenerate covariance — staying float).",
                   result.ratio, config_.ratio_upper_bound);
-        return result;
-    }
-
-    // FFR gate: bootstrap success rate must exceed the configured target
-    // (e.g. 0.999 for 0.1% probability of accepting a wrong-integer fix).
-    // Self-tuning: hard to pass when the search is high-dimensional or
-    // poorly conditioned; easy to pass when the float is well-converged
-    // and the decorrelation is clean.
-    const double p_s = computeBootstrapSuccessRate(d_lambda);
-    if (p_s < config_.min_success_rate) {
-        log->info("WL-constrained AR rejecting fix despite passing ratio "
-                  "({:.2f}): bootstrap P_s={:.5f} < min_success_rate={:.4f}",
-                  result.ratio, p_s, config_.min_success_rate);
-        return result;
-    }
-
-    // Per-NL-pair residual cap: refuse the fix if any individual pair's
-    // |float − fixed| (in cycles) exceeds the cap.  The joint ratio test
-    // can pass on a borderline integer set where one or two pairs are
-    // sitting near a half-cycle boundary; those marginal pairs cause the
-    // ratio to collapse on the next epoch as the state drifts back
-    // toward the "actual" integer.  Catching them up front is the right
-    // defense.
-    double max_pair_frac = 0.0;
-    int    worst_pair_k  = -1;
-    for (int k = 0; k < n_nl; ++k) {
-        const double per_pair = std::abs(y_for_mlambda(k) - afix_n1(k));
-        if (per_pair > max_pair_frac) {
-            max_pair_frac = per_pair;
-            worst_pair_k  = k;
+        full_ok = false;
+    } else {
+        p_s = computeBootstrapSuccessRate(d_lambda);
+        if (p_s < config_.min_success_rate) {
+            log->info("WL-constrained AR rejecting fix despite passing ratio "
+                      "({:.2f}): bootstrap P_s={:.5f} < min_success_rate={:.4f}",
+                      result.ratio, p_s, config_.min_success_rate);
+            full_ok = false;
+        } else {
+            for (int k = 0; k < n_nl; ++k) {
+                const double per_pair = std::abs(y_for_mlambda(k) - afix_n1(k));
+                if (per_pair > max_pair_frac) {
+                    max_pair_frac = per_pair;
+                    worst_pair_k  = k;
+                }
+            }
+            if (max_pair_frac > config_.nl_max_per_pair_frac) {
+                const auto& nlc = nl_candidates[worst_pair_k];
+                log->info("WL-constrained AR rejecting fix despite passing ratio "
+                          "({:.2f}) and P_s={:.5f}: pair {}-{} has |frac|={:.3f} cyc > "
+                          "nl_max_per_pair_frac={:.3f}",
+                          result.ratio, p_s,
+                          pairs[nlc.dd_idx_1].sat_i, pairs[nlc.dd_idx_1].sat_ref,
+                          max_pair_frac, config_.nl_max_per_pair_frac);
+                full_ok = false;
+            }
         }
     }
-    if (max_pair_frac > config_.nl_max_per_pair_frac) {
-        const auto& nlc = nl_candidates[worst_pair_k];
-        log->info("WL-constrained AR rejecting fix despite passing ratio "
-                  "({:.2f}) and P_s={:.5f}: pair {}-{} has |frac|={:.3f} cyc > "
-                  "nl_max_per_pair_frac={:.3f}",
-                  result.ratio, p_s,
-                  pairs[nlc.dd_idx_1].sat_i, pairs[nlc.dd_idx_1].sat_ref,
-                  max_pair_frac, config_.nl_max_per_pair_frac);
+
+    if (!full_ok) {
+        if (!config_.enable_partial_ar) return result;
+
+        // Partial AR — retry on the largest subset of NL candidates that clears
+        // the battery.  The search runs in the N_1-aligned domain
+        // (y_for_mlambda); each kept candidate back-transforms to its two
+        // signal-domain DD rows exactly as the full-set path below does.
+        PartialFix pf = selectFixableSubset_(y_for_mlambda, Q_reduced);
+        if (!pf.success) {
+            log->info("Partial AR (WL/NL): no fixable subset found ({} NL candidates); staying float", n_nl);
+            return result;
+        }
+
+        const int nx = static_cast<int>(x.size());
+        const int m  = static_cast<int>(pf.kept.size());
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(2 * m, nx);
+        Eigen::VectorXd v = Eigen::VectorXd::Zero(2 * m);
+        for (int a = 0; a < m; ++a) {
+            const auto&  nlc        = nl_candidates[pf.kept[a]];
+            const double f_sum      = nlc.f1 + nlc.f2;
+            const double n_nl_fixed = pf.afix_cycles(a) - nl_shift(pf.kept[a]);  // N_1 → IF-NL
+            const double dd1 = (n_nl_fixed + nlc.f2 / f_sum * nlc.dd_wl) * nlc.lam1;
+            const double dd2 = (n_nl_fixed - nlc.f1 / f_sum * nlc.dd_wl) * nlc.lam2;
+            const auto& p1 = pairs[nlc.dd_idx_1];
+            const auto& p2 = pairs[nlc.dd_idx_2];
+            if (p1.state_idx_i   >= 0 && p1.state_idx_i   < nx) H(2 * a,     p1.state_idx_i)   = +1.0;
+            if (p1.state_idx_ref >= 0 && p1.state_idx_ref < nx) H(2 * a,     p1.state_idx_ref) = -1.0;
+            v(2 * a)     = dd1 - (x(p1.state_idx_i) - x(p1.state_idx_ref));
+            if (p2.state_idx_i   >= 0 && p2.state_idx_i   < nx) H(2 * a + 1, p2.state_idx_i)   = +1.0;
+            if (p2.state_idx_ref >= 0 && p2.state_idx_ref < nx) H(2 * a + 1, p2.state_idx_ref) = -1.0;
+            v(2 * a + 1) = dd2 - (x(p2.state_idx_i) - x(p2.state_idx_ref));
+            if (log->should_log(spdlog::level::debug)) {
+                log->debug("  [PAR] NL pair {}-{} {}/{}: N_1_fixed={} dd_wl={}, DD1={:.3f}m DD2={:.3f}m",
+                           p1.sat_i, p1.sat_ref, p1.signal, p2.signal,
+                           static_cast<int>(std::lround(pf.afix_cycles(a))), nlc.dd_wl, dd1, dd2);
+            }
+        }
+        Eigen::MatrixXd R = Eigen::MatrixXd::Identity(2 * m, 2 * m) * config_.hold_variance;
+        KalmanFilter::josephPseudoUpdate(x, P, H, v, R,
+                                         result.fixed_state, result.fixed_covariance);
+        result.success   = true;
+        result.num_fixed = m;
+        result.ratio     = pf.ratio;
+        log->info("Partial AR (WL/NL) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} NL pairs fixed, "
+                  "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+                  config_.hold_variance, m, n_nl, pf.ratio, pf.p_s, pf.max_frac);
         return result;
     }
 

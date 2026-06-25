@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
-project(GNSSProcessor CXX)
+# C is REQUIRED (not optional): the vendored IAU SOFA library (third_party/sofa,
+# used by the CIO frame transform — see the sofa target below) is ANSI C and
+# will not build without the C language enabled.  Do not revert to "CXX" only.
+project(GNSSProcessor CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -77,6 +80,7 @@ add_library(gnss_core STATIC
     src/core/model/PppModel.cpp
     src/core/model/StochasticModel.cpp
     src/core/model/Antenna.cpp
+    src/core/model/SatAttitude.cpp
     src/core/rinex/RinexParser.cpp
     src/core/rinex/MultiRinexSync.cpp
     src/core/rtcm/RtcmParser.cpp
@@ -114,6 +118,8 @@ add_library(gnss_core STATIC
 	src/core/slip/IonoVariabilityMonitor.cpp
 	src/core/slip/TurboEditResolver.cpp
 	src/core/slip/SoftLliBridge.cpp
+	src/core/slip/JumpGapFitter.cpp
+	src/core/slip/SlipBridgeKernel.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
     src/core/aiding/ZuptAidingSource.cpp
@@ -131,9 +137,19 @@ add_library(gnss_core STATIC
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
+    src/core/filter/NetworkNormalEquations.cpp
+    src/core/filter/NetworkEstimator.cpp
+    src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
+# KalmanFilter.cpp emits more COFF sections than the default object format
+# allows (template-heavy Eigen kernels); /bigobj raises the limit.  Side-effect
+# free build flag (MSVC only).
+if(MSVC)
+    set_source_files_properties(src/core/filter/KalmanFilter.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)
     # ws2_32 is needed by the raw TCP client (winsock2).  No-op elsewhere.
@@ -145,6 +161,25 @@ if(OpenMP_CXX_FOUND)
 else()
     message(STATUS "OpenMP not found — Eigen kernels will run single-threaded.")
 endif()
+
+# ---------------------------------------------------------------------------
+# IAU SOFA (vendored, third_party/sofa) — standard ANSI-C astronomy library
+# providing the CIO-based IAU 2000A/2006 celestial-to-terrestrial frame
+# transform used by Planetary::celestialToTerrestrial (gated behind the
+# estimation.enable_cio_frame flag).  This is the ONE sanctioned glob in this
+# build: SOFA ships ~240 tiny .c files and gnss_core's own list stays explicit.
+# Vendored verbatim so the build is self-contained (see third_party/sofa/README.md).
+# Built as a separate static lib with warnings suppressed (third-party C).
+# ---------------------------------------------------------------------------
+file(GLOB SOFA_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sofa/*.c")
+add_library(sofa STATIC ${SOFA_SOURCES})
+target_include_directories(sofa PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sofa")
+if(MSVC)
+    target_compile_options(sofa PRIVATE /w)
+else()
+    target_compile_options(sofa PRIVATE -w)
+endif()
+target_link_libraries(gnss_core PUBLIC sofa)
 
 # Bake the project root into the binary so PathResolver / GnssConfig
 # can default files.internal_data_root to <project_root>/data without
@@ -175,6 +210,20 @@ target_link_libraries(gnss_meas3_xcheck PRIVATE gnss_core)
 add_executable(gnss_atx_diag src/tools/atx_diag.cpp)
 target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 
+# GNSS exam dataset simulator — synthesizes a multi-GNSS RINEX-3.04 observation
+# file (+ truth answer key, in later milestones) for the GNSS/Geodesy qualifying
+# exam, then verifies the processor recovers the injected truth.  Links
+# gnss_core only; coupling to the verifier is out-of-process (writes RINEX, runs
+# gnss_processor, diffs traces).  See C:/GnssSimulator/docs/DESIGN.md.
+add_executable(gnss_simulator
+    src/sim/main.cpp
+    src/sim/RinexObsWriter.cpp
+    src/sim/EphemerisProvider.cpp
+    src/sim/TrajectoryGenerator.cpp
+    src/sim/IonoDisturbance.cpp
+    src/sim/Verifier.cpp)
+target_link_libraries(gnss_simulator PRIVATE gnss_core)
+
 # Unit tests
 enable_testing()
 add_executable(gnss_tests
@@ -182,6 +231,8 @@ add_executable(gnss_tests
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
     tests/test_network_emit.cpp
+    tests/test_network_normal_equations.cpp
+    tests/test_network_estimator.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
@@ -194,6 +245,11 @@ add_executable(gnss_tests
     tests/test_soft_lli_bridge.cpp
     tests/test_aiding_source.cpp
     tests/test_smoother_frame.cpp
+    tests/test_jump_gap_fitter.cpp
+    tests/test_slip_bridge_kernel.cpp
+    tests/test_planetary_cio.cpp
+    tests/test_orbit_enhancements.cpp
+    tests/test_neq_accumulator.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
@@ -201,6 +257,19 @@ target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
 # locate real product files (SP3, RINEX, etc.) without hard-coded paths.
 target_compile_definitions(gnss_tests PRIVATE
     GNSS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
+
+# gnss_simulator self-consistency battery (DESIGN §10.6, product-/processor-free
+# subset; the end-to-end loop is exercised by harness/gnss_verify_loop.ps1).
+# Compiles the standalone sim sources it needs directly (they are not in gnss_core).
+add_executable(gnss_simulator_selftest
+    tests/sim/test_sim_selfconsistency.cpp
+    src/sim/RinexObsWriter.cpp
+    src/sim/IonoDisturbance.cpp
+    src/sim/Verifier.cpp
+    "src/core/math/Coordinates.cpp"
+    "src/core/math/Interpolate.cpp")
+target_link_libraries(gnss_simulator_selftest PRIVATE GTest::GTest GTest::Main gnss_core)
+add_test(NAME gnss_simulator_selftest COMMAND gnss_simulator_selftest)
 
 # Python bindings module (only bindings source; link core)
 add_library(gnss_processor_module MODULE
@@ -239,7 +308,9 @@ target_link_options(gnss_tests PRIVATE /MANIFEST:NO)
 target_link_options(gnss_processor_module PRIVATE /MANIFEST:NO)
 
 # Doxygen
-find_package(Doxygen)
+#   Request the optional `dot` component so doxygen_add_docs() can wire up
+#   Graphviz-rendered structure graphs when Graphviz is installed.
+find_package(Doxygen OPTIONAL_COMPONENTS dot)
 if(DOXYGEN_FOUND)
     set(DOXYGEN_PROJECT_NAME "GNSS Processor")
     set(DOXYGEN_PROJECT_BRIEF "A GNSS processing application for PPP and PPP-RTK.")
@@ -249,6 +320,49 @@ if(DOXYGEN_FOUND)
         "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome.css"
         "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome-sidebar-only.css"
     )
+
+    # --- Tier 1: auto-generated structure graphs (Graphviz / dot) ------------
+    # These are *structure* graphs (class collaboration, include/dir trees,
+    # inheritance) — a navigation aid, NOT the curated *process* diagrams that
+    # live in docs/report.  They require Graphviz `dot`; if it is absent we log
+    # a hint and ship the docs without graphs rather than emit broken output.
+    # The verbose per-function call/caller graphs are opt-in: they are accurate
+    # but turn into hairballs on a state-heavy estimator.
+    option(GNSS_DOXYGEN_CALL_GRAPHS
+           "Add per-function call/caller graphs to Doxygen output (slow, verbose)" OFF)
+
+    if(DOXYGEN_DOT_FOUND)
+        set(DOXYGEN_HAVE_DOT            YES)
+        set(DOXYGEN_DOT_IMAGE_FORMAT    svg)   # zoomable, crisp at any scale
+        set(DOXYGEN_INTERACTIVE_SVG     YES)
+        set(DOXYGEN_DOT_MULTI_TARGETS   YES)
+        set(DOXYGEN_DOT_GRAPH_MAX_NODES 100)   # default 50 truncates our graphs
+        set(DOXYGEN_MAX_DOT_GRAPH_DEPTH 0)     # 0 = unlimited depth
+
+        # Structural graphs — cheap, high value for onboarding/navigation.
+        set(DOXYGEN_CLASS_GRAPH         YES)
+        set(DOXYGEN_COLLABORATION_GRAPH YES)
+        set(DOXYGEN_GROUP_GRAPHS        YES)
+        set(DOXYGEN_INCLUDE_GRAPH       YES)
+        set(DOXYGEN_INCLUDED_BY_GRAPH   YES)
+        set(DOXYGEN_GRAPHICAL_HIERARCHY YES)
+        set(DOXYGEN_DIRECTORY_GRAPH     YES)
+
+        # Call / caller graphs — opt in with -DGNSS_DOXYGEN_CALL_GRAPHS=ON.
+        if(GNSS_DOXYGEN_CALL_GRAPHS)
+            set(DOXYGEN_CALL_GRAPH   YES)
+            set(DOXYGEN_CALLER_GRAPH YES)
+        endif()
+
+        message(STATUS
+            "Doxygen: Graphviz dot found (${DOXYGEN_DOT_EXECUTABLE}); structure graphs enabled.")
+    else()
+        message(STATUS
+            "Doxygen: Graphviz 'dot' not found -- structure graphs disabled. "
+            "Install Graphviz (https://graphviz.org/download/), ensure dot is on "
+            "PATH, and re-run CMake to enable class/include/collaboration diagrams.")
+    endif()
+
     doxygen_add_docs(docs
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src

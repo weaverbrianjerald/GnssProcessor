@@ -1,0 +1,33 @@
+% ============================================================
+%  Foundations -- the shared mathematical substrate that every
+%  other component document builds on: notation, the state
+%  vector, the uncombined observation model, and the
+%  between-satellite / double-difference transformations.
+%
+%  These four are NOT "components"; they are the common
+%  language.  Keeping them in one document means the symbol
+%  table, state layout, and observation equations are defined
+%  once and cited (\Cref{sec:notation} ...) from everywhere.
+%
+%  The four \input'd files (notation.tex, state_vector.tex,
+%  observation_equations.tex, bssd_dd.tex) are pure content
+%  fragments -- edit those, not this wrapper.
+% ============================================================
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+
+\section{Notation and conventions}\label{sec:notation}
+\input{\subfix{notation.tex}}
+
+\section{State vector layout}\label{sec:state}
+\input{\subfix{state_vector.tex}}
+
+\section{Observation equations}\label{sec:obs}
+\input{\subfix{observation_equations.tex}}
+
+\section{Differencing transformations}\label{sec:diff}
+\input{\subfix{bssd_dd.tex}}
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

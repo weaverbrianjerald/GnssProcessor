@@ -908,7 +908,27 @@ namespace GnssProcessor {
             }
             sr_diag(i) = R_(i, i) - hphi;
         }
-        measurement.residuals_covariance = sr_diag.asDiagonal();
+
+        // Post-fit residual covariance.  Default: the diagonal Sr only (the
+        // outlier handler and residual trace consume Sr(i,i) alone).  Item
+        // #13A: when the off-diagonal-R kernel is enabled AND a dense R was
+        // supplied (BSSD / baseline-DD epochs, where R carries SD/DD cross-
+        // covariance), form the full Sr = R − H·P⁺·Hᵀ so the redundancy and
+        // w-test QC below honour correlated observations.  The diagonal of
+        // the full Sr is identical to sr_diag, so the existing outlier path
+        // sees the same per-row variances either way — only the off-diagonals
+        // (previously dropped) are added, behind the flag.
+        const bool dense_r_supplied =
+            (measurement.R_full.rows() == measurement.innovations.size() &&
+             measurement.R_full.cols() == measurement.innovations.size());
+        Eigen::MatrixXd Sr_full;   // empty unless the off-diagonal kernel is active
+        if (config_.enableFullRKernel() && dense_r_supplied) {
+            Sr_full = R_ - sparseHPHt(HP_new, Hs);          // m×m
+            Sr_full = 0.5 * (Sr_full + Sr_full.transpose());
+            measurement.residuals_covariance = Sr_full;
+        } else {
+            measurement.residuals_covariance = sr_diag.asDiagonal();
+        }
         const auto t_after_Sr = clk::now();
 
         // Phase totals in microseconds (wall clock).  Static accumulators
@@ -974,6 +994,20 @@ namespace GnssProcessor {
             sres(i) = (std::isfinite(val) && std::isfinite(denom) && denom > 0.0) ? (val / denom) : 0.0;
         }
         measurement.residuals_standardized = sres;
+
+        // --- Statistical QC layer (item #9): a-posteriori variance factor
+        //     (σ̂₀² = Σ vᵢ²/Rᵢᵢ / dof) + Baarda data-snooping (per-row
+        //     redundancy rᵢ, w-test wᵢ, MDBᵢ).  Pure diagnostics: the QC
+        //     values are stashed on @c measurement (logged + optionally used
+        //     by the data-snooping outlier gate) and never mutate the
+        //     propagated state/covariance.  Skipped entirely when both
+        //     toggles are off, so the hot path is unchanged.  When the
+        //     off-diagonal kernel built a full Sr it is passed through so the
+        //     redundancy/w-test honour correlated R.
+        if (config_.enableVarianceFactor() || config_.enableDataSnooping()) {
+            computeResidualQc_(measurement, R_, sr_diag,
+                               Sr_full.size() != 0 ? &Sr_full : nullptr);
+        }
 
         // --- Outlier handling ---
         // Runs for both PPP and baseline.  The Sr-clamped-to-R standardization
@@ -1190,7 +1224,26 @@ namespace GnssProcessor {
             sres(i) = (std::isfinite(val) && denom > 0.0) ? (val / denom) : 0.0;
         }
         measurement.residuals_standardized = sres;
-        measurement.residuals_covariance = sr_diag.asDiagonal();
+
+        // Item #13A: full Sr = R − H·P⁺·Hᵀ when the off-diagonal kernel is on
+        // and a dense R was supplied (mirrors update(); same value on the
+        // diagonal).  Then the same statistical QC (item #9) the primary
+        // path produces, so the residual trace carries vf / redundancy /
+        // w-test on relinearized epochs too.
+        const bool dense_r_supplied =
+            (measurement.R_full.rows() == m && measurement.R_full.cols() == m);
+        Eigen::MatrixXd Sr_full;
+        if (config_.enableFullRKernel() && dense_r_supplied) {
+            Sr_full = R - HP_new * measurement.H.transpose();   // m×m
+            Sr_full = 0.5 * (Sr_full + Sr_full.transpose());
+            measurement.residuals_covariance = Sr_full;
+        } else {
+            measurement.residuals_covariance = sr_diag.asDiagonal();
+        }
+        if (config_.enableVarianceFactor() || config_.enableDataSnooping()) {
+            computeResidualQc_(measurement, R, sr_diag,
+                               Sr_full.size() != 0 ? &Sr_full : nullptr);
+        }
 
         // --- Commit ---
         state_manager_.setStateVector(x_new);
@@ -1619,6 +1672,95 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
+    // Statistical QC: a-posteriori variance factor + Baarda data-snooping
+    // ===================================================================
+
+    void KalmanFilter::computeResidualQc_(
+        EpochMeasurement& meas, const Eigen::MatrixXd& R,
+        const Eigen::VectorXd& sr_diag, const Eigen::MatrixXd* Sr_full) const {
+
+        const Eigen::Index m = meas.residuals.size();
+        if (m == 0) {
+            meas.variance_factor = 1.0;
+            meas.variance_dof    = 0.0;
+            meas.residual_redundancy.resize(0);
+            meas.residual_wtest.resize(0);
+            meas.residual_mdb.resize(0);
+            return;
+        }
+
+        // Baarda non-centrality δ₀ for the configured critical value at the
+        // conventional 80% test power (β=0.20 → Φ⁻¹(0.80)=0.8416).  Used only
+        // to scale the minimal detectable bias; δ₀≈4.13 for the default
+        // k=3.29.  The a-priori variance of unit weight σ₀² is 1 (R is in
+        // absolute units), so MDBᵢ = σᵢ·δ₀/√rᵢ.
+        const double delta_0 = config_.dataSnoopingCritical() + 0.8416;
+        constexpr double kRedFloor = 1e-6;    // guard /√r
+        constexpr double kSrFloor  = 1e-12;   // guard /√Sr
+        const double kInf = std::numeric_limits<double>::infinity();
+
+        Eigen::VectorXd redundancy(m);
+        Eigen::VectorXd wtest(m);
+        Eigen::VectorXd mdb(m);
+        double wssr = 0.0;   // Σ vᵀR⁻¹v  (weighted post-fit residual SSR)
+        double dof  = 0.0;   // Σ rᵢ      (effective redundancy / degrees of freedom)
+
+        const bool use_full = (Sr_full != nullptr &&
+                               Sr_full->rows() == m && Sr_full->cols() == m &&
+                               R.rows() == m && R.cols() == m);
+
+        if (use_full) {
+            // Correlation-aware path (off-diagonal R kernel, item #13A):
+            //   redundancy matrix  Red = Sr · R⁻¹   → rᵢ = Red(i,i), dof = tr(Red)
+            //   w-test (Teunissen) wᵢ = (Sr⁻¹ v)ᵢ / √(Sr⁻¹)ᵢᵢ
+            //   wssr              = vᵀ R⁻¹ v
+            const Eigen::MatrixXd Rinv =
+                R.ldlt().solve(Eigen::MatrixXd::Identity(m, m));
+            const Eigen::MatrixXd Red   = (*Sr_full) * Rinv;
+            const Eigen::MatrixXd Srinv =
+                Sr_full->ldlt().solve(Eigen::MatrixXd::Identity(m, m));
+            const Eigen::VectorXd Srinv_v = Srinv * meas.residuals;
+            wssr = meas.residuals.dot(Rinv * meas.residuals);
+            for (Eigen::Index i = 0; i < m; ++i) {
+                double r_i = Red(i, i);
+                r_i = std::isfinite(r_i) ? std::min(std::max(r_i, 0.0), 1.0) : 0.0;
+                redundancy(i) = r_i;
+                dof += r_i;
+                const double srinv_ii = Srinv(i, i);
+                wtest(i) = (std::isfinite(srinv_ii) && srinv_ii > kSrFloor &&
+                            std::isfinite(Srinv_v(i)))
+                    ? Srinv_v(i) / std::sqrt(srinv_ii) : 0.0;
+                const double sigma_i = (R(i, i) > 0.0) ? std::sqrt(R(i, i)) : 0.0;
+                mdb(i) = (r_i > kRedFloor) ? sigma_i * delta_0 / std::sqrt(r_i) : kInf;
+            }
+        } else {
+            // Diagonal (uncorrelated) path — the common PPP case.
+            for (Eigen::Index i = 0; i < m; ++i) {
+                const double Rii  = (i < R.rows() && R(i, i) > 0.0) ? R(i, i) : 0.0;
+                const double srii = (i < sr_diag.size()) ? sr_diag(i) : 0.0;
+                const double v_i  = meas.residuals(i);
+                double r_i = (Rii > 0.0) ? srii / Rii : 0.0;
+                r_i = std::isfinite(r_i) ? std::min(std::max(r_i, 0.0), 1.0) : 0.0;
+                redundancy(i) = r_i;
+                dof += r_i;
+                if (Rii > 0.0 && std::isfinite(v_i)) wssr += (v_i * v_i) / Rii;
+                // True studentized residual (NOT floored at R) — the Baarda w-test.
+                const double srii_pos = std::max(srii, kSrFloor);
+                wtest(i) = std::isfinite(v_i) ? v_i / std::sqrt(srii_pos) : 0.0;
+                const double sigma_i = (Rii > 0.0) ? std::sqrt(Rii) : 0.0;
+                mdb(i) = (r_i > kRedFloor) ? sigma_i * delta_0 / std::sqrt(r_i) : kInf;
+            }
+        }
+
+        meas.residual_redundancy = redundancy;
+        meas.residual_wtest      = wtest;
+        meas.residual_mdb        = mdb;
+        meas.variance_dof        = dof;
+        meas.variance_factor     =
+            (dof > 1e-9 && std::isfinite(wssr)) ? (wssr / dof) : 1.0;
+    }
+
+    // ===================================================================
     // Post-fit residual validation
     // ===================================================================
 
@@ -1759,6 +1901,48 @@ namespace GnssProcessor {
             "{}Residual summary: max|sres|={:.3f} at idx={}, RMS|sres|={:.3f}, "
             "over_threshold={}/{}, σ_pos=({:.3f}, {:.3f}, {:.3f}) m",
             epoch_prefix, max_sres, max_idx, rms_sres, num_over, num_obs, sx, sy, sz);
+
+        // --- Statistical QC reporting (item #9) ---------------------------
+        // Diagnostics only — the propagated state/covariance are untouched.
+        // The variance factor rescales a REPORTING copy of σ_pos
+        // (σ_pos → formal·√σ̂₀²); it never feeds back into P.
+        if (config_.enableVarianceFactor()) {
+            const double vf = measurement.variance_factor;
+            const double sf = (std::isfinite(vf) && vf > 0.0) ? std::sqrt(vf) : 1.0;
+            klogger->log(residual_summary_level,
+                "{}Variance factor: sigma0^2={:.3f}, dof={:.2f}, "
+                "sigma_pos(scaled)=({:.3f}, {:.3f}, {:.3f}) m",
+                epoch_prefix, vf, measurement.variance_dof,
+                sx * sf, sy * sf, sz * sf);
+        }
+        if (config_.enableDataSnooping() &&
+            measurement.residual_wtest.size() == sres.size() &&
+            measurement.residual_redundancy.size() == sres.size()) {
+            constexpr double kUncheckableRedundancy = 0.1;
+            const double w_crit = config_.dataSnoopingCritical();
+            size_t n_uncheckable = 0, n_flagged = 0;
+            double max_w = 0.0;
+            size_t max_w_idx = 0;
+            for (Eigen::Index i = 0; i < measurement.residual_wtest.size(); ++i) {
+                if (measurement.residual_redundancy(i) < kUncheckableRedundancy) {
+                    ++n_uncheckable;
+                    continue;
+                }
+                const double w_i = std::abs(measurement.residual_wtest(i));
+                if (!std::isfinite(w_i)) continue;
+                if (w_i > max_w) { max_w = w_i; max_w_idx = static_cast<size_t>(i); }
+                if (w_i > w_crit) ++n_flagged;
+            }
+            const std::string w_sat = (max_w_idx < measurement.satellite_ids.size())
+                ? measurement.satellite_ids[max_w_idx] : std::string("?");
+            const std::string w_sig = (max_w_idx < measurement.signal_types.size())
+                ? measurement.signal_types[max_w_idx] : std::string("?");
+            klogger->log(residual_summary_level,
+                "{}Data-snooping: max|w|={:.3f} ({} {}) vs w_crit={:.2f}, "
+                "flagged={}, uncheckable={}/{}",
+                epoch_prefix, max_w, w_sat, w_sig, w_crit,
+                n_flagged, n_uncheckable, num_obs);
+        }
 
         // --- Pivot slip detector (MAD-based, percentage-thresholded) ---
         //
@@ -2686,11 +2870,50 @@ namespace GnssProcessor {
             }
         }
 
+        // --- Baarda data-snooping gate override (item #9) -----------------
+        // Default: the outlier gate fires on the fixed σ threshold
+        // (gate_stat/gate_idx/gate_crit ≡ max_sres/max_idx/threshold), so the
+        // dispatch below is byte-identical when data-snooping is off.
+        //
+        // When data-snooping is enabled, the gate instead fires on the Baarda
+        // w-test |wᵢ| > dataSnoopingCritical() over CHECKABLE rows (redundancy
+        // ≥ floor), and selects the worst checkable |w| row to handle.
+        // Low-redundancy rows are skipped as uncheckable: their residual is
+        // unreliable (a blunder there is absorbed into the estimate, so
+        // resetting the corresponding ambiguity would discard good
+        // information).  The downstream MW tiebreaker still operates in the
+        // σ-domain; if the w-test caught a blunder the σ cut missed, the
+        // tiebreaker finds no σ-candidates and the w-selected row is handled
+        // directly.
+        double gate_stat = max_sres;
+        size_t gate_idx  = max_idx;
+        double gate_crit = threshold;
+        if (config_.enableDataSnooping() &&
+            measurement.residual_wtest.size() == sres.size() &&
+            measurement.residual_redundancy.size() == sres.size()) {
+            constexpr double kUncheckableRedundancy = 0.1;
+            double max_w = -1.0;
+            size_t max_w_idx = max_idx;
+            for (Eigen::Index i = 0; i < measurement.residual_wtest.size(); ++i) {
+                if (measurement.residual_redundancy(i) < kUncheckableRedundancy) continue;
+                const double w_i = std::abs(measurement.residual_wtest(i));
+                if (std::isfinite(w_i) && w_i > max_w) {
+                    max_w = w_i;
+                    max_w_idx = static_cast<size_t>(i);
+                }
+            }
+            if (max_w >= 0.0) {
+                gate_stat = max_w;
+                gate_idx  = max_w_idx;
+                gate_crit = config_.dataSnoopingCritical();
+            }
+        }
+
         // --- Dispatch outlier handling ---
         bool is_outlier_found = false;
         bool is_complete_reset = false;
 
-        if (max_sres > threshold) {
+        if (gate_stat > gate_crit) {
 
             // (The per-row residual table dump for outlier
             // diagnosis is now handled by the ascending-conciseness
@@ -2705,7 +2928,13 @@ namespace GnssProcessor {
             // outliers with nearly equal |sres|, the raw maximum pick is
             // unreliable.  Use MW deviation scores to identify the satellite
             // most likely to have actually slipped.
-            size_t chosen_idx = max_idx;
+            //
+            // chosen_idx is seeded from gate_idx (≡ max_idx unless
+            // data-snooping reselected the row via the w-test).  The σ-domain
+            // tiebreaker below only refines among rows the σ cut also flags;
+            // when data-snooping fired on a row the σ cut missed, no
+            // σ-candidate is collected and the w-selected gate_idx is kept.
+            size_t chosen_idx = gate_idx;
             if (!measurement.signal_types[max_idx].empty()
                 && measurement.signal_types[max_idx][0] == 'L'
                 && cycle_slip_manager_) {

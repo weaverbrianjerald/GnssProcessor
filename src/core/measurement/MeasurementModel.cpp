@@ -150,6 +150,20 @@ namespace GnssProcessor {
             && ppp_model_.hasBiasEntry(satellite, sig2);
     }
 
+    bool MeasurementModel::ssrCoversCodeSignal(const std::string& satellite,
+                                               const std::string& signal) const {
+        // Match buildJacobianRow's ssr_bias_term gate exactly: the network
+        // producer ESTIMATES satellite biases (importing them would render those
+        // states unobservable), so it never imports SSR code biases and must
+        // keep estimating them.  Everywhere else, a presence check against the
+        // live store: true iff a non-trivial ssr_bias_term will load this exact
+        // (sat, raw signal) row, in which case an estimated sat-bias state for
+        // the same row would be redundant.  Empty store in post-processing -> false.
+        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
+            return false;
+        return SsrCorrectionStore::getInstance().hasCodeBias(satellite, signal);
+    }
+
     bool MeasurementModel::ifCombHasFullRxAtx(const std::string& if_key,
                                                System system) const {
         const size_t us = if_key.find('_');
@@ -878,7 +892,33 @@ namespace GnssProcessor {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type.find('_') != std::string::npos) continue;
                     if (ref_type[0] != 'C') continue;  // code-only
-                    if (ppp_model_.hasBiasEntry(obs.satellite, ref_type)) continue;
+                    // Per-slot GLONASS IFB owns the receiver-side code delay on
+                    // the FDMA band where it creates a state.  A per-(sat,signal)
+                    // sat-bias on that same signal is collinear with it (both
+                    // unit-coefficient and additive), so skip sat-bias creation
+                    // wherever resolveReceiverBias yields a per-slot IFB key.
+                    // Signals with no IFB state (k=0 datum, unknown slot, CDMA
+                    // band) fall through and keep their sat-bias fallback.
+                    if (config_.enableGlonassIfb() && config_.estimateIfb()
+                        && obs.system == System::GLONASS
+                        && !state_initializer_.resolveReceiverBias(
+                                ref_type, obs.system, obs.satellite).state_key.empty())
+                        continue;
+                    // "Already corrected?" — consult BOTH bias sources, not just
+                    // the static .BIA product.  In real-time there is no .BIA, so
+                    // hasBiasEntry is false for every signal and the live SSR
+                    // stream is the actual correction source, applied (ungated) as
+                    // ssr_bias_term in buildJacobianRow.  Without the SSR check a
+                    // redundant, near-frozen (sat_bias_q~1e-10) per-(sat,signal)
+                    // state gets created for every SSR-covered signal — the bug
+                    // this gate fixes.  Per-(sat,signal): IGS streams are partial
+                    // (e.g. E1 covered, E5a/E5b not), so a signal SSR does NOT
+                    // carry still gets its state (its only code correction).  The
+                    // strict prune below drops the state the epoch SSR coverage
+                    // arrives mid-arc; ensureRequiredStates re-creates it if
+                    // coverage later disappears.
+                    if (ppp_model_.hasBiasEntry(obs.satellite, ref_type)
+                        || ssrCoversCodeSignal(obs.satellite, ref_type)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
@@ -1426,10 +1466,16 @@ namespace GnssProcessor {
                         && config_.noBiaCodeDownweight() > 1.0
                         && ref_type.size() >= 2 && ref_type[0] == 'C') {
                         const bool is_if = (ref_type.find('_') != std::string::npos);
+                        // A signal the live SSR stream corrects is NOT missing
+                        // bias coverage — ssr_bias_term loads the row — so it must
+                        // not be downweighted as if uncorrected.  (Raw signals
+                        // only; IF rows get ssr_bias_term=0, so the IF branch is
+                        // left on the .BIA check alone.)
                         const bool missing_bia = is_if
                             ? !ifCombHasFullBia(obs.satellite, ref_type)
                             : (config_.isUncombinedEnabled()
-                               && !ppp_model_.hasBiasEntry(obs.satellite, ref_type));
+                               && !ppp_model_.hasBiasEntry(obs.satellite, ref_type)
+                               && !ssrCoversCodeSignal(obs.satellite, ref_type));
                         if (missing_bia)
                             update.R_v(row) *= config_.noBiaCodeDownweight();
                     }
@@ -2138,6 +2184,31 @@ namespace GnssProcessor {
             for (const auto& r : rows) {
                 if (r.obs_type != 'L') continue;
                 expected.emplace(r.cons, r.sat_i, r.rov_code, r.sat_p);
+            }
+            // Protect ambiguities for phase rows EXCLUDED this pass by the KF
+            // rebuild loop.  An excluded row never enters @c rows, so its
+            // (cons,sat_i,code,pivot) tuple is absent from @c expected above and
+            // the prune below would delete the very ambiguity state the KF just
+            // soft-reset — undoing the outlier-recovery reseed and forcing a
+            // from-scratch reinit (innov_pre, amb_init_var) next epoch, which
+            // loses the converged float + covariance.  Reconstruct each excluded
+            // row's expected tuple under this epoch's pivot and keep it live.
+            // The KF exclusion token is "sat_i_<rov_code>" (or "..._<rov>/<ref>"
+            // when aliased); the DD ambiguity key uses rov_code.  Genuine leak
+            // paths (sat dropout, code switch, pivot change) never appear in
+            // @c excluded_measurements — those sats produce no row to exclude —
+            // so this does not weaken the prune.
+            for (const auto& ex : excluded_measurements) {
+                const auto us = ex.find('_');
+                if (us == std::string::npos || us + 1 >= ex.size()) continue;
+                const std::string sat_i = ex.substr(0, us);
+                std::string code = ex.substr(us + 1);
+                const auto slash = code.find('/');
+                if (slash != std::string::npos) code = code.substr(0, slash);  // rover code
+                const std::string cons = ddConstellationOf(sat_i);
+                auto pit = pivots.find(cons);
+                if (pit == pivots.end()) continue;
+                expected.emplace(cons, sat_i, code, pit->second);
             }
             std::vector<std::string> to_prune;
             for (const auto& [key, idx] : state_manager_.getAmbiguities()) {

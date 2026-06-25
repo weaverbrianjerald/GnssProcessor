@@ -7,6 +7,7 @@
 #include "model/PppModel.hpp"
 #include "products/ProductCache.hpp"
 #include "common/Constants.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -88,6 +89,48 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     const char sys_char = systemToClockRefChar(system);
     if (sys_char == '\0') return result;
 
+    // -----------------------------------------------------------------------
+    // GLONASS per-FCN-slot receiver inter-frequency code bias.
+    //
+    // FDMA: each GLONASS slot transmits on a distinct carrier frequency
+    // (f = f_base + k*df), so the receiver group delay differs per slot.  A
+    // single per-band IFB/DCB state cannot represent that, which is why the
+    // legacy path below excludes GLONASS.  When enable_glonass_ifb is set we
+    // instead emit one bias state per (FDMA band, slot k) with unit coefficient.
+    //
+    // Datum: the central channel k=0 is the held reference (no state).  In
+    // undifferenced PPP its constant is absorbed by the GLONASS ISB (a hard
+    // anchor when a k=0 sat is up, otherwise a soft ISB/mean-IFB gauge).  Under
+    // BSSD these columns survive the receiver-block zeroing (two sats on
+    // different slots do NOT cancel), but only the inter-slot DIFFERENCES are
+    // measurement-determined; the common offset of the {IFB(k)} set is an
+    // unobservable gauge held softly by the per-slot prior.  That gauge lives in
+    // the SD null space, so letting it drift does not affect position — it is
+    // benign by construction.  Only the FDMA bands (G1='1', G2='2') are slot-
+    // dependent;
+    // the CDMA bands (G3/G4/G6) have a fixed frequency and keep the legacy
+    // per-band treatment.
+    //
+    // This runs BEFORE the clock-reference lookup below because GLONASS usually
+    // has no SATELLITE_CLOCK_REFERENCE_OBSERVABLES entry in the .BIA product
+    // (empty reference pair), which would otherwise early-return and never reach
+    // any IFB logic.
+    if (system == System::GLONASS && config_.enableGlonassIfb()) {
+        const char band = (obs_signal.size() >= 2) ? obs_signal[1] : '\0';
+        if (band == '1' || band == '2') {           // FDMA bands only
+            // Resolve k from the model's SEEDED PppUtils (RINEX header / live
+            // broadcast), not this class's own un-seeded instance whose
+            // getGlonassChannel would fall back to the stale default table.
+            const int k = ppp_model_.getGlonassChannel(satellite);
+            if (k < -7 || k > 6) return result;      // unknown slot -> no IFB column
+            if (k == 0) return result;               // central channel = held datum
+            result.state_key   = StateKeys::makeGlonassPerSlotIfbKey(
+                                     PppUtils::getSystemString(system), band, k);
+            result.coefficient = 1.0;
+        }
+        return result;  // GLONASS fully handled here (per-slot, or none for CDMA/k=0)
+    }
+
     const auto& clock_refs = ProductCache::getInstance().getClockRefSignals();
     auto it = clock_refs.find(sys_char);
     if (it == clock_refs.end()) return result;
@@ -100,12 +143,13 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     const char band_2 = (ref.sig2.size() >= 2) ? ref.sig2[1] : '\0';
     if (band_j == '\0' || band_1 == '\0' || band_2 == '\0') return result;
 
-    // Non-reference band: independent IFB state.  GLONASS is excluded (v1):
+    // Non-reference band: independent IFB state.  GLONASS is excluded HERE:
     // its FDMA per-channel receiver delay cannot be captured by a single
     // per-band IFB state shared across slots — that would be unphysical and
-    // bias every channel — so a non-reference GLONASS band carries no IFB
-    // state and its delay is absorbed by the per-(sat,signal) bias path /
-    // residual de-weighting.  Per-slot GLONASS IFB is a v2 refinement.
+    // bias every channel.  The estimable per-(band,slot) treatment lives in the
+    // enable_glonass_ifb branch above; when that flag is off a non-reference
+    // GLONASS band carries no IFB state and its delay is absorbed by the
+    // per-(sat,signal) bias path / residual de-weighting.
     if (band_j != band_1 && band_j != band_2) {
         if (system == System::GLONASS) return result;   // no FDMA per-band IFB
         result.state_key   = sys + "_IFB" + band_j;

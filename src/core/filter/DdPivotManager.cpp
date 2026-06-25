@@ -37,7 +37,17 @@ namespace GnssProcessor {
         for (const auto& [cons, sats] : candidates) {
             std::string chosen;
             auto sticky_it = sticky_.find(cons);
-            if (sticky_it != sticky_.end()
+
+            // A KF-detected coherent pivot slip (forwarded from the baseline
+            // driver via requestForcedRerank) forces a re-rank for this
+            // constellation even if the incumbent is still a candidate, and
+            // excludes the offset / co-disturbed satellites so the re-rank
+            // lands on a clean pivot rather than re-picking the slipped one.
+            auto forced_it = forced_rerank_.find(cons);
+            const bool forced = (forced_it != forced_rerank_.end());
+            const std::set<std::string>* excl = forced ? &forced_it->second : nullptr;
+
+            if (!forced && sticky_it != sticky_.end()
              && sats.find(sticky_it->second) != sats.end()) {
                 // Incumbent is still in the candidate set — keep it.
                 chosen = sticky_it->second;
@@ -46,19 +56,24 @@ namespace GnssProcessor {
                 // Same scoring as the legacy inline implementation.
                 double best = -1.0;
                 for (const auto& [sat, info] : sats) {
+                    if (excl && excl->count(sat)) continue;  // skip slipped / co-disturbed
                     const double score = info.avg_snr
                                        + 0.01 * static_cast<double>(info.num_sigs);
                     if (score > best) { best = score; chosen = sat; }
                 }
-                if (!chosen.empty() && sticky_it != sticky_.end()) {
+                if (!chosen.empty() && sticky_it != sticky_.end()
+                 && chosen != sticky_it->second) {
                     log_manager_.getLogger("main_log")->info(
-                        "DD pivot handover for '{}': '{}' -> '{}'",
+                        "DD pivot {} for '{}': '{}' -> '{}'",
+                        forced ? "forced re-rank (KF slip)" : "handover",
                         cons, sticky_it->second, chosen);
                 }
             }
             if (!chosen.empty()) pivots[cons] = chosen;
         }
         sticky_ = pivots;
+        // Forced-rerank requests are one-shot: consumed this epoch.
+        forced_rerank_.clear();
 
         // Apply S-transform on any pivot that changed, so existing DD
         // ambiguities are re-referenced rather than reset and reseeded.

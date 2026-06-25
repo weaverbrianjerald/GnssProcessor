@@ -114,6 +114,8 @@ namespace GnssProcessor {
         std::string ntrip_password;               ///< NTRIP password.
         std::string nmea_gga;                     ///< Optional GGA sentence for VRS.
         int         reconnect_delay_s{ 5 };       ///< Seconds before reconnect on failure.
+        bool        ntrip_use_tls{ false };       ///< Connect to the primary caster over HTTPS (port-443 casters such as CDDIS).  Transport setting, not a GnssConfig feature flag.  Default false keeps plain-HTTP casters byte-identical.
+        bool        ntrip_tls_insecure{ false };  ///< When @c ntrip_use_tls, skip TLS certificate verification (testing only).
         std::string input_type{ "ntrip" };        ///< Transport for the primary stream: "ntrip", "tcp", "file".
         std::string input_format{ "rtcm" };       ///< Wire format of the primary stream: "rtcm" or "sbf" (Septentrio Binary Format).
         std::string input_path;                   ///< Path for "file" input.
@@ -145,6 +147,8 @@ namespace GnssProcessor {
             std::string ntrip_password;
             std::string nmea_gga;
             int         reconnect_delay_s{ 5 };
+            bool        ntrip_use_tls{ false };   ///< Connect this aux caster over HTTPS (CDDIS-class port-443 SSR/nav mountpoints).
+            bool        ntrip_tls_insecure{ false }; ///< When @c ntrip_use_tls, skip TLS certificate verification (testing only).
             std::string input_path;               ///< Path for "file" input_type.
             std::string tcp_host;                 ///< Host for "tcp" input.
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
@@ -1455,7 +1459,8 @@ namespace GnssProcessor {
         // --- Geophysical site displacements ---
         bool enable_solid_earth_tide{ true };          ///< IERS 2010 solid Earth tide displacement.
         bool enable_ocean_tide_loading{ true };        ///< Ocean tidal loading displacement (BLQ).
-        bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP).
+        bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP): IERS 2010 Sec. 7.1.4 rotational deformation.
+        bool enable_ocean_pole_tide{ false };          ///< Ocean pole tide load displacement (IERS 2010 Sec. 7.1.5 / Desai 2002), added on top of @c enable_pole_tide.  Requires the opole load grid (files.opt_grid_path or <data>/static/opole/).  ~0.1-2 mm; default off keeps runs byte-identical.
         bool enable_atmospheric_loading{ true };       ///< Atmospheric pressure loading displacement.
 
         // --- Antenna phase centre ---

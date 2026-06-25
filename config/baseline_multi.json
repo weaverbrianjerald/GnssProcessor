@@ -43,7 +43,7 @@
     "epoch_sync_tolerance_s": 0.01,
     "code_only": false,
     "signal_aliasing": true,
-    "use_iono_free": true,
+    "use_iono_free": false,
     "estimate_differential_tropo": true,
     "differential_tropo_init_std_m": 0.1,
     "differential_tropo_process_noise_m_per_sqrt_s": 1e-4,

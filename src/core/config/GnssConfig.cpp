@@ -14,6 +14,7 @@
  */
 
 #include "config/GnssConfig.hpp"
+#include "math/TimeUtils.hpp"   // GnssTime definition + mjdToDecimalYear / gpsTimeToUtcMjd
 
 namespace GnssProcessor {
 
@@ -123,11 +124,21 @@ namespace GnssProcessor {
         , relinearize_max_count_{ -1 }
         , eigen_threads_{ 1 }
         , run_smoother_{ false }
+        , enable_noncausal_slip_bridge_{ false }
+        , slip_bridge_half_window_epochs_{ 30 }
+        , pre_bridge_float_tol_cycles_{ 0.5 }
+        , pre_bridge_conv_var_m2_{ 0.0025 }
+        , enable_auto_report_{ false }
+        , report_backend_{ "matplotlib" }
+        , report_python_{ "" }
+        , report_viewers_{}
+        , report_async_{ false }
         , estimate_phase_clock_{ false }
         , enable_if_slip_detector_{ false }
         , accumulate_phase_windup_{ false }
         , enable_between_satellite_sd_{ false }
         , enable_glonass_bssd_{ false }
+        , enable_glonass_ifb_{ false }
         , bssd_pivot_min_elevation_deg_{ 45.0 }
         , pivot_slip_min_cycles_{ 0.25 }
         , persistent_bias_min_cycles_{ 0.10 }
@@ -162,7 +173,29 @@ namespace GnssProcessor {
         , ar_wl_max_frac_{ 0.40 }
         , ar_min_success_rate_{ 0.999 }
         , ar_nl_max_per_pair_frac_{ 0.15 }
+        , ar_enable_partial_ar_{ false }
     {
+    }
+
+    // =================================================================
+    //  ITRF velocity propagation of the fixed a-priori reference position
+    // =================================================================
+    std::array<double, 3> GnssConfig::getReferencePositionEcefAtEpoch(const GnssTime& t) const {
+        // No propagation unless explicitly enabled with a velocity and a
+        // reference epoch, and a valid observation epoch to propagate to.
+        if (!enable_itrf_velocity_ || !has_reference_velocity_ ||
+            reference_position_epoch_year_ == 0.0 || t.week <= 0) {
+            return reference_position_ecef_;
+        }
+        // Linear plate motion: r(t) = r0 + v·(year(t) − t0).  Sub-day precision
+        // in the decimal year is irrelevant at cm/yr station velocities.
+        const double year = TimeUtils::mjdToDecimalYear(TimeUtils::gpsTimeToUtcMjd(t));
+        const double dt   = year - reference_position_epoch_year_;  // years
+        return {
+            reference_position_ecef_[0] + reference_velocity_ecef_[0] * dt,
+            reference_position_ecef_[1] + reference_velocity_ecef_[1] * dt,
+            reference_position_ecef_[2] + reference_velocity_ecef_[2] * dt,
+        };
     }
 
 } // namespace GnssProcessor

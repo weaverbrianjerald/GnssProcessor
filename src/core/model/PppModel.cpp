@@ -31,6 +31,7 @@
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -244,6 +245,36 @@ std::vector<std::string> activeFrequencyBands(
             ionosphere_.emplace(config, log_manager, product_parser, rinex_parser);
         }
 
+        // Ocean pole tide (IERS 2010 Sec. 7.1.5 / Desai 2002): interpolate the
+        // six per-station load coefficients from the global opole grid into
+        // gnss_corrections_ — the SAME instance whose computePoleTideCorrection
+        // is invoked per-epoch by computePoleTideProjection (the Geometry-owned
+        // GnssCorrections that handles OTL/solid tide is a different object and
+        // does NOT compute the pole tide).  Gated by enable_ocean_pole_tide;
+        // default off never touches the grid, so runs stay byte-identical.
+        if (config.getModelCorrections().enable_ocean_pole_tide) {
+            auto log = log_manager_.getLogger("ppp_model");
+            const Eigen::Vector3d opt_ecef = rinex_parser_.getApproxPositionXyz();
+            std::filesystem::path opt_grid = config.getOptGridPath();
+            if (opt_grid.empty()) {
+                opt_grid = config.getInternalDataRoot() / "static" / "opole"
+                         / "opoleloadcoefcmcor.txt";
+            }
+            if (opt_ecef.allFinite() && opt_ecef.norm() > 1e6
+                && !opt_grid.empty() && std::filesystem::exists(opt_grid)) {
+                if (gnss_corrections_.loadOceanPoleTideFromGrid(opt_grid.string(), opt_ecef))
+                    log->info("Ocean pole tide: coefficients loaded from '{}'", opt_grid.string());
+                else
+                    log->warn("Ocean pole tide: grid load failed for '{}'; OPT disabled",
+                              opt_grid.string());
+            } else {
+                log->warn("Ocean pole tide enabled but grid not found ('{}') or station ECEF "
+                          "invalid; OPT disabled. Place opoleloadcoefcmcor.txt under "
+                          "<data>/static/opole/.",
+                          opt_grid.empty() ? "<unset>" : opt_grid.string());
+            }
+        }
+
         // Connect GLONASS frequency slots from RINEX parser to PppUtils
         ppp_utils_.setGlonassSlots(rinex_parser_.getGlonassFreqSlots());
         log_manager_.getLogger("ppp_model")->info(
@@ -270,11 +301,25 @@ std::vector<std::string> activeFrequencyBands(
             // (bypasses RINEX APPROX POSITION and antenna offset). This is intended
             // for fixed-station residual analysis with zero position process noise.
             if (config_.hasReferencePosition()) {
-                const auto& rp = config_.getReferencePositionEcef();
+                // Propagate the fixed a-priori to the observation epoch via the
+                // configured ITRF station velocity (no-op when disabled/unset).
+                const GnssTime t_obs = rinex_parser_.getTimeOfFirstObs();
+                const auto rp = config_.getReferencePositionEcefAtEpoch(t_obs);
                 state.position = Eigen::Vector3d(rp[0], rp[1], rp[2]);
-                log_manager_.getLogger("ppp_model")->info(
-                    "Using user-supplied reference position: ({:.4f}, {:.4f}, {:.4f}) m",
-                    state.position.x(), state.position.y(), state.position.z());
+                if (config_.enableItrfVelocity()) {
+                    const auto& r0 = config_.getReferencePositionEcef();
+                    log_manager_.getLogger("ppp_model")->info(
+                        "Using user-supplied reference position (ITRF-velocity propagated): "
+                        "({:.4f}, {:.4f}, {:.4f}) m [r0=({:.4f}, {:.4f}, {:.4f}), "
+                        "shift=({:+.4f}, {:+.4f}, {:+.4f}) m]",
+                        rp[0], rp[1], rp[2], r0[0], r0[1], r0[2],
+                        rp[0] - r0[0], rp[1] - r0[1], rp[2] - r0[2]);
+                }
+                else {
+                    log_manager_.getLogger("ppp_model")->info(
+                        "Using user-supplied reference position: ({:.4f}, {:.4f}, {:.4f}) m",
+                        state.position.x(), state.position.y(), state.position.z());
+                }
             }
             else if (Eigen::Vector3d marker_pos = rinex_parser_.getApproxPositionXyz();
                      marker_pos.norm() > 1e3 && !marker_pos.hasNaN()) {

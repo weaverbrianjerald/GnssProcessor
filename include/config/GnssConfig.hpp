@@ -481,6 +481,38 @@ namespace GnssProcessor {
         const ReceiverAntennaOrientation& getReceiverAntennaOrientation() const { return receiver_antenna_orientation_; }
 
         /**
+         * @brief Check whether receiver antenna azimuth orientation is applied.
+         *
+         * When true, the receiver PCV look-up azimuth is corrected for the
+         * physical mounting orientation of the antenna (azimuth measured
+         * clockwise from local North) before interpolating the ANTEX PCV
+         * grid: @c az_pcv = wrap(az_measured - orientation_azimuth).  Only the
+         * receiver PCV is affected — the satellite PCV (computed in the
+         * satellite body frame) and the receiver PCO (a line-of-sight
+         * projection, not an azimuth look-up) are intentionally unchanged.
+         * Off by default so legacy runs stay byte-identical.
+         *
+         * @return True if receiver antenna orientation correction is enabled.
+         * @see getReceiverAntennaOrientation()
+         */
+        bool enableRxAntennaOrientation() const { return enable_rx_antenna_orientation_; }
+
+        /**
+         * @brief Check whether receiver antenna model substitution is allowed.
+         *
+         * When true and the RINEX receiver antenna type has no matching ATX
+         * entry, a rule-driven substitution is attempted before giving up: an
+         * explicit deprecated-code table followed by the IGS radome→NONE
+         * fallback (use the radome-agnostic "NONE" calibration when the
+         * specific radome is uncalibrated).  The first valid substitute is
+         * used and a warning is logged.  Off by default so a missing model
+         * still yields a zero receiver correction exactly as before.
+         *
+         * @return True if receiver antenna substitution is enabled.
+         */
+        bool enableRxAntennaSubstitution() const { return enable_rx_antenna_substitution_; }
+
+        /**
          * @brief Gets the process noise parameters.
          * @return Reference to the ProcessNoise struct.
          */
@@ -628,6 +660,65 @@ namespace GnssProcessor {
         double getResidualThreshold() const { return residual_threshold_; }
 
         /**
+         * @brief Check if the a-posteriori variance factor (σ̂₀²) is computed.
+         *
+         * When true, the Kalman filter forms the a-posteriori variance of
+         * unit weight σ̂₀² = (Σ vᵢ²/Rᵢᵢ)/dof from the post-fit residuals each
+         * epoch (dof = Σ redundancy numbers), logs it on the residual-summary
+         * line, and rescales a *reporting copy* of the position covariance
+         * (σ_pos → formal·√σ̂₀²).  The propagated covariance P is never
+         * touched, so the trajectory stays byte-identical to the flag-off
+         * path.  Diagnostic only; estimation-domain toggle.
+         *
+         * @return True if the variance factor is computed and reported.
+         */
+        bool enableVarianceFactor() const { return enable_variance_factor_; }
+
+        /**
+         * @brief Check if Baarda data-snooping QC is enabled.
+         *
+         * When true the filter forms, per observation row, the redundancy
+         * number rᵢ = Sr_ii/Rᵢᵢ, the Baarda w-test statistic
+         * wᵢ = vᵢ/√Sr_ii, and the minimal detectable bias
+         * MDBᵢ = σᵢ·δ₀/√rᵢ; surfaces them in the residual trace; flags
+         * low-redundancy rows (rᵢ below an internal floor) as uncheckable;
+         * and drives the post-fit outlier gate on |wᵢ| >
+         * dataSnoopingCritical() over checkable rows instead of the fixed σ
+         * threshold.  Default off → the existing outlier path is
+         * byte-identical.
+         *
+         * @return True if Baarda data-snooping is enabled.
+         */
+        bool enableDataSnooping() const { return enable_data_snooping_; }
+
+        /**
+         * @brief Baarda w-test critical value (standardized-residual reject bound).
+         *
+         * Default 3.29 ≙ two-sided per-test significance α₀ = 0.001
+         * (Baarda B-method).  Only consulted when enableDataSnooping() is
+         * true.
+         *
+         * @return The |w| rejection threshold.
+         */
+        double dataSnoopingCritical() const { return data_snooping_critical_; }
+
+        /**
+         * @brief Check if the off-diagonal measurement covariance is honoured
+         *        in the post-fit residual kernel.
+         *
+         * The gain/Joseph path already uses the full R whenever a dense
+         * R_full block is supplied (BSSD / baseline-DD epochs).  When this
+         * flag is true the *post-fit residual* covariance is also formed as
+         * the full Sr = R − H·P⁺·Hᵀ (not just its diagonal), so the
+         * redundancy numbers and w-test (see enableDataSnooping()) honour
+         * correlated observations exactly.  Default off → the diagonal
+         * standardization path is byte-identical.  Estimation-domain toggle.
+         *
+         * @return True if the off-diagonal R kernel is active.
+         */
+        bool enableFullRKernel() const { return enable_full_r_kernel_; }
+
+        /**
          * @brief Gets the percentage of bad measurements allowed.
          * @return Bad measurement percentage.
          */
@@ -650,6 +741,12 @@ namespace GnssProcessor {
          * @return Path to the BLQ file (empty if not configured).
          */
         std::filesystem::path getOtlBlqPath() const { return otl_blq_path_; }
+
+        /**
+         * @brief Gets the ocean pole tide load grid path (opoleloadcoefcmcor.txt).
+         * @return Explicit grid path, or empty to use the internal static default.
+         */
+        std::filesystem::path getOptGridPath() const { return opt_grid_path_; }
 
         /**
          * @brief Gets the number of leap seconds.
@@ -677,6 +774,134 @@ namespace GnssProcessor {
          * @return True if the backward smoother should run after the forward pass.
          */
         bool runSmoother() const { return run_smoother_; }
+
+        /**
+         * @brief Check if cross-session normal-equation export is enabled.
+         *
+         * When true, the post-processing run accumulates a label-keyed normal
+         * system alongside the Kalman filter — N += HᵀR⁻¹H, u += HᵀR⁻¹Δz,
+         * ltpl += ΔzᵀR⁻¹Δz — eliminating epoch-local parameters (the receiver
+         * clock) by per-epoch Schur reduction so the retained system spans
+         * only the time-constant/persistent states, then writes
+         * `<navigation_solution>.neq` (compact, round-trippable) and `.asc`
+         * (human-readable) at end of run with the a-posteriori variance
+         * factor σ̂₀².  The normal equations are accumulated from the same
+         * (H, R, innovation) the filter accepts; the filter state is never
+         * mutated.
+         *
+         * Post-processing only; forced off in real-time mode.
+         *
+         * @return True if the NEQ accumulator runs and exports.
+         */
+        bool enableNeqExport() const { return enable_neq_export_; }
+
+        /**
+         * @brief Whether the non-causal cycle-slip bridge runs before the smoother.
+         *
+         * When enabled (and @c runSmoother() is true), a post-forward pass
+         * re-estimates the integer jump at each ambiguity-reset boundary from
+         * both-sides GF+MW windows and, if a conservative independent-float gate
+         * passes, bridges the smoother segments so the arc smooths as one.
+         * Post-processing only; ignored in real-time mode.
+         *
+         * @return True if the non-causal slip bridge should run.
+         */
+        bool enableNoncausalSlipBridge() const { return enable_noncausal_slip_bridge_; }
+
+        /**
+         * @brief Whether SP3 satellite-position interpolation uses the
+         *        sidereal-trigonometric (sin/cos) basis.
+         *
+         * When false (default) the legacy polynomial (Neville) path is used and
+         * behaviour is byte-identical.  When true, position interpolation fits a
+         * sin/cos series keyed to the satellite's near-sidereal orbital period
+         * via Interpolate::trigSvdInterp (an 11-point LS smoother at the default
+         * window size) to reduce the SP3 epoch-boundary sawtooth.
+         *
+         * Configured via @c processing.enable_trig_sp3_interp.  Default false.
+         * @return True if sidereal-trig SP3 interpolation is enabled.
+         */
+        bool enableTrigSp3Interp() const { return enable_trig_sp3_interp_; }
+
+        /**
+         * @brief Whether satellites use beta-driven orbit-normal yaw attitude.
+         *
+         * When false (default) nominal yaw-steering is assumed (with the legacy
+         * hard-coded BeiDou-2 GEO orbit-normal exception) and the satellite body
+         * frame is byte-identical to the historical inline computation.  When
+         * true, the body-frame mode is selected per the M-PAGES-style beta
+         * threshold table (BeiDou beta<4 deg -> orbit-normal, QZSS beta<20 deg ->
+         * orbit-normal label) via SatAttitude::compute.
+         *
+         * Configured via @c processing.enable_orbit_normal_attitude.  Default false.
+         * @return True if orbit-normal attitude selection is enabled.
+         */
+        bool enableOrbitNormalAttitude() const { return enable_orbit_normal_attitude_; }
+
+        /**
+         * @brief Half-window size (epochs) used per side by the bridge fit.
+         * @return Number of epochs sampled on each side of a reset boundary.
+         */
+        int getSlipBridgeHalfWindowEpochs() const { return slip_bridge_half_window_epochs_; }
+
+        /**
+         * @brief Accept tolerance (cycles) for the independent pre-bridge-float gate.
+         *
+         * The recovered integer step @f$ dN\cdot\lambda @f$ must agree with the
+         * difference of the two independent forward floats (pre-slip converged vs
+         * independently re-converged post-reset) to within this many cycles, or
+         * the bridge is rejected and the boundary stays segmented.
+         *
+         * @return Maximum allowed disagreement in cycles.
+         */
+        double getPreBridgeFloatTolCycles() const { return pre_bridge_float_tol_cycles_; }
+
+        /**
+         * @brief Variance (m^2) below which a post-reset float counts as re-converged.
+         * @return Diagonal-covariance threshold for the independent re-converged float.
+         */
+        double getPreBridgeConvVarM2() const { return pre_bridge_conv_var_m2_; }
+
+        /**
+         * @brief Whether to auto-generate an HTML report at the end of a
+         *        post-processing run.
+         *
+         * When true, @c run() invokes the bundled @c pyviz/run_report.py against
+         * the run's trace folder and writes @c gnss_report.html there.  Failure
+         * to produce the report is non-fatal (logged as a warning).  No-op in
+         * real-time mode.  JSON: @c processing.auto_report (default false).
+         *
+         * @return True if the end-of-run report should be generated.
+         */
+        bool autoReport() const { return enable_auto_report_; }
+
+        /**
+         * @brief Rendering backend for the auto report.
+         * @return "matplotlib" (static PNG, default) or "plotly" (interactive).
+         */
+        const std::string& reportBackend() const { return report_backend_; }
+
+        /**
+         * @brief Optional python interpreter override for the auto report.
+         * @return Explicit interpreter path, or "" to use the baked
+         *         @c <project_root>/venv interpreter (falling back to PATH).
+         */
+        const std::string& reportPython() const { return report_python_; }
+
+        /**
+         * @brief Curated viewer subset for the auto report.
+         * @return Viewer names passed to run_report.py via @c --only; empty =
+         *         render every viewer.  JSON: @c processing.report_viewers.
+         */
+        const std::vector<std::string>& reportViewers() const { return report_viewers_; }
+
+        /**
+         * @brief Whether to launch the auto report detached (non-blocking).
+         * @return True to fire-and-forget so the run returns without waiting on
+         *         rendering; false (default) to run synchronously and log the
+         *         outcome.  JSON: @c processing.report_async.
+         */
+        bool reportAsync() const { return report_async_; }
 
         /**
          * @brief Check if geometry relinearization is enabled.
@@ -840,6 +1065,39 @@ namespace GnssProcessor {
          * activate.
          */
         bool enableGlonassBssd() const { return enable_glonass_bssd_; }
+
+        /**
+         * @brief Estimate a per-FCN-slot GLONASS receiver code IFB.
+         *
+         * GLONASS is FDMA: every slot k transmits on a distinct carrier
+         * frequency, so the receiver group delay differs per slot.  A single
+         * per-band IFB/DCB state cannot represent that.  When true, the engine
+         * estimates one receiver code-bias state per (FDMA band, slot k) with
+         * unit coefficient (key "GLONASS_IFB<band>_k<±slot>"); the central
+         * channel k=0 is the held datum (no state).  These per-slot states
+         * survive between-satellite single differencing (unlike receiver-common
+         * DCB/IFB), so GLONASS code can contribute cleanly under BSSD.
+         *
+         * Requires @c estimate_ifb=true and uncombined PPP-RTK; default false
+         * keeps the GLONASS path byte-identical.  See M-PAGES backlog item #4.
+         */
+        bool enableGlonassIfb() const { return enable_glonass_ifb_; }
+
+        /**
+         * @brief Use the CIO-based IAU 2000A/2006 ECI↔ECEF frame transform.
+         *
+         * When true, Sun/Moon positions (and therefore solid-Earth tide,
+         * ocean-tide loading, pole tide, antenna attitude and phase windup,
+         * which all consume them) are computed with the rigorous CIO transform
+         * (SOFA: iauXys00a / iauC2ixys / iauEra00 / iauSp00 / iauPom00 /
+         * iauC2tcio, with observed dX/dY celestial-pole offsets when the ERP
+         * source carries them) instead of the legacy IAU 1976/1980 equinox
+         * chain.  Defaults to false, in which case the legacy path is
+         * byte-identical to the historical behaviour.  Mode-agnostic.
+         *
+         * @return True if the CIO frame transform is enabled.
+         */
+        bool enableCioFrame() const { return enable_cio_frame_; }
 
         /**
          * @brief Get the BSSD pivot minimum elevation (degrees).
@@ -1310,6 +1568,44 @@ namespace GnssProcessor {
         const std::array<double, 3>& getReferencePositionEcef() const { return reference_position_ecef_; }
 
         /**
+         * @brief Whether to propagate the reference position with an ITRF station velocity.
+         *
+         * When true (and a non-zero @c reference_velocity_ecef plus a non-zero
+         * @c reference_position_epoch_year are configured), the fixed a-priori
+         * reference position is propagated to the observation epoch via linear
+         * plate motion: r(t) = r0 + v·(t − t0).  Mode-agnostic.
+         *
+         * @return True if ITRF velocity propagation is enabled.
+         */
+        bool enableItrfVelocity() const { return enable_itrf_velocity_; }
+
+        /**
+         * @brief Get the configured reference-station ITRF velocity (m/yr, ECEF).
+         * @return Velocity as {Vx, Vy, Vz} in meters/year.
+         */
+        const std::array<double, 3>& getReferenceVelocityEcef() const { return reference_velocity_ecef_; }
+
+        /**
+         * @brief Get the epoch (decimal year) at which @c reference_position_ecef is defined.
+         * @return Reference-position epoch as a decimal year (e.g. 2015.0); 0 if unset.
+         */
+        double getReferencePositionEpochYear() const { return reference_position_epoch_year_; }
+
+        /**
+         * @brief Reference ECEF position propagated to a given epoch by ITRF velocity.
+         *
+         * Returns r0 + v·(year(t) − t0) when ITRF velocity propagation is enabled
+         * and a velocity + reference epoch are configured; otherwise returns the
+         * unpropagated @c reference_position_ecef.  An invalid epoch @p t
+         * (week ≤ 0) also yields the unpropagated value.  No filter state is
+         * involved — this is a deterministic shift of the fixed a-priori.
+         *
+         * @param t Observation epoch to propagate to.
+         * @return Propagated reference position as {X, Y, Z} in meters.
+         */
+        std::array<double, 3> getReferencePositionEcefAtEpoch(const GnssTime& t) const;
+
+        /**
          * @brief Check if IMU integration is enabled.
          * @return True if IMU processing is active.
          */
@@ -1508,6 +1804,19 @@ namespace GnssProcessor {
         bool getArWlOnly() const { return ar_wl_only_; }
 
         /**
+         * @brief Partial ambiguity resolution toggle.
+         *
+         * When true, a LAMBDA fix that fails its full-set acceptance gates
+         * (ratio / bootstrap success rate / per-pair fractional cap) is retried
+         * on progressively smaller subsets — dropping the least-fixable
+         * ambiguity each round and re-validating the full battery — so a few
+         * noisy satellites no longer force the whole epoch back to float.
+         * Complements (does not replace) the full-set validation; the AR trace
+         * is bit-identical to the legacy path when off.
+         */
+        bool getArEnablePartialAr() const { return ar_enable_partial_ar_; }
+
+        /**
          * @brief Pseudo-observation variance (cycles²) for WL-only constraints.
          *
          * Default 1e-4 cycle² = (0.01 cycle)² σ.  MW-resolved WL integers
@@ -1704,6 +2013,8 @@ namespace GnssProcessor {
         double obs_ssr_sync_max_hold_s_{ 30.0 };          ///< RT-only: max seconds to hold obs for SSR before degraded fallback (obs↔SSR sync liveness bound).
         std::string rinex_types_;                        ///< Enabled RINEX observation type letters (subset of "CLDS"); default code+phase.
         ReceiverAntennaOrientation receiver_antenna_orientation_; ///< Antenna orientation parameters.
+        bool enable_rx_antenna_orientation_{ false };  ///< Apply receiver antenna azimuth orientation to the RX PCV look-up (off → byte-identical).
+        bool enable_rx_antenna_substitution_{ false }; ///< Allow rule-driven receiver antenna model substitution (deprecated-code table + radome→NONE) when no exact ATX match.
         ProcessNoise process_noise_;                          ///< Process noise parameters.
         InitialStd initial_std_;                              ///< Initial state uncertainties.
         DefaultMeasurementNoise default_meas_noise_;          ///< Default measurement noise (fallback).
@@ -1725,11 +2036,16 @@ namespace GnssProcessor {
         double leap_seconds_tai_;  ///< Number of leap seconds (TAI-UTC=37) since 2017-01-01.
 
         double residual_threshold_;      ///< Residual threshold for outlier detection.
+        bool   enable_variance_factor_{ false };   ///< Compute & report the a-posteriori variance factor σ̂₀² (reporting only; propagated P untouched).
+        bool   enable_data_snooping_{ false };     ///< Baarda data-snooping QC (per-row redundancy/w-test/MDB + w-test outlier gate).
+        double data_snooping_critical_{ 3.29 };    ///< Baarda w-test critical value (|w| reject bound; α₀=0.001 → 3.29).
+        bool   enable_full_r_kernel_{ false };     ///< Honour off-diagonal R in the post-fit residual-covariance kernel (Sr = R − H·P⁺·Hᵀ).
         double bad_meas_percent_;        ///< Percentage of bad measurements allowed.
         double ambiguity_std_;           ///< Ambiguity standard deviation.
         double code_noise_amplify_;      ///< Code noise amplification factor.
 
         std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
+        std::filesystem::path opt_grid_path_;   ///< Path to IERS ocean pole tide load grid (optional; default <data>/static/opole/).
 
         bool estimate_tropo_gradients_;   ///< Estimate troposphere horizontal gradients (Gn, Ge).
         bool   relinearize_geometry_;            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
@@ -1738,11 +2054,25 @@ namespace GnssProcessor {
         int    relinearize_max_count_;              ///< Hard cap on total relinearizations per run; -1 = unlimited.
         int    eigen_threads_;                       ///< Eigen thread count (0=default, 1=sequential, N=pinned).  See eigenThreads().
         bool run_smoother_;                    ///< Run backward RTS smoother after forward Kalman pass (post-processing only).
+        bool enable_neq_export_{ false };      ///< Accumulate & export cross-session normal equations (.neq/.asc); post-processing only.
+        bool enable_trig_sp3_interp_{ false }; ///< Use sidereal-trig (sin/cos) SP3 position interpolation instead of the default polynomial (Neville) path. Default off (byte-identical legacy).
+        bool enable_orbit_normal_attitude_{ false }; ///< Use beta-driven orbit-normal yaw attitude for satellite PCO/PCV; else nominal yaw-steering + legacy BeiDou-2 GEO orbit-normal. Default off.
+        bool enable_noncausal_slip_bridge_;    ///< Non-causal cycle-slip bridge before the smoother (post-processing only).
+        int  slip_bridge_half_window_epochs_;  ///< Half-window (epochs) per side for the bridge GF/MW fit.
+        double pre_bridge_float_tol_cycles_;   ///< Accept tolerance (cycles) for the independent pre-bridge-float gate.
+        double pre_bridge_conv_var_m2_;        ///< Var (m^2) below which a post-reset float counts as re-converged.
+        bool enable_auto_report_;              ///< Generate gnss_report.html via pyviz at the end of a post-processing run.
+        std::string report_backend_;           ///< Auto-report backend: "matplotlib" (static) | "plotly" (interactive).
+        std::string report_python_;            ///< Optional python interpreter override for the auto report ("" = baked venv -> PATH).
+        std::vector<std::string> report_viewers_; ///< Curated viewer subset for the auto report (empty = all viewers).
+        bool report_async_;                    ///< Launch the auto report detached so the run returns without waiting on rendering.
         bool estimate_phase_clock_;            ///< Estimate separate phase clock offset.
         bool enable_if_slip_detector_;             ///< INERT — IfPhaseSlipDetector is staged/uncompiled and has no instantiation path yet (see include/slip/IfPhaseSlipDetector.hpp). Parsed for forward-compat; toggling it currently has no effect.
         bool accumulate_phase_windup_;                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         bool enable_between_satellite_sd_;                ///< Between-satellite single-difference operator in measurement model.
         bool enable_glonass_bssd_;                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
+        bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
+        bool enable_cio_frame_{false};                    ///< Use the CIO IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; legacy equinox chain when off.
         double bssd_pivot_min_elevation_deg_;              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
         double pivot_slip_min_cycles_;                     ///< Minimum |median SD residual| in band-wavelength cycles for pivot-slip detection.  0 disables.
         double persistent_bias_min_cycles_;                ///< Min EWMA |mean| (in cycles) before a phase row's R is inflated to downweight persistent bias.  0 disables.
@@ -1772,6 +2102,10 @@ namespace GnssProcessor {
 
         bool has_reference_position_;                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_; ///< User-supplied reference position ECEF (m).
+        bool enable_itrf_velocity_{ false };                   ///< Propagate reference_position_ecef_ to the obs epoch via ITRF station velocity (r(t)=r0+v·dt).
+        bool has_reference_velocity_{ false };                 ///< True if a reference_velocity_ecef was supplied.
+        std::array<double, 3> reference_velocity_ecef_{ 0.0, 0.0, 0.0 }; ///< Reference-station ITRF velocity (m/yr, ECEF).
+        double reference_position_epoch_year_{ 0.0 };          ///< Epoch (decimal year) at which reference_position_ecef_ is defined; 0 = unset.
 
         ModelCorrections model_corrections_;                            ///< Enable/disable flags for model corrections.
         StochasticModelType stochastic_model_; ///< Measurement stochastic model selection.
@@ -1800,6 +2134,7 @@ namespace GnssProcessor {
         double ar_wl_max_frac_;        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
         double ar_min_success_rate_;  ///< Min bootstrap success rate (FFR-style) for AR fix acceptance.
         double ar_nl_max_per_pair_frac_; ///< Max per-NL-pair |float − fixed| (cyc); rejects marginal fixes.
+        bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).
 
         LoggingConfig logging_config_;             ///< Logger and trace file enable/disable flags.
