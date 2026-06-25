@@ -1,0 +1,372 @@
+% ============================================================
+%  Network mode
+%  Multi-station PPP-RTK network estimator that GENERATES the
+%  SSR-style corrections the single-receiver modes consume:
+%  joint observation model, S-basis / minimum-constraint datum,
+%  per-station Schur reduction, explicit satellite phase-bias
+%  state.
+%
+%  Sources: filter/NetworkEstimator + NetworkNormalEquations
+%  (the arrowhead Schur kernel), filter/StateManager (explicit
+%  sat-phase-bias block), measurement/MeasurementBuilder
+%  (DifferencingMode::None), app/ApplicationNetwork.cpp, and the
+%  S-system theory in foundations (\Cref{sec:diff}).
+% ============================================================
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+
+\section{Network mode}\label{sec:net}
+
+\newcommand{\Nss}{\bm{N}_{ss}}          % shared (satellite) normal block
+\newcommand{\Nrr}{\bm{N}_{rr}}          % per-station local normal block
+\newcommand{\Nsr}{\bm{N}_{sr}}          % shared<->local cross block
+\newcommand{\redNss}{\tilde{\bm{N}}_{ss}} % Schur-reduced shared normals
+\newcommand{\redus}{\tilde{\bm{u}}_s}   % Schur-reduced shared RHS
+\newcommand{\xshared}{\bm{x}_s}         % shared satellite-parameter estimate
+\newcommand{\xlocal}[1]{\bm{x}_{#1}}    % station r's private nuisance block
+\newcommand{\satbiasPB}{\beta}          % satellite phase bias (estimable)
+\newcommand{\satbiasCB}{B}              % satellite code bias (estimable)
+
+This section documents the multi-station network estimator
+(\texttt{ProcessingMode::PPP\_RTK\_Network}) that \emph{produces} the
+satellite-side corrections the single-receiver user modes consume.
+Where every other mode in this reference \emph{differences away} the
+satellite clock and hardware biases
+(\dcref{sec:diff}{the differencing section}) or imports them
+as known SSR quantities (\dcref{sec:ssr}{the SSR-corrections section}),
+the network producer turns that relationship around: it estimates the
+satellite clock and the satellite \emph{phase} and \emph{code} biases
+\emph{explicitly}, jointly across a network of stations whose
+coordinates are known, and emits them in IGS-SSR convention for a
+downstream consumer. The closed loop is deliberate --- the same
+single-receiver PPP-RTK engine documented elsewhere becomes the
+product test, run on a station \emph{held out} of the network solve.
+
+\paragraph{Scope and status.}
+The numerical core --- the arrowhead normal-equation kernel
+(\texttt{filter/NetworkNormalEquations}) and the semantic estimator
+that drives it (\texttt{filter/NetworkEstimator}) --- is implemented
+and validated on a synthetic noise-free network (truth recovery up to
+the declared S-transform). Mode wiring is live: the
+\texttt{PPP\_RTK\_Network} enum, its forced-uncombined
+\texttt{DifferencingMode::None}
+(\texttt{src/core/measurement/MeasurementBuilder.cpp}), the explicit
+satellite phase-bias state in \texttt{filter/StateManager}, and the
+dispatch in \texttt{Application::run} all exist. The live epoch loop
+\texttt{Application::runNetwork} --- per-station design-row assembly
+from each station's \texttt{MeasurementModel}, the between-epoch time
+update, and the product emitter --- is a scaffold at the time of
+writing: it logs a ``not yet implemented'' error and returns non-zero
+(\texttt{src/core/app/ApplicationNetwork.cpp}). The mathematics below
+describes the implemented estimator core and the locked design; where a
+piece is staged rather than wired, it is flagged as such.
+
+\subsection{Joint multi-station observation model}\label{sec:net-model}
+
+The producer runs on the same \emph{undifferenced, uncombined}
+observations as single-receiver PPP
+(\dcref{sec:obs}{the observation-equations section}),
+but stacks the equations of every station $\rx \in \rxset$ into one
+system. The defining structural fact is the partition of the unknowns
+into a block \emph{shared} by all stations and a block \emph{private}
+to each:
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+\item \textbf{Shared (satellite-side).} The estimable satellite clock
+      $\sLight\,\mathrm{d}t^\sat$, the per-signal satellite code bias
+      $\satbiasCB^\sat_\sigl$, and the per-signal satellite \emph{phase}
+      bias $\satbiasPB^\sat_\sigl$. These columns are \emph{identical}
+      across every station --- a satellite's clock and hardware delays
+      do not depend on who is observing it. (Orbits are held fixed to a
+      precise product here; orbit determination is out of scope for the
+      producer.)
+\item \textbf{Private (station-side).} For each station $\rx$: its
+      receiver clock $\sLight\,\mathrm{d}t_\rx$, the inter-system time
+      offsets $\sLight\,\delta t^{(g)}_\rx$, the zenith wet troposphere
+      $\zwd_\rx$ (and gradients), the per-satellite slant ionosphere
+      $I^\sat_{\rx,1}$, the receiver biases, and one float ambiguity
+      $N^\sat_{\rx,\sigl}$ per tracked carrier. Station coordinates are
+      \emph{known} (the network constrains them), so position is not a
+      free parameter.
+\end{itemize}
+
+Write the shared satellite-parameter vector as $\xshared$ and station
+$\rx$'s private nuisance vector as $\xlocal{\rx}$. The undifferenced
+observation rows of station $\rx$ linearise
+(\dcref{sec:obs}{the observation-equations section}) to
+\begin{equation}
+\bm{y}_\rx \;=\; \bm{A}_{s,\rx}\,\xshared \;+\; \bm{A}_{r,\rx}\,\xlocal{\rx}
+            \;+\; \bm{\varepsilon}_\rx,
+\qquad \rx \in \rxset,
+\label{eq:net-station-rows}
+\end{equation}
+where $\bm{y}_\rx$ is the prefit residual (observed minus computed),
+$\bm{A}_{s,\rx}$ is the Jacobian with respect to the \emph{shared}
+satellite columns, and $\bm{A}_{r,\rx}$ is the Jacobian with respect to
+station $\rx$'s \emph{own} nuisances. Crucially there is no
+$\bm{A}_{r,\rx'}$ term for $\rx' \neq \rx$: a station's observations
+touch only the shared block and its own private block. That sparsity is
+the structural engine of \Cref{sec:net-schur}.
+
+\paragraph{No receiver-side differencing.}
+Unlike the PPP-RTK user mode, the producer applies \emph{no}
+between-satellite or between-receiver differencing. The differencing
+strategy is forced to \texttt{DifferencingMode::None}
+(\texttt{MeasurementBuilder.cpp}), overriding any
+\texttt{between\_satellite\_sd} toggle that may be present in a network
+config. Differencing would cancel exactly the satellite-side terms the
+producer is trying to \emph{estimate}; the network instead carries them
+as explicit columns and resolves the resulting rank deficiency with a
+minimum-constraint datum (\Cref{sec:net-sbasis}).
+
+\subsection{The explicit satellite phase-bias state}\label{sec:net-phasebias}
+
+The single defining contrast with the user side is the treatment of the
+satellite phase bias $b^\sat_\sigl$ (here written $\satbiasPB^\sat_\sigl$
+once promoted to a state). On the user side this term is never an
+explicit unknown: between-satellite single differencing
+(\dcref{sec:diff}{the differencing section}) cancels the
+\emph{receiver} phase bias, the satellite phase bias arrives as a
+\emph{known} SSR product, and what remains is an integer
+single-difference ambiguity. The user handles biases \emph{implicitly}.
+
+The producer is what \emph{generates} that known product, so it must
+carry the satellite phase bias as a genuine estimated state. The state
+vector therefore gains a per-$(\text{satellite},\text{signal})$ phase
+bias column,
+\begin{equation}
+\satbiasPB^\sat_\sigl \in \xshared,
+\qquad
+\text{keyed by } \texttt{makeSatPhaseBiasKey}(\sat,\sigl)
+   = \texttt{"$\sat$|$\sigl$|PB"},
+\label{eq:net-pb-key}
+\end{equation}
+held in \texttt{StateManager::sat\_phase\_bias\_indices\_}, a map kept
+\emph{deliberately disjoint} from the satellite \emph{code} bias map
+(\texttt{sat\_bias\_indices\_}); the trailing \texttt{|PB}
+discriminator keeps the two namespaces from colliding
+(\texttt{include/filter/StateKeySchema.hpp}). Its process noise is a
+tiny random walk (\texttt{process\_noise.sat\_phase\_bias}, default two
+orders of magnitude below the code-bias density), reflecting that
+satellite phase hardware delays are nearly constant but not strictly
+so: a $q=0$ random walk would over-converge the diagonal of $\covM$ and
+leave the column deaf to genuine slow drift
+(\texttt{src/core/filter/StateManager.cpp}).
+
+\begin{remark}
+The estimated $\satbiasPB^\sat_\sigl$ is not the ``raw'' satellite phase
+hardware delay --- that quantity is not separately estimable. It is the
+delay \emph{lumped with the network pivot-receiver ambiguity/clock
+datum} (Odijk's $\delta^s$, \cite{odijk2003fast}): the estimable
+combination that, when removed by a user receiver, restores the integer
+property of that user's single-difference ambiguities. This lumping is
+exactly why a \emph{consistent} phase-bias product matters
+(\dcref{sec:ssr}{the SSR-corrections section}): the producer's datum
+and the consumer's integer recovery must be the same S-system.
+\end{remark}
+
+\subsection{Rank deficiency and the minimum-constraint S-basis}
+\label{sec:net-sbasis}
+
+The undifferenced network system \Cref{eq:net-station-rows} is rank
+deficient. The same linear dependencies that the user side disposes of
+by differencing are present here as exact \emph{gauge freedoms} of the
+joint normal matrix: there is no observation that distinguishes a common
+shift of all satellite clocks from an opposite shift of all receiver
+clocks, nor the split of an absolute phase bias between the satellite
+column and the per-station ambiguity datum, nor an inter-system bias
+(ISB) common to a constellation. These are precisely the S-system
+ambiguities of \cite{teunissen1985generalised}: the data fix only
+\emph{estimable combinations}, and a \emph{datum} must be chosen to pin
+the remaining null space.
+
+\paragraph{Exact gauge, soft elimination.}
+The chosen resolution is a \emph{minimum-constraint} datum applied as
+exact hard pins to the reduced shared system, never a hard structural
+elimination of columns. Concretely, each gauge is realised as a single
+\emph{Dirichlet pin} of one shared column $c$ to a datum value (almost
+always $0$): the column's known contribution is moved to the
+right-hand side, its row and column in the reduced normal matrix are
+zeroed, and a diagonal entry is set so that $x_c = \text{value}$ holds
+exactly (\texttt{NetworkEstimator::solve},
+\texttt{src/core/filter/NetworkEstimator.cpp}). The pin is applied to a
+\emph{copy} of the reduced normals (the kernel's
+\texttt{solveSharedConstrained} seam), leaving the estimator's own
+reduced system pristine so per-station back-substitution
+(\Cref{sec:net-schur}) stays valid. The pinned diagonal is set
+commensurate with the reduced normals' own scale rather than to unity,
+so that a genuinely \emph{under}-specified datum still surfaces as a
+near-zero \emph{relative} pivot in the positive-definiteness guard,
+independent of the network's overall weighting magnitude.
+
+In S-transform language, if $\bm{x}$ collects the rank-deficient
+undifferenced parameters and $\bm{S}$ is the S-basis selection, the
+emitted satellite corrections are the estimable combination
+$\bm{S}\,\bm{x}$; choosing the datum \emph{is} choosing $\bm{S}$, and
+the hard pins above are the minimal set of rows of $\bm{S}$ that remove
+the deficiency. The two halves of the datum live in two places:
+
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+\item \textbf{Shared-block gauges} --- the overall clock datum (one per
+      constellation), the per-constellation phase-bias$\leftrightarrow$ambiguity
+      datum, and the ISB datum --- are the elements that touch the shared
+      satellite columns. These go through the explicit
+      \texttt{NetworkEstimator::Datum} (a list of column pins) and are
+      applied in \texttt{solve}.
+\item \textbf{Local datum elements} --- a network \emph{pivot
+      receiver}'s own ambiguity/clock pin, which the emitted satellite
+      phase bias absorbs (Odijk Eq.~4/9) --- live on that one station's
+      private block. They are realised by the \emph{caller} as tight
+      prior rows folded into that station's $\bm{A}_{r,\rx}$, $\bm{W}$,
+      and $\bm{y}$, not through the shared \texttt{Datum}
+      (\texttt{NetworkEstimator.hpp}). Station priors are also what make
+      each local block $\Nrr$ full rank for the Schur step
+      (\Cref{sec:net-schur}).
+\end{itemize}
+
+\begin{remark}
+A rigorous null-space rank gate --- SVD the pre-constraint reduced
+normals and assert that the count of small singular values equals the
+\emph{declared} S-basis dimension --- is the planned W5 slice
+(\texttt{NetworkSbasis}) and is not yet present. The \texttt{Datum} in
+the current estimator is the minimal pin set the solve needs; the
+positive-definiteness guard catches the exact-deficiency
+(under-specified datum) case but does not yet certify the rank against a
+declared dimension. This is recorded as an open item rather than claimed
+as done.
+\end{remark}
+
+\subsection{Per-station Schur reduction (arrowhead normals)}
+\label{sec:net-schur}
+
+Stacking \Cref{eq:net-station-rows} over all stations and forming
+weighted normal equations $\bm{A}^\Tr \bm{W} \bm{A}\,\bm{x} =
+\bm{A}^\Tr \bm{W} \bm{y}$ yields a \emph{bordered block-arrow}
+(``arrowhead'') system, because the station--station off-diagonal
+blocks are exactly zero (stations couple only through $\xshared$):
+\begin{equation}
+\begin{bmatrix}
+\Nss      & \bm{N}_{s1} & \bm{N}_{s2} & \cdots & \bm{N}_{sR} \\
+\bm{N}_{1s} & \bm{N}_{11} & \bm{0}      & \cdots & \bm{0} \\
+\bm{N}_{2s} & \bm{0}      & \bm{N}_{22} & \cdots & \bm{0} \\
+\vdots      &             &             & \ddots &        \\
+\bm{N}_{Rs} & \bm{0}      & \bm{0}      & \cdots & \bm{N}_{RR}
+\end{bmatrix}
+\begin{bmatrix}
+\xshared \\ \xlocal{1} \\ \xlocal{2} \\ \vdots \\ \xlocal{R}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\bm{u}_s \\ \bm{u}_1 \\ \bm{u}_2 \\ \vdots \\ \bm{u}_R
+\end{bmatrix},
+\label{eq:net-arrowhead}
+\end{equation}
+with the per-station blocks built from that station's pre-formed design
+rows,
+\begin{equation}
+\Nss^{\,\rx} = \bm{A}_{s,\rx}^\Tr \bm{W}_\rx \bm{A}_{s,\rx},
+\quad
+\Nsr^{\,\rx} = \bm{A}_{s,\rx}^\Tr \bm{W}_\rx \bm{A}_{r,\rx},
+\quad
+\Nrr^{\,\rx} = \bm{A}_{r,\rx}^\Tr \bm{W}_\rx \bm{A}_{r,\rx},
+\label{eq:net-blocks}
+\end{equation}
+and $\bm{u}_s^{\,\rx} = \bm{A}_{s,\rx}^\Tr \bm{W}_\rx \bm{y}_\rx$,
+$\bm{u}_r^{\,\rx} = \bm{A}_{r,\rx}^\Tr \bm{W}_\rx \bm{y}_\rx$. A full
+(non-diagonal) $\bm{W}_\rx$ is supported, so correlated undifferenced
+measurement covariance (e.g.\ shared pre-corrections) propagates
+exactly (\texttt{addStationObservations},
+\texttt{NetworkNormalEquations.hpp}).
+
+\paragraph{Lossless marginalisation.}
+The arrowhead structure is solved by Schur-eliminating each station's
+private block onto the shared border. Each $\Nrr^{\,\rx}$ is factorised
+once ($\mathrm{LDL}^\Tr$) when the station is added; the elimination
+accumulates
+\begin{empheq}[box=\fbox]{align}
+\redNss &= \sum_{\rx \in \rxset}
+   \Big( \Nss^{\,\rx} - \Nsr^{\,\rx}\,(\Nrr^{\,\rx})^{-1}\,\Nsr^{\,\rx\Tr} \Big)
+   \;+\; \bm{N}_{ss}^{\text{prior}},
+\label{eq:net-schur-N}\\
+\redus &= \sum_{\rx \in \rxset}
+   \Big( \bm{u}_s^{\,\rx} - \Nsr^{\,\rx}\,(\Nrr^{\,\rx})^{-1}\,\bm{u}_r^{\,\rx} \Big)
+   \;+\; \bm{u}_s^{\text{prior}},
+\label{eq:net-schur-u}
+\end{empheq}
+the reduced shared system $\redNss\,\xshared = \redus$
+(\texttt{NetworkNormalEquations::reduce}). The reduction is a
+\emph{lossless} marginalisation, not an approximation: solving
+\Cref{eq:net-schur-N,eq:net-schur-u} for $\xshared$ and
+back-substituting per station,
+\begin{equation}
+\xlocal{\rx} = (\Nrr^{\,\rx})^{-1}\big(\bm{u}_r^{\,\rx} - \Nsr^{\,\rx\Tr}\,\xshared\big),
+\label{eq:net-backsub}
+\end{equation}
+reproduces the dense stacked solve to machine precision. Fill-in is
+confined to the satellite border and each station's elimination is
+independent, so the cost scales linearly in the station count and the
+per-station eliminations parallelise (\texttt{reconstructStation},
+\texttt{NetworkNormalEquations.cpp}). The shared-block priors
+$\bm{N}_{ss}^{\text{prior}}$ in \Cref{eq:net-schur-N} --- soft physical
+priors and any additive exact-gauge contributions --- are added
+pre-reduction via \texttt{addSharedInfo} and carry through the Schur
+complement unchanged.
+
+\begin{remark}
+This arrowhead-with-exact-reduction topology mirrors the NGS M-PAGES
+\texttt{NgsLsq::NormalEquations::reduce}\,/\,\texttt{reconstructLocals}
+batch network solver, specialised so that the M-PAGES ``global'' block
+is the shared satellite border and the per-epoch swept block becomes the
+$R$ independent station blocks. The design panel rejected a two-stage
+covariance-form alternative precisely because the normal-equation Schur
+form is exact and cheaper here.
+\end{remark}
+
+\subsection{Constellation scope}\label{sec:net-constellations}
+
+The producer estimates GPS and Galileo, with BeiDou supported on the
+same footing; \textbf{GLONASS is excluded}. The reason is structural,
+not a tuning choice: GLONASS is FDMA, so each satellite transmits on a
+slightly different frequency and the receiver inter-channel (hardware)
+bias does \emph{not} cancel cleanly across satellites the way it does
+for the CDMA constellations. The satellite/receiver phase-bias
+bookkeeping that underpins the explicit-bias S-system
+(\Cref{sec:net-phasebias,sec:net-sbasis}) assumes a per-signal bias
+common across a constellation's satellites; the per-frequency GLONASS
+inter-channel bias breaks that assumption and would corrupt the datum.
+GLONASS is therefore omitted from the network solve by design
+(\texttt{docs/ssystem\_conformance\_2026-06-15.md}); the user side
+excludes it from ambiguity resolution for the same reason. (This is
+distinct from the float-only GLONASS support the user engine carries for
+positioning; the network \emph{producer} simply does not generate
+GLONASS bias products.)
+
+\subsection{The closed loop: producer $\to$ held-out user}
+\label{sec:net-closedloop}
+
+The emitted product is one \texttt{NetworkSolutionEpoch} per content
+epoch: per-satellite clock $C_0$ plus per-signal code and phase biases,
+keyed by RINEX satellite id and serialised in IGS-SSR convention by
+\texttt{NetworkProductEmitter}
+(\texttt{NetworkEstimator::toSolutionEpoch}). That product is exactly
+the SSR stream the single-receiver engine already knows how to consume:
+the satellite clock refines $-\sLight\,\mathrm{d}t^\sat$ and the
+observable-specific biases refine $-\satbiasCB^\sat_\sigl$ and
+$-b^\sat_\sigl$ as \emph{known} corrections, restoring the integer
+ambiguity property exactly as described in
+\dcref{sec:ssr}{the SSR-corrections section}.
+
+The validation strategy follows directly from this symmetry. The
+companion \texttt{ProcessingMode::PPP\_RTK\_User} mode runs the ordinary
+uncombined PPP-RTK pipeline but consumes the network's own
+bias/atmosphere product. Holding one station \emph{out} of the network
+solve and then positioning it as a user against the produced
+corrections turns the consumer into a closed-loop product test: the
+held-out station's recovered position and fixed ambiguities certify that
+the producer's S-system datum and the consumer's integer recovery are
+mutually consistent. The \texttt{PPP\_RTK\_User} consumer flows through
+the standard PPP path (it is not a separate estimator); only the
+producer takes the joint multi-station pipeline of this section.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

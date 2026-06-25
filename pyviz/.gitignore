@@ -1,0 +1,7 @@
+# generated artifacts
+*.html
+*_report.html
+_check_*.png
+__pycache__/
+.pytest_cache/
+*.pyc

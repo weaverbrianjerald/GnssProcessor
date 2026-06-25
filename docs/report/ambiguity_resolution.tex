@@ -1,3 +1,7 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Integer ambiguity resolution}\label{sec:ar}
 % ============================================================
 %  Integer ambiguity resolution
 %  MLAMBDA over a between-satellite-differenced ambiguity sub-problem
@@ -15,19 +19,25 @@ integer carrier-cycle counts they represent.  The engine implements
 between-satellite-differenced ambiguity sub-problem extracted from the
 filter state and covariance.  The operative quantity is the ambiguity
 differenced against a per-constellation pivot $\piv{g}$
-(\Cref{sec:diff}); the same integer-estimation machinery serves both
+(\dcref{sec:diff}{the differencing section of the Foundations
+document}); the same integer-estimation machinery serves both
 the single-receiver and the baseline modes, but \emph{what makes that
 differenced ambiguity an integer differs by mode}.  The undifferenced
-ambiguity $N^\sat_{\rx,\sigl}$ of \Cref{eq:obs-phase} carries a
+ambiguity $N^\sat_{\rx,\sigl}$ of the phase observation equation
+(\dcref{eq:obs-phase}{Foundations, observation equations}) carries a
 receiver phase bias $b_{\rx,\sigl}$ and a satellite phase bias
 $b^\sat_\sigl$.  In single-receiver PPP / PPP-RTK the pivot difference
 is a \emph{between-satellite single difference} $\bsd{\,\cdot\,}$
-(\Cref{sec:bssd}), which cancels the receiver bias $b_{\rx,\sigl}$
+(\dcref{sec:bssd}{the between-satellite single-difference section of the
+Foundations document}), which cancels the receiver bias $b_{\rx,\sigl}$
 (common to every tracked satellite) but \emph{not} the satellite bias;
 the residual $\bsd N^{\sat,\piv{g}}_{\rx,\sigl}$ is integer only once
 $b^\sat_\sigl$ has been removed by a consistent external phase-bias
-product (BIA / SSR, \Cref{sec:ssr}).  In baseline mode the state
-already holds true double differences $\dd{\,\cdot\,}$ (\Cref{sec:dd}),
+product (BIA / SSR, \dcref{sec:ssr}{the SSR-corrections document}).  In
+baseline mode the state
+already holds true double differences $\dd{\,\cdot\,}$
+(\dcref{sec:dd}{the double-difference section of the Foundations
+document}),
 where the additional between-receiver difference cancels the satellite
 bias as well, so $\dd N$ is integer intrinsically.  We retain the
 resolver's internal label $\dd{}$ for the differenced ambiguity in the
@@ -100,7 +110,8 @@ $\bm{Q}^{\dd{}}$ is symmetrised, $\bm{Q}^{\dd{}} \leftarrow
 \tfrac12(\bm{Q}^{\dd{}} + \bm{Q}^{\dd{}\Tr})$, before factorisation.
 The DD pivot $\piv{g}$ is the highest-elevation satellite within each
 $(\text{constellation},\,\text{signal})$ group, consistent with the
-BSSD pivot of \Cref{sec:diff}; all remaining satellites in the group
+BSSD pivot of \dcref{sec:diff}{the differencing section of the
+Foundations document}; all remaining satellites in the group
 are differenced against it.
 
 \subsection{Decorrelation: $LDL^{\Tr}$ factorisation and the integer
@@ -295,11 +306,16 @@ $\dd{}_{ab} - \dd{}_{ac} + \dd{}_{bc} \ne 0$ fails.
 
 \subsection{Partial / subset ambiguity resolution}\label{sec:ar-partial}
 
-There is no \textsc{LAMBDA}-internal partial search; subset selection
-happens \emph{upstream} by candidate gating when the DD pairs are
-built (\texttt{src/core/filter/AmbiguityResolver.cpp}).  A
-satellite/signal ambiguity is admitted to the integer set only if it
-passes every filter:
+Partial AR operates at \emph{two} levels: a static upstream candidate
+gate that screens which ambiguities ever enter the integer problem, and
+an optional dynamic backward-elimination search that recovers a fixable
+subset when the full set fails validation.
+
+\paragraph{Upstream candidate gating (always on).}
+Subset selection begins when the DD pairs are built
+(\texttt{src/core/filter/AmbiguityResolver.cpp}).  A satellite/signal
+ambiguity is admitted to the integer set only if it passes every
+filter:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item \textbf{Initialised} --- the state entry is non-zero (seeded by
       data), and \textbf{non-frozen} --- its variance is non-zero
@@ -307,7 +323,10 @@ passes every filter:
 \item \textbf{Elevation} --- $\theta^\sat_\rx \ge \theta_{\mathrm{AR}}$
       (\texttt{elevation\_mask}).
 \item \textbf{Resolvable} --- the satellite is not flagged
-      unresolvable for want of bias/ATX (BIA, ATX) coverage.
+      unresolvable for want of bias/ATX (BIA, ATX) coverage
+      (single-receiver path; in baseline DD the analogous filter is the
+      \texttt{exclude\_keys} set of non-integer-capable DDs from
+      \texttt{MeasurementModel}).
 \item \textbf{Constellation} --- $g(\sat) \in$
       \texttt{active\_systems}, when that list is non-empty.
 \item \textbf{Pairable} --- the $(\text{constellation},\,\text{signal})$
@@ -316,9 +335,40 @@ passes every filter:
 The constellation filter keeps a system in the \emph{float} solution
 while excluding it from the candidate set --- useful when one
 constellation's residual model bias would drag down the ratio test.
-Together these realise a static partial-AR: the search runs only over
-the high-confidence subset, and acceptance (\Cref{sec:ar-accept}) is
-all-or-nothing on that subset.
+
+\paragraph{Dynamic backward-elimination subset
+(\texttt{enable\_partial\_ar}, default off).}
+With the candidate set fixed, the default behaviour is all-or-nothing:
+the full set is searched and either passes all of
+\Cref{sec:ar-accept} or the epoch stays float.  When
+\texttt{enable\_partial\_ar} is set, a failure of the full-set battery
+triggers a greedy backward elimination
+(\texttt{selectFixableSubset\_}) instead of falling straight back to
+float.  Starting from the full candidate set, each iteration re-runs the
+complete \textsc{MLAMBDA} pipeline of
+\Crefrange{sec:ar-ils}{sec:ar-lambda} on the current subset and re-tests
+the \emph{same} acceptance battery --- ratio lower/upper bound
+\eqref{eq:ratio}, bootstrap success rate \eqref{eq:ffr}, and per-entry
+fractional cap \eqref{eq:perpair}.  On any failure it drops one entry
+and retries, down to a single ambiguity:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item if the \emph{fractional cap} is the failing gate, the entry with
+      the largest $|\ambfloat_k - \ambfix_k|$ (nearest a half-cycle
+      boundary) is removed;
+\item otherwise the entry with the largest formal float variance
+      $(\ambcov)_{kk}$ --- the least precise ambiguity, whose removal
+      most improves both the bootstrap rate and the search conditioning
+      --- is removed.
+\end{itemize}
+Because the accepted subset is always re-validated by the full battery
+on its own covariance sub-block, this can only fix \emph{fewer}
+ambiguities than the full set, never a worse-conditioned set: a wrong
+elimination order costs fixes, not integrity, and the path is
+bit-identical to the legacy behaviour when off.  The same routine serves
+the per-band SD, baseline DD, and WL-constrained NL paths uniformly,
+operating purely in the decorrelation-agnostic cycle domain; each caller
+maps the surviving indices back to its own state rows and feeds them
+through the constrained update of \Cref{sec:ar-feedback}.
 
 \subsection{Validation: ratio test and fixed-failure-rate
 gate}\label{sec:ar-accept}
@@ -456,6 +506,7 @@ $\sigma^2_{\mathrm{hold}}$ & \texttt{hold\_variance}      & \texttt{0.001} m$^2$
 $n_{\min}^{\text{ep}}$    & \texttt{min\_epochs}          & \texttt{10}     & convergence guard \\
 $\sigma_{\mathrm{pos}}^{\max}$ & \texttt{max\_position\_sigma\_m} & \texttt{0.05} m & convergence guard \\
 ---                       & \texttt{wl\_only}             & \texttt{false}  & MW-WL-only, no NL search \\
+---                       & \texttt{enable\_partial\_ar}  & \texttt{false}  & backward-elimination subset fix (\Cref{sec:ar-partial}) \\
 ---                       & \texttt{active\_systems}  & \texttt{[]} (all) & constellation subset (\Cref{sec:ar-partial}) \\
 ---                       & \texttt{state\_ambiguity\_basis}\,$^{\dagger}$ & \texttt{per\_band} & \texttt{per\_band} vs \texttt{nl\_wl} dispatch \\
 \bottomrule
@@ -463,3 +514,6 @@ $\sigma_{\mathrm{pos}}^{\max}$ & \texttt{max\_position\_sigma\_m} & \texttt{0.05
 
 {\footnotesize $^{\dagger}$\,Path is \texttt{estimation.state\_ambiguity\_basis} --- one level above the \texttt{ambiguity\_resolution} block.}
 \end{center}
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

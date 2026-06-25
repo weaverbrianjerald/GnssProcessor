@@ -62,6 +62,16 @@ public:
     bool isInitialized() const;
 
     /**
+     * @brief Flush all open trace streams to disk.
+     *
+     * The per-record writers use '\n' without an implicit flush, so buffered
+     * tail records may not be on disk until the logger is destroyed.  Call this
+     * when another process must read complete traces during the logger's
+     * lifetime (e.g. the end-of-run auto report).
+     */
+    void flush() const;
+
+    /**
      * @brief Write the current filter state to the state trace file.
      *
      * The method extracts relevant state vector entries and covariance from the

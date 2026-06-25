@@ -132,23 +132,31 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         out.c0            = rec_copy.combined->c0;
         out.c1            = rec_copy.combined->c1;
         out.c2            = rec_copy.combined->c2;
-        out.iode          = rec_copy.combined->iode;
-        out.epoch_time    = rec_copy.combined->received_time;
-        out.has_orbit     = true;
-        out.has_clock     = true;
+        out.iode             = rec_copy.combined->iode;
+        // Orbit + clock share one content epoch in a combined message.  The dt
+        // base is the SSR CONTENT reference epoch (not received_time): the clock
+        // polynomial and RAC rates are defined relative to the provider's epoch,
+        // so applyClockToBias / applyOrbitToPosition propagate over the true age.
+        out.epoch_time       = rec_copy.combined->epoch_time;
+        out.orbit_epoch_time = rec_copy.combined->epoch_time;
+        out.has_orbit        = true;
+        out.has_clock        = true;
     } else {
         if (rec_copy.orbit && freshEnough(rec_copy.orbit->received_time, query_time, max_age_s)) {
-            out.delta_rac     = rec_copy.orbit->delta_rac;
-            out.delta_rac_dot = rec_copy.orbit->delta_rac_dot;
-            out.iode          = rec_copy.orbit->iode;
-            out.epoch_time    = rec_copy.orbit->received_time;
-            out.has_orbit     = true;
+            out.delta_rac        = rec_copy.orbit->delta_rac;
+            out.delta_rac_dot    = rec_copy.orbit->delta_rac_dot;
+            out.iode             = rec_copy.orbit->iode;
+            out.orbit_epoch_time = rec_copy.orbit->epoch_time;   // orbit dt base (content epoch)
+            out.has_orbit        = true;
         }
         if (rec_copy.clock && freshEnough(rec_copy.clock->received_time, query_time, max_age_s)) {
             out.c0         = rec_copy.clock->c0;
             out.c1         = rec_copy.clock->c1;
             out.c2         = rec_copy.clock->c2;
-            if (!out.has_orbit) out.epoch_time = rec_copy.clock->received_time;
+            // Separate orbit/clock subtypes (the IGS-SSR norm) can carry different
+            // content epochs; the clock polynomial MUST use the clock epoch (its
+            // dt is c1/c2-sensitive), independent of any orbit record's epoch.
+            out.epoch_time = rec_copy.clock->epoch_time;
             out.has_clock  = true;
         }
     }
@@ -172,6 +180,15 @@ double SsrCorrectionStore::getCodeBias(const std::string& sat,
     return (sit == m.end()) ? 0.0 : sit->second;
 }
 
+bool SsrCorrectionStore::hasCodeBias(const std::string& sat,
+                                     const std::string& rinex_obs_code) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(sat);
+    if (it == by_sat_.end() || !it->second.code_bias) return false;
+    const auto& m = it->second.code_bias->bias_per_signal;
+    return m.find(rinex_obs_code) != m.end();
+}
+
 std::optional<SsrPhaseBiasEntry>
 SsrCorrectionStore::getPhaseBias(const std::string& sat,
                                  const std::string& rinex_obs_code) const {
@@ -191,6 +208,19 @@ std::optional<GnssTime> SsrCorrectionStore::getSsrEpoch(const std::string& sat) 
     const GnssTime& e = it->second.header.epoch_time;
     if (e.week == 0 && e.tow == 0.0) return std::nullopt;   // header never set
     return e;
+}
+
+std::optional<GnssTime> SsrCorrectionStore::newestSsrEpoch() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::optional<GnssTime> newest;
+    double newest_s = -1.0;
+    for (const auto& [sat, rec] : by_sat_) {
+        const GnssTime& e = rec.header.epoch_time;
+        if (e.week == 0 && e.tow == 0.0) continue;          // header never set
+        const double s = TimeUtils::continuousGpsSeconds(e);
+        if (s > newest_s) { newest_s = s; newest = e; }
+    }
+    return newest;
 }
 
 int SsrCorrectionStore::getSsrIod(const std::string& sat) const {

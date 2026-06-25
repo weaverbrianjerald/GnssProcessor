@@ -182,6 +182,29 @@ namespace GnssProcessor {
         Eigen::Vector3d computePoleTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
         /**
+         * @brief Ocean pole tide load displacement (IERS 2010 Sec. 7.1.5, Desai 2002).
+         *
+         * Closed-form site displacement driven by the ocean's equilibrium
+         * response to the centrifugal pole-tide potential, evaluated from the
+         * station's six interpolated load coefficients and the current polar
+         * motion wobble.  Returned in the local @b East/@b North/@b Up frame
+         * (metres), to be summed onto the Sec. 7.1.4 rotational-deformation pole
+         * tide before rotation into ECEF.  Exposed as a static method so it can
+         * be validated directly against an external reference vector
+         * (see OceanPoleTideTest / scripts/ocean_pole_tide_reference.py)
+         * independently of the grid interpolation and ERP pipeline.
+         *
+         * @param m1_arcsec  Polar-motion wobble m1 = xp - xp_mean   (arcseconds).
+         * @param m2_arcsec  Polar-motion wobble m2 = -(yp - yp_mean) (arcseconds).
+         * @param opt_coeffs Six per-station load coefficients ordered
+         *        [u_n^R, u_n^I, u_e^R, u_e^I, u_r^R, u_r^I] (IERS opole grid
+         *        North/East/radial real & imaginary parts).
+         * @return (East, North, Up) displacement in metres.
+         */
+        static Eigen::Vector3d computeOceanPoleTideDisplacement(
+            double m1_arcsec, double m2_arcsec, const std::array<double, 6>& opt_coeffs);
+
+        /**
          * @brief Compute solid Earth tide correction (LOS displacement).
          * @param receiver_pos Receiver ECEF position (meters).
          * @param sat_pos Satellite ECEF position (meters).
@@ -354,6 +377,39 @@ namespace GnssProcessor {
          */
         bool hasOceanTideCoefficients() const;
 
+        /**
+         * @brief Set the six per-station ocean pole tide load coefficients.
+         * @param coeffs Coefficients ordered [u_n^R, u_n^I, u_e^R, u_e^I,
+         *        u_r^R, u_r^I] (North/East/radial real & imaginary parts), as
+         *        produced by the IERS opole grid.
+         *
+         * Once set, @c computePoleTideCorrection() adds the Sec. 7.1.5 ocean
+         * pole tide term on top of the Sec. 7.1.4 rotational-deformation term.
+         */
+        void setOceanPoleTideCoefficients(const std::array<double, 6>& coeffs);
+
+        /**
+         * @brief Interpolate ocean pole tide load coefficients from the IERS grid.
+         *
+         * Bilinearly interpolates the global 0.5x0.5-degree Desai opole load grid
+         * (@c opoleloadcoefcmcor.txt — IERS Conventions 2010 chapter 7) at the
+         * station position and stores the resulting six coefficients.  Default
+         * runs stay byte-identical: nothing is loaded unless the caller invokes
+         * this (gated upstream by @c enable_ocean_pole_tide).
+         *
+         * @param grid_path     Path to @c opoleloadcoefcmcor.txt.
+         * @param station_ecef  Receiver ECEF position (metres).
+         * @return True if the grid parsed and coefficients were stored.
+         */
+        bool loadOceanPoleTideFromGrid(const std::string& grid_path,
+                                       const Eigen::Vector3d& station_ecef);
+
+        /**
+         * @brief Check whether ocean pole tide coefficients are available.
+         * @return True if OPT coefficients have been set or interpolated.
+         */
+        bool hasOceanPoleTideCoefficients() const { return has_opt_coeffs_; }
+
     private:
         LogManager& log_manager_;                         ///< Logger for debugging and info
         std::vector<ClockData> clocks_;                   ///< Satellite clock data samples
@@ -388,6 +444,13 @@ namespace GnssProcessor {
         mutable std::unordered_map<std::string, double> windup_trace_epoch_;
 
         OceanTideModel ocean_tide_model_;  ///< Ocean tidal loading model
+
+        // Ocean pole tide (IERS 2010 Sec. 7.1.5) per-station load coefficients,
+        // ordered [u_n^R, u_n^I, u_e^R, u_e^I, u_r^R, u_r^I].  Empty/false until
+        // interpolated from the opole grid (or set directly); when absent
+        // computePoleTideCorrection returns only the Sec. 7.1.4 term.
+        std::array<double, 6> opt_coeffs_{};   ///< Ocean pole tide load coefficients.
+        bool has_opt_coeffs_{ false };         ///< True once OPT coefficients are loaded.
 
     };
 

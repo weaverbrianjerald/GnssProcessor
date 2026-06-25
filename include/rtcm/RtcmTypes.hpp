@@ -54,7 +54,8 @@ struct SsrOrbitCorrection {
     int             iode{0};            ///< Issue of Data, Ephemeris (DF071).
     Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};      ///< Radial/Along/Cross delta (meters).
     Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};  ///< Time derivatives (meters/sec).
-    GnssTime        received_time{0, 0.0};                   ///< When the correction was received.
+    GnssTime        received_time{0, 0.0};                   ///< When the correction was received (wall-clock; staleness gate).
+    GnssTime        epoch_time{0, 0.0};                      ///< SSR content reference epoch (DF; dt base for delta_rac_dot propagation).
     int             iod_ssr{0};                              ///< Provider IOD-SSR at receive time.
 };
 
@@ -70,7 +71,8 @@ struct SsrClockCorrection {
     double      c0{0.0};                ///< Polynomial offset (meters).
     double      c1{0.0};                ///< Polynomial drift (m/s).
     double      c2{0.0};                ///< Polynomial drift rate (m/s^2).
-    GnssTime    received_time{0, 0.0};
+    GnssTime    received_time{0, 0.0};  ///< Wall-clock receive time (staleness gate).
+    GnssTime    epoch_time{0, 0.0};     ///< SSR content reference epoch — dt base for dC(t)=c0+c1·dt+c2·dt² (dt = t − epoch_time).
     int         iod_ssr{0};
 };
 
@@ -87,7 +89,8 @@ struct SsrCombinedCorrection {
     double          c0{0.0};
     double          c1{0.0};
     double          c2{0.0};
-    GnssTime        received_time{0, 0.0};
+    GnssTime        received_time{0, 0.0};  ///< Wall-clock receive time (staleness gate).
+    GnssTime        epoch_time{0, 0.0};     ///< SSR content reference epoch (shared orbit+clock dt base).
     int             iod_ssr{0};
 };
 

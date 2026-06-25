@@ -15,6 +15,11 @@
 namespace GnssProcessor {
 
 DifferencingMode differencingModeFor(const GnssConfig& config) {
+    // The network producer runs on undifferenced + uncombined rows and estimates
+    // the satellite-side bias lumps explicitly — it must NEVER apply receiver-side
+    // BSSD even if a between_satellite_sd toggle is present in its config.
+    if (config.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
+                                          return DifferencingMode::None;
     if (config.isBaselineMode())          return DifferencingMode::DoubleDifference;
     if (config.enableBetweenSatelliteSd()) return DifferencingMode::BetweenSatellite;
     return DifferencingMode::None;

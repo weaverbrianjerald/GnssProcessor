@@ -159,6 +159,14 @@ private:
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
+    /// @brief Re-attempt the held obs↔SSR-sync epoch after the SSR stream advances.
+    ///
+    /// Called from @c feedRtcmFrame after an SSR push.  Moves @c held_obs_ back
+    /// through @c processEpoch with the sync gate re-evaluated: if the freshest
+    /// SSR now covers the held epoch it is processed, otherwise it is re-held.
+    /// No-op when nothing is held (the common case and all non-sync runs).
+    void drainHeldObs();
+
     GnssConfig&  config_;
     LogManager&  log_manager_;
 
@@ -216,6 +224,20 @@ private:
     // Observation buffer for epoch assembly from streaming frames.
     GnssTime                        pending_epoch_time_{ 0, 0.0 };
     std::vector<RinexObservation>   pending_obs_;
+
+    // --- obs↔SSR sync (processing.enable_obs_ssr_sync) ---
+    // A complete obs epoch deferred because it ran ahead of the SSR coverage
+    // horizon (freshest SSR content epoch + ssr_max_age).  Keep-latest: a newer
+    // held epoch overwrites the older one (skip-to-latest semantics).  Drained by
+    // drainHeldObs() when an SSR push advances the horizon.  Empty on every
+    // non-sync run, so the feature is fully inert unless enabled.
+    std::vector<RinexObservation>   held_obs_;
+    GnssTime  held_epoch_time_{ 0, 0.0 };       ///< Epoch time of held_obs_ (diagnostics).
+    double    sync_hold_since_s_{ 0.0 };        ///< Wall-clock GPS sec the current hold run began (0 = not holding).
+    bool      sync_outage_{ false };            ///< Latched once a hold exceeds the max-hold budget; cleared when SSR re-covers obs (degraded passthrough while set).
+    bool      processing_synced_epoch_{ false };///< True while draining a held epoch — bypasses skip-to-latest (the held epoch is the intended SSR-aligned target).
+    bool      draining_final_{ false };         ///< True during flush() — bypasses both obs↔SSR hold and skip-to-latest so the final epoch is never lost.
+    uint64_t  sync_hold_warn_ctr_{ 0 };         ///< Throttle for the obs↔SSR hold debug line.
 };
 
 } // namespace GnssProcessor

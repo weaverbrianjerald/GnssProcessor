@@ -145,7 +145,10 @@ if (logging_config.enable_wls_trace) {
     }
 
     if (residual_trace_.is_open()) {
-        residual_trace_ << "week,tow_s,satellite,signal,innovation_m,residual_m,residual_std_m,standardized_residual\n";
+        // The trailing redundancy/w_test/mdb_m columns carry the Baarda
+        // data-snooping QC (item #9); they are populated only when
+        // estimation.enable_data_snooping is on, and written as nan otherwise.
+        residual_trace_ << "week,tow_s,satellite,signal,innovation_m,residual_m,residual_std_m,standardized_residual,redundancy,w_test,mdb_m\n";
     }
 
     if (wls_trace_.is_open()) {
@@ -166,6 +169,17 @@ if (logging_config.enable_wls_trace) {
 
 bool TraceLogger::isInitialized() const {
     return initialized_;
+}
+
+void TraceLogger::flush() const {
+    // Per-record writers use '\n' (no implicit flush); push buffered tail
+    // records to disk so an external reader (the end-of-run report) sees
+    // complete traces.
+    for (std::ofstream* s : { &state_trace_, &ambiguity_trace_, &residual_trace_,
+                              &ionosphere_trace_, &sat_bias_trace_, &sat_status_trace_,
+                              &dop_trace_, &wls_trace_ }) {
+        if (s->is_open()) s->flush();
+    }
 }
 
 void TraceLogger::logState(const GnssTime& time, const StateManager& state_manager) const {
@@ -863,6 +877,15 @@ void TraceLogger::logResiduals(const GnssTime& time, const EpochMeasurement& m) 
         return std::numeric_limits<double>::quiet_NaN();
     };
 
+    // Baarda QC columns (item #9).  These vectors are empty unless
+    // estimation.enable_data_snooping is on; emit NaN per row when absent so
+    // the CSV column count stays constant.
+    auto qc = [](const Eigen::VectorXd& v, size_t i) -> double {
+        return (i < static_cast<size_t>(v.size()))
+            ? v(static_cast<Eigen::Index>(i))
+            : std::numeric_limits<double>::quiet_NaN();
+    };
+
     for (size_t i = 0; i < n; ++i) {
         residual_trace_ << std::fixed << std::setprecision(3)
                         << time.week << "," << time.tow << ",";
@@ -871,7 +894,10 @@ void TraceLogger::logResiduals(const GnssTime& time, const EpochMeasurement& m) 
                         << innov(static_cast<Eigen::Index>(i)) << ","
                         << res(static_cast<Eigen::Index>(i)) << ","
                         << diag_std(i) << ","
-                        << sres(static_cast<Eigen::Index>(i)) << "\n";
+                        << sres(static_cast<Eigen::Index>(i)) << ","
+                        << qc(m.residual_redundancy, i) << ","
+                        << qc(m.residual_wtest, i) << ","
+                        << qc(m.residual_mdb, i) << "\n";
     }
 }
 

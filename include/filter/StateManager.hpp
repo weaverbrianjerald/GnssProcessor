@@ -80,6 +80,27 @@ namespace GnssProcessor {
         size_t getStateSize() const;
 
         /**
+         * @brief Build a stable human-readable label for every state index.
+         *
+         * Returns one string per state vector index (size == getStateSize()),
+         * unioning synthesized labels for the fixed-core block (position,
+         * clock, ZWD, velocity, clock-rate, phase-clock, tropo gradients, IMU
+         * attitude/biases, differential ZWD, inter-system time/rate offsets)
+         * with the category-prefixed keys of the dynamic key→index maps
+         * (ambiguities, per-sat iono, receiver code biases, satellite code /
+         * phase biases).  The dynamic keys come straight from
+         * StateKeySchema, so they are stable across epochs even as state rows
+         * are appended or pruned (which shifts the raw indices).  This is the
+         * label set used to combine normal equations across epochs / sessions
+         * (see NeqAccumulator) where indexing by raw position would be
+         * incorrect.  Any index not otherwise covered falls back to
+         * "STATE_<i>".
+         *
+         * @return Vector of stable labels, indexed by state position.
+         */
+        std::vector<std::string> getStateLabels() const;
+
+        /**
          * @brief Get a copy of the current state vector.
          * @return State vector as Eigen::VectorXd.
          */
@@ -853,6 +874,55 @@ namespace GnssProcessor {
         }
 
         // -------------------------------------------------------------------
+        // Satellite PHASE-bias states (PPP_RTK_Network producer).
+        //
+        // Explicit per-(satellite, signal) satellite phase-bias states (Odijk
+        // Eq. 4 — each carries the network pivot-receiver ambiguity lump).
+        // Mirror the satellite CODE-bias block above but live in a SEPARATE map
+        // (@c sat_phase_bias_indices_) keyed "<sat>|<signal>|PB".  Created and
+        // owned by the network estimator (the shared satellite spine); inert in
+        // every other mode.  The warm-restart cache the code-bias block carries
+        // is deliberately NOT mirrored yet — the network's cross-epoch restart
+        // semantics are decided alongside the estimator (W4), not the
+        // single-receiver arc-continuity cache.
+        // -------------------------------------------------------------------
+
+        /// @brief Index of a satellite phase-bias state, or -1 if absent.
+        int getSatPhaseBiasIndex(const std::string& key) const;
+
+        /// @brief Read-only map "satellite|signal|PB" -> state index.
+        const std::map<std::string, size_t>& getSatPhaseBiasStates() const;
+
+        /// @brief Append a satellite phase-bias state at cold-start variance
+        ///        (@c initial_std.sat_phase_bias²).  Idempotent if the key
+        ///        already exists.  Returns the state index.
+        size_t addSatPhaseBiasState(const std::string& key, double initial_value);
+
+        /// @brief Append a satellite phase-bias state with an explicit variance
+        ///        (e.g. a warm restart).  Non-positive variance falls back to
+        ///        @c initial_std.sat_phase_bias².
+        size_t addSatPhaseBiasStateWithVariance(const std::string& key,
+                                                double initial_value,
+                                                double initial_variance);
+
+        /// @brief Reset a satellite phase-bias state (decorrelate row/col, seed a
+        ///        fresh value+variance).  Refuses to disturb a frozen-pivot row
+        ///        (diag == 0), preserving the S-basis datum.
+        void resetSatPhaseBiasState(const std::string& key,
+                                    double new_value,
+                                    double new_variance);
+
+        /// @brief Re-inflate the variances of all phase-bias states for a
+        ///        satellite (value preserved — phase HW delay is constant),
+        ///        skipping frozen-pivot rows.
+        void reinflateSatPhaseBiasVariancesForSat(const std::string& satellite,
+                                                  double new_variance);
+
+        /// @brief Prune satellite phase-bias states whose keys are not in
+        ///        @p keep_keys (no warm-restart cache yet — see W4).
+        void pruneSatPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
+
+        // -------------------------------------------------------------------
         // Unresolvable ambiguity support
         // -------------------------------------------------------------------
 
@@ -1087,6 +1157,7 @@ namespace GnssProcessor {
         std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
+        std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
         std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (PPP-RTK, diagnostics only).

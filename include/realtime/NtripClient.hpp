@@ -2,9 +2,9 @@
  * @file NtripClient.hpp
  * @brief NTRIP v2 client for receiving RTCM correction streams.
  *
- * Connects to an NTRIP caster over HTTP and provides a blocking byte-read
- * interface that the RTCM stream reader can consume.  Uses libcurl (already
- * linked) for the HTTP transport layer.
+ * Connects to an NTRIP caster over HTTP or HTTPS and provides a blocking
+ * byte-read interface that the RTCM stream reader can consume.  Uses libcurl
+ * (already linked) for the HTTP(S) transport layer.
  */
 #pragma once
 
@@ -30,6 +30,8 @@ struct NtripConfig {
     std::string password;               ///< NTRIP password.
     std::string nmea_gga;               ///< Optional GGA sentence sent to caster for VRS.
     int         reconnect_delay_s{ 5 }; ///< Seconds to wait before reconnecting on failure.
+    bool        use_tls{ false };       ///< Connect over HTTPS (curl SSL) instead of plain HTTP.  Required for port-443 casters (e.g. CDDIS).  Default false keeps plain-HTTP casters (igs-ip.net, SBF replay) byte-identical.
+    bool        tls_insecure{ false };  ///< When @c use_tls, disable peer/host certificate verification (CURLOPT_SSL_VERIFYPEER/VERIFYHOST → 0).  Testing only — against self-signed or mis-chained casters; default verifies the chain.
 };
 
 /**

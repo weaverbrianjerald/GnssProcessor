@@ -48,6 +48,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <cstdlib>
 #include <fmt/format.h>
 
 namespace GnssProcessor {
@@ -1325,6 +1326,13 @@ if (config_.isBaselineMode()) {
     return runBaseline();
 }
 
+// --- Branch on processing mode: the network PRODUCER takes the joint
+//     multi-station pipeline.  PPP_RTK_User flows through the normal PPP
+//     path below as an uncombined PPP-RTK consumer. ---
+if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
+    return runNetwork();
+}
+
 // --- Phase 1b: Resolve (download/cache) product and RINEX data ---
 if (!resolveData()) return 1;
 
@@ -1382,6 +1390,18 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     if (config_.getAdaptiveIonoQConfig().enabled) {
         iono_variability_monitor_ =
             std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
+    }
+
+    // Cross-session normal-equation accumulator (item #13B).  Post-processing
+    // only (the config loader forces enable_neq_export off in real-time mode).
+    // Accumulates Hᵀ R⁻¹ H / Hᵀ R⁻¹ Δz from each accepted update, eliminating
+    // epoch-local states by Schur reduction, and exports .neq / .asc at end of
+    // run.  Filter state is never touched.
+    if (config_.enableNeqExport()) {
+        neq_accumulator_ = std::make_unique<NeqAccumulator>();
+        log_manager_.getLogger("main_log")->info(
+            "Normal-equation export enabled: accumulating cross-session NEQ "
+            "(.neq/.asc will be written beside the navigation solution)");
     }
 
     // Provide BIA satellite biases to the MW and EWL detectors for integer rounding
@@ -1477,13 +1497,14 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         ar_config.wl_max_frac           = config_.getArWlMaxFrac();
         ar_config.min_success_rate      = config_.getArMinSuccessRate();
         ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
+        ar_config.enable_partial_ar     = config_.getArEnablePartialAr();
         ar_config.ar_active_systems     = config_.getArActiveSystems();
         ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log_manager_.getLogger("main_log")->info(
-            "Ambiguity resolution enabled: mode={}, wl_only={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
+            "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
             "min_epochs={}, max_pos_σ={:.3f} m",
-            ar_config.ar_mode, ar_config.wl_only ? "on" : "off",
+            ar_config.ar_mode, ar_config.wl_only ? "on" : "off", ar_config.enable_partial_ar ? "on" : "off",
             ar_config.ratio_threshold, ar_config.ratio_upper_bound,
             ar_config.elevation_mask_ar, ar_config.min_epochs, ar_config.max_position_sigma_m);
     }
@@ -1791,6 +1812,26 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         // are applied below for the forward solution only.
         capturePosteriorSnapshot(epoch_reset_sats, epoch_complete_reset, have_applied);
 
+        // Cross-session NEQ accumulation (item #13B).  Mirrors the accepted
+        // update's (H, R, innovation) into a label-keyed normal system; the
+        // state labels are captured here so they match applied_meas.H columns
+        // (no state resize occurs between the accepted update and this point).
+        // Pure sibling consumer — does not touch the filter state.
+        if (neq_accumulator_ && have_applied) {
+            const std::vector<std::string> state_labels = state_manager_->getStateLabels();
+            if (static_cast<Eigen::Index>(state_labels.size()) == applied_meas.H.cols()) {
+                neq_accumulator_->accumulate(applied_meas, state_labels, epoch_reset_sats);
+            } else {
+                // Should never fire (StateManager only appends/prunes, so
+                // labels are positionally aligned with H columns); warn rather
+                // than debug so a broken invariant is visible without enabling
+                // debug logging — a silent per-epoch drop would corrupt the NEQ.
+                log_manager_.getLogger("main_log")->warn(
+                    "{}NEQ accumulation skipped: state labels ({}) != H columns ({})",
+                    epoch_prefix, state_labels.size(), applied_meas.H.cols());
+            }
+        }
+
         // Soft-LLI bridge: roll the "last good" ambiguity snapshot from the
         // converged FLOAT posterior (before AR fix-and-hold tightens the
         // covariance).  Only converged keys update it, so it holds the pre-gap
@@ -1943,6 +1984,53 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
         }
     }
 
+    // --- Phase 5b: Cross-session normal-equation export (item #13B) ---
+    // The accumulator mirrored each accepted update's (H, R, innovation) into a
+    // label-keyed normal system with the epoch-local states Schur-eliminated.
+    // x̂ = N⁻¹u is the Gauss-Newton INCREMENT about the per-epoch operating
+    // points (≈0 for a converged static run, confirming the filter solution is
+    // a stationary point of the batch system); absolute coordinates are the
+    // final filter state plus that increment.  N, u, the labels and σ̂₀² are
+    // the combinable product written to .neq/.asc.
+    if (neq_accumulator_ && !neq_accumulator_->empty()) {
+        const NeqAccumulator::Solution sol = neq_accumulator_->solve();
+        const std::filesystem::path stem = log_dir_ / "normal_equations";
+        const bool wrote = neq_accumulator_->writeFiles(stem, sol);
+        auto neq_log = log_manager_.getLogger("main_log");
+        if (sol.ok) {
+            double dx = 0.0, dy = 0.0, dz = 0.0;
+            for (std::size_t i = 0; i < sol.labels.size(); ++i) {
+                const auto& lab = sol.labels[i];
+                const double xi = sol.x(static_cast<Eigen::Index>(i));
+                if (lab == "POS_X") dx = xi;
+                else if (lab == "POS_Y") dy = xi;
+                else if (lab == "POS_Z") dz = xi;
+            }
+            const Eigen::Vector3d final_pos =
+                state_manager_->getStateVector().head<3>();
+            const double incr = std::sqrt(dx * dx + dy * dy + dz * dz);
+            neq_log->info(
+                "NEQ export: {} params, {} obs, {} local eliminated, dof={:.1f}, "
+                "sigma0^2={:.3f}",
+                sol.n_params, sol.n_obs, sol.n_local, sol.dof, sol.sigma0_sq);
+            neq_log->info(
+                "NEQ position: increment |dx_pos|={:.4f} m, "
+                "absolute=({:.4f}, {:.4f}, {:.4f}) m",
+                incr, final_pos.x() + dx, final_pos.y() + dy, final_pos.z() + dz);
+        } else {
+            neq_log->warn(
+                "NEQ export: system not solvable ({} params, {} obs); "
+                "matrices still written for inspection",
+                sol.n_params, sol.n_obs);
+        }
+        if (wrote)
+            neq_log->info("Normal equations written: {}.neq / {}.asc",
+                          stem.string(), stem.string());
+        else
+            neq_log->error("Failed to write normal-equation export to {}.*",
+                           stem.string());
+    }
+
     auto wall_end = std::chrono::high_resolution_clock::now();
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
     log_manager_.getLogger("main_log")->info("Processing completed in {} ms, mode={}",
@@ -1950,7 +2038,80 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
 
     if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
 
+    // Optional end-of-run HTML report (pyviz/run_report.py -> gnss_report.html).
+    generateReport_();
+
     return 0;
+}
+
+void Application::generateReport_() {
+    if (!config_.autoReport()) return;
+    // Ensure all buffered trace records are on disk before the report process
+    // reads them (MW / TurboEdit traces already flush per-record).
+    if (trace_logger_) trace_logger_->flush();
+    generateReportFor_(std::filesystem::absolute(log_dir_));
+}
+
+void Application::generateReportFor_(const std::filesystem::path& trace_dir) {
+    namespace fs = std::filesystem;
+    auto log = log_manager_.getLogger("main_log");
+
+    const fs::path root   = fs::path(GNSS_PROJECT_ROOT);
+    const fs::path script = root / "pyviz" / "run_report.py";
+    if (!fs::exists(script)) {
+        if (log) log->warn("auto_report: {} not found - skipping report generation",
+                           script.string());
+        return;
+    }
+
+    // Interpreter: explicit override, else baked venv, else PATH "python".
+    std::string python = config_.reportPython();
+    if (python.empty()) {
+        const fs::path venv_py = root / "venv" / "Scripts" / "python.exe";
+        python = fs::exists(venv_py) ? venv_py.string() : std::string("python");
+    }
+
+    const fs::path log_abs = fs::absolute(trace_dir);
+    const fs::path out     = log_abs / "gnss_report.html";
+    const std::string backend = config_.reportBackend().empty()
+                                  ? std::string("matplotlib") : config_.reportBackend();
+
+    // Quote every path (handles spaces).  On Windows std::system pipes the
+    // string through cmd /c, which strips the outermost quotes -- so the whole
+    // command needs an extra wrapping pair when it already has quoted tokens.
+    std::string inner = "\"" + python + "\" \"" + script.string() + "\" \""
+                      + log_abs.string() + "\" -o \"" + out.string()
+                      + "\" --backend " + backend;
+
+    // Curated viewer subset (empty => render all).
+    if (!config_.reportViewers().empty()) {
+        inner += " --only";
+        for (const std::string& v : config_.reportViewers())
+            inner += " " + v;
+    }
+
+    if (log) log->info("auto_report: generating {} (backend={}, {})", out.string(),
+                       backend, config_.reportAsync() ? "async" : "sync");
+
+#ifdef _WIN32
+    // Async: 'start' launches detached so the run returns without waiting.  The
+    // empty "" is start's (required) window-title argument.
+    const std::string cmd = config_.reportAsync()
+        ? "start \"\" /b " + inner
+        : "\"" + inner + "\"";
+#else
+    const std::string cmd = config_.reportAsync() ? inner + " &" : inner;
+#endif
+
+    const int rc = std::system(cmd.c_str());
+    if (config_.reportAsync()) {
+        if (log) log->info("auto_report: launched in background -> {}", out.string());
+    } else if (rc == 0) {
+        if (log) log->info("auto_report: wrote {}", out.string());
+    } else {
+        if (log) log->warn("auto_report: report generation exited with code {} "
+                          "(is pyviz set up? see pyviz/README.md)", rc);
+    }
 }
 
 } // namespace GnssProcessor

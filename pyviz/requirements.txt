@@ -1,0 +1,11 @@
+# gnssviz runtime dependencies.
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7        # static backend (offline reports)
+
+# interactive / real-time backend
+plotly>=5.20
+# kaleido            # optional: only needed to export plotly figures to PNG
+
+# dev / tests
+pytest>=7.0

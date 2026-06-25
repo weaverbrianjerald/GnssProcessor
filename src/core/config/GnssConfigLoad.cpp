@@ -144,6 +144,8 @@ namespace GnssProcessor {
             else if (norm == "ppp-rtk")          processing_mode_ = ProcessingMode::PPP_RTK;
             else if (norm == "baseline-single")  processing_mode_ = ProcessingMode::BaselineSingle;
             else if (norm == "baseline-multi")   processing_mode_ = ProcessingMode::BaselineMulti;
+            else if (norm == "ppp-rtk-network")  processing_mode_ = ProcessingMode::PPP_RTK_Network;
+            else if (norm == "ppp-rtk-user")     processing_mode_ = ProcessingMode::PPP_RTK_User;
             else {
                 log->warn("Unknown processing mode '{}', defaulting to PPP", mode);
                 processing_mode_ = ProcessingMode::PPP;
@@ -152,6 +154,9 @@ namespace GnssProcessor {
                 processing_mode_ == ProcessingMode::PPP              ? "PPP"             :
                 processing_mode_ == ProcessingMode::PPP_RTK          ? "PPP-RTK"         :
                 processing_mode_ == ProcessingMode::BaselineSingle   ? "Baseline-Single" :
+                processing_mode_ == ProcessingMode::BaselineMulti    ? "Baseline-Multi"  :
+                processing_mode_ == ProcessingMode::PPP_RTK_Network  ? "PPP-RTK-Network" :
+                processing_mode_ == ProcessingMode::PPP_RTK_User     ? "PPP-RTK-User"    :
                                                                        "Baseline-Multi";
             log->info("Processing mode: {}", mode_label);
         }
@@ -306,9 +311,16 @@ namespace GnssProcessor {
         }
 
         uncombined_enabled_ = jval<bool>(json, "processing.uncombined_enabled", "uncombined_enabled", false);
-        if (processing_mode_ == ProcessingMode::PPP_RTK) {
+        if (processing_mode_ == ProcessingMode::PPP_RTK
+         || processing_mode_ == ProcessingMode::PPP_RTK_Network
+         || processing_mode_ == ProcessingMode::PPP_RTK_User) {
+            // The PPP-RTK family (single-receiver user, network producer, and
+            // network-product consumer) all operate on the undifferenced +
+            // uncombined L1/L2 substrate.  The network producer additionally
+            // runs DifferencingMode::None (no receiver-side BSSD) and estimates
+            // the satellite-side bias lumps explicitly (see runNetwork).
             uncombined_enabled_ = true;
-            log->info("PPP-RTK mode: forcing uncombined_enabled=true");
+            log->info("PPP-RTK family mode: forcing uncombined_enabled=true");
         }
         if (processing_mode_ == ProcessingMode::BaselineSingle
          || processing_mode_ == ProcessingMode::BaselineMulti) {
@@ -388,10 +400,27 @@ namespace GnssProcessor {
             log->warn("Non-positive ssr_max_age_s ({:.1f}) → 30 s default", ssr_max_age_s_);
             ssr_max_age_s_ = 30.0;
         }
+        // obs↔SSR sync: hold obs epochs newer than (freshest SSR content epoch +
+        // ssr_max_age) so PPP-RTK consumes obs time-aligned with the corrections
+        // rather than pinned to wall clock; a stalled SSR feed is bounded by the
+        // max-hold liveness budget before degraded fallback.
+        enable_obs_ssr_sync_ = jval<bool>(json,
+            "processing.enable_obs_ssr_sync", "enable_obs_ssr_sync", false);
+        obs_ssr_sync_max_hold_s_ = jval<double>(json,
+            "processing.obs_ssr_sync_max_hold_s", "obs_ssr_sync_max_hold_s", 30.0);
+        if (obs_ssr_sync_max_hold_s_ <= 0.0) {
+            log->warn("Non-positive obs_ssr_sync_max_hold_s ({:.1f}) → 30 s default", obs_ssr_sync_max_hold_s_);
+            obs_ssr_sync_max_hold_s_ = 30.0;
+        }
         if (enable_obs_skip_to_latest_) {
             log->info("Real-time obs skip-to-latest ON: drop epochs >{:.1f}s behind wall-clock GPS "
                       "(backlog warn at {:.1f}s); SSR overlay max age {:.1f}s",
                       obs_skip_max_lag_s_, rt_backlog_warn_s_, ssr_max_age_s_);
+        }
+        if (enable_obs_ssr_sync_) {
+            log->info("Real-time obs↔SSR sync ON: hold obs newer than (freshest SSR content +{:.1f}s); "
+                      "max hold {:.1f}s before degraded fallback",
+                      ssr_max_age_s_, obs_ssr_sync_max_hold_s_);
         }
         // RINEX observation-type filter.  String of letters from the set
         // {C, L, D, S} selecting which measurement types the parser will
@@ -454,6 +483,65 @@ namespace GnssProcessor {
         // is applied by loadAppModeAndRealtimeSection_, once app_mode_
         // has been parsed.
         run_smoother_ = jval<bool>(json, "processing.run_smoother", "run_smoother", false);
+
+        // Cross-session normal-equation export (item #13B): post-processing
+        // only.  Real-time guard is applied by loadAppModeAndRealtimeSection_,
+        // once app_mode_ has been parsed.
+        enable_neq_export_ = jval<bool>(json, "processing.enable_neq_export", "enable_neq_export", false);
+
+        // Orbit-layer enhancements (M-PAGES port): sidereal-trig SP3 position
+        // interpolation and beta-driven orbit-normal satellite attitude.  Both
+        // default off and are byte-identical to the legacy path when disabled.
+        enable_trig_sp3_interp_ = jval<bool>(json, "processing.enable_trig_sp3_interp", "enable_trig_sp3_interp", false);
+        enable_orbit_normal_attitude_ = jval<bool>(json, "processing.enable_orbit_normal_attitude", "enable_orbit_normal_attitude", false);
+
+        // Non-causal cycle-slip bridge (runs before the smoother; requires
+        // run_smoother_; forced off in real-time mode by
+        // loadAppModeAndRealtimeSection_).
+        enable_noncausal_slip_bridge_ = jval<bool>(json, "processing.enable_noncausal_slip_bridge", "enable_noncausal_slip_bridge", false);
+        slip_bridge_half_window_epochs_ = jval<int>(json, "processing.slip_bridge_half_window_epochs", "slip_bridge_half_window_epochs", 30);
+        pre_bridge_float_tol_cycles_ = jval<double>(json, "processing.pre_bridge_float_tol_cycles", "pre_bridge_float_tol_cycles", 0.5);
+        pre_bridge_conv_var_m2_ = jval<double>(json, "processing.pre_bridge_conv_var_m2", "pre_bridge_conv_var_m2", 0.0025);
+
+        // End-of-run auto report (pyviz/run_report.py -> gnss_report.html).
+        enable_auto_report_ = jval<bool>(json, "processing.auto_report", "auto_report", false);
+        report_backend_     = jval<std::string>(json, "processing.report_backend", "report_backend", "matplotlib");
+        report_python_      = jval<std::string>(json, "processing.report_python", "report_python", "");
+        report_async_       = jval<bool>(json, "processing.report_async", "report_async", false);
+        report_viewers_.clear();
+        {
+            const auto& arr = jsection(json, "processing.report_viewers", "report_viewers");
+            if (arr.is_array())
+                report_viewers_ = arr.get<std::vector<std::string>>();
+        }
+        // Sanitize report_* values: they are interpolated into the std::system
+        // command line, so reject anything that could break / inject the shell.
+        {
+            auto safe_token = [](const std::string& s) {
+                if (s.empty()) return false;
+                for (char c : s) {
+                    const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                                  || (c >= '0' && c <= '9') || c == '_' || c == '-';
+                    if (!ok) return false;
+                }
+                return true;
+            };
+            if (report_backend_ != "matplotlib" && report_backend_ != "plotly") {
+                log->warn("Unknown report_backend '{}'; using 'matplotlib'", report_backend_);
+                report_backend_ = "matplotlib";
+            }
+            std::vector<std::string> clean;
+            for (const auto& v : report_viewers_) {
+                if (safe_token(v)) clean.push_back(v);
+                else log->warn("Ignoring invalid report_viewers entry '{}' "
+                               "(allowed: [A-Za-z0-9_-])", v);
+            }
+            report_viewers_ = std::move(clean);
+            if (report_python_.find('"') != std::string::npos) {
+                log->warn("report_python contains a quote; ignoring it");
+                report_python_.clear();
+            }
+        }
 
         // Active systems
         active_systems_.clear();
@@ -539,6 +627,13 @@ namespace GnssProcessor {
                                                  "require_bia_for_signals", false);
         estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
                                                  "estimate_sat_biases", false);
+        // Network producer (PPP_RTK_Network) toggles.  Both default false so the
+        // single-receiver user / baseline paths are byte-identical; they only
+        // take effect once the network estimator (W4) creates the shared states.
+        estimate_sat_phase_biases_ = jval<bool>(json, "estimation.estimate_sat_phase_biases",
+                                                 "estimate_sat_phase_biases", false);
+        promote_sat_code_bias_     = jval<bool>(json, "estimation.promote_sat_code_bias",
+                                                 "promote_sat_code_bias", false);
         // Sat-bias cache thresholds (only meaningful when estimate_sat_biases
         // is on).  warm_age_s controls full warm restore; max_age_s caps
         // entry lifetime.  Validate warm<=max; if not, clamp warm down so
@@ -742,6 +837,46 @@ namespace GnssProcessor {
                                                    "enable_between_satellite_sd", false);
         enable_glonass_bssd_         = jval<bool>(json, "estimation.between_satellite_sd.enable_glonass",
                                                    "enable_glonass_bssd", false);
+        // Per-FCN-slot GLONASS receiver inter-frequency code bias (M-PAGES item
+        // #4).  FDMA: each slot is a distinct carrier frequency → a distinct
+        // receiver group delay, so GLONASS code biases are modelled per
+        // (band, slot) rather than per band.  Requires estimate_ifb + uncombined;
+        // the central channel k=0 is the held datum.  Default false keeps the
+        // GLONASS path byte-identical.
+        enable_glonass_ifb_          = jval<bool>(json, "estimation.glonass_ifb.enable",
+                                                   "enable_glonass_ifb", false);
+        if (enable_glonass_ifb_ && !estimate_ifb_) {
+            log->warn("enable_glonass_ifb is set but estimate_ifb is off — per-slot "
+                      "GLONASS IFB needs estimate_ifb=true in uncombined PPP-RTK; it will be inactive.");
+        }
+        // CIO-based IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; off
+        // by default → legacy IAU 1976/1980 equinox chain stays byte-identical.
+        enable_cio_frame_            = jval<bool>(json, "estimation.enable_cio_frame",
+                                                   "enable_cio_frame", false);
+
+        // Statistical QC layer (item #9 / M-PAGES NgsLsq variance factor +
+        // Baarda data-snooping).  All three default false → the post-fit
+        // residual / outlier path is byte-identical.
+        //  * variance_factor : a-posteriori σ̂₀² = (Σ vᵢ²/Rᵢᵢ)/dof, reported
+        //    only (rescales a copy of σ_pos, never the propagated P).
+        //  * data_snooping   : per-row redundancy/w-test/MDB + a w-test
+        //    outlier gate (|w| > data_snooping_critical) over checkable rows.
+        //  * full_r_kernel   : form the post-fit residual covariance with the
+        //    off-diagonals of a dense R (BSSD/DD) instead of the diagonal,
+        //    so the redundancy/w-test honour correlated observations.
+        enable_variance_factor_ = jval<bool>(json, "estimation.enable_variance_factor",
+                                             "enable_variance_factor", false);
+        enable_data_snooping_   = jval<bool>(json, "estimation.enable_data_snooping",
+                                             "enable_data_snooping", false);
+        data_snooping_critical_ = jval<double>(json, "estimation.data_snooping_critical",
+                                               "data_snooping_critical", 3.29);
+        if (data_snooping_critical_ <= 0.0) {
+            log->warn("Non-positive data_snooping_critical ({:.3f}) ignored; reverting to 3.29",
+                      data_snooping_critical_);
+            data_snooping_critical_ = 3.29;
+        }
+        enable_full_r_kernel_   = jval<bool>(json, "estimation.enable_full_r_kernel",
+                                             "enable_full_r_kernel", false);
         bssd_pivot_min_elevation_deg_ = jval<double>(json, "estimation.between_satellite_sd.pivot_min_elevation",
                                                       "bssd_pivot_min_elevation", 45.0);
 
@@ -1002,6 +1137,8 @@ namespace GnssProcessor {
                                                  "ar_min_success_rate", 0.999);
         ar_nl_max_per_pair_frac_ = jval<double>(json, "estimation.ambiguity_resolution.nl_max_per_pair_frac",
                                                  "ar_nl_max_per_pair_frac", 0.15);
+        ar_enable_partial_ar_    = jval<bool>(json, "estimation.ambiguity_resolution.enable_partial_ar",
+                                               "ar_enable_partial_ar", false);
 
         // estimation.ambiguity_resolution.active_systems = ["GPS","Galileo",...]
         // Empty / missing → all active systems are eligible for AR.
@@ -1035,7 +1172,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}",
+        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -1045,6 +1182,7 @@ namespace GnssProcessor {
             enable_between_satellite_sd_ ? "on" : "off",
             estimate_velocity_        ? "on" : "off",
             estimate_ifb_             ? "on" : "off",
+            enable_glonass_ifb_       ? "on" : "off",
             lock_signals_to_clock_ref_ ? "on" : "off",
             require_bia_for_signals_  ? "on" : "off",
             estimate_sat_biases_      ? "on" : "off",
@@ -1054,7 +1192,16 @@ namespace GnssProcessor {
                 : "off",
             basis_label,
             adaptive_iono_q_.enabled ? "on" : "off",
-            exclude_eclipsing_satellites_ ? "on" : "off");
+            exclude_eclipsing_satellites_ ? "on" : "off",
+            enable_cio_frame_ ? "on" : "off",
+            enable_auto_report_ ? "on" : "off",
+            enable_noncausal_slip_bridge_ ? "on" : "off",
+            enable_variance_factor_ ? "on" : "off",
+            enable_data_snooping_ ? "on" : "off",
+            enable_full_r_kernel_ ? "on" : "off",
+            enable_neq_export_ ? "on" : "off",
+            enable_trig_sp3_interp_ ? "on" : "off",
+            enable_orbit_normal_attitude_ ? "on" : "off");
     }
 
     // =================================================================
@@ -1085,6 +1232,7 @@ namespace GnssProcessor {
                 process_noise_.acceleration_psd = 1e2;
             }
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+            process_noise_.sat_phase_bias      = pn.value("sat_phase_bias_q", 1e-12);
             process_noise_.clock_rate          = pn.value("clock_rate_q", 1e-4);
             process_noise_.system_time_rate_offset =
                 pn.value("system_time_rate_offset_q", 1e-10);
@@ -1111,6 +1259,7 @@ namespace GnssProcessor {
             initial_std_.tropo_gradient      = is.value("tropo_gradient", 1e-3);
             initial_std_.phase_clock         = is.value("phase_clock", 1e3);
             initial_std_.sat_bias            = is.value("sat_bias", 10.0);
+            initial_std_.sat_phase_bias      = is.value("sat_phase_bias", 10.0);
             initial_std_.clock_rate          = is.value("clock_rate", 1.0);
             initial_std_.system_time_rate_offset =
                 is.value("system_time_rate_offset", 1e-2);
@@ -1425,6 +1574,7 @@ namespace GnssProcessor {
             model_corrections_.enable_solid_earth_tide          = mc.value("enable_solid_earth_tide", true);
             model_corrections_.enable_ocean_tide_loading        = mc.value("enable_ocean_tide_loading", true);
             model_corrections_.enable_pole_tide                 = mc.value("enable_pole_tide", true);
+            model_corrections_.enable_ocean_pole_tide           = mc.value("enable_ocean_pole_tide", false);
             model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", true);
             model_corrections_.enable_satellite_pco             = mc.value("enable_satellite_pco", true);
             model_corrections_.enable_satellite_pcv             = mc.value("enable_satellite_pcv", true);
@@ -1448,7 +1598,7 @@ namespace GnssProcessor {
             model_corrections_.enable_higher_order_ionosphere   = mc.value("enable_higher_order_ionosphere", false);
             model_corrections_.refine_emission_time             = mc.value("refine_emission_time",         true);
         }
-        log->info("Model corrections: tropo={}, rel={}, shapiro={}, set={}, otl={}, pole={}, atm={}, "
+        log->info("Model corrections: tropo={}, rel={}, shapiro={}, set={}, otl={}, pole={}, opt={}, atm={}, "
             "sat_pco={}, sat_pcv={}, rx_pco={}, rx_pcv={}, windup={}, cpb={}, atx_fallback={}",
             model_corrections_.enable_troposphere              ? "on" : "off",
             model_corrections_.enable_relativistic_correction ? "on" : "off",
@@ -1456,6 +1606,7 @@ namespace GnssProcessor {
             model_corrections_.enable_solid_earth_tide        ? "on" : "off",
             model_corrections_.enable_ocean_tide_loading      ? "on" : "off",
             model_corrections_.enable_pole_tide               ? "on" : "off",
+            model_corrections_.enable_ocean_pole_tide         ? "on" : "off",
             model_corrections_.enable_atmospheric_loading     ? "on" : "off",
             model_corrections_.enable_satellite_pco           ? "on" : "off",
             model_corrections_.enable_satellite_pcv           ? "on" : "off",
@@ -1512,6 +1663,12 @@ namespace GnssProcessor {
             receiver_antenna_orientation_.azimuth_deg   = ao.value("azimuth_deg", 0.0);
             receiver_antenna_orientation_.elevation_deg = ao.value("elevation_deg", 90.0);
         }
+        enable_rx_antenna_orientation_  = jval<bool>(json, "receiver.enable_antenna_orientation",  "enable_antenna_orientation",  false);
+        enable_rx_antenna_substitution_ = jval<bool>(json, "receiver.enable_antenna_substitution", "enable_antenna_substitution", false);
+        log->info("Receiver antenna: orientation={} (az={:.1f} deg), substitution={}",
+                  enable_rx_antenna_orientation_  ? "on" : "off",
+                  receiver_antenna_orientation_.azimuth_deg,
+                  enable_rx_antenna_substitution_ ? "on" : "off");
         zhd_pressure_mbar = jval<double>(json, "receiver.zhd_pressure_mbar", "zhd_pressure_mbar", 1013.25);
         zhd_temp_kelvin   = jval<double>(json, "receiver.zhd_temp_kelvin", "zhd_temp_kelvin", 288.15);
         log->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
@@ -1576,6 +1733,33 @@ namespace GnssProcessor {
                 has_reference_position_ = true;
                 log->info("Reference position ECEF: ({:.4f}, {:.4f}, {:.4f}) m",
                     reference_position_ecef_[0], reference_position_ecef_[1], reference_position_ecef_[2]);
+            }
+        }
+
+        // ITRF station-velocity propagation of the reference position (optional).
+        // Propagates the fixed a-priori to the observation epoch via linear plate
+        // motion r(t)=r0+v·(t−t0); see GnssConfig::getReferencePositionEcefAtEpoch.
+        {
+            enable_itrf_velocity_ = jval<bool>(json, "receiver.enable_itrf_velocity",
+                                               "enable_itrf_velocity", false);
+            reference_position_epoch_year_ = jval<double>(json, "receiver.reference_position_epoch_year",
+                                                          "reference_position_epoch_year", 0.0);
+            const auto& rv = jsection(json, "receiver.reference_velocity_ecef", "reference_velocity_ecef");
+            if (rv.is_object() && rv.contains("x") && rv.contains("y") && rv.contains("z")) {
+                reference_velocity_ecef_ = { rv.value("x", 0.0), rv.value("y", 0.0), rv.value("z", 0.0) };
+                has_reference_velocity_ = true;
+            }
+            if (enable_itrf_velocity_) {
+                if (has_reference_position_ && has_reference_velocity_ && reference_position_epoch_year_ != 0.0) {
+                    log->info("ITRF velocity propagation: ON, v=({:.5f}, {:.5f}, {:.5f}) m/yr, ref epoch={:.3f}",
+                        reference_velocity_ecef_[0], reference_velocity_ecef_[1], reference_velocity_ecef_[2],
+                        reference_position_epoch_year_);
+                }
+                else {
+                    log->warn("enable_itrf_velocity=true but propagation is INACTIVE — needs "
+                              "reference_position_ecef + reference_velocity_ecef + reference_position_epoch_year; "
+                              "a-priori will NOT be propagated");
+                }
             }
         }
     }
@@ -1688,6 +1872,23 @@ namespace GnssProcessor {
                 else {
                     log->warn("OTL BLQ file not found: {}", otl_blq_path_.string());
                     otl_blq_path_.clear();
+                }
+            }
+        }
+
+        // Ocean pole tide load grid (IERS opoleloadcoefcmcor.txt).  Optional
+        // explicit override; when empty ModelGeometry falls back to
+        // <internal_data_root>/static/opole/opoleloadcoefcmcor.txt.  Only used
+        // when model_corrections.enable_ocean_pole_tide is on.
+        {
+            std::string opt_path_str = jval<std::string>(json, "files.opt_grid_path", "opt_grid_path", "");
+            if (!opt_path_str.empty()) {
+                opt_grid_path_ = opt_path_str;
+                if (std::filesystem::exists(opt_grid_path_))
+                    log->info("Ocean pole tide grid: {}", opt_grid_path_.string());
+                else {
+                    log->warn("Ocean pole tide grid not found: {}", opt_grid_path_.string());
+                    opt_grid_path_.clear();
                 }
             }
         }
@@ -1833,6 +2034,16 @@ namespace GnssProcessor {
                 run_smoother_ = false;
                 log->warn("run_smoother=true ignored in real-time mode (smoothing is post-processing only)");
             }
+            // Non-causal slip bridge rides on the smoother → post-processing only.
+            if (enable_noncausal_slip_bridge_ && app_mode_ == AppMode::RealTime) {
+                enable_noncausal_slip_bridge_ = false;
+                log->warn("enable_noncausal_slip_bridge=true ignored in real-time mode (post-processing only)");
+            }
+            // Normal-equation export is a batch product → post-processing only.
+            if (enable_neq_export_ && app_mode_ == AppMode::RealTime) {
+                enable_neq_export_ = false;
+                log->warn("enable_neq_export=true ignored in real-time mode (post-processing only)");
+            }
         }
         {
             const auto& rt = jsection(json, "realtime", "realtime_config");
@@ -1843,6 +2054,8 @@ namespace GnssProcessor {
             realtime_config_.ntrip_password     = rt.value("ntrip_password", "");
             realtime_config_.nmea_gga           = rt.value("nmea_gga", "");
             realtime_config_.reconnect_delay_s  = rt.value("reconnect_delay_s", 5);
+            realtime_config_.ntrip_use_tls      = rt.value("ntrip_use_tls", false);
+            realtime_config_.ntrip_tls_insecure = rt.value("ntrip_tls_insecure", false);
             realtime_config_.input_type         = rt.value("input_type", "ntrip");
             realtime_config_.input_format       = rt.value("input_format", "rtcm");
             realtime_config_.input_path         = rt.value("input_path", "");
@@ -1866,6 +2079,8 @@ namespace GnssProcessor {
                 c.ntrip_password     = cc.value("ntrip_password", std::string{});
                 c.nmea_gga           = cc.value("nmea_gga", std::string{});
                 c.reconnect_delay_s  = cc.value("reconnect_delay_s", 5);
+                c.ntrip_use_tls      = cc.value("ntrip_use_tls", false);
+                c.ntrip_tls_insecure = cc.value("ntrip_tls_insecure", false);
                 c.input_path         = cc.value("input_path", std::string{});
                 c.tcp_host           = cc.value("tcp_host", std::string{});
                 c.tcp_port           = cc.value("tcp_port", 28784);
@@ -1887,14 +2102,17 @@ namespace GnssProcessor {
                 e.ntrip_password     = ec.value("ntrip_password", std::string{});
                 e.nmea_gga           = ec.value("nmea_gga", std::string{});
                 e.reconnect_delay_s  = ec.value("reconnect_delay_s", 5);
+                e.ntrip_use_tls      = ec.value("ntrip_use_tls", false);
+                e.ntrip_tls_insecure = ec.value("ntrip_tls_insecure", false);
                 e.input_path         = ec.value("input_path", std::string{});
                 e.tcp_host           = ec.value("tcp_host", std::string{});
                 e.tcp_port           = ec.value("tcp_port", 28784);
             }
 
             if (app_mode_ == AppMode::RealTime) {
-                log->info("Real-time config: input={}, ntrip={}:{}/{}, output={}",
+                log->info("Real-time config: input={}, ntrip={}://{}:{}/{}, output={}",
                     realtime_config_.input_type,
+                    realtime_config_.ntrip_use_tls ? "https" : "http",
                     realtime_config_.ntrip_host,
                     realtime_config_.ntrip_port,
                     realtime_config_.ntrip_mountpoint,
@@ -1902,7 +2120,8 @@ namespace GnssProcessor {
                 if (realtime_config_.corrections.enabled) {
                     const auto& c = realtime_config_.corrections;
                     if (c.input_type == "ntrip") {
-                        log->info("Real-time corrections: ntrip={}:{}/{}",
+                        log->info("Real-time corrections: ntrip={}://{}:{}/{}",
+                                  c.ntrip_use_tls ? "https" : "http",
                                   c.ntrip_host, c.ntrip_port, c.ntrip_mountpoint);
                     } else {
                         log->info("Real-time corrections: file={}", c.input_path);
@@ -1911,7 +2130,8 @@ namespace GnssProcessor {
                 if (realtime_config_.ephemeris.enabled) {
                     const auto& e = realtime_config_.ephemeris;
                     if (e.input_type == "ntrip") {
-                        log->info("Real-time ephemeris (nav): ntrip={}:{}/{}",
+                        log->info("Real-time ephemeris (nav): ntrip={}://{}:{}/{}",
+                                  e.ntrip_use_tls ? "https" : "http",
                                   e.ntrip_host, e.ntrip_port, e.ntrip_mountpoint);
                     } else {
                         log->info("Real-time ephemeris (nav): file={}", e.input_path);

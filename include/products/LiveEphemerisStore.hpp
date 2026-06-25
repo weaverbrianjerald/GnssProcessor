@@ -62,10 +62,21 @@ public:
     /**
      * @brief Insert / overwrite a satellite's broadcast ephemeris.
      *
-     * If the new record's IODE differs from the current one, the current
-     * record is demoted to "previous" before being replaced.
+     * Source priority + freshest-toe.  @p from_igs marks whether the record came
+     * from a dedicated IGS broadcast-nav stream (RTCM, default) or the receiver's
+     * own decoded/assembled nav (e.g. SBF).  The IGS stream is AUTHORITATIVE: the
+     * IGS-RTS SSR delta is computed against IGS broadcast ephemeris, so a receiver
+     * record must not overwrite a current IGS record at an equal-or-older toe
+     * (even at the same IODE the receiver's fit params differ, making the SSR
+     * overlay inconsistent).  A receiver record is accepted only as a gap-fill (no
+     * record yet) or when the IGS feed has clearly stalled on that satellite
+     * (receiver toe newer by more than a constellation refresh).  Within one
+     * source the freshest toe wins; an IODE change demotes the current record to
+     * "previous" so an SSR delta can re-reference across a cutover.  Default
+     * @c true keeps single-source callers (post-processing, tests, the all-RTCM
+     * IGS-station config, the network path) on plain freshest-toe behaviour.
      */
-    void insert(const BroadcastEphemeris& eph);
+    void insert(const BroadcastEphemeris& eph, bool from_igs = true);
 
     /**
      * @brief Compute the satellite ECEF position + velocity at @p time.
@@ -107,6 +118,15 @@ public:
     std::optional<SatelliteClock> computeSatelliteClock(
         const std::string& sat, const GnssTime& time, int ssr_iode = -1) const;
 
+    /// @brief Signed age (seconds, query − toe) of the closest-toe held
+    ///        ephemeris for @p sat, or @c std::nullopt when none is held.
+    ///
+    /// A cheap freshness probe (no orbit integration) used by the real-time BSSD
+    /// pivot selector to avoid seating a satellite whose ephemeris is much staler
+    /// than its constellation peers as the pivot.  |age| is the broadcast
+    /// extrapolation magnitude; smaller is a better pivot anchor.
+    std::optional<double> toeAgeSeconds(const std::string& sat, const GnssTime& time) const;
+
     /// True iff no ephemeris has been inserted.
     bool isEmpty() const;
 
@@ -131,6 +151,10 @@ private:
     struct SatRecord {
         BroadcastEphemeris                current;
         std::optional<BroadcastEphemeris> previous;
+        /// True when @c current came from a dedicated IGS broadcast-nav stream
+        /// (authoritative); false when it came from the receiver's own nav.  Used
+        /// by insert() so a receiver record can't clobber an IGS one at equal toe.
+        bool                              current_from_igs{true};
     };
 
     /// Pick current vs previous by reference-epoch proximity to @p time.

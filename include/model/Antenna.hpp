@@ -76,6 +76,23 @@ namespace GnssProcessor {
 			double zenith, double azimuth, double dazi, double dzen);
 
 		/**
+		 * @brief Correct a measured azimuth for receiver antenna orientation.
+		 *
+		 * Pure, stateless helper (exposed for unit testing).  Subtracts the
+		 * antenna mounting orientation (degrees, clockwise from local North)
+		 * from the measured azimuth and wraps the result back into [0, 360).
+		 * Ported from M-PAGES @c NGS::RxAntenna::correctAzimuth.  Used by
+		 * getAntennaCorrection() to rotate the azimuth into the antenna frame
+		 * before the receiver PCV look-up when
+		 * @c GnssConfig::enableRxAntennaOrientation() is set.
+		 *
+		 * @param azimuth_deg Measured azimuth (degrees, clockwise from North).
+		 * @param orientation_deg Antenna mounting orientation (degrees, CW from North).
+		 * @return Orientation-corrected azimuth in [0, 360) degrees.
+		 */
+		static double correctAzimuth(double azimuth_deg, double orientation_deg);
+
+		/**
 		 * @brief Compute antenna correction for a satellite/receiver observation.
 		 *
 		 * Computes the combined antenna correction (phase center offset (PCO),
@@ -229,6 +246,50 @@ namespace GnssProcessor {
 		 * computing corrections.
 		 */
 		void loadAntennaData();
+
+		/**
+		 * @brief Match a RINEX receiver antenna type string to an ATX entry.
+		 *
+		 * Single source of truth for receiver-antenna matching, shared by
+		 * getAntennaCorrection() and the coverage queries
+		 * (hasReceiverAtxEntry / hasFullAtxCoverage / wasAtxSubstituted).
+		 * The raw type is whitespace-sanitized and underscore-normalized,
+		 * then matched against @c antennas_ by (1) exact match on either
+		 * normalized form, then (2) first substring containment.  When
+		 * @c GnssConfig::enableRxAntennaSubstitution() is set and neither
+		 * succeeds, a rule-driven substitution (deprecated-code table +
+		 * radome→NONE fallback) is attempted and a warning is logged on
+		 * success.  Behaviour is unchanged from the historical inline
+		 * matching when substitution is disabled.
+		 *
+		 * @param rx_antenna_type Raw receiver antenna type (RINEX header field).
+		 * @param warn_on_ambiguity Emit a warning when >1 substring candidate matches (true only for the correction path).
+		 * @param out_sanitized [out,optional] Whitespace-stripped form (for caller diagnostics); may be nullptr.
+		 * @param out_underscore [out,optional] Underscore-normalized form (for caller diagnostics); may be nullptr.
+		 * @return Pointer to the matched AntennaData (owned by @c antennas_), or nullptr.
+		 */
+		const AntennaData* findReceiverAntennaEntry(const std::string& rx_antenna_type,
+			bool warn_on_ambiguity,
+			std::string* out_sanitized = nullptr,
+			std::string* out_underscore = nullptr) const;
+
+		/**
+		 * @brief Exact-then-substring receiver antenna match against @c antennas_.
+		 *
+		 * Inner matcher used by findReceiverAntennaEntry() for both the
+		 * primary type and each substitution candidate.  An exact match on
+		 * either normalized form wins; otherwise the first substring
+		 * containment match (in @c antennas_ order) is returned, with an
+		 * optional ambiguity warning when more than one candidate matches.
+		 *
+		 * @param sanitized Whitespace-stripped antenna type.
+		 * @param underscore Underscore-normalized antenna type.
+		 * @param warn_on_ambiguity Emit a warning when >1 candidate matches.
+		 * @return Pointer to the matched AntennaData, or nullptr.
+		 */
+		const AntennaData* matchReceiverEntry_(const std::string& sanitized,
+			const std::string& underscore,
+			bool warn_on_ambiguity) const;
 
 	};
 

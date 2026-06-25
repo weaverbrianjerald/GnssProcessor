@@ -278,6 +278,30 @@ namespace GnssProcessor {
         std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 
         /**
+         * @brief Compute the statistical-QC diagnostics for an epoch (item #9).
+         *
+         * Forms, from the post-fit residuals and the working measurement-noise
+         * covariance, the a-posteriori variance factor σ̂₀² = (Σ vᵢ²/Rᵢᵢ)/dof
+         * (dof = Σ redundancy numbers) and — for Baarda data-snooping — the
+         * per-row redundancy number rᵢ = Sr_ii/Rᵢᵢ, the w-test statistic
+         * wᵢ = vᵢ/√Sr_ii, and the minimal detectable bias MDBᵢ, storing them
+         * on @p meas (variance_factor, variance_dof, residual_redundancy,
+         * residual_wtest, residual_mdb).  Pure diagnostics: nothing here
+         * touches the propagated state or covariance.  When a dense full Sr
+         * is supplied (off-diagonal kernel, item #13A) the redundancy and
+         * w-test are computed correlation-aware via Sr⁻¹; otherwise the
+         * diagonal sr_diag is used.
+         *
+         * @param meas    Epoch measurement; QC fields are filled in place.
+         * @param R       Working measurement-noise covariance R (possibly inflated).
+         * @param sr_diag Diagonal of the post-fit residual covariance Sr = R − H·P⁺·Hᵀ.
+         * @param Sr_full Optional full Sr; nullptr → diagonal (uncorrelated) form.
+         */
+        void computeResidualQc_(EpochMeasurement& meas, const Eigen::MatrixXd& R,
+                                const Eigen::VectorXd& sr_diag,
+                                const Eigen::MatrixXd* Sr_full) const;
+
+        /**
          * @brief Get the list of satellites that had ambiguities reset during the last update.
          *
          * After a call to update() that returns NeedsMeasurementRebuild, this method

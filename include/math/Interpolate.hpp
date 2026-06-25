@@ -295,6 +295,72 @@ namespace GnssProcessor {
             double xq,
             double& val,
             double& deriv);
+
+        /**
+         * @brief Sidereal-trigonometric least-squares SP3 fit with analytic derivative.
+         *
+         * Fits the @p n data points (x[i], y[i]) with the 9-term trigonometric
+         * basis M-PAGES uses for SP3 satellite-coordinate interpolation
+         * (Intrpsp3::TrigExt) and evaluates the fitted value and its first
+         * derivative at @p xq.  The basis is
+         *   a(t) = { 1,
+         *            sin(1*P0*t), cos(1*P0*t), sin(2*P0*t), cos(2*P0*t),
+         *            sin(3*P0*t), cos(3*P0*t), sin(4*P0*t), cos(4*P0*t) }
+         * (constant + four sin/cos harmonic pairs, sin before cos — matching the
+         * M-PAGES index order exactly).  The fundamental period is the sidereal
+         * day (Astronomical Almanac 1995, 0.99726956634 mean solar days).
+         *
+         * @par Time units.
+         * @p P0 is expressed PER SECOND ( 2*pi / (0.99726956634 * 86400) ), so the
+         * basis argument tau = (x[i] - x[0]) is in the caller's seconds and the
+         * analytic derivative is returned per second — no day<->second rescale.
+         * This is identical to the M-PAGES rad/day basis followed by its /86400
+         * velocity scaling; only the unit of tau differs.  The fit origin is the
+         * first node x[0]; an origin shift only re-phases the harmonics (absorbed
+         * by each sin/cos coefficient pair), so the fitted curve is invariant to
+         * the choice of origin while the small tau improves conditioning.
+         *
+         * @par Fit regime.
+         *   - n == 9 : square system; the model passes through all 9 nodes (exact,
+         *              matching the M-PAGES 9-point ±4 window).
+         *   - n  > 9 : OVERDETERMINED least-squares smoother (does NOT pass through
+         *              the nodes).  The engine's default window is up to 11 nodes
+         *              (ModelGeometry IGS_POINTS), so the production call is an
+         *              11-point LS smoother — a deliberate divergence from the
+         *              M-PAGES exact fit, kept so the trig branch reuses the
+         *              existing derotated window verbatim.
+         *
+         * @par Weighting.
+         * Per-node sigmas weight the fit by 1/sigma row-scaling of both A and b.
+         * If @p sigmas is empty, has all positive entries equal, or has no entry
+         * > 0, the weight cancels out of the normal equations and the solve is
+         * effectively unweighted.  This mirrors M-PAGES, whose SP3 weight
+         * sig[i] = 2^acc/1000 m is a single per-satellite value applied uniformly
+         * to every node (hence inert for per-satellite interpolation); the
+         * parameter exists so a future per-epoch accuracy source can drive a
+         * genuinely weighted fit.  The solve is a singular-value-truncated
+         * pseudoinverse (Eigen JacobiSVD, relative threshold 1e-15), the NR
+         * svdfit/svbksb minimum-norm convention.
+         *
+         * @param[in]  x      Node abscissae (same size as y; need not be sorted).
+         * @param[in]  y      Node ordinates.
+         * @param[in]  sigmas Per-node 1-sigma weights (same size as x, or empty
+         *                    for an unweighted fit).
+         * @param[in]  xq     Query abscissa.
+         * @param[out] val    Fitted value p(xq).
+         * @param[out] deriv  Fitted derivative p'(xq) (per x-unit; per second when
+         *                    x is in seconds).
+         *
+         * @note If x is empty (or y.size() != x.size()), val and deriv are set to
+         *       0.0.  With fewer than 9 valid nodes the system is rank-deficient
+         *       and solved via the truncated pseudoinverse (under-determined).
+         */
+        static void trigSvdInterp(const std::vector<double>& x,
+            const std::vector<double>& y,
+            const std::vector<double>& sigmas,
+            double xq,
+            double& val,
+            double& deriv);
     };
 
 } // namespace GnssProcessor

@@ -28,6 +28,7 @@
 #include "filter/AmbiguityResolver.hpp"
 #include "common/PppTypes.hpp"
 #include "filter/Smoother.hpp"
+#include "filter/NeqAccumulator.hpp"
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -421,6 +422,54 @@ private:
      */
     int runBaseline();
 
+    /**
+     * @brief Run the minimum-constraint S-system PPP-RTK NETWORK producer.
+     *
+     * Dispatched from @c run() when @c ProcessingMode is @c PPP_RTK_Network.
+     * The network is a joint multi-station estimator (per-station local normals
+     * reduced onto a shared satellite-parameter block via an exact Schur
+     * complement) that estimates the estimable satellite clock, satellite
+     * phase/code bias, and atmosphere under an explicitly declared S-basis, and
+     * emits them in IGS-SSR convention for the companion @c PPP_RTK_User
+     * consumer.  Implemented in @c ApplicationNetwork.cpp.
+     *
+     * v1 scaffold: logs a "not yet implemented" error and returns non-zero.
+     * Subsequent slices fill in multi-station RINEX ingestion, the joint
+     * estimator, the explicit S-basis, the product emitter, and the closed-loop
+     * validation harness.
+     *
+     * @return 0 on clean shutdown, non-zero on error.
+     */
+    int runNetwork();
+
+    /**
+     * @brief Generate the end-of-run HTML report via the bundled pyviz tool.
+     *
+     * No-op unless @c config_.autoReport() is set.  Flushes the trace logger,
+     * then shells out to @c <project_root>/pyviz/run_report.py against
+     * @c log_dir_, writing @c gnss_report.html there.  The interpreter is
+     * @c config_.reportPython() if set, else the baked @c <project_root>/venv
+     * interpreter, else @c python on PATH; the backend is
+     * @c config_.reportBackend().  Always non-fatal: missing pyviz / python or a
+     * non-zero exit is logged as a warning and processing still returns success.
+     *
+     * Flushes the trace logger and delegates to @ref generateReportFor_ against
+     * @c log_dir_.  Baseline multi-rover runs (whose traces live in per-rover
+     * subdirs) call @ref generateReportFor_ directly, once per rover dir.
+     */
+    void generateReport_();
+
+    /**
+     * @brief Shell out to run_report.py for one trace directory.
+     *
+     * Writes @c <trace_dir>/gnss_report.html using the configured backend /
+     * viewer subset / interpreter (sync or detached per @c config_).  Assumes
+     * the caller has already checked @c autoReport() and flushed the traces.
+     *
+     * @param trace_dir Folder holding the run's *_trace.csv files.
+     */
+    void generateReportFor_(const std::filesystem::path& trace_dir);
+
     // -----------------------------------------------------------------------
     // Data members
     // -----------------------------------------------------------------------
@@ -443,6 +492,7 @@ private:
     std::unique_ptr<AidingSourceManager> aiding_manager_;   //!< Owns the config-selected aiding sources (IMU first client). Replaces the bespoke ImuIntegrator member.
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
     std::unique_ptr<GlobalIonosphereMap> gim_;  /**< IONEX global ionosphere map for PPP-RTK ionosphere weighting (post-processing). */
+    std::unique_ptr<NeqAccumulator>      neq_accumulator_;  /**< Cross-session normal-equation accumulator (item #13B); non-null only when processing.enable_neq_export. */
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */
     Eigen::Vector3d initial_position_;        /**< Position used for sanity-check reversion. */

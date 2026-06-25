@@ -286,6 +286,42 @@ TEST(SsrCorrectionStoreTest, PushAndQuery) {
     store.clear();
 }
 
+// hasCodeBias is the per-(sat,signal) coverage predicate that suppresses
+// redundant sat-bias STATE allocation in MeasurementModel.  Its contract: a
+// pure presence check that must agree with getCodeBias's lookup — including the
+// case getCodeBias != 0.0 cannot distinguish, a PRESENT-but-zero entry, which
+// must read as covered (the provider's bias set defines that signal's datum).
+TEST(SsrCorrectionStoreTest, HasCodeBiasPresenceContract) {
+    auto& store = SsrCorrectionStore::getInstance();
+    store.clear();
+
+    SsrCodeBias cb;
+    cb.sat = "E16";
+    cb.bias_per_signal["C1C"] = 1.04;   // covered, non-zero
+    cb.bias_per_signal["C7X"] = 0.0;    // covered, but exactly zero
+    cb.received_time = GnssTime{2300, 100.0};
+    store.pushCodeBias(cb, SsrHeader{});
+
+    // Present non-zero: covered, and getCodeBias agrees.
+    EXPECT_TRUE(store.hasCodeBias("E16", "C1C"));
+    EXPECT_NEAR(store.getCodeBias("E16", "C1C"), 1.04, 1e-12);
+
+    // Present-but-zero: hasCodeBias is TRUE even though getCodeBias is 0.0 —
+    // the distinction the suppression gate relies on.
+    EXPECT_TRUE(store.hasCodeBias("E16", "C7X"));
+    EXPECT_NEAR(store.getCodeBias("E16", "C7X"), 0.0, 1e-12);
+
+    // Absent signal on a present sat (e.g. stream omits E5a): NOT covered, so
+    // the sat-bias state is still allocated as its only correction.
+    EXPECT_FALSE(store.hasCodeBias("E16", "C5Q"));
+    EXPECT_NEAR(store.getCodeBias("E16", "C5Q"), 0.0, 1e-12);
+
+    // Absent satellite entirely: not covered.
+    EXPECT_FALSE(store.hasCodeBias("G01", "C1C"));
+
+    store.clear();
+}
+
 TEST(SsrCorrectionStoreTest, StalenessRejected) {
     auto& store = SsrCorrectionStore::getInstance();
     store.clear();

@@ -80,17 +80,6 @@
     },
     "residual_history": { "enabled": false },
 
-    // Cycle-slip detection / repair (from sbf_replay_covl145.json — under
-    // validation against post-processing test data).  MW is the primary
-    // detector; turbo_edit enables the MW+GF joint per-signal repair.
-    // mw_detect_reference "time_difference" + mw_td_order "first" gates the
-    // MW TD1 against the MAD of its own time-difference history (memoryless,
-    // trend- and quadratic-immune; sqrt(2) noise amplification).
-    // turbo_edit_mw_only_veto: MW flag with affirmatively flat GF => code
-    // artifact, phase reset skipped (KF residual gate is the backstop).
-    // turbo_edit_max_gap_s: gap-spanning GF bridge for post-gap attribution.
-    // NOTE: TurboEdit repairs are high-rate gated; at 30 s sampling the IVI
-    // gate suppresses unsafe repairs and a one-time warning is logged.
     "cycle_slip": {
       "mw": true,
       "turbo_edit": false,

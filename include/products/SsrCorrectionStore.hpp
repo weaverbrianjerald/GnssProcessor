@@ -40,8 +40,17 @@ namespace GnssProcessor {
  */
 class SsrCorrectionStore {
 public:
-    /// Returns the singleton instance.  Construction is the first call.
+    /// Returns the process-wide singleton instance (used by the live real-time
+    /// pipeline).  Construction is the first call.
     static SsrCorrectionStore& getInstance();
+
+    /// Default-constructible so callers can own a LOCAL instance instead of the
+    /// process-wide singleton.  The network product emitter's closed-loop test
+    /// (and future producer/consumer store injection) uses an owned instance to
+    /// stay isolated from global state — a producer must never share the same
+    /// store it consumes from, and unit tests must not pollute the singleton.
+    SsrCorrectionStore() = default;
+    ~SsrCorrectionStore() = default;
 
     SsrCorrectionStore(const SsrCorrectionStore&)            = delete;
     SsrCorrectionStore& operator=(const SsrCorrectionStore&) = delete;
@@ -76,7 +85,8 @@ public:
         double          c1{0.0};                                  ///< Clock C1 (m/s).
         double          c2{0.0};                                  ///< Clock C2 (m/s^2).
         double          hr_clock{0.0};                            ///< High-rate clock delta (m); 0 if not present.
-        GnssTime        epoch_time{0, 0.0};                       ///< SSR reference epoch.
+        GnssTime        epoch_time{0, 0.0};                       ///< SSR content reference epoch of the CLOCK correction — dt base for applyClockToBias.
+        GnssTime        orbit_epoch_time{0, 0.0};                 ///< SSR content reference epoch of the ORBIT correction — dt base for applyOrbitToPosition (equals epoch_time for a combined record).
         int             iode{0};                                  ///< Broadcast IODE this correction applies to.
         bool            has_orbit{false};                         ///< True if orbit fields are valid.
         bool            has_clock{false};                         ///< True if clock fields are valid.
@@ -103,6 +113,28 @@ public:
     double getCodeBias(const std::string& sat, const std::string& rinex_obs_code) const;
 
     /**
+     * @brief Test whether the stream supplies a code bias for a (sat, signal).
+     *
+     * Presence check mirroring @c getCodeBias's lookup: true iff the satellite
+     * has a code-bias record whose @c bias_per_signal map contains the EXACT
+     * RINEX obs code.  A present-but-zero entry counts as covered — the
+     * provider's bias set defines that signal's datum frame regardless of the
+     * numeric value, so an estimator must not also estimate it.  Distinct from
+     * @c getCodeBias != 0.0, which cannot tell a genuine-zero bias from an
+     * absent signal.
+     *
+     * Used by @c MeasurementModel to suppress redundant per-(sat, signal)
+     * sat-bias STATE allocation for signals the live stream already corrects;
+     * it must agree exactly with @c getCodeBias so a covered signal is never
+     * both estimated AND SSR-corrected on the same row.
+     *
+     * @param sat            Satellite ID (e.g. "G01").
+     * @param rinex_obs_code Exact RINEX obs code (e.g. "C1C", "C5Q").
+     * @return true if the stream carries a code bias for this exact pair.
+     */
+    bool hasCodeBias(const std::string& sat, const std::string& rinex_obs_code) const;
+
+    /**
      * @brief Look up the phase bias entry for a (sat, signal) pair.
      */
     std::optional<SsrPhaseBiasEntry> getPhaseBias(
@@ -111,6 +143,17 @@ public:
     /// SSR reference epoch of the most recent record pushed for @p sat
     /// (from the message header), or @c std::nullopt if none.
     std::optional<GnssTime> getSsrEpoch(const std::string& sat) const;
+
+    /// @brief Freshest SSR content epoch across ALL satellites in the store.
+    ///
+    /// Returns the maximum message header epoch_time held for any satellite, or
+    /// @c std::nullopt when the store is empty / no header has been set.  Unlike
+    /// @c getSsrEpoch (per-satellite) this is the stream-wide "newest correction
+    /// content received" signal.  The real-time obs↔SSR sync uses it to bound how
+    /// far ahead of the corrections the obs stream may run: an obs epoch newer
+    /// than (newestSsrEpoch + ssr_max_age) has no usable SSR for any satellite and
+    /// is held until the stream advances (see RealTimeEngine obs↔SSR sync).
+    std::optional<GnssTime> newestSsrEpoch() const;
 
     /// IOD-SSR of the most recent record pushed for @p sat, or -1 if none.
     int getSsrIod(const std::string& sat) const;
@@ -211,9 +254,6 @@ public:
     }
 
 private:
-    SsrCorrectionStore() = default;
-    ~SsrCorrectionStore() = default;
-
     struct SatRecord {
         std::optional<SsrOrbitCorrection>    orbit;
         std::optional<SsrClockCorrection>    clock;

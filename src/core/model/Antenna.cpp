@@ -1,4 +1,5 @@
 ﻿#include "model/Antenna.hpp"
+#include "model/SatAttitude.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
 #include <Eigen/Dense>
@@ -200,6 +201,88 @@ namespace GnssProcessor {
         }
     }
 
+    /// Whitespace-normalize a receiver antenna type for ATX matching.
+    /// @p sanitized has all whitespace removed; @p underscore collapses
+    /// internal whitespace runs to a single '_' (with no trailing '_').
+    /// Mirrors the historical inline normalization in getAntennaCorrection()
+    /// so matching results are unchanged.
+    void normalizeAntennaType(const std::string& raw,
+                              std::string& sanitized,
+                              std::string& underscore) {
+        sanitized.clear();
+        sanitized.reserve(raw.size());
+        for (char c : raw)
+            if (!std::isspace(static_cast<unsigned char>(c))) sanitized.push_back(c);
+
+        underscore.clear();
+        underscore.reserve(raw.size());
+        for (char c : raw) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!underscore.empty() && underscore.back() != '_')
+                    underscore.push_back('_');
+            } else {
+                underscore.push_back(c);
+            }
+        }
+        if (!underscore.empty() && underscore.back() == '_')
+            underscore.pop_back();
+    }
+
+    // correctAzimuth() is a public static member of Antenna (exposed for unit
+    // testing alongside interpolatePcv); see Antenna.hpp and the definition
+    // below the constructor.
+
+    /// Build receiver antenna substitution candidates (priority order) for a
+    /// raw RINEX antenna type, modelled on M-PAGES AntennaSubs +
+    /// AntennaDatabase::findSubRxAnt:
+    ///   (1) an explicit deprecated/legacy-code table (extension point — see
+    ///       RNXCMP/NGS deprecatedAnts.json), each table candidate also
+    ///       offered with its own radome→NONE fallback; then
+    ///   (2) the generic IGS radome→NONE fallback on the type itself: when
+    ///       the 20-char "<16-char model><4-char radome>" field carries a
+    ///       non-NONE radome, retry with the radome-agnostic "NONE"
+    ///       calibration (the documented IGS fallback).
+    /// Duplicates are removed while preserving priority order.  Returns an
+    /// empty list when no rule applies (e.g. a blank/already-NONE radome and
+    /// no table entry).
+    std::vector<std::string> receiverAntennaSubstitutes(const std::string& raw) {
+        // radome→NONE variant of a 20-char ANTEX/RINEX antenna field, or {}
+        // when there is no distinct non-NONE radome to replace.
+        auto radomeNoneVariant = [](const std::string& s) -> std::string {
+            if (s.size() >= 20 && s.substr(16, 4) != "NONE") {
+                std::string v = s;
+                v.replace(16, 4, "NONE");
+                return v;
+            }
+            return {};
+        };
+
+        // (1) Explicit deprecated/legacy-code table.  Empty by default: the
+        // generic radome→NONE rule below covers the common "specific radome
+        // uncalibrated" case for every antenna, so add entries here only for
+        // genuine model-code remaps, e.g.
+        //   { "OLD_MODEL_CODE   NONE", { "NEW_MODEL_CODE   NONE" } },
+        static const std::map<std::string, std::vector<std::string>> kSubTable = {};
+
+        std::vector<std::string> out;
+        auto push_unique = [&out](const std::string& c) {
+            if (c.empty()) return;
+            for (const auto& e : out) if (e == c) return;
+            out.push_back(c);
+        };
+
+        const auto it = kSubTable.find(raw);
+        if (it != kSubTable.end()) {
+            for (const auto& cand : it->second) {
+                push_unique(cand);
+                push_unique(radomeNoneVariant(cand));
+            }
+        }
+        // (2) Generic radome→NONE on the original type.
+        push_unique(radomeNoneVariant(raw));
+        return out;
+    }
+
     } // namespace
 
     /**
@@ -227,7 +310,7 @@ namespace GnssProcessor {
         rinex_parser_(rinex_parser),
         product_parser_(product_parser),
         ppp_utils_(log_mgr),
-        planetary_(log_mgr),
+        planetary_(log_mgr, config.enableCioFrame()),
         // Initialize reference from cache - NO COPY
         antennas_(ProductCache::getInstance().getAntennas())
     {
@@ -238,6 +321,74 @@ namespace GnssProcessor {
 
         // Dump every loaded antenna model at trace level for ATX comparison
         dumpAntennaModels();
+    }
+
+    double Antenna::correctAzimuth(double azimuth_deg, double orientation_deg) {
+        // Ported verbatim from M-PAGES NGS::RxAntenna::correctAzimuth:
+        // subtract the orientation, then a two-sided 360 wrap into [0,360).
+        // e.g. correctAzimuth(10,90) == 280.
+        double az = azimuth_deg - orientation_deg;
+        if (az < 0.0)   az += 360.0;
+        if (az > 360.0) az -= 360.0;
+        return az;
+    }
+
+    const AntennaData* Antenna::matchReceiverEntry_(const std::string& sanitized,
+                                                    const std::string& underscore,
+                                                    bool warn_on_ambiguity) const {
+        // (1) Exact match on either normalized form.
+        for (const auto& a : antennas_) {
+            if (a.type == sanitized || a.type == underscore) return &a;
+        }
+        // (2) Substring-containment fallback.  Collect candidates so an
+        // ambiguous match can be reported; the first candidate (in antennas_
+        // order) is always the one used — matching the historical behaviour
+        // of both the candidate-vector and break-on-first call sites.
+        std::vector<const AntennaData*> candidates;
+        candidates.reserve(4);
+        for (const auto& a : antennas_) {
+            if ((!sanitized.empty()  && a.type.find(sanitized)  != std::string::npos) ||
+                (!underscore.empty() && a.type.find(underscore) != std::string::npos)) {
+                candidates.push_back(&a);
+            }
+        }
+        if (candidates.empty()) return nullptr;
+        if (candidates.size() > 1 && warn_on_ambiguity) {
+            log_manager_.getLogger("antenna")->warn(
+                "Ambiguous receiver antenna match for '{}' (normalized='{}'), {} candidates: using first '{}'",
+                sanitized, underscore, candidates.size(), candidates.front()->type);
+        }
+        return candidates.front();
+    }
+
+    const AntennaData* Antenna::findReceiverAntennaEntry(const std::string& rx_antenna_type,
+                                                         bool warn_on_ambiguity,
+                                                         std::string* out_sanitized,
+                                                         std::string* out_underscore) const {
+        std::string sanitized, underscore;
+        normalizeAntennaType(rx_antenna_type, sanitized, underscore);
+        if (out_sanitized)  *out_sanitized  = sanitized;
+        if (out_underscore) *out_underscore = underscore;
+
+        if (const AntennaData* rx_entry = matchReceiverEntry_(sanitized, underscore, warn_on_ambiguity))
+            return rx_entry;
+
+        // Rule-driven substitution fallback (opt-in).  Off by default so a
+        // missing model still yields a zero receiver correction, exactly as
+        // the historical inline matching did.
+        if (config_.enableRxAntennaSubstitution()) {
+            for (const std::string& cand : receiverAntennaSubstitutes(rx_antenna_type)) {
+                std::string c_san, c_us;
+                normalizeAntennaType(cand, c_san, c_us);
+                if (const AntennaData* e = matchReceiverEntry_(c_san, c_us, warn_on_ambiguity)) {
+                    log_manager_.getLogger("antenna")->warn(
+                        "Receiver antenna substitution: '{}' has no ATX match; using '{}' (ATX entry '{}')",
+                        rx_antenna_type, cand, e->type);
+                    return e;
+                }
+            }
+        }
+        return nullptr;
     }
 
     /**
@@ -305,42 +456,10 @@ namespace GnssProcessor {
             return 0.0;
         }
 
-        std::string atx_freq;
-        if (system == System::GPS) {
-            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "G01"; }
-            else if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "G02"; }
-            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "G05"; }
-        }
-        else if (system == System::Galileo) {
-            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "E01"; }
-            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "E05"; }
-            else if (freq_type.find("C7") == 0 || freq_type.find("L7") == 0) { atx_freq = "E07"; }
-            else if (freq_type.find("C6") == 0 || freq_type.find("L6") == 0) { atx_freq = "E06"; }
-            else if (freq_type.find("C8") == 0 || freq_type.find("L8") == 0) { atx_freq = "E08"; }
-        }
-        else if (system == System::GLONASS) {
-            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "R01"; }
-            else if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "R02"; }
-            else if (freq_type.find("C3") == 0 || freq_type.find("L3") == 0) { atx_freq = "R03"; }
-        }
-        else if (system == System::BeiDou) {
-            if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "C02"; }
-            else if (freq_type.find("C7") == 0 || freq_type.find("L7") == 0) { atx_freq = "C07"; }
-            else if (freq_type.find("C6") == 0 || freq_type.find("L6") == 0) { atx_freq = "C06"; }
-            else if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "C01"; }
-            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "C05"; }
-            else if (freq_type.find("C8") == 0 || freq_type.find("L8") == 0) { atx_freq = "C08"; }
-        }
-        else if (system == System::QZSS) {
-            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "J01"; }
-            else if (freq_type.find("C2") == 0 || freq_type.find("L2") == 0) { atx_freq = "J02"; }
-            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "J05"; }
-            else if (freq_type.find("C6") == 0 || freq_type.find("L6") == 0) { atx_freq = "J06"; }
-        }
-        else if (system == System::SBAS) {
-            if (freq_type.find("C1") == 0 || freq_type.find("L1") == 0) { atx_freq = "S01"; }
-            else if (freq_type.find("C5") == 0 || freq_type.find("L5") == 0) { atx_freq = "S05"; }
-        }
+        // Map the RINEX signal code + system to the ATX frequency key
+        // (e.g. "L5Q"/Galileo -> "E05").  Single source of truth shared with
+        // the coverage queries; see signalToAtxFrequencyKey() above.
+        const std::string atx_freq = signalToAtxFrequencyKey(freq_type, system);
 
         if (atx_freq.empty()) {
             log_manager_.getLogger("antenna")->warn("No ATX frequency mapping for satellite {}, freq_type={}, system={}",
@@ -383,62 +502,50 @@ namespace GnssProcessor {
         //
         // ATX satellite PCO is defined in this frame (Z toward Earth).
         // ATX satellite PCV is indexed by nadir angle = angle from boresight (+Z) to LOS.
-        Eigen::Vector3d k_s = -sat_pos.normalized();  // +Z axis: toward Earth (nadir/boresight)
-        Eigen::Vector3d i_s, j_s;
-
-        // Detect BeiDou-2 GEO satellites for orbit-normal attitude
-        bool use_orbit_normal = false;
-        if (system == System::BeiDou && satellite.size() >= 2) {
-            int prn = 0;
-            try { prn = std::stoi(satellite.substr(1)); } catch (...) {}
-            if ((prn >= 1 && prn <= 5) || prn == 59 || prn == 60) {
-                use_orbit_normal = true;
-            }
+        // Satellite body frame (X toward Sun, Z nadir) via the shared attitude
+        // helper.  With enableOrbitNormalAttitude()==false this reproduces the
+        // historical inline yaw-steering + hard-coded BeiDou-2 GEO orbit-normal
+        // frame bit-for-bit (including the trace/warn stream below); when enabled
+        // it applies beta-driven mode selection (SatAttitude::compute).
+        int sat_prn = 0;
+        if (satellite.size() >= 2) {
+            try { sat_prn = std::stoi(satellite.substr(1)); } catch (...) { sat_prn = 0; }
         }
+        const bool legacy_geo =
+            (system == System::BeiDou) &&
+            ((sat_prn >= 1 && sat_prn <= 5) || sat_prn == 59 || sat_prn == 60);
 
-        if (use_orbit_normal) {
-            // Orbit-normal (ON) mode for BeiDou-2 GEO:
-            //   Y-axis = orbit normal = normalize(cross(position, velocity))
-            //   X-axis = cross(Y, Z) — approximately along-track
-            //   Z-axis = nadir (already computed as k_s)
-            Eigen::Vector3d orbit_normal = sat_pos.cross(sat_vel);
-            if (orbit_normal.norm() < 1e-8) {
-                orbit_normal = Eigen::Vector3d::UnitY();
+        // Reproduce the engine's original BeiDou-2 GEO degenerate-orbit-normal warn
+        // and orbit-normal trace EXACTLY (the stateless SatAttitude helper cannot
+        // log).  These fired for GEO PRNs on the legacy path, so emit them whenever
+        // legacy_geo to keep the flag-off trace stream byte-identical (and they stay
+        // consistent with the orbit-normal frame the helper produces for these PRNs).
+        if (legacy_geo) {
+            const Eigen::Vector3d on_check = sat_pos.cross(sat_vel);
+            if (on_check.norm() < 1e-8) {
                 log_manager_.getLogger("antenna")->warn(
                     "BeiDou GEO {}: degenerate orbit normal, using fallback", satellite);
             }
-            j_s = orbit_normal.normalized();
-
-            i_s = j_s.cross(k_s);
-            if (i_s.norm() < 1e-8) {
-                i_s = Eigen::Vector3d::UnitX();
-            }
-            i_s.normalize();
-
-            // Re-orthogonalize Y to ensure a clean right-handed frame
-            j_s = k_s.cross(i_s);
-            j_s.normalize();
-
             log_manager_.getLogger("antenna")->trace(
                 "BeiDou GEO {} using orbit-normal attitude", satellite);
         }
-        else {
-            // Standard yaw-steering model (GPS, Galileo, GLONASS, BeiDou-3 MEO, etc.)
-            Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
 
-            j_s = k_s.cross(e_sun);
-            if (j_s.norm() < 1e-8) {
-                // Fallback for eclipse/noon turn
-                Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::UnitY();
-                j_s = k_s.cross(vhat);
-            }
-            j_s.normalize();
+        const SatAttitude::Frame att = SatAttitude::compute(
+            system, sat_prn, sat_pos, sat_vel, sun_pos,
+            config_.enableOrbitNormalAttitude());
+        // att is a function-scope local that outlives every consumer below; the
+        // const-ref bindings are zero-cost and bit-identical (deterministic axes).
+        const Eigen::Vector3d& k_s = att.k_s;  // +Z axis: toward Earth (nadir/boresight)
+        const Eigen::Vector3d& i_s = att.i_s;  // +X axis: toward Sun (in sat-Sun-Earth plane)
+        const Eigen::Vector3d& j_s = att.j_s;  // +Y axis: completes the right-handed frame
 
-            i_s = j_s.cross(k_s);
-            if (i_s.norm() < 1e-8) {
-                i_s = Eigen::Vector3d::UnitX();
-            }
-            i_s.normalize();
+        // Additive attitude-mode trace for the FLAG-ON path only (kept off the
+        // byte-identical flag-off contract; GEO PRNs already traced above).
+        if (config_.enableOrbitNormalAttitude() &&
+            att.mode != SatAttitude::Mode::YawSteering && !legacy_geo) {
+            log_manager_.getLogger("antenna")->trace(
+                "{} attitude mode={} beta={:.2f} deg", satellite,
+                static_cast<int>(att.mode), att.beta);
         }
 
         // Satellite frame rotation matrix: sf = [i; j; k] (rows are basis vectors)
@@ -633,58 +740,13 @@ namespace GnssProcessor {
         // Receiver antenna correction (sanitized + safer matching)
         double rx_pco_corr = 0.0, rx_pcv_corr = 0.0;
 
-        // Sanitize input (remove whitespace)
-        std::string rx_type_sanitized;
-        rx_type_sanitized.reserve(rx_antenna_type.size());
-        for (char c : rx_antenna_type) {
-            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
-        }
-
-        // ATX receiver antenna types are stored as "MODEL_SERIAL" (underscore separator),
-        // while RINEX may provide "MODEL SERIAL" (space separator). Build an underscore-normalized
-        // variant to improve matching.
-        std::string rx_type_underscore;
-        rx_type_underscore.reserve(rx_antenna_type.size());
-        for (char c : rx_antenna_type) {
-            if (std::isspace(static_cast<unsigned char>(c))) {
-                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
-                    rx_type_underscore.push_back('_');
-            } else {
-                rx_type_underscore.push_back(c);
-            }
-        }
-        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
-            rx_type_underscore.pop_back();
-
-        const AntennaData* rx_entry = nullptr;
-
-        for (const auto& a : antennas_) {
-            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
-                rx_entry = &a;
-                break;
-            }
-        }
-
-        if (!rx_entry) {
-            std::vector<const AntennaData*> candidates;
-            candidates.reserve(4);
-
-            for (const auto& a : antennas_) {
-                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
-                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
-                    candidates.push_back(&a);
-                }
-            }
-
-            if (candidates.size() == 1) {
-                rx_entry = candidates.front();
-            } else if (candidates.size() > 1) {
-                log_manager_.getLogger("antenna")->warn(
-                    "Ambiguous receiver antenna match for '{}' (normalized='{}'), {} candidates: using first '{}'",
-                    rx_type_sanitized, rx_type_underscore, candidates.size(), candidates.front()->type);
-                rx_entry = candidates.front();
-            }
-        }
+        // Match the receiver antenna model (sanitize + exact/substring +
+        // optional rule-driven substitution) via the shared helper.  The
+        // normalized forms are echoed back for the diagnostic log lines below.
+        std::string rx_type_sanitized, rx_type_underscore;
+        const AntennaData* rx_entry = findReceiverAntennaEntry(
+            rx_antenna_type, /*warn_on_ambiguity=*/true,
+            &rx_type_sanitized, &rx_type_underscore);
 
         // === Receiver ===
         // Independent fallback walks for PCO and PCV (same rationale as
@@ -772,7 +834,22 @@ namespace GnssProcessor {
                 double dazi = rx_entry->dazi > 0.0 ? rx_entry->dazi : 5.0;
                 double dzen = rx_entry->dzen > 0.0 ? rx_entry->dzen : 5.0;
                 double zen1 = rx_entry->zen1;
-                double pcv_raw = interpolatePcv(pcv_table, zenith - zen1, azimuth, dazi, dzen);
+                // Receiver antenna mounting orientation: rotate the measured
+                // azimuth into the antenna frame before the PCV look-up.  Only
+                // the receiver PCV is azimuth-dependent on the receiver side —
+                // the receiver PCO is a LOS projection and the satellite PCV
+                // uses the satellite body-frame azimuth (az_sat above), so both
+                // are intentionally left untouched.  Off → pcv_azimuth ==
+                // azimuth exactly, keeping legacy runs byte-identical.
+                double pcv_azimuth = azimuth;
+                if (config_.enableRxAntennaOrientation()) {
+                    const double ori_az = config_.getReceiverAntennaOrientation().azimuth_deg;
+                    pcv_azimuth = correctAzimuth(azimuth, ori_az);
+                    log_manager_.getLogger("antenna")->trace(
+                        "RX PCV orientation for {} freq={}: az_meas={:.4f} - ori={:.4f} -> az_pcv={:.4f} deg",
+                        satellite, rx_pcv_freq, azimuth, ori_az, pcv_azimuth);
+                }
+                double pcv_raw = interpolatePcv(pcv_table, zenith - zen1, pcv_azimuth, dazi, dzen);
                 double pcv = pcv_raw * 1e-3;
                 if (std::isfinite(pcv)) {
                     rx_pcv_corr = pcv;
@@ -783,7 +860,7 @@ namespace GnssProcessor {
                         "zen1={:.1f} dzen={:.1f} dazi={:.1f} grid={}x{} "
                         "interp_arg={:.4f} pcv_raw_mm={:.4f} pcv_m={:.6f}",
                         satellite, rx_pcv_freq, rx_entry->type,
-                        elevation, zenith, azimuth,
+                        elevation, zenith, pcv_azimuth,
                         zen1, dzen, dazi,
                         pcv_table.size(), pcv_table[0].size(),
                         zenith - zen1, pcv_raw, pcv);
@@ -831,42 +908,9 @@ namespace GnssProcessor {
         const std::string atx_freq = signalToAtxFrequencyKey(signal, system);
         if (atx_freq.empty()) return false;
 
-        // --- Find receiver antenna entry (same matching as getAntennaCorrection) ---
-        const std::string rx_type_raw = rinex_parser_.getReceiverAntennaType();
-        std::string rx_type_sanitized;
-        rx_type_sanitized.reserve(rx_type_raw.size());
-        for (char c : rx_type_raw)
-            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
-
-        std::string rx_type_underscore;
-        rx_type_underscore.reserve(rx_type_raw.size());
-        for (char c : rx_type_raw) {
-            if (std::isspace(static_cast<unsigned char>(c))) {
-                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
-                    rx_type_underscore.push_back('_');
-            } else {
-                rx_type_underscore.push_back(c);
-            }
-        }
-        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
-            rx_type_underscore.pop_back();
-
-        const AntennaData* rx_entry = nullptr;
-        for (const auto& a : antennas_) {
-            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
-                rx_entry = &a;
-                break;
-            }
-        }
-        if (!rx_entry) {
-            for (const auto& a : antennas_) {
-                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
-                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
-                    rx_entry = &a;
-                    break;
-                }
-            }
-        }
+        // --- Find receiver antenna entry (shared matching) ---
+        const AntennaData* rx_entry = findReceiverAntennaEntry(
+            rinex_parser_.getReceiverAntennaType(), /*warn_on_ambiguity=*/false);
         if (!rx_entry) return false;
         if (rx_entry->pco.count(atx_freq) > 0) return true;
         // Receiver-only cross-system fallback: the nearest GPS band stands in
@@ -905,40 +949,9 @@ namespace GnssProcessor {
             }
         }
 
-        // Locate receiver entry (same matching logic as hasReceiverAtxEntry).
-        const std::string rx_type_raw = rinex_parser_.getReceiverAntennaType();
-        std::string rx_type_sanitized;
-        rx_type_sanitized.reserve(rx_type_raw.size());
-        for (char c : rx_type_raw)
-            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
-        std::string rx_type_underscore;
-        rx_type_underscore.reserve(rx_type_raw.size());
-        for (char c : rx_type_raw) {
-            if (std::isspace(static_cast<unsigned char>(c))) {
-                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
-                    rx_type_underscore.push_back('_');
-            } else {
-                rx_type_underscore.push_back(c);
-            }
-        }
-        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
-            rx_type_underscore.pop_back();
-        const AntennaData* rx_entry = nullptr;
-        for (const auto& a : antennas_) {
-            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
-                rx_entry = &a;
-                break;
-            }
-        }
-        if (!rx_entry) {
-            for (const auto& a : antennas_) {
-                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
-                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
-                    rx_entry = &a;
-                    break;
-                }
-            }
-        }
+        // Locate receiver entry (shared matching logic).
+        const AntennaData* rx_entry = findReceiverAntennaEntry(
+            rinex_parser_.getReceiverAntennaType(), /*warn_on_ambiguity=*/false);
 
         // Helper: given an entry map and a "good" predicate, return the
         // resolved frequency key (exact or fallback).  Mirrors the logic
@@ -1006,42 +1019,9 @@ namespace GnssProcessor {
         }
         if (!sat_entry || !entryHasPcoAndPcv(*sat_entry)) return false;
 
-        // --- Receiver entry (same matching logic as hasReceiverAtxEntry) ---
-        const std::string rx_type_raw = rinex_parser_.getReceiverAntennaType();
-        std::string rx_type_sanitized;
-        rx_type_sanitized.reserve(rx_type_raw.size());
-        for (char c : rx_type_raw)
-            if (!std::isspace(static_cast<unsigned char>(c))) rx_type_sanitized.push_back(c);
-
-        std::string rx_type_underscore;
-        rx_type_underscore.reserve(rx_type_raw.size());
-        for (char c : rx_type_raw) {
-            if (std::isspace(static_cast<unsigned char>(c))) {
-                if (!rx_type_underscore.empty() && rx_type_underscore.back() != '_')
-                    rx_type_underscore.push_back('_');
-            } else {
-                rx_type_underscore.push_back(c);
-            }
-        }
-        if (!rx_type_underscore.empty() && rx_type_underscore.back() == '_')
-            rx_type_underscore.pop_back();
-
-        const AntennaData* rx_entry = nullptr;
-        for (const auto& a : antennas_) {
-            if (a.type == rx_type_sanitized || a.type == rx_type_underscore) {
-                rx_entry = &a;
-                break;
-            }
-        }
-        if (!rx_entry) {
-            for (const auto& a : antennas_) {
-                if ((!rx_type_sanitized.empty() && a.type.find(rx_type_sanitized) != std::string::npos) ||
-                    (!rx_type_underscore.empty() && a.type.find(rx_type_underscore) != std::string::npos)) {
-                    rx_entry = &a;
-                    break;
-                }
-            }
-        }
+        // --- Receiver entry (shared matching logic) ---
+        const AntennaData* rx_entry = findReceiverAntennaEntry(
+            rinex_parser_.getReceiverAntennaType(), /*warn_on_ambiguity=*/false);
         if (!rx_entry) return false;
         if (entryHasPcoAndPcv(*rx_entry)) return true;   // strict, exact freq
         // Receiver-only cross-system fallback: the nearest GPS band supplies

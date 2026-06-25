@@ -225,6 +225,11 @@ private:
         /// signals.  Negative sentinel means no ambiguity state yet
         /// (first BSSD epoch, freshly appeared sat).
         double      max_amb_variance{-1.0};
+        /// Signed broadcast-ephemeris age (s, obs epoch − toe) for this sat;
+        /// |value| is the extrapolation magnitude.  0 in post-processing (no
+        /// live ephemeris).  The selector bars a satellite whose |age| is far
+        /// above its constellation's freshest qualified peer from PIVOT election.
+        double      eph_toe_age_s{0.0};
     };
 
     /** Per-constellation aggregated info for the current epoch. */

@@ -14,13 +14,21 @@
 #include "model/Planetary.hpp"
 #include "common/PppTypes.hpp"
 
+// IAU SOFA (vendored, third_party/sofa) — used by celestialToTerrestrial for the
+// CIO-based IAU 2000A/2006 frame transform.  sofa.h carries its own extern "C"
+// guards, so it can be included directly from this C++ TU.
+#include "sofa.h"
+
 namespace GnssProcessor {
 
     /**
      * @brief Construct a Planetary helper.
      */
-    Planetary::Planetary(LogManager& log_mgr) : log_manager_(log_mgr) {
-        log_manager_.getLogger("planetary_model")->info("Planetary model initialized");
+    Planetary::Planetary(LogManager& log_mgr, bool enable_cio_frame)
+        : log_manager_(log_mgr), enable_cio_frame_(enable_cio_frame) {
+        log_manager_.getLogger("planetary_model")->info(
+            "Planetary model initialized (CIO frame: {})",
+            enable_cio_frame_ ? "on" : "off");
     }
 
     /**
@@ -389,6 +397,55 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief CIO-based IAU 2000A/2006 celestial-to-terrestrial (ECI→ECEF) matrix.
+     *
+     * Mirrors M-PAGES Coordinate::NgsFormC2T using SOFA.  The (X, Y, s) path
+     * (iauXys00a + iauC2ixys) is used instead of bare iauC2i00a so the observed
+     * celestial-pole offsets dX, dY can be injected; with dX=dY=0 the result is
+     * identical to iauC2i00a.  Returns R such that r_ecef = R · r_eci.
+     */
+    Eigen::Matrix3d Planetary::celestialToTerrestrial(double tt_jd, double ut1_jd,
+        double xp_rad, double yp_rad, double dX_rad, double dY_rad)
+    {
+        // Two-part Julian dates using the (MJD_OFFSET, MJD) split for numerical
+        // precision, matching M-PAGES (tta = 2400000.5, ttb = TT MJD; likewise UT1).
+        const double tta = TimeUtils::MJD_OFFSET;          // 2400000.5
+        const double ttb = tt_jd - TimeUtils::MJD_OFFSET;  // TT  as MJD
+        const double uta = TimeUtils::MJD_OFFSET;
+        const double utb = ut1_jd - TimeUtils::MJD_OFFSET;  // UT1 as MJD
+
+        // CIP coordinates (X, Y) and CIO locator s — IAU 2000A precession-nutation.
+        double x = 0.0, y = 0.0, s = 0.0;
+        iauXys00a(tta, ttb, &x, &y, &s);
+
+        // Apply observed celestial-pole offsets (radians); 0 → pure model.
+        x += dX_rad;
+        y += dY_rad;
+
+        // Celestial-to-intermediate matrix.
+        double rc2i[3][3];
+        iauC2ixys(x, y, s, rc2i);
+
+        // Earth Rotation Angle (UT1).
+        const double era = iauEra00(uta, utb);
+
+        // Polar-motion matrix (TIO locator sp from TT).
+        const double sp = iauSp00(tta, ttb);
+        double rpom[3][3];
+        iauPom00(xp_rad, yp_rad, sp, rpom);
+
+        // Compose celestial-to-terrestrial: rc2t = rpom · R3(era) · rc2i.
+        double rc2t[3][3];
+        iauC2tcio(rc2i, era, rpom, rc2t);
+
+        Eigen::Matrix3d U;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                U(i, j) = rc2t[i][j];
+        return U;
+    }
+
+    /**
      * @brief Interpolate ERP values for a given epoch.
      *
      * Uses binary search (O(log n)) to locate the bracketing ERP entries
@@ -397,11 +454,14 @@ namespace GnssProcessor {
      */
     void Planetary::interpolateErp(const GnssTime& time,
         const std::vector<ErpData>& erps,
-        double& xp, double& yp, double& ut1_utc)
+        double& xp, double& yp, double& ut1_utc,
+        double& dX, double& dY)
     {
         xp = 0.0;
         yp = 0.0;
         ut1_utc = 0.0;
+        dX = 0.0;
+        dY = 0.0;
 
         if (erps.empty()) return;
 
@@ -432,22 +492,30 @@ namespace GnssProcessor {
                 xp = before->xp + frac * (after->xp - before->xp);
                 yp = before->yp + frac * (after->yp - before->yp);
                 ut1_utc = before->ut1_utc + frac * (after->ut1_utc - before->ut1_utc);
+                dX = before->dX + frac * (after->dX - before->dX);
+                dY = before->dY + frac * (after->dY - before->dY);
             }
             else {
                 xp = before->xp;
                 yp = before->yp;
                 ut1_utc = before->ut1_utc;
+                dX = before->dX;
+                dY = before->dY;
             }
         }
         else if (before) {
             xp = before->xp;
             yp = before->yp;
             ut1_utc = before->ut1_utc;
+            dX = before->dX;
+            dY = before->dY;
         }
         else if (after) {
             xp = after->xp;
             yp = after->yp;
             ut1_utc = after->ut1_utc;
+            dX = after->dX;
+            dY = after->dY;
         }
     }
 
@@ -471,9 +539,9 @@ namespace GnssProcessor {
     {
         constexpr double AS2R = Constants::PI / 180.0 / 3600.0;
 
-        // Step 1: Interpolate ERP values (xp, yp in arcseconds, ut1_utc in seconds)
-        double xp_as = 0.0, yp_as = 0.0, ut1_utc = 0.0;
-        interpolateErp(time, erps, xp_as, yp_as, ut1_utc);
+        // Step 1: Interpolate ERP values (xp, yp, dX, dY in arcseconds, ut1_utc in seconds)
+        double xp_as = 0.0, yp_as = 0.0, ut1_utc = 0.0, dX_as = 0.0, dY_as = 0.0;
+        interpolateErp(time, erps, xp_as, yp_as, ut1_utc, dX_as, dY_as);
 
         // Convert xp, yp from arcseconds to radians for the rotation matrices
         double xp_rad = xp_as * AS2R;
@@ -506,8 +574,38 @@ namespace GnssProcessor {
         // Step 5: Compute GMST
         double gmst = utc2gmst(t_ut1, ut1_d);
 
-        // Step 6: Compute ECI→ECEF matrix
-        Eigen::Matrix3d U = eci2ecef(t_tt, f, gmst, xp_rad, yp_rad);
+        // Step 6: Compute ECI→ECEF matrix.  With enable_cio_frame_, use the
+        // CIO-based IAU 2000A/2006 transform (SOFA); otherwise the legacy
+        // IAU 1976/1980 equinox chain (byte-identical to the historical path).
+        Eigen::Matrix3d U;
+        if (enable_cio_frame_) {
+            const double tt_jd  = TimeUtils::gpsJdToTtJd(gps_jd);
+            const double dX_rad = dX_as * AS2R;
+            const double dY_rad = dY_as * AS2R;
+            U = celestialToTerrestrial(tt_jd, ut1_jd, xp_rad, yp_rad, dX_rad, dY_rad);
+
+            // One-shot startup diagnostic: angular difference between the CIO and
+            // legacy Sun directions (expected « 1e-3 rad — frame bias + model diff).
+            if (!cio_diag_logged_) {
+                cio_diag_logged_ = true;
+                const Eigen::Matrix3d U_legacy = eci2ecef(t_tt, f, gmst, xp_rad, yp_rad);
+                const Eigen::Vector3d s_cio    = (U * rsun_eci).normalized();
+                const Eigen::Vector3d s_legacy = (U_legacy * rsun_eci).normalized();
+                double cos_d = s_cio.dot(s_legacy);
+                if (cos_d > 1.0) cos_d = 1.0;
+                else if (cos_d < -1.0) cos_d = -1.0;
+                // Route this one-time, run-level validation through the primary
+                // pipeline logger ("main_log") so it surfaces regardless of which
+                // per-component loggers a given config enables.
+                log_manager_.getLogger("main_log")->info(
+                    "CIO frame enabled: Sun-direction delta vs legacy = {:.3e} rad "
+                    "(xp={:.4f}\" yp={:.4f}\" ut1_utc={:.5f}s dX={:.4f}\" dY={:.4f}\")",
+                    std::acos(cos_d), xp_as, yp_as, ut1_utc, dX_as, dY_as);
+            }
+        }
+        else {
+            U = eci2ecef(t_tt, f, gmst, xp_rad, yp_rad);
+        }
 
         // Step 7: Transform to ECEF
         sun_ecef = U * rsun_eci;

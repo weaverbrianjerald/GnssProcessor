@@ -118,6 +118,56 @@ TEST(StateKeySchemaTest, DcbKeyShape) {
 }
 
 // ============================================================================
+// 4b. Per-FCN-slot GLONASS IFB keys — "GLONASS_IFB<band>_k<±slot>"
+// ============================================================================
+
+TEST(StateKeySchemaTest, GlonassPerSlotIfbKeyShape) {
+    EXPECT_EQ(makeGlonassPerSlotIfbKey("GLONASS", '1', 5),  "GLONASS_IFB1_k+5");
+    EXPECT_EQ(makeGlonassPerSlotIfbKey("GLONASS", '2', -4), "GLONASS_IFB2_k-4");
+    EXPECT_EQ(makeGlonassPerSlotIfbKey("GLONASS", '1', 0),  "GLONASS_IFB1_k+0");
+}
+
+TEST(StateKeySchemaTest, GlonassPerSlotIfbRoundTrip) {
+    for (int k = -7; k <= 6; ++k) {
+        for (const char band : {'1', '2'}) {
+            const std::string key = makeGlonassPerSlotIfbKey("GLONASS", band, k);
+            EXPECT_TRUE(isGlonassPerSlotIfbKey(key)) << key;
+            auto parts = parseGlonassPerSlotIfbKey(key);
+            ASSERT_TRUE(parts.has_value()) << key;
+            EXPECT_EQ(parts->band, band) << key;
+            EXPECT_EQ(parts->fcn_slot, k) << key;
+        }
+    }
+}
+
+// THE load-bearing invariant for byte-identical flag-off behavior: the per-slot
+// predicate must NOT match any receiver-common code-bias key.  BssdTransform and
+// StateManager use isGlonassPerSlotIfbKey() to decide which code-bias columns
+// survive single differencing / keep process noise; a false positive on a
+// per-band IFB or DCB key would silently change the BSSD solution for
+// GPS/Galileo/BeiDou (and break the flag-off byte-identical guarantee).
+TEST(StateKeySchemaTest, GlonassPerSlotIfbPredicateRejectsReceiverCommonKeys) {
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GPS", '5')));       // GPS_IFB5
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GPS", '2')));       // GPS_IFB2
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("Galileo", '7')));   // Galileo_IFB7
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GLONASS", '3')));   // per-band GLONASS_IFB3
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeDcbKey("GPS")));            // GPS_DCB
+    EXPECT_FALSE(isGlonassPerSlotIfbKey(makeDcbKey("GLONASS")));        // GLONASS_DCB
+    // ...and it DOES match a genuine per-slot key.
+    EXPECT_TRUE(isGlonassPerSlotIfbKey(makeGlonassPerSlotIfbKey("GLONASS", '1', -4)));
+}
+
+TEST(StateKeySchemaTest, GlonassPerSlotIfbParseRejectsMalformed) {
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("").has_value());
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1").has_value());      // No _k slot
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_DCB").has_value());       // DCB, no IFB
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB12_k+5").has_value()); // Multi-char band
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1_k").has_value());    // Empty slot
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1_k+").has_value());   // Sign only
+    EXPECT_FALSE(parseGlonassPerSlotIfbKey("GLONASS_IFB1_kx").has_value());   // Non-numeric slot
+}
+
+// ============================================================================
 // 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
 // ============================================================================
 
@@ -146,6 +196,55 @@ TEST(StateKeySchemaTest, SatelliteFromSatBiasKeyHandlesLegacyKeys) {
     EXPECT_EQ(satelliteFromSatBiasKey("G01"), "G01");          // Legacy / malformed
     EXPECT_EQ(satelliteFromSatBiasKey("|C1W"), "");            // Pipe-prefixed
     EXPECT_EQ(satelliteFromSatBiasKey(""), "");
+}
+
+// ============================================================================
+// 5b. Per-satellite signal PHASE-bias keys — "<satellite>|<signal>|PB"
+// ============================================================================
+
+TEST(StateKeySchemaTest, SatPhaseBiasRoundTrip) {
+    const std::string key = makeSatPhaseBiasKey("G01", "L1C");
+    EXPECT_EQ(key, "G01|L1C|PB");
+
+    auto parts = parseSatPhaseBiasKey(key);
+    ASSERT_TRUE(parts.has_value());
+    EXPECT_EQ(parts->satellite, "G01");
+    EXPECT_EQ(parts->signal, "L1C");
+
+    EXPECT_TRUE(isSatPhaseBiasKey(key));
+    EXPECT_EQ(satelliteFromSatPhaseBiasKey(key), "G01");
+}
+
+TEST(StateKeySchemaTest, SatPhaseBiasParseRejectsMalformed) {
+    EXPECT_FALSE(parseSatPhaseBiasKey("").has_value());
+    EXPECT_FALSE(parseSatPhaseBiasKey("G01|L1C").has_value());   // No |PB suffix (this is a CODE-bias key)
+    EXPECT_FALSE(parseSatPhaseBiasKey("|L1C|PB").has_value());   // Empty satellite
+    EXPECT_FALSE(parseSatPhaseBiasKey("G01||PB").has_value());   // Empty signal
+    EXPECT_FALSE(parseSatPhaseBiasKey("|PB").has_value());       // No body
+}
+
+// The CODE-bias and PHASE-bias key namespaces must be provably disjoint: the
+// state lives in separate StateManager maps, but the trailing "|PB" guarantees
+// no helper mistakes one for the other.  In particular parseSatBiasKey is never
+// invoked on a phase-bias key in production (it would read "L1C|PB" as the
+// signal); this test pins that the discriminators keep them apart and that the
+// satellite-prefix extractor is robust on either form.
+TEST(StateKeySchemaTest, SatPhaseBiasNamespaceDisjointFromCodeBias) {
+    const std::string code  = makeSatBiasKey("G01", "L1C");        // "G01|L1C"
+    const std::string phase = makeSatPhaseBiasKey("G01", "L1C");   // "G01|L1C|PB"
+    EXPECT_NE(code, phase);
+
+    // Discriminator: only the phase key is a phase-bias key.
+    EXPECT_TRUE(isSatPhaseBiasKey(phase));
+    EXPECT_FALSE(isSatPhaseBiasKey(code));
+
+    // A code-bias key never parses as a phase-bias key.
+    EXPECT_FALSE(parseSatPhaseBiasKey(code).has_value());
+
+    // Satellite-prefix extraction is first-pipe robust on EITHER form.
+    EXPECT_EQ(satelliteFromSatBiasKey(phase), "G01");
+    EXPECT_EQ(satelliteFromSatPhaseBiasKey(phase), "G01");
+    EXPECT_EQ(satelliteFromSatPhaseBiasKey(code), "G01");
 }
 
 // ============================================================================

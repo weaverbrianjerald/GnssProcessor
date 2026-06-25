@@ -15,6 +15,7 @@
 #include <spdlog/spdlog.h>
 #include <array>
 #include <cmath>
+#include <sstream>
 
 namespace GnssProcessor {
 
@@ -105,6 +106,47 @@ double maxEphAgeForSystem(System s) {
     }
 }
 
+// Diagnostic: a receiver-assembled ephemeris and an IGS-stream ephemeris for the
+// SAME satellite at the SAME IODnav decode the SAME on-air data set, so every
+// orbital element MUST be bit-identical.  When the source-priority gate is about
+// to ignore a receiver record that collides at the same IODnav with the held IGS
+// record, log any element that differs — this localises the receiver-vs-network
+// divergence to a specific field on a live capture (vs inferring a decode bug).
+// Quiet (emits nothing) when the two agree, which is the expected case.
+void logSameIodeEphDiff(const std::string& sat,
+                        const BroadcastEphemeris& igs,
+                        const BroadcastEphemeris& rcv) {
+    auto lg = spdlog::get("rt_engine");
+    if (!lg || !lg->should_log(spdlog::level::debug)) return;
+    const KeplerianEphemeris& a = igs.kepler;
+    const KeplerianEphemeris& b = rcv.kepler;
+    std::ostringstream d;
+    auto cmp = [&](const char* name, double x, double y, double tol) {
+        if (std::abs(x - y) > tol)
+            d << ' ' << name << '=' << x << "/vs/" << y;
+    };
+    cmp("sqrtA", a.sqrt_a, b.sqrt_a, 1e-3);
+    cmp("e",     a.e,      b.e,      1e-10);
+    cmp("m0",    a.m0,     b.m0,     1e-9);
+    cmp("dn",    a.delta_n,b.delta_n,1e-12);
+    cmp("i0",    a.i0,     b.i0,     1e-9);
+    cmp("idot",  a.idot,   b.idot,   1e-13);
+    cmp("Om0",   a.omega0, b.omega0, 1e-9);
+    cmp("Omdot", a.omega_dot, b.omega_dot, 1e-13);
+    cmp("w",     a.omega,  b.omega,  1e-9);
+    cmp("crc",   a.crc,    b.crc,    1e-2);
+    cmp("crs",   a.crs,    b.crs,    1e-2);
+    cmp("cuc",   a.cuc,    b.cuc,    1e-9);
+    cmp("cus",   a.cus,    b.cus,    1e-9);
+    cmp("cic",   a.cic,    b.cic,    1e-9);
+    cmp("cis",   a.cis,    b.cis,    1e-9);
+    cmp("toe",   a.toe.tow,b.toe.tow,1.0);
+    cmp("week",  static_cast<double>(a.toe.week), static_cast<double>(b.toe.week), 0.5);
+    const std::string s = d.str();
+    if (!s.empty())
+        lg->debug("EPH-SAME-IODE-DIFF {} iode {}: IGS vs receiver differ:{}", sat, igs.iode, s);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -120,12 +162,80 @@ LiveEphemerisStore& LiveEphemerisStore::getInstance() {
 // Push
 // ---------------------------------------------------------------------------
 
-void LiveEphemerisStore::insert(const BroadcastEphemeris& eph) {
+void LiveEphemerisStore::insert(const BroadcastEphemeris& eph, bool from_igs) {
     if (eph.satellite.empty() || eph.system == System::Unknown) return;
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = by_sat_.find(eph.satellite);
     if (it == by_sat_.end()) {
-        by_sat_.emplace(eph.satellite, SatRecord{eph, std::nullopt});
+        SatRecord rec{eph, std::nullopt};
+        rec.current_from_igs = from_igs;
+        by_sat_.emplace(eph.satellite, std::move(rec));
+        return;
+    }
+
+    const double inc_toe = toeGpsContinuous(eph);
+    const double cur_toe = toeGpsContinuous(it->second.current);
+    constexpr double kToeEpsilonSec = 1.0;
+
+    // --- Source priority: the IGS broadcast stream is AUTHORITATIVE over the
+    // receiver's own nav ---
+    // The IGS-RTS SSR orbit/clock delta is computed against IGS broadcast
+    // ephemeris, so the rover MUST pair it with the SAME IGS broadcast.  Even at
+    // an identical IODE the receiver's locally-assembled orbit carries slightly
+    // different fit parameters (and the SBF Galileo I/NAV assembly was observed
+    // live to diverge by 100 m+), so IGS-SSR applied on top of a receiver
+    // ephemeris is INCONSISTENT — the SD residual becomes the IGS-vs-receiver
+    // broadcast difference and detonates the frame.  Hence a RECEIVER record
+    // never overwrites a current IGS record at an equal-or-older toe; it is
+    // accepted only when it is a genuine update (toe strictly newer by more than
+    // a constellation refresh) the IGS stream has not relayed — i.e. the IGS feed
+    // has STALLED on this satellite — so a dead IGS stream still degrades to
+    // receiver nav rather than stranding the satellite.  (Freshest-toe alone did
+    // not catch the live failure because the receiver overwrite was at EQUAL toe.)
+    //
+    // The threshold is the GLONASS nominal toe step (1800 s), so the comparison
+    // must be STRICT: a receiver record exactly ONE GLONASS cycle newer is a
+    // legitimate fresh update the IGS feed simply hasn't relayed, and must be
+    // allowed through (an inclusive bound would block it and delay recovery a
+    // full extra cycle).  When IGS is alive inc_toe−cur_toe stays well under one
+    // cycle, so the receiver is ignored regardless.  (A per-system stall window
+    // would be tighter still; revisit if a constellation's cadence demands it.
+    // GLONASS iode is always −1, so the IODE-change demote below never fires for
+    // it — its current/previous tracking is purely toe-based, which is correct.)
+    constexpr double kIgsStallFallbackSec = 1800.0;   // 30 min: IGS clearly stalled on this sat
+    if (!from_igs && it->second.current_from_igs) {
+        if (inc_toe < cur_toe + kIgsStallFallbackSec) {
+            // Same-IODnav collision: the two should be bit-identical.  Log any
+            // element that differs so a live SBF capture pinpoints the actual
+            // receiver-vs-network divergence (the SBF I/NAV field decode itself
+            // diffs clean against RTCM 1046, so this localises whatever remains).
+            if (eph.iode == it->second.current.iode
+                && eph.system != System::GLONASS)
+                logSameIodeEphDiff(eph.satellite, it->second.current, eph);
+            if (auto lg = spdlog::get("rt_engine"))
+                lg->trace("EPH-SOURCE {} receiver eph ignored — IGS-stream record authoritative "
+                          "(incoming iode {}, Δtoe {:+.0f}s vs current iode {})",
+                          eph.satellite, eph.iode, inc_toe - cur_toe, it->second.current.iode);
+            return;
+        }
+        if (auto lg = spdlog::get("rt_engine"))
+            lg->debug("EPH-SOURCE {} receiver eph taking over — IGS-stream record stale "
+                      "(receiver toe {:.0f}s newer); falling back to receiver nav",
+                      eph.satellite, inc_toe - cur_toe);
+    }
+
+    // Freshest-toe wins WITHIN the accepted source.  Reject an incoming record
+    // whose reference epoch is OLDER than the one held (a stale same-source
+    // re-broadcast) — the retained current (and its previous) stay intact, so the
+    // SSR IODE re-reference still finds the version a lagging SSR delta names.
+    // Tolerate sub-second jitter / an equal-epoch re-broadcast so a same-toe
+    // refresh still overwrites in place.  (inc_toe / cur_toe / kToeEpsilonSec are
+    // computed above for the source-priority gate.)
+    if (inc_toe < cur_toe - kToeEpsilonSec) {
+        if (auto lg = spdlog::get("rt_engine"))
+            lg->debug("EPH-STALE-INSERT {} rejected: incoming toe {:.0f}s older than held "
+                      "(incoming iode {} vs current {}) — freshest-toe retained",
+                      eph.satellite, cur_toe - inc_toe, eph.iode, it->second.current.iode);
         return;
     }
     // Demote the current record to "previous" only when the IODE changes, so
@@ -146,6 +256,19 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph) {
         it->second.previous = it->second.current;
     }
     it->second.current = eph;
+    it->second.current_from_igs = from_igs;
+}
+
+std::optional<double> LiveEphemerisStore::toeAgeSeconds(const std::string& sat,
+                                                        const GnssTime& time) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = by_sat_.find(sat);
+    if (it == by_sat_.end()) return std::nullopt;
+    // Closest-toe held record (same selector the orbit integration uses); a
+    // cheap freshness probe with no Kepler/PZ-90 integration.  Signed age
+    // (query − toe); the caller takes |age| as the extrapolation magnitude.
+    const BroadcastEphemeris& eph = pick(it->second, time);
+    return continuousSeconds(time) - toeGpsContinuous(eph);
 }
 
 // ---------------------------------------------------------------------------

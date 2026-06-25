@@ -14,6 +14,13 @@
     "eclipse_shadow_scale": 1.0,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": true,
+    // Auto-generate the pyviz HTML report (<logs>/gnss_report.html) at end of run.
+    "auto_report": false,
+    "report_backend": "matplotlib",   // "matplotlib" (static) | "plotly" (interactive)
+    "report_async": false,            // true = launch detached (run returns without waiting on rendering)
+    // Curated viewer subset for a fast report ([] = render all). Recommended fast set:
+    "report_viewers": [],
+    //"report_viewers": ["state","dops","satellite_status","measurement_residuals","ionosphere","ambiguities"],
     "eigen_threads": 10,
     "satellite_interpolation_mode": "lagrange",
     "satellite_clock_interpolation_mode": "linear",

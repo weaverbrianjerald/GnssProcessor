@@ -1,27 +1,19 @@
 // Real-time PPP-RTK with IGS-RTS SSR corrections.
-//
-// Two concurrent RTCM streams:
-//   - Primary  : rover observations (file replay for now; eventually
-//                a Septentrio TCP/serial output of MSM7 messages once
-//                the MSM decoder lands).
-//   - corrections : IGS-RTS legacy SSR (1057-1068, 1240-1270) over NTRIP.
-//                   IGS-SSR 4076 sub-types are recognised by the parser
-//                   but not yet fully decoded — coming in a follow-up.
-//
-// Replace the host/mountpoint/credentials with your IGS-IP account
-// (https://igs.bkg.bund.de/ntrip/ntriplogin or equivalent provider).
+
 {
   "app_mode": "real_time",
   "data_source": "internal",
 
   "processing": {
     "mode": "PPP-RTK",
-	"max_duration_s": 600.0,
+	"max_duration_s": 900.0,
 	"rinex_types": "CL",
-	"active_systems": [ "GPS", "GLONASS" ],
 	//"active_systems": [ "GPS" ],
+	"active_systems": [ "GPS", "Galileo" ],
+	//"active_systems": [ "GPS", "GLONASS" ],
 	//"active_systems": [ "GPS", "Galileo", "GLONASS" ],
     //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
+	//"active_systems": [ "GPS", "GLONASS", "Galileo", "BeiDou" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "elevation_mask_deg": 10.0,
@@ -38,45 +30,33 @@
       "BeiDou":  "IDPXQZ",
       "QZSS":    "CSLXIQDEX",
       "SBAS":    "CXIQ"
-    }
+    },
+	"enable_obs_skip_to_latest": true,
+    "obs_skip_max_lag_s": 5.0,
+    "rt_backlog_warn_s": 5.0,
+    "ssr_max_age_s": 60.0,
+	"enable_obs_ssr_sync": true,
+    "obs_ssr_sync_max_hold_s": 30.0
   },
 
-  // Static products (broadcast nav, ATX, EOT) loaded at startup.  The
-  // SSR overlay corrects the BROADCAST orbits/clocks at query time —
-  // so this section still needs valid broadcast-nav / ATX paths.
   "files": {
     "internal_data_root": "./data"
   },
 
   "realtime": {
-    // Primary stream: rover observations.  input_type selects the
-    // transport.  Three options:
     //   "file"  — replay an RTCM3 dump (input_path).
     //   "ntrip" — pull from a caster (ntrip_host/port/mountpoint).
     //   "tcp"   — direct socket to a receiver, e.g. a Septentrio
     //             configured to push RTCMv3 to "IPS1, port 28784".
     //             No NTRIP wrapper, no auth — raw bytes only.
     "input_type":      "tcp",
-    // SBF, not RTCM: this receiver is rover-only and streams Septentrio Binary
-    // Format on IPS1:28785.  input_format routes the raw TCP bytes to SbfParser
-    // (the native SBF decoder), not RtcmParser.  Required for the live feed.
     "input_format":    "sbf",
     "input_path":      "C:/GnssProcessor/data/rtcm/rover_obs.rtcm3",
-
-    // Active rover feed: AsteRx-U SBF over raw TCP (IP-server port IPS1).  This
-    // unit (S/N 3013924) is licensed rover-only (no RTK/DGPS Base permission)
-    // so it CANNOT emit RTCM3 — it streams SBF instead.  SBF "Rinex" group
-    // (MeasEpoch 4027 + GPSNav/GLONav/GALNav/BDSNav/QZSNav decoded eph) @1Hz on
-    // IPS1 port 28785 (MeasEpoch verified on the wire 2026-06-04).  Framing is
-    // SBF ($@), routed to the SBF parser in the SBF-decoder session, NOT RtcmParser.
     "tcp_host":        "10.214.154.211",
     "tcp_port":        28785,
 
     // NTRIP caster path is DEAD on this unit: AsteRx-U S/N 3013924 lacks the
-    // RTK/DGPS Base permission, so it cannot generate RTCMv3 and the internal
-    // caster mountpoint has nothing to feed it (confirmed 2026-06-04 via the
-    // permission file: rtkbase=0, dgpsbase=0).  Fields kept for a future
-    // permissioned unit; re-enable by purchasing RTK Base from Septentrio.
+    // RTK/DGPS Base permission, so it cannot generate RTCMv3.
     "ntrip_host":      "10.214.154.211",
     "ntrip_port":      2101,
     "ntrip_mountpoint":"rtcm3_restricted",
@@ -87,42 +67,45 @@
     "output_type":     "console",
     "reconnect_delay_s": 5,
 
-    // Second stream: SSR corrections from an IGS-RTS caster.  Set
-    // enabled=true to activate; the realtime engine will spin up a
-    // separate NtripClient thread alongside the primary one and route
-    // decoded SSR records into SsrCorrectionStore.
-    // IGS-SSR 4076 corrections (SSRC03IGS1).  Set enabled=true and fill in
-    // your IGS-IP / provider credentials once you have them; until then the
-    // engine runs broadcast-only float (the receiver's 1019/1042/1046 nav).
+    // Second stream: SSR corrections from an IGS-RTS caster.
     "corrections": {
       "enabled":          true,
       "input_type":       "ntrip",
       "ntrip_host":       "products.igs-ip.net",
       "ntrip_port":       2101,
-      "ntrip_mountpoint": "SSRC03IGS1",
-	  //"ntrip_mountpoint": "SSRC01CAS1",
+      //"ntrip_mountpoint": "SSRC03IGS1",
+	  //"ntrip_mountpoint": "SSRA00CNE0",
+	  "ntrip_mountpoint": "SSRC01CAS1",
+      "ntrip_user":       "weaverb",
+      "ntrip_password":   "OsuGeomatics26!",
+      "reconnect_delay_s": 5,
+      "input_path":       "",
+      "tcp_host":         "",
+      "tcp_port":         28785
+    },
+
+    // Third stream: dedicated IGS broadcast ephemeris (nav).
+    "ephemeris": {
+      "enabled":          true,
+      "input_type":       "ntrip",
+      "ntrip_host":       "products.igs-ip.net",
+      "ntrip_port":       2101,
+      "ntrip_mountpoint": "BCEP00BKG0",
       "ntrip_user":       "weaverb",
       "ntrip_password":   "OsuGeomatics26!",
       "reconnect_delay_s": 5,
 
-      // For replay testing: dump a few minutes of an IGS-RTS feed to
-      // a binary file and switch input_type to "file".
+      // For replay testing: dump a few minutes of a nav feed to a binary file
+      // and switch input_type to "file".
       "input_path":       "",
-
-      // For input_type="tcp" — e.g. a relay box that proxies the IGS-RTS
-      // stream to a local TCP port.
       "tcp_host":         "",
-      "tcp_port":         28785
+      "tcp_port":         28786
     }
   },
 
   "estimation": {
     "between_satellite_sd": {
       "enabled": true,
-      // GLONASS participates in BSSD with FLOAT ambiguities (FDMA inter-channel
-      // bias makes its phase integers unresolvable, so they are held float).
-      // Required for GLONASS to enter the SD solution at all — with this false
-      // GLONASS is decoded/modelled but SKIPPED at the measurement stage.
       "enable_glonass": true,
       "pivot_min_elevation": 25.0
     },
@@ -134,7 +117,7 @@
       "hold_variance": 0.001
     },
 	"stuck_code_bias": {
-		"enabled": false,        // default true
+		"enabled": true,        // default true
 		"min_streak": 5,        // consecutive rejection epochs → reset (0 disables this branch)
 		"bias_floor_m": 3.0     // warmed-up EWMA |mean| (m) → reset (0 disables this branch)
 	},
@@ -146,20 +129,6 @@
     "lock_signals_to_clock_ref": false,
     "require_bia_for_signals": false,
 
-    // Cycle-slip detection / repair (same block as sbf_replay_covl145.json).
-    // MW is the primary detector; turbo_edit enables the MW+GF joint
-    // per-signal repair (Blewitt TurboEdit) — valid here because the live
-    // SBF stream is 1 Hz, so the geometry-free jump isolates the slip
-    // before the ionospheric residual contaminates it.
-    // mw_detect_reference "time_difference" + mw_td_order "first" gates the
-    // MW TD1 against the MAD of its own time-difference history (memoryless,
-    // trend- and quadratic-immune; sqrt(2) noise amplification).
-    // turbo_edit_mw_only_veto: an MW flag whose geometry-free phase is
-    // affirmatively flat is classified as a code-domain artifact (multipath /
-    // NLOS / DLL stress) and the phase reset is SKIPPED; the KF
-    // phase-innovation gate is the backstop if it really was a slip.
-    // turbo_edit_max_gap_s: gap-spanning GF bridge — across-gap ΔGF + MW k
-    // attributes post-gap flags per-signal instead of blanket resets.
     "cycle_slip": {
       "mw": true,
       "turbo_edit": true,
@@ -176,12 +145,6 @@
     "defer_until_corrections_ready": {
       "enabled": true,
       "min_satellites": 5,
-      // Per-constellation cm-grade quorum: hold the startup gate until EVERY
-      // configured active_system (GPS and Galileo here) fields this many SSR-
-      // cm-grade sats — capped by what each can field, floored at 2.  Prevents
-      // the single-constellation start (Galileo-only while GPS ephemeris is
-      // still assembling) that perturbs the filter when GPS joins mid-run.
-      // The timeout_s below still forces a degraded start if one never arrives.
       "min_satellites_per_system": 4,
       "require_all_above_mask": false,
       "drop_broadcast_grade": true,
@@ -189,17 +152,17 @@
     },
     "zwd_constraint": {
       "enabled": true,
-      "apriori_m": 0.10,
-      "sigma_m": 0.20
+      "apriori_m": 0.15,
+      "sigma_m": 0.30
     }
   },
 
   "filter": {
     "process_noise": {
-      "position_q": 0.0,
+      "position_q": 1e2,
       "clock_bias_q": 1e3,
       "phase_clock_q": 1e-9,
-      "troposphere_q": 1e-8,
+      "troposphere_q": 1e-9,
       "ionosphere_q": 0.03,
       "code_bias_q": 1e-4,
       "sat_bias_q": 1e-10,
@@ -211,7 +174,7 @@
       "position": 30.0,
       "velocity": 100.0,
       "clock": 1000.0,
-      "troposphere": 0.2,
+      "troposphere": 0.5,
       "ionosphere": 5.0,
       "ambiguity": 100.0,
       "code_bias": 10.0,
@@ -222,8 +185,6 @@
     "measurement_noise": {
       "code_std_m": 0.300,
       "phase_std_m": 0.001,
-	  //"code_std_m": 0.500,
-	  //"phase_std_m": 0.002,
       "doppler_std_m": 0.5
     },
     "phase_elevation_power": 1.0,
@@ -247,13 +208,7 @@
     "enable_receiver_pcv": true,
     "enable_phase_windup": true,
     "enable_code_phase_bias": false,
-	// Live SBF stream carries no RINEX antenna record — seed the rooftop
-	// LEIAR25 NONE so the receiver ATX entry matches (post-processing's RINEX
-	// header always wins, so this is inert there).  The cross-system fallback
-	// lets Galileo E1/E5a borrow the receiver's GPS L1/L5 PCO/PCV (same
-	// hardware, frequency-dependent pattern); the satellite antenna never
-	// borrows across constellations.
-	"receiver_antenna_type_override": "LEIAR25         NONE",
+	"receiver_antenna_type_override": "LEIAR25 NONE",
 	"enable_receiver_cross_system_atx_fallback": true,
 	"refine_emission_time": false,
 	"require_atx_coverage": true
@@ -323,20 +278,20 @@
     "//3": "--- per-logger levels (no trace) ---",
     "level": "info",
     "levels": {
-      "rt_engine":          "debug",
+      "rt_engine":          "info",
       "ppp_model":          "info",
-      "measurement_model":  "warn",
+      "measurement_model":  "info",
       "kalman_filter":      "info",
       "state_manager":      "debug",
-      "corrections":        "error",
+      "corrections":        "info",
       "ambiguity_resolver": "debug",
       "cycle_slip_manager": "debug",
       "mw_slip_detector":   "info",
-      "turbo_edit_resolver":"debug",
-      "bssd_pivot_manager": "debug",
+      "turbo_edit_resolver":"info",
+      "bssd_pivot_manager": "info",
       "bssd_transform":     "warn",
       "ntrip":              "warn",
-      "state_initializer":  "info",
+      "state_initializer":  "debug",
       "gnss_config":        "info",
       "geometry":           "info",
       "troposphere":        "info",

@@ -64,6 +64,9 @@ inline constexpr std::string_view kDdAmbiguityPrefix = "DD";
 /// Receiver inter-frequency-bias infix in code-bias keys ("GPS_IFB5").
 inline constexpr std::string_view kIfbInfix = "IFB";
 
+/// FCN-slot marker in per-slot GLONASS IFB keys ("GLONASS_IFB1_k-4").
+inline constexpr std::string_view kGlonassFcnMarker = "_k";
+
 /// Receiver differential code bias infix in code-bias keys ("GPS_DCB").
 inline constexpr std::string_view kDcbInfix = "DCB";
 
@@ -389,6 +392,88 @@ inline std::string makeDcbKey(std::string_view system) {
 }
 
 // ===========================================================================
+// 4b. Per-FCN-slot GLONASS receiver IFB keys — "GLONASS_IFB<band>_k<±slot>"
+// ---------------------------------------------------------------------------
+// Examples: "GLONASS_IFB1_k-4", "GLONASS_IFB2_k+5"
+//
+//   system : system name string (always "GLONASS" in practice).
+//   band   : FDMA band digit — '1' (G1) or '2' (G2).  CDMA bands keep the
+//            per-band makeIfbKey form (their frequency is slot-independent).
+//   slot   : GLONASS FDMA channel number k ∈ [-7,+6], printed with an
+//            explicit sign ("+5" / "-4").  The central channel k=0 is the
+//            held datum and never produces a key.
+//
+// Unlike the per-band IFB/DCB keys above, these are NOT receiver-common: two
+// GLONASS satellites on different slots see different group delays, so the
+// columns SURVIVE between-satellite single differencing.  BssdTransform
+// (receiver-block zeroing) and StateManager (process-noise suppression)
+// special-case them via isGlonassPerSlotIfbKey().
+//
+// Constructed in:  StateInitializer (resolveReceiverBias, GLONASS branch)
+// Stored in:       StateManager::code_bias_indices_
+// ===========================================================================
+
+/// Decomposed per-slot GLONASS IFB key.
+struct GlonassPerSlotIfbKeyParts {
+    char band;       ///< FDMA band digit ('1' or '2').
+    int  fcn_slot;   ///< GLONASS FDMA channel number k ∈ [-7,+6].
+};
+
+/// Build a per-FCN-slot GLONASS receiver IFB key, e.g. "GLONASS_IFB1_k-4".
+inline std::string makeGlonassPerSlotIfbKey(std::string_view system,
+                                            char band, int fcn_slot) {
+    std::string out;
+    out.reserve(system.size() + 1 + kIfbInfix.size() + 1
+                + kGlonassFcnMarker.size() + 3);
+    out.append(system);
+    out.push_back(kCodeBiasDelimiter);
+    out.append(kIfbInfix);
+    out.push_back(band);
+    out.append(kGlonassFcnMarker);             // "_k"
+    if (fcn_slot >= 0) out.push_back('+');     // std::to_string keeps '-' for negatives
+    out.append(std::to_string(fcn_slot));
+    return out;
+}
+
+/// Cheap predicate: is @p key a per-slot GLONASS IFB key (carries the IFB
+/// infix AND the "_k" FCN marker)?  The per-band IFB/DCB keys lack "_k", so
+/// they return false — which is exactly what lets BssdTransform / StateManager
+/// distinguish the SD-surviving per-slot columns from receiver-common ones.
+inline bool isGlonassPerSlotIfbKey(std::string_view key) {
+    const auto ifb = key.find(kIfbInfix);
+    if (ifb == std::string_view::npos) return false;
+    return key.find(kGlonassFcnMarker, ifb + kIfbInfix.size())
+           != std::string_view::npos;
+}
+
+/// Parse a per-slot GLONASS IFB key.  Returns @c std::nullopt unless the shape
+/// is exactly "<system>_IFB<band>_k<±slot>" with a single band char.
+inline std::optional<GlonassPerSlotIfbKeyParts>
+parseGlonassPerSlotIfbKey(std::string_view key) {
+    const auto ifb = key.find(kIfbInfix);
+    if (ifb == std::string_view::npos) return std::nullopt;
+    const auto band_pos = ifb + kIfbInfix.size();
+    const auto kpos = key.find(kGlonassFcnMarker, band_pos);
+    if (kpos == std::string_view::npos || kpos != band_pos + 1)
+        return std::nullopt;                       // exactly one band char before "_k"
+    const char band = key[band_pos];
+    std::string_view num = key.substr(kpos + kGlonassFcnMarker.size());
+    if (num.empty()) return std::nullopt;
+    bool neg = false;
+    if (num.front() == '+' || num.front() == '-') {
+        neg = (num.front() == '-');
+        num.remove_prefix(1);
+    }
+    if (num.empty()) return std::nullopt;
+    int mag = 0;
+    for (const char c : num) {
+        if (c < '0' || c > '9') return std::nullopt;
+        mag = mag * 10 + (c - '0');
+    }
+    return GlonassPerSlotIfbKeyParts{ band, neg ? -mag : mag };
+}
+
+// ===========================================================================
 // 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
 // ---------------------------------------------------------------------------
 // Examples: "G01|C1W", "E11|C5Q", "E24|C7Q"
@@ -438,6 +523,72 @@ parseSatBiasKey(std::string_view key) {
 /// preserves the lenient behavior of the original
 /// StateManager::computeProcessNoise loop.
 inline std::string satelliteFromSatBiasKey(std::string_view key) {
+    const auto bar = key.find(kPipeDelimiter);
+    return std::string(bar != std::string_view::npos
+                           ? key.substr(0, bar)
+                           : key);
+}
+
+// ===========================================================================
+// 5b. Per-satellite signal PHASE-bias keys — "<satellite>|<signal>|PB"
+// ---------------------------------------------------------------------------
+// Examples: "G01|L1C|PB", "E11|L5Q|PB"
+//
+// The network producer (PPP_RTK_Network) estimates an EXPLICIT per-(satellite,
+// signal) satellite phase bias (Odijk Eq. 4 — it carries the network pivot-
+// receiver ambiguity lump).  Stored in StateManager::sat_phase_bias_indices_, a
+// map kept DISTINCT from sat_bias_indices_ (CODE bias, section 5).  The trailing
+// "|PB" segment is the discriminator that keeps the two namespaces disjoint:
+//   - satelliteFromSatBiasKey / satelliteFromSatPhaseBiasKey both split on the
+//     FIRST pipe, so either returns the satellite correctly;
+//   - a phase-bias key is NEVER stored in sat_bias_indices_, so parseSatBiasKey
+//     (which would otherwise read "L1C|PB" as the signal) is never invoked on it.
+//
+// Constructed in:  MeasurementModel, the network estimator
+// Stored in:       StateManager::sat_phase_bias_indices_
+// Parsed in:       StateManager::getProcessNoiseMatrix (pivot-freeze check reads
+//                  only the satellite prefix — see satelliteFromSatPhaseBiasKey).
+// ===========================================================================
+
+/// Trailing discriminator separating a phase-bias key from a code-bias key.
+inline constexpr std::string_view kSatPhaseBiasSuffix = "|PB";
+
+/// Build a per-satellite signal PHASE-bias key.
+inline std::string makeSatPhaseBiasKey(std::string_view satellite,
+                                       std::string_view signal) {
+    std::string out;
+    out.reserve(satellite.size() + 1 + signal.size() + kSatPhaseBiasSuffix.size());
+    out.append(satellite);
+    out.push_back(kPipeDelimiter);
+    out.append(signal);
+    out.append(kSatPhaseBiasSuffix);
+    return out;
+}
+
+/// True iff @p key is a satellite phase-bias key (cheap trailing-suffix test).
+inline bool isSatPhaseBiasKey(std::string_view key) {
+    return key.size() > kSatPhaseBiasSuffix.size()
+        && key.substr(key.size() - kSatPhaseBiasSuffix.size()) == kSatPhaseBiasSuffix;
+}
+
+/// Parse a per-satellite signal PHASE-bias key.  Returns @c std::nullopt unless
+/// the key has the form "<sat>|<signal>|PB" with non-empty satellite and signal.
+inline std::optional<SatBiasKeyParts>
+parseSatPhaseBiasKey(std::string_view key) {
+    if (!isSatPhaseBiasKey(key)) return std::nullopt;
+    const std::string_view body = key.substr(0, key.size() - kSatPhaseBiasSuffix.size());
+    const auto bar = body.find(kPipeDelimiter);
+    if (bar == std::string_view::npos) return std::nullopt;
+    if (bar == 0 || bar + 1 >= body.size()) return std::nullopt;
+    return SatBiasKeyParts{
+        std::string(body.substr(0, bar)),
+        std::string(body.substr(bar + 1)),
+    };
+}
+
+/// Extract just the satellite prefix from a sat-phase-bias key (first-pipe split,
+/// matching satelliteFromSatBiasKey's lenient fallback).
+inline std::string satelliteFromSatPhaseBiasKey(std::string_view key) {
     const auto bar = key.find(kPipeDelimiter);
     return std::string(bar != std::string_view::npos
                            ? key.substr(0, bar)

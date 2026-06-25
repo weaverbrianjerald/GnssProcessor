@@ -253,9 +253,14 @@ for (Eigen::Index i = 0; i < n; ++i) {
             zero_col(state_manager_.getSystemTimeRateOffsetIndex(sys));
     }
 
-    // 6b. Receiver DCB / IFB columns
+    // 6b. Receiver DCB / IFB columns.  These are receiver-common and cancel in
+    // same-system SD — EXCEPT the per-FCN-slot GLONASS IFB states, which do NOT
+    // cancel (two sats on different slots have different group delays, so the
+    // differenced row keeps +1 on the sat's slot column and -1 on the pivot's).
+    // Skip zeroing those so the inter-slot signal survives differencing.
     for (const auto& [key, idx] : state_manager_.getCodeBiasStates())
-        zero_col(idx);
+        if (!StateKeys::isGlonassPerSlotIfbKey(key))
+            zero_col(idx);
 
     // 6c. Reference satellite ionosphere and pivot satellite bias columns
     std::set<Eigen::Index> ref_iono_cols;

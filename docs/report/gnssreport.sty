@@ -1,0 +1,184 @@
+% ============================================================
+%  gnssreport.sty -- shared preamble for the GnssProcessor
+%  mathematical reference.
+%
+%  This package is the SINGLE SOURCE OF TRUTH for notation,
+%  packages, and TikZ styles.  Both the combined volume
+%  (main.tex) and every standalone component document (the
+%  subfiles) load it, so a symbol defined here renders the
+%  same everywhere.  Do NOT redefine these macros in the
+%  component files.
+%
+%  Note: biblatex is loaded here, but \addbibresource is left
+%  to the document (main.tex / each subfile preamble) so the
+%  bibliography path can be fixed with \subfix under subfiles.
+% ============================================================
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{gnssreport}[2026/06/24 GnssProcessor math reference shared preamble]
+
+% --- Math
+\RequirePackage{amsmath, amssymb, amsthm, mathtools, bm}
+\RequirePackage{empheq}                 % boxed equations via \begin{empheq}[box=\fbox]{...}
+\RequirePackage{siunitx}                % \SI{10}{km} etc. for typeset units
+\RequirePackage{textcomp}               % \textdegree and friends
+
+% --- Layout
+\RequirePackage[margin=1in]{geometry}
+\RequirePackage{microtype}
+\RequirePackage{enumitem}
+\RequirePackage{booktabs}
+\RequirePackage{array}
+\RequirePackage{longtable}
+
+% --- Diagrams (curated TikZ process diagrams; see diagrams component)
+\RequirePackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, shapes.geometric, fit, backgrounds, calc}
+\tikzset{
+  proc/.style={rectangle, draw, rounded corners=2pt, align=center,
+               font=\small, inner sep=4pt, minimum height=9mm, fill=blue!4},
+  io/.style={rectangle, draw, align=center, font=\small, inner sep=4pt,
+             minimum height=9mm, fill=black!5},
+  store/.style={cylinder, shape border rotate=90, aspect=0.28, draw,
+                align=center, font=\small, inner sep=3pt, fill=green!8},
+  note/.style={font=\footnotesize\itshape, align=left, text=black!60},
+  flow/.style={-{Stealth[length=2mm]}, semithick},
+  feedback/.style={-{Stealth[length=2mm]}, semithick, dashed},
+}
+% Shrink an over-wide box to the text width but never magnify a narrow one.
+\newcommand{\fitwidth}[1]{%
+  \resizebox{\ifdim\width>\linewidth \linewidth\else \width\fi}{!}{#1}}
+
+% --- Cross-refs and links
+\RequirePackage{xcolor}
+\RequirePackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    citecolor=blue!50!black,
+    urlcolor=blue!50!black,
+}
+% Some section titles carry math (e.g. $\Zmat$, $\geomrange^\sat_\rx$).
+% Neutralise the macros for the PDF-bookmark strings so hyperref does not
+% choke on \bm and renders readable plain-text bookmarks.
+\pdfstringdefDisableCommands{%
+  \def\bm#1{#1}%
+  \def\mathrm#1{#1}%
+  \def\Tr{T}%
+  \def\Zmat{Z}%
+  \def\geomrange{rho}%
+  \def\sLight{c}%
+  \def\sat{i}%
+  \def\rx{r}%
+  \def\sigl{s}%
+  \def\mu{mu}%
+}
+\RequirePackage[capitalize, noabbrev]{cleveref}
+
+% --- Lightweight remark environment (used in the inertial-aiding section)
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+% --- Cross-DOCUMENT reference.
+%   \dcref{label}{human-readable name}
+%   In the combined volume the label resolves natively, so this renders a
+%   numbered \Cref (e.g. "Section 3").  In a standalone component PDF the
+%   sibling document is absent, so a combined-volume section number would
+%   be meaningless; instead it renders the human-readable name (e.g. "the
+%   observation-equations section of the Foundations document").
+%   USE \dcref ONLY for references to a label defined in a DIFFERENT
+%   component file; keep plain \Cref for references within the same file.
+%   The branch is chosen at use time (subfiles is loaded by then in both
+%   the combined and the standalone build).
+\newcommand{\dcref}[2]{\ifSubfilesClassLoaded{#2}{\Cref{#1}}}
+
+% --- Bibliography (package load only; \addbibresource lives in the document
+%     so it can be wrapped in \subfix for the subfiles build).
+\RequirePackage[backend=biber, style=numeric-comp, sorting=nyt]{biblatex}
+
+% ============================================================
+%  Notation shortcuts -- centralised so all components render
+%  symbols consistently.
+% ============================================================
+\newcommand{\rxset}{\mathcal{R}}                     % set of receivers
+\newcommand{\sysset}{\mathcal{G}}                    % set of constellations
+\newcommand{\satset}[1]{\mathcal{S}_{#1}}            % sats in constellation g
+\newcommand{\sigset}{\mathcal{B}}                    % set of signals
+\newcommand{\rx}{r}                                  % receiver index
+\newcommand{\sat}{i}                                 % satellite index
+\newcommand{\piv}[1]{p_{#1}}                         % pivot of constellation g
+\newcommand{\sigl}{s}                                % signal index
+\newcommand{\Tr}{\mathrm{T}}                         % transpose
+
+\newcommand{\rxpos}{\bm{r}}                          % receiver pos vector
+\newcommand{\satpos}{\bm{r}^{\sat}}                  % satellite pos vector
+\newcommand{\los}{\bm{e}}                            % unit line-of-sight
+\newcommand{\stateV}{\bm{x}}                         % state vector
+\newcommand{\covM}{\bm{P}}                           % state covariance
+\newcommand{\jacH}{\bm{H}}                           % design matrix
+
+\newcommand{\bsd}[1]{\Delta #1}                      % between-sat SD
+\newcommand{\brd}[1]{\nabla #1}                      % between-rx  SD
+\newcommand{\dd}[1]{\nabla\Delta #1}                 % double-difference
+\newcommand{\bsdpiv}[3]{#1^{#2,\piv{#3}}}            % BSSD wrt pivot of g
+
+\newcommand{\code}{P}                                % pseudorange obs
+\newcommand{\phaseo}{\Phi}                           % carrier-phase obs
+\newcommand{\zwd}{\mathrm{ZWD}}
+\newcommand{\zhd}{\mathrm{ZHD}}
+\newcommand{\geomrange}{\rho}                        % geometric range
+\newcommand{\sLight}{c}                              % speed of light
+
+% --- Estimation: Kalman filter, RTS smoother, ambiguity resolution.
+\newcommand{\Fmat}{\bm{F}}                           % state-transition matrix
+\newcommand{\Qmat}{\bm{Q}}                            % discrete process-noise covariance
+\newcommand{\Rmat}{\bm{R}}                            % measurement-noise covariance
+\newcommand{\Smat}{\bm{S}}                            % innovation covariance H P H^T + R
+\newcommand{\Kgain}{\bm{K}}                           % Kalman gain
+\newcommand{\gainS}{\bm{G}}                           % RTS smoother gain
+\newcommand{\innov}{\bm{\nu}}                         % innovation (measurement - prediction)
+\newcommand{\dt}{\Delta t}                            % epoch interval
+\newcommand{\spd}[1]{q_{#1}}                          % process-noise spectral density (variance rate)
+\newcommand{\sres}{s}                                 % standardised post-fit residual (s_i)
+\newcommand{\smooth}[2]{#1_{#2|N}}                    % fixed-interval smoothed estimate (epoch | all N)
+\newcommand{\ambfloat}{\hat{\bm{N}}}                  % float ambiguity vector (cycles)
+\newcommand{\ambfix}{\check{\bm{N}}}                  % integer-fixed ambiguity vector
+\newcommand{\ambcov}{\bm{Q}_{\hat N}}                 % float ambiguity covariance
+\newcommand{\Zmat}{\bm{Z}}                            % unimodular integer (decorrelating) transform
+\newcommand{\Dmat}{\bm{D}}                            % LDL^T diagonal (conditional variances)
+\newcommand{\Lmat}{\bm{L}}                            % LDL^T unit-lower-triangular factor
+
+% --- Cycle-slip combinations ---
+\newcommand{\slipd}[1]{\delta #1}                    % temporal integer slip step (distinct from \bsd's \Delta)
+\newcommand{\mwc}{\mathrm{MW}}                        % Melbourne-Wubbena combination
+\newcommand{\gfc}{\mathrm{GF}}                        % geometry-free combination
+\newcommand{\graphicc}{\mathrm{GR}}                   % GRAPHIC combination (\mathcal{G} is taken by \sysset)
+\newcommand{\Nwl}{N_{\mathrm{WL}}}                    % wide-lane ambiguity N_1 - N_2
+\newcommand{\lamwl}{\lambda_{\mathrm{WL}}}            % wide-lane wavelength c/(f1-f2)
+\newcommand{\lamnl}{\lambda_{\mathrm{NL}}}            % narrow-lane wavelength c/(f1+f2)
+\newcommand{\lamewl}{\lambda_{\mathrm{EWL}}}          % extra-wide-lane wavelength
+\newcommand{\lamif}{\lambda_{\mathrm{IF}}}            % ionosphere-free effective wavelength
+
+% --- Inertial aiding (IMU) ---
+\newcommand{\Cbe}{\bm{C}_b^e}                         % body-to-ECEF direction-cosine matrix
+\newcommand{\imuvel}{\bm{v}}                          % ECEF velocity (INS nominal state)
+\newcommand{\imupsi}{\delta\bm{\psi}}                 % attitude-error state (small angle)
+\newcommand{\biasa}{\bm{b}_a}                         % accelerometer bias state
+\newcommand{\biasg}{\bm{b}_g}                         % gyroscope bias state
+\newcommand{\imuf}{\bm{f}_b}                          % bias-corrected specific force (body frame)
+\newcommand{\imuw}{\bm{\omega}_b}                     % bias-corrected angular rate (body frame)
+\newcommand{\imufe}{\bm{f}^e}                         % specific force in ECEF (= C_b^e f_b)
+\newcommand{\earthrate}{\bm{\omega}_{ie}^e}           % ECEF Earth-rotation vector
+\newcommand{\gravec}{\bm{g}^e}                        % ECEF plumb-bob gravity vector
+\newcommand{\skewm}[1]{[#1]_\times}                   % skew-symmetric / cross-product matrix
+\newcommand{\insF}{\bm{F}_{\mathrm{ins}}}             % 15x15 continuous INS error transition
+\newcommand{\insG}{\bm{G}_{\mathrm{ins}}}             % INS noise-input matrix
+\newcommand{\insQ}{\bm{Q}_{\mathrm{ins}}}             % INS discrete process noise
+\newcommand{\insPhi}{\bm{\Phi}_{\mathrm{ins}}}        % discrete INS transition
+
+% --- Real-time SSR corrections ---
+\newcommand{\satvel}{\dot{\bm{r}}^{\sat}}             % broadcast satellite velocity
+\newcommand{\racR}{\hat{\bm{e}}_r}                    % SSR orbit radial basis vector
+\newcommand{\racA}{\hat{\bm{e}}_a}                    % SSR orbit along-track basis vector
+\newcommand{\racC}{\hat{\bm{e}}_c}                    % SSR orbit cross-track basis vector
+
+\endinput

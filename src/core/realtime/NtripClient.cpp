@@ -110,8 +110,22 @@ size_t NtripClient::curlWriteCallback(void* data, size_t size, size_t nmemb, voi
 void NtripClient::receiveLoop() {
     auto log = log_manager_.getLogger("ntrip");
 
+    // One-time diagnostic when TLS is requested: surface the libcurl build's
+    // SSL backend (e.g. "Schannel", "OpenSSL/3.x") so a caster failure can be
+    // distinguished from a curl-without-SSL build at a glance.
+    if (config_.use_tls) {
+        log->info("NTRIP TLS enabled (libcurl: {})", curl_version());
+        if (config_.tls_insecure) {
+            log->warn("NTRIP TLS certificate verification DISABLED (tls_insecure) — the "
+                      "caster connection is NOT authenticated and is open to MITM; use "
+                      "only for testing against self-signed/mis-chained casters");
+        }
+    }
+
     while (running_.load()) {
-        log->info("Connecting to NTRIP caster {}:{}/{}", config_.host, config_.port, config_.mountpoint);
+        const char* scheme = config_.use_tls ? "https" : "http";
+        log->info("Connecting to NTRIP caster {}://{}:{}/{}", scheme, config_.host,
+                  config_.port, config_.mountpoint);
 
         CURL* curl = curl_easy_init();
         if (!curl) {
@@ -120,10 +134,21 @@ void NtripClient::receiveLoop() {
             continue;
         }
 
-        // Build URL: http://host:port/mountpoint
-        std::string url = "http://" + config_.host + ":" + std::to_string(config_.port)
-                          + "/" + config_.mountpoint;
+        // Build URL: http(s)://host:port/mountpoint.  The URL scheme is what
+        // actually drives TLS for the HTTP transport.
+        std::string url = std::string(scheme) + "://" + config_.host + ":"
+                          + std::to_string(config_.port) + "/" + config_.mountpoint;
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+
+        // TLS transport (port-443 casters such as CDDIS).  CURLUSESSL_ALL
+        // requires SSL for all communication (belt-and-suspenders alongside the
+        // https scheme above); verification stays ON (VERIFYPEER=1/VERIFYHOST=2)
+        // unless tls_insecure is set for testing against self-signed casters.
+        if (config_.use_tls) {
+            curl_easy_setopt(curl, CURLOPT_USE_SSL, CURLUSESSL_ALL);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, config_.tls_insecure ? 0L : 1L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, config_.tls_insecure ? 0L : 2L);
+        }
 
         // NTRIP v2 uses standard HTTP GET with specific headers.
         struct curl_slist* headers = nullptr;

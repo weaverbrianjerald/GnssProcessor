@@ -251,6 +251,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief GLONASS FDMA channel k for a satellite, from the SEEDED slot map.
+         *
+         * Delegates to the model's own @c PppUtils, which @c setGlonassSlots has
+         * populated from the RINEX header / live broadcast — so callers that hold
+         * only a @c const @c PppModel& (e.g. StateInitializer) resolve the true
+         * current channel rather than their own un-seeded default table.
+         *
+         * @param satellite GLONASS satellite id ("R07").
+         * @return Channel k in [-7,+6], or -999 if the slot is unknown.
+         */
+        int getGlonassChannel(const std::string& satellite) const {
+            return ppp_utils_.getGlonassChannel(satellite);
+        }
+
+        /**
          * @brief Check whether the receiver antenna has ATX coverage for a signal.
          *
          * Delegates to Antenna::hasReceiverAtxEntry().

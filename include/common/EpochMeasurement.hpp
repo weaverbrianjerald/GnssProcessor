@@ -37,8 +37,17 @@ namespace GnssProcessor {
         std::vector<std::string> satellite_ids;      /**< Satellite identifiers ordered to match vectors/matrices */
         std::vector<std::string> signal_types;       /**< Signal/observable types corresponding to measurement rows */
         Eigen::VectorXd residuals;                   /**< Post-fit residuals */
-        Eigen::MatrixXd residuals_covariance;        /**< Covariance of residuals */
+        Eigen::MatrixXd residuals_covariance;        /**< Covariance of residuals (diagonal Sr by default; full Sr when enableFullRKernel() and a dense R is supplied) */
         Eigen::VectorXd residuals_standardized;      /**< Standardized (normalized) residuals for outlier detection */
+        // --- Statistical QC diagnostics (item #9 / M-PAGES NgsLsq + Baarda).
+        //     Populated only when enableVarianceFactor()/enableDataSnooping()
+        //     are on; left empty / at their neutral defaults otherwise, so
+        //     the off-path is byte-identical. ---
+        Eigen::VectorXd residual_redundancy;         /**< Per-row redundancy number rᵢ = Sr_ii/Rᵢᵢ ∈ [0,1] (Baarda). */
+        Eigen::VectorXd residual_wtest;              /**< Per-row Baarda w-test statistic wᵢ = vᵢ/√Sr_ii. */
+        Eigen::VectorXd residual_mdb;                /**< Per-row minimal detectable bias MDBᵢ (m). */
+        double variance_factor{ 1.0 };               /**< A-posteriori variance factor σ̂₀² = (Σ vᵢ²/Rᵢᵢ)/dof (1.0 when not computed). */
+        double variance_dof{ 0.0 };                  /**< Effective redundancy / degrees of freedom = Σ rᵢ used for σ̂₀². */
         size_t bad_residual_count{ 0 };              /**< Count of residuals flagged as bad/outliers */
         std::set<std::string> excluded_measurements; /**< Set of "satellite_signaltype" keys excluded as code outliers (persists across rebuild passes) */
     };

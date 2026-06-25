@@ -158,10 +158,11 @@ namespace GnssProcessor {
         covariance_ = std::move(new_cov);
 
         // Decrement all dynamic-state indices that were above the removed index
-        for (auto& kv : ambiguity_indices_)   if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : code_bias_indices_)   if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : sat_bias_indices_)    if (kv.second > rem_idx) --kv.second;
-        for (auto& kv : ionosphere_indices_)  if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : ambiguity_indices_)      if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : code_bias_indices_)      if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : sat_bias_indices_)       if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : sat_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : ionosphere_indices_)     if (kv.second > rem_idx) --kv.second;
     }
 
     // ===================================================================
@@ -480,7 +481,8 @@ namespace GnssProcessor {
     }
 
     size_t StateManager::getStateSize() const {
-        return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size() + ionosphere_indices_.size() + ambiguity_indices_.size();
+        return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size()
+             + sat_phase_bias_indices_.size() + ionosphere_indices_.size() + ambiguity_indices_.size();
     }
 
     Eigen::VectorXd StateManager::getStateVector() const {
@@ -652,12 +654,17 @@ namespace GnssProcessor {
             }
         }
 
-        // Receiver code bias (IFB) noise (PPP-RTK uncombined)
-        // Suppressed under BSSD: receiver DCB/IFB columns are zeroed in
-        // the SD H-matrix, so these states are unobservable.
-        if (!code_bias_indices_.empty() && !config_.enableBetweenSatelliteSd()) {
-            double cb_var = pn.code_bias * dt;
+        // Receiver code bias (IFB) noise (PPP-RTK uncombined).
+        // Normally suppressed under BSSD: receiver DCB/IFB columns are zeroed
+        // in the SD H-matrix, so those states are unobservable.  The per-FCN-
+        // slot GLONASS IFB states are the exception — they survive SD (their
+        // columns are NOT zeroed in BssdTransform), so they must keep their
+        // random walk even when BSSD is on.
+        if (!code_bias_indices_.empty()) {
+            const double cb_var = pn.code_bias * dt;
+            const bool sd = config_.enableBetweenSatelliteSd();
             for (const auto& [key, idx] : code_bias_indices_) {
+                if (sd && !StateKeys::isGlonassPerSlotIfbKey(key)) continue;
                 Q(idx, idx) = cb_var;
             }
         }
@@ -675,6 +682,21 @@ namespace GnssProcessor {
                 const std::string sat = StateKeys::satelliteFromSatBiasKey(key);
                 if (frozen_pivot_sats_.count(sat)) continue;
                 Q(idx, idx) = sb_var;
+            }
+        }
+
+        // Per-satellite signal PHASE bias noise (PPP_RTK_Network producer).
+        // Even more stable than the code bias; a tiny random walk keeps the
+        // satellite column responsive to genuine slow drift without letting a
+        // strictly-constant (q=0) state over-converge.  Suppressed for the
+        // S-basis datum (frozen-pivot) satellite, whose phase bias is held at
+        // (value=0, variance=0) — applying Q would let it drift off the datum.
+        if (!sat_phase_bias_indices_.empty()) {
+            const double spb_var = pn.sat_phase_bias * dt;
+            for (const auto& [key, idx] : sat_phase_bias_indices_) {
+                const std::string sat = StateKeys::satelliteFromSatPhaseBiasKey(key);
+                if (frozen_pivot_sats_.count(sat)) continue;
+                Q(idx, idx) = spb_var;
             }
         }
 
@@ -819,6 +841,64 @@ namespace GnssProcessor {
 
     size_t StateManager::getNumSystemTimeOffsets() const {
         return systems_with_time_offsets_.size();
+    }
+
+    std::vector<std::string> StateManager::getStateLabels() const {
+        const size_t n = getStateSize();
+        std::vector<std::string> labels(n);
+        for (size_t i = 0; i < n; ++i) labels[i] = "STATE_" + std::to_string(i);
+
+        constexpr size_t kNone = std::numeric_limits<size_t>::max();
+        auto put = [&](size_t idx, const std::string& name) {
+            if (idx < n) labels[idx] = name;
+        };
+
+        // --- Fixed-core block.  Core states carry no stored name strings, so
+        //     synthesize labels from the index getters (guarded by their
+        //     has*()/sentinel checks; the layout is mode-dependent). ---
+        put(0, "POS_X");
+        put(1, "POS_Y");
+        put(2, "POS_Z");
+        if (hasClock())               put(getClockIndex(), "CLK");
+        if (getTropoIndex() != kNone) put(getTropoIndex(), "ZWD");
+        if (hasVelocity()) {
+            put(getVelocityIndex() + 0, "VEL_X");
+            put(getVelocityIndex() + 1, "VEL_Y");
+            put(getVelocityIndex() + 2, "VEL_Z");
+        }
+        if (hasClockRate())  put(getClockRateIndex(),  "CLK_RATE");
+        if (hasPhaseClock()) put(getPhaseClockIndex(), "PHASE_CLK");
+        if (hasTropoGradients()) {
+            put(getTropoGradientNorthIndex(), "TGRAD_N");
+            put(getTropoGradientEastIndex(),  "TGRAD_E");
+        }
+        if (hasImuBiases()) {
+            for (size_t k = 0; k < 3; ++k) {
+                put(getAttitudeIndex()  + k, "ATT_"  + std::to_string(k));
+                put(getAccelBiasIndex() + k, "BACC_" + std::to_string(k));
+                put(getGyroBiasIndex()  + k, "BGYR_" + std::to_string(k));
+            }
+        }
+        if (hasDifferentialTropo()) put(getDifferentialTropoIndex(), "DZWD");
+
+        // Inter-system time / rate offsets (ISB / ISBR), keyed by system name.
+        for (const auto& sys : systems_with_time_offsets_) {
+            const size_t oi = getSystemTimeOffsetIndex(sys);
+            if (oi != kNone) put(oi, "ISB_" + sys);
+            const size_t ri = getSystemTimeRateOffsetIndex(sys);
+            if (ri != kNone) put(ri, "ISBR_" + sys);
+        }
+
+        // --- Dynamic key->index maps.  The keys ARE the stable labels
+        //     (StateKeySchema); prefix a category tag so the disjoint maps
+        //     never alias (e.g. iono "G01" vs sat-bias prefix "G01|C1W"). ---
+        for (const auto& kv : getAmbiguities())        put(kv.second, "AMB:"   + kv.first);
+        for (const auto& kv : getIonosphereStates())   put(kv.second, "IONO:"  + kv.first);
+        for (const auto& kv : getCodeBiasStates())     put(kv.second, "CBIAS:" + kv.first);
+        for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
+        for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
+
+        return labels;
     }
 
     const std::vector<std::string>& StateManager::getSystemsWithTimeOffsets() const {
@@ -1562,6 +1642,192 @@ namespace GnssProcessor {
             logger->debug("Removed sat bias state for {} at former index {} "
                           "(cached value={:+.4f} m, std={:.4f} m for potential restore)",
                           key, rem_idx, cached_value, std::sqrt(std::max(cached_variance, 0.0)));
+        }
+    }
+
+    // ===================================================================
+    // Satellite PHASE-bias states (PPP_RTK_Network producer)
+    // -------------------------------------------------------------------
+    // Mirror of the satellite CODE-bias block above, on the separate
+    // sat_phase_bias_indices_ map.  The warm-restart cache the code-bias
+    // block carries is intentionally NOT mirrored yet (deferred to W4 with
+    // the network estimator's restart semantics); prune simply removes.
+    // ===================================================================
+
+    int StateManager::getSatPhaseBiasIndex(const std::string& key) const {
+        auto it = sat_phase_bias_indices_.find(key);
+        return it != sat_phase_bias_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getSatPhaseBiasStates() const {
+        return sat_phase_bias_indices_;
+    }
+
+    size_t StateManager::addSatPhaseBiasState(const std::string& key, double initial_value) {
+        const double spb_std = config_.getInitialStd().sat_phase_bias;
+        return addSatPhaseBiasStateWithVariance(key, initial_value, spb_std * spb_std);
+    }
+
+    size_t StateManager::addSatPhaseBiasStateWithVariance(const std::string& key,
+                                                          double initial_value,
+                                                          double initial_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_phase_bias_indices_.count(key)) {
+            logger->trace("Sat phase-bias state for {} already exists at index {}",
+                          key, sat_phase_bias_indices_[key]);
+            return sat_phase_bias_indices_[key];
+        }
+        if (!(initial_variance > 0.0)) {
+            const double spb_std = config_.getInitialStd().sat_phase_bias;
+            logger->warn("addSatPhaseBiasStateWithVariance: non-positive variance {} for {}; "
+                         "falling back to initial_std.sat_phase_bias^2 = {}",
+                         initial_variance, key, spb_std * spb_std);
+            initial_variance = spb_std * spb_std;
+        }
+
+        const size_t index = appendState(initial_value, initial_variance);
+        sat_phase_bias_indices_[key] = index;
+
+        logger->info("Added sat phase-bias state for {} at index {}, initial={:.3f} m, std={:.3f} m",
+            key, index, initial_value, std::sqrt(initial_variance));
+        return index;
+    }
+
+    void StateManager::resetSatPhaseBiasState(const std::string& key,
+                                              double new_value,
+                                              double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const auto it = sat_phase_bias_indices_.find(key);
+        if (it == sat_phase_bias_indices_.end()) {
+            logger->debug("resetSatPhaseBiasState: unknown key {}", key);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("resetSatPhaseBiasState index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
+                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return;
+        }
+
+        // Refuse to disturb a frozen-pivot row (held at value=0, variance=0 by
+        // the S-basis datum) — re-inflating it would let the datum drift on the
+        // next update and break the frame for the constellation/band group.
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("resetSatPhaseBiasState refused on frozen pivot row {} "
+                          "(idx={}, P_diag={:.3e}); S-basis datum preserved",
+                          key, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double spb_std = config_.getInitialStd().sat_phase_bias;
+            logger->warn("resetSatPhaseBiasState: non-positive variance {} for {}; "
+                          "falling back to initial_std.sat_phase_bias^2 = {}",
+                          new_variance, key, spb_std * spb_std);
+            new_variance = spb_std * spb_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        state_vector_(idx)    = new_value;
+
+        logger->info("Reset sat phase-bias state {} at index {}: "
+                      "value {:+.4f} -> {:+.4f} m, std {:.4f} -> {:.4f} m",
+                      key, idx,
+                      prev_value, new_value,
+                      std::sqrt(std::max(prev_diag, 0.0)),
+                      std::sqrt(new_variance));
+    }
+
+    void StateManager::reinflateSatPhaseBiasVariancesForSat(const std::string& satellite,
+                                                            double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        if (sat_phase_bias_indices_.empty()) return;
+
+        if (!(new_variance > 0.0)) {
+            const double spb_std = config_.getInitialStd().sat_phase_bias;
+            logger->warn("reinflateSatPhaseBiasVariancesForSat: non-positive variance {} for {}; "
+                          "falling back to initial_std.sat_phase_bias^2 = {}",
+                          new_variance, satellite, spb_std * spb_std);
+            new_variance = spb_std * spb_std;
+        }
+
+        // Keys are "<sat>|<signal>|PB"; prefix-match on "<sat>|" without parsing.
+        const std::string prefix = satellite + "|";
+        std::vector<std::pair<std::string, Eigen::Index>> touched;
+        std::vector<std::string> frozen;
+        for (const auto& [key, raw_idx] : sat_phase_bias_indices_) {
+            if (key.compare(0, prefix.size(), prefix) != 0) continue;
+            const auto idx = static_cast<Eigen::Index>(raw_idx);
+            if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+                logger->error("reinflateSatPhaseBiasVariancesForSat: idx {} out of bounds for {}",
+                               idx, key);
+                continue;
+            }
+            const double current_diag = covariance_(idx, idx);
+            if (!(current_diag > 0.0)) {
+                frozen.push_back(key);   // frozen pivot row — leave the datum alone
+                continue;
+            }
+            covariance_.row(idx).setZero();
+            covariance_.col(idx).setZero();
+            covariance_(idx, idx) = new_variance;
+            // Value preserved — phase hardware delay is constant.
+            touched.emplace_back(key, idx);
+        }
+
+        if (!touched.empty()) {
+            std::string joined;
+            for (size_t i = 0; i < touched.size(); ++i) {
+                if (i) joined += ", ";
+                joined += touched[i].first;
+            }
+            logger->info("Reinflated {} sat-phase-bias state(s) for {} to std={:.4f} m: {}",
+                          touched.size(), satellite,
+                          std::sqrt(new_variance), joined);
+        }
+        if (!frozen.empty()) {
+            logger->debug("reinflateSatPhaseBiasVariancesForSat: skipped {} frozen pivot row(s) for {}",
+                           frozen.size(), satellite);
+        }
+    }
+
+    void StateManager::pruneSatPhaseBiasStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_phase_bias_indices_.empty()) return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [key, idx] : sat_phase_bias_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
+        if (to_remove.empty()) return;
+
+        logger->info("Pruning {} sat phase-bias states (keeping {})",
+            to_remove.size(), keep_keys.size());
+        for (const auto& key : to_remove) {
+            auto it = sat_phase_bias_indices_.find(key);
+            if (it == sat_phase_bias_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneSatPhaseBiasStatesExcept: invalid index {} for {}", rem_idx, key);
+                continue;
+            }
+
+            // removeStateAtIndex decrements all higher indices across every
+            // dynamic map (incl. sat_phase_bias_indices_), so the next key's
+            // index is re-read fresh from the map on the following iteration.
+            removeStateAtIndex(rem_idx);
+            sat_phase_bias_indices_.erase(key);
+
+            logger->debug("Removed sat phase-bias state for {} at former index {}", key, rem_idx);
         }
     }
 

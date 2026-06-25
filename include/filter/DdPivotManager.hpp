@@ -22,6 +22,7 @@
 #include "logging/LogManager.hpp"
 #include "filter/StateManager.hpp"
 #include <map>
+#include <set>
 #include <string>
 
 namespace GnssProcessor {
@@ -115,12 +116,38 @@ namespace GnssProcessor {
          * pre-gap incumbent.  Also called between rovers in
          * Baseline-Multi processing for the same reason.
          */
-        void reset() { sticky_.clear(); }
+        void reset() { sticky_.clear(); forced_rerank_.clear(); }
+
+        /**
+         * @brief Force a pivot re-rank for one constellation next epoch.
+         *
+         * Routed from the baseline driver when @c KalmanFilter's coherent
+         * pivot-slip detector flags @p cons.  On the next @c selectPivots the
+         * sticky incumbent for @p cons is NOT kept even if it is still a
+         * candidate; the re-rank instead skips @p exclude_sats (the offset
+         * pivot plus any co-disturbed satellites the KF identified) so the new
+         * pivot lands on a clean satellite.  The previous-pivot snapshot is
+         * preserved, so the handover S-transform still re-references existing
+         * DD ambiguities onto the new pivot (integer cycles preserved) rather
+         * than resetting them.  One-shot: cleared after the next @c selectPivots.
+         *
+         * @param cons         Constellation name (e.g. "GPS").
+         * @param exclude_sats Satellites to exclude from the re-rank candidates.
+         */
+        void requestForcedRerank(const std::string& cons,
+                                 const std::set<std::string>& exclude_sats) {
+            forced_rerank_[cons].insert(exclude_sats.begin(), exclude_sats.end());
+        }
 
     private:
         const GnssConfig& config_;
         LogManager&       log_manager_;
         std::map<std::string, std::string> sticky_;
+
+        /// Pending KF-driven forced re-ranks: cons → sats to exclude from the
+        /// re-rank candidate set.  Set via @c requestForcedRerank, consumed and
+        /// cleared by the next @c selectPivots.
+        std::map<std::string, std::set<std::string>> forced_rerank_;
 
         /**
          * @brief Apply the DD pivot-handover S-transform.

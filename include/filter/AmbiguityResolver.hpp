@@ -57,6 +57,12 @@ struct AmbiguityResolverConfig {
     double wl_max_frac{ 0.40 };        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
     double min_success_rate{ 0.999 };  ///< Min bootstrap success rate (FFR-style; 0.999 = 0.1% target failure rate).
     double nl_max_per_pair_frac{ 0.15 }; ///< Max |N_1_float − N_1_fixed| per NL pair / DD; rejects marginal fixes.
+    bool   enable_partial_ar{ false };   ///< If true, when the full-set LAMBDA fix fails its
+        ///< acceptance gates, retry on progressively smaller subsets (drop the
+        ///< least-fixable ambiguity, re-validate ratio/bootstrap/frac) so a few
+        ///< noisy satellites no longer force the whole epoch back to float.
+        ///< Complements (does not replace) the full-set FFR/ratio/Joseph-hold
+        ///< validation; bit-identical to the legacy path when off.
     std::vector<std::string> ar_active_systems;
         ///< Constellations eligible for AR (e.g. {"GPS"}, {"GPS","Galileo"}).
         ///< Empty (default) = all active systems.  Use to keep a constellation
@@ -290,6 +296,49 @@ private:
      */
     std::vector<DdPair> buildDdPairs(const StateManager& state_manager,
                                      const std::vector<PppObservation>& observations) const;
+
+    // -----------------------------------------------------------------------
+    // Partial ambiguity resolution (subset selection)
+    // -----------------------------------------------------------------------
+
+    /// Outcome of a partial-subset search over a cycle-domain integer set.
+    struct PartialFix {
+        bool success{ false };       ///< True if a fixable subset (≥1 entry) was found.
+        std::vector<int> kept;       ///< Indices (into the caller's set) that survived and were fixed.
+        Eigen::VectorXd afix_cycles; ///< Integer fix (cycles) for the kept entries, in @c kept order.
+        double ratio{ 0.0 };         ///< Ratio test value of the accepted subset.
+        double p_s{ 0.0 };           ///< Bootstrap success rate of the accepted subset.
+        double max_frac{ 0.0 };      ///< Worst |float − fixed| (cycles) over the accepted subset.
+    };
+
+    /**
+     * @brief Greedy backward-elimination partial ambiguity resolution.
+     *
+     * Starting from the full candidate set, repeatedly runs MLAMBDA on the
+     * current subset and tests the same acceptance battery used by the
+     * full-set fix — ratio (lower and upper bound), bootstrap success rate
+     * (FFR), and per-entry |float − fixed| cap.  On any failure the least
+     * fixable entry is dropped (the largest |float − fixed| when the fractional
+     * cap is the failing gate, otherwise the largest formal float variance)
+     * and the search retries on the smaller subset, down to a single entry.
+     *
+     * The accepted subset is therefore always re-validated by the full gate
+     * battery on its own covariance sub-block, so subset selection can only
+     * fix @e fewer ambiguities than the full set, never a worse-conditioned
+     * set.  This is the safety property that lets PAR complement, rather than
+     * weaken, the existing validation: a wrong elimination order costs fixes,
+     * not integrity.
+     *
+     * Operates purely in the decorrelation-agnostic cycle domain, so it serves
+     * the per-band SD, baseline DD, and WL-constrained NL paths uniformly; each
+     * caller maps the returned @c kept indices back to its own state rows.
+     *
+     * @param y_cycles  Float ambiguity vector (cycles) for the full set.
+     * @param Q_cycles  Covariance of @p y_cycles (cycles²); symmetric PD.
+     * @return PartialFix; @c success=false if no subset down to size 1 passes.
+     */
+    PartialFix selectFixableSubset_(const Eigen::VectorXd& y_cycles,
+                                    const Eigen::MatrixXd& Q_cycles) const;
 
     AmbiguityResolverConfig config_;
     LogManager& log_manager_;

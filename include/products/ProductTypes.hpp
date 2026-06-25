@@ -41,6 +41,16 @@ namespace GnssProcessor {
                                                           -1 = unknown / not from broadcast (e.g. SP3-derived).
                                                           Used by the SSR-overlay path to ensure the correction
                                                           applies to the same ephemeris baseline. */
+        float accuracy_sigma_m{ 0.0f };              /**< Orbit position accuracy 1-sigma (meters), derived
+                                                          from the SP3 per-satellite accuracy exponent (the
+                                                          '++' header block, sigma = 2^acc mm) or, when present,
+                                                          the per-record SP3-c/d position std-dev exponents.
+                                                          0.0 = not present / unknown; trigSvdInterp treats a
+                                                          zero (or all-equal) sigma set as a uniform unit weight,
+                                                          so the SP3 interpolation is unweighted in that case.
+                                                          Not binary-serialized (ProductCache serializes only
+                                                          AntennaData); rides in value-semantic OrbitData
+                                                          vectors and is default-initialized in every copy. */
     };
 
     /**
@@ -119,6 +129,10 @@ namespace GnssProcessor {
         double xp{ 0.0 };                            /**< Pole position X (arcseconds or radians depending on usage) */
         double yp{ 0.0 };                            /**< Pole position Y (arcseconds or radians depending on usage) */
         double ut1_utc{ 0.0 };                       /**< UT1-UTC correction (seconds) */
+        double dX{ 0.0 };                            /**< CIP celestial-pole offset dX (arcseconds). From IERS finals2000A;
+                                                          absent in standard IGS .ERP files, so defaults to 0.  Consumed only
+                                                          by the CIO frame transform (Planetary::celestialToTerrestrial). */
+        double dY{ 0.0 };                            /**< CIP celestial-pole offset dY (arcseconds). See dX. */
     };
 
     /**

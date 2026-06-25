@@ -114,6 +114,8 @@ namespace GnssProcessor {
         std::string ntrip_password;               ///< NTRIP password.
         std::string nmea_gga;                     ///< Optional GGA sentence for VRS.
         int         reconnect_delay_s{ 5 };       ///< Seconds before reconnect on failure.
+        bool        ntrip_use_tls{ false };       ///< Connect to the primary caster over HTTPS (port-443 casters such as CDDIS).  Transport setting, not a GnssConfig feature flag.  Default false keeps plain-HTTP casters byte-identical.
+        bool        ntrip_tls_insecure{ false };  ///< When @c ntrip_use_tls, skip TLS certificate verification (testing only).
         std::string input_type{ "ntrip" };        ///< Transport for the primary stream: "ntrip", "tcp", "file".
         std::string input_format{ "rtcm" };       ///< Wire format of the primary stream: "rtcm" or "sbf" (Septentrio Binary Format).
         std::string input_path;                   ///< Path for "file" input.
@@ -145,6 +147,8 @@ namespace GnssProcessor {
             std::string ntrip_password;
             std::string nmea_gga;
             int         reconnect_delay_s{ 5 };
+            bool        ntrip_use_tls{ false };   ///< Connect this aux caster over HTTPS (CDDIS-class port-443 SSR/nav mountpoints).
+            bool        ntrip_tls_insecure{ false }; ///< When @c ntrip_use_tls, skip TLS certificate verification (testing only).
             std::string input_path;               ///< Path for "file" input_type.
             std::string tcp_host;                 ///< Host for "tcp" input.
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
@@ -183,10 +187,14 @@ namespace GnssProcessor {
      * Defines the available processing modes for the GNSS processor.
      */
     enum class ProcessingMode {
-        PPP,            ///< Precise Point Positioning (single receiver, external products).
-        PPP_RTK,        ///< PPP with RTK enhancements (single receiver, uncombined).
-        BaselineSingle, ///< Double-differenced single baseline: one rover + one reference station.
-        BaselineMulti   ///< Double-differenced multi-receiver network (star topology: N rovers against one reference).
+        PPP,             ///< Precise Point Positioning (single receiver, external products).
+        PPP_RTK,         ///< PPP with RTK enhancements (single receiver, uncombined).
+        BaselineSingle,  ///< Double-differenced single baseline: one rover + one reference station.
+        BaselineMulti,   ///< Double-differenced multi-receiver network (star topology: N rovers against one reference).
+        PPP_RTK_Network, ///< Minimum-constraint S-system network PRODUCER: joint multi-station estimator
+                         ///< emitting satellite clock + code/phase bias (+ atmosphere) under a declared S-basis.
+        PPP_RTK_User     ///< PPP-RTK CONSUMER of network PPP_RTK_Network products (post-processing closed-loop
+                         ///< counterpart): uncombined PPP-RTK + network SSR bias/atmosphere consume + S-basis cross-check.
     };
 
     /**
@@ -916,6 +924,14 @@ namespace GnssProcessor {
         /// constant over hours; 1e-10 allows ~0.01 mm/sqrt(30 s) drift.
         double sat_bias{ 1e-10 };
 
+        /// Per-satellite signal PHASE bias (m*m/s).  Network producer
+        /// (PPP_RTK_Network) only — the estimable satellite phase-bias state.
+        /// Phase hardware delays are even more stable than code, so the default
+        /// is two orders below @c sat_bias (~0.001 mm/sqrt(30 s)).  Strictly
+        /// constant (q=0) would over-converge the diagonal P and leave the
+        /// satellite column deaf to genuine slow drift, so a tiny RW is used.
+        double sat_phase_bias{ 1e-12 };
+
         /// Receiver clock-rate spectral density (m*m/s^3).  Under the CWNA
         /// model on the (clock-bias, clock-rate) pair, clock-bias picks up
         /// q*dt^3/3, clock-rate picks up q*dt, with q*dt^2/2 cross-covariance.
@@ -949,6 +965,7 @@ namespace GnssProcessor {
         double tropo_gradient{ 1e-3 };     ///< Initial tropo gradient standard deviation (m).
         double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
         double sat_bias{ 10.0 };              ///< Initial per-satellite signal bias standard deviation (m).
+        double sat_phase_bias{ 10.0 };        ///< Initial per-satellite signal PHASE bias standard deviation (m) — PPP_RTK_Network only.
         double clock_rate{ 1.0 };             ///< Initial receiver clock-rate standard deviation (m/s).
         double system_time_rate_offset{ 1e-2 }; ///< Initial inter-system clock-rate offset standard deviation (m/s).
     };
@@ -1442,7 +1459,8 @@ namespace GnssProcessor {
         // --- Geophysical site displacements ---
         bool enable_solid_earth_tide{ true };          ///< IERS 2010 solid Earth tide displacement.
         bool enable_ocean_tide_loading{ true };        ///< Ocean tidal loading displacement (BLQ).
-        bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP).
+        bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP): IERS 2010 Sec. 7.1.4 rotational deformation.
+        bool enable_ocean_pole_tide{ false };          ///< Ocean pole tide load displacement (IERS 2010 Sec. 7.1.5 / Desai 2002), added on top of @c enable_pole_tide.  Requires the opole load grid (files.opt_grid_path or <data>/static/opole/).  ~0.1-2 mm; default off keeps runs byte-identical.
         bool enable_atmospheric_loading{ true };       ///< Atmospheric pressure loading displacement.
 
         // --- Antenna phase centre ---

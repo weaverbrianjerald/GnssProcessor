@@ -18,6 +18,7 @@
 #include "products/ProductParser.hpp"
 #include "common/Constants.hpp"
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -200,6 +201,12 @@ namespace GnssProcessor {
                 bool in_header = true;
                 int epoch_interval = 300;
                 std::vector<std::string> satellite_ids;
+                // Per-satellite orbit accuracy 1-sigma (m) recovered from the SP3
+                // '++' accuracy-code block, keyed by PRN.  Used as the uniform
+                // fallback weight when a P-record carries no per-record std-dev.
+                // Declared at the outer record scope so it is visible at both the
+                // header populate site and the P-record consume site.
+                std::map<std::string, float> sat_accuracy_sigma_m;
                 size_t line_count = 0;
 
                 // --- SP3 header ---
@@ -250,7 +257,30 @@ namespace GnssProcessor {
                             }
                             ++line_count;
                         }
+                        // '++' lines carry one signed base-2 accuracy exponent per
+                        // satellite (orbit 1-sigma = 2^acc mm), in the SAME 3-char
+                        // columns and order as the '+ ' satellite-ID block (verified
+                        // against a real MGEX SP3-d: IDs and codes both begin at
+                        // column index 9, 17 fields per line).  Pair by a RUNNING
+                        // positional index across all '++' lines so satellites beyond
+                        // the first 17 (line 2 onward) map to the correct PRN.
+                        size_t acc_idx = 0;
                         while (header_line.substr(0, 2) == "++") {
+                            for (size_t i = 9; i + 3 <= header_line.length() && i < 60; i += 3) {
+                                int acc = 0;
+                                try { acc = std::stoi(header_line.substr(i, 3)); }
+                                catch (...) { acc = 0; }
+                                // acc <= 0 = unknown / not predicted -> skip (leaves the
+                                // sat unweighted).  Clamp a bogus-large exponent so
+                                // 2^acc cannot overflow; it merely heavily down-weights
+                                // that single node.
+                                if (acc_idx < satellite_ids.size() && acc > 0) {
+                                    const int acc_clamped = (acc > 30) ? 30 : acc;
+                                    sat_accuracy_sigma_m[satellite_ids[acc_idx]] =
+                                        static_cast<float>(std::pow(2.0, acc_clamped) / 1000.0);
+                                }
+                                ++acc_idx;
+                            }
                             if (!std::getline(file, header_line)) {
                                 logger->error("Unexpected end of file while reading SP3 accuracy codes at line {} in {}", line_count, sp3_path.string());
                                 file.close();
@@ -318,6 +348,15 @@ namespace GnssProcessor {
                                 data.velocity_valid = false;
                                 data.position = Eigen::Vector3d::Zero();
                                 data.velocity = Eigen::Vector3d::Zero();
+                                // Per-satellite orbit accuracy 1-sigma from the '++'
+                                // header (one value per arc; uniform across nodes,
+                                // matching M-PAGES SVsig — so it is inert as a fit
+                                // weight but carries the orbit accuracy downstream).
+                                {
+                                    auto acc_it = sat_accuracy_sigma_m.find(data.satellite);
+                                    if (acc_it != sat_accuracy_sigma_m.end())
+                                        data.accuracy_sigma_m = acc_it->second;
+                                }
 
                                 // SP3 P record fields start at column 4: "PG02  XXXX YYYY ZZZZ CCCC"
                                 std::string_view psv(line.data() + 4, line.size() - 4);
@@ -1151,6 +1190,10 @@ namespace GnssProcessor {
                 data.xp = xp * 1e-6;        // 1e-6 arcsec -> arcsec
                 data.yp = yp * 1e-6;
                 data.ut1_utc = ut1_utc * 1e-7; // 1e-7 s -> s
+                // dX/dY (CIP celestial-pole offsets) are not carried by the
+                // standard IGS .ERP format parsed here; they remain 0 (their
+                // struct default).  SOFA's IAU 2000A model already includes the
+                // modeled nutation, so dX=dY=0 is the correct nominal value.
                 erps.push_back(data);
             }
             file.close();

@@ -355,6 +355,10 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
             "to store ({} sats cached)",
             parser.lastMessageType(), n_ssr, hdr.epoch_time.week,
             hdr.epoch_time.tow, hdr.iod_ssr, ssr_store.size());
+        // obs↔SSR sync: the freshest SSR content just advanced, so a previously
+        // held obs epoch may now be covered — re-attempt it.  No-op when nothing
+        // is held or the sync feature is off.
+        drainHeldObs();
     }
     if (!parser.getBroadcastEphemeris().empty()) {
         log_manager_.getLogger("rt_engine")->trace(
@@ -439,8 +443,11 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
 
     // Broadcast ephemeris -> live store (same path RTCM nav uses).  These are
     // the receiver's DECODED nav blocks, emitted only on ephemeris change.
+    // from_igs=false: receiver nav must not clobber an authoritative IGS-stream
+    // record (the IGS-RTS SSR is referenced to IGS broadcast — pairing it with a
+    // receiver ephemeris is inconsistent; see LiveEphemerisStore::insert).
     auto& eph_store = LiveEphemerisStore::getInstance();
-    for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph);
+    for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph, /*from_igs=*/false);
     refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
     if (!parser.getBroadcastEphemeris().empty()) {
         log_manager_.getLogger("rt_engine")->trace(
@@ -453,7 +460,7 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
     // continuously, so this is the primary ephemeris source for a live SBF run.
     for (const auto& m : parser.getRawNavMessages()) {
         if (auto eph = subframe_assembler_.consume(m)) {
-            eph_store.insert(*eph);
+            eph_store.insert(*eph, /*from_igs=*/false);   // receiver nav: never clobbers IGS-stream eph
             log_manager_.getLogger("rt_engine")->trace(
                 "SBF raw-nav: assembled {} ephemeris (iode {}, {} sats in live store)",
                 eph->satellite, eph->iode, eph_store.size());
@@ -479,10 +486,31 @@ void RealTimeEngine::feedImuSample(const AidingSample& sample) {
 }
 
 void RealTimeEngine::flush() {
+    // Final drain at stream stop: process whatever is buffered WITHOUT the
+    // obs↔SSR hold or skip-to-latest (there is no "later" to defer to).  A held
+    // sync epoch (older) is submitted before the still-assembling pending epoch
+    // (newer) so they reach the filter in time order.
+    draining_final_ = true;
+    if (!held_obs_.empty()) {
+        processEpoch(held_obs_);
+        held_obs_.clear();
+    }
     if (!pending_obs_.empty()) {
         processEpoch(pending_obs_);
         pending_obs_.clear();
     }
+    draining_final_ = false;
+}
+
+void RealTimeEngine::drainHeldObs() {
+    if (held_obs_.empty()) return;
+    // Move out before re-submitting: processEpoch may re-hold (re-assign held_obs_)
+    // if the SSR stream has not yet advanced far enough to cover this epoch.
+    std::vector<RinexObservation> obs = std::move(held_obs_);
+    held_obs_.clear();
+    processing_synced_epoch_ = true;   // bypass skip-to-latest for the SSR-aligned epoch
+    processEpoch(obs);
+    processing_synced_epoch_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -515,15 +543,65 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // re-seed).  setStateEpochTime/setCurrentEpochTime above only stamp the log
     // tag, never continuity state, so running them first is harmless.
     {
-        const double lag_s = TimeUtils::nowContinuousGpsSeconds()
-                           - TimeUtils::continuousGpsSeconds(current_time);
+        const double now_gps = TimeUtils::nowContinuousGpsSeconds();
+        const double obs_gps = TimeUtils::continuousGpsSeconds(current_time);
+        const double lag_s   = now_gps - obs_gps;
         if (config_.rtBacklogWarnSeconds() > 0.0 && lag_s > config_.rtBacklogWarnSeconds()) {
             if ((backlog_warn_ctr_++ % 30) == 0)
                 log->warn("{}obs backlog: epoch wk{} tow{:.1f} is {:.1f}s behind wall-clock GPS "
                           "(corrections will be fresher than these obs)",
                           epoch_prefix, current_time.week, current_time.tow, lag_s);
         }
+
+        // --- obs↔SSR sync: hold obs ahead of the SSR coverage horizon ---
+        // PPP-RTK needs obs time-ALIGNED with the corrections, not pinned to wall
+        // clock.  An obs epoch newer than (freshest SSR content epoch + ssr_max_age)
+        // has no SSR any satellite can use, so processing it now would drive the
+        // whole epoch broadcast-grade (and, with drop_broadcast_grade, wipe it).
+        // Defer it instead; drainHeldObs() re-attempts it the moment the SSR stream
+        // advances.  Liveness: if the feed stalls longer than obs_ssr_sync_max_hold_s
+        // we latch a degraded "outage" and pass every epoch through (broadcast-grade
+        // / dropped via the existing path) until SSR re-covers the obs — a dead feed
+        // can never starve the filter.  Live-SSR real-time only; never on the final
+        // flush drain or before the first epoch.
+        if (config_.enableObsSsrSync() && !first_epoch_ && !draining_final_
+            && config_.realtimeUsesLiveOrbitClockSource()) {
+            const auto newest = SsrCorrectionStore::getInstance().newestSsrEpoch();
+            if (newest) {
+                const double horizon = TimeUtils::continuousGpsSeconds(*newest)
+                                     + config_.getSsrMaxAge();
+                if (obs_gps <= horizon) {
+                    sync_hold_since_s_ = 0.0;   // SSR covers this epoch — resume normal
+                    sync_outage_       = false;
+                    held_obs_.clear();
+                } else if (sync_outage_) {
+                    held_obs_.clear();          // confirmed outage — pass through degraded
+                } else {
+                    if (sync_hold_since_s_ <= 0.0) sync_hold_since_s_ = now_gps;
+                    const double held_for = now_gps - sync_hold_since_s_;
+                    if (held_for <= config_.getObsSsrSyncMaxHoldS()) {
+                        held_obs_        = epoch_obs;   // keep-latest (skip-to-latest semantics)
+                        held_epoch_time_ = current_time;
+                        if ((sync_hold_warn_ctr_++ % 30) == 0)
+                            log->debug("{}obs↔SSR hold: obs tow{:.1f} ahead of SSR horizon "
+                                       "(newest SSR content tow{:.1f} +{:.0f}s); held {:.1f}/{:.1f}s",
+                                       epoch_prefix, current_time.tow, newest->tow,
+                                       config_.getSsrMaxAge(), held_for,
+                                       config_.getObsSsrSyncMaxHoldS());
+                        return false;   // deferred — drained when SSR advances
+                    }
+                    // Held past the budget: the SSR feed is stalled.  Latch degraded.
+                    sync_outage_       = true;
+                    sync_hold_since_s_ = 0.0;
+                    held_obs_.clear();
+                    log->warn("{}obs↔SSR hold expired after {:.1f}s (SSR stream stalled); "
+                              "processing degraded until SSR recovers", epoch_prefix, held_for);
+                }
+            }
+        }
+
         if (config_.enableObsSkipToLatest() && !first_epoch_
+            && !draining_final_ && !processing_synced_epoch_
             && lag_s > config_.obsSkipMaxLagS()) {
             log->debug("{}Skipping stale obs epoch TOW {:.3f} ({:.1f}s behind real-time)",
                        epoch_prefix, current_time.tow, lag_s);

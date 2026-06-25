@@ -21,21 +21,16 @@
 //                   primary.  RtcmParser decodes nav from whichever stream
 //                   carries it; all feed the same LiveEphemerisStore.
 //
-// CONFIGURED STATION — BRUX00BEL0 (Brussels, Royal Observatory of Belgium).
+// CONFIGURED STATION: BRUX00BEL0 (Brussels, Royal Observatory of Belgium).
 // Flagship multi-GNSS reference (Septentrio PolaRx5).  Its live sourcetable
 // record confirms RTCM 3.3 with 1077/1087/1097/1107/1117/1127 + 1019/1020/
 // 1042/1044/1045/1046 + 1006 + 1033 + 1230.  The engine consumes Galileo
 // I/NAV (1046) and ignores F/NAV (1045).  ECEF + antenna below are from the
-// IGS station log (ITRF/IGS20).  Other self-contained alternatives (verify the
-// mountpoint carries 1019/etc. in the sourcetable first):
-//     WTZR00DEU0  Wettzell, DE   X=4075580.685 Y= 931853.660 Z=4801568.054  LEIAR25.R3      LEIT
-//     ONSA00SWE0  Onsala,   SE   X=3370658.832 Y= 711876.939 Z=5349786.745  AOAD/M_B        OSOD
-//     GANP00SVK0  Ganovce,  SK   X=3929181.500 Y=1455236.800 Z=4793653.900  TRM59800.00     SCIS
+// IGS station log (ITRF/IGS20).
 //
 // ACCESS — one free BKG registration (register.rtcm-ntrip.org) authorizes the
 // whole caster family: igs-ip.net (station obs), products.igs-ip.net (SSR),
-// euref-ip.net, mgex.igs-ip.net.  Replace ntrip_user / ntrip_password below
-// with your account.  NtripClient is plain-HTTP only (no TLS), so use the
+// euref-ip.net, mgex.igs-ip.net. NtripClient is plain-HTTP only (no TLS), so use the
 // port-2101 endpoints — a :443 / CDDIS TLS caster will NOT work.
 {
   "app_mode": "real_time",
@@ -46,33 +41,18 @@
     "max_duration_s": 900.0,
     "rinex_types": "CL",
 
-    // Real-time obs/correction synchronization.  A live obs stream that lags
-    // real time (high-rate obs backing up faster than they're consumed) gets
-    // processed against FRESHER orbit/clock/SSR -> the SSR clock is extrapolated
-    // backward across the gap and detonates ("zero/invalid clock product" on
-    // every sat).  enable_obs_skip_to_latest drops obs epochs more than
-    // obs_skip_max_lag_s behind wall-clock GPS so the filter fast-forwards to
-    // the freshest epoch (assumes an NTP-synced host — the lag is vs the system
-    // clock).  ssr_max_age_s rejects an SSR overlay whose record is desynced
-    // from the obs epoch (incl. a future-stamped record), falling back to
-    // broadcast-grade rather than emitting garbage.  rt_backlog_warn_s emits a
-    // throttled warning when a backlog is detected (<=0 disables; set <=0 for
-    // deliberate file replay where obs is hours behind wall-clock by design).
     "enable_obs_skip_to_latest": true,
     "obs_skip_max_lag_s": 5.0,
     "rt_backlog_warn_s": 5.0,
-    "ssr_max_age_s": 30.0,
+    "ssr_max_age_s": 60.0,
 
-    // BRUX streams GPS/GLO/GAL/BDS/QZS/SBAS.  GLONASS is now supported: the MSM
-    // time-of-day -> GPS-week promotion is plumbed (TimeUtils::glonassTodToGpsTime,
-    // wired through promoteEpoch / the 1020 toe / the GLONASS SSR epoch), and the
-    // FDMA per-satellite wavelength is seeded from the live 1020 freq_channel.
-    // GLONASS runs FLOAT-ONLY (excluded from MW/TurboEdit/AR by FDMA).  Add
-    // BeiDou if the SSR mountpoint corrects it.
+    "enable_obs_ssr_sync": true,
+    "obs_ssr_sync_max_hold_s": 30.0,
+
 	//"active_systems": [ "GPS" ],
-    "active_systems": [ "GPS", "Galileo" ],
+    //"active_systems": [ "GPS", "Galileo" ],
     //"active_systems": [ "GPS", "Galileo", "GLONASS" ],
-    //"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
+    "active_systems": [ "GPS", "Galileo", "BeiDou" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "elevation_mask_deg": 10.0,
@@ -92,31 +72,15 @@
     }
   },
 
-  // Static products: only the date-independent ATX (igs20.atx) is actually
-  // needed here.  No SP3/CLK are loaded (a live obs/SSR source makes
-  // realtimeUsesLiveOrbitClockSource() == true); broadcast nav arrives in the
-  // RTCM stream itself.  require_atx_coverage below hard-drops measurements
-  // with no ATX entry, so data/static/atx/igs20.atx MUST be present.
-  // No date is pinned, so PathResolver's internal-mode date hint falls to the
-  // lexicographically-earliest data/<YYYY-DOY>/ subdir.  That is harmless here
-  // (SP3/CLK in it are skipped for a live source), but if you stage a date-
-  // specific .BIA/.ERP/.INX, put it under the CURRENT date — or pin
-  // data_download.{year,doy} — so a stale historical product isn't picked up.
   "files": {
     "internal_data_root": "./data"
   },
 
-  // A-priori position for the live stream.  The engine does NOT seed the
-  // a-priori from the RTCM 1005/1006 reference coordinate (it only logs it), so
-  // without this pin the filter starts at the geographic-pole fallback and most
-  // satellites sit below the elevation mask.  BRUX00BEL0 ARP, ITRF/IGS20
-  // (IGS station log).  Config position always wins; the filter refines it and
-  // the converged solution should sit on these coordinates.
   "receiver": {
 	// BRUX //
-    "reference_position_ecef": { "x": 4027881.628, "y": 306998.537, "z": 4919498.984 }
+    //"reference_position_ecef": { "x": 4027881.628, "y": 306998.537, "z": 4919498.984 }
 	// P389 //
-	//"reference_position_ecef": { "x": -2347407.253, "y": -3968720.228, "z": 4394008.589 }
+	"reference_position_ecef": { "x": -2347407.253, "y": -3968720.228, "z": 4394008.589 }
 	// AMC4 //
 	//"reference_position_ecef": { "x": -1248596.452, "y": -4819428.103, "z": 3976506.044 }
   },
@@ -125,9 +89,6 @@
     // Primary stream: an IGS station's RTCM3 MSM7 observations over NTRIP.
     //   input_type   = "ntrip"  -> NtripClient (libcurl, HTTP Basic auth).
     //   input_format = "rtcm"   -> RtcmStreamReader + RtcmParser (MSM4/MSM7).
-    // input_format MUST be "rtcm" here.  The routing test is literally
-    // (input_format == "sbf"); the SBF rooftop configs leave it at "sbf", which
-    // would silently route this RTCM feed to the SBF decoder and yield 0 epochs.
     "input_type":      "ntrip",
     "input_format":    "rtcm",
 
@@ -139,59 +100,37 @@
     "ntrip_user":      "weaverb",
     "ntrip_password":  "OsuGeomatics26!",
 
-    // BRUX advertises nmea=0 (no client GGA upload required).  For a VRS/NEAR
-    // mountpoint that demands a position, set nmea_gga to a valid $GPGGA line.
+    // BRUX advertises nmea=0 (no client GGA upload required).
     "nmea_gga":        "",
 
     // For replay testing: dump a few minutes of the station stream to a binary
-    // RTCM3 file and switch input_type to "file" (input_path).  NOTE: live MSM
-    // obs are tagged with the CURRENT GPS week from the system clock, so a stale
-    // capture replayed days later will carry the wrong week — replay soon after
-    // capture, or prefer the sbf_replay_* precise-product configs for archives.
+    // RTCM3 file and switch input_type to "file" (input_path).
     "input_path":      "",
 
     // Output and reconnect knobs.
     "output_type":     "console",
     "reconnect_delay_s": 5,
 
-    // Second stream: IGS-RTS SSR corrections (IGS-SSR 4076).  Same BKG account
-    // as the obs stream.  The corrections stream is ALWAYS parsed as RTCM (no
-    // input_format field) and also feeds feedRtcmFrame, so any broadcast eph it
-    // carries lands in the live store too.
+    // Second stream: IGS-RTS SSR corrections (IGS-SSR 4076).
     "corrections": {
       "enabled":          true,
       "input_type":       "ntrip",
       "ntrip_host":       "products.igs-ip.net",
       "ntrip_port":       2101,
-      "ntrip_mountpoint": "SSRC03IGS1",
-      //"ntrip_mountpoint": "SSRC01CAS1",
+      //"ntrip_mountpoint": "SSRC03IGS1",
+      "ntrip_mountpoint": "SSRC01CAS1",
       "ntrip_user":       "weaverb",
       "ntrip_password":   "OsuGeomatics26!",
       "reconnect_delay_s": 5,
 
-      // For replay testing: dump a few minutes of an IGS-RTS feed to a binary
-      // file and switch input_type to "file".
+      // For replay testing
       "input_path":       "",
 
-      // For input_type="tcp" — e.g. a relay box that proxies the IGS-RTS
-      // stream to a local TCP port.
       "tcp_host":         "",
       "tcp_port":         28785
     },
 
-    // Third stream: dedicated broadcast ephemeris (nav).  REQUIRED for an
-    // obs-only station mountpoint — one that streams MSM observations but no
-    // broadcast nav (1019/1020/1042/1044/1046).  P38900USA0 (the primary above)
-    // is obs-only: a 49 s capture cached exactly one GLONASS 1020 and zero GPS
-    // 1019, so LiveEphemerisStore stayed empty, every GPS sat was
-    // unpositionable, computeModels failed for the whole epoch, and the session
-    // produced 0 epochs (corrections.log: eph_iode=-2 / brdc_iode=-1).  This
-    // stream supplies the broadcast orbit/clock baseline the SSR 4076 overlay
-    // corrects.  Same transport + parsing as corrections (routes to
-    // feedRtcmFrame -> LiveEphemerisStore).  BCEP00BKG0 broadcasts the full
-    // multi-GNSS nav set globally on products.igs-ip.net, same BKG account.
-    // DISABLE this (enabled=false) when the primary is a self-contained obs+nav
-    // station such as BRUX00BEL0 — then primary + corrections suffice.
+    // Third stream: dedicated broadcast ephemeris (nav).
     "ephemeris": {
       "enabled":          true,
       "input_type":       "ntrip",
@@ -202,8 +141,7 @@
       "ntrip_password":   "OsuGeomatics26!",
       "reconnect_delay_s": 5,
 
-      // For replay testing: dump a few minutes of a nav feed to a binary file
-      // and switch input_type to "file".
+      // For replay testing
       "input_path":       "",
       "tcp_host":         "",
       "tcp_port":         28786
@@ -213,10 +151,6 @@
   "estimation": {
     "between_satellite_sd": {
       "enabled": true,
-      // GLONASS participates in BSSD with FLOAT ambiguities (FDMA inter-channel
-      // bias makes its phase integers unresolvable, so they are held float).
-      // Required for GLONASS to enter the SD solution at all — with this false
-      // GLONASS is decoded/modelled but SKIPPED at the measurement stage.
       "enable_glonass": true,
       "pivot_min_elevation": 25.0
     },
@@ -228,7 +162,7 @@
       "hold_variance": 0.001
     },
     "stuck_code_bias": {
-      "enabled": false,        // default true
+      "enabled": true,        // default true
       "min_streak": 5,        // consecutive rejection epochs → reset (0 disables this branch)
       "bias_floor_m": 3.0     // warmed-up EWMA |mean| (m) → reset (0 disables this branch)
     },
@@ -240,12 +174,6 @@
     "lock_signals_to_clock_ref": false,
     "require_bia_for_signals": false,
 
-    // Cycle-slip detection / repair.  The IGS station "0" stream is 1 Hz, so the
-    // same high-rate MW + TurboEdit (MW+GF joint per-signal repair) settings as
-    // the SBF configs apply: the geometry-free jump isolates the slip before the
-    // ionospheric residual contaminates it.  mw_detect_reference
-    // "time_difference" + mw_td_order "first" gates the MW TD1 against the MAD of
-    // its own time-difference history (memoryless, trend/quadratic-immune).
     "cycle_slip": {
       "mw": true,
       "turbo_edit": true,
@@ -262,11 +190,6 @@
     "defer_until_corrections_ready": {
       "enabled": true,
       "min_satellites": 5,
-      // Per-constellation cm-grade quorum: hold the startup gate until EVERY
-      // active_system (GPS and Galileo here) fields this many SSR-cm-grade sats.
-      // If the chosen SSR mountpoint doesn't field this many per system the gate
-      // holds until timeout_s and then forces a degraded start — lower this (or
-      // disable the gate) for obs-only / broadcast bring-up.
       "min_satellites_per_system": 4,
       "require_all_above_mask": false,
       "drop_broadcast_grade": true,
@@ -307,8 +230,6 @@
     "measurement_noise": {
       "code_std_m": 0.300,
       "phase_std_m": 0.001,
-      //"code_std_m": 0.500,
-      //"phase_std_m": 0.002,
       "doppler_std_m": 0.5
     },
     "phase_elevation_power": 1.0,
@@ -332,16 +253,10 @@
     "enable_receiver_pcv": true,
     "enable_phase_windup": true,
     "enable_code_phase_bias": false,
-    // The live RTCM stream carries no RINEX antenna record, so this override is
-    // the ONLY receiver-antenna source — it MUST match the station's true
-    // antenna+radome or the wrong PCO/PCV is applied silently.  BRUX00BEL0 =
-    // "JAVRINGANT_DM   SCIS" (IGS station log).  Update it when you change the
-    // mountpoint (see the alternatives in the header).  The cross-system
-    // fallback lets Galileo E1/E5a borrow the receiver's GPS L1/L5 PCO/PCV.
-	// BRUX
-    "receiver_antenna_type_override": "JAVRINGANT_DM   SCIS",
-	// P389
-	//"receiver_antenna_type_override": "TRM59800.80 SCIT",
+	// BRUX //
+    //"receiver_antenna_type_override": "JAVRINGANT_DM   SCIS",
+	// P389 //
+	"receiver_antenna_type_override": "TRM59800.80 SCIT",
     "enable_receiver_cross_system_atx_fallback": true,
     "refine_emission_time": false,
     "require_atx_coverage": true
@@ -411,27 +326,27 @@
     "//3": "--- per-logger levels (no trace) ---",
     "level": "info",
     "levels": {
-      "rt_engine":          "debug",
+      "rt_engine":          "info",
       "ppp_model":          "info",
-      "measurement_model":  "debug",
+      "measurement_model":  "info",
       "kalman_filter":      "info",
-      "state_manager":      "debug",
-      "corrections":        "debug",
-      "ambiguity_resolver": "debug",
-      "cycle_slip_manager": "debug",
+      "state_manager":      "info",
+      "corrections":        "info",
+      "ambiguity_resolver": "info",
+      "cycle_slip_manager": "info",
       "mw_slip_detector":   "info",
-      "turbo_edit_resolver":"debug",
-      "bssd_pivot_manager": "debug",
+      "turbo_edit_resolver":"info",
+      "bssd_pivot_manager": "info",
       "bssd_transform":     "warn",
       "ntrip":              "warn",
-      "state_initializer":  "debug",
+      "state_initializer":  "info",
       "gnss_config":        "info",
       "geometry":           "info",
       "troposphere":        "info",
       "ionosphere":         "info",
       "antenna":            "info",
       "stochastic_model":   "info",
-      "main_log":           "warn"
+      "main_log":           "info"
     }
   }
 }

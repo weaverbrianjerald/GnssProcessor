@@ -1,3 +1,7 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Inertial aiding}\label{sec:imu}
 % ============================================================
 %  Inertial aiding (tightly-coupled IMU integration)
 %
@@ -12,17 +16,35 @@
 % ============================================================
 
 When an IMU is configured (\texttt{imu.enabled}; the sibling boolean
-\texttt{estimation.aiding.imu} is the future \texttt{AidingSourceManager}
-selector and is presently inert), the inter-epoch time update of
-\Cref{sec:kf-predict} is replaced by a first-order strapdown
-mechanization in the Earth-centred Earth-fixed
-(ECEF) frame.  The mechanization is implemented in
-\texttt{src/core/filter/ImuIntegrator.cpp} and spliced into the filter
-covariance by \texttt{KalmanFilter::predictAided}
-(\texttt{src/core/filter/KalmanFilter.cpp}); the live predict path
+\texttt{estimation.aiding.imu} is the \texttt{AidingSourceManager}
+selector and back-compat-defaults to \texttt{imu.enabled}, so enabling
+the legacy flag also enables the aiding-IMU source --- an explicit
+\texttt{estimation.aiding.imu} wins, see
+\texttt{src/core/config/GnssConfigLoad.cpp}), the inter-epoch time
+update of \dcref{sec:kf-predict}{the time update} is replaced by a
+first-order strapdown
+mechanization in the Earth-centred Earth-fixed (ECEF) frame.  The
+mechanization itself lives in
+\texttt{src/core/filter/ImuIntegrator.cpp}; the live per-epoch predict
 routes through \texttt{Application::run} $\to$
-\texttt{AidingSourceManager} $\to$
-\texttt{src/core/aiding/ImuAidingSource.cpp}.
+\texttt{AidingSourceManager::collectPredict} $\to$
+\texttt{src/core/aiding/ImuAidingSource.cpp}, whose
+\texttt{PredictContribution} is spliced into the filter covariance by
+\texttt{KalmanFilter::predictAided}
+(\texttt{src/core/filter/KalmanFilter.cpp}).
+
+This \texttt{IAidingSource} / \texttt{AidingSourceManager} abstraction
+(\texttt{include/aiding/}) is the composable seam through which every
+non-GNSS modality --- IMU, ZUPT, NHC, baro, wheel odometry, vision ---
+contributes up to three things (a \texttt{StateManager}-owned state
+block, a predict-time $\Phi/Q$ sub-block, and either independent
+measurement rows or extra Jacobian \emph{columns} on existing GNSS
+rows).  The IMU is its first and privileged client; the legacy
+monolithic \texttt{KalmanFilter::predictImu} is retained but no longer
+on the live path (superseded by \texttt{predictAided}).  The
+\texttt{ImuAidingSource} replicates \texttt{predictImu}'s arithmetic
+verbatim --- the strapdown equations below are unchanged by the
+refactor.
 
 The formulation is an \emph{error-state} extended Kalman filter.  The
 mechanization propagates the nominal navigation state
@@ -180,7 +202,8 @@ The accumulated $15\times15$ pair $(\insPhi,\insQ)$ is spliced
 transition $\Fmat$ and onto the random-walk process-noise baseline
 $\Qmat$ over the indices the INS owns; the non-INS states (clock,
 troposphere, ionosphere, ambiguities, \dots) retain their standard
-random-walk model from \Cref{sec:kf-predict}.  The covariance is then
+random-walk model from \dcref{sec:kf-predict}{the time update}.  The
+covariance is then
 propagated once and symmetrised,
 \begin{empheq}[box=\fbox]{equation}
 \covM \leftarrow \Fmat\,\covM\,\Fmat^{\Tr} + \Qmat, \qquad
@@ -195,7 +218,7 @@ rotation increment has already been applied directly to $\Cbe$ in
 the corrected attitude error feeds back multiplicatively into the DCM
 and is again reset,
 \begin{equation}
-\Cbe \leftarrow \bigl(\boldsymbol I - \skewm{\imupsi}\bigr)\Cbe,
+\Cbe \leftarrow \bigl(\boldsymbol I + \skewm{\imupsi}\bigr)\Cbe,
 \qquad \imupsi := \boldsymbol 0 ,
 \label{eq:imu-att-feedback}
 \end{equation}
@@ -211,7 +234,8 @@ coupling mode (\texttt{imu.coupling\_mode}).
 
 \paragraph{Loosely coupled (default).}
 The GNSS code and carrier-phase Jacobians of
-\Cref{sec:obs-geometry} touch only the position (and velocity) columns.
+\dcref{sec:obs-geometry}{the observation geometry} touch only the
+position (and velocity) columns.
 The INS error states $\imupsi,\biasa,\biasg$ therefore receive
 \emph{no direct} observation partials; they are corrected only
 indirectly, through the off-diagonal cross-covariances that
@@ -221,11 +245,18 @@ the feedback of \cref{eq:imu-att-feedback}.
 
 \paragraph{Tightly coupled.}
 In the tightly-coupled mode the \emph{Doppler} observation alone gains
-direct attitude and accelerometer-bias columns
+direct attitude and accelerometer-bias columns.  This is the one
+aiding contribution that re-parameterizes existing GNSS rows rather
+than appending its own: each relinearisation pass calls
+\texttt{AidingSourceManager::applyTcJacobianInputs} $\to$
+\texttt{ImuAidingSource::applyTcJacobianInputs}, which feeds the
+current attitude and specific force to
+\texttt{MeasurementModel::setImuState}
 (\texttt{src/core/measurement/MeasurementModel.cpp}).  With
 $\imufe = \Cbe\imuf$ the specific force in ECEF and
 $\los^\sat_{\rx}$ the unit line-of-sight of
-\Cref{eq:los}, the Doppler measurement function $h_{\mathrm{D}}$
+\dcref{eq:los}{the line-of-sight definition}, the Doppler measurement
+function $h_{\mathrm{D}}$
 contributes
 \begin{empheq}[box=\fbox]{equation}
 \frac{\partial h_{\mathrm{D}}}{\partial \imupsi}
@@ -244,8 +275,18 @@ only Doppler couples directly to the inertial errors.
 \begin{remark}[Relinearisation under tight coupling]
 The tightly-coupled path retains the legacy single \emph{naive}
 second-pass relinearisation rather than the prior-anchored iterated
-EKF of \Cref{sec:kf-iekf}: re-deriving the gain from a fixed prior
+EKF of \dcref{sec:kf-iekf}{the iterated EKF}: re-deriving the gain from
+a fixed prior
 conflicts with the multiplicative attitude/bias feedback of
 \cref{eq:imu-att-feedback}, which has already mutated $\Cbe$ between
-passes.
+passes.  The aiding layer exposes this as a capability query
+(\texttt{AidingSourceManager::anySourceRequiresNaiveRelin\-earization},
+which the IMU source answers true for in tight coupling), so any future
+nominal-feedback source forces the same path; the migration off the
+direct \texttt{tightlyCoupledImu()} checks in
+\texttt{Application.cpp} / \texttt{KalmanFilter.cpp} is still in
+progress.
 \end{remark}
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

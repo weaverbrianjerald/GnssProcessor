@@ -33,8 +33,13 @@ namespace GnssProcessor {
         /**
          * @brief Construct a Planetary helper.
          * @param log_mgr Reference to the LogManager used for logging.
+         * @param enable_cio_frame When true, the ECI→ECEF transform used for
+         *        Sun/Moon positions switches from the legacy IAU 1976/1980
+         *        equinox chain to the CIO-based IAU 2000A/2006 transform
+         *        (Planetary::celestialToTerrestrial, via SOFA).  Defaults to
+         *        false so the legacy path is byte-identical.
          */
-        explicit Planetary(LogManager& log_mgr);
+        explicit Planetary(LogManager& log_mgr, bool enable_cio_frame = false);
 
         /**
          * @brief Convert a GnssTime to Modified Julian Date (GPS time scale).
@@ -101,8 +106,40 @@ namespace GnssProcessor {
                                          const Eigen::Vector3d& sun_pos_ecef,
                                          double shadow_scale = 1.0);
 
+        /**
+         * @brief Build the CIO-based celestial-to-terrestrial (ECI→ECEF) matrix.
+         *
+         * Implements the IAU 2000A/2006, CIO-based transform using the SOFA
+         * library, mirroring M-PAGES Coordinate::NgsFormC2T:
+         *
+         *   1. CIP coordinates and CIO locator (X, Y, s) from `iauXys00a`
+         *      (IAU 2000A precession-nutation).
+         *   2. Apply the observed celestial-pole offsets dX, dY (zero by
+         *      default, in which case the result is identical to `iauC2i00a`).
+         *   3. Form the celestial-to-intermediate matrix with `iauC2ixys`.
+         *   4. Earth Rotation Angle from `iauEra00` (UT1).
+         *   5. Polar-motion matrix from `iauPom00` (TIO locator `sp` via
+         *      `iauSp00`).
+         *   6. Compose with `iauC2tcio`.
+         *
+         * The returned matrix R satisfies `r_ecef = R · r_eci` (GCRS→ITRS),
+         * matching the orientation of the legacy `eci2ecef()` output.
+         *
+         * @param tt_jd   Terrestrial Time Julian Date.
+         * @param ut1_jd  UT1 Julian Date.
+         * @param xp_rad  Polar motion X (radians).
+         * @param yp_rad  Polar motion Y (radians).
+         * @param dX_rad  CIP celestial-pole offset dX (radians; 0 = pure model).
+         * @param dY_rad  CIP celestial-pole offset dY (radians; 0 = pure model).
+         * @return 3×3 celestial-to-terrestrial (ECI→ECEF) rotation matrix.
+         */
+        static Eigen::Matrix3d celestialToTerrestrial(double tt_jd, double ut1_jd,
+            double xp_rad, double yp_rad, double dX_rad, double dY_rad);
+
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
+        bool enable_cio_frame_ = false;                   /**< Use the CIO IAU 2000A/2006 ECI→ECEF transform (SOFA) for Sun/Moon. */
+        mutable bool cio_diag_logged_ = false;            /**< One-shot guard for the startup CIO-vs-legacy Sun-direction diagnostic. */
 
         /**
          * @brief Compute Sun and Moon positions in the ECI (J2000) frame.
@@ -181,10 +218,14 @@ namespace GnssProcessor {
          * @param[out] xp       Interpolated pole position X (arcseconds).
          * @param[out] yp       Interpolated pole position Y (arcseconds).
          * @param[out] ut1_utc  Interpolated UT1-UTC (seconds).
+         * @param[out] dX       Interpolated CIP offset dX (arcseconds; 0 when
+         *                      the ERP source carries no celestial-pole offsets).
+         * @param[out] dY       Interpolated CIP offset dY (arcseconds).
          */
         static void interpolateErp(const GnssTime& time,
             const std::vector<ErpData>& erps,
-            double& xp, double& yp, double& ut1_utc);
+            double& xp, double& yp, double& ut1_utc,
+            double& dX, double& dY);
 
         /**
          * @brief Build a 3×3 rotation matrix about a principal axis.
