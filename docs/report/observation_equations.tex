@@ -101,7 +101,8 @@ The Jacobian row $\jacH_{(\sat,\sigl)}$ contributing to the design
 matrix at the position columns is therefore $-(\los^\sat_{\hat{\rx}})^{\Tr}$.
 For sub-metre residual targets this single linearisation per epoch is
 sufficient; the engine optionally relinearises within the epoch
-(\texttt{processing.relinearize\_geometry}, on by default) to handle
+(\texttt{processing.relinearize\_geometry}, which defaults to off in
+code but is enabled in all shipped configurations) to handle
 long initial position offsets.
 
 The satellite position $\satpos$ is itself a function of the

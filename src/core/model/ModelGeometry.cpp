@@ -14,6 +14,8 @@
 #include "model/ModelGeometry.hpp"
 #include "model/Antenna.hpp"
 #include "products/ProductParser.hpp"
+#include "products/StationInfoFile.hpp"
+#include "corrections/OceanTideModel.hpp"
 #include "common/Constants.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
@@ -114,7 +116,40 @@ namespace GnssProcessor {
             const Eigen::Vector3d station_ecef = rinex_parser_.getApproxPositionXyz();
 
             bool loaded = false;
-            if (!otl_blq_path.empty() && !station_name.empty()) {
+
+            // Highest fidelity: per-station FES2014b coefficients from a SIF.
+            // Unlike the EOT20 grid (radial only), the SIF carries all three
+            // components.  Convert the SIF Up/East/North amplitude+phase set to
+            // the model's Up/West/South lag convention: Up passes through, and
+            // since East = -West and North = -South the horizontals keep their
+            // amplitude and shift phase by 180 deg.
+            if (config_.enableStationInfo()) {
+                if (const auto sif = config_.getStationInfo()) {
+                    const StationInfo* si = sif->find(station_name);
+                    if (si && si->has_otl) {
+                        OtlStationCoefficients coeffs;
+                        coeffs.station_name = si->id;
+                        for (std::size_t k = 0; k < 11; ++k) {
+                            const SifOtlConstituent& c = si->otl[k];
+                            OtlConstituentCoeffs& d = coeffs.constituents[k];
+                            d.amp_up    = c.up_amp;     d.phase_up    = c.up_phase;
+                            d.amp_west  = c.east_amp;   d.phase_west  = c.east_phase  + 180.0;
+                            d.amp_south = c.north_amp;  d.phase_south = c.north_phase + 180.0;
+                        }
+                        coeffs.valid = true;
+                        corrections_.setOceanTideCoefficients(coeffs);
+                        log->info("OTL: loaded 3-component FES2014b coefficients from SIF for "
+                                  "marker '{}' (matched {}); M2 up-amp={:.4f} m",
+                                  station_name, si->id, coeffs.constituents[0].amp_up);
+                        log_manager_.getLogger("main_log")->info(
+                            "Ocean tide loading source: SIF 3-component FES2014b (marker '{}' -> {})",
+                            station_name, si->id);
+                        loaded = true;
+                    }
+                }
+            }
+
+            if (!loaded && !otl_blq_path.empty() && !station_name.empty()) {
                 if (corrections_.loadOceanTideFromBLQ(otl_blq_path.string(), station_name)) {
                     log->info("OTL: loaded BLQ coefficients for station '{}'", station_name);
                     loaded = true;

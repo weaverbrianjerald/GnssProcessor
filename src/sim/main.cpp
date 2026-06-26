@@ -42,6 +42,7 @@
 #include "sim/EphemerisProvider.hpp"
 #include "sim/IonoDisturbance.hpp"
 #include "sim/RinexObsWriter.hpp"
+#include "sim/SimConfig.hpp"
 #include "sim/TrajectoryGenerator.hpp"
 #include "sim/Verifier.hpp"
 
@@ -534,7 +535,7 @@ Dop computeDop(const Eigen::Vector3d& rx, const std::vector<Eigen::Vector3d>& sa
 // and with elevation-weighted noise.  The bare model (no iono/tropo/relativity)
 // is recovered end-to-end by the real processor with corrections OFF.  A
 // visibility/DOP pre-flight is logged per epoch so unsolvable geometry is caught.
-int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, double storm_scale) {
+int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::SimConfig& scfg) {
     const std::string tag = kinematic ? "synth-kinematic" : "synth-static";
     std::error_code ec;
     std::filesystem::create_directories(outdir, ec);
@@ -560,9 +561,22 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
     std::cout << "[" << tag << "] provider ready: " << eph.orbitNodeCount() << " orbit nodes, "
               << eph.clockSampleCount() << " clock samples\n";
 
-    // ---- Truth trajectory ----
+    // ---- Truth trajectory (knobs from SimConfig; kinematic from the subcommand) ----
     sim::TrajectoryConfig tcfg;
     tcfg.kinematic = kinematic;
+    tcfg.interval_s = scfg.trajectory.interval_s;
+    tcfg.n_epochs = scfg.trajectory.n_epochs;
+    tcfg.cruise_speed_mps = scfg.trajectory.cruise_speed_mps;
+    tcfg.lat0_deg = scfg.trajectory.lat0_deg;
+    tcfg.lon0_deg = scfg.trajectory.lon0_deg;
+    tcfg.h0_m = scfg.trajectory.h0_m;
+    tcfg.heading0_deg = scfg.trajectory.heading0_deg;
+    tcfg.heading_amp_deg = scfg.trajectory.heading_amp_deg;
+    tcfg.heading_period_s = scfg.trajectory.heading_period_s;
+    tcfg.heave_amp_m = scfg.trajectory.heave_amp_m;
+    tcfg.heave_period_s = scfg.trajectory.heave_period_s;
+    tcfg.clock_bias0_s = scfg.trajectory.clock_bias0_s;
+    tcfg.clock_drift_sps = scfg.trajectory.clock_drift_sps;
     sim::TrajectoryGenerator traj(tcfg);
     const auto& truth = traj.states();
     if (truth.empty()) {
@@ -572,13 +586,14 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
 
     const double deg = Constants::PI / 180.0;
     const double c = Constants::SPEED_OF_LIGHT;
-    const double mask_deg = 10.0;
+    const double mask_deg = scfg.geometry.elevation_mask_deg;
 
-    std::mt19937_64 rng(20240315ULL);
+    std::mt19937_64 rng(scfg.noise.seed);
     std::normal_distribution<double> gauss(0.0, 1.0);
-    const double sigma_zen = 0.30, sigma_phase = 0.003;
-    const double zwd_true_m = 0.15;  // truth wet zenith delay (humid tropical environment)
-    const double isb_true_m = isb_m; // GPS->Galileo inter-system bias (truth state, DESIGN §5.6)
+    const double sigma_zen = scfg.noise.code_sigma_zen_m, sigma_phase = scfg.noise.phase_sigma_zen_m;
+    const double zwd_true_m = scfg.atmosphere.zwd_m;       // truth wet zenith delay (humid tropical environment)
+    const double isb_true_m = scfg.biases.isb_gps_gal_m;   // GPS->Galileo inter-system bias (truth state, DESIGN §5.6)
+    const double storm_scale = scfg.iono.storm_scale;      // multiplies storm amplitudes (0 = storm off, same RNG)
 
     // Multi-GNSS signal plan: GPS L1/L2 (C1C/L1C, C2W/L2W) + Galileo E1/E5a
     // (C1C/L1C, C5Q/L5Q), dual frequency.  Galileo E1 frequency == GPS L1 and
@@ -596,15 +611,16 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
         std::vector<Band> bands;
         double isb_m;
     };
-    // Multipath amplitudes are milder than DESIGN §5.7 (semicodeless L2 worst).
+    // Multipath amplitudes are milder than DESIGN §5.7 (semicodeless L2 worst);
+    // per-band zenith amplitudes come from SimConfig (smartphone cases bump these).
     const std::vector<SysPlan> plans = {
         { 'G', 32,
-          { { "C1C", "L1C", Constants::GPS_L1_WAVELENGTH, 0.020 },
-            { "C2W", "L2W", Constants::GPS_L2_WAVELENGTH, 0.030 } },
+          { { "C1C", "L1C", Constants::GPS_L1_WAVELENGTH, scfg.multipath.code_amp_gps_l1_m },
+            { "C2W", "L2W", Constants::GPS_L2_WAVELENGTH, scfg.multipath.code_amp_gps_l2_m } },
           0.0 },
         { 'E', 36,
-          { { "C1C", "L1C", Constants::GAL_E1_WAVELENGTH, 0.015 },
-            { "C5Q", "L5Q", Constants::GAL_E5A_WAVELENGTH, 0.015 } },
+          { { "C1C", "L1C", Constants::GAL_E1_WAVELENGTH, scfg.multipath.code_amp_gal_e1_m },
+            { "C5Q", "L5Q", Constants::GAL_E5A_WAVELENGTH, scfg.multipath.code_amp_gal_e5a_m } },
           isb_true_m },
     };
 
@@ -614,11 +630,24 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
     // it (1/f^2, same STEC) so PPP position stays flat; scintillation inflates
     // phase noise in the storm core.  Centred near the vessel's IPP cloud.
     sim::IonoConfig icfg;
+    icfg.quiet_vtec_tecu = scfg.iono.quiet_vtec_tecu;
+    icfg.sed_amp_tecu = scfg.iono.sed_amp_tecu;
+    icfg.tid_amp_tecu = scfg.iono.tid_amp_tecu;
+    icfg.scint_sigma_phi_max_rad = scfg.iono.scint_sigma_phi_max_rad;
+    icfg.sed_sigma_lat_deg = scfg.iono.sed_sigma_lat_deg;
+    icfg.sed_sigma_lon_deg = scfg.iono.sed_sigma_lon_deg;
+    icfg.drift_lat_deg_per_min = scfg.iono.drift_lat_deg_per_min;
+    icfg.drift_lon_deg_per_min = scfg.iono.drift_lon_deg_per_min;
+    icfg.tid_wavelength_km = scfg.iono.tid_wavelength_km;
+    icfg.tid_period_s = scfg.iono.tid_period_s;
+    icfg.tid_azimuth_deg = scfg.iono.tid_azimuth_deg;
+    icfg.shell_height_km = scfg.iono.shell_height_km;
+    icfg.scint_elev_clamp_deg = scfg.iono.scint_elev_clamp_deg;
     const double arc_s = tcfg.interval_s * static_cast<double>(truth.size() - 1);
-    icfg.window_start_tow_s = truth.front().time.tow + 0.25 * arc_s;
-    icfg.window_duration_s = 0.50 * arc_s;
-    icfg.center_lat0_deg = tcfg.lat0_deg;
-    icfg.center_lon0_deg = tcfg.lon0_deg + 0.20; // a touch east of the start point
+    icfg.window_start_tow_s = truth.front().time.tow + scfg.iono.window_start_frac * arc_s;
+    icfg.window_duration_s = scfg.iono.window_duration_frac * arc_s;
+    icfg.center_lat0_deg = tcfg.lat0_deg + scfg.iono.center_lat_offset_deg;
+    icfg.center_lon0_deg = tcfg.lon0_deg + scfg.iono.center_lon_offset_deg; // default +0.20 = a touch east
     // storm_scale multiplies the STORM amplitudes only (1.0 = nominal storm;
     // 0.0 = no storm but the SAME RNG draws and the SAME quiet Klobuchar
     // background, for a controlled storm-on/off comparison that isolates the
@@ -634,16 +663,16 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
     // --- Marine multipath (Gauss-Markov) + cycle slips (mixed flagging). -------
     // Drawn from a SEPARATE RNG stream so tuning these does not move the white
     // measurement noise (and vice versa), keeping the storm-on/off control exact.
-    std::mt19937_64 aux_rng(20240315ULL ^ 0xA17EC0DEull);
+    std::mt19937_64 aux_rng(scfg.multipath.seed);
     std::normal_distribution<double> ngm(0.0, 1.0);
     std::uniform_real_distribution<double> uni(0.0, 1.0);
-    const double mp_tau_s = 300.0;                                // multipath correlation time
+    const double mp_tau_s = scfg.multipath.tau_s;                 // multipath correlation time
     const double mp_phi = std::exp(-tcfg.interval_s / mp_tau_s);  // ~0.905 at 30 s
-    const double mp_phase_amp = 0.002;                            // zenith phase multipath (m)
-    const double slip_base = 0.0002;   // per-epoch slip-rate base; scaled by 1/sin^2(el), 0 above 45 deg
-    const int slip_min_gap = 3;        // min epochs between slips on one (sat,band)
+    const double mp_phase_amp = scfg.multipath.phase_amp_zen_m;   // zenith phase multipath (m)
+    const double slip_base = scfg.slips.rate_base;     // per-epoch slip-rate base; scaled by 1/sin^2(el)
+    const int slip_min_gap = scfg.slips.min_gap_epochs;// min epochs between slips on one (sat,band)
     auto slipProb = [&](double el_deg) -> double {
-        if (el_deg >= 45.0) return 0.0;          // slips concentrate at low elevation
+        if (el_deg >= scfg.slips.max_elev_deg) return 0.0; // slips concentrate at low elevation
         const double s = std::sin(el_deg * deg);
         return slip_base / (s * s);
     };
@@ -653,10 +682,11 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
         // at low elevation to stay clear of that noise (otherwise it is unrecoverable
         // and biases the float ambiguity), and may be smaller (~10 cyc) at high
         // elevation where the noise is quiet.  Keeps the slip detectable everywhere.
-        const double s = std::sin(std::max(el_deg, 5.0) * deg);
-        const double base = 8.0 + uni(aux_rng) * 14.0; // 8-22 nominal cycles at zenith
+        const double s = std::sin(std::max(el_deg, scfg.noise.elev_factor_floor_deg) * deg);
+        const double span = scfg.slips.max_cycles_zenith - scfg.slips.min_cycles_zenith;
+        const double base = scfg.slips.min_cycles_zenith + uni(aux_rng) * span; // nominal cycles at zenith
         int mag = static_cast<int>(std::lround(base / s));
-        if (mag < 2) mag = 2;
+        if (mag < scfg.slips.min_magnitude) mag = scfg.slips.min_magnitude;
         return (uni(aux_rng) < 0.5) ? -mag : mag;
     };
 
@@ -780,7 +810,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
                     const double quiet_I_L1 = eph.klobucharDelayMetres(r_rx, sat_pos, t, f_L1);
                     quiet_slant_stec = quiet_I_L1 * f_L1 * f_L1 / (40.3 * 1e16);
                 } else {
-                    quiet_slant_stec = icfg.quiet_vtec_tecu / std::sin(std::max(elev, 5.0) * deg);
+                    quiet_slant_stec = icfg.quiet_vtec_tecu / std::sin(std::max(elev, scfg.noise.elev_factor_floor_deg) * deg);
                 }
                 // Ionosphere at the moving IPP for this ray (Klobuchar quiet + storm).
                 const sim::IonoSample samp = iono.evaluate(ts.lat_deg, ts.lon_deg, az, elev, t, quiet_slant_stec);
@@ -799,7 +829,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
                          << sim::IonoDisturbance::slantDelayMetres(samp.stec_total_tecu, f_L1) << ","
                          << dI_L1 << "," << (samp.in_storm_window ? 1 : 0) << "\n";
 
-                const double el_factor = 1.0 / std::sin(std::max(elev, 5.0) * deg);
+                const double el_factor = 1.0 / std::sin(std::max(elev, scfg.noise.elev_factor_floor_deg) * deg);
                 const double sc = sigma_zen * el_factor;   // code sigma (m)
                 const double sp = sigma_phase * el_factor; // phase sigma (m)
 
@@ -807,10 +837,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
                 row.sat_id = sat;
                 double first_code_noise = 0.0;
                 double I_band[2] = { 0.0, 0.0 };
-                // Multipath elevation factor capped at 20 deg: real low-elevation
+                // Multipath elevation factor capped (default 20 deg): real low-elevation
                 // multipath is large, but uncapped it biases the short post-slip
                 // ambiguity segments enough to defeat truth recovery.
-                const double mp_inv_sin = 1.0 / std::sin(std::max(elev, 20.0) * deg);
+                const double mp_inv_sin = 1.0 / std::sin(std::max(elev, scfg.multipath.elev_factor_cap_deg) * deg);
                 for (std::size_t bi = 0; bi < plan.bands.size(); ++bi) {
                     const Band& band = plan.bands[bi];
                     const double f_b = Constants::SPEED_OF_LIGHT / band.wavelength;
@@ -993,13 +1023,13 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
         js << "    \"quiet_background\": \"" << (eph.hasKlobuchar() ? "broadcast Klobuchar" : "analytic") << "\"\n";
         js << "  },\n";
         js << "  \"noise\": {\"code_sigma_zen_m\": " << std::setprecision(4) << sigma_zen
-           << ", \"phase_sigma_zen_m\": " << sigma_phase << ", \"seed\": 20240315},\n";
+           << ", \"phase_sigma_zen_m\": " << sigma_phase << ", \"seed\": " << scfg.noise.seed << "},\n";
         js << "  \"multipath\": {\"model\": \"Gauss-Markov\", \"tau_s\": " << std::setprecision(1) << mp_tau_s
            << ", \"code_amp_zenith_m\": {\"GPS_L1\": " << std::setprecision(3) << plans[0].bands[0].mp_code_amp
            << ", \"GPS_L2\": " << plans[0].bands[1].mp_code_amp << ", \"GAL_E1\": " << plans[1].bands[0].mp_code_amp
            << ", \"GAL_E5a\": " << plans[1].bands[1].mp_code_amp << "}"
            << ", \"phase_amp_zenith_m\": " << std::setprecision(4) << mp_phase_amp
-           << ", \"elev_factor_cap_deg\": 20"
+           << ", \"elev_factor_cap_deg\": " << std::setprecision(1) << scfg.multipath.elev_factor_cap_deg
            << ", \"peak_code_m\": " << std::setprecision(3) << max_mp_code << "},\n";
         js << "  \"cycle_slips\": {\"count\": " << n_slips << ", \"flagged_lli\": " << n_slips_flagged
            << ", \"unflagged\": " << (n_slips - n_slips_flagged) << ", \"detail\": \"truth_slips.csv\"},\n";
@@ -1077,8 +1107,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
                   << " m (> 1 mm) — ISB not injected/inverted consistently\n";
         ++failures;
     }
-    if (worst_noisy > 15.0) { // sanity bound for sigma~0.3 m code SPP per epoch
-        std::cerr << "[" << tag << "] FAIL: noisy recovery " << worst_noisy << " m implausibly large\n";
+    const double noisy_bound = std::max(15.0, 50.0 * sigma_zen); // scales with code sigma (0.3 m => 15 m)
+    if (worst_noisy > noisy_bound) { // sanity bound for the configured code SPP per epoch
+        std::cerr << "[" << tag << "] FAIL: noisy recovery " << worst_noisy << " m implausibly large (> "
+                  << noisy_bound << " m for code sigma " << sigma_zen << " m)\n";
         ++failures;
     }
     if (min_sats < 5) {
@@ -1103,9 +1135,26 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, double isb_m, 
 } // namespace
 
 int main(int argc, char** argv) {
-    const std::string cmd = argc > 1 ? argv[1] : "selftest";
+    // Pull an optional "--sim-config <path>" (or "--sim-config=<path>") out of the
+    // argument list BEFORE positional parsing, so the harness contract
+    // (synth-* <outdir> <isb> <storm_scale>) is preserved unchanged.
+    std::string sim_config_path;
+    std::vector<std::string> a;
+    for (int i = 0; i < argc; ++i) {
+        const std::string s = argv[i];
+        if (s == "--sim-config") {
+            if (i + 1 >= argc) { std::cerr << "[gnss_simulator] --sim-config requires a path\n"; return 2; }
+            sim_config_path = argv[++i];
+            continue;
+        }
+        if (s.rfind("--sim-config=", 0) == 0) { sim_config_path = s.substr(13); continue; }
+        a.push_back(s);
+    }
+    const int ac = static_cast<int>(a.size());
+
+    const std::string cmd = ac > 1 ? a[1] : "selftest";
     auto outdirArg = [&](const std::filesystem::path& dflt) {
-        return argc > 2 ? std::filesystem::path(argv[2]) : dflt;
+        return ac > 2 ? std::filesystem::path(a[2]) : dflt;
     };
     if (cmd == "selftest") {
         return runSelfTest(outdirArg(std::filesystem::temp_directory_path() / "gnss_sim_selftest"));
@@ -1114,52 +1163,67 @@ int main(int argc, char** argv) {
         return runProbeOrbit(outdirArg(std::filesystem::temp_directory_path() / "gnss_sim_probe"));
     }
     if (cmd == "verify") {
-        if (argc < 4) {
+        if (ac < 4) {
             std::cerr << "usage: gnss_simulator verify <truth_dir> <run_logs_dir>\n";
             return 2;
         }
         sim::VerifierConfig vcfg;
-        vcfg.truth_dir = argv[2];
-        vcfg.run_logs_dir = argv[3];
+        vcfg.truth_dir = a[2];
+        vcfg.run_logs_dir = a[3];
         const sim::VerifierResult res = sim::Verifier::run(vcfg);
         for (const auto& line : res.report) std::cout << line << "\n";
         return res.pass ? 0 : 1;
     }
-    // Optional 3rd arg overrides the injected GPS->Galileo ISB (m); default 8.0
-    // (DESIGN §5.6).  4th arg scales all ionospheric TEC amplitudes (default 1.0;
-    // 0.0 = storm off with identical RNG, for a controlled storm-on/off compare).
-    const double isb_m = argc > 3 ? std::atof(argv[3]) : 8.0;
-    const double storm_scale = argc > 4 ? std::atof(argv[4]) : 1.0;
-    if (cmd == "synth-static") {
-        return runSynth(outdirArg(std::filesystem::temp_directory_path() / "gnss_sim_synth"), /*kinematic=*/false, isb_m, storm_scale);
+
+    // Resolve the synthesis knobs: struct defaults, then the --sim-config file (if
+    // any), then legacy positional overrides for isb_m and storm_scale so existing
+    // harness invocations keep working.  The positional default (omitted => 8.0 /
+    // 1.0) equals the struct default, so omitting everything reproduces the
+    // original synthesis byte-for-byte.
+    sim::SimConfig scfg;
+    if (!sim_config_path.empty()) {
+        std::string err;
+        if (!sim::loadSimConfig(sim_config_path, scfg, &err)) {
+            std::cerr << "[gnss_simulator] " << err << "\n";
+            return 2;
+        }
+        std::cout << "[gnss_simulator] sim config: " << sim_config_path << "\n";
     }
-    if (cmd == "synth-kinematic") {
-        return runSynth(outdirArg(std::filesystem::temp_directory_path() / "gnss_sim_kine"), /*kinematic=*/true, isb_m, storm_scale);
+    auto applyPositionalOverrides = [&](int isb_idx, int storm_idx) {
+        if (ac > isb_idx)   scfg.biases.isb_gps_gal_m = std::atof(a[isb_idx].c_str());
+        if (ac > storm_idx) scfg.iono.storm_scale     = std::atof(a[storm_idx].c_str());
+    };
+
+    if (cmd == "synth-static" || cmd == "synth-kinematic") {
+        const bool kin = (cmd == "synth-kinematic");
+        applyPositionalOverrides(/*isb=*/3, /*storm=*/4);
+        const std::filesystem::path dflt =
+            std::filesystem::temp_directory_path() / (kin ? "gnss_sim_kine" : "gnss_sim_synth");
+        return runSynth(outdirArg(dflt), kin, scfg);
     }
     if (cmd == "all") {
         // One-shot loop: synthesize -> run gnss_processor (out-of-process, per-run
         // CWD because its log dir is hardcoded to ./logs) -> verify.  The config's
         // files.observation_path MUST point at <output_dir>'s synthesized RINEX.
-        if (argc < 5) {
+        if (ac < 5) {
             std::cerr << "usage: gnss_simulator all <static|kinematic> <output_dir> <config>"
-                         " [processor_exe] [isb_m] [storm_scale]\n";
+                         " [processor_exe] [isb_m] [storm_scale]   [--sim-config <sim.json>]\n";
             return 2;
         }
-        const std::string mode = argv[2];
+        const std::string mode = a[2];
         if (mode != "static" && mode != "kinematic") {
             std::cerr << "all: mode must be 'static' or 'kinematic'\n";
             return 2;
         }
-        const std::filesystem::path outdir = argv[3];
-        const std::filesystem::path config = argv[4];
-        const std::filesystem::path proc = argc > 5
-            ? std::filesystem::path(argv[5])
-            : std::filesystem::path(argv[0]).parent_path() / "gnss_processor.exe"; // sibling of this exe
-        const double isb_all = argc > 6 ? std::atof(argv[6]) : 8.0;
-        const double storm_all = argc > 7 ? std::atof(argv[7]) : 1.0;
+        const std::filesystem::path outdir = a[3];
+        const std::filesystem::path config = a[4];
+        const std::filesystem::path proc = ac > 5
+            ? std::filesystem::path(a[5])
+            : std::filesystem::path(a[0]).parent_path() / "gnss_processor.exe"; // sibling of this exe
+        applyPositionalOverrides(/*isb=*/6, /*storm=*/7);
 
         std::cout << "[all] (1/3) synthesize (" << mode << ") -> " << outdir.string() << "\n";
-        if (runSynth(outdir, mode == "kinematic", isb_all, storm_all) != 0) {
+        if (runSynth(outdir, mode == "kinematic", scfg) != 0) {
             std::cerr << "[all] synthesis failed\n";
             return 1;
         }
@@ -1193,8 +1257,8 @@ int main(int argc, char** argv) {
     }
     std::cerr << "usage: " << (argc > 0 ? argv[0] : "gnss_simulator")
               << " <selftest|probe-orbit|synth-static|synth-kinematic|verify|all> ...\n"
-              << "  synth-static|synth-kinematic [output_dir] [isb_m] [storm_scale]\n"
+              << "  synth-static|synth-kinematic [output_dir] [isb_m] [storm_scale] [--sim-config <sim.json>]\n"
               << "  verify <truth_dir> <run_logs_dir>\n"
-              << "  all <static|kinematic> <output_dir> <config> [processor_exe] [isb_m] [storm_scale]\n";
+              << "  all <static|kinematic> <output_dir> <config> [processor_exe] [isb_m] [storm_scale] [--sim-config <sim.json>]\n";
     return 2;
 }

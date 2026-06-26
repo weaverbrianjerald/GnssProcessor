@@ -1,0 +1,415 @@
+/**
+ * @file StationInfoFile.cpp
+ * @brief Implementation of the SIF loader / registry (see StationInfoFile.hpp).
+ */
+
+#include "products/StationInfoFile.hpp"
+#include "math/Coordinates.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <utility>
+
+namespace GnssProcessor {
+
+namespace {
+
+    /// Read a numeric field, returning @p def if missing/non-numeric.
+    double jnum(const nlohmann::json& j, const char* key, double def = 0.0) {
+        auto it = j.find(key);
+        return (it != j.end() && it->is_number()) ? it->get<double>() : def;
+    }
+
+    /// Read a string field, returning empty if missing/non-string.
+    std::string jstr(const nlohmann::json& j, const char* key) {
+        auto it = j.find(key);
+        return (it != j.end() && it->is_string()) ? it->get<std::string>() : std::string{};
+    }
+
+    /// Read a boolean field, returning @p def if missing/non-boolean.
+    bool jbool(const nlohmann::json& j, const char* key, bool def = false) {
+        auto it = j.find(key);
+        return (it != j.end() && it->is_boolean()) ? it->get<bool>() : def;
+    }
+
+    /// Read a 3-element numeric array into a vector (zeros if missing/short).
+    Eigen::Vector3d jvec3(const nlohmann::json& j, const char* key) {
+        Eigen::Vector3d v = Eigen::Vector3d::Zero();
+        auto it = j.find(key);
+        if (it != j.end() && it->is_array() && it->size() >= 3) {
+            for (int k = 0; k < 3; ++k)
+                if ((*it)[k].is_number()) v[k] = (*it)[k].get<double>();
+        }
+        return v;
+    }
+
+    /// Read a numeric array of arbitrary length (empty if missing).
+    std::vector<double> jarr(const nlohmann::json& j, const char* key) {
+        std::vector<double> out;
+        auto it = j.find(key);
+        if (it != j.end() && it->is_array()) {
+            out.reserve(it->size());
+            for (const auto& e : *it)
+                if (e.is_number()) out.push_back(e.get<double>());
+        }
+        return out;
+    }
+
+    /// Trim ASCII whitespace and upper-case (for case-insensitive key matching).
+    std::string upperTrim(std::string s) {
+        const auto b = s.find_first_not_of(" \t\r\n");
+        if (b == std::string::npos) return {};
+        const auto e = s.find_last_not_of(" \t\r\n");
+        s = s.substr(b, e - b + 1);
+        for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return s;
+    }
+
+    /// Convert a SIF timestamp ("YYYY-MM-DDTHH:MM:SS TZ") to a decimal year.
+    ///
+    /// The timezone suffix (UTC / GPS) is ignored: the <=18 s GPS-UTC offset is
+    /// far below the precision at which decimal-year window selection or
+    /// velocity propagation matters.  An open-ended SIF END ("9999-...") is
+    /// mapped to a large sentinel so it always compares as "in the future".
+    double decimalYearFromSif(const std::string& s) {
+        int Y = 0, M = 1, D = 1, h = 0, mi = 0, se = 0;
+        if (std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &Y, &M, &D, &h, &mi, &se) < 3)
+            return 0.0;
+        if (Y >= 9000) return 9999.0;  // open-ended END sentinel
+        if (M < 1 || M > 12) M = 1;
+        if (D < 1) D = 1;
+        static const int cum[12] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+        const bool leap = (Y % 4 == 0 && (Y % 100 != 0 || Y % 400 == 0));
+        const int doy = cum[M - 1] + (D - 1) + ((leap && M > 2) ? 1 : 0);
+        const double diy = leap ? 366.0 : 365.0;
+        return Y + (doy + (h * 3600.0 + mi * 60.0 + se) / 86400.0) / diy;
+    }
+
+} // namespace
+
+StationInfoFile::StationInfoFile(LogManager& log_manager)
+    : log_manager_(log_manager) {}
+
+std::size_t StationInfoFile::load(const std::filesystem::path& sif_json) {
+    auto log = log_manager_.getLogger("station_info");
+
+    std::ifstream f(sif_json);
+    if (!f.is_open()) {
+        log->error("SIF: cannot open '{}'", sif_json.string());
+        return 0;
+    }
+
+    nlohmann::json doc;
+    try {
+        f >> doc;
+    } catch (const std::exception& e) {
+        log->error("SIF: JSON parse error in '{}': {}", sif_json.string(), e.what());
+        return 0;
+    }
+
+    double meta_epoch = 2020.0;
+    std::string meta_frame;
+    if (auto mit = doc.find("METADATA"); mit != doc.end() && mit->is_object()) {
+        meta_epoch = jnum(*mit, "REFERENCE_EPOCH", 2020.0);
+        meta_frame = jstr(*mit, "REFERENCE_FRAME");
+    }
+
+    auto sit = doc.find("STATIONS");
+    if (sit == doc.end() || !sit->is_array()) {
+        log->error("SIF: '{}' has no STATIONS array", sif_json.string());
+        return 0;
+    }
+
+    std::size_t added = 0;
+    for (const auto& sj : *sit) {
+        StationInfo st;
+        st.id = jstr(sj, "ID");
+        if (st.id.empty()) continue;  // a station with no ID is unusable
+        st.domes = jstr(sj, "DOMES");
+        st.description = jstr(sj, "DESCRIPTION");
+        st.reference_frame = meta_frame;
+        st.reference_epoch_year = meta_epoch;
+        st.approximate_coordinates = jvec3(sj, "APPROXIMATE_COORDINATES");
+
+        // --- Ocean tidal loading (FES2014b, Up/East/North amplitudes & phases) ---
+        if (auto otlit = sj.find("OCEAN_TIDE_LOADING"); otlit != sj.end() && otlit->is_object()) {
+            bool any = false;
+            for (std::size_t k = 0; k < 11; ++k) {
+                auto cit = otlit->find(SIF_OTL_CONSTITUENTS[k]);
+                if (cit != otlit->end() && cit->is_object()) {
+                    SifOtlConstituent c;
+                    c.up_amp    = jnum(*cit, "UP_AMPLITUDE");
+                    c.east_amp  = jnum(*cit, "EAST_AMPLITUDE");
+                    c.north_amp = jnum(*cit, "NORTH_AMPLITUDE");
+                    c.up_phase    = jnum(*cit, "UP_PHASE");
+                    c.east_phase  = jnum(*cit, "EAST_PHASE");
+                    c.north_phase = jnum(*cit, "NORTH_PHASE");
+                    st.otl[k] = c;
+                    any = true;
+                }
+            }
+            st.has_otl = any;
+        }
+
+        // --- Ocean pole tide (Desai load coefficients, NEU real/imag) ---
+        if (auto optit = sj.find("OCEAN_POLE_TIDE"); optit != sj.end() && optit->is_object()) {
+            st.opt.north_real = jnum(*optit, "NORTH_REAL");
+            st.opt.north_imag = jnum(*optit, "NORTH_IMAGINARY");
+            st.opt.east_real  = jnum(*optit, "EAST_REAL");
+            st.opt.east_imag  = jnum(*optit, "EAST_IMAGINARY");
+            st.opt.up_real    = jnum(*optit, "UP_REAL");
+            st.opt.up_imag    = jnum(*optit, "UP_IMAGINARY");
+            st.opt.valid = true;
+        }
+
+        // --- Antenna history ---
+        if (auto ant = sj.find("ANTENNA"); ant != sj.end() && ant->is_array()) {
+            st.antennas.reserve(ant->size());
+            for (const auto& aj : *ant) {
+                SifAntennaWindow w;
+                w.start_year = decimalYearFromSif(jstr(aj, "START"));
+                w.end_year   = decimalYearFromSif(jstr(aj, "END"));
+                w.type   = jstr(aj, "TYPE");
+                w.serial = jstr(aj, "SERIAL_NUMBER");
+                w.arp_minus_grp_enu = jvec3(aj, "ARP_MINUS_GRP_ENU");
+                w.orientation_deg = jnum(aj, "ORIENTATION");
+                w.do_not_use = jbool(aj, "DO_NOT_USE");
+                st.antennas.push_back(std::move(w));
+            }
+        }
+
+        // --- Receiver history ---
+        if (auto rec = sj.find("RECEIVER"); rec != sj.end() && rec->is_array()) {
+            st.receivers.reserve(rec->size());
+            for (const auto& rj : *rec) {
+                SifReceiverWindow w;
+                w.start_year = decimalYearFromSif(jstr(rj, "START"));
+                w.end_year   = decimalYearFromSif(jstr(rj, "END"));
+                w.type     = jstr(rj, "TYPE");
+                w.firmware = jstr(rj, "FIRMWARE");
+                w.satellite_systems = jstr(rj, "SATELLITE_SYSTEMS");
+                w.do_not_use = jbool(rj, "DO_NOT_USE");
+                st.receivers.push_back(std::move(w));
+            }
+        }
+
+        // --- Occupation (ITRF coordinate solutions) ---
+        if (auto occ = sj.find("OCCUPATION"); occ != sj.end() && occ->is_array()) {
+            st.occupations.reserve(occ->size());
+            for (const auto& oj : *occ) {
+                SifOccupation o;
+                o.start_year = decimalYearFromSif(jstr(oj, "START"));
+                o.end_year   = decimalYearFromSif(jstr(oj, "END"));
+                o.coordinates  = jvec3(oj, "COORDINATES");
+                o.coord_sigmas = jvec3(oj, "COORDINATE_SIGMAS");          // metres (COORDINATE_UNITS=m)
+                o.velocity         = jvec3(oj, "VELOCITY") * 1.0e-3;      // mm/y -> m/y
+                o.velocity_sigmas  = jvec3(oj, "VELOCITY_SIGMAS") * 1.0e-3;
+                o.do_not_use = jbool(oj, "DO_NOT_USE");
+
+                // Assemble the full symmetric 6x6 [X Y Z Vx Vy Vz] covariance:
+                //   diagonal from the sigma arrays (already SI above), off-diagonal
+                //   from the 15-element 6X6_COVARIANCE_MATRIX (mm^2 -> m^2; the same
+                //   1e-6 factor applies to all cross terms, position and velocity
+                //   alike).  Ordering follows the SIF/M-PAGES convention.
+                const std::vector<double> c = jarr(oj, "6X6_COVARIANCE_MATRIX");
+                if (c.size() >= 15) {
+                    Eigen::Matrix<double, 6, 6>& C = o.covariance;
+                    C.setZero();
+                    C(0, 0) = o.coord_sigmas[0] * o.coord_sigmas[0];
+                    C(1, 1) = o.coord_sigmas[1] * o.coord_sigmas[1];
+                    C(2, 2) = o.coord_sigmas[2] * o.coord_sigmas[2];
+                    C(3, 3) = o.velocity_sigmas[0] * o.velocity_sigmas[0];
+                    C(4, 4) = o.velocity_sigmas[1] * o.velocity_sigmas[1];
+                    C(5, 5) = o.velocity_sigmas[2] * o.velocity_sigmas[2];
+                    constexpr double s = 1.0e-6;  // mm^2 -> m^2
+                    C(0, 1) = s * c[0];  C(0, 2) = s * c[1];  C(0, 3) = s * c[2];
+                    C(0, 4) = s * c[3];  C(0, 5) = s * c[4];
+                    C(1, 2) = s * c[5];  C(1, 3) = s * c[6];  C(1, 4) = s * c[7];
+                    C(1, 5) = s * c[8];
+                    C(2, 3) = s * c[9];  C(2, 4) = s * c[10]; C(2, 5) = s * c[11];
+                    C(3, 4) = s * c[12]; C(3, 5) = s * c[13];
+                    C(4, 5) = s * c[14];
+                    for (int i = 0; i < 6; ++i)
+                        for (int j = i + 1; j < 6; ++j) C(j, i) = C(i, j);
+                    o.has_covariance = true;
+                }
+                st.occupations.push_back(std::move(o));
+            }
+        }
+
+        // --- Nonlinear terms: periodic (seasonal) + post-seismic deformation ---
+        if (auto nlt = sj.find("NONLINEAR_TERMS"); nlt != sj.end() && nlt->is_object()) {
+            if (auto per = nlt->find("PERIODIC_TERMS"); per != nlt->end() && per->is_array()) {
+                st.periodic.reserve(per->size());
+                for (const auto& bj : *per) {
+                    SifPeriodicBlock b;
+                    b.start_year = decimalYearFromSif(jstr(bj, "START"));
+                    b.end_year   = decimalYearFromSif(jstr(bj, "END"));
+                    b.reference_epoch_year = meta_epoch;
+                    if (auto fr = bj.find("FREQUENCIES"); fr != bj.end() && fr->is_array()) {
+                        b.freqs.reserve(fr->size());
+                        for (const auto& fj : *fr) {
+                            SifPeriodicFreq pf;
+                            pf.period_yr = jnum(fj, "PERIOD", 1.0);
+                            constexpr double mm = 1.0e-3;  // mm -> m (PERIODIC_COEFF_UNITS=mm)
+                            pf.x_cos = mm * jnum(fj, "X_COS");
+                            pf.x_sin = mm * jnum(fj, "X_SIN");
+                            pf.y_cos = mm * jnum(fj, "Y_COS");
+                            pf.y_sin = mm * jnum(fj, "Y_SIN");
+                            pf.z_cos = mm * jnum(fj, "Z_COS");
+                            pf.z_sin = mm * jnum(fj, "Z_SIN");
+                            b.freqs.push_back(pf);
+                        }
+                    }
+                    st.periodic.push_back(std::move(b));
+                }
+            }
+
+            if (auto psd = nlt->find("POST_SEISMIC"); psd != nlt->end() && psd->is_array()) {
+                st.psd.reserve(psd->size());
+                for (const auto& pj : *psd) {
+                    SifPsdBlock pb;
+                    pb.event_year = decimalYearFromSif(jstr(pj, "EVENT_EPOCH"));
+                    const auto readComp = [&](const char* key, SifPsdComponent& comp) {
+                        if (auto cit = pj.find(key); cit != pj.end() && cit->is_object()) {
+                            comp.aexp = jarr(*cit, "AEXP");  // PSD_COEFF_UNITS=m, PSD_TIME_UNITS=y
+                            comp.texp = jarr(*cit, "TEXP");
+                            comp.alog = jarr(*cit, "ALOG");
+                            comp.tlog = jarr(*cit, "TLOG");
+                        }
+                    };
+                    readComp("EAST",  pb.east);
+                    readComp("NORTH", pb.north);
+                    readComp("UP",    pb.up);
+                    st.psd.push_back(std::move(pb));
+                }
+            }
+        }
+
+        // --- Index and store ---
+        const std::size_t idx = stations_.size();
+        const std::string id_u = upperTrim(st.id);
+        const std::string dm   = upperTrim(st.domes);
+        stations_.push_back(std::move(st));
+        if (!id_u.empty()) {
+            by_id_.emplace(id_u, idx);
+            if (id_u.size() >= 4) by_id4_.emplace(id_u.substr(0, 4), idx);  // first wins
+        }
+        if (!dm.empty()) by_domes_.emplace(dm, idx);
+        ++added;
+    }
+
+    log->info("SIF: ingested {} stations from '{}'", added, sif_json.string());
+    return added;
+}
+
+const StationInfo* StationInfoFile::find(const std::string& station_key) const {
+    const std::string k = upperTrim(station_key);
+    if (k.empty()) return nullptr;
+    if (auto it = by_id_.find(k); it != by_id_.end()) return &stations_[it->second];
+    if (auto it = by_domes_.find(k); it != by_domes_.end()) return &stations_[it->second];
+    if (k.size() >= 4) {
+        if (auto it = by_id4_.find(k.substr(0, 4)); it != by_id4_.end())
+            return &stations_[it->second];
+    }
+    return nullptr;
+}
+
+namespace {
+
+    /// Pick the OCCUPATION covering @p year (start <= year < end, not flagged),
+    /// else the non-flagged occupation whose window midpoint is nearest @p year.
+    const SifOccupation* selectOccupation(const StationInfo& s, double year) {
+        const SifOccupation* best = nullptr;
+        double best_dist = 1e30;
+        for (const auto& o : s.occupations) {
+            if (o.do_not_use) continue;
+            if (year >= o.start_year && year < o.end_year) return &o;  // exact window
+            const double mid = 0.5 * (o.start_year + std::min(o.end_year, 9000.0));
+            const double dist = std::abs(year - mid);
+            if (dist < best_dist) { best_dist = dist; best = &o; }
+        }
+        return best;
+    }
+
+} // namespace
+
+ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
+                                              double decimal_year,
+                                              bool with_periodic,
+                                              bool with_psd) {
+    ResolvedStationCoord out;
+    const SifOccupation* occ = selectOccupation(s, decimal_year);
+    if (occ == nullptr) return out;  // no usable solution; caller falls back
+
+    // Linear term: reference coordinate + velocity * (t - t_ref).
+    const double dt = decimal_year - s.reference_epoch_year;
+    out.ecef = occ->coordinates + occ->velocity * dt;
+
+    // Periodic (seasonal) terms: sum over the block whose window covers the
+    // epoch.  d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/Period,
+    // dT = (t - block ref epoch) in years (NGS / M-PAGES convention).
+    if (with_periodic) {
+        for (const auto& b : s.periodic) {
+            if (decimal_year < b.start_year || decimal_year >= b.end_year) continue;
+            const double dT = decimal_year - b.reference_epoch_year;
+            for (const auto& f : b.freqs) {
+                if (f.period_yr == 0.0) continue;
+                const double w = 2.0 * 3.14159265358979323846 / f.period_yr;
+                const double c = std::cos(w * dT), sn = std::sin(w * dT);
+                out.ecef.x() += f.x_cos * c + f.x_sin * sn;
+                out.ecef.y() += f.y_cos * c + f.y_sin * sn;
+                out.ecef.z() += f.z_cos * c + f.z_sin * sn;
+            }
+        }
+    }
+
+    // Post-seismic deformation: sum of log/exp relaxation per ENU component,
+    // for events before the epoch.  d = sum A_log*log(1 + dT/T_log)
+    //                                 + sum A_exp*(1 - exp(-dT/T_exp)).
+    if (with_psd && !s.psd.empty()) {
+        const auto evalComp = [](const SifPsdComponent& comp, double dT) {
+            double d = 0.0;
+            const std::size_t nlog = std::min(comp.alog.size(), comp.tlog.size());
+            for (std::size_t i = 0; i < nlog; ++i)
+                if (comp.tlog[i] > 0.0) d += comp.alog[i] * std::log(1.0 + dT / comp.tlog[i]);
+            const std::size_t nexp = std::min(comp.aexp.size(), comp.texp.size());
+            for (std::size_t i = 0; i < nexp; ++i)
+                if (comp.texp[i] > 0.0) d += comp.aexp[i] * (1.0 - std::exp(-dT / comp.texp[i]));
+            return d;
+        };
+        Eigen::Vector3d enu = Eigen::Vector3d::Zero();  // (E, N, U)
+        for (const auto& pb : s.psd) {
+            const double dT = decimal_year - pb.event_year;
+            if (dT <= 0.0) continue;  // event has not happened yet at this epoch
+            enu.x() += evalComp(pb.east, dT);
+            enu.y() += evalComp(pb.north, dT);
+            enu.z() += evalComp(pb.up, dT);
+        }
+        if (enu.squaredNorm() > 0.0) {
+            const Coordinates::Llh llh = Coordinates::ecefToLlh(out.ecef);
+            out.ecef += Coordinates::enuToEcef(enu, llh);
+        }
+    }
+
+    // Propagate the position covariance to the epoch: with A = [I3 | dt*I3],
+    // Cov3(t) = Cxx + dt*(Cxv + Cxv^T) + dt^2*Cvv.  (The periodic/PSD sigma
+    // contributions are sub-mm and intentionally omitted from the datum prior.)
+    if (occ->has_covariance) {
+        const Eigen::Matrix3d Cxx = occ->covariance.topLeftCorner<3, 3>();
+        const Eigen::Matrix3d Cxv = occ->covariance.topRightCorner<3, 3>();
+        const Eigen::Matrix3d Cvv = occ->covariance.bottomRightCorner<3, 3>();
+        out.covariance = Cxx + dt * (Cxv + Cxv.transpose()) + (dt * dt) * Cvv;
+        out.has_covariance = true;
+    }
+
+    out.valid = true;
+    return out;
+}
+
+} // namespace GnssProcessor

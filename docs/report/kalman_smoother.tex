@@ -54,11 +54,14 @@ state --- ambiguities, per-satellite ionosphere, zenith wet delay,
 gradients, code and satellite biases, and any rate-free inter-system
 offset --- has $\Fmat = \bm{I}$ and is propagated as a pure random walk
 with its mean held constant.  Under the BSSD (single-difference)
-parameterisation the clock and inter-system-offset rows are
-unobservable; their position rows in \Cref{eq:kf-F-blocks} are
-suppressed and the corresponding cross-covariances are zeroed in place
-after propagation while the diagonal variance is preserved
-(\texttt{src/core/filter/KalmanFilter.cpp}).
+parameterisation the receiver-clock, phase-clock
+(\texttt{getPhaseClockIndex}), inter-system-offset, and frozen-pivot
+per-satellite ionosphere (\texttt{getFrozenPivotSatellites}) rows are
+unobservable (their $\jacH$ columns are zero); their position rows in
+\Cref{eq:kf-F-blocks} are suppressed and, for each, the corresponding
+cross-covariances are zeroed in place after propagation while the
+diagonal variance is preserved (the \texttt{freeze\_state} block in
+\texttt{src/core/filter/KalmanFilter.cpp}).
 
 The propagation itself is the standard EKF time update
 \begin{empheq}[box=\fbox]{align}
@@ -305,11 +308,14 @@ Outlier rejection (\texttt{KalmanFilter::validatePostFitResiduals})
 operates on the standardised \emph{post-fit} residuals $\sres_i$ of
 \Cref{eq:kf-sres} against a fixed scalar threshold, supplemented by
 robust median-based spatial detectors for pivot slips.  The two
-top-level thresholds are compile-time constants, \emph{not} JSON-tunable:
-the per-row rejection threshold is
-$\sres_{\max} = 6.0$ (\texttt{getResidualThreshold}) and the
-complete-reset trigger fraction is $0.5$ (\texttt{getBadMeasPercent});
-readers should not search for config keys for these.
+top-level thresholds are hardcoded \texttt{GnssConfig} defaults
+(\texttt{residual\_threshold\_} $= 6.0$ and \texttt{bad\_meas\_percent\_}
+$= 0.5$ in \texttt{src/core/config/GnssConfig.cpp}) that are
+deliberately not exposed to JSON: the per-row rejection threshold is
+$\sres_{\max} = 6.0$ (read at runtime via \texttt{getResidualThreshold})
+and the complete-reset trigger fraction is $0.5$
+(\texttt{getBadMeasPercent}); readers should not search for config keys
+for these.
 
 \paragraph{Per-row rejection.}
 If $\max_i |\sres_i| > 6.0$, the worst row is dispatched by type: a
@@ -320,7 +326,7 @@ are reset alongside it.
 
 \paragraph{Complete-reset backstop.}
 If the count of rejected rows exceeds
-$0.5 \times (\text{original pre-peel observation count})$, the filter
+$0.5 \times{}$ (original pre-peel observation count), the filter
 covariance is re-inflated (\texttt{resetFilterCovariance}) --- a hard
 reset that, in the smoother, marks a segment boundary
 (\Cref{sec:kf-smoother}).

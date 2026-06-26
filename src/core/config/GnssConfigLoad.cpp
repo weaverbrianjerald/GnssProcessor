@@ -27,6 +27,7 @@
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/BaselineFixtures.hpp"
+#include "products/StationInfoFile.hpp"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -1889,6 +1890,66 @@ namespace GnssProcessor {
                 else {
                     log->warn("Ocean pole tide grid not found: {}", opt_grid_path_.string());
                     opt_grid_path_.clear();
+                }
+            }
+        }
+
+        // Station Information Files (SIF).  A bundle of per-station metadata
+        // (ITRF coordinates/velocity/covariance, FES2014b ocean tide loading,
+        // Desai ocean pole tide, antenna/receiver history, nonlinear motion).
+        // The master toggle lives in the processing section (loop-level data
+        // source); paths in the files section.  Default off keeps runs
+        // byte-identical to the pre-SIF behaviour.
+        {
+            enable_station_info_ = jval<bool>(json, "processing.enable_station_info",
+                                               "enable_station_info", false);
+            station_info_paths_.clear();
+
+            // Explicit paths win: files.station_info_paths (array) and/or
+            // files.station_info_path (single string).
+            const nlohmann::json& files = jsection(json, "files");
+            if (auto it = files.find("station_info_paths");
+                it != files.end() && it->is_array()) {
+                for (const auto& p : *it)
+                    if (p.is_string()) station_info_paths_.emplace_back(p.get<std::string>());
+            }
+            const std::string single =
+                jval<std::string>(json, "files.station_info_path", "station_info_path", "");
+            if (!single.empty()) station_info_paths_.emplace_back(single);
+
+            if (enable_station_info_) {
+                // Auto-discovery: glob <internal_data_root>/static/sif/*.json.
+                // SIFs are date-independent static assets (like the ATX and
+                // opole grid), so they don't go through PathResolver's
+                // date-aware product logic.
+                if (station_info_paths_.empty()) {
+                    const std::filesystem::path sif_dir =
+                        internal_data_root_ / "static" / "sif";
+                    std::error_code ec;
+                    if (std::filesystem::is_directory(sif_dir, ec)) {
+                        for (const auto& e : std::filesystem::directory_iterator(sif_dir, ec)) {
+                            if (e.is_regular_file() && e.path().extension() == ".json")
+                                station_info_paths_.push_back(e.path());
+                        }
+                        std::sort(station_info_paths_.begin(), station_info_paths_.end());
+                    }
+                }
+
+                auto registry = std::make_shared<StationInfoFile>(log_manager);
+                std::size_t total = 0;
+                for (const auto& p : station_info_paths_) {
+                    if (std::filesystem::exists(p)) total += registry->load(p);
+                    else log->warn("SIF path not found: {}", p.string());
+                }
+                if (total > 0) {
+                    station_info_ = std::move(registry);
+                    log->info("Station info: loaded {} stations from {} SIF file(s)",
+                              total, station_info_paths_.size());
+                } else {
+                    log->warn("enable_station_info=true but no SIF stations were loaded "
+                              "(checked {} path(s) under {})",
+                              station_info_paths_.size(),
+                              (internal_data_root_ / "static" / "sif").string());
                 }
             }
         }

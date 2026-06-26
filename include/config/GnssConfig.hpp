@@ -8,6 +8,7 @@
 #include <array>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>        // only the loadXxxSection_ decls need json; the
@@ -15,6 +16,11 @@
 #include <set>
 
 namespace GnssProcessor {
+
+    // Forward declaration; the full type is only needed in GnssConfigLoad.cpp
+    // (which builds the registry) and at consumer call sites.  A shared_ptr to
+    // an incomplete type is fine for a class member.
+    class StationInfoFile;
 
 
     /**
@@ -747,6 +753,33 @@ namespace GnssProcessor {
          * @return Explicit grid path, or empty to use the internal static default.
          */
         std::filesystem::path getOptGridPath() const { return opt_grid_path_; }
+
+        /**
+         * @brief Whether the Station Information File (SIF) subsystem is enabled.
+         *
+         * When true and a SIF was successfully loaded, per-station metadata
+         * (ocean tide loading, ocean pole tide, ITRF coordinates/velocity, and
+         * antenna/receiver history) takes precedence over grid-interpolated or
+         * RINEX-header sources for matched stations.  Defaults to false, which
+         * keeps runs byte-identical to the pre-SIF behaviour.
+         * @return True if SIF consumption is enabled.
+         */
+        bool enableStationInfo() const { return enable_station_info_; }
+
+        /**
+         * @brief SIF JSON file paths in load order (explicit or auto-discovered).
+         * @return Resolved SIF paths; empty if none configured/found.
+         */
+        const std::vector<std::filesystem::path>& getStationInfoPaths() const { return station_info_paths_; }
+
+        /**
+         * @brief The loaded station-metadata registry, if any.
+         *
+         * Built once at config-load time from @c getStationInfoPaths().  Shared
+         * (read-only) across all consumers and copies of this config.
+         * @return Registry pointer, or @c nullptr when SIF is disabled / empty.
+         */
+        std::shared_ptr<const StationInfoFile> getStationInfo() const { return station_info_; }
 
         /**
          * @brief Gets the number of leap seconds.
@@ -2046,6 +2079,10 @@ namespace GnssProcessor {
 
         std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
         std::filesystem::path opt_grid_path_;   ///< Path to IERS ocean pole tide load grid (optional; default <data>/static/opole/).
+
+        bool enable_station_info_{ false };                     ///< Master toggle for the SIF subsystem (default off = byte-identical).
+        std::vector<std::filesystem::path> station_info_paths_; ///< SIF JSON paths in load order (explicit or auto-discovered).
+        std::shared_ptr<const StationInfoFile> station_info_;   ///< Loaded SIF registry (nullptr when disabled/empty).
 
         bool estimate_tropo_gradients_;   ///< Estimate troposphere horizontal gradients (Gn, Ge).
         bool   relinearize_geometry_;            ///< Re-run computeModels after first KF update to recompute geometry at updated position.

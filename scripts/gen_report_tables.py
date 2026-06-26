@@ -283,7 +283,9 @@ def gen_slip_detectors() -> tuple[str, int]:
         )
 
     table = longtable(
-        r"@{}l l c c l >{\raggedright\arraybackslash}p{3.6cm}@{}",
+        r"@{}>{\raggedright\arraybackslash}p{2.8cm} "
+        r">{\raggedright\arraybackslash}p{3.2cm} c c l "
+        r">{\raggedright\arraybackslash}p{3.6cm}@{}",
         [
             r"\textbf{Detector}",
             r"\textbf{Config flag}",
@@ -387,7 +389,8 @@ def gen_config_toggles() -> tuple[str, dict]:
         ]
 
     mc_table = longtable(
-        r"@{}l c >{\raggedright\arraybackslash}p{9.2cm}@{}",
+        r"@{}>{\raggedright\arraybackslash}p{4.5cm} c "
+        r">{\raggedright\arraybackslash}p{9.2cm}@{}",
         [r"\textbf{Field}", r"\textbf{Default}", r"\textbf{Effect}"],
         struct_rows(mc_fields),
         caption=(
@@ -398,7 +401,8 @@ def gen_config_toggles() -> tuple[str, dict]:
         label="tab:gen-model-corrections",
     )
     lc_table = longtable(
-        r"@{}l c >{\raggedright\arraybackslash}p{9.2cm}@{}",
+        r"@{}>{\raggedright\arraybackslash}p{4.5cm} c "
+        r">{\raggedright\arraybackslash}p{9.2cm}@{}",
         [r"\textbf{Field}", r"\textbf{Default}", r"\textbf{Channel}"],
         struct_rows(lc_fields),
         caption=(
@@ -513,8 +517,9 @@ def gen_state_keys() -> tuple[str, int]:
         )
 
     table = longtable(
-        r"@{}>{\raggedright\arraybackslash}p{4.6cm} l "
-        r">{\raggedright\arraybackslash}l@{}",
+        r"@{}>{\raggedright\arraybackslash}p{4.6cm} "
+        r">{\raggedright\arraybackslash}p{6.3cm} "
+        r">{\raggedright\arraybackslash}p{4.3cm}@{}",
         [r"\textbf{State}", r"\textbf{Key format}", r"\textbf{Builder}"],
         rows,
         caption=(
@@ -546,7 +551,8 @@ def gen_processing_modes() -> tuple[str, int]:
         rows = [[tt(n), tex_escape(d)] for (n, d) in members]
         return (
             longtable(
-                r"@{}l >{\raggedright\arraybackslash}p{11cm}@{}",
+                r"@{}>{\raggedright\arraybackslash}p{3.6cm} "
+                r">{\raggedright\arraybackslash}p{11cm}@{}",
                 [r"\textbf{Value}", r"\textbf{Meaning}"],
                 rows,
                 caption=caption,
