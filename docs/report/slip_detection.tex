@@ -15,7 +15,7 @@
 The uncombined filter (\dcref{sec:obs}{the observation-equations
 section of the Foundations document}) never forms a linear combination
 on the measurement-update path: per-signal $\code^\sat_{\rx,\sigl}$ and
-$\phaseo^\sat_{\rx,\sigl}$ enter \Cref{eq:obs-code,eq:obs-phase}
+$\phaseo^\sat_{\rx,\sigl}$ enter \dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations}
 directly.  Cycle slips are instead screened by a bank of
 \emph{diagnostic} combinations, each constructed so that the geometric
 range $\geomrange^\sat_\rx$, the clocks $\sLight(\mathrm{d}t_\rx -
@@ -42,7 +42,7 @@ and $\lambda_1 < \lambda_2$
 Carrier phase is read from RINEX in cycles and scaled by
 $\lambda_\sigl = \sLight / f_\sigl$ before combining, so
 $\phaseo^\sat_\sigl$ below is always in metres, consistent with
-\Cref{eq:obs-phase}.  We reserve the operator $\slipd{\,\cdot\,}$ for a
+\dcref{eq:obs-phase}{the phase observation equation}.  We reserve the operator $\slipd{\,\cdot\,}$ for a
 \emph{temporal} integer slip step (e.g.\ $\slipd N_\sigl$ is the change
 in the ambiguity on signal $\sigl$ across the slip epoch); this is
 deliberately distinct from the between-satellite single difference
@@ -118,12 +118,12 @@ the engine forms (\texttt{MwSlipDetector::computeMwMeters})
 \underbrace{\frac{f_1\,\code^\sat_{1} + f_2\,\code^\sat_{2}}{f_1 + f_2}}_{\text{narrow-lane code}}.
 \label{eq:mw}
 \end{empheq}
-The range-additive terms common to \Cref{eq:obs-code,eq:obs-phase} ---
+The range-additive terms common to \dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations} ---
 geometry, clocks, troposphere --- cancel between the two bracketed
 combinations.  The slant ionosphere also cancels: the wide-lane phase
 carries the ionospheric coefficient $-(f_1\mu_1 - f_2\mu_2)/(f_1-f_2)$
 and the narrow-lane code carries $+(f_1\mu_1 + f_2\mu_2)/(f_1+f_2)$,
-and with $\mu_\sigl = f_1^2/f_\sigl^2$ (\Cref{eq:iono-scaling}) these
+and with $\mu_\sigl = f_1^2/f_\sigl^2$ (\dcref{eq:iono-scaling}{the ionosphere-scaling relation}) these
 two coefficients are equal, so the difference \eqref{eq:mw} removes the
 ionosphere exactly to first order.  What remains is a near-constant
 equal to the wide-lane ambiguity plus hardware bias,
@@ -144,7 +144,7 @@ $\sigma_{\mathrm{MW}} \approx \sigma_\code / (\sqrt{2}\,\lamwl) \sim
 0.25$ wide-lane cycles, i.e.\ code-noise-limited.  The integer-ready
 (BIA-corrected) variant subtracts the satellite MW bias
 $b_{\mathrm{MW}}^\sat$, which has the same algebra as \Cref{eq:mw}
-applied to the OSB phase and code biases of \Cref{eq:obs-code,eq:obs-phase}.
+applied to the OSB phase and code biases of \dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations}.
 
 The level series $\mwc^\sat(k)$ is screened against a robust adaptive
 gate whose deviation statistic is configurable via
@@ -207,7 +207,7 @@ band (\texttt{GraphicSlipDetector::computeGraphic}):
 with $\phaseo^\sat_\sigl$ in metres.  Because the slant ionosphere
 enters $+\mu_\sigl I^\sat_{\rx,1}$ on the code and $-\mu_\sigl
 I^\sat_{\rx,1}$ on the phase of the \emph{same} signal
-(\Cref{eq:obs-code,eq:obs-phase}), the half-sum cancels it to first
+(\dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations}), the half-sum cancels it to first
 order --- GRAPHIC is ionosphere-free without a second frequency, at the
 cost of retaining half the code noise.  The combination still contains
 the geometric range, clocks and troposphere plus the constant
@@ -299,10 +299,9 @@ is currently inert.
 
 \subsection{TurboEdit dual-frequency resolution}\label{sec:slip-turboedit}
 
-The TurboEdit resolver
-(\texttt{src/core/slip/TurboEditResolver.cpp},
-\texttt{include/slip/TurboEditResolver.hpp}) is a \emph{pure} MW+GF
-joint integer solver.  It owns the per-arc geometry-free jump history
+The TurboEdit resolver is a \emph{pure} MW+GF joint integer solver
+(\texttt{src/core/slip/TurboEditResolver.cpp} and its header
+\texttt{include/slip/TurboEditResolver.hpp}).  It owns the per-arc geometry-free jump history
 and the integer arithmetic, and returns per-signal integer repairs plus
 a reset-fallback set without mutating filter state; it is wired into
 both the post-processing \texttt{CycleSlipManager} and the real-time

@@ -62,6 +62,7 @@
 % choke on \bm and renders readable plain-text bookmarks.
 \pdfstringdefDisableCommands{%
   \def\bm#1{#1}%
+  \def\texttt#1{#1}%
   \def\mathrm#1{#1}%
   \def\Tr{T}%
   \def\Zmat{Z}%
@@ -90,6 +91,54 @@
 %   The branch is chosen at use time (subfiles is loaded by then in both
 %   the combined and the standalone build).
 \newcommand{\dcref}[2]{\ifSubfilesClassLoaded{#2}{\Cref{#1}}}
+
+% --- Breakable monospace for long source paths / identifiers ----------
+%   Long \texttt strings (e.g. src/core/filter/NetworkEstimator.cpp or
+%   StateManager::sat\_phase\_bias\_indices\_) do not hyphenate, so they
+%   overran the right margin.  We permit line breaks after path
+%   separators "/" and after "\_" (snake_case), scoped to \texttt so
+%   nothing else is affected.  The "/" handling splits the argument at
+%   each top-level slash (brace groups are respected) and inserts a
+%   low-penalty breakpoint; "\_" is locally redefined to add \allowbreak.
+%   Implemented as nested delimited-argument splitters (segments between
+%   separators are emitted verbatim, so brace groups and commands inside
+%   \texttt survive intact): split on "/" at the top level, then split each
+%   segment on ":" (for C++ "::" scopes).  "\_" is locally redefined to add
+%   a breakpoint.  "." and "-" are left intact (rarely the overflow cause).
+\makeatletter
+\let\bjw@orig@texttt\texttt
+\newcommand*{\bjw@usbreak}{\textunderscore\allowbreak}
+\def\bjw@stop{}
+% Innermost: split on "-"; emits sub-segments raw.
+\def\bjw@dash#1-{%
+  \@ifnextchar\bjw@stop
+    {\bjw@dashlast{#1}}%
+    {#1-\allowbreak\bjw@dash}}
+\def\bjw@dashlast#1\bjw@stop{#1}
+% Split on "." (e.g. file extensions); routes through the "-" splitter.
+\def\bjw@dot#1.{%
+  \@ifnextchar\bjw@stop
+    {\bjw@dotlast{#1}}%
+    {\bjw@dash#1-\bjw@stop.\allowbreak\bjw@dot}}
+\def\bjw@dotlast#1\bjw@stop{\bjw@dash#1-\bjw@stop}
+% Split on ":" (C++ "::" scopes); routes through the "." splitter.
+\def\bjw@colon#1:{%
+  \@ifnextchar\bjw@stop
+    {\bjw@colonlast{#1}}%
+    {\bjw@dot#1.\bjw@stop:\allowbreak\bjw@colon}}
+\def\bjw@colonlast#1\bjw@stop{\bjw@dot#1.\bjw@stop}
+% Outermost: split on "/" (path separators); routes through the ":" splitter.
+\def\bjw@slash#1/{%
+  \@ifnextchar\bjw@stop
+    {\bjw@slashlast{#1}}%
+    {\bjw@colon#1:\bjw@stop/\allowbreak\bjw@slash}}
+\def\bjw@slashlast#1\bjw@stop{\bjw@colon#1:\bjw@stop}
+\protected\def\texttt#1{%
+  \bjw@orig@texttt{\let\_\bjw@usbreak \bjw@slash#1/\bjw@stop}}
+\makeatother
+% Backstop for any remaining wide boxes (e.g. long camelCase identifiers
+% with no separator): let the paragraph breaker stretch as a last resort.
+\setlength{\emergencystretch}{4em}
 
 % --- Bibliography (package load only; \addbibresource lives in the document
 %     so it can be wrapped in \subfix for the subfiles build).

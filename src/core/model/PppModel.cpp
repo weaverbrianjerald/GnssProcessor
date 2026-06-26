@@ -24,6 +24,7 @@
 #include "rinex/RinexParser.hpp"
 #include "filter/StateManager.hpp"
 #include "products/ProductParser.hpp"
+#include "products/StationInfoFile.hpp"
 #include "common/Constants.hpp"
 #include "math/Coordinates.hpp"
 #include "measurement/MeasurementModel.hpp"
@@ -255,23 +256,51 @@ std::vector<std::string> activeFrequencyBands(
         if (config.getModelCorrections().enable_ocean_pole_tide) {
             auto log = log_manager_.getLogger("ppp_model");
             const Eigen::Vector3d opt_ecef = rinex_parser_.getApproxPositionXyz();
-            std::filesystem::path opt_grid = config.getOptGridPath();
-            if (opt_grid.empty()) {
-                opt_grid = config.getInternalDataRoot() / "static" / "opole"
-                         / "opoleloadcoefcmcor.txt";
+
+            // Prefer per-station SIF Desai coefficients when the station-info
+            // subsystem is enabled and the station resolves.  These are the
+            // authoritative values the opole grid is sampled from, so they
+            // carry no bilinear-interpolation error.  SifOceanPoleTide is laid
+            // out in exactly the [N_R, N_I, E_R, E_I, U_R, U_I] order
+            // setOceanPoleTideCoefficients expects.
+            bool from_sif = false;
+            if (config.enableStationInfo()) {
+                if (const auto sif = config.getStationInfo()) {
+                    const std::string key = rinex_parser_.getHeader().marker_name;
+                    if (const StationInfo* si = sif->find(key); si && si->opt.valid) {
+                        gnss_corrections_.setOceanPoleTideCoefficients(
+                            { si->opt.north_real, si->opt.north_imag,
+                              si->opt.east_real,  si->opt.east_imag,
+                              si->opt.up_real,    si->opt.up_imag });
+                        log->info("Ocean pole tide: per-station SIF coefficients for marker '{}' "
+                                  "(matched {})", key, si->id);
+                        log_manager_.getLogger("main_log")->info(
+                            "Ocean pole tide source: SIF per-station coefficients (marker '{}' -> {})",
+                            key, si->id);
+                        from_sif = true;
+                    }
+                }
             }
-            if (opt_ecef.allFinite() && opt_ecef.norm() > 1e6
-                && !opt_grid.empty() && std::filesystem::exists(opt_grid)) {
-                if (gnss_corrections_.loadOceanPoleTideFromGrid(opt_grid.string(), opt_ecef))
-                    log->info("Ocean pole tide: coefficients loaded from '{}'", opt_grid.string());
-                else
-                    log->warn("Ocean pole tide: grid load failed for '{}'; OPT disabled",
-                              opt_grid.string());
-            } else {
-                log->warn("Ocean pole tide enabled but grid not found ('{}') or station ECEF "
-                          "invalid; OPT disabled. Place opoleloadcoefcmcor.txt under "
-                          "<data>/static/opole/.",
-                          opt_grid.empty() ? "<unset>" : opt_grid.string());
+
+            if (!from_sif) {
+                std::filesystem::path opt_grid = config.getOptGridPath();
+                if (opt_grid.empty()) {
+                    opt_grid = config.getInternalDataRoot() / "static" / "opole"
+                             / "opoleloadcoefcmcor.txt";
+                }
+                if (opt_ecef.allFinite() && opt_ecef.norm() > 1e6
+                    && !opt_grid.empty() && std::filesystem::exists(opt_grid)) {
+                    if (gnss_corrections_.loadOceanPoleTideFromGrid(opt_grid.string(), opt_ecef))
+                        log->info("Ocean pole tide: coefficients loaded from '{}'", opt_grid.string());
+                    else
+                        log->warn("Ocean pole tide: grid load failed for '{}'; OPT disabled",
+                                  opt_grid.string());
+                } else {
+                    log->warn("Ocean pole tide enabled but grid not found ('{}') or station ECEF "
+                              "invalid; OPT disabled. Place opoleloadcoefcmcor.txt under "
+                              "<data>/static/opole/.",
+                              opt_grid.empty() ? "<unset>" : opt_grid.string());
+                }
             }
         }
 

@@ -138,8 +138,9 @@ MSM observation messages are decoded by a single body
 (\texttt{decodeMsmImpl}, \texttt{src/core/rtcm/RtcmMsmDecoder.cpp})
 parameterised over an \texttt{MsmVariant} descriptor that supplies the
 per-field bit widths, scale factors, sentinels and capability flags.
-Two variants are emitted, MSM4 and MSM7 (MSM5/MSM6 are structurally
-supported by the variant table but not currently produced).  The header
+Two variants are emitted, MSM4 and MSM7 (MSM5/MSM6 are described by the
+same variant mechanism, but no variant entry is instantiated for them, so
+they are not currently produced).  The header
 carries a 64-bit satellite mask, a 32-bit signal mask, and an
 $N_{\text{sat}}\times N_{\text{sig}}$ cell mask; the number of cells is
 $N_{\text{cell}} = \operatorname{popcount}(\text{cell mask})$.  Each
@@ -307,7 +308,7 @@ coverage horizon from the freshest stored SSR content epoch
 t_{\text{horizon}} =
   t_{\text{SSR}}^{\text{newest}} + \tau_{\text{max}},
 \qquad
-\tau_{\text{max}} = \texttt{ssr\_max\_age}.
+\tau_{\text{max}} = \texttt{ssr\_max\_age\_s}.
 \label{eq:rt-horizon}
 \end{equation}
 The decision is:

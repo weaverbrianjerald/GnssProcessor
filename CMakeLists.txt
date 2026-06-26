@@ -127,6 +127,7 @@ add_library(gnss_core STATIC
     src/core/products/DataDownloader.cpp
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
+    src/core/products/StationInfoFile.cpp
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -217,6 +218,7 @@ target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 # gnss_processor, diffs traces).  See C:/GnssSimulator/docs/DESIGN.md.
 add_executable(gnss_simulator
     src/sim/main.cpp
+    src/sim/SimConfig.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/EphemerisProvider.cpp
     src/sim/TrajectoryGenerator.cpp
@@ -250,6 +252,7 @@ add_executable(gnss_tests
     tests/test_planetary_cio.cpp
     tests/test_orbit_enhancements.cpp
     tests/test_neq_accumulator.cpp
+    tests/test_station_info.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

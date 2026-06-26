@@ -146,7 +146,12 @@ $|\det\Zmat| = 1$, that re-parameterises
 \end{equation}
 so that the transformed ambiguities are nearly decorrelated (small
 off-diagonal $\Lmat$ entries) and their conditional variances are
-ordered.  Because $\Zmat$ is unimodular the integer minimiser maps back
+ordered.  We write the decorrelated float vector as
+$\bar{\bm{z}} := \Zmat^{\Tr}\ambfloat$ (the quantity the search of
+\Cref{sec:ar-lambda} actually rounds; implemented as
+\texttt{z\_float = Z.transpose()*a} in
+\texttt{src/core/filter/AmbiguityResolver.cpp}), with components
+$\bar{z}_k$.  Because $\Zmat$ is unimodular the integer minimiser maps back
 exactly, $\ambfix = (\Zmat^{\Tr})^{-1}\check{\bm{z}}$ with
 $(\Zmat^{\Tr})^{-1}$ also integer; decorrelation therefore does not
 alter the solution of \eqref{eq:ils} --- it only makes the search
@@ -190,7 +195,7 @@ points inside the ellipsoid $\sum_i (z_i - \hat{z}_i)^2 / d_i \le
 zig-zagging outward).  Recursing from the last level $k = n-1$ down to
 $0$,
 \begin{align}
-\hat{z}_k &= \ambfloat_k + \sum_{i>k}(z_i - \hat{z}_i)\,L_{ik},
+\hat{z}_k &= \bar{z}_k + \sum_{i>k}(z_i - \hat{z}_i)\,L_{ik},
   &&\text{(conditional centre)} \label{eq:cond}\\
 z_k = \lceil \hat{z}_k \rfloor,
 \qquad
@@ -299,10 +304,17 @@ WL-only mode (\texttt{estimation.ambiguity\_resolution.wl\_only}, in the
 $\dd{}_{1}/\lambda_1 - \dd{}_{2}/\lambda_2 = \dd N_{\mathrm{WL}}$ as a
 single pseudo-observation per pair without any NL search, with
 covariance inflation on the affected single-difference states when MW
-re-locks at a new integer so the state snaps within one epoch.  A
-cross-frequency parity check rejects all WL DDs of a triple-frequency
-satellite when the telescoping cycle-count consistency
-$\dd{}_{ab} - \dd{}_{ac} + \dd{}_{bc} \ne 0$ fails.
+re-locks at a new integer so the state snaps within one epoch.  This
+\texttt{per\_band} \texttt{wl\_only} path carries no cross-frequency
+consistency check: it gates each DD WL only on the per-arc fractional
+residual (\texttt{wl\_max\_frac}, both arcs).  The cross-frequency parity
+check lives instead in the \texttt{nl\_wl} basis
+(\texttt{applyMwWlConstraintsNlWl\_} in
+\texttt{src/core/filter/AmbiguityResolver.cpp}), where it rejects all
+three WL DDs of a triple-frequency satellite when the telescoping
+canonical cycle-count consistency
+$\dd{}_{ab} - \dd{}_{ac} + \dd{}_{bc} \ne 0$ fails; it does \emph{not}
+run in the \texttt{per\_band} \texttt{wl\_only} path.
 
 \subsection{Partial / subset ambiguity resolution}\label{sec:ar-partial}
 

@@ -33,6 +33,7 @@
 #include "math/Coordinates.hpp"
 #include "products/PathResolver.hpp"
 #include "products/ProductResolver.hpp"
+#include "products/StationInfoFile.hpp"
 #include "realtime/NtripClient.hpp"
 #include "realtime/RtcmStreamReader.hpp"
 #include "filter/AmbiguityResolver.hpp"
@@ -291,6 +292,71 @@ bool Application::initializePosition() {
         }
         initial_position_ = fallback_position;
     }
+
+    // Station Information File a-priori: when enabled and the station resolves,
+    // seed the filter with the authoritative ITRF coordinate propagated to the
+    // first-observation epoch (velocity + seasonal + post-seismic terms).  This
+    // is more accurate and frame-consistent (ITRF2020 / IGS20, matching the
+    // products) than the RINEX APPROX header.  The OCCUPATION coordinate is
+    // ARP-referenced like the state vector, so no antenna delta is applied.
+    if (config_.enableStationInfo()) {
+        if (const auto sif = config_.getStationInfo()) {
+            const std::string marker = rinex_parser_->getHeader().marker_name;
+            if (const StationInfo* si = sif->find(marker)) {
+                const GnssTime t0 = rinex_parser_->getTimeOfFirstObs();
+                const double year = TimeUtils::mjdToDecimalYear(TimeUtils::gpsTimeToUtcMjd(t0));
+                const ResolvedStationCoord rc = resolveStationCoordinate(*si, year);
+                if (rc.valid && rc.ecef.allFinite() && rc.ecef.norm() > 1e6) {
+                    const Eigen::Vector3d prev = initial_position_;
+                    initial_position_ = rc.ecef;
+                    Eigen::VectorXd sv = state_manager_->getStateVector();
+                    if (sv.size() >= static_cast<Eigen::Index>(state_manager_->getPositionIndex() + 3)) {
+                        sv.segment<3>(state_manager_->getPositionIndex()) = initial_position_;
+                        state_manager_->setStateVector(sv);
+                    }
+                    log_manager_.getLogger("main_log")->info(
+                        "SIF a-priori for marker '{}' (matched {}) @ {:.3f}: ITRF {} "
+                        "({:.3f}, {:.3f}, {:.3f}) m; shift vs RINEX/fallback = {:.3f} m",
+                        marker, si->id, year, si->reference_frame,
+                        initial_position_.x(), initial_position_.y(), initial_position_.z(),
+                        (initial_position_ - prev).norm());
+                }
+
+                // Antenna / receiver metadata QC against the SIF active windows
+                // at the first-obs epoch: flag DO_NOT_USE equipment and antenna
+                // type disagreements between the RINEX header and the SIF.
+                const auto trimmed = [](std::string v) {
+                    const auto b = v.find_first_not_of(" \t");
+                    if (b == std::string::npos) return std::string{};
+                    const auto e = v.find_last_not_of(" \t");
+                    return v.substr(b, e - b + 1);
+                };
+                for (const auto& aw : si->antennas) {
+                    if (year < aw.start_year || year >= aw.end_year) continue;
+                    if (aw.do_not_use)
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF: antenna window for '{}' at {:.3f} is flagged DO_NOT_USE "
+                            "(type '{}')", marker, year, aw.type);
+                    const std::string rinex_ant = trimmed(rinex_parser_->getHeader().antenna_type);
+                    const std::string sif_ant   = trimmed(aw.type);
+                    if (!rinex_ant.empty() && !sif_ant.empty() && rinex_ant != sif_ant)
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF: antenna type mismatch for '{}': RINEX='{}' vs SIF='{}'",
+                            marker, rinex_ant, sif_ant);
+                    break;  // one covering window
+                }
+                for (const auto& rw : si->receivers) {
+                    if (year < rw.start_year || year >= rw.end_year) continue;
+                    if (rw.do_not_use)
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF: receiver window for '{}' at {:.3f} is flagged DO_NOT_USE "
+                            "(type '{}')", marker, year, rw.type);
+                    break;
+                }
+            }
+        }
+    }
+
     return true;
 }
 
