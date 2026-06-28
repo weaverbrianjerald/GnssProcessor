@@ -1,0 +1,620 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Coordinate Frames and Time Systems}\label{sec:frames}
+% ============================================================
+%  The geodetic-frame and time-scale substrate the engine assumes
+% ============================================================
+
+% --- Doc-local symbols (descriptive names to avoid package collisions) ---
+\newcommand{\semia}{a}                               % WGS84 semi-major axis
+\newcommand{\wgsflat}{f}                              % WGS84 flattening
+\newcommand{\eccsq}{e^{2}}                            % first eccentricity squared
+\newcommand{\primevn}{N}                              % prime-vertical radius of curvature
+\newcommand{\geolat}{\varphi}                         % geodetic latitude
+\newcommand{\geolon}{\lambda}                         % geodetic longitude
+\newcommand{\geoht}{h}                                % ellipsoidal height
+\newcommand{\enuE}{\hat{\bm{e}}_{\mathrm{E}}}         % ENU East basis vector
+\newcommand{\enuN}{\hat{\bm{e}}_{\mathrm{N}}}         % ENU North basis vector
+\newcommand{\enuU}{\hat{\bm{e}}_{\mathrm{U}}}         % ENU Up basis vector
+\newcommand{\enuR}{\bm{R}_{\mathrm{ENU}}}             % ENU->ECEF rotation
+\newcommand{\elev}{\mathrm{el}}                       % elevation angle
+\newcommand{\azim}{\mathrm{az}}                       % azimuth angle
+\newcommand{\leapgu}{\Delta_{\mathrm{GU}}}            % GPS - UTC leap seconds
+\newcommand{\precP}{\bm{P}_{\mathrm{prec}}}           % precession matrix
+\newcommand{\nutN}{\bm{N}_{\mathrm{nut}}}             % nutation matrix
+\newcommand{\polW}{\bm{W}_{\mathrm{pm}}}              % polar-motion matrix
+\newcommand{\Umat}{\bm{U}}                            % full ECI->ECEF matrix
+\newcommand{\rotR}[1]{\bm{R}_{#1}}                    % elementary axis rotation
+\newcommand{\dpsi}{\Delta\psi}                        % nutation in longitude
+\newcommand{\deps}{\Delta\varepsilon}                % nutation in obliquity
+\newcommand{\obleps}{\varepsilon}                     % mean obliquity of the ecliptic
+\newcommand{\gmst}{\mathrm{GMST}}
+\newcommand{\gast}{\mathrm{GAST}}
+\newcommand{\era}{\theta_{\mathrm{ERA}}}             % Earth Rotation Angle
+\newcommand{\cipX}{X}                                 % CIP coordinate X
+\newcommand{\cipY}{Y}                                 % CIP coordinate Y
+\newcommand{\cioloc}{s}                               % CIO locator
+
+Every model in this reference --- the tropospheric and ionospheric
+mappings of \dcref{sec:atmos}{the Atmosphere document}, the
+solid-Earth, ocean, and pole tides of \dcref{sec:sitedisp}{the Site
+Displacement document}, the antenna, attitude, and phase-wind-up terms
+of \dcref{sec:obsphys}{the Observation Physics document}, and the orbit
+evaluation of \dcref{sec:products}{the Product Evaluation document} ---
+presumes a fixed geodetic-frame and time-scale substrate.  This document
+specifies that substrate: the WGS84 ellipsoid and the three coordinate
+representations (Cartesian ECEF, geodetic, and local ENU) the engine
+moves between; the family of GNSS time scales together with the leap-
+second machinery that ties them to UTC; and the Earth-orientation chain
+that rotates the celestial frame --- in which the Sun, Moon, and the
+satellite ephemerides are most naturally expressed --- into the
+terrestrial frame in which the receiver sits.  None of the conversions
+here is an estimator state.  The one frame quantity that \emph{is}
+estimated --- the inter-system time offset (ISB) that absorbs the
+unmodelled bias between constellation time scales --- belongs to
+\dcref{sec:state}{the State Vector document}; this document covers only
+the \emph{deterministic} scale conversions that the ISB state is defined
+relative to.  Code references are to \texttt{src/core/math/Coordinates.cpp},
+\texttt{src/core/math/TimeUtils.cpp}, \texttt{src/core/model/Planetary.cpp},
+\texttt{src/core/products/LiveEphemerisStore.cpp}, and
+\texttt{src/core/products/ProductParser.cpp}.
+
+% ============================================================
+\subsection{The WGS84 ellipsoid: ECEF, geodetic, and local frames}
+\label{sec:frame-geodetic}
+% ============================================================
+
+The terrestrial reference frame is the WGS84 Earth-Centred,
+Earth-Fixed (ECEF) Cartesian system: origin at the geocentre, $z$ along
+the conventional pole, $x$ toward the IERS reference meridian, $y$
+completing a right-handed triad.  The defining ellipsoid has semi-major
+axis $\semia$ and flattening $\wgsflat$, from which the first eccentricity
+squared follows (\texttt{src/core/math/Coordinates.cpp:11}, :55):
+\begin{equation}
+\eccsq \;=\; \wgsflat\,(2-\wgsflat).
+\label{eq:frame-e2}
+\end{equation}
+The radius of curvature in the prime vertical at geodetic latitude
+$\geolat$ is
+\begin{equation}
+\primevn(\geolat) \;=\;
+\frac{\semia}{\sqrt{1 - \eccsq\,\sin^2\!\geolat}} ,
+\label{eq:frame-primevert}
+\end{equation}
+which scales the entire forward map from geodetic coordinates
+$(\geolat,\geolon,\geoht)$ to ECEF
+(\texttt{src/core/math/Coordinates.cpp:54--68}):
+\begin{empheq}[box=\fbox]{equation}
+\begin{aligned}
+x &= \big(\primevn + \geoht\big)\cos\geolat\,\cos\geolon, \\
+y &= \big(\primevn + \geoht\big)\cos\geolat\,\sin\geolon, \\
+z &= \big((1-\eccsq)\,\primevn + \geoht\big)\sin\geolat .
+\end{aligned}
+\label{eq:frame-llh2ecef}
+\end{empheq}
+The factor $(1-\eccsq)\primevn$ on the $z$ component is the source of all
+ellipsoidal subtlety: a sphere would carry $\primevn$ unmodified on every
+axis, and the $(1-\eccsq)$ correction is precisely the contraction that
+distinguishes the geodetic normal (perpendicular to the ellipsoid
+surface) from the geocentric radius vector.
+
+\paragraph{Inverse map (Bowring fixed point).}
+The inverse problem --- recovering $(\geolat,\geolon,\geoht)$ from
+$(x,y,z)$ --- has no closed form for the latitude because $\primevn$ in
+\eqref{eq:frame-llh2ecef} itself depends on $\geolat$.  The longitude is
+immediate, $\geolon = \operatorname{atan2}(y,x)$.  For the latitude the
+engine runs a Bowring fixed-point iteration on the equatorial projection
+$p = \sqrt{x^2+y^2}$ (\texttt{src/core/math/Coordinates.cpp:21--47}).
+The seed neglects height,
+\begin{equation}
+\geolat^{(0)} = \operatorname{atan2}\!\big(z,\; p\,(1-\eccsq)\big),
+\label{eq:frame-bowring-seed}
+\end{equation}
+and each pass recomputes $\primevn$ and the height and re-evaluates the
+latitude with the height feedback folded back into the eccentricity term:
+\begin{equation}
+\geoht^{(k)} = \frac{p}{\cos\geolat^{(k)}} - \primevn^{(k)},
+\qquad
+\geolat^{(k+1)} = \operatorname{atan2}\!\left(z,\;
+p\left[1 - \eccsq\,\frac{\primevn^{(k)}}{\primevn^{(k)}+\geoht^{(k)}}\right]\right).
+\label{eq:frame-bowring-iter}
+\end{equation}
+The iteration is capped at ten passes and exits early once
+$|\geolat^{(k+1)}-\geolat^{(k)}| < 10^{-13}$; for terrestrial heights it
+converges to machine precision in two or three steps.
+
+\paragraph{Pole branch.}
+When $p < 10^{-12}\,\mathrm{m}$ the point lies on (or within a
+picometre of) the $z$ axis and both the longitude and the
+$p/\cos\geolat$ height formula degenerate.  The code takes an explicit
+branch (\texttt{src/core/math/Coordinates.cpp:21--28}): it sets
+$\geolon = 0$, fixes $\geolat = \pm\pi/2$ by the sign of $z$, and reads
+the height directly off the polar semi-minor axis,
+\begin{equation}
+\geoht = |z| - \primevn\,(1-\eccsq)
+       = |z| - \semia\,(1-\eccsq) \quad (\text{at the pole, } \sin^2\!\geolat = 1),
+\label{eq:frame-pole}
+\end{equation}
+since $\primevn(1-\eccsq)$ evaluated at the pole is exactly the polar
+radius $\semia\sqrt{1-\eccsq}$.  This guard keeps the inverse map total
+over all of $\mathbb{R}^3$, which matters because the planetary and
+attitude code occasionally evaluates geometry for satellite positions
+that transit near the polar axis.
+
+\paragraph{Local East--North--Up frame.}
+Many of the downstream models --- the tropospheric mapping function, the
+elevation mask, the antenna phase-centre projection --- are most natural
+in the topocentric ENU frame anchored at the receiver's geodetic
+$(\geolat,\geolon)$.  The columns of the ENU$\to$ECEF rotation are the
+three local unit vectors expressed in ECEF
+(\texttt{src/core/math/Coordinates.cpp:70--81}):
+\begin{empheq}[box=\fbox]{equation}
+\enuR(\geolat,\geolon) =
+\big[\,\enuE \;\; \enuN \;\; \enuU\,\big]
+=
+\begin{bmatrix}
+-\sin\geolon & -\sin\geolat\cos\geolon & \cos\geolat\cos\geolon \\
+\;\;\cos\geolon & -\sin\geolat\sin\geolon & \cos\geolat\sin\geolon \\
+0            & \cos\geolat              & \sin\geolat
+\end{bmatrix}.
+\label{eq:frame-enu}
+\end{empheq}
+The Up column is the outward geodetic normal --- identical to the
+direction along which $\geoht$ is measured in \eqref{eq:frame-llh2ecef}
+--- East is its horizontal cross-product with the pole, and North
+completes the right-handed triad.  Because the columns are orthonormal,
+$\enuR$ is a proper rotation and its inverse is its transpose: an ECEF
+displacement is resolved into local components by
+$\bm{v}_{\mathrm{ENU}} = \enuR^{\Tr}\,\bm{v}_{\mathrm{ECEF}}$
+(\texttt{src/core/math/Coordinates.cpp:83--92}), avoiding any explicit
+matrix inversion.
+
+\paragraph{Elevation and azimuth.}
+With the receiver-to-satellite line-of-sight resolved into the local
+frame, $\bm{e}_{\mathrm{ENU}} = (e_{\mathrm E}, e_{\mathrm N},
+e_{\mathrm U})^{\Tr} = \enuR^{\Tr}\los$, the elevation and azimuth that
+gate the measurement (the elevation mask of
+\dcref{sec:obs-geometry}{the Observation Equations document} and the
+mapping-function argument of \dcref{sec:atmos}{the Atmosphere document})
+follow directly:
+\begin{equation}
+\elev = \arcsin\!\big(e_{\mathrm U}\big),
+\qquad
+\azim = \operatorname{atan2}\!\big(e_{\mathrm E},\, e_{\mathrm N}\big),
+\label{eq:frame-elaz}
+\end{equation}
+azimuth measured clockwise from North.  Equations
+\eqref{eq:frame-enu}--\eqref{eq:frame-elaz} are the entire geometric
+bridge between the ECEF state vector and every elevation-dependent
+weighting and antenna model in the reference.
+
+% ============================================================
+\subsection{GNSS time scales and the GPS reference epoch}
+\label{sec:frame-timescale}
+% ============================================================
+
+Time inside the engine is carried as a \texttt{GnssTime}
+$\{\text{week},\text{tow}\}$ pair --- an integer GPS week and a
+floating-point time-of-week in seconds --- and is expanded to a single
+continuous count $T = \text{week}\times 604800 + \text{tow}$ wherever a
+monotone scalar is needed (e.g.\ ERP interpolation,
+\Cref{sec:frame-erp}).  A week boundary is $604\,800\;\mathrm{s}$ and a
+day $86\,400\;\mathrm{s}$ (\texttt{src/core/math/TimeUtils.cpp}, header
+constants \texttt{SECONDS\_IN\_WEEK}, \texttt{SECONDS\_IN\_DAY}).  The
+common origin is the GPS epoch, 1980-01-06 00:00:00 UTC, whose Julian
+Date is fixed in the code:
+\begin{equation}
+\mathrm{JD}_{\mathrm{GPS}} = 2444244.5
+\qquad(\texttt{src/core/math/TimeUtils.cpp}, \texttt{GPS\_EPOCH\_JD}).
+\label{eq:frame-gpsepoch}
+\end{equation}
+GPS time is a continuous atomic scale --- it never inserts a leap second
+--- so it sits a fixed integer offset below International Atomic Time and
+a fixed fractional offset below Terrestrial Time
+(\texttt{src/core/math/TimeUtils.cpp:65--67}, header
+\texttt{TAI\_GPS\_OFFSET}, \texttt{TT\_GPS\_OFFSET}):
+\begin{empheq}[box=\fbox]{equation}
+\mathrm{TAI} - \mathrm{GPS} = 19\;\mathrm{s},
+\qquad
+\mathrm{TT} - \mathrm{GPS} = 51.184\;\mathrm{s} = (32.184 + 19)\;\mathrm{s}.
+\label{eq:frame-tai-tt}
+\end{empheq}
+The $32.184\;\mathrm s$ in the TT relation is the constant TT$-$TAI
+offset; together these let any GPS time be promoted to the TT scale on
+which precession and nutation are evaluated.  Terrestrial Time relative
+to the J2000.0 epoch is measured in Julian centuries,
+\begin{equation}
+t = \frac{\mathrm{JD}_{\mathrm{TT}} - 2451545.0}{36525.0},
+\label{eq:frame-jcent}
+\end{equation}
+the dimensionless argument of the astronomical series of
+\Cref{sec:frame-eci,sec:frame-sunmoon}
+(\texttt{src/core/math/TimeUtils.cpp:253--255}, \texttt{J2000\_JD},
+\texttt{DAYS\_PER\_JULIAN\_CENTURY}).
+
+\paragraph{Gregorian$\leftrightarrow$Julian Date.}
+The calendar conversions follow the Meeus algorithm \cite{meeus1991}.
+The forward map, with the month shifted so January and February count as
+months 13 and 14 of the prior year and a Gregorian-reform correction
+$b = 2 - A + \lfloor A/4\rfloor$ for $A = \lfloor y/100\rfloor$, is
+(\texttt{src/core/math/TimeUtils.cpp:73--84}):
+\begin{equation}
+\mathrm{JD} = \big\lfloor 365.25\,(y+4716)\big\rfloor
+            + \big\lfloor 30.6001\,(m+1)\big\rfloor
+            + d + b - 1524.5 + \frac{\text{(time of day)}}{86400},
+\label{eq:frame-greg2jd}
+\end{equation}
+and the inverse (\texttt{src/core/math/TimeUtils.cpp:86--112}) reverses
+it through the integer auxiliaries $z = \lfloor\mathrm{JD}+0.5\rfloor$
+and the Gregorian-reform branch at $z \ge 2299161$.  The crucial
+distinction the code maintains throughout is between a calendar date that
+is already on the GPS scale (no leap correction:
+\texttt{gregorianGpsToGpsTime}) and one that is on UTC and must have the
+epoch's leap seconds added back to land on GPS time
+(\texttt{gregorianToGpsTime},
+\texttt{src/core/math/TimeUtils.cpp:157--176}); conflating the two is the
+classic source of whole-second timing errors.
+
+% ============================================================
+\subsection{Leap seconds and per-system dispatch}
+\label{sec:frame-leap}
+% ============================================================
+
+UTC is tied to GPS by the historical table of leap-second insertions.
+The engine stores the table as $\big(\mathrm{JD}_k,\,\leapgu(k)\big)$
+pairs --- the GPS$-$UTC offset that takes effect at each insertion
+boundary, the first row being the GPS epoch itself with offset zero
+(\texttt{src/core/math/TimeUtils.cpp:35--55}).  A query resolves the
+offset by a reverse scan that returns the offset of the latest boundary
+not after the epoch:
+\begin{equation}
+\leapgu(\mathrm{JD}) = \leapgu(k^{\star}),
+\qquad
+k^{\star} = \max\{\,k : \mathrm{JD}_k \le \mathrm{JD}\,\},
+\label{eq:frame-leaplookup}
+\end{equation}
+falling back to zero before the epoch
+(\texttt{src/core/math/TimeUtils.cpp:58--63}).  TAI$-$UTC is then simply
+$\leapgu + 19\;\mathrm{s}$ from \eqref{eq:frame-tai-tt}
+(\texttt{src/core/math/TimeUtils.cpp:65--67}).  The epoch-dependence is
+essential: the same UTC calendar instant maps to different GPS times in
+2005 and 2010 because a leap second was inserted between them, and only a
+boundary-aware lookup recovers the correct offset.
+
+\paragraph{Per-constellation Gregorian dispatch.}
+The four supported time systems differ only in how a RINEX/broadcast
+calendar timestamp is referred to the GPS scale, dispatched by a system
+tag (\texttt{src/core/math/TimeUtils.cpp:178--208}):
+\begin{itemize}
+  \item \textbf{GPS / Galileo} --- already on the GPS scale; the
+    timestamp is converted with no leap correction (GST is steered to
+    GPS time and shares the same week/second framing to within the few
+    nanoseconds the ISB state of \dcref{sec:state}{the State Vector
+    document} absorbs).
+  \item \textbf{BeiDou} --- the timestamp is on BDT, which runs
+    $14\;\mathrm{s}$ behind GPS (\Cref{sec:frame-bdt}); the code converts
+    on the GPS-scale assumption and then \emph{adds} $14\;\mathrm{s}$,
+    carrying any week roll-over
+    (\texttt{src/core/math/TimeUtils.cpp:193--198}).
+  \item \textbf{GLONASS} --- the RINEX timestamp is UTC; the full leap
+    correction of \eqref{eq:frame-leaplookup} is applied to bring it onto
+    GPS time (\texttt{src/core/math/TimeUtils.cpp:201--203}).
+\end{itemize}
+GPS and Galileo therefore carry no leap correction, BeiDou a fixed
+$14\;\mathrm{s}$, and GLONASS the full epoch-dependent leap count --- a
+dispatch that exactly mirrors the constellations' defining time
+references.
+
+% ============================================================
+\subsection{GLONASS time-of-day to full GPS week}
+\label{sec:frame-glonass}
+% ============================================================
+
+GLONASS broadcast and SSR records frequently carry only a time-of-day
+--- seconds since the start of the GLONASS day --- with no week and no
+absolute date.  GLONASS time runs on UTC(SU) advanced by three hours
+(Moscow), so its day boundary is three hours ahead of the UTC midnight.
+Reconstructing a full GPS week from a bare time-of-day therefore needs an
+\emph{anchor}: an approximate GPS-seconds estimate of the true epoch
+(typically the current obs epoch), against which the day and the
+$\pm12\,\mathrm{h}$ wrap are resolved
+(\texttt{src/core/math/TimeUtils.cpp:126--155}, after RTKLIB's
+\texttt{adjday\_glot}).  The procedure, with day length
+$D = 86\,400\;\mathrm{s}$, half-day $D/2$, and Moscow offset
+$M = 3\times3600\;\mathrm{s}$:
+\begin{enumerate}
+  \item Convert the anchor GPS seconds to UTC by subtracting the leap
+    count at that epoch, $\,t_{\mathrm{UTC}} = t_{\mathrm{anchor}} -
+    \leapgu$, then shift into the Moscow-day frame
+    $t_{\mathrm M} = t_{\mathrm{UTC}} + M$ and locate that day's midnight
+    $t_0 = \lfloor t_{\mathrm M}/D\rfloor\,D$, giving the anchor's
+    time-of-day $\tau_{\mathrm a} = t_{\mathrm M} - t_0$.
+  \item Place the reported time-of-day $\tau$ in the anchor's day,
+    resolving the midnight wrap toward the nearest match:
+\end{enumerate}
+\begin{empheq}[box=\fbox]{equation}
+\tau \leftarrow
+\begin{cases}
+\tau + D, & \tau < \tau_{\mathrm a} - D/2,\\[2pt]
+\tau - D, & \tau > \tau_{\mathrm a} + D/2,\\[2pt]
+\tau,     & \text{otherwise,}
+\end{cases}
+\qquad
+t_{\mathrm{GPS}} = \underbrace{(t_0 + \tau)}_{\text{Moscow}} - M + \leapgu .
+\label{eq:frame-glonass-tod}
+\end{empheq}
+The final line undoes the Moscow offset to recover UTC and then
+\emph{re-adds the same leap count} $\leapgu$ to climb back onto the GPS
+scale.  The leap term enters once with each sign and so cancels exactly
+between the two legs --- it is present only because the intermediate
+arithmetic must pass through UTC to frame the Moscow day correctly.  If
+no usable anchor is supplied (a non-positive value) the routine returns
+the sentinel $\{0,0\}$ rather than fabricate a week, so the caller can
+detect the failure and fall back; the continuous-seconds-to-week split
+that closes the routine carries the standard negative-TOW correction
+(\texttt{src/core/math/TimeUtils.cpp:119--124}).
+
+% ============================================================
+\subsection{BeiDou time: the 14\,s offset and independent week base}
+\label{sec:frame-bdt}
+% ============================================================
+
+BeiDou time (BDT) is offset from GPS by a sub-second-level integer and by
+an independent week numbering, and the two pieces are owned by different
+modules.  The \emph{sub-second} relation,
+\begin{equation}
+\mathrm{BDT} = \mathrm{GPS} - 14\;\mathrm{s},
+\label{eq:frame-bdt-sec}
+\end{equation}
+reflects that BDT was synchronised to UTC at its 2006 zero epoch, by
+which time GPS already led UTC by $14\;\mathrm{s}$; it is applied in
+\texttt{TimeUtils} when a BeiDou calendar timestamp is converted to GPS
+time (\texttt{src/core/math/TimeUtils.cpp:193--198}, \Cref{sec:frame-leap}).
+The \emph{week} relation is separate.  BDT counts weeks from its own zero
+epoch (2006-01-01), which is GPS week 1356, and this base is applied at
+query time by the ephemeris store, not by \texttt{TimeUtils}
+(\texttt{src/core/products/LiveEphemerisStore.cpp:29}, :442).  When the
+store lifts a BeiDou ephemeris reference time onto the common GPS scale
+for an honest cross-system age check it adds the combined offset
+\begin{empheq}[box=\fbox]{equation}
+\Delta_{\mathrm{BDT}\to\mathrm{GPS}}
+= 1356 \times 604800\;\mathrm{s} + 14\;\mathrm{s},
+\label{eq:frame-bdt-week}
+\end{empheq}
+the week base plus the $14\;\mathrm{s}$ of \eqref{eq:frame-bdt-sec}
+(\texttt{src/core/products/LiveEphemerisStore.cpp:29--39}).  Omitting the
+week base would make every BeiDou satellite read roughly 1356 weeks
+($\sim$26 years) stale and be silently rejected by the staleness guard
+that follows; the offset does not cancel automatically because the query
+time is GPS-scale while the stored $t_{\mathrm{oe}}$ is on the native BDT
+week (\texttt{src/core/products/LiveEphemerisStore.cpp:438--448}).
+
+% ============================================================
+\subsection{Legacy ECI$\to$ECEF: the equinox-based chain}
+\label{sec:frame-eci}
+% ============================================================
+
+The Sun, Moon, and (for some product streams) the satellite positions
+are most naturally given in a quasi-inertial celestial frame; the tides,
+attitude, and phase wind-up that consume them live in the terrestrial
+ECEF frame.  The bridge is the Earth-orientation matrix $\Umat$ such that
+$\bm{r}_{\mathrm{ECEF}} = \Umat\,\bm{r}_{\mathrm{ECI}}$.  The default
+(always-available) path is the classical equinox-based chain following
+the IAU-1976 precession and IAU-1980 nutation conventions
+\cite{iers2010}, composed as
+(\texttt{src/core/model/Planetary.cpp:356--397}):
+\begin{empheq}[box=\fbox]{equation}
+\Umat = \polW\;\rotR{3}(\gast)\;\nutN\;\precP .
+\label{eq:frame-legacy-chain}
+\end{empheq}
+Here $\rotR{1},\rotR{2},\rotR{3}$ are the elementary right-handed axis
+rotations of \texttt{Planetary::Rxyz} (\texttt{Planetary.cpp:50--67}) and
+each factor reverses one piece of the celestial-to-terrestrial
+orientation: precession and nutation orient the true equator and equinox
+of date, the sidereal rotation $\rotR{3}(\gast)$ spins the frame about
+the pole by the apparent sidereal time, and polar motion $\polW$ ties the
+celestial pole to the conventional terrestrial pole.
+
+\paragraph{Precession (IAU 1976).}
+With $t$ the TT centuries of \eqref{eq:frame-jcent} and arcsecond
+coefficients converted to radians, the three equatorial precession angles
+$\zeta_A, \theta_A, z_A$ and the mean obliquity $\obleps_0$ are
+(\texttt{src/core/model/Planetary.cpp:374--379}):
+\begin{align}
+\zeta_A &= 2306.2181\,t + 0.30188\,t^2 + 0.017998\,t^3, \nonumber\\
+\theta_A &= 2004.3109\,t - 0.42665\,t^2 - 0.041833\,t^3, \nonumber\\
+z_A &= 2306.2181\,t + 1.09468\,t^2 + 0.018203\,t^3,
+\label{eq:frame-prec-angles}\\
+\obleps_0 &= 84381.448 - 46.8150\,t - 0.00059\,t^2 + 0.001813\,t^3
+\quad(\text{arcsec}), \nonumber
+\end{align}
+assembled as
+$\precP = \rotR{3}(-z_A)\,\rotR{2}(\theta_A)\,\rotR{3}(-\zeta_A)$.
+
+\paragraph{Nutation (IAU 1980, 106 terms).}
+The nutation in longitude $\dpsi$ and in obliquity $\deps$ are summed
+over the 106-term IAU-1980 series \cite{iers2010} in the five Delaunay
+fundamental arguments $f = (l, l', F, D, \Omega)$
+(\texttt{src/core/model/Planetary.cpp:96--231}; arguments from
+\texttt{astArgs}, \texttt{Planetary.cpp:70--94}):
+\begin{equation}
+\dpsi = 10^{-4}\!\!\sum_{i=1}^{106}\!\big(A^{\psi}_i + \dot A^{\psi}_i\,t\big)\sin\!\big(\bm{n}_i\!\cdot\! f\big),
+\quad
+\deps = 10^{-4}\!\!\sum_{i=1}^{106}\!\big(A^{\varepsilon}_i + \dot A^{\varepsilon}_i\,t\big)\cos\!\big(\bm{n}_i\!\cdot\! f\big),
+\label{eq:frame-nutation}
+\end{equation}
+in arcseconds (the $10^{-4}$ scales the tabulated $0.1\,\mathrm{mas}$
+units), then converted to radians.  The nutation matrix rotates by the
+true obliquity $\obleps_0 + \deps$:
+$\nutN = \rotR{1}(-\obleps_0-\deps)\,\rotR{3}(-\dpsi)\,\rotR{1}(\obleps_0)$
+(\texttt{Planetary.cpp:381--384}).
+
+\paragraph{Apparent sidereal time and the 0h-UT1 subtlety.}
+Greenwich Apparent Sidereal Time adds the equation of the equinoxes ---
+the nutation in longitude projected on the equator, plus the two leading
+complementary terms in the lunar node $\Omega$ --- to the mean sidereal
+time (\texttt{src/core/model/Planetary.cpp:386--388}):
+\begin{equation}
+\gast = \gmst + \dpsi\cos\obleps_0
+        + \big(0.00264\sin\Omega + 0.000063\sin 2\Omega\big)\,\text{arcsec}.
+\label{eq:frame-gast}
+\end{equation}
+GMST itself is built from the IAU-1982 model evaluated at the
+\emph{start} of the current UT1 day plus the Earth's rotation through the
+elapsed day fraction (\texttt{Planetary.cpp:242--263}).  The reference
+instant must be 0h UT1 of the calendar day, and because a Julian Date is
+referenced to \emph{noon}, that midnight is recovered as
+\begin{equation}
+\mathrm{JD}_{0\mathrm h} = \big\lfloor \mathrm{JD}_{\mathrm{UT1}} - 0.5\big\rfloor + 0.5,
+\label{eq:frame-0h-ut1}
+\end{equation}
+not $\lfloor\mathrm{JD}\rfloor$ (\texttt{Planetary.cpp:245--251}).  Using
+the bare floor lands on the \emph{previous} noon for any post-midnight
+epoch --- a half-day error that propagates to roughly $0.5^{\circ}$ in
+GMST and, through \eqref{eq:frame-legacy-chain}, on the order of
+$10^{6}\;\mathrm{km}$ in the rotated Sun position; the comment at the
+cited line records exactly this failure mode.
+
+\paragraph{Polar motion.}
+The terrestrial-pole tie is
+$\polW = \rotR{2}(-x_p)\,\rotR{1}(-y_p)$ for the interpolated pole
+coordinates $(x_p, y_p)$ in radians
+(\texttt{src/core/model/Planetary.cpp:390--392}), the small-angle
+two-axis rotation that aligns the celestial intermediate pole of date
+with the IERS conventional pole.
+
+% ============================================================
+\subsection{CIO-based ITRS$\leftrightarrow$GCRS (IAU 2000A/2006)}
+\label{sec:frame-cio}
+% ============================================================
+
+An opt-in path (\texttt{enable\_cio\_frame\_}) replaces the equinox chain
+with the modern Celestial Intermediate Origin (CIO) based transform of
+the IAU 2000A/2006 conventions \cite{iers2010}, evaluated through SOFA
+\cite{sofa} and mirroring the M-PAGES \texttt{NgsFormC2T} construction
+(\texttt{src/core/model/Planetary.cpp:399--446}).  The
+celestial-to-terrestrial matrix is composed as
+\begin{empheq}[box=\fbox]{equation}
+\Umat = \mathtt{POM}(x_p, y_p, s')\;\rotR{3}(\era)\;\mathtt{C2I}(\cipX,\cipY,\cioloc),
+\label{eq:frame-cio-chain}
+\end{empheq}
+i.e.\ the SOFA composition \texttt{iauC2tcio}.  The Celestial
+Intermediate Pole coordinates $(\cipX,\cipY)$ and the CIO locator
+$\cioloc$ come from the full IAU-2000A precession-nutation model via
+\texttt{iauXys00a}, after which the \emph{observed} celestial-pole
+offsets are injected additively,
+\begin{equation}
+\cipX \leftarrow \cipX + \mathrm{d}X, \qquad
+\cipY \leftarrow \cipY + \mathrm{d}Y,
+\label{eq:frame-cip-offset}
+\end{equation}
+and the celestial-to-intermediate matrix is formed by \texttt{iauC2ixys}.
+The diurnal rotation is the Earth Rotation Angle $\era$ (a strictly
+linear function of UT1, \texttt{iauEra00}) rather than the sidereal time
+of \eqref{eq:frame-gast}, and the terrestrial-pole tie
+$\mathtt{POM}$ uses \texttt{iauPom00} with the TIO locator $s'$ from
+\texttt{iauSp00}.  Two-part Julian Dates are passed with the
+$(2400000.5, \mathrm{MJD})$ split for numerical conditioning
+(\texttt{Planetary.cpp:410--415}).  The two paths are designed to agree:
+with $\mathrm{d}X = \mathrm{d}Y = 0$ the CIO result reproduces the bare
+IAU-2000A model and differs from the legacy equinox chain only by the
+(sub-milliarcsecond) frame-bias and model-version difference, which the
+engine confirms at startup by logging the angular separation of the two
+Sun directions (\texttt{Planetary.cpp:587--604}).
+
+% ============================================================
+\subsection{Earth-orientation parameters: parse and interpolation}
+\label{sec:frame-erp}
+% ============================================================
+
+Both transforms above need the time-varying Earth-orientation parameters
+$(x_p, y_p, \mathrm{UT1}-\mathrm{UTC}, \mathrm{d}X, \mathrm{d}Y)$.  These
+arrive in a standard IGS \texttt{.ERP} file, parsed by
+\texttt{ProductParser::parseErp} (\texttt{src/core/products/ProductParser.cpp:1166--1206}).
+The parser reads the MJD time tag and the pole/UT1 columns and applies
+the IGS scale factors --- the pole coordinates are tabulated in
+$10^{-6}$ arcseconds and UT1$-$UTC in $10^{-7}$ seconds
+(\texttt{ProductParser.cpp:1190--1192}):
+\begin{equation}
+x_p = (\text{col})\times 10^{-6}\,\text{arcsec}, \quad
+y_p = (\text{col})\times 10^{-6}\,\text{arcsec}, \quad
+(\mathrm{UT1}-\mathrm{UTC}) = (\text{col})\times 10^{-7}\,\text{s}.
+\label{eq:frame-erp-scale}
+\end{equation}
+The MJD tag is converted to a GPS week/TOW relative to the GPS-epoch MJD
+(\texttt{ProductParser.cpp:1183--1189}).  The CIP offsets $\mathrm{d}X,
+\mathrm{d}Y$ are \emph{not} carried by the standard \texttt{.ERP} format
+and default to zero; because the IAU-2000A model of
+\eqref{eq:frame-cio-chain} already includes the modelled
+precession-nutation, $\mathrm{d}X = \mathrm{d}Y = 0$ is the correct
+nominal value, not a missing input
+(\texttt{ProductParser.cpp:1193--1196}).  The parser \emph{only} parses;
+all temporal interpolation lives in \texttt{Planetary::interpolateErp}
+(\texttt{src/core/model/Planetary.cpp:448--520}), which binary-searches
+the chronologically sorted table on continuous GPS seconds and linearly
+interpolates every component between the bracketing entries:
+\begin{equation}
+p(t) = p_{0} + \frac{t - t_{0}}{t_{1}-t_{0}}\,(p_{1}-p_{0}),
+\qquad p \in \{x_p, y_p, \mathrm{UT1}{-}\mathrm{UTC}, \mathrm{d}X, \mathrm{d}Y\},
+\label{eq:frame-erp-interp}
+\end{equation}
+clamping to the nearest endpoint outside the table span
+(\texttt{Planetary.cpp:486--519}).  The interpolated $(x_p, y_p)$ feed
+the polar-motion factor of \eqref{eq:frame-legacy-chain} /
+\eqref{eq:frame-cio-chain}, while UT1$-$UTC corrects UTC to UT1 before
+the sidereal/ERA evaluation.  The product-evaluation document
+(\dcref{sec:products}{Product Evaluation}) cross-references this section
+rather than re-deriving the polar-motion application, since the same
+$\polW$ rotates both the luni-solar vectors and any celestial-frame
+satellite product.
+
+% ============================================================
+\subsection{The Sun and Moon series these transforms position}
+\label{sec:frame-sunmoon}
+% ============================================================
+
+The end purpose of the orientation chain is to place the Sun and Moon in
+ECEF for the geophysical and observation-model corrections.  The
+celestial-frame positions are computed first, from an analytic series in
+the J2000 centuries $t$ and the Delaunay arguments $f$
+(\texttt{src/core/model/Planetary.cpp:264--354}), an enhanced
+RTKLIB/Meeus model \cite{meeus1991, montenbruck2000}.  The Sun's
+ecliptic longitude is the mean longitude plus the equation of centre
+(three harmonics of the solar mean anomaly $M_\odot$) and small Venus,
+Jupiter, and lunar perturbation terms
+(\texttt{Planetary.cpp:303--310}); the obliquity rotation
+\begin{equation}
+\obleps = 23.439291 - 0.0130042\,t \quad(\text{deg})
+\label{eq:frame-obliquity}
+\end{equation}
+(\texttt{Planetary.cpp:290}) carries the resulting ecliptic
+$(\lambda_\odot, \beta_\odot)$ into equatorial ECI components
+(\texttt{Planetary.cpp:324--331}):
+\begin{align}
+r_x &= r\,\cos\beta_\odot\cos\lambda_\odot, \nonumber\\
+r_y &= r\,(\cos\obleps\,\cos\beta_\odot\sin\lambda_\odot - \sin\obleps\,\sin\beta_\odot), \label{eq:frame-eci-sun}\\
+r_z &= r\,(\sin\obleps\,\cos\beta_\odot\sin\lambda_\odot + \cos\obleps\,\sin\beta_\odot), \nonumber
+\end{align}
+with the solar distance $r$ from the three-harmonic radius series
+(\texttt{Planetary.cpp:317--322}).  The Moon's longitude, latitude, and
+horizontal-parallax-derived distance follow the analogous Brown-series
+truncation in the same five fundamental arguments
+(\texttt{Planetary.cpp:333--353}).  The resulting ECI vectors are then
+rotated to ECEF by exactly the $\Umat$ of \eqref{eq:frame-legacy-chain}
+or \eqref{eq:frame-cio-chain} according to the
+\texttt{enable\_cio\_frame\_} toggle
+(\texttt{Planetary.cpp:535--612}); the ECEF Sun and Moon are precisely
+the inputs consumed by the solid-Earth and ocean tides of
+\dcref{sec:sitedisp}{the Site Displacement document} and by the
+satellite-attitude and phase-wind-up models of
+\dcref{sec:obsphys}{the Observation Physics document}.  The two
+luni-solar models are only $\sim$100\,km accurate in position --- ample
+for the tidal and attitude geometry, which depend on the Sun/Moon
+\emph{direction} to well under the milliarcsecond level that matters ---
+and a non-finite guard substitutes a nominal 1\,AU / mean-lunar-distance
+fallback rather than propagate a NaN into the correction stack
+(\texttt{Planetary.cpp:614--622}).
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

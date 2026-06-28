@@ -59,7 +59,8 @@ namespace GnssProcessor {
         double sat_clock         = 0.0;
         double shapiro_delay     = 0.0;
         double sagnac_corr       = 0.0;
-        double atm_loading_corr  = 0.0;
+        double otl_corr          = 0.0;   ///< Ocean tidal loading site displacement projected onto -LOS (m).
+        double apl_corr          = 0.0;   ///< Atmospheric pressure loading (S1/S2 thermal tide) projected onto -LOS (m).
         double relativistic_corr = 0.0;
         double solid_tide        = 0.0;
         double mf_w              = 0.0;
@@ -337,6 +338,25 @@ namespace GnssProcessor {
          * @param gim Pointer to a loaded GIM, or @c nullptr.
          */
         void setGim(const GlobalIonosphereMap* gim) { gim_ = gim; }
+
+        /**
+         * @brief Inject a non-owning SSR-correction store override (DI seam for
+         *        the PPP-RTK closed-loop harness).
+         *
+         * Forwards to the internal @c Model::Geometry (SSR clock + orbit overlay)
+         * and the model's own @c GnssCorrections.  Pass @c nullptr (the default
+         * state) to use the process-wide singleton — every non-harness caller is
+         * byte-identical.  The network closed-loop consumer points this at the
+         * producer's OWNED store so a held-out station consumes the network's
+         * freshly-emitted satellite clock without polluting global state.
+         *
+         * @param store Non-owning store pointer (must outlive this model) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrStore(const SsrCorrectionStore* store) {
+            geometry_.setSsrStore(store);
+            gnss_corrections_.setSsrStore(store);
+        }
 
         /**
          * @brief Compute the per-signal I₂ + I₃ correction (m) to add

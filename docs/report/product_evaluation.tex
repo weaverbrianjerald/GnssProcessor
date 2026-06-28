@@ -1,0 +1,628 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Orbit and Clock Product Evaluation}\label{sec:products}
+% ============================================================
+%  The deterministic satellite orbit/clock backbone that every
+%  mode evaluates; the SSR overlay (sec:ssr) refines it.
+% ============================================================
+
+% --- doc-local notation (descriptive names to dodge package collisions) ---
+\newcommand{\eciframe}{\bm{r}^{\sat}_{\mathrm{I}}}     % near-inertial derotated position
+\newcommand{\rotz}[1]{\bm{R}_z(#1)}                    % rotation about ECEF z
+\newcommand{\earthrot}{\omega_{\oplus}}               % Earth rotation rate (scalar)
+\newcommand{\sidereal}{\kappa}                         % sidereal-day ratio
+\newcommand{\trigfreq}{\Omega_{0}}                     % fundamental sidereal angular rate
+\newcommand{\satclk}{\delta t^{\sat}}                 % satellite clock bias [s]
+\newcommand{\eccanom}{E}                              % eccentric anomaly
+\newcommand{\meananom}{M}                             % mean anomaly
+\newcommand{\trueanom}{\nu}                           % true anomaly
+\newcommand{\meanmotion}{n}                           % corrected mean motion
+\newcommand{\jtwo}{J_2}                               % oblateness coefficient
+
+Every processing mode in the engine --- post-processed PPP, PPP-RTK, the
+baseline modes, and the real-time streaming engine --- shares one
+deterministic satellite \emph{backbone}: a position
+$\satpos$, velocity $\satvel$, and clock bias $\satclk$ for each
+satellite at each query epoch.  This backbone is evaluated \emph{before}
+any state-space refinement.  In post-processing it is the final word; in
+the live engine it is the broadcast baseline that the SSR overlay
+(\dcref{sec:ssr}{the SSR corrections document}) refines by a RAC orbit
+delta and a scalar clock delta.  This document derives the backbone
+itself --- the two precise interpolation paths and the two broadcast
+evaluation paths --- and the ephemeris-selection logic that feeds them.
+It deliberately stops at the point where the SSR delta is added:
+the orbit/clock \emph{overlay} math (RAC frame, IOD gate, freshness)
+lives in \dcref{sec:ssr}{the SSR document} and is not re-derived here.
+The Sagnac (Earth-rotation) range correction that turns $\satpos$ at
+transmit time into a consistent line-of-sight belongs to
+\dcref{sec:obsphys}{the observation-physics document}; the ERP /
+polar-motion transforms that carry an SP3 sample between the terrestrial
+and celestial frames belong to \dcref{sec:frames}{the reference-frames
+document}.
+
+The backbone splits cleanly into a \emph{precise} path and a
+\emph{broadcast} path.  The precise path consumes tabulated SP3 orbit
+samples and CLK clock samples (IGS Final / Rapid products) and
+\emph{interpolates}; it is the post-processing default and is
+centimetre-to-millimetre grade.  The broadcast path evaluates a
+Keplerian (or, for GLONASS, a numerically integrated PZ-90) ephemeris
+analytically from the navigation message; it is metre-grade on its own
+and is the substrate the live SSR stream corrects.  The two paths never
+mix within a satellite at a given epoch: a precise product, when loaded
+and spanning the query, wins; otherwise the engine falls through to the
+broadcast evaluation (\texttt{src/core/model/ModelGeometry.cpp},
+\texttt{src/core/corrections/GnssCorrections.cpp}).
+
+\subsection{Precise orbit: derotated Neville interpolation}\label{sec:prod-neville}
+
+SP3 files tabulate the satellite position in the ECEF frame on a coarse
+grid (typically $900$\,s for IGS Final, $300$\,s for Rapid).  The ECEF
+trajectory is \emph{not} a smooth low-degree polynomial: it carries the
+sidereal-frequency oscillation of the rotating frame relative to the
+satellite's near-inertial orbit, which a degree-$10$ fit cannot capture
+to better than a few millimetres near the SP3 epoch boundaries.  The
+engine therefore \emph{derotates} each node into a common
+near-inertial frame anchored at the query epoch before interpolating
+(\texttt{src/core/model/ModelGeometry.cpp}, following the
+RTKLIB / cssrlib convention \cite{takasu2009rtklib}).  For a node sampled
+at $t_{\sat}$ and a query at $t_q$, with the Earth-rotation rate
+$\earthrot = 7.2921151467\times10^{-5}$\,rad/s
+(\texttt{Constants::EARTH\_ANGULAR\_VELOCITY}), the in-plane coordinates
+are rotated by the angle the frame swept between the two epochs:
+\begin{equation}
+\eciframe(t_{\sat})
+=
+\rotz{\earthrot\,(t_{\sat}-t_q)}\;\satpos(t_{\sat}),
+\qquad
+\rotz{\alpha}=
+\begin{bmatrix}
+\cos\alpha & -\sin\alpha & 0\\
+\sin\alpha & \phantom{-}\cos\alpha & 0\\
+0 & 0 & 1
+\end{bmatrix}.
+\label{eq:prod-derotate}
+\end{equation}
+Concretely, with $\alpha_{\sat}=\earthrot\,(t_{\sat}-t_q)$ the derotated
+in-plane components written to the interpolation arrays are
+$\tilde{x}_{\sat}=\cos\alpha_{\sat}\,x_{\sat}-\sin\alpha_{\sat}\,y_{\sat}$
+and
+$\tilde{y}_{\sat}=\sin\alpha_{\sat}\,x_{\sat}+\cos\alpha_{\sat}\,y_{\sat}$,
+with $z$ untouched (\texttt{ModelGeometry.cpp}).  Because the rotation
+angle is exactly zero at $t_{\sat}=t_q$, the interpolated value at the
+query is \emph{already} the ECEF position at $t_q$ --- no post-rotation
+is needed.
+
+\paragraph{Bracket-centred window.}
+The node window is the decisive design choice for position
+\emph{continuity}.  The engine selects an $\mathrm{IGS\_POINTS}=11$-node
+window centred on the \emph{bracket} $[t_a,t_{a+1}]$ that contains $t_q$,
+not the $11$ nodes nearest to $t_q$
+(\texttt{ModelGeometry.cpp}).  The distinction is subtle but
+operationally important: a nearest-$N$ rule swaps a node at the
+\emph{midpoint} between SP3 epochs, where the two candidate polynomials
+disagree by a few millimetres, producing the well-known
+synchronous-across-constellation $15$-minute sawtooth in PPP position.
+A bracket-centred rule instead swaps the window exactly when $t_q$
+crosses a node $t_{a+1}$; at that instant $t_{a+1}$ is shared by both
+windows, so the Neville value is identical on either side and the
+interpolated orbit is continuous across the swap.  A gap guard
+re-picks a narrower $\mathrm{MIN\_POINTS}=9$-node window and rejects
+the satellite if the residual span still exceeds the fit interval
+(thresholds in \texttt{ModelGeometry.cpp}; tuning values cited, not
+reproduced).
+
+\paragraph{Neville value and derivative.}
+Within the window the engine runs Neville's algorithm
+simultaneously for the value and its analytic derivative
+(\texttt{src/core/math/Interpolate.cpp},
+\texttt{Interpolate::nevilleInterpDeriv}).  To avoid catastrophic
+cancellation, the node abscissae are shifted to
+$s_{\sat}=t_{\sat}-t_q$ (raw continuous GPS seconds are $\sim\!1.36\times10^8$,
+so an un-shifted difference loses $\sim\!8$ digits); the polynomial value
+and derivative are both invariant under this unit-Jacobian shift.  With
+the tableau column $P_{i}$ for the value and $D_{i}$ for the derivative,
+the coupled recurrence over degree $j$ (evaluating at the shifted query
+$s_q=0$) is
+\begin{align}
+P_{i,j}
+&=
+\frac{(s_q-s_{i+j})\,P_{i,j-1}-(s_q-s_i)\,P_{i+1,j-1}}
+     {s_i-s_{i+j}},
+\label{eq:prod-neville-value}\\[4pt]
+D_{i,j}
+&=
+\frac{(s_q-s_{i+j})\,D_{i,j-1}+P_{i,j-1}
+       -(s_q-s_i)\,D_{i+1,j-1}-P_{i+1,j-1}}
+     {s_i-s_{i+j}},
+\label{eq:prod-neville-deriv}
+\end{align}
+seeded by $P_{i,0}=y_i$ and $D_{i,0}=0$; the converged scalars are
+$P_{0,n-1}$ and $D_{0,n-1}$ (\texttt{Interpolate.cpp}).  The derivative
+recurrence \eqref{eq:prod-neville-deriv} is exactly
+$\partial/\partial s_q$ of the value recurrence
+\eqref{eq:prod-neville-value}, so no second pass or finite difference is
+required.
+
+\paragraph{Inertial-to-ECEF velocity.}
+The Neville derivative is taken on the \emph{derotated} channels, so it
+is the velocity in the frame fixed at $t_q$ --- a snapshot inertial
+frame.  Downstream consumers (Doppler line-of-sight rate, orbit-normal
+attitude, the relativistic $\satpos\cdot\satvel$ term) require the ECEF
+velocity, recovered by removing the frame rotation
+$\satvel_{\mathrm{ECEF}}=\satvel_{\mathrm{I}}-\bm{\omega}_{\oplus}\times\satpos$.
+For $\bm{\omega}_{\oplus}=(0,0,\earthrot)$ this is the boxed transform
+applied in \texttt{ModelGeometry.cpp}:
+\begin{empheq}[box=\fbox]{equation}
+\satvel_{\mathrm{ECEF}}
+=
+\begin{bmatrix}
+v_{\mathrm{I},x}+\earthrot\,\satpos_y\\[2pt]
+v_{\mathrm{I},y}-\earthrot\,\satpos_x\\[2pt]
+v_{\mathrm{I},z}
+\end{bmatrix}.
+\label{eq:prod-vel-ecef}
+\end{empheq}
+The relativistic clock term is invariant to this conversion, since
+$\satpos\cdot(\bm{\omega}_{\oplus}\times\satpos)=0$; only the Doppler and
+cross-product attitude paths see the difference
+(\texttt{ModelGeometry.cpp}).
+
+\subsection{Precise orbit: sidereal-trigonometric LSQ fit}\label{sec:prod-trig}
+
+A config-gated alternative (\texttt{config.enableTrigSp3Interp()}) replaces
+the Neville polynomial with an over-determined least-squares fit on a
+\emph{sidereal-trigonometric basis}, run on the identical derotated
+channels and time base
+(\texttt{ModelGeometry.cpp};
+\texttt{Interpolate::trigSvdInterp}).  The basis is a constant plus four
+sine/cosine harmonic pairs of the fundamental sidereal angular rate ---
+nine terms in all:
+\begin{equation}
+\satpos_{\mathrm{c}}(\tau)
+=
+c_0
++
+\sum_{f=1}^{4}\bigl[
+  c_{2f-1}\sin(f\,\trigfreq\,\tau)
+  + c_{2f}\cos(f\,\trigfreq\,\tau)
+\bigr],
+\qquad
+\tau = t-t_0,
+\label{eq:prod-trig-basis}
+\end{equation}
+where $t_0$ is the first node (the constant term absorbs the offset, the
+sin/cos pairs the phase, so the fitted curve is invariant to this
+choice).  The fundamental rate is the angular frequency of the
+\emph{mean sidereal day}: with the sidereal-day ratio
+$\sidereal=0.99726956634$ and a nominal solar day of $86400$\,s,
+\begin{empheq}[box=\fbox]{equation}
+\trigfreq
+=
+\frac{2\pi}{\sidereal\cdot 86400\ \mathrm{s}}\quad[\mathrm{rad/s}],
+\qquad
+\sidereal = 0.99726956634,
+\label{eq:prod-trig-rate}
+\end{empheq}
+expressed \emph{per second} so the basis argument $\tau$ stays in the
+caller's seconds and the analytic derivative falls out per second
+(\texttt{Interpolate.cpp}; M-PAGES uses rad/day and divides the velocity
+by $86400$, numerically identical).  The constant
+$\sidereal=0.99726956634$ is the IERS mean sidereal-to-solar day ratio
+and \emph{is} the physics of the model, so it is reproduced here with its
+source line.
+
+The fit is solved by Eigen's \texttt{JacobiSVD} with a relative
+singular-value threshold of $10^{-15}$, which yields the minimum-norm
+least-squares solution --- the Numerical-Recipes \texttt{svbksb}
+convention M-PAGES' \texttt{svdfit} uses \cite{press2007numerical}.  Per-node
+weights derive from the SP3 \texttt{++} accuracy codes; because those are
+a single value per satellite, the weight set is uniform and the fit is
+effectively unweighted, matching M-PAGES.  The analytic value and
+derivative at the query $\tau_q=t_q-t_0$ are
+\begin{align}
+\satpos_{\mathrm{c}}(\tau_q)
+&=
+c_0+\sum_{f=1}^{4}\bigl[
+  c_{2f-1}\sin(f\trigfreq\tau_q)+c_{2f}\cos(f\trigfreq\tau_q)\bigr],
+\label{eq:prod-trig-value}\\[4pt]
+\dot{\satpos}_{\mathrm{c}}(\tau_q)
+&=
+\sum_{f=1}^{4}(f\trigfreq)\bigl[
+  c_{2f-1}\cos(f\trigfreq\tau_q)-c_{2f}\sin(f\trigfreq\tau_q)\bigr],
+\label{eq:prod-trig-deriv}
+\end{align}
+with the per-harmonic angular weight $w_f=f\,\trigfreq$
+(\texttt{Interpolate.cpp}).  Crucially this is an \emph{over-determined
+smoother}: the window is up to $11$ nodes against $9$ basis terms, so for
+$N>9$ the fitted curve does \emph{not} pass through the nodes --- a
+deliberate divergence from the M-PAGES $9$-point exact fit, kept so the
+trig branch reuses the existing derotated window verbatim.  The same
+inertial-to-ECEF velocity conversion \eqref{eq:prod-vel-ecef} is then
+applied to $\dot{\satpos}_{\mathrm{c}}$.
+
+\subsection{Precise clock interpolation}\label{sec:prod-clock}
+
+The CLK product tabulates the scalar satellite clock bias $\satclk$ on
+its own grid (commonly $30$\,s).  Because clock noise is process-driven
+(a near-Brownian random walk in bias, with occasional rate
+discontinuities), the engine offers three interpolation modes selected by
+\texttt{config.getSatelliteClockInterpolationMode()}
+(\texttt{src/core/corrections/GnssCorrections.cpp}).  All three are
+bracket-centred for the same continuity reason as the orbit window: the
+sliding window must swap on a shared node, never at a between-epoch
+midpoint.
+
+\paragraph{(a) Linear (MMSE for Brownian motion).}
+The default is a two-node linear interpolation across the bracket
+$[t_0,t_1]$ containing $t_q$:
+\begin{equation}
+\satclk(t_q)
+=
+\satclk_0
++
+\bigl(\satclk_1-\satclk_0\bigr)\,
+\frac{t_q-t_0}{t_1-t_0},
+\label{eq:prod-clock-linear}
+\end{equation}
+which is the minimum-mean-square-error estimator for a Wiener process
+sampled at the two bracketing epochs.  Interpolation across a gap larger
+than a guard threshold (in seconds) is rejected outright rather than
+fabricated (\texttt{GnssCorrections.cpp}; gap value cited, not
+reproduced).
+
+\paragraph{(b) Rate-anchored weighted LSQ.}
+The \texttt{LsqSatClock} mode fits a local line
+$\satclk(t)\approx a+b\,(t-t_q)$ over an $\sim\!11$-node window by
+weighted least squares, with the centring shift $s_k=t_k-t_q$ making the
+fitted value at the query equal to the intercept $a$ directly.  The key
+refinement is that the CLK product may also carry a clock \emph{rate}
+$m_j$ at the coarse $5$-minute epochs; each rate is added as an
+\emph{explicit observation of the slope}, $m_j=b+\mu_j$.  Since a value
+equation $y_k=a+b\,s_k+\nu_k$ has $\partial/\partial a=1$, $\partial/\partial b=s_k$
+while a rate equation $m_j=b+\mu_j$ has $\partial/\partial a=0$,
+$\partial/\partial b=1$, the rate observations contribute to the slope
+row only.  With value weights $w^{(y)}_k=1/\sigma_{y,k}^2$ and rate
+weights $w^{(m)}_j=1/\sigma_{m,j}^2$, the $2\times2$ weighted normal
+equations are
+\begin{empheq}[box=\fbox]{equation}
+\begin{bmatrix}
+\displaystyle\sum_k w^{(y)}_k
+&
+\displaystyle\sum_k w^{(y)}_k s_k
+\\[10pt]
+\displaystyle\sum_k w^{(y)}_k s_k
+&
+\displaystyle\sum_k w^{(y)}_k s_k^{2}
+\;+\;
+\displaystyle\sum_j w^{(m)}_j
+\end{bmatrix}
+\!\!
+\begin{bmatrix} a\\[6pt] b \end{bmatrix}
+=
+\begin{bmatrix}
+\displaystyle\sum_k w^{(y)}_k y_k
+\\[10pt]
+\displaystyle\sum_k w^{(y)}_k s_k y_k
+\;+\;
+\displaystyle\sum_j w^{(m)}_j m_j
+\end{bmatrix},
+\label{eq:prod-clock-lsq}
+\end{empheq}
+solved in closed form for the intercept
+\begin{equation}
+a
+=
+\frac{\bigl(S_{wxx}+S_m\bigr)\,S_{wy}
+       -S_{wx}\,\bigl(S_{wxy}+S_{my}\bigr)}
+     {S_w\bigl(S_{wxx}+S_m\bigr)-S_{wx}^{2}},
+\label{eq:prod-clock-lsq-soln}
+\end{equation}
+with the running sums named exactly as in
+\texttt{GnssCorrections.cpp}
+($S_w=\sum w^{(y)}_k$, $S_{wx}=\sum w^{(y)}_k s_k$,
+$S_{wxx}=\sum w^{(y)}_k s_k^2$, $S_{wy}=\sum w^{(y)}_k y_k$,
+$S_{wxy}=\sum w^{(y)}_k s_k y_k$, $S_m=\sum w^{(m)}_j$,
+$S_{my}=\sum w^{(m)}_j m_j$), and the determinant in the denominator
+guarding a degenerate (coincident-time) window with a linear fallback.
+The estimate $\satclk(t_q)=a$ is returned.  Because the fit smooths
+$\sim\!N$ value samples instead of touching two, the observation-noise
+component of the estimate at the bracket midpoint drops by
+$\sim\!\sqrt{N/2}$ relative to plain linear \eqref{eq:prod-clock-linear} ---
+material in the seconds-to-minutes regime where the CLK observation noise
+dominates the per-sample process noise.  The cost is a loss of
+exact-node passage: the smoother introduces millimetre-level
+discontinuities at the clock epochs when the window slides.
+
+\paragraph{(c) Barycentric Lagrange.}
+For high-rate ($1$\,Hz) products a barycentric-form Lagrange interpolation
+over a $\mathrm{LAGRANGE\_POINTS}=9$-node window is available
+(\texttt{GnssCorrections.cpp};
+\texttt{Interpolate::barycentricWeights} / \texttt{barycentricEval}).  The
+barycentric form
+\begin{equation}
+\satclk(t_q)
+=
+\Biggl.
+\sum_{i=1}^{n}\frac{w_i}{t_q-t_i}\,\satclk_i
+\;\Biggm/\;
+\sum_{i=1}^{n}\frac{w_i}{t_q-t_i},
+\qquad
+w_i=\prod_{k\neq i}\frac{1}{t_i-t_k},
+\label{eq:prod-clock-bary}
+\end{equation}
+is the numerically stable evaluation of the degree-$(n-1)$ Lagrange
+polynomial \cite{berrut2004barycentric}; an extrapolation guard falls back
+to two-node linear when $t_q$ lies outside the node span.  This mode is
+\emph{not} recommended for standard $30$\,s IGS Final clocks --- the
+polynomial oscillates between the sparse samples --- and is retained only
+for genuinely high-rate input.
+
+\subsection{Broadcast Keplerian evaluation}\label{sec:prod-kepler}
+
+When no precise product spans the query, GPS, Galileo, BeiDou and QZSS
+are evaluated from their Keplerian broadcast ephemeris
+(\texttt{src/core/products/LiveEphemerisStore.cpp},
+\texttt{keplerPosition}).  This is the substrate the live SSR stream
+corrects.  Each system carries its own gravitational parameter $\mu$ and
+Earth-rotation rate $\earthrot$ (\texttt{LiveEphemerisStore.cpp}):
+GPS / QZSS use $\mu=3.986005\times10^{14}\,\mathrm{m^3/s^2}$,
+$\earthrot=7.2921151467\times10^{-5}\,\mathrm{rad/s}$;
+Galileo / BeiDou use $\mu=3.986004418\times10^{14}\,\mathrm{m^3/s^2}$,
+with BeiDou taking the slightly different
+$\earthrot=7.292115\times10^{-5}\,\mathrm{rad/s}$.  BeiDou is evaluated
+entirely on its native BeiDou Time (BDT) scale --- BDT week $0$ aligns
+with GPS week $1356$ and $\mathrm{BDT}=\mathrm{GPS}-14$\,s --- with both
+the query epoch and the stored $t_{oe}$ kept on BDT so the node-rotation
+term below uses the BDT seconds-of-week directly
+(\texttt{LiveEphemerisStore.cpp}).
+
+With the semi-major axis $a=(\sqrt{a})^2$ and the time-from-ephemeris
+$t_k=t-t_{oe}$ reduced into $[-302400,+302400]$\,s (week rollover), the
+corrected mean motion adds the broadcast $\delta n$ to the Keplerian
+value, and the mean anomaly propagates linearly:
+\begin{equation}
+\meanmotion
+=
+\sqrt{\frac{\mu}{a^{3}}}+\delta n,
+\qquad
+\meananom
+=
+M_0+\meanmotion\,t_k.
+\label{eq:prod-kepler-motion}
+\end{equation}
+Kepler's equation $\meananom=\eccanom-e\sin\eccanom$ is solved by Newton
+iteration (up to $15$ steps, convergence at
+$|\Delta\eccanom|<10^{-13}$):
+\begin{equation}
+\eccanom_{k+1}
+=
+\eccanom_k
++
+\frac{\meananom-\bigl(\eccanom_k-e\sin\eccanom_k\bigr)}
+     {1-e\cos\eccanom_k}.
+\label{eq:prod-kepler-newton}
+\end{equation}
+The true anomaly and the argument of latitude follow, then the broadcast
+second-harmonic corrections refine the argument of latitude $u$, the
+orbital radius $r$, and the inclination $i$:
+\begin{align}
+\trueanom
+&=
+\operatorname{atan2}\!\bigl(\sqrt{1-e^2}\,\sin\eccanom,\;\cos\eccanom-e\bigr),
+\qquad
+\phi=\trueanom+\omega,
+\label{eq:prod-kepler-anom}\\[4pt]
+u &= \phi + c_{us}\sin 2\phi + c_{uc}\cos 2\phi,
+\nonumber\\
+r &= a\bigl(1-e\cos\eccanom\bigr) + c_{rs}\sin 2\phi + c_{rc}\cos 2\phi,
+\label{eq:prod-kepler-harmonic}\\
+i &= i_0 + \dot{\imath}\,t_k + c_{is}\sin 2\phi + c_{ic}\cos 2\phi.
+\nonumber
+\end{align}
+The corrected longitude of the ascending node folds in the node rate
+\emph{relative to} the rotating Earth and the fixed node offset at the
+ephemeris epoch:
+\begin{empheq}[box=\fbox]{equation}
+\Omega
+=
+\Omega_0
++
+\bigl(\dot{\Omega}-\earthrot\bigr)\,t_k
+-
+\earthrot\,t_{oe},
+\label{eq:prod-kepler-node}
+\end{empheq}
+where the final $-\earthrot\,t_{oe}$ uses the seconds-of-week of $t_{oe}$
+on the native scale (\texttt{LiveEphemerisStore.cpp}).  With the in-plane
+position $(x_o,y_o)=(r\cos u,\,r\sin u)$ the ECEF position is the standard
+rotation through $\Omega$ and $i$:
+\begin{equation}
+\satpos
+=
+\begin{bmatrix}
+x_o\cos\Omega - y_o\cos i\,\sin\Omega\\
+x_o\sin\Omega + y_o\cos i\,\cos\Omega\\
+y_o\sin i
+\end{bmatrix}.
+\label{eq:prod-kepler-ecef}
+\end{equation}
+The BeiDou GEO additional fixed rotation is not applied (GEO satellites
+are rarely used for PPP-RTK).  Velocity is obtained by central finite
+difference of \eqref{eq:prod-kepler-ecef} over $\pm0.5$\,s, $\satvel
+\approx[\satpos(t+\tfrac12)-\satpos(t-\tfrac12)]/(2\,\Delta t)$ with
+$\Delta t=0.5$\,s, reusing the same
+analytic position evaluator (\texttt{LiveEphemerisStore.cpp}).
+
+\subsection{Broadcast GLONASS: PZ-90 RK4 integration}\label{sec:prod-glonass}
+
+GLONASS does not broadcast Keplerian elements; it broadcasts an ECEF
+state vector (position, velocity, and a luni-solar acceleration) valid at
+$t_b$, and the ICD prescribes numerical integration of the PZ-90
+equations of motion to the query epoch \cite{glonassicd2008}.  The engine
+marches a fixed-step fourth-order Runge--Kutta integrator
+(\texttt{src/core/products/LiveEphemerisStore.cpp},
+\texttt{glonassState}).  The per-axis acceleration combines the central
+gravitational term, the $\jtwo$ oblateness perturbation, the centrifugal
+and Coriolis terms of the rotating frame, and the broadcast luni-solar
+acceleration held constant over the integration.  Writing
+$r=\lVert\satpos\rVert$ and the oblateness coefficient
+\begin{equation}
+\kappa_{\jtwo}
+=
+\tfrac{3}{2}\,\jtwo\,\frac{\mu\,a_e^{2}}{r^{5}},
+\qquad
+\jtwo = 1.0826257\times10^{-3},
+\label{eq:prod-glonass-j2coef}
+\end{equation}
+(with $\mu=3.9860044\times10^{14}\,\mathrm{m^3/s^2}$,
+$a_e=6378136\,\mathrm{m}$, $\earthrot=7.292115\times10^{-5}\,\mathrm{rad/s}$,
+all PZ-90 constants at \texttt{LiveEphemerisStore.cpp}), the accelerations are
+\begin{empheq}[box=\fbox]{align}
+\ddot{x}
+&=
+-\frac{\mu}{r^{3}}x
++\kappa_{\jtwo}\,x\bigl(1-5\,z^2/r^2\bigr)
++\earthrot^{2}x+2\earthrot\dot{y}+a_{x},
+\nonumber\\
+\ddot{y}
+&=
+-\frac{\mu}{r^{3}}y
++\kappa_{\jtwo}\,y\bigl(1-5\,z^2/r^2\bigr)
++\earthrot^{2}y-2\earthrot\dot{x}+a_{y},
+\label{eq:prod-glonass-accel}\\
+\ddot{z}
+&=
+-\frac{\mu}{r^{3}}z
++\kappa_{\jtwo}\,z\bigl(3-5\,z^2/r^2\bigr)
++a_{z},
+\nonumber
+\end{empheq}
+where $(a_x,a_y,a_z)$ is the broadcast luni-solar acceleration.  Note the
+distinct numerator on the $z$-axis oblateness term ($3-5z^2/r^2$ versus
+$1-5z^2/r^2$ in-plane), and that the centrifugal $\earthrot^2$ and
+Coriolis $2\earthrot$ terms appear only on the in-plane axes, as required
+in the PZ-90 rotating frame.  The integrator steps with a fixed maximum
+$h=30$\,s, signed toward the query, clamping the final partial step so
+the march lands exactly on $t_q$; each step is the classical RK4 update
+$y\!\leftarrow\! y+\tfrac{h}{6}(k_1+2k_2+2k_3+k_4)$
+(\texttt{LiveEphemerisStore.cpp}).
+
+\subsection{Broadcast satellite clock}\label{sec:prod-bclock}
+
+The broadcast satellite clock for the Keplerian systems is the standard
+second-order polynomial in the time-from-clock-epoch $t-t_{oc}$
+(on the native scale, with BeiDou shifted to BDT exactly as the orbit
+node term is):
+\begin{empheq}[box=\fbox]{equation}
+\satclk
+=
+a_{f0}+a_{f1}\,(t-t_{oc})+a_{f2}\,(t-t_{oc})^{2}.
+\label{eq:prod-bclock-poly}
+\end{empheq}
+GLONASS instead uses its two-term broadcast model with the $1020$-message
+$\tau_n$ (DF123) and $\gamma_n$ (DF120) about $t_b=t_{oe}$:
+\begin{equation}
+\satclk
+=
+-\tau_n+\gamma_n\,(t-t_b)
+\label{eq:prod-bclock-glonass}
+\end{equation}
+(\texttt{LiveEphemerisStore.cpp}; GLONASS is presently excluded from the
+active CDMA-systems set, so this path is implemented for completeness).
+
+\paragraph{The precise-clock-baseline convention.}
+A design decision worth stating explicitly: the broadcast clock
+\eqref{eq:prod-bclock-poly} \emph{deliberately omits} both the periodic
+relativistic eccentricity term and the group delay (TGD/BGD).  This is
+not an oversight --- it is what makes the broadcast clock a clean drop-in
+for the SSR scalar clock delta.  The IGS-RTS clock correction is
+generated against precisely this bare polynomial, so the engine must
+\emph{not} pre-apply the periodic relativity or TGD before adding the SSR
+delta, or the correction would double-count.  The periodic relativistic
+term
+$-2\,\satpos\cdot\satvel/\sLight^2$ is added later, in the
+observation-physics path; see
+\dcref{sec:obsphys}{the observation-physics document} for its
+derivation.  This convention keeps the orbit, the bare clock, and the SSR
+overlay mutually consistent on one ephemeris baseline.
+
+\subsection{Ephemeris selection and IOD bookkeeping}\label{sec:prod-selection}
+
+The broadcast paths above presuppose that the \emph{right} ephemeris
+record has been selected.  The live store holds, per satellite, a
+\texttt{current} and an optional \texttt{previous} record, and several
+interlocking rules govern which one feeds the orbit/clock evaluation
+(\texttt{src/core/products/LiveEphemerisStore.cpp}).
+
+\paragraph{Freshest-toe within a source.}
+Within a single source, the record with the newer reference epoch wins:
+an incoming record whose $t_{oe}$ is older than the held one (a stale
+re-broadcast) is rejected, while a sub-second jitter or equal-epoch
+refresh overwrites in place (\texttt{LiveEphemerisStore.cpp}).  Selection
+between \texttt{current} and \texttt{previous} at query time is by
+\emph{closest} $t_{oe}$ on a common GPS-continuous scale --- BeiDou's BDT
+$t_{oe}$ is lifted to GPS seconds first
+(\texttt{toeGpsContinuous}), or every BeiDou record would read $\sim\!1356$
+weeks stale and be wrongly skipped.
+
+\paragraph{IGS-source authority over receiver nav.}
+When the engine ingests both an IGS broadcast stream and the receiver's
+own decoded navigation, the IGS record is \emph{authoritative}.  The
+IGS-RTS SSR delta is computed against IGS broadcast ephemeris, so the
+rover must pair the delta with the \emph{same} IGS broadcast; even at an
+identical IOD, the receiver's locally assembled orbit carries slightly
+different fit parameters (a live Galileo I/NAV assembly was observed to
+diverge by $100$\,m$+$), and applying IGS-SSR on top of a receiver
+ephemeris detonates the single-difference frame.  A receiver record
+therefore never overwrites a current IGS record at an equal-or-older
+$t_{oe}$; it is accepted only when it is strictly newer than the IGS
+record by more than one constellation refresh ($1800$\,s, the GLONASS
+nominal step), the signature of a \emph{stalled} IGS feed --- so a dead
+IGS stream degrades gracefully to receiver nav rather than stranding the
+satellite (\texttt{LiveEphemerisStore.cpp}).
+
+\paragraph{IODE-change demote and SSR re-referencing.}
+When the IOD changes, the \texttt{current} record is demoted to
+\texttt{previous} (rather than discarded), keeping the just-superseded
+orbit valid across the cutover instant
+(\texttt{LiveEphemerisStore.cpp}).  This matters because, across a
+cutover, the receiver can hold a version one step ahead of the lagging
+SSR stream.  When an SSR delta names a specific IOD,
+\texttt{pickForSsr} re-references: it returns whichever held record
+(\texttt{current} or \texttt{previous}) matches the SSR's IOD, so the
+orbit and clock are evaluated on the exact baseline the correction was
+computed for, instead of dropping the satellite to broadcast grade on a
+\texttt{current}-vs-SSR mismatch.
+
+\paragraph{The GNSS-IOD matching convention.}
+The SSR ``GNSS IOD'' field (IGS-SSR / RTCM \texttt{4076}, IDF012) is an
+$8$-bit quantity whose per-constellation \emph{definition} differs from
+the raw broadcast IODE stored on the ephemeris.  \texttt{ssrMatchIode}
+normalises the held record's IODE into the SSR convention in exactly one
+place (\texttt{LiveEphemerisStore.cpp}):
+\begin{equation}
+\mathrm{IOD}_{\mathrm{SSR}}(\sat)
+=
+\begin{cases}
+\mathrm{IODE} & \text{GPS, QZSS (8-bit LNAV, passthrough),}\\[2pt]
+\mathrm{IODnav}\ \&\ \mathtt{0xFF}
+              & \text{Galileo (low 8 bits of the 10-bit I/NAV IODnav),}\\[2pt]
+\bigl\lfloor t_{oe}^{\,\mathrm{sow}}/720\bigr\rfloor \bmod 240
+              & \text{BeiDou (toe-derived, per IGS-SSR v1.00),}
+\end{cases}
+\label{eq:prod-ssr-iode-map}
+\end{equation}
+with $t_{oe}^{\,\mathrm{sow}}$ the BDT seconds-of-week.  The BeiDou
+broadcast AODE that the decoder stores in the IODE field is a
+\emph{different} quantity and would never match the SSR field, so it is
+deliberately ignored in favour of the toe-derived value.  The raw IODE is
+left intact for the demote bookkeeping above; only the value handed to
+the SSR gate is normalised here.  How that normalised IOD then \emph{gates}
+the application of the SSR orbit/clock delta --- accept the delta only on
+an exact IOD match, else fall back to broadcast grade --- is the subject
+of \dcref{sec:ssr-iod}{the SSR IOD-gate section}; this document supplies
+only the matched quantity it consumes.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

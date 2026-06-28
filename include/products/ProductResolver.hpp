@@ -6,6 +6,7 @@
 #include "math/TimeUtils.hpp"
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -95,13 +96,26 @@ private:
     /** @brief Ensure all sub-directories under data_root exist. */
     void ensureDirectories();
 
-    /** @brief Build CDDIS product URL for a given product tag and YYYYDOY. */
+    /**
+     * @brief Build CDDIS product URL for a given product tag and YYYYDOY.
+     * @param type_override When non-empty, use this product-latency code
+     *        (FIN/RAP/ULT) instead of @c config_.product_type. Used to fetch a
+     *        RAPID ERP in a live real-time session whose orbit product is FINAL.
+     */
     std::string buildProductUrl(const std::string& tag, const std::string& yyyydoy,
-                                int gps_week) const;
+                                int gps_week, const std::string& type_override = {}) const;
 
-    /** @brief Build the expected filename for a product tag and YYYYDOY. */
+    /** @brief Build the expected filename for a product tag and YYYYDOY.
+     *  @param type_override See @c buildProductUrl. */
     std::string buildProductFilename(const std::string& tag,
-                                     const std::string& yyyydoy) const;
+                                     const std::string& yyyydoy,
+                                     const std::string& type_override = {}) const;
+
+    /** @brief Map a product-latency code (FIN/RAP/ULT) to its long-name segment. */
+    static std::string typeSeg(const std::string& product_type);
+
+    /** @brief Shift (year, doy) by @p delta days, normalizing across year ends. */
+    static std::pair<int, int> shiftDate(int year, int doy, int delta);
 
     /** @brief Format an integer DOY as a zero-padded 3-character string. */
     static std::string padDoy(int doy);
@@ -109,11 +123,27 @@ private:
     /** @brief Compute GPS week number from year and DOY. */
     static int gpsWeekFromDate(int year, int doy);
 
-    /** @brief Resolve a single product type over a list of YYYYDOY strings. */
+    /** @brief Resolve a single product type over a list of YYYYDOY strings.
+     *  @param type_override See @c buildProductUrl. */
     std::vector<std::filesystem::path> resolveProduct(
         const std::string& tag,
         const std::vector<std::string>& yyyydoy_list,
-        const std::vector<int>& gps_weeks);
+        const std::vector<int>& gps_weeks,
+        const std::string& type_override = {});
+
+    /**
+     * @brief Resolve the ERP (Earth-rotation) product, real-time-aware.
+     *
+     * A live real-time session (broadcast+SSR orbit/clock source) cannot obtain
+     * a FINAL ERP for the current day — it does not exist yet — which would
+     * leave @c erps_ empty and silently drop the pole tide (up to ~25 mm radial)
+     * and degrade the Sun/Moon EOP frame. This prefers the short-latency RAPID
+     * product in that case and walks backward day-by-day to the most recent
+     * available ERP; polar motion / UT1 drift over a few days is far below the
+     * pole-tide error budget once flat-extrapolated to the session epoch.
+     * Returns an empty path if none resolves within @c kErpMaxAgeDays.
+     */
+    std::filesystem::path resolveErp(int year, int doy);
 
     /** @brief Resolve the broadcast navigation file. */
     std::filesystem::path resolveBrdc(const std::string& yyyydoy);

@@ -225,6 +225,29 @@ bool RealTimeEngine::initialize() {
             "skipped.  Disable the flag in real-time configs to avoid this warning.");
     }
 
+    // GIM ionosphere-weighting (PPP-RTK soft iono constraint) is a
+    // post-processing-only feature: the pseudo-observation that pulls each
+    // per-sat slant-iono state toward the GIM lives in Application::run and is
+    // not wired into the streaming path (the RTCM stream carries no IONEX/VTEC).
+    // Warn so an enabled flag isn't a silent no-op at runtime.
+    if (config_.getIonosphereWeightingConfig().enabled) {
+        log_manager_.getLogger("ionosphere")->warn(
+            "Real-time mode: ionosphere_weighting is enabled but unsupported in "
+            "the streaming pipeline (no GIM source) — no iono constraint will be "
+            "applied.  Disable the flag in real-time configs to avoid this warning.");
+    }
+
+    // Adaptive ionospheric process noise (IonoVariabilityMonitor) is only
+    // constructed and driven in Application::run; the real-time engine never
+    // builds the monitor, so the per-sat iono process noise stays static at
+    // process_noise.ionosphere.  Warn so an enabled flag isn't a silent no-op.
+    if (config_.getAdaptiveIonoQConfig().enabled) {
+        log_manager_.getLogger("ionosphere")->warn(
+            "Real-time mode: adaptive_iono_process_noise is enabled but not wired "
+            "into the streaming pipeline — per-sat iono process noise will stay "
+            "static.  Disable the flag in real-time configs to avoid this warning.");
+    }
+
     // Provide BIA satellite biases to the MW detector for WL integer rounding
     mw_slip_detector_->setCorrections(&ppp_model_->getCorrections());
     if (turbo_edit_resolver_)
@@ -566,7 +589,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         // flush drain or before the first epoch.
         if (config_.enableObsSsrSync() && !first_epoch_ && !draining_final_
             && config_.realtimeUsesLiveOrbitClockSource()) {
-            const auto newest = SsrCorrectionStore::getInstance().newestSsrEpoch();
+            const auto newest = ssrStore().newestSsrEpoch();
             if (newest) {
                 const double horizon = TimeUtils::continuousGpsSeconds(*newest)
                                      + config_.getSsrMaxAge();
@@ -797,7 +820,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
                 // stays broadcast-only => an IODE-match issue (see the per-sat
                 // "SSR clock present ... but NOT applied" trace in GnssCorrections).
                 log->info("{}  SSR store census: {}",
-                          epoch_prefix, SsrCorrectionStore::getInstance().censusSummary());
+                          epoch_prefix, ssrStore().censusSummary());
             }
             return false;   // accumulate nav/SSR; no predict/update; first_epoch_ stays true
         }
@@ -829,7 +852,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
             sats.push_back(o.satellite);
             if (!o.broadcast_only) ++n_cm;
         }
-        const auto cov = SsrCorrectionStore::getInstance().coverageFor(sats, current_time);
+        const auto cov = ssrStore().coverageFor(sats, current_time);
         log->info("{}SSR coverage: {} sats | clk-applied {}/{} | in-store orb {}/{} "
                   "clk {}/{} cbias {}/{} pbias {}/{}",
                   epoch_prefix, cov.total, n_cm, cov.total,
@@ -1250,7 +1273,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // ambiguity; reset it before the KF update.  No-op when no SSR phase biases
     // are present (post-processing / corrections disabled).
     {
-        auto& ssr = SsrCorrectionStore::getInstance();
+        const auto& ssr = ssrStore();
         const double reset_std = config_.getAmbiguityStd();
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.modeled) {
@@ -1406,10 +1429,23 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // Mirrors Application::run: only after a successful float update, feed the
     // MW-resolved WL integers + fractions to the resolver; on a confident fix,
     // apply the fixed state/covariance and fix-and-hold.
+    last_ar_ran_ = false;
+    last_ar_result_ = AmbiguityResolution{};
     if (ambiguity_resolver_ && update_applied) {
-        const auto wl_ambs  = mw_slip_detector_->getResolvedWlAmbiguities();
-        const auto wl_fracs = mw_slip_detector_->getResolvedWlFractions();
+        // Default: feed the MW-resolved WL integers (halves the LAMBDA search).
+        // Closed-loop network-bias validation: suppress them so AR runs PURE
+        // MLAMBDA on the KF float, which carries the consumed network phase bias
+        // — the MW WL is in the separate .BIA frame and would re-inject a
+        // conflicting WL datum (see setArIgnoreMwWl).
+        const std::map<std::string, int>    no_wl_ambs;
+        const std::map<std::string, double> no_wl_fracs;
+        const auto wl_ambs  = ar_ignore_mw_wl_ ? no_wl_ambs
+                                               : mw_slip_detector_->getResolvedWlAmbiguities();
+        const auto wl_fracs = ar_ignore_mw_wl_ ? no_wl_fracs
+                                               : mw_slip_detector_->getResolvedWlFractions();
         auto ar_result = ambiguity_resolver_->resolve(*state_manager_, modeled_obs, wl_ambs, wl_fracs);
+        last_ar_ran_ = true;
+        last_ar_result_ = ar_result;   // recorded even when not accepted (carries num_candidates)
         if (ar_result.success) {
             state_manager_->setStateVector(ar_result.fixed_state);
             state_manager_->setCovariance(ar_result.fixed_covariance);
@@ -1467,6 +1503,23 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 // ---------------------------------------------------------------------------
 // State accessors
 // ---------------------------------------------------------------------------
+
+const SsrCorrectionStore& RealTimeEngine::ssrStore() const {
+    return ssr_store_override_ ? *ssr_store_override_
+                              : SsrCorrectionStore::getInstance();
+}
+
+void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
+                                 bool consume_clock, bool consume_bias) {
+    // Clock/orbit overlay lives in PppModel (geometry + corrections); bias overlay
+    // + the phase-bias-discontinuity reset hook live in MeasurementModel.  Route
+    // each independently so the caller can, e.g., keep precise SP3/CLK for the
+    // clock while consuming only the network phase bias (clean integer test).
+    // Called after initialize(), so the models exist.
+    ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
+    if (ppp_model_)  ppp_model_->setSsrStore(consume_clock ? store : nullptr);
+    if (meas_model_) meas_model_->setSsrStore(consume_bias  ? store : nullptr);
+}
 
 Eigen::Vector3d RealTimeEngine::getPosition() const {
     return ppp_state_.position;

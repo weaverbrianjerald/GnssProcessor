@@ -90,6 +90,11 @@ namespace GnssProcessor {
             config_.getSignalPriorities().size(), modeLabel(config_));
     }
 
+    const SsrCorrectionStore& MeasurementModel::ssrStore() const {
+        return ssr_store_override_ ? *ssr_store_override_
+                                   : SsrCorrectionStore::getInstance();
+    }
+
     // ===================================================================
     // IMU state setter
     // ===================================================================
@@ -161,7 +166,7 @@ namespace GnssProcessor {
         // the same row would be redundant.  Empty store in post-processing -> false.
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
             return false;
-        return SsrCorrectionStore::getInstance().hasCodeBias(satellite, signal);
+        return ssrStore().hasCodeBias(satellite, signal);
     }
 
     bool MeasurementModel::ifCombHasFullRxAtx(const std::string& if_key,
@@ -958,6 +963,76 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
+    // Network producer: shared satellite-state pre-allocation
+    // ===================================================================
+
+    void MeasurementModel::ensureNetworkSharedStates(
+        const std::vector<PppObservation>& observations,
+        const std::set<std::string>& allowed_phase_keys) {
+        if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) return;
+        if (!config_.isUncombinedEnabled()) return;  // network V1 is uncombined-only
+
+        // Empty exclusion set: the network driver runs no KF rebuild loop, so no
+        // row is carried-excluded.  Matches the excluded set computeMeasurementUpdate
+        // is called with below, keeping this admission gate identical to the build.
+        const std::set<std::string> no_excl;
+
+        std::set<std::string> required_clock_keys;
+        std::set<std::string> required_phase_keys;
+
+        for (const auto& obs : observations) {
+            // GLONASS is excluded from the emitted product (FDMA per-signal OSB
+            // is unphysical / FCN-channel dependent) — never give it a shared
+            // satellite column.
+            if (obs.system == System::GLONASS) continue;
+
+            // Mirror the obs-level admission gates in computeMeasurementUpdate's
+            // row-assembly loop, so every allocated shared column is written by at
+            // least one row this epoch (no phantom all-zero columns → no spurious
+            // null-space dimension for the network rank gate to trip on).
+            if (obs.sat_pos.norm() < 1.9e7 || !obs.sat_pos.allFinite()) continue;
+            if (obs.range < 1.5e7 || !std::isfinite(obs.range))         continue;
+            if (obs.elevation < config_.getElevationMaskDeg())          continue;
+            if (obs.los.norm() < 0.5 || !obs.los.allFinite())           continue;
+            if (obs.mf_w <= 0.0 || !std::isfinite(obs.mf_w))            continue;
+
+            bool sat_usable = false;
+            for (const auto& [ref_type, observed] : obs.observed) {
+                if (!isUsableMeasurement(obs, ref_type, no_excl, "")) continue;
+                if (ref_type.find('_') != std::string::npos) continue;  // raw signals only
+                sat_usable = true;
+
+                // Per-(sat,signal) phase bias on raw phase rows.
+                if (config_.estimateSatPhaseBiases()
+                    && classifyMeasurement(ref_type) == MeasurementType::Phase) {
+                    const std::string pk =
+                        StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
+                    if (!allowed_phase_keys.empty() && !allowed_phase_keys.count(pk))
+                        continue;
+                    required_phase_keys.insert(pk);
+                    if (state_manager_.getSatPhaseBiasIndex(pk) < 0)
+                        state_manager_.addSatPhaseBiasState(pk, 0.0);
+                }
+            }
+
+            // One clock per satellite with any usable raw measurement.
+            if (config_.estimateSatClocks() && sat_usable) {
+                const std::string ck = StateKeys::makeSatClockKey(obs.satellite);
+                required_clock_keys.insert(ck);
+                if (state_manager_.getSatClockIndex(ck) < 0)
+                    state_manager_.addSatClockState(ck, 0.0);
+            }
+        }
+
+        // Drop stale shared states (satellite/signal no longer usable this epoch),
+        // so the per-station column set is exactly this epoch's required set.
+        if (config_.estimateSatClocks())
+            state_manager_.pruneSatClockStatesExcept(required_clock_keys);
+        if (config_.estimateSatPhaseBiases())
+            state_manager_.pruneSatPhaseBiasStatesExcept(required_phase_keys);
+    }
+
+    // ===================================================================
     // Measurement filtering
     // ===================================================================
 
@@ -1202,6 +1277,27 @@ namespace GnssProcessor {
             }
         }
 
+        // Per-satellite CLOCK (network producer only).  The satellite orbit is
+        // held FIXED from the precise/real-time product; the network ESTIMATES
+        // an explicit per-satellite clock correction Δδtˢ (metres) to stay
+        // consistent with the chosen S-system datum.  The observable carries the
+        // satellite clock as −c·δtˢ and obs.modeled already removed the a-priori
+        // product clock, so the residual-clock state enters with a −1 Jacobian on
+        // BOTH code and phase rows (one clock per satellite, all signals).  Like
+        // the bias states this CONSUMES an already-present column (the network
+        // estimator creates/owns it); gated on estimateSatClocks() (default off),
+        // inert in every other mode.  Single-station PPP would be rank-deficient
+        // here (rx-clock ↔ common sat-clock), which is why it is network-only.
+        double sat_clock_term = 0.0;
+        if (config_.estimateSatClocks() && is_uncombined) {
+            const std::string sc_key = StateKeys::makeSatClockKey(obs.satellite);
+            const int sc_idx = state_manager_.getSatClockIndex(sc_key);
+            if (sc_idx >= 0 && sc_idx < static_cast<int>(state_size)) {
+                jacobian(sc_idx) = -1.0;
+                sat_clock_term = -x(sc_idx);
+            }
+        }
+
         // SSR satellite biases (PPP-RTK): a KNOWN correction added to the
         // predicted observable (no state, no Jacobian).  getCodeBias /
         // getPhaseBias return the per-(sat, signal) value in metres; combined
@@ -1221,7 +1317,7 @@ namespace GnssProcessor {
         if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
             constexpr double kSsrCodeBiasSign  = +1.0;
             constexpr double kSsrPhaseBiasSign = +1.0;
-            auto& ssr_store = SsrCorrectionStore::getInstance();
+            const auto& ssr_store = ssrStore();
             if (is_phase) {
                 if (auto pb = ssr_store.getPhaseBias(obs.satellite, ref_type))
                     ssr_bias_term = kSsrPhaseBiasSign * pb->bias_m;
@@ -1240,7 +1336,8 @@ namespace GnssProcessor {
 
         predicted = modeled + range_correction + rx_clk + phase_clk_value
             + tropo_wet_term + tropo_grad_term + time_offset_value
-            + iono_term + code_bias_term + sat_bias_term + sat_phase_bias_term + ssr_bias_term;
+            + iono_term + code_bias_term + sat_bias_term + sat_phase_bias_term
+            + sat_clock_term + ssr_bias_term;
 
         // Ambiguity (phase only)
         if (is_phase) {

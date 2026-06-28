@@ -100,6 +100,21 @@ private:
     bool resolveData();
 
     /**
+     * @brief Opt-in: refresh the IGS ANTEX (igs20.atx) before it is loaded.
+     *
+     * When @c data_download.atx_auto_refresh is set, shells out to
+     * @c scripts/refresh_atx.py (the single source of truth for the refresh:
+     * conditional GET, ANTEX-validate, backup, atomic replace) against the
+     * resolved ATX path, throttled by @c atx_refresh_max_age_days.  Best-effort
+     * and non-fatal: a network/validation failure logs a warning and the run
+     * proceeds with the existing local ATX.  No-op when the toggle is off, so
+     * runs stay reproducible by default.  Called at the end of @ref resolveData
+     * so it covers post-processing, baseline and real-time alike, and lands
+     * before @ref loadInputData reads the antenna model.
+     */
+    void refreshAtxIfEnabled_();
+
+    /**
      * @brief Parse RINEX observations and load external products into the cache.
      * @return true on success, false on failure.
      */

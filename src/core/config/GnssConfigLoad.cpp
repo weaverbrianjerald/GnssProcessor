@@ -76,6 +76,9 @@ namespace GnssProcessor {
             if (isBaselineMode()) {
                 if (!loadBaselineSection_(json, log_manager)) return false;
             }
+            if (isNetworkMode()) {
+                if (!loadNetworkSection_(json, log_manager)) return false;
+            }
             loadLoggingSection_(json, log_manager);
 
             // Cross-section validation.  Runs once after every section is
@@ -633,6 +636,8 @@ namespace GnssProcessor {
         // take effect once the network estimator (W4) creates the shared states.
         estimate_sat_phase_biases_ = jval<bool>(json, "estimation.estimate_sat_phase_biases",
                                                  "estimate_sat_phase_biases", false);
+        estimate_sat_clocks_       = jval<bool>(json, "estimation.estimate_sat_clocks",
+                                                 "estimate_sat_clocks", false);
         promote_sat_code_bias_     = jval<bool>(json, "estimation.promote_sat_code_bias",
                                                  "promote_sat_code_bias", false);
         // Sat-bias cache thresholds (only meaningful when estimate_sat_biases
@@ -1234,6 +1239,7 @@ namespace GnssProcessor {
             }
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
             process_noise_.sat_phase_bias      = pn.value("sat_phase_bias_q", 1e-12);
+            process_noise_.sat_clock           = pn.value("sat_clock_q", 1e-2);
             process_noise_.clock_rate          = pn.value("clock_rate_q", 1e-4);
             process_noise_.system_time_rate_offset =
                 pn.value("system_time_rate_offset_q", 1e-10);
@@ -1261,6 +1267,7 @@ namespace GnssProcessor {
             initial_std_.phase_clock         = is.value("phase_clock", 1e3);
             initial_std_.sat_bias            = is.value("sat_bias", 10.0);
             initial_std_.sat_phase_bias      = is.value("sat_phase_bias", 10.0);
+            initial_std_.sat_clock           = is.value("sat_clock", 1000.0);
             initial_std_.clock_rate          = is.value("clock_rate", 1.0);
             initial_std_.system_time_rate_offset =
                 is.value("system_time_rate_offset", 1e-2);
@@ -1576,7 +1583,7 @@ namespace GnssProcessor {
             model_corrections_.enable_ocean_tide_loading        = mc.value("enable_ocean_tide_loading", true);
             model_corrections_.enable_pole_tide                 = mc.value("enable_pole_tide", true);
             model_corrections_.enable_ocean_pole_tide           = mc.value("enable_ocean_pole_tide", false);
-            model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", true);
+            model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", false);
             model_corrections_.enable_satellite_pco             = mc.value("enable_satellite_pco", true);
             model_corrections_.enable_satellite_pcv             = mc.value("enable_satellite_pcv", true);
             model_corrections_.enable_receiver_pco              = mc.value("enable_receiver_pco", true);
@@ -1711,19 +1718,31 @@ namespace GnssProcessor {
                 tropo_apriori_source_   == TroposphereAprioriSource::Gpt3 ||
                 tropo_mapping_function_ == TroposphereMappingFunction::Vmf3;
 
-            std::string gpt3_str = jval<std::string>(json, "receiver.gpt3_grid_path",
-                                                     "gpt3_grid_path", std::string{});
+            // Explicit receiver.gpt3_grid_path wins.  Otherwise leave the path
+            // EMPTY here and let the consumer (Troposphere) default to
+            // <internal_data_root>/static/gpt3/gpt3_5.grd at construction time.
+            // The internal data root is not resolved until loadFilesSection_,
+            // which runs *after* this section, so baking the default here would
+            // build it from an empty root -> the bogus relative path
+            // "static/gpt3/gpt3_5.grd", which fails to open and silently drops
+            // VMF3/GPT3 back to GMF.  Deferring to the consumer mirrors how the
+            // ocean-pole-tide (opt_grid_path) and atmospheric-loading
+            // (atm_tide_grid_path) static grids default in ModelGeometry, where
+            // the internal data root is always known.
+            const std::string gpt3_str = jval<std::string>(json, "receiver.gpt3_grid_path",
+                                                            "gpt3_grid_path", std::string{});
             if (!gpt3_str.empty()) {
                 gpt3_grid_path_ = gpt3_str;
-            } else if (need_gpt3) {
-                // Default to bundled location under the internal data root.
-                gpt3_grid_path_ = internal_data_root_ / "static" / "gpt3" / "gpt3_5.grd";
             }
 
-            log->info("Troposphere a priori: source={}, mapping={}, gpt3_grid_path='{}'",
+            const std::string gpt3_display =
+                !gpt3_grid_path_.empty() ? gpt3_grid_path_.string()
+                : need_gpt3              ? std::string("<default: static/gpt3/gpt3_5.grd under internal data root>")
+                                        : std::string("<unset>");
+            log->info("Troposphere a priori: source={}, mapping={}, gpt3_grid_path={}",
                       tropo_apriori_source_ == TroposphereAprioriSource::Gpt3 ? "gpt3" : "standard_atmosphere",
                       tropo_mapping_function_ == TroposphereMappingFunction::Vmf3 ? "vmf3" : "gmf",
-                      gpt3_grid_path_.string());
+                      gpt3_display);
         }
 
         // Reference position (optional)
@@ -1894,6 +1913,22 @@ namespace GnssProcessor {
             }
         }
 
+        // Atmospheric S1/S2 tide load grid.  Optional explicit override; when
+        // empty ModelGeometry falls back to <internal_data_root>/static/apl/.
+        // Only used when model_corrections.enable_atmospheric_loading is on.
+        {
+            std::string apl_path_str = jval<std::string>(json, "files.atm_tide_grid_path", "atm_tide_grid_path", "");
+            if (!apl_path_str.empty()) {
+                atm_tide_grid_path_ = apl_path_str;
+                if (std::filesystem::exists(atm_tide_grid_path_))
+                    log->info("Atmospheric S1/S2 tide grid: {}", atm_tide_grid_path_.string());
+                else {
+                    log->warn("Atmospheric S1/S2 tide grid not found: {}", atm_tide_grid_path_.string());
+                    atm_tide_grid_path_.clear();
+                }
+            }
+        }
+
         // Station Information Files (SIF).  A bundle of per-station metadata
         // (ITRF coordinates/velocity/covariance, FES2014b ocean tide loading,
         // Desai ocean pole tide, antenna/receiver history, nonlinear motion).
@@ -2054,6 +2089,9 @@ namespace GnssProcessor {
             std::string crx_str = dl.value("crx2rnx_path", "");
             if (!crx_str.empty()) download_config_.crx2rnx_path = crx_str;
             download_config_.keep_zip_after_unzip = dl.value("keep_zip_after_unzip", false);
+            download_config_.atx_auto_refresh = dl.value("atx_auto_refresh", false);
+            download_config_.atx_refresh_max_age_days = dl.value("atx_refresh_max_age_days", 7.0);
+            download_config_.atx_refresh_url = dl.value("atx_refresh_url", std::string{});
 
             if (download_config_.enabled) {
                 log->info("Data download enabled: root={}, source={}, type={}, station={}, year={}, doy={}",
@@ -2456,6 +2494,187 @@ namespace GnssProcessor {
                 rv.has_position ? ", a-priori position supplied" : "");
         }
         return true;
+    }
+
+    // =================================================================
+    //  Section: network  (PPP_RTK_Network producer)
+    // =================================================================
+    bool GnssConfig::loadNetworkSection_(const nlohmann::json& json, LogManager& log_manager) {
+        auto log = log_manager.getLogger("gnss_config");
+        const auto& nw = jsection(json, "network", "network");
+        if (nw.is_null() || !nw.is_object()) {
+            log->error("PPP-RTK-Network mode selected but no 'network' section found in config");
+            return false;
+        }
+
+        // --- Peer stations (>=2; each holds coordinates fixed) ---
+        network_config_.stations.clear();
+        auto addStation = [&](const nlohmann::json& sj) {
+            StationConfig sc;
+            sc.name       = sj.value("name", std::string{});
+            sc.rinex_path = sj.value("rinex_path", std::string{});
+            sc.fixed      = sj.value("fixed", true);  // network holds station coordinates fixed
+            if (sj.contains("position_ecef") && sj["position_ecef"].is_array()
+                && sj["position_ecef"].size() == 3) {
+                sc.position_ecef = {
+                    sj["position_ecef"][0].get<double>(),
+                    sj["position_ecef"][1].get<double>(),
+                    sj["position_ecef"][2].get<double>()
+                };
+                sc.has_position = true;
+            }
+            network_config_.stations.push_back(std::move(sc));
+        };
+        if (nw.contains("stations") && nw["stations"].is_array()) {
+            for (const auto& sj : nw["stations"])
+                if (sj.is_object()) addStation(sj);
+        }
+
+        if (network_config_.stations.size() < 2) {
+            log->error("Network: need >=2 stations in network.stations (got {})",
+                       network_config_.stations.size());
+            return false;
+        }
+        for (const auto& s : network_config_.stations) {
+            if (s.name.empty()) {
+                log->error("Network: every station needs a non-empty 'name'");
+                return false;
+            }
+            // An empty rinex_path is tolerated (PathResolver fills it from the
+            // internal tree by station name); a known position is required (the
+            // network holds coordinates fixed, so it cannot bootstrap them).
+            if (!s.has_position) {
+                log->error("Network: station '{}' needs a known 'position_ecef' (held fixed)", s.name);
+                return false;
+            }
+        }
+
+        // --- Datum fields ---
+        network_config_.clock_datum_station =
+            jval<std::string>(json, "network.clock_datum_station", "clock_datum_station", std::string{});
+        network_config_.clock_datum_satellite =
+            jval<std::string>(json, "network.clock_datum_satellite", "clock_datum_satellite", std::string{});
+        network_config_.epoch_sync_tolerance_s =
+            jval<double>(json, "network.epoch_sync_tolerance_s", "epoch_sync_tolerance_s", 0.01);
+        network_config_.product_output_path =
+            jval<std::string>(json, "network.product_output_path", "product_output_path", std::string{});
+
+        if (network_config_.clock_datum_station.empty()) {
+            network_config_.clock_datum_station = network_config_.stations.front().name;
+            log->info("Network: clock_datum_station unset; defaulting to first station '{}'",
+                      network_config_.clock_datum_station);
+        } else {
+            bool found = false;
+            for (const auto& s : network_config_.stations)
+                if (s.name == network_config_.clock_datum_station) { found = true; break; }
+            if (!found) {
+                log->error("Network: clock_datum_station '{}' not found among stations",
+                           network_config_.clock_datum_station);
+                return false;
+            }
+        }
+
+        // --- Force the shared satellite-state estimation for V1 (network producer) ---
+        // V1 scope = estimable satellite CLOCK + PHASE BIAS only (the integer-
+        // recovery essentials).  Satellite CODE bias is DEFERRED to W6: estimating
+        // it would add the IF-code-bias lump as a SECOND estimable place (it is
+        // already absorbed into the estimable clock), needing an extra code-bias
+        // datum pin.  So force clock + phase-bias ON and leave code-bias OFF —
+        // the satellite code delay then re-partitions into the per-station rx code
+        // bias + local slant iono (the existing L1-referenced iono+DCB convention;
+        // the emitted clock is code-blind / phase-consistent).  loadEstimation-
+        // Section_ runs earlier, so this overrides the JSON estimation block.
+        estimate_sat_clocks_       = true;
+        estimate_sat_phase_biases_ = true;
+        estimate_sat_biases_       = false;  // V1: defer satellite code bias to W6
+        promote_sat_code_bias_     = false;  // V1: defer satellite code bias to W6
+        log->info("Network producer (V1): forcing estimate_sat_clocks + estimate_sat_phase_biases = true; "
+                  "satellite code bias deferred (estimate_sat_biases / promote_sat_code_bias = false)");
+
+        // --- Optional closed-loop integer-recovery harness (held-out consumer) ---
+        // A station deliberately NOT in network.stations that consumes the
+        // network's emitted SSR products through the user-side PPP-RTK + AR
+        // pipeline (see ClosedLoopConfig).  Inert unless closed_loop.enable.
+        network_config_.closed_loop = ClosedLoopConfig{};
+        if (nw.contains("closed_loop") && nw["closed_loop"].is_object()) {
+            const auto& cl = nw["closed_loop"];
+            auto& clc = network_config_.closed_loop;
+            clc.enable = cl.value("enable", false);
+            if (cl.contains("station") && cl["station"].is_object()) {
+                const auto& sj = cl["station"];
+                clc.station.name       = sj.value("name", std::string{});
+                clc.station.rinex_path = sj.value("rinex_path", std::string{});
+                clc.station.fixed      = true;   // truth coordinates, held for scoring
+                if (sj.contains("position_ecef") && sj["position_ecef"].is_array()
+                    && sj["position_ecef"].size() == 3) {
+                    clc.station.position_ecef = {
+                        sj["position_ecef"][0].get<double>(),
+                        sj["position_ecef"][1].get<double>(),
+                        sj["position_ecef"][2].get<double>()
+                    };
+                    clc.station.has_position = true;
+                }
+            }
+            clc.ar_mode    = cl.value("ar_mode", 1);
+            clc.ar_wl_only = cl.value("ar_wl_only", true);
+            clc.consume_network_products = cl.value("consume_network_products", true);
+            clc.consume_network_clock    = cl.value("consume_network_clock", true);
+            if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
+                for (const auto& s : cl["ar_active_systems"])
+                    if (s.is_string()) clc.ar_active_systems.push_back(s.get<std::string>());
+            }
+            if (clc.enable) {
+                if (clc.station.name.empty() || clc.station.rinex_path.empty()
+                    || !clc.station.has_position) {
+                    log->error("Network closed_loop.enable=true but the consumer station is "
+                               "incomplete (needs name + rinex_path + position_ecef); disabling.");
+                    clc.enable = false;
+                } else {
+                    log->info("Network closed-loop harness ENABLED: held-out consumer '{}' "
+                              "(AR mode {}, wl_only {})", clc.station.name, clc.ar_mode,
+                              clc.ar_wl_only ? "on" : "off");
+                }
+            }
+        }
+
+        log->info("Network mode: {} stations, clock datum station '{}'{}, sync tol {:.3f} s",
+                  network_config_.stations.size(),
+                  network_config_.clock_datum_station,
+                  network_config_.clock_datum_satellite.empty()
+                      ? std::string{}
+                      : (" + datum sat '" + network_config_.clock_datum_satellite + "'"),
+                  network_config_.epoch_sync_tolerance_s);
+        return true;
+    }
+
+    GnssConfig GnssConfig::deriveClosedLoopConsumerConfig() const {
+        GnssConfig c = *this;
+        // The consumer is an uncombined PPP-RTK USER (single receiver), not the
+        // joint network producer.
+        c.processing_mode_ = ProcessingMode::PPP_RTK;
+        // The network producer ESTIMATES the shared satellite states; the
+        // consumer CONSUMES them from the injected SSR store, so turn the
+        // network-forced estimation flags back off to their PPP-RTK defaults.
+        c.estimate_sat_clocks_       = false;
+        c.estimate_sat_phase_biases_ = false;
+        c.estimate_sat_biases_       = false;  // producer folded the satellite code delay
+                                               // into the estimable clock — the consumer must
+                                               // NOT re-estimate a separate sat code bias.
+        c.promote_sat_code_bias_     = false;
+        // Between-satellite single-difference: the user-side S-transform that
+        // removes the receiver clock/bias datum so the SD ambiguity is integer
+        // once the network satellite phase bias is applied.  The producer runs
+        // undifferenced (network has no receiver datum to remove); the consumer
+        // is a single receiver and needs BSSD for integer recovery.
+        c.enable_between_satellite_sd_ = true;
+        // Enable ambiguity resolution for the consumer (the producer itself is
+        // float): the closed loop validates integer RECOVERY on the held-out
+        // station from the producer's products.
+        c.ar_mode_    = network_config_.closed_loop.ar_mode;
+        c.ar_wl_only_ = network_config_.closed_loop.ar_wl_only;
+        if (!network_config_.closed_loop.ar_active_systems.empty())
+            c.ar_active_systems_ = network_config_.closed_loop.ar_active_systems;
+        return c;
     }
 
     // =================================================================

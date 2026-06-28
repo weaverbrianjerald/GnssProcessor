@@ -25,8 +25,17 @@ class ViewerResult:
 
 @dataclass
 class Viewer:
-    """Registry entry binding a name + its required CSV(s) to a build function."""
+    """Registry entry binding a name + its required CSV(s) to a build function.
+
+    ``default_enabled`` controls whether the viewer is part of the *default*
+    report/dashboard composition.  When ``False`` the driver skips it unless it
+    is explicitly requested (``--only <name>``) or the caller opts every viewer
+    in (``--all`` / ``include_disabled=True``).  Use it for heavy or noisy
+    viewers that are useful on demand but shouldn't clutter the standard
+    summary -- e.g. the ``residual_strip`` raster.
+    """
     name: str
     title: str
     required_csvs: tuple
     build: Callable[[TraceContext], ViewerResult]
+    default_enabled: bool = True

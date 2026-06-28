@@ -130,6 +130,7 @@ add_library(gnss_core STATIC
     src/core/products/StationInfoFile.cpp
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
+    src/core/products/NetworkProductIO.cpp
     src/core/products/LiveEphemerisStore.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
@@ -140,6 +141,7 @@ add_library(gnss_core STATIC
     src/core/filter/CovarianceReReference.cpp
     src/core/filter/NetworkNormalEquations.cpp
     src/core/filter/NetworkEstimator.cpp
+    src/core/filter/NetworkSbasis.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
@@ -233,8 +235,10 @@ add_executable(gnss_tests
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
     tests/test_network_emit.cpp
+    tests/test_network_product_io.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
+    tests/test_ssr_store_injection.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp

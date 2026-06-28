@@ -923,6 +923,55 @@ namespace GnssProcessor {
         void pruneSatPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
+        // Satellite CLOCK states (PPP_RTK_Network producer).
+        //
+        // Explicit per-satellite clock-correction states (Δδtˢ in metres,
+        // relative to the a-priori product clock already removed in obs.modeled)
+        // kept in a SEPARATE map (@c sat_clock_indices_) keyed "<sat>|SC".  The
+        // satellite ORBIT stays fixed from the precise/real-time product; only
+        // the clock is estimated, to maintain consistency with the chosen
+        // S-system datum.  Created/owned by the network estimator (the shared
+        // satellite spine); inert in every other mode.  Per-satellite (one clock
+        // per satellite, NOT per signal), so there is no signal field.  Like the
+        // phase-bias block, the warm-restart cache is deliberately NOT mirrored
+        // yet — network cross-epoch restart is decided alongside the estimator.
+        // -------------------------------------------------------------------
+
+        /// @brief Index of a satellite clock state, or -1 if absent.
+        int getSatClockIndex(const std::string& key) const;
+
+        /// @brief Read-only map "satellite|SC" -> state index.
+        const std::map<std::string, size_t>& getSatClockStates() const;
+
+        /// @brief Append a satellite clock state at cold-start variance
+        ///        (@c initial_std.sat_clock²).  Idempotent if the key already
+        ///        exists.  Returns the state index.
+        size_t addSatClockState(const std::string& key, double initial_value);
+
+        /// @brief Append a satellite clock state with an explicit variance
+        ///        (e.g. a warm restart / carried-forward prior).  Non-positive
+        ///        variance falls back to @c initial_std.sat_clock².
+        size_t addSatClockStateWithVariance(const std::string& key,
+                                            double initial_value,
+                                            double initial_variance);
+
+        /// @brief Reset a satellite clock state (decorrelate row/col, seed a
+        ///        fresh value+variance).  Refuses to disturb a frozen-pivot row
+        ///        (diag == 0), preserving the S-basis datum.
+        void resetSatClockState(const std::string& key,
+                                double new_value,
+                                double new_variance);
+
+        /// @brief Re-inflate the variance of a satellite's clock state, skipping
+        ///        a frozen-pivot row.  Value is preserved.
+        void reinflateSatClockVarianceForSat(const std::string& satellite,
+                                             double new_variance);
+
+        /// @brief Prune satellite clock states whose keys are not in
+        ///        @p keep_keys (no warm-restart cache yet — see W4).
+        void pruneSatClockStatesExcept(const std::set<std::string>& keep_keys);
+
+        // -------------------------------------------------------------------
         // Unresolvable ambiguity support
         // -------------------------------------------------------------------
 
@@ -1158,6 +1207,7 @@ namespace GnssProcessor {
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
+        std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
         std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (PPP-RTK, diagnostics only).

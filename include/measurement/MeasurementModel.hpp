@@ -26,6 +26,8 @@
 
 namespace GnssProcessor {
 
+    class SsrCorrectionStore;
+
     /**
      * @file MeasurementModel.hpp
      * @brief Builds measurement vectors, design matrices and covariance used by the Kalman filter.
@@ -63,6 +65,38 @@ namespace GnssProcessor {
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
             const Eigen::VectorXd& current_state,
             const std::set<std::string>& excluded_measurements = {});
+
+        /**
+         * @brief Pre-allocate the SHARED satellite states the PPP-RTK network
+         *        producer's joint estimator owns (per-satellite clock +
+         *        per-(satellite,signal) phase bias), so this station's @c H
+         *        carries their columns this epoch.
+         *
+         * No-op unless @c ProcessingMode::PPP_RTK_Network (and uncombined).
+         * Those two state families are "consume-only" in @c buildJacobianRow
+         * (creation/ownership belongs to the network estimator, not the
+         * single-receiver model), so without this pre-pass their Jacobian
+         * columns would be all-zero and the satellite spine would carry no
+         * information.
+         *
+         * The admission gate MIRRORS the row-assembly loop in
+         * @c computeMeasurementUpdate (the obs-level geometry/elevation checks +
+         * @c isUsableMeasurement) so the allocated column set is EXACTLY the set
+         * @c buildJacobianRow will write — never a superset.  An over-allocated
+         * (all-zero) shared column would add a phantom unobserved gauge that the
+         * network's null-space rank gate would (correctly) reject.  States no
+         * longer required this epoch are pruned, so a satellite/signal that
+         * drops out leaves no stale column behind.
+         *
+         * @param observations      this station's modeled observations for the epoch.
+         * @param allowed_phase_keys If non-empty, restrict phase-bias allocation
+         *        to these @c "<sat>|<signal>|PB" keys — the datum (pivot) station's
+         *        set, so every shared phase-bias column has a pivot-receiver
+         *        ambiguity pin to fix its gauge.  Empty => allocate for every
+         *        usable raw phase signal (used to seed the pivot set first).
+         */
+        void ensureNetworkSharedStates(const std::vector<PppObservation>& observations,
+                                       const std::set<std::string>& allowed_phase_keys = {});
 
         /**
          * @brief Compute a DD measurement update from two per-receiver
@@ -228,6 +262,23 @@ namespace GnssProcessor {
         StateInitializer& getStateInitializer() { return state_initializer_; }
         const StateInitializer& getStateInitializer() const { return state_initializer_; }
 
+        /**
+         * @brief Inject a non-owning SSR-correction store override (DI seam for
+         *        the PPP-RTK closed-loop harness).
+         *
+         * The SSR satellite code/phase-bias term in @c buildJacobianRow and the
+         * @c ssrCoversCodeSignal presence check default to the process-wide
+         * @c SsrCorrectionStore singleton (empty in post-processing → no SSR
+         * applied).  The network closed-loop consumer points this at the
+         * producer's OWNED store so a held-out station consumes the network's
+         * freshly-emitted satellite phase bias.  @c nullptr (the default)
+         * restores the singleton; every non-harness caller is byte-identical.
+         *
+         * @param store Non-owning store pointer (must outlive this object) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
+
         /// Per-satellite NL reference band map for the
         /// @c StateAmbiguityBasis::NlWl path.  Used by @c BssdTransform to
         /// look up the pivot's NL/WL state columns when building the SD
@@ -245,6 +296,14 @@ namespace GnssProcessor {
         const PppModel& ppp_model_;
         const GnssConfig& config_;
         LogManager& log_manager_;
+
+        /// Non-owning SSR store override; nullptr -> process-wide singleton.
+        /// Set via setSsrStore() for the closed-loop consumer (see header).
+        const SsrCorrectionStore* ssr_store_override_{ nullptr };
+
+        /// Resolve the active SSR store (override when set, else the singleton).
+        /// Defined in the .cpp where the full type is visible.
+        const SsrCorrectionStore& ssrStore() const;
 
         // -------------------------------------------------------------------
         // Delegate components

@@ -550,7 +550,7 @@ std::vector<std::string> activeFrequencyBands(
                 geom.sat_pos, geom.rx_pos, geom.elevation, geom.azimuth,
                 geom.los, geom.range, geom.tropo_zhd,
                 geom.sat_clock, geom.shapiro_delay, geom.sagnac_corr,
-                geom.atm_loading_corr, geom.relativistic_corr, geom.solid_tide,
+                geom.otl_corr, geom.apl_corr, geom.relativistic_corr, geom.solid_tide,
                 geom.mf_w, geom.mf_d, geom.sat_vel,
                 geom.broadcast_only,
                 drop_reason);
@@ -1387,7 +1387,8 @@ std::vector<std::string> activeFrequencyBands(
      * @param sat_clock Satellite clock (seconds or converted to meters in code).
      * @param shapiro_delay Shapiro delay (meters).
      * @param sagnac_corr Sagnac correction (meters).
-     * @param atm_loading_corr Atmospheric loading correction (meters).
+     * @param otl_corr Ocean tidal loading site-displacement projection (meters).
+     * @param apl_corr Atmospheric pressure loading (S1/S2 thermal tide) site-displacement projection (meters).
      * @param relativistic_corr Relativistic periodic correction -2(r·v)/c² (seconds). Must be
      *        subtracted from the modeled observable (converted to meters via multiplication
      *        by SPEED_OF_LIGHT) to account for the eccentricity-dependent clock variation
@@ -1452,7 +1453,8 @@ std::vector<std::string> activeFrequencyBands(
             + antenna_corr
             + bias_corr
             + geom.shapiro_delay
-            + geom.atm_loading_corr
+            + geom.otl_corr
+            + geom.apl_corr
             + geom.solid_tide;
     }
 

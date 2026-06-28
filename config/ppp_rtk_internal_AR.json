@@ -11,9 +11,9 @@
     "mode": "PPP-RTK",
     "rinex_types": "CL",
     //"active_systems": [ "GPS" ],
-    //"active_systems": [ "GPS", "Galileo" ],
+    "active_systems": [ "GPS", "Galileo" ],
     //"active_systems": [ "GPS", "Galileo", "BeiDou" ],
-    "active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
+    //"active_systems": [ "GPS", "Galileo", "BeiDou", "GLONASS" ],
     "frequency_mode": "all",
     "channel_mode": "all",
     "gnss_rate_s": 30.0,
@@ -22,6 +22,7 @@
     "eclipse_shadow_scale": 1.1,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": true,
+    "run_smoother": true,                 // post-proc RTS smoother (improves per-epoch kinematic track)
     "inhouse_bias_estimation": false,
     "mw_frequency_mode": "all",
     "mw_channel_mode": "all",
@@ -34,7 +35,8 @@
       "Galileo": "CQXBI",
       "BeiDou": "IDPXQZ",
       "GLONASS": "PCX"
-    }
+    },
+	"enable_station_info": true 
   },
 
   "files": {
@@ -57,6 +59,14 @@
     "lock_signals_to_clock_ref": false, // strict
     "require_bia_for_signals": false, // strict
     //"estimate_ifb": true, // GLONASS inter-frequency bias estimation, depricated
+
+    // --- M-PAGES accuracy / QC enhancements (audited 2026-06-27) ---
+    "estimate_tropo_gradients": true,                   // N/E wet-tropo gradients (low-elevation azimuthal asymmetry)
+    "enable_variance_factor": true,                     // a-posteriori sigma0^2 hat (reporting only; never touches P)
+    "enable_full_r_kernel": true,                       // correlation-aware QC kernel for BSSD's dense R
+    "adaptive_iono_process_noise": { "enable": true },  // GF-TD2-driven per-sat iono process noise
+    "ionosphere_weighting": { "enable": true },         // soft-constrain per-sat iono toward COD GIM
+
     "between_satellite_sd": {
       "enabled": true,
       "enable_glonass": true,
@@ -106,7 +116,7 @@
       "sat_bias_q": 1e-12,
       "system_time_offset_q": 1e-12,
       "tropo_gradient_q": 5e-12,
-      "ambiguity_q": 1e-12
+      "ambiguity_q": 0.0
     },
     "initial_std": {
       "position": 100.0,
@@ -122,7 +132,7 @@
     },
     "measurement_noise": {
       "code_std_m": 0.300,
-      "phase_std_m": 0.0015,
+      "phase_std_m": 0.002,
       "doppler_std_m": 0.500
     },
     "phase_elevation_power": 1.0,
@@ -139,7 +149,7 @@
     "enable_solid_earth_tide": true,
     "enable_ocean_tide_loading": true,
     "enable_pole_tide": true,
-    "enable_atmospheric_loading": true,
+    "enable_atmospheric_loading": false,
     "enable_satellite_pco": true,
     "enable_satellite_pcv": true,
     "enable_receiver_pco": true,
@@ -152,8 +162,10 @@
     "loosen_amb_q_for_substituted_atx": true,
     "ambiguity_q_substituted_atx": 1e-9,
     "apply_phase_shifts": false,
-    "refine_emission_time": false,
-    "enable_higher_order_ionosphere": false
+    "refine_emission_time": true,                       // second-pass slant-ZHD + IF-ATX + periodic-relativity at emission
+    "enable_receiver_cross_system_atx_fallback": true,  // borrow cross-system rx PCO/PCV rather than drop a band
+    "enable_higher_order_ionosphere": true,
+	"enable_ocean_pole_tide": true
   },
 
   "data_download": {
@@ -161,12 +173,15 @@
     "data_root": "C:/GnssProcessorSupport/products",
     "product_source": "COD",
     "product_type": "FIN",
-    "station": "GCGO",
+    "station": "P389",
     "station_country": "USA",
     "year": 2026,
     "doy": 100,
+	//"year": 2024,
+	//"doy": 129,
     "download_rinex": true,
     "download_products": true,
+    "download_gim": true,
     "atx_path": "C:/GnssProcessorSupport/products/atx/igs20.atx",
     "nc_path": "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
     "crx2rnx_path": "C:/GnssProcessorSupport/exe/crx2rnx.exe",
@@ -225,7 +240,7 @@
     "enable_windup_trace":      false,
     "enable_if_slip_trace":     false,
     "enable_gf_slip_trace":     false,
-    "enable_smoother_trace":    false,
+    "enable_smoother_trace":    true,
 
     "kalman_filter_concise_log": false,
 
@@ -235,14 +250,14 @@
       "ppp_model":          "info",
       "measurement_model":  "info",
       "kalman_filter":      "info",
-      "state_manager":      "debug",
+      "state_manager":      "info",
       "corrections":        "error",
-      "ambiguity_resolver": "debug",
-      "cycle_slip_manager": "debug",
+      "ambiguity_resolver": "info",
+      "cycle_slip_manager": "info",
       "mw_slip_detector":   "info",
-      "turbo_edit_resolver":"debug",
-      "bssd_pivot_manager": "debug",
-      "bssd_transform":     "debug",
+      "turbo_edit_resolver":"info",
+      "bssd_pivot_manager": "info",
+      "bssd_transform":     "info",
       "state_initializer":  "info",
       "gnss_config":        "info",
       "geometry":           "info",

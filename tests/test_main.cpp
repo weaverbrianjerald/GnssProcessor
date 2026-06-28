@@ -903,6 +903,90 @@ TEST(OceanPoleTideTest, MatchesReferenceVector) {
 }
 
 // ============================================================================
+// Atmospheric pressure loading — S1/S2 thermal tide (convention lock)
+// ============================================================================
+//
+// computeAtmosphericTideDisplacement assembles the diurnal (S1) and semidiurnal
+// (S2) atmospheric thermal-tide site displacement from per-station in-phase
+// (cos) / out-of-phase (sin) ENU coefficients, with local-solar-time arguments
+//   theta_S1 = 2*pi*UT_frac + lambda,  theta_S2 = 2*(2*pi*UT_frac + lambda).
+// Coefficient layout per harmonic [aE^cos, aE^sin, aN^cos, aN^sin, aU^cos, aU^sin],
+// index 0..5 = S1, 6..11 = S2.  This locks the index mapping, the S1/S2 argument
+// scaling, the longitude (local-solar-time) usage, and the ENU->ECEF rotation
+// (mirrors OceanTideModel).  The grid loader and a full flag-off bit-identity run
+// are validated separately.
+TEST(AtmosphericTideTest, S1S2ConventionAndRotation) {
+    LogManager log_mgr;
+    GnssCorrections gc(log_mgr);
+
+    // Station at the equator / prime meridian so the ENU->ECEF rotation is the
+    // trivial permutation enuToEcef((dE,dN,dU)) = (dU, dE, dN), and lambda == 0.
+    const GnssTime t{ 2313, 281700.0 };
+    const Eigen::Vector3d rx0 = Coordinates::llhToEcef(0.0, 0.0, 0.0);
+
+    // No coefficients loaded => not available, zero displacement.
+    EXPECT_FALSE(gc.hasAtmosphericTideCoefficients());
+    EXPECT_NEAR(gc.computeAtmosphericTideDisplacement(rx0, t).norm(), 0.0, 1e-15);
+
+    // Independent evaluation of the arguments the model declares.
+    const Coordinates::Llh llh = Coordinates::ecefToLlh(rx0);
+    const double ut_frac  = std::fmod(TimeUtils::gpsTimeToMjd(t), 1.0);
+    const double lambda   = llh.lon_rad;                     // 0 at prime meridian
+    const double theta_s1 = 2.0 * Constants::PI * ut_frac + lambda;
+    const double theta_s2 = 2.0 * (2.0 * Constants::PI * ut_frac + lambda);
+
+    // Case A: S1 Up-only => locks indices 4/5, the S1 argument, and rotation.
+    {
+        std::array<double, 12> c{};
+        c[4] = 1.0e-3;   // aU^cos (S1)
+        c[5] = 0.5e-3;   // aU^sin (S1)
+        gc.setAtmosphericTideCoefficients(c);
+        EXPECT_TRUE(gc.hasAtmosphericTideCoefficients());
+        const double d_u = c[4] * std::cos(theta_s1) + c[5] * std::sin(theta_s1);
+        const Eigen::Vector3d e = gc.computeAtmosphericTideDisplacement(rx0, t);
+        EXPECT_NEAR(e.x(), d_u, 1e-12);   // Up -> ECEF X at (0,0)
+        EXPECT_NEAR(e.y(), 0.0, 1e-12);
+        EXPECT_NEAR(e.z(), 0.0, 1e-12);
+    }
+
+    // Case B: S2 East-only => locks indices 6/7 and the 2x semidiurnal argument.
+    {
+        std::array<double, 12> c{};
+        c[6] = 0.8e-3;   // aE^cos (S2)
+        c[7] = 0.3e-3;   // aE^sin (S2)
+        gc.setAtmosphericTideCoefficients(c);
+        const double d_e = c[6] * std::cos(theta_s2) + c[7] * std::sin(theta_s2);
+        const Eigen::Vector3d e = gc.computeAtmosphericTideDisplacement(rx0, t);
+        EXPECT_NEAR(e.x(), 0.0, 1e-12);
+        EXPECT_NEAR(e.y(), d_e, 1e-12);   // East -> ECEF Y at (0,0)
+        EXPECT_NEAR(e.z(), 0.0, 1e-12);
+    }
+
+    // Magnitude band: representative mm-level coefficients => sub-cm site effect.
+    {
+        std::array<double, 12> c{};
+        for (int i = 0; i < 12; ++i) c[i] = 0.3e-3;
+        gc.setAtmosphericTideCoefficients(c);
+        EXPECT_LT(gc.computeAtmosphericTideDisplacement(rx0, t).norm(), 1.5e-2);
+    }
+
+    // Physical sanity guard: an out-of-range (>1 cm) displacement returns zero;
+    // an in-range one passes through equal to the hand-computed value.
+    {
+        std::array<double, 12> c{};
+        c[4] = 1.0;   // 1 m radial cos (S1) — far above the ~1.5 mm physical band
+        gc.setAtmosphericTideCoefficients(c);
+        const double d_u = 1.0 * std::cos(theta_s1);
+        const Eigen::Vector3d e = gc.computeAtmosphericTideDisplacement(rx0, t);
+        if (std::abs(d_u) > 0.01) {
+            EXPECT_NEAR(e.norm(), 0.0, 1e-15) << "guard should zero an out-of-range displacement";
+        } else {
+            EXPECT_NEAR(e.x(), d_u, 1e-12);
+        }
+    }
+}
+
+// ============================================================================
 // Niell Mapping Function (default "GMF"/NMF tropo path) — convention lock
 // ============================================================================
 //

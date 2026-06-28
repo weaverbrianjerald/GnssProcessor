@@ -99,18 +99,22 @@ int ProductResolver::gpsWeekFromDate(int year, int doy) {
     return gt.week;
 }
 
-std::string ProductResolver::buildProductFilename(const std::string& tag,
-                                                  const std::string& yyyydoy) const {
-    const std::string& src = config_.product_source; // e.g. "COD"
-    const std::string& typ = config_.product_type;   // e.g. "FIN"
+std::string ProductResolver::typeSeg(const std::string& product_type) {
+    // Map product_type to the long-name convention segment.
+    // FIN -> MGXFIN, RAP -> OPSRAP, ULT -> OPSULT (default FIN).
+    if (product_type == "RAP") return "OPSRAP";
+    if (product_type == "ULT") return "OPSULT";
+    return "MGXFIN";
+}
 
-    // Map product_type to the naming convention segment.
-    // FIN -> MGXFIN, RAP -> OPSRAP, ULT -> OPSULT
-    std::string type_seg;
-    if (typ == "FIN")      type_seg = "MGXFIN";
-    else if (typ == "RAP") type_seg = "OPSRAP";
-    else if (typ == "ULT") type_seg = "OPSULT";
-    else                   type_seg = "MGXFIN";
+std::string ProductResolver::buildProductFilename(const std::string& tag,
+                                                  const std::string& yyyydoy,
+                                                  const std::string& type_override) const {
+    const std::string& src = config_.product_source; // e.g. "COD"
+    const std::string  typ =                         // e.g. "FIN"
+        type_override.empty() ? config_.product_type : type_override;
+
+    std::string type_seg = typeSeg(typ);
 
     // PREFIX0TYPE_YYYYDOY0000_01D_RATE_PRODUCT.EXT.gz
     if (tag == "orb") {
@@ -133,9 +137,10 @@ std::string ProductResolver::buildProductFilename(const std::string& tag,
 
 std::string ProductResolver::buildProductUrl(const std::string& tag,
                                              const std::string& yyyydoy,
-                                             int gps_week) const {
+                                             int gps_week,
+                                             const std::string& type_override) const {
     const std::string host = "https://cddis.nasa.gov";
-    std::string filename = buildProductFilename(tag, yyyydoy);
+    std::string filename = buildProductFilename(tag, yyyydoy, type_override);
 
     if (tag == "brdc") {
         // Broadcast nav is under /archive/gnss/data/daily/YYYY/brdc/
@@ -159,10 +164,15 @@ std::string ProductResolver::buildProductUrl(const std::string& tag,
 std::vector<std::filesystem::path> ProductResolver::resolveProduct(
     const std::string& tag,
     const std::vector<std::string>& yyyydoy_list,
-    const std::vector<int>& gps_weeks) {
+    const std::vector<int>& gps_weeks,
+    const std::string& type_override) {
 
     auto log = log_manager_.getLogger("resolver");
     std::vector<std::filesystem::path> resolved;
+
+    // Effective product-latency code for this resolve (override wins).
+    const std::string eff_type =
+        type_override.empty() ? config_.product_type : type_override;
 
     if (tag != "orb" && tag != "clk" && tag != "dcb" && tag != "erp" && tag != "brdc" && tag != "gim") {
         log->error("Unknown product tag: {}", tag);
@@ -181,7 +191,7 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
         const std::filesystem::path cache_dir = config_.data_root / "cache" / ddir;
 
         // Filename of the ready (decompressed) artifact.
-        std::string filename_gz = buildProductFilename(tag, yyyydoy);
+        std::string filename_gz = buildProductFilename(tag, yyyydoy, type_override);
         std::string filename = filename_gz;
         if (filename.size() > 3 && filename.substr(filename.size() - 3) == ".gz")
             filename = filename.substr(0, filename.size() - 3);
@@ -194,7 +204,7 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
         }
 
         // Download .gz to cache/, decompress straight to the ready/ dir.
-        std::string url = buildProductUrl(tag, yyyydoy, gps_week);
+        std::string url = buildProductUrl(tag, yyyydoy, gps_week, type_override);
         auto result = downloader_.downloadAndDecompress(url, cache_dir, ready_dir);
         if (!result.empty()) {
             resolved.push_back(result);
@@ -203,11 +213,7 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
 
         // For orbits, try 15M fallback if 5M failed (typically a 404).
         if (tag == "orb") {
-            std::string type_seg;
-            if (config_.product_type == "FIN")      type_seg = "MGXFIN";
-            else if (config_.product_type == "RAP") type_seg = "OPSRAP";
-            else if (config_.product_type == "ULT") type_seg = "OPSULT";
-            else                                    type_seg = "MGXFIN";
+            std::string type_seg = typeSeg(eff_type);
 
             std::string fallback_filename =
                 config_.product_source + "0" + type_seg + "_" + yyyydoy + "0000_01D_15M_ORB.SP3.gz";
@@ -224,11 +230,7 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
 
         // For ERP, try 01D period fallback if 12H failed.
         if (tag == "erp") {
-            std::string type_seg;
-            if (config_.product_type == "FIN")      type_seg = "MGXFIN";
-            else if (config_.product_type == "RAP") type_seg = "OPSRAP";
-            else if (config_.product_type == "ULT") type_seg = "OPSULT";
-            else                                    type_seg = "MGXFIN";
+            std::string type_seg = typeSeg(eff_type);
 
             std::string fallback_filename =
                 config_.product_source + "0" + type_seg + "_" + yyyydoy + "0000_01D_01D_ERP.ERP.gz";
@@ -246,6 +248,58 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
         log->warn("Failed to obtain {} for {}", tag, yyyydoy);
     }
     return resolved;
+}
+
+// ---------------------------------------------------------------------------
+// ERP (Earth-rotation) — real-time-aware latency + backward-date search
+// ---------------------------------------------------------------------------
+
+std::pair<int, int> ProductResolver::shiftDate(int year, int doy, int delta) {
+    auto isLeap = [](int y) { return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0); };
+    int y = year;
+    int d = doy + delta;
+    while (d < 1)                          { y -= 1; d += isLeap(y) ? 366 : 365; }
+    for (int diy; d > (diy = isLeap(y) ? 366 : 365); ) { d -= diy; y += 1; }
+    return { y, d };
+}
+
+std::filesystem::path ProductResolver::resolveErp(int year, int doy) {
+    auto log = log_manager_.getLogger("resolver");
+
+    // ERP latency selection. A live real-time session (no precise orbit/clock
+    // download) cannot obtain a FINAL ERP for the current day — it does not
+    // exist yet — so prefer the short-latency RAPID product, whose polar motion
+    // / UT1 is current to within the pole-tide error budget. An explicitly-set
+    // RAP/ULT product_type is honoured as-is.
+    std::string erp_type = config_.product_type;
+    if (!config_.download_orbits_clocks && erp_type == "FIN") {
+        erp_type = "RAP";
+        log->info("Real-time live source: using RAPID ERP (FINAL not yet "
+                  "available for the current day)");
+    }
+
+    // Walk backward from the session day to the most recent available ERP.
+    // Polar motion (~a few mas/day) and UT1-UTC (~ms/day) drift slowly, so an
+    // ERP a few days old — flat-extrapolated to the session epoch by
+    // Planetary::interpolateErp — biases the pole tide by well under a mm,
+    // versus omitting the ~25 mm-radial correction entirely when erps_ is empty.
+    constexpr int kErpMaxAgeDays = 7;
+    for (int back = 0; back <= kErpMaxAgeDays; ++back) {
+        auto [y, d] = shiftDate(year, doy, -back);
+        const std::string yyyydoy = std::to_string(y) + padDoy(d);
+        const int week = gpsWeekFromDate(y, d);
+        auto paths = resolveProduct("erp", { yyyydoy }, { week }, erp_type);
+        if (!paths.empty()) {
+            if (back > 0)
+                log->info("ERP: current-day product unavailable; using "
+                          "{}-day-old {} ERP ({})", back, erp_type, yyyydoy);
+            return paths.front();
+        }
+    }
+    log->warn("No {} ERP resolved within {} days of {}{} — pole tide and the "
+              "Sun/Moon EOP frame will be degraded",
+              erp_type, kErpMaxAgeDays, year, padDoy(doy));
+    return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -476,12 +530,14 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
             log->info("Real-time live source: skipping orbit/clock download");
         }
         auto bia_paths = resolveProduct("dcb", day_dates, day_weeks);
-        auto erp_paths = resolveProduct("erp", day_dates, day_weeks);
+        // ERP: real-time-aware (RAPID + most-recent-available) so a live "today"
+        // session does not silently lose the pole tide / EOP frame.
+        auto erp_path  = resolveErp(year, doy);
 
         for (auto& p : orb_paths) resolved.product_paths.push_back(std::move(p));
         for (auto& p : clk_paths) resolved.product_paths.push_back(std::move(p));
         for (auto& p : bia_paths) resolved.product_paths.push_back(std::move(p));
-        for (auto& p : erp_paths) resolved.product_paths.push_back(std::move(p));
+        if (!erp_path.empty()) resolved.product_paths.push_back(std::move(erp_path));
 
         // Broadcast navigation
         auto brdc_path = resolveBrdc(yd_obs);

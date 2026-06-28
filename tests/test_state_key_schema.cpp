@@ -248,6 +248,49 @@ TEST(StateKeySchemaTest, SatPhaseBiasNamespaceDisjointFromCodeBias) {
 }
 
 // ============================================================================
+// 5c. Per-satellite CLOCK keys — "<satellite>|SC" (PPP_RTK_Network)
+// ============================================================================
+
+TEST(StateKeySchemaTest, SatClockRoundTrip) {
+    const std::string key = makeSatClockKey("G01");
+    EXPECT_EQ(key, "G01|SC");
+
+    auto sat = parseSatClockKey(key);
+    ASSERT_TRUE(sat.has_value());
+    EXPECT_EQ(*sat, "G01");
+
+    EXPECT_TRUE(isSatClockKey(key));
+    EXPECT_EQ(satelliteFromSatClockKey(key), "G01");
+}
+
+TEST(StateKeySchemaTest, SatClockParseRejectsMalformed) {
+    EXPECT_FALSE(parseSatClockKey("").has_value());
+    EXPECT_FALSE(parseSatClockKey("G01").has_value());        // No |SC suffix
+    EXPECT_FALSE(parseSatClockKey("|SC").has_value());        // Empty satellite
+    EXPECT_FALSE(parseSatClockKey("G01|L1C|SC").has_value()); // Sat clock is per-satellite, no signal field
+}
+
+// The sat-clock key (per-satellite, "<sat>|SC") must stay disjoint from the
+// per-(sat,signal) bias keys.  "|SC" and "|PB" are distinct discriminators, and
+// a clock key carries no signal field, so it never parses as a bias key.
+TEST(StateKeySchemaTest, SatClockNamespaceDisjointFromBiasKeys) {
+    const std::string clock = makeSatClockKey("G01");           // "G01|SC"
+    const std::string code  = makeSatBiasKey("G01", "L1C");     // "G01|L1C"
+    const std::string phase = makeSatPhaseBiasKey("G01", "L1C");// "G01|L1C|PB"
+
+    EXPECT_TRUE(isSatClockKey(clock));
+    EXPECT_FALSE(isSatClockKey(code));
+    EXPECT_FALSE(isSatClockKey(phase));
+    EXPECT_FALSE(isSatPhaseBiasKey(clock));
+
+    // A clock key never parses as a phase-bias key, and vice versa.
+    EXPECT_FALSE(parseSatPhaseBiasKey(clock).has_value());
+    EXPECT_FALSE(parseSatClockKey(phase).has_value());
+
+    EXPECT_EQ(satelliteFromSatClockKey(clock), "G01");
+}
+
+// ============================================================================
 // 6. System-time-offset keys — bare system name
 // ============================================================================
 

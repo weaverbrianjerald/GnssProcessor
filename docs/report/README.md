@@ -67,6 +67,31 @@ docs/report/
     observation_equations.tex Uncombined PPP pseudorange/phase observation model.
     bssd_dd.tex               BSSD (PPP-RTK) and DD (baseline) transformations
                               + S-transform structure.
+  frames_time.tex           WGS84 ECEF<->geodetic<->ENU, GNSS time scales + leap
+                            seconds (GLONASS TOD, BeiDou BDT), legacy IAU-1976/1980
+                            and CIO-based ECI<->ECEF transforms.
+  product_evaluation.tex    Baseline orbit/clock product evaluation: derotated-
+                            Neville / sidereal-trig SP3 interpolation, rate-anchored
+                            clock LSQ, broadcast Kepler / GLONASS PZ-90, ephemeris
+                            selection — the baseline the SSR chapter overlays.
+  atmosphere.tex            Tropospheric (Saastamoinen ZHD, Niell/GMF/VMF3/GPT3
+                            mapping, Chen-Herring gradients) and ionospheric
+                            (uncombined slant scaling, GIM/IONEX STEC + iono-
+                            weighted pseudo-obs, Klobuchar seed, higher-order)
+                            delay models.
+  site_displacement.tex     Geophysical station displacements: solid Earth tide
+                            (IERS-2010 Steps 1+2), pole + ocean-pole tide, ocean
+                            tidal loading, and the LOS-projection integration.
+  observation_physics.tex   Deterministic per-observation corrections: antenna
+                            PCO/PCV + ATX fallback, satellite attitude/yaw, phase
+                            wind-up, relativity/Shapiro/Sagnac, group-delay/biases.
+  stochastic_qc.tex         Measurement stochastic models (elevation/SNR/sat-block
+                            weighting) + a-posteriori QC: variance factor, Baarda
+                            data-snooping, redundancy numbers, MDB, full-R kernel.
+  estimator_infrastructure.tex  Filter-bootstrap machinery: WLS position/clock/tropo
+                            seed, first-epoch residual-difference state initialisation
+                            (ISB/phase-clock/code-bias/iono/ambiguity), BSSD/DD pivot
+                            selection + disturbance detection.
   kalman_smoother.tex       Variable-dim EKF (Joseph update, prior-anchored IEKF,
                             robust gating) + backward RTS smoother.
   slip_detection.tex        MW/GF/GRAPHIC/EWL combinations + TurboEdit 2x2 repair,
@@ -158,8 +183,15 @@ not churning code:
 
 - State vector layout (rarely changes).
 - Observation equations (settled GNSS theory).
+- Coordinate frames and time systems (WGS84/ENU, leap seconds, CIO/SOFA).
+- Orbit/clock product evaluation (SP3 interpolation, Kepler/PZ-90).
+- Atmospheric delay models (troposphere mapping, ionosphere GIM/HOI).
+- Geophysical site displacements (solid Earth / ocean / pole tides).
+- Observation-model physics (antenna, attitude, relativity, range corrections).
 - Differencing transformations (algebraic, code-independent).
 - Filter equations (KF predict/update, IEKF, RTS smoother).
+- Stochastic model and quality control (weighting, variance factor, Baarda).
+- Estimator infrastructure (WLS seed, state initialisation, pivot management).
 - Cycle-slip combinations and the TurboEdit integer repair.
 - Integer ambiguity resolution (MLAMBDA, WL/NL, validation).
 - Inertial aiding (strapdown mechanisation, INS error state).

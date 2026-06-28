@@ -1,0 +1,50 @@
+{
+  "_comment": "Standard test-run matrix. Stations x config cells, graded vs independent SINEX/SIF truth. Driven by scripts/run_test_suite.py. Paths are relative to the repo root. Each cell = a base config + dot-path override patch. The empty-overrides cell of a base is its A/B reference.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/matrix",
+
+  "truth": {
+    "sinex_dir": "data/static/sinex",
+    "sif_paths": [
+      "data/static/sif/igs20_SIF.json",
+      "data/static/sif/ncn20_SIF.json"
+    ],
+    "auto_fetch_sinex": true,
+    "sif_with_periodic": true,
+    "cross_check_tol_m": 0.05
+  },
+
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA",
+      "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" },
+    { "name": "CIT1", "truth_key": "CIT100USA",
+      "obs": "data/2024-129/obs/cit1/cit11290.24o" },
+    { "name": "GCGO", "truth_key": "GCGO00USA",
+      "obs": "data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+
+  "bases": {
+    "ppp":    "config/test_suite/ppp_static.jsonc",
+    "ppprtk": "config/test_suite/ppp_rtk_static.jsonc"
+  },
+
+  "cells": [
+    { "label": "ppp_static",        "base": "ppp",    "overrides": {} },
+    { "label": "ppp_gps_only",      "base": "ppp",    "overrides": { "processing.active_systems": ["GPS"] } },
+    { "label": "ppp_kinematic",     "base": "ppp",    "overrides": { "estimation.estimate_velocity": true, "processing.rinex_types": "CLD", "filter.process_noise.position_q": 100.0, "filter.process_noise.acceleration_psd_q": 1.0 } },
+    { "label": "ppp_no_solid_tide", "base": "ppp",    "overrides": { "model_corrections.enable_solid_earth_tide": false } },
+    { "label": "ppp_smoother",      "base": "ppp",    "overrides": { "processing.run_smoother": true } },
+    { "label": "ppprtk_float",      "base": "ppprtk", "overrides": {} },
+    { "label": "ppprtk_ar",         "base": "ppprtk", "overrides": { "estimation.ambiguity_resolution.mode": 1 } },
+    { "label": "ppprtk_no_bssd",    "base": "ppprtk", "overrides": { "estimation.between_satellite_sd.enabled": false } }
+  ],
+
+  "matrix": [
+    { "station": "JPLM", "cells": ["ppp_static", "ppp_gps_only", "ppp_kinematic", "ppp_no_solid_tide", "ppp_smoother", "ppprtk_float", "ppprtk_ar", "ppprtk_no_bssd"] },
+    { "station": "CIT1", "cells": ["ppp_static", "ppp_gps_only", "ppp_no_solid_tide"] },
+    { "station": "GCGO", "cells": ["ppp_static"] }
+  ]
+}

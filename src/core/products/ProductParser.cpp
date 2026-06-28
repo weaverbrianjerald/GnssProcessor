@@ -1326,6 +1326,17 @@ namespace GnssProcessor {
         }
 
         loadSingle("ERP", "ERP", &ProductParser::parseErp, erps_);
+        if (erps_.empty()) {
+            // No Earth-rotation data → pole tide is omitted (up to ~25 mm
+            // radial) and the Sun/Moon ECI→ECEF frame falls back to
+            // xp=yp=UT1=0. Surface it once: in real-time ProductResolver now
+            // prefers a RAPID / most-recent ERP, so an empty set here means
+            // none resolved (offline live run, or a missing internal fixture).
+            ppp_log->warn("No ERP (Earth-rotation) data loaded — pole tide and "
+                          "the Sun/Moon EOP frame will be degraded. Supply a "
+                          "recent .ERP (production RT auto-fetches RAPID; "
+                          "internal mode needs a bundled fixture).");
+        }
 
         auto rnx_path = getProductPath("RNX");
         if (!rnx_path.empty()) {

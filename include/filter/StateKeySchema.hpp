@@ -596,6 +596,59 @@ inline std::string satelliteFromSatPhaseBiasKey(std::string_view key) {
 }
 
 // ===========================================================================
+// 5c. Per-satellite CLOCK keys — "<satellite>|SC"
+// ---------------------------------------------------------------------------
+// Examples: "G01|SC", "E11|SC"
+//
+// The network producer (PPP_RTK_Network) estimates an EXPLICIT per-satellite
+// clock correction (Δδtˢ in metres, relative to the a-priori precise/real-time
+// product clock already removed in obs.modeled) to maintain consistency with
+// the chosen S-system datum.  Unlike the code/phase biases this is PER-SATELLITE
+// (one clock per satellite, NOT per signal), so the key carries no signal field.
+// Stored in StateManager::sat_clock_indices_, a map kept DISTINCT from the
+// bias maps via the trailing "|SC" discriminator.  The satellite orbit (position)
+// stays FIXED from the product; only the clock is estimated.
+//
+// Constructed in:  the network driver / estimator
+// Stored in:       StateManager::sat_clock_indices_
+// Parsed in:       StateManager::getProcessNoiseMatrix (frozen-pivot check reads
+//                  only the satellite prefix — see satelliteFromSatClockKey).
+// ===========================================================================
+
+/// Trailing discriminator marking a per-satellite clock key.
+inline constexpr std::string_view kSatClockSuffix = "|SC";
+
+/// Build a per-satellite clock key "<satellite>|SC".
+inline std::string makeSatClockKey(std::string_view satellite) {
+    std::string out;
+    out.reserve(satellite.size() + kSatClockSuffix.size());
+    out.append(satellite);
+    out.append(kSatClockSuffix);
+    return out;
+}
+
+/// True iff @p key is a per-satellite clock key (cheap trailing-suffix test).
+inline bool isSatClockKey(std::string_view key) {
+    return key.size() > kSatClockSuffix.size()
+        && key.substr(key.size() - kSatClockSuffix.size()) == kSatClockSuffix;
+}
+
+/// Extract the satellite from a sat-clock key, or empty if malformed.
+inline std::string satelliteFromSatClockKey(std::string_view key) {
+    if (!isSatClockKey(key)) return std::string(key);
+    return std::string(key.substr(0, key.size() - kSatClockSuffix.size()));
+}
+
+/// Parse a per-satellite clock key.  Returns the satellite, or std::nullopt
+/// unless the key has the form "<sat>|SC" with a non-empty satellite.
+inline std::optional<std::string> parseSatClockKey(std::string_view key) {
+    if (!isSatClockKey(key)) return std::nullopt;
+    const std::string_view sat = key.substr(0, key.size() - kSatClockSuffix.size());
+    if (sat.empty() || sat.find(kPipeDelimiter) != std::string_view::npos) return std::nullopt;
+    return std::string(sat);
+}
+
+// ===========================================================================
 // 6. System-time-offset keys — "<system>"
 // ---------------------------------------------------------------------------
 // Just the system name string ("Galileo", "GLONASS", "BeiDou", "QZSS",

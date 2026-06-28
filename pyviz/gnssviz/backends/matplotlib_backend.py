@@ -219,9 +219,13 @@ class MatplotlibBackend(Backend):
             ax.set_ylabel(spec.ylabel)
         if spec.y2label and twin["ax"] is not None:
             twin["ax"].set_ylabel(spec.y2label)
-        if spec.yscale == "log":
+        # Log scale only when the axis actually carries positive data; a
+        # degenerate column (e.g. ADOP all-zero in a float PPP run) would
+        # otherwise make savefig raise "no positive values" and abort the
+        # whole report.  Fall back to linear in that case.
+        if spec.yscale == "log" and _axis_has_positive(ax, "y"):
             ax.set_yscale("log")
-        if spec.xscale == "log":
+        if spec.xscale == "log" and _axis_has_positive(ax, "x"):
             ax.set_xscale("log")
         if spec.xlim is not None:
             ax.set_xlim(spec.xlim)
@@ -286,6 +290,33 @@ class MatplotlibBackend(Backend):
 
 
 # --------------------------------------------------------------------------- #
+def _axis_has_positive(ax, which: str) -> bool:
+    """True if the drawn artists put any finite positive value on ``which`` axis.
+
+    Used to gate ``set_*scale("log")``: matplotlib defers the "no positive
+    values" error to draw/savefig time, so we must decide *before* enabling the
+    log scale.  On any inspection error we return True (leave the spec honoured)
+    so this guard can only ever prevent a crash, never introduce one.
+    """
+    try:
+        idx = 1 if which == "y" else 0
+        vals = []
+        for ln in ax.lines:
+            d = ln.get_ydata() if which == "y" else ln.get_xdata()
+            vals.append(np.asarray(d, dtype=float).ravel())
+        for col in ax.collections:
+            off = np.asarray(col.get_offsets(), dtype=float)
+            if off.ndim == 2 and off.shape[1] == 2:
+                vals.append(off[:, idx])
+        if not vals:
+            return True
+        allv = np.concatenate(vals)
+        allv = allv[np.isfinite(allv)]
+        return bool(allv.size) and bool(allv.max() > 0.0)
+    except Exception:
+        return True
+
+
 def _extent_x(x):
     """Return (x0, x1, is_date) for an imshow extent over (possibly datetime) x."""
     x = np.asarray(x)

@@ -33,6 +33,12 @@ pre { background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px;
 .toc { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 10px 18px; }
 .toc a { color: #1b3a5c; text-decoration: none; }
 .skip { color: #999; font-style: italic; }
+.banner { font-weight: 600; font-size: 1.1rem; padding: 10px 16px; border-radius: 6px;
+          margin: 4px 0 14px; }
+.banner.pass { background: #e6f4ea; color: #1b5e20; border: 1px solid #b6e0c2; }
+.banner.fail { background: #fdecea; color: #9b1c14; border: 1px solid #f5c2bd; }
+.links { font-size: 0.85rem; margin: 6px 0 14px; }
+.links a { color: #1b3a5c; }
 """
 
 
@@ -46,6 +52,7 @@ def build_html_report(
     dpi: int = 110,
     live_token: Optional[str] = None,
     poll_interval: float = 5.0,
+    extra_html: str = "",
 ) -> str:
     """Assemble the report HTML from ``(section_title, ViewerResult)`` pairs.
 
@@ -53,6 +60,11 @@ def build_html_report(
     ``/status`` every ``poll_interval`` seconds and reloads the page when the
     token changes -- the basis of the real-time dashboard (no reload while the
     data is idle, one reload per new-data tick).
+
+    ``extra_html`` is *trusted* HTML (caller-generated, never user input) injected
+    just below the meta line and above the table of contents -- used by the
+    test-suite report for a coloured pass/fail gate banner and per-cell report
+    links, which the escaped ``<pre>`` summaries cannot carry.
     """
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Interactive backends (plotly) need their JS runtime loaded once per doc.
@@ -74,6 +86,8 @@ def build_html_report(
         f"<div class='meta'>Trace folder: <code>{html.escape(log_dir)}</code>"
         f" &nbsp;|&nbsp; generated {now}{live_badge}</div>",
     ]
+    if extra_html:
+        parts.append(extra_html)
 
     # Table of contents.
     parts.append("<div class='toc'><b>Sections</b><ul>")
@@ -86,11 +100,18 @@ def build_html_report(
         if res.summary:
             parts.append(f"<pre>{html.escape(res.summary)}</pre>")
         for fig in res.figures:
-            rendered = backend.render(fig)
+            # Per-figure isolation: a single figure that fails to render must
+            # not abort the entire report -- emit a placeholder and continue.
             try:
-                parts.append(backend.to_html(rendered, dpi=dpi))
-            finally:
-                backend.close(rendered)
+                rendered = backend.render(fig)
+                try:
+                    parts.append(backend.to_html(rendered, dpi=dpi))
+                finally:
+                    backend.close(rendered)
+            except Exception as exc:  # pragma: no cover - defensive
+                parts.append("<p class='skip'>(figure '%s' failed to render: %s)</p>"
+                             % (html.escape(getattr(fig, "name", "?")),
+                                html.escape(str(exc))))
         if not res.figures and not res.summary:
             parts.append("<p class='skip'>(no figures produced)</p>")
 
