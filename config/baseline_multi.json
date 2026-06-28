@@ -115,7 +115,7 @@
     "enable_solid_earth_tide": true,
     "enable_ocean_tide_loading": true,
     "enable_pole_tide": true,
-    "enable_atmospheric_loading": true,
+    "enable_atmospheric_loading": false,
     "enable_satellite_pco": true,
     "enable_satellite_pcv": true,
     "enable_receiver_pco": true,

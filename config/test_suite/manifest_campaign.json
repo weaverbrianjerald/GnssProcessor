@@ -1,0 +1,85 @@
+{
+  "_comment": "Validation CAMPAIGN matrix (2026-06-28). Extends the curated manifest.json with verified-live A/B cells targeting (1) the unexplained JPLM +5.7cm UP bias decomposition [Wave 1], (2) the open Galileo C5/C7 code residual on the PPP-RTK base [Wave 2], and (3) a few cheap secondary probes [Wave 3]. Every override key was confirmed live in GnssConfigLoad.cpp + consuming code before inclusion. Separate output_root so it is a self-contained, reproducible run. Graded vs independent ITRF2020 SINEX truth.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/campaign",
+
+  "truth": {
+    "sinex_dir": "data/static/sinex",
+    "sif_paths": [
+      "data/static/sif/igs20_SIF.json",
+      "data/static/sif/ncn20_SIF.json"
+    ],
+    "auto_fetch_sinex": true,
+    "sif_with_periodic": true,
+    "cross_check_tol_m": 0.05
+  },
+
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA",
+      "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" },
+    { "name": "CIT1", "truth_key": "CIT100USA",
+      "obs": "data/2024-129/obs/cit1/cit11290.24o" },
+    { "name": "GCGO", "truth_key": "GCGO00USA",
+      "obs": "data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+
+  "bases": {
+    "ppp":    "config/test_suite/ppp_static.jsonc",
+    "ppprtk": "config/test_suite/ppp_rtk_static.jsonc"
+  },
+
+  "cells": [
+    { "label": "ppp_static",        "base": "ppp",    "overrides": {} },
+    { "label": "ppp_gps_only",      "base": "ppp",    "overrides": { "processing.active_systems": ["GPS"] } },
+
+    { "label": "ppp_no_solid_tide", "base": "ppp",    "overrides": { "model_corrections.enable_solid_earth_tide": false } },
+    { "label": "ppp_no_pole_tide",  "base": "ppp",    "overrides": { "model_corrections.enable_pole_tide": false } },
+    { "label": "ppp_all_tides_off", "base": "ppp",    "overrides": { "model_corrections.enable_solid_earth_tide": false, "model_corrections.enable_pole_tide": false } },
+
+    { "label": "ppp_no_rx_pco",     "base": "ppp",    "overrides": { "model_corrections.enable_receiver_pco": false } },
+    { "label": "ppp_no_sat_pco",    "base": "ppp",    "overrides": { "model_corrections.enable_satellite_pco": false } },
+    { "label": "ppp_no_rx_pcv",     "base": "ppp",    "overrides": { "model_corrections.enable_receiver_pcv": false } },
+    { "label": "ppp_no_sat_pcv",    "base": "ppp",    "overrides": { "model_corrections.enable_satellite_pcv": false } },
+    { "label": "ppp_no_windup",     "base": "ppp",    "overrides": { "model_corrections.enable_phase_windup": false } },
+
+    { "label": "ppp_no_tropo",      "base": "ppp",    "overrides": { "model_corrections.enable_troposphere": false } },
+    { "label": "ppp_tropoq_1e8",    "base": "ppp",    "overrides": { "filter.process_noise.troposphere_q": 1e-8 } },
+    { "label": "ppp_tropoq_1e7",    "base": "ppp",    "overrides": { "filter.process_noise.troposphere_q": 1e-7 } },
+    { "label": "ppp_vmf3",          "base": "ppp",    "overrides": { "receiver.troposphere_mapping_function": "vmf3" } },
+
+    { "label": "ppp_otl_on_ref",    "base": "ppp",    "overrides": { "data_download.nc_path": "C:/GnssProcessor/data/static/nc/EOT20_load.nc", "model_corrections.enable_ocean_tide_loading": true } },
+    { "label": "ppp_otl_off",       "base": "ppp",    "overrides": { "data_download.nc_path": "C:/GnssProcessor/data/static/nc/EOT20_load.nc", "model_corrections.enable_ocean_tide_loading": false } },
+
+    { "label": "ppprtk_float",      "base": "ppprtk", "overrides": {} },
+    { "label": "ppprtk_ar",         "base": "ppprtk", "overrides": { "estimation.ambiguity_resolution.mode": 1 } },
+    { "label": "ppprtk_no_bssd",    "base": "ppprtk", "overrides": { "estimation.between_satellite_sd.enabled": false } },
+    { "label": "ppprtk_gps_only",   "base": "ppprtk", "overrides": { "processing.active_systems": ["GPS"] } },
+    { "label": "ppprtk_no_satbias", "base": "ppprtk", "overrides": { "estimation.estimate_sat_biases": false } },
+    { "label": "ppprtk_freq_dual",  "base": "ppprtk", "overrides": { "processing.frequency_mode": "dual" } },
+    { "label": "ppprtk_no_codebias","base": "ppprtk", "overrides": { "model_corrections.enable_code_phase_bias": false } },
+    { "label": "ppprtk_no_atxfb",   "base": "ppprtk", "overrides": { "model_corrections.enable_atx_frequency_fallback": false } }
+  ],
+
+  "matrix": [
+    { "station": "JPLM", "cells": [
+      "ppp_static", "ppp_gps_only",
+      "ppp_no_solid_tide", "ppp_no_pole_tide", "ppp_all_tides_off",
+      "ppp_no_rx_pco", "ppp_no_sat_pco", "ppp_no_rx_pcv", "ppp_no_sat_pcv", "ppp_no_windup",
+      "ppp_no_tropo", "ppp_tropoq_1e8", "ppp_tropoq_1e7", "ppp_vmf3",
+      "ppp_otl_on_ref", "ppp_otl_off",
+      "ppprtk_float", "ppprtk_ar", "ppprtk_no_bssd", "ppprtk_gps_only",
+      "ppprtk_no_satbias", "ppprtk_freq_dual", "ppprtk_no_codebias", "ppprtk_no_atxfb"
+    ] },
+    { "station": "CIT1", "cells": [
+      "ppp_static", "ppp_no_solid_tide", "ppp_no_pole_tide",
+      "ppp_no_rx_pco", "ppp_no_sat_pco", "ppp_tropoq_1e8", "ppp_vmf3"
+    ] },
+    { "station": "GCGO", "cells": [
+      "ppp_static", "ppp_no_solid_tide", "ppp_no_pole_tide",
+      "ppp_no_rx_pco", "ppp_tropoq_1e8"
+    ] }
+  ]
+}

@@ -157,6 +157,14 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
     }
 
     const Eigen::VectorXd x_s = neq_.solveSharedConstrained(N, u);
+
+    // Cache the shared covariance (inverse of the datum-constrained reduced
+    // normals) for the driver's between-epoch carry-forward prior (W4-S2b D2).
+    // N is full rank here (the datum removed the deficiency, as solveShared-
+    // Constrained already verified), so the symmetric inverse is well-defined.
+    shared_cov_ = N.ldlt().solve(
+        Eigen::MatrixXd::Identity(numShared(), numShared()));
+
     solved_ = true;
     return x_s;
 }
@@ -164,6 +172,27 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
 Eigen::VectorXd NetworkEstimator::reconstructStation(
     std::size_t station, const Eigen::VectorXd& x_s) const {
     return neq_.reconstructStation(station, x_s);
+}
+
+const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
+    neq_.reduce();
+    return neq_.reducedSharedNormals();
+}
+
+void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
+    if (priors.empty()) return;
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    for (const SharedPrior& p : priors) {
+        if (!(p.info > 0.0)) continue;
+        const auto it = index_.find(key_(p.sat, p.kind, p.signal));
+        if (it == index_.end()) continue;   // parameter not in this epoch's layout
+        const Eigen::Index c = it->second;
+        delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
+        delta_rhs(c)     += p.info * p.value;
+    }
+    neq_.addSharedInfo(delta_info, delta_rhs);
 }
 
 NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_s,

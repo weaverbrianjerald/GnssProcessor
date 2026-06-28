@@ -1,0 +1,204 @@
+// PPP-RTK NETWORK producer (minimum-constraint S-system) — internal fixture.
+//
+// Joint multi-station estimator: per-station local normals reduced onto a shared
+// satellite-parameter block (exact Schur complement), emitting the estimable
+// satellite clock + per-(sat,signal) phase bias under a declared S-basis.
+//
+// V1 scope: estimable sat CLOCK + PHASE BIAS, coordinates/orbits FIXED, GPS +
+// Galileo, per-band uncombined, float (no network AR).  Each station's coordinates
+// MUST be known (held fixed) and its rinex_path MUST be explicit (the PathResolver
+// network gate is deferred).  Three continental-scale IGS stations from the bundled
+// 2024-129 fixture; JPLM is the clock datum (network-time reference receiver).
+{
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [ "GPS", "Galileo" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 10,
+    "max_duration_s": 3600.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ"
+    }
+  },
+
+  "files": {
+    "internal_data_root": "./data",
+    // Date anchor for product resolution (the network driver ignores this for
+    // observations — it reads network.stations[].rinex_path).
+    "observation_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx"
+  },
+
+  "estimation": {
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "estimate_ifb": false,
+    "estimate_sat_biases": false,
+    // The network estimates the satellite clock; code anchors the clock vs
+    // phase-bias split.  Do NOT downweight code on no-.BIA signals (the default
+    // 100x starves that separation and leaves it numerically near-singular).
+    "no_bia_code_downweight": 1.0,
+    "between_satellite_sd": { "enabled": false },
+    // mode 0 keeps the PRODUCER float; the closed-loop CONSUMER overrides ar_mode
+    // (network.closed_loop.ar_mode) and inherits these gate knobs (matching the
+    // validated user-AR config — the network defaults are too tight for a
+    // single-station consumer fed thin 3-station clocks).
+    "ambiguity_resolution": {
+      "mode": 0,
+      "wl_only": true,
+      "active_systems": [ "GPS" ],
+      "ratio_threshold": 3.0,
+      "ratio_upper_bound": 1e4,
+      "min_success_rate": 0.999,
+      "nl_max_per_pair_frac": 0.15,
+      "elevation_mask": 25.0,
+      "min_epochs": 1,
+      "max_position_sigma_m": 10.0,
+      "hold_variance": 0.001,
+      "wl_max_frac": 0.40
+    },
+    "adaptive_iono_process_noise": { "enable": false }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 1e2,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-9,
+      "ionosphere_q": 1e-3,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-12,
+      "sat_phase_bias_q": 1e-12,
+      "sat_clock_q": 1e-2,
+      "system_time_offset_q": 1e-12,
+      "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 1000.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "sat_phase_bias": 10.0,
+      "sat_clock": 1000.0,
+      "system_time_offset": 1000.0
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.002
+    },
+    "stochastic_model": "elevation"
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": true
+  },
+
+  "network": {
+    "clock_datum_station": "JPLM00USA",
+    "epoch_sync_tolerance_s": 1.0,
+    // Serialize each emitted NetworkSolutionEpoch (estimable sat clock + code/
+    // phase bias, plus the per-epoch datum-change flag) to this file so consumer-
+    // side experiments can replay the products WITHOUT re-running the network
+    // (NetworkProductReader::replay reproduces the store byte-for-byte).  Relative
+    // paths land in the network trace dir; "" disables serialization.
+    "product_output_path": "network_products.txt",
+    "stations": [
+      {
+        "name": "JPLM00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2493304.6796, -4655215.1032, 3565497.5918 ]
+      },
+      {
+        "name": "P38900USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/p38900usa/P38900USA_R_20241290000_01D_15S_MO.rnx",
+        "position_ecef": [ -2347409.5144, -3968716.0159, 4394004.5932 ]
+      },
+      {
+        "name": "GCGO00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2281621.6297, -1453585.1138, 5756964.9518 ]
+      }
+    ],
+
+    // Closed-loop integer-recovery harness: a HELD-OUT station (CIT1 / Caltech,
+    // ~8.7 km from the JPLM datum, deliberately NOT in stations[] above) consumes
+    // the network's freshly-emitted SSR products epoch-by-epoch through the
+    // user-side PPP-RTK + AR pipeline (fed from the producer's OWNED store).
+    // position_ecef is the RINEX-header surveyed truth (a-priori seed + position
+    // scoring).  AR = wide-lane only on GPS, matching the float-only v1 producer.
+    // Default mode = BIAS-ONLY (consume_network_clock=false): precise SP3/CLK for
+    // the clock + the network's satellite PHASE BIAS — isolates the integer-
+    // essential phase-bias product from the marginal thin-network clock.  Set
+    // consume_network_clock=true for the FULL closed loop (network clock+bias), or
+    // consume_network_products=false for the precise-only A/B BASELINE.
+    // wl_only AR is the practical path; ar_wl_only=false (full NL LAMBDA on the
+    // float) is experimental and slow until the network clock product tightens.
+    "closed_loop": {
+      "enable": true,
+      "consume_network_products": true,
+      "consume_network_clock": false,
+      "ar_mode": 1,
+      "ar_wl_only": true,
+      "ar_active_systems": [ "GPS" ],
+      "station": {
+        "name": "CIT100USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cit1/cit11290.24o",
+        "position_ecef": [ -2491490.2616, -4660803.2317, 3559129.0005 ]
+      }
+    }
+  },
+
+  "data_download": {
+    "enabled": false,
+    "product_source": "COD",
+    "product_type": "FIN",
+    "year": 2024,
+    "doy": 129
+  },
+
+  "logging": {
+    "enable_main_log": true,
+    "enable_ambiguity_resolver": true,
+    "//": "CSV traces below are written by the held-out CONSUMER (CIT1) — review in gnssviz/test_suite.",
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_residual_trace": true,
+    "enable_dop_trace": true,
+    "enable_sat_status_trace": true,
+    "levels": {
+      "measurement_model": "warn",
+      "state_manager": "warn",
+      "state_initializer": "warn",
+      "ppp_model": "warn",
+      "kalman_filter": "warn",
+      "ambiguity_resolver": "info"
+    }
+  }
+}

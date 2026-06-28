@@ -28,6 +28,7 @@ def run_viewers(
     ctx: TraceContext,
     *,
     only: Optional[Sequence[str]] = None,
+    include_disabled: bool = False,
     registry: Sequence[Viewer] = REGISTRY,
 ) -> RunOutput:
     """Build every applicable viewer for the run at ``ctx``.
@@ -36,12 +37,23 @@ def run_viewers(
     ----------
     only:
         Optional whitelist of viewer names to run (others skipped silently).
+        An explicit name always wins over ``default_enabled`` -- requesting a
+        default-off viewer by name runs it.
+    include_disabled:
+        When no ``only`` whitelist is given, also run viewers whose
+        ``default_enabled`` is ``False`` (the ``--all`` escape hatch).  Ignored
+        when ``only`` is set.
     """
     out = RunOutput()
     wanted = set(only) if only is not None else None
 
     for viewer in registry:
-        if wanted is not None and viewer.name not in wanted:
+        if wanted is not None:
+            if viewer.name not in wanted:
+                continue
+        elif not viewer.default_enabled and not include_disabled:
+            out.skipped.append(
+                (viewer.name, f"off by default (run with --only {viewer.name} or --all)"))
             continue
         missing = [c for c in viewer.required_csvs if not ctx.has_data(c)]
         if missing:

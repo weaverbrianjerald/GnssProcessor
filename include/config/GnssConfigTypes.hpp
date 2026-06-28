@@ -101,6 +101,49 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Configuration for the PPP-RTK NETWORK producer (@c PPP_RTK_Network).
+     *
+     * A set of PEER stations (no master/rover asymmetry) whose single-receiver
+     * normal equations are jointly reduced onto a shared satellite-parameter
+     * border (clock + code/phase bias) under an explicit minimum-constraint
+     * S-basis.  Each station holds its coordinates fixed/tightly-constrained.  The
+     * datum fields name the network time reference (a pivot receiver clock) and
+     * optionally a reference satellite per constellation for the clock gauge.
+     */
+    /**
+     * @brief Closed-loop integer-recovery harness configuration (held-out consumer).
+     *
+     * The closed-loop acceptance test for the network producer: a HELD-OUT
+     * station — deliberately NOT one of the @c NetworkConfig::stations in the
+     * joint solve — consumes the network's freshly-emitted SSR products
+     * (satellite clock + phase bias) epoch-by-epoch through the existing
+     * user-side PPP-RTK + ambiguity-resolution pipeline, fed from an OWNED
+     * @c SsrCorrectionStore (never the process-wide singleton).  Success =
+     * "our own user engine recovers integers from our own products on an
+     * independent station."  The consumer holds its coordinates as TRUTH for
+     * scoring the recovered position; integer recovery (WL fix rate / count)
+     * is the primary metric.
+     */
+    struct ClosedLoopConfig {
+        bool          enable{ false };   ///< Run the held-out consumer after each network solve epoch.
+        StationConfig station;           ///< Held-out consumer station (NOT in the network solve); needs rinex_path + known ECEF (truth).
+        int           ar_mode{ 1 };      ///< Consumer AR mode (0 float, 1 continuous, 2 instantaneous, 3 fix-and-hold).  Producer is float; the consumer enables AR.
+        bool          ar_wl_only{ true };///< WL-only AR — matches the float-only v1 producer (validates wide-lane recovery; full-NL is gated on the unscheduled NL-LAMBDA validation).
+        std::vector<std::string> ar_active_systems;  ///< Constellations eligible for consumer AR (empty => inherit the base config's AR active systems).
+        bool          consume_network_products{ true }; ///< Inject the OWNED network store into the consumer.  Set false for the A/B BASELINE: the consumer then runs on precise SP3/CLK + .BIA only (a normal PPP-RTK user), isolating the network product's contribution to integer recovery / position from the consumer's own modeling.
+        bool          consume_network_clock{ true };    ///< When consuming products, also consume the network CLOCK.  Set false to keep precise SP3/CLK for the clock while consuming only the network PHASE BIAS — the cleanest integer-recovery test, isolating the (integer-essential) phase-bias product from a marginal thin-network clock product.
+    };
+
+    struct NetworkConfig {
+        std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
+        std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).
+        std::string clock_datum_satellite;    ///< Optional reference satellite pinned for the clock gauge ("" => auto: highest-elevation tracked, per constellation).
+        double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
+        ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
+        std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
+    };
+
+    /**
      * @brief Configuration for real-time streaming mode.
      *
      * When AppMode::RealTime is selected these settings control the NTRIP
@@ -932,6 +975,12 @@ namespace GnssProcessor {
         /// satellite column deaf to genuine slow drift, so a tiny RW is used.
         double sat_phase_bias{ 1e-12 };
 
+        /// Per-satellite clock random-walk spectral density (m*m/s) for the
+        /// PPP_RTK_Network producer's Δδtˢ states.  A loose default — satellite
+        /// clocks drift far faster than biases; the carried-forward prior plus
+        /// this RW gives epoch-to-epoch continuity without over-constraining.
+        double sat_clock{ 1e-2 };
+
         /// Receiver clock-rate spectral density (m*m/s^3).  Under the CWNA
         /// model on the (clock-bias, clock-rate) pair, clock-bias picks up
         /// q*dt^3/3, clock-rate picks up q*dt, with q*dt^2/2 cross-covariance.
@@ -966,6 +1015,7 @@ namespace GnssProcessor {
         double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
         double sat_bias{ 10.0 };              ///< Initial per-satellite signal bias standard deviation (m).
         double sat_phase_bias{ 10.0 };        ///< Initial per-satellite signal PHASE bias standard deviation (m) — PPP_RTK_Network only.
+        double sat_clock{ 1000.0 };           ///< Initial per-satellite clock standard deviation (m) — PPP_RTK_Network only (loose; Δδtˢ vs a-priori product clock).
         double clock_rate{ 1.0 };             ///< Initial receiver clock-rate standard deviation (m/s).
         double system_time_rate_offset{ 1e-2 }; ///< Initial inter-system clock-rate offset standard deviation (m/s).
     };
@@ -1461,7 +1511,7 @@ namespace GnssProcessor {
         bool enable_ocean_tide_loading{ true };        ///< Ocean tidal loading displacement (BLQ).
         bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP): IERS 2010 Sec. 7.1.4 rotational deformation.
         bool enable_ocean_pole_tide{ false };          ///< Ocean pole tide load displacement (IERS 2010 Sec. 7.1.5 / Desai 2002), added on top of @c enable_pole_tide.  Requires the opole load grid (files.opt_grid_path or <data>/static/opole/).  ~0.1-2 mm; default off keeps runs byte-identical.
-        bool enable_atmospheric_loading{ true };       ///< Atmospheric pressure loading displacement.
+        bool enable_atmospheric_loading{ false };      ///< Atmospheric pressure loading (S1/S2 thermal-tide site displacement). Requires per-station S1/S2 load coefficients (files.atm_tide_grid_path or <data>/static/apl/). Sun-synchronous → does NOT average out in static daily PPP. Default off keeps runs byte-identical.
 
         // --- Antenna phase centre ---
         bool enable_satellite_pco{ true };             ///< Satellite antenna phase centre offset.
@@ -1529,6 +1579,9 @@ namespace GnssProcessor {
         std::filesystem::path nc_path;               ///< Path to local ocean-loading NC file.
         std::filesystem::path crx2rnx_path;          ///< Path to crx2rnx executable for Hatanaka decompression.
         bool keep_zip_after_unzip{ false };          ///< If true, keep the .gz after decompression. Default false (delete to save disk).
+        bool atx_auto_refresh{ false };              ///< Opt-in: refresh igs20.atx from IGS at run start (shells out to scripts/refresh_atx.py). Default off for reproducibility.
+        double atx_refresh_max_age_days{ 7.0 };      ///< Skip the network check when the local ATX is younger than this (per-run throttle). 0 = always check.
+        std::string atx_refresh_url;                 ///< Optional ATX source URL override (empty = script default, files.igs.org/.../igs20.atx).
     };
 
     /**

@@ -28,6 +28,8 @@ def main(argv=None) -> int:
                     help="output HTML path (default: <log_dir>/gnss_report.html)")
     ap.add_argument("--only", nargs="*", default=None,
                     help="only run these viewer names (e.g. state dops)")
+    ap.add_argument("--all", action="store_true",
+                    help="also run viewers that are off by default (e.g. residual_strip)")
     ap.add_argument("--backend", default="matplotlib")
     ap.add_argument("--dpi", type=int, default=110)
     ap.add_argument("--show", action="store_true",
@@ -52,7 +54,7 @@ def main(argv=None) -> int:
 
     ctx = TraceContext(args.log_dir)
     print(f"=== gnssviz: {ctx.log_dir} ===")
-    out = run_viewers(ctx, only=args.only)
+    out = run_viewers(ctx, only=args.only, include_disabled=args.all)
     backend = get_backend(args.backend)
 
     for name, reason in out.skipped:

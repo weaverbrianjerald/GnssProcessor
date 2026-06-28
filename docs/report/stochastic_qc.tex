@@ -1,0 +1,366 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Stochastic Model and Quality Control}\label{sec:stoch}
+% ============================================================
+%  Measurement weighting (R) + a-posteriori quality control
+% ============================================================
+
+% --- doc-local macros (descriptive names, no single/double-letter caps) ---
+\newcommand{\zenvar}{\sigma^2_{\mathrm{zen}}}            % zenith-referenced variance
+\newcommand{\elev}{\theta}                               % satellite elevation angle
+\newcommand{\sinel}{\sin\elev}                            % sin elevation
+\newcommand{\cnzero}{\mathrm{C/N_0}}                     % carrier-to-noise density
+\newcommand{\redmat}{\bm{\Theta}}                        % redundancy matrix Sr R^{-1}
+\newcommand{\srmat}{\bm{Q}}                              % post-fit residual covariance (named matrix Q; subscript-free so call sites can attach _{ii})
+\newcommand{\redno}{r}                                   % redundancy number r_i
+\newcommand{\wtest}{w}                                   % Baarda w-test statistic
+\newcommand{\mdb}{\mathrm{MDB}}                          % minimal detectable bias
+\newcommand{\noncentral}{\delta_0}                       % non-centrality parameter
+\newcommand{\varfac}{\hat{\sigma}^2_0}                   % a-posteriori variance factor
+\newcommand{\wssr}{\Omega}                               % weighted sum of squared residuals
+\newcommand{\dof}{\mathrm{dof}}                          % degrees of freedom / total redundancy
+\newcommand{\residvec}{\hat{\bm{v}}}                     % post-fit residual vector
+
+This document covers the \emph{measurement} side of the estimator's error
+budget: the strategies that populate the observation-noise covariance
+$\Rmat$, and the a-posteriori quality-control (QC) layer that validates an
+epoch's residuals against that $\Rmat$.  The $\Rmat$ produced here is the
+block-diagonal skeleton of \dcref{eq:noise-model}{the observation-equations
+noise model}; this document supplies the per-strategy variance interiors of
+that skeleton.  The QC layer is built on the same post-fit residual statistics
+the filter already computes for outlier rejection, but reframes them as the
+classical geodetic detection theory of Baarda and Teunissen
+\cite{teunissen2017handbook}.
+
+Two scopes are deliberately \emph{out} of this document and only
+cross-referenced.  First, the standardised-residual outlier path
+($|\sres|>6$), the Huber re-weighting, and the EWMA $\Rmat$-inflation that
+react to a detected blunder live in
+\dcref{sec:kf-gating}{the Kalman-filter gating section} --- this document
+explains how the QC statistics feed an \emph{alternative} gate but does not
+re-derive the dispatch.  Second, the per-state process-noise covariance
+$\Qmat$ (clock random walk, ZWD, ambiguity, IMU bias) is purely a
+\emph{dynamics}-side quantity and lives with the smoother
+(\dcref{eq:kf-Q-iono}{the process-noise section}); everything below is
+measurement noise only.
+
+\subsection{The stochastic-model dispatch}\label{sec:stoch-dispatch}
+
+Every undifferenced observation $(\rx,\sat,\sigl)$ is assigned a scalar
+variance by a strategy object selected from the
+\texttt{StochasticModelType} enum (\texttt{include/config/GnssConfigTypes.hpp},
+the four-way \{\texttt{Constant}, \texttt{Elevation}, \texttt{SNR},
+\texttt{SatelliteBlock}\} set).  The dispatch lives in
+\texttt{src/core/model/StochasticModel.cpp}; each variant returns a variance in
+$\mathrm{m}^2$ that becomes one diagonal entry of $\Rmat$.  All four share a
+common low-elevation guard: when $\sinel \le 10^{-6}$ the elevation
+amplification is suppressed and the un-amplified variance is returned, so a
+satellite at the horizon does not inflate to a numerically infinite weight
+(\texttt{computeElevation}).
+
+\paragraph{(a) Constant.}  The trivial strategy returns the a-priori variance
+of unit weight unchanged,
+\begin{equation}
+\sigma^2_{\rx,\sat,\sigl} = \sigma^2_{0,\mathrm{type}(\sigl)},
+\label{eq:qc-constant}
+\end{equation}
+with $\sigma_0$ drawn from \texttt{filter.measurement\_noise}
+(\texttt{computeConstant}).  This is the reference against which the other
+strategies are multiplicative.
+
+\paragraph{(b) Elevation.}  The classical elevation-dependent model scales the
+zenith-referenced variance by an inverse power of $\sinel$,
+\begin{empheq}[box=\fbox]{equation}
+\sigma^2_{\rx,\sat,\sigl}
+  = \zenvar \,\bigl(\sinel^{\sat}_{\rx}\bigr)^{-2p_{\mathrm{type}}},
+\qquad
+p_{\code} = 1.0,\;\; p_{\phaseo} = 0.5 .
+\label{eq:qc-elevation}
+\end{empheq}
+The two distinct powers are the key design choice
+(\texttt{computeElevation}, \texttt{src/core/model/StochasticModel.cpp}): with
+$p_{\code}=1$ the code variance follows the legacy $\csc^2\elev$ law, whereas
+phase uses the gentler $p_{\phaseo}=0.5$ giving a $\csc\elev$ \emph{variance}
+($\csc^{1/2}\elev$ in $\sigma$).  Carrier-phase tracking degrades far more
+slowly with elevation than code multipath does, and the half-power keeps
+low-elevation phase from being over-deweighted into irrelevance.  The exponent
+in code is $-2p_{\mathrm{type}}$ because the strategy works in variance, not
+$\sigma$: $\bigl(\sinel\bigr)^{-2p}$ is exactly $\bigl(\sinel^{-p}\bigr)^2$.
+Rows whose observable code does not begin with \texttt{L} (i.e.\ everything but
+carrier phase, including Doppler) take the code power.
+
+\paragraph{(c) SNR (SIGMA-$\varepsilon$).}  When carrier-to-noise density is
+available the strategy uses the Hadás--Bosy variance-additive form
+\cite{subirana2013gnss}.  Writing the measured (or synthesised) density as
+$\cnzero$ in $\mathrm{dB\,Hz}$,
+\begin{empheq}[box=\fbox]{equation}
+\sigma^2_{\mathrm{SNR}}
+  = a^2 + b^2 \, 10^{-\cnzero/10},
+\label{eq:qc-snr}
+\end{empheq}
+where $a$ is the high-SNR floor ($\sigma\!\to\!a$ as $\cnzero\!\to\!\infty$)
+and $b$ scales the SNR-dependent contribution; both have separate code/phase
+values (\texttt{snr\_params\_.code\_a/b}, \texttt{phase\_a/b}).  The
+\emph{variance}-additive composition in \Cref{eq:qc-snr} is mathematically the
+correct combination of two independent noise sources.  The legacy
+$\sigma$-additive alternative
+$\sigma = a + b\,10^{-\cnzero/10}$ is explicitly rejected in
+\texttt{computeSnr} (lines 170--181) because squaring it produces an
+unphysical $2ab\,10^{-\cnzero/10}$ cross-term that has no noise-process
+interpretation --- it would couple the two contributions as if they were
+correlated when they are not.
+
+When no \texttt{S\dots} observable is present the model does not switch
+functional form; instead it \emph{synthesises} a density from elevation so the
+noise curve stays continuous across the boundary
+(\texttt{synthesizeCn0FromElevation}, lines 220--225):
+\begin{equation}
+\cnzero(\elev) = 50 - 15\,\bigl(1 - \max(0,\sinel)\bigr) \;\; [\mathrm{dB\,Hz}],
+\label{eq:qc-snr-synth}
+\end{equation}
+i.e.\ a $50\,\mathrm{dB\,Hz}$ zenith maximum dropping $15\,\mathrm{dB}$ to the
+horizon.  The density is then clamped to the configured working range
+$[\texttt{snr\_floor\_dbhz},\,\texttt{snr\_ceil\_dbhz}]$.  Two refinements
+follow: on code rows a per-band scale $s_{\mathrm{band}}^2$ from the
+SatelliteBlock code table multiplies $\sigma^2_{\mathrm{SNR}}$ (wider-bandwidth
+signals such as L5/E5a get $\sim\!\sqrt{10}$ less correlator-noise $\sigma$,
+hence a factor $\sim\!1/10$ in variance), while phase stays band-flat because
+PLL noise is governed by carrier-loop bandwidth, not chip rate.  Finally the
+Wieser hybrid step pipes the SNR variance through \Cref{eq:qc-elevation} so
+that elevation-correlated multipath --- which pure SNR weighting
+under-weights, since the carrier loop tracks cleanly even while the range is
+corrupted --- is still captured.
+
+\paragraph{(d) SatelliteBlock.}  The most detailed strategy keys the zenith
+$\sigma$ on the transmitting satellite's ANTEX block type, then applies
+observable-specific frequency-band and tracking-attribute scales
+(\texttt{computeSatBlock}, lines 231--345):
+\begin{empheq}[box=\fbox]{equation}
+\sigma^2_{\rx,\sat,\sigl}
+  = \bigl(\sigma_{\mathrm{block}(\sat),\,\mathrm{type}}\,
+          s_{\mathrm{band}}\, s_{\mathrm{attr}}\bigr)^2
+    \bigl(\sinel\bigr)^{-2p_{\mathrm{type}}} .
+\label{eq:qc-satblock}
+\end{empheq}
+Here $\sigma_{\mathrm{block}(\sat),\mathrm{type}}$ is looked up by
+substring-matching the satellite's ATX type string against
+\texttt{block\_code\_std\_m} / \texttt{block\_phase\_std\_m}
+(falling back to \texttt{default\_code\_std\_m} / \texttt{default\_phase\_std\_m}
+when no block matches); $s_{\mathrm{band}}$ is the per-band factor keyed on the
+RINEX band character (\texttt{obs\_type[1]}); and $s_{\mathrm{attr}}$ is the
+tracking-attribute factor keyed on \texttt{obs\_type[2]} via a
+\emph{per-system} table, because RINEX-3 attributes carry constellation-specific
+meaning (a \texttt{C} attribute is the noisy GPS C/A but the high-precision
+Galileo E1C pilot).  The attribute lookup order is
+\texttt{[system][attr]}~$\to$~\texttt{[default][attr]}~$\to$~$1.0$.  Code and
+phase carry separate band/attribute tables
+(\texttt{SatBlockNoiseParams::ObservableScale}) since chip-rate calibration
+governs code while carrier-tracking calibration --- a much smaller band
+gradient --- governs phase.  As with the other geometry-aware strategies the
+block variance is finally amplified by \Cref{eq:qc-elevation}; phase only
+reaches this path when \texttt{apply\_to\_phase} is set, otherwise it takes the
+flat \texttt{default\_phase\_std\_m} route in the top-level dispatch.
+
+All four strategies populate diagonal entries only; the undifferenced $\Rmat$
+is therefore block-diagonal, exactly the skeleton of
+\dcref{eq:noise-model}{the observation noise model}.  Structured off-diagonal
+correlation appears only after differencing (\Cref{sec:stoch-fullR}).
+
+\subsection{A-posteriori variance factor}\label{sec:stoch-vf}
+
+Once an epoch has been updated, the post-fit residuals $\residvec$ provide an
+internal-consistency check on whether the assumed $\Rmat$ was correctly scaled.
+The a-posteriori \emph{variance factor} (estimated variance of unit weight) is
+\begin{empheq}[box=\fbox]{equation}
+\varfac = \frac{\wssr}{\dof},
+\qquad
+\wssr = \residvec^{\Tr}\Rmat^{-1}\residvec
+      = \sum_i \frac{\hat v_i^{\,2}}{R_{ii}}\;\bigg|_{\,\Rmat\;\mathrm{diag}},
+\qquad
+\dof = \operatorname{tr}\redmat,
+\label{eq:qc-varfac}
+\end{empheq}
+where $\wssr$ is the weighted sum of squared residuals and the degrees of
+freedom $\dof$ is the trace of the redundancy matrix $\redmat$
+(\Cref{eq:qc-redundancy} below), i.e.\ the \emph{effective} redundancy of a
+recursively-filtered epoch rather than the naive $m-n$ of a single batch
+(\texttt{computeResidualQc\_}, \texttt{src/core/filter/KalmanFilter.cpp}
+lines 1759--1760).  Because $\Rmat$ is carried in absolute units, the a-priori
+variance of unit weight is exactly $\sigma^2_0 = 1$; a well-scaled model
+therefore yields $\varfac \approx 1$, with $\varfac \gg 1$ signalling
+under-weighted (optimistic) noise and $\varfac \ll 1$ pessimistic noise.
+
+The variance factor is a \emph{reporting-only} rescale: it never feeds back
+into the propagated covariance $\covM$.  When \texttt{enableVarianceFactor()}
+is set, the filter emits a copy of the position $\sigma$ scaled by
+$\sqrt{\varfac}$, i.e.\ $\sigma_{\mathrm{pos}} \to \sigma_{\mathrm{pos}}\,
+\sqrt{\varfac}$, leaving the filter state untouched
+(\texttt{src/core/filter/KalmanFilter.cpp} lines 1909--1916).
+
+The same quantity has a batch incarnation in the normal-equation accumulator
+used by the network and NEQ-export paths.  Given normal matrix $\bm{N}$,
+right-hand side $\bm{u}$, and the pre-reduced $\bm{l}^{\Tr}\bm{P}\bm{l}$ term,
+the accumulator forms (\texttt{src/core/filter/NeqAccumulator.cpp} lines
+255--271)
+\begin{align}
+\wssr &= \bm{l}^{\Tr}\bm{P}\bm{l} - \bm{u}^{\Tr}\hat{\stateV},
+&
+\dof &= n_{\mathrm{obs}} - (n_{\mathrm{params}} + n_{\mathrm{local}}),
+\label{eq:qc-neq-wssr}\\[2pt]
+\varfac &= \frac{\wssr}{\dof},
+&
+\sigma_i &= \sqrt{\varfac\,\bigl(\bm{N}^{-1}\bigr)_{ii}} .
+\label{eq:qc-neq-sigma}
+\end{align}
+Here $\hat{\stateV} = \bm{N}^{-1}\bm{u}$ is the least-squares solution, the
+Schur-reduced local parameters $n_{\mathrm{local}}$ are subtracted from the
+redundancy alongside the retained parameters $n_{\mathrm{params}}$, and each
+retained parameter's formal $\sigma$ is the $\varfac$-scaled square root of the
+inverse normal matrix diagonal --- the batch analogue of
+\Cref{eq:qc-varfac}'s recursive $\dof$.
+
+\subsection{Redundancy numbers, the Baarda $w$-test, and the MDB}
+\label{sec:stoch-baarda}
+
+The detection theory rests on the post-fit residual covariance $\srmat$
+(the covariance of $\residvec$),
+\begin{equation}
+\srmat \;=\; \Rmat - \jacH\,\covM^{+}\,\jacH^{\Tr},
+\label{eq:qc-srcov}
+\end{equation}
+where $\covM^{+}$ is the \emph{updated} (post-fit) state covariance, so that
+$\srmat$ is the covariance of $\residvec$ propagated through the gain.  Its
+diagonal $\srmat_{ii}$ is built per row in
+\texttt{src/core/filter/KalmanFilter.cpp} (line 909) as
+$R_{ii} - (\jacH\covM^{+}\jacH^{\Tr})_{ii}$; the full matrix is formed only
+under the off-diagonal kernel of \Cref{sec:stoch-fullR}.
+
+\paragraph{Redundancy number.}  The (local) redundancy of observation $i$ is
+\begin{empheq}[box=\fbox]{equation}
+\redno_i \;=\; \frac{\srmat_{ii}}{R_{ii}}
+            \;=\; \bigl(\redmat\bigr)_{ii},
+\qquad
+\redmat = \srmat\,\Rmat^{-1},
+\qquad
+\redno_i \in [0,1],
+\label{eq:qc-redundancy}
+\end{empheq}
+clamped to $[0,1]$ for numerical safety (line 1742 in the diagonal path, line
+1725 in the full-matrix path).  $\redno_i \to 1$ means the observation is fully
+checked by the geometry (a blunder lands almost entirely in the residual);
+$\redno_i \to 0$ means it is \emph{uncheckable} (a blunder is absorbed into the
+estimate and leaves no residual signature).  The sum $\dof = \sum_i \redno_i =
+\operatorname{tr}\redmat$ is the effective number of degrees of freedom used in
+\Cref{eq:qc-varfac}.
+
+\paragraph{$w$-test.}  Baarda's data-snooping statistic standardises each
+residual by its own post-fit standard deviation.  The diagonal (uncorrelated)
+form is
+\begin{equation}
+\wtest_i \;=\; \frac{\hat v_i}{\sqrt{\srmat_{ii}}}
+\label{eq:qc-wtest-diag}
+\end{equation}
+(line 1749), which --- crucially --- divides by $\sqrt{\srmat_{ii}}$, the
+\emph{true} residual standard deviation, not by $\sqrt{R_{ii}}$.  This is the
+Studentised residual proper; under the null hypothesis $\wtest_i \sim
+\mathcal{N}(0,1)$, whereas the $\sres$ used by the fixed gate floors the
+denominator at $R$ and is therefore conservative.  When the residual
+covariance is non-diagonal the correlated Teunissen generalisation is used
+instead (line 1715):
+\begin{empheq}[box=\fbox]{equation}
+\wtest_i \;=\;
+  \frac{\bigl(\srmat^{-1}\residvec\bigr)_i}
+       {\sqrt{\bigl(\srmat^{-1}\bigr)_{ii}}} .
+\label{eq:qc-wtest-corr}
+\end{empheq}
+\Cref{eq:qc-wtest-corr} reduces to \Cref{eq:qc-wtest-diag} when $\srmat$ is
+diagonal, but accounts for the off-diagonal correlation among residuals
+introduced by differencing
+\cite{teunissen2017handbook,teunissen1985generalised}.
+
+\paragraph{Minimal detectable bias.}  The smallest blunder on observation $i$
+that the $w$-test will detect, at the configured significance and a
+conventional $80\%$ test power, is
+\begin{empheq}[box=\fbox]{equation}
+\mdb_i \;=\; \frac{\sigma_i\,\noncentral}{\sqrt{\redno_i}},
+\qquad
+\noncentral = \texttt{dataSnoopingCritical()} + 0.8416 ,
+\label{eq:qc-mdb}
+\end{empheq}
+with $\sigma_i = \sqrt{R_{ii}}$ the a-priori observation $\sigma$ (lines
+1733--1734, 1750--1751).  The non-centrality $\noncentral$ is the critical
+value plus $\Phi^{-1}(0.80)=0.8416$ (the $20\%$ false-negative quantile,
+i.e.\ $\beta=0.20$ power); for the default critical $k=3.29$ this gives
+$\noncentral \approx 4.13$ (line 1697).  The $1/\sqrt{\redno_i}$ factor is the
+geometric leverage: a poorly-checked observation ($\redno_i \to 0$) has an
+arbitrarily large MDB --- the code returns $+\infty$ when $\redno_i$ falls
+below a small floor --- so a blunder there is by construction undetectable from
+the residual alone.
+
+\subsection{Data-snooping gate override}\label{sec:stoch-snooping}
+
+The QC statistics are not merely reported; when \texttt{enableDataSnooping()}
+is set they drive an \emph{alternative, parallel} outlier gate that can
+reselect the row the fixed $|\sres|>6$ path missed.  Both gates share the same
+downstream dispatch in \texttt{src/core/filter/KalmanFilter.cpp}; only the
+\emph{statistic, index, and critical value} differ.  By default the gate is
+seeded from the fixed-$\sigma$ triple $(\,\max_i|\sres_i|,\,\arg\max,\,6\,)$ so
+the dispatch is byte-identical when snooping is off (lines 2888--2890).
+
+When snooping is enabled the gate is instead reseeded from the $w$-test over
+\emph{checkable} rows only (lines 2891--2909): rows with $\redno_i < 0.1$ are
+skipped as uncheckable (lines 1927, 2898), because their residual is
+unreliable and resetting the corresponding ambiguity would discard good
+information.  Over the surviving rows the gate fires on
+\begin{equation}
+\max_{\{i\,:\,\redno_i \ge 0.1\}} |\wtest_i| \;>\; \texttt{dataSnoopingCritical()},
+\label{eq:qc-snoop-gate}
+\end{equation}
+and the worst checkable $|\wtest_i|$ row becomes the handled index (lines
+2905--2909).  Because $\wtest_i$ uses the true residual $\sigma$
+(\Cref{eq:qc-wtest-diag}) rather than the $R$-floored $\sres$, this gate can
+catch a blunder on a high-leverage row whose floored $\sres$ stayed below $6$,
+and it overrides the $\sres$ pick (lines 2932--2937): the downstream
+Melbourne--Wübbena tiebreaker still operates in the $\sigma$ domain, so when
+the $w$-test selected a row the $\sigma$ cut missed, no $\sigma$-candidate is
+collected and the $w$-selected index is handled directly.  This is the
+complement of the fixed standardised-residual path in
+\dcref{sec:kf-gating}{the gating section}, which this document does not
+re-derive.
+
+\subsection{Correlation-aware full-$\Rmat$ kernel}\label{sec:stoch-fullR}
+
+The diagonal forms above assume $\Rmat$ and $\srmat$ are diagonal, which holds
+for undifferenced PPP.  For BSSD and baseline-DD epochs the differencing
+operator $\bm{D}$ of \dcref{sec:diff}{the differencing transformations} maps
+the diagonal undifferenced covariance into a \emph{dense} one,
+$\Rmat_{\mathrm{SD/DD}} = \bm{D}\,\Rmat_{\mathrm{ZD}}\,\bm{D}^{\Tr}$, carrying
+the structured SD/DD cross-covariance between observations that share a pivot
+or reference.  Under the off-diagonal kernel
+(\texttt{src/core/filter/KalmanFilter.cpp} lines 1712--1735) the full residual
+covariance \Cref{eq:qc-srcov} is built densely and symmetrised, and the QC
+quantities follow without approximation:
+\begin{align}
+\redmat &= \srmat\,\Rmat^{-1},
+  & \redno_i &= \bigl(\redmat\bigr)_{ii},
+  & \dof &= \operatorname{tr}\redmat,
+\label{eq:qc-full-red}\\[2pt]
+\wssr &= \residvec^{\Tr}\Rmat^{-1}\residvec,
+  & \wtest_i &= \frac{\bigl(\srmat^{-1}\residvec\bigr)_i}{\sqrt{(\srmat^{-1})_{ii}}},
+  & \mdb_i &= \frac{\sqrt{R_{ii}}\,\noncentral}{\sqrt{\redno_i}} .
+\label{eq:qc-full-w}
+\end{align}
+$\Rmat^{-1}$ and $\srmat^{-1}$ are obtained by $\mathrm{LDL}^{\Tr}$ solves
+against the identity (lines 1717--1721), exploiting the symmetric
+positive-definiteness of both.  The kernel is consistent by construction: the
+diagonal of the full $\redmat$ and of the full Teunissen $\wtest$ equal the
+per-row quantities of \Cref{sec:stoch-baarda} whenever the off-diagonals
+vanish, so the \emph{outlier-handling path is unchanged behind the flag} --- it
+only gains correctness on differenced epochs where the residual correlations
+are real.  This is the measurement-side counterpart to the structured
+correlation \dcref{sec:diff}{the differencing section} introduces on the model
+side.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

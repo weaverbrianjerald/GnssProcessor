@@ -163,6 +163,22 @@ creates `orbit/`, `clock/`, `dcb/`, `erp/`, `brdc/`, `rinex/`, `atx/`,
 `crx2rnx_path` point at user-supplied static resources that
 ProductResolver does not know how to download.
 
+**ATX auto-refresh (honoured in *both* modes).**  `atx_auto_refresh`
+(default `false`) is the one `data_download` field that is *not* ignored
+in internal mode.  When set, the engine shells out to
+`scripts/refresh_atx.py` at run start — after paths are resolved, before
+the antenna model is loaded — to keep the IGS ANTEX (`igs20.atx`) current:
+a conditional GET against `files.igs.org`, ANTEX-validated, the previous
+file backed up (`igs20.atx.weekNNNN.bak`), then an atomic in-place replace.
+It is best-effort and non-fatal: a network or validation failure logs a
+warning and the run proceeds with the existing local ATX.
+`atx_refresh_max_age_days` (default `7`) throttles the network check —
+when the local file is younger than this the check is skipped (`0` =
+always check).  `atx_refresh_url` overrides the source URL (empty = the
+IGS default).  Off by default so runs stay reproducible; the same script
+can be run by hand or on a schedule (`python scripts/refresh_atx.py`)
+instead of, or in addition to, the per-run hook.
+
 For baseline runs, the typical pattern is to download the reference
 station via the `data_download.station` field and drop the rover in
 manually — or run internal mode with the bootstrap script

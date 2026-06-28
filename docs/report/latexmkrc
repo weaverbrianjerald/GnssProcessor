@@ -16,7 +16,14 @@ $bibtex_use = 2;    # run biber; remove .bbl on a full clean
 @default_files = (
     'main.tex',                 # combined volume (built first: provides main.aux)
     'foundations.tex',
+    'frames_time.tex',
+    'product_evaluation.tex',
+    'atmosphere.tex',
+    'site_displacement.tex',
+    'observation_physics.tex',
     'kalman_smoother.tex',
+    'stochastic_qc.tex',
+    'estimator_infrastructure.tex',
     'slip_detection.tex',
     'ambiguity_resolution.tex',
     'imu_aiding.tex',

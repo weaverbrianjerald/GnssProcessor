@@ -43,6 +43,8 @@
 
 namespace GnssProcessor {
 
+class SsrCorrectionStore;
+
 /**
  * @brief Self-contained real-time PPP processing engine.
  *
@@ -134,6 +136,45 @@ public:
      */
     bool processEpoch(const std::vector<RinexObservation>& epoch_obs);
 
+    /**
+     * @brief Inject a non-owning SSR-correction store override (DI seam).
+     *
+     * Repoints the engine's SSR consumption — satellite clock (via the PppModel
+     * geometry/corrections), satellite code/phase bias (via the MeasurementModel),
+     * the phase-bias-discontinuity → ambiguity-reset hook, and the coverage
+     * diagnostics — at @p store instead of the process-wide singleton.  The
+     * PPP-RTK network closed-loop harness drives a held-out station through this
+     * engine reading the producer's OWNED store (see ClosedLoopConfig).  Call
+     * AFTER @ref initialize (so the models exist).  @c nullptr restores the
+     * singleton.  RTCM/SBF PUSHES are unaffected — they always target the
+     * singleton — so this is consume-side only and a no-op for live streaming.
+     *
+     * @param store Non-owning store pointer (must outlive the engine) or nullptr.
+     * @param consume_clock  Route the SSR CLOCK/orbit overlay (PppModel geometry +
+     *        corrections) at @p store.  Set false to keep precise SP3/CLK for the
+     *        clock while still consuming the satellite phase bias — the cleanest
+     *        integer-recovery test, isolating the phase-bias product from a
+     *        marginal network clock product.
+     * @param consume_bias   Route the SSR code/phase BIAS (MeasurementModel) and
+     *        the phase-bias-discontinuity reset hook at @p store.
+     */
+    void setSsrStore(const SsrCorrectionStore* store,
+                     bool consume_clock = true, bool consume_bias = true);
+
+    /// Result of the most recent epoch's ambiguity-resolution attempt (closed-loop
+    /// harness metric).  @ref lastArRan reports whether AR was actually invoked
+    /// this epoch (resolver present AND a float update committed).
+    const AmbiguityResolution& lastArResult() const { return last_ar_result_; }
+    bool lastArRan() const { return last_ar_ran_; }
+
+    /// Suppress the MW wide-lane feed into ambiguity resolution, so AR runs PURE
+    /// MLAMBDA on the Kalman float.  The network closed-loop validation uses this
+    /// with full LAMBDA: the KF float carries the consumed network satellite phase
+    /// bias, whereas the MW detector's WL integers are in the (separate) .BIA
+    /// frame — feeding them would re-inject a conflicting WL datum.  Default false
+    /// (live/normal AR uses the MW WL to halve the search).
+    void setArIgnoreMwWl(bool ignore) { ar_ignore_mw_wl_ = ignore; }
+
     /// Get the current receiver position (ECEF, meters).
     Eigen::Vector3d getPosition() const;
 
@@ -158,6 +199,10 @@ public:
 private:
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
+
+    /// Resolve the active SSR store: the injected override when set, else the
+    /// process-wide singleton.  Defined in the .cpp (full type visible there).
+    const SsrCorrectionStore& ssrStore() const;
 
     /// @brief Re-attempt the held obs↔SSR-sync epoch after the SSR stream advances.
     ///
@@ -197,6 +242,18 @@ private:
 
     PppState ppp_state_{};
     Eigen::Vector3d initial_position_{ 0.0, 0.0, 0.0 };
+
+    /// Non-owning SSR store override; nullptr -> process-wide singleton.
+    /// Set via setSsrStore() for the closed-loop consumer (see header).
+    const SsrCorrectionStore* ssr_store_override_{ nullptr };
+
+    /// Most recent epoch's AR result + whether AR ran (closed-loop metrics).
+    AmbiguityResolution last_ar_result_{};
+    bool last_ar_ran_{ false };
+
+    /// When true, AR ignores the MW WL feed and runs pure MLAMBDA on the KF float
+    /// (closed-loop network-phase-bias validation; see setArIgnoreMwWl).
+    bool ar_ignore_mw_wl_{ false };
 
     uint64_t  epoch_count_{ 0 };
     bool      first_epoch_{ true };

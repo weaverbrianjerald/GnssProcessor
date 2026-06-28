@@ -27,10 +27,12 @@
 #include <Eigen/Dense>
 
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "filter/NetworkEstimator.hpp"
+#include "filter/NetworkSbasis.hpp"
 
 namespace GnssProcessor {
 namespace {
@@ -319,6 +321,165 @@ TEST(NetworkEstimatorTest, AddStationAfterSolveThrows) {
     // A fresh epoch re-opens accumulation.
     est.beginEpoch();
     EXPECT_NO_THROW(est.addStation(A_s, A_r, w, y));
+}
+
+// The between-epoch D2 carry-forward seam (W4-S2b): sharedCovariance() exposes a
+// well-formed posterior covariance, and addSharedPrior() (a diagonal prior on the
+// shared border) actually moves the next epoch's estimate.  These are exactly the
+// two mechanics the runNetwork() driver leans on for between-epoch continuity.
+TEST(NetworkEstimatorTest, SharedCovarianceAndCarryForwardPrior) {
+    const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s] = est.registerPhaseBias(t.sats[s], signal);
+    }
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+
+    // Epoch 1: a plain solve, then inspect the shared covariance.
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y;
+        buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
+        est.addStation(A_s, A_r, w, y);
+    }
+    const Eigen::VectorXd x1 = est.solve(datum);
+    const Eigen::MatrixXd cov = est.sharedCovariance();
+
+    ASSERT_EQ(cov.rows(), est.numShared());
+    ASSERT_EQ(cov.cols(), est.numShared());
+    EXPECT_TRUE(cov.allFinite());
+    EXPECT_NEAR((cov - cov.transpose()).cwiseAbs().maxCoeff(), 0.0, 1e-9);  // symmetric
+    // The datum-pinned column is realized as a hard pin (N(col,col)=pin_scale), so
+    // its covariance is 1/pin_scale — small relative to a free column, but not zero.
+    EXPECT_GT(cov(clkCol[0], clkCol[0]), 0.0);
+    EXPECT_GT(cov(clkCol[1], clkCol[1]), 0.0);
+    EXPECT_LT(cov(clkCol[0], clkCol[0]), cov(clkCol[1], clkCol[1]));  // pinned tighter than free
+
+    // Epoch 2: identical data, but a STRONG carry-forward prior pulls satellite
+    // 1's clock toward a deliberately biased value.  The D2 seam must move it.
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y;
+        buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
+        est.addStation(A_s, A_r, w, y);
+    }
+    const double biased = x1(clkCol[1]) + 5.0;
+    est.addSharedPrior({{SharedParamKind::Clock, t.sats[1], "", biased, 1e8}});
+    const Eigen::VectorXd x2 = est.solve(datum);
+
+    EXPECT_GT(x2(clkCol[1]), x1(clkCol[1]) + 4.0);  // dominated by the strong prior
+    EXPECT_NEAR(x2(clkCol[0]), 0.0, 1e-6);          // datum column still pinned
+    // A prior identity-keyed to a satellite absent from the layout is ignored.
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y;
+        buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
+        est.addStation(A_s, A_r, w, y);
+    }
+    est.addSharedPrior({{SharedParamKind::Clock, "G99", "", 99.0, 1e8}});  // not registered
+    const Eigen::VectorXd x3 = est.solve(datum);
+    for (int s = 0; s < t.S; ++s)
+        EXPECT_NEAR(x3(clkCol[s]), x1(clkCol[s]), 1e-6) << "absent-prior must be a no-op, sat " << s;
+}
+
+// ===========================================================================
+// NetworkSbasis (W5) — minimum-constraint datum builder + null-space rank gate
+// ===========================================================================
+
+// The shared datum is ONE satellite-clock pin per constellation (the clock gauge
+// per timing system).  The phase-bias gauge is per (sat,signal) and is fixed by
+// LOCAL pivot-receiver ambiguity pins, so it does NOT appear in the shared datum.
+TEST(NetworkSbasisTest, BuildsOneClockPinPerConstellation) {
+    NetworkEstimator est;
+    est.registerClock("G01"); est.registerClock("G02");
+    est.registerClock("E11"); est.registerClock("E12");
+    est.registerPhaseBias("G01", "L1");  // phase columns coexist in the layout
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+    const auto plan = sb.buildSharedDatum(est, {"G01", "G02", "E11", "E12"}, decl);
+
+    EXPECT_EQ(plan.declared_dimension, 2);          // GPS + Galileo => 2 clock pins
+    ASSERT_EQ(plan.shared_datum.size(), 2u);
+    EXPECT_EQ(plan.clock_pivot.at("G"), "G01");     // first registered per constellation
+    EXPECT_EQ(plan.clock_pivot.at("E"), "E11");
+
+    std::set<Eigen::Index> cols;
+    for (const auto& p : plan.shared_datum) { cols.insert(p.column); EXPECT_EQ(p.value, 0.0); }
+    EXPECT_TRUE(cols.count(est.clockColumn("G01")));
+    EXPECT_TRUE(cols.count(est.clockColumn("E11")));
+
+    // A declared override picks a different pivot satellite for that constellation.
+    decl.clock_pivot_sat["G"] = "G02";
+    const auto plan2 = sb.buildSharedDatum(est, {"G01", "G02", "E11", "E12"}, decl);
+    EXPECT_EQ(plan2.clock_pivot.at("G"), "G02");
+    EXPECT_TRUE([&]{ for (const auto& p : plan2.shared_datum)
+                       if (p.column == est.clockColumn("G02")) return true; return false; }());
+}
+
+// The SVD gate must count near-zero singular values == declared S-basis dimension.
+TEST(NetworkSbasisTest, NullSpaceGateCountsDeficiencies) {
+    NetworkSbasis sb;
+
+    // Rank-2 of 3: one exact gauge (zero eigenvalue).
+    Eigen::MatrixXd N = Eigen::MatrixXd::Zero(3, 3);
+    N(0, 0) = 10.0; N(1, 1) = 5.0; N(2, 2) = 0.0;
+    EXPECT_NO_THROW(sb.assertNullSpaceRank(N, 1));
+    EXPECT_THROW(sb.assertNullSpaceRank(N, 0), std::runtime_error);  // under-counts
+    EXPECT_THROW(sb.assertNullSpaceRank(N, 2), std::runtime_error);  // over-counts
+
+    // Full rank => zero deficiencies.
+    const Eigen::MatrixXd F = Eigen::MatrixXd::Identity(4, 4) * 7.0;
+    EXPECT_NO_THROW(sb.assertNullSpaceRank(F, 0));
+    EXPECT_THROW(sb.assertNullSpaceRank(F, 1), std::runtime_error);
+}
+
+// End-to-end: NetworkSbasis builds the clock datum, the gate sees exactly one
+// residual deficiency (single constellation) after the local ambiguity pins, and
+// the solve recovers the synthetic truth up to that S-transform.
+TEST(NetworkSbasisTest, DrivesSingleConstellationRecoveryAndGate) {
+    const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    std::vector<std::string> clk_sats;
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s] = est.registerPhaseBias(t.sats[s], signal);
+        clk_sats.push_back(t.sats[s]);
+    }
+
+    est.beginEpoch();
+    std::vector<std::size_t> ids;
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::MatrixXd A_s, A_r;
+        Eigen::VectorXd w, y;
+        buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);  // pivot r=0 folds local amb pins
+        ids.push_back(est.addStation(A_s, A_r, w, y));
+    }
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+    const auto plan = sb.buildSharedDatum(est, clk_sats, decl);
+    EXPECT_EQ(plan.declared_dimension, 1);   // one constellation => one clock pin
+
+    // Gate: after the local ambiguity pins are folded + Schur-eliminated, the
+    // reduced shared normals carry exactly the one clock deficiency.
+    EXPECT_NO_THROW(sb.assertNullSpaceRank(est.reducedSharedNormals(),
+                                           plan.declared_dimension));
+
+    const Eigen::VectorXd x_s = est.solve(plan.shared_datum);
+    const double c0 = t.c[0];   // pivot = first registered sat = G01 = sats[0]
+    for (int s = 0; s < t.S; ++s) {
+        EXPECT_NEAR(x_s(clkCol[s]), t.c[s] - c0, 1e-6) << "sat clock " << s;
+        EXPECT_NEAR(x_s(pbCol[s]), t.b[s] + t.M[0][s], 1e-6) << "sat phase bias " << s;
+    }
+    EXPECT_NEAR(x_s(clkCol[0]), 0.0, 1e-6);  // pivot clock pinned to the datum
 }
 
 } // namespace

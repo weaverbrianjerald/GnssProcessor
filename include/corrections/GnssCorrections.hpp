@@ -34,6 +34,7 @@ namespace GnssProcessor {
     // Forward declarations to avoid header cycles
     class GnssConfig;
     class RinexParser;
+    class SsrCorrectionStore;
 
     /**
      * @class GnssCorrections
@@ -100,6 +101,22 @@ namespace GnssProcessor {
          * without recreating the GnssCorrections object.
          */
         void setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps);
+
+        /**
+         * @brief Inject a non-owning SSR-correction store override (dependency
+         *        injection seam for the PPP-RTK closed-loop harness).
+         *
+         * By default the SSR clock overlay in @c getSatelliteClockCorrection
+         * reads the process-wide @c SsrCorrectionStore singleton.  The network
+         * closed-loop consumer instead points this at the producer's OWNED store
+         * so a held-out station consumes the network's freshly-emitted clock
+         * without polluting global state.  Pass @c nullptr (the default) to
+         * restore the singleton — every non-harness caller is then byte-identical.
+         *
+         * @param store Non-owning store pointer; must outlive this object, or
+         *        @c nullptr to use the singleton.
+         */
+        void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
 
         /**
          * @brief Get satellite clock correction in seconds.
@@ -258,15 +275,64 @@ namespace GnssProcessor {
         Eigen::Vector3d computeOceanTideCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
         /**
-         * @brief Compute atmospheric loading correction (radial displacement).
+         * @brief Compute the atmospheric pressure loading (APL) site displacement
+         *        from the S1/S2 thermal-tide model (ECEF displacement vector).
          * @param rx_pos Receiver ECEF position (meters).
-         * @param time Epoch when the loading is evaluated.
-         * @return Radial displacement in meters due to atmospheric loading.
+         * @param time  Epoch when the loading is evaluated.
+         * @return ECEF displacement vector (meters); zero if no S1/S2 coefficients
+         *         are loaded for this station.
          *
-         * Uses configured or climatological pressure/atmospheric parameters to
-         * estimate station displacement from atmospheric mass loading.
+         * Models the diurnal (S1) and semidiurnal (S2) atmospheric thermal tides,
+         * the sun-synchronous part of atmospheric pressure loading.  Unlike the
+         * synoptic (non-tidal) component, S1/S2 do NOT average out over a static
+         * daily PPP arc — they alias a coherent ~mm radial bias into the daily
+         * mean height, which is why this is the high-value v1 component.  The
+         * non-tidal/synoptic APL (gridded 6-hourly pressure or a precomputed
+         * displacement series) is deferred to a later phase.
+         *
+         * Per component c in {East, North, Up}, with local-solar-time arguments
+         *   theta_S1 = 2*pi*UT_frac + lambda,  theta_S2 = 2*(2*pi*UT_frac) + 2*lambda
+         * (lambda = station longitude, UT_frac = fractional MJD):
+         *   d_c = aS1_c^cos*cos(theta_S1) + aS1_c^sin*sin(theta_S1)
+         *       + aS2_c^cos*cos(theta_S2) + aS2_c^sin*sin(theta_S2)
+         * assembled as ENU and rotated to ECEF (mirrors OceanTideModel).
          */
-        double computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
+        Eigen::Vector3d computeAtmosphericTideDisplacement(const Eigen::Vector3d& rx_pos,
+                                                           const GnssTime& time) const;
+
+        /**
+         * @brief Load per-station S1/S2 atmospheric-tide load coefficients by
+         *        bilinear interpolation of a global grid at the station.
+         * @param grid_path     Path to the atmospheric-tide load grid (Ray & Ponte
+         *                       / IERS Conventions 2010 Sec. 7.1 atmospheric tidal
+         *                       loading; CM frame to match OTL).
+         * @param station_ecef  Receiver ECEF position (meters).
+         * @return True if the grid parsed and coefficients were stored.
+         *
+         * @warning The exact header-line count, column order, and frame of the
+         *          atmospheric-tide grid are product-specific and must be pinned
+         *          to the supplied file before enabling in production (see the
+         *          PROVISIONAL constants in the .cpp).  Gated off by default via
+         *          model_corrections.enable_atmospheric_loading.
+         */
+        bool loadAtmosphericTideFromGrid(const std::string& grid_path,
+                                         const Eigen::Vector3d& station_ecef);
+
+        /**
+         * @brief Directly set the S1/S2 atmospheric-tide load coefficients.
+         * @param coeffs 12 coefficients: indices 0..5 = S1, 6..11 = S2; within
+         *        each harmonic [aE^cos, aE^sin, aN^cos, aN^sin, aU^cos, aU^sin] (m).
+         *
+         * Primarily for testing and for callers (e.g. a SIF block) that already
+         * hold per-station coefficients without a grid.
+         */
+        void setAtmosphericTideCoefficients(const std::array<double, 12>& coeffs);
+
+        /**
+         * @brief Check whether S1/S2 atmospheric-tide coefficients are available.
+         * @return True if coefficients have been set or interpolated.
+         */
+        bool hasAtmosphericTideCoefficients() const { return has_atm_tide_coeffs_; }
 
         /**
          * @brief Get bias correction for a given satellite/signal at an epoch.
@@ -420,6 +486,11 @@ namespace GnssProcessor {
         // Optional external references (nullable pointers)
         const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
+        const SsrCorrectionStore* ssr_store_override_{ nullptr }; ///< Non-owning SSR store override; nullptr -> process-wide singleton (see setSsrStore).
+
+        /// Resolve the active SSR store: the injected override when set, else the
+        /// process-wide singleton.  Defined in the .cpp where the full type is visible.
+        const SsrCorrectionStore& ssrStore() const;
 
         std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;
         void buildClockIndex();
@@ -451,6 +522,14 @@ namespace GnssProcessor {
         // computePoleTideCorrection returns only the Sec. 7.1.4 term.
         std::array<double, 6> opt_coeffs_{};   ///< Ocean pole tide load coefficients.
         bool has_opt_coeffs_{ false };         ///< True once OPT coefficients are loaded.
+
+        // Atmospheric pressure loading (S1/S2 thermal tide) per-station load
+        // coefficients.  Indices 0..5 = S1 (diurnal), 6..11 = S2 (semidiurnal);
+        // within each harmonic [aE^cos, aE^sin, aN^cos, aN^sin, aU^cos, aU^sin]
+        // in metres.  Empty/false until interpolated from a grid or set directly;
+        // when absent computeAtmosphericTideDisplacement returns zero.
+        std::array<double, 12> atm_tide_coeffs_{};  ///< S1/S2 atmospheric-tide load coefficients.
+        bool has_atm_tide_coeffs_{ false };         ///< True once S1/S2 coefficients are loaded.
 
     };
 

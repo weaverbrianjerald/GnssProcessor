@@ -46,6 +46,8 @@ percent of |standardized_residual| > 3) per (system, Code|Phase).
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pandas as pd
 
@@ -397,7 +399,13 @@ def _summary(df: pd.DataFrame, present, has_std: bool) -> str:
     return "\n".join(lines)
 
 
+# The standardized-residual figures (figs 3 & 4) are off by default in the
+# report: ``build_measurement_residuals`` keeps the MATLAB-faithful
+# ``show_standardized=True`` default for direct callers, but the *registered*
+# viewer renders only the raw Code/Phase residual series.  Flip the partial to
+# ``True`` (or drop it) to restore the standardized panels.
 viewer = Viewer(name="measurement_residuals",
                 title="Measurement residuals by signal & system",
                 required_csvs=("measurement_residuals.csv",),
-                build=build_measurement_residuals)
+                build=partial(build_measurement_residuals,
+                              show_standardized=False))

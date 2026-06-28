@@ -1,0 +1,605 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Observation Model Physics: Antenna, Attitude, Relativity, and Range Corrections}\label{sec:obsphys}
+% ============================================================
+%  Deterministic per-observation corrections beyond geometry
+%  and atmosphere: antenna PCO/PCV, satellite attitude, carrier
+%  wind-up, relativity, Shapiro, Sagnac, and group-delay/bias
+%  realisation of the abstract B/b terms.
+% ============================================================
+
+% --- doc-local macros (defined in the body, never in a section title) ---
+\newcommand{\bframe}{\bm{F}}                       % satellite body-frame matrix [i_s j_s k_s]
+\newcommand{\isun}{\hat{\bm{x}}_\sat}              % sat body +X (toward Sun)
+\newcommand{\jcross}{\hat{\bm{y}}_\sat}            % sat body +Y (cross-track)
+\newcommand{\knad}{\hat{\bm{k}}_\sat}              % sat body +Z (nadir / boresight)
+\newcommand{\esun}{\hat{\bm{e}}_\odot}            % unit Sun direction
+\newcommand{\pco}{\bm{p}}                          % phase-centre offset vector
+\newcommand{\dipS}{\bm{D}_\sat}                    % satellite effective dipole
+\newcommand{\dipR}{\bm{D}_\rx}                     % receiver effective dipole
+\newcommand{\winddphi}{\Delta\varphi}             % signed wind-up angle (rad)
+
+The corrections in this document are the \emph{deterministic} part of the
+observation model that lies between pure geometry and the atmosphere on
+one side, and the streamed SSR overlay on the other.
+\dcref{sec:obs}{The Foundations observation equations}
+\dcref{eq:obs-code}{the undifferenced code equation} and
+\dcref{eq:obs-phase}{the undifferenced phase equation} introduce the satellite and
+receiver hardware biases $B^\sat_\sigl,\,b^\sat_\sigl,\,B_{\rx,\sigl},
+\,b_{\rx,\sigl}$ \emph{abstractly}, and
+\dcref{sec:obs-geometry}{the observation-geometry section} carries the
+geometric range $\geomrange^\sat_\rx$ and its linearisation; this
+document supplies every \emph{other} deterministic term that maps the
+raw measurement to the modelled range: the antenna phase-centre
+geometry, the satellite attitude frame on which it depends, the
+carrier-phase wind-up, the relativistic clock and propagation
+corrections, the Sagnac (Earth-rotation) frame correction, and the
+deterministic realisation of the bias terms through broadcast group
+delays and the precise \texttt{.BIA} product.  The streamed SSR overlay
+that refines the \emph{same} terms in real time is the subject of
+\dcref{sec:ssr}{the SSR corrections document}; the two mechanisms are
+related but distinct, and the differences (frames, sign conventions,
+gating) are flagged where they matter.
+
+Every term below is assembled into a single modelled observable in
+\texttt{model/PppModel.cpp} (\texttt{computeModelledObservable} and the
+iono-free variant), summed onto the geometric range that
+\texttt{model/ModelGeometry.cpp} produces.  The dominant structure of
+that sum, for the code observable, is
+\begin{equation}
+\hat{\code}^\sat_{\rx,\sigl}
+=
+\geomrange^\sat_\rx
+\;-\;\sLight\,\mathrm{d}t^\sat
+\;-\;\sLight\,\delta t_{\mathrm{rel}}
+\;+\;T^\sat_\rx
+\;+\;A^\sat_{\rx,\sigl}
+\;+\;B_{\mathrm{grp}}
+\;+\;S^\sat_\rx
+\;+\;d_{\mathrm{atm}}
+\;+\;d_{\mathrm{tide}},
+\label{eq:obsphys-assembly}
+\end{equation}
+where $A^\sat_{\rx,\sigl}$ is the total antenna correction
+(\Cref{sec:obsphys-antenna}), $\delta t_{\mathrm{rel}}$ the periodic
+relativistic clock term (\Cref{sec:obsphys-rel}), $S^\sat_\rx$ the
+Shapiro delay (\Cref{sec:obsphys-shapiro}), $B_{\mathrm{grp}}$ the
+deterministic code/phase bias (\Cref{sec:obsphys-bias}), and
+$d_{\mathrm{atm}},\,d_{\mathrm{tide}}$ the loading/site-displacement
+terms documented in \dcref{sec:sitedisp}{the site-displacement
+document}.  The Sagnac correction (\Cref{sec:obsphys-sagnac}) is folded
+into $\geomrange^\sat_\rx$ itself, not added separately, for reasons made
+precise below.  The signs in \eqref{eq:obsphys-assembly} are taken
+verbatim from the return statement of
+\texttt{PppModel::computeModelledObservable}
+(\texttt{model/PppModel.cpp}): the satellite clock and relativistic terms
+\emph{subtract}, the antenna, Shapiro, loading and tide terms \emph{add}.
+
+% ============================================================
+\subsection{Satellite attitude: the body frame}\label{sec:obsphys-attitude}
+% ============================================================
+
+The satellite antenna phase-centre offset, the antenna phase-centre
+variation, and the carrier wind-up are all defined in the
+\emph{spacecraft body frame}, so that frame must be constructed first.
+The engine uses the IGS/ANTEX convention: a right-handed orthonormal
+triad $(\isun,\jcross,\knad)$ with $+Z$ toward the Earth's centre
+(nadir / antenna boresight), $+X$ in the Sun--satellite--Earth plane
+pointing toward the Sun, and $+Y$ completing the triad along the solar-panel
+(cross-track) axis (\texttt{model/SatAttitude.cpp},
+\texttt{model/Antenna.cpp}).
+
+\paragraph{Nominal yaw-steering.}
+With $\satpos$ the satellite ECEF position and
+$\esun=(\bm{r}_\odot-\satpos)/\lVert\bm{r}_\odot-\satpos\rVert$ the unit
+direction to the Sun, the nadir axis and the cross-track axis are
+\begin{equation}
+\knad = -\,\frac{\satpos}{\lVert\satpos\rVert},
+\qquad
+\jcross = \frac{\knad\times\esun}{\lVert\knad\times\esun\rVert},
+\qquad
+\isun = \jcross\times\knad,
+\label{eq:obsphys-yaw-frame}
+\end{equation}
+the exact operand ordering of \texttt{SatAttitude::compute}
+(\texttt{model/SatAttitude.cpp}) and the engine's inline copy
+(\texttt{Antenna.cpp}).  Forming $\jcross$ first and then
+$\isun=\jcross\times\knad$ is algebraically the Gram--Schmidt
+orthogonalisation of the Sun direction against nadir: by the
+$\bm{a}\times(\bm{b}\times\bm{c})$ identity,
+\begin{equation}
+\isun = \jcross\times\knad
+      = (\knad\times\esun)\times\knad
+      = \esun - \knad\,(\knad\cdot\esun),
+\label{eq:obsphys-xsun-gramschmidt}
+\end{equation}
+i.e. $\isun$ is the component of $\esun$ orthogonal to nadir, normalised
+--- the $+X$ axis points half-toward the Sun, as required by the ANTEX
+convention.  The body-frame matrix collecting the three columns,
+\begin{equation}
+\bframe = \big[\,\isun\;\;\jcross\;\;\knad\,\big],
+\label{eq:obsphys-bodyframe-matrix}
+\end{equation}
+is orthonormal, so its inverse is its transpose --- the property exploited
+below to rotate a body-frame offset into ECEF.
+
+\paragraph{Sun elevation and the mode switch.}
+For non-nominal attitude (eclipse seasons, the noon/midnight yaw turn) the
+relevant geometric quantity is the Sun's elevation above the orbital
+plane, $\beta$.  With the orbit angular-momentum (normal) unit vector
+$\hat{\bm{n}}=(\satpos\times\satvel)/\lVert\satpos\times\satvel\rVert$,
+\begin{empheq}[box=\fbox]{equation}
+\beta = \arcsin\!\big(\hat{\bm{n}}\cdot\esun\big),
+\qquad
+\hat{\bm{n}} = \frac{\satpos\times\satvel}{\lVert\satpos\times\satvel\rVert},
+\label{eq:obsphys-beta}
+\end{empheq}
+signed by the projection of the Sun direction onto the $+(\satpos\times
+\satvel)$ normal (\texttt{SatAttitude::computeBeta},
+\texttt{model/SatAttitude.cpp}; the sign is noted in-code as unvalidated
+against an external attitude product).  The mode selector
+(\texttt{SatAttitude::determineMode}) keeps GPS, GLONASS and Galileo in
+yaw-steering unconditionally, and switches BeiDou and QZSS to
+orbit-normal attitude below a constellation-specific $\beta$ threshold
+($4.0^\circ$ BeiDou, $20.0^\circ$ QZSS,
+\texttt{model/SatAttitude.cpp}).  In orbit-normal mode the $+Y$ axis is
+pinned to the orbit normal, $\jcross=\hat{\bm{n}}$, and the triad is
+re-orthogonalised $\isun=\jcross\times\knad$, $\jcross=\knad\times\isun$.
+The legacy default path additionally forces the hard-coded BeiDou-2 GEO
+PRN list (C01--C05, C59, C60) into orbit-normal mode irrespective of
+$\beta$; the $\beta$-driven table is active only when
+\texttt{enableOrbitNormalAttitude()} is set, and is constructed so the
+flag-off result is bit-identical to the historical inline frame
+(\texttt{model/Antenna.cpp}, \texttt{model/SatAttitude.cpp}).
+
+\paragraph{Eclipse gating.}
+The body frame above presumes a known yaw angle, which is exactly what
+fails during Earth-shadow passes: the actual spacecraft yaw during
+eclipse and the post-shadow recovery is block-specific and not modelled
+here, so the antenna PCO/PCV and the wind-up are unreliable for an
+eclipsing satellite.  When the user opts in
+(\texttt{processing.exclude\_eclipsing\_satellites}), the satellite is
+dropped at the geometry stage by a \emph{cylindrical umbra} test
+(\texttt{Planetary::isSatelliteEclipsing}, \texttt{model/Planetary.cpp},
+called from \texttt{model/ModelGeometry.cpp}).  With
+$\hat{\bm{u}}_\odot=\bm{r}_\odot/\lVert\bm{r}_\odot\rVert$ the Earth-to-Sun
+direction, the satellite's along-axis and perpendicular distances are
+$s_\parallel=\satpos\cdot\hat{\bm{u}}_\odot$ and $\bm{s}_\perp=\satpos -
+s_\parallel\,\hat{\bm{u}}_\odot$, and the predicate is
+\begin{equation}
+\text{eclipsed}
+\;\Longleftrightarrow\;
+\big(s_\parallel < 0\big)
+\;\wedge\;
+\big(\lVert\bm{s}_\perp\rVert < \kappa\,R_\oplus\big),
+\label{eq:obsphys-eclipse}
+\end{equation}
+i.e. the satellite is on the anti-Sun side \emph{and} inside the shadow
+cylinder of radius $\kappa R_\oplus$, with $R_\oplus = 6\,371\,230$\,m
+(\texttt{common/Constants.hpp}) and $\kappa$ the user shadow scale
+(\texttt{processing.eclipse\_shadow\_scale}, default unity; cited rather
+than reproduced as a tuning knob).  This is a deliberately conservative
+geometric umbra, not a photometric penumbra model.
+
+% ============================================================
+\subsection{Antenna phase-centre corrections}\label{sec:obsphys-antenna}
+% ============================================================
+
+The range measurement is realised between the satellite and receiver
+\emph{antenna phase centres}, but the estimated states refer to the
+satellite centre of mass and the receiver antenna reference point (ARP).
+The antenna correction $A^\sat_{\rx,\sigl}$ reconciles the two, summing
+four geometric terms plus the wind-up:
+\begin{empheq}[box=\fbox]{equation}
+A^\sat_{\rx,\sigl}
+\;=\;
+-\,\delta_{\mathrm{PCO}}^{\sat}
+\;+\;\delta_{\mathrm{PCV}}^{\sat}
+\;+\;\delta_{\mathrm{PCO}}^{\rx}
+\;+\;\delta_{\mathrm{PCV}}^{\rx}
+\;+\;\varphi_{\mathrm{wu}},
+\label{eq:obsphys-antenna-total}
+\end{empheq}
+the exact accumulation of \texttt{Antenna::getAntennaCorrection}
+(\texttt{model/Antenna.cpp}).  The line-of-sight used throughout is the
+\emph{satellite-to-receiver} unit vector,
+$\los = (\rxpos_\rx-\satpos)/\lVert\rxpos_\rx-\satpos\rVert$
+(\texttt{Antenna.cpp}; note this is the negative of the receiver-to-satellite
+$\los^\sat_{\hat{\rx}}$ of \dcref{sec:obs-geometry}{the geometry section}
+in \dcref{eq:los}{its line-of-sight definition}).  The sign conventions are derived once and reused for
+each term below.
+
+\paragraph{Satellite PCO (subtracted).}
+The satellite phase-centre offset $\pco^\sat_{\mathrm{body}}$ is published
+in the body frame (millimetres in ANTEX).  It is rotated to ECEF by the
+body-frame matrix --- because $\bframe$ collects the body axes as
+\emph{columns}, $\bframe$ itself maps body $\to$ ECEF (and the orthonormal
+$\bframe^\Tr=\bframe^{-1}$ maps ECEF $\to$ body) --- and projected onto the
+LOS:
+\begin{equation}
+\delta_{\mathrm{PCO}}^{\sat}
+=
+\big(\bframe\,\pco^\sat_{\mathrm{body}}\big)\cdot\los .
+\label{eq:obsphys-sat-pco}
+\end{equation}
+Because the antenna phase centre sits \emph{nearer the receiver} than the
+centre of mass, the true range is shorter than the CoM range; the
+correction is therefore \emph{subtracted} in
+\eqref{eq:obsphys-antenna-total} (\texttt{correction -= sat\_pco\_corr},
+\texttt{model/Antenna.cpp}).
+
+\paragraph{Satellite PCV (added).}
+The satellite phase-centre variation is a function of the \emph{nadir
+angle} --- the angle between the boresight $\knad$ and the line of sight ---
+and of the azimuth in the body frame.  With $\cos\theta_{\mathrm{nad}} =
+\knad\cdot\los$,
+\begin{equation}
+\theta_{\mathrm{nad}} = \arccos\!\big(\knad\cdot\los\big),
+\qquad
+\alpha_{\mathrm{body}} = \operatorname{atan2}\!\big((\bframe^\Tr\,\los)_y,\,
+(\bframe^\Tr\,\los)_x\big),
+\label{eq:obsphys-nadir}
+\end{equation}
+and the PCV value is read by bilinear interpolation of the ANTEX grid
+over (zenith/nadir ring, azimuth sector), the look-up argument being
+$\theta_{\mathrm{nad}}-\mathtt{zen1}$ in grid units
+(\texttt{Antenna::interpolatePcv}, \texttt{model/Antenna.cpp}).  The
+satellite PCV is \emph{added} to the range correction.
+
+\paragraph{Receiver PCO (added).}
+The receiver PCO is published as a North/East/Up (NEU) triplet relative to
+the ARP.  It is reordered to ENU, rotated to ECEF by the local
+ENU$\to$ECEF rotation $\bm{R}_{\mathrm{enu}}(\phi,\lambda)$ at the
+receiver geodetic latitude/longitude
+(\texttt{Coordinates::enuToEcefMatrix}), and projected on the LOS:
+\begin{equation}
+\delta_{\mathrm{PCO}}^{\rx}
+=
+\Big(\bm{R}_{\mathrm{enu}}(\phi,\lambda)\,
+\big[\,p_E\;\;p_N\;\;p_U\,\big]^\Tr\Big)\cdot\los,
+\qquad
+\big[\,p_E\;p_N\;p_U\,\big] = \big[\,p_{\mathrm{NEU},2}\;\;
+p_{\mathrm{NEU},1}\;\;p_{\mathrm{NEU},3}\,\big],
+\label{eq:obsphys-rx-pco}
+\end{equation}
+where the index swap $(N,E,U)\!\to\!(E,N,U)$ is explicit in
+\texttt{model/Antenna.cpp}.  It is \emph{added} to the correction.
+
+\paragraph{Receiver PCV (added).}
+The receiver PCV is indexed by \emph{zenith angle} $z = 90^\circ -
+\mathrm{el}$ (and, optionally, azimuth corrected for the antenna mounting
+orientation when \texttt{enableRxAntennaOrientation()} is set), with the
+same bilinear interpolation over $z-\mathtt{zen1}$
+(\texttt{model/Antenna.cpp}).  It is \emph{added} to the correction.
+
+\paragraph{ATX frequency fallback.}
+ANTEX entries frequently omit the newest carriers (L5/E5a/B2a on older
+spacecraft, and many receiver antennas published before triple-frequency
+tracking).  Rather than dropping the antenna correction to zero --- which
+leaves a several-centimetre vertical bias --- the engine walks a
+\emph{nearest-carrier} substitution chain when the requested ANTEX
+frequency key is absent (\texttt{pickAtxFrequencyKey},
+\texttt{model/Antenna.cpp}).  The chains are ordered by carrier-frequency
+proximity, e.g. for GPS $\mathtt{G05}\to\{\mathtt{G02},\mathtt{G01}\}$ and
+for Galileo $\mathtt{E05}\to\{\mathtt{E08},\mathtt{E07},\mathtt{E06},
+\mathtt{E01}\}$, since cross-frequency PCO drift on one physical antenna
+is typically below a centimetre.  The PCO and PCV chains are walked
+\emph{independently} (an antenna may carry the PCO but not the PCV at a
+given key).  For the \emph{satellite} antenna only the intra-system chain
+is permitted --- borrowing another constellation's spacecraft entry would
+be meaningless.  For the \emph{receiver} antenna, after the intra-system
+chain is exhausted and only when
+\texttt{enable\_receiver\_cross\_system\_atx\_fallback} is set, a
+\emph{cross-system} nearest-GPS-band chain is allowed
+(\texttt{pickReceiverAtxFrequencyKey}), because the receiver phase pattern
+is a function of frequency on shared hardware: the load-bearing mappings
+are exact-carrier matches ($\mathtt{E01}\!\to\!\mathtt{G01}$,
+$\mathtt{E05}\!\to\!\mathtt{G05}$ at $1575.42$ and $1176.45$\,MHz), the
+remainder $\sim$10--70\,MHz approximations
+(\texttt{model/Antenna.cpp}).  Each substitution raises a coverage flag and
+emits a fallback log line; this is the same graceful-fallback policy used
+for biases rather than excluding the measurement.
+
+% ============================================================
+\subsection{Carrier-phase wind-up}\label{sec:obsphys-windup}
+% ============================================================
+
+A right-hand-circularly-polarised GNSS signal accrues a phase shift equal
+to the relative geometric rotation between the transmitting and receiving
+antenna dipoles as either rotates about the line of sight \cite{wuebbena1985software}.
+This wind-up is identical on every signal in cycles (hence a range term
+proportional to wavelength) and is computed in
+\texttt{GnssCorrections::computePhaseWindUp}
+(\texttt{corrections/GnssCorrections.cpp}).  With $\bm{k}$ the unit
+line-of-sight, $(\isun,\jcross)$ the satellite body $\pm X,+Y$ axes and
+$(\bm{x}_\rx,\bm{y}_\rx)$ the receiver local North/East axes, the
+\emph{effective dipoles} are
+\begin{equation}
+\dipS = \isun - \bm{k}\,(\bm{k}\cdot\isun) + \bm{k}\times\jcross,
+\qquad
+\dipR = \bm{x}_\rx - \bm{k}\,(\bm{k}\cdot\bm{x}_\rx) + \bm{k}\times\bm{y}_\rx,
+\label{eq:obsphys-windup-dipoles}
+\end{equation}
+the standard Wu construction --- each dipole is the antenna $X$ axis
+projected into the plane orthogonal to $\bm{k}$, plus the $\bm{k}\times Y$
+quadrature term (\texttt{corrections/GnssCorrections.cpp}).  The receiver
+North and East axes are built directly from the geodetic latitude
+$\phi$ and longitude $\lambda$,
+$\bm{x}_\rx = (-\sin\phi\cos\lambda,\,-\sin\phi\sin\lambda,\,\cos\phi)$ and
+$\bm{y}_\rx = (-\sin\lambda,\,\cos\lambda,\,0)$
+(\texttt{GnssCorrections.cpp}).  The signed wind-up angle is the
+$\operatorname{atan2}$ of the cross- and dot-products of the unit
+dipoles, which recovers the full $(-\pi,\pi]$ range and avoids the
+information loss of an $\arccos$ near $0$ and $\pi$:
+\begin{empheq}[box=\fbox]{equation}
+\winddphi
+=
+\operatorname{atan2}\!\Big(
+\bm{k}\cdot\big(\hat{\dipS}\times\hat{\dipR}\big),\;
+\hat{\dipS}\cdot\hat{\dipR}
+\Big),
+\qquad
+\varphi_{\mathrm{wu}}
+=
+\winddphi\,\frac{\lambda_\sigl}{2\pi},
+\label{eq:obsphys-windup-angle}
+\end{empheq}
+with $\hat{\dipS},\hat{\dipR}$ the normalised dipoles and $\lambda_\sigl$
+the signal wavelength (\texttt{corrections/GnssCorrections.cpp}); the
+$\bm{k}\!\cdot\!(\hat{\dipS}\times\hat{\dipR})$ argument fixes the sign of
+the rotation about the line of sight.  The result enters
+\eqref{eq:obsphys-antenna-total} as $\varphi_{\mathrm{wu}}$ on phase
+observables only (the code branch passes zero wavelength).
+
+\paragraph{Fractional vs.\ accumulated modes.}
+The raw $\operatorname{atan2}$ returns the wind-up wrapped to a single
+cycle.  In the default \emph{fractional} mode this wrapped angle is used
+directly: the float ambiguity $N^\sat_{\rx,\sigl}$ absorbs any
+integer-cycle component, so wrapping is harmless.  For integer ambiguity
+resolution the ambiguity must stay a constant integer across the arc, so
+the engine offers an \emph{accumulated} (unwrapped) mode
+(\texttt{config.accumulatePhaseWindUp()}) that unwraps each epoch
+relative to the previous stored angle,
+$\winddphi_t = \winddphi_{t-1} + \operatorname{wrap}_{2\pi}(\winddphi_t -
+\winddphi_{t-1})$, provided the inter-epoch gap is below the
+$300$\,s continuity threshold; a larger gap (or a backward time step)
+restarts the accumulator from the raw angle
+(\texttt{corrections/GnssCorrections.cpp}).  This $300$\,s reset is the
+wind-up analogue of an ambiguity-arc boundary: a gap long enough to
+invalidate the unwrap reference is treated as a fresh arc.
+
+\paragraph{Known frame duplication.}
+The satellite body frame feeding the wind-up dipole $\dipS$
+\eqref{eq:obsphys-windup-dipoles} is built \emph{inline} inside
+\texttt{computePhaseWindUp} (\texttt{corrections/GnssCorrections.cpp})
+rather than calling the shared \texttt{model/SatAttitude.cpp} helper used
+by the antenna path \eqref{eq:obsphys-yaw-frame}.  The two
+constructions are deliberately bit-for-bit identical (same operand
+ordering, same BeiDou-2 GEO orbit-normal special case, same velocity
+fallback), and both source files note the duplication explicitly.  It is
+flagged here because the invariant is a \emph{maintenance} obligation: a
+change to one frame must be mirrored in the other or the antenna PCV and
+the wind-up would silently diverge on the same satellite.
+
+% ============================================================
+\subsection{Periodic relativistic clock correction}\label{sec:obsphys-rel}
+% ============================================================
+
+A clock on an eccentric orbit runs at a time-varying rate relative to a
+clock on the geoid; the constant and secular parts are absorbed into the
+broadcast/precise clock polynomial, but the \emph{periodic} part driven by
+orbital eccentricity must be applied separately.  The standard expression
+\cite{subirana2013gnss}, in
+\texttt{GnssCorrections::computeRelativisticCorrection}
+(\texttt{corrections/GnssCorrections.cpp}), is
+\begin{empheq}[box=\fbox]{equation}
+\delta t_{\mathrm{rel}}
+\;=\;
+-\,\frac{2\,(\satpos\cdot\satvel)}{\sLight^{2}}
+\quad[\text{s}],
+\qquad
+\text{range term } = -\,\sLight\,\delta t_{\mathrm{rel}},
+\label{eq:obsphys-rel}
+\end{empheq}
+i.e. $-2\,(\bm{r}\cdot\bm{v})/c^2$ seconds, applied to the range by the
+$-\sLight\,\delta t_{\mathrm{rel}}$ term of the assembly
+\eqref{eq:obsphys-assembly} (\texttt{model/PppModel.cpp}).  Two points are
+worth making precise.  First, the dot product $\satpos\cdot\satvel$ is
+\emph{invariant} to whether the position/velocity pair is expressed in the
+inertial or the co-rotating ECEF frame: the ECEF velocity differs from the
+inertial velocity by the frame-rotation term
+$\satvel_{\mathrm{ecef}} = \satvel_{\mathrm{inertial}} -
+\bm{\omega}_\oplus\times\satpos$, and
+$\satpos\cdot(\bm{\omega}_\oplus\times\satpos)=0$ because the
+cross-product is orthogonal to $\satpos$; so the same scalar results from
+either velocity, and the broadcast-ephemeris ECEF velocity may be used
+directly.  Second, the periodic term is computed \emph{here}, separately,
+because the IGS precise CLK product by convention carries only the
+constant-plus-drift clock and excludes the periodic eccentricity term ---
+applying \eqref{eq:obsphys-rel} restores the missing piece consistently
+for both precise and broadcast clock sources.
+
+% ============================================================
+\subsection{Shapiro (gravitational-delay) correction}\label{sec:obsphys-shapiro}
+% ============================================================
+
+The signal path bends and slows in the Earth's gravitational potential;
+the resulting Shapiro delay is a few centimetres
+\cite{subirana2013gnss}.  With $r_\sat=\lVert\satpos\rVert$,
+$r_\rx=\lVert\rxpos_\rx\rVert$ the geocentric radii and
+$r_{\sat\rx}=\lVert\satpos-\rxpos_\rx\rVert$ the satellite--receiver
+distance, the delay (in metres) is
+\begin{empheq}[box=\fbox]{equation}
+S^\sat_\rx
+\;=\;
+\frac{2\,GM}{\sLight^{2}}\,
+\ln\!\frac{r_\sat + r_\rx + r_{\sat\rx}}
+          {r_\sat + r_\rx - r_{\sat\rx}},
+\label{eq:obsphys-shapiro}
+\end{empheq}
+with $GM = 3.986005\times10^{14}\,\mathrm{m^3/s^2}$
+(\texttt{Constants::GRAVITATIONAL\_CONSTANT}, \texttt{common/Constants.hpp})
+and the formula verbatim at \texttt{GnssCorrections.cpp}.  Because
+$r_{\sat\rx}<r_\sat+r_\rx$ the logarithm is positive, so $S^\sat_\rx>0$
+and the term is \emph{added} to the modelled range in
+\eqref{eq:obsphys-assembly} (\texttt{model/PppModel.cpp}).  Its magnitude
+is $\sim$1--2\,cm for a typical MEO geometry.
+
+% ============================================================
+\subsection{Sagnac (Earth-rotation) correction}\label{sec:obsphys-sagnac}
+% ============================================================
+
+The pseudorange is formed between the satellite position at \emph{signal
+emission} and the receiver position at \emph{signal reception}, but both
+are needed in a single, consistent ECEF frame.  During the
+$\sim$70\,ms transit the ECEF frame itself rotates with the Earth, so the
+emission-time satellite coordinates must be rotated forward into the
+reception-time frame.  The engine applies the \emph{rigorous} rotation,
+not a scalar approximation: with the geometric time-of-flight
+$\tau = \lVert\satpos_{\mathrm{em}}-\rxpos_\rx\rVert/\sLight$ and the
+Earth rotation rate $\omega_\oplus = 7.2921151467\times10^{-5}$\,rad/s
+(\texttt{common/Constants.hpp}), the emission-time position
+$\satpos_{\mathrm{em}}$ is rotated by $\theta=\omega_\oplus\tau$ about the
+$Z$ axis,
+\begin{empheq}[box=\fbox]{equation}
+\satpos
+=
+\bm{R}_z(\omega_\oplus\tau)\,\satpos_{\mathrm{em}},
+\qquad
+\bm{R}_z(\theta)
+=
+\begin{bmatrix}
+\;\;\cos\theta & \sin\theta & 0\\
+-\sin\theta & \cos\theta & 0\\
+0 & 0 & 1
+\end{bmatrix},
+\label{eq:obsphys-sagnac}
+\end{empheq}
+after which $\geomrange^\sat_\rx=\lVert\satpos-\rxpos_\rx\rVert$ and the
+line of sight are computed from the rotated $\satpos$
+(\texttt{model/ModelGeometry.cpp}, the \texttt{rotateAndComputeTopo}
+lambda).  The Sagnac correction is thus \emph{folded into the geometric
+range itself} rather than added as a separate term --- which is why
+\eqref{eq:obsphys-assembly} carries no explicit Sagnac entry.  An
+equivalent scalar form,
+$(\omega_\oplus/\sLight)\,(x_\sat y_\rx - y_\sat x_\rx)$, exists in the
+codebase as a \emph{diagnostic} only
+(\texttt{GnssCorrections::computeSagnacCorrection},
+\texttt{corrections/GnssCorrections.cpp}); it is the first-order expansion
+of the rigorous rotation and is not on the modelling path.  The
+\dcref{sec:products}{Orbit and Clock Product Evaluation document} cross-references
+\emph{here} for the Sagnac frame rotation; the derivation is kept in this
+document.  The same $\bm{R}_z(\omega(t_{\mathrm{node}}-t_{\mathrm{query}}))$
+rotation is reused at SP3 interpolation time to pre-rotate ephemeris
+nodes into the query-epoch frame
+(\texttt{model/ModelGeometry.cpp}), a numerical-conditioning use of the
+identical rotation documented with the products.
+
+% ============================================================
+\subsection{Group delays and inter-frequency biases}\label{sec:obsphys-bias}
+% ============================================================
+
+The abstract bias terms of the Foundations observation equations --- the
+satellite code/phase biases $B^\sat_\sigl,\,b^\sat_\sigl$ and the receiver
+biases $B_{\rx,\sigl},\,b_{\rx,\sigl}$ --- are realised deterministically by
+two products, which this section ties to the equation symbols.
+
+\paragraph{Broadcast group delay.}
+The broadcast navigation message carries a per-system inter-frequency
+group delay (GPS TGD, Galileo BGD, BeiDou TGD), referencing each signal's
+code hardware delay to the ionosphere-free combination used to generate
+the broadcast clock.  In the uncombined parameterisation these are absorbed
+into the deterministic code bias applied through
+\texttt{model/PppModel.cpp}'s bias term; they are the broadcast-grade
+realisation of $B^\sat_\sigl$, used when no precise bias product is
+available.
+
+\paragraph{Precise OSB / DCB biases.}
+When a precise bias product is loaded, the deterministic correction is the
+observable-specific bias (OSB) / differential code bias (DCB) entry for the
+exact (\sat,\sigl) pair, time-windowed against its validity interval and
+returned by \texttt{GnssCorrections::getBiasCorrection}
+(\texttt{corrections/GnssCorrections.cpp}).  This single scalar realises
+$B^\sat_\sigl$ (code) or $b^\sat_\sigl$ (phase) for that signal:
+\begin{equation}
+B_{\mathrm{grp}} = \mathrm{bias}(\sat,\sigl,t),
+\qquad
+t_{\mathrm{start}} \le t \le t_{\mathrm{end}},
+\label{eq:obsphys-bias-window}
+\end{equation}
+with the application gated by
+\texttt{enable\_code\_phase\_bias} (\texttt{model/PppModel.cpp}).  Two
+exclusions are baked into the bias index
+(\texttt{GnssCorrections::buildBiasIndex}): \emph{zero-valued} code entries
+(e.g. MGEX placeholder $\mathtt{C2I}/\mathtt{C6I}$ for BeiDou) are treated
+as \emph{absent} so the model does not both apply a null correction and
+suppress the per-(\sat,\sigl) estimated bias state, leaving the real
+tens-of-metres delay unmodelled; and \emph{GLONASS code} entries are
+likewise treated as missing because the FDMA per-channel receiver delay
+cannot be captured by a single value-per-(\sat,\sigl) bias, forcing those
+signals onto the estimated-state path
+(\texttt{corrections/GnssCorrections.cpp}).
+
+\paragraph{Estimated vs.\ deterministic biases.}
+Whatever the deterministic bias leaves uncorrected --- principally the
+receiver hardware delay $B_{\rx,\sigl},\,b_{\rx,\sigl}$, and any satellite
+delay not covered by a product --- is handled by the estimator.  The
+receiver biases are common to all satellites on a signal and so collapse
+into the receiver clock / inter-system bias states or cancel under
+between-satellite differencing
+(\dcref{sec:diff}{the differencing section}); the per-(\sat,\sigl)
+satellite code bias may be \emph{estimated} as a state when no product
+covers it (\texttt{estimation.estimate\_sat\_biases},
+\texttt{measurement/MeasurementModel.cpp}).  The state-allocation gate
+that prevents estimating a bias the products already supply ---
+$\mathrm{hasBIA}(\sat,\sigl)$ from the static product, OR'd with
+$\mathrm{hasSsrCB}(\sat,\sigl)$ from the live stream --- is documented with
+the SSR overlay (\dcref{sec:ssr}{the SSR corrections document},
+\Cref{eq:ssr-satbias-gate} there); the present document supplies only the
+\emph{deterministic} half of that OR.
+
+\paragraph{Relation to the SSR overlay.}
+The streamed SSR code/phase OSB (\dcref{sec:ssr}{the SSR corrections
+document}) refines the \emph{same} $B^\sat_\sigl,\,b^\sat_\sigl$ terms in
+real time, summed onto the predicted observable as \texttt{ssr\_bias\_term}
+in \texttt{measurement/MeasurementModel.cpp} alongside the deterministic
+$B_{\mathrm{grp}}$ here.  The two are distinct mechanisms and must not be
+conflated: the SSR bias is a per-(\sat,\sigl) scalar like
+\eqref{eq:obsphys-bias-window}, but the SSR \emph{orbit} delta lives in a
+radial/along/cross (RAC) delta frame
+(\dcref{sec:ssr}{the SSR document}'s \Cref{eq:ssr-rac-frame}) that is
+\emph{not} the satellite attitude body frame
+\eqref{eq:obsphys-bodyframe-matrix} of this document --- the RAC frame is
+built from the broadcast position and velocity to express an orbit
+correction, whereas the body frame is built from the Sun direction to
+orient the antenna.  They coincide neither in construction nor in purpose.
+
+% ============================================================
+\subsection{Provenance and assembly}\label{sec:obsphys-provenance}
+% ============================================================
+
+All deterministic corrections converge in
+\texttt{model/PppModel.cpp}: \texttt{computeModelledObservable} (and its
+iono-free sibling) returns the sum \eqref{eq:obsphys-assembly}, calling
+\texttt{model/ModelGeometry.cpp} for the Sagnac-rotated geometric range
+\eqref{eq:obsphys-sagnac}, \texttt{model/Antenna.cpp} for the total
+antenna correction \eqref{eq:obsphys-antenna-total} (which in turn calls
+\texttt{model/SatAttitude.cpp} for the body frame and
+\texttt{corrections/GnssCorrections.cpp} for the wind-up), and
+\texttt{corrections/GnssCorrections.cpp} for the relativistic
+\eqref{eq:obsphys-rel}, Shapiro \eqref{eq:obsphys-shapiro} and bias
+\eqref{eq:obsphys-bias-window} terms.  The Sun and Moon ephemeris feeding
+the attitude frame \eqref{eq:obsphys-yaw-frame}, the Sun-elevation
+\eqref{eq:obsphys-beta}, the eclipse predicate
+\eqref{eq:obsphys-eclipse} and the wind-up
+\eqref{eq:obsphys-windup-dipoles} is produced by
+\texttt{model/Planetary.cpp} (the rigorous IAU precession/nutation Sun
+position, cached per epoch) and is documented in
+\dcref{sec:frames}{the Coordinate Frames and Time Systems document}.  Every term is invariant
+physics; the only user-facing knobs are enable toggles and the
+eclipse-shadow scale, all cited rather than reproduced because they tune
+\emph{whether} a correction is applied, never its functional form.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

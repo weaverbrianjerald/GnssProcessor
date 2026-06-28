@@ -162,6 +162,7 @@ namespace GnssProcessor {
         for (auto& kv : code_bias_indices_)      if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_bias_indices_)       if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : sat_clock_indices_)      if (kv.second > rem_idx) --kv.second;
         for (auto& kv : ionosphere_indices_)     if (kv.second > rem_idx) --kv.second;
     }
 
@@ -482,7 +483,8 @@ namespace GnssProcessor {
 
     size_t StateManager::getStateSize() const {
         return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size()
-             + sat_phase_bias_indices_.size() + ionosphere_indices_.size() + ambiguity_indices_.size();
+             + sat_phase_bias_indices_.size() + sat_clock_indices_.size()
+             + ionosphere_indices_.size() + ambiguity_indices_.size();
     }
 
     Eigen::VectorXd StateManager::getStateVector() const {
@@ -700,6 +702,20 @@ namespace GnssProcessor {
             }
         }
 
+        // Per-satellite CLOCK noise (PPP_RTK_Network producer).  Δδtˢ relative to
+        // the a-priori product clock; a small random walk lets the estimated
+        // clock track genuine drift between epochs while the carried-forward
+        // prior provides continuity.  Suppressed for the S-basis datum
+        // (frozen-pivot) satellite, whose clock is held at (value=0, variance=0).
+        if (!sat_clock_indices_.empty()) {
+            const double sc_var = pn.sat_clock * dt;
+            for (const auto& [key, idx] : sat_clock_indices_) {
+                const std::string sat = StateKeys::satelliteFromSatClockKey(key);
+                if (frozen_pivot_sats_.count(sat)) continue;
+                Q(idx, idx) = sc_var;
+            }
+        }
+
         // Inter-system time offset noise (and rate offset, when present).
         //
         // Mirrors the clock-bias / clock-rate handling above on a per-system
@@ -897,6 +913,7 @@ namespace GnssProcessor {
         for (const auto& kv : getCodeBiasStates())     put(kv.second, "CBIAS:" + kv.first);
         for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
         for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
+        for (const auto& kv : getSatClockStates())     put(kv.second, "SATCLK:" + kv.first);
 
         return labels;
     }
@@ -1828,6 +1845,167 @@ namespace GnssProcessor {
             sat_phase_bias_indices_.erase(key);
 
             logger->debug("Removed sat phase-bias state for {} at former index {}", key, rem_idx);
+        }
+    }
+
+    // ===================================================================
+    // Satellite CLOCK states (PPP_RTK_Network producer) — mirror the
+    // satellite phase-bias block above, keyed "<sat>|SC", PER-SATELLITE.
+    // ===================================================================
+
+    int StateManager::getSatClockIndex(const std::string& key) const {
+        auto it = sat_clock_indices_.find(key);
+        return it != sat_clock_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getSatClockStates() const {
+        return sat_clock_indices_;
+    }
+
+    size_t StateManager::addSatClockState(const std::string& key, double initial_value) {
+        const double sc_std = config_.getInitialStd().sat_clock;
+        return addSatClockStateWithVariance(key, initial_value, sc_std * sc_std);
+    }
+
+    size_t StateManager::addSatClockStateWithVariance(const std::string& key,
+                                                      double initial_value,
+                                                      double initial_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_clock_indices_.count(key)) {
+            logger->trace("Sat clock state for {} already exists at index {}",
+                          key, sat_clock_indices_[key]);
+            return sat_clock_indices_[key];
+        }
+        if (!(initial_variance > 0.0)) {
+            const double sc_std = config_.getInitialStd().sat_clock;
+            logger->warn("addSatClockStateWithVariance: non-positive variance {} for {}; "
+                         "falling back to initial_std.sat_clock^2 = {}",
+                         initial_variance, key, sc_std * sc_std);
+            initial_variance = sc_std * sc_std;
+        }
+
+        const size_t index = appendState(initial_value, initial_variance);
+        sat_clock_indices_[key] = index;
+
+        logger->info("Added sat clock state for {} at index {}, initial={:.3f} m, std={:.3f} m",
+            key, index, initial_value, std::sqrt(initial_variance));
+        return index;
+    }
+
+    void StateManager::resetSatClockState(const std::string& key,
+                                          double new_value,
+                                          double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const auto it = sat_clock_indices_.find(key);
+        if (it == sat_clock_indices_.end()) {
+            logger->debug("resetSatClockState: unknown key {}", key);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("resetSatClockState index out of bounds for key {}: idx={}, state_size={}, cov={}x{}",
+                key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return;
+        }
+
+        // Refuse to disturb a frozen-pivot row (held at value=0, variance=0 by
+        // the S-basis datum) — re-inflating it would let the datum drift.
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("resetSatClockState refused on frozen pivot row {} "
+                          "(idx={}, P_diag={:.3e}); S-basis datum preserved",
+                          key, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double sc_std = config_.getInitialStd().sat_clock;
+            logger->warn("resetSatClockState: non-positive variance {} for {}; "
+                          "falling back to initial_std.sat_clock^2 = {}",
+                          new_variance, key, sc_std * sc_std);
+            new_variance = sc_std * sc_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        state_vector_(idx)    = new_value;
+
+        logger->info("Reset sat clock state {} at index {}: "
+                      "value {:+.4f} -> {:+.4f} m, std {:.4f} -> {:.4f} m",
+                      key, idx,
+                      prev_value, new_value,
+                      std::sqrt(std::max(prev_diag, 0.0)),
+                      std::sqrt(new_variance));
+    }
+
+    void StateManager::reinflateSatClockVarianceForSat(const std::string& satellite,
+                                                       double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_clock_indices_.empty()) return;
+
+        const std::string key = StateKeys::makeSatClockKey(satellite);
+        const auto it = sat_clock_indices_.find(key);
+        if (it == sat_clock_indices_.end()) return;
+
+        if (!(new_variance > 0.0)) {
+            const double sc_std = config_.getInitialStd().sat_clock;
+            logger->warn("reinflateSatClockVarianceForSat: non-positive variance {} for {}; "
+                          "falling back to initial_std.sat_clock^2 = {}",
+                          new_variance, satellite, sc_std * sc_std);
+            new_variance = sc_std * sc_std;
+        }
+
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("reinflateSatClockVarianceForSat: idx {} out of bounds for {}", idx, key);
+            return;
+        }
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {   // frozen pivot row — leave the datum alone
+            logger->debug("reinflateSatClockVarianceForSat: skipped frozen pivot row {}", key);
+            return;
+        }
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        // Value preserved — the clock estimate continuity is intentional.
+        logger->info("Reinflated sat-clock state {} to std={:.4f} m", key, std::sqrt(new_variance));
+    }
+
+    void StateManager::pruneSatClockStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (sat_clock_indices_.empty()) return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [key, idx] : sat_clock_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
+        if (to_remove.empty()) return;
+
+        logger->info("Pruning {} sat clock states (keeping {})",
+            to_remove.size(), keep_keys.size());
+        for (const auto& key : to_remove) {
+            auto it = sat_clock_indices_.find(key);
+            if (it == sat_clock_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneSatClockStatesExcept: invalid index {} for {}", rem_idx, key);
+                continue;
+            }
+
+            // removeStateAtIndex decrements all higher indices across every
+            // dynamic map (incl. sat_clock_indices_), so the next key's index is
+            // re-read fresh from the map on the following iteration.
+            removeStateAtIndex(rem_idx);
+            sat_clock_indices_.erase(key);
+
+            logger->debug("Removed sat clock state for {} at former index {}", key, rem_idx);
         }
     }
 

@@ -36,12 +36,18 @@ specs with **zero viewer changes** — that is what the abstraction buys.
 | Group | Viewer (CSV) |
 |-------|--------------|
 | State / position | `state` (state_trace) · `wls` (wls_trace) · `baseline` (baseline_trace) |
-| Measurement | `measurement_residuals`, `residual_strip`, `plot_satellite_signals` (measurement_residuals) · `dops` (dop_trace) · `satellite_status`, `satellite_strip` (satellite_status_trace) |
+| Measurement | `measurement_residuals`, `residual_strip`†, `plot_satellite_signals` (measurement_residuals) · `dops` (dop_trace) · `satellite_status`, `satellite_strip` (satellite_status_trace) |
 | State (per-sat) | `ambiguities`, `ambiguity_locktime` (ambiguity_trace) · `ionosphere`, `iono_strip` (ionosphere_trace) · `sat_biases` (sat_bias_trace) |
 | Cycle-slip | `mwwl_trace` (mwwl_trace) · `turbo_edit_trace` (turbo_edit_trace) · `slip_gate_strip`, `slip_conditions` (mwwl/turbo) · `graphic_trace`, `gf_trace`, `if_slip_trace` (staged detectors) |
 
 Each viewer auto-skips when its trace CSV is missing/empty (header-only too), so
 one invocation works unchanged across PPP / PPP-RTK / baseline / replay runs.
+
+† `residual_strip` is **off by default** in the report (heavy per-signal rasters,
+redundant with the `measurement_residuals` line plots); enable it with `--only
+residual_strip` or `--all`. `measurement_residuals` likewise renders only the raw
+Code/Phase residual series by default — its **standardized**-residual panels are
+off (see the `partial(..., show_standardized=False)` in its viewer module).
 
 **Deferred** (separate concerns, easy to add): `view_lcf` (NGS LASER constraint
 files — its own input format/workstream) and the **batch lane**
@@ -69,6 +75,7 @@ cd C:\GnssProcessor\pyviz
 ..\venv\Scripts\python.exe run_report.py --open                  # static PNG report
 ..\venv\Scripts\python.exe run_report.py --backend plotly -o r.html   # interactive report
 ..\venv\Scripts\python.exe run_report.py D:\run\logs --only state dops
+..\venv\Scripts\python.exe run_report.py --all                   # incl. off-by-default viewers
 ```
 
 ### Automatic report at end of a run

@@ -35,6 +35,7 @@ namespace GnssProcessor {
     // holds only a non-owning pointer for emission-time pseudorange
     // refinement; it never constructs or destroys the Antenna instance.
     class Antenna;
+    class SsrCorrectionStore;
 
     namespace Model {
 
@@ -104,7 +105,8 @@ namespace GnssProcessor {
          * @param[out] sat_clock Satellite clock correction (seconds).
          * @param[out] shapiro_delay Shapiro relativistic path delay (meters).
          * @param[out] sagnac_corr Sagnac correction (meters).
-         * @param[out] atm_loading_corr Atmospheric loading correction (meters).
+         * @param[out] otl_corr Ocean tidal loading site-displacement projection onto -LOS (meters).
+         * @param[out] apl_corr Atmospheric pressure loading (S1/S2 thermal tide) site-displacement projection onto -LOS (meters).
          * @param[out] relativistic_corr Relativistic orbit-clock correction (meters or seconds depending on caller convention).
          * @param[out] solid_tide Solid Earth tide radial correction (meters).
          * @param[out] mf_w Wide-lane Melbourne-Wübbena combination factor (if applicable).
@@ -127,7 +129,7 @@ namespace GnssProcessor {
             Eigen::Vector3d& sat_pos, Eigen::Vector3d& rx_pos, double& elevation,
             double& azimuth, Eigen::Vector3d& los, double& range, double& tropo_delay,
             double& sat_clock, double& shapiro_delay, double& sagnac_corr,
-            double& atm_loading_corr, double& relativistic_corr, double& solid_tide,
+            double& otl_corr, double& apl_corr, double& relativistic_corr, double& solid_tide,
             double& mf_w, double& mf_d, Eigen::Vector3d& sat_vel,
             bool& broadcast_only,
             DropReason& drop_reason) const;
@@ -210,6 +212,26 @@ namespace GnssProcessor {
          */
         void setAntennaModel(const Antenna& antenna) { antenna_ = &antenna; }
 
+        /**
+         * @brief Inject a non-owning SSR-correction store override (DI seam for
+         *        the PPP-RTK closed-loop harness).
+         *
+         * Forwards to the internal @c GnssCorrections (which applies the SSR
+         * clock overlay) and also overrides the SSR ORBIT overlay this class
+         * applies in @c getSatellitePV.  Pass @c nullptr (the default) to use
+         * the process-wide singleton — every non-harness caller stays
+         * byte-identical.  The network closed-loop consumer points this at the
+         * producer's OWNED store so a held-out station consumes the network's
+         * freshly-emitted corrections without touching global state.
+         *
+         * @param store Non-owning store pointer (must outlive this object) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrStore(const SsrCorrectionStore* store) {
+            ssr_store_override_ = store;
+            corrections_.setSsrStore(store);
+        }
+
         std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
 
     private:
@@ -233,6 +255,14 @@ namespace GnssProcessor {
         /// emission-time pseudorange refinement.  Set via setAntennaModel().
         /// May be nullptr (then the refinement only applies slant tropo).
         const Antenna* antenna_ = nullptr;
+
+        /// Non-owning SSR store override; nullptr -> process-wide singleton.
+        /// Set via setSsrStore() for the closed-loop consumer (see header).
+        const SsrCorrectionStore* ssr_store_override_ = nullptr;
+
+        /// Resolve the active SSR store (override when set, else the singleton).
+        /// Defined in the .cpp where the full type is visible.
+        const SsrCorrectionStore& ssrStore() const;
 
         /** @brief Load product and auxiliary data into internal containers. */
         void loadData();

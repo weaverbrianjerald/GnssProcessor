@@ -72,6 +72,11 @@ namespace GnssProcessor {
             loadData();
         }
 
+        const SsrCorrectionStore& Geometry::ssrStore() const {
+            return ssr_store_override_ ? *ssr_store_override_
+                                       : SsrCorrectionStore::getInstance();
+        }
+
         void Geometry::loadData() {
             log_manager_.getLogger("geometry")->debug("Begin satellite orbit index");
 
@@ -106,6 +111,35 @@ namespace GnssProcessor {
             // Skip the load entirely when OTL is disabled — avoids a misleading
             // "loaded coefficients" log line when the per-epoch site won't use them.
             auto log = log_manager_.getLogger("geometry");
+
+            // Atmospheric pressure loading (S1/S2 thermal tide) — loaded
+            // independently of OTL into the same Geometry-owned corrections_
+            // instance that applies it per-epoch.  Date-independent static asset
+            // (like the opole grid): explicit files.atm_tide_grid_path wins, else
+            // <internal_data_root>/static/apl/.  Scoped so its station ECEF does
+            // not collide with the OTL station_ecef below.  Default-off keeps
+            // runs byte-identical until a grid is supplied and the flag flipped.
+            if (config_.getModelCorrections().enable_atmospheric_loading) {
+                const Eigen::Vector3d apl_ecef = rinex_parser_.getApproxPositionXyz();
+                std::filesystem::path apl_grid = config_.getAtmTideGridPath();
+                if (apl_grid.empty()) {
+                    apl_grid = config_.getInternalDataRoot() / "static" / "apl"
+                             / "s1_s2_load_cm.dat";   // PROVISIONAL filename — pin to the supplied product
+                }
+                if (apl_ecef.allFinite() && apl_ecef.norm() > 1e6
+                    && std::filesystem::exists(apl_grid)) {
+                    if (corrections_.loadAtmosphericTideFromGrid(apl_grid.string(), apl_ecef))
+                        log->info("APL: loaded S1/S2 coefficients from grid '{}'", apl_grid.string());
+                    else
+                        log->warn("APL: failed to load S1/S2 grid '{}'; APL displacement will be zero",
+                                  apl_grid.string());
+                } else {
+                    log->info("APL: enabled but no usable grid at '{}'; APL displacement will be zero "
+                              "(place the S1/S2 load grid under <data>/static/apl/)",
+                              apl_grid.string());
+                }
+            }
+
             if (!config_.getModelCorrections().enable_ocean_tide_loading) {
                 log->info("OTL: disabled via enable_ocean_tide_loading=false; skipping coefficient load");
                 return;
@@ -543,7 +577,8 @@ namespace GnssProcessor {
             double& sat_clock,
             double& shapiro_delay,
             double& sagnac_corr,
-            double& atm_loading_corr,
+            double& otl_corr,
+            double& apl_corr,
             double& relativistic_corr,
             double& solid_tide,
             double& mf_w,
@@ -822,7 +857,17 @@ namespace GnssProcessor {
             Eigen::Vector3d otl_ecef = config_.getModelCorrections().enable_ocean_tide_loading
                 ? corrections_.computeOceanTideCorrection(rx_pos, obs.time)
                 : Eigen::Vector3d::Zero();
-            atm_loading_corr = otl_ecef.dot(-los);
+            otl_corr = otl_ecef.dot(-los);
+
+            // Atmospheric pressure loading (S1/S2 thermal tide; site displacement
+            // projected onto LOS).  Same sign convention as OTL/solid-tide: a
+            // station displacement toward the satellite shortens the range, and
+            // .dot(-los) (sat->rx) handles the sign automatically.  Zero unless
+            // enabled AND per-station S1/S2 coefficients are loaded.
+            Eigen::Vector3d apl_ecef = config_.getModelCorrections().enable_atmospheric_loading
+                ? corrections_.computeAtmosphericTideDisplacement(rx_pos, obs.time)
+                : Eigen::Vector3d::Zero();
+            apl_corr = apl_ecef.dot(-los);
 
             // Solid Earth tide (uses cached Sun/Moon positions)
             ensureSunMoonCached(obs.time);
@@ -839,10 +884,10 @@ namespace GnssProcessor {
             log_manager_.getLogger("geometry")->trace(
                 "Satellite geometry for {} at TOW {:.3f}: range={:.3f} m, elev={:.3f} deg, az={:.3f} deg, "
                 "tropo={:.3f} m, sat_clock={:.3e} s ({:.3f} m), shapiro={:.3e} m, sagnac={:.3f} m, "
-                "atm_load={:.3f} m, relativistic={:.3e} s ({:.3f} m), solid_tide={:.3f} m, broadcast_only={}",
+                "otl={:.4f} m, apl={:.4f} m, relativistic={:.3e} s ({:.3f} m), solid_tide={:.3f} m, broadcast_only={}",
                 obs.satellite, obs.time.tow, range, elevation, azimuth,
                 tropo_delay, sat_clock, sat_clock * c,
-                shapiro_delay, sagnac_corr, atm_loading_corr,
+                shapiro_delay, sagnac_corr, otl_corr, apl_corr,
                 relativistic_corr, relativistic_corr * c, solid_tide, broadcast_only);
 
             return true;
@@ -891,7 +936,7 @@ namespace GnssProcessor {
                 // across a cutover the receiver may be a version ahead of the SSR
                 // stream, so re-reference to the retained previous record instead
                 // of dropping the satellite to broadcast-grade.
-                const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, config_.getSsrMaxAge());
+                const auto ssr = ssrStore().getOrbitClock(satellite, time, config_.getSsrMaxAge());
                 const int ssr_iode = (ssr && ssr->has_orbit) ? ssr->iode : -1;
                 auto bc = LiveEphemerisStore::getInstance()
                               .computeSatellitePV(satellite, time, ssr_iode);
@@ -1218,7 +1263,7 @@ namespace GnssProcessor {
                 }
             }
 
-            if (auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, config_.getSsrMaxAge());
+            if (auto ssr = ssrStore().getOrbitClock(satellite, time, config_.getSsrMaxAge());
                 ssr && ssr->has_orbit
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)

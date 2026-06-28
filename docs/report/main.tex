@@ -51,10 +51,26 @@ them in roughly the order the engine applies them:
       \emph{uncombined} pseudorange / carrier-phase observation model, and
       the between-satellite single-difference (BSSD) and double-difference
       (DD) transformations.  Every other component builds on this.
-\item \textbf{Estimation engine} (\Cref{sec:kf}) --- the
-      variable-dimension Kalman filter (Joseph-form update,
+\item \textbf{Reference systems and measurement models}
+      (\Cref{sec:frames,sec:products,sec:atmos,sec:sitedisp,sec:obsphys})
+      --- the deterministic substrate and physics behind the observation
+      model the Foundations document writes abstractly: the coordinate
+      frames and time systems every other chapter assumes; the baseline
+      satellite orbit/clock product evaluation that SSR refines;
+      tropospheric and ionospheric delay modelling; the geophysical
+      site displacements (solid Earth, ocean, and pole tides) that
+      correct the receiver coordinate; and the antenna, attitude,
+      relativity, and range corrections that map the raw measurement to
+      the modelled observable.
+\item \textbf{Estimation engine} (\Cref{sec:kf,sec:stoch,sec:estinfra}) ---
+      the variable-dimension Kalman filter (Joseph-form update,
       prior-anchored iterated relinearisation, robust gating) and the
-      backward RTS smoother.
+      backward RTS smoother; the measurement stochastic model and the
+      a-posteriori quality-control layer (variance factor, Baarda
+      data-snooping, minimal detectable bias); and the supporting
+      infrastructure that bootstraps the filter --- the weighted
+      least-squares seed, the first-epoch residual-difference state
+      initialisation, and the pivot selection / disturbance logic.
 \item \textbf{Cycle-slip detection and repair} (\Cref{sec:slip}) --- the
       linear-combination test statistics (Melbourne--W\"ubbena,
       geometry-free, GRAPHIC, extra-wide-lane) and the TurboEdit
@@ -94,8 +110,17 @@ see \Cref{sec:notation} for the symbol table this document depends on.
 \part{Foundations}
 \subfile{foundations}
 
+\part{Reference systems and measurement models}
+\subfile{frames_time}
+\subfile{product_evaluation}
+\subfile{atmosphere}
+\subfile{site_displacement}
+\subfile{observation_physics}
+
 \part{Estimation engine}
 \subfile{kalman_smoother}
+\subfile{stochastic_qc}
+\subfile{estimator_infrastructure}
 
 \part{Cycle-slip detection and repair}
 \subfile{slip_detection}

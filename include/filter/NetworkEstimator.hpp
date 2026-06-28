@@ -144,6 +144,46 @@ public:
                                        const Eigen::VectorXd& x_s) const;
 
     /**
+     * @brief Covariance of the shared estimate from the most recent @ref solve.
+     *
+     * The inverse of the datum-constrained reduced shared normals — i.e. the
+     * formal covariance of @c x_s (datum-pinned columns carry a tiny variance,
+     * being the fixed S-basis gauges).  Used by the network driver's between-epoch
+     * carry-forward (the W4-S2b D2 prior): the posterior (value, variance) per
+     * shared parameter seeds the next epoch's prior via @ref
+     * NetworkNormalEquations::addSharedInfo.  Empty until @ref solve is called.
+     */
+    const Eigen::MatrixXd& sharedCovariance() const { return shared_cov_; }
+
+    /**
+     * @brief The reduced shared normals @f$\tilde N_{ss}@f$ after Schur reduction
+     *        (lazily reduces).  The W5 null-space-gate seam — inspect the
+     *        pre-constraint reduced system before @ref solve.  Non-const: updates
+     *        the kernel's internal reduction cache (idempotent; @ref solve reuses it).
+     */
+    const Eigen::MatrixXd& reducedSharedNormals();
+
+    /// A carried-forward prior on one shared parameter (W4-S2b D2 time update).
+    struct SharedPrior {
+        SharedParamKind kind;     ///< parameter family
+        std::string     sat;      ///< satellite id
+        std::string     signal;   ///< signal (empty for Clock)
+        double          value{0.0};  ///< prior mean
+        double          info{0.0};   ///< information weight = 1 / prior-variance (>0)
+    };
+
+    /**
+     * @brief Inject diagonal carried-forward priors onto the shared border (the
+     *        D2 between-epoch time update; forwards to
+     *        @ref NetworkNormalEquations::addSharedInfo).
+     *
+     * Identity-keyed by (sat, kind, signal): a prior whose parameter is not in the
+     * current epoch's layout (the satellite set) is skipped.  Call after
+     * @ref beginEpoch and before @ref solve.
+     */
+    void addSharedPrior(const std::vector<SharedPrior>& priors);
+
+    /**
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
@@ -173,6 +213,7 @@ private:
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
+    Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };

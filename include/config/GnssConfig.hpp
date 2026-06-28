@@ -97,6 +97,35 @@ namespace GnssProcessor {
         ProcessingMode getProcessingMode() const { return processing_mode_; }
 
         /**
+         * @brief Override the processing mode after load.
+         *
+         * Used by the closed-loop harness to derive a CONSUMER config
+         * (@c ProcessingMode::PPP_RTK) from the network producer config so the
+         * held-out station runs the user-side pipeline.  Not part of the normal
+         * JSON-driven flow — prefer the config file for production runs.
+         *
+         * @param mode New processing mode.
+         */
+        void setProcessingMode(ProcessingMode mode) { processing_mode_ = mode; }
+
+        /**
+         * @brief Derive a held-out CONSUMER config from this network producer config.
+         *
+         * Returns a copy with @c ProcessingMode::PPP_RTK (uncombined PPP-RTK
+         * user), the network-forced shared-state estimation flags
+         * (@c estimateSatClocks / @c estimateSatPhaseBiases / @c estimateSatBiases /
+         * @c promoteSatCodeBias) turned back OFF — the consumer CONSUMES those
+         * satellite products from the injected SSR store rather than estimating
+         * them — and ambiguity resolution enabled per
+         * @c NetworkConfig::closed_loop (the producer itself is float).  All other
+         * settings (products, atmosphere, BSSD, antenna) are inherited unchanged
+         * so the consumer's correction frame matches the producer's exactly.
+         *
+         * @return A PPP-RTK consumer @c GnssConfig.
+         */
+        GnssConfig deriveClosedLoopConsumerConfig() const;
+
+        /**
          * @brief Gets the KF frequency mode (band scope).
          * @return Current FrequencyMode (Dual, Triple, or All).
          */
@@ -753,6 +782,13 @@ namespace GnssProcessor {
          * @return Explicit grid path, or empty to use the internal static default.
          */
         std::filesystem::path getOptGridPath() const { return opt_grid_path_; }
+
+        /**
+         * @brief Gets the S1/S2 atmospheric-tide load grid path.
+         * @return Explicit grid path, or empty to use the internal static default
+         *         (<internal_data_root>/static/apl/).
+         */
+        std::filesystem::path getAtmTideGridPath() const { return atm_tide_grid_path_; }
 
         /**
          * @brief Whether the Station Information File (SIF) subsystem is enabled.
@@ -1471,6 +1507,13 @@ namespace GnssProcessor {
         bool estimateSatPhaseBiases() const { return estimate_sat_phase_biases_; }
 
         /**
+         * @brief Whether the network producer estimates explicit per-satellite
+         *        clock states (Δδtˢ relative to the a-priori product clock).
+         * @return True if satellite clock estimation is enabled (PPP_RTK_Network).
+         */
+        bool estimateSatClocks() const { return estimate_sat_clocks_; }
+
+        /**
          * @brief Whether the satellite CODE-bias state is promoted to first-class
          *        (always estimated) rather than created only on missing BIA/SSR
          *        coverage.
@@ -1734,6 +1777,30 @@ namespace GnssProcessor {
         bool isBaselineMode() const {
             return processing_mode_ == ProcessingMode::BaselineSingle
                 || processing_mode_ == ProcessingMode::BaselineMulti;
+        }
+
+        /**
+         * @brief Const access to the PPP-RTK network producer configuration.
+         * @return The NetworkConfig (default-constructed/unused unless network mode).
+         */
+        const NetworkConfig& getNetworkConfig() const { return network_config_; }
+
+        /**
+         * @brief Check if the active mode is the PPP-RTK network producer.
+         * @return True when @c processing_mode_ is @c PPP_RTK_Network.
+         */
+        bool isNetworkMode() const {
+            return processing_mode_ == ProcessingMode::PPP_RTK_Network;
+        }
+
+        /**
+         * @brief Override one network station's RINEX path (PathResolver fill-in).
+         * @param idx Index into the network stations vector.
+         * @param path New RINEX path.
+         */
+        void setNetworkStationRinexPath(size_t idx, const std::filesystem::path& path) {
+            if (idx < network_config_.stations.size())
+                network_config_.stations[idx].rinex_path = path;
         }
 
         /**
@@ -2016,6 +2083,7 @@ namespace GnssProcessor {
         void loadDataDownloadSection_(const nlohmann::json& json, LogManager& log_manager);
         void loadAppModeAndRealtimeSection_(const nlohmann::json& json, LogManager& log_manager);
         bool loadBaselineSection_(const nlohmann::json& json, LogManager& log_manager);
+        bool loadNetworkSection_(const nlohmann::json& json, LogManager& log_manager);
         void loadLoggingSection_(const nlohmann::json& json, LogManager& log_manager);
         void logConfigurationSummary_(LogManager& log_manager) const;
 
@@ -2079,6 +2147,7 @@ namespace GnssProcessor {
 
         std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
         std::filesystem::path opt_grid_path_;   ///< Path to IERS ocean pole tide load grid (optional; default <data>/static/opole/).
+        std::filesystem::path atm_tide_grid_path_;  ///< Path to S1/S2 atmospheric-tide load grid (optional; default <data>/static/apl/).
 
         bool enable_station_info_{ false };                     ///< Master toggle for the SIF subsystem (default off = byte-identical).
         std::vector<std::filesystem::path> station_info_paths_; ///< SIF JSON paths in load order (explicit or auto-discovered).
@@ -2122,6 +2191,7 @@ namespace GnssProcessor {
         bool require_bia_for_signals_;                           ///< Only use signals with BIA product coverage.
         bool estimate_sat_biases_;                               ///< Estimate per-satellite bias for signals without BIA coverage.
         bool estimate_sat_phase_biases_{false};                  ///< PPP_RTK_Network: estimate explicit per-(sat,signal) phase-bias states.
+        bool estimate_sat_clocks_{false};                        ///< PPP_RTK_Network: estimate explicit per-satellite clock states (orbit held fixed).
         bool promote_sat_code_bias_{false};                      ///< PPP_RTK_Network: estimate satellite code bias on every code row (not fallback-only).
         double sat_bias_cache_warm_age_s_;                       ///< Sat-bias cache: warm-restore window (sec).  Within this, restore value + aged variance.
         double sat_bias_cache_max_age_s_;                       ///< Sat-bias cache: max entry lifetime (sec).  Beyond this, evict; in [warm, max], restore value with cold-start variance.
@@ -2157,6 +2227,7 @@ namespace GnssProcessor {
         AppMode app_mode_;                    ///< Top-level execution mode.
         RealTimeConfig realtime_config_;                                  ///< Real-time streaming configuration.
         BaselineConfig baseline_config_;                                  ///< Baseline / network processing configuration (used when isBaselineMode()).
+        NetworkConfig  network_config_;                                   ///< PPP-RTK network producer configuration (used when isNetworkMode()).
 
         // --- Ambiguity Resolution ---
         int    ar_mode_;                  ///< AR mode: 0=float, 1=continuous, 2=instantaneous, 3=fix-and-hold.

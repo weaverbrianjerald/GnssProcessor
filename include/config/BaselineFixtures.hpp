@@ -87,14 +87,20 @@ inline const std::map<std::string, BaselineFixturePreset>& baselineFixturePreset
         // default for repeatable testing — anyone can re-fetch the
         // data and the coordinates are published on igs.org.
         //
-        // ECEF below is from the IGS station coordinate file
-        // (igs14.snx) at epoch 2010.0; current epoch values differ by
-        // a few cm from plate motion but that's well below the
-        // discrimination level of a development run.
+        // ECEF below is the CIT100USA (Caltech) monument in ITRF2020,
+        // from the NGS Station Info File (data/static/sif/igs20_SIF.json),
+        // propagated with the station velocity to the fixture's
+        // observation epoch (2024-DOY129 ≈ 2024.35) so the held-fixed DD
+        // reference matches where the antenna actually is on the obs day.
+        // It converts to lat 34.1367°, lon -118.1273°, h 215 m — Caltech.
+        // (The prior value { -2492006.9389, -4659170.3174, 3559273.6829 }
+        // was wrong by ~1.7 km — it converted to a -694 m height — so the
+        // rover absolute solution inherited that ~1.7 km error.  See
+        // docs/test_suite.md, "Findings".)
         // -----------------------------------------------------------
         {"igs_pasadena", BaselineFixturePreset{
             "CIT100USA",
-            { -2492006.9389, -4659170.3174, 3559273.6829 },
+            { -2491490.7288, -4660802.8538, 3559129.1818 },
             "JPLM00USA",
             2024, 129,
             "IGS Caltech vs JPL baseline (~10 km, CIT1 ref + JPLM rover, 2024-DOY129). "

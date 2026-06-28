@@ -110,6 +110,11 @@ namespace GnssProcessor {
             "Built clock index: {} satellites indexed", clock_index_.size());
     }
 
+    const SsrCorrectionStore& GnssCorrections::ssrStore() const {
+        return ssr_store_override_ ? *ssr_store_override_
+                                   : SsrCorrectionStore::getInstance();
+    }
+
     // =================================================================
     // Clock interpolation
     // =================================================================
@@ -153,9 +158,9 @@ namespace GnssProcessor {
         // stale/mis-timed SSR no longer detonates applyClockToBias.  Surface the
         // drop loudly (rate-limited by spdlog level) so it never hides again.
         const double ssr_max_age = config_ ? config_->getSsrMaxAge() : 60.0;
-        const auto ssr = SsrCorrectionStore::getInstance().getOrbitClock(satellite, time, ssr_max_age);
+        const auto ssr = ssrStore().getOrbitClock(satellite, time, ssr_max_age);
         if (!ssr) {
-            if (auto se = SsrCorrectionStore::getInstance().getSsrEpoch(satellite)) {
+            if (auto se = ssrStore().getSsrEpoch(satellite)) {
                 const double age = TimeUtils::continuousGpsSeconds(time)
                                  - TimeUtils::continuousGpsSeconds(*se);
                 if (std::abs(age) > ssr_max_age)
@@ -1139,16 +1144,170 @@ namespace GnssProcessor {
         return true;
     }
 
-    double GnssCorrections::computeAtmosphericLoadingCorrection(const Eigen::Vector3d& rx_pos,
-        const GnssTime& time) const {
-        Coordinates::Llh ref_llh = Coordinates::ecefToLlh(rx_pos);
-        double latitude = ref_llh.lat_rad * 180.0 / Constants::PI;
-        double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
-        double amplitude = 0.001;
-        double correction = amplitude * std::cos(2.0 * Constants::PI * t / TimeUtils::SECONDS_IN_DAY)
-                          * std::cos(latitude * Constants::PI / 180.0);
-        log_manager_.getLogger("ppp_model")->trace("Atmospheric loading correction: {} m", correction);
-        return correction;
+    void GnssCorrections::setAtmosphericTideCoefficients(const std::array<double, 12>& coeffs) {
+        atm_tide_coeffs_ = coeffs;
+        has_atm_tide_coeffs_ = true;
+    }
+
+    Eigen::Vector3d GnssCorrections::computeAtmosphericTideDisplacement(
+        const Eigen::Vector3d& rx_pos, const GnssTime& time) const {
+        if (!has_atm_tide_coeffs_) {
+            return Eigen::Vector3d::Zero();
+        }
+        if (!rx_pos.allFinite() || rx_pos.norm() < 1e3) {
+            log_manager_.getLogger("ppp_model")->warn(
+                "APL: invalid receiver position at TOW {:.3f}", time.tow);
+            return Eigen::Vector3d::Zero();
+        }
+
+        // Local-solar-time arguments (sun-synchronous tide).  UT fraction of day
+        // from the MJD; UT1-UTC (< 1 s) neglected, consistent with the OTL/solid
+        // tide models.  lambda = station longitude (the local-solar-time offset).
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(rx_pos);
+        const double ut_frac  = std::fmod(TimeUtils::gpsTimeToMjd(time), 1.0);
+        const double lambda   = llh.lon_rad;
+        const double theta_s1 = 2.0 * Constants::PI * ut_frac + lambda;
+        const double theta_s2 = 2.0 * (2.0 * Constants::PI * ut_frac + lambda);
+
+        const double c1 = std::cos(theta_s1), s1 = std::sin(theta_s1);
+        const double c2 = std::cos(theta_s2), s2 = std::sin(theta_s2);
+
+        // Per component d_c = aS1^cos*cos(S1) + aS1^sin*sin(S1)
+        //                   + aS2^cos*cos(S2) + aS2^sin*sin(S2).
+        // Layout per harmonic: [aE^cos, aE^sin, aN^cos, aN^sin, aU^cos, aU^sin];
+        // index 0..5 = S1, 6..11 = S2.
+        auto comp = [&](int base) {
+            return atm_tide_coeffs_[base + 0] * c1 + atm_tide_coeffs_[base + 1] * s1
+                 + atm_tide_coeffs_[base + 6] * c2 + atm_tide_coeffs_[base + 7] * s2;
+        };
+        const double d_e = comp(0);   // East
+        const double d_n = comp(2);   // North
+        const double d_u = comp(4);   // Up
+
+        const Eigen::Vector3d enu(d_e, d_n, d_u);
+        const Eigen::Vector3d ecef = Coordinates::enuToEcef(enu, llh);
+
+        // Physical sanity guard: the S1+S2 site displacement is sub-cm (radial
+        // typically <= ~1.5 mm).  Mirrors the OTL (>0.5 m) / pole-tide guards.
+        if (!ecef.allFinite() || ecef.norm() > 0.01) {
+            log_manager_.getLogger("ppp_model")->warn(
+                "APL: S1/S2 displacement out of range at TOW {:.3f}: "
+                "ENU=({:.5f},{:.5f},{:.5f}) m, norm={:.5f}",
+                time.tow, d_e, d_n, d_u, ecef.norm());
+            return Eigen::Vector3d::Zero();
+        }
+
+        log_manager_.getLogger("ppp_model")->trace(
+            "APL S1/S2 displacement at TOW {:.3f}: ENU=({:.5f},{:.5f},{:.5f}) m, "
+            "ECEF=({:.5f},{:.5f},{:.5f}) m",
+            time.tow, d_e, d_n, d_u, ecef.x(), ecef.y(), ecef.z());
+
+        return ecef;
+    }
+
+    bool GnssCorrections::loadAtmosphericTideFromGrid(const std::string& grid_path,
+                                                      const Eigen::Vector3d& station_ecef) {
+        auto log = log_manager_.getLogger("ppp_model");
+
+        if (!station_ecef.allFinite() || station_ecef.norm() < 1e6) {
+            log->warn("APL: invalid station ECEF for grid interpolation (norm={:.3e})",
+                      station_ecef.norm());
+            return false;
+        }
+
+        std::ifstream file(grid_path);
+        if (!file.is_open()) {
+            log->error("APL: cannot open atmospheric-tide grid '{}'", grid_path);
+            return false;
+        }
+
+        // PROVISIONAL grid geometry — mirrors the IERS opole grid layout for two
+        // harmonics.  The exact filename, header-line count, column order, and
+        // frame (CM to match OTL) of the atmospheric S1/S2 load grid (Ray & Ponte
+        // 2003 / IERS Conventions 2010 Sec. 7.1) MUST be pinned to the supplied
+        // file before enabling in production.  Assumed: 0.5-deg global grid,
+        // lat-major/lon-minor, each row:
+        //   lon lat  S1[uE^R uE^I uN^R uN^I uU^R uU^I]  S2[uE^R uE^I uN^R uN^I uU^R uU^I]
+        // where ^R/^I are in-phase(cos)/out-of-phase(sin) coefficients in metres.
+        constexpr int kNlon = 720, kNlat = 360, kHeaderLines = 0;  // TODO: confirm header count
+        constexpr double kLon0 = 0.25, kLat0 = -89.75, kStep = 0.5;
+        constexpr int kNc = 12;
+
+        std::string line;
+        for (int i = 0; i < kHeaderLines; ++i) {
+            if (!std::getline(file, line)) {
+                log->error("APL: grid '{}' truncated in header", grid_path);
+                return false;
+            }
+        }
+
+        // 12 coefficient planes (S1 then S2, each E/N/U cos & sin) flattened [j*nlon+i].
+        std::vector<std::vector<float>> plane(
+            kNc, std::vector<float>(static_cast<size_t>(kNlon) * kNlat));
+        for (int j = 0; j < kNlat; ++j) {
+            for (int i = 0; i < kNlon; ++i) {
+                double lon_d, lat_d;
+                if (!(file >> lon_d >> lat_d)) {
+                    log->error("APL: grid '{}' truncated at lat row {} lon col {}",
+                               grid_path, j, i);
+                    return false;
+                }
+                const size_t idx = static_cast<size_t>(j) * kNlon + i;
+                for (int k = 0; k < kNc; ++k) {
+                    double v;
+                    if (!(file >> v)) {
+                        log->error("APL: grid '{}' truncated reading coeff {} at ({},{})",
+                                   grid_path, k, j, i);
+                        return false;
+                    }
+                    plane[k][idx] = static_cast<float>(v);
+                }
+            }
+        }
+
+        // Station geodetic position; longitude wrapped to [0, 360).
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(station_ecef);
+        const double lat_deg = llh.lat_rad * 180.0 / Constants::PI;
+        double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
+        if (lon_deg < 0.0) lon_deg += 360.0;
+
+        // Bilinear interpolation; longitude wraps the 360/0 seam, latitude clamps.
+        const double fi = (lon_deg - kLon0) / kStep;
+        double fj = (lat_deg - kLat0) / kStep;
+        if (fj < 0.0) fj = 0.0;
+        if (fj > kNlat - 1) fj = kNlat - 1;
+        int j0 = static_cast<int>(std::floor(fj));
+        if (j0 < 0) j0 = 0;
+        if (j0 > kNlat - 2) j0 = kNlat - 2;
+        const int j1 = j0 + 1;
+        const double wj = fj - j0;
+        const int i0 = static_cast<int>(std::floor(fi));
+        const double wi = fi - std::floor(fi);
+        const int i0w = ((i0 % kNlon) + kNlon) % kNlon;
+        const int i1w = (i0w + 1) % kNlon;
+
+        auto bilerp = [&](const std::vector<float>& g) -> double {
+            const double v00 = g[static_cast<size_t>(j0) * kNlon + i0w];
+            const double v10 = g[static_cast<size_t>(j0) * kNlon + i1w];
+            const double v01 = g[static_cast<size_t>(j1) * kNlon + i0w];
+            const double v11 = g[static_cast<size_t>(j1) * kNlon + i1w];
+            const double v0 = v00 * (1.0 - wi) + v10 * wi;
+            const double v1 = v01 * (1.0 - wi) + v11 * wi;
+            return v0 * (1.0 - wj) + v1 * wj;
+        };
+
+        // Grid plane order [S1: uE^R uE^I uN^R uN^I uU^R uU^I, S2: ...] maps 1:1 to
+        // the member layout [aE^cos, aE^sin, aN^cos, aN^sin, aU^cos, aU^sin] per
+        // harmonic (cos==real==in-phase, sin==imag==out-of-phase).
+        for (int k = 0; k < kNc; ++k) atm_tide_coeffs_[k] = bilerp(plane[k]);
+        has_atm_tide_coeffs_ = true;
+
+        log->info("APL: interpolated S1/S2 coeffs at ({:.4f},{:.4f}) deg lon/lat: "
+                  "S1 U=({:.5f},{:.5f}) m, S2 U=({:.5f},{:.5f}) m",
+                  lon_deg, lat_deg,
+                  atm_tide_coeffs_[4], atm_tide_coeffs_[5],
+                  atm_tide_coeffs_[10], atm_tide_coeffs_[11]);
+        return true;
     }
 
     // =================================================================

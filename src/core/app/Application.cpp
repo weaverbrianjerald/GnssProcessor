@@ -186,7 +186,73 @@ bool Application::resolveData() {
         }
     }
 
+    // Opt-in ATX freshness refresh, after paths are resolved (so the ATX path is
+    // known) and before loadInputData() reads the antenna model.
+    refreshAtxIfEnabled_();
+
     return true;
+}
+
+void Application::refreshAtxIfEnabled_() {
+    namespace fs = std::filesystem;
+    const auto& dl = config_.getDownloadConfig();
+    if (!dl.atx_auto_refresh) return;
+    auto log = log_manager_.getLogger("main_log");
+
+    // Locate the ATX among the resolved inputs.  Works for both modes: internal
+    // globs static/atx into the product set; production pushes atx_path there.
+    fs::path atx = dl.atx_path;
+    if (atx.empty() || !fs::exists(atx)) {
+        for (const auto& p : config_.getProductPaths()) {
+            std::string e = p.extension().string();
+            std::transform(e.begin(), e.end(), e.begin(),
+                           [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; });
+            if (e == ".atx") { atx = p; break; }
+        }
+    }
+    if (atx.empty()) {
+        if (log) log->warn("atx_auto_refresh: no ATX path resolved - skipping refresh");
+        return;
+    }
+
+    const fs::path root   = fs::path(GNSS_PROJECT_ROOT);
+    const fs::path script = root / "scripts" / "refresh_atx.py";
+    if (!fs::exists(script)) {
+        if (log) log->warn("atx_auto_refresh: {} not found - skipping refresh", script.string());
+        return;
+    }
+
+    // Interpreter: explicit report_python override, else baked venv, else PATH.
+    std::string python = config_.reportPython();
+    if (python.empty()) {
+        const fs::path venv_py = root / "venv" / "Scripts" / "python.exe";
+        python = fs::exists(venv_py) ? venv_py.string() : std::string("python");
+    }
+
+    std::string inner = "\"" + python + "\" \"" + script.string() + "\" --atx \""
+                      + fs::absolute(atx).string() + "\" --max-age-days "
+                      + std::to_string(dl.atx_refresh_max_age_days);
+    if (!dl.atx_refresh_url.empty())
+        inner += " --url \"" + dl.atx_refresh_url + "\"";
+
+    if (log) log->info("atx_auto_refresh: checking {} for updates (max_age={} d)",
+                       atx.string(), dl.atx_refresh_max_age_days);
+
+#ifdef _WIN32
+    // std::system pipes through cmd /c, which strips the outermost quotes -- wrap
+    // the already-quoted command in an extra pair (same idiom as generateReportFor_).
+    const std::string cmd = "\"" + inner + "\"";
+#else
+    const std::string cmd = inner;
+#endif
+    const int rc = std::system(cmd.c_str());
+    if (rc == 0) {
+        if (log) log->info("atx_auto_refresh: ATX is current or was updated "
+                           "(see refresh_atx.py output above)");
+    } else {
+        if (log) log->warn("atx_auto_refresh: refresh exited with code {} - "
+                           "continuing with the local ATX (network down? see stderr)", rc);
+    }
 }
 
 // ---------------------------------------------------------------------------

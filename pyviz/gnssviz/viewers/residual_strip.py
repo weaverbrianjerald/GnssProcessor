@@ -280,4 +280,8 @@ viewer = Viewer(
     title="Measurement residual strip",
     required_csvs=("measurement_residuals.csv",),
     build=build_residual_strip,
+    # Off by default in the report -- the per-signal (sat x epoch) rasters are
+    # heavy and redundant with the measurement_residuals line plots.  Enable on
+    # demand with ``run_report.py --only residual_strip`` (or ``--all``).
+    default_enabled=False,
 )

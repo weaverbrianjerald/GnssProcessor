@@ -167,19 +167,19 @@ TEST(StateManagerTest, AddAmbiguityGrowsStateAndAssignsIndex) {
 
 // removeStateAtIndex must decrement the indices of EVERY dynamic map sitting
 // above the removed slot — ambiguity, code-bias, sat-bias, sat-PHASE-bias (W2),
-// and ionosphere.  A missing decrement loop silently corrupts the
-// survivor->index mapping.  Seed each map with a distinct sentinel value,
-// remove the FIRST dynamic state (forcing every other dynamic state to shift
-// down by one), and assert each survivor's key still resolves to the slot
+// sat-CLOCK (W4-S2b), and ionosphere.  A missing decrement loop silently
+// corrupts the survivor->index mapping.  Seed each map with a distinct sentinel
+// value, remove the FIRST dynamic state (forcing every other dynamic state to
+// shift down by one), and assert each survivor's key still resolves to the slot
 // holding its sentinel.
-TEST(StateManagerTest, RemovalDecrementsAllFiveDynamicMaps) {
+TEST(StateManagerTest, RemovalDecrementsAllSixDynamicMaps) {
     StateManagerHarness h;
     auto& sm = h.state_manager;
 
     const size_t base = sm.getStateSize();
 
     // Add the to-be-removed phase-bias state FIRST so removing it shifts all
-    // four other dynamic maps (and the surviving phase-bias entry) downward.
+    // five other dynamic maps (and the surviving phase-bias entry) downward.
     const size_t victim = sm.addSatPhaseBiasState("G05|L1C|PB", 500.0);
     EXPECT_EQ(victim, base);
 
@@ -188,14 +188,16 @@ TEST(StateManagerTest, RemovalDecrementsAllFiveDynamicMaps) {
     sm.addCodeBiasState("GPS_C2W", 300.0);
     sm.addSatBiasState("G05|C1W", 400.0);
     const size_t survivor_pb = sm.addSatPhaseBiasState("G07|L1C|PB", 600.0);
+    const size_t survivor_sc = sm.addSatClockState("G05|SC", 700.0);
 
-    EXPECT_EQ(sm.getStateSize(), base + 6);
+    EXPECT_EQ(sm.getStateSize(), base + 7);
     EXPECT_EQ(survivor_pb, base + 5);
+    EXPECT_EQ(survivor_sc, base + 6);
 
     // Remove the first dynamic state via the public phase-bias prune.
     sm.pruneSatPhaseBiasStatesExcept({ "G07|L1C|PB" });
 
-    EXPECT_EQ(sm.getStateSize(), base + 5);
+    EXPECT_EQ(sm.getStateSize(), base + 6);
     EXPECT_EQ(sm.getSatPhaseBiasIndex("G05|L1C|PB"), -1);
 
     // Every survivor's key must now resolve to the slot holding its sentinel.
@@ -212,9 +214,12 @@ TEST(StateManagerTest, RemovalDecrementsAllFiveDynamicMaps) {
     EXPECT_NEAR(valAt(sm.getSatBiasIndex("G05|C1W")), 400.0, 1e-12);
     ASSERT_GE(sm.getSatPhaseBiasIndex("G07|L1C|PB"), 0);
     EXPECT_NEAR(valAt(sm.getSatPhaseBiasIndex("G07|L1C|PB")), 600.0, 1e-12);
+    ASSERT_GE(sm.getSatClockIndex("G05|SC"), 0);
+    EXPECT_NEAR(valAt(sm.getSatClockIndex("G05|SC")), 700.0, 1e-12);
 
-    // The surviving phase-bias state shifted down by exactly one slot.
+    // The surviving phase-bias and sat-clock states each shifted down one slot.
     EXPECT_EQ(sm.getSatPhaseBiasIndex("G07|L1C|PB"), static_cast<int>(survivor_pb - 1));
+    EXPECT_EQ(sm.getSatClockIndex("G05|SC"), static_cast<int>(survivor_sc - 1));
 }
 
 TEST(StateManagerTest, AddAmbiguityIndependentKeysGetDistinctIndices) {

@@ -22,6 +22,7 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace GnssProcessor {
 
@@ -71,15 +72,23 @@ namespace GnssProcessor {
             config_.getElevationMaskDeg());
 
         if (want_vmf3 || want_gpt3_apriori) {
-            const auto& grid_path = config_.getGpt3GridPath();
+            // Explicit receiver.gpt3_grid_path wins; otherwise default to the
+            // bundled static grid under the internal data root.  GPT3 is a
+            // date-independent static asset, so it is resolved here rather than
+            // through PathResolver's date-aware product logic — mirroring the
+            // ocean-pole-tide / atmospheric-loading grids defaulted in
+            // ModelGeometry.  The config loader cannot bake this default because
+            // the internal data root is resolved only after the receiver section
+            // parses (see GnssConfig::loadReceiverSection_); by the time this
+            // constructor runs the root is always known.
+            std::filesystem::path grid_path = config_.getGpt3GridPath();
             if (grid_path.empty()) {
-                logger->warn("GPT3 grid required (mapping=VMF3 or apriori=GPT3) but gpt3_grid_path is empty; falling back to GMF/stdatm");
-            } else {
-                gpt3_ = std::make_unique<Gpt3>();
-                if (!gpt3_->load(grid_path, log_manager_)) {
-                    logger->warn("GPT3 grid load failed ('{}'); falling back to GMF/stdatm", grid_path.string());
-                    gpt3_.reset();
-                }
+                grid_path = config_.getInternalDataRoot() / "static" / "gpt3" / "gpt3_5.grd";
+            }
+            gpt3_ = std::make_unique<Gpt3>();
+            if (!gpt3_->load(grid_path, log_manager_)) {
+                logger->warn("GPT3 grid load failed ('{}'); falling back to GMF/stdatm", grid_path.string());
+                gpt3_.reset();
             }
         }
     }
