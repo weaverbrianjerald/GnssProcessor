@@ -133,17 +133,22 @@
       {
         "name": "JPLM00USA",
         "rinex_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx",
-        "position_ecef": [ -2493304.6796, -4655215.1032, 3565497.5918 ]
+        "position_ecef": [ -2493304.9886, -4655214.7866, 3565497.6745 ]
       },
       {
         "name": "P38900USA",
         "rinex_path": "C:/GnssProcessor/data/2024-129/obs/p38900usa/P38900USA_R_20241290000_01D_15S_MO.rnx",
+        // P389 is a US CORS station, NOT in the IGS ITRF2020 SSC — this ECEF is
+        // unverified against SINEX (the others were regenerated via
+        // scripts/resolve_itrf_ecef.py). As a held-FIXED network station a wrong
+        // coord biases the satellite products; replace with an IGS-SSC station in
+        // the global expansion, or source its NGS CORS coordinate.
         "position_ecef": [ -2347409.5144, -3968716.0159, 4394004.5932 ]
       },
       {
         "name": "GCGO00USA",
         "rinex_path": "C:/GnssProcessor/data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
-        "position_ecef": [ -2281621.6297, -1453585.1138, 5756964.9518 ]
+        "position_ecef": [ -2281621.7499, -1453585.0819, 5756964.8917 ]
       }
     ],
 
@@ -152,25 +157,32 @@
     // the network's freshly-emitted SSR products epoch-by-epoch through the
     // user-side PPP-RTK + AR pipeline (fed from the producer's OWNED store).
     // position_ecef is the RINEX-header surveyed truth (a-priori seed + position
-    // scoring).  AR = wide-lane only on GPS, matching the float-only v1 producer.
-    // Default mode = BIAS-ONLY (consume_network_clock=false): precise SP3/CLK for
-    // the clock + the network's satellite PHASE BIAS — isolates the integer-
-    // essential phase-bias product from the marginal thin-network clock.  Set
-    // consume_network_clock=true for the FULL closed loop (network clock+bias), or
-    // consume_network_products=false for the precise-only A/B BASELINE.
-    // wl_only AR is the practical path; ar_wl_only=false (full NL LAMBDA on the
-    // float) is experimental and slow until the network clock product tightens.
+    // scoring).
+    //
+    // consumer_undifferenced=true selects the END-STATE user model: undifferenced
+    // uncombined PPP-RTK — apply the network phase biases directly to the raw
+    // float and fix per-band ambiguities INDIVIDUALLY (the resolver forms the
+    // between-satellite difference internally; no BSSD, no WL/NL cascade, no pivot
+    // machinery).  This forces ar_wl_only off (direct per-band LAMBDA) and tightens
+    // the AR σ-gate so the integer search only fires on a converged float.  Set it
+    // false for the legacy BSSD consumer (wl_only MW AR) as an A/B comparison.
+    //
+    // Product A/B: BIAS-ONLY (consume_network_clock=false) keeps precise SP3/CLK
+    // for the clock + the network PHASE BIAS (isolates the integer-essential bias
+    // product from the thin-network clock); consume_network_clock=true = FULL
+    // (network clock+bias); consume_network_products=false = precise-only BASELINE.
     "closed_loop": {
       "enable": true,
+      "consumer_undifferenced": true,
       "consume_network_products": true,
       "consume_network_clock": false,
       "ar_mode": 1,
-      "ar_wl_only": true,
+      "ar_wl_only": false,
       "ar_active_systems": [ "GPS" ],
       "station": {
         "name": "CIT100USA",
         "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cit1/cit11290.24o",
-        "position_ecef": [ -2491490.2616, -4660803.2317, 3559129.0005 ]
+        "position_ecef": [ -2491490.7172, -4660802.8495, 3559129.1872 ]
       }
     }
   },

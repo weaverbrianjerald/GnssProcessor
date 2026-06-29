@@ -120,10 +120,20 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     requireSymmetric(N_ss_r, "addStation: N_ss_r");
     requireSymmetric(N_rr_r, "addStation: N_rr_r");
 
-    // Accumulate this station's contribution to the shared border.
-    N_ss_ += N_ss_r;
-    u_s_ += u_s_r;
-
+    // Build and VALIDATE this station's local block BEFORE committing anything to
+    // the shared border.  addStation throws on a non-positive-definite local block
+    // (a station with an unobservable nuisance — e.g. a GPS-only station whose
+    // Galileo-ISB column is structurally zero), and the driver drops such a
+    // station.  A thrown station MUST leave N_ss_/u_s_ untouched: if we accumulated
+    // N_ss_r up front (before the throw) its shared contribution would stay in the
+    // border with NO compensating Schur term (the station is never pushed to
+    // stations_, so reduce() never subtracts its N_sr Nrr⁻¹ N_rs).  Its
+    // observations would then pin the shared parameters they touch with the
+    // receiver-clock absorption MISSING — a GPS-only station phantom-pins the GPS
+    // satellite-clock common-mode gauge, so the null-space rank gate sees one
+    // fewer free gauge than declared and WITHHOLDS every epoch (this was the global
+    // PPP-RTK network zero-emit: the two dropped GPS-only stations' bᵀWb summed to
+    // exactly the spurious GPS-common pin).
     Station st;
     st.N_sr = N_sr_r;
     st.u_r = u_r_r;
@@ -154,6 +164,11 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
             fail(os.str());
         }
     }
+
+    // Local block accepted — commit this station's shared-border contribution
+    // (kept in lock-step with the Schur term reduce() will subtract for it).
+    N_ss_ += N_ss_r;
+    u_s_ += u_s_r;
 
     stations_.push_back(std::move(st));
     reduced_ = false;

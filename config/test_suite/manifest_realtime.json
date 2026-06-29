@@ -1,0 +1,35 @@
+{
+  "_comment": "REAL-TIME replay tier. Drives the real-time engine (RealTimeEngine -> SBF decode -> processEpoch -> state_trace) via deterministic FILE REPLAY of a frozen SBF capture, with PRECISE products (COD MGX final), then grades the converged position vs an INDEPENDENT frozen site coordinate (data/static/sites/covl.json, consumed nowhere in the engine). This is the position-accuracy regression guard for the RT pipeline; stream-level invariants position-grading cannot see (SSR saw-tooth, obs<->SSR sync, GLONASS TOD, sat-bias SSR-blindness) are covered by C++ gtests (tests/test_realtime_seams.cpp). PREREQUISITE: the SBF fixture (data/sbf/covl1452.26_) and COD MGX final products for 2026-145 staged under data_download.data_root.",
+  "date": { "year": 2026, "doy": 145 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/realtime",
+
+  "truth": {
+    "sinex_dir": "data/static/sinex",
+    "site_paths": [ "data/static/sites/covl.json" ],
+    "auto_fetch_sinex": false,
+    "cross_check_tol_m": 0.05
+  },
+
+  "eval": { "warmup_s": 600.0, "threshold_m": 0.20, "bias_tol_m": 0.03, "rms_tol_m": 0.03 },
+
+  "stations": [
+    { "name": "COVL", "truth_key": "COVL",
+      "input_path": "data/sbf/covl1452.26_" }
+  ],
+
+  "bases": {
+    "rt_covl": "config/test_suite/rt_replay_covl.jsonc"
+  },
+
+  "cells": [
+    { "label": "rt_static", "base": "rt_covl", "overrides": {} },
+    { "label": "rt_r4_ant", "base": "rt_covl",
+      "_comment": "A/B: select the multi-GNSS LEIAR25.R4 NONE ATX block (native Galileo E1/E5a PCO/PCV) vs the base LEIAR25 NONE (GPS-L1/L2-only -> Galileo via cross-system fallback to L2). Quantifies the Galileo antenna-fallback effect on position.",
+      "overrides": { "model_corrections.receiver_antenna_type_override": "LEIAR25.R4      NONE" } }
+  ],
+
+  "matrix": [
+    { "station": "COVL", "cells": ["rt_static", "rt_r4_ant"] }
+  ]
+}

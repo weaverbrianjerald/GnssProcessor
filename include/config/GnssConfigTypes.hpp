@@ -132,6 +132,7 @@ namespace GnssProcessor {
         std::vector<std::string> ar_active_systems;  ///< Constellations eligible for consumer AR (empty => inherit the base config's AR active systems).
         bool          consume_network_products{ true }; ///< Inject the OWNED network store into the consumer.  Set false for the A/B BASELINE: the consumer then runs on precise SP3/CLK + .BIA only (a normal PPP-RTK user), isolating the network product's contribution to integer recovery / position from the consumer's own modeling.
         bool          consume_network_clock{ true };    ///< When consuming products, also consume the network CLOCK.  Set false to keep precise SP3/CLK for the clock while consuming only the network PHASE BIAS — the cleanest integer-recovery test, isolating the (integer-essential) phase-bias product from a marginal thin-network clock product.
+        bool          consumer_undifferenced{ false };   ///< Consumer user model.  false = BSSD (legacy: between-satellite single-difference S-transform in the filter).  true = UNDIFFERENCED uncombined PPP-RTK USER (the end-state): no observation-space differencing — apply the network satellite phase biases directly to the raw float and fix per-band ambiguities INDIVIDUALLY via the resolver's internal-SD LAMBDA (no WL/NL cascade, no pivot-handover machinery).  Dissolves the network-bias↔.BIA-frame conflict by dropping the MW WL.
     };
 
     struct NetworkConfig {

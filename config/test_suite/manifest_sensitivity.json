@@ -1,0 +1,34 @@
+{
+  "_comment": "SENSITIVITY tier. OFAT (one-factor-at-a-time) sweep over site-displacement / antenna / tropo correction toggles, anchored to an all-models-on baseline. Single axis 'model' whose FIRST level is the baseline (empty override) = the A/B reference; every other level turns exactly one model off (or, for OTL, wires the EOT20 grid on). Linear cost (n = #levels). This is the reusable, declarative form of the +5cm-UP decomposition campaign.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/sensitivity",
+  "truth": { "sinex_dir": "data/static/sinex", "sif_paths": ["data/static/sif/igs20_SIF.json", "data/static/sif/ncn20_SIF.json"], "auto_fetch_sinex": true, "sif_with_periodic": true, "cross_check_tol_m": 0.05 },
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA", "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+  "bases": { "ppp": "config/test_suite/ppp_static.jsonc" },
+  "suites": [
+    {
+      "name": "site_disp",
+      "base": "ppp",
+      "stations": ["JPLM"],
+      "design": "ofat",
+      "axes": {
+        "model": {
+          "baseline":      {},
+          "no_solid_tide": { "model_corrections.enable_solid_earth_tide": false },
+          "no_pole_tide":  { "model_corrections.enable_pole_tide": false },
+          "otl_active":    { "data_download.nc_path": "C:/GnssProcessor/data/static/nc/EOT20_load.nc", "model_corrections.enable_ocean_tide_loading": true },
+          "no_rx_pco":     { "model_corrections.enable_receiver_pco": false },
+          "no_sat_pco":    { "model_corrections.enable_satellite_pco": false },
+          "no_rx_pcv":     { "model_corrections.enable_receiver_pcv": false },
+          "no_sat_pcv":    { "model_corrections.enable_satellite_pcv": false },
+          "no_windup":     { "model_corrections.enable_phase_windup": false },
+          "no_tropo":      { "model_corrections.enable_troposphere": false }
+        }
+      }
+    }
+  ]
+}

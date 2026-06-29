@@ -587,6 +587,127 @@ class SifTruth(TruthSource):
 
 
 # ---------------------------------------------------------------------------
+# Site backend -- a frozen "site database" of externally-established coordinates
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _Site:
+    ecef: np.ndarray            # m, at ref_epoch
+    velocity: np.ndarray        # m/yr (zeros if unknown)
+    ref_epoch: float            # decimal year the ecef is referenced to
+    frame: str
+    source: str                 # provenance tag (survey method / product set)
+    sigma: Optional[np.ndarray] # (3,) 1-sigma ECEF, or None
+
+
+class SiteTruth(TruthSource):
+    """Truth from a frozen JSON *site database* of fixed-station coordinates.
+
+    For receivers that are **not** IGS/CORS stations (so absent from any SINEX
+    or SIF) -- e.g. a rooftop research receiver fed to the real-time engine --
+    the truth coordinate is established once *out of band* (a long static-PPP
+    survey-in, an official survey, or a published monument value) and frozen
+    into a small JSON file that the engine consumes **nowhere**.  That keeps the
+    grader independent in exactly the same sense as :class:`SinexTruth`: a frame
+    or site-displacement bug in the engine cannot hide inside the truth.
+
+    File schema (``data/static/sites/*.json``)::
+
+        {
+          "frame": "ITRF2020",            // file-level default
+          "ref_epoch": 2026.40,           // file-level default (decimal year)
+          "sites": {
+            "COVL": {
+              "ecef_m": [x, y, z],        // required
+              "velocity_m_yr": [vx,vy,vz],// optional (default 0 -> no propagation)
+              "ref_epoch": 2026.40,       // optional (overrides file default)
+              "sigma_m": [sx, sy, sz],    // optional 1-sigma
+              "frame": "ITRF2020",        // optional (overrides file default)
+              "source": "static PPP survey-in (COD MGX final), 2026-145",
+              "aliases": ["COVL00USA"]    // optional extra lookup keys
+            }
+          }
+        }
+
+    Lookup is by exact key, then by any declared alias, then by 4-char prefix
+    (so ``COVL00USA`` resolves ``COVL``).  ``resolve`` propagates the coordinate
+    to the query epoch with the (usually zero) site velocity, mirroring
+    :class:`SinexTruth`.
+    """
+
+    def __init__(self, paths):
+        if isinstance(paths, (str, Path)):
+            paths = [paths]
+        self._sites: Dict[str, _Site] = {}        # canonical name -> _Site
+        self._alias: Dict[str, str] = {}          # alias/prefix -> canonical
+        for p in paths:
+            self._load(Path(p))
+
+    def _load(self, path: Path) -> None:
+        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+        file_frame = str(doc.get("frame", "") or "")
+        file_epoch = float(doc.get("ref_epoch", 2020.0))
+        for name, sj in (doc.get("sites", {}) or {}).items():
+            ecef = self._vec3(sj, "ecef_m")
+            if ecef is None:
+                continue                          # a site without a position is useless
+            vel = self._vec3(sj, "velocity_m_yr")
+            if vel is None:
+                vel = np.zeros(3, dtype=float)
+            sig = self._vec3(sj, "sigma_m")
+            site = _Site(
+                ecef=ecef, velocity=vel,
+                ref_epoch=float(sj.get("ref_epoch", file_epoch)),
+                frame=str(sj.get("frame", file_frame) or file_frame),
+                source=str(sj.get("source", "") or ""),
+                sigma=sig,
+            )
+            key = name.strip().upper()
+            self._sites.setdefault(key, site)
+            if len(key) >= 4:
+                self._alias.setdefault(key[:4], key)
+            for a in sj.get("aliases", []) or []:
+                ak = str(a).strip().upper()
+                if ak:
+                    self._alias.setdefault(ak, key)
+                    if len(ak) >= 4:
+                        self._alias.setdefault(ak[:4], key)
+
+    @staticmethod
+    def _vec3(j, key) -> Optional[np.ndarray]:
+        v = j.get(key)
+        if isinstance(v, list) and len(v) >= 3:
+            return np.array([float(v[0]), float(v[1]), float(v[2])], dtype=float)
+        return None
+
+    def _find(self, station: str) -> Optional[_Site]:
+        k = station.strip().upper()
+        if not k:
+            return None
+        if k in self._sites:
+            return self._sites[k]
+        if k in self._alias:
+            return self._sites[self._alias[k]]
+        if len(k) >= 4 and k[:4] in self._alias:
+            return self._sites[self._alias[k[:4]]]
+        return None
+
+    def resolve(self, station: str, decimal_year: float) -> Optional[TruthCoord]:
+        s = self._find(station)
+        if s is None:
+            return None
+        dt = decimal_year - s.ref_epoch
+        ecef = s.ecef + s.velocity * dt
+        return TruthCoord(ecef=ecef, epoch_year=decimal_year, frame=s.frame,
+                          source=f"site:{station.strip().upper()}"
+                                 + (f" ({s.source})" if s.source else ""),
+                          sigma=s.sigma)
+
+    def stations(self) -> List[str]:
+        return sorted(self._sites.keys())
+
+
+# ---------------------------------------------------------------------------
 # Composite (SINEX primary, SIF fallback)
 # ---------------------------------------------------------------------------
 
@@ -606,16 +727,20 @@ class CompositeTruth(TruthSource):
 
 def make_default_truth(sinex_paths: Optional[Sequence] = None,
                        sif_paths: Optional[Sequence] = None,
-                       sif_kwargs: Optional[dict] = None) -> CompositeTruth:
-    """Build the harness default: SINEX/SSC primary, SIF fallback.
+                       sif_kwargs: Optional[dict] = None,
+                       site_paths: Optional[Sequence] = None) -> CompositeTruth:
+    """Build the harness default: SINEX/SSC primary, SIF, then site database.
 
-    Any SINEX path that does not exist is silently skipped, so the composite
-    degrades to SIF-only until a real SSC is dropped into
-    ``data/static/sinex/``.
+    Any path that does not exist is silently skipped, so the composite degrades
+    gracefully (e.g. to SIF-only until a real SSC is dropped into
+    ``data/static/sinex/``).  Order is SINEX -> SIF -> :class:`SiteTruth`; the
+    site database is last because its members (non-IGS stations) are disjoint
+    from the global SSC/SIF coverage, so the precedence never actually bites --
+    but keeping the published-network sources first is the safe default.
 
     Parameters
     ----------
-    sinex_paths, sif_paths
+    sinex_paths, sif_paths, site_paths
         Iterables of file paths.  ``None`` -> empty.
     sif_kwargs
         Forwarded to :class:`SifTruth` (e.g. ``with_periodic``, ``with_psd``).
@@ -629,4 +754,9 @@ def make_default_truth(sinex_paths: Optional[Sequence] = None,
     sif_existing = [p for p in (sif_paths or []) if Path(p).is_file()]
     if sif_existing:
         sources.append(SifTruth(sif_existing, **(sif_kwargs or {})))
+    site_existing = [p for p in (site_paths or []) if Path(p).is_file()]
+    if site_existing:
+        site = SiteTruth(site_existing)
+        if site.stations():
+            sources.append(site)
     return CompositeTruth(sources)

@@ -110,6 +110,25 @@ namespace GnssProcessor {
         bool parse();
 
         /**
+         * @brief Clip parsing to the first @p span_s seconds of observations.
+         *
+         * RINEX observation records are time-ordered, so once an epoch is more
+         * than @p span_s past the file's first observation epoch the remainder
+         * of the file is irrelevant to a windowed run and @c parse() stops
+         * reading.  This avoids materializing (and copying) the discarded tail
+         * for runs that only consume a short span (e.g. a network solve bounded
+         * by @c processing.max_duration_s).  The header is always parsed in
+         * full.
+         *
+         * @param span_s Maximum span in seconds from the first observation
+         *               epoch to retain.  A value @c <= 0 (the default) means
+         *               "no window" — parse the entire file, preserving the
+         *               historical behavior for every caller that does not opt
+         *               in.
+         */
+        void setMaxObservationSpanSeconds(double span_s) { max_obs_span_s_ = span_s; }
+
+        /**
          * @brief Get the parsed RINEX header.
          * @return Const reference to the stored @c RinexHeader.
          */
@@ -233,6 +252,7 @@ namespace GnssProcessor {
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
         std::string receiver_serial_no_; /**< Receiver serial number parsed from header (if any). */
         GnssTime time_of_first_obs_;     /**< Time of first observation epoch parsed. */
+        double max_obs_span_s_{ 0.0 };   /**< Parse-window span (s) from the first epoch; <=0 means unbounded. */
 
         /**
          * @brief Validate a RINEX 3.x observation code.

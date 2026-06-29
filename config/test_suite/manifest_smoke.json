@@ -1,0 +1,19 @@
+{
+  "_comment": "SMOKE / gate tier. The smallest meaningful run: PPP + PPP-RTK static on JPLM, graded vs truth. Fast (~2 min). Intended to run on every change as the regression anchor (--golden). The other tiers (system / sensitivity / interaction) run less often.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/smoke",
+  "truth": { "sinex_dir": "data/static/sinex", "sif_paths": ["data/static/sif/igs20_SIF.json"], "auto_fetch_sinex": true, "sif_with_periodic": true, "cross_check_tol_m": 0.05 },
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA", "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+  "bases": { "ppp": "config/test_suite/ppp_static.jsonc", "ppprtk": "config/test_suite/ppp_rtk_static.jsonc" },
+  "cells": [
+    { "label": "ppp_static",   "base": "ppp",    "overrides": {} },
+    { "label": "ppprtk_float", "base": "ppprtk", "overrides": {} }
+  ],
+  "matrix": [
+    { "station": "JPLM", "cells": ["ppp_static", "ppprtk_float"] }
+  ]
+}

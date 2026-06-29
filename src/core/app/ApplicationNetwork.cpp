@@ -193,9 +193,30 @@ int Application::runNetwork() {
     }
 
     MultiRinexSync sync(config_, roster, log_manager_, *product_parser_);
+
+    // Clip each station's parse to the processing window.  The epoch loop below
+    // is bounded by processing.max_duration_s (anchored on the first synced
+    // epoch); without this, load() would parse — and synchronize() would copy —
+    // the FULL 24h of every station even when only the first minutes are used,
+    // which dominates wall-time at ~50 full-day stations.  A small margin covers
+    // per-station first-epoch jitter; max_duration_s <= 0 keeps full-file parsing.
+    if (config_.getMaxDuration() > 0.0) {
+        const double span_s = config_.getMaxDuration() + 60.0;
+        sync.setParseWindowSeconds(span_s);
+        log->info("Network: clipping RINEX parse to the first {:.0f} s of each "
+                  "station (max_duration_s {:.0f} s + 60 s margin)",
+                  span_s, config_.getMaxDuration());
+    }
+
     if (!sync.load()) {
-        log->error("Network: failed to load one or more station RINEX files");
-        return 1;
+        // Non-fatal: a station that failed to parse is excluded from the aligned
+        // schedule (synchronize() skips it; the datum/pivot is guarded below in
+        // buildStation).  This lets a large roster proceed when some stations'
+        // observation files are missing or corrupt — the expected case when
+        // fetching ~50 stations from a public archive.
+        log->warn("Network: one or more station RINEX files failed to parse; "
+                  "proceeding with the stations that loaded (the datum station "
+                  "is required and is checked next).");
     }
     if (!sync.synchronize()) {
         log->error("Network: failed to synchronise epochs across stations");
@@ -254,10 +275,19 @@ int Application::runNetwork() {
         stations.push_back(std::move(st));
         return true;
     };
-    if (!buildStation(roster.reference, /*is_pivot=*/true)) return 1;
+    if (!buildStation(roster.reference, /*is_pivot=*/true)) {
+        log->error("Network: clock datum station '{}' failed to load; the network "
+                   "cannot be built without its datum. Aborting.",
+                   roster.reference.name);
+        return 1;
+    }
     for (const auto& rv : roster.rovers) {
         if (closed_loop_on && rv.name == cl.station.name) continue;  // held-out consumer
-        if (!buildStation(rv, /*is_pivot=*/false)) return 1;
+        if (!buildStation(rv, /*is_pivot=*/false)) {
+            log->warn("Network: station '{}' failed to load; skipping it (the "
+                      "network proceeds with the remaining stations).", rv.name);
+            continue;
+        }
     }
     log->info("Network: {} station estimators constructed (pivot '{}')",
               stations.size(), stations.front().name);
@@ -309,15 +339,22 @@ int Application::runNetwork() {
                        "disabling the harness for this run.");
             consumer.reset();
         } else {
-            // Full LAMBDA on the network-bias-corrected float must NOT also take the
-            // MW WL (it is in the .BIA frame; see setArIgnoreMwWl).  wl_only AR keeps
-            // the MW WL by definition.
+            // Direct LAMBDA on the network-bias-corrected float must NOT also take
+            // the MW WL (it is in the .BIA frame; see setArIgnoreMwWl).  wl_only AR
+            // keeps the MW WL by definition.
             consumer->setArIgnoreMwWl(!consumer_config.getArWlOnly());
-            if (!consumer_config.getArWlOnly())
-                log->warn("Network closed-loop: ar_wl_only=false runs PURE full NL LAMBDA on "
-                          "the float — EXPERIMENTAL and slow on the v1 product (the WL-float-"
-                          "level position makes the NL search ill-conditioned).  Prefer "
-                          "ar_wl_only=true until the network clock product tightens.");
+            const bool undiff = cl.consumer_undifferenced;
+            if (undiff)
+                log->info("Network closed-loop: UNDIFFERENCED user model — direct per-band "
+                          "LAMBDA on the network-bias float (no BSSD, no WL/NL cascade); the "
+                          "resolver forms the between-satellite difference internally. AR fires "
+                          "once the float σ converges below the gate ({:.2f} m).",
+                          consumer_config.getArMaxPositionSigma());
+            else if (!consumer_config.getArWlOnly())
+                log->warn("Network closed-loop: BSSD consumer with ar_wl_only=false runs PURE "
+                          "full NL LAMBDA on the float — EXPERIMENTAL and slow on the v1 product "
+                          "(the WL-float-level position makes the NL search ill-conditioned).  "
+                          "Prefer ar_wl_only=true, or consumer_undifferenced=true.");
             if (cl.consume_network_products) {
                 // Consume OUR products (never the singleton).  consume_network_clock
                 // gates the clock overlay: false keeps precise SP3/CLK and consumes
@@ -397,6 +434,7 @@ int Application::runNetwork() {
     size_t n_emitted = 0, n_skipped = 0, n_gate_withheld = 0;
     double max_dur_anchor_s = 0.0;
     bool   max_dur_anchored = false;
+    bool   spectrum_diag_done = false;  // one-shot estimability spectrum dump
 
     // Column-split helper: split a station's H into the shared border A_s
     // (clock/phase-bias columns) and the local nuisance block A_r (everything
@@ -608,10 +646,11 @@ int Application::runNetwork() {
                 modeled[i], st.sm->getStateVector());
             if (em.innovations.size() == 0) { present[i] = false; continue; }
             if (em.H.cols() != static_cast<Eigen::Index>(st.sm->getStateSize())) {
-                log->warn("Network: station '{}' H/state mismatch ({} vs {}); skipping epoch",
+                log->warn("Network: station '{}' H/state mismatch ({} vs {})",
                           st.name, em.H.cols(), st.sm->getStateSize());
-                epoch_ok = false;
-                break;
+                if (st.is_pivot) { epoch_ok = false; break; }  // no datum without the pivot
+                present[i] = false;
+                continue;
             }
 
             Eigen::MatrixXd A_s, A_r;
@@ -658,10 +697,21 @@ int Application::runNetwork() {
             try {
                 est.addStation(A_s, A_r, w, y);
             } catch (const std::exception& ex) {
-                log->warn("Network: station '{}' addStation rejected ({}); skipping epoch",
+                // One station's rank-deficient / ill-conditioned local block must
+                // not sink the whole epoch in a large heterogeneous network: drop
+                // it and keep the rest (the null-space gate still guards the
+                // result).  The PIVOT is the exception — it carries the S-basis, so
+                // without it the epoch has no datum and must be skipped.
+                if (st.is_pivot) {
+                    log->warn("Network: PIVOT '{}' addStation rejected ({}); skipping epoch",
+                              st.name, ex.what());
+                    epoch_ok = false;
+                    break;
+                }
+                log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
                           st.name, ex.what());
-                epoch_ok = false;
-                break;
+                present[i] = false;
+                continue;
             }
         }
 
@@ -714,6 +764,35 @@ int Application::runNetwork() {
         // 1e-9 relative tolerance lands squarely in the gap, counting only the
         // genuine gauges while still catching a truly unpinned datum.
         constexpr double kNullSpaceTol = 1e-9;
+
+        // ---- One-shot estimability diagnostic -----------------------------
+        // Dump the tail of the reduced shared-normal singular spectrum for the
+        // first epoch that reaches the gate, so we can see WHERE the null space
+        // sits relative to the declared datum dimension: a clean ~7-decade gap
+        // at exactly declared_dim ⇒ the 1e-9 tolerance is mis-set; one or more
+        // EXTRA tiny singular values above the gap ⇒ a genuinely unpinned
+        // direction (a missing datum constraint).
+        if (!spectrum_diag_done) {
+            spectrum_diag_done = true;
+            const Eigen::MatrixXd& Nss = est.reducedSharedNormals();
+            Eigen::JacobiSVD<Eigen::MatrixXd> svd(Nss);
+            const Eigen::VectorXd& sv = svd.singularValues();
+            const Eigen::Index k = sv.size();
+            const double smax = (k > 0) ? sv(0) : 0.0;
+            const double cutoff = kNullSpaceTol * std::max(smax, 1.0);
+            int below = 0;
+            for (Eigen::Index i = 0; i < k; ++i) if (sv(i) < cutoff) ++below;
+            const Eigen::Index ntail = std::min<Eigen::Index>(14, k);
+            std::string tail;
+            for (Eigen::Index i = k - ntail; i < k; ++i)
+                tail += fmt::format("{}{:.3e}", (i == k - ntail ? "" : ", "), sv(i));
+            log->warn("Network[estimability]: TOW {:.1f} reduced_N_ss {}x{}, "
+                      "declared_dim={}, sv_max={:.3e}, cutoff={:.3e}, {} sv<cutoff; "
+                      "smallest {} sv = [{}]",
+                      se.time.tow, Nss.rows(), Nss.cols(), plan.declared_dimension,
+                      smax, cutoff, below, ntail, tail);
+        }
+
         bool gate_ok = true;
         try {
             sb.assertNullSpaceRank(est.reducedSharedNormals(), plan.declared_dimension,
@@ -916,10 +995,13 @@ int Application::runNetwork() {
         const Eigen::Vector3d final_err = consumer->getPosition() - cl_truth;
         const Eigen::Vector3d final_enu = Coordinates::ecefToEnu(final_err, cl_truth_llh);
 
-        const char* mode_label = !cl.consume_network_products
+        const char* product_label = !cl.consume_network_products
             ? "BASELINE (precise products only — network store NOT consumed)"
             : (cl.consume_network_clock ? "FULL (network clock + phase bias)"
                                         : "BIAS-ONLY (precise clock + network phase bias)");
+        const std::string mode_label =
+            std::string(cl.consumer_undifferenced ? "UNDIFFERENCED" : "BSSD")
+            + " user / " + product_label;
 
         // Honest, fix-rate-led verdict.  WL-only AR does not fix the narrow lane,
         // so the post-fix position stays at the WL-float level (~m) even on a

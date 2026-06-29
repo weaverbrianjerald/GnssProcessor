@@ -2619,6 +2619,7 @@ namespace GnssProcessor {
             clc.ar_wl_only = cl.value("ar_wl_only", true);
             clc.consume_network_products = cl.value("consume_network_products", true);
             clc.consume_network_clock    = cl.value("consume_network_clock", true);
+            clc.consumer_undifferenced   = cl.value("consumer_undifferenced", false);
             if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
                 for (const auto& s : cl["ar_active_systems"])
                     if (s.is_string()) clc.ar_active_systems.push_back(s.get<std::string>());
@@ -2657,23 +2658,62 @@ namespace GnssProcessor {
         // network-forced estimation flags back off to their PPP-RTK defaults.
         c.estimate_sat_clocks_       = false;
         c.estimate_sat_phase_biases_ = false;
-        c.estimate_sat_biases_       = false;  // producer folded the satellite code delay
-                                               // into the estimable clock — the consumer must
-                                               // NOT re-estimate a separate sat code bias.
         c.promote_sat_code_bias_     = false;
-        // Between-satellite single-difference: the user-side S-transform that
-        // removes the receiver clock/bias datum so the SD ambiguity is integer
-        // once the network satellite phase bias is applied.  The producer runs
-        // undifferenced (network has no receiver datum to remove); the consumer
-        // is a single receiver and needs BSSD for integer recovery.
-        c.enable_between_satellite_sd_ = true;
+        // Satellite CODE bias handling depends on WHICH clock the consumer uses.
+        // The network folds the satellite code delay into its estimable CLOCK, so
+        // a consumer using the NETWORK clock (FULL mode) must NOT re-estimate a
+        // separate sat code bias.  But on the PRECISE clock (BIAS-ONLY / BASELINE)
+        // there is no folded delay — the consumer is an ordinary PPP-RTK user and
+        // SHOULD estimate residual per-(sat,signal) code biases for signals its
+        // .BIA does not cover, or the uncorrected code pulls the position estimate.
+        const bool consuming_network_clock =
+            network_config_.closed_loop.consume_network_products &&
+            network_config_.closed_loop.consume_network_clock;
+        c.estimate_sat_biases_ = !consuming_network_clock;
+        // The network SOLVE keeps code fully weighted (no_bia_code_downweight ≈ 1)
+        // to separate the satellite clock from the phase bias.  A single-receiver
+        // USER that inherits that fully weights code carrying uncorrected biases →
+        // a systematic position pull.  Restore the user default so code on signals
+        // without .BIA coverage is downweighted.
+        c.no_bia_code_downweight_ = 100.0;
         // Enable ambiguity resolution for the consumer (the producer itself is
         // float): the closed loop validates integer RECOVERY on the held-out
         // station from the producer's products.
         c.ar_mode_    = network_config_.closed_loop.ar_mode;
-        c.ar_wl_only_ = network_config_.closed_loop.ar_wl_only;
         if (!network_config_.closed_loop.ar_active_systems.empty())
             c.ar_active_systems_ = network_config_.closed_loop.ar_active_systems;
+
+        if (network_config_.closed_loop.consumer_undifferenced) {
+            // UNDIFFERENCED uncombined PPP-RTK USER (the end-state). No
+            // observation-space differencing: the network satellite phase biases
+            // are applied directly to the raw float (ssr_bias_term, undifferenced
+            // — there is no applyDifferencing to re-difference them away), and the
+            // AmbiguityResolver forms the between-satellite difference INTERNALLY
+            // at fix time (y_dd = x[i] - x[ref]), which cancels the receiver phase
+            // bias and yields integer SD ambiguities. So integer recovery needs no
+            // BSSD filter machinery / pivot handover at all.
+            c.enable_between_satellite_sd_ = false;
+            // Direct per-band LAMBDA, NOT the MW/.BIA-frame WL: the state is
+            // already PerBand, and forcing wl_only off makes the driver drop the
+            // MW WL (setArIgnoreMwWl(true)) so AR runs pure MLAMBDA on the network-
+            // bias-corrected float — dissolving the network-bias↔.BIA frame
+            // conflict. No WL or WL/NL cascade.
+            c.ar_wl_only_ = false;
+            // Direct NL LAMBDA needs a converged float to keep the integer search
+            // bounded — a loose σ-gate (safe for the robust long-λ WL) lets the
+            // per-band search explode. Cap the gate so AR only fires once the
+            // float has settled (a BIAS-ONLY float reaches cm well within this).
+            if (!(c.ar_max_position_sigma_m_ > 0.0) || c.ar_max_position_sigma_m_ > 0.20)
+                c.ar_max_position_sigma_m_ = 0.20;
+        } else {
+            // Legacy BSSD consumer: the user-side S-transform removes the receiver
+            // clock/bias datum so the SD ambiguity is integer once the network
+            // satellite phase bias is applied. The producer runs undifferenced
+            // (no receiver datum to remove); a BSSD single receiver recovers
+            // integers through the pivot S-transform.
+            c.enable_between_satellite_sd_ = true;
+            c.ar_wl_only_ = network_config_.closed_loop.ar_wl_only;
+        }
         return c;
     }
 

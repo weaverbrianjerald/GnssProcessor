@@ -606,6 +606,15 @@ namespace GnssProcessor {
                             first_epoch = false;
                         }
 
+                        // Parse-window clip: RINEX epochs are time-ordered, so once we
+                        // pass the requested span past the first epoch the rest of the
+                        // file is discarded — stop reading instead of materializing it.
+                        if (max_obs_span_s_ > 0.0 &&
+                            TimeUtils::continuousGpsSeconds(epoch_time) -
+                                TimeUtils::continuousGpsSeconds(time_of_first_obs_) > max_obs_span_s_) {
+                            break;
+                        }
+
                         for (int i = 0; i < num_sats && std::getline(file, line); ++i) {
                             if (line.length() < 3) {
                                 log_manager_.getLogger("rinex_parser")->warn("Invalid satellite line: {}", line);
@@ -798,6 +807,15 @@ namespace GnssProcessor {
                         if (first_epoch) {
                             time_of_first_obs_ = epoch_time;
                             first_epoch = false;
+                        }
+
+                        // Parse-window clip (see the v3 path): stop once we pass the
+                        // requested span past the first epoch — the time-ordered tail
+                        // is discarded rather than parsed and copied.
+                        if (max_obs_span_s_ > 0.0 &&
+                            TimeUtils::continuousGpsSeconds(epoch_time) -
+                                TimeUtils::continuousGpsSeconds(time_of_first_obs_) > max_obs_span_s_) {
+                            break;
                         }
 
                         // Pull satellite IDs from the epoch line (cols 32+) plus continuation

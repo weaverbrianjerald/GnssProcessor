@@ -58,6 +58,7 @@ namespace GnssProcessor {
         for (auto& [name, sd] : stations_) {
             log->info("Loading RINEX for station '{}': {}",
                       name, sd.config.getObservationPath().string());
+            sd.parser->setMaxObservationSpanSeconds(parse_window_s_);
             if (!sd.parser->parse()) {
                 log->error("Failed to parse RINEX for station '{}'", name);
                 ok = false;
@@ -132,8 +133,13 @@ namespace GnssProcessor {
         std::map<std::string, PerEpochObs> per_station;
         for (const auto& [name, sd] : stations_) {
             if (!sd.loaded) {
-                log->error("MultiRinexSync::synchronize(): station '{}' not loaded", name);
-                return false;
+                // A failed station is skipped, not fatal: a large roster should
+                // still align on the stations that did load.  The reference is
+                // guarded explicitly below (its absence from per_station is the
+                // genuine fatal case — no schedule can be built without it).
+                log->warn("MultiRinexSync::synchronize(): station '{}' not loaded; "
+                          "excluding it from the aligned schedule", name);
+                continue;
             }
             per_station.emplace(name, groupByEpoch(sd.parser->getObservations()));
         }

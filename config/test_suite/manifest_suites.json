@@ -1,0 +1,105 @@
+{
+  "_comment": "Declarative SUITE catalog (2026-06-28). Each suite = base + axes + design, expanded by gnssviz.eval.suites into cells+matrix. Two big variables per suite max (the rule), everything else pinned/inherited. Graded vs independent ITRF2020 SINEX truth. system_ppp/system_ppprtk = constellation x dynamics full grids; tropo = mapping x ZWD-q (validates the VMF3 fix). Explicit ppp_static/ppprtk_float empty cells are the A/B reference anchors.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/suites",
+
+  "truth": {
+    "sinex_dir": "data/static/sinex",
+    "sif_paths": [
+      "data/static/sif/igs20_SIF.json",
+      "data/static/sif/ncn20_SIF.json"
+    ],
+    "auto_fetch_sinex": true,
+    "sif_with_periodic": true,
+    "cross_check_tol_m": 0.05
+  },
+
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA",
+      "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" },
+    { "name": "GCGO", "truth_key": "GCGO00USA",
+      "obs": "data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+
+  "bases": {
+    "ppp":    "config/test_suite/ppp_static.jsonc",
+    "ppprtk": "config/test_suite/ppp_rtk_static.jsonc"
+  },
+
+  "cells": [
+    { "label": "ppp_static",   "base": "ppp",    "overrides": {} },
+    { "label": "ppprtk_float", "base": "ppprtk", "overrides": {} }
+  ],
+
+  "matrix": [
+    { "station": "JPLM", "cells": ["ppp_static", "ppprtk_float"] },
+    { "station": "GCGO", "cells": ["ppp_static"] }
+  ],
+
+  "suites": [
+    {
+      "name": "sys_ppp",
+      "base": "ppp",
+      "stations": ["JPLM", "GCGO"],
+      "design": "full",
+      "pinned": { "processing.frequency_mode": "all" },
+      "axes": {
+        "sys": {
+          "G":    { "processing.active_systems": ["GPS"] },
+          "GE":   { "processing.active_systems": ["GPS", "Galileo"] },
+          "GR":   { "processing.active_systems": ["GPS", "GLONASS"] },
+          "GC":   { "processing.active_systems": ["GPS", "BeiDou"] },
+          "GRE":  { "processing.active_systems": ["GPS", "GLONASS", "Galileo"] },
+          "GEC":  { "processing.active_systems": ["GPS", "Galileo", "BeiDou"] },
+          "GREC": { "processing.active_systems": ["GPS", "GLONASS", "Galileo", "BeiDou"] }
+        },
+        "dyn": {
+          "static":    { "estimation.estimate_velocity": false, "filter.process_noise.position_q": 0.0 },
+          "kinematic": { "estimation.estimate_velocity": true, "processing.rinex_types": "CLD", "filter.process_noise.acceleration_psd_q": 1.0 }
+        }
+      }
+    },
+    {
+      "name": "sys_ppprtk",
+      "base": "ppprtk",
+      "stations": ["JPLM"],
+      "design": "full",
+      "pinned": { "processing.frequency_mode": "all", "estimation.between_satellite_sd.enable_glonass": true },
+      "axes": {
+        "sys": {
+          "G":    { "processing.active_systems": ["GPS"] },
+          "GE":   { "processing.active_systems": ["GPS", "Galileo"] },
+          "GR":   { "processing.active_systems": ["GPS", "GLONASS"] },
+          "GC":   { "processing.active_systems": ["GPS", "BeiDou"] },
+          "GRE":  { "processing.active_systems": ["GPS", "GLONASS", "Galileo"] },
+          "GEC":  { "processing.active_systems": ["GPS", "Galileo", "BeiDou"] },
+          "GREC": { "processing.active_systems": ["GPS", "GLONASS", "Galileo", "BeiDou"] }
+        },
+        "dyn": {
+          "static":    { "estimation.estimate_velocity": false, "filter.process_noise.position_q": 0.0 },
+          "kinematic": { "estimation.estimate_velocity": true, "processing.rinex_types": "CLD", "filter.process_noise.acceleration_psd_q": 1.0 }
+        }
+      }
+    },
+    {
+      "name": "tropo",
+      "base": "ppp",
+      "stations": ["JPLM"],
+      "design": "full",
+      "axes": {
+        "map": {
+          "gmf":  { "receiver.troposphere_mapping_function": "gmf" },
+          "vmf3": { "receiver.troposphere_mapping_function": "vmf3" }
+        },
+        "zwdq": {
+          "tight":  { "filter.process_noise.troposphere_q": 1e-9 },
+          "mid":    { "filter.process_noise.troposphere_q": 1e-8 },
+          "loose":  { "filter.process_noise.troposphere_q": 1e-7 }
+        }
+      }
+    }
+  ]
+}

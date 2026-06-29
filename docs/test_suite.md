@@ -208,6 +208,138 @@ at 5.45 cm** (a newer station extrapolated past the SSC span — base ITRF2020 v
 SIF's 2023 update genuinely differ), so its absolute bias is treated as truth
 ambiguity, not silently trusted.
 
+## Suite catalog (declarative suites)
+
+The matrix no longer has to be hand-listed cell by cell. A **suite** declares a
+small slice of config space anchored to one base, and `gnssviz.eval.suites`
+(`expand_manifest_suites`, wired into `run_test_suite.py`) expands it into
+ordinary cells + matrix rows. A manifest with a `suites` block Just Works.
+
+```jsonc
+"suites": [{
+  "name": "sys_ppp", "base": "ppp", "stations": ["JPLM","GCGO"],
+  "design": "full",                                   // full | ofat | pairwise
+  "pinned": { "processing.frequency_mode": "all" },   // held constant across the suite
+  "axes": {                                           // each level is an OVERRIDE PATCH
+    "sys": { "G":  {"processing.active_systems": ["GPS"]},
+             "GE": {"processing.active_systems": ["GPS","Galileo"]} },
+    "dyn": { "static":    {"estimation.estimate_velocity": false},
+             "kinematic": {"estimation.estimate_velocity": true,
+                           "filter.process_noise.acceleration_psd_q": 1.0} }
+  }
+}]
+```
+
+A cell's override is the ordered merge `pinned + axis[0] patch + axis[1] patch + …`
+(later wins); the label defaults to `name_level1_level2` (override with
+`label_template`). The **design** is the lever that tames the explosion — pick it
+per suite by what you're asking:
+
+| design | runs | catches | use for |
+|--------|------|---------|---------|
+| `full` | ∏ \|axis\| | the interaction between the (few) axes | a 1–2 axis grid you want to read in full |
+| `ofat` | 1 + Σ(\|axis\|−1) — **linear** | main effects | sensitivity sweeps over many independent knobs |
+| `pairwise` | ~tens (2-wise covering array) | all 2-way interactions | many axes, suspected coupling, full product too big |
+
+**The "≤ 2 big variables per suite" rule** keeps every scorecard delta unambiguously
+attributable: pin everything not under test, vary at most one or two axes. Don't take
+the full product of dozens of variables — run several focused slices instead.
+
+### Tiers (run frequency)
+
+| manifest | tier | contents |
+|----------|------|----------|
+| `manifest_smoke.json` | gate (every change) | PPP + PPP-RTK static, JPLM — the regression anchor |
+| `manifest_suites.json` | system (per feature) | `sys_ppp`/`sys_ppprtk` = constellation × dynamics (full) + `tropo` |
+| `manifest_sensitivity.json` | sensitivity (on demand) | `site_disp` ofat — the +5 cm-Up decomposition |
+| `manifest_interaction.json` | interaction (on demand) | `ar_bssd` (full) + `robust` (pairwise, 8 corners → 4 cells) |
+| `manifest_realtime.json` | real-time (on demand) | RT engine via SBF file replay + precise products, graded vs a frozen site coordinate (see below) |
+
+Adding a suite: drop a `suites` entry into the matching tier's manifest (or a new
+manifest), confirm every axis-value override key is **live in code** first (this
+codebase has silently-dead toggles), then run. Each tier writes its own
+`report.html` and `golden.json` under `test_suite_results/<tier>/`.
+
+## Real-time replay tier
+
+The post-processing tiers above never exercise the **real-time engine**
+(`RealTimeEngine` → SBF/RTCM decode → `processEpoch`). The RT tier closes that
+gap by reusing the *same* runner and grader, unchanged, on a deterministic
+**file replay**:
+
+```
+config/test_suite/rt_replay_covl.jsonc   RT base: app_mode=real_time, input_type=file,
+                                          input_format=sbf, precise products, static
+data/sbf/covl1452.26_                     frozen SBF capture (1 h, Corvallis AsteRx-U)
+data/static/sites/covl.json               frozen site truth  (SiteTruth)   <- independent
+config/test_suite/manifest_realtime.json  COVL × rt_static, truth = SiteTruth
+```
+
+Three things make this work with almost no new harness code:
+
+1. **Deterministic file replay already exists.** `input_type:"file"` +
+   `input_format:"sbf"` drives the RT engine reproducibly off a frozen dump — no
+   live caster. EOF → `engine.flush()` → clean finite run.
+2. **The RT engine writes the same gradeable trace.** `state_trace.csv` has the
+   identical `week,tow_s,x_m,y_m,z_m,…` header, so `evaluate_state_trace` grades
+   it unchanged. `run_test_suite.py` detects an RT cell by the base config's
+   `app_mode == "real_time"` and injects `realtime.input_path` (the per-station
+   fixture, via the station's `input_path` field) instead of
+   `files.observation_path`; everything downstream is identical.
+3. **Independent truth for a non-IGS receiver.** The Corvallis rooftop AsteRx-U
+   is absent from any SINEX/SSC or NGS SIF, so its truth coordinate is frozen in
+   a small **site database** (`data/static/sites/*.json`) read by the new
+   `SiteTruth` source — consumed *nowhere* in the engine, the same independence
+   guarantee `SinexTruth` gives. Add it to a manifest's `truth.site_paths`.
+
+### Precise products, not a live SSR stream — and why
+
+The plan's hard part was *freezing a live SSR window* (provider datum vs ITRF,
+recording the stream). This tier **sidesteps it**: the replay runs against
+**COD MGX final products** (`data_source:"production"`, staged under
+`data_download.data_root`), i.e. PPP through the RT *code path*, not PPP-RTK with
+live SSR. That gives a reproducible, network-free cm-grade RT cell today; a true
+frozen-SSR PPP-RTK cell is a later addition (needs a recorded SSR dump + the
+frame-datum handling).
+
+### Bootstrap seed and independence
+
+This Meas3 capture carries no PVTGeodetic block, and BSSD has no WLS cold-start,
+so the filter needs *some* a-priori to lift satellites above the mask (a missing
+seed pins it at the Earth-centred pole fallback forever). The base config seeds a
+**coarse (~10 m) approximate** position — *not* the cm-level truth. The grade
+stays independent because the position is **measurement-driven**: the filter
+pulls it several metres off the seed to a point fixed by the observations +
+precise products (verified: epoch-1 jumps ~4 m toward the monument), exactly as
+post-processing seeds from the RINEX APPROX POSITION (also ~m-level) and grades
+vs an independent SSC. Run as STATIC (`position_q = 0`) for a sharp converged
+coordinate.
+
+### Stream-level invariants the position grade cannot see
+
+Position grading is blind to defects that still leave a *plausible* position —
+an old observation consuming a future-stamped SSR correction (the obs↔SSR
+backlog hole), or an ephemeris extrapolated far past its fit interval (the BSSD
+epoch-blowup / RT model-degradation root). Those are pinned by focused C++ gtests
+in [`tests/test_realtime_seams.cpp`](../tests/test_realtime_seams.cpp)
+(`RealtimeSsrFreshnessTest`, `RealtimeEphStalenessTest`), complementing the
+existing RTCM/SSR/eph decode tests (`SsrCorrectionStoreTest`, `GlonassTodToGps`,
+`LiveEphemerisStoreTest`, …) in `tests/test_rtcm.cpp`.
+
+### Prerequisites
+
+The SBF fixture (`data/sbf/covl1452.26_`) and the COD MGX final products for the
+fixture date (2026-145) staged under `data_download.data_root` (e.g.
+`C:/GnssProcessorSupport/products/2026-145/products/`). With both present the run
+is offline; absent them the cell is skipped (fixture) or hits the network
+(products).
+
+```powershell
+$py = "C:\GnssProcessor\venv\Scripts\python.exe"
+& $py C:\GnssProcessor\scripts\run_test_suite.py `
+      --manifest C:\GnssProcessor\config\test_suite\manifest_realtime.json --workers 1
+```
+
 ## Running
 
 ```powershell

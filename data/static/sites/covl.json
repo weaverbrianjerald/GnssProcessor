@@ -1,0 +1,16 @@
+{
+  "_comment": "Frozen site-coordinate database for the real-time replay test tier. These are non-IGS/CORS receivers (absent from any SINEX/SSC or NGS SIF), so their truth coordinate is established out of band and consumed NOWHERE in the engine -- the same independence guarantee SinexTruth gives for IGS stations. Read by gnssviz.eval.SiteTruth. See docs/test_suite.md (Real-time replay tier).",
+  "frame": "IGS20",
+  "ref_epoch": 2026.396,
+  "sites": {
+    "COVL": {
+      "ecef_m": [-2497215.425, -3805289.764, 4453261.057],
+      "velocity_m_yr": [0.0, 0.0, 0.0],
+      "ref_epoch": 2026.396,
+      "sigma_m": [0.15, 0.15, 0.20],
+      "frame": "IGS20",
+      "source": "Oregon State / Corvallis rooftop AsteRx-U monument; surveyed reference carried in config/sbf_replay_covl145.json. PROVENANCE NOTE: a float-BSSD static-PPP survey-in of covl1452.26_ (COD MGX final, 2026-145, no AR) converges ~27 cm 3D from this value (E-17/N+15/U+15 cm) -- the ~16 cm HORIZONTAL offset most likely reflects this surveyed datum's own uncertainty (provenance unverified), so the absolute datum carries ~dm uncertainty. (Antenna note: LEIAR25 IS calibrated in igs20.atx, but the 'LEIAR25 NONE' override block is GPS-L1/L2-only, so Galileo E5a uses cross-system ATX fallback to L2 -- a few-mm/cm effect; the LEIAR25.R4 NONE block carries the exact E1/E5a cal if the real antenna is that variant.) Adequate as a stable RT regression anchor; refine via a multi-day AR survey-in for cm absolute accuracy. sigma_m widened to reflect this.",
+      "aliases": ["COVL00USA", "COVL0OR"]
+    }
+  }
+}
