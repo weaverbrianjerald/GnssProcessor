@@ -227,19 +227,19 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
         // MOVE data from parser - this is the key optimization
         // The parser's vectors are left empty after this, which is fine
         // since we only load products once.
-        orbits_ = parser.moveOrbits();
-        clocks_ = parser.moveClocks();
-        antennas_ = parser.moveAntennas();
-        biases_ = parser.moveBiases();
+        orbits_   = std::make_shared<const std::vector<OrbitData>>(parser.moveOrbits());
+        clocks_   = std::make_shared<const std::vector<ClockData>>(parser.moveClocks());
+        antennas_ = std::make_shared<const std::vector<AntennaData>>(parser.moveAntennas());
+        biases_   = std::make_shared<const std::vector<BiasData>>(parser.moveBiases());
         clock_ref_signals_ = parser.moveClockRefSignals();
-        erps_ = parser.moveErps();
+        erps_     = std::make_shared<const std::vector<ErpData>>(parser.moveErps());
         klobuchar_coeffs_ = parser.moveKlobucharCoeffs();
 
         // Validate essential products
-        if (orbits_.empty()) {
+        if (orbits_->empty()) {
             log_manager.getLogger("product_cache")->warn("No orbit data loaded");
         }
-        if (clocks_.empty()) {
+        if (clocks_->empty()) {
             log_manager.getLogger("product_cache")->warn("No clock data loaded");
         }
 
@@ -253,8 +253,8 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
             "Product cache loaded in {} ms (move semantics): "
             "{} orbits, {} clocks, {} antennas, {} biases, {} ERPs, {} Klobuchar coeffs",
             duration.count(),
-            orbits_.size(), clocks_.size(), antennas_.size(),
-            biases_.size(), erps_.size(), klobuchar_coeffs_.size()
+            orbits_->size(), clocks_->size(), antennas_->size(),
+            biases_->size(), erps_->size(), klobuchar_coeffs_.size()
         );
 
         return true;
@@ -271,21 +271,14 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
 void ProductCache::clearCache() {
     std::lock_guard<std::mutex> lock(load_mutex_);
 
-    // Clear and deallocate
-    orbits_.clear();
-    orbits_.shrink_to_fit();
-
-    clocks_.clear();
-    clocks_.shrink_to_fit();
-
-    antennas_.clear();
-    antennas_.shrink_to_fit();
-
-    biases_.clear();
-    biases_.shrink_to_fit();
-
-    erps_.clear();
-    erps_.shrink_to_fit();
+    // Release the shared product copies (rebind to empty so getX() stays safe).
+    // Any model component still holding a getXShared() handle keeps its copy alive
+    // until it too releases — exactly the shared-ownership contract.
+    orbits_   = std::make_shared<const std::vector<OrbitData>>();
+    clocks_   = std::make_shared<const std::vector<ClockData>>();
+    antennas_ = std::make_shared<const std::vector<AntennaData>>();
+    biases_   = std::make_shared<const std::vector<BiasData>>();
+    erps_     = std::make_shared<const std::vector<ErpData>>();
 
     klobuchar_coeffs_.clear();
     klobuchar_coeffs_.shrink_to_fit();

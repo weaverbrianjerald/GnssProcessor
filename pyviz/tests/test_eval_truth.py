@@ -11,6 +11,7 @@ from gnssviz.eval.truth import (
     CompositeTruth,
     SifTruth,
     SinexTruth,
+    SiteTruth,
     make_default_truth,
 )
 
@@ -132,6 +133,73 @@ def test_sif_unknown_returns_none(tmp_path):
     p = tmp_path / "sif.json"
     p.write_text(json.dumps(_sif_doc([1e6, 2e6, 3e6], [0, 0, 0])), encoding="utf-8")
     assert SifTruth([p]).resolve("NOPE", 2024.0) is None
+
+
+# ---------------------------------------------------------------------------
+# Site database
+# ---------------------------------------------------------------------------
+
+_SITE_ECEF = [-2497215.425, -3805289.764, 4453261.057]
+
+
+def _site_doc(**site_over):
+    site = {
+        "ecef_m": list(_SITE_ECEF),
+        "sigma_m": [0.02, 0.02, 0.03],
+        "source": "static PPP survey-in",
+        "aliases": ["COVL00USA"],
+    }
+    site.update(site_over)
+    return {"frame": "IGS20", "ref_epoch": 2026.0, "sites": {"COVL": site}}
+
+
+def test_site_basic_resolve(tmp_path):
+    p = _write(tmp_path, "covl.json", json.dumps(_site_doc()))
+    src = SiteTruth(p)
+    tc = src.resolve("COVL", 2026.0)
+    assert tc is not None
+    assert np.allclose(tc.ecef, _SITE_ECEF, atol=1e-9)   # dt == 0 -> no velocity
+    assert tc.frame == "IGS20"
+    assert tc.source.startswith("site:COVL")
+    assert np.allclose(tc.sigma, [0.02, 0.02, 0.03], atol=1e-9)
+    assert src.stations() == ["COVL"]
+
+
+def test_site_resolves_by_alias_and_prefix(tmp_path):
+    p = _write(tmp_path, "covl.json", json.dumps(_site_doc()))
+    src = SiteTruth(p)
+    by_alias = src.resolve("COVL00USA", 2026.0)      # declared alias
+    by_prefix = src.resolve("COVL0OTHER", 2026.0)    # 4-char prefix of canonical
+    assert by_alias is not None and by_prefix is not None
+    assert np.allclose(by_alias.ecef, _SITE_ECEF)
+    assert np.allclose(by_prefix.ecef, _SITE_ECEF)
+
+
+def test_site_velocity_propagation_and_epoch_override(tmp_path):
+    # Site-level ref_epoch overrides the file default; velocity propagates.
+    p = _write(tmp_path, "covl.json",
+               json.dumps(_site_doc(velocity_m_yr=[0.01, -0.02, 0.03],
+                                    ref_epoch=2020.0)))
+    src = SiteTruth(p)
+    tc = src.resolve("COVL", 2025.0)
+    expected = np.array(_SITE_ECEF) + np.array([0.01, -0.02, 0.03]) * 5.0
+    assert np.allclose(tc.ecef, expected, atol=1e-9)
+
+
+def test_site_unknown_returns_none_and_no_position_skipped(tmp_path):
+    doc = _site_doc()
+    doc["sites"]["NOPS"] = {"source": "missing ecef"}   # no ecef_m -> skipped
+    p = _write(tmp_path, "covl.json", json.dumps(doc))
+    src = SiteTruth(p)
+    assert src.resolve("ZZZZ", 2026.0) is None
+    assert "NOPS" not in src.stations()
+
+
+def test_make_default_truth_includes_sites(tmp_path):
+    sitep = _write(tmp_path, "covl.json", json.dumps(_site_doc()))
+    comp = make_default_truth(site_paths=[sitep])
+    tc = comp.resolve("COVL", 2026.0)
+    assert tc is not None and tc.source.startswith("site:COVL")
 
 
 # ---------------------------------------------------------------------------

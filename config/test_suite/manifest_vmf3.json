@@ -1,0 +1,56 @@
+{
+  "_comment": "Fast VMF3-fix validation + generator smoke test. The `tropo` suite (mapping x ZWD-q) on JPLM only, sharing output_root with manifest_suites.json so these cells cache-reuse into the full run. tropo_gmf_tight == ppp_static; tropo_vmf3_tight vs tropo_gmf_tight = the GMF-vs-VMF3 delta now that VMF3's grid path is fixed.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/suites",
+
+  "truth": {
+    "sinex_dir": "data/static/sinex",
+    "sif_paths": [
+      "data/static/sif/igs20_SIF.json",
+      "data/static/sif/ncn20_SIF.json"
+    ],
+    "auto_fetch_sinex": true,
+    "sif_with_periodic": true,
+    "cross_check_tol_m": 0.05
+  },
+
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA",
+      "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+
+  "bases": {
+    "ppp": "config/test_suite/ppp_static.jsonc"
+  },
+
+  "cells": [
+    { "label": "ppp_static", "base": "ppp", "overrides": {} }
+  ],
+
+  "matrix": [
+    { "station": "JPLM", "cells": ["ppp_static"] }
+  ],
+
+  "suites": [
+    {
+      "name": "tropo",
+      "base": "ppp",
+      "stations": ["JPLM"],
+      "design": "full",
+      "axes": {
+        "map": {
+          "gmf":  { "receiver.troposphere_mapping_function": "gmf" },
+          "vmf3": { "receiver.troposphere_mapping_function": "vmf3" }
+        },
+        "zwdq": {
+          "tight":  { "filter.process_noise.troposphere_q": 1e-9 },
+          "mid":    { "filter.process_noise.troposphere_q": 1e-8 },
+          "loose":  { "filter.process_noise.troposphere_q": 1e-7 }
+        }
+      }
+    }
+  ]
+}

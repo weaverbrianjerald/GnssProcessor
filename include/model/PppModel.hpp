@@ -475,7 +475,7 @@ namespace GnssProcessor {
          * @param[out] freq_bands           Frequency bands in discovery order.
          * @return true if at least one band was populated.
          */
-        bool buildFrequencyBandMap(const std::map<std::string, double>& measurements,
+        bool buildFrequencyBandMap(const ObsValueMap<double>& measurements,
             const std::string& system_str,
             const std::vector<std::string>& signals,
             std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
@@ -508,7 +508,7 @@ namespace GnssProcessor {
         /**
          * @brief Determine which observation types (keys) to process from the measurements map.
          */
-        std::vector<std::string> selectObservationTypes(const std::map<std::string, double>& measurements,
+        std::vector<std::string> selectObservationTypes(const ObsValueMap<double>& measurements,
             System system, const std::string& system_str) const;
 
         // -------------------------------------------------------------------

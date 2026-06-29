@@ -12,6 +12,7 @@
 #include "math/TimeUtils.hpp"
 #include "common/Constants.hpp"
 #include "common/PppTypes.hpp"
+#include "common/ObsValueMap.hpp"
 #include <Eigen/Dense>
 
 namespace GnssProcessor {
@@ -34,19 +35,42 @@ namespace GnssProcessor {
      * Variances are expressed in squared meters for code/phase measures where
      * applicable. Loss-of-lock indicators (LLI) follow RINEX conventions and
      * are stored per-observation-code as integer flags.
+     *
+     * The three channels are @c ObsValueMap rather than @c std::map: they share
+     * a single per-(file,system) obs-code layout (so the obs-code strings live
+     * once, not once per node per observation) and store values in a flat array.
+     * The container mirrors the @c std::map API used across the pipeline, so
+     * lookups, iteration and @c operator[] writes are unchanged at call sites.
+     * See @c common/ObsValueMap.hpp.
      */
     struct RinexObservation {
         std::string satellite;                     /**< Satellite ID (e.g., "G01" or "G01" for GPS) */
         System system;                             /**< GNSS system enum for the satellite */
         GnssTime time;                             /**< Epoch time of this observation */
-        std::map<std::string, double> measurements;/**< Map of observation code -> observed value */
-        std::map<std::string, double> variances;   /**< Map of observation code -> variance (m^2) */
-        std::map<std::string, int> lli_flags;      /**< Map of observation code -> loss-of-lock indicator */
+        ObsValueMap<double> measurements;          /**< Observation code -> observed value */
+        ObsValueMap<double> variances;             /**< Observation code -> variance (m^2) */
+        ObsValueMap<int> lli_flags;                /**< Observation code -> loss-of-lock indicator */
         std::string receiver_id;                   /**< Receiver identifier (useful in network files) */
         int glonass_freq_channel{ INT_MIN };       /**< GLONASS FDMA frequency-channel number k (-7..+6),
                                                         carried from RTCM DF419 / 1020 DF039 so the FDMA
                                                         wavelength can be resolved per satellite.  INT_MIN
                                                         means "unknown" (non-GLONASS, or FCN not supplied). */
+
+        /**
+         * @brief Point all three channels at a shared per-system obs-code
+         *        layout and size their value stores to it (all-absent).
+         *
+         * Used by the RINEX parser once the system's declared obs-type order is
+         * known: subsequent @c operator[] writes for any declared code hit an
+         * existing index with no per-observation string allocation and no
+         * mutation of the shared layout.  Streaming producers (SBF/RTCM) skip
+         * this and let @c operator[] grow a private layout on first write.
+         */
+        void attachLayout(const std::shared_ptr<ObsCodeIndex>& layout) {
+            measurements.attachLayout(layout);
+            variances.attachLayout(layout);
+            lli_flags.attachLayout(layout);
+        }
     };
 
     /**
@@ -108,6 +132,25 @@ namespace GnssProcessor {
          * @return True on successful parse, false on error (errors are logged).
          */
         bool parse();
+
+        /**
+         * @brief Clip parsing to the first @p span_s seconds of observations.
+         *
+         * RINEX observation records are time-ordered, so once an epoch is more
+         * than @p span_s past the file's first observation epoch the remainder
+         * of the file is irrelevant to a windowed run and @c parse() stops
+         * reading.  This avoids materializing (and copying) the discarded tail
+         * for runs that only consume a short span (e.g. a network solve bounded
+         * by @c processing.max_duration_s).  The header is always parsed in
+         * full.
+         *
+         * @param span_s Maximum span in seconds from the first observation
+         *               epoch to retain.  A value @c <= 0 (the default) means
+         *               "no window" — parse the entire file, preserving the
+         *               historical behavior for every caller that does not opt
+         *               in.
+         */
+        void setMaxObservationSpanSeconds(double span_s) { max_obs_span_s_ = span_s; }
 
         /**
          * @brief Get the parsed RINEX header.
@@ -231,8 +274,35 @@ namespace GnssProcessor {
 
         RinexHeader header_;             /**< Parsed header metadata. */
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
+
+        /**
+         * @brief Per-system shared obs-code layouts, built lazily during parse.
+         *
+         * Keyed by GNSS system; each entry holds the declared (v3-translated)
+         * obs-code order shared by every observation of that system.  Cleared at
+         * the start of each @c parse().  The @c shared_ptr is copied into every
+         * @c RinexObservation, so the layout outlives the parser when
+         * observations are moved/copied into longer-lived stores.
+         */
+        std::map<System, std::shared_ptr<ObsCodeIndex>> obs_layouts_;
+
+        /**
+         * @brief Fetch (or build and cache) the shared layout for @p system.
+         * @param system    GNSS system the observation belongs to.
+         * @param v3_codes  Declared obs codes in header order, already in their
+         *                  RINEX-3 form (verbatim for v3 files, translated for v2).
+         */
+        std::shared_ptr<ObsCodeIndex> getObsLayout(System system,
+                                                   const std::vector<std::string>& v3_codes) {
+            auto it = obs_layouts_.find(system);
+            if (it != obs_layouts_.end()) return it->second;
+            auto layout = ObsCodeIndex::fromCodes(v3_codes);
+            obs_layouts_.emplace(system, layout);
+            return layout;
+        }
         std::string receiver_serial_no_; /**< Receiver serial number parsed from header (if any). */
         GnssTime time_of_first_obs_;     /**< Time of first observation epoch parsed. */
+        double max_obs_span_s_{ 0.0 };   /**< Parse-window span (s) from the first epoch; <=0 means unbounded. */
 
         /**
          * @brief Validate a RINEX 3.x observation code.

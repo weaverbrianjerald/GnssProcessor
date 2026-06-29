@@ -240,6 +240,7 @@ namespace GnssProcessor {
 
         try {
             observations_.clear();
+            obs_layouts_.clear();   // rebuilt per-system from this file's header
             header_ = RinexHeader(); // Reset header
             time_of_first_obs_ = GnssTime{ 0, 0.0 };
             glonass_freq_slots_.clear();
@@ -606,6 +607,15 @@ namespace GnssProcessor {
                             first_epoch = false;
                         }
 
+                        // Parse-window clip: RINEX epochs are time-ordered, so once we
+                        // pass the requested span past the first epoch the rest of the
+                        // file is discarded — stop reading instead of materializing it.
+                        if (max_obs_span_s_ > 0.0 &&
+                            TimeUtils::continuousGpsSeconds(epoch_time) -
+                                TimeUtils::continuousGpsSeconds(time_of_first_obs_) > max_obs_span_s_) {
+                            break;
+                        }
+
                         for (int i = 0; i < num_sats && std::getline(file, line); ++i) {
                             if (line.length() < 3) {
                                 log_manager_.getLogger("rinex_parser")->warn("Invalid satellite line: {}", line);
@@ -630,6 +640,10 @@ namespace GnssProcessor {
                             obs.receiver_id = header_.marker_name;
 
                             auto obs_types = header_.obs_types[system];
+                            // Share one obs-code layout across every observation of this
+                            // system (codes stored once); pre-size the flat value stores so
+                            // the operator[] writes below hit existing indices.
+                            obs.attachLayout(getObsLayout(system, obs_types));
                             std::istringstream data_iss(line.substr(3));
                             for (size_t j = 0; j < obs_types.size(); ++j) {
                                 // Apply the processing.rinex_types filter: skip any
@@ -800,6 +814,15 @@ namespace GnssProcessor {
                             first_epoch = false;
                         }
 
+                        // Parse-window clip (see the v3 path): stop once we pass the
+                        // requested span past the first epoch — the time-ordered tail
+                        // is discarded rather than parsed and copied.
+                        if (max_obs_span_s_ > 0.0 &&
+                            TimeUtils::continuousGpsSeconds(epoch_time) -
+                                TimeUtils::continuousGpsSeconds(time_of_first_obs_) > max_obs_span_s_) {
+                            break;
+                        }
+
                         // Pull satellite IDs from the epoch line (cols 32+) plus continuation
                         // lines (also at cols 32+). Each ID is 3 chars: system letter + 2-digit PRN.
                         // Pre-RINEX-2.10 GPS-only files may emit a leading space in place of the
@@ -901,6 +924,24 @@ namespace GnssProcessor {
                             obs.system      = system;
                             obs.time        = epoch_time;
                             obs.receiver_id = header_.marker_name;
+
+                            // Share one obs-code layout per system.  RINEX 2 codes are
+                            // stored in their translated v3 form (see translateV2ObsCodeToV3
+                            // below), so the layout is built from the translated declared
+                            // list — computed once per system, then cached.
+                            {
+                                auto cached = obs_layouts_.find(system);
+                                if (cached != obs_layouts_.end()) {
+                                    obs.attachLayout(cached->second);
+                                } else {
+                                    std::vector<std::string> v3_codes;
+                                    v3_codes.reserve(n_obs_types);
+                                    for (size_t j = 0; j < n_obs_types; ++j)
+                                        v3_codes.push_back(
+                                            translateV2ObsCodeToV3(shared_obs_types[j], system));
+                                    obs.attachLayout(getObsLayout(system, v3_codes));
+                                }
+                            }
 
                             for (size_t j = 0; j < n_obs_types; ++j) {
                                 // Apply the processing.rinex_types filter.  RINEX 2.x

@@ -252,7 +252,7 @@ int Application::runBaseline() {
             p.satellite  = r.satellite;
             p.system     = r.system;
             p.time       = r.time;
-            p.lli_flags  = r.lli_flags;
+            p.lli_flags  = r.lli_flags.toStdMap();
             for (const auto& [code, val] : r.measurements) {
                 if (code.empty()) continue;
                 const char t = code[0];
@@ -900,6 +900,7 @@ int Application::runBaseline() {
                     trace_logger_->logState(se.time, *state_manager_);
                     trace_logger_->logResiduals(se.time, em);
                     trace_logger_->logAmbiguities(se.time, *state_manager_);
+                    trace_logger_->logReceiverCodeBiases(se.time, *state_manager_);
                 }
             }
 

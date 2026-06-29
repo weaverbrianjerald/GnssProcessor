@@ -26,6 +26,7 @@ from .truth import (
     CompositeTruth,
     SifTruth,
     SinexTruth,
+    SiteTruth,
     TruthCoord,
     TruthSource,
     make_default_truth,
@@ -50,12 +51,18 @@ from .regression import (
     cross_check_truth,
     index_metrics,
 )
+from .suites import (
+    DESIGNS,
+    expand_manifest_suites,
+    expand_suite,
+)
 
 __all__ = [
     "TruthSource",
     "TruthCoord",
     "SinexTruth",
     "SifTruth",
+    "SiteTruth",
     "CompositeTruth",
     "make_default_truth",
     "PositionMetrics",
@@ -72,4 +79,7 @@ __all__ = [
     "index_metrics",
     "CrossCheckRow",
     "MetricDelta",
+    "expand_suite",
+    "expand_manifest_suites",
+    "DESIGNS",
 ]

@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .trace_paths import TraceContext
 from .viewers import REGISTRY
-from .viewers.base import Viewer, ViewerResult
+from .viewers.base import Viewer, ViewerResult, ViewerSkip
 
 
 @dataclass
@@ -62,6 +62,8 @@ def run_viewers(
         try:
             result = viewer.build(ctx)
             out.ran.append((viewer, result))
+        except ViewerSkip as skip:    # viewer opted out at build time (no roster/IONEX/etc.)
+            out.skipped.append((viewer.name, str(skip)))
         except Exception as exc:  # match view_all: report + continue
             out.failed.append((viewer.name, f"{type(exc).__name__}: {exc}"))
     return out

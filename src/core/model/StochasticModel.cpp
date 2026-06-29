@@ -42,7 +42,7 @@ namespace GnssProcessor {
 
     double StochasticModelWeight::computeVariance(
         const std::string& obs_type,
-        const std::map<std::string, double>& measurements,
+        const ObsValueMap<double>& measurements,
         double elevation_deg,
         double default_var) const {
 
@@ -74,7 +74,7 @@ namespace GnssProcessor {
 
     double StochasticModelWeight::computeVariance(
         const std::string& obs_type,
-        const std::map<std::string, double>& measurements,
+        const ObsValueMap<double>& measurements,
         double elevation_deg,
         double default_var,
         const std::string& satellite,
@@ -140,7 +140,7 @@ namespace GnssProcessor {
 
     double StochasticModelWeight::computeSnr(
         const std::string& obs_type,
-        const std::map<std::string, double>& measurements,
+        const ObsValueMap<double>& measurements,
         double elevation_deg,
         double default_var) const {
 

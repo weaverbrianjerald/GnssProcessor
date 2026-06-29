@@ -80,15 +80,36 @@ def rp(rel: str) -> Path:
 # build + run one cell
 # ---------------------------------------------------------------------------
 
+def station_input(station: dict) -> str:
+    """The on-disk input a station's cells consume: a replay fixture (RT) or
+    a RINEX obs file (post-processing).  RT stations carry ``input_path``;
+    post-processing stations carry ``obs``."""
+    return station.get("input_path") or station.get("obs", "")
+
+
 def build_cell_config(base_cfg: dict, station: dict, overrides: dict,
                       year: int, doy: int) -> dict:
     cfg = copy.deepcopy(base_cfg)
-    cfg["data_source"] = "internal"
-    files = cfg.setdefault("files", {})
-    files["observation_path"] = str(rp(station["obs"]))
-    files["internal_data_root"] = str(REPO / "data")
-    dl = cfg.setdefault("data_download", {})
-    dl.update({"enabled": False, "station": station["name"], "year": year, "doy": doy})
+    if cfg.get("app_mode") == "real_time":
+        # Real-time replay cell.  The fixture drives ``realtime.input_path``; the
+        # truth coordinate is independent because the a-priori comes from the
+        # stream (SBF PVTGeodetic / RTCM 1005), NOT a seeded reference_position.
+        # Respect the base config's data_source + data_download (precise products
+        # are staged for production replay) rather than forcing internal mode.
+        rt = cfg.setdefault("realtime", {})
+        rt["input_path"] = str(rp(station["input_path"]))
+        files = cfg.setdefault("files", {})
+        files.setdefault("internal_data_root", str(REPO / "data"))
+        dl = cfg.setdefault("data_download", {})
+        dl.setdefault("year", year)
+        dl.setdefault("doy", doy)
+    else:
+        cfg["data_source"] = "internal"
+        files = cfg.setdefault("files", {})
+        files["observation_path"] = str(rp(station["obs"]))
+        files["internal_data_root"] = str(REPO / "data")
+        dl = cfg.setdefault("data_download", {})
+        dl.update({"enabled": False, "station": station["name"], "year": year, "doy": doy})
     for dotted, value in overrides.items():
         set_dotpath(cfg, dotted, value)
     return cfg
@@ -188,12 +209,16 @@ def main(argv=None) -> int:
         pass
 
     from gnssviz.eval import (
-        SifTruth, SinexTruth, CompositeTruth,
+        SifTruth, SinexTruth, SiteTruth, CompositeTruth,
         compare_metrics, cross_check_truth,
         doy_to_decimal_year, ensure_itrf_ssc, evaluate_state_trace, find_sinex_files,
+        expand_manifest_suites,
     )
 
     man = load_jsonc(args.manifest)
+    # Declarative `suites` (base + axes + design) expand into ordinary
+    # cells + matrix rows before anything else looks at them.
+    expand_manifest_suites(man)
     year, doy = man["date"]["year"], man["date"]["doy"]
     epoch = doy_to_decimal_year(year, doy)
     exe = args.exe or rp(man["exe"])
@@ -215,21 +240,28 @@ def main(argv=None) -> int:
     sif_paths = [rp(p) for p in tr.get("sif_paths", []) if rp(p).is_file()]
     sif_kwargs = {"with_periodic": tr.get("sif_with_periodic", True),
                   "with_psd": tr.get("sif_with_psd", True)}
+    # Frozen site database (non-IGS receivers, e.g. the real-time replay tier);
+    # consumed nowhere in the engine, so independent in the same sense as SINEX.
+    site_paths = [rp(p) for p in tr.get("site_paths", []) if rp(p).is_file()]
 
     snx_sources = [s for s in (SinexTruth(p) for p in sinex_files) if s.stations()]
     sif_source = SifTruth(sif_paths, **sif_kwargs) if sif_paths else None
+    site_source = SiteTruth(site_paths) if site_paths else None
     # Cross-check against the *secular* (periodic-free) SIF so a seasonal term
     # can't masquerade as a bad coordinate; grading still uses sif_source.
     sif_linear = (SifTruth(sif_paths, with_periodic=False, with_psd=False)
                   if sif_paths else None)
-    truth_sources = list(snx_sources) + ([sif_source] if sif_source else [])
+    truth_sources = (list(snx_sources) + ([sif_source] if sif_source else [])
+                     + ([site_source] if site_source else []))
     truth = CompositeTruth(truth_sources)
 
     print(f"== Standard test run ==  {year}-{doy:03d}  epoch={epoch:.4f}")
     print(f"   exe:    {exe}")
     print(f"   truth:  SINEX({len(sinex_files)} file(s): "
           f"{', '.join(p.name for p in sinex_files) or 'none'}) -> "
-          f"SIF({len(sif_paths)} file(s))")
+          f"SIF({len(sif_paths)} file(s)) -> "
+          f"SITE({len(site_paths)} file(s): "
+          f"{', '.join(s for s in (site_source.stations() if site_source else [])) or 'none'})")
     print(f"   out:    {out_root}\n")
 
     # ---- truth cross-check (SINEX vs SIF) ----
@@ -259,8 +291,9 @@ def main(argv=None) -> int:
     jobs = []
     for entry in man["matrix"]:
         sta = stations[entry["station"]]
-        if not rp(sta["obs"]).is_file():
-            print(f"[data] {sta['name']}: obs missing {sta['obs']} -- skipped")
+        sin = station_input(sta)
+        if not sin or not rp(sin).is_file():
+            print(f"[data] {sta['name']}: input missing {sin or '(none)'} -- skipped")
             continue
         for label in entry["cells"]:
             cell = cells[label]

@@ -29,8 +29,8 @@ import numpy as np
 from matplotlib.colors import ListedColormap
 
 from ..figures import (Axes, Band, ColorBar, Figure, HLine, Line, Markers,
-                       PolarScatter, Raster, RgbRaster, Scatter, StackedArea,
-                       Stem, TextBox, VLine)
+                       Mesh, PolarScatter, Raster, RgbRaster, Scatter,
+                       StackedArea, Stem, TextBox, VLine)
 from .base import Backend
 
 
@@ -82,10 +82,25 @@ class MatplotlibBackend(Backend):
     def _draw_axes(self, spec: Axes, ax, fig: Figure, fig_cmap):
         if spec.projection == "polar":
             return None, self._draw_polar(spec, ax)
+        if spec.projection == "geo":
+            return self._draw_geo(spec, ax, fig, fig_cmap)
 
+        ax_cmap = ListedColormap(spec.cmap) if spec.cmap is not None else fig_cmap
+        raster_m, point_m, twin = self._draw_traces(spec, ax, fig, ax_cmap)
+        self._decorate(spec, ax, twin)
+        return raster_m, point_m
+
+    # ------------------------------------------------------------------ #
+    def _draw_traces(self, spec: Axes, ax, fig: Figure, ax_cmap):
+        """Draw every trace of ``spec`` onto rectangular/geo axes ``ax``.
+
+        Returns ``(raster_mappable, point_mappable, twin)`` -- the raster (or
+        Mesh) mappable and the coloured-scatter mappable for colorbars, plus the
+        lazily-created secondary-y handle the caller's ``_decorate`` needs.
+        """
         twin = {"ax": None}
         raster_m = point_m = None
-        ax_cmap = ListedColormap(spec.cmap) if spec.cmap is not None else fig_cmap
+        vmin, vmax = (spec.clim if spec.clim is not None else (None, None))
 
         def right():
             if twin["ax"] is None:
@@ -100,10 +115,23 @@ class MatplotlibBackend(Backend):
                          label=(tr.label if tr.show_in_legend else "_nolegend_"))
             elif isinstance(tr, Scatter):
                 tgt = right() if tr.axis == "right" else ax
-                tgt.scatter(np.asarray(tr.x), np.asarray(tr.y, dtype=float),
-                            s=tr.size, marker=tr.marker, alpha=tr.alpha,
-                            color=tuple(tr.color),
-                            label=(tr.label if tr.show_in_legend else "_nolegend_"))
+                kw = dict(s=tr.size, marker=tr.marker, alpha=tr.alpha,
+                          label=(tr.label if tr.show_in_legend else "_nolegend_"))
+                if tr.edgecolor is not None:
+                    kw["edgecolors"] = tuple(tr.edgecolor)
+                    kw["linewidths"] = tr.linewidth
+                if tr.zorder is not None:
+                    kw["zorder"] = tr.zorder
+                if tr.c is not None:
+                    # Per-point scalar -> coloured through the axes cmap/clim; the
+                    # mappable is surfaced so a colorbar can attach.
+                    point_m = tgt.scatter(np.asarray(tr.x),
+                                          np.asarray(tr.y, dtype=float),
+                                          c=np.asarray(tr.c, dtype=float),
+                                          cmap=ax_cmap, vmin=vmin, vmax=vmax, **kw)
+                else:
+                    tgt.scatter(np.asarray(tr.x), np.asarray(tr.y, dtype=float),
+                                color=tuple(tr.color), **kw)
             elif isinstance(tr, Band):
                 lo = np.asarray(tr.lo, dtype=float)
                 hi = np.asarray(tr.hi, dtype=float)
@@ -127,16 +155,22 @@ class MatplotlibBackend(Backend):
                            linewidth=tr.width,
                            label=(tr.label or "_nolegend_"))
             elif isinstance(tr, TextBox):
-                ax.text(tr.x, tr.y, tr.text, transform=ax.transAxes, ha=tr.ha,
-                        va=tr.va, color=tuple(tr.color), fontsize=9,
+                trans = ax.transData if tr.data_coords else ax.transAxes
+                kw = {}
+                if tr.zorder is not None:
+                    kw["zorder"] = tr.zorder
+                ax.text(tr.x, tr.y, tr.text, transform=trans, ha=tr.ha,
+                        va=tr.va, color=tuple(tr.color), fontsize=tr.fontsize,
                         fontweight="bold" if tr.bold else "normal",
                         family="monospace" if tr.mono else None,
                         bbox=(dict(facecolor="white", edgecolor=(0.7, 0.7, 0.7),
-                                   pad=1.5) if tr.boxed else None))
+                                   pad=1.5) if tr.boxed else None), **kw)
             elif isinstance(tr, Raster):
                 raster_m = self._draw_raster(tr, ax, fig, ax_cmap)
             elif isinstance(tr, RgbRaster):
                 raster_m = self._draw_rgb_raster(tr, ax)
+            elif isinstance(tr, Mesh):
+                raster_m = self._draw_mesh(tr, ax, ax_cmap, vmin, vmax)
             elif isinstance(tr, Markers):
                 ax.plot(np.asarray(tr.x), np.asarray(tr.rows, dtype=float) + 1.0,
                         tr.marker, markersize=tr.size, markerfacecolor="none",
@@ -151,8 +185,68 @@ class MatplotlibBackend(Backend):
                         linestyle="none", label=(tr.label or "_nolegend_"))
                 ax.axhline(tr.baseline, color=(0.6, 0.6, 0.6), linewidth=0.6)
 
-        self._decorate(spec, ax, twin)
+        return raster_m, point_m, twin
+
+    # ------------------------------------------------------------------ #
+    def _draw_geo(self, spec: Axes, ax, fig: Figure, fig_cmap):
+        """Equirectangular world map: coastline + graticule + ordinary traces.
+
+        A ``geo`` axes plots lon (x) vs lat (y) in degrees.  The vendored
+        Natural Earth coastline is drawn over any :class:`Mesh` field but under
+        the markers (zorder ordering); ``Scatter``/``Line``/``TextBox`` traces
+        from the viewer render through the shared trace loop on top.
+        """
+        ax_cmap = ListedColormap(spec.cmap) if spec.cmap is not None else fig_cmap
+        ext = spec.geo_extent or (-180.0, 180.0, -90.0, 90.0)
+
+        # Graticule (under everything).
+        g = spec.graticule_deg
+        if g and g > 0:
+            import numpy as _np
+            for lon in _np.arange(_np.ceil(ext[0] / g) * g, ext[1] + 1e-6, g):
+                ax.axvline(lon, color=(0.86, 0.86, 0.86), linewidth=0.5, zorder=0.5)
+            for lat in _np.arange(_np.ceil(ext[2] / g) * g, ext[3] + 1e-6, g):
+                ax.axhline(lat, color=(0.86, 0.86, 0.86), linewidth=0.5, zorder=0.5)
+
+        # Viewer traces (Mesh field at low zorder, then lines/markers).
+        raster_m, point_m, _twin = self._draw_traces(spec, ax, fig, ax_cmap)
+
+        # Coastline over the field, under the markers.
+        if spec.coastline:
+            from ..coastline import load_coastline
+            clon, clat = load_coastline()
+            if clon.size:
+                ax.plot(clon, clat, color=(0.30, 0.30, 0.30), linewidth=0.6,
+                        zorder=2.0)
+
+        ax.set_xlim(ext[0], ext[1])
+        ax.set_ylim(ext[2], ext[3])
+        ax.set_aspect("equal", adjustable="box")
+        if spec.title:
+            ax.set_title(spec.title)
+        ax.set_xlabel(spec.xlabel or "Longitude (deg)")
+        ax.set_ylabel(spec.ylabel or "Latitude (deg)")
+        if spec.grid:
+            ax.grid(False)   # graticule already drawn; suppress the default grid
+        if spec.legend is not None:
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(handles, labels, loc=spec.legend.loc, fontsize=7,
+                          framealpha=0.9)
         return raster_m, point_m
+
+    # ------------------------------------------------------------------ #
+    def _draw_mesh(self, tr: Mesh, ax, cmap_obj, vmin, vmax):
+        lon = np.asarray(tr.lon, dtype=float)
+        lat = np.asarray(tr.lat, dtype=float)
+        grid = np.ma.masked_invalid(np.asarray(tr.grid, dtype=float))
+        cmap = (cmap_obj if cmap_obj is not None else plt.get_cmap("viridis")).copy()
+        cmap.set_bad(alpha=0.0)
+        lon_e = _centers_to_edges(lon)
+        lat_e = _centers_to_edges(lat)
+        zorder = tr.zorder if tr.zorder is not None else 0.0
+        return ax.pcolormesh(lon_e, lat_e, grid, cmap=cmap, vmin=vmin, vmax=vmax,
+                             alpha=tr.alpha, shading="auto", zorder=zorder)
 
     # ------------------------------------------------------------------ #
     def _draw_polar(self, spec: Axes, ax):
@@ -274,9 +368,14 @@ class MatplotlibBackend(Backend):
             cb.set_ticklabels(list(spec.tick_labels))
 
     # ------------------------------------------------------------------ #
-    def to_png_bytes(self, rendered, dpi: int = 110) -> bytes:
+    def to_png_bytes(self, rendered, dpi: int = 110, tight: bool = True) -> bytes:
         buf = io.BytesIO()
-        rendered.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        # Animation frames render with tight=False so every frame shares pixel
+        # dimensions (a per-frame "tight" bbox would jitter the GIF canvas).
+        if tight:
+            rendered.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        else:
+            rendered.savefig(buf, format="png", dpi=dpi)
         return buf.getvalue()
 
     def save(self, rendered, path: str, dpi: int = 110) -> None:
@@ -317,8 +416,32 @@ def _axis_has_positive(ax, which: str) -> bool:
         return True
 
 
+def _centers_to_edges(c):
+    """Cell-centre coordinates -> (n+1) cell edges for ``pcolormesh``.
+
+    Interior edges are midpoints; the two ends are extrapolated by half a cell
+    so the painted grid spans symmetrically around the outer centres.
+    """
+    c = np.asarray(c, dtype=float)
+    if c.size == 0:
+        return c
+    if c.size == 1:
+        return np.array([c[0] - 0.5, c[0] + 0.5])
+    mid = 0.5 * (c[:-1] + c[1:])
+    first = c[0] - (mid[0] - c[0])
+    last = c[-1] + (c[-1] - mid[-1])
+    return np.concatenate([[first], mid, [last]])
+
+
 def _extent_x(x):
-    """Return (x0, x1, is_date) for an imshow extent over (possibly datetime) x."""
+    """Return (x0, x1, is_date) for an imshow extent over (possibly datetime) x.
+
+    Guards against a degenerate axis: an all-NaT/empty raster column would make
+    ``date2num`` yield NaN, and matplotlib >= 3.10 raises "Axis limits cannot be
+    NaN or Inf" at draw time.  Fall back to ``(0, 1)`` when no finite coordinate
+    is present (the raster still draws; only its time extent is nominal) so a
+    single bad trace never aborts the whole report.
+    """
     x = np.asarray(x)
     if np.issubdtype(x.dtype, np.datetime64) or _is_datetime(x):
         xnum = mdates.date2num(np.asarray(x, dtype="datetime64[ns]"))
@@ -326,8 +449,12 @@ def _extent_x(x):
     else:
         xnum = np.asarray(x, dtype=float)
         is_date = False
-    x0, x1 = float(np.min(xnum)), float(np.max(xnum))
-    if x1 <= x0:
+    xnum = np.asarray(xnum, dtype=float)
+    finite = xnum[np.isfinite(xnum)]
+    if finite.size == 0:
+        return 0.0, 1.0, is_date
+    x0, x1 = float(finite.min()), float(finite.max())
+    if not (x1 > x0):
         x1 = x0 + 1.0
     return x0, x1, is_date
 

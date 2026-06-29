@@ -113,7 +113,7 @@ const char* frequencyModeLabel(FrequencyMode m) {
 /// systems without a band-8 wideband (GPS, GLONASS, QZSS, SBAS).
 void pruneRedundantSidebands(const std::string& system_str,
                              std::vector<std::string>& bands,
-                             const std::map<std::string, double>& measurements) {
+                             const ObsValueMap<double>& measurements) {
     // Logical sideband band-names superseded by the band-8 wideband, per system.
     static const std::map<std::string, std::vector<std::string>> kSidebands = {
         {"Galileo", {"E5a", "E5b"}},   // superseded by "E5"   (alt-BOC, band 8)
@@ -147,7 +147,7 @@ void pruneRedundantSidebands(const std::string& system_str,
 /// and iono-free flows stay consistent.
 std::vector<std::string> activeFrequencyBands(
         const std::string& system_str, FrequencyMode mode,
-        const std::map<std::string, double>& measurements) {
+        const ObsValueMap<double>& measurements) {
     const auto& band_map = getBandMap();
     const auto it = band_map.find(system_str);
     if (it == band_map.end()) return {};
@@ -214,11 +214,11 @@ std::vector<std::string> activeFrequencyBands(
         ppp_utils_(log_manager),
         // Pass cache reference to geometry
         geometry_(config, ProductCache::getInstance(), rinex_parser, log_manager),
-        // GnssCorrections uses cache references
+        // GnssCorrections shares the single cached copy (no per-instance duplication)
         gnss_corrections_(log_manager, config,
-            ProductCache::getInstance().getClocks(),
-            ProductCache::getInstance().getErps(),
-            ProductCache::getInstance().getBiases(),
+            ProductCache::getInstance().getClocksShared(),
+            ProductCache::getInstance().getErpsShared(),
+            ProductCache::getInstance().getBiasesShared(),
             rinex_parser),
         // ionosphere_ is std::optional — constructed in the body below
         // only when the Klobuchar fallback is actually requested.
@@ -566,9 +566,9 @@ std::vector<std::string> activeFrequencyBands(
             ppp_obs.satellite = obs.satellite;
             ppp_obs.system = obs.system;
             ppp_obs.time = obs.time;
-            ppp_obs.observed = obs.measurements;
-            ppp_obs.variances = obs.variances;
-            ppp_obs.lli_flags = obs.lli_flags;
+            ppp_obs.observed = obs.measurements.toStdMap();
+            ppp_obs.variances = obs.variances.toStdMap();
+            ppp_obs.lli_flags = obs.lli_flags.toStdMap();
 
             ppp_obs.sat_pos = geom.sat_pos;
             ppp_obs.sat_vel = geom.sat_vel;
@@ -784,7 +784,7 @@ std::vector<std::string> activeFrequencyBands(
     // ===================================================================
 
     bool PppModel::buildFrequencyBandMap(
-        const std::map<std::string, double>& measurements,
+        const ObsValueMap<double>& measurements,
         const std::string& system_str,
         const std::vector<std::string>& signals,
         std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
@@ -1972,7 +1972,7 @@ std::vector<std::string> activeFrequencyBands(
      * @param system_str System string used to lookup priorities.
      * @return Vector of selected measurement keys in priority order (may be empty).
      */
-    std::vector<std::string> PppModel::selectObservationTypes(const std::map<std::string, double>& measurements,
+    std::vector<std::string> PppModel::selectObservationTypes(const ObsValueMap<double>& measurements,
         System system,
         const std::string& system_str) const {
         std::vector<std::string> selected_types;

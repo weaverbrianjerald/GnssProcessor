@@ -38,6 +38,7 @@ const auto state_path = log_dir / "state_trace.csv";
 const auto amb_path = log_dir / "ambiguity_trace.csv";
 const auto iono_path = log_dir / "ionosphere_trace.csv";
 const auto sat_bias_path = log_dir / "sat_bias_trace.csv";
+const auto code_bias_path = log_dir / "code_bias_trace.csv";
 const auto sat_status_path = log_dir / "satellite_status_trace.csv";
 const auto dop_path = log_dir / "dop_trace.csv";
 const auto residual_path = log_dir / "measurement_residuals.csv";
@@ -72,6 +73,16 @@ if (logging_config.enable_sat_bias_trace) {
     if (!sat_bias_trace_.is_open()) {
         try { log_manager_.getLogger("main_log")->warn("Could not open sat-bias trace file '{}'", sat_bias_path.string()); }
         catch (...) {}
+    }
+}
+
+if (logging_config.enable_code_bias_trace) {
+    code_bias_trace_.open(code_bias_path, std::ios::out | std::ios::trunc);
+    if (!code_bias_trace_.is_open()) {
+        try { log_manager_.getLogger("main_log")->warn("Could not open code-bias trace file '{}'", code_bias_path.string()); }
+        catch (...) {}
+    } else {
+        code_bias_trace_ << "week,tow_s,key,value_m,std_m\n";
     }
 }
 
@@ -158,8 +169,8 @@ if (logging_config.enable_wls_trace) {
 
     // Consider the logger initialized if at least one file is writable.
     initialized_ = state_trace_.is_open() || ambiguity_trace_.is_open() || ionosphere_trace_.is_open()
-                || sat_bias_trace_.is_open() || sat_status_trace_.is_open() || dop_trace_.is_open()
-                || residual_trace_.is_open() || wls_trace_.is_open();
+                || sat_bias_trace_.is_open() || code_bias_trace_.is_open() || sat_status_trace_.is_open()
+                || dop_trace_.is_open() || residual_trace_.is_open() || wls_trace_.is_open();
 
     if (!initialized_) {
         try { log_manager_.getLogger("main_log")->error("TraceLogger failed to open any trace files in '{}'", log_dir.string()); }
@@ -176,8 +187,8 @@ void TraceLogger::flush() const {
     // records to disk so an external reader (the end-of-run report) sees
     // complete traces.
     for (std::ofstream* s : { &state_trace_, &ambiguity_trace_, &residual_trace_,
-                              &ionosphere_trace_, &sat_bias_trace_, &sat_status_trace_,
-                              &dop_trace_, &wls_trace_ }) {
+                              &ionosphere_trace_, &sat_bias_trace_, &code_bias_trace_,
+                              &sat_status_trace_, &dop_trace_, &wls_trace_ }) {
         if (s->is_open()) s->flush();
     }
 }
@@ -322,6 +333,33 @@ void TraceLogger::logAmbiguities(const GnssTime& time, const StateManager& state
                          << time.week << "," << time.tow << ",";
         ambiguity_trace_ << key << ",";
         ambiguity_trace_ << std::setprecision(6) << val << "," << std << "\n";
+    }
+}
+
+void TraceLogger::logReceiverCodeBiases(const GnssTime& time, const StateManager& state_manager) const {
+    if (!code_bias_trace_.is_open()) return;
+
+    const auto& cb_map = state_manager.getCodeBiasStates();
+    if (cb_map.empty()) return;
+
+    const Eigen::VectorXd sv = state_manager.getStateVector();
+    const Eigen::MatrixXd cov = state_manager.getCovariance();
+    auto std_at = [&cov](size_t idx) -> double {
+        if (idx < static_cast<size_t>(cov.rows()) && idx < static_cast<size_t>(cov.cols())) {
+            const double var = cov(static_cast<Eigen::Index>(idx), static_cast<Eigen::Index>(idx));
+            return std::sqrt(std::max(0.0, var));
+        }
+        return std::numeric_limits<double>::quiet_NaN();
+    };
+
+    for (const auto& [key, idx] : cb_map) {
+        if (idx >= static_cast<size_t>(sv.size())) continue;
+        code_bias_trace_ << std::fixed << std::setprecision(3)
+                         << time.week << "," << time.tow << ",";
+        code_bias_trace_ << key << ",";
+        code_bias_trace_ << std::setprecision(6)
+                         << sv(static_cast<Eigen::Index>(idx)) << ","
+                         << std_at(idx) << "\n";
     }
 }
 

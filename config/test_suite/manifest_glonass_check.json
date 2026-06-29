@@ -1,0 +1,23 @@
+{
+  "_comment": "Confirmation test for the silent GLONASS/BeiDou drop (PppModel.cpp:457). gps_only vs gr_withpri: same active_systems-minus-R baseline, but gr_withpri adds GLONASS+BeiDou to signal_priorities. If gr_withpri differs from gps_only, the missing-signal_priorities skip was the cause and supplying priorities is the fix.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/glonass_check",
+  "truth": { "sinex_dir": "data/static/sinex", "sif_paths": ["data/static/sif/igs20_SIF.json"], "auto_fetch_sinex": true, "sif_with_periodic": true, "cross_check_tol_m": 0.05 },
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA", "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+  "bases": { "ppp": "config/test_suite/ppp_static.jsonc" },
+  "cells": [
+    { "label": "gps_only", "base": "ppp", "overrides": { "processing.active_systems": ["GPS"] } },
+    { "label": "gr_nopri", "base": "ppp", "overrides": { "processing.active_systems": ["GPS", "GLONASS"] } },
+    { "label": "gr_withpri", "base": "ppp", "overrides": {
+        "processing.active_systems": ["GPS", "GLONASS"],
+        "processing.signal_priorities": { "GPS": "WCSLXPYMIQ", "GLONASS": "CPQ", "Galileo": "CQXBI", "BeiDou": "IQXP" }
+      } }
+  ],
+  "matrix": [
+    { "station": "JPLM", "cells": ["gps_only", "gr_nopri", "gr_withpri"] }
+  ]
+}

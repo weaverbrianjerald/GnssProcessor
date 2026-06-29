@@ -26,12 +26,16 @@ the same figures, with an offline **HTML summary report**, an **interactive
 The load-bearing boundary is [figures.py](gnssviz/figures.py): a declarative
 scene graph (`Figure → Axes → traces`). Trace kinds: `Line, Scatter, Band,
 StackedArea, HLine, VLine, TextBox, Stem, Raster, RgbRaster, Markers,
-PolarScatter`; `Axes` supports `projection='polar'`, dual y-axis, log scale,
-per-axes colormaps, frameless text. Viewers never import a plotting library —
-they emit specs; a backend interprets them. The plotly backend renders the same
-specs with **zero viewer changes** — that is what the abstraction buys.
+PolarScatter, Mesh`; `Axes` supports `projection='polar'` and `'geo'`
+(equirectangular world map with a vendored Natural-Earth coastline), dual y-axis,
+log scale, per-axes colormaps, coloured `Scatter` (per-point `c` through the axes
+cmap), frameless text. An [`Animation`](gnssviz/animation.py) is just a list of
+`Figure` frames the backend renders to a looping GIF (the ionosphere movie).
+Viewers never import a plotting library — they emit specs; a backend interprets
+them. The plotly backend renders the same specs with **zero viewer changes** —
+that is what the abstraction buys.
 
-## Viewers (21 ported)
+## Viewers (21 ported + 5 network)
 
 | Group | Viewer (CSV) |
 |-------|--------------|
@@ -39,9 +43,35 @@ specs with **zero viewer changes** — that is what the abstraction buys.
 | Measurement | `measurement_residuals`, `residual_strip`†, `plot_satellite_signals` (measurement_residuals) · `dops` (dop_trace) · `satellite_status`, `satellite_strip` (satellite_status_trace) |
 | State (per-sat) | `ambiguities`, `ambiguity_locktime` (ambiguity_trace) · `ionosphere`, `iono_strip` (ionosphere_trace) · `sat_biases` (sat_bias_trace) |
 | Cycle-slip | `mwwl_trace` (mwwl_trace) · `turbo_edit_trace` (turbo_edit_trace) · `slip_gate_strip`, `slip_conditions` (mwwl/turbo) · `graphic_trace`, `gf_trace`, `if_slip_trace` (staged detectors) |
+| **Network** (PPP-RTK NETWORK producer) | `network_map` (network_stations.csv / config) · `network_health` (network_trace) · `network_products` (network_solution) · `network_iono_map` (network_ionosphere) · `network_closed_loop` (closed_loop_trace) |
 
 Each viewer auto-skips when its trace CSV is missing/empty (header-only too), so
 one invocation works unchanged across PPP / PPP-RTK / baseline / replay runs.
+
+### Network-level visualization
+
+The network viewers visualize a **PPP-RTK NETWORK** run (the multi-station
+satellite-product producer):
+
+- **`network_map`** — every station on a world map: estimating peers, the clock
+  datum (★), and the held-out closed-loop user (▲), with great-circle baselines
+  from the datum. Positions come from the producer's `network_stations.csv`
+  roster (preferred) or, with `--network-config <cfg.json>`, straight from the
+  run config (so it renders **without a run**).
+- **`network_iono_map`** — the network's *own* estimated ionosphere as
+  **ionospheric pierce points** coloured by VTEC: a coverage map, a single-epoch
+  snapshot over the CODE IONEX field (found under `--data-root`), and an animated
+  **GIF** stepping through epochs.
+- **`network_health`** — per-epoch estimability & convergence (stations/clocks/
+  phase-biases present, clock-Δ RMS, gate-withheld epochs).
+- **`network_products`** — the emitted satellite clock / phase-bias / code-bias
+  time series, one line per satellite, with discontinuity rings.
+- **`network_closed_loop`** — the held-out user's 3D/ENU error and integer-fix
+  rate over time.
+
+`network_iono_map` needs the producer to emit the per-station slant iono — enable
+it in the network config: `"network": { "trace_ionosphere": true }` (the cheap
+`network_stations.csv` roster is on by default via `"trace_stations": true`).
 
 † `residual_strip` is **off by default** in the report (heavy per-signal rasters,
 redundant with the `measurement_residuals` line plots); enable it with `--only
@@ -76,6 +106,9 @@ cd C:\GnssProcessor\pyviz
 ..\venv\Scripts\python.exe run_report.py --backend plotly -o r.html   # interactive report
 ..\venv\Scripts\python.exe run_report.py D:\run\logs --only state dops
 ..\venv\Scripts\python.exe run_report.py --all                   # incl. off-by-default viewers
+
+# Network run: feed the config (station positions/roles) + data root (IONEX backdrop)
+..\venv\Scripts\python.exe run_report.py <netlogs> --network-config config\ppp_rtk_network_internal.json --data-root .\data
 ```
 
 ### Automatic report at end of a run

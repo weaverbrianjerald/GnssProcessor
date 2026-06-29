@@ -1,0 +1,196 @@
+// RT-REPLAY base config for the real-time regression tier.
+//
+// Exercises the *real-time engine* (RealTimeEngine -> SBF decode -> processEpoch
+// -> state_trace) end-to-end via deterministic FILE REPLAY of a frozen SBF
+// capture, but with PRECISE products (COD MGX final) instead of a live SSR
+// stream.  That sidesteps the "freeze a live SSR window" problem and gives a
+// reproducible, cm-grade RT cell today; a true PPP-RTK-with-frozen-SSR cell is a
+// later addition (needs a recorded SSR dump + frame-datum handling).
+//
+// Graded as STATIC PPP for absolute accuracy: position is one constant state
+// (position_q = 0), a-priori seeded from the stream's own PVTGeodetic (~3 m),
+// NOT from a reference coordinate -- so grading vs the frozen COVL site truth
+// (data/static/sites/covl.json, consumed nowhere in the engine) is independent.
+//
+// run_test_suite.py injects realtime.input_path (the per-station fixture) and
+// leaves data_source/data_download untouched for RT cells; the input_path below
+// is the standalone default.
+//
+// PREREQUISITE: COD MGX final products for the fixture's date staged under
+// data_download.data_root (here 2026-145), e.g.
+// C:/GnssProcessorSupport/products/2026-145/products/.  No network if present.
+{
+  "app_mode": "real_time",
+  "data_source": "production",
+
+  "processing": {
+    "mode": "PPP-RTK",
+    "max_duration_s": 3600.0,
+    "rinex_types": "CL",
+    "active_systems": [ "GPS", "Galileo" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "eclipse_shadow_scale": 1.0,
+    "relinearize_geometry": true,
+    "leap_seconds_tai": 37.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS":     "WCSLXPYMIQ",
+      "Galileo": "CBXIQ",
+      "BeiDou":  "IDPXQZ"
+    }
+  },
+
+  "files": { "internal_data_root": "./data" },
+
+  "receiver": {
+    // COARSE (~10 m, truth rounded to 10 m) a-priori, NOT the cm-level truth.
+    // This Meas3 capture carries no PVTGeodetic and BSSD has no WLS cold-start,
+    // so SOME a-priori is required to lift the satellites above the mask (a
+    // missing seed pins the filter at the Earth-centred pole fallback forever).
+    // The grade stays independent because the position is MEASUREMENT-DRIVEN:
+    // the filter pulls it several metres off this seed to a point fixed by the
+    // observations + precise products (verified: epoch-1 jumps ~4 m toward the
+    // monument), exactly as post-processing seeds from the RINEX APPROX POSITION
+    // (also ~m-level) and grades vs an independent SSC.  The cm-level truth lives
+    // only in data/static/sites/covl.json, consumed nowhere in the engine.
+    "reference_position_ecef": { "x": -2497220.0, "y": -3805290.0, "z": 4453260.0 }
+  },
+
+  "realtime": {
+    "input_type":   "file",
+    "input_format": "sbf",
+    "input_path":   "C:/GnssProcessor/data/sbf/covl1452.26_",
+    "output_type":     "console",
+    "reconnect_delay_s": 5,
+    "corrections": { "enabled": false }
+  },
+
+  "estimation": {
+    "between_satellite_sd": {
+      "enabled": true,
+      "pivot_min_elevation": 25.0
+    },
+    "estimate_sat_biases": true,
+    "ambiguity_resolution": {
+      "mode": 0,
+      "ratio_threshold": 3.0,
+      "elevation_mask": 20.0,
+      "hold_variance": 0.001
+    },
+    "residual_history": { "enabled": false },
+    "enable_huber_r_inflation": false,
+    "accumulate_phase_windup": true,
+    "estimate_velocity": false,
+    "enable_subcycle_slip_suppression": false,
+    "lock_signals_to_clock_ref": false,
+    "require_bia_for_signals": false,
+
+    "cycle_slip": {
+      "mw": true,
+      "turbo_edit": true,
+      "turbo_edit_mw_only_veto": true,
+      "turbo_edit_max_gap_s": 60.0,
+      "turbo_edit_bridge_lli": true,
+      "mw_sigma_multiplier":         8.0,
+      "turbo_edit_sigma_multiplier":  8.0,
+      "mw_detect_reference": "time_difference",
+      "mw_td_order": "first",
+      "mw_local_window": 20
+    },
+
+    "defer_until_corrections_ready": { "enabled": false },
+
+    "zwd_constraint": {
+      "enabled": true,
+      "apriori_m": 0.10,
+      "sigma_m": 0.30
+    }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 0.0,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-8,
+      "ionosphere_q": 0.03,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-10,
+      "system_time_offset_q": 1e-12,
+      "tropo_gradient_q": 5e-12,
+      "acceleration_psd_q": 1e2
+    },
+    "initial_std": {
+      "position": 30.0,
+      "velocity": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 100.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "system_time_offset": 1000.0,
+      "tropo_gradient": 0.001
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.001,
+      "doppler_std_m": 0.5
+    },
+    "phase_elevation_power": 1.0,
+    "stochastic_model": "satellite_block",
+    "satellite_block": {
+      "apply_to_phase": true
+    }
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": false,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_code_phase_bias": true,
+    "refine_emission_time": false,
+    "receiver_antenna_type_override": "LEIAR25         NONE",
+    "enable_receiver_cross_system_atx_fallback": true,
+    "require_atx_coverage": true
+  },
+
+  "data_download": {
+    "enabled": true,
+    "year": 2026,
+    "doy": 145,
+    "product_source": "COD",
+    "product_type": "FIN",
+    "download_rinex": false,
+    "download_products": true,
+    "data_root": "C:/GnssProcessorSupport/products",
+    "atx_path":  "C:/GnssProcessorSupport/products/atx/igs20.atx",
+    "nc_path":   "C:/GnssProcessorSupport/products/nc/EOT20_load.nc",
+    "keep_zip_after_unzip": false
+  },
+
+  "logging": {
+    "enable_main_log":          true,
+    "enable_gnss_config":       true,
+    "enable_rt_engine":         true,
+    "enable_ppp_model":         false,
+    "enable_kalman_filter":     false,
+    "enable_corrections":       false,
+    "enable_state_trace":       true,
+    "level": "warn",
+    "levels": { "rt_engine": "info", "main_log": "info" }
+  }
+}

@@ -49,7 +49,7 @@ namespace GnssProcessor {
 
     GnssCorrections::GnssCorrections(LogManager& log_mgr)
         : log_manager_(log_mgr),
-        clocks_(), erps_(), biases_(), orbits_(),
+        // clocks_/erps_/biases_/orbits_ keep their in-class empty-shared default.
         config_(nullptr), rinex_parser_(nullptr),
         ocean_tide_model_(log_mgr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (minimal)");
@@ -60,42 +60,50 @@ namespace GnssProcessor {
         const std::vector<ClockData>& clocks,
         const std::vector<ErpData>& erps)
         : log_manager_(log_mgr),
-        clocks_(clocks), erps_(erps), biases_(), orbits_(),
+        // Unused legacy ctor: take a private copy (not a per-station hot path).
+        clocks_(std::make_shared<const std::vector<ClockData>>(clocks)),
+        erps_(std::make_shared<const std::vector<ErpData>>(erps)),
         config_(nullptr), rinex_parser_(nullptr),
         ocean_tide_model_(log_mgr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed with {} clocks, {} erps",
-            clocks_.size(), erps_.size());
+            clocks_->size(), erps_->size());
         buildClockIndex();
     }
 
     GnssCorrections::GnssCorrections(LogManager& log_mgr,
         const GnssConfig& config,
-        const std::vector<ClockData>& clocks,
-        const std::vector<ErpData>& erps,
-        const std::vector<BiasData>& biases,
+        std::shared_ptr<const std::vector<ClockData>> clocks,
+        std::shared_ptr<const std::vector<ErpData>> erps,
+        std::shared_ptr<const std::vector<BiasData>> biases,
         const RinexParser& rinex)
         : log_manager_(log_mgr),
-        clocks_(clocks), erps_(erps), biases_(biases), orbits_(),
+        // Share the cached copies directly (no per-station duplication).  Fall back
+        // to an empty-shared vector if a caller passes null.
+        clocks_(clocks ? std::move(clocks) : std::make_shared<const std::vector<ClockData>>()),
+        erps_(erps ? std::move(erps) : std::make_shared<const std::vector<ErpData>>()),
+        biases_(biases ? std::move(biases) : std::make_shared<const std::vector<BiasData>>()),
         config_(&config), rinex_parser_(&rinex),
         ocean_tide_model_(log_mgr) {
         log_manager_.getLogger("corrections")->trace("GnssCorrections constructed (full) with {} clocks, {} erps, {} biases",
-            clocks_.size(), erps_.size(), biases_.size());
+            clocks_->size(), erps_->size(), biases_->size());
         buildClockIndex();
         buildBiasIndex();
     }
 
     void GnssCorrections::setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps) {
-        clocks_ = clocks;
-        erps_ = erps;
+        // Override with caller-owned data (e.g. an SSR clock stream): take a private
+        // copy behind a fresh shared_ptr, releasing the previously-shared cache copy.
+        clocks_ = std::make_shared<const std::vector<ClockData>>(clocks);
+        erps_ = std::make_shared<const std::vector<ErpData>>(erps);
         buildClockIndex();
-        log_manager_.getLogger("corrections")->trace("GnssCorrections updated: {} clocks, {} erps", clocks_.size(), erps_.size());
+        log_manager_.getLogger("corrections")->trace("GnssCorrections updated: {} clocks, {} erps", clocks_->size(), erps_->size());
     }
 
     void GnssCorrections::buildClockIndex() {
         clock_index_.clear();
         clock_index_.reserve(300);
 
-        for (const auto& c : clocks_)
+        for (const auto& c : *clocks_)
             clock_index_[c.satellite].push_back(&c);
 
         for (auto& [sat, vec] : clock_index_) {
@@ -144,7 +152,7 @@ namespace GnssProcessor {
         // its MAX_WINDOW (e.g. a stale fixture shadowing a live rooftop run).
         // (It is safe to call with clocks_ empty: the clock index is then empty
         // and it returns 0.0, so the broadcast fallback below can still fire.)
-        double clock_corr = interpolateClock(satellite, time, clocks_);
+        double clock_corr = interpolateClock(satellite, time, *clocks_);
 
         // SSR record up front so the broadcast baseline + IODE gate can select
         // the ephemeris VERSION the SSR clock delta was computed for (iode_ssr).
@@ -864,7 +872,7 @@ namespace GnssProcessor {
             log->warn("Invalid time for pole tide: week {}, TOW {:.3f}", time.week, time.tow);
             return Eigen::Vector3d::Zero();
         }
-        if (erps_.empty()) {
+        if (erps_->empty()) {
             log->warn("No ERP data for pole tide at TOW {:.3f}", time.tow);
             return Eigen::Vector3d::Zero();
         }
@@ -879,13 +887,13 @@ namespace GnssProcessor {
         // polar motion delta.  Linear interpolation matches the Sun/Moon
         // path in Planetary::interpolateErp and eliminates the step.
         const double t_query = TimeUtils::continuousGpsSeconds(time);
-        auto upper_it = std::upper_bound(erps_.begin(), erps_.end(), t_query,
+        auto upper_it = std::upper_bound(erps_->begin(), erps_->end(), t_query,
             [](double t, const ErpData& e) {
                 return t < TimeUtils::continuousGpsSeconds(e.time);
             });
 
         double xp_arcsec = 0.0, yp_arcsec = 0.0;
-        if (upper_it == erps_.begin()) {
+        if (upper_it == erps_->begin()) {
             // Query before first ERP sample — use first entry (clamped extrap).
             if (!std::isfinite(upper_it->xp) || !std::isfinite(upper_it->yp)) {
                 log->trace("No valid ERP data for pole tide at TOW {:.3f}: first entry invalid", time.tow);
@@ -893,9 +901,9 @@ namespace GnssProcessor {
             }
             xp_arcsec = upper_it->xp;
             yp_arcsec = upper_it->yp;
-        } else if (upper_it == erps_.end()) {
+        } else if (upper_it == erps_->end()) {
             // Query past last ERP sample — use last entry (clamped extrap).
-            auto last = std::prev(erps_.end());
+            auto last = std::prev(erps_->end());
             if (!std::isfinite(last->xp) || !std::isfinite(last->yp)) {
                 log->trace("No valid ERP data for pole tide at TOW {:.3f}: last entry invalid", time.tow);
                 return Eigen::Vector3d::Zero();
@@ -1642,7 +1650,7 @@ namespace GnssProcessor {
 
         const double t_query = TimeUtils::continuousGpsSeconds(time);
 
-        auto it = std::find_if(biases_.begin(), biases_.end(),
+        auto it = std::find_if(biases_->begin(), biases_->end(),
             [&satellite, &freq_type, t_query](const BiasData& b) {
                 if (b.satellite != satellite || b.signal != freq_type) return false;
                 double t_start = TimeUtils::continuousGpsSeconds(b.start_time);
@@ -1650,14 +1658,14 @@ namespace GnssProcessor {
                 return (t_start <= t_query && t_query <= t_end);
             });
 
-        if (it != biases_.end()) {
+        if (it != biases_->end()) {
             log->trace("Bias for {} ({}) {} at TOW {:.3f}: {:.3e} m",
                 satellite, PppUtils::getSystemString(satellite), freq_type, time.tow, it->bias);
             return it->bias;
         }
 
-        if (!biases_.empty())
-            log->debug("No bias entry for {} {} at t={:.3f}, {} entries total", satellite, freq_type, t_query, biases_.size());
+        if (!biases_->empty())
+            log->debug("No bias entry for {} {} at t={:.3f}, {} entries total", satellite, freq_type, t_query, biases_->size());
 
         log->trace("No bias for {} ({}) {} at TOW {:.3f}",
             satellite, PppUtils::getSystemString(satellite), freq_type, time.tow);
@@ -1693,7 +1701,7 @@ namespace GnssProcessor {
         // (zero is a meaningful value in some product schemes; GLONASS
         // phase biases, when published, are usable because the float
         // ambiguity absorbs whatever the receiver-side ICB is anyway).
-        for (const auto& b : biases_) {
+        for (const auto& b : *biases_) {
             const bool is_code = !b.signal.empty() && b.signal[0] == 'C';
             if (is_code && b.bias == 0.0) {
                 ++skipped_zero_code;
@@ -1711,7 +1719,7 @@ namespace GnssProcessor {
         log->debug(
             "Built bias index: {} unique satellite|signal pairs from {} entries "
             "({} zero code entries skipped, {} GLONASS code entries skipped)",
-            bias_signals_.size(), biases_.size(),
+            bias_signals_.size(), biases_->size(),
             skipped_zero_code, skipped_glonass_code);
         if (skipped_zero_code > 0) {
             log->info(
@@ -1798,10 +1806,10 @@ namespace GnssProcessor {
             // Velocity-based fallback
             Eigen::Vector3d z_s = -ez;
             Eigen::Vector3d vel = sat_vel;
-            if (vel.norm() < 1e-8 && !orbits_.empty()) {
-                auto orbit_it = std::find_if(orbits_.begin(), orbits_.end(),
+            if (vel.norm() < 1e-8 && !orbits_->empty()) {
+                auto orbit_it = std::find_if(orbits_->begin(), orbits_->end(),
                     [&satellite](const OrbitData& o) { return o.satellite == satellite; });
-                if (orbit_it != orbits_.end() && orbit_it->velocity_valid)
+                if (orbit_it != orbits_->end() && orbit_it->velocity_valid)
                     vel = orbit_it->velocity;
             }
             y_s = vel.norm() > 1e-8 ? vel.normalized().cross(z_s) : Eigen::Vector3d::Zero();

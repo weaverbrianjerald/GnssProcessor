@@ -36,7 +36,11 @@ favorites_report_*/
 # Date-keyed fixture subtrees (e.g. data/2024-129/products/...)
 data/[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]/
 # Date-independent assets and raw download cache (production-mode).
-data/static/
+# Ignore the bulk static assets (sinex SSC, SIF, ATX, EOT20 nc, gpt3 grids)
+# but KEEP the tiny site-truth database: a few hand-established coordinates for
+# non-IGS receivers (the real-time replay tier) that are NOT auto-fetchable.
+data/static/*
+!data/static/sites/
 data/cache/
 # User-managed debug RINEX subsets (e.g. trimmed 1-hour files for
 # fast iteration); pinned by some configs via files.observation_path.

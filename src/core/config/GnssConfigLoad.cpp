@@ -852,8 +852,17 @@ namespace GnssProcessor {
         enable_glonass_ifb_          = jval<bool>(json, "estimation.glonass_ifb.enable",
                                                    "enable_glonass_ifb", false);
         if (enable_glonass_ifb_ && !estimate_ifb_) {
-            log->warn("enable_glonass_ifb is set but estimate_ifb is off — per-slot "
-                      "GLONASS IFB needs estimate_ifb=true in uncombined PPP-RTK; it will be inactive.");
+            // The PPP-RTK network producer force-enables BOTH estimate_ifb and
+            // glonass_ifb under network.estimate_glonass (loadNetworkSection_, which
+            // dispatches AFTER this estimation section), so the prerequisite is
+            // satisfied there — don't warn on that config (the warning, evaluated on
+            // the pre-force values, would be misleading).
+            const bool glonass_network =
+                jval<bool>(json, "network.estimate_glonass", "estimate_glonass", false);
+            if (!glonass_network) {
+                log->warn("enable_glonass_ifb is set but estimate_ifb is off — per-slot "
+                          "GLONASS IFB needs estimate_ifb=true in uncombined PPP-RTK; it will be inactive.");
+            }
         }
         // CIO-based IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; off
         // by default → legacy IAU 1976/1980 equinox chain stays byte-identical.
@@ -1238,6 +1247,7 @@ namespace GnssProcessor {
                 process_noise_.acceleration_psd = 1e2;
             }
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+            process_noise_.sat_code_bias       = pn.value("sat_code_bias_q", 1e-10);
             process_noise_.sat_phase_bias      = pn.value("sat_phase_bias_q", 1e-12);
             process_noise_.sat_clock           = pn.value("sat_clock_q", 1e-2);
             process_noise_.clock_rate          = pn.value("clock_rate_q", 1e-4);
@@ -2559,6 +2569,20 @@ namespace GnssProcessor {
         network_config_.product_output_path =
             jval<std::string>(json, "network.product_output_path", "product_output_path", std::string{});
 
+        // --- Per-station compute parallelism (geometry + measurement assembly) ---
+        network_config_.parallel_stations =
+            jval<bool>(json, "network.parallel_stations", "parallel_stations", true);
+        network_config_.parallel_min_stations =
+            jval<int>(json, "network.parallel_min_stations", "parallel_min_stations", 10);
+        network_config_.parallel_max_threads =
+            jval<int>(json, "network.parallel_max_threads", "parallel_max_threads", 0);
+
+        // --- Visualization traces (pyviz network viewers) ---
+        network_config_.trace_stations =
+            jval<bool>(json, "network.trace_stations", "trace_stations", true);
+        network_config_.trace_ionosphere =
+            jval<bool>(json, "network.trace_ionosphere", "trace_ionosphere", false);
+
         if (network_config_.clock_datum_station.empty()) {
             network_config_.clock_datum_station = network_config_.stations.front().name;
             log->info("Network: clock_datum_station unset; defaulting to first station '{}'",
@@ -2586,10 +2610,112 @@ namespace GnssProcessor {
         // Section_ runs earlier, so this overrides the JSON estimation block.
         estimate_sat_clocks_       = true;
         estimate_sat_phase_biases_ = true;
-        estimate_sat_biases_       = false;  // V1: defer satellite code bias to W6
-        promote_sat_code_bias_     = false;  // V1: defer satellite code bias to W6
-        log->info("Network producer (V1): forcing estimate_sat_clocks + estimate_sat_phase_biases = true; "
-                  "satellite code bias deferred (estimate_sat_biases / promote_sat_code_bias = false)");
+        estimate_sat_biases_       = false;  // V1 default: defer satellite code bias (W6 below re-enables)
+        promote_sat_code_bias_     = false;  // V1 default: defer satellite code bias (W6 below re-enables)
+        log->info("Network producer: forcing estimate_sat_clocks + estimate_sat_phase_biases = true");
+
+        // --- W6: satellite CODE-bias (OSB) estimation -----------------------------
+        // When network.estimate_sat_code_bias is on, the network estimates its OWN
+        // per-(satellite,signal) code biases (GPS + Galileo) and emits them, so the
+        // user can SKIP the external .BIA.  This is a single coupled slice — the
+        // satellite code-bias column, the receiver DCB (estimate_ifb), and the GIM
+        // ionosphere weighting (the load-bearing constraint that makes the satellite
+        // DCB observable against the per-(rx,sat) slant iono) must ALL be present or
+        // the shared null-space rank gate withholds every epoch.  Forcing them here
+        // keeps them in lockstep behind the one flag.
+        estimate_network_sat_code_bias_ = jval<bool>(
+            json, "network.estimate_sat_code_bias", "estimate_sat_code_bias", false);
+        if (estimate_network_sat_code_bias_) {
+            estimate_sat_biases_   = true;   // promote the satellite code bias to a state
+            promote_sat_code_bias_ = true;   // estimate it on every raw code row (not fallback-only)
+            estimate_ifb_          = true;   // receiver DCB/IFB — an explicit rx code-bias state on the
+                                             // undifferenced rows, or the satellite OSB absorbs it
+            // GIM-weighted iono constraint: the satellite DCB is co-linear with the
+            // free per-(rx,sat) slant iono until the GIM imposes between-satellite
+            // structure (common-mode-free R leaves the per-constellation level free,
+            // pinned by the explicit sum-to-zero DCB datum).  runNetwork hard-errors
+            // if the GIM is absent at startup (the slice would be inert without it).
+            iono_weighting_.enabled = true;
+            // Estimate the FULL satellite code bias from scratch in the network's own
+            // datum — NOT a residual to .BIA.  Skip the external .BIA on both producer
+            // and (via the derived consumer config) the held-out consumer, so the
+            // network OSB is the single code-bias source and nothing double-corrects.
+            model_corrections_.enable_code_phase_bias = false;
+            // The producer never needs the phase-clock split for V1; keep it off so it
+            // cannot add a spurious gauge to the shared system.
+            estimate_phase_clock_ = false;
+            log->info("Network producer (W6): satellite code-bias estimation ENABLED — forcing "
+                      "estimate_sat_biases + promote_sat_code_bias + estimate_ifb (rx DCB) + "
+                      "ionosphere_weighting = on, enable_code_phase_bias (.BIA) = OFF; the network "
+                      "emits its own satellite code biases (GPS+Galileo) under a sum-to-zero "
+                      "per-constellation DCB datum.");
+        } else {
+            log->info("Network producer (V1): satellite code bias deferred "
+                      "(estimate_sat_biases / promote_sat_code_bias = false)");
+        }
+
+        // --- GLONASS in the network (code-only: sat clock + per-FCN-slot rx IFB) ---
+        // FDMA makes a single shared per-(sat,signal) satellite OSB unphysical, so
+        // GLONASS contributes a per-satellite CLOCK only.  The receiver group delay
+        // is carried by the per-FCN-slot receiver IFB as a LOCAL nuisance (Schur-
+        // eliminated, never emitted), and NO GLONASS satellite phase bias is
+        // produced.  Admitting GLONASS therefore REQUIRES the per-slot IFB
+        // machinery: force its prerequisites on, and require GLONASS in
+        // active_systems (otherwise GLONASS rows would build with no shared clock
+        // column and pin the receiver clock, corrupting the GPS/Galileo products).
+        enable_glonass_network_ = jval<bool>(json, "network.estimate_glonass",
+                                             "estimate_glonass", false);
+        if (enable_glonass_network_) {
+            const bool has_glonass =
+                std::find(active_systems_.begin(), active_systems_.end(), "GLONASS")
+                != active_systems_.end();
+            if (!has_glonass) {
+                log->error("Network: network.estimate_glonass=true but 'GLONASS' is not in "
+                           "processing.active_systems.  Add GLONASS to active_systems AND give it "
+                           "a processing.signal_priorities entry, or set estimate_glonass=false.");
+                return false;
+            }
+            // A GLONASS signal_priorities entry is the OTHER half of admitting it:
+            // without one, PppModel::decideConstellationCanonicals finds no priority
+            // string and skips every GLONASS satellite at signal selection, so the
+            // network would silently emit ZERO GLONASS products (no clock, no per-slot
+            // IFB ever allocated) while the GPS/Galileo solution looks nominal — the
+            // documented multi-GNSS signal_priorities silent-drop failure mode.  Fail
+            // loud here so the misconfig is caught at load, matching the error string
+            // above that already instructs the user to add the entry.
+            if (signal_priorities_.find("GLONASS") == signal_priorities_.end()) {
+                log->error("Network: network.estimate_glonass=true but 'GLONASS' has no "
+                           "processing.signal_priorities entry.  Without it every GLONASS "
+                           "observation is dropped at signal selection (a silent zero-emit of "
+                           "GLONASS products).  Add a GLONASS signal_priorities entry (e.g. "
+                           "\"GLONASS\": \"CP\" for the FDMA G1/G2 bands), or set "
+                           "estimate_glonass=false.");
+                return false;
+            }
+            if (!uncombined_enabled_) {
+                log->error("Network: network.estimate_glonass=true requires uncombined PPP-RTK "
+                           "(the per-FCN-slot IFB is an uncombined receiver-bias state).");
+                return false;
+            }
+            estimate_ifb_       = true;   // enables the receiver-bias allocation loop
+            enable_glonass_ifb_ = true;   // enables the GLONASS per-FCN-slot resolver branch
+            log->info("Network producer: GLONASS ENABLED (code-only) — forcing estimate_ifb + "
+                      "enable_glonass_ifb = true; emitting a GLONASS satellite clock with the "
+                      "per-FCN-slot receiver IFB as a local nuisance (no GLONASS satellite phase bias).");
+        }
+
+        // GLONASS + satellite code-bias are not jointly supported in V1: admitting
+        // GLONASS forces the receiver-bias allocation to skip GPS/Galileo IFB (only
+        // the GLONASS per-slot IFB is created — see MeasurementModel's network alloc
+        // gate), but the satellite code-bias separation REQUIRES an explicit GPS/
+        // Galileo receiver DCB on the undifferenced rows.  Fail loud rather than
+        // silently produce an unidentifiable system.
+        if (estimate_network_sat_code_bias_ && enable_glonass_network_) {
+            log->error("Network: network.estimate_sat_code_bias and network.estimate_glonass cannot "
+                       "both be on in V1 — GLONASS admission skips the GPS/Galileo receiver DCB that "
+                       "the satellite code-bias estimation needs.  Disable one of them.");
+            return false;
+        }
 
         // --- Optional closed-loop integer-recovery harness (held-out consumer) ---
         // A station deliberately NOT in network.stations that consumes the
@@ -2619,6 +2745,7 @@ namespace GnssProcessor {
             clc.ar_wl_only = cl.value("ar_wl_only", true);
             clc.consume_network_products = cl.value("consume_network_products", true);
             clc.consume_network_clock    = cl.value("consume_network_clock", true);
+            clc.consumer_undifferenced   = cl.value("consumer_undifferenced", false);
             if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
                 for (const auto& s : cl["ar_active_systems"])
                     if (s.is_string()) clc.ar_active_systems.push_back(s.get<std::string>());
@@ -2644,6 +2771,19 @@ namespace GnssProcessor {
                       ? std::string{}
                       : (" + datum sat '" + network_config_.clock_datum_satellite + "'"),
                   network_config_.epoch_sync_tolerance_s);
+        if (network_config_.parallel_stations
+            && static_cast<int>(network_config_.stations.size()) > network_config_.parallel_min_stations) {
+            log->info("Network: per-station compute parallelism ENABLED ({} stations > threshold {}; "
+                      "thread cap {})", network_config_.stations.size(),
+                      network_config_.parallel_min_stations,
+                      network_config_.parallel_max_threads > 0
+                          ? std::to_string(network_config_.parallel_max_threads)
+                          : std::string("auto"));
+        } else {
+            log->info("Network: per-station compute runs SERIALLY ({} stations <= threshold {} or "
+                      "parallel_stations=false)", network_config_.stations.size(),
+                      network_config_.parallel_min_stations);
+        }
         return true;
     }
 
@@ -2657,23 +2797,67 @@ namespace GnssProcessor {
         // network-forced estimation flags back off to their PPP-RTK defaults.
         c.estimate_sat_clocks_       = false;
         c.estimate_sat_phase_biases_ = false;
-        c.estimate_sat_biases_       = false;  // producer folded the satellite code delay
-                                               // into the estimable clock — the consumer must
-                                               // NOT re-estimate a separate sat code bias.
         c.promote_sat_code_bias_     = false;
-        // Between-satellite single-difference: the user-side S-transform that
-        // removes the receiver clock/bias datum so the SD ambiguity is integer
-        // once the network satellite phase bias is applied.  The producer runs
-        // undifferenced (network has no receiver datum to remove); the consumer
-        // is a single receiver and needs BSSD for integer recovery.
-        c.enable_between_satellite_sd_ = true;
+        c.estimate_network_sat_code_bias_ = false;  // producer-only switch; consumer CONSUMES the OSB
+        // The consumer applies the network's satellite code biases via ssr_bias_term
+        // (not gated by enable_code_phase_bias), and inherits enable_code_phase_bias
+        // = false from the producer when the network estimates its own OSB — so the
+        // network OSB is the SOLE code-bias source and the .BIA never double-corrects.
+        // Satellite CODE bias handling depends on WHICH clock the consumer uses.
+        // The network folds the satellite code delay into its estimable CLOCK, so
+        // a consumer using the NETWORK clock (FULL mode) must NOT re-estimate a
+        // separate sat code bias.  But on the PRECISE clock (BIAS-ONLY / BASELINE)
+        // there is no folded delay — the consumer is an ordinary PPP-RTK user and
+        // SHOULD estimate residual per-(sat,signal) code biases for signals its
+        // .BIA does not cover, or the uncorrected code pulls the position estimate.
+        const bool consuming_network_clock =
+            network_config_.closed_loop.consume_network_products &&
+            network_config_.closed_loop.consume_network_clock;
+        c.estimate_sat_biases_ = !consuming_network_clock;
+        // The network SOLVE keeps code fully weighted (no_bia_code_downweight ≈ 1)
+        // to separate the satellite clock from the phase bias.  A single-receiver
+        // USER that inherits that fully weights code carrying uncorrected biases →
+        // a systematic position pull.  Restore the user default so code on signals
+        // without .BIA coverage is downweighted.
+        c.no_bia_code_downweight_ = 100.0;
         // Enable ambiguity resolution for the consumer (the producer itself is
         // float): the closed loop validates integer RECOVERY on the held-out
         // station from the producer's products.
         c.ar_mode_    = network_config_.closed_loop.ar_mode;
-        c.ar_wl_only_ = network_config_.closed_loop.ar_wl_only;
         if (!network_config_.closed_loop.ar_active_systems.empty())
             c.ar_active_systems_ = network_config_.closed_loop.ar_active_systems;
+
+        if (network_config_.closed_loop.consumer_undifferenced) {
+            // UNDIFFERENCED uncombined PPP-RTK USER (the end-state). No
+            // observation-space differencing: the network satellite phase biases
+            // are applied directly to the raw float (ssr_bias_term, undifferenced
+            // — there is no applyDifferencing to re-difference them away), and the
+            // AmbiguityResolver forms the between-satellite difference INTERNALLY
+            // at fix time (y_dd = x[i] - x[ref]), which cancels the receiver phase
+            // bias and yields integer SD ambiguities. So integer recovery needs no
+            // BSSD filter machinery / pivot handover at all.
+            c.enable_between_satellite_sd_ = false;
+            // Direct per-band LAMBDA, NOT the MW/.BIA-frame WL: the state is
+            // already PerBand, and forcing wl_only off makes the driver drop the
+            // MW WL (setArIgnoreMwWl(true)) so AR runs pure MLAMBDA on the network-
+            // bias-corrected float — dissolving the network-bias↔.BIA frame
+            // conflict. No WL or WL/NL cascade.
+            c.ar_wl_only_ = false;
+            // Direct NL LAMBDA needs a converged float to keep the integer search
+            // bounded — a loose σ-gate (safe for the robust long-λ WL) lets the
+            // per-band search explode. Cap the gate so AR only fires once the
+            // float has settled (a BIAS-ONLY float reaches cm well within this).
+            if (!(c.ar_max_position_sigma_m_ > 0.0) || c.ar_max_position_sigma_m_ > 0.20)
+                c.ar_max_position_sigma_m_ = 0.20;
+        } else {
+            // Legacy BSSD consumer: the user-side S-transform removes the receiver
+            // clock/bias datum so the SD ambiguity is integer once the network
+            // satellite phase bias is applied. The producer runs undifferenced
+            // (no receiver datum to remove); a BSSD single receiver recovers
+            // integers through the pivot S-transform.
+            c.enable_between_satellite_sd_ = true;
+            c.ar_wl_only_ = network_config_.closed_loop.ar_wl_only;
+        }
         return c;
     }
 
@@ -2728,6 +2912,7 @@ namespace GnssProcessor {
         logging_config_.enable_ambiguity_trace    = lg.value("enable_ambiguity_trace", false);
         logging_config_.enable_ionosphere_trace   = lg.value("enable_ionosphere_trace", false);
         logging_config_.enable_sat_bias_trace     = lg.value("enable_sat_bias_trace", false);
+        logging_config_.enable_code_bias_trace    = lg.value("enable_code_bias_trace", false);
         logging_config_.enable_sat_status_trace   = lg.value("enable_sat_status_trace", false);
         logging_config_.enable_dop_trace          = lg.value("enable_dop_trace", false);
         logging_config_.enable_residual_trace     = lg.value("enable_residual_trace", false);

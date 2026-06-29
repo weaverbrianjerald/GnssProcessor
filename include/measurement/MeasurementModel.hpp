@@ -99,6 +99,34 @@ namespace GnssProcessor {
                                        const std::set<std::string>& allowed_phase_keys = {});
 
         /**
+         * @brief Seed the model's frequency helper with GLONASS FCN slot numbers.
+         *
+         * GLONASS is FDMA, so the carrier frequency (and therefore the iono
+         * coefficient and carrier wavelength used in @c buildJacobianRow) depends
+         * on each satellite's channel.  This model owns a private @c PppUtils that
+         * is constructed un-seeded; callers that process GLONASS uncombined (the
+         * network driver, per station) must seed it from the station's RINEX
+         * "GLONASS SLOT / FRQ #" header (@c RinexParser::getGlonassFreqSlots) so
+         * the Jacobian uses the actual channel rather than the default table.
+         *
+         * @param slots satellite-id -> FCN channel number map.
+         */
+        void setGlonassSlots(const std::map<std::string, int>& slots);
+
+        /**
+         * @brief Carrier frequency (Hz) of an observation code on a satellite.
+         *
+         * Exposes the model's private @c PppUtils frequency lookup so the network
+         * driver can form the ionosphere-free (clock-preserving) combination
+         * weights for the satellite code-bias IF datum pin (the GF/DCB part of the
+         * OSB is emitted; its IF part lives in the estimable clock).  GLONASS uses
+         * the seeded FCN slots (@ref setGlonassSlots); GPS/Galileo are per-signal
+         * constants.  Returns 0 (and PppUtils logs) for an unknown code/satellite.
+         */
+        double carrierFrequency(const std::string& obs_code,
+                                const std::string& satellite) const;
+
+        /**
          * @brief Compute a DD measurement update from two per-receiver
          *        PppModel outputs (baseline mode).
          *

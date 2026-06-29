@@ -1,0 +1,47 @@
+{
+  "_comment": "INTERACTION tier. Two suites demonstrating the non-OFAT designs: (1) ar_bssd = FULL 2-axis grid AR-mode x BSSD (where AR genuinely depends on the SD structure, so the full cross is worth it); (2) robustness = PAIRWISE over 3 axes (elev mask x frequency mode x dynamics) -- a 2x2x2=8 corner space covered by a ~4-cell 2-wise array, an acceptance check that the solution stays healthy across config corners. Explicit ppprtk_float / ppp_static empty cells are the per-base A/B references.",
+  "date": { "year": 2024, "doy": 129 },
+  "exe": "build/x64-Release/gnss_processor.exe",
+  "output_root": "test_suite_results/interaction",
+  "truth": { "sinex_dir": "data/static/sinex", "sif_paths": ["data/static/sif/igs20_SIF.json"], "auto_fetch_sinex": true, "sif_with_periodic": true, "cross_check_tol_m": 0.05 },
+  "eval": { "warmup_s": 1800.0, "threshold_m": 0.10, "bias_tol_m": 0.02, "rms_tol_m": 0.02 },
+  "stations": [
+    { "name": "JPLM", "truth_key": "JPLM00USA", "obs": "data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx" }
+  ],
+  "bases": { "ppp": "config/test_suite/ppp_static.jsonc", "ppprtk": "config/test_suite/ppp_rtk_static.jsonc" },
+  "cells": [
+    { "label": "ppp_static",   "base": "ppp",    "overrides": {} },
+    { "label": "ppprtk_float", "base": "ppprtk", "overrides": {} }
+  ],
+  "matrix": [
+    { "station": "JPLM", "cells": ["ppp_static", "ppprtk_float"] }
+  ],
+  "suites": [
+    {
+      "name": "ar_bssd",
+      "base": "ppprtk",
+      "stations": ["JPLM"],
+      "design": "full",
+      "axes": {
+        "ar":   { "float": { "estimation.ambiguity_resolution.mode": 0 },
+                  "wl":    { "estimation.ambiguity_resolution.mode": 1 } },
+        "bssd": { "on":  { "estimation.between_satellite_sd.enabled": true },
+                  "off": { "estimation.between_satellite_sd.enabled": false } }
+      }
+    },
+    {
+      "name": "robust",
+      "base": "ppp",
+      "stations": ["JPLM"],
+      "design": "pairwise",
+      "axes": {
+        "elev": { "m10": { "processing.elevation_mask_deg": 10.0 },
+                  "m15": { "processing.elevation_mask_deg": 15.0 } },
+        "freq": { "all":  { "processing.frequency_mode": "all" },
+                  "dual": { "processing.frequency_mode": "dual" } },
+        "dyn":  { "static":    { "estimation.estimate_velocity": false, "filter.process_noise.position_q": 0.0 },
+                  "kinematic": { "estimation.estimate_velocity": true, "processing.rinex_types": "CLD", "filter.process_noise.acceleration_psd_q": 1.0 } }
+      }
+    }
+  ]
+}

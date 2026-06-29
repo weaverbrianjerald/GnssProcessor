@@ -74,8 +74,16 @@ struct SbasisDeclaration {
     /// Declared wind-up / yaw-attitude model id (producer and consumer must agree;
     /// "nominal" = yaw-steering from sun/velocity geometry, eclipse AR ungated).
     std::string windup_yaw_model_id{ "nominal" };
-    /// V1 emits satellite clock + phase bias only; code bias deferred to W6.
+    /// V1 emits satellite clock + phase bias only; W6 (network.estimate_sat_code_bias)
+    /// adds satellite code bias.  True when the network emits its own OSB.
     bool emit_code_bias{ false };
+    /// Satellite code-bias (OSB) datum convention (W6).  The emitted per-(sat,
+    /// signal) code biases are referenced so each satellite's ionosphere-free
+    /// combination is zero (the IF lump lives in the estimable clock) and they sum
+    /// to zero per constellation (the absolute level the GIM common-mode-free iono
+    /// weighting leaves free).  Recorded so a consumer can cross-check compatibility.
+    enum class CodeBiasDatum { SumToZeroPerConstellation }
+        code_bias_datum{ CodeBiasDatum::SumToZeroPerConstellation };
 };
 
 /**

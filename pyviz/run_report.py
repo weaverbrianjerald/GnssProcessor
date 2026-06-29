@@ -31,6 +31,11 @@ def main(argv=None) -> int:
     ap.add_argument("--all", action="store_true",
                     help="also run viewers that are off by default (e.g. residual_strip)")
     ap.add_argument("--backend", default="matplotlib")
+    ap.add_argument("--network-config", default=None,
+                    help="network run config JSON (station positions/roles for the "
+                         "worldmap + iono pierce-point viewers)")
+    ap.add_argument("--data-root", default=None,
+                    help="data root searched for an IONEX GIM (ionosphere backdrop)")
     ap.add_argument("--dpi", type=int, default=110)
     ap.add_argument("--show", action="store_true",
                     help="open interactive figure windows instead of writing a report")
@@ -52,7 +57,8 @@ def main(argv=None) -> int:
     from gnssviz import TraceContext, run_viewers
     from gnssviz.backends import get_backend
 
-    ctx = TraceContext(args.log_dir)
+    ctx = TraceContext(args.log_dir, network_config=args.network_config,
+                       data_root=args.data_root)
     print(f"=== gnssviz: {ctx.log_dir} ===")
     out = run_viewers(ctx, only=args.only, include_disabled=args.all)
     backend = get_backend(args.backend)

@@ -74,6 +74,13 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
+try:
+    import hatanaka  # bundled RNXCMP 4.x — gzip + Hatanaka decompression, RINEX 2/3/4
+    HAVE_HATANAKA = True
+except ImportError:
+    hatanaka = None
+    HAVE_HATANAKA = False
+
 # ---------------------------------------------------------------------
 # What to fetch
 # ---------------------------------------------------------------------
@@ -255,23 +262,34 @@ def expected_rnx_output(compact_path: Path) -> Path | None:
         return compact_path.with_name(name[:-1] + new_last)
     return None
 
-def crx_to_rnx(compact_path: Path, crx2rnx_exe: Path | None) -> Path | None:
+def crx_to_rnx(compact_path: Path, crx2rnx_exe: Path | None = None) -> Path | None:
     """Convert a Hatanaka-compressed obs file (.crx or .YYd) to
     standard RINEX (.rnx or .YYo).
 
-    Returns the path to the produced standard-RINEX file, or ``None``
-    on any error (including "no executable available" or
-    "unrecognised input extension").  RNXCMP writes the output
-    next to the input.
+    Primary engine is the ``hatanaka`` library (bundled RNXCMP 4.x — RINEX
+    2/3/4 capable; the old standalone crx2rnx 4.0.x rejects RINEX 4).  Falls
+    back to an external ``crx2rnx`` binary only when hatanaka is unavailable.
+    Returns the produced standard-RINEX path, or ``None`` on any error.  The
+    output is written next to the input.
     """
-    if crx2rnx_exe is None:
-        return None
     rnx_out = expected_rnx_output(compact_path)
     if rnx_out is None:
         print(f"  unrecognised compact extension: {compact_path.name}", file=sys.stderr)
         return None
     if rnx_out.exists():
         return rnx_out
+    if HAVE_HATANAKA:
+        try:
+            produced = Path(hatanaka.decompress_on_disk(compact_path))
+        except Exception as e:
+            print(f"  hatanaka decompress error: {e!r}", file=sys.stderr)
+            return None
+        if produced != rnx_out and produced.exists():
+            produced.replace(rnx_out)
+        return rnx_out if rnx_out.exists() else None
+    # Legacy fallback: external crx2rnx executable (RINEX 2/3 only on 4.0.x).
+    if crx2rnx_exe is None:
+        return None
     import subprocess
     try:
         result = subprocess.run(
@@ -650,14 +668,15 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("\n[2/3] Observation RINEX fixtures")
     crx2rnx_exe = find_crx2rnx(args.crx2rnx)
-    if crx2rnx_exe is None:
-        print("  (no crx2rnx executable located — Hatanaka .crx files will "
-              "be staged but not converted.  Install RNXCMP from "
-              "https://terras.gsi.go.jp/ja/crx2rnx.html and either set "
-              "the CRX2RNX env var, place the binary on PATH, or pass "
-              "--crx2rnx PATH on the next run.)")
+    if HAVE_HATANAKA:
+        print(f"  decompressor: hatanaka (bundled RNXCMP {hatanaka.rnxcmp_version})")
+    elif crx2rnx_exe is None:
+        print("  (no decompressor located — Hatanaka .crx files will be staged "
+              "but not converted.  Install the hatanaka package "
+              "(pip install hatanaka) — it bundles a RINEX-4-capable RNXCMP — "
+              "or place a recent crx2rnx on PATH and re-run.)")
     else:
-        print(f"  crx2rnx: {crx2rnx_exe}")
+        print(f"  crx2rnx: {crx2rnx_exe} (legacy fallback — prefer 'pip install hatanaka' for RINEX 4)")
     manual, crx_pending = fetch_observations(data_root, crx2rnx_exe)
 
     print("\n[3/3] Static assets (igs20.atx, EOT20_load.nc, gpt3_5.grd)")

@@ -246,29 +246,49 @@ namespace GnssProcessor {
             return logger;
         }
 
-        if (loggers_.find(logger_name) == loggers_.end()) {
-            try {
-                auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-                auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                    (log_dir_ / (logger_name + ".log")).string(), 1024 * 1024 * 5, 3);
-                auto logger = std::make_shared<spdlog::logger>(logger_name, spdlog::sinks_init_list{ file_sink, console_sink });
-                logger->set_formatter(makeGpsFormatter());
-                // Effective level = (disabled ? Off : per-logger override ?: global level_).
-                if (disabled_loggers_.count(logger_name)) {
-                    logger->set_level(spdlog::level::off);
-                } else if (auto it = per_logger_levels_.find(logger_name); it != per_logger_levels_.end()) {
-                    logger->set_level(toSpdlogLevel(it->second));
-                } else {
-                    logger->set_level(toSpdlogLevel(level_));
-                }
-                logger->flush_on(spdlog::level::info);
-                spdlog::register_logger(logger);
-                loggers_[logger_name] = logger;
+        // Lock-free fast path.  std::map::find is data-race-safe for concurrent
+        // readers (see [container.requirements.dataraces]), and the returned
+        // shared_ptr copy is atomically ref-counted — so once a logger exists it
+        // can be fetched from many threads at once.  The PPP-RTK network producer
+        // parallelizes its per-station geometry/assembly across threads and
+        // PREWARMS every logger its model path can touch before entering that
+        // region, so in steady state this is the only branch taken concurrently:
+        // no map mutation, no race.  (Returning find()->second rather than the
+        // associative operator[] matters — operator[] is NOT in the const/
+        // data-race-safe set for associative containers.)
+        if (auto it = loggers_.find(logger_name); it != loggers_.end())
+            return it->second;
+
+        // Slow path: create + register + insert under a mutex.  Runs at startup
+        // and on first touch of a new logger.  The mutex makes concurrent CREATES
+        // mutually safe; the prewarm contract above guarantees this path is never
+        // taken concurrently with the fast path on the SAME new name inside a
+        // parallel region (which would otherwise be a find-vs-insert race).
+        std::lock_guard<std::mutex> create_lock(logger_create_mutex_);
+        // Re-check: another thread may have created it while we waited.
+        if (auto it = loggers_.find(logger_name); it != loggers_.end())
+            return it->second;
+        try {
+            auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+            auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                (log_dir_ / (logger_name + ".log")).string(), 1024 * 1024 * 5, 3);
+            auto logger = std::make_shared<spdlog::logger>(logger_name, spdlog::sinks_init_list{ file_sink, console_sink });
+            logger->set_formatter(makeGpsFormatter());
+            // Effective level = (disabled ? Off : per-logger override ?: global level_).
+            if (disabled_loggers_.count(logger_name)) {
+                logger->set_level(spdlog::level::off);
+            } else if (auto it = per_logger_levels_.find(logger_name); it != per_logger_levels_.end()) {
+                logger->set_level(toSpdlogLevel(it->second));
+            } else {
+                logger->set_level(toSpdlogLevel(level_));
             }
-            catch (const spdlog::spdlog_ex& e) {
-                loggers_["gnss_processor"]->error("Failed to initialize logger {}: {}. Using default logger.", logger_name, e.what());
-                return loggers_["gnss_processor"];
-            }
+            logger->flush_on(spdlog::level::info);
+            spdlog::register_logger(logger);
+            loggers_[logger_name] = logger;
+        }
+        catch (const spdlog::spdlog_ex& e) {
+            loggers_["gnss_processor"]->error("Failed to initialize logger {}: {}. Using default logger.", logger_name, e.what());
+            return loggers_["gnss_processor"];
         }
         return loggers_[logger_name];
     }

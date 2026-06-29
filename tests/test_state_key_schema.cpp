@@ -117,6 +117,45 @@ TEST(StateKeySchemaTest, DcbKeyShape) {
     EXPECT_EQ(makeDcbKey("BeiDou"), "BeiDou_DCB");
 }
 
+TEST(StateKeySchemaTest, IfbKeyRoundTrip) {
+    for (const std::string sys : {"GPS", "Galileo", "BeiDou"}) {
+        for (const char band : {'1', '2', '5', '7'}) {
+            const std::string key = makeIfbKey(sys, band);
+            auto parts = parseIfbKey(key);
+            ASSERT_TRUE(parts.has_value()) << key;
+            EXPECT_EQ(parts->system, sys) << key;
+            EXPECT_EQ(parts->band, band) << key;
+        }
+    }
+}
+
+TEST(StateKeySchemaTest, DcbKeyRoundTrip) {
+    for (const std::string sys : {"GPS", "Galileo", "BeiDou"}) {
+        auto sys_out = parseDcbKey(makeDcbKey(sys));
+        ASSERT_TRUE(sys_out.has_value()) << sys;
+        EXPECT_EQ(*sys_out, sys) << sys;
+    }
+}
+
+// parseIfbKey / parseDcbKey select ONLY receiver-common per-band code biases —
+// the columns a network common-mode pin / S-basis datum acts on.  They must
+// reject the per-slot GLONASS form (its own central-channel datum) and each
+// other's shape, mirroring the isGlonassPerSlotIfbKey discriminator.
+TEST(StateKeySchemaTest, IfbDcbParseRejectsForeignAndMalformed) {
+    EXPECT_FALSE(parseIfbKey(makeGlonassPerSlotIfbKey("GLONASS", '1', -4)).has_value());
+    EXPECT_FALSE(parseIfbKey("GPS_DCB").has_value());
+    EXPECT_FALSE(parseIfbKey("GPS_IFB").has_value());    // no band char
+    EXPECT_FALSE(parseIfbKey("GPS_IFB25").has_value());  // multi-char band
+    EXPECT_FALSE(parseIfbKey("IFB5").has_value());       // no system
+    EXPECT_FALSE(parseIfbKey("").has_value());
+
+    EXPECT_FALSE(parseDcbKey("GPS_IFB5").has_value());
+    EXPECT_FALSE(parseDcbKey(makeGlonassPerSlotIfbKey("GLONASS", '2', 3)).has_value());
+    EXPECT_FALSE(parseDcbKey("GPS_DCBX").has_value());   // trailing junk
+    EXPECT_FALSE(parseDcbKey("DCB").has_value());        // no system
+    EXPECT_FALSE(parseDcbKey("").has_value());
+}
+
 // ============================================================================
 // 4b. Per-FCN-slot GLONASS IFB keys — "GLONASS_IFB<band>_k<±slot>"
 // ============================================================================

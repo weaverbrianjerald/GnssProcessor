@@ -69,8 +69,29 @@ namespace GnssProcessor {
                        ProductParser& product_parser);
 
         /**
+         * @brief Clip every station's parse to the first @p span_s seconds.
+         *
+         * Forwarded to each station's @c RinexParser before @c load().  Lets a
+         * caller that only consumes a short data span (e.g. a network solve
+         * bounded by @c processing.max_duration_s) avoid parsing — and the
+         * synchronizer avoid copying — the discarded 23h tail of full-day
+         * files.  Must be called before @c load() to take effect.  A value
+         * @c <= 0 (the default) means "no window" (parse full files), so the
+         * baseline DD path is unchanged unless it opts in.
+         *
+         * @param span_s Maximum span in seconds from each file's first epoch.
+         */
+        void setParseWindowSeconds(double span_s) { parse_window_s_ = span_s; }
+
+        /**
          * @brief Parse each station's RINEX observation file.
-         * @return True if every station parsed successfully; false if any station failed.
+         *
+         * A station that fails to parse is logged and left @c loaded=false; it
+         * is skipped by @c synchronize() rather than sinking the whole roster.
+         * @return True if every station parsed successfully; false if any
+         *         station failed (callers that tolerate partial rosters should
+         *         check @c parserOf() for the stations they require instead of
+         *         treating a false return as fatal).
          */
         bool load();
 
@@ -133,6 +154,7 @@ namespace GnssProcessor {
 
         std::map<std::string, StationData> stations_;
         std::vector<SyncedEpoch> synced_;
+        double parse_window_s_{ 0.0 };  ///< Per-file parse-window span (s); <=0 means unbounded.
     };
 
 } // namespace GnssProcessor

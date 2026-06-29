@@ -94,6 +94,21 @@ public:
     void logAmbiguities(const GnssTime& time, const StateManager& state_manager) const;
 
     /**
+     * @brief Write receiver code-bias (DCB / per-band IFB) state estimates to the
+     *        code-bias trace file (long format: week,tow_s,key,value_m,std_m).
+     *
+     * One row per receiver code-bias state held by the @c StateManager — the
+     * per-system DCB and per-band IFB columns allocated under @c estimate_ifb in
+     * uncombined PPP-RTK (and the per-FCN-slot GLONASS IFB).  Lets an analyst see
+     * each receiver hardware-delay state converge; complements the satellite-side
+     * @c sat_bias_trace.csv.
+     *
+     * @param time Epoch time for the snapshot.
+     * @param state_manager StateManager that owns the code-bias state values.
+     */
+    void logReceiverCodeBiases(const GnssTime& time, const StateManager& state_manager) const;
+
+    /**
      * @brief Write per-satellite ionosphere state estimates to the ionosphere trace file.
      *
      * Each row contains satellite ID, slant iono delay estimate, standard deviation
@@ -257,6 +272,7 @@ private:
     mutable std::ofstream residual_trace_;  /**< Output stream for residual trace file. */
     mutable std::ofstream ionosphere_trace_; /**< Output stream for ionosphere trace file. */
     mutable std::ofstream sat_bias_trace_;   /**< Output stream for per-(sat,signal) hardware bias trace file. */
+    mutable std::ofstream code_bias_trace_;  /**< Output stream for receiver code-bias (DCB/IFB) trace file. */
     mutable std::ofstream sat_status_trace_; /**< Output stream for per-satellite epoch status trace file. */
     mutable std::ofstream dop_trace_;        /**< Output stream for per-epoch DOP + sat-count trace file. */
     mutable std::ofstream wls_trace_;       /**< Output stream for WLS trace file. */

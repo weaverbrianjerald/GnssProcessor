@@ -243,11 +243,14 @@ namespace GnssProcessor {
         LogManager& log_manager_;                         /**< Logger for diagnostics. */
         const RinexParser& rinex_parser_;                 /**< RINEX data parser (header/metadata). */
         const double elevation_threshold_;                /**< Elevation mask in degrees. */
-        std::vector<OrbitData> orbits_;                   /**< Loaded satellite orbit records. */
-        std::vector<ClockData> clocks_;                   /**< Loaded satellite clock records. */
-        std::vector<AntennaData> antennas_;               /**< Antenna correction models. */
-        std::vector<BiasData> biases_;                    /**< Receiver/satellite bias entries. */
-        std::vector<ErpData> erps_;                       /**< Earth rotation parameter samples. */
+        // Shared handles to the single cached copy (ProductCache) — read-only
+        // product data referenced, NOT duplicated per Geometry instance (the
+        // per-station memory fix; ~0.5 GB/station of copies otherwise).
+        std::shared_ptr<const std::vector<OrbitData>>   orbits_;    /**< Satellite orbit records (shared). */
+        std::shared_ptr<const std::vector<ClockData>>   clocks_;    /**< Satellite clock records (shared). */
+        std::shared_ptr<const std::vector<AntennaData>> antennas_;  /**< Antenna correction models (shared). */
+        std::shared_ptr<const std::vector<BiasData>>    biases_;     /**< Receiver/satellite bias entries (shared). */
+        std::shared_ptr<const std::vector<ErpData>>     erps_;       /**< Earth rotation parameter samples (shared). */
         std::vector<double> klobuchar_coeffs_;            /**< Klobuchar ionospheric coefficients. */
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priorities per GNSS system. */
 

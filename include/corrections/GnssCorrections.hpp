@@ -25,6 +25,7 @@
 #include <fstream>
 #include <set>
 #include <unordered_map>
+#include <memory>
 #include <vector>
 #include <Eigen/Dense>
 #include <string>
@@ -87,9 +88,9 @@ namespace GnssProcessor {
          */
         GnssCorrections(LogManager& log_mgr,
             const GnssConfig& config,
-            const std::vector<ClockData>& clocks,
-            const std::vector<ErpData>& erps,
-            const std::vector<BiasData>& biases,
+            std::shared_ptr<const std::vector<ClockData>> clocks,
+            std::shared_ptr<const std::vector<ErpData>> erps,
+            std::shared_ptr<const std::vector<BiasData>> biases,
             const RinexParser& rinex);
 
         /**
@@ -478,10 +479,14 @@ namespace GnssProcessor {
 
     private:
         LogManager& log_manager_;                         ///< Logger for debugging and info
-        std::vector<ClockData> clocks_;                   ///< Satellite clock data samples
-        std::vector<ErpData> erps_;                       ///< Earth rotation parameters
-        std::vector<BiasData> biases_;                    ///< Bias correction entries
-        std::vector<OrbitData> orbits_;                   ///< Satellite orbit/ephemeris data
+        // Shared handles to the single cached copy (ProductCache) — read-only
+        // clock/ERP/bias data is REFERENCED, not duplicated per instance (the
+        // per-station memory fix).  Non-null by default so deref is always safe;
+        // an SSR consumer that overrides clocks rebinds its own shared_ptr.
+        std::shared_ptr<const std::vector<ClockData>> clocks_{std::make_shared<const std::vector<ClockData>>()};  ///< Satellite clock samples (shared).
+        std::shared_ptr<const std::vector<ErpData>>   erps_{std::make_shared<const std::vector<ErpData>>()};       ///< Earth rotation parameters (shared).
+        std::shared_ptr<const std::vector<BiasData>>  biases_{std::make_shared<const std::vector<BiasData>>()};    ///< Bias entries (shared).
+        std::shared_ptr<const std::vector<OrbitData>> orbits_{std::make_shared<const std::vector<OrbitData>>()};   ///< Orbit records (shared; currently unused/empty).
 
         // Optional external references (nullable pointers)
         const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)

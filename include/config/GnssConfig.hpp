@@ -1153,6 +1153,43 @@ namespace GnssProcessor {
         bool enableGlonassIfb() const { return enable_glonass_ifb_; }
 
         /**
+         * @brief Admit GLONASS to the PPP-RTK NETWORK producer (code-only scope).
+         *
+         * When set, GLONASS satellites contribute to the joint network solve with
+         * a per-satellite shared CLOCK column (the integer/clock product), while
+         * the FDMA receiver group delay is carried by the per-FCN-slot receiver
+         * IFB as a LOCAL nuisance (Schur-eliminated, never emitted).  NO satellite
+         * phase bias is emitted for GLONASS: a single shared per-(sat,signal) phase
+         * bias is unphysical for FDMA (the receiver group-delay-vs-frequency
+         * response is per-receiver/per-antenna and so not portable to consumers).
+         *
+         * Network mode only.  Requires uncombined PPP-RTK and the per-slot IFB
+         * machinery; @c loadNetworkSection_ forces @c estimate_ifb +
+         * @c enable_glonass_ifb on and requires GLONASS in @c active_systems (its
+         * observations would otherwise pin the receiver clock and corrupt the
+         * GPS/Galileo products).  Default false keeps the GPS+Galileo network
+         * byte-identical.
+         */
+        bool enableGlonassNetwork() const { return enable_glonass_network_; }
+
+        /**
+         * @brief Estimate satellite CODE biases (OSB) in the PPP-RTK network producer.
+         *
+         * When on (@c network.estimate_sat_code_bias), the network promotes the
+         * per-(satellite, signal) code bias to a first-class shared border column
+         * (GPS + Galileo, raw code signals) so the engine emits its OWN satellite
+         * code-bias product instead of relying on an external @c .BIA.  It is the
+         * single switch that lands the coupled W6 slice: @c loadNetworkSection_
+         * also forces @c estimate_sat_biases / @c promote_sat_code_bias / @c
+         * estimate_ifb (receiver DCB) on and the GIM ionosphere weighting on (the
+         * load-bearing iono constraint that makes the satellite DCB observable),
+         * and forces @c enable_code_phase_bias OFF so the network estimates the
+         * full bias from scratch rather than a residual to @c .BIA.  Default false
+         * keeps the clock+phase-bias-only V1 network byte-identical.
+         */
+        bool estimateNetworkSatCodeBias() const { return estimate_network_sat_code_bias_; }
+
+        /**
          * @brief Use the CIO-based IAU 2000A/2006 ECI↔ECEF frame transform.
          *
          * When true, Sun/Moon positions (and therefore solid-Earth tide,
@@ -2178,6 +2215,8 @@ namespace GnssProcessor {
         bool enable_between_satellite_sd_;                ///< Between-satellite single-difference operator in measurement model.
         bool enable_glonass_bssd_;                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
+        bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
+        bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
         bool enable_cio_frame_{false};                    ///< Use the CIO IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; legacy equinox chain when off.
         double bssd_pivot_min_elevation_deg_;              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
         double pivot_slip_min_cycles_;                     ///< Minimum |median SD residual| in band-wavelength cycles for pivot-slip detection.  0 disables.

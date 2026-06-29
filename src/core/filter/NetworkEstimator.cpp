@@ -77,8 +77,24 @@ Eigen::Index NetworkEstimator::phaseBiasColumn(const std::string& sat,
     return index_.at(key_(sat, SharedParamKind::PhaseBias, signal));
 }
 
+void NetworkEstimator::reset() {
+    // Clear the shared-column layout for a new epoch.  index_ (a few-hundred-node
+    // map) and columns_ are small; their per-epoch churn is negligible next to the
+    // per-station Schur blocks, which the retained neq_ pool (reset in beginEpoch)
+    // now reuses.  Flags are cleared so a fresh register → beginEpoch sequence is
+    // valid; neq_ itself is NOT reconstructed here (beginEpoch reuses it).
+    index_.clear();
+    columns_.clear();
+    shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
+    epoch_open_ = false;
+    solved_ = false;
+}
+
 void NetworkEstimator::beginEpoch() {
-    neq_ = NetworkNormalEquations(numShared());
+    // Reuse the kernel's retained per-station allocations rather than constructing
+    // a fresh NetworkNormalEquations (which would free + reallocate every station
+    // block each epoch — the memory-churn the network producer accumulates).
+    neq_.reset(numShared());
     epoch_open_ = true;
     solved_ = false;
 }
@@ -192,6 +208,19 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
         delta_rhs(c)     += p.info * p.value;
     }
+    neq_.addSharedInfo(delta_info, delta_rhs);
+}
+
+void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
+                                               const Eigen::VectorXd& z,
+                                               double weight) {
+    if (H.cols() != numShared() || H.rows() != z.size()) {
+        throw std::invalid_argument(
+            "NetworkEstimator::addSharedConstraintRows: dimension mismatch");
+    }
+    if (H.rows() == 0 || !(weight > 0.0)) return;
+    const Eigen::MatrixXd delta_info = weight * (H.transpose() * H);
+    const Eigen::VectorXd delta_rhs  = weight * (H.transpose() * z);
     neq_.addSharedInfo(delta_info, delta_rhs);
 }
 
