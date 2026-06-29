@@ -630,14 +630,21 @@ int Application::runNetwork() {
         }
 
         // Receiver inter-frequency-bias (IFB) columns on NON-primary bands: when
-        // estimating the satellite code bias (confined to the two primary bands),
-        // drop the receiver IFB on every other band (the "sys_IFB<band>" states).
-        // Such an IFB drains the code information that otherwise separates that
-        // band's satellite clock from its phase bias (regressing the L5/E5b/...
-        // phase-bias product); dropping it lets that band's code play its V1 role,
-        // its receiver delay folding into the slant iono (the L1-referenced
-        // convention).  The two primary-band receiver DCB ("sys_DCB") is kept, and
-        // the GLONASS per-slot IFB (a different state family) is untouched.
+        // estimating the satellite code bias, drop the receiver IFB on every band
+        // outside the iono-free reference pair (the "sys_IFB<band>" states).  An
+        // EXPLICIT non-primary receiver IFB drains the code information that
+        // otherwise separates that band's satellite clock from its phase bias —
+        // regressing the L5/E5b/... phase-bias product to a near-gauge (verified:
+        // keeping it drives the per-constellation L5Q phase-bias common mode below
+        // the null-space cutoff and withholds the whole epoch).  Dropping it folds
+        // the receiver's non-primary code delay into the per-(rx,constellation)
+        // slant-iono common mode the GIM weighting deliberately leaves free (the
+        // L1-referenced convention); the SATELLITE code bias on that band stays
+        // observable through the GIM's BETWEEN-satellite iono structure (a per-
+        // satellite quantity, so the per-receiver delay averages out across the
+        // network), not through an explicit receiver counterpart.  The two primary-
+        // band receiver DCB ("sys_DCB") is kept, and the GLONASS per-slot IFB (a
+        // different state family) is untouched.
         std::set<int> drop_cols;
         if (config_.estimateNetworkSatCodeBias()) {
             for (const auto& kv : st.sm->getCodeBiasStates()) {
@@ -941,60 +948,37 @@ int Application::runNetwork() {
             const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
             if (parts) est.registerPhaseBias(parts->satellite, parts->signal);
         }
-        // Register the satellite CODE-bias (OSB) columns (W6): every (sat,signal)
-        // any present station carries an OSB state for.  Collected (deduplicated,
-        // first-seen order) for the code-bias datum constraints, the D2 carry-
-        // forward, and the solution trace.  Empty unless estimate_sat_code_bias.
-        // Choose which (sat,signal) satellite code biases become shared columns.
-        // frequency_mode "all" tracks many per-band attribute signals at a subset
-        // of stations; three failure modes make most of them un-estimable as a
-        // shared OSB and would each leave an unpinned null direction that withholds
-        // the epoch:
-        //   * single-station coverage — the satellite code bias is perfectly
-        //     confounded with that one station's receiver code bias;
-        //   * multiple attribute signals on the same band (C2W/C2L/C2S) — each adds
-        //     an unobservable per-signal rx↔sat common mode;
-        //   * a third frequency band (L5/E5b/E6/E5) — too sparsely tracked to
-        //     observe against the slant iono, and estimating its code bias also
-        //     drains the code information that separates that band's satellite
-        //     clock from its phase bias (regressing the phase-bias product).
-        // So confine the OSB to ONE canonical signal (the best-covered, >=2-station)
-        // on each of the two PRIMARY frequency bands per satellite — the iono-free
-        // reference pair (GPS L1/L2, Galileo E1/E5a) the precise products use.  The
-        // dropped single-station / attribute / third-band code biases stay local
-        // nuisances the receiver code bias / slant iono absorbs (the pre-W6 path).
+        // Register the satellite CODE-bias (OSB) columns (W6, full multi-band):
+        // EVERY (sat,signal) — every frequency band AND every tracking channel
+        // (attribute) — that at least two present stations carry an OSB state for.
+        // Collected (deduplicated, first-seen order) for the code-bias datum
+        // constraints, the D2 carry-forward, and the solution trace.  Empty unless
+        // estimate_sat_code_bias.
+        //
+        // The ONLY admission gate is >=2-station coverage: a single-station code
+        // bias is perfectly confounded with that one station's receiver code bias
+        // and cannot be separated, so it stays a local nuisance (its sat-bias state
+        // is pruned below, leaving its raw code row to fold into the receiver
+        // clock / slant iono — the pre-W6 path).  Everything with >=2 stations is a
+        // first-class shared OSB column and is datumed below: the GIM between-
+        // satellite iono structure makes the inter-band DCBs observable, while
+        // same-band channels (C1C vs C1W, C2W vs C2L, ...) need no iono at all
+        // (equal frequency → the receiver and ionosphere terms cancel in the raw
+        // between-channel difference, leaving the satellite inter-channel bias).
+        // The earlier slice confined the OSB to the two lowest bands and so emitted
+        // nothing on a 3rd band; the datum below now pins every registered column.
         std::vector<std::pair<std::string, std::string>> registered_code_keys;
-        {
-            auto bandDigitOf = [](const std::string& s) -> char {
-                return s.size() >= 2 ? s[1] : '\0';
-            };
+        if (config_.estimateNetworkSatCodeBias()) {
             std::map<std::string, int> cb_station_count;   // "sat|signal" -> #stations
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
                 for (const auto& kv : stations[i].sm->getSatBiasStates())
                     ++cb_station_count[kv.first];
             }
-            // Per (sat, band) keep the best-covered (>=2-station) signal, then take
-            // the two lowest-frequency bands per satellite.
-            std::map<std::string, std::map<char, std::pair<std::string, int>>> best;  // sat -> band -> (signal,count)
-            for (const auto& [key, cnt] : cb_station_count) {
-                if (cnt < 2) continue;
-                const auto p = StateKeys::parseSatBiasKey(key);
-                if (!p) continue;
-                auto& slot = best[p->satellite][bandDigitOf(p->signal)];
-                if (cnt > slot.second
-                    || (cnt == slot.second && (slot.first.empty() || p->signal < slot.first)))
-                    slot = {p->signal, cnt};
-            }
             std::set<std::string> keep_keys;
-            for (const auto& [sat, bands] : best) {        // bands sorted by band digit
-                int taken = 0;
-                for (const auto& [b, sigc] : bands) {
-                    if (taken >= 2) break;
-                    keep_keys.insert(sat + "|" + sigc.first);
-                    ++taken;
-                }
-            }
+            for (const auto& [key, cnt] : cb_station_count)
+                if (cnt >= 2) keep_keys.insert(key);
+
             std::set<std::string> cb_seen;
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
@@ -1253,23 +1237,45 @@ int Application::runNetwork() {
             continue;
         }
 
-        // --- Satellite code-bias datum constraints (W6) ---------------------
-        // Adding a per-(sat,signal) code bias opens two gauge freedoms the data
+        // --- Satellite code-bias datum constraints (W6, full multi-band) -----
+        // Each shared per-(sat,signal) code bias opens gauge freedoms the data
         // cannot resolve; fold them here — BEFORE the null-space gate — as pure-
         // gauge rows so the reduced shared system keeps only the per-constellation
         // clock deficiency the explicit clock datum pins (declared_dimension
-        // unchanged).  The two gauges:
-        //   (1) per-satellite IONOSPHERE-FREE combination = 0 — keeps the emitted
-        //       OSB pure-DCB with its IF lump in the estimable clock (else the
-        //       clock and OSB double-count it and break phase consistency); and
-        //   (2) per-CONSTELLATION reference-band sum-to-zero — the absolute DCB
-        //       level the GIM common-mode-free iono weighting deliberately frees.
+        // unchanged).  Generalised to ALL bands and tracking channels, the gauges:
+        //   (1) per-satellite CLOCK-COMMON direction — a constant added to every
+        //       one of a satellite's code biases is absorbed by its estimable
+        //       clock.  Pinned by an ionosphere-free pin on the two lowest distinct-
+        //       frequency signals (a1+a2=1), keeping the emitted OSB pure-DCB with
+        //       its IF lump in the clock (else clock and OSB double-count it); and
+        //   (2) per-(CONSTELLATION, SIGNAL) absolute level — each registered code
+        //       signal's constellation-wide common mode is a gauge the GIM common-
+        //       mode-free iono weighting leaves free.  Pinned by a sum-to-zero over
+        //       the satellites carrying that signal — one row per (constellation,
+        //       signal).  This adopts the standard IGS/AC OSB convention that every
+        //       channel's per-constellation mean is zero (cross-checked against the
+        //       COD .BIA: same-band inter-channel means are ~0 — exactly 0 for
+        //       Galileo and GPS L2, <=0.14 m only on the handful of GPS L1C sats).
+        //       The earlier two-band slice pinned only the lowest band, so every 3rd
+        //       band (GPS L5, Galileo E5b/E6/E5) left an unpinned exact gauge that
+        //       withheld the whole epoch.
+        //       Why per-SIGNAL, not per-band: pinning one representative channel per
+        //       band leaves a *non-co-tracked* same-band channel (e.g. Galileo C5Q
+        //       vs C5X, seen by disjoint receivers so their inter-channel bias is
+        //       unobservable) an unpinned gauge that withholds the epoch at network
+        //       scale.  Per-signal pins every channel's level robustly.  For the
+        //       minority of co-tracked same-band channels whose inter-channel mean IS
+        //       observable, this also fixes that mean to the conventional zero (a
+        //       sub-decimetre effect, per the .BIA cross-check); a connected-component
+        //       datum that pins only genuinely-unobservable levels is future work.
         // These are pure gauge directions (no data information), so any positive
-        // weight fixes them exactly without biasing the estimable (between-
-        // satellite) DCB structure the GIM constraint makes observable.  If the
-        // GIM iono constraint is absent the between-satellite DCBs themselves stay
-        // confounded with the slant iono and the gate trips ("under-specified") —
-        // the coupled-landing safety net.
+        // weight fixes them without biasing the estimable (between-satellite) DCB
+        // structure the GIM makes observable.  Over-covering one level with both a
+        // sum-to-zero and the IF pin is harmless: redundant positive-semidefinite
+        // information cannot create a new near-zero direction (Weyl), so generous
+        // coverage cannot trip the gate — only an UNpinned gauge can.  If the GIM
+        // iono constraint is absent the between-satellite DCBs stay confounded with
+        // the slant iono and the gate trips ("under-specified") — the safety net.
         if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             constexpr double kCodeBiasGaugeWeight = 1.0e3;  // » gate cutoff (1e-9·σmax), « σmax → no spectral inflation
             const Eigen::Index nshared = est.numShared();
@@ -1296,27 +1302,33 @@ int Application::runNetwork() {
             }
 
             std::vector<Eigen::VectorXd> rows;                 // length-nshared constraint Jacobians
-            std::map<std::string, Eigen::VectorXd> dcb_row;    // constellation -> reference-band sum row
 
+            // (2) Per-(constellation, signal) sum-to-zero — one row per registered
+            // signal, summed over the satellites that carry it (keyed
+            // "<constellation>|<signal>").  Pins every channel's absolute level; see
+            // the block header for why this is per-SIGNAL (robust to non-co-tracked
+            // same-band channels at network scale) rather than per-band.
+            std::map<std::string, Eigen::VectorXd> st0_row;
+            for (const auto& kv : registered_code_keys) {
+                Eigen::Index col;
+                try { col = est.codeBiasColumn(kv.first, kv.second); } catch (...) { continue; }
+                const std::string skey =
+                    NetworkSbasis::constellationOf(kv.first) + "|" + kv.second;
+                Eigen::VectorXd& srow = st0_row[skey];
+                if (srow.size() == 0) srow = Eigen::VectorXd::Zero(nshared);
+                srow(col) += 1.0;
+            }
+
+            // (1) Per-satellite ionosphere-free pin (clock-common gauge).
             for (const std::string& sat : sat_order) {
                 std::vector<std::string>& sigs = sat_signals[sat];
                 // Sort by RINEX band digit so the primary dual-frequency pair
-                // (GPS L1/L2, Galileo E1/E5a) is the first two distinct bands; the
-                // lowest-band signal is the per-constellation DCB datum anchor.
+                // (GPS L1/L2, Galileo E1/E5a) is the first two distinct bands.
                 std::sort(sigs.begin(), sigs.end(),
                           [&](const std::string& a, const std::string& b) {
                               return bandDigit(a) < bandDigit(b);
                           });
-                const std::string cons = NetworkSbasis::constellationOf(sat);
-                Eigen::Index ref_col = -1;
-                try { ref_col = est.codeBiasColumn(sat, sigs.front()); } catch (...) { ref_col = -1; }
-                if (ref_col >= 0) {
-                    Eigen::VectorXd& drow = dcb_row[cons];
-                    if (drow.size() == 0) drow = Eigen::VectorXd::Zero(nshared);
-                    drow(ref_col) += 1.0;
-                }
-
-                // (1) IF pin: two lowest DISTINCT-frequency code signals → a1+a2=1.
+                // IF pin: two lowest DISTINCT-frequency code signals → a1+a2=1.
                 const double f1 = freqOf(sat, sigs.front());
                 std::string sig2; double f2 = 0.0;
                 for (size_t k = 1; k < sigs.size(); ++k) {
@@ -1342,7 +1354,7 @@ int Application::runNetwork() {
                 }
                 if (row_ok && row.cwiseAbs().sum() > 0.0) rows.push_back(std::move(row));
             }
-            for (auto& kv : dcb_row)
+            for (auto& kv : st0_row)
                 if (kv.second.size() == nshared && kv.second.cwiseAbs().sum() > 0.0)
                     rows.push_back(std::move(kv.second));
 
@@ -1356,8 +1368,8 @@ int Application::runNetwork() {
             }
             if (!spectrum_diag_done)   // one-shot (spectrum block sets the flag below)
                 log->warn("Network[W6-cb]: nshared={}, n_cb={}, folded {} code-bias gauge "
-                          "rows (IF pins for {} sats + DCB sum-to-zero for {} const)",
-                          est.numShared(), n_cb, rows.size(), sat_order.size(), dcb_row.size());
+                          "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels)",
+                          est.numShared(), n_cb, rows.size(), sat_order.size(), st0_row.size());
         }
 
         // --- Datum + null-space gate + solve --------------------------------
