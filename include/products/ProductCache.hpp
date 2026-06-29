@@ -14,6 +14,7 @@
 
 #include "common/PppTypes.hpp"
 #include "logging/LogManager.hpp"
+#include <memory>
 #include <vector>
 #include <mutex>
 #include <atomic>
@@ -75,21 +76,33 @@ public:
      */
     void clearCache();
 
-    // Const accessors for cached products
-    const std::vector<OrbitData>& getOrbits() const { return orbits_; }
-    const std::vector<ClockData>& getClocks() const { return clocks_; }
-    const std::vector<AntennaData>& getAntennas() const { return antennas_; }
-    const std::vector<BiasData>& getBiases() const { return biases_; }
-    const std::vector<ErpData>& getErps() const { return erps_; }
+    // Const accessors for cached products (deref the shared owner; always non-null).
+    const std::vector<OrbitData>& getOrbits() const { return *orbits_; }
+    const std::vector<ClockData>& getClocks() const { return *clocks_; }
+    const std::vector<AntennaData>& getAntennas() const { return *antennas_; }
+    const std::vector<BiasData>& getBiases() const { return *biases_; }
+    const std::vector<ErpData>& getErps() const { return *erps_; }
     const std::vector<double>& getKlobucharCoeffs() const { return klobuchar_coeffs_; }
     const ClockRefMap& getClockRefSignals() const { return clock_ref_signals_; }
 
+    // SHARED owners — hand these to per-instance model components (Geometry,
+    // GnssCorrections) so they REFERENCE the single cached copy instead of each
+    // copying the (read-only, MB-to-GB) product/antenna vectors.  This is what
+    // eliminates the per-station product duplication at network scale (~0.5 GB ×
+    // N stations otherwise).  Each is const, so sharing is safe; an SSR consumer
+    // that needs to OVERRIDE clocks simply rebinds its own shared_ptr.
+    std::shared_ptr<const std::vector<OrbitData>>   getOrbitsShared() const { return orbits_; }
+    std::shared_ptr<const std::vector<ClockData>>   getClocksShared() const { return clocks_; }
+    std::shared_ptr<const std::vector<AntennaData>> getAntennasShared() const { return antennas_; }
+    std::shared_ptr<const std::vector<BiasData>>    getBiasesShared() const { return biases_; }
+    std::shared_ptr<const std::vector<ErpData>>     getErpsShared() const { return erps_; }
+
     // Get product counts for diagnostics
-    size_t getOrbitCount() const { return orbits_.size(); }
-    size_t getClockCount() const { return clocks_.size(); }
-    size_t getAntennaCount() const { return antennas_.size(); }
-    size_t getBiasCount() const { return biases_.size(); }
-    size_t getErpCount() const { return erps_.size(); }
+    size_t getOrbitCount() const { return orbits_->size(); }
+    size_t getClockCount() const { return clocks_->size(); }
+    size_t getAntennaCount() const { return antennas_->size(); }
+    size_t getBiasCount() const { return biases_->size(); }
+    size_t getErpCount() const { return erps_->size(); }
 
     // Delete copy constructor and assignment operator
     //ProductCache(const ProductCache&) = delete;
@@ -106,12 +119,15 @@ private:
     // Mutex for thread-safe loading
     mutable std::mutex load_mutex_;
     
-    // Cached product data
-    std::vector<OrbitData> orbits_;
-    std::vector<ClockData> clocks_;
-    std::vector<AntennaData> antennas_;
-    std::vector<BiasData> biases_;
-    std::vector<ErpData> erps_;
+    // Cached product data.  The large read-only vectors are held behind a
+    // shared_ptr<const ...> so model components can share the single copy (see the
+    // getXShared accessors).  Initialized non-null (empty) so getX() is always safe
+    // before loadProducts().
+    std::shared_ptr<const std::vector<OrbitData>>   orbits_{std::make_shared<const std::vector<OrbitData>>()};
+    std::shared_ptr<const std::vector<ClockData>>   clocks_{std::make_shared<const std::vector<ClockData>>()};
+    std::shared_ptr<const std::vector<AntennaData>> antennas_{std::make_shared<const std::vector<AntennaData>>()};
+    std::shared_ptr<const std::vector<BiasData>>    biases_{std::make_shared<const std::vector<BiasData>>()};
+    std::shared_ptr<const std::vector<ErpData>>     erps_{std::make_shared<const std::vector<ErpData>>()};
     std::vector<double> klobuchar_coeffs_;
     ClockRefMap clock_ref_signals_;
 

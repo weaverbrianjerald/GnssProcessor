@@ -473,6 +473,40 @@ parseGlonassPerSlotIfbKey(std::string_view key) {
     return GlonassPerSlotIfbKeyParts{ band, neg ? -mag : mag };
 }
 
+/// Decomposed receiver per-band IFB key ("<system>_IFB<band>").
+struct IfbKeyParts {
+    std::string system;  ///< system name string (e.g. "GPS", "Galileo")
+    char        band;    ///< RINEX frequency-band digit
+};
+
+/// Parse a receiver-common per-band IFB key "<system>_IFB<band>".  Returns
+/// @c std::nullopt for the per-slot GLONASS form ("<system>_IFB<band>_k<±slot>",
+/// which carries its own central-channel datum) or any malformed shape.  This is
+/// the inverse of @c makeIfbKey and the receiver-common counterpart to
+/// @c parseGlonassPerSlotIfbKey — letting a caller select the receiver-common
+/// code-bias columns (the ones a network common-mode pin / S-basis datum acts on)
+/// while skipping the SD-surviving per-slot GLONASS columns.
+inline std::optional<IfbKeyParts> parseIfbKey(std::string_view key) {
+    if (isGlonassPerSlotIfbKey(key)) return std::nullopt;   // per-slot, not per-band
+    const auto ifb = key.find(kIfbInfix);
+    if (ifb == std::string_view::npos || ifb == 0) return std::nullopt;
+    if (key[ifb - 1] != kCodeBiasDelimiter) return std::nullopt;     // need "<sys>_IFB"
+    const auto band_pos = ifb + kIfbInfix.size();
+    if (band_pos + 1 != key.size()) return std::nullopt;             // exactly one band char
+    return IfbKeyParts{ std::string(key.substr(0, ifb - 1)), key[band_pos] };
+}
+
+/// Parse a receiver DCB key "<system>_DCB".  Returns the system name string, or
+/// @c std::nullopt unless @p key is exactly "<system>_DCB".  Inverse of
+/// @c makeDcbKey.
+inline std::optional<std::string> parseDcbKey(std::string_view key) {
+    const auto dcb = key.find(kDcbInfix);
+    if (dcb == std::string_view::npos || dcb == 0) return std::nullopt;
+    if (key[dcb - 1] != kCodeBiasDelimiter) return std::nullopt;     // need "<sys>_DCB"
+    if (dcb + kDcbInfix.size() != key.size()) return std::nullopt;   // nothing after "DCB"
+    return std::string(key.substr(0, dcb - 1));
+}
+
 // ===========================================================================
 // 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
 // ---------------------------------------------------------------------------

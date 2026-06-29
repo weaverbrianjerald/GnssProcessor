@@ -240,6 +240,7 @@ namespace GnssProcessor {
 
         try {
             observations_.clear();
+            obs_layouts_.clear();   // rebuilt per-system from this file's header
             header_ = RinexHeader(); // Reset header
             time_of_first_obs_ = GnssTime{ 0, 0.0 };
             glonass_freq_slots_.clear();
@@ -639,6 +640,10 @@ namespace GnssProcessor {
                             obs.receiver_id = header_.marker_name;
 
                             auto obs_types = header_.obs_types[system];
+                            // Share one obs-code layout across every observation of this
+                            // system (codes stored once); pre-size the flat value stores so
+                            // the operator[] writes below hit existing indices.
+                            obs.attachLayout(getObsLayout(system, obs_types));
                             std::istringstream data_iss(line.substr(3));
                             for (size_t j = 0; j < obs_types.size(); ++j) {
                                 // Apply the processing.rinex_types filter: skip any
@@ -919,6 +924,24 @@ namespace GnssProcessor {
                             obs.system      = system;
                             obs.time        = epoch_time;
                             obs.receiver_id = header_.marker_name;
+
+                            // Share one obs-code layout per system.  RINEX 2 codes are
+                            // stored in their translated v3 form (see translateV2ObsCodeToV3
+                            // below), so the layout is built from the translated declared
+                            // list — computed once per system, then cached.
+                            {
+                                auto cached = obs_layouts_.find(system);
+                                if (cached != obs_layouts_.end()) {
+                                    obs.attachLayout(cached->second);
+                                } else {
+                                    std::vector<std::string> v3_codes;
+                                    v3_codes.reserve(n_obs_types);
+                                    for (size_t j = 0; j < n_obs_types; ++j)
+                                        v3_codes.push_back(
+                                            translateV2ObsCodeToV3(shared_obs_types[j], system));
+                                    obs.attachLayout(getObsLayout(system, v3_codes));
+                                }
+                            }
 
                             for (size_t j = 0; j < n_obs_types; ++j) {
                                 // Apply the processing.rinex_types filter.  RINEX 2.x

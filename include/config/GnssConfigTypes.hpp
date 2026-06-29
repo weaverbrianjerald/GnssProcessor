@@ -142,6 +142,22 @@ namespace GnssProcessor {
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
+
+        // --- Per-station compute parallelism (PASS A geometry + PASS B assembly) ---
+        // The per-station geometry/measurement-model work is embarrassingly
+        // parallel (each station owns an independent StateManager/PppModel/
+        // MeasurementModel); only the shared-estimator scatter (est.addStation)
+        // serializes.  When activated, PASS A/B compute runs one thread per
+        // station and the scatter stays serial in deterministic station order, so
+        // the float solution is BIT-IDENTICAL to a serial run regardless of thread
+        // count.  Below the threshold the loop runs serially (no fork-join cost).
+        bool parallel_stations{ true };   ///< Master enable for per-station threading (only takes effect above @ref parallel_min_stations).
+        int  parallel_min_stations{ 10 }; ///< Parallelize only when the network has STRICTLY MORE than this many stations.
+        int  parallel_max_threads{ 0 };   ///< Optional worker-thread cap (0 => omp_get_max_threads()).
+
+        // --- Visualization traces (consumed by the pyviz network viewers) ---
+        bool trace_stations{ true };      ///< Emit a static @c network_stations.csv roster (station id, role, ECEF) once at startup.  Cheap (one tiny file); drives the worldmap viewer so it reflects the stations that actually loaded.
+        bool trace_ionosphere{ false };   ///< Emit @c network_ionosphere.csv: per-station, per-satellite back-substituted slant ionosphere (m) + elevation/azimuth each emitted epoch, for the ionospheric pierce-point map.  O(stations x sats x epochs) — off by default; enable for the iono viz.
     };
 
     /**
@@ -968,6 +984,16 @@ namespace GnssProcessor {
         /// constant over hours; 1e-10 allows ~0.01 mm/sqrt(30 s) drift.
         double sat_bias{ 1e-10 };
 
+        /// Per-satellite signal CODE bias (m*m/s).  Network producer
+        /// (PPP_RTK_Network) only — the estimable satellite code-bias (OSB) state
+        /// when @c network.estimate_sat_code_bias is on.  Satellite code hardware
+        /// delays are very stable (geodetic-grade DCBs drift ~mm/day), so the
+        /// default mirrors @c sat_bias (1e-10, ~0.01 mm/sqrt(30 s)).  Separate
+        /// from @c sat_bias so the network can tune the shared OSB carry-forward
+        /// independently of the single-receiver fallback bias.  Config key:
+        /// @c sat_code_bias_q.
+        double sat_code_bias{ 1e-10 };
+
         /// Per-satellite signal PHASE bias (m*m/s).  Network producer
         /// (PPP_RTK_Network) only — the estimable satellite phase-bias state.
         /// Phase hardware delays are even more stable than code, so the default
@@ -1634,6 +1660,7 @@ namespace GnssProcessor {
         bool enable_ambiguity_trace{ true };        ///< logs/ambiguity_trace.csv
         bool enable_ionosphere_trace{ true };       ///< logs/ionosphere_trace.csv
         bool enable_sat_bias_trace{ true };         ///< logs/sat_bias_trace.csv
+        bool enable_code_bias_trace{ true };        ///< logs/code_bias_trace.csv (receiver DCB/IFB)
         bool enable_sat_status_trace{ true };       ///< logs/satellite_status_trace.csv
         bool enable_dop_trace{ true };              ///< logs/dop_trace.csv
         bool enable_residual_trace{ true };         ///< logs/measurement_residuals.csv

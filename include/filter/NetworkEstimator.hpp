@@ -100,8 +100,23 @@ public:
 
     // --- One solution epoch -------------------------------------------------
 
+    /**
+     * @brief Clear the shared-column layout for a new epoch, REUSING allocations.
+     *
+     * Call at the top of each epoch (before re-registering the shared parameters)
+     * when the estimator is hoisted out of the epoch loop.  Empties the layout
+     * (@ref index_ / @ref columns_) and the per-epoch flags but RETAINS the
+     * underlying @ref NetworkNormalEquations station-block pool, so the heavy
+     * per-station Schur buffers are reused across epochs instead of being freed
+     * and reallocated (the network producer's memory-churn fix).  Equivalent in
+     * effect to default-constructing a new @c NetworkEstimator each epoch, minus
+     * the large-block heap churn.
+     */
+    void reset();
+
     /// Open a fresh arrowhead system over the current shared layout.  Freezes the
     /// layout for this epoch (no registration after this until the next call).
+    /// Reuses the kernel's retained allocations (see @ref NetworkNormalEquations::reset).
     void beginEpoch();
 
     /**
@@ -182,6 +197,32 @@ public:
      * @ref beginEpoch and before @ref solve.
      */
     void addSharedPrior(const std::vector<SharedPrior>& priors);
+
+    /**
+     * @brief Fold an explicit linear gauge constraint onto the shared border.
+     *
+     * Adds the information form of @p weight·‖@p H x − @p z‖² to the shared
+     * normals: @f$N_{ss} \mathrel{+}= w\,H^\top H,\ u_s \mathrel{+}= w\,H^\top z@f$
+     * (via @ref NetworkNormalEquations::addSharedInfo).  Used by the network driver
+     * to pin the satellite code-bias gauges the data leaves free — the per-
+     * satellite ionosphere-free combination (so the emitted OSB is pure-DCB, its IF
+     * lump staying in the estimable clock) and the per-constellation DCB
+     * sum-to-zero — as tight-but-finite rows folded BEFORE the null-space gate, so
+     * the reduced shared system carries only the per-constellation clock deficiency
+     * the explicit @ref Datum pins.
+     *
+     * Because these rows pin pure GAUGE directions (zero data information), any
+     * positive @p weight fixes them exactly without biasing the estimable
+     * (between-satellite) DCB structure.  Call after @ref beginEpoch and before
+     * @ref solve / the rank gate.
+     *
+     * @param H      Constraint Jacobian (@c k × @ref numShared).
+     * @param z      Constraint target (length @c k; usually 0).
+     * @param weight Row information weight (= 1/σ²) applied to every row.
+     * @throws std::invalid_argument on a dimension mismatch.
+     */
+    void addSharedConstraintRows(const Eigen::MatrixXd& H, const Eigen::VectorXd& z,
+                                 double weight);
 
     /**
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.

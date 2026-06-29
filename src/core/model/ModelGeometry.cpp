@@ -43,7 +43,7 @@ namespace GnssProcessor {
 
         Geometry::Geometry(const GnssConfig& config, ProductCache& cache,
             const RinexParser& rinex, LogManager& log_mgr)
-            : corrections_(log_mgr, config, cache.getClocks(), cache.getErps(), cache.getBiases(), rinex),
+            : corrections_(log_mgr, config, cache.getClocksShared(), cache.getErpsShared(), cache.getBiasesShared(), rinex),
             config_(config),
             planetary_(log_mgr, config.enableCioFrame()),
             troposphere_(config, log_mgr),
@@ -52,21 +52,19 @@ namespace GnssProcessor {
             rinex_parser_(rinex),
             elevation_threshold_(config.getElevationMaskDeg()),
             signal_priorities_(config.getSignalPriorities()),
-            // Initialize references from cache
-            orbits_(cache.getOrbits()),
-            clocks_(cache.getClocks()),
-            antennas_(cache.getAntennas()),
-            biases_(cache.getBiases()),
-            erps_(cache.getErps()),
+            // Share the single cached product copy (no per-instance duplication).
+            orbits_(cache.getOrbitsShared()),
+            clocks_(cache.getClocksShared()),
+            antennas_(cache.getAntennasShared()),
+            biases_(cache.getBiasesShared()),
+            erps_(cache.getErpsShared()),
             klobuchar_coeffs_(cache.getKlobucharCoeffs())
         {
-            // No need to copy data - we now hold references to cache data
-
-            // Update GnssCorrections to use cache references directly
-            //corrections_.setClocksAndErps(cache.getClocks(), cache.getErps());
+            // orbits_/clocks_/antennas_/biases_/erps_ now reference the shared
+            // ProductCache copy via shared_ptr<const> — nothing is duplicated.
 
             log_manager_.getLogger("geometry")->info(
-                "Geometry model initialized: {} orbits, {} clocks, elev_mask={:.1f} deg", orbits_.size(), clocks_.size(), elevation_threshold_
+                "Geometry model initialized: {} orbits, {} clocks, elev_mask={:.1f} deg", orbits_->size(), clocks_->size(), elevation_threshold_
             );
             // Build indices from the cached product vectors so lookups are O(1)
             loadData();
@@ -82,8 +80,10 @@ namespace GnssProcessor {
 
             orbit_index_.clear();
 
-            // Build orbit index: satellite -> vector of pointers to OrbitData
-            for (const OrbitData& od : orbits_) {
+            // Build orbit index: satellite -> vector of pointers to OrbitData.
+            // The index stores raw pointers INTO the shared orbits_ vector; safe
+            // because this Geometry holds a shared_ptr<const> keeping it alive.
+            for (const OrbitData& od : *orbits_) {
                 if (od.satellite.empty()) continue;
                 orbit_index_[od.satellite].push_back(&od);
             }
@@ -228,7 +228,7 @@ namespace GnssProcessor {
             const double cached_t = TimeUtils::continuousGpsSeconds(cached_sun_moon_epoch_);
             const double query_t  = TimeUtils::continuousGpsSeconds(time);
             if (std::abs(query_t - cached_t) > 1e-3) {
-                planetary_.computeSunMoonPosition(time, erps_,
+                planetary_.computeSunMoonPosition(time, *erps_,
                     cached_sun_pos_, cached_moon_pos_);
                 cached_sun_moon_epoch_ = time;
             }

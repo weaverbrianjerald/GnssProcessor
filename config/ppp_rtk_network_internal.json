@@ -123,6 +123,12 @@
   "network": {
     "clock_datum_station": "JPLM00USA",
     "epoch_sync_tolerance_s": 1.0,
+    // Visualization traces (consumed by the pyviz network viewers).  The station
+    // roster (network_stations.csv) is cheap and on by default; the per-station,
+    // per-satellite slant-iono pierce-point trace (network_ionosphere.csv) is
+    // O(stations×sats×epochs) — enable it to drive network_iono_map.
+    "trace_stations": true,
+    "trace_ionosphere": false,
     // Serialize each emitted NetworkSolutionEpoch (estimable sat clock + code/
     // phase bias, plus the per-epoch datum-change flag) to this file so consumer-
     // side experiments can replay the products WITHOUT re-running the network

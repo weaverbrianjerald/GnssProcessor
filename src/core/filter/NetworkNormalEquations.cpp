@@ -85,6 +85,26 @@ NetworkNormalEquations::NetworkNormalEquations(Eigen::Index n_shared)
     }
 }
 
+void NetworkNormalEquations::reset(Eigen::Index n_shared) {
+    if (n_shared < 0) {
+        fail("reset: n_shared must be non-negative");
+    }
+    n_shared_ = n_shared;
+    // setZero(r,c) reuses the existing buffer when the size is unchanged and
+    // reallocates only on a size change.  The shared-block size drifts slowly as
+    // the satellite set changes (one modest matrix, not the per-station pool), so
+    // this is negligible churn.
+    N_ss_.setZero(n_shared, n_shared);
+    u_s_.setZero(n_shared);
+    reduced_N_ss_.setZero(n_shared, n_shared);
+    reduced_u_s_.setZero(n_shared);
+    // Retain the stations_ pool (its dense per-station buffers persist for reuse);
+    // just mark every slot inactive.  This is what eliminates the per-epoch
+    // allocate/free churn — addStation overwrites pooled slots in place.
+    n_active_ = 0;
+    reduced_ = false;
+}
+
 void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
                                            const Eigen::VectorXd& delta_rhs) {
     requireSquare(delta_info, n_shared_, "addSharedInfo: delta_info");
@@ -134,9 +154,17 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     // fewer free gauge than declared and WITHHOLDS every epoch (this was the global
     // PPP-RTK network zero-emit: the two dropped GPS-only stations' bᵀWb summed to
     // exactly the spurious GPS-common pin).
-    Station st;
-    st.N_sr = N_sr_r;
-    st.u_r = u_r_r;
+    //
+    // Build into a REUSED pool slot (its dense buffers persist across epochs — the
+    // Eigen .compute()/assignments below reuse the slot's storage when the size
+    // matches).  Grow the pool only on a new high-water station count.  A station
+    // that throws below leaves n_active_ unadvanced and N_ss_/u_s_ untouched, so
+    // its partially-written slot is simply overwritten by the next addStation —
+    // the same drop-on-singular-station semantics as the old push_back path.
+    if (n_active_ >= stations_.size()) {
+        stations_.emplace_back();
+    }
+    Station& st = stations_[n_active_];
     st.n_local = n_r;
 
     if (n_r > 0) {
@@ -165,14 +193,15 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
         }
     }
 
-    // Local block accepted — commit this station's shared-border contribution
-    // (kept in lock-step with the Schur term reduce() will subtract for it).
+    // Local block accepted — record it + commit this station's shared-border
+    // contribution (kept in lock-step with the Schur term reduce() will subtract).
+    st.N_sr = N_sr_r;
+    st.u_r = u_r_r;
     N_ss_ += N_ss_r;
     u_s_ += u_s_r;
 
-    stations_.push_back(std::move(st));
     reduced_ = false;
-    return stations_.size() - 1;
+    return n_active_++;
 }
 
 std::size_t NetworkNormalEquations::addStationObservations(
@@ -245,7 +274,10 @@ void NetworkNormalEquations::reduce() {
     reduced_N_ss_ = N_ss_;
     reduced_u_s_ = u_s_;
 
-    for (const Station& st : stations_) {
+    // Iterate only the ACTIVE pool slots [0, n_active_) — slots beyond that are
+    // retained allocations from a previous (larger) epoch, not part of this solve.
+    for (std::size_t i = 0; i < n_active_; ++i) {
+        const Station& st = stations_[i];
         if (st.n_local == 0) {
             continue; // no nuisance block to eliminate
         }
@@ -301,7 +333,7 @@ Eigen::VectorXd NetworkNormalEquations::solveSharedConstrained(
 
 Eigen::VectorXd NetworkNormalEquations::reconstructStation(
     std::size_t station, const Eigen::VectorXd& x_s) const {
-    if (station >= stations_.size()) {
+    if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::reconstructStation: "
                                 "station index out of range");
     }
@@ -318,7 +350,7 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
 }
 
 Eigen::Index NetworkNormalEquations::numLocal(std::size_t station) const {
-    if (station >= stations_.size()) {
+    if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::numLocal: "
                                 "station index out of range");
     }

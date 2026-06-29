@@ -116,6 +116,27 @@ public:
     explicit NetworkNormalEquations(Eigen::Index n_shared);
 
     /**
+     * @brief Re-initialize for a new epoch over a (possibly different) shared
+     *        block, REUSING the existing heap allocations.
+     *
+     * Equivalent in result to assigning a freshly-constructed
+     * `NetworkNormalEquations(n_shared)`, but it does NOT free and reallocate the
+     * per-station blocks: the @ref stations_ pool is retained (its count reset to
+     * zero) so each epoch's @ref addStation overwrites a pooled @c Station's dense
+     * buffers in place rather than allocating a new one.  This collapses the
+     * per-epoch large-block allocate/free churn that the process heap would
+     * otherwise retain as committed memory — the dominant driver of the network
+     * producer's memory growth at scale (≈0.5 GB/station for a multi-epoch run).
+     * After a few epochs the pooled buffers reach their high-water size and stop
+     * reallocating entirely.
+     *
+     * @param n_shared Dimension of the shared satellite-parameter block for the
+     *        new epoch (≥ 0).  The shared normals/RHS are zeroed (buffer reused
+     *        when the size is unchanged).
+     */
+    void reset(Eigen::Index n_shared);
+
+    /**
      * @brief Add a deterministic contribution directly to the shared border.
      *
      * Used for exact-gauge S-basis constraints and genuine physical priors on
@@ -262,8 +283,8 @@ public:
 
     /// @return Shared-block dimension @c n_shared.
     Eigen::Index numShared() const { return n_shared_; }
-    /// @return Number of stations added.
-    std::size_t numStations() const { return stations_.size(); }
+    /// @return Number of stations added this epoch (the active pool count).
+    std::size_t numStations() const { return n_active_; }
     /// @return Local dimension of station @p station.
     Eigen::Index numLocal(std::size_t station) const;
     /// @return Whether @ref reduce has run since the last mutation.
@@ -281,7 +302,8 @@ private:
     Eigen::Index n_shared_;       ///< shared-block dimension
     Eigen::MatrixXd N_ss_;        ///< Σ_r N_ss^r + priors (pre-reduction)
     Eigen::VectorXd u_s_;         ///< Σ_r u_s^r + priors (pre-reduction)
-    std::vector<Station> stations_;
+    std::vector<Station> stations_;  ///< per-station block POOL (capacity persists across @ref reset)
+    std::size_t n_active_{0};        ///< number of pool slots in use this epoch (≤ stations_.size())
 
     Eigen::MatrixXd reduced_N_ss_; ///< Ñ_ss (valid when reduced_)
     Eigen::VectorXd reduced_u_s_;  ///< ũ_s  (valid when reduced_)

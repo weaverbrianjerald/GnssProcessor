@@ -41,12 +41,34 @@ class TraceContext:
         first existing default (see :func:`default_log_dir`).
     """
 
-    def __init__(self, log_dir: Optional[str] = None):
+    def __init__(self, log_dir: Optional[str] = None, *,
+                 network_config: Optional[str] = None,
+                 data_root: Optional[str] = None):
         self.log_dir = os.path.abspath(log_dir) if log_dir else default_log_dir()
+        #: Optional path to the NETWORK run's config JSON -- lets the geographic
+        #: viewers resolve station positions/roles when no roster CSV was emitted.
+        self.network_config = os.path.abspath(network_config) if network_config else None
+        #: Optional data root searched for an IONEX GIM (the ionosphere backdrop).
+        self.data_root = os.path.abspath(data_root) if data_root else None
 
     def path(self, csv_name: str) -> str:
         """Full path of a trace CSV inside this run's folder."""
         return os.path.join(self.log_dir, csv_name)
+
+    def find_ionex(self) -> Optional[str]:
+        """Locate an IONEX GIM (``*GIM*.INX``) for the ionosphere backdrop.
+
+        Searches :attr:`data_root` (when set) then the default project ``data``
+        tree, returning the first match (lexicographically) or ``None``.
+        """
+        import glob
+        roots = [r for r in (self.data_root, r"C:\GnssProcessor\data") if r]
+        for root in roots:
+            hits = sorted(glob.glob(os.path.join(root, "**", "*GIM*.INX"),
+                                    recursive=True))
+            if hits:
+                return hits[0]
+        return None
 
     def has_data(self, csv_name: str) -> bool:
         """``True`` if the CSV exists and has at least one *data* row.

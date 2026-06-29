@@ -9,10 +9,12 @@ numpy/pandas/matplotlib.
 
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import html
 from typing import List, Optional, Sequence, Tuple
 
+from .animation import render_gif
 from .backends.base import Backend
 from .viewers.base import ViewerResult
 
@@ -112,7 +114,26 @@ def build_html_report(
                 parts.append("<p class='skip'>(figure '%s' failed to render: %s)</p>"
                              % (html.escape(getattr(fig, "name", "?")),
                                 html.escape(str(exc))))
-        if not res.figures and not res.summary:
+        # Animated figures (GIF movies, e.g. ionosphere over epochs).  Rendered
+        # via the same backend's per-frame PNG path and embedded as a looping
+        # <img>; isolated like static figures so one bad movie can't abort the report.
+        for anim in getattr(res, "animations", []):
+            if anim.title:
+                parts.append(f"<p class='meta'><b>{html.escape(anim.title)}</b> "
+                             f"&middot; {anim.n_frames} frames @ {anim.fps:g} fps</p>")
+            if getattr(anim, "summary", ""):
+                parts.append(f"<pre>{html.escape(anim.summary)}</pre>")
+            try:
+                # Cap animation DPI: an N-frame GIF base64-embedded at full
+                # figure DPI bloats the HTML; 90 keeps movies legible but light.
+                gif = render_gif(anim, backend, dpi=min(dpi, 90))
+                b64 = base64.b64encode(gif).decode("ascii")
+                parts.append(f"<div class='fig'><img src='data:image/gif;base64,{b64}'></div>")
+            except Exception as exc:  # pragma: no cover - defensive
+                parts.append("<p class='skip'>(animation '%s' failed to render: %s)</p>"
+                             % (html.escape(getattr(anim, "name", "?")),
+                                html.escape(str(exc))))
+        if not res.figures and not res.summary and not getattr(res, "animations", []):
             parts.append("<p class='skip'>(no figures produced)</p>")
 
     if skipped:

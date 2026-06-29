@@ -90,6 +90,32 @@ namespace GnssProcessor {
             config_.getSignalPriorities().size(), modeLabel(config_));
     }
 
+    void MeasurementModel::setGlonassSlots(const std::map<std::string, int>& slots) {
+        // Seed this station's frequency helper with its RINEX-header FCN slots so
+        // GLONASS-frequency-dependent Jacobian terms — the iono coefficient
+        // alpha=(f_L1/f)^2 and the per-slot carrier wavelength — use the actual
+        // channel rather than the compiled-in default table.  Mirrors PppModel's
+        // own one-shot seed; the network driver calls this per station.
+        ppp_utils_.setGlonassSlots(slots);
+    }
+
+    double MeasurementModel::carrierFrequency(const std::string& obs_code,
+                                              const std::string& satellite) const {
+        System system = System::Unknown;
+        if (!satellite.empty()) {
+            switch (satellite.front()) {
+                case 'G': system = System::GPS;     break;
+                case 'E': system = System::Galileo; break;
+                case 'R': system = System::GLONASS; break;
+                case 'C': system = System::BeiDou;  break;
+                case 'J': system = System::QZSS;    break;
+                case 'S': system = System::SBAS;    break;
+                default:  system = System::Unknown; break;
+            }
+        }
+        return ppp_utils_.getFrequency(obs_code, system, satellite);
+    }
+
     const SsrCorrectionStore& MeasurementModel::ssrStore() const {
         return ssr_store_override_ ? *ssr_store_override_
                                    : SsrCorrectionStore::getInstance();
@@ -723,6 +749,19 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
                     const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite);
                     if (!std::isfinite(bias.coefficient) || bias.state_key.empty()) continue;
+                    // GLONASS network producer: allocate ONLY the GLONASS per-FCN-slot
+                    // IFB.  GPS/Galileo receiver DCB/IFB states are intentionally absent
+                    // (as in the GPS+Galileo network) — a non-reference-band IFB has no
+                    // IFB-free reference code to anchor the slant iono, so creating one
+                    // adds a per-satellite iono<->IFB<->ambiguity rank deficiency to the
+                    // absolute per-epoch local block.  The GPS+Galileo network avoids it
+                    // by absorbing the receiver code bias into the clock/iono (the L1-
+                    // referenced convention), so we keep those bands IFB-free here.  The
+                    // GLONASS per-slot IFB is the one receiver bias the network needs
+                    // (its FDMA group delay is otherwise unmodellable); its residual
+                    // iono/common-mode gauges are pinned by soft anchors in the driver.
+                    if (config_.enableGlonassNetwork()
+                        && !StateKeys::isGlonassPerSlotIfbKey(bias.state_key)) continue;
                     if (required_code_biases.count(bias.state_key)) continue;
                     required_code_biases.insert(bias.state_key);
                     if (state_manager_.getCodeBiasIndex(bias.state_key) < 0) {
@@ -891,8 +930,19 @@ namespace GnssProcessor {
             }
         };
 
+        // In the PPP-RTK NETWORK producer the satellite code-bias state lifecycle is
+        // owned by ensureNetworkSharedStates (a SHARED border column, allocated and
+        // pruned in lockstep with the satellite clock + phase bias), NOT by this
+        // single-receiver fallback path — exactly as the satellite clock and phase
+        // bias are network-owned.  Skip it here so the two paths never fight over the
+        // same per-(sat,signal) states (the network admits every GPS/Galileo raw code
+        // signal regardless of .BIA coverage; the .BIA/SSR gate below is a user-side
+        // concern that does not apply when the network estimates its own OSB).
+        const bool network_owns_sat_bias =
+            config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
         std::set<std::string> required_sat_biases;
-        if (config_.estimateSatBiases() && config_.isUncombinedEnabled()) {
+        if (!network_owns_sat_bias
+            && config_.estimateSatBiases() && config_.isUncombinedEnabled()) {
             for (const auto& obs : observations) {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type.find('_') != std::string::npos) continue;
@@ -933,7 +983,7 @@ namespace GnssProcessor {
                 }
             }
         }
-        if (config_.estimateSatBiases() && !is_uncombined) {
+        if (!network_owns_sat_bias && config_.estimateSatBiases() && !is_uncombined) {
             for (const auto& obs : observations) {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
@@ -957,7 +1007,7 @@ namespace GnssProcessor {
         // cache so a near-term re-acquisition can warm-restart instead
         // of paying a cold-start re-seed (which is fragile against
         // un-converged neighbor states — see seedSatBias comment).
-        if (config_.estimateSatBiases()) {
+        if (!network_owns_sat_bias && config_.estimateSatBiases()) {
             state_manager_.pruneSatBiasStatesExcept(required_sat_biases);
         }
     }
@@ -979,12 +1029,18 @@ namespace GnssProcessor {
 
         std::set<std::string> required_clock_keys;
         std::set<std::string> required_phase_keys;
+        std::set<std::string> required_code_keys;
 
         for (const auto& obs : observations) {
-            // GLONASS is excluded from the emitted product (FDMA per-signal OSB
-            // is unphysical / FCN-channel dependent) — never give it a shared
-            // satellite column.
-            if (obs.system == System::GLONASS) continue;
+            // GLONASS in the network product (code-only scope, enableGlonassNetwork):
+            // it gets a shared satellite CLOCK column (allocated below), but its
+            // FDMA per-(sat,signal) PHASE BIAS is unphysical (the receiver group-
+            // delay-vs-frequency response is per-receiver/per-antenna), so the
+            // phase-bias branch is skipped for GLONASS.  The receiver group delay
+            // is carried by the per-FCN-slot receiver IFB as a local nuisance.
+            // When the flag is off, GLONASS is excluded entirely (legacy default).
+            if (obs.system == System::GLONASS && !config_.enableGlonassNetwork())
+                continue;
 
             // Mirror the obs-level admission gates in computeMeasurementUpdate's
             // row-assembly loop, so every allocated shared column is written by at
@@ -1002,8 +1058,13 @@ namespace GnssProcessor {
                 if (ref_type.find('_') != std::string::npos) continue;  // raw signals only
                 sat_usable = true;
 
-                // Per-(sat,signal) phase bias on raw phase rows.
+                // Per-(sat,signal) phase bias on raw phase rows.  Skipped for
+                // GLONASS (code-only network scope): a shared per-(sat,signal)
+                // satellite phase bias is unphysical for FDMA, so GLONASS phase
+                // observations contribute to the satellite CLOCK only (the float
+                // ambiguity absorbs the per-receiver phase nuisance).
                 if (config_.estimateSatPhaseBiases()
+                    && obs.system != System::GLONASS
                     && classifyMeasurement(ref_type) == MeasurementType::Phase) {
                     const std::string pk =
                         StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
@@ -1012,6 +1073,25 @@ namespace GnssProcessor {
                     required_phase_keys.insert(pk);
                     if (state_manager_.getSatPhaseBiasIndex(pk) < 0)
                         state_manager_.addSatPhaseBiasState(pk, 0.0);
+                }
+
+                // Per-(sat,signal) CODE bias (OSB) on raw code rows (W6).  Promoted
+                // to a shared border column for GPS + Galileo only — FDMA makes a
+                // single shared per-(sat,signal) code OSB unphysical for GLONASS, so
+                // its receiver group delay stays the per-FCN-slot rx IFB and it
+                // contributes to the satellite CLOCK only.  Allocated at value 0:
+                // like the clock and phase bias this is a SHARED state the network
+                // solve treats as absolute (lin point 0, never written back), so the
+                // innovation carries the full bias and the joint solve recovers it.
+                // The +1 Jacobian is written by buildJacobianRow's sat_bias_term
+                // (gated on estimateSatBiases(), forced on with this flag).
+                if (config_.estimateNetworkSatCodeBias()
+                    && obs.system != System::GLONASS
+                    && classifyMeasurement(ref_type) == MeasurementType::Code) {
+                    const std::string cbk = obs.satellite + "|" + ref_type;  // matches sat_bias_term key
+                    required_code_keys.insert(cbk);
+                    if (state_manager_.getSatBiasIndex(cbk) < 0)
+                        state_manager_.addSatBiasState(cbk, 0.0);
                 }
             }
 
@@ -1030,6 +1110,8 @@ namespace GnssProcessor {
             state_manager_.pruneSatClockStatesExcept(required_clock_keys);
         if (config_.estimateSatPhaseBiases())
             state_manager_.pruneSatPhaseBiasStatesExcept(required_phase_keys);
+        if (config_.estimateNetworkSatCodeBias())
+            state_manager_.pruneSatBiasStatesExcept(required_code_keys);
     }
 
     // ===================================================================

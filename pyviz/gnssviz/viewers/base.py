@@ -12,8 +12,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List
 
+from ..animation import Animation
 from ..figures import Figure
 from ..trace_paths import TraceContext
+
+
+class ViewerSkip(Exception):
+    """Raised by a viewer's ``build`` to declare it has nothing to draw.
+
+    The driver turns this into a *skipped* (not *failed*) entry, with the
+    exception text as the reason.  Used by viewers whose applicability cannot be
+    expressed as a missing ``required_csvs`` -- e.g. the geographic viewers,
+    which depend on a station roster / config / IONEX resolved at build time.
+    """
 
 
 @dataclass
@@ -21,6 +32,7 @@ class ViewerResult:
     """What a viewer produces for one run."""
     figures: List[Figure] = field(default_factory=list)
     summary: str = ""        # plain-text stats block, surfaced in the HTML report
+    animations: List[Animation] = field(default_factory=list)  # GIF movies (e.g. iono over epochs)
 
 
 @dataclass

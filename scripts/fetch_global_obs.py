@@ -11,12 +11,15 @@ station-name match.  Idempotent: an already-present ``.rnx`` is skipped.
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+try:
+    import hatanaka  # bundled RNXCMP 4.x — gzip + Hatanaka decompression, RINEX 2/3/4
+except ImportError:
+    sys.exit("fetch_global_obs.py requires the 'hatanaka' package (pip install hatanaka)")
 
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -61,20 +64,16 @@ def main() -> int:
             if crxgz.exists(): crxgz.unlink()
             continue
 
-        crx = obsdir / f"{long}_R_{yd}0000_01D_{args.rate}_MO.crx"
+        # hatanaka handles gunzip + Hatanaka decompression in one call and
+        # supports RINEX 2/3/4 (the old crx2rnx 4.0.x choked on RINEX 4).
         try:
-            with gzip.open(crxgz, "rb") as f, open(crx, "wb") as g:
-                shutil.copyfileobj(f, g)
+            hatanaka.decompress_on_disk(crxgz, delete=True)   # .crx.gz -> .rnx
         except Exception as e:
-            failed.append((long, f"gunzip:{e}")); print(f"  FAIL gz  {long}"); continue
-        crxgz.unlink()
-
-        r2 = subprocess.run([args.crx2rnx, "-f", str(crx)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        if r2.returncode != 0 or not rnx.exists():
-            failed.append((long, "crx2rnx")); print(f"  FAIL crx {long}: {r2.stderr.decode()[:80]}")
+            failed.append((long, f"decompress:{e}")); print(f"  FAIL cvt {long}: {str(e)[:80]}")
+            if crxgz.exists(): crxgz.unlink()
             continue
-        crx.unlink()
+        if not rnx.exists():
+            failed.append((long, "decompress")); print(f"  FAIL cvt {long}: no .rnx produced"); continue
         ok.append(long); print(f"  OK      {long}")
 
     print(f"\n=== {len(ok)} ok, {len(failed)} failed ===")

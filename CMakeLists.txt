@@ -238,6 +238,8 @@ add_executable(gnss_tests
     tests/test_network_product_io.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
+    tests/test_glonass_network_config.cpp
+    tests/test_codebias_network_config.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_transforms.cpp

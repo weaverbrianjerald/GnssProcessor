@@ -159,15 +159,25 @@ order: `data_download.netrc_path` (if set) → `~/.netrc` → `~/_netrc`
 HTTP 401 / 403 responses include the resolved-path and a hint pointing
 at the CDDIS netrc-creation guide.
 
-**crx2rnx (Hatanaka decompression).** RNXCMP's `crx2rnx` is invoked
-with stderr+stdout captured (via `_popen` / `popen`); failures are
-logged at error level with the exit code and the first ~10 lines of
-output. Resolution order for the executable:
-`data_download.crx2rnx_path` → well-known install dirs (incl.
-`C:/GnssProcessorSupport/exe/crx2rnx.exe`) → `where crx2rnx.exe`
-(Windows) / `which crx2rnx` (Unix). When a `.crx.gz` download
-succeeds but conversion fails, ProductResolver hard-errors rather
-than masking the problem with a `.rnx.gz` fallback.
+**crx2rnx (Hatanaka decompression).** The Python data scripts
+(`bootstrap_internal_data.py`, `fetch_global_obs.py`) decompress via
+the **`hatanaka`** library (pinned in `requirements.txt`; bundles
+RNXCMP 4.x, so RINEX 2/3/**4** all work — the old standalone crx2rnx
+4.0.x rejects RINEX 4 with "format version not valid" and leaves an
+82-byte stub). `bootstrap`'s `crx_to_rnx` keeps the external crx2rnx
+subprocess as a legacy fallback when hatanaka isn't installed.
+
+The C++ production path (`ProductResolver` → `DataDownloader`) still
+shells out: RNXCMP's `crx2rnx` is invoked with stderr+stdout captured
+(via `_popen` / `popen`); failures are logged at error level with the
+exit code and the first ~10 lines of output. Resolution order for the
+executable: `data_download.crx2rnx_path` → well-known install dirs
+(incl. `C:/GnssProcessorSupport/exe/crx2rnx.exe`, upgraded in-place to
+RNXCMP 4.1.0 for RINEX-4 support; the 2015 binary is kept beside it as
+`crx2rnx_2015_rnxcmp.exe.bak`) → `where crx2rnx.exe` (Windows) /
+`which crx2rnx` (Unix). When a `.crx.gz` download succeeds but
+conversion fails, ProductResolver hard-errors rather than masking the
+problem with a `.rnx.gz` fallback.
 
 Either mode produces a `PathResolver::ResolvedPaths` struct that the
 `Application` driver merges into `GnssConfig` via the

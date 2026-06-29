@@ -1396,6 +1396,7 @@ void Application::writeEpochTraces(const GnssTime& current_time,
     trace_logger_->logAmbiguities(gps_time, *state_manager_);
     trace_logger_->logIonosphere(gps_time, *state_manager_);
     trace_logger_->logSatBiases(gps_time, *state_manager_);
+    trace_logger_->logReceiverCodeBiases(gps_time, *state_manager_);
     if (have_applied) {
         trace_logger_->logResiduals(gps_time, applied_meas);
     }

@@ -24,6 +24,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "common/PppTypes.hpp"
+#include "common/ObsValueMap.hpp"
 #include <map>
 #include <string>
 #include <vector>
@@ -77,7 +78,7 @@ namespace GnssProcessor {
          * @return Computed variance in m� (or Hz� / (m/s)� for Doppler).
          */
         double computeVariance(const std::string& obs_type,
-                               const std::map<std::string, double>& measurements,
+                               const ObsValueMap<double>& measurements,
                                double elevation_deg,
                                double default_var) const;
 
@@ -99,7 +100,7 @@ namespace GnssProcessor {
          * @return Computed variance in m�.
          */
         double computeVariance(const std::string& obs_type,
-                               const std::map<std::string, double>& measurements,
+                               const ObsValueMap<double>& measurements,
                                double elevation_deg,
                                double default_var,
                                const std::string& satellite,
@@ -155,7 +156,7 @@ namespace GnssProcessor {
          *     σ²_final = σ² / sin²(el), uniformly to code and phase.
          */
         double computeSnr(const std::string& obs_type,
-                          const std::map<std::string, double>& measurements,
+                          const ObsValueMap<double>& measurements,
                           double elevation_deg,
                           double default_var) const;
 

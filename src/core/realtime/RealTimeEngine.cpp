@@ -1477,6 +1477,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         trace_logger_->logAmbiguities(gps_time, *state_manager_);
         trace_logger_->logIonosphere(gps_time, *state_manager_);
         trace_logger_->logSatBiases(gps_time, *state_manager_);
+        trace_logger_->logReceiverCodeBiases(gps_time, *state_manager_);
         trace_logger_->logResiduals(gps_time, meas_update);
 
         // Satellite-status strip chart: real-time engine has no CSM-driven

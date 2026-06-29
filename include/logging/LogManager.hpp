@@ -8,6 +8,7 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/pattern_formatter.h>
 #include <map>
+#include <mutex>
 #include <chrono>
 
 namespace GnssProcessor {
@@ -200,6 +201,14 @@ namespace GnssProcessor {
     private:
         /// Map of logger name to spdlog logger instance.
         std::map<std::string, std::shared_ptr<spdlog::logger>> loggers_;
+
+        /// Serializes lazy logger CREATION in getLogger().  The fetch of an
+        /// already-created logger is lock-free (std::map::find is data-race-safe
+        /// for concurrent readers); only the first-touch create path locks.  This
+        /// lets the PPP-RTK network producer fetch loggers from its per-station
+        /// worker threads safely (it prewarms every reachable logger first, so no
+        /// insert ever races a concurrent fetch inside a parallel region).
+        std::mutex logger_create_mutex_;
 
         /// Directory where log files are stored.
         std::filesystem::path log_dir_;

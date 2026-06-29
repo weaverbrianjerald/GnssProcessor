@@ -71,7 +71,12 @@ class HLine:
 
 @dataclass
 class TextBox:
-    """Text anchored in axes-fraction coords (MATLAB ``'Units','normalized'``)."""
+    """Text anchored in axes-fraction coords (MATLAB ``'Units','normalized'``).
+
+    Set ``data_coords=True`` to place the text at *data* coordinates instead
+    (``x``/``y`` are then data values, e.g. lon/lat on a geo axes) — used for
+    on-map station labels.
+    """
     x: float
     y: float
     text: str
@@ -81,6 +86,9 @@ class TextBox:
     mono: bool = False           # monospace font (stat read-outs)
     bold: bool = False           # bold weight
     boxed: bool = False          # white background w/ light edge
+    data_coords: bool = False     # x/y are data coords (not axes-fraction)
+    fontsize: float = 9.0
+    zorder: Optional[float] = None
 
 
 @dataclass
@@ -109,7 +117,14 @@ class Markers:
 
 @dataclass
 class Scatter:
-    """A scatter series (MATLAB ``scatter`` / ``plot(...,'o')``)."""
+    """A scatter series (MATLAB ``scatter`` / ``plot(...,'o')``).
+
+    When ``c`` is given, points are coloured by that per-point scalar through the
+    axes ``cmap`` / ``clim`` (the mappable is surfaced for a colorbar) instead of
+    the flat ``color`` — used by the geo viewers to colour station/pierce-point
+    markers by a value (e.g. slant iono).  ``edgecolor`` / ``linewidth`` draw a
+    marker outline (e.g. a white ring around a coloured station dot).
+    """
     x: Sequence
     y: Sequence
     label: Optional[str] = None
@@ -119,6 +134,10 @@ class Scatter:
     alpha: float = 1.0
     axis: str = "left"
     show_in_legend: bool = True
+    c: Optional[Sequence] = None
+    edgecolor: Optional[RGB] = None
+    linewidth: float = 0.0
+    zorder: Optional[float] = None
 
 
 @dataclass
@@ -187,8 +206,25 @@ class PolarScatter:
     label: Optional[str] = None
 
 
+@dataclass
+class Mesh:
+    """A georeferenced scalar grid drawn with ``pcolormesh`` (lon × lat).
+
+    ``lon`` (length ``n_col``) and ``lat`` (length ``n_row``) are cell-CENTRE
+    coordinates; ``grid`` is ``(n_row, n_col)`` with ``NaN`` cells transparent.
+    Coloured through the *axes* ``cmap`` / ``clim`` (set on the :class:`Axes`),
+    with the mappable surfaced so a colorbar can attach.  Used on a ``geo`` axes
+    to paint a global VTEC field behind pierce-point markers.
+    """
+    lon: Sequence
+    lat: Sequence
+    grid: np.ndarray
+    alpha: float = 1.0
+    zorder: Optional[float] = None
+
+
 Trace = Union[Line, StackedArea, HLine, TextBox, Raster, Markers,
-              Scatter, Band, VLine, RgbRaster, PolarScatter, Stem]
+              Scatter, Band, VLine, RgbRaster, PolarScatter, Stem, Mesh]
 
 
 # --------------------------------------------------------------------------- #
@@ -228,7 +264,7 @@ class Axes:
     clim: Optional[tuple] = None
     colorbar: Optional["ColorBar"] = None
 
-    projection: str = "rect"      # 'rect' | 'polar'
+    projection: str = "rect"      # 'rect' | 'polar' | 'geo'
     axis_off: bool = False        # frameless (text-only panels)
 
     # Polar (sky-plot) configuration; ignored unless projection == 'polar'.
@@ -237,6 +273,13 @@ class Axes:
     rlim: Optional[tuple] = None
     rticks: Optional[Sequence[float]] = None
     rtick_labels: Optional[Sequence[str]] = None
+
+    # Geographic (equirectangular) configuration; ignored unless projection ==
+    # 'geo'.  A geo axes plots lon (x, deg) vs lat (y, deg) with a vendored world
+    # coastline backdrop; ordinary Scatter/Line/Mesh/TextBox traces draw on top.
+    geo_extent: Optional[tuple] = None   # (lon_min, lon_max, lat_min, lat_max); None => world
+    coastline: bool = True               # draw the vendored Natural Earth coastline
+    graticule_deg: float = 30.0          # lon/lat gridline spacing (0 => none)
 
 
 @dataclass
