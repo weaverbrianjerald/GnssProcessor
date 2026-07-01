@@ -625,6 +625,8 @@ namespace GnssProcessor {
                                                 "estimate_velocity", false);
         estimate_ifb_             = jval<bool>(json, "estimation.estimate_ifb",
                                                 "estimate_ifb", false);
+        code_bias_reinflate_std_  = jval<double>(json, "estimation.code_bias_reinflate_std",
+                                                "code_bias_reinflate_std", 0.5);
         lock_signals_to_clock_ref_ = jval<bool>(json, "estimation.lock_signals_to_clock_ref",
                                                  "lock_signals_to_clock_ref", false);
         require_bia_for_signals_   = jval<bool>(json, "estimation.require_bia_for_signals",
@@ -1126,6 +1128,42 @@ namespace GnssProcessor {
                       iono_weighting_.common_mode_sigma_m, iono_weighting_.std_scale,
                       iono_weighting_.floor_m, iono_weighting_.elevation_cutoff_deg);
         }
+
+        // Co-estimated global SH-VTEC ionosphere (network producer).  The master
+        // toggle (global_vtec_sh_.enabled) is driven by network.estimate_iono_sh in
+        // loadNetworkSection_; the tuning knobs are parsed here so they are
+        // available regardless of section order.  Defaults are the Stage-1 design
+        // values (degree 4, 450 km shell, loose Kaula/a₀₀ priors).
+        global_vtec_sh_.max_degree = jval<int>(json,
+            "estimation.global_vtec_sh.max_degree", "global_vtec_sh_max_degree", 4);
+        global_vtec_sh_.layer_height_km = jval<double>(json,
+            "estimation.global_vtec_sh.layer_height_km", "global_vtec_sh_layer_height_km", 450.0);
+        global_vtec_sh_.earth_radius_km = jval<double>(json,
+            "estimation.global_vtec_sh.earth_radius_km", "global_vtec_sh_earth_radius_km", 6371.0);
+        global_vtec_sh_.kaula_scale_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.kaula_scale_tecu", "global_vtec_sh_kaula_scale_tecu", 10.0);
+        global_vtec_sh_.q_per_degree = jval<double>(json,
+            "estimation.global_vtec_sh.q_per_degree", "global_vtec_sh_q_per_degree", 1.0e-2);
+        global_vtec_sh_.mean_vtec_prior_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.mean_vtec_prior_tecu", "global_vtec_sh_mean_vtec_prior_tecu", 15.0);
+        global_vtec_sh_.mean_vtec_prior_sigma_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.mean_vtec_prior_sigma_tecu",
+            "global_vtec_sh_mean_vtec_prior_sigma_tecu", 30.0);
+        global_vtec_sh_.representation_sigma_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.representation_sigma_tecu",
+            "global_vtec_sh_representation_sigma_tecu", 5.0);  // matches GlobalVtecShConfig struct default
+        global_vtec_sh_.sun_fixed = jval<bool>(json,
+            "estimation.global_vtec_sh.sun_fixed", "global_vtec_sh_sun_fixed", true);
+        global_vtec_sh_.trace = jval<bool>(json,
+            "estimation.global_vtec_sh.trace", "global_vtec_sh_trace", false);
+        if (global_vtec_sh_.max_degree < 0)         global_vtec_sh_.max_degree = 0;
+        if (global_vtec_sh_.layer_height_km <= 0.0)  global_vtec_sh_.layer_height_km = 450.0;
+        if (global_vtec_sh_.earth_radius_km  <= 0.0) global_vtec_sh_.earth_radius_km = 6371.0;
+        if (global_vtec_sh_.kaula_scale_tecu <= 0.0) global_vtec_sh_.kaula_scale_tecu = 10.0;
+        if (global_vtec_sh_.mean_vtec_prior_sigma_tecu <= 0.0)
+            global_vtec_sh_.mean_vtec_prior_sigma_tecu = 30.0;
+        if (global_vtec_sh_.representation_sigma_tecu <= 0.0)
+            global_vtec_sh_.representation_sigma_tecu = 5.0;
 
         // Ambiguity resolution
         ar_mode_            = jval<int>(json, "estimation.ambiguity_resolution.mode",
@@ -2576,12 +2614,16 @@ namespace GnssProcessor {
             jval<int>(json, "network.parallel_min_stations", "parallel_min_stations", 10);
         network_config_.parallel_max_threads =
             jval<int>(json, "network.parallel_max_threads", "parallel_max_threads", 0);
+        network_config_.parallel_reduce =
+            jval<bool>(json, "network.parallel_reduce", "parallel_reduce", false);
 
         // --- Visualization traces (pyviz network viewers) ---
         network_config_.trace_stations =
             jval<bool>(json, "network.trace_stations", "trace_stations", true);
         network_config_.trace_ionosphere =
             jval<bool>(json, "network.trace_ionosphere", "trace_ionosphere", false);
+        network_config_.trace_slip_events =
+            jval<bool>(json, "network.trace_slip_events", "trace_slip_events", false);
 
         if (network_config_.clock_datum_station.empty()) {
             network_config_.clock_datum_station = network_config_.stations.front().name;
@@ -2625,6 +2667,20 @@ namespace GnssProcessor {
         // keeps them in lockstep behind the one flag.
         estimate_network_sat_code_bias_ = jval<bool>(
             json, "network.estimate_sat_code_bias", "estimate_sat_code_bias", false);
+
+        // Co-estimated global SH-VTEC ionosphere.  This REPLACES the external GIM as
+        // the iono constraint that makes the satellite DCB observable, so it implies
+        // — and forces on — the whole W6 satellite code-bias slice.  Setting it here
+        // (before the W6 chain below) lets that chain fire unchanged; the driver then
+        // uses the SH row builder instead of the external-GIM one and does NOT load a
+        // GIM (the two iono sources are never double-applied).
+        estimate_network_iono_sh_ = jval<bool>(
+            json, "network.estimate_iono_sh", "estimate_iono_sh", false);
+        if (estimate_network_iono_sh_) {
+            estimate_network_sat_code_bias_ = true;   // SH co-estimation is the W6 iono constraint
+            global_vtec_sh_.enabled         = true;
+        }
+
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
             promote_sat_code_bias_ = true;   // estimate it on every raw code row (not fallback-only)
@@ -2652,6 +2708,19 @@ namespace GnssProcessor {
         } else {
             log->info("Network producer (V1): satellite code bias deferred "
                       "(estimate_sat_biases / promote_sat_code_bias = false)");
+        }
+
+        if (estimate_network_iono_sh_) {
+            log->info("Network producer (SH-iono): co-estimating the global single-layer "
+                      "SH-VTEC ionosphere (degree {}, shell {:.0f} km, {}) jointly with the "
+                      "satellite code biases — the network's OWN iono constraint REPLACES the "
+                      "external GIM (.INX is NOT loaded; no double-apply). Every coefficient "
+                      "carries a Kaula prior (a₀₀ loose: {:.0f}±{:.0f} TECU) so the null-space "
+                      "rank gate stays at #constellations regardless of coverage.",
+                      global_vtec_sh_.max_degree, global_vtec_sh_.layer_height_km,
+                      global_vtec_sh_.sun_fixed ? "sun-fixed" : "geographic",
+                      global_vtec_sh_.mean_vtec_prior_tecu,
+                      global_vtec_sh_.mean_vtec_prior_sigma_tecu);
         }
 
         // --- GLONASS in the network (code-only: sat clock + per-FCN-slot rx IFB) ---
@@ -2717,6 +2786,141 @@ namespace GnssProcessor {
             return false;
         }
 
+        // --- Phase-leveling: carry per-station ambiguities across epochs ---------
+        // Move the producer from a per-epoch ABSOLUTE snapshot solve to one that
+        // carries each non-pivot station's float ambiguities as a diagonal prior on
+        // its own local block, so carrier-phase precision (not just code) sharpens
+        // the satellite clock/phase-bias/code-bias products.  Additive and purely
+        // local: OFF is byte-identical to today (the bisection anchor for the whole
+        // feature).  q_amb / warmup / max_gap are heuristics flagged for tuning.
+        network_phase_leveling_ =
+            jval<bool>(json, "network.phase_leveling", "phase_leveling", false);
+        network_phase_leveling_q_amb_ =
+            jval<double>(json, "network.phase_leveling_q_amb", "phase_leveling_q_amb", 0.0);
+        network_phase_leveling_warmup_epochs_ =
+            jval<int>(json, "network.phase_leveling_warmup_epochs", "phase_leveling_warmup_epochs", 6);
+        network_phase_leveling_max_gap_s_ =
+            jval<double>(json, "network.phase_leveling_max_gap_s", "phase_leveling_max_gap_s", 120.0);
+        network_phase_leveling_var_floor_m2_ =
+            jval<double>(json, "network.phase_leveling_var_floor_m2", "phase_leveling_var_floor_m2", 0.0);
+        // T0 cycle-slip repair (Increment 2): only meaningful with the carry on.
+        network_cycle_slip_turbo_edit_ =
+            jval<bool>(json, "network.cycle_slip.turbo_edit", "network_cycle_slip_turbo_edit", false);
+        network_cycle_slip_turbo_edit_frac_max_ =
+            jval<double>(json, "network.cycle_slip.turbo_edit_frac_max",
+                         "network_cycle_slip_turbo_edit_frac_max", 0.15);
+        network_cycle_slip_turbo_edit_dn_max_ =
+            jval<int>(json, "network.cycle_slip.turbo_edit_dn_max",
+                      "network_cycle_slip_turbo_edit_dn_max", 50);
+        // IF-phase triple-difference slip DETECTION (this increment): between-
+        // satellite, between-epoch ionosphere-free phase OMC.  Detection-only — a
+        // flagged IF pair refloats BOTH band ambiguities (pending-reseed) so the
+        // carry re-estimates them from data; no MW/GF confirm, no integer repair.
+        // OFF is byte-identical; meaningful for products only with the carry on.
+        network_cycle_slip_if_phase_td_ =
+            jval<bool>(json, "network.cycle_slip.if_phase_td",
+                       "network_cycle_slip_if_phase_td", false);
+        network_cycle_slip_if_phase_td_k_mad_ =
+            jval<double>(json, "network.cycle_slip.if_phase_td_k_mad",
+                         "network_cycle_slip_if_phase_td_k_mad", 8.0);
+        network_cycle_slip_if_phase_td_floor_frac_ =
+            jval<double>(json, "network.cycle_slip.if_phase_td_floor_frac",
+                         "network_cycle_slip_if_phase_td_floor_frac", 1.0);
+        network_cycle_slip_if_phase_td_min_pool_ =
+            jval<int>(json, "network.cycle_slip.if_phase_td_min_pool",
+                      "network_cycle_slip_if_phase_td_min_pool", 30);
+        network_cycle_slip_if_phase_td_ewma_alpha_ =
+            jval<double>(json, "network.cycle_slip.if_phase_td_ewma_alpha",
+                         "network_cycle_slip_if_phase_td_ewma_alpha", 0.15);
+        network_cycle_slip_if_phase_td_shrink_kappa_ =
+            jval<double>(json, "network.cycle_slip.if_phase_td_shrink_kappa",
+                         "network_cycle_slip_if_phase_td_shrink_kappa", 20.0);
+        // Post-fit network RAIM (Increment 3, T2): the safety net for the zero-q carry.
+        network_raim_ =
+            jval<bool>(json, "network.raim", "network_raim", false);
+        network_raim_k_sigma_ =
+            jval<double>(json, "network.raim_k_sigma", "network_raim_k_sigma", 6.0);
+        network_raim_min_stations_ =
+            jval<int>(json, "network.raim_min_stations", "network_raim_min_stations", 3);
+        network_raim_attribution_ =
+            jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
+        network_raim_within_epoch_ =
+            jval<bool>(json, "network.raim_within_epoch", "network_raim_within_epoch", false);
+        network_raim_sigma0_trigger_ =
+            jval<double>(json, "network.raim_sigma0_trigger", "network_raim_sigma0_trigger", 3.0);
+        if (network_phase_leveling_) {
+            if (network_phase_leveling_q_amb_ < 0.0) {
+                log->error("Network: network.phase_leveling_q_amb must be >= 0 (got {}); a "
+                           "negative carry process noise is meaningless.",
+                           network_phase_leveling_q_amb_);
+                return false;
+            }
+            if (network_phase_leveling_q_amb_ == 0.0)
+                log->info("Network producer (phase-leveling): carrying per-station carrier-phase "
+                          "ambiguities with ZERO process noise — the correct random-constant model, "
+                          "so each ambiguity ACCUMULATES carrier-phase precision indefinitely "
+                          "between resets.  Continuity is enforced by the IF-phase / MW-GF slip "
+                          "detectors (refloat), gaps by the {:.0f} s max-gap drop — NOT by "
+                          "continuous dilation.  warmup {} epochs.  Non-pivot ambiguity columns "
+                          "only; the pivot's 1e10 pins still define the phase-bias gauge.",
+                          network_phase_leveling_max_gap_s_,
+                          network_phase_leveling_warmup_epochs_);
+            else
+                log->info("Network producer (phase-leveling): carrying per-station carrier-phase "
+                          "ambiguities across epochs (soft gap-reacquisition q_amb {:.1e} m²/s, "
+                          "warmup {} epochs, max gap {:.0f} s).  Non-pivot ambiguity columns only; "
+                          "the pivot's 1e10 pins still define the phase-bias gauge.",
+                          network_phase_leveling_q_amb_, network_phase_leveling_warmup_epochs_,
+                          network_phase_leveling_max_gap_s_);
+            if (network_cycle_slip_turbo_edit_) {
+                log->info("Network producer (phase-leveling T0): per-station MW+GF TurboEdit "
+                          "cycle-slip REPAIR ENABLED — only confident integer slips (frac ≤ {:.2f}, "
+                          "|dN| ≤ {} cyc) shift the carried ambiguity continuously (value += dN·λ); "
+                          "less-confident detections are LEFT untouched (BIA-less float-MW false "
+                          "positives dominate).  Non-pivot, raw-per-signal ambiguities only.",
+                          network_cycle_slip_turbo_edit_frac_max_,
+                          network_cycle_slip_turbo_edit_dn_max_);
+            }
+        } else if (network_cycle_slip_turbo_edit_) {
+            log->warn("Network: network.cycle_slip.turbo_edit is on but network.phase_leveling is "
+                      "off — T0 slip repair acts on the carried ambiguities, so it is INERT "
+                      "without phase-leveling.  Enable network.phase_leveling too.");
+        }
+        if (network_cycle_slip_if_phase_td_) {
+            if (network_phase_leveling_)
+                log->info("Network producer (IF-phase slip): between-satellite, between-epoch "
+                          "ionosphere-free phase triple-difference slip DETECTION enabled — a "
+                          "flagged IF pair refloats BOTH of its band ambiguities (pending-reseed) "
+                          "so the carry re-estimates them from this epoch's data.  Threshold is "
+                          "elevation-normalized (1/sin el) and per (station, signal-pair): the "
+                          "network pool seeds each station-pair, then an EWMA of its own noise "
+                          "scale takes over as it accumulates clean samples (shrink κ={:.0f}, "
+                          "α={:.2f}).  Non-pivot only; detection-only (no MW/GF confirm, no "
+                          "integer repair).",
+                          network_cycle_slip_if_phase_td_shrink_kappa_,
+                          network_cycle_slip_if_phase_td_ewma_alpha_);
+            else
+                log->info("Network producer (IF-phase slip): detection enabled in DIAGNOSTIC-ONLY "
+                          "mode — network.phase_leveling is off, so there is no carry to refloat; "
+                          "slips are logged but have no product effect (every non-pivot ambiguity "
+                          "is re-estimated free each epoch in the absolute solve).");
+        }
+        if (network_raim_) {
+            if (network_phase_leveling_)
+                log->info("Network producer (RAIM, Increment 3 / T2): post-fit cross-station "
+                          "residual consensus ENABLED — a carried ambiguity whose slip the "
+                          "pre-processors missed is caught when the network's OTHER stations "
+                          "(pinned to their own carries) cannot absorb its leaked shared-clock "
+                          "error and their post-fit residuals spike (>{:.1f}σ); a satellite so "
+                          "flagged at >= {} stations is refloated network-wide (pending-reseed). "
+                          "The redundancy-based safety net that makes zero-process-noise carry sound.",
+                          network_raim_k_sigma_, network_raim_min_stations_);
+            else
+                log->warn("Network: network.raim is on but network.phase_leveling is off — the "
+                          "post-fit RAIM protects the carried ambiguities, so it is INERT without "
+                          "phase-leveling.  Enable network.phase_leveling too.");
+        }
+
         // --- Optional closed-loop integer-recovery harness (held-out consumer) ---
         // A station deliberately NOT in network.stations that consumes the
         // network's emitted SSR products through the user-side PPP-RTK + AR
@@ -2764,6 +2968,31 @@ namespace GnssProcessor {
             }
         }
 
+        // --- Producer-side network ambiguity resolution (network AR) ---
+        // Integer-leveled satellite phase biases (doc §5).  Default OFF so the
+        // float product is bit-identical until explicitly enabled.  Gates are
+        // stricter than the user path (FFR 0.9999, per-pair frac 0.10, partial
+        // AR on) because a wrong network fix poisons every downstream user.
+        {
+            auto& nar = network_config_.ambiguity_resolution;
+            nar.enable               = jval<bool>  (json, "network.ambiguity_resolution.enable",               "network_ar_enable",               false);
+            nar.min_success_rate     = jval<double>(json, "network.ambiguity_resolution.min_success_rate",     "network_ar_min_success_rate",     0.9999);
+            nar.ratio_threshold      = jval<double>(json, "network.ambiguity_resolution.ratio_threshold",      "network_ar_ratio_threshold",      3.0);
+            nar.ratio_upper_bound    = jval<double>(json, "network.ambiguity_resolution.ratio_upper_bound",    "network_ar_ratio_upper_bound",    1e4);
+            nar.nl_max_per_pair_frac = jval<double>(json, "network.ambiguity_resolution.nl_max_per_pair_frac", "network_ar_nl_max_per_pair_frac", 0.10);
+            nar.enable_partial_ar    = jval<bool>  (json, "network.ambiguity_resolution.enable_partial_ar",    "network_ar_enable_partial_ar",    true);
+            nar.wl_cascade           = jval<bool>  (json, "network.ambiguity_resolution.wl_cascade",           "network_ar_wl_cascade",           false);
+            nar.min_epochs           = jval<int>   (json, "network.ambiguity_resolution.min_epochs",           "network_ar_min_epochs",           10);
+            if (nar.enable) {
+                log->info("Network AR ENABLED (producer integer-leveled biases): FFR>={:.4f}, "
+                          "ratio>={:.1f} (<{:.0e}), per-pair frac<={:.2f} cyc, partial_ar {}, "
+                          "wl_cascade {}, min_epochs {}",
+                          nar.min_success_rate, nar.ratio_threshold, nar.ratio_upper_bound,
+                          nar.nl_max_per_pair_frac, nar.enable_partial_ar ? "on" : "off",
+                          nar.wl_cascade ? "on" : "off", nar.min_epochs);
+            }
+        }
+
         log->info("Network mode: {} stations, clock datum station '{}'{}, sync tol {:.3f} s",
                   network_config_.stations.size(),
                   network_config_.clock_datum_station,
@@ -2799,6 +3028,8 @@ namespace GnssProcessor {
         c.estimate_sat_phase_biases_ = false;
         c.promote_sat_code_bias_     = false;
         c.estimate_network_sat_code_bias_ = false;  // producer-only switch; consumer CONSUMES the OSB
+        c.estimate_network_iono_sh_ = false;        // producer-only; the consumer estimates its own local iono
+        c.global_vtec_sh_.enabled   = false;
         // The consumer applies the network's satellite code biases via ssr_bias_term
         // (not gated by enable_code_phase_bias), and inherits enable_code_phase_bias
         // = false from the producer when the network estimates its own OSB — so the

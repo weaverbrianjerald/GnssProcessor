@@ -19,6 +19,20 @@
  * W6b wires in).  The consumer's @c noteSsrDiscontinuity -> @c resetAmbiguity
  * hook turns that increment into a clean ambiguity reset.
  *
+ * It owns the analogous bookkeeping for satellite CODE biases (H1): the
+ * per-(constellation, signal) sum-to-zero datum re-references whenever the
+ * satellite SET carrying a signal changes (rise/set), and the per-satellite
+ * ionosphere-free pin re-references whenever that satellite's distinct-band set
+ * changes — both step the emitted code biases.  The emitter detects both from
+ * the epoch's own @c code_bias_m composition (so replay reproduces the counters
+ * with NO new serialization, exactly as for phase), and also honours the same
+ * @c markDatumChange forced bump (a clock-pivot handover re-references the whole
+ * shared solution).  There is no magnitude threshold for code: the deterministic
+ * set/band-change detectors cover every gauge re-reference, and a code RW noise
+ * step is not a datum discontinuity.  The consumer's @c getCodeBiasDiscontinuity
+ * -> @c reinflateCodeBiasVariance hook turns an increment into a clean receiver
+ * code-bias re-inflation.
+ *
  * Sink B (RTCM-4076 wire encoding) is deferred to Phase 2.
  *
  * NOTE: push into an OWNED (non-singleton) SsrCorrectionStore for the closed
@@ -29,6 +43,7 @@
 #include "rtcm/RtcmTypes.hpp"   // GnssTime, SSR record structs
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -79,14 +94,30 @@ public:
     /// emit — e.g. on a global pivot handover / S-basis re-declaration (W6b).
     void markDatumChange();
 
-    /// Current discontinuity counter for a (sat, signal), or 0 if untracked.
+    /// Current phase-bias discontinuity counter for a (sat, signal), or 0 if untracked.
     int discontinuityCounter(const std::string& sat, const std::string& signal) const;
+
+    /// Current code-bias discontinuity counter for a (sat, signal), or 0 if untracked.
+    int codeBiasDiscontinuityCounter(const std::string& sat, const std::string& signal) const;
 
 private:
     double disc_threshold_m_;
     bool   force_datum_bump_{false};
-    std::map<std::string, int>    disc_counter_;    ///< "sat|signal" -> discontinuity counter.
-    std::map<std::string, double> last_phase_bias_; ///< "sat|signal" -> last emitted bias (m).
+    std::map<std::string, int>    disc_counter_;    ///< "sat|signal" -> phase discontinuity counter.
+    std::map<std::string, double> last_phase_bias_; ///< "sat|signal" -> last emitted phase bias (m).
+
+    // --- Satellite code-bias discontinuity bookkeeping (H1) ---------------
+    // prev_code_satset_ / prev_band_tuple_ are WHOLESALE-REPLACED with the
+    // current epoch's maps inside emitToStore (never merged): a (const,signal)
+    // channel or a satellite that disappears and later reappears is then a
+    // clean first-sighting on both a live run AND a fresh replay process, so
+    // the counters reproduce deterministically.  They update ONLY on an actual
+    // emit (the writer persists only emitted epochs; replay must reproduce the
+    // emitted-only diff sequence).
+    std::map<std::string, int>    code_disc_counter_; ///< "sat|signal" -> code discontinuity counter.
+    std::map<std::string, double> last_code_bias_;    ///< "sat|signal" -> last emitted code bias (m); first-sighting marker.
+    std::map<std::string, std::set<std::string>> prev_code_satset_; ///< "const|signal" -> sats carrying it last emit.
+    std::map<std::string, std::vector<char>>     prev_band_tuple_;  ///< "sat" -> sorted distinct code band-digits last emit (IF-pin proxy).
 };
 
 } // namespace GnssProcessor

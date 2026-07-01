@@ -1292,6 +1292,58 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         }
     }
 
+    // --- SSR code-bias datum re-reference -> receiver code-bias reinflation ---
+    // The network producer references its satellite code biases to a per-(const,
+    // signal) sum-to-zero datum; that level steps by a per-signal common mode
+    // whenever the satellite set carrying a signal changes (rise/set).  The
+    // receiver code-bias (DCB/IFB) state absorbs the step, but its near-frozen
+    // random walk cannot follow a jump in one epoch.  An incremented code-bias
+    // discontinuity counter signals the step — re-inflate the affected
+    // constellation's receiver code-bias states so the next update re-absorbs it
+    // cleanly, the code-domain analog of the phase-bias -> ambiguity reset above.
+    // No-op without receiver code-bias states (estimate_ifb off) or without SSR
+    // code-bias discontinuity counters (post-processing / RTCM streams carry
+    // none — the wire format has no such field), so live RTCM is unaffected.
+    if (config_.estimateIfb()) {
+        const auto& ssr = ssrStore();
+        const double cb_var =
+            config_.codeBiasReinflateStd() * config_.codeBiasReinflateStd();
+        std::set<std::string> reref_systems;   // system-name prefixes whose datum stepped
+        for (const auto& obs : modeled_obs) {
+            for (const auto& kv : obs.modeled) {
+                const std::string& code = kv.first;
+                if (code.empty() || code[0] != 'C') continue;          // code obs only
+                if (code.find('_') != std::string::npos) continue;      // raw signal only
+                if (auto c = ssr.getCodeBiasDiscontinuity(obs.satellite, code)) {
+                    if (state_manager_->noteSsrDiscontinuity(
+                            "CB|" + obs.satellite + "|" + code, *c)) {
+                        reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        log->info("{}SSR code-bias discontinuity: {} {} (datum re-reference)",
+                                  epoch_prefix, obs.satellite, code);
+                    }
+                }
+            }
+        }
+        // Re-inflate every receiver code-bias state of each re-referenced
+        // constellation (keys "<sys>_DCB" / "<sys>_IFB<band>").  Constellation-
+        // scoped (not per-band) for robustness: it reaches the reference-band
+        // DCB — which the receiver clock CANNOT self-heal (the clock is shared
+        // across constellations and across code+phase, so steering it injects a
+        // transient into every other residual) — without a fragile
+        // signal->band->state-key mapping; the handful of extra IFB/DCB states
+        // it touches re-converge within an epoch or two from informative code
+        // under the modest re-inflation variance.
+        for (const auto& [key, idx] : state_manager_->getCodeBiasStates()) {
+            (void)idx;
+            for (const std::string& sys : reref_systems) {
+                if (key.rfind(sys + "_", 0) == 0) {
+                    state_manager_->reinflateCodeBiasVariance(key, cb_var);
+                    break;
+                }
+            }
+        }
+    }
+
     // --- KF measurement update (with outlier / pivot-handover rebuild loop) ---
     // The real-time path previously called update() once and discarded its
     // result, so a NeedsMeasurementRebuild return (post-fit outlier or a forced

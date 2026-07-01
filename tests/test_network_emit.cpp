@@ -17,10 +17,36 @@
 #include "products/NetworkProductEmitter.hpp"
 #include "products/SsrCorrectionStore.hpp"
 
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace GnssProcessor {
 namespace {
 
 const GnssTime kT{2313, 259200.0};
+
+// Build a clock-only epoch from a list of (sat, {signal: code_bias}) — exercises
+// the satellite CODE-bias discontinuity bookkeeping (no phase biases).
+NetworkSolutionEpoch makeCodeEpoch(
+    const GnssTime& t,
+    const std::vector<std::pair<std::string, std::map<std::string, double>>>& sats) {
+    NetworkSolutionEpoch sol;
+    sol.epoch_time  = t;
+    sol.iod_ssr     = 3;
+    sol.provider_id = 42;
+    sol.solution_id = 1;
+    for (const auto& [sat, biases] : sats) {
+        NetworkSatSolution s;
+        s.sat         = sat;
+        s.has_clock   = true;
+        s.clock_c0_m  = 0.0;
+        s.code_bias_m = biases;
+        sol.sats.push_back(s);
+    }
+    return sol;
+}
 
 // One-satellite (G01) solution: clock + C1W code bias + L1C phase bias.
 NetworkSolutionEpoch makeEpoch(const GnssTime& t, double clk, double cbias,
@@ -124,6 +150,122 @@ TEST(NetworkProductEmitterTest, OwnedStoresAreIsolated) {
 
     EXPECT_FALSE(store_a.isEmpty());
     EXPECT_TRUE(store_b.isEmpty());
+}
+
+// --- Satellite code-bias discontinuity bookkeeping (H1) -------------------
+
+// A per-(const,signal) sum-to-zero set re-reference (a satellite for that signal
+// rises/sets) steps every CONTINUING member's code bias -> bump those counters.
+TEST(NetworkProductEmitterTest, CodeBiasBumpsOnSatSetChange) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;
+
+    GnssTime t = kT;
+    // Three GPS sats, each two stable bands (band-tuple [1,2] never changes, so
+    // the bump is attributable purely to the channel set-change).
+    const std::map<std::string, double> two_band{{"C1C", 0.10}, {"C2W", 0.20}};
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", two_band},
+                                          {"G02", two_band},
+                                          {"G03", two_band}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);  // first sight
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G03", "C2W"), 0);
+
+    // G03 sets -> the (G,C1C) and (G,C2W) sets change -> G01,G02 bump on both.
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", two_band},
+                                          {"G02", two_band}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G02", "C1C"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C2W"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G02", "C2W"), 1);
+
+    // The bump is visible to the consumer through the store.
+    auto d = store.getCodeBiasDiscontinuity("G01", "C1C");
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(*d, 1);
+}
+
+// The per-satellite ionosphere-free pin re-references when a satellite's
+// distinct-band set changes WITHOUT a (const,signal) membership change (it drops
+// a band while peers keep the channel populated) -> bump that satellite's
+// surviving signals, and ONLY that satellite's.
+TEST(NetworkProductEmitterTest, CodeBiasBumpsOnIfPinBandChange) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;
+
+    GnssTime t = kT;
+    // G01 on three bands, G02 on two bands.  Both channels (G,C1C)/(G,C5Q) carry
+    // {G01,G02}; (G,C2W) carries only {G01}.
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.1}, {"C2W", 0.2}, {"C5Q", 0.3}}},
+                                          {"G02", {{"C1C", 0.1}, {"C5Q", 0.3}}}}), store);
+
+    // G01 drops C2W: (G,C1C) and (G,C5Q) sets are UNCHANGED ({G01,G02}); (G,C2W)
+    // vanishes (not a continuing-channel set-change).  Only G01's band-tuple
+    // [1,2,5] -> [1,5] changed -> G01's C1C and C5Q bump; G02 untouched.
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.1}, {"C5Q", 0.3}}},
+                                          {"G02", {{"C1C", 0.1}, {"C5Q", 0.3}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C5Q"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G02", "C1C"), 0);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G02", "C5Q"), 0);
+}
+
+// A forced (clock-pivot) datum change bumps every code counter for exactly one
+// emit, even with an identical satellite set and identical biases.
+TEST(NetworkProductEmitterTest, CodeBiasForcedDatumChangeBumpsOneEmit) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;
+
+    GnssTime t = kT;
+    const std::vector<std::pair<std::string, std::map<std::string, double>>> net{
+        {"G01", {{"C1C", 0.1}}}, {"E11", {{"C1C", 0.2}}}};
+    emitter.emitToStore(makeCodeEpoch(t, net), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);
+
+    t.tow += 30.0;
+    emitter.markDatumChange();
+    emitter.emitToStore(makeCodeEpoch(t, net), store);  // identical content
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("E11", "C1C"), 1);
+
+    // Applies to exactly one emit.
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, net), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+}
+
+// An unchanged satellite set + unchanged band composition never bumps, even as
+// the bias value drifts (a code RW step is not a datum discontinuity — there is
+// no magnitude threshold for code).
+TEST(NetworkProductEmitterTest, CodeBiasNoBumpOnSteadyStateOrDrift) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;
+
+    GnssTime t = kT;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.10}, {"C2W", 0.20}}}}), store);
+    t.tow += 30.0;
+    // Same set/bands, biases drift by > a GPS L1 cycle — still no bump.
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.55}, {"C2W", 0.95}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C2W"), 0);
+}
+
+// A wholly new (constellation, signal) channel is a first-sighting -> counter 0,
+// and it does not disturb an unrelated, unchanged channel.
+TEST(NetworkProductEmitterTest, CodeBiasNewChannelFirstSightingNoBump) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;
+
+    GnssTime t = kT;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.1}}}}), store);
+
+    // Introduce a brand-new Galileo channel; GPS is untouched.
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.1}}},
+                                          {"E11", {{"C1C", 0.2}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("E11", "C1C"), 0);  // first sight
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);  // unrelated, steady
 }
 
 } // namespace

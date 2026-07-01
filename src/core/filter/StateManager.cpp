@@ -1357,6 +1357,62 @@ namespace GnssProcessor {
                       std::sqrt(new_variance));
     }
 
+    void StateManager::reinflateCodeBiasVariance(const std::string& key,
+                                                 double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const auto it = code_bias_indices_.find(key);
+        if (it == code_bias_indices_.end()) {
+            logger->debug("reinflateCodeBiasVariance: no code-bias state for {}", key);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("reinflateCodeBiasVariance index out of bounds for {}: idx={}, "
+                          "state_size={}, cov={}x{}",
+                          key, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return;
+        }
+
+        // Refuse to disturb a frozen row.  The undifferenced network consumer
+        // has no frozen pivot, and GLONASS per-slot IFB columns are never
+        // targeted by the code-bias path (GLONASS carries no satellite code
+        // bias in the network); this guard defends against a future caller that
+        // forgets, mirroring reinflateIonosphereVariance.
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("reinflateCodeBiasVariance refused on frozen state {} "
+                         "(idx={}, P_diag={:.3e}); invariant preserved",
+                         key, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double cb_std = config_.getInitialStd().code_bias;
+            logger->warn("reinflateCodeBiasVariance: non-positive variance {} for {}; "
+                         "falling back to initial_std.code_bias² = {}",
+                         new_variance, key, cb_std * cb_std);
+            new_variance = cb_std * cb_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        // Value intentionally preserved: the receiver hardware delay did not
+        // change — only the satellite-bias gauge it is referenced to stepped.
+        // Breaking the (code-bias, rest) covariance partition lets the next
+        // update re-absorb the common-mode step without a multi-epoch transient.
+
+        logger->info("Reinflated code-bias state {} at index {}: "
+                     "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m",
+                     key, idx, prev_value,
+                     std::sqrt(std::max(prev_diag, 0.0)),
+                     std::sqrt(new_variance));
+    }
+
     void StateManager::setIonosphereElevation(const std::string& satellite, double elevation_deg) {
         ionosphere_elevations_[satellite] = elevation_deg;
     }

@@ -135,12 +135,36 @@ namespace GnssProcessor {
         bool          consumer_undifferenced{ false };   ///< Consumer user model.  false = BSSD (legacy: between-satellite single-difference S-transform in the filter).  true = UNDIFFERENCED uncombined PPP-RTK USER (the end-state): no observation-space differencing — apply the network satellite phase biases directly to the raw float and fix per-band ambiguities INDIVIDUALLY via the resolver's internal-SD LAMBDA (no WL/NL cascade, no pivot-handover machinery).  Dissolves the network-bias↔.BIA-frame conflict by dropping the MW WL.
     };
 
+    /**
+     * @brief Producer-side network ambiguity-resolution gates.
+     *
+     * Controls integer fixing of the network's own between-station,
+     * between-satellite double-difference ambiguities so the emitted satellite
+     * phase biases are integer-leveled (their integer part referred to a stable
+     * network datum, fractional part the satellite UPD).  Disabled by default —
+     * the float product is bit-identical until @c enable is set.  Gates are
+     * stricter than the single-station user path because a wrong network fix
+     * poisons every downstream user (see
+     * @c docs/network_ambiguity_resolution_design.md §5).
+     */
+    struct NetworkArConfig {
+        bool   enable{ false };               ///< Master switch; OFF => float product unchanged.
+        double min_success_rate{ 0.9999 };    ///< FFR bootstrap acceptance gate (stricter than the user's 0.999).
+        double ratio_threshold{ 3.0 };        ///< LAMBDA ratio-test backstop.
+        double ratio_upper_bound{ 1e4 };      ///< Reject ratios above this (degenerate covariance).
+        double nl_max_per_pair_frac{ 0.10 };  ///< Max per-DD |float − fixed| (cycles).
+        bool   enable_partial_ar{ true };     ///< Fix the decisively-fixable subset; leave the rest float.
+        bool   wl_cascade{ false };           ///< WL->NL cascade (needs per-station MW aggregation; off in V1).
+        int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
+    };
+
     struct NetworkConfig {
         std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
         std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).
         std::string clock_datum_satellite;    ///< Optional reference satellite pinned for the clock gauge ("" => auto: highest-elevation tracked, per constellation).
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
+        NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default OFF => float product).
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
 
         // --- Per-station compute parallelism (PASS A geometry + PASS B assembly) ---
@@ -154,10 +178,23 @@ namespace GnssProcessor {
         bool parallel_stations{ true };   ///< Master enable for per-station threading (only takes effect above @ref parallel_min_stations).
         int  parallel_min_stations{ 10 }; ///< Parallelize only when the network has STRICTLY MORE than this many stations.
         int  parallel_max_threads{ 0 };   ///< Optional worker-thread cap (0 => omp_get_max_threads()).
+        // Fan the per-epoch Schur reduction across threads too (the @ref
+        // NetworkNormalEquations::reduce station loop).  OFF by default and kept
+        // SEPARATE from @ref parallel_stations because, unlike the build phase (whose
+        // serial-ordered scatter keeps it bit-identical to a serial run), the reduce
+        // fan-out combines per-thread partials in a different summation grouping — so
+        // its result is reproducible for a fixed thread count but ULP-different from
+        // the serial reduce (the network's ill-conditioning amplifies that to ~1e-5
+        // in the products; physically null, but it breaks serial≡parallel
+        // byte-identity).  Enable only for max-speed runs that don't rely on a
+        // serial-vs-parallel byte-diff for regression.  Uses the same thread budget
+        // (@ref parallel_max_threads) and only when @ref parallel_stations is active.
+        bool parallel_reduce{ false };    ///< Parallelize the Schur reduce loop (opt-in; trades serial≡parallel byte-identity for speed).
 
         // --- Visualization traces (consumed by the pyviz network viewers) ---
         bool trace_stations{ true };      ///< Emit a static @c network_stations.csv roster (station id, role, ECEF) once at startup.  Cheap (one tiny file); drives the worldmap viewer so it reflects the stations that actually loaded.
         bool trace_ionosphere{ false };   ///< Emit @c network_ionosphere.csv: per-station, per-satellite back-substituted slant ionosphere (m) + elevation/azimuth each emitted epoch, for the ionospheric pierce-point map.  O(stations x sats x epochs) — off by default; enable for the iono viz.
+        bool trace_slip_events{ false };  ///< Emit the deep-investigation slip log: @c network_if_slip.csv (per-(station,sat,pair) between-epoch IF ΔΔφ + the elevation-normalized / per-station-EWMA threshold decision, every epoch) and @c network_raim.csv (per-(sat,station) post-fit standardized residual + cross-station consensus at any spike).  O(stations x sats x epochs) for the IF file — off by default; enable to debug IF-phase pre-detector and RAIM events.
     };
 
     /**
@@ -872,6 +909,36 @@ namespace GnssProcessor {
         double std_scale = 1.0;             ///< Scale on the GIM RMS-derived per-row pseudo-obs std.
         double floor_m = 0.05;              ///< Lower floor on the per-row pseudo-obs std (m).
         double elevation_cutoff_deg = 10.0; ///< Satellites below this elevation are not GIM-constrained.
+    };
+
+    /**
+     * @brief Co-estimated global single-layer SH-VTEC ionosphere (network producer).
+     *
+     * When @c network.estimate_iono_sh is on, the PPP-RTK network producer
+     * co-estimates its OWN global ionosphere — a sun-fixed spherical-harmonic VTEC
+     * field — jointly with the satellite code biases (W6 OSB), so it no longer
+     * imports an external GIM (`.INX`).  The SH coefficients are SHARED columns in
+     * @ref NetworkEstimator (SharedParamKind::VtecSh); the per-(rx,sat) slant-iono
+     * states are kept and the field is an informative (Kaula-regularized) prior on
+     * their between-satellite structure, reusing the GIM weighting's common-mode-
+     * free R unchanged (so the receiver-DCB ↔ iono level stays free).
+     *
+     * JSON: estimation.global_vtec_sh.{enable, max_degree, layer_height_km,
+     * kaula_scale_tecu, q_per_degree, mean_vtec_prior_tecu, mean_vtec_prior_sigma_tecu,
+     * representation_sigma_tecu, sun_fixed, trace}.
+     */
+    struct GlobalVtecShConfig {
+        bool   enabled = false;                ///< Master toggle (set by network.estimate_iono_sh).
+        int    max_degree = 4;                 ///< Triangular truncation degree N → (N+1)² coeffs.
+        double layer_height_km = 450.0;        ///< Single-layer shell height H (km).
+        double earth_radius_km = 6371.0;       ///< Shell base radius R_e (km).
+        double kaula_scale_tecu = 10.0;        ///< Kaula prior scale: σ_n = kaula_scale/n (TECU) for n≥1.
+        double q_per_degree = 1.0e-2;          ///< Per-degree random-walk q (TECU²/s), scaled by 1/n² for n≥1.
+        double mean_vtec_prior_tecu = 15.0;    ///< a₀₀ climatology mean (TECU) — data-determined, loosely anchored.
+        double mean_vtec_prior_sigma_tecu = 30.0;  ///< a₀₀ prior σ (TECU) — LOOSE (climatology, not an IONEX value).
+        double representation_sigma_tecu = 5.0;    ///< Per-LOS single-layer representativeness σ (VTEC TECU), mapped to slant.  The field is an INFORMATIVE prior on the slant states, not a tight constraint — too tight aliases unrepresentable small-scale TEC into huge low-degree coefficients at global scale.
+        bool   sun_fixed = true;               ///< Expand the field in sun-fixed longitude (λ_ipp − λ_mean_sun).
+        bool   trace = false;                  ///< Write the per-epoch SH coefficient trace (network_vtec_sh.csv).
     };
 
     struct AdaptiveIonoQConfig {

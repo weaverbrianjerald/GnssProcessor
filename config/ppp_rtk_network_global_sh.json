@@ -1,0 +1,214 @@
+// PPP-RTK NETWORK producer — CO-ESTIMATED GLOBAL SH-VTEC IONOSPHERE fixture.
+//
+// Same 3-station internal network as ppp_rtk_network_codebias.json, but the
+// network estimates its OWN global single-layer spherical-harmonic VTEC field
+// (network.estimate_iono_sh = true) jointly with the satellite code biases —
+// so it no longer imports the external GIM (.INX).  This is the self-sufficiency
+// step: own clock + own phase bias + own code bias + own ionosphere.
+//
+// estimate_iono_sh FORCES the whole W6 satellite code-bias slice on (sat code
+// bias + receiver DCB + the iono-weighting common-mode-free R machinery) and
+// switches the iono row builder from the external-GIM target to the co-estimated
+// SH field.  Every SH coefficient carries a Kaula prior (a00 loose climatology),
+// so the null-space rank gate stays at #constellations regardless of coverage.
+//
+// Stage-1 proving slice (per the user): GPS+Galileo, DUAL frequency, SINGLE
+// channel, degree-4 field.  Bring-up runs the 3-station fixture for a 10-minute
+// smoke (gate passes, emits, field/OSB sane); the global GPS+Gal set is the
+// quantitative acceptance.
+{
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [ "GPS", "Galileo" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 10.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 10,
+    "max_duration_s": 600.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ"
+    }
+  },
+
+  "files": {
+    "internal_data_root": "./data",
+    "observation_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx"
+  },
+
+  "estimation": {
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "estimate_ifb": false,
+    "estimate_sat_biases": false,
+    "no_bia_code_downweight": 1.0,
+    "between_satellite_sd": { "enabled": false },
+    // The common-mode-free R is REUSED unchanged by the SH row builder: the large
+    // common_mode_sigma leaves the per-(rx,constellation) iono level free (the
+    // receiver DCB rides in it), so the SH field constrains only the between-
+    // satellite slant-iono structure.  Forced enabled by estimate_iono_sh.
+    "ionosphere_weighting": {
+      "enable": true,
+      "common_mode_sigma_m": 50.0,
+      "std_scale": 1.0,
+      "floor_m": 0.05,
+      "elevation_cutoff_deg": 10.0
+    },
+    // Co-estimated global SH-VTEC field (enabled by network.estimate_iono_sh).
+    "global_vtec_sh": {
+      "max_degree": 4,
+      "layer_height_km": 450.0,
+      "earth_radius_km": 6371.0,
+      "kaula_scale_tecu": 10.0,
+      "q_per_degree": 1.0e-2,
+      "mean_vtec_prior_tecu": 15.0,
+      "mean_vtec_prior_sigma_tecu": 30.0,
+      "representation_sigma_tecu": 2.0,
+      "sun_fixed": true,
+      "trace": true
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      "wl_only": true,
+      "active_systems": [ "GPS" ],
+      "ratio_threshold": 3.0,
+      "ratio_upper_bound": 1e4,
+      "min_success_rate": 0.999,
+      "nl_max_per_pair_frac": 0.15,
+      "elevation_mask": 25.0,
+      "min_epochs": 1,
+      "max_position_sigma_m": 10.0,
+      "hold_variance": 0.001,
+      "wl_max_frac": 0.40
+    },
+    "adaptive_iono_process_noise": { "enable": false }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 1e2,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-9,
+      "ionosphere_q": 1e-3,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-12,
+      "sat_code_bias_q": 1e-10,
+      "sat_phase_bias_q": 1e-12,
+      "sat_clock_q": 1e-2,
+      "system_time_offset_q": 1e-12,
+      "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 1000.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "sat_phase_bias": 10.0,
+      "sat_clock": 1000.0,
+      "system_time_offset": 1000.0
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.002
+    },
+    "stochastic_model": "elevation"
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": true
+  },
+
+  "network": {
+    "clock_datum_station": "JPLM00USA",
+    "epoch_sync_tolerance_s": 1.0,
+    "estimate_iono_sh": true,
+    "trace_ionosphere": true,
+    "product_output_path": "network_products_global_sh.txt",
+    "stations": [
+      {
+        "name": "JPLM00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2493304.9886, -4655214.7866, 3565497.6745 ]
+      },
+      {
+        "name": "P38900USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/p38900usa/P38900USA_R_20241290000_01D_15S_MO.rnx",
+        "position_ecef": [ -2347409.5144, -3968716.0159, 4394004.5932 ]
+      },
+      {
+        "name": "GCGO00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2281621.7499, -1453585.0819, 5756964.8917 ]
+      }
+    ],
+
+    // Held-out consumer applies the network's OWN clock + phase bias + CODE bias
+    // (no .BIA).  BIAS-ONLY (consume_network_clock=false) keeps precise SP3/CLK
+    // for the clock and consumes the network phase + code biases.
+    "closed_loop": {
+      "enable": true,
+      "consumer_undifferenced": true,
+      "consume_network_products": true,
+      "consume_network_clock": false,
+      "ar_mode": 1,
+      "ar_wl_only": false,
+      "ar_active_systems": [ "GPS" ],
+      "station": {
+        "name": "QUIN00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/quin00usa/QUIN00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2517231.5310, -4198594.9212, 4076531.1451 ]
+      }
+    }
+  },
+
+  "data_download": {
+    "enabled": false,
+    "product_source": "COD",
+    "product_type": "FIN",
+    "year": 2024,
+    "doy": 129
+  },
+
+  "logging": {
+    "enable_main_log": true,
+    "enable_ambiguity_resolver": true,
+    "enable_state_trace": true,
+    "enable_ambiguity_trace": true,
+    "enable_residual_trace": true,
+    "enable_dop_trace": true,
+    "enable_sat_status_trace": true,
+    "levels": {
+      "measurement_model": "warn",
+      "state_manager": "warn",
+      "state_initializer": "warn",
+      "ppp_model": "warn",
+      "kalman_filter": "warn",
+      "ambiguity_resolver": "info"
+    }
+  }
+}

@@ -52,7 +52,18 @@ def build_satellite_status(ctx) -> ViewerResult:
     n_epochs = epochs.size
     has_elev = "elevation_deg" in df.columns
 
-    sys_present = [s for s in _SYS_ORDER if (df["system"] == s).any()]
+    # "Used" systems only: a constellation present in the trace but entirely
+    # NoModel (code 7) -- e.g. an active_systems entry with no signal_priorities,
+    # so every satellite is skipped -- carries no information and is dropped from
+    # the default view.  Keep a system if it has any non-NoModel sample (which
+    # subsumes "has any Clean data").
+    _NOMODEL = 7
+    present_all = [s for s in _SYS_ORDER if (df["system"] == s).any()]
+    sys_present = [
+        s for s in present_all
+        if np.any(df.loc[df["system"] == s, "status_code"].to_numpy(float) != _NOMODEL)
+    ]
+    hidden = [s for s in present_all if s not in sys_present]
     figures = []
     for sys_name in sys_present:
         d = df[df["system"] == sys_name]
@@ -85,7 +96,7 @@ def build_satellite_status(ctx) -> ViewerResult:
             cmap=_STATUS_COLORS, clim=(-0.5, 7.5),
             colorbar=ColorBar(label="Status", ticks=_TICKS, tick_labels=_TICK_LABELS)))
 
-    return ViewerResult(figures=figures, summary=_summary(df, sys_present, epochs))
+    return ViewerResult(figures=figures, summary=_summary(df, sys_present, epochs, hidden))
 
 
 def _prn_sort(sats):
@@ -94,7 +105,7 @@ def _prn_sort(sats):
                   else (1, uniq.index(s)))
 
 
-def _summary(df, sys_present, epochs) -> str:
+def _summary(df, sys_present, epochs, hidden=()) -> str:
     out = ["=== Satellite Status Summary ===",
            f"Epochs     : {epochs.size}",
            f"Span (GPS) : {pd.Timestamp(epochs[0])} -> {pd.Timestamp(epochs[-1])}",
@@ -111,6 +122,9 @@ def _summary(df, sys_present, epochs) -> str:
             return np.sum(code == c) / ne if ne else 0.0
         out.append(f"{sys_name:<9}" + "".join(
             f"{per_epoch(c):>9.2f}" for c in (0, 1, 2, 3, 4, 6, 7)))
+    if hidden:
+        out.append("")
+        out.append(f"Hidden (present but all NoModel): {', '.join(hidden)}")
     return "\n".join(out)
 
 

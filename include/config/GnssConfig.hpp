@@ -1190,6 +1190,305 @@ namespace GnssProcessor {
         bool estimateNetworkSatCodeBias() const { return estimate_network_sat_code_bias_; }
 
         /**
+         * @brief Co-estimate the global SH-VTEC ionosphere in the network producer.
+         *
+         * When on (@c network.estimate_iono_sh), the network producer estimates its
+         * OWN global single-layer spherical-harmonic VTEC field jointly with the
+         * satellite code biases, replacing the external GIM (`.INX`) as the iono
+         * constraint that makes the satellite DCB observable.  It FORCES
+         * @c network.estimate_sat_code_bias on (the W6 coupled slice — sat code bias
+         * + rx DCB + iono weighting machinery) and switches the iono row builder from
+         * the external-GIM target to the co-estimated SH field.  Mutually exclusive
+         * with loading an external GIM for the same purpose (no double-apply).
+         * Default false keeps the external-GIM W6 path byte-identical.
+         */
+        bool estimateNetworkIonoSh() const { return estimate_network_iono_sh_; }
+
+        /**
+         * @brief Carry per-station carrier-phase ambiguities across epochs in the
+         *        PPP-RTK network producer (phase-leveling, Increment 1).
+         *
+         * When on (@c network.phase_leveling), each non-pivot station's float
+         * ambiguities are carried as a diagonal information prior on its own local
+         * block (injected via @ref NetworkEstimator::addStationPrior before the
+         * Schur reduction), so the network finally extracts carrier-phase precision
+         * — not just code — into the satellite clock / phase-bias / code-bias
+         * products.  The carry is reduction-orthogonal to the shared border and to
+         * the datum gauge, so it sharpens the locals without touching the
+         * minimum-constraint S-basis.  Default false keeps the per-epoch ABSOLUTE
+         * snapshot solve byte-identical.
+         */
+        bool networkPhaseLeveling() const { return network_phase_leveling_; }
+
+        /**
+         * @brief Process noise (m²/s) inflating a carried ambiguity's variance over
+         *        the inter-epoch gap (@c network.phase_leveling_q_amb).
+         *
+         * @c var_eff = var + q_amb·Δt_since_last_seen.  Must be @c >= 0.
+         *
+         * The physically correct process model for a carrier-phase ambiguity is a
+         * RANDOM CONSTANT punctuated by discrete cycle-slip resets — i.e. ZERO
+         * process noise between slips.  With @c q_amb = 0 (the default) the carried
+         * ambiguity therefore accumulates carrier-phase precision indefinitely,
+         * which is the whole point of phase-leveling: continuity is enforced by the
+         * IF-phase / MW-GF slip detectors (which refloat a slipped arc) and long
+         * gaps by @ref networkPhaseLevelingMaxGapS (which drops and re-acquires),
+         * NOT by continuous dilation.  A small positive @c q_amb is available only
+         * as an optional SOFT gap-reacquisition knob (weakly re-floats an ambiguity
+         * across a gap without fully dropping it); note it also caps steady-state
+         * accumulation at @c ~q_amb·Δt and so partially defeats the unlock.
+         */
+        double networkPhaseLevelingQAmb() const { return network_phase_leveling_q_amb_; }
+
+        /**
+         * @brief Emitted-epoch count before a carried ambiguity is trusted
+         *        (@c network.phase_leveling_warmup_epochs).
+         *
+         * Cold-start epochs are ill-conditioned (the clock/SH field has not
+         * converged); carrying an ambiguity before then would freeze a contaminated
+         * value.  No carry is stashed or injected until this many product epochs
+         * have been emitted.  (A convergence-tied warmup is the intended refinement.)
+         */
+        int networkPhaseLevelingWarmupEpochs() const { return network_phase_leveling_warmup_epochs_; }
+
+        /**
+         * @brief Maximum gap (s) a carried ambiguity survives unseen before it is
+         *        dropped (@c network.phase_leveling_max_gap_s).
+         *
+         * Bounds the carry container and prevents re-injecting a stale value when a
+         * satellite returns after a long outage (where a slip is likely and, in
+         * Increment 1, undetected).  A benign housekeeping drop — distinct from the
+         * slip-driven REFLOAT/DROP of later increments.
+         */
+        double networkPhaseLevelingMaxGapS() const { return network_phase_leveling_max_gap_s_; }
+
+        /**
+         * @brief Floor (m²) on a carried ambiguity's effective prior variance — a
+         *        lock-in guard (@c network.phase_leveling_var_floor_m2).
+         *
+         * The full §3.7 fading-memory guard is co-owned by the slip tiers (T0/T1/T2,
+         * later increments): a sub-cycle/multipath bias that never trips a slip
+         * detector would otherwise see its carried variance collapse monotonically
+         * and freeze a contaminated value into the products.  This single scalar caps
+         * the carried information (@c var_eff ≥ floor ⇒ @c Λ ≤ 1/floor) so fresh data
+         * can always pull a slowly-biasing ambiguity back.  Default 0 disables it
+         * (no cap), keeping behaviour identical until the user opts in for longer runs.
+         */
+        double networkPhaseLevelingVarFloorM2() const { return network_phase_leveling_var_floor_m2_; }
+
+        /**
+         * @brief Per-station T0 cycle-slip REPAIR for the carried ambiguities
+         *        (phase-leveling Increment 2; @c network.cycle_slip.turbo_edit).
+         *
+         * When on (and @ref networkPhaseLeveling is on), each non-pivot station runs
+         * a persistent MW + GF TurboEdit detector pair every epoch; a confident
+         * per-(sat,signal) integer slip @c dN is applied as a continuous,
+         * covariance-preserving shift to the carried ambiguity
+         * (@c value_abs += dN·λ), so a cycle slip no longer corrupts the carry.
+         * REFLOAT/DROP of unrepairable slips and pivot-slip handover are later
+         * increments.  Default false keeps Increment 1 (carry-only) byte-identical.
+         */
+        bool networkCycleSlipTurboEdit() const { return network_cycle_slip_turbo_edit_; }
+
+        /**
+         * @brief Integer-confidence gate for a network T0 slip repair
+         *        (@c network.cycle_slip.turbo_edit_frac_max; phase-leveling Inc 2).
+         *
+         * A repair is APPLIED (continuous @c value_abs += dN·λ) only when its rounding
+         * residual @c frac (0 = exact integer, 0.5 = worst) is ≤ this threshold AND
+         * @c |dN| ≤ @ref networkCycleSlipTurboEditDnMax.  The network runs the MW
+         * detector WITHOUT external @c .BIA (it estimates its own satellite biases),
+         * so the wide-lane is float-based and TurboEdit's own ~0.3 gate is too loose.
+         * A repair that FAILS either bound is LEFT untouched (carry kept): for the
+         * BIA-less network those low-confidence emitted repairs are predominantly
+         * float-MW FALSE positives, so refloating/dropping them measurably degrades
+         * the products.  The rare real-but-rejected slip's lock-in is bounded by
+         * @ref networkPhaseLevelingVarFloorM2 / the max-gap drop and is properly
+         * resolved by Increment 3's cross-station RAIM consensus.  Default 0.15.
+         */
+        double networkCycleSlipTurboEditFracMax() const { return network_cycle_slip_turbo_edit_frac_max_; }
+
+        /**
+         * @brief Magnitude bound (cycles) on a trusted network T0 slip repair
+         *        (@c network.cycle_slip.turbo_edit_dn_max; phase-leveling Inc 2).
+         *
+         * @c frac gates rounding cleanliness, not magnitude: a BIA-less float can
+         * round cleanly to a large spurious integer (TurboEdit's own cap is 1000
+         * cycles ≈ 190 m).  A repair with @c |dN| above this bound is treated as
+         * untrustworthy and LEFT untouched (carry kept) rather than shifted — only
+         * small, confident integers move the carry.  Default 50 cycles — raise it
+         * once external BIA makes the wide-lane integer trustworthy.
+         */
+        int networkCycleSlipTurboEditDnMax() const { return network_cycle_slip_turbo_edit_dn_max_; }
+
+        /**
+         * @brief Whether the network IF-phase triple-difference cycle-slip DETECTOR is on
+         *        (@c network.cycle_slip.if_phase_td).
+         *
+         * Between-satellite, between-epoch ionosphere-free phase OMC (the staged
+         * @ref IfPhaseSlipDetector, revived for the network where the fixed
+         * near-truth station coordinates remove its only blocker — the
+         * pre-convergence position-uncertainty gate).  Detection-only: a flagged
+         * IF pair refloats BOTH of its band ambiguities (marks them pending-reseed,
+         * so the carry re-estimates them from this epoch's data) — no MW/GF
+         * confirmation and no integer repair (those are later increments).  The
+         * refloat ACTION is meaningful only with @ref networkPhaseLeveling on; with
+         * the carry off the detector runs as a pure diagnostic.  Non-pivot stations
+         * only.  Default false keeps the snapshot/carry solve byte-identical.
+         */
+        bool networkCycleSlipIfPhaseTd() const { return network_cycle_slip_if_phase_td_; }
+
+        /**
+         * @brief k for the network IF-phase MAD gate (@c network.cycle_slip.if_phase_td_k_mad).
+         *
+         * A flag fires when @f$|\Delta\Delta\phi_{IF} - \mathrm{med}| > \max(k\cdot
+         * 1.4826\cdot\mathrm{MAD},\ \mathrm{floor})@f$, the MAD pooled network-wide per
+         * signal pair.  Deliberately loose (8–12) — a per-epoch post-estimation phase
+         * validation is the intended sharper second pass.  Default 8.
+         */
+        double networkCycleSlipIfPhaseTdKMad() const { return network_cycle_slip_if_phase_td_k_mad_; }
+
+        /**
+         * @brief Detection floor as a fraction of the (1,1) IF jump
+         *        (@c network.cycle_slip.if_phase_td_floor_frac).
+         *
+         * The smallest integer slip in the ionosphere-free phase is (ΔN1,ΔN2)=(1,1) =
+         * @f$c/(f_1+f_2)@f$ ≈ 10.7 cm (GPS L1/L2).  The MAD gate is clamped to never
+         * fall below @c floor_frac times this jump, so on a clean pair real slips are
+         * still caught while sub-slip noise is not.  Default 1.0 (the (1,1) jump
+         * itself — flags jumps at/above the smallest integer slip; a clean network's
+         * pooled MAD is ~mm so this floor binds and the k·MAD term is dormant).  Drop
+         * toward ~0.7 to catch a bare (1,1) reliably at the cost of more flags.
+         */
+        double networkCycleSlipIfPhaseTdFloorFrac() const { return network_cycle_slip_if_phase_td_floor_frac_; }
+
+        /**
+         * @brief Minimum pooled samples for a robust per-pair network MAD
+         *        (@c network.cycle_slip.if_phase_td_min_pool).
+         *
+         * A 50-station network yields hundreds of between-epoch IF triple-differences
+         * per signal pair per epoch, so the per-epoch cross-satellite MAD is robust and
+         * replaces between-epoch temporal variability.  Advisory: pairs under this count
+         * are logged (their MAD is less reliable).  Default 30.
+         */
+        int networkCycleSlipIfPhaseTdMinPool() const { return network_cycle_slip_if_phase_td_min_pool_; }
+
+        /**
+         * @brief EWMA smoothing factor for the per-(station, signal-pair) IF-phase noise
+         *        scale (@c network.cycle_slip.if_phase_td_ewma_alpha).
+         *
+         * Each (station, signal-pair) tracks an EWMA of its own elevation-normalized
+         * robust scale (1.4826·median|z|, z = (ΔΔφ_IF − network-median)·sin el).  This is
+         * the recency weight per epoch: scale ← (1−α)·scale + α·scale_epoch.  Smaller =
+         * longer memory (steadier), larger = faster tracking of a changing multipath
+         * environment.  Default 0.15 (~13-epoch memory).
+         */
+        double networkCycleSlipIfPhaseTdEwmaAlpha() const { return network_cycle_slip_if_phase_td_ewma_alpha_; }
+
+        /**
+         * @brief Shrinkage strength blending the network pool into the per-station IF-phase
+         *        scale (@c network.cycle_slip.if_phase_td_shrink_kappa).
+         *
+         * The effective scale is a count-weighted blend of the station-pair's own EWMA and
+         * the network-pooled per-pair scale: @f$w = \mathrm{count}/(\mathrm{count}+\kappa)@f$,
+         * @f$s_{eff} = w\cdot\mathrm{EWMA} + (1-w)\cdot\mathrm{pool}@f$.  Cold (count 0) →
+         * pure pool prior (instant, huge sample size); warm (count ≫ κ) → the station's own
+         * data-driven scale.  κ is the clean-sample count at which the two are weighted
+         * equally.  Default 20 (a dense pair — ~10 sats/epoch — becomes station-dominated
+         * within a few epochs; a sparse pair leans on the pool longer, which is correct).
+         */
+        double networkCycleSlipIfPhaseTdShrinkKappa() const { return network_cycle_slip_if_phase_td_shrink_kappa_; }
+
+        /**
+         * @brief Whether the post-fit network RAIM backstop is on
+         *        (@c network.raim; phase-leveling Increment 3, tier T2).
+         *
+         * The safety net for the zero-process-noise carry: the pre-processing slip
+         * detectors (MW/GF TurboEdit, IF-phase triple-difference) are per-station and
+         * threshold/pool-limited, so a real slip on a satellite that is setting (few
+         * stations, under the pooled MAD count) passes undetected — and with zero
+         * process noise the stale carry then freezes into the products indefinitely.
+         *
+         * This runs AFTER the joint solve and exploits the network redundancy the
+         * per-station detectors cannot see.  A carried ambiguity gone bad injects its
+         * error into the SHARED satellite clock/phase-bias; the guilty station hides
+         * it there, but every OTHER station tracking that satellite is pinned to its
+         * own (correct) carry and so CANNOT absorb the shared shift — its post-fit
+         * phase residual spikes.  A cross-station consensus on those standardized
+         * residuals (Baarda data-snooping, aggregated per satellite) therefore
+         * detects the contamination the guilty station masks, and refloats the
+         * offending carries (marks them pending-reseed, so the next epoch re-estimates
+         * them from data — the same one-shot lifecycle the IF-phase detector uses).
+         * Meaningful only with @ref networkPhaseLeveling on.  Default false keeps the
+         * carry solve byte-identical.
+         */
+        bool networkRaim() const { return network_raim_; }
+
+        /**
+         * @brief Standardized post-fit residual threshold σ for the network RAIM
+         *        (@c network.raim_k_sigma).
+         *
+         * A carried-ambiguity phase row whose standardized post-fit residual
+         * @f$|r|\sqrt{w}@f$ exceeds this is flagged.  A large blunder (a frozen
+         * multi-cycle slip leaking metres into the shared clock) sits far above the
+         * mm-level phase noise, so a wide default (6σ) catches catastrophic misses
+         * while leaving routine 1-cycle slips to the pre-processors.  Default 6.
+         */
+        double networkRaimKSigma() const { return network_raim_k_sigma_; }
+
+        /**
+         * @brief Cross-station consensus count for the network RAIM
+         *        (@c network.raim_min_stations).
+         *
+         * A satellite whose carried ambiguities are flagged at @b at-least this many
+         * stations is refloated network-wide (all stations, including the guilty one
+         * that hides the slip in its shared clock).  The consensus rejects
+         * single-station noise; a directly-flagged (station, satellite) is also
+         * refloated on its own.  Default 3.
+         */
+        int networkRaimMinStations() const { return network_raim_min_stations_; }
+
+        /**
+         * @brief Whether RAIM refloats are driven by prominence attribution
+         *        (@c network.raim_attribution) instead of the per-satellite consensus.
+         *
+         * When on, each RAIM epoch's post-fit residuals are decomposed by a robust 2-way
+         * median polish into satellite / station / isolated-arc effects, and the refloat
+         * is targeted at the dominant dimension: a bad SATELLITE refloats network-wide, a
+         * bad STATION refloats only that station's arcs, an isolated ARC refloats just that
+         * (station, sat) — instead of refloating every station of any consensus-flagged
+         * satellite.  The gate is @c effect/σ̂0 > @ref networkRaimKSigma per dimension.
+         * Default false keeps the per-satellite consensus behaviour.
+         */
+        bool networkRaimAttribution() const { return network_raim_attribution_; }
+
+        /**
+         * @brief Whether a "so bad" epoch triggers within-epoch adaptation
+         *        (@c network.raim_within_epoch).
+         *
+         * When the robust a-posteriori variance factor σ̂0 exceeds @ref
+         * networkRaimSigma0Trigger the joint solve is contaminated enough that emitting it
+         * would be wrong; this arms the detect→drop-culprit→re-solve adaptation.  Default
+         * false.  (Detection/logging first; the re-solve is staged behind the same flag.)
+         */
+        bool networkRaimWithinEpoch() const { return network_raim_within_epoch_; }
+
+        /**
+         * @brief σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires
+         *        (@c network.raim_sigma0_trigger; used only when @ref networkRaimWithinEpoch).
+         *
+         * σ̂0 = max(1, 1.4826·median|v·√w|) is the network-wide robust residual level: 1 on a
+         * clean epoch, several on an all-move-together contamination.  Default 3.0.
+         */
+        double networkRaimSigma0Trigger() const { return network_raim_sigma0_trigger_; }
+
+        /**
+         * @brief Access the co-estimated global SH-VTEC ionosphere configuration.
+         * @return Const reference to the global SH-VTEC config.
+         */
+        const GlobalVtecShConfig& getGlobalVtecShConfig() const { return global_vtec_sh_; }
+
+        /**
          * @brief Use the CIO-based IAU 2000A/2006 ECI↔ECEF frame transform.
          *
          * When true, Sun/Moon positions (and therefore solid-Earth tide,
@@ -1488,6 +1787,19 @@ namespace GnssProcessor {
          * @return True if IFB estimation is enabled.
          */
         bool estimateIfb() const { return estimate_ifb_; }
+
+        /**
+         * @brief Std (m) the receiver code-bias state is re-inflated to on a
+         *        consumed satellite code-bias datum discontinuity.
+         *
+         * Sized to the gauge re-reference step (cm–dm), deliberately NOT the
+         * full @c initial_std.code_bias (which would make the near-frozen
+         * IFB/DCB a free parameter on every rise/set).  Used by the PPP-RTK
+         * user consumer when @c getCodeBiasDiscontinuity reports an increment.
+         *
+         * @return Re-inflation standard deviation in meters.
+         */
+        double codeBiasReinflateStd() const { return code_bias_reinflate_std_; }
 
         /**
          * @brief Check if signal selection is locked to clock-reference bands.
@@ -2217,6 +2529,27 @@ namespace GnssProcessor {
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
         bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
         bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
+        bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
+        bool   network_phase_leveling_{false};            ///< Carry per-station carrier-phase ambiguities across epochs (phase-leveling, Increment 1); OFF = byte-identical absolute solve.
+        double network_phase_leveling_q_amb_{0.0};        ///< Carried-ambiguity process noise (m²/s) inflating var over the inter-epoch gap; 0 (default) = pure zero-process-noise accumulation (random-constant model).
+        int    network_phase_leveling_warmup_epochs_{6};  ///< Emitted-epoch count before a carried ambiguity is trusted (cold-start convergence guard).
+        double network_phase_leveling_max_gap_s_{120.0};  ///< Max unseen gap (s) a carried ambiguity survives before it is dropped (stale-carry / map-growth guard).
+        double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ — lock-in guard); 0 = off (no cap).
+        bool   network_cycle_slip_turbo_edit_{false};     ///< T0 per-station MW/GF cycle-slip REPAIR of the carried ambiguities (phase-leveling Increment 2); OFF = Increment-1 byte-identical.
+        double network_cycle_slip_turbo_edit_frac_max_{0.15}; ///< Max rounding residual for a network T0 repair to be trusted (float-MW gate; default 0.15).
+        int    network_cycle_slip_turbo_edit_dn_max_{50};      ///< Max |dN| (cycles) for a trusted network T0 repair; larger ⇒ DROP/re-float (float-MW magnitude guard).
+        bool   network_cycle_slip_if_phase_td_{false};         ///< IF-phase between-sat/between-epoch triple-difference slip DETECTION (refloats both bands of a flagged IF pair via pending-reseed when the carry is active); OFF = byte-identical.
+        double network_cycle_slip_if_phase_td_k_mad_{8.0};      ///< k for the network IF-phase MAD gate: flag if |ΔΔφ_IF−med| > max(k·1.4826·MAD, floor). Loose (8–12); post-estimation phase validation is the sharp second pass.
+        double network_cycle_slip_if_phase_td_floor_frac_{1.0}; ///< Floor as a fraction of the (1,1) IF jump c/(f1+f2)≈10.7 cm; 1.0 = the (1,1) jump itself (default; binds on a clean network), ~0.7 to catch a bare (1,1) reliably.
+        int    network_cycle_slip_if_phase_td_min_pool_{30};    ///< Min pooled per-pair samples for a robust network MAD (advisory; under-count pairs are logged).
+        double network_cycle_slip_if_phase_td_ewma_alpha_{0.15};   ///< EWMA recency weight for the per-(station,pair) elevation-normalized IF-phase noise scale; smaller = longer memory.
+        double network_cycle_slip_if_phase_td_shrink_kappa_{20.0}; ///< Clean-sample count at which the per-station IF EWMA scale and the network pool prior are weighted equally (empirical-Bayes shrinkage w=count/(count+κ)).
+        bool   network_raim_{false};              ///< Post-fit network RAIM (Increment 3, T2): cross-station post-fit residual consensus refloats a carried ambiguity whose slip the pre-processors missed; OFF = byte-identical.
+        double network_raim_k_sigma_{6.0};        ///< Standardized post-fit residual threshold (σ) above which a carried-ambiguity phase row is flagged slip-contaminated.
+        int    network_raim_min_stations_{3};     ///< Cross-station consensus count: a satellite flagged at ≥ this many stations is refloated network-wide (catches the guilty station that hides its slip in the shared clock).
+        bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
+        bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; OFF = emit the first solve as today.
+        double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
         bool enable_cio_frame_{false};                    ///< Use the CIO IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; legacy equinox chain when off.
         double bssd_pivot_min_elevation_deg_;              ///< Elevation threshold below which the BSSD pivot is handed over (degrees).
         double pivot_slip_min_cycles_;                     ///< Minimum |median SD residual| in band-wavelength cycles for pivot-slip detection.  0 disables.
@@ -2235,6 +2568,7 @@ namespace GnssProcessor {
         double sat_bias_cache_warm_age_s_;                       ///< Sat-bias cache: warm-restore window (sec).  Within this, restore value + aged variance.
         double sat_bias_cache_max_age_s_;                       ///< Sat-bias cache: max entry lifetime (sec).  Beyond this, evict; in [warm, max], restore value with cold-start variance.
         double no_bia_code_downweight_;                            ///< Variance multiplier for code on signals without BIA coverage.
+        double code_bias_reinflate_std_{0.5};                      ///< Std (m) the rx code-bias state is re-inflated to on a consumed sat code-bias datum discontinuity (H1).
         bool estimate_velocity_;                           ///< Estimate receiver velocity from Doppler observations.
         ResidualHistoryConfig residual_history_;                    ///< Per-(sat, signal) post-fit residual history tracker config.
         StuckCodeBiasConfig   stuck_code_bias_;                     ///< Stuck-code-bias detector + reset thresholds.
@@ -2245,6 +2579,7 @@ namespace GnssProcessor {
         AidingConfig           aiding_;                             ///< Which aiding sources run (AidingSourceRegistry selection).
         AdaptiveIonoQConfig adaptive_iono_q_;                       ///< Adaptive ionospheric process-noise (GF second-difference) config.
         IonosphereWeightingConfig iono_weighting_;                  ///< GIM ionosphere-weighting (PPP-RTK soft iono constraint) config.
+        GlobalVtecShConfig global_vtec_sh_;                         ///< Co-estimated global SH-VTEC ionosphere (network producer) config.
 
         bool has_reference_position_;                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_; ///< User-supplied reference position ECEF (m).

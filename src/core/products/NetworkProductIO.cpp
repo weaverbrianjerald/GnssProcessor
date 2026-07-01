@@ -157,6 +157,15 @@ std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& 
 void NetworkProductReader::replay(const NetworkProductRecord& rec,
                                   SsrCorrectionStore& store,
                                   NetworkProductEmitter& emitter) {
+    // Discontinuity counters are NOT serialized — for phase OR for code.  The
+    // emitter recomputes them deterministically from two inputs, both of which
+    // are reproduced here: (1) the per-epoch solution itself (phase-bias jumps;
+    // and, for code, the per-(const,signal) satellite-set + per-satellite
+    // distinct-band composition of code_bias_m, which is exactly the producer's
+    // gauge structure), and (2) the serialized datum_changed flag, re-applied
+    // via markDatumChange() to force the same clock-pivot bump.  Replaying the
+    // emitted-only epoch sequence in order therefore reproduces the live store
+    // byte-for-byte, including every discontinuity counter.
     if (rec.datum_changed) emitter.markDatumChange();
     emitter.emitToStore(rec.epoch, store);
 }

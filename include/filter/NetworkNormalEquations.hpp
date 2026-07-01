@@ -101,9 +101,13 @@ namespace GnssProcessor {
  * @f$\tilde N_{ss},\ \tilde u_s@f$ so a `NetworkSbasis` can apply the explicit
  * minimum-constraint datum (W5) prior to @ref solveShared.
  *
- * @note Not thread-safe.  Add/reduce/solve are a single-threaded sequence; the
- *       per-station elimination is internally trivially parallelizable but kept
- *       serial here (Eigen already threads the dense kernels under OpenMP).
+ * @note Not thread-safe across calls on one object: add/reduce/solve are a
+ *       single-threaded sequence.  @ref reduce may INTERNALLY fan its per-station
+ *       elimination across threads (opt-in via its @c n_threads argument) — each
+ *       station's blocks are read-only and own a private LDLᵀ factor, so the loop
+ *       is race-free and combined deterministically for a fixed thread count.  The
+ *       driver pins Eigen itself to one thread for the epoch, so this coarse
+ *       station-level parallelism does not nest with Eigen's own kernel threading.
  */
 class NetworkNormalEquations {
 public:
@@ -144,6 +148,15 @@ public:
      * Accumulates @f$ N_{ss} \mathrel{+}= \Delta N,\ u_s \mathrel{+}= \Delta u @f$.
      * A diagonal info prior @f$ p\,I @f$ with target @c x0 contributes
      * @f$\Delta N = p I,\ \Delta u = p\,x0@f$.
+     *
+     * Reduction-preserving: a shared-border increment carries through the Schur
+     * reduction unchanged (the per-station subtrahends depend only on @c N_sr /
+     * @c N_rr, never on @c N_ss), so when @ref reduce has already run this delta is
+     * folded into the cached reduced normals in place and the reduction stays
+     * current — sparing a full re-reduction for a post-reduce prior (e.g. the
+     * driver's D2 carry-forward, added between the rank gate and the solve).  The
+     * in-place fold symmetrizes @p delta_info so it is exact for any symmetric
+     * increment regardless of floating-point asymmetry.
      *
      * @param delta_info @c n_shared × @c n_shared symmetric information increment.
      * @param delta_rhs  @c n_shared right-hand-side increment.
@@ -212,18 +225,76 @@ public:
                                        const Eigen::VectorXd& y);
 
     /**
+     * @brief Fold a DIAGONAL information increment into one station's local
+     *        block @f$N_{rr}^r / u_r^r@f$ (the per-station analogue of
+     *        @ref addSharedInfo) — the carried-ambiguity phase-leveling prior.
+     *
+     * For each requested local column @p local_cols[i] this applies
+     * @f[
+     *   N_{rr}(c,c)\mathrel{+}=\Lambda_i,\qquad u_r(c)\mathrel{+}=\eta_i,
+     * @f]
+     * with @f$\Lambda_i=@f$ @p delta_Nrr_diag[i] (an information weight,
+     * @f$1/\text{var}_\text{eff}@f$, @b non-negative) and @f$\eta_i=@f$
+     * @p delta_ur[i] (the information-form RHS @f$\Lambda_i\cdot\text{target}@f$,
+     * with @c target expressed in the station's CORRECTION frame — i.e. the
+     * carried absolute value minus that ambiguity's current linearization point,
+     * matching the kernel's @f$x_r=\Delta x@f$ convention).
+     *
+     * The update is realized as a sequence of rank-1 updates of the cached
+     * @f$N_{rr}@f$ LDLᵀ factor (`Eigen::LDLT::rankUpdate(e_c, Λ_i)`), so the raw
+     * @f$N_{rr}@f$ need never be stored or re-factorized from scratch: a positive
+     * @f$\Lambda_i@f$ keeps the factor positive-definite by construction.  The
+     * shared border @f$N_{ss}/u_s@f$ is left UNTOUCHED — a per-station local
+     * increment is reduction-orthogonal to every other station and to the shared
+     * null-space (it conditions only this station's @f$x_r@f$), which is what makes
+     * the carried prior safe and cheap (see the file-level correctness notes).
+     *
+     * @par Ordering contract
+     * MUST be called AFTER @ref addStation (it mutates that station's cached
+     * factor) and BEFORE @ref reduce: a local-block change alters the Schur
+     * subtrahend, which is baked into the reduced normals during @ref reduce, and
+     * there is NO post-reduce in-place fast-path for it (unlike @ref addSharedInfo,
+     * whose shared-border delta bypasses Schur).  This call marks the cached
+     * reduction stale so the next @ref reduce recomputes exactly once.  For
+     * byte-identical determinism the caller MUST pass @p local_cols in a fixed
+     * (e.g. ascending) order — the rank-1 update sequence is order-dependent at ULP.
+     *
+     * @param station        Index returned by @ref addStation (must have local state).
+     * @param local_cols     Local columns (within @c A_r) receiving a prior.
+     * @param delta_Nrr_diag Per-column information increments @f$\Lambda_i\ge0@f$.
+     * @param delta_ur       Per-column RHS increments @f$\eta_i@f$.
+     * @throws std::out_of_range / std::invalid_argument on a bad index, a size
+     *         mismatch, an out-of-range column, or a negative information weight.
+     */
+    void addStationPrior(std::size_t station,
+                         const std::vector<Eigen::Index>& local_cols,
+                         const Eigen::VectorXd& delta_Nrr_diag,
+                         const Eigen::VectorXd& delta_ur);
+
+    /**
      * @brief Schur-eliminate every station's nuisance block onto the shared
      *        border, producing @f$\tilde N_{ss},\ \tilde u_s@f$.
      *
-     * Recomputes the reduced form from the immutable accumulated pre-reduction
-     * blocks (@c N_ss / @c u_s), so it is idempotent when no @c add* call
-     * intervenes: calling @ref reduce twice in a row yields identical results.
-     * An @ref addStation / @ref addSharedInfo marks the cached reduction stale
-     * (via an internal flag) so the next @ref solveShared recomputes it; it does
-     * not corrupt the previously cached @ref reducedSharedNormals.  Per-station
-     * LDLᵀ factors are reused (factorization happens once, in @ref addStation).
+     * Caches the result: a no-op when the reduction is already current (the
+     * internal @c reduced_ flag), so calling @ref reduce twice in a row yields
+     * identical results.  @ref addStation marks the cache stale; @ref addSharedInfo
+     * instead carries its shared-border delta straight through the reduction in
+     * place (keeping it current), so a post-reduce prior — e.g. the driver's D2
+     * carry-forward applied between the rank gate and the solve — does NOT force a
+     * second full per-station Schur pass.  Per-station LDLᵀ factors are reused
+     * (factorization happens once, in @ref addStation).
+     *
+     * @param n_threads Optional fan-out of the per-station Schur loop (default 1 =
+     *        serial, bit-identical to the historical loop).  With @p n_threads > 1
+     *        and OpenMP, stations are eliminated in parallel via per-thread partial
+     *        accumulators combined in a fixed (ascending station-range, ascending
+     *        thread) order: the result is reproducible for a given thread count but
+     *        differs from the serial fold at ULP (a different summation grouping).
+     *        Callers needing byte-identical output across thread counts pass 1.
+     *        The dense kernels inside the loop must run single-threaded (the driver
+     *        pins Eigen to one thread for the epoch) to avoid nested oversubscription.
      */
-    void reduce();
+    void reduce(int n_threads = 1);
 
     /**
      * @brief Solve the reduced shared system @f$\tilde N_{ss}\,x_s=\tilde u_s@f$.
@@ -253,12 +324,20 @@ public:
      * @param constrained_N_ss The datum-constrained reduced normals
      *                         (@c n_shared × @c n_shared, must be full rank).
      * @param constrained_u_s  The matching reduced RHS (length @c n_shared).
+     * @param cov_out If non-null, receives the formal covariance of @c x_s — the
+     *               inverse @f$(\tilde N_{ss}^{\text{constrained}})^{-1}@f$ computed
+     *               from the SAME LDLᵀ factor used for the point solve (so the
+     *               caller avoids a redundant second factorization).  The
+     *               datum-pinned columns carry the implementation's @c 1/pin_scale
+     *               variance; treat them as exact downstream.  Empty when
+     *               @c n_shared is 0.
      * @return The shared estimate @c x_s.
      * @throws std::invalid_argument on a dimension mismatch or a still-singular
      *         system (the applied constraint did not remove the deficiency).
      */
     Eigen::VectorXd solveSharedConstrained(const Eigen::MatrixXd& constrained_N_ss,
-                                           const Eigen::VectorXd& constrained_u_s) const;
+                                           const Eigen::VectorXd& constrained_u_s,
+                                           Eigen::MatrixXd* cov_out = nullptr) const;
 
     /**
      * @brief Back-substitute a station's nuisance estimate given the shared
@@ -270,6 +349,62 @@ public:
      */
     Eigen::VectorXd reconstructStation(std::size_t station,
                                        const Eigen::VectorXd& x_s) const;
+
+    /**
+     * @brief Conditional covariance of a station's nuisance block, propagating
+     *        the shared-parameter covariance @p cov_free_xs into the locals.
+     *
+     * Applies the marginal-covariance identity (the (r,r) block of the full
+     * bordered inverse)
+     * @f[
+     *   \mathrm{Cov}(x_r) = N_{rr}^{-1}
+     *     + N_{rr}^{-1} N_{rs}\,\mathrm{Cov}(x_s)\,N_{sr}\,N_{rr}^{-1},
+     * @f]
+     * reusing the cached @f$N_{rr}@f$ LDLᵀ factor and @f$N_{rs}=N_{sr}^\top@f$.
+     * Pass the FULL shared covariance to get the marginal local covariance; pass
+     * it with the rows/columns of any EXACT (datum-pinned) shared parameter
+     * zeroed to get @f$\mathrm{Cov}(x_r\mid x_s^{\text{free}})@f$ — the frame in
+     * which between-station double-difference ambiguities are integer-estimable
+     * (producer-side network AR, Phase 1).  Treating the gauge columns as known
+     * (variance 0) instead of carrying their artificial @c 1/pin_scale variance
+     * is the load-bearing correctness step: it keeps the DD ambiguity covariance
+     * from being inflated by the datum's implementation artifact.
+     *
+     * @param station      Index from @ref addStation.
+     * @param cov_free_xs  Shared-parameter covariance (@c n_shared × @c n_shared),
+     *                     datum-pinned rows/cols zeroed for the conditional form.
+     * @return The station's @c n_local × @c n_local covariance (symmetric; empty
+     *         if the station has no locals).
+     * @throws std::out_of_range / std::invalid_argument on a bad index or size.
+     */
+    Eigen::MatrixXd reconstructStationCovariance(
+        std::size_t station, const Eigen::MatrixXd& cov_free_xs) const;
+
+    /**
+     * @brief Diagonal of @ref reconstructStationCovariance for a SUBSET of local
+     *        columns — the cheap per-ambiguity conditional-variance harvest.
+     *
+     * Returns, for each @p local_cols[i], the @f$(c,c)@f$ entry of
+     * @f$\mathrm{Cov}(x_r)=N_{rr}^{-1}+M\,\mathrm{Cov}_\text{free}\,M^\top@f$ with
+     * @f$M=N_{rr}^{-1}N_{rs}@f$ — computed WITHOUT forming the full
+     * @f$N_{rr}^{-1}@f$.  Each column costs one local solve
+     * @f$n_c=N_{rr}^{-1}e_c@f$ (giving @f$(N_{rr}^{-1})_{cc}=n_c(c)@f$) plus the
+     * shared propagation @f$ (N_{sr}n_c)^\top\,\mathrm{Cov}_\text{free}\,(N_{sr}n_c)@f$,
+     * i.e. @f$O(k\,(n_r^2+n_s^2))@f$ for @c k requested columns instead of the
+     * @f$O(n_r^3)@f$ full inverse @ref reconstructStationCovariance pays — the
+     * per-station full inverse being a known serial-path cost at scale.  Pass the
+     * SAME @p cov_free_xs (datum-pinned shared rows/cols zeroed) as the full form.
+     *
+     * @param station     Index from @ref addStation.
+     * @param local_cols  Local columns whose conditional variance is wanted.
+     * @param cov_free_xs Shared-parameter covariance (datum-pinned rows/cols zeroed).
+     * @return A vector of conditional variances, one per requested column (empty if
+     *         the station has no locals or @p local_cols is empty).
+     * @throws std::out_of_range / std::invalid_argument on a bad index or column.
+     */
+    Eigen::VectorXd reconstructStationCovarianceDiag(
+        std::size_t station, const std::vector<Eigen::Index>& local_cols,
+        const Eigen::MatrixXd& cov_free_xs) const;
 
     /// @return The reduced shared normal matrix @f$\tilde N_{ss}@f$ (after @ref reduce).
     const Eigen::MatrixXd& reducedSharedNormals() const { return reduced_N_ss_; }
@@ -287,8 +422,17 @@ public:
     std::size_t numStations() const { return n_active_; }
     /// @return Local dimension of station @p station.
     Eigen::Index numLocal(std::size_t station) const;
-    /// @return Whether @ref reduce has run since the last mutation.
+    /// @return Whether the cached reduction is current (set by @ref reduce, kept
+    ///         current by @ref addSharedInfo, cleared by @ref addStation /
+    ///         @ref addStationPrior / @ref reset).
     bool isReduced() const { return reduced_; }
+
+    /// @return How many times @ref reduce has actually RECOMPUTED the per-station
+    ///         Schur loop since the last @ref reset (idempotent no-op returns do
+    ///         not count).  Reset to 0 by @ref reset; used to assert the
+    ///         "reduce-once-per-epoch" invariant when the carried prior is on (a
+    ///         stray post-gate local injection would force a second full reduce).
+    std::size_t reduceRecomputeCount() const { return reduce_recompute_count_; }
 
 private:
     /// Per-station cached state needed for reduction and back-substitution.
@@ -308,6 +452,7 @@ private:
     Eigen::MatrixXd reduced_N_ss_; ///< Ñ_ss (valid when reduced_)
     Eigen::VectorXd reduced_u_s_;  ///< ũ_s  (valid when reduced_)
     bool reduced_{false};
+    std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
 };
 
 } // namespace GnssProcessor

@@ -54,11 +54,12 @@
 
 namespace GnssProcessor {
 
-/// Kind of shared satellite-side parameter carried in the network solution.
+/// Kind of shared (cross-station) parameter carried in the network solution.
 enum class SharedParamKind {
     Clock,      ///< Estimable satellite clock (signal-independent).
     CodeBias,   ///< Per-signal satellite code bias (OSB).
     PhaseBias,  ///< Per-signal satellite phase bias (OSB; carries the pivot lump).
+    VtecSh,     ///< Global single-layer SH-VTEC coefficient (a_nm/b_nm; network-wide, not per-satellite).
 };
 
 /**
@@ -87,6 +88,9 @@ public:
     Eigen::Index registerCodeBias(const std::string& sat, const std::string& signal);
     /// Register a per-signal satellite phase-bias column (idempotent).
     Eigen::Index registerPhaseBias(const std::string& sat, const std::string& signal);
+    /// Register a global SH-VTEC coefficient column (n,m,trig) (idempotent).
+    /// @p trig is 'C' (cosine, m>=0) or 'S' (sine, m>=1).
+    Eigen::Index registerVtecCoeff(int n, int m, char trig);
 
     /// @return The clock column for @p sat. @throws std::out_of_range if absent.
     Eigen::Index clockColumn(const std::string& sat) const;
@@ -94,6 +98,8 @@ public:
     Eigen::Index codeBiasColumn(const std::string& sat, const std::string& signal) const;
     /// @return The phase-bias column for (@p sat, @p signal). @throws if absent.
     Eigen::Index phaseBiasColumn(const std::string& sat, const std::string& signal) const;
+    /// @return The SH-VTEC coefficient column for (n,m,trig). @throws if absent.
+    Eigen::Index vtecCoeffColumn(int n, int m, char trig) const;
 
     /// @return Number of registered shared columns.
     Eigen::Index numShared() const { return static_cast<Eigen::Index>(columns_.size()); }
@@ -139,6 +145,22 @@ public:
                            const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y);
 
     /**
+     * @brief Set the per-station fan-out used by the Schur reduction (@ref
+     *        NetworkNormalEquations::reduce), the dominant per-epoch serial cost.
+     *
+     * Default 1 (serial, byte-identical output).  The network driver sets this to
+     * its per-station thread budget when station-parallelism is enabled so the
+     * reduction runs across cores; values > 1 make reduce()'s output
+     * reproducible-but-ULP-dependent on the thread count (see that method).  Takes
+     * effect on the next @ref solve / @ref reducedSharedNormals.
+     *
+     * @param n_threads Thread count (clamped to ≥ 1).
+     */
+    void setReduceThreads(int n_threads) {
+        reduce_threads_ = n_threads > 1 ? n_threads : 1;
+    }
+
+    /**
      * @brief Solve the shared satellite parameters under the explicit @p datum.
      *
      * Reduces the arrowhead, applies the datum pins to the reduced shared system
@@ -154,9 +176,76 @@ public:
      */
     Eigen::VectorXd solve(const Datum& datum);
 
+    /**
+     * @brief Inject a carried-ambiguity (phase-leveling) prior onto one station's
+     *        local block — forwards to @ref NetworkNormalEquations::addStationPrior.
+     *
+     * Call AFTER @ref addStation (the station must already be in this epoch's
+     * arrowhead) and BEFORE @ref solve / @ref reducedSharedNormals (a local-block
+     * change must be folded before the Schur reduction; there is no post-reduce
+     * fast-path).  @p local_cols are columns within that station's @c A_r;
+     * @p delta_Nrr_diag are the per-column information weights
+     * (@f$1/\text{var}_\text{eff}@f$) and @p delta_ur the matching information-RHS
+     * increments.  See the kernel method for the ordering/determinism contract.
+     *
+     * @throws std::logic_error if called before @ref beginEpoch or after @ref solve.
+     */
+    void addStationPrior(std::size_t station,
+                         const std::vector<Eigen::Index>& local_cols,
+                         const Eigen::VectorXd& delta_Nrr_diag,
+                         const Eigen::VectorXd& delta_ur);
+
     /// Back-substitute a station's nuisance estimate given the shared solution.
     Eigen::VectorXd reconstructStation(std::size_t station,
                                        const Eigen::VectorXd& x_s) const;
+
+    /**
+     * @brief Conditional covariance of a station's nuisance block in the
+     *        datum-as-known frame (producer-side network AR, Phase 1).
+     *
+     * Takes the most recent @ref solve's shared covariance (@ref
+     * sharedCovariance), zeros the rows/columns of every @p datum-pinned shared
+     * column (the S-basis gauges are EXACT, so they carry no random
+     * uncertainty), and propagates the result into station @p station's locals
+     * via @ref NetworkNormalEquations::reconstructStationCovariance.  The
+     * returned block is @f$\mathrm{Cov}(x_r\mid x_s^{\text{free}})@f$ — the
+     * covariance the between-station DD ambiguities are differenced from before
+     * the integer search.
+     *
+     * @param station Index from @ref addStation.
+     * @param datum   The same datum passed to @ref solve (its pinned columns).
+     * @return The station's local covariance (@c n_local × @c n_local); empty if
+     *         the station has no locals.  Requires a prior @ref solve.
+     */
+    Eigen::MatrixXd conditionalLocalCovariance(std::size_t station,
+                                               const Datum& datum) const;
+
+    /**
+     * @brief Diagonal conditional variances for a SUBSET of a station's local
+     *        columns in the datum-as-known frame (the carried-ambiguity harvest).
+     *
+     * Like @ref conditionalLocalCovariance but returns only the diagonal entries
+     * for @p local_cols, computed without the full per-station inverse — the cheap
+     * per-epoch harvest the phase-leveling carry needs to seed each ambiguity's
+     * next-epoch prior variance.  Zeros the @p datum-pinned shared columns of the
+     * last solve's @ref sharedCovariance (exact gauges carry no random
+     * uncertainty), then forwards to
+     * @ref NetworkNormalEquations::reconstructStationCovarianceDiag.
+     *
+     * @param station    Index from @ref addStation.
+     * @param local_cols Local columns whose conditional variance is wanted.
+     * @param datum      The same datum passed to @ref solve (its pinned columns).
+     * @return One conditional variance per requested column (empty if the station
+     *         has no locals or @p local_cols is empty).  Requires a prior @ref solve.
+     */
+    Eigen::VectorXd conditionalLocalVarianceDiag(
+        std::size_t station, const std::vector<Eigen::Index>& local_cols,
+        const Datum& datum) const;
+
+    /// @return The kernel's reduce-once instrumentation
+    ///         (@ref NetworkNormalEquations::reduceRecomputeCount) for the current
+    ///         epoch — asserts the carried prior did not force a second reduction.
+    std::size_t reduceRecomputeCount() const { return neq_.reduceRecomputeCount(); }
 
     /**
      * @brief Covariance of the shared estimate from the most recent @ref solve.
@@ -178,11 +267,15 @@ public:
      */
     const Eigen::MatrixXd& reducedSharedNormals();
 
-    /// A carried-forward prior on one shared parameter (W4-S2b D2 time update).
+    /// A carried-forward / regularizing prior on one shared parameter (W4-S2b D2
+    /// time update; also the SH-VTEC Kaula/temporal prior).
     struct SharedPrior {
         SharedParamKind kind;     ///< parameter family
-        std::string     sat;      ///< satellite id
-        std::string     signal;   ///< signal (empty for Clock)
+        std::string     sat;      ///< satellite id (empty for VtecSh)
+        std::string     signal;   ///< signal (empty for Clock / VtecSh)
+        int             sh_n{-1};    ///< VtecSh degree (VtecSh only)
+        int             sh_m{-1};    ///< VtecSh order  (VtecSh only)
+        char            sh_trig{0};  ///< VtecSh 'C'/'S' (VtecSh only)
         double          value{0.0};  ///< prior mean
         double          info{0.0};   ///< information weight = 1 / prior-variance (>0)
     };
@@ -239,9 +332,12 @@ public:
 private:
     /// Descriptor of one shared column (for reverse mapping in toSolutionEpoch).
     struct ColumnDesc {
-        std::string sat;
+        std::string sat;       ///< satellite id (empty for VtecSh)
         SharedParamKind kind;
-        std::string signal;  ///< empty for Clock
+        std::string signal;    ///< empty for Clock / VtecSh
+        int  sh_n{-1};         ///< VtecSh degree (VtecSh only)
+        int  sh_m{-1};         ///< VtecSh order  (VtecSh only)
+        char sh_trig{0};       ///< VtecSh 'C'/'S' (VtecSh only)
     };
 
     Eigen::Index registerColumn_(const std::string& sat, SharedParamKind kind,
@@ -255,6 +351,7 @@ private:
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
+    int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };

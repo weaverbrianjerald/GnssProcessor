@@ -103,6 +103,19 @@ struct SsrCombinedCorrection {
 struct SsrCodeBias {
     std::string                    sat;
     std::map<std::string, double>  bias_per_signal;     ///< RINEX obs code -> meters.
+    /// RINEX obs code -> network code-bias discontinuity counter.
+    ///
+    /// Empty for RTCM/IGS-SSR-decoded code biases — the wire standard has NO
+    /// per-signal discontinuity field for CODE biases (only PHASE biases do,
+    /// because only phase carries an integer property).  This is therefore an
+    /// internal extension, populated ONLY by @c NetworkProductEmitter when
+    /// @c network.estimate_sat_code_bias is on.  It increments when the
+    /// producer's per-(constellation, signal) sum-to-zero datum re-references
+    /// (a satellite for that signal rises/sets), when a satellite's
+    /// ionosphere-free pin band-set changes, or on a forced (clock-pivot)
+    /// datum change.  NOT serialized: recomputed deterministically on replay
+    /// from the per-epoch satellite-set composition (mirrors the phase path).
+    std::map<std::string, int>     disc_per_signal;
     GnssTime                       received_time{0, 0.0};
     int                            iod_ssr{0};
 };

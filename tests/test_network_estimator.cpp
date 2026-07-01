@@ -368,7 +368,12 @@ TEST(NetworkEstimatorTest, SharedCovarianceAndCarryForwardPrior) {
         est.addStation(A_s, A_r, w, y);
     }
     const double biased = x1(clkCol[1]) + 5.0;
-    est.addSharedPrior({{SharedParamKind::Clock, t.sats[1], "", biased, 1e8}});
+    {
+        NetworkEstimator::SharedPrior pr;
+        pr.kind = SharedParamKind::Clock; pr.sat = t.sats[1];
+        pr.value = biased; pr.info = 1e8;
+        est.addSharedPrior({pr});
+    }
     const Eigen::VectorXd x2 = est.solve(datum);
 
     EXPECT_GT(x2(clkCol[1]), x1(clkCol[1]) + 4.0);  // dominated by the strong prior
@@ -380,10 +385,82 @@ TEST(NetworkEstimatorTest, SharedCovarianceAndCarryForwardPrior) {
         buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
         est.addStation(A_s, A_r, w, y);
     }
-    est.addSharedPrior({{SharedParamKind::Clock, "G99", "", 99.0, 1e8}});  // not registered
+    {
+        NetworkEstimator::SharedPrior pr;  // not registered → must be a no-op
+        pr.kind = SharedParamKind::Clock; pr.sat = "G99";
+        pr.value = 99.0; pr.info = 1e8;
+        est.addSharedPrior({pr});
+    }
     const Eigen::VectorXd x3 = est.solve(datum);
     for (int s = 0; s < t.S; ++s)
         EXPECT_NEAR(x3(clkCol[s]), x1(clkCol[s]), 1e-6) << "absent-prior must be a no-op, sat " << s;
+}
+
+// ===========================================================================
+// SharedParamKind::VtecSh — global SH-VTEC coefficient columns
+// ===========================================================================
+
+// registerVtecCoeff is idempotent and disjoint from clock/bias columns;
+// vtecCoeffColumn round-trips; the prior routes to the right SH column; the SH
+// columns are solved from their (Kaula) prior alone when they carry no data; and
+// toSolutionEpoch does NOT manufacture a per-satellite slot for an SH column.
+TEST(NetworkEstimatorTest, VtecShColumnsRegisterPriorAndSkipEmit) {
+    NetworkEstimator est;
+    const Eigen::Index cG1 = est.registerClock("G01");
+    const Eigen::Index cG2 = est.registerClock("G02");
+    // Degree-1 field: (0,0,C),(1,0,C),(1,1,C),(1,1,S).
+    const Eigen::Index a00 = est.registerVtecCoeff(0, 0, 'C');
+    const Eigen::Index a10 = est.registerVtecCoeff(1, 0, 'C');
+    const Eigen::Index a11c = est.registerVtecCoeff(1, 1, 'C');
+    const Eigen::Index a11s = est.registerVtecCoeff(1, 1, 'S');
+    EXPECT_EQ(est.registerVtecCoeff(1, 1, 'C'), a11c);          // idempotent
+    EXPECT_EQ(est.vtecCoeffColumn(0, 0, 'C'), a00);             // round-trip
+    EXPECT_EQ(est.vtecCoeffColumn(1, 1, 'S'), a11s);
+    EXPECT_EQ(est.numShared(), 6);
+    // Disjoint namespaces: SH columns are distinct from clock columns.
+    std::set<Eigen::Index> cols{cG1, cG2, a00, a10, a11c, a11s};
+    EXPECT_EQ(cols.size(), 6u);
+
+    est.beginEpoch();
+    // One station observing G01/G02 by code: P = a_rx - c_sat (A_r = rx clock).
+    // The SH columns carry NO data (A_s SH entries all zero).
+    Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(2, 6);
+    A_s(0, cG1) = -1.0;
+    A_s(1, cG2) = -1.0;
+    Eigen::MatrixXd A_r(2, 1);
+    A_r << 1.0, 1.0;                       // receiver clock
+    Eigen::VectorXd w(2); w << 1.0, 1.0;
+    Eigen::VectorXd y(2); y << 3.0, 5.0;   // arbitrary prefit residuals
+    est.addStation(A_s, A_r, w, y);
+
+    // Kaula-style prior: a₀₀ → climatology 12 TECU, the rest → 0, all tight so the
+    // data-free SH columns resolve to their prior mean.
+    std::vector<NetworkEstimator::SharedPrior> pr;
+    auto mk = [](int n, int m, char t, double v) {
+        NetworkEstimator::SharedPrior p;
+        p.kind = SharedParamKind::VtecSh; p.sh_n = n; p.sh_m = m; p.sh_trig = t;
+        p.value = v; p.info = 1.0e4;
+        return p;
+    };
+    pr.push_back(mk(0, 0, 'C', 12.0));
+    pr.push_back(mk(1, 0, 'C', 0.0));
+    pr.push_back(mk(1, 1, 'C', 0.0));
+    pr.push_back(mk(1, 1, 'S', 0.0));
+    est.addSharedPrior(pr);
+
+    NetworkEstimator::Datum datum{ NetworkEstimator::Pin{cG1, 0.0} };  // GPS clock gauge
+    const Eigen::VectorXd x = est.solve(datum);
+
+    EXPECT_NEAR(x(a00), 12.0, 1e-3);   // data-free SH column resolves to its prior mean
+    EXPECT_NEAR(x(a10), 0.0, 1e-3);
+    EXPECT_NEAR(x(a11c), 0.0, 1e-3);
+    EXPECT_NEAR(x(a11s), 0.0, 1e-3);
+
+    // toSolutionEpoch must NOT create an "SH" satellite — only G01/G02 appear.
+    const NetworkSolutionEpoch sol = est.toSolutionEpoch(x, GnssTime{2313, 259200.0});
+    EXPECT_EQ(sol.sats.size(), 2u);
+    for (const auto& s : sol.sats)
+        EXPECT_TRUE(s.sat == "G01" || s.sat == "G02") << "unexpected sat " << s.sat;
 }
 
 // ===========================================================================
@@ -436,6 +513,64 @@ TEST(NetworkSbasisTest, NullSpaceGateCountsDeficiencies) {
     const Eigen::MatrixXd F = Eigen::MatrixXd::Identity(4, 4) * 7.0;
     EXPECT_NO_THROW(sb.assertNullSpaceRank(F, 0));
     EXPECT_THROW(sb.assertNullSpaceRank(F, 1), std::runtime_error);
+}
+
+// FIREWALL at the GATE (design §4 / §9(d)): turning the carried-ambiguity prior ON
+// must NOT change the null-space gate's withhold decision.  A carry on a station's
+// LOCAL ambiguity cannot fill a SHARED gauge the data leaves free, so a marginal /
+// under-declared epoch still WITHHOLDS with the carry on.  Here two shared columns
+// are forced co-linear (an exact analogue of an unpinned per-constellation clock
+// datum), giving one shared gauge; the gate's pass/throw decision is asserted to be
+// identical with the carry OFF and ON.
+TEST(NetworkSbasisTest, CarryDoesNotChangeGateDecision_Firewall) {
+    NetworkSbasis sb;
+    std::mt19937 gen(20260630);
+    auto rnd = [&](Eigen::Index r, Eigen::Index c) {
+        std::uniform_real_distribution<double> d(-1.0, 1.0);
+        Eigen::MatrixXd M(r, c);
+        for (Eigen::Index a = 0; a < r; ++a)
+            for (Eigen::Index b = 0; b < c; ++b) M(a, b) = d(gen);
+        return M;
+    };
+    const Eigen::Index n_shared = 3, nl = 3, m = 8;
+    struct S { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
+    std::vector<S> sd;
+    for (int s = 0; s < 2; ++s) {
+        S st;
+        st.A_s = rnd(m, n_shared);
+        st.A_s.col(1) = st.A_s.col(0);          // cols 0,1 identical → one shared gauge (e0−e1)
+        st.A_r = rnd(m, nl);
+        st.w = Eigen::VectorXd::Constant(m, 1.0);
+        st.y = rnd(m, 1);
+        sd.push_back(std::move(st));
+    }
+    auto build = [&](NetworkNormalEquations& neq, bool with_carry) {
+        for (const auto& s : sd) {
+            const Eigen::MatrixXd WA_s = s.w.asDiagonal() * s.A_s;
+            const Eigen::MatrixXd WA_r = s.w.asDiagonal() * s.A_r;
+            Eigen::MatrixXd N_rr = s.A_r.transpose() * WA_r
+                + 1e-2 * Eigen::MatrixXd::Identity(nl, nl);  // PD local block
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+        if (with_carry) {
+            Eigen::VectorXd dN(2); dN << 4.0, 2.0;
+            Eigen::VectorXd du(2); du << 1.0, -1.0;
+            neq.addStationPrior(0, {0, 2}, dN, du);   // prior on station 0's local ambiguities
+        }
+        neq.reduce();
+    };
+    NetworkNormalEquations off(n_shared), on(n_shared);
+    build(off, false);
+    build(on, true);
+
+    // Declared dimension = 1 (the single shared gauge): both pass.
+    EXPECT_NO_THROW(sb.assertNullSpaceRank(off.reducedSharedNormals(), 1));
+    EXPECT_NO_THROW(sb.assertNullSpaceRank(on.reducedSharedNormals(), 1));
+    // Under-declared datum (0): BOTH still withhold (throw).  The carry did not mask
+    // the gauge — the firewall holds with the carry on.
+    EXPECT_THROW(sb.assertNullSpaceRank(off.reducedSharedNormals(), 0), std::runtime_error);
+    EXPECT_THROW(sb.assertNullSpaceRank(on.reducedSharedNormals(), 0), std::runtime_error);
 }
 
 // End-to-end: NetworkSbasis builds the clock datum, the gate sees exactly one

@@ -189,6 +189,17 @@ bool SsrCorrectionStore::hasCodeBias(const std::string& sat,
     return m.find(rinex_obs_code) != m.end();
 }
 
+std::optional<int>
+SsrCorrectionStore::getCodeBiasDiscontinuity(const std::string& sat,
+                                             const std::string& rinex_obs_code) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(sat);
+    if (it == by_sat_.end() || !it->second.code_bias) return std::nullopt;
+    const auto& m = it->second.code_bias->disc_per_signal;   // empty for RTCM-decoded biases
+    const auto sit = m.find(rinex_obs_code);
+    return (sit == m.end()) ? std::nullopt : std::optional<int>{ sit->second };
+}
+
 std::optional<SsrPhaseBiasEntry>
 SsrCorrectionStore::getPhaseBias(const std::string& sat,
                                  const std::string& rinex_obs_code) const {

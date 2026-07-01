@@ -91,4 +91,5 @@ def _status_categories(df: pd.DataFrame):
 
 viewer = Viewer(name="satellite_strip", title="Satellite status strip",
                 required_csvs=("satellite_status_trace.csv",),
-                build=build_satellite_strip)
+                build=build_satellite_strip,
+                default_enabled=False)

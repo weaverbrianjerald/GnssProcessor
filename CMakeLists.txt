@@ -49,6 +49,7 @@ add_library(gnss_core STATIC
     src/core/atmosphere/Ionosphere.cpp
     src/core/atmosphere/IonexParser.cpp
     src/core/atmosphere/GlobalIonosphereMap.cpp
+    src/core/atmosphere/SphericalHarmonicIonosphere.cpp
     src/core/atmosphere/MagneticField.cpp
     src/core/atmosphere/HigherOrderIonosphere.cpp
     src/core/config/GnssConfig.cpp
@@ -71,6 +72,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManager.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
+    src/core/filter/IlsCore.cpp
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/MeasurementBuilder.cpp
@@ -103,13 +105,13 @@ add_library(gnss_core STATIC
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
 	#   IfPhaseSlipDetector: DD IF-phase pre-fit residuals; only valid for
-	#     static sites with a precise a priori position. Development incomplete.
+	#     static sites with a precise a priori position — the NETWORK producer regime.
 	#   GfSlipDetector: 2nd-order time-differenced GF; intended for high-rate
 	#     (>=1 Hz) real-time slip *repair* alongside the MW detector, where
 	#     ionospheric residual contamination of GF is small enough. Not yet
 	#     wired in; the MW detector currently covers slip detection.
-	# Both .cpp are intentionally excluded from the build until finished.
-	#src/core/slip/IfPhaseSlipDetector.cpp
+	# GfSlipDetector.cpp stays excluded until finished; IfPhaseSlipDetector.cpp is built (network).
+	src/core/slip/IfPhaseSlipDetector.cpp
 	#src/core/slip/GfSlipDetector.cpp
 	src/core/slip/GraphicSlipDetector.cpp
 	src/core/slip/EwlSlipDetector.cpp
@@ -235,6 +237,7 @@ add_executable(gnss_tests
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
     tests/test_network_emit.cpp
+    tests/test_sh_ionosphere.cpp
     tests/test_network_product_io.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
@@ -247,6 +250,7 @@ add_executable(gnss_tests
     tests/test_rtcm.cpp
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
+    tests/test_ils_core.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
     tests/test_stochastic_model.cpp

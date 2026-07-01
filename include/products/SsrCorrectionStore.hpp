@@ -140,6 +140,26 @@ public:
     std::optional<SsrPhaseBiasEntry> getPhaseBias(
         const std::string& sat, const std::string& rinex_obs_code) const;
 
+    /**
+     * @brief Look up the network code-bias discontinuity counter for a (sat,
+     *        signal) pair.
+     *
+     * Returns @c std::nullopt when the stream carries no code bias for the pair
+     * OR carries one without a discontinuity counter (every RTCM/IGS-SSR-decoded
+     * code bias — the wire format has no such field).  A value is present only
+     * for biases emitted by the network producer (@c NetworkProductEmitter) with
+     * @c network.estimate_sat_code_bias on.  The consumer uses an increment of
+     * this counter to re-inflate the affected receiver code-bias state when the
+     * producer's code-bias datum re-references, the analog of the phase-bias
+     * discontinuity → ambiguity reset.
+     *
+     * @param sat            Satellite ID (e.g. "G01").
+     * @param rinex_obs_code Exact RINEX obs code (e.g. "C1C", "C5Q").
+     * @return The counter, or @c std::nullopt if untracked.
+     */
+    std::optional<int> getCodeBiasDiscontinuity(
+        const std::string& sat, const std::string& rinex_obs_code) const;
+
     /// SSR reference epoch of the most recent record pushed for @p sat
     /// (from the message header), or @c std::nullopt if none.
     std::optional<GnssTime> getSsrEpoch(const std::string& sat) const;

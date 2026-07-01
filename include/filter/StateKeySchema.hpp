@@ -721,5 +721,84 @@ inline std::string makePivotSeedKey(std::string_view cons,
     return out;
 }
 
+// ===========================================================================
+// 8. Global SH-VTEC coefficient keys — "SH|<n>|<m>|<C|S>"
+// ---------------------------------------------------------------------------
+// Examples: "SH|0|0|C", "SH|4|2|C", "SH|4|2|S"
+//
+//   n    : spherical-harmonic degree (0..N).
+//   m    : order (0..n).
+//   trig : 'C' (cosine term, includes m=0) or 'S' (sine term, m>=1).
+//
+// These name the SHARED spherical-harmonic VTEC coefficient columns of the
+// PPP-RTK network producer's co-estimated global ionosphere
+// (SharedParamKind::VtecSh).  Unlike every other key here they are NOT
+// StateManager state-vector keys — the coefficients live only in
+// NetworkEstimator's shared border — but they follow the same make/parse
+// pattern so the estimator's column map and the driver's col_desc/trace stay in
+// lockstep.
+//
+// Constructed in:  the network estimator (registerVtecCoeff), the driver.
+// ===========================================================================
+
+/// Tag that opens every SH-VTEC coefficient key.
+inline constexpr std::string_view kVtecShPrefix = "SH";
+
+/// Decomposed SH-VTEC coefficient key.
+struct VtecShKeyParts {
+    int  n;     ///< Degree.
+    int  m;     ///< Order.
+    char trig;  ///< 'C' or 'S'.
+};
+
+/// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>".
+inline std::string makeVtecShKey(int n, int m, char trig) {
+    std::string out;
+    out.append(kVtecShPrefix);
+    out.push_back(kPipeDelimiter);
+    out.append(std::to_string(n));
+    out.push_back(kPipeDelimiter);
+    out.append(std::to_string(m));
+    out.push_back(kPipeDelimiter);
+    out.push_back(trig);
+    return out;
+}
+
+/// Cheap predicate: does @p key open with the SH prefix + a pipe?
+inline bool isVtecShKey(std::string_view key) {
+    return key.size() > kVtecShPrefix.size() + 1
+        && key.substr(0, kVtecShPrefix.size()) == kVtecShPrefix
+        && key[kVtecShPrefix.size()] == kPipeDelimiter;
+}
+
+/// Parse a global SH-VTEC coefficient key.  Returns @c std::nullopt unless the
+/// key has the exact form "SH|<n>|<m>|<C|S>" with non-negative integer n, m and
+/// a 'C' or 'S' trig tag.
+inline std::optional<VtecShKeyParts>
+parseVtecShKey(std::string_view key) {
+    if (!isVtecShKey(key)) return std::nullopt;
+    const auto p0 = kVtecShPrefix.size();                         // pipe after "SH"
+    const auto p1 = key.find(kPipeDelimiter, p0 + 1);
+    if (p1 == std::string_view::npos) return std::nullopt;
+    const auto p2 = key.find(kPipeDelimiter, p1 + 1);
+    if (p2 == std::string_view::npos) return std::nullopt;
+    if (key.find(kPipeDelimiter, p2 + 1) != std::string_view::npos)
+        return std::nullopt;                                     // no extra fields
+    const std::string_view n_sv = key.substr(p0 + 1, p1 - p0 - 1);
+    const std::string_view m_sv = key.substr(p1 + 1, p2 - p1 - 1);
+    const std::string_view t_sv = key.substr(p2 + 1);
+    if (n_sv.empty() || m_sv.empty() || t_sv.size() != 1) return std::nullopt;
+    if (t_sv.front() != 'C' && t_sv.front() != 'S') return std::nullopt;
+    auto toInt = [](std::string_view sv, int& out) -> bool {
+        int v = 0;
+        for (const char c : sv) { if (c < '0' || c > '9') return false; v = v * 10 + (c - '0'); }
+        out = v;
+        return true;
+    };
+    int n = 0, m = 0;
+    if (!toInt(n_sv, n) || !toInt(m_sv, m)) return std::nullopt;
+    return VtecShKeyParts{n, m, t_sv.front()};
+}
+
 }  // namespace StateKeys
 }  // namespace GnssProcessor

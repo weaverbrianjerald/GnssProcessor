@@ -333,6 +333,30 @@ namespace GnssProcessor {
                                           double new_variance);
 
         /**
+         * @brief Re-inflate a receiver code-bias (DCB/IFB) state's variance.
+         *
+         * The network code-bias analog of @c reinflateIonosphereVariance: when
+         * a consumed satellite code-bias datum re-references (the producer's
+         * per-(const,signal) sum-to-zero level steps as satellites rise/set),
+         * the receiver code-bias state that absorbs that per-signal common-mode
+         * step must be freed to re-absorb it in a single epoch instead of
+         * dragging the step through its near-frozen random walk.  Breaks the
+         * cross-covariance (zeroes the row/col) and sets the diagonal, while
+         * PRESERVING the state value — the hardware delay itself did not change,
+         * only the gauge it is referenced to.
+         *
+         * @param key Receiver code-bias state key (e.g. "GPS_DCB", "GPS_IFB5").
+         *            No-op (debug log) when no such state exists.
+         * @param new_variance Replacement diagonal (m²).  Falls back to
+         *            @c initial_std.code_bias² when non-positive.  Refused
+         *            (warn) on a frozen row (P_diag ≤ 0), defending any
+         *            BSSD-held / GLONASS per-slot column the network path
+         *            should never target.
+         */
+        void reinflateCodeBiasVariance(const std::string& key,
+                                       double new_variance);
+
+        /**
          * @brief Store the last-known elevation (degrees) for a per-satellite iono state.
          *
          * Used by the process noise model to apply elevation-dependent spectral

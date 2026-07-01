@@ -127,18 +127,23 @@ public:
                           const SbasisDeclaration& decl) const;
 
     /**
-     * @brief Null-space rank gate: SVD the PRE-constraint reduced shared normals
-     *        and assert the count of (relatively) zero singular values equals the
-     *        declared S-basis dimension.
+     * @brief Null-space rank gate: eigen-decompose the PRE-constraint reduced
+     *        shared normals and assert the count of (relatively) zero eigenvalues
+     *        equals the declared S-basis dimension.
      *
      * Run after the kernel's @c reduce() (local ambiguity pins already folded and
      * eliminated) and before the datum solve.  A mismatch means the datum is
      * under- or over-specified — the producer would emit a meaningless least-norm
      * split — so this throws loudly rather than letting the solve proceed.
      *
+     * The reduced normals are symmetric positive-SEMIdefinite here (the gate
+     * precedes any indefinite modification), so eigenvalues equal singular values
+     * and a self-adjoint eigensolve gives the same count as an SVD far more
+     * cheaply.
+     *
      * @param reduced_N_ss The reduced shared normal matrix @f$\tilde N_{ss}@f$.
      * @param declared_dim Expected null-space dimension (Plan::declared_dimension).
-     * @param tol          Relative singular-value threshold (vs the largest σ).
+     * @param tol          Relative eigenvalue threshold (vs the largest λ).
      * @throws std::runtime_error with observed-vs-declared counts on mismatch.
      */
     void assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,

@@ -193,11 +193,97 @@ TEST(NetworkProductIoTest, ReplayReproducesLiveStore) {
     // Clock + code bias agree too.
     EXPECT_DOUBLE_EQ(store_live.getCodeBias("G01", "C1W"),
                      store_disk.getCodeBias("G01", "C1W"));
+
+    // The code-bias discontinuity counter (single sat, single band: no set or
+    // band-tuple change) takes the forced-datum-change path at epoch 3 and is
+    // reproduced on replay from the serialized datum_changed flag alone.
+    {
+        const auto a = store_live.getCodeBiasDiscontinuity("G01", "C1W");
+        const auto b = store_disk.getCodeBiasDiscontinuity("G01", "C1W");
+        ASSERT_TRUE(a.has_value());
+        ASSERT_TRUE(b.has_value());
+        EXPECT_EQ(*a, 1);          // one forced bump at the datum_changed epoch
+        EXPECT_EQ(*a, *b);
+    }
     const auto oc_live = store_live.getOrbitClock("G01", last_t);
     const auto oc_disk = store_disk.getOrbitClock("G01", last_t);
     ASSERT_TRUE(oc_live.has_value());
     ASSERT_TRUE(oc_disk.has_value());
     EXPECT_DOUBLE_EQ(oc_live->c0, oc_disk->c0);
+
+    std::filesystem::remove(path);
+}
+
+// Code-bias discontinuity counters are NOT serialized; they are recomputed from
+// the per-epoch satellite-set + band composition (set-change, IF-pin band-tuple
+// change) plus the serialized datum_changed flag.  A sequence with a rise, a
+// set, a forced bump, and a vanish-then-return must replay byte-for-byte.
+TEST(NetworkProductIoTest, CodeBiasReplayReproducesCounters) {
+    const std::string path = tempFile("gnss_netprod_cbias.txt");
+    std::filesystem::remove(path);
+
+    auto codeEpoch = [](const GnssTime& t, bool with_g03) {
+        NetworkSolutionEpoch sol;
+        sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
+        auto addSat = [&](const std::string& sat) {
+            NetworkSatSolution s;
+            s.sat = sat; s.has_clock = true; s.clock_c0_m = 1.0;
+            s.code_bias_m["C1C"] = 0.10;
+            s.code_bias_m["C2W"] = 0.20;
+            sol.sats.push_back(s);
+        };
+        addSat("G01");
+        addSat("G02");
+        if (with_g03) addSat("G03");
+        return sol;
+    };
+
+    // 1: G01,G02            2: +G03 (rise)   3: -G03 (set, datum_changed)
+    // 4: G01,G02 forced     5: +G03 (return)
+    struct Step { bool g03; bool datum_changed; };
+    const Step steps[] = {
+        {false, false}, {true, false}, {false, true}, {false, true}, {true, false},
+    };
+
+    SsrCorrectionStore    store_live;
+    NetworkProductEmitter emit_live;
+    GnssTime              t = kT0;
+    {
+        NetworkProductWriter w(path);
+        ASSERT_TRUE(w.good());
+        for (const Step& s : steps) {
+            const NetworkSolutionEpoch sol = codeEpoch(t, s.g03);
+            if (s.datum_changed) emit_live.markDatumChange();
+            emit_live.emitToStore(sol, store_live);
+            w.write(sol, s.datum_changed);
+            t.tow += 30.0;
+        }
+    }
+
+    bool ok = false;
+    std::vector<NetworkProductRecord> recs = NetworkProductReader::read(path, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 5u);
+
+    SsrCorrectionStore    store_disk;
+    NetworkProductEmitter emit_disk;
+    for (const NetworkProductRecord& r : recs)
+        NetworkProductReader::replay(r, store_disk, emit_disk);
+
+    // Every (sat,code) counter in the final store reproduces exactly.
+    for (const char* sat : {"G01", "G02", "G03"}) {
+        for (const char* code : {"C1C", "C2W"}) {
+            const auto a = store_live.getCodeBiasDiscontinuity(sat, code);
+            const auto b = store_disk.getCodeBiasDiscontinuity(sat, code);
+            ASSERT_TRUE(a.has_value()) << sat << " " << code;
+            ASSERT_TRUE(b.has_value()) << sat << " " << code;
+            EXPECT_EQ(*a, *b) << sat << " " << code;
+            EXPECT_EQ(emit_live.codeBiasDiscontinuityCounter(sat, code),
+                      emit_disk.codeBiasDiscontinuityCounter(sat, code)) << sat << " " << code;
+        }
+    }
+    // G01 stepped at every later epoch (rise, set+force, force, return) -> 4.
+    EXPECT_EQ(emit_live.codeBiasDiscontinuityCounter("G01", "C1C"), 4);
 
     std::filesystem::remove(path);
 }
