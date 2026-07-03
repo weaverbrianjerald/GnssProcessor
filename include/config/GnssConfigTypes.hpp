@@ -164,6 +164,21 @@ namespace GnssProcessor {
         int    min_epochs{ 10 };              ///< Let the network float converge before fixing.
     };
 
+    /**
+     * @brief Producer a-priori satellite orbit/clock source for the PPP-RTK
+     *        network producer (@c network.apriori_source).
+     *
+     * Selects what the network producer's per-satellite a-priori clock (and the
+     * orbit its geometry uses) is referenced to; the estimable satellite-clock
+     * state then absorbs the error of that a-priori.  Frozen conventions:
+     * @c docs/rt_service_conventions.md §1 (RTF-1) and the card decomposition in
+     * @c docs/rtf12_brdc_rts_plan.md.
+     */
+    enum class NetworkAprioriSource {
+        Sp3,      ///< (default) Resolved precise SP3(+CLK) files; the emitted clock C0 is a delta against the SP3/CLK product identity (today's behaviour — byte-identical).
+        BrdcRts   ///< Broadcast ephemeris (@c LiveEphemerisStore) + external IGS-SSR (4076) orbit corrections; the emitted C0 is a delta against broadcast(IODE) + the applied RTS orbit (the self-sufficient real-time service mode).
+    };
+
     struct NetworkConfig {
         std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
         std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).

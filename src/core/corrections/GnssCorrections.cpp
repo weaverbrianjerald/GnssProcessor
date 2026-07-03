@@ -248,11 +248,17 @@ namespace GnssProcessor {
                     ssr->delta_rac_dot.x(), ssr->delta_rac_dot.y(), ssr->delta_rac_dot.z(),
                     ssr->c0, ssr->c1, ssr->c2, ssr->hr_clock,
                     clock_corr, used_broadcast,
-                    eph_iode, ssr->iode, brdc_iode,
-                    SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode));
+                    eph_iode, ssr->clock_iode, brdc_iode,
+                    SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode));
             }
+            // RTF-2 (Card 3): the CLOCK application gates on the CLOCK IODE
+            // (clock_iode), not the orbit anchor (ssr->iode).  For every current
+            // path clock_iode == ssr->iode (standard clocks inherit the orbit
+            // anchor in getOrbitClock; standalone network clocks stay -1), so this
+            // is byte-identical; only a brdc_rts producer's stamped clock IODE
+            // makes it differ.  The ORBIT overlay gate (ModelGeometry) stays on iode.
             if (std::isfinite(clock_corr)
-                && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
+                && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
                                 - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
                 clock_corr += SsrCorrectionStore::applyClockToBias(
@@ -278,9 +284,9 @@ namespace GnssProcessor {
                 // ssr_iode) from a convention problem (sane-but-unequal) per
                 // constellation (GAL low-8-bit IODnav, BDS mod(toe/720,240)).
                 log->trace("SSR clock present for {} ({}) but NOT applied: "
-                           "brdc_iode={} ssr_iode={} clock_finite={}",
+                           "brdc_iode={} clock_iode={} clock_finite={}",
                            satellite, PppUtils::getSystemString(satellite),
-                           brdc_iode, ssr->iode, std::isfinite(clock_corr));
+                           brdc_iode, ssr->clock_iode, std::isfinite(clock_corr));
             }
         }
 

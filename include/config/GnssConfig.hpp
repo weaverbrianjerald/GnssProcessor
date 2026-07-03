@@ -1398,6 +1398,66 @@ namespace GnssProcessor {
         bool estimateNetworkIonoSh() const { return estimate_network_iono_sh_; }
 
         /**
+         * @brief A-priori satellite orbit/clock source for the network producer
+         *        (@c network.apriori_source).
+         *
+         * @c Sp3 (default) resolves precise SP3(+CLK) files — the emitted clock
+         * C0 is a delta against the SP3/CLK product identity (today's behaviour,
+         * byte-identical everywhere).  @c BrdcRts references the a-priori clock to
+         * the broadcast ephemeris (@c LiveEphemerisStore) plus external IGS-SSR
+         * (4076) orbit corrections; the estimable clock state then absorbs the
+         * broadcast-clock error and the emitted C0 becomes a delta against
+         * broadcast(IODE) + the applied RTS orbit (the self-sufficient real-time
+         * service mode — see @c docs/rt_service_conventions.md §1).  The choice is
+         * orthogonal to @c network.service_mode (an input-source selection, not a
+         * bundled toggle) — @c service_mode does NOT arm it.  Consumed by the
+         * producer core path (later RTF-1 cards); this getter is config plumbing.
+         */
+        NetworkAprioriSource networkAprioriSource() const { return network_apriori_source_; }
+
+        /**
+         * @brief A-priori satellite-clock anchor pseudo-observation σ (m) for the
+         *        network producer (@c network.apriori_clock_anchor_sigma_m).
+         *
+         * The per-satellite a-priori clock is bound to the solve by a loose anchor
+         * pseudo-observation whose information is @f$1/\sigma^2@f$.  @c 0.0
+         * (default) means AUTO: the mode-appropriate value is resolved at the
+         * producer (unchanged in @c Sp3 mode; broadcast-grade ~3 m in @c BrdcRts,
+         * per @c docs/rtf12_brdc_rts_plan.md D6).  An explicit positive value
+         * overrides the auto in both modes.  Parsed and stored here; consumed by
+         * the producer core (a later RTF-1 card).
+         */
+        double networkAprioriClockAnchorSigmaM() const { return network_apriori_clock_anchor_sigma_m_; }
+
+        /**
+         * @brief Card 5 (plan D6): the RESOLVED a-priori satellite-clock anchor σ (m)
+         *        the network producer actually folds, given the mode + AUTO policy.
+         *
+         * Resolution (single source of truth — the driver's anchor fold AND its B7
+         * information-fraction diagnostic both call this so they never diverge):
+         *   1. explicit @c network.apriori_clock_anchor_sigma_m > 0 → that value,
+         *      in BOTH modes;
+         *   2. else @c BrdcRts (auto) → @c 3.0 m (broadcast-grade; conventions §1 —
+         *      binds the anchor because the driver's < 100 m gate then passes);
+         *   3. else @c Sp3 (auto) → @c initial_std.sat_clock, UNCHANGED (the default
+         *      1000 m leaves the anchor OFF at the < 100 m gate ⇒ every existing sp3
+         *      network config is byte-identical).
+         *
+         * This does NOT apply the < 100 m binding gate (the driver keeps that) and
+         * does NOT touch @c initial_std.sat_clock (the mode-independent loose state
+         * init).  Pure function of config members — unit-testable in isolation.
+         *
+         * @return The resolved anchor σ in metres.
+         */
+        double resolveNetworkAprioriClockAnchorSigmaM() const {
+            const double explicit_sigma = network_apriori_clock_anchor_sigma_m_;
+            if (explicit_sigma > 0.0) return explicit_sigma;   // explicit wins in both modes
+            if (network_apriori_source_ == NetworkAprioriSource::BrdcRts)
+                return 3.0;                                    // brdc_rts auto (conventions §1 / D6)
+            return initial_std_.sat_clock;                     // sp3 auto (unchanged)
+        }
+
+        /**
          * @brief Carry per-station carrier-phase ambiguities across epochs in the
          *        PPP-RTK network producer (phase-leveling, Increment 1).
          *
@@ -1807,6 +1867,27 @@ namespace GnssProcessor {
          * keep-forever baseline — byte-identical.
          */
         double networkEmitterStalenessHorizonS() const { return network_emitter_staleness_horizon_s_; }
+
+        /**
+         * @brief Whether the curated RT-service producer profile is on
+         *        (@c network.service_mode, RTB-8).
+         *
+         * One switch that ARMS the coherent RT-service producer toggle set at
+         * load time (clock/URA discontinuity channels + retro-bump, two-state
+         * clock model, phase-leveling, both RAIM tiers + the σ̂0 withhold and
+         * its per-constellation carve-out, epoch-status heartbeat, pivot
+         * vanish-return signalling, sticky pivot, scoped handover response,
+         * generation id, disc-counter serialization, v2 S contract +
+         * re-broadcast, per-epoch flush, health heartbeat, trace rotation).
+         * BUNDLE-WINS: it overrides explicit disables of the armed keys — each
+         * override is individually warned at load; run without @c service_mode
+         * to hand-tune.  By the time the config is loaded the armed toggles
+         * already carry their service values, so at runtime this getter is
+         * PROVENANCE only: the L15 run manifest (and operator tooling) records
+         * that the run's toggle set came from the bundle rather than
+         * hand-assembly.  Default false ⇒ nothing armed (byte-identical).
+         */
+        bool networkServiceMode() const { return network_service_mode_; }
 
         /**
          * @brief Standardized post-fit residual threshold σ for the network RAIM
@@ -3267,6 +3348,8 @@ namespace GnssProcessor {
         bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
         bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
         bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
+        NetworkAprioriSource network_apriori_source_{NetworkAprioriSource::Sp3}; ///< RTF-1: producer a-priori orbit/clock source (network.apriori_source); Sp3 (default) = precise SP3/CLK identity (byte-identical), BrdcRts = broadcast eph + external RTS orbits. Parse+store in Card 1; consumed by the producer core (later RTF-1 card).
+        double network_apriori_clock_anchor_sigma_m_{0.0};  ///< RTF-1/D6: a-priori satellite-clock anchor pseudo-obs σ (m); 0 (default) = auto (mode-resolved at the producer), explicit positive wins. Parse+store only in Card 1.
         bool   network_phase_leveling_{false};            ///< Carry per-station carrier-phase ambiguities across epochs (phase-leveling, Increment 1); OFF = byte-identical absolute solve.
         double network_phase_leveling_q_amb_{0.0};        ///< Carried-ambiguity process noise (m²/s) inflating var over the inter-epoch gap; 0 (default) = pure zero-process-noise accumulation (random-constant model).
         int    network_phase_leveling_warmup_epochs_{6};  ///< Emitted-epoch count before a carried ambiguity is trusted (cold-start convergence guard).
@@ -3315,6 +3398,7 @@ namespace GnssProcessor {
         bool   network_serialize_disc_counters_{false};    ///< RTA-4: append the POST-EMIT discontinuity-counter VALUES as optional trailing fields (C field 5 clock / B field 5 code / P field 7 phase) so a tail reader reconstructs counters without replaying from epoch 1; OFF = old field counts (byte-identical).
         double network_contract_rebroadcast_s_{0.0};       ///< RTA-5: re-broadcast a CURRENT v2 'S' contract line (refreshed realized pivots) every N seconds of product time AND on any datum-change emit; requires serialize_sbasis_contract; 0 = single header S line (byte-identical).
         double network_emitter_staleness_horizon_s_{0.0};  ///< RTA-11: per-key last-emitted PRODUCT-time horizon (s); a (sat[,signal]) key returning after a longer gap is a first sighting (baseline reseed, no jump/forced disc bump) on phase/code/clock channels; travels in the S contract as stale=; 0 = keep-forever baselines (byte-identical).
+        bool   network_service_mode_{false};               ///< RTB-8: curated RT-service profile switch (network.service_mode) — the loader arms the coherent producer toggle set (bundle-wins over explicit disables, each override warned; see loadNetworkSection_).  Member kept purely for PROVENANCE (getter + L15 run manifest); OFF = nothing armed (byte-identical).
         double network_clock_model_meas_std_m_{0.05};    ///< Std (m) of the network-solved offset as the two-state model's measurement (the update R).
         double network_clock_model_max_gap_s_{120.0};    ///< R11: max unseen gap (s) the carried two-state clock model survives before reseed / drift-reset / C1-ZOH; loader defaults it to network_phase_leveling_max_gap_s_ (clock-model carry only, distinct from the ambiguity/ZWD max-gap).
         // --- RT0-4: product generation-time metadata ---

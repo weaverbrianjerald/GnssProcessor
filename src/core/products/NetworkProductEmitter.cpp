@@ -200,6 +200,16 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             rec.received_time = sol.epoch_time;
             rec.epoch_time    = sol.epoch_time;
             rec.iod_ssr       = sol.iod_ssr;
+            // RTF-2 (Card 4 plumbing): carry the per-sat broadcast-anchor IODE +
+            // RTS-orbit echo VALUES from the solution into the wire struct so the
+            // live closed loop AND file replay stamp the store identically.  All
+            // three default to the "unstamped" sentinel (-1 / -1 / {0,0}) in sp3
+            // mode (Card 5 populates them in brdc_rts), so getOrbitClock's clock
+            // gate stays byte-identical (a standalone clock's clock_iode inherits
+            // the paired orbit anchor — Card 3).
+            rec.iode          = s.clock_iode;
+            rec.orbit_iod_ssr = s.orbit_iod_ssr;
+            rec.orbit_epoch   = s.orbit_epoch;
 
             // Clock discontinuity bookkeeping (A2): bump on a scoped datum change
             // for THIS satellite's constellation (a clock-pivot handover).  First

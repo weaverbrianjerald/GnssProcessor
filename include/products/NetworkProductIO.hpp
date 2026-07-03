@@ -40,8 +40,14 @@
  * @code
  *   I,<generation_id>                       # RTA-3 solution-generation id (after E/G)
  *   C,<sat>,<c0>[,<c1>][,<clock_disc>]      # RTA-4: with counters on, c1 is ALWAYS
- *                                           #   written (0 when absent) so the clock
- *                                           #   disc counter sits at fixed field 5
+ *     [,iode=<n>][,oiod=<n>]                #   written (0 when absent) so the clock
+ *     [,oepoch=<week>:<tow>]                #   disc counter sits at fixed field 5.
+ *                                           #   Card 4 (RTF-2): the iode=/oiod=/
+ *                                           #   oepoch= key=value tokens carry the
+ *                                           #   brdc_rts broadcast-IODE anchor + RTS
+ *                                           #   orbit echo (all absent in sp3 mode;
+ *                                           #   a field with '=' ends the positional
+ *                                           #   c1/clock_disc parse)
  *   B,<sat>,<signal>,<bias>[,<code_disc>]   # RTA-4 code disc counter (field 5)
  *   P,<sat>,<sig>,<b>,<si>,<wl>[,<ph_disc>] # RTA-4 phase disc counter (field 7)
  *   S,...[,gid=<id>][,stale=<sec>]          # RTA-3/RTA-11 trailing key=value fields;

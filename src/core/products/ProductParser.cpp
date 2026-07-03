@@ -188,6 +188,7 @@ namespace GnssProcessor {
             std::map<std::string, std::map<GnssTime, OrbitData>> orbit_map;
             constexpr double MIN_TIME_DIFF = 1.0;
             size_t total_entries = 0;
+            int merged_epoch_interval = -1;   // m2: first merged file's SP3 sampling, to flag mixed-rate concats
             auto logger = log_manager_.getLogger("product_parser");
 
             for (const auto& sp3_path : sp3_paths) {
@@ -305,6 +306,24 @@ namespace GnssProcessor {
                     }
                 }
 
+                // m2: a multi-file merge that mixes sampling rates (e.g. a COD 05M
+                // ultra-rapid margin file concatenated with an IGS 15M one) interleaves
+                // the finer file's off-grid nodes into the coarser arc.  They are NOT
+                // duplicates, so the 1 s dedup window below (correctly) keeps them,
+                // leaving a non-uniformly-sampled merged series.  The orbit values are
+                // valid; only the node spacing is mixed — surface it once per differing
+                // file so the operator knows an interpolation window may straddle two
+                // products.  Single-file / same-rate merges never trip this (byte-identical).
+                if (merged_epoch_interval < 0) {
+                    merged_epoch_interval = epoch_interval;
+                } else if (epoch_interval != merged_epoch_interval && sp3_paths.size() > 1) {
+                    logger->warn("SP3 merge mixes sampling intervals ({} s and {} s) across {} "
+                                 "files ({}); off-grid nodes from the finer file are retained, so "
+                                 "the merged arc is non-uniformly sampled (mixed-rate ULT concat).",
+                                 merged_epoch_interval, epoch_interval, sp3_paths.size(),
+                                 sp3_path.string());
+                }
+
                 // --- SP3 data records ---
                 bool have_line = !in_header && !line.empty();
                 while (have_line || std::getline(file, line)) {
@@ -391,7 +410,13 @@ namespace GnssProcessor {
                                 std::string sat_id = line.substr(1, 3);
                                 auto& sat_orbits = orbit_map[sat_id];
                                 auto it = sat_orbits.find(epoch_time);
-                                if (it != sat_orbits.end()) {
+                                // m1: first-file-wins for velocity, mirroring the P-record
+                                // dedup above.  A P record inserts with velocity_valid=false and
+                                // the FIRST V for that epoch sets it true, so a file's own V
+                                // still applies exactly once; but a later (overlapping ULT margin)
+                                // file whose duplicate P was skipped must NOT overwrite the
+                                // velocity already carried on the retained first-file entry.
+                                if (it != sat_orbits.end() && !it->second.velocity_valid) {
                                     // SP3 V record fields also start at column 4.
                                     std::string_view vsv(line.data() + 4, line.size() - 4);
                                     double vx, vy, vz, clock_rate;

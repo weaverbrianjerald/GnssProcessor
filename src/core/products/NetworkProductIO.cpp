@@ -139,9 +139,33 @@ struct LineAssembler {
                 NetworkSatSolution& s = satSolution(f[1]);
                 s.has_clock  = true;
                 s.clock_c0_m = std::stod(f[2]);
-                if (f.size() > 3) s.clock_c1_m_s = std::stod(f[3]);   // B3b: optional drift (old files omit it)
-                if (f.size() > 4)   // RTA-4: optional post-emit clock disc counter (field 5)
-                    cur.serialized_disc.clock[f[1]] = std::stoi(f[4]);
+                // Positional optional fields: c1 (field 4, B3b) then the RTA-4
+                // post-emit clock disc counter (field 5).  Card 4 (RTF-2) appends
+                // self-describing key=value tokens (iode=/oiod=/oepoch=) AFTER
+                // these; a field containing '=' is a key=value token, never a
+                // positional number, so the positional parse stops at the first '='
+                // field.  For every pre-Card-4 file no field has '=', so this is
+                // byte-for-byte the old two-line c1/clock-disc parse.
+                std::size_t k = 3;
+                if (k < f.size() && f[k].find('=') == std::string::npos)
+                    s.clock_c1_m_s = std::stod(f[k++]);                    // B3b drift
+                if (k < f.size() && f[k].find('=') == std::string::npos)   // RTA-4 clock disc
+                    cur.serialized_disc.clock[f[1]] = std::stoi(f[k++]);
+                for (; k < f.size(); ++k) {   // Card 4 brdc_rts anchor / orbit echo
+                    if (f[k].rfind("iode=", 0) == 0) {
+                        s.clock_iode = std::stoi(f[k].substr(5));
+                    } else if (f[k].rfind("oiod=", 0) == 0) {
+                        s.orbit_iod_ssr = std::stoi(f[k].substr(5));
+                    } else if (f[k].rfind("oepoch=", 0) == 0) {
+                        const std::string v = f[k].substr(7);
+                        const auto colon = v.find(':');
+                        if (colon != std::string::npos) {
+                            s.orbit_epoch.week = std::stoi(v.substr(0, colon));
+                            s.orbit_epoch.tow  = std::stod(v.substr(colon + 1));
+                        }
+                    }
+                    // Unknown key=value tokens are ignored (forward-compatible).
+                }
             } else if (tag == "B") {
                 if (!have_cur || f.size() < 4) { ok = false; return completed; }
                 satSolution(f[1]).code_bias_m[f[2]] = std::stod(f[3]);
@@ -443,6 +467,22 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                      << ',' << disc_source->clockDiscontinuityCounter(s.sat);
             } else if (s.clock_c1_m_s != 0.0) {  // B3b: optional drift field 4 (only when clock_model emits it)
                 out_ << ',' << fmt::format("{}", s.clock_c1_m_s);
+            }
+            // Card 4 (RTF-2): brdc_rts clock ephemeris-anchor + orbit-echo fields as
+            // trailing key=value tokens.  Position-independent — the c1/clock_disc
+            // positional fields above vary in count, and orbit_iod_ssr/orbit_epoch
+            // are themselves independently optional — and self-describing.  Written
+            // ONLY when the producer stamped a broadcast IODE (clock_iode >= 0, i.e.
+            // brdc_rts mode); sp3 mode leaves clock_iode = -1 → nothing appended →
+            // the C line is byte-identical.  A field containing '=' is a key=value
+            // token, never a positional number, so the reader's positional
+            // c1/clock_disc parse stops at the first such field.
+            if (s.clock_iode >= 0) {
+                out_ << ",iode=" << s.clock_iode;
+                if (s.orbit_iod_ssr >= 0) out_ << ",oiod=" << s.orbit_iod_ssr;
+                if (s.orbit_epoch.week != 0)
+                    out_ << ",oepoch=" << s.orbit_epoch.week << ':'
+                         << fmt::format("{}", s.orbit_epoch.tow);
             }
             out_ << '\n';
         }

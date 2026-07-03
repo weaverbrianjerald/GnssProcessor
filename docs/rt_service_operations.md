@@ -119,10 +119,12 @@ concatenate the chain oldest-first, stripping the header line of every
 generation except the first:
 
 ```powershell
-Get-Content network_trace.csv.3, network_trace.csv.2, network_trace.csv.1 |
+# One header (from the oldest generation), then every data row oldest -> newest
+# with each generation's own header stripped.
+Get-Content network_trace.csv.3 | Select-Object -First 1 | Set-Content combined.csv -Encoding utf8
+Get-Content network_trace.csv.3, network_trace.csv.2, network_trace.csv.1, network_trace.csv |
     Where-Object { $_ -notmatch '^week,' } |
-    Set-Content combined.csv -Encoding utf8
-Get-Content network_trace.csv | Select-Object -Skip 0 | Add-Content combined.csv
+    Add-Content combined.csv
 ```
 
 (or simply point a viewer at one renamed generation at a time).  If a rolled

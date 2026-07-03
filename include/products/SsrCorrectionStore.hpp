@@ -121,7 +121,22 @@ public:
         double          hr_clock{0.0};                            ///< High-rate clock delta (m); 0 if not present.
         GnssTime        epoch_time{0, 0.0};                       ///< SSR content reference epoch of the CLOCK correction — dt base for applyClockToBias.
         GnssTime        orbit_epoch_time{0, 0.0};                 ///< SSR content reference epoch of the ORBIT correction — dt base for applyOrbitToPosition (equals epoch_time for a combined record).
-        int             iode{-1};                                 ///< Broadcast IODE this correction applies to; -1 == unknown → keeps iodeMatches() permissive. A standalone clock subtype carries no orbit IODE and leaves this at -1 (see getOrbitClock; RT0-1).
+        int             iode{-1};                                 ///< Broadcast IODE the ORBIT applies to; -1 == unknown → keeps iodeMatches() permissive. A standalone clock subtype carries no orbit IODE and leaves this at -1 (see getOrbitClock; RT0-1).
+        /// RTF-2 (Card 3): broadcast IODE the CLOCK C0 is referenced to (IGS-SSR
+        /// matching convention).  Distinct from @c iode (the ORBIT anchor): a
+        /// standard SSR clock carries no independent IODE, so this INHERITS the
+        /// paired orbit's @c iode (byte-identical to the pre-card clock gate,
+        /// which gated the clock on @c iode too); the @c brdc_rts network producer
+        /// stamps its own value (SsrClockCorrection.iode ≥ 0) which then wins.
+        /// -1 = unknown (permissive).  GnssCorrections gates CLOCK application on
+        /// @c iodeMatches(brdc_iode, clock_iode); ORBIT application stays on @c iode.
+        int             clock_iode{-1};
+        /// RTF-2 (Card 3): orbit coherence echo carried from the winning clock /
+        /// combined record (IOD-SSR + content epoch of the RTS orbit the clock was
+        /// estimated against).  Default -1 / {0,0} = not stamped.  Consumed by the
+        /// Card-7 consumer echo check; unread today (byte-identical).
+        int             orbit_iod_ssr{-1};
+        GnssTime        orbit_epoch{0, 0.0};
         bool            has_orbit{false};                         ///< True if orbit fields are valid.
         bool            has_clock{false};                         ///< True if clock fields are valid.
         /// RTB-5(b): satellite reference point of the ORBIT part (@c APC for

@@ -63,7 +63,8 @@ src/core/             Implementation files mirror the include/ subdir layout
                       products/, slip/, etc.).  src/core/config/ also holds
                       gnss_config.json — the primary user-edited config file.
 
-tests/                Empty — `gnss_tests.exe` builds but registers 0 test cases
+tests/                GoogleTest unit suite (~550 cases across 33 files) linked into
+                      `gnss_tests.exe`; see docs/test_suite.md
 logs/                 Runtime CSV traces + spdlog files (under build tree)
 
 scripts/              One-off Python utilities.  Most notably
@@ -240,7 +241,7 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **No test suite.** `gnss_tests.exe` has zero registered tests. Verification for numerical changes = clean build + user runs on real data + trace inspection. Do not claim regression confidence from the test binary.
+- **Test suite.** `gnss_tests.exe` runs a substantial GoogleTest suite (~550 cases across 33 files; see docs/test_suite.md) — filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. It guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + user runs on real data + trace inspection.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.

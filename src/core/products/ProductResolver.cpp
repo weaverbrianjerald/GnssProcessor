@@ -493,6 +493,20 @@ std::filesystem::path ProductResolver::resolveErp(int year, int doy) {
         log->info("Real-time live source: using RAPID ERP (FINAL not yet "
                   "available for the current day)");
     }
+    // m3: ultra-rapid has no dedicated ERP benefit — polar motion (~mas/day) and
+    // UT1 (~ms/day) drift far below the pole-tide error budget over the day-scale
+    // latency gap, so a ULT session takes the RAPID ERP, whose IGS long-name
+    // grammar (OPSRAP, 01D) is validated and resolves via the walk-back below.
+    // The OPSULT ERP long name this resolver would otherwise build was never
+    // validated against the CODE/IGS archives (ultra-rapids are 02D, not the 01D
+    // period the ERP branch of buildProductFilename emits), so route around it
+    // rather than ship an unverified name that would 404 and drop the pole tide.
+    if (erp_type == "ULT") {
+        erp_type = "RAP";
+        log->info("Ultra-rapid session: using RAPID ERP (no dedicated ultra-rapid "
+                  "ERP product benefit; polar motion / UT1 drift stays well within "
+                  "the pole-tide budget over the latency gap).");
+    }
 
     // Walk backward from the session day to the most recent available ERP.
     // Polar motion (~a few mas/day) and UT1-UTC (~ms/day) drift slowly, so an

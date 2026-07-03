@@ -452,15 +452,19 @@ TEST(NetworkConsumerProfile, ClockStaleHoldAndBandFallbackKeysParse) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
 }
 
-// RTB-8: network.service_mode arms the coherent RT-service producer toggle set
-// with "fill-if-default" semantics — an explicit value in the same config wins.
+// RTB-8: network.service_mode arms the coherent RT-service producer toggle set.
+// BUNDLE-WINS semantics: an explicit non-zero numeric wins, but an explicit
+// false on an armed bool (or an explicit 0 numeric) is overridden with a warn
+// (see BundleOverridesExplicitDisables below).
 TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     LogManager log;
 
-    // Default (no service_mode): every armed toggle stays at its factory default.
+    // Default (no service_mode): every armed toggle stays at its factory default
+    // (the OFF-path byte-identity proxy, incl. every P2-added knob).
     const fs::path p0 = writeTempConfig("svc_off", networkConfig(kGpsGal, kPriosGps, ""));
     GnssConfig c0;
     ASSERT_TRUE(c0.loadFromJson(p0, log));
+    EXPECT_FALSE(c0.networkServiceMode());
     EXPECT_FALSE(c0.networkEmitClockDisc());
     EXPECT_FALSE(c0.networkEmitUra());
     EXPECT_FALSE(c0.networkClockModel());
@@ -470,12 +474,20 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_DOUBLE_EQ(c0.networkContractRebroadcastS(), 0.0);
     EXPECT_DOUBLE_EQ(c0.getNetworkConfig().health_interval_s, 0.0);
     EXPECT_FALSE(c0.getNetworkConfig().product_flush_per_epoch);
+    // P2 additions stay at their defaults without service_mode.
+    EXPECT_FALSE(c0.networkPerConstWithhold());
+    EXPECT_FALSE(c0.networkEmitEpochStatusRecord());
+    EXPECT_FALSE(c0.networkPivotVanishReturnSignal());
+    EXPECT_FALSE(c0.networkStickyPivot());
+    EXPECT_FALSE(c0.networkScopedHandoverResponse());
+    EXPECT_DOUBLE_EQ(c0.getNetworkConfig().trace_rotate_mb, 0.0);
 
-    // service_mode on → the coherent producer set is armed.
+    // service_mode on → the FULL coherent producer set is armed.
     const fs::path p1 = writeTempConfig("svc_on",
         networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
     GnssConfig c1;
     ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_TRUE(c1.networkServiceMode());                        // provenance member (P5)
     EXPECT_TRUE(c1.networkEmitClockDisc());
     EXPECT_TRUE(c1.networkEmitUra());
     EXPECT_TRUE(c1.networkUraRetroBump());
@@ -484,15 +496,28 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_TRUE(c1.networkRaim());                               // feeds the σ̂0 EWMA → URA scaling
     EXPECT_TRUE(c1.networkRaimAttribution());                    // complementary post-fit tier
     EXPECT_TRUE(c1.networkRaimWithinEpoch());
-    EXPECT_GT(c1.networkRaimWithholdSigma0(), 0.0);              // ~2x the trigger
+    EXPECT_DOUBLE_EQ(c1.networkRaimWithholdSigma0(), 6.0);       // 2x the default trigger 3.0
     EXPECT_TRUE(c1.networkEmitGenerationId());
     EXPECT_TRUE(c1.networkSerializeDiscCounters());
     EXPECT_TRUE(c1.getNetworkConfig().serialize_sbasis_contract);
     EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().health_interval_s, 30.0);
+    // P2 additions: withhold carve-out, heartbeat, datum-signalling + handover
+    // controls, trace rotation (keep stays at its parsed default 3).
+    EXPECT_TRUE(c1.networkPerConstWithhold());
+    EXPECT_TRUE(c1.networkEmitEpochStatusRecord());
+    EXPECT_TRUE(c1.networkPivotVanishReturnSignal());
+    EXPECT_TRUE(c1.networkStickyPivot());
+    EXPECT_TRUE(c1.networkScopedHandoverResponse());
+    EXPECT_DOUBLE_EQ(c1.getNetworkConfig().trace_rotate_mb, 256.0);
+    EXPECT_EQ(c1.getNetworkConfig().trace_rotate_keep, 3);
+    // NOT armed: user-path / policy numerics.
+    EXPECT_TRUE(c1.getNetworkConfig().state_snapshot_path.empty());
+    EXPECT_DOUBLE_EQ(c1.getNetworkConfig().warmup_ura_floor_m, 0.0);
+    EXPECT_FALSE(c1.networkClockRunawayCheck());
 
-    // Explicit value wins over the profile default (fill-if-default).
+    // Explicit NON-ZERO numeric wins over the profile default.
     const fs::path p2 = writeTempConfig("svc_override",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"service_mode\": true,\n"
@@ -504,6 +529,111 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_TRUE(c2.networkEmitUra());                            // rest still armed
 
     std::error_code ec2; fs::remove(p0, ec2); fs::remove(p1, ec2); fs::remove(p2, ec2);
+}
+
+// RTB-8/P1: BUNDLE-WINS — an explicit `false` on an armed bool, an explicit 0
+// numeric, and a negative numeric (clamped to 0 at parse) are all overridden by
+// the bundle.  Each such override emits one WARN at load; the warn itself is
+// NOT assertable in this harness (LogManager writes to spdlog file sinks and
+// exposes no inspectable capture sink), so these are behavioral asserts only.
+TEST(NetworkServiceProfile, BundleOverridesExplicitDisables) {
+    LogManager log;
+
+    // Explicit false bools + explicit 0 numeric → bundle overrides all of them.
+    const fs::path p1 = writeTempConfig("svc_explicit_false",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"service_mode\": true,\n"
+                      "    \"sticky_pivot\": false,\n"
+                      "    \"raim\": false,\n"
+                      "    \"emit_ura\": false,\n"
+                      "    \"contract_rebroadcast_s\": 0.0,\n"));
+    GnssConfig c1;
+    ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_TRUE(c1.networkStickyPivot());                        // bundle wins over explicit false
+    EXPECT_TRUE(c1.networkRaim());
+    EXPECT_TRUE(c1.networkEmitUra());
+    EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);    // explicit 0 = disable → re-armed
+
+    // Explicit NEGATIVE numeric: clamped to 0 at parse, then re-armed by the
+    // bundle (the "clamped-then-armed" funnel the override warn covers).
+    const fs::path p2 = writeTempConfig("svc_explicit_neg",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"service_mode\": true,\n"
+                      "    \"contract_rebroadcast_s\": -1.0,\n"
+                      "    \"health_interval_s\": -5.0,\n"));
+    GnssConfig c2;
+    ASSERT_TRUE(c2.loadFromJson(p2, log));
+    EXPECT_DOUBLE_EQ(c2.networkContractRebroadcastS(), 30.0);
+    EXPECT_DOUBLE_EQ(c2.getNetworkConfig().health_interval_s, 30.0);
+
+    std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec);
+}
+
+// RTB-8/P3(a) regression: the R11/R1 pathological-withhold clamp runs at parse,
+// BEFORE the arming block — so a service-armed withhold of 2×trigger with a
+// small explicit trigger (2×0.4 = 0.8 <= 1; σ̂0 is floored at 1) used to slip
+// through and withhold essentially every warm epoch.  The post-arming re-run
+// must catch it: the withhold comes out DISABLED (0), not armed <= 1, and the
+// rest of the bundle stays armed.
+TEST(NetworkServiceProfile, ServiceArmedPathologicalWithholdIsReclamped) {
+    LogManager log;
+
+    const fs::path p1 = writeTempConfig("svc_small_trigger",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"service_mode\": true,\n"
+                      "    \"raim_sigma0_trigger\": 0.4,\n"));
+    GnssConfig c1;
+    ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_DOUBLE_EQ(c1.networkRaimWithholdSigma0(), 0.0);       // re-clamped, NOT 0.8
+    EXPECT_TRUE(c1.networkRaimWithinEpoch());                    // rest of the bundle unaffected
+    EXPECT_TRUE(c1.networkRaim());
+
+    // Non-service parse-site clamp still behaves as before (idempotency anchor:
+    // an explicit pathological ceiling is disabled at parse; the post-arming
+    // re-run then sees an already-valid 0 and must NOT fire again).
+    const fs::path p2 = writeTempConfig("nosvc_patho_withhold",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"raim_withhold_sigma0\": 0.5,\n"));
+    GnssConfig c2;
+    ASSERT_TRUE(c2.loadFromJson(p2, log));
+    EXPECT_DOUBLE_EQ(c2.networkRaimWithholdSigma0(), 0.0);       // parse-site clamp
+    EXPECT_FALSE(c2.networkRaimWithinEpoch());                   // clamped BEFORE the coupling
+
+    // P3(b) companion: a stray invalid clock_model_q2 with clock_model UNSET is
+    // unvalidated at parse (the restore gates on the pre-arming flag); the
+    // service bundle arms clock_model, so the post-arming re-run must restore it.
+    const fs::path p3 = writeTempConfig("svc_bad_q2",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"service_mode\": true,\n"
+                      "    \"clock_model_q2\": -1.0,\n"));
+    GnssConfig c3;
+    ASSERT_TRUE(c3.loadFromJson(p3, log));
+    EXPECT_TRUE(c3.networkClockModel());                         // service-armed
+    EXPECT_DOUBLE_EQ(c3.networkClockModelQ2(), 1.5e-7);          // restored, not -1
+
+    std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
+}
+
+// RTB-8/P4(b): service_mode with an EMPTY network.product_output_path parses
+// fine — the load emits the one coherence warn listing the inert file-side
+// knobs (not assertable in this harness, see above) and the armed set is
+// unchanged (the knobs stay armed; they simply have no file to write to until
+// a path is configured).
+TEST(NetworkServiceProfile, EmptyProductPathParsesWithArmedSetUnchanged) {
+    LogManager log;
+
+    // networkConfig writes no product_output_path → empty.
+    const fs::path p1 = writeTempConfig("svc_no_product_path",
+        networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
+    GnssConfig c1;
+    ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_TRUE(c1.getNetworkConfig().product_output_path.empty());
+    EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);   // still armed
+    EXPECT_TRUE(c1.networkEmitEpochStatusRecord());               // still armed
+    EXPECT_TRUE(c1.getNetworkConfig().serialize_sbasis_contract); // still armed
+    EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);     // still armed
+
+    std::error_code ec; fs::remove(p1, ec);
 }
 
 // RTB-6 P4(d) + P1: the service-observability knobs parse with sibling-convention
@@ -756,4 +886,179 @@ TEST(RealtimePreciseOrbitConfig, UsePreciseOrbitsParsesDefaultsOffAndSplitsGates
     EXPECT_FALSE(c3.realtimeUsesLiveOrbitClockSource());
 
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
+}
+
+// ===========================================================================
+// RTF-1 Card 1: network.apriori_source + network.apriori_clock_anchor_sigma_m
+// ===========================================================================
+
+// Default network config: a-priori source is Sp3 (precise SP3/CLK identity —
+// today's byte-identical behaviour) and the anchor sigma is 0.0 (auto).
+TEST(NetworkAprioriSourceConfig, DefaultsToSp3AutoAnchor) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_default", networkConfig(kGpsGal, kPriosGps, ""));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::Sp3);
+    EXPECT_DOUBLE_EQ(cfg.networkAprioriClockAnchorSigmaM(), 0.0);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// "brdc_rts" parses to BrdcRts (case-insensitive) and — on its own, with the
+// clock+phase-bias-only V1 slice (no code bias) — loads without error.  The
+// anchor sigma parses to its explicit value.
+TEST(NetworkAprioriSourceConfig, ParsesBrdcRtsAndAnchorSigma) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_brdc",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"apriori_source\": \"BRDC_RTS\",\n"
+                      "    \"apriori_clock_anchor_sigma_m\": 3.0,\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::BrdcRts);
+    EXPECT_DOUBLE_EQ(cfg.networkAprioriClockAnchorSigmaM(), 3.0);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// A negative anchor sigma is meaningless -> clamped to 0 (auto), load succeeds.
+TEST(NetworkAprioriSourceConfig, NegativeAnchorSigmaClampsToAuto) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_negsig",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"apriori_clock_anchor_sigma_m\": -1.0,\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_DOUBLE_EQ(cfg.networkAprioriClockAnchorSigmaM(), 0.0);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// An unknown apriori_source warns and falls back to Sp3 (load still succeeds).
+TEST(NetworkAprioriSourceConfig, UnknownSourceFallsBackToSp3) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_bogus",
+        networkConfig(kGpsGal, kPriosGps, "    \"apriori_source\": \"sideways\",\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::Sp3);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// Validation 1 (hard error): brdc_rts + estimate_sat_code_bias but NOT
+// estimate_iono_sh — the external GIM iono constraint is post-processing-only,
+// so the real-time code-bias slice has no iono constraint.  Fail loud at load.
+TEST(NetworkAprioriSourceConfig, BrdcRtsCodeBiasWithoutIonoShIsError) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_brdc_gim",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"apriori_source\": \"brdc_rts\",\n"
+                      "    \"estimate_sat_code_bias\": true,\n"));
+    GnssConfig cfg;
+    EXPECT_FALSE(cfg.loadFromJson(p, log));
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// Validation 1 legal path: brdc_rts + estimate_iono_sh (which FORCES the code
+// bias slice on) is the supported real-time W6 combination — loads fine, both
+// flags on.  (The sp3-mode GIM path is unaffected: EstimateSatCodeBiasForces-
+// Prerequisites above still loads code bias with the default sp3 source.)
+TEST(NetworkAprioriSourceConfig, BrdcRtsWithIonoShIsLegal) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_brdc_sh",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"apriori_source\": \"brdc_rts\",\n"
+                      "    \"estimate_iono_sh\": true,\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::BrdcRts);
+    EXPECT_TRUE(cfg.estimateNetworkIonoSh());
+    EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());   // forced on by iono_sh
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// service_mode does NOT arm apriori_source (an input-source selection, orthogonal
+// to the toggle bundle): a service run left at the default stays Sp3, and an
+// explicit brdc_rts is preserved through the bundle.
+TEST(NetworkAprioriSourceConfig, ServiceModeDoesNotArmAprioriSource) {
+    LogManager log;
+
+    const fs::path p1 = writeTempConfig("apri_svc_default",
+        networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
+    GnssConfig c1;
+    ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_TRUE(c1.networkServiceMode());
+    EXPECT_EQ(c1.networkAprioriSource(), NetworkAprioriSource::Sp3);   // untouched by the bundle
+
+    const fs::path p2 = writeTempConfig("apri_svc_brdc",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"service_mode\": true,\n"
+                      "    \"apriori_source\": \"brdc_rts\",\n"));
+    GnssConfig c2;
+    ASSERT_TRUE(c2.loadFromJson(p2, log));
+    EXPECT_EQ(c2.networkAprioriSource(), NetworkAprioriSource::BrdcRts);  // explicit preserved
+    EXPECT_TRUE(c2.networkEmitUra());   // rest of the bundle still armed
+
+    std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec);
+}
+
+// ---------------------------------------------------------------------------
+// RTF-1 Card 5 (plan D6): resolveNetworkAprioriClockAnchorSigmaM() — the
+// mode-aware AUTO resolution the producer folds.  Pure config function; the
+// driver's < 100 m binding gate is NOT applied here.
+// ---------------------------------------------------------------------------
+
+// sp3 + auto (default): resolves to initial_std.sat_clock UNCHANGED — the
+// byte-identity guarantee.  The loose default (>100 m) keeps the driver anchor
+// OFF, so every existing sp3 network config is unaffected.
+TEST(NetworkAprioriSourceConfig, ResolveAnchorSp3AutoIsInitialStdUnchanged) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_res_sp3", networkConfig(kGpsGal, kPriosGps, ""));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    ASSERT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::Sp3);
+    EXPECT_DOUBLE_EQ(cfg.resolveNetworkAprioriClockAnchorSigmaM(),
+                     cfg.getInitialStd().sat_clock);
+    EXPECT_GT(cfg.getInitialStd().sat_clock, 100.0);   // loose default ⇒ driver anchor stays off
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// brdc_rts + auto: resolves to the 3.0 m broadcast-grade default (< 100 m ⇒ the
+// driver anchor binds), NOT the loose initial_std.sat_clock.
+TEST(NetworkAprioriSourceConfig, ResolveAnchorBrdcRtsAutoIsThreeMetres) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_res_brdc",
+        networkConfig(kGpsGal, kPriosGps, "    \"apriori_source\": \"brdc_rts\",\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    ASSERT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::BrdcRts);
+    EXPECT_DOUBLE_EQ(cfg.networkAprioriClockAnchorSigmaM(), 0.0);   // auto
+    EXPECT_DOUBLE_EQ(cfg.resolveNetworkAprioriClockAnchorSigmaM(), 3.0);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// Explicit positive sigma wins in BOTH modes (overrides the auto), sp3 case:
+// a user pinning 5 m in sp3 mode gets 5 m, not initial_std.sat_clock.
+TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInSp3) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_res_sp3_expl",
+        networkConfig(kGpsGal, kPriosGps, "    \"apriori_clock_anchor_sigma_m\": 5.0,\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    ASSERT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::Sp3);
+    EXPECT_DOUBLE_EQ(cfg.resolveNetworkAprioriClockAnchorSigmaM(), 5.0);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// Explicit positive sigma wins in BOTH modes, brdc_rts case: 5 m overrides the
+// 3 m auto default.
+TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInBrdcRts) {
+    LogManager log;
+    const fs::path p = writeTempConfig("apri_res_brdc_expl",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"apriori_source\": \"brdc_rts\",\n"
+                      "    \"apriori_clock_anchor_sigma_m\": 5.0,\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    ASSERT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::BrdcRts);
+    EXPECT_DOUBLE_EQ(cfg.resolveNetworkAprioriClockAnchorSigmaM(), 5.0);
+    std::error_code ec; fs::remove(p, ec);
 }

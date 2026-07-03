@@ -37,19 +37,27 @@ namespace GnssProcessor {
  * @brief Shift the rotated-suffix chain of @p file one place and retire the live file.
  *
  * Performs, in order (all non-throwing, best-effort per step):
- *  1. delete <tt>file.(keep)</tt> (the oldest generation, if present),
- *  2. rename <tt>file.(k) → file.(k+1)</tt> for k = keep-1 … 1,
- *  3. rename <tt>file → file.1</tt>.
+ *  1. stage the live file: rename <tt>file → file.rotating</tt> (after clearing
+ *     any stale scratch from a crashed roll).  This is done FIRST and BEFORE any
+ *     history mutation, so if the live file is locked the whole chain is left
+ *     untouched and the call returns false with nothing lost (m4: the previous
+ *     order deleted/shifted history first, so a persistent live lock eroded a
+ *     generation on every retry).
+ *  2. delete <tt>file.(keep)</tt> (the oldest generation, if present),
+ *  3. rename <tt>file.(k) → file.(k+1)</tt> for k = keep-1 … 1,
+ *  4. rename <tt>file.rotating → file.1</tt>; on failure (a lock on <tt>.1</tt>)
+ *     roll the staged file back to @p file so no rows are stranded.
  *
  * The caller must have CLOSED the live file first (an open handle blocks the
- * final rename on Windows).  @p keep < 1 is treated as 1 (a single rolled
+ * staging rename on Windows).  @p keep < 1 is treated as 1 (a single rolled
  * generation).  Missing intermediate generations are skipped silently — the
  * chain need not be dense.
  *
  * @param file Path of the live CSV file (e.g. <tt>logs/network_trace.csv</tt>).
  * @param keep Number of rolled generations to retain (<tt>.1 … .keep</tt>).
- * @return true iff step 3 succeeded (the live file was retired to @c .1);
- *         false when the live file is missing or could not be renamed.
+ * @return true iff the live file was fully retired to @c .1; false when the live
+ *         file is missing/locked or the final slot could not be filled — in
+ *         which case the live file is left (or restored) in place for a retry.
  */
 bool rotateCsvSuffixes(const std::filesystem::path& file, int keep);
 
