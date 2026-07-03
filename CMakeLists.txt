@@ -59,6 +59,7 @@ add_library(gnss_core STATIC
     src/core/logging/CsvRotator.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
+    src/core/products/RinexNavParser.cpp
     src/core/products/ProductCache.cpp
     src/core/math/TimeUtils.cpp
     src/core/logging/KalmanFilterLogger.cpp
@@ -245,6 +246,7 @@ add_executable(gnss_tests
     tests/test_network_emit.cpp
     tests/test_sh_ionosphere.cpp
     tests/test_network_product_io.cpp
+    tests/test_rinex_nav_parser.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
     tests/test_glonass_network_config.cpp

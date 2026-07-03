@@ -2809,6 +2809,19 @@ namespace GnssProcessor {
             return false;
         }
 
+        // RTB-8: read the service-profile flag FIRST.  Several coherence warnings
+        // in this section (per_const no-op, contract-rebroadcast inert, warmup-URA
+        // no-op, emit_ura-without-raim, retro-bump-no-tier, RT0-5 inert rate) would
+        // be FALSE under service_mode — the bundle arms their prerequisites in the
+        // arming block near the end of this section — so they are gated on
+        // !service_mode.  The arming ITSELF still runs LAST, after every armed
+        // toggle is parsed.  Kept as a member (networkServiceMode) purely for
+        // provenance: the L15 run manifest records that the run's toggle set came
+        // from the bundle rather than hand-tuning.
+        network_service_mode_ =
+            jval<bool>(json, "network.service_mode", "network_service_mode", false);
+        const bool service_mode = network_service_mode_;
+
         // --- Peer stations (>=2; each holds coordinates fixed) ---
         network_config_.stations.clear();
         auto addStation = [&](const nlohmann::json& sj) {
@@ -3190,6 +3203,88 @@ namespace GnssProcessor {
                       global_vtec_sh_.mean_vtec_prior_sigma_tecu);
         }
 
+        // --- RTF-1/RTF-2: producer a-priori orbit/clock source -------------------
+        // network.apriori_source selects what the producer's per-satellite
+        // a-priori clock (and the orbit its geometry uses) is referenced to.  The
+        // default "sp3" is today's behaviour (precise SP3/CLK identity) and is
+        // byte-identical everywhere.  "brdc_rts" references the a-priori to the
+        // broadcast ephemeris (+ external IGS-SSR 4076 orbits) — the
+        // self-sufficient real-time service mode (docs/rt_service_conventions.md
+        // §1).  Parse-only in this card; the producer core path (nav load,
+        // phase-gate suppression, anchor re-base, C0 delta-to-broadcast) lands in
+        // later RTF-1 cards.  Mirrors the receiver.troposphere_apriori_source
+        // string-match pattern (own local to_lower — the receiver-section lambda
+        // is out of scope here).  Placed AFTER the estimate_iono_sh coupling above
+        // so the brdc_rts validation sees final flag values.
+        {
+            auto to_lower = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                return s;
+            };
+            const std::string src = to_lower(jval<std::string>(
+                json, "network.apriori_source", "apriori_source", std::string{"sp3"}));
+            if (src == "brdc_rts") {
+                network_apriori_source_ = NetworkAprioriSource::BrdcRts;
+            } else {
+                if (src != "sp3")
+                    log->warn("Unknown network.apriori_source='{}', falling back to 'sp3' "
+                              "(precise SP3/CLK a-priori).", src);
+                network_apriori_source_ = NetworkAprioriSource::Sp3;
+            }
+        }
+        // D6: a-priori clock anchor σ (m); 0 = auto (mode-resolved at the
+        // producer), an explicit positive value wins.  Parse+store only here.
+        network_apriori_clock_anchor_sigma_m_ = jval<double>(
+            json, "network.apriori_clock_anchor_sigma_m", "apriori_clock_anchor_sigma_m", 0.0);
+        if (network_apriori_clock_anchor_sigma_m_ < 0.0) {
+            log->warn("Network: network.apriori_clock_anchor_sigma_m {} < 0 is meaningless; "
+                      "clamped to 0 (auto).", network_apriori_clock_anchor_sigma_m_);
+            network_apriori_clock_anchor_sigma_m_ = 0.0;
+        }
+
+        if (network_apriori_source_ == NetworkAprioriSource::BrdcRts) {
+            // Validation 1 (hard error): the satellite code-bias slice (W6) needs
+            // an iono constraint that makes the satellite DCB observable.  In
+            // brdc_rts that constraint MUST be the co-estimated SH-VTEC field —
+            // the external GIM path is post-processing-only (a daily product; see
+            // Phase 3b GIM/SH exclusivity in ApplicationNetwork + conventions §1).
+            // estimate_iono_sh forces estimate_sat_code_bias on above, so the only
+            // illegal combination is sat-code-bias ON with iono_sh OFF (the GIM
+            // path).
+            if (estimate_network_sat_code_bias_ && !estimate_network_iono_sh_) {
+                log->error("Network: network.apriori_source = brdc_rts with "
+                           "network.estimate_sat_code_bias but NOT network.estimate_iono_sh — "
+                           "the external GIM iono constraint that makes the satellite code bias "
+                           "observable is post-processing-only, so the real-time producer has no "
+                           "iono constraint for the code-bias slice.  Set network.estimate_iono_sh "
+                           "= true (co-estimate the SH-VTEC field) or drop "
+                           "network.estimate_sat_code_bias.");
+                return false;
+            }
+            // Validation 2 (warn — no per-mount dialect declaration exists yet,
+            // RTF-3): the producer's SSR ORBIT corrections must be IGS-SSR 4076
+            // (CoM); legacy 1240-1270 (APC) mountpoints are user-engine-only
+            // (RTB-5, honor_ssr_reference_point).  Dialect is decoded from the
+            // message type at runtime, not declared in config, so this cannot be a
+            // load-time hard error yet — downgrade to a warn per the plan.
+            if (realtime_config_.corrections.enabled) {
+                log->warn("Network: network.apriori_source = brdc_rts with a realtime "
+                          "corrections stream configured — the producer's SSR ORBIT corrections "
+                          "must be IGS-SSR 4076 (CoM); legacy 1240-1270 (APC) dialect is NOT "
+                          "supported for the producer and is not validated at load (no per-mount "
+                          "dialect declaration — RTF-3).  Ensure the corrections mountpoint "
+                          "streams 4076.");
+            }
+            log->info("Network producer (RTF-1): a-priori source = broadcast + external RTS "
+                      "orbits (brdc_rts) — the emitted clock C0 becomes a delta against "
+                      "broadcast(IODE) + the applied RTS orbit; a-priori clock anchor σ = {} m "
+                      "(0 = auto → broadcast grade).  NOTE: the producer core path (RINEX-nav "
+                      "load, broadcast-phase-gate suppression, anchor re-base) lands in later "
+                      "RTF-1 cards — this card is config plumbing only.",
+                      network_apriori_clock_anchor_sigma_m_);
+        }
+
         // --- GLONASS in the network (code-only: sat clock + per-FCN-slot rx IFB) ---
         // FDMA makes a single shared per-(sat,signal) satellite OSB unphysical, so
         // GLONASS contributes a per-satellite CLOCK only.  The receiver group delay
@@ -3357,7 +3452,10 @@ namespace GnssProcessor {
                       network_per_const_withhold_min_rows_);
             network_per_const_withhold_min_rows_ = 1;
         }
-        if (network_per_const_withhold_ && network_raim_withhold_sigma0_ <= 0.0)
+        // P4: suppressed under service_mode — the bundle arms raim_withhold_sigma0
+        // (2x trigger) in the arming block below, so the "silent no-op" claim would
+        // be false by the end of the load.
+        if (network_per_const_withhold_ && network_raim_withhold_sigma0_ <= 0.0 && !service_mode)
             log->warn("Network (RTA-10): network.per_const_withhold is on but "
                       "network.raim_withhold_sigma0 is 0 (off) — the carve-out only runs when the "
                       "A4 σ̂0 withhold trips, so it is a silent no-op.  Set a withhold ceiling "
@@ -3483,7 +3581,9 @@ namespace GnssProcessor {
                       "|clock−global median| exceeds {:.0f} m or median |drift| exceeds {:.2f} m/s is "
                       "dropped from the epoch's emission and flagged (scope-limits a runaway).",
                       network_clock_runaway_mag_m_, network_clock_runaway_rate_m_s_);
-            if (!network_clock_model_)
+            // P4: gated on !service_mode — the bundle arms network.clock_model below,
+            // so under service_mode the rate ceiling is NOT inert.
+            if (!network_clock_model_ && !service_mode)
                 log->info("Network (RT0-5): the rate ceiling ({:.2f} m/s) is inert without "
                           "network.clock_model (no drift is estimated); the magnitude ceiling "
                           "({:.0f} m) still applies.", network_clock_runaway_rate_m_s_,
@@ -3511,7 +3611,8 @@ namespace GnssProcessor {
                       "withholds, which otherwise emit nothing), so a tail consumer can tell "
                       "\"withheld\" from \"producer died\".  Coverage starts at the first emit "
                       "(the deferred product writer opens then).");
-            if (!network_config_.product_flush_per_epoch)
+            // P4: gated on !service_mode — the bundle arms product_flush_per_epoch below.
+            if (!network_config_.product_flush_per_epoch && !service_mode)
                 log->info("Network (RTA-10): consider network.product_flush_per_epoch alongside "
                           "the heartbeat — a live tail only sees the H line when the stream "
                           "flushes.");
@@ -3530,13 +3631,8 @@ namespace GnssProcessor {
             jval<bool>(json, "network.ura_retro_bump", "network_ura_retro_bump", false);
         network_ura_refloat_inflate_ =
             jval<double>(json, "network.ura_refloat_inflate", "network_ura_refloat_inflate", 1.0);
-        // RTB-8: read the service profile flag EARLY so the coherence warnings
-        // below can suppress under it — service_mode arms network.raim + the
-        // flag-producing tiers later in this section, so a bare "raim is off"
-        // warning would contradict the final (coherent) armed state.  The arming
-        // ITSELF still runs later, after every armed toggle is parsed.
-        const bool service_mode =
-            jval<bool>(json, "network.service_mode", "network_service_mode", false);
+        // (RTB-8: service_mode was read at the very top of this section so ALL
+        // coherence warnings — including those above this point — can gate on it.)
         if (network_emit_ura_)
             log->info("Network: network.emit_ura on — per-satellite URA quality channel "
                       "(EWMA α {:.2f}) written to the product; consumer R-inflation {}.",
@@ -3548,7 +3644,9 @@ namespace GnssProcessor {
                       "network.raim for σ̂0-scaled URA.");
         // RTB-7(b): the warmup URA floor rides the URA channel — without emit_ura
         // the URA pass never runs and the floor is a SILENT NO-OP.  Say so.
-        if (network_config_.warmup_ura_floor_m > 0.0 && !network_emit_ura_)
+        // P4: under service_mode the bundle arms emit_ura below, so the floor is
+        // NOT a no-op — fall through to the ramp-ON info instead of the warn.
+        if (network_config_.warmup_ura_floor_m > 0.0 && !network_emit_ura_ && !service_mode)
             log->warn("Network (RTB-7): network.warmup_ura_floor_m {:.1f} is set but "
                       "network.emit_ura is off — the startup quality ramp floors the EMITTED "
                       "URA, so without the URA channel it is a silent no-op.  Enable "
@@ -3718,7 +3816,10 @@ namespace GnssProcessor {
                 log->info("Network producer (RTA-5): S-contract re-broadcast ON — a CURRENT S line "
                           "(refreshed realized pivots) every {:.0f} s of product time and on any "
                           "datum-change emit.", network_contract_rebroadcast_s_);
-            else
+            // P4: warn suppressed under service_mode — the bundle arms
+            // serialize_sbasis_contract in the arming block below, so the
+            // "inert" claim would be false by the end of the load.
+            else if (!service_mode)
                 log->warn("Network: network.contract_rebroadcast_s {} is set but "
                           "network.serialize_sbasis_contract is OFF — there is no S contract to "
                           "re-broadcast, so the knob is inert.  Enable serialize_sbasis_contract.",
@@ -3727,47 +3828,201 @@ namespace GnssProcessor {
 
         // --- RTB-8: curated service profile -------------------------------------
         // One switch (network.service_mode) arms the coherent set of producer
-        // toggles a live PPP-RTK service needs, instead of hand-assembling ~10
+        // toggles a live PPP-RTK service needs, instead of hand-assembling ~20
         // interlocking default-off flags (each with implicit couplings that were
-        // only ever wired up in scattered test configs).  "Fill if default": a
-        // toggle is armed to its service value ONLY when still at its factory
-        // default (false / 0), so an explicit value in THIS config wins — the one
-        // exception is an explicit `false` on a bool the profile arms, which the
-        // profile overrides (service_mode is an opinionated bundle; to keep a
-        // specific flag off, run without service_mode).  Placed after every armed
-        // toggle is parsed so it sees final values.  Default off ⇒ nothing armed
-        // (byte-identical).  Cross-validation of the realized product against the
-        // consumer is the S contract itself (RTA-5 re-broadcast + RTA-12 identity
-        // fields + checkContract), which this profile turns on.  service_mode was
-        // read EARLIER (URA section) so the coherence warnings could suppress under it.
+        // only ever wired up in scattered test configs).  BUNDLE-WINS semantics:
+        // a bool the profile arms is forced true even over an explicit user
+        // `false`, and a numeric at 0 (default, an explicit 0, or a negative
+        // clamped to 0 above) is armed to its service value — to keep a specific
+        // knob off, run without service_mode.  P1: every override of a value the
+        // USER actually wrote (presence-checked on both the dotted and the flat
+        // legacy key form, the enable_ssr_bias_max_age_explicit_ pattern) is
+        // individually WARNED; a user value that already equals the bundle's
+        // choice is not an override and stays silent.  Placed after every armed
+        // toggle is parsed so it sees final values; the two parse-site validations
+        // it can bypass (withhold clamp, clock_model restore) are RE-RUN just
+        // below (P3).  Default off ⇒ nothing armed (byte-identical).
+        // Deliberately NOT armed (see the do-not-arm notes below the arms):
+        //   - network.state_snapshot_path — needs a user-chosen path; a missing
+        //     one gets a recommendation info line instead.
+        //   - network.warmup_ura_floor_m — policy numeric with no universal
+        //     default; the RTB-7 no-op warn above covers a misconfig.
+        //   - network.clock_runaway_* ceilings — numeric policy, default-off
+        //     quarantine; scope-limiting a runaway is an operator decision.
+        //   - network.apriori_source (RTF-1) — an input-SOURCE selection, not a
+        //     toggle, and orthogonal to the bundle: a service can run on sp3
+        //     ultra-rapids (RTB-4) or brdc_rts equally.  Left exactly as set.
+        // Cross-validation of the realized product against the consumer is the
+        // S contract itself (RTA-5 re-broadcast + RTA-12 identity fields +
+        // checkContract), which this profile turns on.  service_mode was read at
+        // the TOP of this section so the coherence warnings could suppress under it.
         if (service_mode) {
-            auto armBool   = [](bool& f)            { if (!f)          f = true; };
-            auto armDouble = [](double& f, double v){ if (f == 0.0)    f = v;    };
-            armBool(network_emit_clock_disc_);              // consumer resets on clock-pivot handover
-            armBool(network_emit_ura_);                     // per-sat quality → consumer weighting
-            armBool(network_ura_retro_bump_);               // per-sat post-fit disc
-            armBool(network_clock_model_);                  // two-state clock → C1 drift extrapolation
-            armBool(network_phase_leveling_);               // cross-epoch carry — carry_warm prerequisite of BOTH RAIM tiers
-            armBool(network_raim_);                         // post-fit RAIM: the σ̂0 EWMA that scales the emitted URA is fed by THIS base flag (NOT within_epoch), and its auto-coupling at the raim_within_epoch parse ran BEFORE this block, so arm it explicitly
-            armBool(network_raim_attribution_);             // complementary post-fit attribution refloat tier (the two halves of one backstop)
-            armBool(network_raim_within_epoch_);            // fault detect → drop-culprit → re-solve
-            armDouble(network_raim_withhold_sigma0_,        // withhold a still-contaminated epoch
-                      2.0 * network_raim_sigma0_trigger_);  //   at ~2× the trigger (design guidance)
-            armBool(network_emit_generation_id_);           // RTA-3 restart / datum-break detection
-            armBool(network_serialize_disc_counters_);      // RTA-4 late-joiner counter recovery
-            armBool(network_config_.serialize_sbasis_contract);   // v2 S contract header
-            armDouble(network_contract_rebroadcast_s_, 30.0);     // RTA-5 periodic re-broadcast
-            armBool(network_config_.product_flush_per_epoch);     // RTA-6 live-tail visibility
-            armDouble(network_config_.health_interval_s, 30.0);   // RTB-6 operator heartbeat
-            log->info("Network (RTB-8): service_mode ON — armed the RT-service producer set "
-                      "(clock/URA disc, clock-model, within-epoch RAIM + withhold @ {:.1f}, "
-                      "generation-id, disc-counter serialization, v2 contract + {:.0f} s "
-                      "re-broadcast, per-epoch flush, {:.0f} s health heartbeat).  Explicit "
-                      "config values in this file still win (fill-if-default).  NOTE: the "
-                      "RTA-10 withhold/status toggles fold into this set once that card lands.",
-                      network_raim_withhold_sigma0_, network_contract_rebroadcast_s_,
-                      network_config_.health_interval_s);
+            // P1: presence check — did the user write this key (either form)?
+            auto userWrote = [&](const char* dotted, const char* flat) {
+                return detail::resolvePath(json, dotted) != nullptr || json.contains(flat);
+            };
+            auto armBool = [&](bool& f, const char* dotted, const char* flat) {
+                if (!f && userWrote(dotted, flat))
+                    log->warn("Network (RTB-8): service_mode overrides explicit {}=false -> true "
+                              "(opinionated bundle; run without service_mode to hand-tune).",
+                              dotted);
+                if (!f) f = true;
+            };
+            auto armDouble = [&](double& f, double v, const char* dotted, const char* flat) {
+                if (f != 0.0) return;                       // explicit non-zero value wins
+                if (userWrote(dotted, flat))
+                    log->warn("Network (RTB-8): service_mode overrides explicit {} "
+                              "(disabled: 0, or clamped to 0 above) -> {:.1f} (opinionated "
+                              "bundle; run without service_mode to hand-tune).", dotted, v);
+                f = v;
+            };
+            armBool(network_emit_clock_disc_,               // consumer resets on clock-pivot handover
+                    "network.emit_clock_disc", "network_emit_clock_disc");
+            armBool(network_emit_ura_,                      // per-sat quality → consumer weighting
+                    "network.emit_ura", "network_emit_ura");
+            armBool(network_ura_retro_bump_,                // per-sat post-fit disc
+                    "network.ura_retro_bump", "network_ura_retro_bump");
+            armBool(network_clock_model_,                   // two-state clock → C1 drift extrapolation
+                    "network.clock_model", "network_clock_model");
+            armBool(network_phase_leveling_,                // cross-epoch carry — carry_warm prerequisite of BOTH RAIM tiers
+                    "network.phase_leveling", "phase_leveling");
+            armBool(network_raim_,                          // post-fit RAIM: the σ̂0 EWMA that scales the emitted URA is fed by THIS base flag (NOT within_epoch), and its auto-coupling at the raim_within_epoch parse ran BEFORE this block, so arm it explicitly
+                    "network.raim", "network_raim");
+            armBool(network_raim_attribution_,              // complementary post-fit attribution refloat tier (the two halves of one backstop)
+                    "network.raim_attribution", "network_raim_attribution");
+            armBool(network_raim_within_epoch_,             // fault detect → drop-culprit → re-solve
+                    "network.raim_within_epoch", "network_raim_within_epoch");
+            armDouble(network_raim_withhold_sigma0_,        // withhold a still-contaminated epoch at ~2× the trigger (design guidance); re-validated below (P3)
+                      2.0 * network_raim_sigma0_trigger_,
+                      "network.raim_withhold_sigma0", "network_raim_withhold_sigma0");
+            armBool(network_per_const_withhold_,            // P2/RTA-10: the bundle injects the withhold ceiling above, so the parse-site "no safe ceiling" rationale for not arming the carve-out is void here — degrade SCOPE, not availability
+                    "network.per_const_withhold", "network_per_const_withhold");
+            armBool(network_emit_epoch_status_record_,      // P2/RTA-10: H heartbeat — a service's live tail must distinguish "withheld" from "producer died"
+                    "network.emit_epoch_status_record", "network_emit_epoch_status_record");
+            armBool(network_pivot_vanish_return_signal_,    // P2/A1: without it a vanish-return pivot change is an UNSIGNALLED datum break (emit_clock_disc cannot cover it)
+                    "network.pivot_vanish_return_signal", "network_pivot_vanish_return_signal");
+            armBool(network_sticky_pivot_,                  // P2/RTA-1: minimize handover rate (datum re-references the consumer pays for)
+                    "network.sticky_pivot", "network_sticky_pivot");
+            armBool(network_scoped_handover_response_,      // P2/RTA-2: limit a handover's internal blast radius to the affected constellation(s)
+                    "network.scoped_handover_response", "network_scoped_handover_response");
+            armBool(network_emit_generation_id_,            // RTA-3 restart / datum-break detection
+                    "network.emit_generation_id", "network_emit_generation_id");
+            armBool(network_serialize_disc_counters_,       // RTA-4 late-joiner counter recovery
+                    "network.serialize_disc_counters", "network_serialize_disc_counters");
+            armBool(network_config_.serialize_sbasis_contract,    // v2 S contract header
+                    "network.serialize_sbasis_contract", "serialize_sbasis_contract");
+            armDouble(network_contract_rebroadcast_s_, 30.0,      // RTA-5 periodic re-broadcast
+                      "network.contract_rebroadcast_s", "network_contract_rebroadcast_s");
+            armBool(network_config_.product_flush_per_epoch,      // RTA-6 live-tail visibility
+                    "network.product_flush_per_epoch", "product_flush_per_epoch");
+            armDouble(network_config_.health_interval_s, 30.0,    // RTB-6 operator heartbeat
+                      "network.health_interval_s", "health_interval_s");
+            armDouble(network_config_.trace_rotate_mb, 256.0,     // P2/RTB-6: a 24/7 service must not grow its CSVs unbounded (keep stays at its parsed default 3)
+                      "network.trace_rotate_mb", "trace_rotate_mb");
+            // P4(b): EVERY file-side knob the bundle just armed (per-epoch flush,
+            // disc-counter serialization, v2 S contract + re-broadcast, generation
+            // id, H heartbeat) writes into the product FILE — with no
+            // product_output_path there is no file and all of them are inert.  The
+            // parse-site RTA-6 flush warn cannot catch this (it ran before the
+            // arming), so say it here, once, listing the inert knobs.
+            if (network_config_.product_output_path.empty())
+                log->warn("Network (RTB-8): service_mode is ON but network.product_output_path "
+                          "is empty — no product file is written, so the bundle's file-side "
+                          "knobs (per-epoch flush, disc-counter serialization, v2 S contract + "
+                          "{:.0f} s re-broadcast, generation id, epoch-status heartbeat) are "
+                          "ALL inert.  Set network.product_output_path.",
+                          network_contract_rebroadcast_s_);
+            // Not armed (needs a user-chosen path) — but a 24/7 service without a
+            // snapshot cold-starts a new generation on every restart, so recommend it.
+            if (network_config_.state_snapshot_path.empty())
+                log->info("Network (RTB-8): service_mode is on with no "
+                          "network.state_snapshot_path — consider setting one so a producer "
+                          "restart WARM-resumes from the RTB-7 snapshot (generation id "
+                          "preserved, no consumer-wide ambiguity reset) instead of "
+                          "cold-starting a new generation.");
         }
+
+        // --- P3: post-arming re-validation ---------------------------------------
+        // Two parse-site checks earlier in this section run BEFORE the service
+        // arming block and would be bypassed by service-armed values:
+        //   (a) the R11/R1 pathological σ̂0-withhold clamp — the bundle arms the
+        //       withhold at 2× network.raim_sigma0_trigger, which for a small
+        //       explicit trigger (<= 0.5) lands in the pathological (0,1] band the
+        //       parse-site clamp exists to reject (σ̂0 is floored at 1 ⇒ near-total
+        //       availability loss);
+        //   (b) the clock_model_* validity-restore, gated on the PRE-arming
+        //       network_clock_model_ — service_mode arms the oscillator, so a stray
+        //       invalid clock_model_q2 would otherwise run it unvalidated.
+        // The parse-site originals are KEPT (moving them here would change
+        // non-service semantics: the within-epoch auto-coupling reads the CLAMPED
+        // withhold, and the R5 ura_staleness_q2 default capture reads the RESTORED
+        // q2 — both sit between the two sites).  These re-runs are IDEMPOTENT for
+        // non-service runs: they re-apply the exact parse-site conditions, which
+        // the parse-site pass already discharged (only the arming block writes
+        // these values in between), so they fire — with their one warn — only when
+        // the ARMING itself introduced the invalid value.
+        if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
+            log->warn("Network: network.raim_withhold_sigma0 {} (service-armed at 2x "
+                      "network.raim_sigma0_trigger {}) is <= 1 — σ̂0 is floored at 1, so a "
+                      "ceiling at or below 1 would withhold most warm epochs (near-total "
+                      "availability loss).  Disabling it; raise network.raim_sigma0_trigger "
+                      "or set an explicit network.raim_withhold_sigma0 > 1 to restore the "
+                      "withhold (the per-constellation carve-out is inert until then).",
+                      network_raim_withhold_sigma0_, network_raim_sigma0_trigger_);
+            network_raim_withhold_sigma0_ = 0.0;
+        }
+        if (network_clock_model_ &&
+            (!(network_clock_model_q2_ > 0.0) || network_clock_model_q1_ < 0.0 ||
+             !(network_clock_model_k_sigma_ > 0.0) || !(network_clock_model_meas_std_m_ > 0.0))) {
+            log->warn("Network: invalid network.clock_model_* parameters (q1={}, q2={}, k_sigma={}, "
+                      "meas_std={}) under the service-armed clock model; restoring defaults "
+                      "(q1=0, q2=1.5e-7, k_sigma=6, meas_std=0.05).",
+                      network_clock_model_q1_, network_clock_model_q2_,
+                      network_clock_model_k_sigma_, network_clock_model_meas_std_m_);
+            network_clock_model_q1_ = 0.0; network_clock_model_q2_ = 1.5e-7;
+            network_clock_model_k_sigma_ = 6.0; network_clock_model_meas_std_m_ = 0.05;
+        }
+        // m8: re-capture the R5 ZOH clock-staleness q² AFTER the service-armed
+        // clock_model_q2 restore above.  The parse-site default (line ~3600) read the
+        // PRE-arming clock_model_q2; under service_mode a stray-invalid clock_model_q2
+        // was left unvalidated there (the parse-site validity-restore is gated on the
+        // PRE-arming clock_model flag) and the negative guard then zeroed the derived
+        // ura_staleness_q2 — so a service run that armed the oscillator carried
+        // staleness inflation OFF despite the model being on.  Re-running the exact
+        // capture picks up the NOW-restored q2.  Gated on service_mode so the
+        // non-service path is byte-identical (an explicit user value still wins via
+        // jval, exactly as at the parse site).
+        if (service_mode) {
+            network_ura_staleness_q2_ =
+                jval<double>(json, "network.ura_staleness_q2", "network_ura_staleness_q2",
+                             network_clock_model_q2_);
+            if (network_ura_staleness_q2_ < 0.0) {
+                log->warn("Network: network.ura_staleness_q2 {} < 0 → 0 (ZOH staleness inflation "
+                          "off; check network.clock_model_q2, which supplies the default).",
+                          network_ura_staleness_q2_);
+                network_ura_staleness_q2_ = 0.0;
+            }
+        }
+
+        // m9: announce the armed service profile AFTER the P3 re-validation above, so
+        // the logged withhold reflects its POST-clamp value.  Armed at 2× a small
+        // explicit trigger the withhold can land in the pathological (0,1] band and be
+        // disabled by the clamp just above; logging inside the arming block printed the
+        // pre-clamp ceiling one line before the clamp retracted it.
+        if (service_mode)
+            log->info("Network (RTB-8): service_mode ON — armed the RT-service producer set "
+                      "(clock/URA disc + retro-bump, clock-model, phase-leveling, post-fit + "
+                      "within-epoch RAIM, withhold @ {:.1f} with per-constellation carve-out, "
+                      "epoch-status heartbeat, pivot vanish-return signalling, sticky pivot, "
+                      "scoped handover response, generation-id, disc-counter serialization, "
+                      "v2 contract + {:.0f} s re-broadcast, per-epoch flush, {:.0f} s health "
+                      "heartbeat, {:.0f} MiB trace rotation).  service_mode is an OPINIONATED "
+                      "bundle: it overrides explicit disables of the armed keys (each override "
+                      "is warned individually) — run without service_mode to hand-tune.  Left "
+                      "user-set: state_snapshot_path (needs a path), warmup_ura_floor_m and "
+                      "the clock_runaway_* ceilings (policy numerics with no universal default).",
+                      network_raim_withhold_sigma0_, network_contract_rebroadcast_s_,
+                      network_config_.health_interval_s, network_config_.trace_rotate_mb);
 
         if (network_emitter_staleness_horizon_s_ > 0.0)
             log->info("Network producer (RTA-11): emitter staleness horizon {:.0f} s ON — a "

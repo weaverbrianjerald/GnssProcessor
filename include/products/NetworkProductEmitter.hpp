@@ -68,6 +68,30 @@ struct NetworkSatSolution {
     double                                  clock_c1_m_s{0.0}; ///< Estimable satellite clock drift C1 (m/s); 0 unless network.clock_model on (B3b — the two-state oscillator drift the consumer extrapolates as c0+c1·dt).
     double                                  clock_ura_m{0.0}; ///< B1: per-sat URA 1σ (m) = EWMA(σ̂0)×formal clock σ; 0 unless has_ura.
     bool                                    has_ura{false};   ///< B1: whether clock_ura_m is populated (network.emit_ura on).
+    /// RTF-2 (Card 5): broadcast ephemeris version (IODE, in the IGS-SSR matching
+    /// convention) the estimable clock @c clock_c0_m is a delta against, threaded
+    /// from the producer emission path in @c brdc_rts mode.  -1 = sp3 mode /
+    /// unstamped: @c emitToStore then leaves @c SsrClockCorrection.iode = -1 (so
+    /// @c getOrbitClock's clock gate inherits the orbit anchor, byte-identical —
+    /// Card 3) and the C record serializes NO @c iode= field.  Card 4 owns the
+    /// field + its serialization + store stamping; Card 5 populates it.
+    int                                     clock_iode{-1};
+    /// RTF-2 (Card 5): IOD-SSR of the RTS orbit correction this clock was estimated
+    /// against (orbit coherence echo — broadcast radial-orbit error absorbs 1:1
+    /// into the clock, so the consumer verifies it applied the SAME orbit update).
+    /// -1 = unstamped (brdc-only replay / sp3).  The orbit echo is SUBORDINATE to
+    /// the @c iode= anchor: serialized as the C-record @c oiod= field only when
+    /// @c clock_iode >= 0 (the parent @c iode= token is written) AND this field is
+    /// >= 0.  A brdc_rts producer always stamps @c clock_iode (conventions §2), so
+    /// "@c clock_iode >= 0" holds whenever this is set — but set this WITHOUT
+    /// @c clock_iode and it is silently dropped from the wire.
+    int                                     orbit_iod_ssr{-1};
+    /// RTF-2 (Card 5): SSR content epoch of that referenced RTS orbit — the other
+    /// operand of the consumer orbit/clock age-skew budget (Card 7).  {0,0} =
+    /// unstamped.  Like @c orbit_iod_ssr it is subordinate to the @c iode= anchor:
+    /// serialized as the C-record @c oepoch= field only when @c clock_iode >= 0 AND
+    /// week != 0.
+    GnssTime                                orbit_epoch{0, 0.0};
     std::map<std::string, double>           code_bias_m;    ///< RINEX obs code -> satellite code bias (m).
     std::map<std::string, NetworkPhaseBias> phase_bias;     ///< RINEX obs code -> satellite phase bias.
 };

@@ -74,7 +74,7 @@ enum class SsrReferencePoint {
  */
 struct SsrOrbitCorrection {
     std::string     sat;                ///< Satellite identifier (e.g. "G01", "E11").
-    int             iode{0};            ///< Issue of Data, Ephemeris (DF071).
+    int             iode{-1};           ///< Issue of Data, Ephemeris (DF071), IGS-SSR matching convention; -1 = unknown → iodeMatches() permissive (RTF-2/RT0-1 sibling: decoders always set it explicitly, so the default only affects unstamped test/product constructions).
     Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};      ///< Radial/Along/Cross delta (meters).
     Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};  ///< Time derivatives (meters/sec).
     GnssTime        received_time{0, 0.0};                   ///< When the correction was received (wall-clock; staleness gate).
@@ -113,6 +113,25 @@ struct SsrClockCorrection {
     /// re-reference (and, if it carries a stiff receiver-clock state, re-inflating
     /// it) — the clock analog of the phase-bias → ambiguity reset.
     int         disc_counter{0};
+    /// RTF-2 (Card 3): broadcast ephemeris version (IODE, in the IGS-SSR matching
+    /// convention) the producer's C0 baseline was referenced to.  -1 = unknown:
+    /// the RTCM/IGS-SSR wire clock message carries NO IODE, so decoded clocks
+    /// leave this at -1 and @c getOrbitClock then inherits the paired ORBIT's
+    /// IODE for the gate (byte-identical to the pre-card behaviour).  Stamped >= 0
+    /// ONLY by the network producer in @c brdc_rts mode (C0 = a delta against
+    /// broadcast(IODE)); the consumer then gates clock application on
+    /// @c iodeMatches(brdc_iode, iode) instead of the orbit anchor.
+    int         iode{-1};
+    /// RTF-2 (Card 3): orbit coherence echo — the IOD-SSR of the RTS orbit
+    /// correction this clock was estimated against.  Broadcast radial-orbit error
+    /// absorbs 1:1 into the estimated clock, so the consumer verifies it applies
+    /// the SAME orbit update the producer used (Card 7 echo check).  -1 = not
+    /// stamped (standard SSR / non-brdc_rts).
+    int         orbit_iod_ssr{-1};
+    /// RTF-2 (Card 3): SSR content epoch of that referenced RTS orbit correction
+    /// (the other operand of the consumer orbit/clock age-skew budget).  {0,0} =
+    /// not stamped.
+    GnssTime    orbit_epoch{0, 0.0};
 };
 
 /**
@@ -122,7 +141,7 @@ struct SsrClockCorrection {
  */
 struct SsrCombinedCorrection {
     std::string     sat;
-    int             iode{0};
+    int             iode{-1};           ///< Issue of Data, Ephemeris; -1 = unknown → permissive (decoders set it explicitly; RTF-2/RT0-1 sibling).
     Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};
     Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};
     double          c0{0.0};

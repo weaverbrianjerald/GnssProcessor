@@ -213,8 +213,12 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
     EXPECT_GE(brdc_iode, 0);         // populated live store -> real IODE (the RT trap)
     EXPECT_EQ(brdc_iode, 10);        // gpsEph IODE, unchanged by the -1 re-reference
 
+    // RTF-2 (Card 3): the CLOCK gate now keys on clock_iode.  A standalone network
+    // clock carries no wire IODE and no orbit, so clock_iode inherits the -1
+    // "unknown" anchor -> permissive, identical to the pre-card gate on ssr->iode.
+    EXPECT_EQ(ssr->clock_iode, -1);
     // Gate MUST pass -> the network clock is applied.
-    EXPECT_TRUE(SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode));
+    EXPECT_TRUE(SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode));
 
     // ...and the gate's OTHER co-condition holds (GnssCorrections.cpp:242 gates on
     // std::isfinite(clock_corr) AND iodeMatches, where clock_corr = broadcast
@@ -233,6 +237,71 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
 
     eph_store.clear();
     ssr_store.clear();
+}
+
+// RTF-2 (Card 3): a brdc_rts producer stamps the clock's OWN broadcast IODE and
+// an orbit coherence echo.  getOrbitClock propagates them onto the merged
+// record's clock_iode / orbit_iod_ssr / orbit_epoch, and the consumer gates the
+// clock on clock_iode (applies on a broadcast match, drops on a mismatch).
+TEST(RealtimeSsrIodeGateTest, StampedClockIodePropagatesAndGates) {
+    SsrCorrectionStore store;   // owned: no singleton coupling
+    SsrClockCorrection c = makeClock("G07", 0.05, GnssTime{2300, 100.0});
+    c.iode          = 25;                       // brdc_rts stamp (its own C0 baseline)
+    c.orbit_iod_ssr = 3;                        // orbit coherence echo
+    c.orbit_epoch   = GnssTime{2300, 90.0};
+    store.pushClock(c, SsrHeader{});
+    const auto q = store.getOrbitClock("G07", GnssTime{2300, 100.0}, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q.has_value());
+    EXPECT_TRUE(q->has_clock);
+    EXPECT_FALSE(q->has_orbit);
+    EXPECT_EQ(q->iode, -1);                     // orbit anchor: unknown (no orbit record)
+    EXPECT_EQ(q->clock_iode, 25);               // stamped clock IODE propagates
+    EXPECT_EQ(q->orbit_iod_ssr, 3);             // echo carried through the store
+    EXPECT_NEAR(q->orbit_epoch.tow, 90.0, 1e-9);
+    EXPECT_TRUE(SsrCorrectionStore::iodeMatches(25, q->clock_iode));   // matching broadcast -> apply
+    EXPECT_FALSE(SsrCorrectionStore::iodeMatches(24, q->clock_iode));  // mismatch -> drop
+}
+
+// RTF-2 (Card 3) byte-identity: a STANDARD SSR clock (no wire IODE) merged with a
+// standalone orbit inherits the ORBIT's IODE for the clock gate — exactly the
+// pre-card behaviour (the old gate keyed the clock on the orbit anchor too).
+TEST(RealtimeSsrIodeGateTest, StandardClockInheritsOrbitIodeForGate) {
+    SsrCorrectionStore store;   // owned
+    SsrOrbitCorrection o;
+    o.sat           = "G07";
+    o.iode          = 30;
+    o.received_time = GnssTime{2300, 100.0};
+    o.epoch_time    = GnssTime{2300, 100.0};
+    store.pushOrbit(o, SsrHeader{});
+    store.pushClock(makeClock("G07", 0.05, GnssTime{2300, 100.0}), SsrHeader{});  // clk.iode == -1
+    const auto q = store.getOrbitClock("G07", GnssTime{2300, 100.0}, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q.has_value());
+    EXPECT_TRUE(q->has_orbit);
+    EXPECT_TRUE(q->has_clock);
+    EXPECT_EQ(q->iode, 30);                     // orbit anchor
+    EXPECT_EQ(q->clock_iode, 30);               // inherited (unstamped clock) -> gate == orbit gate
+    EXPECT_TRUE(SsrCorrectionStore::iodeMatches(30, q->clock_iode));
+    EXPECT_FALSE(SsrCorrectionStore::iodeMatches(31, q->clock_iode));  // mismatch drops BOTH, as today
+}
+
+// RTF-2 (Card 3): a combined record shares one IOD, so clock_iode == iode and the
+// orbit echo is the record's own IOD-SSR / content epoch.
+TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
+    SsrCorrectionStore store;   // owned
+    SsrCombinedCorrection cb;
+    cb.sat           = "E11";
+    cb.iode          = 44;
+    cb.c0            = 0.3;
+    cb.received_time = GnssTime{2300, 100.0};
+    cb.epoch_time    = GnssTime{2300, 95.0};
+    cb.iod_ssr       = 6;
+    store.pushCombined(cb, SsrHeader{});
+    const auto q = store.getOrbitClock("E11", GnssTime{2300, 100.0}, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q.has_value());
+    EXPECT_EQ(q->iode, 44);
+    EXPECT_EQ(q->clock_iode, 44);               // combined: clock shares the orbit IOD
+    EXPECT_EQ(q->orbit_iod_ssr, 6);
+    EXPECT_NEAR(q->orbit_epoch.tow, 95.0, 1e-9);
 }
 
 // ===========================================================================

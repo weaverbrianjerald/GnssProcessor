@@ -400,6 +400,33 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Card 5 (RTF-1 / plan D1): keep carrier phase on broadcast-grade
+         *        satellites instead of gating them to code-only.
+         *
+         * @c computeModels drops every phase observable for a satellite whose range
+         * model is only metre-level — a broadcast clock with no precise CLK and no
+         * SSR clock (@c broadcast_only).  At mm phase precision the float ambiguity
+         * is inseparable from the metre-level clock error, so for a single-receiver
+         * PPP user phase cannot improve the position.  The @c brdc_rts NETWORK
+         * PRODUCER is the deliberate exception: it ESTIMATES the satellite clock
+         * (its per-sat state is Δδtˢ relative to the broadcast a-priori), so its
+         * stations' carrier phase carries the information the estimator needs — the
+         * gate must be lifted.
+         *
+         * ApplicationNetwork sets this @c true on PRODUCER station models only, when
+         * @c network.apriori_source == brdc_rts.  It MUST NOT be set on the
+         * closed-loop CONSUMER's model: a consumer's broadcast-grade sats genuinely
+         * cannot use phase (no network clock was applied to them), and sats that DID
+         * receive a network clock are not @c broadcast_only in the first place.
+         *
+         * @param suppressed @c true keeps phase on broadcast-grade sats; @c false
+         *        (the default) restores the code-only gate — byte-identical.
+         */
+        void setBroadcastPhaseGateSuppressed(bool suppressed) {
+            broadcast_phase_gate_suppressed_ = suppressed;
+        }
+
+        /**
          * @brief Compute the per-signal I₂ + I₃ correction (m) to add
          *        to the modeled observable.
          *
@@ -453,6 +480,18 @@ namespace GnssProcessor {
         /// code-only).  Without this the info line fires once per epoch per
         /// satellite for the whole run; we log once per satellite per session.
         mutable std::set<std::string> sats_phase_gated_;
+
+        /// Card 5 (RTF-1 / plan D1): when true, @c computeModels KEEPS carrier phase
+        /// on broadcast-grade satellites (the brdc_rts network producer estimates the
+        /// satellite clock, so phase is informative) instead of the default code-only
+        /// gate.  Set via @ref setBroadcastPhaseGateSuppressed on producer station
+        /// models only; the default @c false is byte-identical for every other caller.
+        bool broadcast_phase_gate_suppressed_{false};
+
+        /// Satellites already logged as phase-RETAINED under the gate-suppressed
+        /// (brdc_rts producer) mode — the one-shot companion to @c sats_phase_gated_,
+        /// so the operator sees the mode once per satellite, not once per epoch.
+        mutable std::set<std::string> sats_phase_retained_;
 
         /**
          * @brief Per-constellation canonical signal cache.

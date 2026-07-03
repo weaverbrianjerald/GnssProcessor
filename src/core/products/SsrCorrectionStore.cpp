@@ -133,6 +133,12 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         out.c1            = rec_copy.combined->c1;
         out.c2            = rec_copy.combined->c2;
         out.iode             = rec_copy.combined->iode;
+        // RTF-2 (Card 3): a combined message guarantees IOD coherence, so the
+        // clock shares the orbit IOD; the orbit echo is the record's own IOD-SSR /
+        // content epoch (the consumer's echo check then trivially agrees).
+        out.clock_iode       = rec_copy.combined->iode;
+        out.orbit_iod_ssr    = rec_copy.combined->iod_ssr;
+        out.orbit_epoch      = rec_copy.combined->epoch_time;
         // Orbit + clock share one content epoch in a combined message.  The dt
         // base is the SSR CONTENT reference epoch (not received_time): the clock
         // polynomial and RAC rates are defined relative to the provider's epoch,
@@ -160,14 +166,23 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             // dt is c1/c2-sensitive), independent of any orbit record's epoch.
             out.epoch_time = rec_copy.clock->epoch_time;
             out.has_clock  = true;
-            // out.iode is intentionally left as the orbit branch set it (or the
-            // -1 "unknown" default when this is a STANDALONE clock subtype — the
-            // network / IGS-SSR clock stream carries no orbit IODE).  Leaving it
-            // -1 keeps the downstream iodeMatches() gate permissive; stamping {0}
-            // here would collide with a real broadcast IODE and silently drop
-            // every network clock in live RT (populated live store, brdc_iode>=0;
-            // post-processing has an empty store so brdc_iode=-1 masked the bug).
-            // Full per-record IODE stamping is the clock-anchor contract (RTF-2).
+            // out.iode (the ORBIT anchor) is intentionally left as the orbit
+            // branch set it (or the -1 "unknown" default for a STANDALONE clock —
+            // network / IGS-SSR clock streams carry no orbit IODE; RT0-1).
+            //
+            // RTF-2 (Card 3): the CLOCK gate now keys on a SEPARATE clock_iode.
+            // A standard SSR clock (iode == -1 on the wire) is referenced to the
+            // SAME broadcast baseline as its paired orbit, so inherit out.iode —
+            // this reproduces the pre-card behaviour EXACTLY (the old gate used
+            // out.iode for the clock too): standard orbit+clock stays gated on the
+            // orbit IODE, a standalone network clock stays permissive (-1).  The
+            // brdc_rts producer stamps clock->iode >= 0 (its own C0 baseline),
+            // which WINS so the consumer gates the clock on the producer's
+            // baseline, not the orbit's.  The orbit coherence echo travels on the
+            // clock record (Card 7).
+            out.clock_iode    = (rec_copy.clock->iode >= 0) ? rec_copy.clock->iode : out.iode;
+            out.orbit_iod_ssr = rec_copy.clock->orbit_iod_ssr;
+            out.orbit_epoch   = rec_copy.clock->orbit_epoch;
         }
     }
 

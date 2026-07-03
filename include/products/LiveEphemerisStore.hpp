@@ -118,6 +118,36 @@ public:
     std::optional<SatelliteClock> computeSatelliteClock(
         const std::string& sat, const GnssTime& time, int ssr_iode = -1) const;
 
+    /**
+     * @brief Metres of broadcast-clock discontinuity between the freshest held
+     *        ephemeris and the version @p old_iode, evaluated at @p time:
+     *        @c c·(bias_new − bias_old).
+     *
+     * The network PPP-RTK producer (RTF-2 Card 6, @c network.apriori_source =
+     * @c brdc_rts) estimates each satellite clock as Δδtˢ relative to the
+     * BROADCAST a-priori clock of the ephemeris version its geometry currently
+     * uses.  When that version rolls (old IODE → new IODE) the a-priori jumps by
+     * this amount; the TRUE satellite clock is continuous, so the estimable Δδtˢ
+     * must be re-based by @c −(this) to keep referencing the same satellite —
+     * the driver's deterministic eph-cutover re-level, which emits NO
+     * discontinuity bump because the consumer reconstructs @c brdc(new_iode)+C0.
+     *
+     * Uses the same pinned-version retention as @ref computeSatelliteClock: the
+     * freshest held record supplies @c bias_new and the record whose SSR-match
+     * IODE equals @p old_iode (current OR previous) supplies @c bias_old.  Both
+     * biases are evaluated at @p time, so a non-zero @c af1/af2 is honoured.
+     *
+     * @param sat      Satellite id ("G01").
+     * @param time     Epoch to evaluate both clock polynomials at.
+     * @param old_iode The SSR-convention IODE the carried Δδtˢ is referenced to.
+     * @return c·(bias_new − bias_old) in metres; @c std::nullopt when no
+     *         ephemeris is held for @p sat, or when @p old_iode is no longer
+     *         retained (current/previous) — the caller then forces a per-sat
+     *         discontinuity rather than re-leveling against an unknown baseline.
+     */
+    std::optional<double> ephCutoverShiftMetres(const std::string& sat,
+                                                const GnssTime& time, int old_iode) const;
+
     /// @brief Signed age (seconds, query − toe) of the closest-toe held
     ///        ephemeris for @p sat, or @c std::nullopt when none is held.
     ///

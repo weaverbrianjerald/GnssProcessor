@@ -62,6 +62,8 @@
  *   A,<sat>                                             # retro_active (edge-trigger)
  *   Y,<sat>,<epochs>                                    # URA refloat-inflation horizon
  *   C,<sat>                                             # c1_zoh_active (event edge-trigger)
+ *   I,<sat>,<iode>                                      # Card6 eph re-level baseline (brdc_rts)
+ *   X,<sat>                                             # Card6 pending eph-cutover disc bump
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
@@ -178,6 +180,15 @@ struct NetworkStateSnapshot {
     std::set<std::string> ura_retro_sats;  ///< B1 retro-bumps pending for the next emit.
     std::set<std::string> retro_active;    ///< Currently-flagged sats (retro edge-trigger).
     std::set<std::string> c1_zoh_active;   ///< T5/R6 c1-ZOH event edge-trigger (log-only dedup).
+
+    // --- Card 6 (RTF-2) ephemeris-cutover re-level state (brdc_rts only) ----
+    /// sat -> broadcast IODE the carried clock state is currently referenced to
+    /// (the eph-cutover re-level baseline).  Empty in sp3 mode / a pre-Card-6
+    /// snapshot ⇒ the first brdc_rts epoch re-seeds it, so absence is safe.
+    std::map<std::string, int> relevel_iode;
+    /// sats with a pending forced eph-cutover discontinuity (prior eph version
+    /// evicted before Δ_eph could be computed), awaiting their next emit.
+    std::set<std::string> eph_cutover_disc_pending;
 
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own

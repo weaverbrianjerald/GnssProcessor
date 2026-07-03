@@ -145,6 +145,10 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
         put(fmt::format("Y,{},{}", sat, n));
     for (const auto& s : snap.c1_zoh_active)  put(fmt::format("C,{}", s));
+    for (const auto& [sat, iode] : snap.relevel_iode)   // Card 6
+        put(fmt::format("I,{},{}", sat, iode));
+    for (const auto& s : snap.eph_cutover_disc_pending) // Card 6
+        put(fmt::format("X,{}", s));
     // Emitter blob: verbatim, already newline-terminated lines from
     // NetworkProductEmitter::serializeState (EMITTER header .. EEND).
     {
@@ -305,6 +309,13 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "C") {
             if (f.size() != 2) return fail("malformed C line");
             s.c1_zoh_active.insert(f[1]);
+        } else if (tag == "I") {   // Card 6 eph re-level baseline
+            if (f.size() != 3) return fail("malformed I line");
+            if (!parseI(f[2], i1)) return fail("malformed I iode");
+            s.relevel_iode[f[1]] = static_cast<int>(i1);
+        } else if (tag == "X") {   // Card 6 pending eph-cutover disc
+            if (f.size() != 2) return fail("malformed X line");
+            s.eph_cutover_disc_pending.insert(f[1]);
         } else {
             return fail("unknown record tag '" + tag + "'");
         }
@@ -347,11 +358,18 @@ bool NetworkStateSnapshotIO::write(const std::filesystem::path& path,
     // is replaced in one step.  COPY_ALLOWED degrades to copy+delete only
     // ACROSS volumes; the temp file lives beside the target (path + ".tmp"),
     // i.e. always the same volume, so the replace is a metadata-only atomic
-    // rename here.  The remove+rename fallback covers any implementation that
-    // refuses an existing target (POSIX rename overwrites; some layers do not).
-    // The previous good snapshot is never opened or written in place, so a
-    // crash at ANY point leaves either the old complete file or the new
-    // complete file at @p path.
+    // rename here.  ON THIS PRIMARY PATH a crash at any point leaves either the
+    // old complete file or the new complete file at @p path — the previous good
+    // snapshot is never opened or written in place.
+    //
+    // The remove+rename fallback below is a portability backstop for an
+    // implementation that refuses an existing target; it is NOT reached on MSVC
+    // (the replace above already handles an existing destination) and — unlike
+    // the primary rename — it is NOT atomic: a crash in the window between the
+    // remove and the rename leaves neither file at @p path.  The intact
+    // "<path>.tmp" still survives that window (recoverable by hand), and reaching
+    // the branch at all already implies the atomic replace itself failed, so we
+    // accept the narrow non-atomic gap rather than claim a guarantee it lacks.
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {

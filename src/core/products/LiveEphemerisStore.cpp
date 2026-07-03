@@ -531,6 +531,21 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
     return out;
 }
 
+std::optional<double>
+LiveEphemerisStore::ephCutoverShiftMetres(const std::string& sat, const GnssTime& time,
+                                          int old_iode) const {
+    const auto now = computeSatelliteClock(sat, time);            // freshest (default pick)
+    if (!now) return std::nullopt;                               // nothing held for this sat
+    const auto old = computeSatelliteClock(sat, time, old_iode); // pinned to the old version
+    // pickForSsr FALLS BACK to the freshest record when @p old_iode is no longer
+    // retained (current/previous); detect that fallback via the reported IODE, so a
+    // silent re-level against the wrong baseline is impossible — the caller forces a
+    // per-sat discontinuity on nullopt instead.
+    if (!old || old->iode != old_iode) return std::nullopt;
+    if (now->iode == old_iode) return 0.0;                       // no roll (defensive; caller pre-checks)
+    return Constants::SPEED_OF_LIGHT * (now->bias - old->bias);
+}
+
 // ---------------------------------------------------------------------------
 // Introspection
 // ---------------------------------------------------------------------------

@@ -68,6 +68,8 @@
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
 #include "products/NetworkStateSnapshot.hpp"   // RTB-7: atomic state snapshot + warm resume
+#include "products/LiveEphemerisStore.hpp"     // Card 5 (RTF-1): broadcast a-priori store for brdc_rts
+#include "products/RinexNavParser.hpp"         // Card 5 (RTF-1): RINEX-nav → LiveEphemerisStore loader
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
@@ -467,6 +469,16 @@ int Application::runNetwork() {
     // (built below) and instead consumes the producer's emitted SSR products.
     const ClosedLoopConfig& cl = nc.closed_loop;
     const bool closed_loop_on = cl.enable && !cl.station.name.empty();
+
+    // Card 5 (RTF-1): a-priori orbit/clock source.  sp3 (default) = the precise
+    // SP3/CLK cache is the a-priori (today's behaviour, byte-identical).  brdc_rts =
+    // the a-priori is BROADCAST ephemeris (LiveEphemerisStore) — the self-sufficient
+    // real-time service mode.  Threaded through Phase 3 (nav load + SP3-error lift),
+    // the producer station gate-suppression (D1), the anchor-σ re-base (D6), the
+    // clock-IODE stamp, and the apriori_product_id.  Every use is guarded on this
+    // flag so the sp3 path is textually unchanged.
+    const bool brdc_rts =
+        (config_.networkAprioriSource() == NetworkAprioriSource::BrdcRts);
     if (closed_loop_on) {
         roster.rovers.push_back(cl.station);
         log->info("Network: closed-loop consumer '{}' added to the sync roster "
@@ -532,7 +544,68 @@ int Application::runNetwork() {
     }
     log->info("Network: product cache loaded — {} orbits, {} clocks",
               product_cache.getOrbitCount(), product_cache.getClockCount());
-    if (product_cache.getOrbitCount() == 0) {
+    if (brdc_rts) {
+        // Card 5 (RTF-1): the a-priori is BROADCAST ephemeris, not SP3/CLK.  Parse the
+        // RINEX navigation file into the shared LiveEphemerisStore — the SAME store the
+        // real-time engine fills from RTCM 1019/1042/1044/1046 — so replay resolves
+        // satellite orbit+clock through the identical code path as a live run (frame
+        // consistency, conventions §1 / plan D4).  Geometry::getSatellitePV falls back
+        // to this store when no SP3 is loaded, and GnssCorrections::getSatelliteClock-
+        // Correction supplies the broadcast SV clock (marked broadcast-grade) when no
+        // precise CLK covers the epoch — exactly the broadcast a-priori this mode needs.
+        const std::filesystem::path nav_path = config_.getNavigationPath();
+        if (nav_path.empty()) {
+            log->error("Network (brdc_rts): network.apriori_source = brdc_rts requires a "
+                       "broadcast navigation file, but files.navigation_path is empty. "
+                       "Set it, or let PathResolver auto-resolve a BRDC / _MN.rnx file "
+                       "covering the observation day.");
+            return 1;
+        }
+        auto& eph_store = LiveEphemerisStore::getInstance();
+        // Parse first so a per-constellation loaded-sat summary is available; then
+        // insert every record (freshest-toe + current/previous retention in the store).
+        const std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
+        std::map<char, std::set<std::string>> nav_by_const;
+        for (const auto& e : nav)
+            if (!e.satellite.empty()) nav_by_const[e.satellite[0]].insert(e.satellite);
+        for (const auto& e : nav) eph_store.insert(e, /*from_igs=*/true);
+        if (nav.empty() || eph_store.isEmpty()) {
+            log->error("Network (brdc_rts): parsed 0 usable broadcast ephemerides from '{}' "
+                       "(store {}). Cannot form a broadcast a-priori — check the file is a "
+                       "RINEX 3/4 navigation file covering the observation day.",
+                       nav_path.string(), eph_store.isEmpty() ? "empty" : "unchanged");
+            return 1;
+        }
+        {
+            std::string summary;
+            for (const auto& kv : nav_by_const)
+                summary += fmt::format("{}{}={}", summary.empty() ? "" : " ",
+                                       kv.first, kv.second.size());
+            log->info("Network (brdc_rts): broadcast a-priori loaded from '{}' — {} records, "
+                      "{} satellites [{}].", nav_path.filename().string(), nav.size(),
+                      eph_store.size(), summary);
+        }
+        // ANY precise product present in brdc_rts is an unsupported combination — refuse
+        // rather than mask it (revisit when the RTS-orbit seam, plan D9, lands).  BOTH the
+        // orbit AND the clock cache must be empty: a precise SP3 shadows the broadcast
+        // a-priori via getSatellitePV node interpolation, and a precise CLK shadows the
+        // broadcast clock in getSatelliteClockCorrection (interpolateClock wins over the
+        // broadcast fallback for covered epochs → used_broadcast=false, NOT broadcast-grade).
+        // Either alone is a silent orbit/clock frame split: the estimated C0 becomes a delta
+        // against the wrong baseline while its stamped IODE still names the broadcast eph, so
+        // the consumer reconstructs brdc(iode)+C0 and is metre-level wrong.  Gate on orbit OR
+        // clock count (getOrbitCount alone missed a CLK-without-SP3 product set).
+        if (product_cache.getOrbitCount() > 0 || product_cache.getClockCount() > 0) {
+            log->error("Network (brdc_rts): precise products are loaded alongside "
+                       "apriori_source = brdc_rts ({} SP3 orbit node(s), {} CLK sample(s)). This "
+                       "combination is not supported — a precise orbit/clock would shadow the "
+                       "broadcast a-priori (a silent orbit/clock frame split). Remove the SP3/CLK "
+                       "product paths, or use apriori_source = sp3.",
+                       product_cache.getOrbitCount(), product_cache.getClockCount());
+            return 1;
+        }
+    } else if (product_cache.getOrbitCount() == 0) {
+        // sp3 mode (default): the precise orbit cache IS the a-priori — unchanged.
         log->error("Network: no orbit data available; cannot compute satellite geometry. "
                    "Set navigation_path / products to cover the observation day.");
         return 1;
@@ -558,6 +631,18 @@ int Application::runNetwork() {
                   sh_model->maxDegree(), sh_model->numCoeffs(), shc.layer_height_km,
                   shc.sun_fixed ? "sun-fixed" : "geographic");
     } else if (config_.estimateNetworkSatCodeBias()) {
+        // Card 5 belt-and-braces: the external-GIM code-bias path is post-processing-only
+        // (a GIM is a daily product, unavailable in the self-sufficient brdc_rts service).
+        // Card 1's load-time validation rejects brdc_rts + estimate_sat_code_bias +
+        // !estimate_iono_sh as a hard error, so reaching this branch in brdc_rts means the
+        // guard was bypassed — refuse rather than silently loading a GIM the service can't have.
+        if (brdc_rts) {
+            log->error("Network (brdc_rts): reached the external-GIM code-bias path, which is "
+                       "post-processing-only. Set network.estimate_iono_sh = true to co-estimate "
+                       "the ionosphere field, or disable network.estimate_sat_code_bias "
+                       "(this combination should have been rejected at config load).");
+            return 1;
+        }
         gim_ = std::make_unique<GlobalIonosphereMap>(
             config_.getProductPath("INX").string(), log_manager_);
         if (!gim_->isLoaded()) {
@@ -595,6 +680,14 @@ int Application::runNetwork() {
         st.sm->setStateEpochTime(synced.front().time);
         st.model = std::make_unique<PppModel>(
             config_, *product_parser_, log_manager_, *parser, *st.sm);
+        // Card 5 (RTF-1 / plan D1): in brdc_rts the a-priori satellite clock is
+        // broadcast-grade, but the network ESTIMATES the clock (Δδtˢ vs that
+        // a-priori), so this PRODUCER station's carrier phase is informative and
+        // must be kept.  Suppress the code-only broadcast-phase gate on producer
+        // models only — buildStation never builds the held-out closed-loop consumer
+        // (the roster loop below skips it), so the consumer keeps the default gate.
+        // sp3 mode passes false ⇒ byte-identical.
+        st.model->setBroadcastPhaseGateSuppressed(brdc_rts);
         st.mm = std::make_unique<MeasurementModel>(
             *st.sm, *st.model, config_, log_manager_);
         // Seed this station's measurement-model frequency helper with its own
@@ -785,11 +878,19 @@ int Application::runNetwork() {
             const auto& dl = config_.getDownloadConfig();
             std::string apriori_id =
                 fmt::format("{}{}{:04d}{:03d}", dl.product_source, dl.product_type, dl.year, dl.doy);
-            const std::string sp3 = config_.getProductPath("SP3").filename().string();
-            const std::string clk = config_.getProductPath("CLK").filename().string();
-            if (!sp3.empty() || !clk.empty())
-                apriori_id = (sp3.empty() ? std::string("?") : sp3) + "+"
-                           + (clk.empty() ? std::string("?") : clk);
+            if (brdc_rts) {
+                // Card 5 (plan D10): the a-priori is broadcast ephemeris, so the identity
+                // is the nav-file basename ("brdc:<file>").  Once an RTS-orbit source is
+                // attached (plan D9 seam / RTF-3), this becomes "brdc+rts:<mount>".
+                const std::string nav = config_.getNavigationPath().filename().string();
+                apriori_id = "brdc:" + (nav.empty() ? std::string("?") : nav);
+            } else {
+                const std::string sp3 = config_.getProductPath("SP3").filename().string();
+                const std::string clk = config_.getProductPath("CLK").filename().string();
+                if (!sp3.empty() || !clk.empty())
+                    apriori_id = (sp3.empty() ? std::string("?") : sp3) + "+"
+                               + (clk.empty() ? std::string("?") : clk);
+            }
             pending_contract.apriori_product_id = apriori_id;
             // RTA-12: contract identity fields (each serialized as an optional
             // key=value S-line field ONLY when non-empty).
@@ -1258,6 +1359,24 @@ int Application::runNetwork() {
     // Two-state oscillator clock state per satellite (network.clock_model): the carried
     // [offset, drift] + 2×2 covariance, persisted across epochs.  Empty / inert unless clk_model_on.
     std::map<std::string, ClockOsc> clock_osc;   // per-sat carried [offset,drift]+cov+t_last (P0-3: t_last drives per-sat prediction/drift-FD across gaps)
+    // Card 6 (RTF-2, network.apriori_source = brdc_rts): the broadcast-ephemeris IODE
+    // that each satellite's CARRIED clock state (clock_osc.x0 / the D2 clock carry /
+    // the clock-monitor jump baseline) is currently referenced to.  Advanced at the
+    // eph-cutover RE-LEVEL (before the solve), NOT deferred to the emit site like
+    // prev_pivot — the re-level MUTATES the carried state whether or not this epoch
+    // emits (the post-emit carry updates are skipped on a withhold/solve-fail, so the
+    // shifted values persist), so deferring the advance would re-detect the same roll
+    // next epoch and DOUBLE-shift.  Empty / inert unless brdc_rts.  (The plan called
+    // this last_emitted_iode_; "referenced-to" is the honest name since it advances on
+    // withheld epochs too.)
+    std::map<std::string, int> relevel_iode;
+    // Card 6: sats whose eph rolled but whose PRIOR version was already evicted from
+    // the store, so Δ_eph is incomputable — a forced per-sat discontinuity is queued
+    // and lands at the sat's next actual emit (present/pending split like
+    // ura_retro_sats).  Effectively unreachable in steady state (per-epoch checking
+    // makes two rolls between consecutive checks impossible); a defensive belt for a
+    // snapshot gap / two-roll corner.
+    std::set<std::string> eph_cutover_disc_pending;
     double start_anchor_s = -1.0;                        // first-epoch time anchor for network.start_offset_hours
     // Phase-leveling per-station ambiguity carry (Increment 1): persistent across
     // epochs, keyed by (station index, sat, signal); ORDERED so the inject order
@@ -1388,6 +1507,9 @@ int Application::runNetwork() {
                << fmt::format("\"config_hash_fnv1a64\":\"{:016x}\",", cfg_hash)
                << "\"build\":{\"compiled\":\"" << __DATE__ " " __TIME__ << "\"},"
                << "\"network\":{"
+               // RTB-8/P5: bundle provenance — records that the run's toggle set
+               // came from the service profile rather than hand-assembly.
+               << "\"service_mode\":" << (config_.networkServiceMode() ? "true" : "false") << ','
                << "\"stations\":" << stations.size() << ','
                << "\"clock_datum_station\":\"" << jesc(nc.clock_datum_station) << "\","
                << "\"clock_datum_satellite\":\"" << jesc(nc.clock_datum_satellite) << "\","
@@ -1914,6 +2036,13 @@ int Application::runNetwork() {
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
+        // Card 6: apriori_source + anchor σ are datum-relevant.  The carried clock
+        // frame is Δδtˢ-vs-broadcast in brdc_rts but Δδtˢ-vs-precise in sp3 (differ by
+        // ~metres), and only brdc_rts carries the relevel_iode baseline — so a warm
+        // resume must NOT cross an apriori_source change or it would fold a clock carry
+        // in the wrong frame and re-level against a stale baseline.
+        add(fmt::format("{}", static_cast<int>(config_.networkAprioriSource())));
+        add(fmt::format("{}", config_.networkAprioriClockAnchorSigmaM()));
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
     if (!snap_path.empty() && std::filesystem::exists(snap_path)) {
@@ -2005,6 +2134,12 @@ int Application::runNetwork() {
                     ura_refloat_horizon = snap.ura_refloat_horizon;
                     ura_retro_sats      = snap.ura_retro_sats;
                     retro_active        = snap.retro_active;
+                    // Card 6: restore the eph-cutover re-level baseline + any pending
+                    // forced disc so a warm resume does not re-level against a stale
+                    // baseline (or lose a pending forced bump).  Empty in an sp3 or
+                    // pre-Card-6 snapshot ⇒ the first brdc_rts epoch re-seeds cleanly.
+                    relevel_iode             = snap.relevel_iode;
+                    eph_cutover_disc_pending = snap.eph_cutover_disc_pending;
                     // RTA-3 seam (the critical one): PRESERVE the snapshot's
                     // generation id.  The first-emit minting site only mints when
                     // generation_id == 0, so a restored non-zero id SUPPRESSES the
@@ -2058,6 +2193,14 @@ int Application::runNetwork() {
             }
         }
     }
+
+    // Card 5 (RTF-1 / plan D6): resolve the a-priori satellite-clock anchor σ ONCE
+    // (loop-invariant, config-only) so the anchor fold and its B7 information-fraction
+    // diagnostic below share one value.  The resolution policy (explicit > 0 wins;
+    // brdc_rts auto → 3.0 m; sp3 auto → initial_std.sat_clock, unchanged) lives in
+    // GnssConfig so it is a single source of truth and unit-testable in isolation.
+    // The < 100 m binding gate at the fold site is unchanged and stays in the driver.
+    const double clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
 
     for (const auto& se : synced) {
         // Optional testing fast-forward (network.start_offset_hours): skip epochs until the
@@ -3504,6 +3647,84 @@ int Application::runNetwork() {
         // data.  Populated only when the diagnostic trace is open; inert otherwise.
         std::map<std::string, double> clk_prior_info;
 
+        // --- Card 6 (RTF-2 / plan D3): ephemeris-cutover re-level ------------------------------
+        // The producer's estimable per-sat clock is Δδtˢ = (true sat clock) − (broadcast
+        // a-priori clock of the version this epoch's geometry uses).  When that broadcast
+        // version rolls (old IODE → new IODE) the a-priori jumps by
+        // Δ_eph(t) = c·(brdc_new(t) − brdc_old(t)); the TRUE clock is continuous, so the
+        // estimable Δδtˢ must jump by −Δ_eph to keep representing the same satellite.  Left
+        // alone, the carried clock prior — the TIGHT two-state clock_osc prediction, or the
+        // D2 q_clock carry — is a full Δ_eph out of frame and FIGHTS the new-frame
+        // measurements: a slow transient that also trips the two-state NIS / clock-monitor
+        // jump test as a spurious per-sat fault.  So we deterministically re-base the CARRIED
+        // clock state by −Δ_eph, and the solve runs entirely in the new frame — emitted C0 is
+        // continuous-in-reconstruction (the consumer forms brdc(new_iode)+C0, Card 7) with NO
+        // discontinuity bump.
+        //
+        // ORDERING (deliberate deviation from the plan's "after the solve, before the C1
+        // pass"): the re-base MUST precede the prior injection (below) and the solve.  The
+        // plan's post-solve placement anchored to where Card 5 STAMPS clock_iode (after
+        // toSolutionEpoch); but by then x_s was already solved against the OLD-frame prior, so
+        // a post-hoc x_s shift is exact ONLY when the prior dominates (tight) and OVER-corrects
+        // a data-dominated (loose) solve.  Shifting the PRIOR is unconditionally exact for any
+        // prior weight AND — being a deterministic function of the broadcast ephemeris alone —
+        // is independent of the solve, so it applies identically on every disposition (emit /
+        // σ̂0-withhold / solve-fail).  The IODE this epoch uses is read straight from the
+        // shared LiveEphemerisStore (Card 5's own equivalence note: toe granularity ≫
+        // intra-epoch light-travel, so the emit-site query lands on the version the emission
+        // path used), so no dependence on the post-solve stamp remains.
+        //
+        // Placed after the observability-gate `continue`: a gate-withheld epoch leaves the
+        // carried clock state untouched (its post-emit update never runs), so deferring the
+        // re-level to the next non-gate-withheld epoch keeps relevel_iode and the carried
+        // state in lock-step.  On the σ̂0/solve-fail paths the block DID run, the shift landed,
+        // and the (skipped) post-emit updates leave it in place — no double-shift either way.
+        if (brdc_rts) {
+            auto& eph_store = LiveEphemerisStore::getInstance();
+            for (const std::string& sat : registered_clock_sats) {
+                if (sat.empty() || sat[0] == 'R') continue;          // GLONASS out of scope (plan D8)
+                const auto now = eph_store.computeSatelliteClock(sat, se.time);
+                if (!now) continue;                                  // no eph held → nothing to track
+                const int new_iode = now->iode;
+                auto bit = relevel_iode.find(sat);
+                if (bit == relevel_iode.end()) {                     // first sighting: seed, no shift
+                    relevel_iode[sat] = new_iode;
+                    continue;
+                }
+                if (bit->second == new_iode) continue;               // no roll — the common case
+                const int old_iode = bit->second;
+                const auto shift = eph_store.ephCutoverShiftMetres(sat, se.time, old_iode);
+                relevel_iode[sat] = new_iode;                        // baseline advances regardless
+                if (shift) {
+                    // Re-base the carried clock state by −Δ_eph.  Offset / level term ONLY —
+                    // the drift (c1) and the 2×2 covariance are frame-invariant and untouched.
+                    const double d = *shift;
+                    if (auto oit = clock_osc.find(sat); oit != clock_osc.end() && oit->second.init)
+                        oit->second.x0 -= d;                          // two-state offset (clock_model)
+                    for (CarryPrior& cp : prev_carry)                 // D2 scalar clock carry (model off)
+                        if (cp.kind == SharedParamKind::Clock && cp.sat == sat) cp.value -= d;
+                    if (auto jit = prev_clk.find(sat); jit != prev_clk.end())
+                        jit->second.first -= d;                       // clock-monitor jump baseline
+                    log->info("Network (Card 6): {} eph cutover IODE {}->{} — re-leveled carried "
+                              "clock by {:.4f} m (−Δ_eph); no discontinuity bump.",
+                              sat, old_iode, new_iode, -d);
+                    emitEvent("RELEVEL", "eph_cutover_relevel", sat, "", -d, std::nullopt,
+                              "relevel", fmt::format("iode={}->{}", old_iode, new_iode));
+                } else {
+                    // Prior version no longer retained → Δ_eph incomputable → the clock stepped
+                    // by an unknown amount.  Force a per-sat discontinuity (consumer resets this
+                    // sat's network-corrected ambiguity across the step); it lands at the sat's
+                    // next actual emit (below).  Effectively unreachable with per-epoch checking.
+                    eph_cutover_disc_pending.insert(sat);
+                    log->warn("Network (Card 6): {} eph cutover IODE {}->{} but the prior version "
+                              "is no longer held — forcing a per-sat discontinuity (Δ_eph "
+                              "incomputable).", sat, old_iode, new_iode);
+                    emitEvent("RELEVEL", "eph_cutover_disc", sat, "", std::nullopt, std::nullopt,
+                              "disc", fmt::format("iode={}->{}", old_iode, new_iode));
+                }
+            }
+        }
+
         // --- D2 carry-forward prior (diagonal, inflated over the gap) -------
         // Applied AFTER the gate (which must see the DATA-only gauge structure)
         // and BEFORE the solve.  The prior anchors each non-datum shared
@@ -3631,7 +3852,7 @@ int Application::runNetwork() {
         // estimability defect (its large-scale level is unobservable under the
         // common-mode-free iono R); pinning the clock does NOT move the field.
         {
-            const double clk_sigma = config_.getInitialStd().sat_clock;  // m
+            const double clk_sigma = clk_anchor_sigma;  // m (D6-resolved; sp3 auto == initial_std.sat_clock)
             if (std::isfinite(clk_sigma) && clk_sigma > 0.0 && clk_sigma < 100.0) {
                 const double clk_info = 1.0 / (clk_sigma * clk_sigma);
                 std::vector<NetworkEstimator::SharedPrior> clk_anchor;
@@ -4133,6 +4354,27 @@ int Application::runNetwork() {
 
         // --- Emit -----------------------------------------------------------
         NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, se.time, iod++);
+        // Card 5 (RTF-2): stamp the broadcast-ephemeris VERSION the producer's clock-C0
+        // baseline used, per emitted satellite, so the consumer applies C0 against the
+        // SAME broadcast clock (getSatelliteClockCorrection pinned to clock_iode, Card 7)
+        // and the eph-cutover re-level (Card 6) can detect a version roll.  The broadcast
+        // clock is station-independent (one shared LiveEphemerisStore), so the version the
+        // per-station emission path (computeEmissionState) selected this epoch is exactly
+        // what computeSatelliteClock reports here — toe granularity (hours) dwarfs the
+        // intra-epoch light-travel spread, so pick() lands on the same record.  Querying
+        // the store directly at the emit site is a deliberate, equivalent simplification of
+        // the plan's "thread the IODE out of the emission path" (no per-station out-param
+        // plumbing needed).  GLONASS ('R') stays -1 (plan D8).  sp3 mode: the store is empty
+        // ⇒ nullopt ⇒ clock_iode stays -1 everywhere ⇒ Card-4 writes no iode= token ⇒
+        // byte-identical.
+        if (brdc_rts) {
+            auto& eph_store = LiveEphemerisStore::getInstance();
+            for (auto& s : sol.sats) {
+                if (!s.has_clock || s.sat.empty() || s.sat[0] == 'R') continue;
+                if (auto bc = eph_store.computeSatelliteClock(s.sat, se.time))
+                    s.clock_iode = bc->iode;
+            }
+        }
         // RT0-4: stamp the wall-clock TIME-OF-GENERATION (distinct from the content
         // epoch se.time) so a consumer can measure product latency.  Only when armed
         // — otherwise generation_time stays {0,0} and no G record is serialized
@@ -4465,6 +4707,26 @@ int Application::runNetwork() {
                     emitEvent("RETRO", "retro_bump", s, "", std::nullopt, std::nullopt,
                               "disc_bump", "union");
         }
+        // Card 6: land the forced per-sat discontinuities for eph cutovers whose prior
+        // version was evicted before Δ_eph could be computed (an unknown clock step → the
+        // consumer must reset that sat's network-corrected ambiguity).  Independent of
+        // ura_retro_bump — this is a genuine datum step, not a QC retro-bump — but reuses
+        // the same present/pending split: a flagged sat ABSENT from this emission waits for
+        // its next actual emit, so the bump lands with the sat present (replay-faithful).
+        if (!eph_cutover_disc_pending.empty()) {
+            std::set<std::string> present, mark, still_pending;
+            for (const auto& s : sol.sats) present.insert(s.sat);
+            for (const auto& sat : eph_cutover_disc_pending)
+                (present.count(sat) ? mark : still_pending).insert(sat);
+            eph_cutover_disc_pending = std::move(still_pending);
+            if (!mark.empty()) {
+                emitter.markSatDiscontinuity(mark);
+                if (events_trace.is_open())
+                    for (const auto& s : mark)
+                        emitEvent("RELEVEL", "eph_cutover_disc_landed", s, "", std::nullopt,
+                                  std::nullopt, "disc_bump", "prior_eph_version_evicted");
+            }
+        }
         // The handover-detection baseline advances ONLY here, with the bump it
         // pairs with: prev_pivot/last_pivot describe the datum of the last
         // EMITTED product.  A handover epoch that never reaches this point
@@ -4718,7 +4980,7 @@ int Application::runNetwork() {
         // carry stiffness — plus carry_frac = carry/total, which lights up on a lock-in.
         // Read-only; the anchor fold itself is unchanged.
         if (anchor_info_trace.is_open()) {
-            const double clk_sigma_a = config_.getInitialStd().sat_clock;
+            const double clk_sigma_a = clk_anchor_sigma;  // D6-resolved (matches the fold site above)
             const bool anchor_active =
                 std::isfinite(clk_sigma_a) && clk_sigma_a > 0.0 && clk_sigma_a < 100.0;
             const double anchor_info =
@@ -5808,6 +6070,18 @@ int Application::runNetwork() {
         if (!snap_path.empty()
             && (last_snapshot_write_s < 0.0
                 || pl_now_s - last_snapshot_write_s >= nc.state_snapshot_interval_s)) {
+            // RTB-7 cold-state exclusions (in-tree record of a decision previously
+            // documented only in memory/report): this snapshot carries ONLY shared,
+            // network-level producer state — the cross-epoch carries (phase-level /
+            // iono / ZWD), clock oscillators, pivots, generation id, URA/ramp metrics
+            // and the emitter's disc-counter / baseline / first-sighting bookkeeping.
+            // Per-STATION filter state is DELIBERATELY NOT snapshotted: per-station
+            // cycle-slip arcs and slip-detector history, per-station StateManager
+            // ambiguity / iono / receiver-bias marks, and per-station covariance.  On
+            // a warm resume those layers cold-start and re-warm within a few epochs,
+            // and the post-fit RAIM safety net absorbs the transient — serializing the
+            // large per-station covariance blocks would buy nothing the re-warm does
+            // not already provide.  That is the recovery-budget trade RTB-7 accepts.
             NetworkStateSnapshot snap;
             snap.snap_week          = se.time.week;
             snap.snap_tow           = se.time.tow;
@@ -5864,6 +6138,8 @@ int Application::runNetwork() {
             snap.ura_refloat_horizon = ura_refloat_horizon;
             snap.ura_retro_sats      = ura_retro_sats;
             snap.retro_active        = retro_active;
+            snap.relevel_iode              = relevel_iode;              // Card 6
+            snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // Card 6
             {
                 std::ostringstream es;
                 emitter.serializeState(es);

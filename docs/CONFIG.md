@@ -8,7 +8,7 @@ at the command line:
 gnss_processor.exe config/<scenario>.json
 ```
 
-Default when no argv is given: `config/baseline_single.json`.
+Default when no argv is given: `config/ppp_rtk_internal.json`.
 
 Field-level Doxygen lives in
 [`include/config/GnssConfig.hpp`](../include/config/GnssConfig.hpp); this
@@ -55,7 +55,7 @@ the preset entirely.
 | Preset | Stations | Baseline | Date | Source |
 | --- | --- | --- | --- | --- |
 | `IGS_Pasadena` | Caltech `CIT100USA` vs JPL `JPLM00USA` | ~10 km | 2024 DOY 129 | CDDIS (auto-fetched) |
-| `OSU_Campus` | OSU `NARY` reference + `233` rover | ~340 m | 2023 DOY 321 | Local — drop into `data/observations/baseline/short/static/` |
+| `OSU_Campus` | OSU `NARY` reference + `233` rover | ~340 m | 2023 DOY 321 | Local — drop into `data/2023-321/obs/<station>/` |
 
 ---
 

@@ -714,7 +714,7 @@ std::vector<std::string> activeFrequencyBands(
             // the broadcast extrapolation magnitude.
             if (auto age = LiveEphemerisStore::getInstance().toeAgeSeconds(obs.satellite, obs.time))
                 ppp_obs.eph_toe_age_s = *age;
-            if (geom.broadcast_only) {
+            if (geom.broadcast_only && !broadcast_phase_gate_suppressed_) {
                 for (std::map<std::string, double>* m :
                          { &ppp_obs.observed, &ppp_obs.modeled,
                            &ppp_obs.variances, &ppp_obs.zenith_variances }) {
@@ -728,6 +728,18 @@ std::vector<std::string> activeFrequencyBands(
                         "Broadcast-grade clock for {} — using code-only (carrier phase "
                         "excluded; phase at mm precision is inconsistent with metre-level "
                         "broadcast products)", obs.satellite);
+                }
+            } else if (geom.broadcast_only && broadcast_phase_gate_suppressed_) {
+                // Card 5 (RTF-1 / plan D1): brdc_rts network producer.  The satellite's
+                // a-priori clock is broadcast-grade, but the network ESTIMATES the clock
+                // (Δδtˢ vs that a-priori), so carrier phase is informative and is RETAINED
+                // — the code-only erase above is skipped.  One-shot per satellite so the
+                // operator sees the mode without per-epoch spam.
+                if (sats_phase_retained_.insert(obs.satellite).second) {
+                    log_manager_.getLogger("ppp_model")->info(
+                        "Broadcast-grade clock for {} — carrier phase RETAINED (brdc_rts "
+                        "network producer estimates the satellite clock; phase gate "
+                        "suppressed)", obs.satellite);
                 }
             }
 

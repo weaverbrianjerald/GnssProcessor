@@ -619,6 +619,165 @@ TEST(NetworkProductIoTest, UraAndClockDriftRoundTrip) {
     std::filesystem::remove(path);
 }
 
+// ---------------------------------------------------------------------------
+
+// Card 4 (RTF-2): the brdc_rts clock ephemeris-anchor IODE and RTS-orbit echo
+// serialize as self-describing key=value tokens on the C line (iode=/oiod=/
+// oepoch=), round-trip exactly, and — crucially — REPLAY stamps them onto the
+// store's merged OrbitClockCorrection so a file-replayed product gates the clock
+// on the producer's broadcast baseline identically to the live closed loop.  A
+// second sat left at the default sentinel (clock_iode = -1) writes NO token.
+TEST(NetworkProductIoTest, ClockIodeAndOrbitEchoRoundTripAndStamp) {
+    const std::string path = tempFile("gnss_netprod_iode.txt");
+    std::filesystem::remove(path);
+
+    NetworkSolutionEpoch sol = makeEpoch(kT0, /*pb01=*/-0.7);
+    // G01: stamped like a brdc_rts producer — broadcast IODE 42, estimated against
+    // RTS orbit IOD-SSR 7 at a slightly earlier content epoch.  Also give it a
+    // non-zero C1 drift so the key=value tokens sit AFTER a positional c1 field.
+    sol.sats[0].clock_iode    = 42;
+    sol.sats[0].orbit_iod_ssr = 7;
+    sol.sats[0].orbit_epoch   = GnssTime{2313, 259100.5};
+    sol.sats[0].clock_c1_m_s  = -0.0025;
+    // G02: unstamped (default clock_iode = -1) — must write no iode= token.
+
+    {
+        NetworkProductWriter w(path);
+        ASSERT_TRUE(w.good());
+        w.write(sol);
+    }
+
+    bool ok = false;
+    const auto recs = NetworkProductReader::read(path, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_EQ(recs[0].epoch.sats.size(), 2u);
+
+    const NetworkSatSolution& g1 = recs[0].epoch.sats[0];
+    EXPECT_EQ(g1.clock_iode, 42);
+    EXPECT_EQ(g1.orbit_iod_ssr, 7);
+    EXPECT_EQ(g1.orbit_epoch.week, 2313);
+    EXPECT_DOUBLE_EQ(g1.orbit_epoch.tow, 259100.5);   // exact round-trip
+    EXPECT_DOUBLE_EQ(g1.clock_c1_m_s, -0.0025);        // positional c1 still parses
+
+    const NetworkSatSolution& g2 = recs[0].epoch.sats[1];
+    EXPECT_EQ(g2.clock_iode, -1);        // unstamped
+    EXPECT_EQ(g2.orbit_iod_ssr, -1);
+    EXPECT_EQ(g2.orbit_epoch.week, 0);
+
+    // The stamped sat's tokens are present; the unstamped sat's C line has none.
+    const std::string content = readAllBytes(path);
+    EXPECT_NE(content.find("iode=42"), std::string::npos);
+    EXPECT_NE(content.find("oiod=7"), std::string::npos);
+    EXPECT_NE(content.find("oepoch=2313:259100.5"), std::string::npos);
+
+    // Replay stamps the store: getOrbitClock on the standalone clock reports the
+    // producer's clock_iode (WINS over the -1 orbit-inherit) + the orbit echo.
+    SsrCorrectionStore    store;
+    NetworkProductEmitter emit;
+    NetworkProductReader::replay(recs[0], store, emit);
+    const auto q = store.getOrbitClock("G01", kT0, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q.has_value());
+    EXPECT_EQ(q->clock_iode, 42);
+    EXPECT_EQ(q->orbit_iod_ssr, 7);
+    EXPECT_EQ(q->orbit_epoch.week, 2313);
+    EXPECT_DOUBLE_EQ(q->orbit_epoch.tow, 259100.5);
+    // Consumer gate: applies on a matching broadcast IODE, drops on a mismatch.
+    EXPECT_TRUE(SsrCorrectionStore::iodeMatches(42, q->clock_iode));
+    EXPECT_FALSE(SsrCorrectionStore::iodeMatches(41, q->clock_iode));
+    // G02 unstamped: clock_iode stays the permissive -1 (inherited orbit anchor).
+    const auto q2 = store.getOrbitClock("G02", kT0, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q2.has_value());
+    EXPECT_EQ(q2->clock_iode, -1);
+
+    std::filesystem::remove(path);
+}
+
+// Card 4 (RTF-2): the iode=/oiod= key=value tokens coexist with the RTA-4
+// serialized disc counters — with serialize_disc_counters armed the C line
+// carries the ALWAYS-written c1 (field 4) + clock disc counter (field 5) BEFORE
+// the key=value tokens, and the reader parses BOTH the positional counter and
+// the trailing IODE.  This is the field-ordering stress case.
+TEST(NetworkProductIoTest, ClockIodeCoexistsWithSerializedDiscCounters) {
+    const std::string path = tempFile("gnss_netprod_iode_disc.txt");
+    std::filesystem::remove(path);
+
+    auto ep = [](const GnssTime& t) {
+        NetworkSolutionEpoch sol;
+        sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
+        NetworkSatSolution g;
+        g.sat = "G01"; g.has_clock = true; g.clock_c0_m = 5.0;
+        g.clock_c1_m_s  = 0.01;
+        g.clock_iode    = 15;
+        g.orbit_iod_ssr = 4;
+        sol.sats.push_back(g);
+        return sol;
+    };
+
+    NetworkProductEmitter emit(NetworkProductEmitter::kDefaultDiscThresholdM,
+                               /*emit_clock_disc=*/true);
+    const GnssTime t2{kT0.week, kT0.tow + 5.0};
+    {
+        NetworkProductWriter w(path);
+        ASSERT_TRUE(w.good());
+        SsrCorrectionStore   store;
+        NetworkSolutionEpoch e1 = ep(kT0);
+        emit.emitToStore(e1, store);
+        w.write(e1, /*datum_changed=*/false, {}, {}, &emit);   // disc counter 0
+        NetworkSolutionEpoch e2 = ep(t2);
+        emit.markDatumChange();                                // forced clock bump
+        emit.emitToStore(e2, store);
+        w.write(e2, /*datum_changed=*/true, {}, {}, &emit);    // disc counter 1
+    }
+
+    bool ok = false;
+    const auto recs = NetworkProductReader::read(path, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 2u);
+    // Both the serialized clock disc counter AND the stamped IODE parse back.
+    EXPECT_EQ(recs[0].epoch.sats[0].clock_iode, 15);
+    EXPECT_EQ(recs[0].epoch.sats[0].orbit_iod_ssr, 4);
+    EXPECT_DOUBLE_EQ(recs[0].epoch.sats[0].clock_c1_m_s, 0.01);   // positional c1
+    ASSERT_EQ(recs[0].serialized_disc.clock.count("G01"), 1u);
+    EXPECT_EQ(recs[0].serialized_disc.clock.at("G01"), 0);
+    EXPECT_EQ(recs[1].epoch.sats[0].clock_iode, 15);
+    ASSERT_EQ(recs[1].serialized_disc.clock.count("G01"), 1u);
+    EXPECT_EQ(recs[1].serialized_disc.clock.at("G01"), 1);        // forced bump
+
+    std::filesystem::remove(path);
+}
+
+// Card 4 (RTF-2): the sp3-mode sentinel (clock_iode = -1) writes NO iode=/oiod=/
+// oepoch= token, so a producer that never sets it is BYTE-IDENTICAL to a run that
+// explicitly leaves the fields at their sentinel — the twin-file invariant.
+TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
+    const std::string a = tempFile("gnss_netprod_iode_a.txt");
+    const std::string b = tempFile("gnss_netprod_iode_b.txt");
+    std::filesystem::remove(a);
+    std::filesystem::remove(b);
+
+    // File A: plain makeEpoch (fields at their in-struct defaults).
+    { NetworkProductWriter w(a); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, -0.7)); }
+    // File B: the SAME epoch with the Card-4 fields explicitly at their sentinels.
+    NetworkSolutionEpoch sol = makeEpoch(kT0, -0.7);
+    for (auto& s : sol.sats) {
+        s.clock_iode    = -1;
+        s.orbit_iod_ssr = -1;
+        s.orbit_epoch   = GnssTime{0, 0.0};
+    }
+    { NetworkProductWriter w(b); ASSERT_TRUE(w.good()); w.write(sol); }
+
+    const std::string ba = readAllBytes(a);
+    const std::string bb = readAllBytes(b);
+    EXPECT_EQ(ba, bb);                                  // byte-identical
+    EXPECT_EQ(ba.find("iode="), std::string::npos);     // no Card-4 tokens at all
+    EXPECT_EQ(ba.find("oiod="), std::string::npos);
+    EXPECT_EQ(ba.find("oepoch="), std::string::npos);
+
+    std::filesystem::remove(a);
+    std::filesystem::remove(b);
+}
+
 // B6 (P1-1): the v2 S-basis contract header (S line, including realized per-
 // constellation pivots + a-priori product id) round-trips, and checkContract
 // accepts a matching consumer expectation while flagging a mismatched one.
@@ -1898,6 +2057,40 @@ TEST(CsvRotatorTest, RotateCsvSuffixesSparseChainAndKeepClamp) {
     fs::remove_all(dir, ec);
 }
 
+// m4: the staged-rename order (live -> .rotating, then shift, then .rotating ->
+// .1) must leave no ".rotating" scratch behind on success, clear a stale scratch
+// from a crashed prior roll (step 1) rather than colliding with it, and preserve
+// the live file's rows across the roll.
+TEST(CsvRotatorTest, RotateCsvSuffixesStagingCleansScratchAndPreservesData) {
+    namespace fs = std::filesystem;
+    const fs::path dir  = rotatorScratchDir("gnss_csv_rot_stage");
+    const fs::path live = dir / "t.csv";
+    const fs::path g1(live.string() + ".1"), g2(live.string() + ".2");
+    const fs::path scratch(live.string() + ".rotating");
+    auto put = [](const fs::path& p, const std::string& s) {
+        std::ofstream o(p, std::ios::out | std::ios::trunc); o << s;
+    };
+
+    // A stale scratch file from a crashed prior roll must not block the next roll.
+    put(scratch, "STALE");
+    put(live, "LIVE");
+    EXPECT_TRUE(rotateCsvSuffixes(live, 3));
+    EXPECT_EQ(readAllBytes(g1.string()), "LIVE");   // live content preserved in .1
+    EXPECT_FALSE(fs::exists(live));                  // live retired
+    EXPECT_FALSE(fs::exists(scratch));               // no ".rotating" residue
+
+    // A second roll of a fresh live file leaves no scratch, preserves data, and
+    // shifts the prior generation down one slot.
+    put(live, "LIVE2");
+    EXPECT_TRUE(rotateCsvSuffixes(live, 3));
+    EXPECT_EQ(readAllBytes(g1.string()), "LIVE2");
+    EXPECT_EQ(readAllBytes(g2.string()), "LIVE");   // prior .1 shifted to .2
+    EXPECT_FALSE(fs::exists(scratch));
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
 // =============================================================================
 // RTB-7: NetworkStateSnapshot — serialize/parse round-trip, atomic write,
 // warm/cold resume gate, and the quality-ramp lift rule.
@@ -1942,6 +2135,8 @@ NetworkStateSnapshot makeFullSnapshot() {
     s.ura_retro_sats = {"G13", "E09"};
     s.retro_active   = {"G13"};
     s.c1_zoh_active  = {"C21"};
+    s.relevel_iode   = {{"G01", 10}, {"E11", 7}};   // Card 6 re-level baselines
+    s.eph_cutover_disc_pending = {"C21"};           // Card 6 pending forced disc
 
     // A REAL emitter blob (round-trips through restoreState in the driver),
     // carrying a PENDING forced datum bump: G is tracked (first emit), then a
@@ -2033,6 +2228,8 @@ TEST(NetworkStateSnapshotTest, SerializeParseRoundTripsEveryGroup) {
     EXPECT_EQ(r.ura_retro_sats, s.ura_retro_sats);
     EXPECT_EQ(r.retro_active, s.retro_active);
     EXPECT_EQ(r.c1_zoh_active, s.c1_zoh_active);
+    EXPECT_EQ(r.relevel_iode, s.relevel_iode);                       // Card 6
+    EXPECT_EQ(r.eph_cutover_disc_pending, s.eph_cutover_disc_pending);// Card 6
     // Emitter blob verbatim — and it restores into a matching emitter with the
     // PENDING G datum bump intact: G's next emit after the round trip lands it.
     EXPECT_EQ(r.emitter_state, s.emitter_state);
