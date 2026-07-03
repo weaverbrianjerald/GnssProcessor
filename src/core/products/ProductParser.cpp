@@ -1280,7 +1280,7 @@ namespace GnssProcessor {
     // Product loading orchestration
     // =================================================================
 
-    void ProductParser::loadProducts(bool load_precise_orbits_clocks) {
+    void ProductParser::loadProducts(bool load_precise_orbits, bool load_precise_clocks) {
         auto ppp_log = log_manager_.getLogger("ppp_model");
 
         // Helper: load a multi-file product (SP3, CLK)
@@ -1304,15 +1304,18 @@ namespace GnssProcessor {
         };
 
         // Precise orbits/clocks are skipped when a live broadcast+SSR source
-        // drives the geometry (real-time live mode); orbits_/clocks_ then stay
-        // empty so Geometry::getSatellitePV resolves through the live store.
-        if (load_precise_orbits_clocks) {
+        // drives the geometry (real-time live mode); the corresponding cache then
+        // stays empty so the query resolves through the live store.  RTB-4: the
+        // two are independent — a config may load precise (ultra-rapid) orbits
+        // while taking clocks live ("ULT orbits + network clocks").
+        if (load_precise_orbits)
             loadMulti("SP3",  &ProductParser::getOrbitPaths, &ProductParser::parseSp3, orbits_);
+        else
+            ppp_log->info("Skipping precise SP3 load — live orbit source in use");
+        if (load_precise_clocks)
             loadMulti("CLK",  &ProductParser::getClockPaths, &ProductParser::parseClk, clocks_);
-        } else {
-            ppp_log->info("Skipping precise SP3/CLK load — live broadcast+SSR "
-                          "orbit/clock source in use");
-        }
+        else
+            ppp_log->info("Skipping precise CLK load — live/network clock source in use");
         loadSingle("ATX", "ATX", &ProductParser::parseAtx, antennas_);
 
         // BIA: special case  parseBia also extracts the clock reference map

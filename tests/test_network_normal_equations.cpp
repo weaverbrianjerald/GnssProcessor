@@ -514,5 +514,437 @@ TEST(NetworkNormalEquationsTest, DiagonalWeightDimMismatchThrows) {
     EXPECT_THROW(neq.addStationObservations(A_s, A_r, w, y), std::invalid_argument);
 }
 
+// ---------------------------------------------------------------------------
+// reconstructStationCovariance (producer-side network AR, Phase 1) — the #1
+// correctness risk.  Validate the marginal-covariance identity against a fully
+// independent dense full-inverse, both unpinned and with a shared param treated
+// as exactly known (the datum-as-known frame the DD ambiguities live in).
+// ---------------------------------------------------------------------------
+
+// Build the Schur kernel from raw station data + isotropic priors and reduce.
+NetworkNormalEquations buildReducedNeq(const std::vector<StationData>& stations,
+                                       Eigen::Index n_shared, double sp, double lp) {
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr = s.A_r.transpose() * WA_r;
+        N_rr += lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                       WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq.reduce();
+    return neq;
+}
+
+// Unpinned: Cov(x_r) from reconstructStationCovariance must equal the (r,r)
+// block of the full bordered inverse, with the full shared covariance fed in.
+TEST(NetworkNormalEquationsTest, ConditionalCovarianceMatchesFullInverseBlock) {
+    std::mt19937 gen(20260629);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, {3, 2}, {10, 9}, true);
+    const double sp = 1e-2, lp = 1e-2;
+    const DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+
+    // Brute-force marginal covariance of ALL params = inverse of the full
+    // bordered normal matrix (assembled independently of the Schur kernel).
+    const Eigen::MatrixXd cov_full = dense.N.inverse();
+
+    NetworkNormalEquations neq = buildReducedNeq(stations, n_shared, sp, lp);
+    // Full shared covariance = inverse of the reduced shared normals (= the
+    // (s,s) block of cov_full by the Schur-complement identity).
+    const Eigen::MatrixXd cov_xs = neq.reducedSharedNormals().inverse();
+
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        const Eigen::Index n_r = stations[r].A_r.cols();
+        const Eigen::MatrixXd cov_rr = neq.reconstructStationCovariance(r, cov_xs);
+        const Eigen::MatrixXd ref =
+            cov_full.block(dense.local_offset[r], dense.local_offset[r], n_r, n_r);
+        EXPECT_TRUE(cov_rr.isApprox(ref, 1e-8))
+            << "station " << r << " cov_rr=\n" << cov_rr << "\nref=\n" << ref;
+        EXPECT_TRUE(cov_rr.isApprox(cov_rr.transpose(), 1e-12));  // symmetric
+    }
+}
+
+// Pinned-as-known: feeding cov_free with shared param 0's row/col zeroed must
+// reproduce the (r,r) block of the inverse of the system CONDITIONED on x_0
+// exact (its row/col removed) — the datum-as-known frame.  Using the full
+// (un-zeroed) shared covariance instead would inflate the DD ambiguity Q.
+TEST(NetworkNormalEquationsTest, ConditionalCovarianceTreatsPinnedSharedAsKnown) {
+    std::mt19937 gen(424242);
+    const Eigen::Index n_shared = 3;  // index 0 pinned (exact); 1..2 free
+    const auto stations = makeStations(gen, n_shared, {2, 3}, {9, 11}, true);
+    const double sp = 1e-2, lp = 1e-2;
+    const DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+
+    // Reference: condition on shared param 0 KNOWN by removing its row/col from
+    // the full normal, then invert.  (Index 0 first → removal = bottom-right.)
+    const Eigen::Index P = dense.N.rows();
+    const Eigen::MatrixXd cov_cond = dense.N.bottomRightCorner(P - 1, P - 1).inverse();
+
+    NetworkNormalEquations neq = buildReducedNeq(stations, n_shared, sp, lp);
+    // cov_free: free-shared block = inverse of the reduced normals with row/col 0
+    // removed; pinned column 0 left zero (treated as exact).
+    const Eigen::MatrixXd reduced = neq.reducedSharedNormals();
+    Eigen::MatrixXd cov_free = Eigen::MatrixXd::Zero(n_shared, n_shared);
+    cov_free.bottomRightCorner(n_shared - 1, n_shared - 1) =
+        reduced.bottomRightCorner(n_shared - 1, n_shared - 1).inverse();
+
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        const Eigen::Index n_r = stations[r].A_r.cols();
+        const Eigen::MatrixXd cov_rr = neq.reconstructStationCovariance(r, cov_free);
+        // Station r's block offset shifts down by 1 in the conditioned system.
+        const Eigen::MatrixXd ref = cov_cond.block(
+            dense.local_offset[r] - 1, dense.local_offset[r] - 1, n_r, n_r);
+        EXPECT_TRUE(cov_rr.isApprox(ref, 1e-8))
+            << "station " << r << " cov_rr=\n" << cov_rr << "\nref=\n" << ref;
+    }
+}
+
+// addSharedInfo is REDUCTION-PRESERVING: a shared-border delta added AFTER reduce()
+// is folded into the cached reduced system in place (reduction stays current),
+// yielding the SAME result as adding it before reduce() and recomputing.  This is
+// the sentinel for the "stop reducing twice" optimization — a regression that
+// instead dropped the post-reduce prior (the driver's D2 carry-forward) would
+// surface here as an O(1) mismatch, not merely a ULP one.
+TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingDiagonal) {
+    std::mt19937 gen(123);
+    const Eigen::Index n_shared = 5;
+    const auto stations = makeStations(gen, n_shared, {3, 2, 4}, {10, 9, 11}, true);
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations)
+            neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    };
+
+    // Diagonal delta (the D2 carry-forward shape) folded AFTER reduce().
+    Eigen::VectorXd dvec(n_shared); dvec << 0.5, 1.0, 0.25, 2.0, 0.1;
+    const Eigen::MatrixXd dDiag = Eigen::MatrixXd(dvec.asDiagonal());
+    Eigen::VectorXd drhs(n_shared); drhs << 1, -2, 3, 0.5, -1;
+
+    NetworkNormalEquations post(n_shared);
+    build(post);
+    post.reduce();
+    const Eigen::MatrixXd N_before = post.reducedSharedNormals();
+    const Eigen::VectorXd u_before = post.reducedSharedRhs();
+
+    post.addSharedInfo(dDiag, drhs);
+    EXPECT_TRUE(post.isReduced());  // reduction stays current — no re-reduce needed
+    EXPECT_TRUE(post.reducedSharedNormals().isApprox(N_before + dDiag, 1e-12));
+    EXPECT_TRUE(post.reducedSharedRhs().isApprox(u_before + drhs, 1e-12));
+    // A subsequent reduce() must be a no-op (guarded), preserving the folded delta.
+    post.reduce();
+    EXPECT_TRUE(post.reducedSharedNormals().isApprox(N_before + dDiag, 1e-12));
+
+    // From-scratch reference: same delta added BEFORE reduce() (full recompute).
+    NetworkNormalEquations pre(n_shared);
+    build(pre);
+    pre.addSharedInfo(dDiag, drhs);
+    pre.reduce();
+    EXPECT_TRUE(post.reducedSharedNormals().isApprox(pre.reducedSharedNormals(), 1e-12));
+    EXPECT_TRUE(post.reducedSharedRhs().isApprox(pre.reducedSharedRhs(), 1e-12));
+}
+
+// The in-place fold symmetrizes the increment, so it is also exact for a
+// NON-diagonal symmetric delta (e.g. a wHᵀH constraint increment) — guards the
+// 0.5·(Δ+Δᵀ) hardening against a future post-reduce non-diagonal caller.
+TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingSymmetric) {
+    std::mt19937 gen(321);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, {2, 3}, {9, 10}, true);
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations)
+            neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    };
+    const Eigen::MatrixXd R = makeRand(gen, n_shared, n_shared);
+    const Eigen::MatrixXd Sdelta = 0.5 * (R + R.transpose());   // symmetric
+    Eigen::VectorXd drhs = makeRand(gen, n_shared, 1);
+
+    NetworkNormalEquations post(n_shared);
+    build(post);
+    post.reduce();
+    post.addSharedInfo(Sdelta, drhs);
+
+    NetworkNormalEquations pre(n_shared);
+    build(pre);
+    pre.addSharedInfo(Sdelta, drhs);
+    pre.reduce();
+
+    EXPECT_TRUE(post.reducedSharedNormals().isApprox(pre.reducedSharedNormals(), 1e-12));
+    EXPECT_TRUE(post.reducedSharedRhs().isApprox(pre.reducedSharedRhs(), 1e-12));
+}
+
+#ifdef _OPENMP
+// The parallel Schur reduction (reduce(n_threads>1)) matches the serial fold to
+// within ULP-reorder tolerance, for every thread count, and yields the same solve.
+TEST(NetworkNormalEquationsTest, ParallelReduceMatchesSerial) {
+    std::mt19937 gen(4242);
+    const Eigen::Index n_shared = 8;
+    std::vector<Eigen::Index> n_locals, m_obs;
+    for (int r = 0; r < 17; ++r) {            // 17 stations exercises uneven chunks
+        n_locals.push_back(1 + (r % 4));
+        m_obs.push_back(n_shared + n_locals.back() + 3);
+    }
+    const auto stations = makeStations(gen, n_shared, n_locals, m_obs, true);
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations)
+            neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    };
+
+    NetworkNormalEquations serial(n_shared);
+    build(serial);
+    serial.reduce(1);
+
+    for (int nt : {2, 4, 8}) {
+        NetworkNormalEquations par(n_shared);
+        build(par);
+        par.reduce(nt);
+        EXPECT_TRUE(par.reducedSharedNormals().isApprox(serial.reducedSharedNormals(), 1e-10))
+            << "threads=" << nt;
+        EXPECT_TRUE(par.reducedSharedRhs().isApprox(serial.reducedSharedRhs(), 1e-10))
+            << "threads=" << nt;
+        EXPECT_TRUE(par.solveShared().isApprox(serial.solveShared(), 1e-9))
+            << "threads=" << nt;
+    }
+}
+#endif
+
+// ===========================================================================
+// Phase-leveling carried-ambiguity prior (Increment 1): addStationPrior
+// ===========================================================================
+
+// addStationPrior folds a diagonal information increment Λ into one station's
+// N_rr and η into u_r — it must reproduce the dense stacked solve with the SAME
+// diagonal augmentation applied to that station's local block.
+TEST(NetworkNormalEquationsTest, AddStationPriorMatchesDenseAugmentedSolve) {
+    std::mt19937 gen(20260630);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, /*n_locals=*/{3, 4},
+                                       /*m_obs=*/{10, 12}, /*correlated=*/true);
+    const double sp = 1e-2, lp = 1e-2;
+
+    // A carried prior on station 1, local columns {0, 2}.
+    const std::size_t pr_sta = 1;
+    const std::vector<Eigen::Index> cols{0, 2};
+    Eigen::VectorXd dN(2); dN << 3.7, 0.9;     // Λ (info weights)
+    Eigen::VectorXd du(2); du << 1.1, -2.3;    // η (info-form RHS)
+
+    // Dense reference: build the full bordered N/u (with the isotropic priors),
+    // then add Λ on the diagonal and η on the RHS of station 1's local columns.
+    DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+    Eigen::MatrixXd N = dense.N;
+    Eigen::VectorXd u = dense.u;
+    const Eigen::Index off = dense.local_offset[pr_sta];
+    for (Eigen::Index i = 0; i < cols.size(); ++i) {
+        N(off + cols[i], off + cols[i]) += dN(i);
+        u(off + cols[i]) += du(i);
+    }
+    const Eigen::VectorXd x_ref = N.ldlt().solve(u);
+
+    // Schur path: addStation each (local prior folded into N_rr), then
+    // addStationPrior on station 1, then solve + reconstruct.
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s;
+        const Eigen::MatrixXd WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr = s.A_r.transpose() * WA_r;
+        N_rr += lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                       WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq.addStationPrior(pr_sta, cols, dN, du);
+    const Eigen::VectorXd x_s = neq.solveShared();
+
+    EXPECT_TRUE(x_s.isApprox(x_ref.head(n_shared), 1e-9))
+        << "x_s=\n" << x_s.transpose() << "\nref=\n" << x_ref.head(n_shared).transpose();
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        const Eigen::Index n_r = stations[r].A_r.cols();
+        const Eigen::VectorXd ref = x_ref.segment(dense.local_offset[r], n_r);
+        EXPECT_TRUE(neq.reconstructStation(r, x_s).isApprox(ref, 1e-9))
+            << "station " << r << " mismatch";
+    }
+}
+
+// An EMPTY addStationPrior is a genuine no-op: byte-identical to never calling it
+// (the OFF-state byte-identity guarantee at the kernel level).
+TEST(NetworkNormalEquationsTest, AddStationPriorEmptyIsNoOp) {
+    std::mt19937 gen(555);
+    const Eigen::Index n_shared = 3;
+    const auto stations = makeStations(gen, n_shared, {2, 3}, {8, 9}, false);
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations)
+            neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    };
+    NetworkNormalEquations plain(n_shared);   build(plain);
+    NetworkNormalEquations empty(n_shared);   build(empty);
+    empty.addStationPrior(0, {}, Eigen::VectorXd(), Eigen::VectorXd());
+
+    const Eigen::VectorXd xp = plain.solveShared();
+    const Eigen::VectorXd xe = empty.solveShared();
+    EXPECT_EQ((xp - xe).cwiseAbs().maxCoeff(), 0.0);  // exact, not just approx
+    EXPECT_TRUE(empty.reducedSharedNormals().isApprox(plain.reducedSharedNormals(), 0.0));
+}
+
+// addStationPrior validates its inputs.
+TEST(NetworkNormalEquationsTest, AddStationPriorRejectsBadInputs) {
+    NetworkNormalEquations neq(2);
+    Eigen::MatrixXd N_ss(2, 2); N_ss << 3, 1, 1, 4;
+    Eigen::MatrixXd N_sr(2, 2); N_sr.setZero();
+    Eigen::MatrixXd N_rr(2, 2); N_rr << 5, 0, 0, 6;
+    Eigen::VectorXd u_s(2); u_s << 1, 2;
+    Eigen::VectorXd u_r(2); u_r << 0, 0;
+    neq.addStation(N_ss, N_sr, N_rr, u_s, u_r);
+
+    Eigen::VectorXd one(1); one << 1.0;
+    Eigen::VectorXd neg(1); neg << -1.0;
+    EXPECT_THROW(neq.addStationPrior(5, {0}, one, one), std::out_of_range);   // bad station
+    EXPECT_THROW(neq.addStationPrior(0, {0}, one, Eigen::VectorXd()),         // size mismatch
+                 std::invalid_argument);
+    EXPECT_THROW(neq.addStationPrior(0, {7}, one, one), std::invalid_argument);  // col out of range
+    EXPECT_THROW(neq.addStationPrior(0, {0}, neg, one), std::invalid_argument);  // negative info
+}
+
+// Reduce-once instrumentation: the carried-prior path (addStation → addStationPrior
+// → solve) must trigger EXACTLY ONE per-station Schur recompute, and a post-reduce
+// addStationPrior must correctly invalidate the cache (forcing a second recompute).
+TEST(NetworkNormalEquationsTest, AddStationPriorReduceOnceInstrumentation) {
+    std::mt19937 gen(8675309);
+    const Eigen::Index n_shared = 3;
+    const auto stations = makeStations(gen, n_shared, {2, 2}, {8, 8}, false);
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations)
+            neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    };
+
+    // Path mirroring the driver: prior injected BEFORE the first reduce → one recompute.
+    NetworkNormalEquations neq(n_shared);
+    build(neq);
+    Eigen::VectorXd one(1); one << 5.0;
+    neq.addStationPrior(0, {0}, one, one);
+    EXPECT_EQ(neq.reduceRecomputeCount(), 0u);
+    neq.solveShared();
+    EXPECT_EQ(neq.reduceRecomputeCount(), 1u);
+    neq.solveShared();                              // idempotent — no new recompute
+    EXPECT_EQ(neq.reduceRecomputeCount(), 1u);
+
+    // A post-reduce prior must mark the cache stale (the design's "stray post-gate
+    // injection doubles the serial path" — detectable via the counter).
+    neq.addStationPrior(1, {1}, one, one);
+    neq.reduce();
+    EXPECT_EQ(neq.reduceRecomputeCount(), 2u);
+
+    // reset() clears the counter.
+    neq.reset(n_shared);
+    EXPECT_EQ(neq.reduceRecomputeCount(), 0u);
+}
+
+// reconstructStationCovarianceDiag returns exactly the diagonal of the full
+// reconstructStationCovariance for the requested columns.
+TEST(NetworkNormalEquationsTest, CovarianceDiagMatchesFullDiagonal) {
+    std::mt19937 gen(13);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, {3, 4}, {11, 12}, true);
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations)
+        neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    neq.reduce();
+    // An arbitrary SPD shared covariance to propagate.
+    const Eigen::MatrixXd cov_free = makeSpd(gen, n_shared).inverse();
+
+    const std::size_t sta = 1;
+    const Eigen::MatrixXd full = neq.reconstructStationCovariance(sta, cov_free);
+    const std::vector<Eigen::Index> cols{0, 2, 3};
+    const Eigen::VectorXd diag = neq.reconstructStationCovarianceDiag(sta, cols, cov_free);
+    ASSERT_EQ(diag.size(), static_cast<Eigen::Index>(cols.size()));
+    for (Eigen::Index i = 0; i < diag.size(); ++i)
+        EXPECT_NEAR(diag(i), full(cols[i], cols[i]), 1e-10);
+}
+
+// FIREWALL (design §4): a carried prior is reduction-orthogonal to a SHARED gauge
+// direction the data leaves free.  A station ambiguity carry must NOT fill an
+// unpinned shared-clock gauge — so a marginal / under-determined epoch still trips
+// the null-space gate (withholds) with the carry ON.  Here two shared columns are
+// made co-linear (analogue of an unpinned per-constellation clock datum): the
+// direction e0−e1 is exactly null in the reduced normals, and adding a local carry
+// must leave it exactly null while still moving the reconstructed locals.
+TEST(NetworkNormalEquationsTest, CarryDoesNotFillSharedGauge_Firewall) {
+    std::mt19937 gen(31459);
+    const Eigen::Index n_shared = 3;
+    auto stations = makeStations(gen, n_shared, /*n_locals=*/{2, 3}, /*m_obs=*/{9, 10},
+                                 /*correlated=*/false);
+    // Force shared columns 0 and 1 to be IDENTICAL at every station → only their
+    // difference is unobservable: v = e0 − e1 is a pure gauge (A v = 0 everywhere).
+    for (auto& s : stations) s.A_s.col(1) = s.A_s.col(0);
+    Eigen::VectorXd v = Eigen::VectorXd::Zero(n_shared);
+    v(0) = 1.0; v(1) = -1.0;
+
+    auto build = [&](NetworkNormalEquations& neq) {
+        // NO shared prior on the gauge: leave the deficiency in place (a real
+        // unpinned datum); a tiny prior only on column 2 keeps the rest sensible.
+        for (const auto& s : stations) {
+            const Eigen::MatrixXd WA_s = s.W * s.A_s;
+            const Eigen::MatrixXd WA_r = s.W * s.A_r;
+            const Eigen::Index n_r = s.A_r.cols();
+            Eigen::MatrixXd N_rr = s.A_r.transpose() * WA_r;
+            N_rr += 1e-2 * Eigen::MatrixXd::Identity(n_r, n_r);  // PD local block
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+    };
+
+    NetworkNormalEquations base(n_shared);
+    build(base);
+    base.reduce();
+    const double gauge_before = (base.reducedSharedNormals() * v).norm();
+    EXPECT_LT(gauge_before, 1e-8) << "gauge should be (near) null before the carry";
+
+    // Same system + a carried prior on station 1's local ambiguity columns.
+    NetworkNormalEquations carried(n_shared);
+    build(carried);
+    Eigen::VectorXd dN(2); dN << 4.0, 2.0;
+    Eigen::VectorXd du(2); du << 1.5, -0.5;
+    carried.addStationPrior(1, {0, 2}, dN, du);
+    carried.reduce();
+
+    // The shared gauge direction stays EXACTLY as null as before — the carry could
+    // not pin it (it touches only local columns).  The gate's null-space count is
+    // therefore unchanged → an under-determined epoch still withholds.
+    const double gauge_after = (carried.reducedSharedNormals() * v).norm();
+    EXPECT_LT(gauge_after, 1e-8) << "carry must NOT fill the shared gauge";
+
+    // ...yet the carry is genuinely ACTIVE: it moves the reconstructed locals (so
+    // this is a real firewall, not a vacuous no-op).  Solve the constrained system
+    // (pin the gauge so a unique solution exists) and compare station-1 locals.
+    Eigen::MatrixXd Cb = base.reducedSharedNormals();
+    Eigen::MatrixXd Cc = carried.reducedSharedNormals();
+    Eigen::VectorXd ub = base.reducedSharedRhs();
+    Eigen::VectorXd uc = carried.reducedSharedRhs();
+    // Pin column 1 to 0 (resolve the e0−e1 gauge) so a unique solution exists.
+    auto pin = [&](Eigen::MatrixXd& C, Eigen::VectorXd& u) {
+        C.row(1).setZero(); C.col(1).setZero(); C(1, 1) = 1.0; u(1) = 0.0;
+    };
+    pin(Cb, ub); pin(Cc, uc);
+    const Eigen::VectorXd xb = base.reconstructStation(1, Cb.ldlt().solve(ub));
+    const Eigen::VectorXd xc = carried.reconstructStation(1, Cc.ldlt().solve(uc));
+    EXPECT_GT((xb - xc).cwiseAbs().maxCoeff(), 1e-6)
+        << "the carry should change station 1's locals (active prior)";
+}
+
 } // namespace
 } // namespace GnssProcessor

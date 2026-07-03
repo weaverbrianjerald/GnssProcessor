@@ -78,7 +78,8 @@ namespace GnssProcessor {
         // even when the state vector grows/shrinks between epochs.
         // ---------------------------------------------------------------
         std::map<std::string, size_t> ambiguities;   ///< Ambiguity key -> state index.
-        std::map<std::string, size_t> ionospheres;   ///< Satellite ID -> per-sat iono state index.
+        std::map<std::string, size_t> ionospheres;   ///< Satellite ID -> per-sat iono LEVEL state index.
+        std::map<std::string, size_t> iono_rates;    ///< Satellite ID -> per-sat iono RATE (Idot) index; populated only under the constant-velocity model. Kept in the common subspace alongside the level so F_CC carries the F(level,rate)=dt coupling and the rate is smoothed jointly.
         std::map<std::string, size_t> code_biases;   ///< Code bias key -> state index.
         std::map<std::string, size_t> sat_biases;    ///< Per-sat signal bias key -> state index.
         std::map<std::string, size_t> sys_offsets;   ///< Inter-system time offset system -> state index.

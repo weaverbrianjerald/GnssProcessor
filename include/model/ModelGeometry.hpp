@@ -224,12 +224,69 @@ namespace GnssProcessor {
          * producer's OWNED store so a held-out station consumes the network's
          * freshly-emitted corrections without touching global state.
          *
+         * Delegates to @ref setSsrOrbitStore + @ref setSsrClockStore (RTA-8:
+         * the two overlays are independently routable); this coupled form is
+         * retained for every pre-split caller and behaves exactly as before.
+         *
          * @param store Non-owning store pointer (must outlive this object) or
          *        @c nullptr for the singleton.
          */
         void setSsrStore(const SsrCorrectionStore* store) {
+            setSsrOrbitStore(store);
+            setSsrClockStore(store);
+        }
+
+        /**
+         * @brief RTA-8: route ONLY the SSR ORBIT overlay (@c getSatellitePV's
+         *        RAC delta application) at @p store.
+         *
+         * Leaves the clock path (the internal @c GnssCorrections) untouched, so
+         * a consumer can read orbit corrections from the external RTS stream
+         * (the singleton, via @c nullptr here) while its clocks come from an
+         * injected network-product store — the split the standalone
+         * network-consumer wiring uses (@c processing.network_consumer.orbit_source).
+         *
+         * @param store Non-owning store pointer (must outlive this object) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrOrbitStore(const SsrCorrectionStore* store) {
             ssr_store_override_ = store;
+        }
+
+        /**
+         * @brief RTA-8: route ONLY the SSR CLOCK overlay (the internal
+         *        @c GnssCorrections satellite-clock lookup) at @p store.
+         *
+         * Counterpart of @ref setSsrOrbitStore; the orbit overlay keeps its
+         * current routing.
+         *
+         * @param store Non-owning store pointer (must outlive this object) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrClockStore(const SsrCorrectionStore* store) {
             corrections_.setSsrStore(store);
+        }
+
+        /**
+         * @brief RTB-5(c): was the most recent SSR orbit overlay APPLIED to
+         *        @p satellite an APC-referenced (legacy-SSR) correction?
+         *
+         * Recorded at the two orbit-overlay apply sites in
+         * @c getSatellitePV (live-ephemeris fallback and SP3 branch) — true
+         * only when a fresh, IODE-matched orbit delta tagged
+         * @c SsrReferencePoint::APC was actually subtracted for the most
+         * recent query of this satellite; false when no overlay applied or
+         * the record was CoM-referenced.  @c PppModel reads it to skip the
+         * satellite-PCO range term (the APC double-count guard).
+         *
+         * Only maintained while @c realtime.honor_ssr_reference_point is
+         * armed — with the toggle off nothing is recorded and this always
+         * returns false, keeping the default path byte-identical and
+         * allocation-free.
+         */
+        bool ssrOrbitApcApplied(const std::string& satellite) const {
+            const auto it = ssr_orbit_apc_applied_.find(satellite);
+            return it != ssr_orbit_apc_applied_.end() && it->second;
         }
 
         std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
@@ -338,6 +395,13 @@ namespace GnssProcessor {
         /// epoch) and dominates geometry.log — typically 4 sats × 2 calls/epoch
         /// × thousands of epochs. We warn once per satellite per session.
         mutable std::set<std::string> sats_warned_no_clock_;
+
+        /// RTB-5(c): per-satellite record of whether the most recent
+        /// getSatellitePV query APPLIED an APC-referenced SSR orbit delta
+        /// (see ssrOrbitApcApplied).  Written at the overlay apply sites only
+        /// while realtime.honor_ssr_reference_point is armed; mutable because
+        /// getSatellitePV is const (same pattern as the Sun/Moon cache).
+        mutable std::unordered_map<std::string, bool> ssr_orbit_apc_applied_;
     };
 
     } // namespace Model

@@ -138,8 +138,10 @@ namespace GnssProcessor {
          */
         struct IfJumpInfo {
             double delta_grad_m{ 0.0 };  ///< Between-epoch DD IF phase jump (meters).
-            double lambda_if_m{ 0.0 };   ///< IF wavelength (meters).
+            double lambda_if_m{ 0.0 };   ///< IF wavelength = c/(f1+f2) = the (1,1) IF slip jump (m); the physical floor.
             double elevation_deg{ 0.0 };  ///< Satellite elevation (degrees) at detection epoch.
+            std::string sig1;             ///< High-band signal of the IF pair (e.g. "L1C").
+            std::string sig2;             ///< Low-band signal of the IF pair (e.g. "L2W").
             bool   valid{ false };        ///< True if a finite jump was computed.
         };
 
@@ -156,6 +158,34 @@ namespace GnssProcessor {
          * @return IfJumpInfo  Phase jump info (valid=false if not available).
          */
         IfJumpInfo getLastIfJump(const std::string& satellite) const;
+
+        /**
+         * @brief All per-satellite IF jumps from the last detect() call.
+         *
+         * Used by the NETWORK producer's deferred-flagging path: the driver pools
+         * these between-epoch double differences across ALL stations by signal pair
+         * to form a robust per-pair MAD, then thresholds (max(k·MAD, floor)) and
+         * refloats — instead of each station thresholding its own ~handful of
+         * satellites. Keyed by satellite id.
+         */
+        const std::map<std::string, IfJumpInfo>& getLastIfJumps() const { return last_if_jumps_; }
+
+        /**
+         * @brief Defer per-satellite outlier flagging to an external (network) pool.
+         *
+         * When enabled, detect() still groups, single-differences, double-differences,
+         * applies the reference-change / reference-slip corrections, caches the jumps
+         * (see @ref getLastIfJumps) and carries the gradients forward — but it does
+         * NOT run its own per-station MAD outlier flag (so it does not exclude
+         * per-satellite-flagged arcs from the next epoch's gradients; the caller is
+         * responsible for calling @ref resetSatellite on arcs it flags from the pool).
+         * The reference-satellite slip check still runs (it is a per-station
+         * common-mode test the network pool cannot see). Default false (self-contained
+         * per-station flagging, the original behaviour).
+         *
+         * @param defer True to defer per-satellite flagging to the caller.
+         */
+        void setDeferFlagging(bool defer) { defer_flagging_ = defer; }
 
         /**
          * @brief Enable CSV tracing for IF phase slip diagnostics.
@@ -177,6 +207,10 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
         PppUtils ppp_utils_;
+
+        /** When true, per-satellite outlier flagging is deferred to the caller
+         *  (network-pooled MAD path); see @ref setDeferFlagging. */
+        bool defer_flagging_{ false };
 
         /** Minimum elevation (degrees) for a satellite to be chosen as reference. */
         static constexpr double kRefElevThreshDeg = 45.0;

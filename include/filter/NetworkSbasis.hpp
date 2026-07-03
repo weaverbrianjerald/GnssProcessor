@@ -15,10 +15,11 @@
  * The undifferenced uncombined network normal matrix is rank-deficient by:
  *  - **Clock gauge — one per constellation.**  Adding a constant to every
  *    satellite clock of a constellation and to the receivers' clock/ISB of that
- *    constellation cancels on every row.  GPS uses the receiver-clock datum;
- *    each extra constellation has its own clock⇄ISB gauge (ISB is a free
- *    per-station local state).  Realized as a SHARED hard pin on one satellite's
- *    clock column per constellation (@ref NetworkEstimator::Datum).
+ *    constellation cancels on every row.  Every constellation — GPS included —
+ *    is gauged identically: the datum is realized as a SHARED hard pin on one
+ *    satellite's clock column per constellation (@ref NetworkEstimator::Datum).
+ *    No system is anchored to a receiver clock; each station's receiver
+ *    clock/ISB stays a free local state that absorbs the pinned satellite's lump.
  *  - **Phase-bias↔ambiguity gauge — one per (satellite, signal).**  Each
  *    satellite's phase bias @f$b^s_\sigma@f$ is co-linear with that satellite's
  *    ambiguity column @f$\{N^s_{r,\sigma}\}_r@f$ (null vector
@@ -66,9 +67,13 @@ struct SbasisDeclaration {
     /// Ambiguity datum convention: the pivot receiver's ambiguities are pinned
     /// (the estimable phase bias carries that lump).  Recorded for the consumer.
     enum class AmbDatum { PivotReceiverZeroAmbiguity } amb_datum{ AmbDatum::PivotReceiverZeroAmbiguity };
-    /// ISB datum: GPS is the inter-system reference; each extra constellation's
-    /// clock gauge is fixed by its own clock pin (ISB stays a free local state).
-    enum class IsbDatum { GpsReference } isb_datum{ IsbDatum::GpsReference };
+    /// Inter-system / clock-gauge datum: every constellation (GPS included) has
+    /// its clock gauge fixed by a hard pin on one of its OWN satellite clocks; no
+    /// system is anchored to a receiver clock, and each station's receiver
+    /// clock/ISB stays a free local state.  (Enumerator names the realized basis,
+    /// mirroring the sibling AmbDatum / CodeBiasDatum style.)
+    enum class IsbDatum { PerConstellationSatClockPin }
+        isb_datum{ IsbDatum::PerConstellationSatClockPin };
     /// Satellite bias sign convention (matches kSsr*BiasSign at MeasurementModel).
     double bias_sign{ +1.0 };
     /// Declared wind-up / yaw-attitude model id (producer and consumer must agree;
@@ -111,34 +116,62 @@ public:
      * @brief Build the SHARED-block datum: one satellite-clock pin per
      *        constellation present in @p registered_clock_sats.
      *
-     * The pivot satellite per constellation is @p decl.clock_pivot_sat if set and
-     * present, else the first registered satellite of that constellation (stable
-     * lexical order).  The phase-bias↔ambiguity gauge is fixed by LOCAL
-     * pivot-receiver ambiguity pins folded by the driver, so it is intentionally
-     * absent here.
+     * Pivot selection per constellation, in priority order:
+     *  1. **Config pin** — @p decl.clock_pivot_sat, when set and present in the
+     *     registered set.  Honored in BOTH modes (pinning declares user intent,
+     *     so the pinned satellite reclaims the datum on its return; that
+     *     flip-back is deliberate and the driver signals it as a handover).
+     *  2. **Sticky incumbent** (@c network.sticky_pivot, RTA-1) — with
+     *     @p sticky_prev_pivot non-null, the incumbent pivot recorded in that
+     *     map, as long as it is still present in the registered set.  Only when
+     *     the incumbent is absent (set / dropped) is a new pivot selected via
+     *     rule 3, and that NEW pivot then becomes the sticky incumbent in turn:
+     *     the old one returning does NOT flip the datum back.
+     *  3. **Lexical fallback** — the first registered satellite of that
+     *     constellation (stable lexical order).  With @p sticky_prev_pivot null
+     *     (the default / legacy mode) this rule is re-derived EVERY epoch, so
+     *     the auto-picked pivot flips whenever a lexically lower satellite
+     *     rises — each flip a constellation-wide datum re-reference the product
+     *     consumer pays for with an ambiguity reset.
+     *
+     * The phase-bias↔ambiguity gauge is fixed by LOCAL pivot-receiver ambiguity
+     * pins folded by the driver, so it is intentionally absent here.
      *
      * @param est                   the estimator AFTER all register* calls (layout frozen).
      * @param registered_clock_sats every satellite for which a clock column was registered.
      * @param decl                  the S-basis convention (pivot overrides).
+     * @param sticky_prev_pivot     Constellation char → incumbent pivot satellite,
+     *                              i.e. the datum of the last EMITTED product that
+     *                              contained that constellation (the driver's
+     *                              persistent emit-baseline map, advanced only at
+     *                              the emit site).  Pass @c nullptr for the legacy
+     *                              per-epoch lexical auto-pick (byte-identical).
      * @return the datum plan (shared pins + declared residual dimension).
      */
     Plan buildSharedDatum(const NetworkEstimator& est,
                           const std::vector<std::string>& registered_clock_sats,
-                          const SbasisDeclaration& decl) const;
+                          const SbasisDeclaration& decl,
+                          const std::map<std::string, std::string>* sticky_prev_pivot
+                              = nullptr) const;
 
     /**
-     * @brief Null-space rank gate: SVD the PRE-constraint reduced shared normals
-     *        and assert the count of (relatively) zero singular values equals the
-     *        declared S-basis dimension.
+     * @brief Null-space rank gate: eigen-decompose the PRE-constraint reduced
+     *        shared normals and assert the count of (relatively) zero eigenvalues
+     *        equals the declared S-basis dimension.
      *
      * Run after the kernel's @c reduce() (local ambiguity pins already folded and
      * eliminated) and before the datum solve.  A mismatch means the datum is
      * under- or over-specified — the producer would emit a meaningless least-norm
      * split — so this throws loudly rather than letting the solve proceed.
      *
+     * The reduced normals are symmetric positive-SEMIdefinite here (the gate
+     * precedes any indefinite modification), so eigenvalues equal singular values
+     * and a self-adjoint eigensolve gives the same count as an SVD far more
+     * cheaply.
+     *
      * @param reduced_N_ss The reduced shared normal matrix @f$\tilde N_{ss}@f$.
      * @param declared_dim Expected null-space dimension (Plan::declared_dimension).
-     * @param tol          Relative singular-value threshold (vs the largest σ).
+     * @param tol          Relative eigenvalue threshold (vs the largest λ).
      * @throws std::runtime_error with observed-vs-declared counts on mismatch.
      */
     void assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,

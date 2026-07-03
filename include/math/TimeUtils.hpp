@@ -378,14 +378,64 @@ namespace GnssProcessor {
          * @brief Current system wall-clock time as continuous GPS seconds.
          *
          * Reads the host clock (UTC/POSIX) and converts to continuous GPS
-         * seconds (week·604800 + tow), adding @c LEAP_SECONDS for the UTC→GPS
-         * offset.  Used by the real-time engine to measure how far an
-         * observation epoch lags real time (obs-backlog / skip-to-latest); also
-         * the single source of truth behind @c currentGpsWeekFromSystem.
+         * seconds (week·604800 + tow), adding @ref currentLeapSeconds for the
+         * UTC→GPS offset (the compiled @c LEAP_SECONDS unless overridden via
+         * @ref setLeapSecondsOverride).  Used by the real-time engine to
+         * measure how far an observation epoch lags real time (obs-backlog /
+         * skip-to-latest), and as the COLD-START anchor of the RTCM parser's
+         * stream-time tracker (RTB-1(a)).
          *
          * @return Continuous GPS seconds for "now" (≤ 0 if before the GPS epoch).
          */
         static double nowContinuousGpsSeconds();
+
+        /**
+         * @brief Override the GPS-UTC leap-second count used by the wall-clock
+         *        → GPS conversion (RTB-1(c); config key @c realtime.leap_seconds).
+         *
+         * Affects @ref nowContinuousGpsSeconds (and therefore everything built
+         * on it: the RT decode paths' cold-start week/day promotion,
+         * @ref nowGpsTime product stamps, RT lag measurement).  The
+         * epoch-dependent TABLE lookups (@ref leapSecondsGpsUtc — used for
+         * historical epochs, GLONASS day arithmetic at the anchor epoch, UTC
+         * formatting) are deliberately NOT overridden: they are already
+         * correct per epoch; this override exists so a future leap-second
+         * insertion doesn't strand the compiled constant on live streams
+         * before a rebuild.  Set once at startup (RealTimeEngine::initialize)
+         * before the receive threads spin up; the value is stored atomically
+         * so a late set is safe, just not atomic with in-flight conversions.
+         *
+         * Deriving the leap count from the broadcast navigation message
+         * (GPS LNAV page-18 ΔtLS and equivalents) is the principled follow-on
+         * — RTF-scale, since it needs the nav decoders to surface the field
+         * and a policy for pre-first-nav frames.
+         *
+         * @param leap_s GPS-UTC offset in seconds (e.g. 18.0).
+         */
+        static void setLeapSecondsOverride(double leap_s);
+
+        /**
+         * @brief The GPS-UTC leap-second count currently in effect for
+         *        wall-clock conversions.
+         *
+         * The compiled @c LEAP_SECONDS (18) unless @ref setLeapSecondsOverride
+         * replaced it (config @c realtime.leap_seconds).
+         */
+        static double currentLeapSeconds();
+
+        /**
+         * @brief Current system wall-clock time as a @c GnssTime (GPS week + TOW).
+         *
+         * Wraps @ref nowContinuousGpsSeconds and splits it into (week, tow).  Used
+         * to stamp a product's TIME-OF-GENERATION so a downstream consumer can
+         * measure end-to-end latency (received − generated) — RT0-4.  This is the
+         * wall clock, NOT a content-reference epoch (those come from the observation
+         * stream); it is non-deterministic by nature, so never use it on a path that
+         * must be byte-reproducible.
+         *
+         * @return Wall-clock "now" as a GnssTime (week 0, tow 0 semantics unused).
+         */
+        static GnssTime nowGpsTime();
 
         // -----------------------------------------------------------------------
         // Time system constants

@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -28,8 +29,19 @@ struct NtripConfig {
     std::string mountpoint;             ///< Mountpoint name (e.g. "RTCM3").
     std::string username;               ///< NTRIP username (empty for anonymous).
     std::string password;               ///< NTRIP password.
-    std::string nmea_gga;               ///< Optional GGA sentence sent to caster for VRS.
-    int         reconnect_delay_s{ 5 }; ///< Seconds to wait before reconnecting on failure.
+    /// Optional NMEA GGA sentence for VRS / nearest-station mountpoints.
+    /// Sent as the NTRIP rev2 @c "Ntrip-GGA:" REQUEST HEADER on the GET
+    /// (RTB-2(e)).  The previous implementation put it in
+    /// @c CURLOPT_POSTFIELDS, which silently turned the request into a POST —
+    /// wrong for fixed-station rev2 casters and not the rev2 GGA mechanism
+    /// either.  NTRIP rev1-style IN-STREAM GGA upload (writing sentences into
+    /// the open connection, as some legacy VRS casters expect) is NOT
+    /// supported by this client.
+    std::string nmea_gga;
+    /// Base seconds to wait before reconnecting on failure.  A uniform 0-2 s
+    /// jitter is ADDED per attempt (RTB-2(b)) so N clients dropped by one
+    /// caster outage don't re-dial the recovering caster in lockstep.
+    int         reconnect_delay_s{ 5 };
     bool        use_tls{ false };       ///< Connect over HTTPS (curl SSL) instead of plain HTTP.  Required for port-443 casters (e.g. CDDIS).  Default false keeps plain-HTTP casters (igs-ip.net, SBF replay) byte-identical.
     bool        tls_insecure{ false };  ///< When @c use_tls, disable peer/host certificate verification (CURLOPT_SSL_VERIFYPEER/VERIFYHOST → 0).  Testing only — against self-signed or mis-chained casters; default verifies the chain.
 };
@@ -89,8 +101,22 @@ private:
     /// Background thread entry point.
     void receiveLoop();
 
+    /**
+     * @brief Next reconnect back-off in milliseconds (RTB-2(b)).
+     *
+     * @c reconnect_delay_s × 1000 plus a uniform 0-2000 ms jitter drawn from
+     * a per-client @c std::mt19937 (seeded from @c std::random_device at
+     * construction), so multiple streams dropped by a single caster outage
+     * spread their re-dials instead of hammering the recovering caster in
+     * lockstep.  Called only on the receive thread.
+     */
+    int reconnectDelayMs();
+
     NtripConfig           config_;
     LogManager&           log_manager_;
+
+    /// Per-client jitter source for reconnect back-off (see reconnectDelayMs).
+    std::mt19937          jitter_rng_;
 
     std::thread           thread_;
     std::atomic<bool>     running_{ false };

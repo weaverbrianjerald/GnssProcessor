@@ -49,12 +49,14 @@ add_library(gnss_core STATIC
     src/core/atmosphere/Ionosphere.cpp
     src/core/atmosphere/IonexParser.cpp
     src/core/atmosphere/GlobalIonosphereMap.cpp
+    src/core/atmosphere/SphericalHarmonicIonosphere.cpp
     src/core/atmosphere/MagneticField.cpp
     src/core/atmosphere/HigherOrderIonosphere.cpp
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
+    src/core/logging/CsvRotator.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/ProductCache.cpp
@@ -71,6 +73,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManager.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
+    src/core/filter/IlsCore.cpp
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/MeasurementBuilder.cpp
@@ -88,6 +91,8 @@ add_library(gnss_core STATIC
     src/core/rtcm/RtcmSignalMap.cpp
     src/core/rtcm/RtcmMsmDecoder.cpp
     src/core/rtcm/RtcmNavDecoder.cpp
+    src/core/rtcm/LockTimeTracker.cpp
+    src/core/common/CurlGlobalGuard.cpp
     src/core/sbf/SbfSignalMap.cpp
     src/core/sbf/SbfStreamReader.cpp
     src/core/sbf/SbfParser.cpp
@@ -103,13 +108,13 @@ add_library(gnss_core STATIC
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
 	#   IfPhaseSlipDetector: DD IF-phase pre-fit residuals; only valid for
-	#     static sites with a precise a priori position. Development incomplete.
+	#     static sites with a precise a priori position — the NETWORK producer regime.
 	#   GfSlipDetector: 2nd-order time-differenced GF; intended for high-rate
 	#     (>=1 Hz) real-time slip *repair* alongside the MW detector, where
 	#     ionospheric residual contamination of GF is small enough. Not yet
 	#     wired in; the MW detector currently covers slip detection.
-	# Both .cpp are intentionally excluded from the build until finished.
-	#src/core/slip/IfPhaseSlipDetector.cpp
+	# GfSlipDetector.cpp stays excluded until finished; IfPhaseSlipDetector.cpp is built (network).
+	src/core/slip/IfPhaseSlipDetector.cpp
 	#src/core/slip/GfSlipDetector.cpp
 	src/core/slip/GraphicSlipDetector.cpp
 	src/core/slip/EwlSlipDetector.cpp
@@ -131,6 +136,7 @@ add_library(gnss_core STATIC
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkProductIO.cpp
+    src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
@@ -148,9 +154,11 @@ add_library(gnss_core STATIC
 target_include_directories(gnss_core PUBLIC include)
 # KalmanFilter.cpp emits more COFF sections than the default object format
 # allows (template-heavy Eigen kernels); /bigobj raises the limit.  Side-effect
-# free build flag (MSVC only).
+# free build flag (MSVC only).  ApplicationNetwork.cpp is the large network-driver
+# TU and likewise crossed the section limit as it grew.
 if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
+        src/core/app/ApplicationNetwork.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
@@ -235,6 +243,7 @@ add_executable(gnss_tests
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
     tests/test_network_emit.cpp
+    tests/test_sh_ionosphere.cpp
     tests/test_network_product_io.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
@@ -247,6 +256,7 @@ add_executable(gnss_tests
     tests/test_rtcm.cpp
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
+    tests/test_ils_core.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
     tests/test_stochastic_model.cpp

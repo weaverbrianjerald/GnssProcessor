@@ -12,6 +12,7 @@
  */
 
 #include "products/DataDownloader.hpp"
+#include "common/CurlGlobalGuard.hpp"
 #include <curl/curl.h>
 #include <zlib.h>
 #include <array>
@@ -97,12 +98,18 @@ DataDownloader::DataDownloader(LogManager& log_manager,
     : log_manager_(log_manager),
       netrc_path_(netrc_path),
       keep_zip_after_unzip_(keep_zip_after_unzip) {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    // RTB-2(a): process-wide call_once guard shared with NtripClient — a raw
+    // curl_global_init here would re-run on every DataDownloader construction.
+    ensureCurlGlobalInit();
 }
 
-DataDownloader::~DataDownloader() {
-    curl_global_cleanup();
-}
+// RTB-2(a): deliberately NO curl_global_cleanup here.  This destructor used
+// to run it, which is undefined behaviour while NtripClient receive threads
+// are still inside curl_easy_perform (curl_global_cleanup is documented as
+// non-thread-safe and only legal once ALL curl use in the process has ended
+// — a condition this object cannot know).  Skipping the cleanup at process
+// exit is explicitly sanctioned by the libcurl docs; see CurlGlobalGuard.hpp.
+DataDownloader::~DataDownloader() = default;
 
 // ---------------------------------------------------------------------------
 // .netrc resolution (idempotent; runs on first download attempt)

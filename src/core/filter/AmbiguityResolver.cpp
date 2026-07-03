@@ -8,6 +8,7 @@
  */
 
 #include "filter/AmbiguityResolver.hpp"
+#include "filter/IlsCore.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/KalmanFilter.hpp"
 #include "common/Constants.hpp"
@@ -33,34 +34,16 @@ AmbiguityResolver::AmbiguityResolver(const AmbiguityResolverConfig& config,
 // LDL^T decomposition
 // ===========================================================================
 
+// The MLAMBDA numerical kernels (ldlDecompose, reduction, search, mlambda,
+// computeBootstrapSuccessRate) now live in filter/IlsCore.hpp as pure free
+// functions shared with the PPP-RTK network producer path.  These members are
+// retained as thin forwarders so the existing test seam (MlambdaTestAccess)
+// and the StateManager-coupled entry points below keep their call sites
+// unchanged.  Behavior is bit-identical to the pre-extraction kernels.
 bool AmbiguityResolver::ldlDecompose(const Eigen::MatrixXd& Q,
                                      Eigen::MatrixXd& L,
                                      Eigen::VectorXd& d) {
-    const int n = static_cast<int>(Q.rows());
-    L = Eigen::MatrixXd::Zero(n, n);
-    d = Eigen::VectorXd::Zero(n);
-
-    Eigen::MatrixXd A = Q;
-
-    for (int i = n - 1; i >= 0; --i) {
-        d(i) = A(i, i);
-        if (d(i) <= 0.0) return false; // not positive definite
-
-        const double sqrt_d = std::sqrt(d(i));
-        for (int j = 0; j <= i; ++j) {
-            L(i, j) = A(i, j) / sqrt_d;
-        }
-        for (int j = 0; j < i; ++j) {
-            for (int k = 0; k <= j; ++k) {
-                A(j, k) -= L(i, k) * L(i, j);
-            }
-        }
-        for (int j = 0; j <= i; ++j) {
-            L(i, j) /= L(i, i);
-        }
-    }
-
-    return true;
+    return ils::ldlDecompose(Q, L, d);
 }
 
 // ===========================================================================
@@ -69,59 +52,7 @@ bool AmbiguityResolver::ldlDecompose(const Eigen::MatrixXd& Q,
 
 void AmbiguityResolver::reduction(Eigen::MatrixXd& L, Eigen::VectorXd& d,
                                   Eigen::MatrixXd& Z) {
-    const int n = static_cast<int>(d.size());
-    Z = Eigen::MatrixXd::Identity(n, n);
-
-    int j = n - 2;
-    int sw = n - 2;
-
-    while (j >= 0) {
-        // Gauss transformations
-        if (j <= sw) {
-            for (int i = j + 1; i < n; ++i) {
-                double mu = std::round(L(i, j));
-                if (mu != 0.0) {
-                    for (int k = i; k < n; ++k) {
-                        L(k, j) -= mu * L(k, i);
-                    }
-                    for (int k = 0; k < n; ++k) {
-                        Z(k, j) -= mu * Z(k, i);
-                    }
-                }
-            }
-        }
-
-        // Permutation test
-        double delta = d(j) + L(j + 1, j) * L(j + 1, j) * d(j + 1);
-        if (delta + 1e-6 < d(j + 1)) {
-            // Permute columns j and j+1
-            double eta = d(j) / delta;
-            double lam = d(j + 1) * L(j + 1, j) / delta;
-
-            d(j) = eta * d(j + 1);
-            d(j + 1) = delta;
-
-            // Update L rows j and j+1 for columns 0..j-1
-            Eigen::RowVectorXd Lj_row = L.row(j).head(j).eval();
-            Eigen::RowVectorXd Lj1_row = L.row(j + 1).head(j).eval();
-            L.row(j).head(j) = -L(j + 1, j) * Lj_row + Lj1_row;
-            L.row(j + 1).head(j) = eta * Lj_row + lam * Lj1_row;
-
-            L(j + 1, j) = lam;
-
-            // Swap L columns j,j+1 for rows j+2..n-1
-            for (int k = j + 2; k < n; ++k) {
-                std::swap(L(k, j), L(k, j + 1));
-            }
-            // Swap Z columns j,j+1
-            Z.col(j).swap(Z.col(j + 1));
-
-            sw = j;
-            j = n - 2;
-        } else {
-            --j;
-        }
-    }
+    ils::reduction(L, d, Z);
 }
 
 // ===========================================================================
@@ -134,90 +65,7 @@ int AmbiguityResolver::search(const Eigen::MatrixXd& L,
                               Eigen::MatrixXd& zn,
                               Eigen::VectorXd& sq,
                               int m) {
-    const int n = static_cast<int>(d.size());
-    int nn = 0;
-    int imax = 0;
-    double Chi2 = 1e18;
-
-    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(n, n);
-    Eigen::VectorXd dist = Eigen::VectorXd::Zero(n);
-    Eigen::VectorXd zb = Eigen::VectorXd::Zero(n);
-    Eigen::VectorXd z = Eigen::VectorXd::Zero(n);
-    Eigen::VectorXd step = Eigen::VectorXd::Zero(n);
-    zn = Eigen::MatrixXd::Zero(n, m);
-    sq = Eigen::VectorXd::Constant(m, 0.0);
-
-    int k = n - 1;
-    zb(k) = zs(k);
-    z(k) = std::round(zb(k));
-    double y = zb(k) - z(k);
-    step(k) = (y >= 0.0) ? 1.0 : -1.0;
-
-    constexpr int kMaxIter = 10000;
-    for (int iter = 0; iter < kMaxIter; ++iter) {
-        double newdist = dist(k) + y * y / d(k);
-
-        if (newdist < Chi2) {
-            if (k != 0) {
-                --k;
-                dist(k) = newdist;
-                for (int i = 0; i <= k; ++i) {
-                    S(k, i) = S(k + 1, i) + (z(k + 1) - zb(k + 1)) * L(k + 1, i);
-                }
-                zb(k) = zs(k) + S(k, k);
-                z(k) = std::round(zb(k));
-                y = zb(k) - z(k);
-                step(k) = (y >= 0.0) ? 1.0 : -1.0;
-            } else {
-                // Found a candidate
-                if (nn < m) {
-                    if (nn == 0 || newdist > sq(imax)) {
-                        imax = nn;
-                    }
-                    zn.col(nn) = z;
-                    sq(nn) = newdist;
-                    ++nn;
-                } else {
-                    if (newdist < sq(imax)) {
-                        zn.col(imax) = z;
-                        sq(imax) = newdist;
-                        imax = 0;
-                        for (int i = 1; i < m; ++i) {
-                            if (sq(i) > sq(imax)) imax = i;
-                        }
-                    }
-                    Chi2 = sq(imax);
-                }
-                z(0) += step(0);
-                y = zb(0) - z(0);
-                step(0) = -step(0) - ((step(0) >= 0.0) ? 1.0 : -1.0);
-            }
-        } else {
-            if (k == n - 1) break;
-            ++k;
-            z(k) += step(k);
-            y = zb(k) - z(k);
-            step(k) = -step(k) - ((step(k) >= 0.0) ? 1.0 : -1.0);
-        }
-    }
-
-    // Sort by ascending squared distance
-    if (nn >= 2) {
-        std::vector<int> order(nn);
-        std::iota(order.begin(), order.end(), 0);
-        std::sort(order.begin(), order.end(),
-                  [&sq](int a, int b) { return sq(a) < sq(b); });
-        Eigen::MatrixXd zn_sorted = zn;
-        Eigen::VectorXd sq_sorted = sq;
-        for (int i = 0; i < nn; ++i) {
-            zn_sorted.col(i) = zn.col(order[i]);
-            sq_sorted(i) = sq(order[i]);
-        }
-        zn = zn_sorted;
-        sq = sq_sorted;
-    }
-
-    return nn;
+    return ils::search(L, d, zs, zn, sq, m);
 }
 
 // ===========================================================================
@@ -229,37 +77,7 @@ bool AmbiguityResolver::mlambda(const Eigen::VectorXd& a,
                                 Eigen::VectorXd& afix,
                                 Eigen::VectorXd& s,
                                 Eigen::VectorXd* d_out) {
-    Eigen::MatrixXd L;
-    Eigen::VectorXd d;
-    if (!ldlDecompose(Q, L, d)) return false;
-
-    Eigen::MatrixXd Z;
-    reduction(L, d, Z);
-
-    // Z-transform the float ambiguities
-    Eigen::VectorXd z_float = Z.transpose() * a;
-
-    // ILS search for 2 best candidates
-    Eigen::MatrixXd E;
-    Eigen::VectorXd sq;
-    int found = search(L, d, z_float, E, sq, 2);
-    if (found < 2) return false;
-
-    s = sq.head(2);
-    if (d_out) *d_out = d;  // post-reduction diagonal — caller may compute P_s,boot
-
-    // Back-transform best candidate: afix = inv(Z^T) * E(:,0)
-    // Since Z is integer, inv(Z^T) = round(inv(Z^T))
-    Eigen::MatrixXd Zt_inv = Z.transpose().inverse();
-    // Round to nearest integer to clean up numerical noise
-    for (int i = 0; i < Zt_inv.rows(); ++i) {
-        for (int j = 0; j < Zt_inv.cols(); ++j) {
-            Zt_inv(i, j) = std::round(Zt_inv(i, j));
-        }
-    }
-    afix = Zt_inv * E.col(0);
-
-    return true;
+    return ils::mlambda(a, Q, afix, s, d_out);
 }
 
 // ===========================================================================
@@ -267,17 +85,7 @@ bool AmbiguityResolver::mlambda(const Eigen::VectorXd& a,
 // ===========================================================================
 
 double AmbiguityResolver::computeBootstrapSuccessRate(const Eigen::VectorXd& d) {
-    // P_s,boot = Π_i  erf( 1 / (2·√(2·d_i)) )
-    // Per-dimension: P(|N(0, d_i)| < 0.5) = erf( 0.5 / (√d_i · √2) )
-    if (d.size() == 0) return 0.0;
-    constexpr double kInv2Sqrt2 = 0.353553390593273762200422181052424519;  // 1/(2√2)
-    double p = 1.0;
-    for (int i = 0; i < d.size(); ++i) {
-        if (d(i) <= 0.0) return 0.0;
-        p *= std::erf(kInv2Sqrt2 / std::sqrt(d(i)));
-        if (p <= 0.0) return 0.0;
-    }
-    return p;
+    return ils::computeBootstrapSuccessRate(d);
 }
 
 // ===========================================================================
@@ -288,83 +96,28 @@ AmbiguityResolver::PartialFix AmbiguityResolver::selectFixableSubset_(
     const Eigen::VectorXd& y_cycles,
     const Eigen::MatrixXd& Q_cycles) const {
 
+    // The backward-elimination loop now lives in filter/IlsCore.hpp as
+    // ils::selectFixableSubset, shared with the network producer's ilsFix.
+    // This member is a thin adapter that maps config_ → IlsGateConfig and the
+    // returned ils::PartialFix → AmbiguityResolver::PartialFix.  Bit-identical
+    // to the pre-extraction loop (verbatim port, same gate values).
+    const ils::IlsGateConfig gates{
+        config_.ratio_threshold,
+        config_.ratio_upper_bound,
+        config_.min_success_rate,
+        config_.nl_max_per_pair_frac,
+        config_.enable_partial_ar,
+    };
+    const ils::PartialFix pf = ils::selectFixableSubset(y_cycles, Q_cycles, gates);
+
     PartialFix out;
-    const int nb = static_cast<int>(y_cycles.size());
-    if (nb <= 0) return out;
-
-    // Active = indices (into the caller's full set) still in contention.
-    std::vector<int> active(nb);
-    std::iota(active.begin(), active.end(), 0);
-
-    // Each iteration strictly shrinks `active`, so the loop terminates.  We
-    // allow the subset to shrink to a single entry: the ratio/bootstrap/frac
-    // gates remain meaningful for one ambiguity and reject all but the most
-    // confident lone fixes.
-    while (static_cast<int>(active.size()) >= 1) {
-        const int m = static_cast<int>(active.size());
-
-        Eigen::VectorXd y_sub(m);
-        Eigen::MatrixXd Q_sub(m, m);
-        for (int a = 0; a < m; ++a) {
-            y_sub(a) = y_cycles(active[a]);
-            for (int b = 0; b < m; ++b) {
-                Q_sub(a, b) = Q_cycles(active[a], active[b]);
-            }
-        }
-        // No-op on the already-symmetric inputs (bit-identical), but keeps the
-        // sub-block robust to any caller that passes a not-quite-symmetric Q.
-        Q_sub = 0.5 * (Q_sub + Q_sub.transpose());
-
-        // Drop the entry with the largest formal float variance (cycles²) —
-        // the least precise ambiguity, whose removal most improves the
-        // bootstrap success rate and search conditioning.
-        auto drop_worst_variance = [&]() {
-            int worst = 0;
-            double worst_var = -1.0;
-            for (int a = 0; a < m; ++a) {
-                if (Q_sub(a, a) > worst_var) { worst_var = Q_sub(a, a); worst = a; }
-            }
-            active.erase(active.begin() + worst);
-        };
-
-        Eigen::VectorXd afix_sub, s_sub, d_sub;
-        if (!mlambda(y_sub, Q_sub, afix_sub, s_sub, &d_sub)) { drop_worst_variance(); continue; }
-        if (s_sub(0) <= 0.0 || s_sub(1) <= 0.0)               { drop_worst_variance(); continue; }
-
-        const double ratio = s_sub(1) / s_sub(0);
-        if (ratio < config_.ratio_threshold || ratio > config_.ratio_upper_bound) {
-            drop_worst_variance();
-            continue;
-        }
-
-        const double p_s = computeBootstrapSuccessRate(d_sub);
-        if (p_s < config_.min_success_rate) { drop_worst_variance(); continue; }
-
-        // Per-entry fractional cap: when this is the failing gate, drop the
-        // specific entry sitting nearest a half-cycle boundary rather than the
-        // highest-variance one.
-        double max_frac = 0.0;
-        int    worst_frac = 0;
-        for (int a = 0; a < m; ++a) {
-            const double f = std::abs(y_sub(a) - afix_sub(a));
-            if (f > max_frac) { max_frac = f; worst_frac = a; }
-        }
-        if (max_frac > config_.nl_max_per_pair_frac) {
-            active.erase(active.begin() + worst_frac);
-            continue;
-        }
-
-        // Subset passes the full acceptance battery — accept it.
-        out.success     = true;
-        out.kept        = active;
-        out.afix_cycles = afix_sub;
-        out.ratio       = ratio;
-        out.p_s         = p_s;
-        out.max_frac    = max_frac;
-        return out;
-    }
-
-    return out;  // success == false: no subset down to size 1 cleared the gates
+    out.success     = pf.success;
+    out.kept        = pf.kept;
+    out.afix_cycles = pf.afix_cycles;
+    out.ratio       = pf.ratio;
+    out.p_s         = pf.p_s;
+    out.max_frac    = pf.max_frac;
+    return out;
 }
 
 // ===========================================================================

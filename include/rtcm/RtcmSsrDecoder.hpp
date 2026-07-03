@@ -48,14 +48,26 @@ struct DecodeResult {
  *   - 1061/1067/1244/1250/1256/1262                → @p uras
  *   - 1062/1068/1245/1251/1257/1263                → @p hrclocks
  *
+ * Orbit-bearing records (orbit + combined) are tagged
+ * @c SsrReferencePoint::APC: legacy RTCM SSR corrects the broadcast orbit to
+ * the satellite antenna phase center (RTCM 10403.3 sec. 3.5.12), unlike
+ * IGS-SSR 4076's center-of-mass convention (RTB-5(b)).  The legacy Galileo
+ * 10-bit IODnav is masked to 8 bits at decode so it matches the broadcast
+ * side's @c IODnav&0xFF convention (see @c LiveEphemerisStore::ssrMatchIode;
+ * RTB-5(a)).
+ *
  * @param payload     Pointer to the message payload (excluding 3-byte header
  *                    and 3-byte CRC).  First 12 bits are DF002 (message type)
  *                    and will be consumed by the decoder.
  * @param len_bytes   Payload length in bytes.
  * @param msg_type    The 12-bit DF002 value extracted from the payload header.
- * @param current_gps_week  GPS week at which the frame was received (used to
- *                    promote the 20-bit GPS TOW or 17-bit GLO TOD into a full
- *                    @c GnssTime).  Pass 0 to leave @c epoch_time.week zero.
+ * @param anchor_gps_seconds  Continuous GPS seconds of a known nearby epoch,
+ *                    used to promote the 20-bit GPS TOW into the full week
+ *                    minimizing |Δt| to the anchor (nearest continuation,
+ *                    RTKLIB adjweek) and to anchor the 17-bit GLO TOD → GPS
+ *                    day resolution.  Supplied by @c RtcmParser's per-parser
+ *                    stream-time tracker (host clock at cold start only —
+ *                    RTB-1(a)).  Pass ≤ 0 to leave @c epoch_time.week zero.
  *
  * @return @c DecodeResult.ok = true if the entire message decoded without
  *         truncation; the @c header field is always populated when the
@@ -66,7 +78,7 @@ DecodeResult decodeLegacy(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<SsrOrbitCorrection>&    orbits,
     std::vector<SsrClockCorrection>&    clocks,
     std::vector<SsrCombinedCorrection>& combined,
@@ -94,17 +106,25 @@ DecodeResult decodeLegacy(
  * VTEC (IM=201) and NavIC (IM=81-87) are not yet supported and decoded
  * as @c ok=false.  The shared header is still populated for diagnostics.
  *
+ * Orbit-bearing records are tagged @c SsrReferencePoint::CoM — IGS-SSR
+ * corrects the broadcast orbit to the satellite center of mass (IGS SSR
+ * Format v1.00 sec. 4), matching the SP3 convention, so the user-side
+ * satellite PCO must still be applied (RTB-5(b)).  The IOD field is a
+ * uniform 8 bits here (no masking needed — see decodeLegacy for the
+ * legacy Galileo 10-bit case).
+ *
  * @param payload          Pointer to the message payload (DF002 included).
  * @param len_bytes        Payload length in bytes.
- * @param current_gps_week GPS week used to promote the 20-bit ms-of-week
- *                         epoch into a full @c GnssTime.
+ * @param anchor_gps_seconds Continuous GPS seconds of a known nearby epoch —
+ *                         nearest-continuation week promotion of the 20-bit
+ *                         TOW epoch, as @ref decodeLegacy (RTB-1(a)).
  *
  * @return @c DecodeResult.ok = true if the entire message decoded cleanly.
  */
 DecodeResult decodeIgs4076(
     const uint8_t* payload,
     std::size_t    len_bytes,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<SsrOrbitCorrection>&    orbits,
     std::vector<SsrClockCorrection>&    clocks,
     std::vector<SsrCombinedCorrection>& combined,

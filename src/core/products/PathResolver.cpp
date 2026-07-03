@@ -342,14 +342,18 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
     // Precise orbits/clocks are not inputs when a live broadcast+SSR source
     // drives real-time geometry — skip discovery so a stale fixture can't
     // shadow today's live PRNs (see GnssConfig::realtimeUsesLiveOrbitClockSource).
-    if (!config_.realtimeUsesLiveOrbitClockSource()) {
-        for (const auto& d : { prev_day_products, obs_day_products, next_day_products }) {
-            append(globByExtension(d, {".sp3"}));
-            append(globByExtension(d, {".clk"}));
-        }
-    } else {
-        log->info("Real-time live source: skipping SP3/CLK product discovery");
+    // RTB-4: SP3 (orbit) and CLK (clock) discovery are gated independently so a
+    // "precise (ULT) orbits + network clocks" config discovers SP3 but not CLK.
+    const bool skip_orbit_disc = config_.realtimeUsesLiveOrbitSource();
+    const bool skip_clock_disc = config_.realtimeUsesLiveOrbitClockSource();
+    for (const auto& d : { prev_day_products, obs_day_products, next_day_products }) {
+        if (!skip_orbit_disc) append(globByExtension(d, {".sp3"}));
+        if (!skip_clock_disc) append(globByExtension(d, {".clk"}));
     }
+    if (skip_orbit_disc && skip_clock_disc)
+        log->info("Real-time live source: skipping SP3/CLK product discovery");
+    else if (skip_clock_disc)
+        log->info("RTB-4: precise orbits + live/network clocks — discovering SP3, skipping CLK");
     append(globByExtension(obs_day_products, {".bia", ".bsx"}));
     append(globByExtension(obs_day_products, {".erp"}));
     append(globByExtension(obs_day_products, {".inx"}));
@@ -496,7 +500,9 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     rc.download_products = dl.download_products;
     // In a live real-time session orbits/clocks come from broadcast+SSR — don't
     // waste a CDDIS round-trip pulling daily SP3/CLK that would only be shadowed.
-    rc.download_orbits_clocks = !config_.realtimeUsesLiveOrbitClockSource();
+    // RTB-4: gated independently so "ULT orbits + network clocks" pulls SP3 only.
+    rc.download_orbits = !config_.realtimeUsesLiveOrbitSource();
+    rc.download_clocks = !config_.realtimeUsesLiveOrbitClockSource();
     rc.download_gim      = dl.download_gim;
     rc.atx_path          = dl.atx_path;
     rc.nc_path           = dl.nc_path;

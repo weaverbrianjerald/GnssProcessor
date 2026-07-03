@@ -449,6 +449,11 @@ namespace GnssProcessor {
         }
 
         // --- Non-reference outlier detection ---
+        // Deferred mode (network producer): the per-satellite outlier flag is done
+        // by the driver against a NETWORK-POOLED per-signal-pair MAD; skip it here.
+        // The between-epoch double differences are still computed, cached, and
+        // carried forward. The reference-slip common-mode check above still runs.
+        if (!defer_flagging_) {
         if (all_finite && delta_grad.size() >= 2) {
             // Full MAD-based adaptive outlier check
             auto cleaned = checkOutliers(delta_grad, cs.ref_satellite, lambda_if);
@@ -488,6 +493,7 @@ namespace GnssProcessor {
                     true, "fixed_threshold", position_sigma_3d, false);
             }
         }
+        } // if (!defer_flagging_)
 
         return delta_grad;
     }
@@ -558,10 +564,12 @@ namespace GnssProcessor {
                 if (delta_grad.find(sat) == delta_grad.end())
                     delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
 
-            // Build elevation lookup for caching
-            std::map<std::string, double> sat_elev;
+            // Build per-satellite lookup for caching: elevation, the IF pair
+            // signature (sig1/sig2), and the per-pair IF wavelength c/(f1+f2) =
+            // the (1,1) slip jump, used as the physical detection floor downstream.
+            std::map<std::string, const SatData*> sat_lookup;
             for (const auto& sd : sat_vec)
-                sat_elev[sd.satellite] = sd.elevation;
+                sat_lookup[sd.satellite] = &sd;
 
             // Write trace records for non-slip satellites
             if (trace_file_.is_open()) {
@@ -582,12 +590,19 @@ namespace GnssProcessor {
                 }
             }
 
-            // Cache IF jump values for external query (joint MW+IF repair)
+            // Cache IF jump values for external query (network pool / joint MW+IF).
             for (const auto& [sat, dd] : delta_grad) {
                 IfJumpInfo info;
                 info.delta_grad_m = dd;
-                info.lambda_if_m = lambda_if;
-                info.elevation_deg = sat_elev.count(sat) ? sat_elev.at(sat) : 0.0;
+                auto sdit = sat_lookup.find(sat);
+                if (sdit != sat_lookup.end()) {
+                    info.lambda_if_m   = sdit->second->lambda_if;   // per-pair (1,1) floor
+                    info.elevation_deg = sdit->second->elevation;
+                    info.sig1          = sdit->second->sig1;
+                    info.sig2          = sdit->second->sig2;
+                } else {
+                    info.lambda_if_m = lambda_if;                   // fallback: constellation median
+                }
                 info.valid = std::isfinite(dd);
                 last_if_jumps_[sat] = info;
             }

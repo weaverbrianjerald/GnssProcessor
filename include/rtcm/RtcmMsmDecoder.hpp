@@ -10,13 +10,18 @@
  *
  * Output: one @c RinexObservation per (satellite, epoch) with all
  * present (signal, observable) cells populated under RINEX-3 obs codes
- * (e.g. "C1C", "L1C", "S1C", "D1C").  The 12-bit DF002 message-type
- * field is consumed by @c RtcmParser::parseFrame before this decoder
- * runs, so the bit reader starts at offset 12 of the payload.
+ * (e.g. "C1C", "L1C", "S1C", "D1C").  The decoded per-cell lock time is
+ * additionally carried on @c RinexObservation::lock_time_ms (keyed like
+ * the LLI channel, "L1C" etc.) so the epoch-assembly layer can derive
+ * loss-of-lock LLI bits statefully (see @c LockTimeTracker) without this
+ * decoder holding history.  The 12-bit DF002 message-type field is
+ * consumed by @c RtcmParser::parseFrame before this decoder runs, so the
+ * bit reader starts at offset 12 of the payload.
  *
- * MSM4/MSM5/MSM6 variants share the same overall structure but have
- * narrower per-signal fields; they are not yet implemented and will
- * be added as the same code parameterised by a small variant struct.
+ * MSM4/MSM5/MSM7 share the same overall structure and differ only in
+ * field widths / capability flags, parameterised by a small variant
+ * struct in the implementation.  MSM6 (high-precision, no Doppler) is
+ * not yet emitted by any stream we consume and remains unimplemented.
  */
 
 #include "rtcm/RtcmTypes.hpp"
@@ -60,9 +65,18 @@ struct MsmDecodeResult {
  * @param payload          Pointer to the message payload (DF002 included).
  * @param len_bytes        Payload length in bytes.
  * @param msg_type         The DF002 message-type value (used to dispatch system).
- * @param current_gps_week GPS week used to promote the 30-bit ms-of-week
- *                         epoch field into a full @c GnssTime.  Pass 0
- *                         to leave @c epoch_time.week zero.
+ * @param anchor_gps_seconds Continuous GPS seconds (week·604800 + tow) of a
+ *                         known nearby epoch, used to promote the 30-bit
+ *                         ms-of-week epoch field into a full @c GnssTime by
+ *                         nearest continuation (the week minimizing |Δt| to
+ *                         the anchor — RTKLIB @c adjweek), and to anchor the
+ *                         GLONASS TOD→GPS day resolution
+ *                         (@c TimeUtils::glonassTodToGpsTime).  The caller
+ *                         (@c RtcmParser) maintains this as a per-parser
+ *                         last-decoded-epoch tracker so a skewed host clock
+ *                         only matters at cold start (RTB-1(a)).  Pass ≤ 0
+ *                         to leave @c epoch_time.week zero (GLONASS epochs
+ *                         then stay {0,0} — no anchor to resolve the day).
  * @param[out] observations  One @c RinexObservation appended per active
  *                         satellite.  Existing entries are not touched.
  *
@@ -73,7 +87,7 @@ MsmDecodeResult decodeMsm7(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<RinexObservation>& observations);
 
 /**
@@ -84,13 +98,33 @@ MsmDecodeResult decodeMsm7(
  * integer-dB-Hz CNR (vs 10-bit 1/16 dB-Hz), and no range-rate fields
  * (no Doppler observable).  Septentrio receivers commonly emit MSM4 on
  * bandwidth-constrained NTRIP links — same observation set as MSM7,
- * just at lower precision.
+ * just at lower precision.  Parameters as @ref decodeMsm7.
  */
 MsmDecodeResult decodeMsm4(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
+    std::vector<RinexObservation>& observations);
+
+/**
+ * @brief Decode an MSM5 message (RTCM 1075/1085/1095/1105/1115/1125) — RTB-2(c).
+ *
+ * MSM5 = MSM4-precision ranges PLUS the Doppler fields (RTCM 10403.3
+ * Table 3.5-75): per-cell DF400 fine pseudorange (15 bits, 2⁻²⁴ ms),
+ * DF401 fine phase range (22 bits, 2⁻²⁹ ms), DF402 lock time (4-bit basic
+ * table), DF420 half-cycle, DF403 CNR (6 bits, whole dB-Hz), DF404 fine
+ * phase range rate (15 bits, 0.0001 m/s); per-satellite DF397/DF398 rough
+ * ranges, DF399 rough range rate (14 bits, m/s) AND DF419 extended
+ * satellite info (present in MSM5/MSM7 for every system; GLONASS FCN).
+ * Emits the same observable set as MSM7 (C/L/S/D) at MSM4 precision.
+ * Parameters as @ref decodeMsm7.
+ */
+MsmDecodeResult decodeMsm5(
+    const uint8_t* payload,
+    std::size_t    len_bytes,
+    uint16_t       msg_type,
+    double         anchor_gps_seconds,
     std::vector<RinexObservation>& observations);
 
 } // namespace GnssProcessor::RtcmMsm

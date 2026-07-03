@@ -350,11 +350,52 @@ namespace GnssProcessor {
          * producer's OWNED store so a held-out station consumes the network's
          * freshly-emitted satellite clock without polluting global state.
          *
+         * Delegates to @ref setSsrOrbitStore + @ref setSsrClockStore (RTA-8:
+         * the two overlays are independently routable); this coupled form is
+         * retained for every pre-split caller — notably the closed-loop
+         * harness — and behaves exactly as before.
+         *
          * @param store Non-owning store pointer (must outlive this model) or
          *        @c nullptr for the singleton.
          */
         void setSsrStore(const SsrCorrectionStore* store) {
-            geometry_.setSsrStore(store);
+            setSsrOrbitStore(store);
+            setSsrClockStore(store);
+        }
+
+        /**
+         * @brief RTA-8: route ONLY the SSR ORBIT overlay at @p store.
+         *
+         * Forwards to @c Model::Geometry::setSsrOrbitStore (the RAC-delta
+         * application in @c getSatellitePV).  The clock path — geometry's
+         * internal @c GnssCorrections and the model's own @c gnss_corrections_
+         * — keeps its current routing.  This is how the standalone
+         * network-consumer wiring keeps orbit corrections on the external RTS
+         * stream (singleton) while clocks come from the injected
+         * network-product store
+         * (@c processing.network_consumer.orbit_source = "external").
+         *
+         * @param store Non-owning store pointer (must outlive this model) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrOrbitStore(const SsrCorrectionStore* store) {
+            geometry_.setSsrOrbitStore(store);
+        }
+
+        /**
+         * @brief RTA-8: route ONLY the SSR CLOCK overlay at @p store.
+         *
+         * Covers BOTH satellite-clock consumers behind this model: geometry's
+         * internal @c GnssCorrections (emission-time refinement) and the
+         * model's own @c gnss_corrections_ (the per-observation clock in
+         * @c computeModels) — the identical pair the coupled @ref setSsrStore
+         * always routed together, minus the orbit overlay.
+         *
+         * @param store Non-owning store pointer (must outlive this model) or
+         *        @c nullptr for the singleton.
+         */
+        void setSsrClockStore(const SsrCorrectionStore* store) {
+            geometry_.setSsrClockStore(store);
             gnss_corrections_.setSsrStore(store);
         }
 

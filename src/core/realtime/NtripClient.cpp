@@ -4,6 +4,7 @@
  */
 
 #include "realtime/NtripClient.hpp"
+#include "common/CurlGlobalGuard.hpp"
 #include <curl/curl.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -16,7 +17,8 @@ namespace GnssProcessor {
 // ---------------------------------------------------------------------------
 
 NtripClient::NtripClient(const NtripConfig& config, LogManager& log_manager)
-    : config_(config), log_manager_(log_manager) {
+    : config_(config), log_manager_(log_manager),
+      jitter_rng_(std::random_device{}()) {
 }
 
 NtripClient::~NtripClient() {
@@ -35,9 +37,21 @@ bool NtripClient::start() {
         return false;
     }
 
+    // RTB-2(a): guarantee curl_global_init ran exactly once BEFORE the receive
+    // thread's first curl_easy_init.  An NTRIP-only session (no DataDownloader
+    // constructed) previously relied on libcurl's lazy auto-init, which is
+    // documented as thread-unsafe.  See CurlGlobalGuard.hpp.
+    ensureCurlGlobalInit();
+
     running_.store(true);
     thread_ = std::thread(&NtripClient::receiveLoop, this);
     return true;
+}
+
+int NtripClient::reconnectDelayMs() {
+    // Uniform 0-2000 ms of jitter on top of the configured base (RTB-2(b)).
+    std::uniform_int_distribution<int> jitter(0, 2000);
+    return config_.reconnect_delay_s * 1000 + jitter(jitter_rng_);
 }
 
 void NtripClient::stop() {
@@ -130,7 +144,7 @@ void NtripClient::receiveLoop() {
         CURL* curl = curl_easy_init();
         if (!curl) {
             log->error("Failed to create libcurl handle");
-            std::this_thread::sleep_for(std::chrono::seconds(config_.reconnect_delay_s));
+            std::this_thread::sleep_for(std::chrono::milliseconds(reconnectDelayMs()));
             continue;
         }
 
@@ -154,6 +168,17 @@ void NtripClient::receiveLoop() {
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, "Ntrip-Version: Ntrip/2.0");
         headers = curl_slist_append(headers, "User-Agent: NTRIP GnssProcessor/1.0");
+        // RTB-2(e): a configured GGA sentence rides as the NTRIP rev2
+        // "Ntrip-GGA:" request header on the GET.  The previous
+        // CURLOPT_POSTFIELDS approach silently turned the request into a POST
+        // — wrong for fixed-station rev2 casters and not the rev2 GGA
+        // mechanism.  rev1-style IN-STREAM GGA (periodic sentences written
+        // into the open connection) is unsupported; see NtripConfig::nmea_gga.
+        std::string gga_header;
+        if (!config_.nmea_gga.empty()) {
+            gga_header = "Ntrip-GGA: " + config_.nmea_gga;
+            headers = curl_slist_append(headers, gga_header.c_str());
+        }
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
         // Authentication (if provided).
@@ -168,11 +193,6 @@ void NtripClient::receiveLoop() {
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &NtripClient::curlWriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, this);
-
-        // Send NMEA GGA if configured (for VRS mountpoints).
-        if (!config_.nmea_gga.empty()) {
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, config_.nmea_gga.c_str());
-        }
 
         connected_.store(true);
         const size_t bytes_before = total_rx_bytes_.load();
@@ -213,7 +233,9 @@ void NtripClient::receiveLoop() {
             log->info("NTRIP stream {}/{} ended after {} bytes; reconnecting in {} s",
                       config_.host, config_.mountpoint, bytes_this, config_.reconnect_delay_s);
         }
-        std::this_thread::sleep_for(std::chrono::seconds(config_.reconnect_delay_s));
+        // RTB-2(b): base delay + per-client jitter — N streams dropped by one
+        // caster outage must not re-dial the recovering caster in lockstep.
+        std::this_thread::sleep_for(std::chrono::milliseconds(reconnectDelayMs()));
     }
 
     log->info("NTRIP receive loop exited");

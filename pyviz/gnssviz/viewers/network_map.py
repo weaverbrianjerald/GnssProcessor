@@ -1,9 +1,12 @@
-"""Network worldmap viewer -- stations + baselines on an equirectangular map.
+"""Network worldmap viewer -- stations + datum links on an equirectangular map.
 
 Draws the PPP-RTK NETWORK geometry: every estimating peer station, the
 clock-datum pivot, and (when present) the held-out closed-loop consumer / user
-station, on a world coastline, with great-circle baselines fanning out from the
-datum (the star topology the network time reference defines).
+station, on a world coastline, with great-circle "datum links" fanning out from
+the clock-datum station.  These arcs are a COSMETIC depiction of the star
+topology the network time reference defines (every station tied to the common
+clock datum) -- the producer forms an undifferenced joint normal-equation
+system, so they are NOT double-differenced baselines.
 
 Station positions / roles come from :func:`gnssviz.network_config.load_stations`
 -- preferring the producer-emitted ``network_stations.csv`` roster (it reflects
@@ -39,13 +42,15 @@ _LABEL_ALL_MAX = 18   # label every station only for small networks; else just d
 
 
 # --------------------------------------------------------------------------- #
-def build_network_map(ctx, *, baselines: bool = True) -> ViewerResult:
+def build_network_map(ctx, *, datum_links: bool = True) -> ViewerResult:
     """Build the network station worldmap.
 
     Parameters
     ----------
-    baselines:
-        Draw great-circle arcs from the datum station to every peer (default on).
+    datum_links:
+        Draw cosmetic great-circle arcs from the clock-datum station to every
+        peer (default on).  These depict the common-clock star topology, not
+        double-differenced baselines (the producer is undifferenced).
     """
     stations = load_stations(ctx.path("network_stations.csv"), ctx.network_config)
     if not stations:
@@ -62,8 +67,8 @@ def build_network_map(ctx, *, baselines: bool = True) -> ViewerResult:
               coastline=True, graticule_deg=30.0)
     traces: list = []
 
-    # Baselines from the datum (drawn first, under the markers).
-    if baselines and datum is not None:
+    # Datum links (cosmetic star spokes, drawn first, under the markers).
+    if datum_links and datum is not None:
         for s in stations:
             if s.role == ROLE_DATUM or s.role == ROLE_HELD_OUT:
                 continue
@@ -165,7 +170,7 @@ def _summary(stations: List[Station], datum) -> str:
         bl = sorted(_baseline_km(datum, s) for s in stations
                     if s.role == ROLE_NETWORK)
         if bl:
-            out.append(f"Baselines from datum (km): min {bl[0]:.0f}, "
+            out.append(f"Range from datum (km): min {bl[0]:.0f}, "
                        f"median {bl[len(bl) // 2]:.0f}, max {bl[-1]:.0f}")
         for s in held:
             out.append(f"Datum -> {s.id} baseline : {_baseline_km(datum, s):.0f} km")
@@ -180,5 +185,5 @@ def _summary(stations: List[Station], datum) -> str:
     return "\n".join(out)
 
 
-viewer = Viewer(name="network_map", title="Network map (stations & baselines)",
+viewer = Viewer(name="network_map", title="Network map (stations & datum links)",
                 required_csvs=(), build=build_network_map)

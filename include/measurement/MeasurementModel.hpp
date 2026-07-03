@@ -442,12 +442,18 @@ namespace GnssProcessor {
          *
          * Mirrors the apply-site activation exactly: false in the network
          * producer mode (which ESTIMATES satellite biases as states rather than
-         * importing them), and a pure presence check via
-         * @c SsrCorrectionStore::hasCodeBias otherwise.  Used to suppress
-         * redundant per-(satellite, signal) sat-bias STATE allocation for
-         * signals the stream already corrects.  Post-processing leaves the SSR
-         * store empty, so this is always false there and the state layout is
-         * byte-identical.
+         * importing them); a presence check via
+         * @c SsrCorrectionStore::hasCodeBias otherwise — AGE-GATED with the SAME
+         * effective stale-hold limit as the apply site when the A5 staleness
+         * gate is on (a bias the gate has dropped no longer defines this row's
+         * datum, so the sat-bias state and the no-BIA downweight must
+         * re-engage).  Used to suppress redundant per-(satellite, signal)
+         * sat-bias STATE allocation for signals the stream already corrects.
+         * Post-processing leaves the SSR store empty, so this is always false
+         * there and the state layout is byte-identical.
+         *
+         * @param obs_time Observation epoch for the staleness comparison
+         *        (ignored unless @c enableSsrBiasMaxAge).
          *
          * @note Raw signals only.  IF-combined rows (key contains '_') get
          *       @c ssr_bias_term = 0 (SSR code biases are per raw signal), so
@@ -455,7 +461,8 @@ namespace GnssProcessor {
          *       suppressed — pass raw signal keys here.
          */
         bool ssrCoversCodeSignal(const std::string& satellite,
-                                 const std::string& signal) const;
+                                 const std::string& signal,
+                                 const GnssTime& obs_time) const;
 
         /**
          * @brief Check whether both component signals of an IF combination

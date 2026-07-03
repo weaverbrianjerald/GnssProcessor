@@ -32,18 +32,21 @@
 #include "products/ProductParser.hpp"
 #include "rinex/RinexParser.hpp"
 #include "rtcm/RtcmParser.hpp"
+#include "rtcm/LockTimeTracker.hpp"
 #include "sbf/SubframeAssembler.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/TraceLogger.hpp"
 #include "math/WlsEstimator.hpp"
 #include "math/TimeUtils.hpp"
+#include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
 #include <Eigen/Dense>
+#include <chrono>
+#include <fstream>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace GnssProcessor {
-
-class SsrCorrectionStore;
 
 /**
  * @brief Self-contained real-time PPP processing engine.
@@ -71,6 +74,78 @@ public:
     bool initialize();
 
     /**
+     * @brief RTA-8(b): per-stream SSR ingest accept policy.
+     *
+     * Applied on the SSR push path in @ref feedRtcmFrame, per FRAME — the
+     * driver (@c Application::runRealTime) passes the policy of the stream a
+     * frame came from, so different streams get different filters.  Configured
+     * per corrections/ephemeris stream via the @c corrections_accept key
+     * (@c realtime.corrections.corrections_accept /
+     * @c realtime.ephemeris.corrections_accept).
+     *
+     * @c OrbitOnly exists for the "orbits from the external RTS stream,
+     * clocks/biases from OUR network product" wiring: without it, the RTS
+     * stream's 1060/1066 combined records would land clock content in the
+     * singleton and shadow the network clock wherever the singleton is
+     * consulted.  Under @c OrbitOnly the stream's orbit and URA records push
+     * as today, standalone clock / code-bias / phase-bias / high-rate-clock
+     * records are DROPPED, and combined orbit+clock records are DECOMPOSED
+     * into an orbit-only push (the store's combined-wins merge logic is never
+     * touched — the combined record simply never enters the store).
+     */
+    enum class SsrAcceptPolicy {
+        All,       ///< Push every decoded SSR record (default; byte-identical legacy path).
+        OrbitOnly  ///< Push orbit + URA; drop clock/bias content; decompose combined → orbit.
+    };
+
+    /// RTA-8(b): kinds of decoded SSR records the push path routes (mirrors the
+    /// RtcmParser getter set / SsrCorrectionStore push API one-to-one).
+    enum class SsrRecordKind {
+        Orbit, Clock, Combined, CodeBias, PhaseBias, Ura, HighRateClock
+    };
+
+    /// RTA-8(b): what the push site should do with one record under a policy.
+    enum class SsrPushAction {
+        Push,           ///< Push the record unchanged.
+        Drop,           ///< Do not push.
+        DecomposeOrbit  ///< Combined under OrbitOnly: push only the orbit part (see combinedOrbitPart).
+    };
+
+    /**
+     * @brief RTA-8(b): the record-in → push-decision-out ingest filter.
+     *
+     * Pure function (factored out of @ref feedRtcmFrame so the policy matrix is
+     * unit-testable).  @c All → @c Push for every kind.  @c OrbitOnly →
+     * @c Push for Orbit/Ura, @c DecomposeOrbit for Combined, @c Drop for
+     * Clock/CodeBias/PhaseBias/HighRateClock (high-rate clock IS clock
+     * content — an additive delta on the polynomial — so it is dropped with
+     * the rest of the clock family).
+     */
+    static SsrPushAction ssrPushAction(SsrAcceptPolicy policy, SsrRecordKind kind);
+
+    /**
+     * @brief RTA-8(b): extract the orbit-only part of a combined orbit+clock record.
+     *
+     * Copies sat / IODE / RAC delta + rate / received & content epochs /
+     * IOD-SSR into an @c SsrOrbitCorrection and discards c0/c1/c2 — pushing the
+     * result via @c SsrCorrectionStore::pushOrbit yields a record whose
+     * @c getOrbitClock merge reports @c has_orbit=true, @c has_clock=false.
+     * The decomposition happens at the PUSH SITE; the store's combined-wins
+     * preference is deliberately untouched.
+     */
+    static SsrOrbitCorrection combinedOrbitPart(const SsrCombinedCorrection& rec);
+
+    /**
+     * @brief RTA-8(b): parse a @c corrections_accept config string.
+     *
+     * @c "all" (or empty — the unset default) → @c All; @c "orbit_only" →
+     * @c OrbitOnly; anything else → @c All with @p recognized (when non-null)
+     * set false so the caller can warn once.  Case-insensitive.
+     */
+    static SsrAcceptPolicy parseSsrAcceptPolicy(const std::string& value,
+                                                bool* recognized = nullptr);
+
+    /**
      * @brief Feed a complete RTCM3 frame for decoding.
      *
      * Decoded observations are buffered internally.  When a new epoch
@@ -78,8 +153,22 @@ public:
      * for processing via processEpoch().
      *
      * @param frame  Complete RTCM3 frame (header + payload + CRC).
+     * @param accept RTA-8(b): SSR ingest policy for the stream this frame came
+     *        from (default @c All — every pre-existing caller byte-identical).
+     *        Observations / broadcast nav / station coords are never filtered;
+     *        the policy touches only the SSR push loop.
+     * @param receipt RTB-1(b): steady-clock receipt stamp from the framer
+     *        boundary (@c RtcmStreamReader::lastFrameReceipt) for sub-second
+     *        receive→process latency accounting.  The stamp of the FIRST
+     *        frame contributing observations to a buffered epoch is carried
+     *        to that epoch's processEpoch and surfaced on the obs-backlog
+     *        diagnostics; it never gates control flow.  Defaults to "now"
+     *        (a caller without a framer stamp loses only framer→feed skew).
      */
-    void feedRtcmFrame(const std::vector<uint8_t>& frame);
+    void feedRtcmFrame(const std::vector<uint8_t>& frame,
+                       SsrAcceptPolicy accept = SsrAcceptPolicy::All,
+                       std::chrono::steady_clock::time_point receipt =
+                           std::chrono::steady_clock::now());
 
     /**
      * @brief Feed a complete Septentrio SBF block for decoding.
@@ -137,6 +226,26 @@ public:
     bool processEpoch(const std::vector<RinexObservation>& epoch_obs);
 
     /**
+     * @brief RTA-8(a): where the SSR ORBIT overlay reads from when a store is
+     *        injected via @ref setSsrStore.
+     *
+     * The pre-split @ref setSsrStore routed the orbit overlay together with the
+     * clock (@c FollowClock — kept as the default so the closed-loop harness
+     * call site behaves exactly as it always has).  The standalone
+     * network-consumer wiring instead selects @c External (default of
+     * @c processing.network_consumer.orbit_source): the orbit overlay stays on
+     * the process-wide singleton — fed by the external RTS corrections stream,
+     * ideally ingest-filtered to @c orbit_only (RTA-8(b)) — while clocks and
+     * biases come from the injected network-product store.  @c Network is for
+     * a future product that carries its own orbit corrections.
+     */
+    enum class SsrOrbitSource {
+        FollowClock,  ///< Legacy coupling: orbit overlay routed with the clock (per consume_clock).
+        External,     ///< Orbit overlay reads the SINGLETON (external RTS stream); clocks per consume_clock.
+        Network       ///< Orbit overlay reads the INJECTED store (orbit-bearing network product).
+    };
+
+    /**
      * @brief Inject a non-owning SSR-correction store override (DI seam).
      *
      * Repoints the engine's SSR consumption — satellite clock (via the PppModel
@@ -150,16 +259,22 @@ public:
      * singleton — so this is consume-side only and a no-op for live streaming.
      *
      * @param store Non-owning store pointer (must outlive the engine) or nullptr.
-     * @param consume_clock  Route the SSR CLOCK/orbit overlay (PppModel geometry +
+     * @param consume_clock  Route the SSR CLOCK overlay (PppModel geometry +
      *        corrections) at @p store.  Set false to keep precise SP3/CLK for the
      *        clock while still consuming the satellite phase bias — the cleanest
      *        integer-recovery test, isolating the phase-bias product from a
      *        marginal network clock product.
      * @param consume_bias   Route the SSR code/phase BIAS (MeasurementModel) and
      *        the phase-bias-discontinuity reset hook at @p store.
+     * @param orbit_source   RTA-8(a): orbit-overlay routing.  Default
+     *        @c FollowClock reproduces the pre-split coupling (orbit routed with
+     *        the clock per @p consume_clock) so every existing caller — the
+     *        closed-loop harness in particular — is byte-identical.  See
+     *        @ref SsrOrbitSource.
      */
     void setSsrStore(const SsrCorrectionStore* store,
-                     bool consume_clock = true, bool consume_bias = true);
+                     bool consume_clock = true, bool consume_bias = true,
+                     SsrOrbitSource orbit_source = SsrOrbitSource::FollowClock);
 
     /// Result of the most recent epoch's ambiguity-resolution attempt (closed-loop
     /// harness metric).  @ref lastArRan reports whether AR was actually invoked
@@ -172,8 +287,26 @@ public:
     /// with full LAMBDA: the KF float carries the consumed network satellite phase
     /// bias, whereas the MW detector's WL integers are in the (separate) .BIA
     /// frame — feeding them would re-inject a conflicting WL datum.  Default false
-    /// (live/normal AR uses the MW WL to halve the search).
+    /// (live/normal AR uses the MW WL to halve the search).  JSON exposure (RTA-7):
+    /// @c processing.ar_ignore_mw_wl (standalone) and the
+    /// @c processing.network_consumer profile (see
+    /// @c GnssConfig::networkConsumerArIgnoreMwWl) — wired in
+    /// @c Application::runRealTime.
     void setArIgnoreMwWl(bool ignore) { ar_ignore_mw_wl_ = ignore; }
+
+    /**
+     * @brief RTA-6: product-arrival wake for the obs↔SSR hold buffer.
+     *
+     * The hold buffer (processing.enable_obs_ssr_sync) drains only when an RTCM
+     * SSR push advances the coverage horizon (@c feedRtcmFrame).  Network
+     * products injected through @ref setSsrStore arrive OUTSIDE that path — the
+     * @c runRealTime driver polls a @c NetworkProductTail and pushes epochs into
+     * the injected store directly — so the driver calls this after delivering
+     * >= 1 new product epoch to run the SAME drain check (@c drainHeldObs).
+     * No-op when nothing is held (every non-sync run), exactly like the RTCM
+     * trigger site.
+     */
+    void notifyProductsAdvanced() { drainHeldObs(); }
 
     /// Get the current receiver position (ECEF, meters).
     Eigen::Vector3d getPosition() const;
@@ -212,6 +345,15 @@ private:
     /// No-op when nothing is held (the common case and all non-sync runs).
     void drainHeldObs();
 
+    /// @brief RTA-13: log the one-line SSR bias attribute-mismatch summary.
+    ///
+    /// Reads @c ssrStore().biasAttributeMismatchCounts() and logs one INFO line
+    /// with per-domain totals + the top offending (sat|signal|domain) keys.
+    /// Silent when no mismatch was ever counted (every clean run).  Called
+    /// periodically from @c processEpoch (every 300 processed epochs) and once
+    /// from @c flush() (end-of-run).
+    void logBiasAttrMismatchSummary(const char* tag);
+
     GnssConfig&  config_;
     LogManager&  log_manager_;
 
@@ -235,6 +377,11 @@ private:
     std::unique_ptr<SoftLliBridge>       soft_lli_;
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
     std::unique_ptr<TraceLogger>         trace_logger_;
+    /// L10: consumer-side SSR-application trace (network.trace_ssr_consumer).  Opened in
+    /// initialize() into the same "logs" dir as the producer traces; one row per modeled
+    /// sat per processed epoch recording correction age / clk-applied / URA R-inflation /
+    /// disc counters.  Never opened when the toggle is off (byte-identical).
+    std::ofstream                        ssr_consumer_trace_;
 
     /// Assembles broadcast ephemeris from raw SBF nav subframes (GPSRawCA/
     /// GALRawINAV/BDSRaw) — persistent across blocks, feeds LiveEphemerisStore.
@@ -274,13 +421,60 @@ private:
 
     bool      apriori_seeded_from_pvt_{ false };  ///< Logged once when the a-priori is taken from PVTGeodetic.
     bool      apriori_seeded_from_station_{ false }; ///< Logged once when the a-priori is taken from an RTCM 1005/1006 station ARP.
+    bool      arp_blunder_warned_{ false };          ///< RTA-12(3): warned once that a decoded 1005/1006 ARP failed the realtime.arp_blunder_gate_m cross-check against the existing a-priori.
+    bool      warned_ssr_cb_no_ifb_{ false };        ///< A5: warned once that network code biases are consumed while estimate_ifb is off (no rx code-bias state to absorb a datum re-reference).
+    // A5 (P1-4): per-(sat|signal) record of whether the SSR phase bias was APPLIED (fresh
+    // within the staleness gate) at the previous epoch.  Only maintained when the bias
+    // staleness gate (enable_ssr_bias_max_age) is on; a fresh↔stale flip is a full-bias
+    // phase step with no producer disc-counter change, so the ambiguity is reset on the flip.
+    std::map<std::string, bool> ssr_phase_bias_applied_;
+    /// RTA-3: last observed network solution-generation id from the SSR store
+    /// (0 = never seen).  A CHANGE of a present id means the producer RESTARTED
+    /// and re-realized its whole datum (every phase-bias lump / code-bias level
+    /// at once, with no per-signal disc-counter continuity — a restarted
+    /// producer's counters re-seed at 0, so a warm consumer holding 0 sees 0→0 =
+    /// "no change"); the engine reacts with a global datum break: reset ALL
+    /// ambiguities + re-inflate every receiver code-bias state.  An absent id
+    /// (RTCM streams / pre-RTA-3 products) never reacts — byte-identical.
+    uint32_t  last_ssr_generation_id_{ 0 };
+    /// RTA-10: last observed network-producer epoch-status STATE from the SSR
+    /// store's heartbeat surface (nullopt = never seen).  Edge-trigger for the
+    /// one-shot transition log (ok→withheld_sigma0 etc.): the first sighting
+    /// logs once, then only CHANGES log.  Absent heartbeats (live RTCM streams,
+    /// pre-RTA-10 products, network.emit_epoch_status_record off) never react —
+    /// byte-identical console output for legacy content.  Deeper integrity
+    /// wiring (gating measurement usage on producer status) is RTF-9 scope.
+    std::optional<NetworkProducerStatus::State> last_producer_status_;
     double    prev_tow_{ 0.0 };
     GnssTime  prev_epoch_time_{ 0, 0.0 };
     uint64_t  backlog_warn_ctr_{ 0 };          ///< Throttle counter for the obs-backlog warning (every Nth lagging epoch).
 
+    /// RTB-1(a): PERSISTENT RTCM parser — one per engine, reused across every
+    /// frame from every stream (primary / corrections / ephemeris share the
+    /// GPS timeline).  Persistence is what gives the parser's stream-time
+    /// tracker its continuity: the old parser-per-frame pattern re-cold-started
+    /// the week promotion off the host clock on EVERY frame.  clear() runs at
+    /// the top of feedRtcmFrame (outputs are per-frame; the tracker survives).
+    RtcmParser                      rtcm_parser_;
+
+    /// RTB-3: MSM lock-time history for the LLI 0x1 derivation at epoch
+    /// assembly (armed by realtime.msm_lli_from_locktime; station key "" —
+    /// the multi-station front-end will key per stream).
+    LockTimeTracker                 lock_time_tracker_;
+
     // Observation buffer for epoch assembly from streaming frames.
     GnssTime                        pending_epoch_time_{ 0, 0.0 };
     std::vector<RinexObservation>   pending_obs_;
+
+    // RTB-1(b): receipt stamps for receive→process latency accounting.
+    // pending_* tracks the FIRST frame that contributed observations to the
+    // epoch currently assembling; processing_* is snapshotted for the epoch
+    // handed to processEpoch (valid only on the RTCM assembly path — direct
+    // feeds and held-epoch re-drains have no stamp).  Diagnostics only.
+    std::chrono::steady_clock::time_point pending_epoch_receipt_{};
+    bool                            pending_epoch_receipt_valid_{ false };
+    std::chrono::steady_clock::time_point processing_epoch_receipt_{};
+    bool                            processing_epoch_receipt_valid_{ false };
 
     // --- obs↔SSR sync (processing.enable_obs_ssr_sync) ---
     // A complete obs epoch deferred because it ran ahead of the SSR coverage

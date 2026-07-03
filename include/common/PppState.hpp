@@ -34,6 +34,7 @@ namespace GnssProcessor {
         double phase_clock_offset{ 0.0 };            /**< Receiver phase clock offset from code clock (meters) */
         double ionosphere_zenith_delay;              /**< Ionospheric zenith delay (meters), if modeled as a single parameter */
         std::map<std::string, double> slant_ionosphere; /**< Per-satellite slant ionosphere delays (meters), keyed by satellite ID (e.g. "G01") */
+        std::map<std::string, double> slant_ionosphere_rate; /**< Per-satellite slant-iono RATE Idot_s (meters/second), keyed by satellite ID; populated only under the constant-velocity iono model (enable_iono_rate) */
         std::map<std::string, double> system_time_offsets; /**< Inter-system time biases (meters) keyed by system name */
         Eigen::MatrixXd covariance;                  /**< State covariance matrix */
         std::map<std::string, double> ambiguities;   /**< Carrier-phase ambiguity estimates keyed by satellite-signal */

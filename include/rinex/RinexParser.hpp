@@ -50,6 +50,18 @@ namespace GnssProcessor {
         ObsValueMap<double> measurements;          /**< Observation code -> observed value */
         ObsValueMap<double> variances;             /**< Observation code -> variance (m^2) */
         ObsValueMap<int> lli_flags;                /**< Observation code -> loss-of-lock indicator */
+        /**
+         * @brief Phase-signal code ("L1C", ...) -> decoded lock time (ms).
+         *
+         * Populated ONLY by the RTCM MSM decoder (DF402 basic / DF407 extended
+         * tables) so the epoch-assembly layer can derive the 0x1 loss-of-lock
+         * LLI bit statefully via @c LockTimeTracker (RTB-3, armed by
+         * @c realtime.msm_lli_from_locktime).  Empty (default-constructed, no
+         * allocation) for RINEX-parsed and SBF-decoded observations, and
+         * deliberately NOT attached by @c attachLayout — the RINEX bulk path
+         * never writes it, so pre-sizing it there would only cost memory.
+         */
+        ObsValueMap<double> lock_time_ms;
         std::string receiver_id;                   /**< Receiver identifier (useful in network files) */
         int glonass_freq_channel{ INT_MIN };       /**< GLONASS FDMA frequency-channel number k (-7..+6),
                                                         carried from RTCM DF419 / 1020 DF039 so the FDMA

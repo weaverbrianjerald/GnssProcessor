@@ -1,5 +1,6 @@
 #include "atmosphere/GlobalIonosphereMap.hpp"
 
+#include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
 #include "math/Coordinates.hpp"
 
@@ -118,27 +119,16 @@ namespace GnssProcessor {
         GimQuery q;
         if (!isLoaded() || frequency_hz <= 0.0) return q;
 
-        const Coordinates::Llh rx = Coordinates::ecefToLlh(rx_pos_ecef);
-        const Eigen::Vector3d enu = Coordinates::ecefToEnu(sat_pos_ecef - rx_pos_ecef, rx);
-        const double el = std::atan2(enu.z(), std::hypot(enu.x(), enu.y()));  // rad
-        const double az = std::atan2(enu.x(), enu.y());                      // rad, North->East
-        if (el <= 0.0) return q;                                             // below horizon
-
+        // Single-layer pierce-point geometry — shared with the SH ionosphere model
+        // so the two never drift (the math here is unchanged: the helper reproduces
+        // this block verbatim, so the GIM result stays byte-identical).
         const double Re = data_.base_radius_km * 1000.0;
         const double H  = data_.height_km * 1000.0;
-        const double sin_zp = (Re / (Re + H)) * std::cos(el);  // sin of the zenith angle at the IPP
-        const double cos_zp = std::sqrt(std::max(0.0, 1.0 - sin_zp * sin_zp));
-        if (cos_zp <= 1.0e-6) return q;
-        const double mapping = 1.0 / cos_zp;                   // thin-shell VTEC -> STEC
-
-        // Ionospheric pierce point on the single-layer shell.
-        auto safeAsin = [](double x) { return std::asin(std::clamp(x, -1.0, 1.0)); };
-        const double psi = (Constants::PI / 2.0) - el - safeAsin(sin_zp);  // earth-centred angle
-        const double lat_ipp = safeAsin(std::sin(rx.lat_rad) * std::cos(psi) +
-                                        std::cos(rx.lat_rad) * std::sin(psi) * std::cos(az));
-        const double lon_ipp = rx.lon_rad +
-            safeAsin(std::sin(psi) * std::sin(az) / std::max(1.0e-9, std::cos(lat_ipp)));
-        if (!std::isfinite(lat_ipp) || !std::isfinite(lon_ipp)) return q;
+        const IppGeometry g = computeIppGeometry(rx_pos_ecef, sat_pos_ecef, Re, H);
+        if (!g.valid) return q;
+        const double mapping  = g.mapping;
+        const double lat_ipp  = g.ipp_lat_rad;
+        const double lon_ipp  = g.ipp_lon_rad;
 
         const double rad2deg = 180.0 / Constants::PI;
         double vtec = 0.0, vtec_rms = 0.0;

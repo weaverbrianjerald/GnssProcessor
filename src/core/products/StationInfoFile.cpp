@@ -412,4 +412,24 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
     return out;
 }
 
+std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile& registry,
+                                                           const std::string& station_name,
+                                                           double decimal_year) {
+    const StationInfo* s = registry.find(station_name);
+    if (s == nullptr) return std::nullopt;
+    // Full SIF coordinate function at the run date (see resolveStationCoordinate):
+    //   x(t) = x_ref + v * (t - t_ref) + periodic(t) + post-seismic(t)
+    // with x_ref/v the occupation solution at the SIF reference epoch (typically
+    // ITRF2020 @ 2020.0), so the returned ECEF is velocity-propagated survey-grade
+    // at decimal_year — exactly what a fixed-coordinate network roster needs.
+    const ResolvedStationCoord rc = resolveStationCoordinate(*s, decimal_year,
+                                                             /*with_periodic=*/true,
+                                                             /*with_psd=*/true);
+    if (!rc.valid) return std::nullopt;
+    SifRosterCoordinate out;
+    out.ecef       = rc.ecef;
+    out.epoch_year = decimal_year;
+    return out;
+}
+
 } // namespace GnssProcessor

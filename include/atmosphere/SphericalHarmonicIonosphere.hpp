@@ -1,0 +1,155 @@
+#pragma once
+
+/**
+ * @file SphericalHarmonicIonosphere.hpp
+ * @brief Single-layer spherical-harmonic VTEC model + shared IPP geometry, for
+ *        the co-estimated global ionosphere of the PPP-RTK network producer.
+ *
+ * The network producer can estimate its OWN global ionosphere — a single-layer
+ * spherical-harmonic VTEC field — jointly with the satellite code biases (W6
+ * OSB), so it no longer needs to import an external GIM (`.INX`).  This is the
+ * CODE/Schaer recipe: a sun-fixed spherical-harmonic VTEC expansion
+ *
+ *   VTEC(β, s) = Σ_{n=0}^{N} Σ_{m=0}^{n} P̄_nm(sin β)
+ *                            · [ a_nm cos(m s) + b_nm sin(m s) ]   [TECU]
+ *
+ * where β is geographic latitude of the ionospheric pierce point (IPP), s is the
+ * sun-fixed longitude (λ_ipp − λ_mean_sun), and P̄_nm are normalized associated
+ * Legendre functions chosen so the real surface harmonics
+ * {P̄_nm cos(mλ), P̄_nm sin(mλ)} are orthonormal under (1/4π)∫dΩ (the convention
+ * a Gram-matrix test in the unit suite pins down).
+ *
+ * This header provides three reusable, filter-free pieces (Stage 0 of
+ * docs/network_global_sh_iono_design_2026-06-29.md):
+ *   1. @ref computeIppGeometry — the single-layer pierce-point geometry
+ *      (elevation, thin-shell mapping, IPP lat/lon), extracted so the SH model
+ *      and the legacy @ref GlobalIonosphereMap share ONE implementation.
+ *   2. @ref meanSunLongitude — the sub-solar (mean-sun) geographic longitude,
+ *      used to rotate the field into a sun-fixed frame.
+ *   3. @ref SphericalHarmonicIonosphere — the basis (P̄_nm), VTEC synthesis, and
+ *      the analytic partials ∂VTEC/∂coeff used by the network row builder.
+ *
+ * The class owns NO estimator state — the SH coefficients live in
+ * @ref NetworkEstimator's shared border (SharedParamKind::VtecSh).
+ */
+
+#include <Eigen/Dense>
+
+#include <string>
+#include <vector>
+
+#include "math/TimeUtils.hpp"
+
+namespace GnssProcessor {
+
+/// Single-layer ionospheric pierce-point geometry for one receiver→satellite
+/// line of sight.  Angles in radians; @c valid is false below the horizon or on
+/// a degenerate mapping.
+struct IppGeometry {
+    double elevation_rad = 0.0;   ///< Satellite elevation at the receiver.
+    double azimuth_rad   = 0.0;   ///< Satellite azimuth (North→East).
+    double mapping       = 0.0;   ///< Thin-shell VTEC→STEC mapping 1/cos(z').
+    double ipp_lat_rad   = 0.0;   ///< Geographic latitude of the IPP on the shell.
+    double ipp_lon_rad   = 0.0;   ///< Geographic longitude of the IPP on the shell.
+    bool   valid         = false; ///< False if the LOS is below the horizon / degenerate.
+};
+
+/**
+ * @brief Single-layer ionospheric pierce-point geometry.
+ *
+ * Reproduces the geometry block of @ref GlobalIonosphereMap::slantIonoDelay
+ * exactly (so the two share one source of truth): the satellite elevation /
+ * azimuth in the receiver's local ENU frame, the thin-shell mapping
+ * @f$1/\cos z'@f$ with @f$\sin z' = \frac{R_e}{R_e+H}\cos(el)@f$, and the IPP
+ * latitude / longitude on the single-layer shell.
+ *
+ * @param rx_pos_ecef    Receiver ECEF position (m).
+ * @param sat_pos_ecef   Satellite ECEF position (m).
+ * @param earth_radius_m IONEX base radius @f$R_e@f$ (m), e.g. 6371000.
+ * @param shell_height_m Single-layer shell height @f$H@f$ (m), e.g. 450000.
+ * @return The pierce-point geometry; @c valid is false below the horizon.
+ */
+IppGeometry computeIppGeometry(const Eigen::Vector3d& rx_pos_ecef,
+                               const Eigen::Vector3d& sat_pos_ecef,
+                               double earth_radius_m, double shell_height_m);
+
+/**
+ * @brief Sub-solar (mean-sun) geographic longitude at @p time.
+ *
+ * Returns the ECEF longitude of the point directly beneath the Sun
+ * (@f$\lambda_{ss} = \alpha_\odot - \mathrm{GMST}@f$), used to convert a
+ * geographic IPP longitude to the sun-fixed longitude @f$s = \lambda_{ipp} -
+ * \lambda_{ss}@f$ the field is expanded in.  Lightweight closed-form (NOAA-style
+ * low-order solar series + GMST) — accurate to well under 1° including the
+ * equation of time, which is all a sun-fixed VTEC frame needs (the field
+ * coefficients are estimated, so a small consistent offset is absorbed).
+ *
+ * @param time GNSS epoch (GPS time scale; the GPS−UT1 offset costs < 0.1°).
+ * @return Sub-solar longitude in radians, wrapped to [−π, π].
+ */
+double meanSunLongitude(const GnssTime& time);
+
+/**
+ * @class SphericalHarmonicIonosphere
+ * @brief Real spherical-harmonic single-layer VTEC basis, synthesis, partials.
+ *
+ * Triangular truncation to degree @c N has @c (N+1)² real coefficients (a
+ * cos/"C" term for every (n, m≥0) plus a sin/"S" term for every (n, m≥1)),
+ * enumerated once by @ref coeffs in a fixed order that the network's shared
+ * column layout mirrors.  All angles in radians.
+ */
+class SphericalHarmonicIonosphere {
+public:
+    /// One real coefficient of the expansion.
+    struct Coeff {
+        int  n;     ///< Degree (0..N).
+        int  m;     ///< Order (0..n).
+        char trig;  ///< 'C' (cosine; includes m=0) or 'S' (sine; m≥1 only).
+    };
+
+    /// @param max_degree Truncation degree N (≥ 0).
+    explicit SphericalHarmonicIonosphere(int max_degree);
+
+    /// Truncation degree N.
+    int maxDegree() const { return max_degree_; }
+    /// Number of real coefficients = (N+1)².
+    int numCoeffs() const { return static_cast<int>(coeffs_.size()); }
+    /// The coefficient enumeration (fixed order; matches the basis() output order).
+    const std::vector<Coeff>& coeffs() const { return coeffs_; }
+
+    /**
+     * @brief Evaluate every basis function at one (latitude, sun-fixed longitude).
+     *
+     * Fills @p out (resized to @ref numCoeffs) with
+     * @f$\bar P_{nm}(\sin\beta)\,\{\cos,\sin\}(m\,s)@f$ in @ref coeffs order, so
+     * that @c VTEC = Σ_k coeff_k · out_k and @c ∂VTEC/∂coeff_k = out_k.
+     *
+     * @param lat_rad     Geographic latitude β of the IPP.
+     * @param lon_sf_rad  Sun-fixed longitude s = λ_ipp − λ_mean_sun.
+     * @param out         Output basis values (length @ref numCoeffs).
+     */
+    void basis(double lat_rad, double lon_sf_rad, std::vector<double>& out) const;
+
+    /**
+     * @brief Synthesize VTEC (TECU) from a coefficient vector.
+     * @param coeff_tecu Coefficients in @ref coeffs order (length @ref numCoeffs).
+     * @param lat_rad    Geographic latitude β.
+     * @param lon_sf_rad Sun-fixed longitude s.
+     * @return VTEC in TECU.
+     */
+    double vtec(const Eigen::VectorXd& coeff_tecu, double lat_rad,
+                double lon_sf_rad) const;
+
+private:
+    /// Normalized associated Legendre P̄_nm(x) for all 0≤m≤n≤N, x = sin(lat).
+    /// Indexed [n][m]; includes the (2−δ_0m) real-harmonic normalization so the
+    /// cos/sin basis is orthonormal under (1/4π)∫dΩ.
+    void legendre_(double x, std::vector<std::vector<double>>& p) const;
+
+    int max_degree_;
+    std::vector<Coeff> coeffs_;
+    /// Normalization N_nm = sqrt[(2−δ_0m)(2n+1)(n−m)!/(n+m)!], precomputed [n][m].
+    std::vector<std::vector<double>> norm_;
+};
+
+} // namespace GnssProcessor

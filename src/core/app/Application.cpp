@@ -1309,6 +1309,7 @@ void Application::capturePosteriorSnapshot(const std::set<std::string>& reset_sa
     // these across epochs.
     snap.ambiguities = state_manager_->getAmbiguities();
     snap.ionospheres = state_manager_->getIonosphereStates();
+    snap.iono_rates  = state_manager_->getIonosphereRateStates(); // CV model; empty otherwise
     snap.code_biases = state_manager_->getCodeBiasStates();
     snap.sat_biases  = state_manager_->getSatBiasStates();
     for (const auto& sys : state_manager_->getSystemsWithTimeOffsets()) {

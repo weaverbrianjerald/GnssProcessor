@@ -469,5 +469,35 @@ TEST(StateKeySchemaTest, CategoriesAreDistinguishable) {
     EXPECT_EQ(sat_from_dd->signal, "GPS|G05|L1|G01");
 }
 
+TEST(StateKeySchema, VtecShKeyRoundTrip) {
+    using namespace StateKeys;
+    EXPECT_EQ(makeVtecShKey(0, 0, 'C'), "SH|0|0|C");
+    EXPECT_EQ(makeVtecShKey(4, 2, 'S'), "SH|4|2|S");
+    EXPECT_EQ(makeVtecShKey(12, 11, 'C'), "SH|12|11|C");
+
+    for (char trig : {'C', 'S'}) {
+        for (int n = 0; n <= 12; ++n) {
+            for (int m = 0; m <= n; ++m) {
+                const std::string k = makeVtecShKey(n, m, trig);
+                EXPECT_TRUE(isVtecShKey(k));
+                auto p = parseVtecShKey(k);
+                ASSERT_TRUE(p.has_value()) << k;
+                EXPECT_EQ(p->n, n);
+                EXPECT_EQ(p->m, m);
+                EXPECT_EQ(p->trig, trig);
+            }
+        }
+    }
+
+    // Malformed / cross-namespace inputs are rejected.
+    EXPECT_FALSE(parseVtecShKey("SH|1|2").has_value());        // too few fields
+    EXPECT_FALSE(parseVtecShKey("SH|1|2|X").has_value());      // bad trig tag
+    EXPECT_FALSE(parseVtecShKey("SH|1|2|C|extra").has_value());// extra field
+    EXPECT_FALSE(parseVtecShKey("SH|a|2|C").has_value());      // non-numeric degree
+    EXPECT_FALSE(parseVtecShKey("G01|SC").has_value());        // not an SH key
+    EXPECT_FALSE(isVtecShKey("G01|CB|C1W"));
+    EXPECT_FALSE(isVtecShKey("SH"));
+}
+
 }  // namespace
 }  // namespace GnssProcessor

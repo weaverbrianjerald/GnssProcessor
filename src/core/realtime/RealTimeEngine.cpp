@@ -17,6 +17,7 @@
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -93,6 +94,27 @@ bool RealTimeEngine::initialize() {
     auto log = log_manager_.getLogger("rt_engine");
     log->info("Initializing real-time engine");
 
+    // RTB-1(c): apply the configured GPS-UTC leap-second count to the RT
+    // wall-clock→GPS conversion (nowContinuousGpsSeconds) — the host-clock
+    // anchor of the RTCM decode paths (cold-start week promotion, GLONASS day
+    // resolution) and the obs-lag measurement.  Default equals the compiled
+    // TimeUtils::LEAP_SECONDS, so an unconfigured run is a no-op.  Set BEFORE
+    // any stream thread decodes a frame.  Nav-derived leap seconds (LNAV
+    // ΔtLS) are the RTF-scale follow-on.
+    TimeUtils::setLeapSecondsOverride(
+        static_cast<double>(config_.getRealTimeConfig().leap_seconds));
+
+    // RTA-13 (opt-in): arm the CODE-domain band-wise bias fallback on the
+    // process-wide store for the live-stream path.  An injected OWNED store is
+    // armed by its owner (Application::runRealTime) at creation.  Default off —
+    // the store is untouched and every lookup byte-identical.
+    if (config_.ssrBiasBandFallback()) {
+        SsrCorrectionStore::getInstance().setCodeBiasBandFallback(true);
+        log->info("SSR code-bias band fallback ON (processing.ssr_bias_band_fallback): an "
+                  "exact-attribute miss consumes the same-band sibling CODE bias (residual "
+                  "attribute DCB absorbed by receiver code-bias states); PHASE never falls back.");
+    }
+
     // ProductParser (loads static products: ATX, BIA, broadcast nav).  In a
     // live session orbits/clocks come from the broadcast ephemeris + IGS-SSR,
     // not precise SP3/CLK, so those are skipped below.
@@ -128,9 +150,13 @@ bool RealTimeEngine::initialize() {
     // Load products.  Skip precise SP3/CLK when a live broadcast+SSR source
     // supplants them (SSR corrections enabled and/or a live socket primary);
     // a real-time *file* replay with no corrections still loads them so a
-    // historical run can use precise products.
-    const bool skip_precise = config_.realtimeUsesLiveOrbitClockSource();
-    product_parser_->loadProducts(!skip_precise);
+    // historical run can use precise products.  RTB-4: orbit and clock are gated
+    // independently so a "precise (ultra-rapid) orbits + network clocks" config
+    // loads SP3 but skips the precise CLK.  With use_precise_orbits=false (default)
+    // both gates equal realtimeUsesLiveOrbitClockSource() — byte-identical.
+    const bool skip_orbit = config_.realtimeUsesLiveOrbitSource();
+    const bool skip_clock = config_.realtimeUsesLiveOrbitClockSource();
+    product_parser_->loadProducts(!skip_orbit, !skip_clock);
 
     auto& cache = ProductCache::getInstance();
     if (!cache.loadProducts(*product_parser_, log_manager_)) {
@@ -299,6 +325,20 @@ bool RealTimeEngine::initialize() {
     const auto& logging_cfg = config_.getLoggingConfig();
     trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir, is_ppp_rtk, logging_cfg);
 
+    // L10: consumer-side SSR-application trace (network.trace_ssr_consumer).  Same "logs"
+    // dir as the producer traces (the two hardcoded log dirs coincide in the closed loop).
+    if (config_.getNetworkConfig().trace_ssr_consumer) {
+        std::error_code ec;
+        std::filesystem::create_directories(log_dir, ec);
+        ssr_consumer_trace_.open(log_dir / "ssr_consumer_trace.csv");
+        if (ssr_consumer_trace_)
+            ssr_consumer_trace_ << "week,tow,sat,ssr_age_s,clk_applied,c0_m,ura_m,r_add_var_m2,"
+                                   "pb_age_s,n_pb,clk_disc,pb_disc_max,cb_disc_max,pb_fresh\n";
+        else
+            log->warn("Real-time engine: failed to open SSR-consumer trace {}",
+                      (log_dir / "ssr_consumer_trace.csv").string());
+    }
+
     if (logging_cfg.enable_mw_slip_trace) {
         mw_slip_detector_->enableTracing(log_dir);
     }
@@ -315,15 +355,80 @@ bool RealTimeEngine::initialize() {
 // RTCM frame ingestion
 // ---------------------------------------------------------------------------
 
-void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
-    // Decode the frame through the existing RtcmParser message API.
-    // This is a temporary file-less parser invocation.
-    RtcmParser parser;
+// ---------------------------------------------------------------------------
+// RTA-8(b): SSR ingest filter — pure record-kind → push-action policy matrix,
+// factored out of feedRtcmFrame so it is unit-testable (record-in →
+// push-decision-out) without a parser or an engine.
+// ---------------------------------------------------------------------------
+
+RealTimeEngine::SsrPushAction
+RealTimeEngine::ssrPushAction(SsrAcceptPolicy policy, SsrRecordKind kind) {
+    if (policy == SsrAcceptPolicy::All) return SsrPushAction::Push;
+    // OrbitOnly: orbit + URA flow as today; combined records are decomposed at
+    // the push site (never entering the store, so its combined-wins merge is
+    // untouched); everything carrying clock or bias content is dropped —
+    // including the high-rate clock, an additive delta on the clock polynomial.
+    switch (kind) {
+        case SsrRecordKind::Orbit:
+        case SsrRecordKind::Ura:            return SsrPushAction::Push;
+        case SsrRecordKind::Combined:       return SsrPushAction::DecomposeOrbit;
+        case SsrRecordKind::Clock:
+        case SsrRecordKind::CodeBias:
+        case SsrRecordKind::PhaseBias:
+        case SsrRecordKind::HighRateClock:  return SsrPushAction::Drop;
+    }
+    return SsrPushAction::Drop;   // unreachable; keeps -Wreturn-type quiet
+}
+
+SsrOrbitCorrection
+RealTimeEngine::combinedOrbitPart(const SsrCombinedCorrection& rec) {
+    SsrOrbitCorrection orb;
+    orb.sat             = rec.sat;
+    orb.iode            = rec.iode;
+    orb.delta_rac       = rec.delta_rac;
+    orb.delta_rac_dot   = rec.delta_rac_dot;
+    orb.received_time   = rec.received_time;
+    orb.epoch_time      = rec.epoch_time;    // shared orbit+clock content epoch → orbit dt base
+    orb.iod_ssr         = rec.iod_ssr;
+    orb.reference_point = rec.reference_point;  // RTB-5(b): the orbit part keeps its dialect tag
+    // c0/c1/c2 intentionally discarded: the whole point of the decomposition is
+    // that no clock content from this stream reaches the store.
+    return orb;
+}
+
+RealTimeEngine::SsrAcceptPolicy
+RealTimeEngine::parseSsrAcceptPolicy(const std::string& value, bool* recognized) {
+    std::string v;
+    v.reserve(value.size());
+    for (char c : value) v.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (recognized) *recognized = true;
+    if (v.empty() || v == "all")  return SsrAcceptPolicy::All;
+    if (v == "orbit_only")        return SsrAcceptPolicy::OrbitOnly;
+    if (recognized) *recognized = false;
+    return SsrAcceptPolicy::All;
+}
+
+void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame,
+                                   SsrAcceptPolicy accept,
+                                   std::chrono::steady_clock::time_point receipt) {
+    // Decode the frame through the engine's PERSISTENT parser (RTB-1(a)):
+    // outputs are drained per frame (clear() below), but the parser's
+    // stream-time tracker survives, so mod-week epoch fields are promoted by
+    // nearest continuation to the last decoded epoch instead of re-anchoring
+    // on the host clock every frame.  All three RTCM streams (primary /
+    // corrections / ephemeris) share this parser — same GPS timeline.
+    rtcm_parser_.clear();
+    RtcmParser& parser = rtcm_parser_;
     parser.parseFrame(frame);
 
+    // RTB-3: MSM lock-time → LLI 0x1 derivation, armed by
+    // realtime.msm_lli_from_locktime (default OFF — arming changes
+    // slip-detection behaviour on RT replays).
+    const bool lli_from_locktime =
+        config_.getRealTimeConfig().msm_lli_from_locktime;
+
     // Observations: buffer until a new epoch is detected, then submit the
-    // previous epoch.  MSM4/MSM7 decode is a follow-up phase — until then
-    // getObservations() is empty and this loop is a no-op.
+    // previous epoch.
     // Drop disabled constellations BEFORE the epoch-boundary test (not just in
     // processEpoch): a mis-tagged clock — notably GLONASS, carried as week-0
     // seconds-of-day until full GPS-week promotion lands — emits a wildly
@@ -337,13 +442,36 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
         if (!isSystemActive(obs.system, active)) continue;
         if (pending_obs_.empty()) {
             pending_epoch_time_ = obs.time;
+            // RTB-1(b): the assembling epoch's receipt = the stamp of the
+            // first frame that contributed observations to it.
+            pending_epoch_receipt_       = receipt;
+            pending_epoch_receipt_valid_ = true;
         } else if (std::abs(obs.time.tow - pending_epoch_time_.tow) > 0.5) {
+            // RTB-1(b): carry the buffered epoch's receipt stamp into
+            // processEpoch for the sub-second latency diagnostics.
+            processing_epoch_receipt_       = pending_epoch_receipt_;
+            processing_epoch_receipt_valid_ = pending_epoch_receipt_valid_;
             // New epoch  process the buffered one.
             processEpoch(pending_obs_);
+            processing_epoch_receipt_valid_ = false;
             pending_obs_.clear();
-            pending_epoch_time_ = obs.time;
+            pending_epoch_time_          = obs.time;
+            pending_epoch_receipt_       = receipt;   // RTB-1(b): new epoch's first frame
+            pending_epoch_receipt_valid_ = true;
         }
         pending_obs_.push_back(obs);
+        if (lli_from_locktime) {
+            // RTB-3: derive the loss-of-lock bit from the decoded MSM lock
+            // times on the STORED copy (never the parser's).  Station key ""
+            // — single-rover engine; the multi-station front-end reuses one
+            // LockTimeTracker across streams with per-stream station keys.
+            auto& stored = pending_obs_.back();
+            for (const auto& [code, lock_ms] : stored.lock_time_ms) {
+                if (lock_time_tracker_.update("", stored.satellite, code, lock_ms)) {
+                    stored.lli_flags[code] |= 0x1;
+                }
+            }
+        }
     }
 
     // Push decoded SSR records into the shared SsrCorrectionStore, carrying the
@@ -351,15 +479,41 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
     // reflect the provider solution, not wall-clock receipt.  The orbit / clock
     // query paths in Geometry and GnssCorrections consult the store
     // transparently — no further wiring at the per-epoch level.
+    //
+    // RTA-8(b): each push consults the per-stream accept policy (ssrPushAction —
+    // the caller passes the policy of the stream this frame came from).  Under
+    // the default All every action is Push and the loop below is byte-identical
+    // to the unfiltered original.  Under OrbitOnly, clock/bias content from this
+    // stream is dropped and combined orbit+clock records are decomposed into an
+    // orbit-only push, so an RTS stream's 1060/1066 clock content can never
+    // shadow an injected network clock.
     auto& ssr_store = SsrCorrectionStore::getInstance();
     const SsrHeader& hdr = parser.getLastSsrHeader();
-    for (const auto& r : parser.getSsrOrbits())         ssr_store.pushOrbit(r, hdr);
-    for (const auto& r : parser.getSsrClocks())         ssr_store.pushClock(r, hdr);
-    for (const auto& r : parser.getSsrCombined())       ssr_store.pushCombined(r, hdr);
-    for (const auto& r : parser.getSsrCodeBiases())     ssr_store.pushCodeBias(r, hdr);
-    for (const auto& r : parser.getSsrPhaseBiases())    ssr_store.pushPhaseBias(r, hdr);
-    for (const auto& r : parser.getSsrUras())           ssr_store.pushUra(r, hdr);
-    for (const auto& r : parser.getSsrHighRateClocks()) ssr_store.pushHighRateClock(r, hdr);
+    std::size_t n_ssr_dropped = 0;
+    auto allowed = [&](SsrRecordKind kind) {
+        if (ssrPushAction(accept, kind) == SsrPushAction::Push) return true;
+        ++n_ssr_dropped;
+        return false;
+    };
+    for (const auto& r : parser.getSsrOrbits())
+        if (allowed(SsrRecordKind::Orbit))         ssr_store.pushOrbit(r, hdr);
+    for (const auto& r : parser.getSsrClocks())
+        if (allowed(SsrRecordKind::Clock))         ssr_store.pushClock(r, hdr);
+    for (const auto& r : parser.getSsrCombined()) {
+        switch (ssrPushAction(accept, SsrRecordKind::Combined)) {
+            case SsrPushAction::Push:           ssr_store.pushCombined(r, hdr); break;
+            case SsrPushAction::DecomposeOrbit: ssr_store.pushOrbit(combinedOrbitPart(r), hdr); break;
+            case SsrPushAction::Drop:           ++n_ssr_dropped; break;
+        }
+    }
+    for (const auto& r : parser.getSsrCodeBiases())
+        if (allowed(SsrRecordKind::CodeBias))      ssr_store.pushCodeBias(r, hdr);
+    for (const auto& r : parser.getSsrPhaseBiases())
+        if (allowed(SsrRecordKind::PhaseBias))     ssr_store.pushPhaseBias(r, hdr);
+    for (const auto& r : parser.getSsrUras())
+        if (allowed(SsrRecordKind::Ura))           ssr_store.pushUra(r, hdr);
+    for (const auto& r : parser.getSsrHighRateClocks())
+        if (allowed(SsrRecordKind::HighRateClock)) ssr_store.pushHighRateClock(r, hdr);
 
     // Push decoded broadcast ephemeris into the live store — this is what lets
     // Geometry::getSatellitePV resolve satellite orbits with no SP3 file loaded.
@@ -372,12 +526,23 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
         parser.getSsrCombined().size()    + parser.getSsrCodeBiases().size() +
         parser.getSsrPhaseBiases().size() + parser.getSsrUras().size() +
         parser.getSsrHighRateClocks().size();
-    if (n_ssr > 0) {
-        log_manager_.getLogger("rt_engine")->trace(
-            "RTCM {}: pushed {} SSR records (epoch wk{} tow{:.0f}, IOD-SSR {}) "
-            "to store ({} sats cached)",
-            parser.lastMessageType(), n_ssr, hdr.epoch_time.week,
-            hdr.epoch_time.tow, hdr.iod_ssr, ssr_store.size());
+    // RTA-8(b): only records that actually reached the store count as "pushed"
+    // (a decomposed combined record did — as an orbit).  With the default All
+    // policy nothing is dropped and this is exactly the pre-filter n_ssr.
+    const std::size_t n_ssr_pushed = n_ssr - n_ssr_dropped;
+    if (n_ssr_pushed > 0) {
+        if (n_ssr_dropped > 0)
+            log_manager_.getLogger("rt_engine")->trace(
+                "RTCM {}: pushed {} SSR records ({} dropped by ingest policy) "
+                "(epoch wk{} tow{:.0f}, IOD-SSR {}) to store ({} sats cached)",
+                parser.lastMessageType(), n_ssr_pushed, n_ssr_dropped,
+                hdr.epoch_time.week, hdr.epoch_time.tow, hdr.iod_ssr, ssr_store.size());
+        else
+            log_manager_.getLogger("rt_engine")->trace(
+                "RTCM {}: pushed {} SSR records (epoch wk{} tow{:.0f}, IOD-SSR {}) "
+                "to store ({} sats cached)",
+                parser.lastMessageType(), n_ssr_pushed, hdr.epoch_time.week,
+                hdr.epoch_time.tow, hdr.iod_ssr, ssr_store.size());
         // obs↔SSR sync: the freshest SSR content just advanced, so a previously
         // held obs epoch may now be covered — re-attempt it.  No-op when nothing
         // is held or the sync feature is off.
@@ -404,9 +569,44 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
         const auto& s = parser.getStationCoords().front();
         if (first_epoch_ && !config_.hasReferencePosition()
             && s.arp_ecef.allFinite() && s.arp_ecef.norm() > 1e3) {
+            // RTA-12(3): blunder gate.  When armed (realtime.arp_blunder_gate_m
+            // > 0) and a plausible a-priori already exists (RINEX-header approx
+            // position, SBF PVT seed, or an earlier ARP seed), a decoded ARP that
+            // disagrees by more than the gate is REJECTED — a mis-configured
+            // caster (wrong mountpoint, stale 1005 coordinates) must not teleport
+            // the a-priori.  0 (default) keeps the legacy seed-always behaviour.
+            const double gate_m = config_.getRealTimeConfig().arp_blunder_gate_m;
+            bool blunder = false;
+            // RTA-12 fix: only cross-check against a GENUINE prior.  The initial
+            // a-priori is the geographic-pole fallback (0,0,EARTH_RADIUS,
+            // norm ~6.37e6), which trivially clears norm()>1e3 — testing against
+            // it rejects the FIRST legitimate ARP seed (thousands of km from the
+            // pole) and the filter never bootstraps.  A prior exists only once
+            // ppp_state_.position has moved away from initial_position_ (an SBF
+            // PVT seed, an earlier ARP seed, or a RINEX-approx a-priori).
+            if (gate_m > 0.0 && ppp_state_.position.allFinite()
+                && (ppp_state_.position - initial_position_).norm() > 1e3) {
+                const double dist_m = (s.arp_ecef - ppp_state_.position).norm();
+                if (dist_m > gate_m) {
+                    blunder = true;
+                    if (!arp_blunder_warned_) {
+                        arp_blunder_warned_ = true;
+                        log_manager_.getLogger("rt_engine")->warn(
+                            "RTCM {}: station {} broadcast ARP ({:.3f}, {:.3f}, {:.3f}) m "
+                            "disagrees with the existing a-priori ({:.3f}, {:.3f}, {:.3f}) m "
+                            "by {:.1f} m (> realtime.arp_blunder_gate_m = {:.1f}) — NOT "
+                            "overwriting the a-priori (suspect caster/mountpoint "
+                            "misconfiguration or stale 1005/1006 coordinates)",
+                            parser.lastMessageType(), s.reference_station_id,
+                            s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z(),
+                            ppp_state_.position.x(), ppp_state_.position.y(),
+                            ppp_state_.position.z(), dist_m, gate_m);
+                    }
+                }
+            }
             const size_t pidx = state_manager_->getPositionIndex();
             Eigen::VectorXd sv = state_manager_->getStateVector();
-            if (sv.size() >= static_cast<Eigen::Index>(pidx + 3)) {
+            if (!blunder && sv.size() >= static_cast<Eigen::Index>(pidx + 3)) {
                 sv.segment<3>(pidx) = s.arp_ecef;
                 state_manager_->setStateVector(sv);
                 ppp_state_.position = s.arp_ecef;
@@ -423,10 +623,39 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame) {
             // A-priori already pinned (config reference_position) or already
             // owned by the KF — just surface the broadcast ARP so it can be
             // eyeballed against the configured/estimated position.
-            log_manager_.getLogger("rt_engine")->info(
-                "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
-                parser.lastMessageType(), s.reference_station_id,
-                s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
+            // RTA-12(3): with the gate armed, additionally CROSS-CHECK the
+            // broadcast ARP against a configured reference position (which is
+            // never overwritten regardless) and upgrade to a one-shot WARN on
+            // disagreement — the operator pointed the engine at the wrong
+            // mountpoint or configured the wrong station.
+            const double gate_m = config_.getRealTimeConfig().arp_blunder_gate_m;
+            bool flagged = false;
+            if (gate_m > 0.0 && config_.hasReferencePosition()
+                && s.arp_ecef.allFinite() && s.arp_ecef.norm() > 1e3) {
+                const auto& rp = config_.getReferencePositionEcef();
+                const Eigen::Vector3d ref(rp[0], rp[1], rp[2]);
+                const double dist_m = (s.arp_ecef - ref).norm();
+                if (dist_m > gate_m) {
+                    flagged = true;
+                    if (!arp_blunder_warned_) {
+                        arp_blunder_warned_ = true;
+                        log_manager_.getLogger("rt_engine")->warn(
+                            "RTCM {}: station {} broadcast ARP ({:.3f}, {:.3f}, {:.3f}) m "
+                            "disagrees with the configured reference position "
+                            "({:.3f}, {:.3f}, {:.3f}) m by {:.1f} m (> "
+                            "realtime.arp_blunder_gate_m = {:.1f}) — the configured "
+                            "position stays authoritative (check mountpoint/station)",
+                            parser.lastMessageType(), s.reference_station_id,
+                            s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z(),
+                            ref.x(), ref.y(), ref.z(), dist_m, gate_m);
+                    }
+                }
+            }
+            if (!flagged)
+                log_manager_.getLogger("rt_engine")->info(
+                    "RTCM {}: station {} ARP=({:.4f},{:.4f},{:.4f})",
+                    parser.lastMessageType(), s.reference_station_id,
+                    s.arp_ecef.x(), s.arp_ecef.y(), s.arp_ecef.z());
         }
     }
 }
@@ -519,10 +748,19 @@ void RealTimeEngine::flush() {
         held_obs_.clear();
     }
     if (!pending_obs_.empty()) {
+        // RTB-1(b): the final buffered epoch still carries its receipt stamp.
+        processing_epoch_receipt_       = pending_epoch_receipt_;
+        processing_epoch_receipt_valid_ = pending_epoch_receipt_valid_;
         processEpoch(pending_obs_);
+        processing_epoch_receipt_valid_ = false;
         pending_obs_.clear();
+        pending_epoch_receipt_valid_ = false;
     }
     draining_final_ = false;
+
+    // RTA-13: end-of-run obs-code attribute-mismatch summary (flush is the
+    // engine's end-of-stream hook).  Silent when no mismatch was counted.
+    logBiasAttrMismatchSummary("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -570,10 +808,27 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         const double obs_gps = TimeUtils::continuousGpsSeconds(current_time);
         const double lag_s   = now_gps - obs_gps;
         if (config_.rtBacklogWarnSeconds() > 0.0 && lag_s > config_.rtBacklogWarnSeconds()) {
-            if ((backlog_warn_ctr_++ % 30) == 0)
-                log->warn("{}obs backlog: epoch wk{} tow{:.1f} is {:.1f}s behind wall-clock GPS "
-                          "(corrections will be fresher than these obs)",
-                          epoch_prefix, current_time.week, current_time.tow, lag_s);
+            if ((backlog_warn_ctr_++ % 30) == 0) {
+                // RTB-1(b): lag_s (wall clock vs obs epoch) is truncated to
+                // whole seconds by nowContinuousGpsSeconds — good enough for
+                // the gates, coarse for diagnosis.  The framer receipt stamp
+                // gives the SUB-SECOND receive→process component (assembly
+                // wait + backlog queueing) on the steady clock, immune to
+                // wall-clock steps.  Diagnostic only; no gate reads it.
+                double rx_to_proc_s = -1.0;
+                if (processing_epoch_receipt_valid_) {
+                    rx_to_proc_s = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - processing_epoch_receipt_).count();
+                }
+                if (rx_to_proc_s >= 0.0)
+                    log->warn("{}obs backlog: epoch wk{} tow{:.1f} is {:.1f}s behind wall-clock GPS "
+                              "(frame rx→process {:.3f}s; corrections will be fresher than these obs)",
+                              epoch_prefix, current_time.week, current_time.tow, lag_s, rx_to_proc_s);
+                else
+                    log->warn("{}obs backlog: epoch wk{} tow{:.1f} is {:.1f}s behind wall-clock GPS "
+                              "(corrections will be fresher than these obs)",
+                              epoch_prefix, current_time.week, current_time.tow, lag_s);
+            }
         }
 
         // --- obs↔SSR sync: hold obs ahead of the SSR coverage horizon ---
@@ -858,6 +1113,87 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
                   epoch_prefix, cov.total, n_cm, cov.total,
                   cov.orbit, cov.total, cov.clock, cov.total,
                   cov.code_bias, cov.total, cov.phase_bias, cov.total);
+    }
+
+    // --- L10: consumer-side SSR-application trace (network.trace_ssr_consumer) ---
+    // A SIBLING of the coverage census above, but gated ONLY on the toggle (NOT on
+    // realtimeUsesLiveOrbitClockSource, which is FALSE for the closed-loop consumer — the
+    // exact V4 case).  Placed BEFORE the broadcast-grade drop below so dropped sats still
+    // appear.  One row per modeled sat: correction age, clk-applied (the TRUE applied signal
+    // !broadcast_only — a fresh-in-store clock can still be IODE-rejected), c0/URA from the
+    // engine's store, the R-inflation add-variance RECOMPUTED with the IDENTICAL formula as
+    // the apply site (MeasurementModel.cpp: ura² + q2·dt³/3, q2=networkUraStalenessQ2, dt from
+    // getSsrEpoch), phase-bias age/count/freshness (A5 hold semantics) and disc counters.
+    // Blanks (not 0) for absent optionals.  Allocation-light — shares the live 1 Hz path.
+    if (ssr_consumer_trace_.is_open()) {
+        const auto& store = ssrStore();
+        const double now_s = TimeUtils::continuousGpsSeconds(current_time);
+        // RTA-9(b): mirror the apply-site windows — with the clock stale-hold
+        // rung armed, the clock/URA lookups accept the same widened window the
+        // apply gate uses (the recomputed r_add_var then grows with the true dt
+        // exactly like the URA channel at the apply site; the rung's fallback-q²
+        // term for URA-less sats is NOT folded in here — clk_applied + blank
+        // ura_m identifies those rows).
+        const double ssr_max_age = SsrCorrectionStore::clockHoldWindow(
+            config_.getSsrMaxAge(), config_.getSsrClockStaleHoldFactor());
+        const bool   consume_ura = config_.networkConsumeUra();
+        const double ura_q2 = config_.networkUraStalenessQ2();
+        const bool   bias_age_on = config_.enableSsrBiasMaxAge();
+        const double bias_limit = config_.getSsrBiasMaxAge() * config_.getSsrBiasStaleHoldFactor();
+        for (const auto& obs : modeled_obs) {
+            const std::string& sat = obs.satellite;
+            auto& o = ssr_consumer_trace_;
+            o << current_time.week << ',' << fmt::format("{:.3f}", current_time.tow) << ','
+              << sat << ',';
+            const auto ep = store.getSsrEpoch(sat);
+            double ssr_dt = 0.0; bool have_ep = false;
+            if (ep) { ssr_dt = now_s - TimeUtils::continuousGpsSeconds(*ep); have_ep = true;
+                      o << fmt::format("{:.3f}", ssr_dt); }
+            o << ',';
+            o << (obs.broadcast_only ? 0 : 1) << ',';                       // clk_applied (TRUE signal)
+            const auto oc = store.getOrbitClock(sat, current_time, ssr_max_age);
+            if (oc && oc->has_clock) o << fmt::format("{:.4f}", oc->c0);
+            o << ',';
+            const auto ura = store.getUra(sat, current_time, ssr_max_age);
+            if (ura) o << fmt::format("{:.4f}", *ura);
+            o << ',';
+            double add_var = 0.0;   // recomputed R-inflation (0 when consume_ura off / no URA)
+            if (consume_ura && ura) {
+                add_var = (*ura) * (*ura);
+                if (ura_q2 > 0.0 && have_ep && ssr_dt > 0.0)
+                    add_var += ura_q2 * ssr_dt * ssr_dt * ssr_dt / 3.0;   // == MeasurementModel apply site
+            }
+            o << fmt::format("{:.6e}", add_var) << ',';
+            const auto pbt = store.getPhaseBiasTime(sat);
+            if (pbt) o << fmt::format("{:.3f}", now_s - TimeUtils::continuousGpsSeconds(*pbt));
+            o << ',';
+            int n_pb = 0;
+            int pb_disc_max = std::numeric_limits<int>::min();
+            int cb_disc_max = std::numeric_limits<int>::min();
+            for (const auto& kv : obs.modeled) {              // mirror the A5 tracked-signal filter
+                const std::string& code = kv.first;
+                if (code.empty() || code.find('_') != std::string::npos) continue;
+                if (code[0] == 'L') {
+                    auto pb = bias_age_on ? store.getPhaseBias(sat, code, current_time, bias_limit)
+                                          : store.getPhaseBias(sat, code);
+                    if (pb) { ++n_pb; pb_disc_max = std::max(pb_disc_max, pb->discontinuity_counter); }
+                } else if (code[0] == 'C') {
+                    auto d = store.getCodeBiasDiscontinuity(
+                        sat, code, current_time,
+                        bias_age_on ? bias_limit : std::numeric_limits<double>::max());
+                    if (d) cb_disc_max = std::max(cb_disc_max, *d);
+                }
+            }
+            o << n_pb << ',';
+            const auto cd = store.getClockDiscontinuity(sat);
+            if (cd) o << *cd;                                              // blank on nullopt
+            o << ',';
+            if (pb_disc_max != std::numeric_limits<int>::min()) o << pb_disc_max;
+            o << ',';
+            if (cb_disc_max != std::numeric_limits<int>::min()) o << cb_disc_max;
+            o << ',';
+            o << (n_pb > 0 ? 1 : 0) << '\n';                              // pb_fresh
+        }
     }
 
     // --- Drop broadcast-grade satellites (precise SSR PPP-RTK) ---
@@ -1267,6 +1603,74 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         if (soft_lli_) soft_lli_->advanceEpoch(epoch_now_s);
     }
 
+    // --- RTA-3: solution-generation id change -> GLOBAL datum break ---
+    // The network producer stamps a per-run generation id on its products
+    // (network.emit_generation_id); a CHANGE of a PRESENT id between epochs means
+    // the producer RESTARTED and re-realized its whole datum — every satellite
+    // phase-bias lump and code-bias level re-referenced at once, while the
+    // restarted emitter's discontinuity counters re-seeded at 0 (a warm consumer
+    // that stored counter=0 sees 0→0 = "no change", the exact hole this closes).
+    // React with the union of the fine-grained reactions below, applied globally:
+    // reset EVERY ambiguity (the noteSsrDiscontinuity→resetAmbiguity machinery,
+    // whole-state scope) and re-inflate EVERY receiver code-bias state
+    // (reinflateCodeBiasVariance).  Fires only when the id is present — an absent
+    // id (live RTCM, pre-RTA-3 products) never reacts, so this is byte-identical
+    // for every legacy stream.  First sighting records only (no reaction).
+    {
+        const auto gid = ssrStore().getGenerationId();
+        if (gid) {
+            if (last_ssr_generation_id_ != 0 && *gid != last_ssr_generation_id_) {
+                log->warn("{}SSR solution-generation id changed ({} -> {}): producer restart / "
+                          "global datum re-realization — resetting ALL network-corrected "
+                          "ambiguities and re-inflating receiver code-bias states.",
+                          epoch_prefix, last_ssr_generation_id_, *gid);
+                const double reset_std = config_.getAmbiguityStd();
+                std::vector<std::string> keys;   // copy: resetAmbiguity may touch the map
+                keys.reserve(state_manager_->getAmbiguities().size());
+                for (const auto& kv : state_manager_->getAmbiguities()) keys.push_back(kv.first);
+                for (const auto& k : keys) state_manager_->resetAmbiguity(k, reset_std);
+                const double cb_var =
+                    config_.codeBiasReinflateStd() * config_.codeBiasReinflateStd();
+                std::vector<std::string> cb_keys;
+                cb_keys.reserve(state_manager_->getCodeBiasStates().size());
+                for (const auto& kv : state_manager_->getCodeBiasStates())
+                    cb_keys.push_back(kv.first);
+                for (const auto& k : cb_keys)
+                    state_manager_->reinflateCodeBiasVariance(k, cb_var);
+            }
+            last_ssr_generation_id_ = *gid;
+        }
+    }
+
+    // --- RTA-10: producer epoch-status heartbeat -> one-shot transition log ---
+    // The network producer's H heartbeat (network.emit_epoch_status_record) reaches
+    // the store via the product-tail wiring (ApplicationRealtime), INCLUDING for
+    // fully withheld epochs that deliver no product record — so this is where the
+    // consumer learns "the producer is alive but withholding" vs "products stopped".
+    // Edge-triggered on the STATE (ok/partial/withheld_*): the first sighting and
+    // every CHANGE log exactly once; a steady state stays silent.  An absent
+    // heartbeat (live RTCM streams / pre-RTA-10 products / toggle off) never logs.
+    // Deeper integrity wiring — gating measurement usage or R-inflation on the
+    // producer status — is deliberately out of scope here (RTF-9).
+    {
+        const auto pst = ssrStore().getProducerStatus();
+        if (pst && (!last_producer_status_ || *last_producer_status_ != pst->state)) {
+            const char* from = last_producer_status_
+                                   ? NetworkProducerStatus::stateName(*last_producer_status_)
+                                   : "(none)";
+            const char* to = NetworkProducerStatus::stateName(pst->state);
+            if (pst->state == NetworkProducerStatus::State::Ok)
+                log->info("{}Network producer status: {} -> {} (heartbeat tow {:.1f}).",
+                          epoch_prefix, from, to, pst->time.tow);
+            else
+                log->warn("{}Network producer status: {} -> {} (heartbeat tow {:.1f}, "
+                          "sigma0 {:.2f}, withheld [{}], {} sat(s) published).",
+                          epoch_prefix, from, to, pst->time.tow, pst->sigma0,
+                          pst->withheld, pst->n_sats_published);
+            last_producer_status_ = pst->state;
+        }
+    }
+
     // --- SSR phase-bias discontinuity -> ambiguity reset ---
     // An incremented IGS-SSR discontinuity counter means the satellite phase
     // bias for a signal jumped, breaking the integer property of that signal's
@@ -1275,18 +1679,152 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     {
         const auto& ssr = ssrStore();
         const double reset_std = config_.getAmbiguityStd();
+        const bool   bias_age_gate = config_.enableSsrBiasMaxAge();
+        // A5 stale-hold: probe with the SAME effective limit the apply site uses
+        // (hold_factor × max_age), so the flip detector fires exactly when the
+        // applied ssr_bias_term actually steps — once per genuine outage, not per
+        // provider-update cycle hovering near max_age.
+        const double bias_max_age  = config_.getSsrBiasMaxAge()
+                                   * config_.getSsrBiasStaleHoldFactor();
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.modeled) {
                 const std::string& code = kv.first;
                 if (code.empty() || code[0] != 'L') continue;       // phase only
                 if (code.find('_') != std::string::npos) continue;   // raw signal only
+                const std::string key = obs.satellite + "|" + code;
                 if (auto pb = ssr.getPhaseBias(obs.satellite, code)) {
                     if (state_manager_->noteSsrDiscontinuity(
-                            obs.satellite + "|" + code, pb->discontinuity_counter)) {
+                            key, pb->discontinuity_counter)) {
                         state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
                         log->info("{}SSR phase-bias discontinuity: reset {} {}",
                                   epoch_prefix, obs.satellite, code);
                     }
+                }
+                // A5 (P1-4): with the bias staleness gate ON, a phase bias that goes stale
+                // (age-gated out) mid-arc and later returns steps the APPLIED ssr_bias_term
+                // by a full bias — with NO producer disc-counter change — so the ambiguity
+                // silently absorbs the jump and the next AR wrong-fixes.  Track whether the
+                // bias is currently APPLIED (fresh within the gate); reset the ambiguity on
+                // any fresh↔stale flip so the step re-floats instead of corrupting the fix.
+                // Only when the gate is on ⇒ no flips otherwise ⇒ byte-identical.
+                if (bias_age_gate) {
+                    const bool applied_now =
+                        static_cast<bool>(ssr.getPhaseBias(obs.satellite, code, obs.time, bias_max_age));
+                    const auto it = ssr_phase_bias_applied_.find(key);
+                    if (it != ssr_phase_bias_applied_.end() && it->second != applied_now) {
+                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
+                                  epoch_prefix, it->second ? "fresh" : "stale",
+                                  applied_now ? "fresh" : "stale", obs.satellite, code);
+                    }
+                    ssr_phase_bias_applied_[key] = applied_now;
+                }
+            }
+        }
+    }
+
+    // --- SSR code-bias datum re-reference -> receiver code-bias reinflation ---
+    // The network producer references its satellite code biases to a per-(const,
+    // signal) sum-to-zero datum; that level steps by a per-signal common mode
+    // whenever the satellite set carrying a signal changes (rise/set).  The
+    // receiver code-bias (DCB/IFB) state absorbs the step, but its near-frozen
+    // random walk cannot follow a jump in one epoch.  An incremented code-bias
+    // discontinuity counter signals the step — re-inflate the affected
+    // constellation's receiver code-bias states so the next update re-absorbs it
+    // cleanly, the code-domain analog of the phase-bias -> ambiguity reset above.
+    // No-op without receiver code-bias states (estimate_ifb off) or without SSR
+    // code-bias discontinuity counters (post-processing / RTCM streams carry
+    // none — the wire format has no such field), so live RTCM is unaffected.
+    if (config_.estimateIfb()) {
+        const auto& ssr = ssrStore();
+        const double cb_var =
+            config_.codeBiasReinflateStd() * config_.codeBiasReinflateStd();
+        std::set<std::string> reref_systems;   // system-name prefixes whose datum stepped
+        for (const auto& obs : modeled_obs) {
+            for (const auto& kv : obs.modeled) {
+                const std::string& code = kv.first;
+                if (code.empty() || code[0] != 'C') continue;          // code obs only
+                if (code.find('_') != std::string::npos) continue;      // raw signal only
+                if (auto c = ssr.getCodeBiasDiscontinuity(obs.satellite, code)) {
+                    if (state_manager_->noteSsrDiscontinuity(
+                            "CB|" + obs.satellite + "|" + code, *c)) {
+                        reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        log->info("{}SSR code-bias discontinuity: {} {} (datum re-reference)",
+                                  epoch_prefix, obs.satellite, code);
+                    }
+                }
+            }
+        }
+        // Re-inflate every receiver code-bias state of each re-referenced
+        // constellation (keys "<sys>_DCB" / "<sys>_IFB<band>").  Constellation-
+        // scoped (not per-band) for robustness: it reaches the reference-band
+        // DCB — which the receiver clock CANNOT self-heal (the clock is shared
+        // across constellations and across code+phase, so steering it injects a
+        // transient into every other residual) — without a fragile
+        // signal->band->state-key mapping; the handful of extra IFB/DCB states
+        // it touches re-converge within an epoch or two from informative code
+        // under the modest re-inflation variance.
+        for (const auto& [key, idx] : state_manager_->getCodeBiasStates()) {
+            (void)idx;
+            for (const std::string& sys : reref_systems) {
+                if (key.rfind(sys + "_", 0) == 0) {
+                    state_manager_->reinflateCodeBiasVariance(key, cb_var);
+                    break;
+                }
+            }
+        }
+    } else {
+        // A5 part (b): estimate_ifb is off, so there are NO receiver code-bias states to
+        // absorb a network code-bias datum re-reference.  For a STANDALONE consumer of a
+        // network product that emits satellite code biases this is a silent misconfiguration
+        // (the closed-loop consumer inherits estimate_ifb=true from the producer, so it is
+        // safe).  Warn ONCE if the stream actually carries a network code-bias discontinuity
+        // counter — turning the previously-silent no-op into a loud, actionable diagnostic.
+        if (!warned_ssr_cb_no_ifb_) {
+            const auto& ssr = ssrStore();
+            for (const auto& obs : modeled_obs) {
+                bool hit = false;
+                for (const auto& kv : obs.modeled) {
+                    const std::string& code = kv.first;
+                    if (code.empty() || code[0] != 'C' || code.find('_') != std::string::npos) continue;
+                    if (ssr.getCodeBiasDiscontinuity(obs.satellite, code)) { hit = true; break; }
+                }
+                if (hit) {
+                    log->warn("{}Consuming NETWORK satellite code biases but estimation.estimate_ifb "
+                              "is OFF — no receiver code-bias state exists to absorb a code-bias datum "
+                              "re-reference; enable estimate_ifb for a standalone network-code-bias "
+                              "consumer (the closed-loop consumer inherits it automatically).",
+                              epoch_prefix);
+                    warned_ssr_cb_no_ifb_ = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // --- SSR clock datum re-reference -> receiver-clock note (A2) ---
+    // The network producer references each constellation's satellite clocks to a
+    // per-constellation pivot-satellite pin; that datum steps every satellite clock
+    // of the constellation by a COMMON constant when the pivot changes (a clock-
+    // pivot handover).  A common step is absorbed by the receiver clock, so — unlike
+    // the phase-bias step, which breaks the ambiguity integer property and is reset
+    // above — a clock re-reference needs NO ambiguity reset.  Note it (so the
+    // re-reference is observable, and so a consumer that carries a STIFF/random-walk
+    // receiver-clock state can re-inflate it here) and log it.  No-op without network
+    // clock disc counters: RTCM-decoded clocks and producer runs with
+    // network.emit_clock_disc off carry disc_counter=0, so noteSsrDiscontinuity never
+    // fires and live RTCM is unaffected.
+    {
+        const auto& ssr = ssrStore();
+        for (const auto& obs : modeled_obs) {
+            if (auto c = ssr.getClockDiscontinuity(obs.satellite)) {
+                if (state_manager_->noteSsrDiscontinuity("SC|" + obs.satellite, *c)) {
+                    log->info("{}SSR clock discontinuity: {} (datum re-reference)",
+                              epoch_prefix, obs.satellite);
+                    // A receiver clock estimated fresh each epoch (white noise)
+                    // re-absorbs the common step with no action; a future consumer
+                    // that carries a random-walk receiver clock would re-inflate it
+                    // here (there is no reinflateReceiverClockVariance today).
                 }
             }
         }
@@ -1461,6 +1999,10 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     ++epoch_count_;
 
+    // RTA-13: periodic obs-code attribute-mismatch visibility (one line every
+    // 300 processed epochs; silent when no mismatch was ever counted).
+    if (epoch_count_ % 300 == 0) logBiasAttrMismatchSummary("periodic");
+
     log->info("{}Epoch {}: pos=({:.3f},{:.3f},{:.3f}) clk={:.3f} zwd={:.4f} sats={}",
               epoch_prefix, epoch_count_,
               ppp_state_.position.x(), ppp_state_.position.y(), ppp_state_.position.z(),
@@ -1511,15 +2053,63 @@ const SsrCorrectionStore& RealTimeEngine::ssrStore() const {
 }
 
 void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
-                                 bool consume_clock, bool consume_bias) {
+                                 bool consume_clock, bool consume_bias,
+                                 SsrOrbitSource orbit_source) {
     // Clock/orbit overlay lives in PppModel (geometry + corrections); bias overlay
     // + the phase-bias-discontinuity reset hook live in MeasurementModel.  Route
     // each independently so the caller can, e.g., keep precise SP3/CLK for the
     // clock while consuming only the network phase bias (clean integer test).
     // Called after initialize(), so the models exist.
     ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
-    if (ppp_model_)  ppp_model_->setSsrStore(consume_clock ? store : nullptr);
+    if (ppp_model_) {
+        switch (orbit_source) {
+        case SsrOrbitSource::FollowClock:
+            // Legacy coupled routing (the default): orbit overlay rides with the
+            // clock, exactly as the pre-split setSsrStore did.  The closed-loop
+            // harness call site lands here — byte-identical.
+            ppp_model_->setSsrStore(consume_clock ? store : nullptr);
+            break;
+        case SsrOrbitSource::External:
+            // RTA-8(a): clocks from the injected store (per consume_clock), orbit
+            // overlay pinned to the SINGLETON — the external RTS corrections
+            // stream (ideally ingest-filtered to orbit_only, RTA-8(b)).
+            ppp_model_->setSsrClockStore(consume_clock ? store : nullptr);
+            ppp_model_->setSsrOrbitStore(nullptr);
+            break;
+        case SsrOrbitSource::Network:
+            // RTA-8(a): a future orbit-bearing network product — orbit overlay
+            // reads the injected store even when the clock is kept precise.
+            ppp_model_->setSsrClockStore(consume_clock ? store : nullptr);
+            ppp_model_->setSsrOrbitStore(store);
+            break;
+        }
+    }
     if (meas_model_) meas_model_->setSsrStore(consume_bias  ? store : nullptr);
+}
+
+void RealTimeEngine::logBiasAttrMismatchSummary(const char* tag) {
+    const auto counts = ssrStore().biasAttributeMismatchCounts();
+    if (counts.empty()) return;   // clean run: never logs (byte-identical)
+    std::uint64_t code_total = 0, phase_total = 0;
+    for (const auto& [key, n] : counts) {
+        if (!key.empty() && key.back() == 'L') phase_total += n;
+        else                                   code_total  += n;
+    }
+    // Top offenders by count (deterministic tie-break: map key order).
+    std::vector<std::pair<std::string, std::uint64_t>> top(counts.begin(), counts.end());
+    std::stable_sort(top.begin(), top.end(),
+                     [](const auto& a, const auto& b) { return a.second > b.second; });
+    constexpr std::size_t kMaxListed = 8;
+    std::string detail;
+    for (std::size_t i = 0; i < top.size() && i < kMaxListed; ++i) {
+        if (!detail.empty()) detail += ", ";
+        detail += fmt::format("{}={}", top[i].first, top[i].second);
+    }
+    log_manager_.getLogger("rt_engine")->info(
+        "[RT] SSR bias attribute mismatches ({}): tracked signal missing while a same-band "
+        "sibling bias exists — code {} / phase {} lookups; top: {}{}",
+        tag, code_total, phase_total, detail,
+        top.size() > kMaxListed ? ", ..." : "");
 }
 
 Eigen::Vector3d RealTimeEngine::getPosition() const {

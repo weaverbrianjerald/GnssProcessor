@@ -16,6 +16,8 @@
 #include "products/ProductCache.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductResolver.hpp"
+#include "products/NetworkProductIO.hpp"
+#include "products/SsrCorrectionStore.hpp"
 #include "realtime/NtripClient.hpp"
 #include "realtime/TcpClient.hpp"
 #include "realtime/RtcmStreamReader.hpp"
@@ -321,13 +323,90 @@ int Application::runRealTime() {
 
     if (!resolveData()) return 1;
 
+    const auto& rt_config = config_.getRealTimeConfig();
+
+    // --- RTA-6/RTA-7: standalone network-product consumer -------------------
+    // A non-empty realtime.network_products_path arms a live product-file tail
+    // feeding an OWNED SsrCorrectionStore injected into the engine.  The
+    // processing.network_consumer profile applies the shared consumer couplings
+    // (one source of truth with the closed-loop harness) BEFORE the engine is
+    // constructed so they shape the state vector.  Both default off — the
+    // realtime path is byte-identical without them.
+    const std::string& net_products_path = rt_config.network_products_path;
+    const auto& ncc = config_.getNetworkConsumerConfig();
+    const bool consumer_profile_on = ncc.enable && !net_products_path.empty();
+    if (ncc.enable && net_products_path.empty())
+        log->warn("processing.network_consumer.enable is set but "
+                  "realtime.network_products_path is empty — no product source; "
+                  "the profile is NOT applied.");
+    if (consumer_profile_on)
+        config_.applyNetworkConsumerProfile(log_manager_);
+
+    // Declared BEFORE the engine so they outlive it (the engine holds a
+    // non-owning pointer to the store via setSsrStore).
+    std::unique_ptr<SsrCorrectionStore> network_store;
+    std::unique_ptr<NetworkProductTail> product_tail;
+
     RealTimeEngine engine(config_, log_manager_);
     if (!engine.initialize()) {
         log->error("Failed to initialize real-time engine");
         return 1;
     }
 
-    const auto& rt_config = config_.getRealTimeConfig();
+    if (!net_products_path.empty()) {
+        network_store = std::make_unique<SsrCorrectionStore>();
+        // RTA-13 (opt-in): arm the CODE-domain band-wise bias fallback on the
+        // OWNED store (the singleton is armed by RealTimeEngine::initialize).
+        if (config_.ssrBiasBandFallback())
+            network_store->setCodeBiasBandFallback(true);
+        // Start-of-file join: replaying the whole file so far reconstructs every
+        // discontinuity counter exactly (a fresh consumer start); a producer
+        // restart mid-session is handled by the tail's rotation reopen.
+        product_tail  = std::make_unique<NetworkProductTail>(net_products_path);
+        const bool consume_clock = consumer_profile_on ? ncc.clock : true;
+        const bool consume_bias  = consumer_profile_on ? ncc.bias  : true;
+        // RTA-8(a): orbit-overlay routing.  Without the profile keep the legacy
+        // coupled routing (orbit rides with the clock — byte-identical).  With
+        // the profile, orbit_source selects: "external" (default) pins the
+        // orbit overlay on the singleton — the external RTS corrections stream
+        // — while clocks/biases come from the owned store; "network" points it
+        // at the owned store (future orbit-bearing product).
+        RealTimeEngine::SsrOrbitSource orbit_source =
+            RealTimeEngine::SsrOrbitSource::FollowClock;
+        if (consumer_profile_on)
+            orbit_source = (ncc.orbit_source == "network")
+                               ? RealTimeEngine::SsrOrbitSource::Network
+                               : RealTimeEngine::SsrOrbitSource::External;
+        engine.setSsrStore(network_store.get(), consume_clock, consume_bias, orbit_source);
+        log->info("Realtime network products (RTA-6): tailing '{}' into an owned store "
+                  "(consume clock {}, bias {}; orbit overlay {}; profile {}).",
+                  net_products_path, consume_clock ? "on" : "off",
+                  consume_bias ? "on" : "off",
+                  orbit_source == RealTimeEngine::SsrOrbitSource::FollowClock
+                      ? "coupled to clock (legacy)"
+                      : (orbit_source == RealTimeEngine::SsrOrbitSource::Network
+                             ? "owned store (network)"
+                             : "singleton (external RTS)"),
+                  consumer_profile_on ? "network_consumer" : "default flags");
+        // RTA-8(c): the classic misconfiguration — network clocks consumed while
+        // an unfiltered external corrections stream still pushes clock content
+        // into the singleton.  The singleton's clocks then shadow the network
+        // product wherever the singleton is consulted (bias-only clock mode, the
+        // obs↔SSR sync horizon, coverage census).  Filter the stream instead.
+        if (consumer_profile_on && ncc.orbit_source == "external"
+            && rt_config.corrections.enabled && rt_config.corrections.accept == "all") {
+            log->warn("Network-consumer profile is on with orbit_source=external, but the "
+                      "external corrections stream has corrections_accept=\"all\" — its "
+                      "1060/1066 clock content lands in the singleton store and may shadow "
+                      "the network clock.  Set realtime.corrections.corrections_accept="
+                      "\"orbit_only\" to ingest orbits (and URA) only.");
+        }
+    }
+    // Effective AR MW-WL suppression: the profile resolution when active
+    // (explicit override, else the closed-loop-equivalent derivation), otherwise
+    // the standalone processing.ar_ignore_mw_wl key (default false — no change).
+    engine.setArIgnoreMwWl(consumer_profile_on ? config_.networkConsumerArIgnoreMwWl()
+                                               : config_.arIgnoreMwWl());
 
     auto primary = openPrimary(rt_config, log_manager_);
     if (!primary) return 1;
@@ -364,6 +443,86 @@ int Application::runRealTime() {
     RtcmStreamReader   eph_framer;
     std::vector<uint8_t> scratch;
 
+    // RTA-8(b): per-stream SSR ingest policies (parsed/validated at config load;
+    // the parse helper only translates the vetted string).  The primary stream
+    // is never filtered — it carries obs/nav, and any embedded SSR keeps the
+    // legacy unfiltered behaviour.
+    const auto corr_policy =
+        RealTimeEngine::parseSsrAcceptPolicy(rt_config.corrections.accept);
+    const auto eph_policy =
+        RealTimeEngine::parseSsrAcceptPolicy(rt_config.ephemeris.accept);
+
+    // --- RTA-7(c): startup / per-change S-contract check ---------------------
+    // When the tail sees a contract (v2 header S line, or an RTA-5 re-broadcast
+    // after a mid-file join) and the consumer profile is on, cross-check it
+    // against the consumer's declared expectation and HARD-WARN (never abort) on
+    // mismatch — once per contract CHANGE, keyed on the convention fields
+    // (pivot-only refreshes are routine handovers, not contract changes).  The
+    // expectation is pivot-less (like the closed-loop per-receipt check): the
+    // FIRST received contract seeds it, overlaid with the profile's optional
+    // expect_* pins so a declared pin mismatches even on first receipt.
+    SbasisContract contract_expectation;
+    bool           have_contract_expectation = false;
+    std::string    last_contract_fp;
+    auto contractFp = [](const SbasisContract& c) {
+        // RTA-12: the identity fields (frame/cepoch/atx/oref) are convention
+        // fields too — a producer restart with a different frame or ATX must
+        // count as a contract CHANGE and re-run the check.
+        return fmt::format("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                           c.decl.reference_receiver_id, c.decl.bias_sign,
+                           c.decl.windup_yaw_model_id,
+                           static_cast<int>(c.decl.amb_datum),
+                           static_cast<int>(c.decl.isb_datum),
+                           c.decl.emit_code_bias,
+                           static_cast<int>(c.decl.code_bias_datum),
+                           c.disc_threshold_m, c.emit_clock_disc,
+                           c.apriori_product_id, c.staleness_horizon_s,
+                           c.generation_id,
+                           c.frame_id, c.coord_epoch, c.atx_id, c.orbit_ref);
+    };
+    auto checkConsumerContract = [&](const SbasisContract& file_contract) {
+        const std::string fp = contractFp(file_contract);
+        if (fp == last_contract_fp) return;   // once per contract CHANGE
+        last_contract_fp = fp;
+        if (!have_contract_expectation) {
+            contract_expectation = file_contract;              // adopt the first receipt...
+            contract_expectation.decl.clock_pivot_sat.clear(); // ...pivot-less (pivots evolve)
+            if (!ncc.expect_reference_receiver.empty())
+                contract_expectation.decl.reference_receiver_id = ncc.expect_reference_receiver;
+            if (!ncc.expect_apriori_product_id.empty())
+                contract_expectation.apriori_product_id = ncc.expect_apriori_product_id;
+            // RTA-12 identity pins: a declared expectation overrides the adopted
+            // first receipt, so a pinned frame/ATX/orbit-ref mismatches even on
+            // the very first contract (checkContract compares each only when the
+            // expectation is non-empty).
+            if (!ncc.expect_frame_id.empty())
+                contract_expectation.frame_id = ncc.expect_frame_id;
+            if (!ncc.expect_atx_id.empty())
+                contract_expectation.atx_id = ncc.expect_atx_id;
+            if (!ncc.expect_orbit_ref.empty())
+                contract_expectation.orbit_ref = ncc.expect_orbit_ref;
+            have_contract_expectation = true;
+        }
+        std::vector<std::string> mismatches;
+        if (NetworkProductReader::checkContract(file_contract, contract_expectation,
+                                                &mismatches)) {
+            log->info("Network products: S-basis contract verified (ref rx '{}', "
+                      "a-priori '{}', gid {}).",
+                      file_contract.decl.reference_receiver_id,
+                      file_contract.apriori_product_id, file_contract.generation_id);
+        } else {
+            std::string joined;
+            for (const auto& m : mismatches) {
+                if (!joined.empty()) joined += "; ";
+                joined += m;
+            }
+            log->warn("Network products: S-basis contract MISMATCH against the consumer "
+                      "expectation — products may be in an incompatible frame (integer "
+                      "recovery / counter replay compromised).  Continuing anyway.  {}",
+                      joined);
+        }
+    };
+
     // Install the Ctrl+C / termination handler so a live stream can be ended
     // cleanly.  Reset the flag first in case runRealTime is ever re-entered.
     g_stop_requested.store(false, std::memory_order_relaxed);
@@ -371,6 +530,11 @@ int Application::runRealTime() {
     log->info("Real-time session running — press Ctrl+C to stop");
 
     const auto wall_start = std::chrono::high_resolution_clock::now();
+    // RTA-6: last product-tail poll instant (throttles the file stat to ~5 Hz).
+    auto last_tail_poll = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+    // RTA-10: content-epoch key (week·604800+tow) of the last producer heartbeat pushed
+    // into the owned store, so each H record is forwarded exactly once (-1 = none yet).
+    double last_status_pushed_s = -1.0;
 
     // Single-threaded multi-source poll loop.  Each iteration drains a
     // chunk from each active source, frames it, and dispatches frames
@@ -394,8 +558,13 @@ int Application::runRealTime() {
                     [&](const std::vector<uint8_t>& f) { engine.feedSbfFrame(f); },
                     scratch, timeout_ms);
             } else {
+                // RTB-1(b): forward the framer-boundary receipt stamp so the
+                // engine can account sub-second receive→process latency.
                 produced += pumpFrames(*primary, primary_rtcm,
-                    [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
+                    [&](const std::vector<uint8_t>& f) {
+                        engine.feedRtcmFrame(f, RealTimeEngine::SsrAcceptPolicy::All,
+                                             primary_rtcm.lastFrameReceipt());
+                    },
                     scratch, timeout_ms);
             }
         }
@@ -403,8 +572,12 @@ int Application::runRealTime() {
             const int timeout_ms = (rt_config.corrections.input_type == "file") ? 0 : 50;
             // Single-chunk (max_drain_bytes=4096): SSR is sparse but critical;
             // serviced every iteration, never throttled by the obs drain.
+            // RTA-8(b): frames from THIS stream carry its ingest accept policy.
+            // RTB-1(b): plus the framer-boundary receipt stamp.
             produced += pumpFrames(*corrections, corr_framer,
-                [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
+                [&](const std::vector<uint8_t>& f) {
+                    engine.feedRtcmFrame(f, corr_policy, corr_framer.lastFrameReceipt());
+                },
                 scratch, timeout_ms, 4096);
         }
         if (ephemeris && ephemeris->active()) {
@@ -412,8 +585,47 @@ int Application::runRealTime() {
             // Single-chunk like corrections: broadcast nav is sparse; serviced
             // every iteration so the obs drain never starves it.
             produced += pumpFrames(*ephemeris, eph_framer,
-                [&](const std::vector<uint8_t>& f) { engine.feedRtcmFrame(f); },
+                [&](const std::vector<uint8_t>& f) {
+                    engine.feedRtcmFrame(f, eph_policy, eph_framer.lastFrameReceipt());
+                },
                 scratch, timeout_ms, 4096);
+        }
+        // RTA-6: poll the live network-product tail.  Throttled to ~5 Hz — the
+        // product cadence is seconds, and a hot file-replay loop must not stat
+        // the file thousands of times a second.  New epochs go into the owned
+        // store, then the engine's obs↔SSR hold buffer is woken exactly like an
+        // RTCM SSR push would (notifyProductsAdvanced -> drainHeldObs).
+        if (product_tail) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_tail_poll >= std::chrono::milliseconds(200)) {
+                last_tail_poll = now;
+                const auto new_products = product_tail->pollInto(*network_store);
+                if (!new_products.empty()) {
+                    produced += new_products.size();
+                    log->debug("Network products: {} new epoch(s) from tail "
+                               "(store size {}).",
+                               new_products.size(), network_store->size());
+                    engine.notifyProductsAdvanced();   // RTA-6(d): product-arrival wake
+                    if (consumer_profile_on)
+                        for (const auto& rec : new_products)
+                            if (rec.contract_refresh.present)
+                                checkConsumerContract(rec.contract_refresh);
+                }
+                // RTA-10: forward the producer's epoch-status heartbeat (H record) into
+                // the owned store.  Read the tail's latest-status surface — NOT the
+                // per-record field — because a fully WITHHELD epoch's H completes no
+                // product record (new_products can be empty while the producer is
+                // withholding, which is exactly when the consumer must hear about it).
+                // Keyed on the heartbeat's content epoch so each H is pushed once; the
+                // engine logs one-shot status TRANSITIONS from the store surface.
+                if (const auto hst = product_tail->lastStatus()) {
+                    const double hkey = hst->time.week * 604800.0 + hst->time.tow;
+                    if (hkey != last_status_pushed_s) {
+                        last_status_pushed_s = hkey;
+                        network_store->setProducerStatus(*hst);
+                    }
+                }
+            }
         }
         if (produced == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

@@ -374,6 +374,60 @@ TEST(StateManagerTest, PruneCodeBiasStatesExcept) {
     EXPECT_EQ(sm.getCodeBiasIndex("Galileo_DCB"), -1);
 }
 
+// The network code-bias consumer re-inflation (H1): on a consumed satellite
+// code-bias datum discontinuity, the receiver code-bias state must keep its
+// value (the hardware delay didn't change) while its variance is reset and its
+// cross-covariance with other states is broken, so the next update re-absorbs
+// the common-mode step in one epoch.
+TEST(StateManagerTest, ReinflateCodeBiasVariancePreservesValueBreaksCovariance) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    const int idx_a = static_cast<int>(sm.addCodeBiasState("GPS_DCB", 0.0));
+    const int idx_b = static_cast<int>(sm.addCodeBiasState("GPS_IFB5", 0.0));
+
+    Eigen::VectorXd x = sm.getStateVector();
+    Eigen::MatrixXd P = sm.getCovariance();
+    x(idx_a)            = 0.42;
+    P(idx_a, idx_a)     = 4.0;
+    P(idx_b, idx_b)     = 9.0;
+    P(idx_a, idx_b)     = 1.5;
+    P(idx_b, idx_a)     = 1.5;
+    sm.setStateVector(x);
+    sm.setCovariance(P);
+
+    sm.reinflateCodeBiasVariance("GPS_DCB", 0.25);
+
+    const Eigen::VectorXd x2 = sm.getStateVector();
+    const Eigen::MatrixXd P2 = sm.getCovariance();
+    EXPECT_DOUBLE_EQ(x2(idx_a), 0.42);        // value preserved
+    EXPECT_DOUBLE_EQ(P2(idx_a, idx_a), 0.25); // diagonal reset
+    EXPECT_DOUBLE_EQ(P2(idx_a, idx_b), 0.0);  // cross-covariance broken
+    EXPECT_DOUBLE_EQ(P2(idx_b, idx_a), 0.0);
+    EXPECT_DOUBLE_EQ(P2(idx_b, idx_b), 9.0);  // neighbour untouched
+}
+
+TEST(StateManagerTest, ReinflateCodeBiasVarianceRefusesFrozenAndAbsent) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    const int idx = static_cast<int>(sm.addCodeBiasState("GPS_DCB", 0.0));
+    Eigen::VectorXd x = sm.getStateVector();
+    Eigen::MatrixXd P = sm.getCovariance();
+    x(idx)        = 0.7;
+    P(idx, idx)   = 0.0;   // frozen row (guards a BSSD-held / GLONASS per-slot column)
+    sm.setStateVector(x);
+    sm.setCovariance(P);
+
+    sm.reinflateCodeBiasVariance("GPS_DCB", 0.25);   // refused
+    EXPECT_DOUBLE_EQ(sm.getCovariance()(idx, idx), 0.0);
+    EXPECT_DOUBLE_EQ(sm.getStateVector()(idx), 0.7);
+
+    const size_t sz = sm.getStateSize();
+    sm.reinflateCodeBiasVariance("Galileo_IFB7", 0.25);  // absent key: no-op, no throw
+    EXPECT_EQ(sm.getStateSize(), sz);
+}
+
 TEST(StateManagerTest, AddSatBiasStateAndLookup) {
     StateManagerHarness h;
     auto& sm = h.state_manager;

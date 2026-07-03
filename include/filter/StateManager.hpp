@@ -279,6 +279,26 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& getIonosphereStates() const;
 
         /**
+         * @brief Lookup the per-satellite iono RATE (Idot_s) state index.
+         *
+         * Present only when @c GnssConfig::enableIonoRate() is on (constant-
+         * velocity slant-iono model).  The rate is a companion to the level
+         * state @c getIonosphereIndex, keyed by the same satellite ID, added
+         * and pruned in lockstep with it.  Unobserved directly (H=0); driven by
+         * the F-coupling into the level state.
+         *
+         * @param satellite Satellite identifier.
+         * @return Zero-based index of the iono-rate state, or -1 if not present.
+         */
+        int getIonosphereRateIndex(const std::string& satellite) const;
+
+        /**
+         * @brief Get reference to the internal per-satellite iono-RATE index map.
+         * @return Map from satellite ID to state index (empty unless enableIonoRate).
+         */
+        const std::map<std::string, size_t>& getIonosphereRateStates() const;
+
+        /**
          * @brief Add a new per-satellite ionosphere state and return its index.
          *
          * The ionosphere state is appended to the state vector and covariance.
@@ -331,6 +351,49 @@ namespace GnssProcessor {
          */
         void reinflateIonosphereVariance(const std::string& satellite,
                                           double new_variance);
+
+        /**
+         * @brief Re-inflate a per-satellite iono RATE (Idot_s) state on a slip.
+         *
+         * The constant-velocity companion of @c reinflateIonosphereVariance,
+         * with identical semantics: the RATE value is PRESERVED (the physical
+         * slant-iono ramp is continuous across a phase-lock loss, just like the
+         * level), while the cross-covariance partition is broken (row/column
+         * zeroed) and the diagonal reset to @p new_variance so the filter can
+         * re-learn the ramp cleanly after the ambiguity reseed.  No-op when
+         * @c enableIonoRate is off or no rate state exists.  Refuses to operate
+         * on a frozen (pivot) row (zero diagonal).
+         *
+         * @param satellite Satellite identifier.
+         * @param new_variance Replacement diagonal (m²/s²).  Falls back to
+         *                  @c initial_std.ionosphere_rate² when non-positive.
+         */
+        void reinflateIonosphereRateVariance(const std::string& satellite,
+                                             double new_variance);
+
+        /**
+         * @brief Re-inflate a receiver code-bias (DCB/IFB) state's variance.
+         *
+         * The network code-bias analog of @c reinflateIonosphereVariance: when
+         * a consumed satellite code-bias datum re-references (the producer's
+         * per-(const,signal) sum-to-zero level steps as satellites rise/set),
+         * the receiver code-bias state that absorbs that per-signal common-mode
+         * step must be freed to re-absorb it in a single epoch instead of
+         * dragging the step through its near-frozen random walk.  Breaks the
+         * cross-covariance (zeroes the row/col) and sets the diagonal, while
+         * PRESERVING the state value — the hardware delay itself did not change,
+         * only the gauge it is referenced to.
+         *
+         * @param key Receiver code-bias state key (e.g. "GPS_DCB", "GPS_IFB5").
+         *            No-op (debug log) when no such state exists.
+         * @param new_variance Replacement diagonal (m²).  Falls back to
+         *            @c initial_std.code_bias² when non-positive.  Refused
+         *            (warn) on a frozen row (P_diag ≤ 0), defending any
+         *            BSSD-held / GLONASS per-slot column the network path
+         *            should never target.
+         */
+        void reinflateCodeBiasVariance(const std::string& key,
+                                       double new_variance);
 
         /**
          * @brief Store the last-known elevation (degrees) for a per-satellite iono state.
@@ -1209,6 +1272,7 @@ namespace GnssProcessor {
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
+        std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono RATE (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
         std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (PPP-RTK, diagnostics only).
         std::set<std::string> frozen_pivot_sats_; //!< BSSD pivot satellites: iono, ambiguity, and sat-bias states are frozen (Q=0).

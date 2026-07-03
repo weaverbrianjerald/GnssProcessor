@@ -10,6 +10,8 @@
 
 #include "filter/NetworkEstimator.hpp"
 
+#include "filter/StateKeySchema.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 
@@ -18,7 +20,9 @@ namespace GnssProcessor {
 std::string NetworkEstimator::key_(const std::string& sat, SharedParamKind kind,
                                    const std::string& signal) {
     // Clock is signal-independent; code/phase bias are per-signal.  The kind
-    // tag keeps the three families disjoint in the same map.
+    // tag keeps the families disjoint in the same map.  VtecSh is keyed by
+    // (n,m,trig), not (sat,signal), so it is handled by registerVtecCoeff /
+    // vtecCoeffColumn directly (its key is never built from this overload).
     switch (kind) {
         case SharedParamKind::Clock:
             return sat + "|CLK";
@@ -26,6 +30,8 @@ std::string NetworkEstimator::key_(const std::string& sat, SharedParamKind kind,
             return sat + "|CB|" + signal;
         case SharedParamKind::PhaseBias:
             return sat + "|PB|" + signal;
+        case SharedParamKind::VtecSh:
+            return sat;  // unused for VtecSh; see registerVtecCoeff
     }
     return sat; // unreachable
 }
@@ -63,6 +69,24 @@ Eigen::Index NetworkEstimator::registerPhaseBias(const std::string& sat,
     return registerColumn_(sat, SharedParamKind::PhaseBias, signal);
 }
 
+Eigen::Index NetworkEstimator::registerVtecCoeff(int n, int m, char trig) {
+    if (epoch_open_) {
+        throw std::logic_error(
+            "NetworkEstimator: cannot register shared parameters after "
+            "beginEpoch(); finalize the layout first");
+    }
+    const std::string k = StateKeys::makeVtecShKey(n, m, trig);
+    auto it = index_.find(k);
+    if (it != index_.end()) return it->second;
+    const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
+    index_.emplace(k, col);
+    ColumnDesc d;
+    d.kind = SharedParamKind::VtecSh;
+    d.sh_n = n; d.sh_m = m; d.sh_trig = trig;
+    columns_.push_back(std::move(d));
+    return col;
+}
+
 Eigen::Index NetworkEstimator::clockColumn(const std::string& sat) const {
     return index_.at(key_(sat, SharedParamKind::Clock, ""));
 }
@@ -75,6 +99,10 @@ Eigen::Index NetworkEstimator::codeBiasColumn(const std::string& sat,
 Eigen::Index NetworkEstimator::phaseBiasColumn(const std::string& sat,
                                                const std::string& signal) const {
     return index_.at(key_(sat, SharedParamKind::PhaseBias, signal));
+}
+
+Eigen::Index NetworkEstimator::vtecCoeffColumn(int n, int m, char trig) const {
+    return index_.at(StateKeys::makeVtecShKey(n, m, trig));
 }
 
 void NetworkEstimator::reset() {
@@ -130,7 +158,7 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
     if (!epoch_open_) {
         throw std::logic_error("NetworkEstimator::solve: call beginEpoch() first");
     }
-    neq_.reduce();
+    neq_.reduce(reduce_threads_);
 
     // Apply the explicit minimum-constraint datum to a COPY of the reduced
     // shared system (the kernel's W5 seam), so the kernel's own reduced normals
@@ -172,17 +200,32 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
         u(p.column) = pin_scale * p.value;
     }
 
-    const Eigen::VectorXd x_s = neq_.solveSharedConstrained(N, u);
-
-    // Cache the shared covariance (inverse of the datum-constrained reduced
-    // normals) for the driver's between-epoch carry-forward prior (W4-S2b D2).
-    // N is full rank here (the datum removed the deficiency, as solveShared-
-    // Constrained already verified), so the symmetric inverse is well-defined.
-    shared_cov_ = N.ldlt().solve(
-        Eigen::MatrixXd::Identity(numShared(), numShared()));
+    // Solve the datum-constrained reduced system AND recover the shared covariance
+    // from the SAME LDLᵀ factor: the kernel factorizes the constrained N once and
+    // fills shared_cov_ (the inverse of the datum-constrained reduced normals), so
+    // this caller no longer refactors N a second time.  shared_cov_ feeds the
+    // driver's between-epoch carry-forward prior (W4-S2b D2; its diagonal) and
+    // producer-side network AR (the full block via conditionalLocalCovariance).
+    const Eigen::VectorXd x_s = neq_.solveSharedConstrained(N, u, &shared_cov_);
 
     solved_ = true;
     return x_s;
+}
+
+void NetworkEstimator::addStationPrior(std::size_t station,
+                                       const std::vector<Eigen::Index>& local_cols,
+                                       const Eigen::VectorXd& delta_Nrr_diag,
+                                       const Eigen::VectorXd& delta_ur) {
+    if (!epoch_open_) {
+        throw std::logic_error("NetworkEstimator::addStationPrior: call beginEpoch() first");
+    }
+    if (solved_) {
+        throw std::logic_error(
+            "NetworkEstimator::addStationPrior: epoch already solved; the carried "
+            "prior must be injected before solve() (a local-block change must pass "
+            "through the Schur reduction)");
+    }
+    neq_.addStationPrior(station, local_cols, delta_Nrr_diag, delta_ur);
 }
 
 Eigen::VectorXd NetworkEstimator::reconstructStation(
@@ -190,8 +233,52 @@ Eigen::VectorXd NetworkEstimator::reconstructStation(
     return neq_.reconstructStation(station, x_s);
 }
 
+Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
+    std::size_t station, const Datum& datum) const {
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
+    // (variance 0), not as carrying the Dirichlet pin's artificial 1/pin_scale.
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    return neq_.reconstructStationCovariance(station, cov_free);
+}
+
+Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
+    std::size_t station, const std::vector<Eigen::Index>& local_cols,
+    const Datum& datum) const {
+    // Same datum-as-known frame as conditionalLocalCovariance: the pinned shared
+    // columns are EXACT (variance 0), not carrying the Dirichlet pin's 1/pin_scale.
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free);
+}
+
+Eigen::VectorXd NetworkEstimator::rowRedundancy(
+    std::size_t station, const Eigen::MatrixXd& A_s_rows,
+    const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
+    const Datum& datum) const {
+    // Datum-as-known frame: the pinned shared columns are EXACT gauges (variance 0).
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    return neq_.rowRedundancy(station, A_s_rows, A_r_rows, w_rows, cov_free);
+}
+
 const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
-    neq_.reduce();
+    neq_.reduce(reduce_threads_);
     return neq_.reducedSharedNormals();
 }
 
@@ -202,7 +289,10 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
-        const auto it = index_.find(key_(p.sat, p.kind, p.signal));
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
         delta_info(c, c) += p.info;          // diagonal info prior (D2 carry-forward)
@@ -254,6 +344,11 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
 
     for (Eigen::Index c = 0; c < numShared(); ++c) {
         const ColumnDesc& d = columns_[static_cast<std::size_t>(c)];
+        // The global SH-VTEC coefficients are network-wide, not per-satellite, so
+        // they are NOT mapped into the per-satellite NetworkSolutionEpoch here.
+        // The driver reads them straight from x_s via vtecCoeffColumn for the trace;
+        // their product serialization (IGS-SSR VTEC) is a later stage.
+        if (d.kind == SharedParamKind::VtecSh) continue;
         NetworkSatSolution& s = slotFor(d.sat);
         switch (d.kind) {
             case SharedParamKind::Clock:
@@ -263,12 +358,38 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
             case SharedParamKind::CodeBias:
                 s.code_bias_m[d.signal] = x_s(c);
                 break;
-            case SharedParamKind::PhaseBias:
-                s.phase_bias[d.signal].bias_m = x_s(c);
+            case SharedParamKind::PhaseBias: {
+                NetworkPhaseBias& npb = s.phase_bias[d.signal];
+                npb.bias_m = x_s(c);
+                // RT0-3: flag the bias as integer-preserving for CDMA constellations
+                // (GPS/GAL/BDS/QZSS).  Its uncombined satellite phase bias carries the
+                // pivot-receiver ambiguity lump (Odijk Eq. 4) but preserves the integer
+                // property a consumer's AR candidate selection can exploit.  GLONASS/FDMA
+                // ('R') biases fold in a per-slot inter-frequency bias and are NOT
+                // integer-recoverable, so they stay false.  Truthful metadata: no consumer
+                // reads it yet, but it is cheap insurance before FDMA biases enter the
+                // product (a consumer must not treat an 'R' bias as an integer candidate).
+                npb.signal_integer = !d.sat.empty() && d.sat[0] != 'R';
                 break;
+            }
+            case SharedParamKind::VtecSh:
+                break;  // handled above
         }
     }
     return sol;
+}
+
+NetworkEstimator::PerConstWithholdDecision NetworkEstimator::decidePerConstWithhold(
+    const std::map<char, PerConstSigma0>& stats, double ceiling, int min_rows) {
+    // RTA-10 pure publish/withhold policy (see the header for the semantics).
+    // Publishable = clean by its OWN σ̂0_c under the SAME ceiling AND judgeable
+    // (enough rows).  Every input key lands in exactly one output set.
+    PerConstWithholdDecision dec;
+    for (const auto& [cst, st] : stats) {
+        if (st.sigma0_c <= ceiling && st.rows >= min_rows) dec.publish.insert(cst);
+        else                                               dec.withhold.insert(cst);
+    }
+    return dec;
 }
 
 } // namespace GnssProcessor

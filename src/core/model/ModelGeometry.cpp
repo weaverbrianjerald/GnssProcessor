@@ -943,12 +943,22 @@ namespace GnssProcessor {
                 if (!bc) return std::nullopt;
                 Eigen::Vector3d pos = bc->position;
                 Eigen::Vector3d vel = bc->velocity;
+                bool applied_apc = false;
                 if (ssr && ssr->has_orbit
                     && SsrCorrectionStore::iodeMatches(bc->iode, ssr->iode)) {
                     const double dt = TimeUtils::continuousGpsSeconds(time)
                                     - TimeUtils::continuousGpsSeconds(ssr->orbit_epoch_time);
                     pos = SsrCorrectionStore::applyOrbitToPosition(
                         pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
+                    applied_apc =
+                        (ssr->orbit_reference_point == SsrReferencePoint::APC);
+                }
+                // RTB-5(c): record whether THIS query's applied overlay was
+                // APC-referenced, so PppModel can skip the satellite-PCO term.
+                // Only while the toggle is armed — the default path stays
+                // byte-identical and never touches the map.
+                if (config_.getRealTimeConfig().honor_ssr_reference_point) {
+                    ssr_orbit_apc_applied_[satellite] = applied_apc;
                 }
                 return std::make_pair(pos, vel);
             };
@@ -1263,13 +1273,23 @@ namespace GnssProcessor {
                 }
             }
 
-            if (auto ssr = ssrStore().getOrbitClock(satellite, time, config_.getSsrMaxAge());
-                ssr && ssr->has_orbit
-                && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
-                const double dt = TimeUtils::continuousGpsSeconds(time)
-                                - TimeUtils::continuousGpsSeconds(ssr->orbit_epoch_time);
-                pos = SsrCorrectionStore::applyOrbitToPosition(
-                    pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
+            {
+                bool applied_apc = false;
+                if (auto ssr = ssrStore().getOrbitClock(satellite, time, config_.getSsrMaxAge());
+                    ssr && ssr->has_orbit
+                    && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->iode)) {
+                    const double dt = TimeUtils::continuousGpsSeconds(time)
+                                    - TimeUtils::continuousGpsSeconds(ssr->orbit_epoch_time);
+                    pos = SsrCorrectionStore::applyOrbitToPosition(
+                        pos, vel, ssr->delta_rac, ssr->delta_rac_dot, dt);
+                    applied_apc =
+                        (ssr->orbit_reference_point == SsrReferencePoint::APC);
+                }
+                // RTB-5(c): as in liveFallback — record only while the toggle
+                // is armed (byte-identical, allocation-free otherwise).
+                if (config_.getRealTimeConfig().honor_ssr_reference_point) {
+                    ssr_orbit_apc_applied_[satellite] = applied_apc;
+                }
             }
 
             // Find chronological window bounds for debug logging without re-sorting
