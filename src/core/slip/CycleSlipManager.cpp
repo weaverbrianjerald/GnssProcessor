@@ -1167,6 +1167,10 @@ CycleSlipEpochResult CycleSlipManager::detectAndRepair(
                         if (io_std > 0.0) {
                             state_manager.reinflateIonosphereVariance(
                                 sat_id, io_std * io_std);
+                            // Constant-velocity model: decorrelate the companion
+                            // rate too (no-op unless enableIonoRate).  0.0 => the
+                            // initial_std.ionosphere_rate default variance.
+                            state_manager.reinflateIonosphereRateVariance(sat_id, 0.0);
                         }
                         if (sb_std > 0.0) {
                             state_manager.reinflateSatBiasVariancesForSat(

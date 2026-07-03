@@ -46,6 +46,7 @@
 
 #include <cstddef>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -242,6 +243,24 @@ public:
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
         const Datum& datum) const;
 
+    /**
+     * @brief Baarda per-row redundancy numbers for one station's measurement rows
+     *        (B2 network RAIM standardization), in the datum-as-known frame.
+     *
+     * Zeros the @p datum-pinned columns of the last @ref solve's @ref sharedCovariance
+     * (the S-basis gauges are EXACT — no random uncertainty), then forwards to
+     * @ref NetworkNormalEquations::rowRedundancy.  Returns
+     * @f$r_i = 1 - w_i\,a_i^\top\mathrm{Cov}(\theta)\,a_i \in [0,1]@f$ per row, with
+     * @f$a_i = [\,@c A_s_rows.row(i)\mid@c A_r_rows.row(i)\,]@f$.  Requires a prior
+     * @ref solve.  A low value ⇒ a lightly-checked measurement whose residual barely
+     * responds to a fault (needs @f$/\sqrt{r_i}@f$ standardization to be flaggable).
+     */
+    Eigen::VectorXd rowRedundancy(std::size_t station,
+                                  const Eigen::MatrixXd& A_s_rows,
+                                  const Eigen::MatrixXd& A_r_rows,
+                                  const Eigen::VectorXd& w_rows,
+                                  const Datum& datum) const;
+
     /// @return The kernel's reduce-once instrumentation
     ///         (@ref NetworkNormalEquations::reduceRecomputeCount) for the current
     ///         epoch — asserts the carried prior did not force a second reduction.
@@ -328,6 +347,47 @@ public:
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
                                          int provider_id = 0, int solution_id = 0) const;
+
+    // --- RTA-10: per-constellation σ̂0 carve-out decision --------------------
+
+    /// One constellation's restriction of the network σ̂0 statistic
+    /// (@c network.per_const_withhold): σ̂0_c over that constellation's
+    /// carried-ambiguity phase rows, plus how many rows backed it.
+    struct PerConstSigma0 {
+        double sigma0_c{1.0};  ///< max(1, 1.4826·median r) over the constellation's rows.
+        int    rows{0};        ///< Standardized-residual rows in the constellation's pool.
+    };
+
+    /// The carve-out's publish/withhold partition of the judged constellations.
+    struct PerConstWithholdDecision {
+        std::set<char> publish;   ///< Constellations individually publishable.
+        std::set<char> withhold;  ///< Constellations to prune from the emission.
+    };
+
+    /**
+     * @brief Decide, per constellation, whether its slice of a σ̂0-withheld epoch is
+     *        individually publishable (RTA-10, @c network.per_const_withhold).
+     *
+     * Pure policy — no estimator state.  A constellation is PUBLISHABLE iff its
+     * σ̂0_c is at or below the SAME withhold ceiling the global σ̂0 tripped
+     * (@p ceiling = @c network.raim_withhold_sigma0) AND it has at least
+     * @p min_rows rows in its pool (fewer ⇒ too little redundancy to certify
+     * cleanliness under a contaminated epoch — withheld as UNJUDGEABLE, not
+     * published unjudged).  Everything else lands in @c withhold.  The caller maps
+     * the sets onto the emission: an empty @c publish means NO healthy subset
+     * exists and the whole-epoch withhold applies unchanged; a constellation
+     * absent from @p stats (zero rows) is likewise unjudgeable and must not be
+     * published by the caller.
+     *
+     * @param stats    Per-constellation σ̂0_c + row count (see the driver's pool
+     *                 partition of the within-epoch RAIM standardized residuals).
+     * @param ceiling  The A4 withhold ceiling (@c network.raim_withhold_sigma0).
+     * @param min_rows Minimum rows to be judgeable
+     *                 (@c network.per_const_withhold_min_rows).
+     * @return The publish/withhold partition of exactly the keys of @p stats.
+     */
+    static PerConstWithholdDecision decidePerConstWithhold(
+        const std::map<char, PerConstSigma0>& stats, double ceiling, int min_rows);
 
 private:
     /// Descriptor of one shared column (for reverse mapping in toSolutionEpoch).

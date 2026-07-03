@@ -435,7 +435,8 @@ namespace GnssProcessor {
         double azimuth,
         const std::string& rx_antenna_type,
         const GnssTime& time,
-        const Eigen::Vector3d& sun_pos_hint) const {
+        const Eigen::Vector3d& sun_pos_hint,
+        bool skip_satellite_pco) const {
 
         double correction = 0.0;
         bool is_phase = freq_type[0] == 'L';
@@ -655,7 +656,13 @@ namespace GnssProcessor {
             : std::string{};
         if (sat_entry && (!sat_pco_freq.empty() || !sat_pcv_freq.empty())) {
             // === PCO ===
+            // RTB-5(c): skip_satellite_pco suppresses ONLY this term — an
+            // APC-referenced (legacy-SSR) orbit already places the satellite
+            // at the phase center, so the CoM->APC offset must not be applied
+            // a second time.  PCV (defined about the APC boresight) and all
+            // receiver-side terms below are unaffected.
             if (config_.getModelCorrections().enable_satellite_pco
+                && !skip_satellite_pco
                 && !sat_pco_freq.empty()) {
             Eigen::Vector3d pco_body = sat_entry->pco.at(sat_pco_freq) * 1e-3; // mm -> m, in satellite body frame
             if (pco_body.allFinite()) {

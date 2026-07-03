@@ -74,6 +74,12 @@ namespace GnssProcessor {
         std::array<double, 3> position_ecef{ 0.0, 0.0, 0.0 }; ///< A-priori (or fixed) ECEF position (m).
         bool has_position{ false };               ///< True if @c position_ecef was supplied in the config.
         bool fixed{ false };                      ///< True when the station position is held fixed (reference station).
+        /// RTA-12 provenance: true when @c position_ecef was resolved from a loaded
+        /// SIF registry (velocity-propagated occupation) under
+        /// @c network.use_sif_coordinates rather than typed in the JSON.  Explicit
+        /// JSON coordinates always win, so this is false whenever the user supplied
+        /// them.  Logged per station at roster build.
+        bool position_from_sif{ false };
     };
 
     /**
@@ -166,6 +172,14 @@ namespace GnssProcessor {
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default OFF => float product).
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
+        /// RTA-6: flush the product file once per emitted epoch (after the epoch
+        /// block, incl. any RTA-5 S re-broadcast preceding it) so a LIVE tail
+        /// consumer (@c NetworkProductTail via realtime.network_products_path)
+        /// sees each epoch as soon as it is written instead of at
+        /// ofstream-buffer boundaries.  Flushing changes NO bytes — an OFF run's
+        /// file is byte-identical — but a live tail REQUIRES it for bounded
+        /// product latency.  Default false per the default-off toggle discipline.
+        bool product_flush_per_epoch{false};
 
         // --- Per-station compute parallelism (PASS A geometry + PASS B assembly) ---
         // The per-station geometry/measurement-model work is embarrassingly
@@ -194,7 +208,72 @@ namespace GnssProcessor {
         // --- Visualization traces (consumed by the pyviz network viewers) ---
         bool trace_stations{ true };      ///< Emit a static @c network_stations.csv roster (station id, role, ECEF) once at startup.  Cheap (one tiny file); drives the worldmap viewer so it reflects the stations that actually loaded.
         bool trace_ionosphere{ false };   ///< Emit @c network_ionosphere.csv: per-station, per-satellite back-substituted slant ionosphere (m) + elevation/azimuth each emitted epoch, for the ionospheric pierce-point map.  O(stations x sats x epochs) — off by default; enable for the iono viz.
+        bool trace_clock_full{ false };   ///< L4: append @c nis,mode columns to @c network_clock_monitor.csv (the exception to the append-only column rule — a trailing-column format break) and, when true, write EVERY sat-epoch row (both mode filters replaced with @c true) instead of only near/over-threshold rows.  The file itself still only opens under @ref trace_slip_events && (@ref clock_monitor || @ref clock_model); this only widens/annotates what it records.  Off by default.
         bool trace_slip_events{ false };  ///< Emit the deep-investigation slip log: @c network_if_slip.csv (per-(station,sat,pair) between-epoch IF ΔΔφ + the elevation-normalized / per-station-EWMA threshold decision, every epoch) and @c network_raim.csv (per-(sat,station) post-fit standardized residual + cross-station consensus at any spike).  O(stations x sats x epochs) for the IF file — off by default; enable to debug IF-phase pre-detector and RAIM events.
+        bool trace_anchor_info{ false };  ///< B7: emit @c network_anchor_info.csv — per-satellite a-priori-clock-anchor information fraction (anchor_info / reduced-normals total_info) each emitted epoch, so validation runs can CERTIFY the estimable clock is data-dominated over the a-priori CODE-product anchor.  Pure diagnostic (anchor fold unchanged); off by default.  O(clock_sats x epochs).
+        bool trace_dd_fractional{ false };///< B5: emit @c network_dd_fractional.csv — per-epoch cross-station between-satellite double-differenced float ambiguity (from reconstructStation), keyed (constellation,signal), with its fractional-cycle residual: a sign-convention self-check + empirical <0.1-cycle-support evidence for user AR.  O(stations x sats x epochs); off by default.  Pure additional CSV, no state mutation.
+        bool trace_flag_rates{ false };   ///< B8: log a per-tier flag-rate summary at end of run — for each RAIM/QC tier (IF-phase slip, within-epoch trigger, post-fit RAIM cell/consensus, clock-model NIS, clock-monitor) accumulate {opportunities, flags} over the run and report realized rate vs the implied one-sided Gaussian α for the configured k.  Also writes @c network_flag_rates.csv + @c network_run_summary.csv (L3).  Measurement only — no threshold or decision change; OFF (default) = byte-identical.
+        bool trace_epoch_status{ false }; ///< L1: emit @c network_epoch_status.csv — ONE row per processed epoch (emitted OR skipped) recording the disposition (emitted / gate_withheld / sigma0_withheld / solve_failed / datum_failed / sync_skip), σ̂0, within-epoch adapt count, refloat/retro counts, datum-change flag, and the clock-Δ median+std+worst-sat (the median+std+worst convention, unlike @c network_trace.csv's rms/max).  Makes per-epoch disposition + σ̂0 level-shifts mechanically judgeable (V1/V3/V6).  O(epochs); off by default — byte-identical when OFF (no new file).
+        bool write_run_manifest{ false }; ///< L15: write @c network_run_manifest.json (JSONL, two records) — a run-provenance snapshot (config path + FNV-1a-64 hash of the config bytes, build stamp, and the full network.* toggle/knob dump) at startup, plus an end-of-run record with the epoch counts + loop wall.  Makes an archived @c logs/ folder self-describing weeks later (which toggle set produced it) when everything is uncommitted.  Does NOT read git state.  Off by default.
+        double health_interval_s{ 0.0 };  ///< RTB-6: operator health-record cadence in seconds of PROCESSED (content) time.  When > 0 the producer appends a machine-readable @c network_service_health.csv row every @c health_interval_s of data — cumulative epochs emitted/skipped/gate-withheld/σ̂0-withheld/runaway, the σ̂0 EWMA (−1 sentinel = "unavailable" when its feeding tiers @ref emit_ura + @ref raim + @ref phase_leveling are not ALL armed; the value would otherwise sit frozen at its 1.0 init), stations present, clock sats, mean ms/epoch over the just-ended health window, last-emit age, and the realized per-constellation clock pivots ("G:G05;E:E11"; empty before the first emit) — so a SERVICE run is observable WITHOUT waiting for the exit-time summary (all health surfaces else assume a finite run).  Distinct from the RTA-10 per-epoch product @c H status record (this is an aggregate OPERATOR heartbeat, not product content) and from the pyviz @c network_health VIEWER (which reads @c network_trace.csv, a different surface — hence this file's @c service name).  Column semantics: @c docs/rt_service_operations.md.  Negative values clamp to 0 with a warning.  Default 0 = off ⇒ no file, byte-identical.
+        double trace_rotate_mb{ 0.0 };    ///< P1: size-based rotation threshold (MiB) for the unbounded service CSVs — the always-on @c network_trace.csv / @c network_solution.csv and the RTB-6 @c network_service_health.csv.  When > 0, a file crossing the threshold is closed, the suffix chain shifts (<tt>file.csv.k → file.csv.(k+1)</tt> up to @ref trace_rotate_keep, oldest deleted), the live file becomes <tt>file.csv.1</tt>, and a fresh live file reopens WITH the header re-written, so every rolled generation parses standalone.  NOTE: the pyviz viewers auto-discover only the LIVE file name — rotated @c .1…@c .keep suffixes are NOT read; the operator concatenates the chain (headers of non-first generations stripped) or points a viewer at one generation (see @c docs/rt_service_operations.md).  Checked once per processed epoch, so a file may overshoot by up to one epoch's rows.  Negative values clamp to 0 with a warning.  Default 0 = off ⇒ no rename/close ever happens, byte-identical.
+        int    trace_rotate_keep{ 3 };    ///< P1: rolled generations retained per rotating CSV (<tt>.1 … .keep</tt>; the shift deletes <tt>.keep</tt> first).  Inert unless @ref trace_rotate_mb > 0.  Values < 1 clamp to 1 with a warning.  Default 3.
+        double warmup_ura_floor_m{ 0.0 }; ///< RTB-7(b): cold-start quality-ramp URA floor (m).  While the startup ramp is ACTIVE the emitted per-sat URA is floored at this value, so a freshly (re)started producer advertises DEGRADED quality and a consumer down-weights/withholds instead of trusting a not-yet-converged network solution.  The ramp LIFTS (see @c networkWarmupRampLifted) when BOTH: (1) emitted epochs ≥ max(@ref warmup_epochs, @c phase_leveling_warmup_epochs) — the carry population is warm, not merely counted; AND (2) the σ̂0 EWMA has received ≥ @ref warmup_epochs updates, OR the EWMA is structurally unavailable this run (the RTB-6 sentinel condition: @c emit_ura + @c raim + @c phase_leveling not all armed — then the epoch count alone decides).  The lift is logged with the RTB-7(c) cold-start-to-product-grade metric (also a @c network_service_health.csv column).  On an RTB-7(a) WARM resume the ramp state restores from the snapshot — a warm-resumed producer is NOT degraded.  Requires @c network.emit_ura (a floor without it is warned as a silent no-op at load).  Default 0 = off ⇒ emitted URA unchanged (byte-identical).
+        int    warmup_epochs{ 0 };        ///< RTB-7(b): the quality-ramp horizon — the minimum EMITTED-epoch count AND the minimum σ̂0-EWMA update count required before the @c warmup_ura_floor_m lifts (combined with @c phase_leveling_warmup_epochs; see @ref warmup_ura_floor_m for the exact rule).  Inert unless @c warmup_ura_floor_m > 0.  Default 0 = off (the ramp then waits only for the phase-leveling warmup).
+        // --- RTB-7(a): producer state snapshot + warm resume -----------------
+        /// Path of the producer state-snapshot file (empty = OFF, byte-identical).
+        /// A relative path lands under the network log directory.  When set, the
+        /// producer atomically rewrites this file every @ref state_snapshot_interval_s
+        /// of product time (temp-file + rename replace — a crash mid-write never
+        /// corrupts the previous good snapshot) with BOTH cross-epoch state layers
+        /// (driver carries/oscillators/pivots/pending-bump sets/generation id +
+        /// the emitter's discontinuity stream state).  At startup, a snapshot that
+        /// parses, matches the run's datum-relevant config fingerprint, and is
+        /// younger than the carry-validity horizon (max of
+        /// @c phase_leveling_max_gap_s / @c clock_model_max_gap_s vs the first
+        /// live epoch) triggers a WARM resume: state restores, the RTA-3
+        /// generation id is PRESERVED (no consumer reset), and per-key staleness
+        /// is judged by the existing downstream gap machinery.  Anything else
+        /// cold-starts safely with a warning and a fresh generation id.  See
+        /// @c products/NetworkStateSnapshot.hpp.
+        std::string state_snapshot_path;
+        /// RTB-7(a): snapshot cadence in seconds of PRODUCT (content) time.
+        /// Checked at the end of each EMITTED epoch.  Non-positive values clamp
+        /// back to the default with a warning.  Inert while
+        /// @ref state_snapshot_path is empty.  Default 10.
+        double state_snapshot_interval_s{ 10.0 };
+        bool trace_station_residuals{ false }; ///< L13: emit @c network_station_residuals.csv — EVERY post-fit RAIM cell (per non-pivot station with carried ambiguities, per sat) with its measurement-standardized residual @c s_raw (already B2-normalized), the σ̂0-normalized @c s_norm, and the epoch σ̂0.  Answers "which station is poisoning the network".  VERY heavy (≈ stations x sats x RAIM-epochs — e.g. 50x40x3600 ≈ 7M rows); requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
+        bool trace_ssr_consumer{ false }; ///< L10: CONSUMER-side trace — the RealTimeEngine SSR consumer writes @c ssr_consumer_trace.csv (correction age, clk-applied, c0, URA, the recomputed R-inflation add-variance, phase-bias age/freshness, and disc counters) per modeled sat per processed epoch.  The V4 consumer-side evidence that the producer's URA/disc actually reach the user solution.  Off by default — byte-identical when OFF.
+        bool trace_zwd{ false };          ///< L7: emit @c network_zwd.csv — per present station each emitted epoch, the estimated ZWD (a-priori state + reconstructed correction) and its datum-conditioned formal σ, plus a carried flag (a ZWD carry prior was actually injected).  The V7 instrument for border-station formal-σ sharpening under @ref carry_zwd — no data source for it exists otherwise.  O(stations x epochs); off by default — byte-identical when OFF.
+        bool trace_events{ false };       ///< L2: emit @c network_events.csv — one structured LONG-format row per discrete QC ACTION (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), replacing spdlog regex-scraping of which sat/station/arc was acted on and when.  Note pivot handover + retro-bump arming are otherwise SILENT.  Rows are written even on subsequently-withheld epochs (that IS the disposition story).  O(QC events); off by default — byte-identical when OFF (no new file).
+        bool serialize_sbasis_contract{ false }; ///< B6: stamp the S-basis contract (declaration + a-priori orbit/clock product identity + phase-bias discontinuity threshold) into the product-file header (v2 "S" line) so a consumer can cross-check compatibility.  OFF (default) => the product file stays byte-identical to the v1 format.
+
+        // --- RTA-12: product-contract identity + survey-grade station coordinates ---
+        /// Declared reference frame of the fixed station coordinates, e.g. "IGS20".
+        /// Pure declaration (no auto-detection); travels in the S-contract line as an
+        /// optional @c frame= field — empty (default) writes nothing (byte-identity).
+        std::string frame_id;
+        /// Declared coordinate epoch — a decimal year ("2024.5") or an ISO date
+        /// ("2024-07-01").  Travels as the optional @c cepoch= S-line field; empty
+        /// (default) writes nothing.  When @ref use_sif_coordinates propagated any
+        /// roster coordinate and this was left empty, the loader defaults it to the
+        /// propagation date (decimal year).
+        std::string coord_epoch;
+        /// Resolve roster coordinates from the loaded SIF registry
+        /// (@c processing.enable_station_info) for stations whose @c position_ecef
+        /// was NOT typed in the JSON: the occupation valid at the run date is
+        /// velocity-propagated to that date (x(t) = x_ref + v·(t − t_ref) + periodic
+        /// + post-seismic; see @c resolveStationCoordinate).  Explicit JSON ECEF
+        /// always wins.  OFF (default): a missing @c position_ecef stays the
+        /// pre-RTA-12 hard load error.
+        bool use_sif_coordinates{ false };
+        /// Cheap coordinate-age advisory: when @ref coord_epoch is set and parseable
+        /// and the run date lies more than this many years beyond it, log a single
+        /// WARN at roster build (plate motion is ~2-7 cm/yr — recommend
+        /// re-propagation).  0 (default) = off.  Suggested: 1.0.  Advisory only; a
+        /// datum-event machinery (automatic re-propagation / product re-basing) is an
+        /// RTF-scale follow-on, not this knob.
+        double coord_age_warn_years{ 0.0 };
     };
 
     /**
@@ -221,6 +300,15 @@ namespace GnssProcessor {
         std::string output_type{ "console" };     ///< Output destination: "console", "file", "nmea".
         std::string output_path;                  ///< Path for file-based output.
         size_t      max_epoch_buffer{ 100 };      ///< Max epochs to buffer before dropping oldest.
+        /// RTB-4: pin PRECISE (e.g. ultra-rapid SP3) orbits while satellite CLOCKS
+        /// still arrive from the live/network stream ("ULT orbits + network clocks").
+        /// Default false ⇒ the orbit source follows the clock source exactly as
+        /// before (@ref GnssConfig::realtimeUsesLiveOrbitClockSource), byte-identical.
+        /// When true (real-time only) the engine loads/resolves precise SP3 and
+        /// skips only the precise CLK; the file-boundary switchover between
+        /// consecutive ultra-rapid orbit files is a datum event the producer and
+        /// consumer must cross at the SAME epoch (see RTF-1).
+        bool        use_precise_orbits{ false };
 
         /**
          * @brief Optional second RTCM stream carrying SSR corrections.
@@ -249,6 +337,27 @@ namespace GnssProcessor {
             std::string input_path;               ///< Path for "file" input_type.
             std::string tcp_host;                 ///< Host for "tcp" input.
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
+
+            /**
+             * @brief RTA-8(b): per-stream SSR ingest accept policy
+             *        (@c corrections_accept key inside this stream's block).
+             *
+             * @c "all" (default) pushes every decoded SSR record from this
+             * stream into the correction store — byte-identical legacy
+             * behaviour.  @c "orbit_only" pushes orbit and URA records as
+             * today but DROPS standalone clock, code-bias, phase-bias and
+             * high-rate-clock records, and DECOMPOSES combined orbit+clock
+             * records (1060/1066-class) into an orbit-only push.  This is the
+             * ingest half of the "orbits from the external RTS stream,
+             * clocks/biases from OUR network product" wiring: without it the
+             * RTS stream's clock content would land in the singleton store
+             * and shadow the injected network clock (the store's fresh
+             * combined record wins over a standalone clock).  Unknown values
+             * warn at load and fall back to @c "all".  Applied per frame in
+             * @c RealTimeEngine::feedRtcmFrame via
+             * @c RealTimeEngine::ssrPushAction.
+             */
+            std::string accept{ "all" };
         };
         Corrections corrections;                   ///< Optional SSR corrections stream.
 
@@ -276,6 +385,156 @@ namespace GnssProcessor {
          */
         using Ephemeris = Corrections;
         Ephemeris ephemeris;                       ///< Optional broadcast-ephemeris (nav) stream.
+
+        /**
+         * @brief RTA-6: path to a LIVE (growing) network product file to consume.
+         *
+         * When non-empty, @c Application::runRealTime owns an
+         * @c SsrCorrectionStore + @c NetworkProductTail pair: the tail is polled
+         * once per poll-loop iteration, newly completed product epochs are
+         * replayed into the owned store, the store is injected into the engine
+         * via @c RealTimeEngine::setSsrStore (consume flags from the
+         * @c processing.network_consumer profile when enabled), and the engine's
+         * obs↔SSR hold buffer is woken via @c notifyProductsAdvanced.  The
+         * producer must run @c network.product_flush_per_epoch (and ideally
+         * @c network.contract_rebroadcast_s + @c network.serialize_disc_counters
+         * for late-join robustness).  Empty (default) = off; the realtime path
+         * is byte-identical.
+         */
+        std::string network_products_path;
+
+        /**
+         * @brief RTA-12(3): blunder gate on the RTCM 1005/1006 a-priori seed (m).
+         *
+         * The engine seeds the filter a-priori from a decoded station ARP when no
+         * configured reference position pins it.  With this gate armed (> 0) and a
+         * plausible a-priori already present (a RINEX-header / SBF-PVT / earlier-ARP
+         * seed), a decoded ARP that disagrees with it by more than this many metres
+         * is REJECTED with a WARN carrying both coordinates and the distance — a
+         * mis-configured caster (wrong mountpoint, stale 1005 coordinates) can
+         * otherwise teleport the a-priori across the country.  A configured
+         * reference position is never overwritten regardless; with the gate armed it
+         * is additionally cross-checked against the broadcast ARP (WARN on
+         * disagreement).  0 (default) = off — the legacy seed-always behaviour,
+         * byte-identical.  Suggested: 10.0.
+         */
+        double arp_blunder_gate_m{ 0.0 };
+
+        /**
+         * @brief RTB-1(c): GPS-UTC leap-second count for the RT wall-clock →
+         *        GPS conversion (@c realtime.leap_seconds).
+         *
+         * Default 18 = the compiled @c TimeUtils::LEAP_SECONDS (valid from
+         * 2017-01-01), so an absent key changes nothing.  Applied via
+         * @c TimeUtils::setLeapSecondsOverride at @c RealTimeEngine::initialize,
+         * it feeds @c TimeUtils::nowContinuousGpsSeconds — the host-clock
+         * anchor of the RTCM decode paths (cold-start week promotion, GLONASS
+         * day resolution, obs-lag measurement) — so a future leap-second
+         * insertion can be accommodated by config before a rebuild.  Deriving
+         * the count from the broadcast nav message (LNAV ΔtLS) is the
+         * RTF-scale follow-on.
+         */
+        int leap_seconds{ 18 };
+
+        /**
+         * @brief RTB-3: derive the LLI loss-of-lock bit (0x1) from MSM lock
+         *        times (@c realtime.msm_lli_from_locktime).
+         *
+         * RTCM MSM carries per-(sat, signal) LOCK TIMES, not RINEX LLI flags;
+         * only the half-cycle 0x2 bit can be set statelessly at decode.  With
+         * this armed, @c RealTimeEngine runs a @c LockTimeTracker over the
+         * decoded lock times at epoch assembly and ORs 0x1 into the assembled
+         * observation's LLI when lock decreased (RTKLIB @c lossoflock rule —
+         * see LockTimeTracker.hpp).  Default false: arming CHANGES
+         * slip-detection behaviour on RT replays (the LLI-triggered reset
+         * paths start firing), so it must be an explicit choice.
+         */
+        bool msm_lli_from_locktime{ false };
+
+        /**
+         * @brief RTB-5(c): honor the SSR orbit reference point in the satellite
+         *        PCO term (@c realtime.honor_ssr_reference_point).
+         *
+         * Legacy RTCM SSR (1057/1060/1240-series) corrects the broadcast orbit
+         * to the satellite ANTENNA PHASE CENTER; IGS-SSR 4076 and SP3 correct
+         * to the CENTER OF MASS.  @c PppModel applies the satellite PCO
+         * unconditionally — correct for CoM baselines, but a DOUBLE COUNT of
+         * the PCO z-offset (0.6-2.6 m along the LOS) when an APC-referenced
+         * legacy-SSR orbit is in effect.  When armed, the satellite-PCO range
+         * term is SKIPPED for exactly those satellites whose applied orbit
+         * correction this epoch is tagged @c SsrReferencePoint::APC (recorded
+         * per satellite by @c Geometry at the orbit-overlay apply sites).
+         * Default false = byte-identical legacy behaviour, including for
+         * users knowingly running legacy SSR with the historical double count.
+         */
+        bool honor_ssr_reference_point{ false };
+    };
+
+    /**
+     * @brief First-class NETWORK-CONSUMER profile for a standalone user (RTA-7).
+     *
+     * The closed-loop harness inside @c Application::runNetwork derives its
+     * consumer config from the producer config
+     * (@c GnssConfig::deriveClosedLoopConsumerConfig).  A STANDALONE real-time
+     * consumer — a separate process tailing a live product file
+     * (@c realtime.network_products_path) — has no producer config to derive
+     * from, so this profile block (@c processing.network_consumer) declares the
+     * same intent explicitly and @c GnssConfig::applyNetworkConsumerProfile
+     * applies the SAME couplings through the shared
+     * @c GnssConfig::applyNetworkConsumerCouplings helper (one source of truth
+     * with the closed-loop derivation).  Default @c enable=false leaves every
+     * path byte-identical.
+     *
+     * RTA-9(a): when @c bias is on and the user did not explicitly set
+     * @c processing.enable_ssr_bias_max_age, @c applyNetworkConsumerProfile
+     * arms the bias staleness gate (an explicit @c false is respected) —
+     * consuming network biases without an age gate would silently apply
+     * unboundedly stale biases across producer withhold gaps.
+     *
+     * RTA-9(c) — cadence sizing: the consumer's staleness gates only work if
+     * the producer emit cadence is MUCH shorter than the acceptance window —
+     * size @c processing.ssr_max_age_s so that emit cadence ≪ ssr_max_age/2
+     * (e.g. a 5 s product cadence comfortably fits the 30 s default; a 30 s
+     * cadence needs ssr_max_age ≥ 60 s or every other epoch drops to
+     * broadcast-grade).  @c processing.ssr_clock_stale_hold_factor buys
+     * additional margin for producer WITHHOLD gaps (RAIM/QC epochs that emit
+     * nothing): held clocks stay applied with honest R inflation instead of
+     * falling off the broadcast-grade cliff.
+     */
+    struct NetworkConsumerConfig {
+        bool enable{ false };        ///< Master switch.  Only takes effect when a product source exists (realtime.network_products_path set).
+        bool clock{ true };          ///< Consume the network CLOCK (setSsrStore consume_clock).  false = keep precise SP3/CLK, consume only the bias products.
+        bool bias{ true };           ///< Consume the network code/phase BIAS (setSsrStore consume_bias).
+        bool undifferenced{ true };  ///< Consumer user model: true = undifferenced uncombined PPP-RTK user (direct per-band LAMBDA, no BSSD); false = legacy BSSD consumer.
+        /**
+         * @brief RTA-8(a): where the SSR ORBIT overlay reads from
+         *        (@c processing.network_consumer.orbit_source).
+         *
+         * @c "external" (default): the orbit overlay stays on the process-wide
+         * singleton store — fed by the external RTS corrections stream (which
+         * should be ingest-filtered to @c corrections_accept="orbit_only",
+         * RTA-8(b), so its clock content cannot shadow the network clock) —
+         * while clocks/biases come from the injected network-product store.
+         * @c "network": the orbit overlay reads the injected store too, for a
+         * future network product that carries its own orbit corrections.
+         * Unknown values warn at load and fall back to @c "external".  Maps to
+         * @c RealTimeEngine::SsrOrbitSource at the @c setSsrStore call site in
+         * @c Application::runRealTime; ignored when the profile is off (the
+         * legacy coupled routing is used).
+         */
+        std::string orbit_source{ "external" };
+        /// Optional EXPLICIT override for @c RealTimeEngine::setArIgnoreMwWl
+        /// (tri-state: -1 = absent → derive exactly as the closed-loop driver
+        /// does, @c !getArWlOnly() after the couplings; 0/1 = forced).  The MW
+        /// detector's WL integers are in the .BIA frame — feeding them to AR
+        /// while the float carries NETWORK phase biases injects a conflicting WL
+        /// datum, so the derived value is true for the undifferenced consumer.
+        int  ar_ignore_mw_wl{ -1 };
+        std::string expect_reference_receiver;  ///< Optional S-contract expectation: producer reference receiver id ("" = don't pin).
+        std::string expect_apriori_product_id;  ///< Optional S-contract expectation: a-priori orbit/clock product identity ("" = don't pin).
+        std::string expect_frame_id;            ///< RTA-12 optional S-contract expectation: reference frame id, e.g. "IGS20" ("" = don't pin).
+        std::string expect_atx_id;              ///< RTA-12 optional S-contract expectation: producer ATX basename, e.g. "igs20.atx" ("" = don't pin).
+        std::string expect_orbit_ref;           ///< RTA-12 optional S-contract expectation: orbit reference point, "CoM" or "APC" ("" = don't pin).
     };
 
     /**
@@ -996,7 +1255,27 @@ namespace GnssProcessor {
         /// Ionosphere zenith delay (m*m/s). Only active in PPP-RTK
         /// uncombined mode. Scaled to slant by 1/sin�(el) per satellite.
         /// 0.02 is within the typical 0.01-0.1 range for the zenith value.
+        /// This is the random-walk driving noise; when @c enable_iono_rate is
+        /// on the per-sat iono becomes a constant-velocity [I,Idot] block and
+        /// this field is superseded by @c iono_rate_psd (see below).
         double ionosphere{ 0.10 };
+
+        /// Per-satellite slant-iono RATE acceleration PSD (m*m/s^3).  Active
+        /// only when @c enable_iono_rate is on: the per-sat slant iono is
+        /// modelled as a constant-velocity pair [I_s, Idot_s] with transition
+        /// [[1,dt],[0,1]] and the coupled CWNA (continuous white-noise
+        /// acceleration) block Q[I]=q*dt^3/3, Q[I,Idot]=q*dt^2/2, Q[Idot]=q*dt
+        /// — exactly the receiver clock-bias/clock-rate template (@c clock_rate).
+        /// The rate carries the largely-deterministic slant-iono ramp (obliquity
+        /// change + pierce-point motion + diurnal VTEC trend), leaving only the
+        /// turbulent 2nd-order part as process noise, so the iono prior tightens
+        /// ~1000x vs the random walk (stronger AR/position + in-band iono-fault
+        /// detection).  Obliquity-scaled to slant by 1/sin^2(el) like the level
+        /// state.  Default 1e-10 was fit from real 24 h GPS+Galileo arc data
+        /// (the zenith accel PSD reproducing the observed second-difference
+        /// scatter of 2 mm at zenith to 8 mm at 12 deg elevation).  Orthogonal
+        /// to @c adaptive_iono_process_noise, which inflates this PSD in storms.
+        double iono_rate_psd{ 1e-10 };
 
         /// Carrier phase ambiguity (m*m/s).  Default 1e-12 is a "safety
         /// floor" — sub-mm accumulation per day, indistinguishable from
@@ -1102,6 +1381,7 @@ namespace GnssProcessor {
         double clock{ 1e3 };          ///< Initial clock bias standard deviation (m).
         double troposphere{ 0.5 };      ///< Initial tropospheric zenith delay standard deviation (m).
         double ionosphere{ 5.0 };       ///< Initial ionospheric zenith delay standard deviation (m).
+        double ionosphere_rate{ 0.1 };  ///< Initial slant-iono RATE standard deviation (m/s) — cold-start Idot_s uncertainty when @c enable_iono_rate is on. Generous; quickly informed by the F-coupling into I_s.
         double ambiguity{ 1e3 };      ///< Initial ambiguity standard deviation (m).
         double code_bias{ 10.0 };         ///< Initial receiver code bias (IFB) standard deviation (m).
         double system_time_offset{ 1e2 }; ///< Initial inter-system time bias standard deviation (m).

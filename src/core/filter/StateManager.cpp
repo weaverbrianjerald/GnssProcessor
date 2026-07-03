@@ -164,6 +164,7 @@ namespace GnssProcessor {
         for (auto& kv : sat_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_clock_indices_)      if (kv.second > rem_idx) --kv.second;
         for (auto& kv : ionosphere_indices_)     if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : iono_rate_indices_)      if (kv.second > rem_idx) --kv.second;
     }
 
     // ===================================================================
@@ -484,7 +485,8 @@ namespace GnssProcessor {
     size_t StateManager::getStateSize() const {
         return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size()
              + sat_phase_bias_indices_.size() + sat_clock_indices_.size()
-             + ionosphere_indices_.size() + ambiguity_indices_.size();
+             + ionosphere_indices_.size() + iono_rate_indices_.size()
+             + ambiguity_indices_.size();
     }
 
     Eigen::VectorXd StateManager::getStateVector() const {
@@ -633,8 +635,14 @@ namespace GnssProcessor {
         // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin�(el)
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             const double q_zenith_default = pn.ionosphere;
+            const bool   iono_cv          = config_.enableIonoRate();
+            const double q_rate_zenith    = pn.iono_rate_psd; // accel PSD (m^2/s^3)
+            const double dt2              = dt * dt;
             for (const auto& [sat, idx] : ionosphere_indices_) {
                 // Suppress process noise for BSSD pivot iono states (unobservable).
+                // For a pivot this also zeroes the companion rate Q (the whole
+                // satellite is skipped), so the frozen (0,0) rate never accrues
+                // variance — mirroring the level-state pivot treatment.
                 if (frozen_pivot_sats_.count(sat)) continue;
 
                 // Per-satellite override from the adaptive iono process-noise
@@ -652,7 +660,33 @@ namespace GnssProcessor {
                     sin2_el = sin_el * sin_el;
                     if (sin2_el < 0.01) sin2_el = 0.01; // floor at ~5.7 deg to avoid blow-up
                 }
-                Q(idx, idx) = (q_zenith / sin2_el) * dt;
+
+                if (iono_cv) {
+                    auto rit = iono_rate_indices_.find(sat);
+                    if (rit != iono_rate_indices_.end()) {
+                        // Constant-velocity [I_s, Idot_s] CWNA block.  The
+                        // acceleration PSD is obliquity-scaled to slant like the
+                        // level state (empirically q_zenith/sin^2 reproduces the
+                        // observed slant rate-scatter across elevation).  When the
+                        // adaptive monitor has flagged this satellite, inflate the
+                        // rate PSD by the SAME ratio it would have inflated the
+                        // level RW (override / static level q) — so the Sage-Husa
+                        // storm response drives the physically-correct term (Idot)
+                        // and its m^2/s->m^2/s^3 unit change is handled as a pure
+                        // dimensionless multiplier.
+                        double q_rate = q_rate_zenith / sin2_el;
+                        if (q_ov != iono_q_overrides_.end() && q_zenith_default > 0.0) {
+                            q_rate *= (q_ov->second / q_zenith_default);
+                        }
+                        const size_t r = rit->second;
+                        Q(idx, idx) = q_rate * dt2 * dt / 3.0; // level: q*dt^3/3
+                        Q(idx, r)   = q_rate * dt2 / 2.0;      // cross: q*dt^2/2
+                        Q(r,   idx) = q_rate * dt2 / 2.0;
+                        Q(r,   r)   = q_rate * dt;             // rate:  q*dt
+                        continue;
+                    }
+                }
+                Q(idx, idx) = (q_zenith / sin2_el) * dt; // random-walk fallback
             }
         }
 
@@ -799,6 +833,23 @@ namespace GnssProcessor {
             }
         }
 
+        // Per-satellite slant-iono level/rate coupling (constant-velocity model):
+        // I_s(k+1) = I_s(k) + dt * Idot_s(k).  Unlike the clock (SD-unobservable,
+        // gated off under BSSD) the slant-iono LEVEL is observable under BSSD —
+        // only the pivot column is zeroed — so the coupling is kept for every
+        // non-pivot satellite.  A frozen pivot's rate is held at (0,0) with its
+        // Q suppressed; leaving its coupling live would re-drive the pivot level
+        // off the SD datum, so skip it.
+        if (config_.enableIonoRate()) {
+            for (const auto& [sat, iono_idx] : ionosphere_indices_) {
+                if (frozen_pivot_sats_.count(sat)) continue;
+                auto rit = iono_rate_indices_.find(sat);
+                if (rit != iono_rate_indices_.end()) {
+                    F(iono_idx, rit->second) = dt;
+                }
+            }
+        }
+
         auto logger = log_manager_.getLogger("state_manager");
         logger->trace("Computed transition matrix: size={}x{}, dt={:.3f} s, velocity_coupling={}, clock_rate_coupling={}",
             F.rows(), F.cols(), dt,
@@ -910,6 +961,7 @@ namespace GnssProcessor {
         //     never alias (e.g. iono "G01" vs sat-bias prefix "G01|C1W"). ---
         for (const auto& kv : getAmbiguities())        put(kv.second, "AMB:"   + kv.first);
         for (const auto& kv : getIonosphereStates())   put(kv.second, "IONO:"  + kv.first);
+        for (const auto& kv : getIonosphereRateStates()) put(kv.second, "IONORATE:" + kv.first);
         for (const auto& kv : getCodeBiasStates())     put(kv.second, "CBIAS:" + kv.first);
         for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
         for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
@@ -980,6 +1032,10 @@ namespace GnssProcessor {
             for (const auto& [sat, idx] : ionosphere_indices_)
                 if (idx < static_cast<size_t>(current_state.size()))
                     ppp_state.slant_ionosphere[sat] = current_state(idx);
+            ppp_state.slant_ionosphere_rate.clear();
+            for (const auto& [sat, idx] : iono_rate_indices_)
+                if (idx < static_cast<size_t>(current_state.size()))
+                    ppp_state.slant_ionosphere_rate[sat] = current_state(idx);
         }
 
         ppp_state.system_time_offsets.clear();
@@ -1015,6 +1071,11 @@ namespace GnssProcessor {
             for (const auto& [sat, value] : ppp_state.slant_ionosphere) {
                 auto it = ionosphere_indices_.find(sat);
                 if (it != ionosphere_indices_.end() && it->second < static_cast<size_t>(sv.size()))
+                    sv(it->second) = value;
+            }
+            for (const auto& [sat, value] : ppp_state.slant_ionosphere_rate) {
+                auto it = iono_rate_indices_.find(sat);
+                if (it != iono_rate_indices_.end() && it->second < static_cast<size_t>(sv.size()))
                     sv(it->second) = value;
             }
         }
@@ -1244,6 +1305,15 @@ namespace GnssProcessor {
         return ionosphere_indices_;
     }
 
+    int StateManager::getIonosphereRateIndex(const std::string& satellite) const {
+        auto it = iono_rate_indices_.find(satellite);
+        return it != iono_rate_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getIonosphereRateStates() const {
+        return iono_rate_indices_;
+    }
+
     size_t StateManager::addIonosphereState(const std::string& satellite, double initial_value,
                                              double std_scale) {
         auto logger = log_manager_.getLogger("state_manager");
@@ -1266,6 +1336,19 @@ namespace GnssProcessor {
 
         const size_t index = appendState(initial_value, init_var);
         ionosphere_indices_[satellite] = index;
+
+        // Constant-velocity model: append the companion iono-RATE state Idot_s
+        // (seed 0, cold-start variance from initial_std.ionosphere_rate).  The
+        // two rows are adjacent at append time but are always addressed via their
+        // own maps thereafter — never assume (idx, idx+1) after prunes/re-adds.
+        if (config_.enableIonoRate() && iono_rate_indices_.find(satellite) == iono_rate_indices_.end()) {
+            const double r_std = config_.getInitialStd().ionosphere_rate;
+            const double r_var = r_std * r_std;
+            const size_t r_index = appendState(0.0, r_var);
+            iono_rate_indices_[satellite] = r_index;
+            logger->info("Added iono-rate state for {} at index {}, init_std={:.3f} m/s",
+                satellite, r_index, r_std);
+        }
 
         logger->info("Added ionosphere state for {} at index {} with initial value {:.3f} m, init_std={:.1f} m",
             satellite, index, initial_value, std::sqrt(init_var));
@@ -1294,6 +1377,31 @@ namespace GnssProcessor {
                 continue;
             }
 
+            // Constant-velocity model: the satellite owns two rows (level + rate).
+            // removeStateAtIndex shifts every higher dynamic index down by one, so
+            // remove the HIGHER index first.  CRUCIAL: removeStateAtIndex sizes the
+            // shrunk matrix from getStateSize() (which counts the index maps), so
+            // that count must match the actual matrix at EACH call — erase each
+            // row's map entry immediately after its removal, never both up front.
+            auto rit = iono_rate_indices_.find(sat);
+            if (rit != iono_rate_indices_.end()) {
+                const size_t rate_idx = rit->second;
+                const size_t hi = std::max(rem_idx, rate_idx);
+                const size_t lo = std::min(rem_idx, rate_idx);
+                auto erase_entry = [&](size_t which) {
+                    if (which == rate_idx) iono_rate_indices_.erase(sat);
+                    else                   ionosphere_indices_.erase(sat);
+                };
+                removeStateAtIndex(hi);   // matrix -1; keep both map entries so getStateSize()==old
+                erase_entry(hi);          // now maps count == matrix (old-1)
+                removeStateAtIndex(lo);   // matrix -1; getStateSize()==old-1 matches
+                erase_entry(lo);          // maps count == matrix (old-2)
+                ionosphere_elevations_.erase(sat);
+                ionosphere_azimuths_.erase(sat);
+                logger->debug("Removed ionosphere+rate states for {} at former indices {} / {}",
+                              sat, rem_idx, rate_idx);
+                continue;
+            }
             removeStateAtIndex(rem_idx);
             ionosphere_indices_.erase(sat);
             ionosphere_elevations_.erase(sat);
@@ -1355,6 +1463,54 @@ namespace GnssProcessor {
                       satellite, idx, prev_value,
                       std::sqrt(std::max(prev_diag, 0.0)),
                       std::sqrt(new_variance));
+    }
+
+    void StateManager::reinflateIonosphereRateVariance(const std::string& satellite,
+                                                       double new_variance) {
+        if (!config_.enableIonoRate()) return;
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const auto it = iono_rate_indices_.find(satellite);
+        if (it == iono_rate_indices_.end()) {
+            logger->debug("reinflateIonosphereRateVariance: no iono-rate state for {}", satellite);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(it->second);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("reinflateIonosphereRateVariance index out of bounds for {}: idx={}, "
+                          "state_size={}, cov={}x{}",
+                          satellite, idx, state_vector_.size(), covariance_.rows(), covariance_.cols());
+            return;
+        }
+
+        // Refuse to disturb a frozen pivot row (held at (0,0) by PivotManager).
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("reinflateIonosphereRateVariance refused on frozen pivot {} "
+                          "(idx={}, P_diag={:.3e}); BSSD invariant preserved",
+                          satellite, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double ir_std = config_.getInitialStd().ionosphere_rate;
+            new_variance = ir_std * ir_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        // Value preserved: the physical slant-iono rate is continuous across a
+        // phase-lock loss (the ionosphere keeps ramping), just as the level
+        // value is preserved; only the cross-covariance partition is broken so
+        // the filter re-partitions cleanly over the next several epochs.
+
+        logger->info("Reinflated iono-rate state for {} at index {}: "
+                      "value={:+.5f} m/s (unchanged), std {:.4f} -> {:.4f} m/s",
+                      satellite, idx, prev_value,
+                      std::sqrt(std::max(prev_diag, 0.0)), std::sqrt(new_variance));
     }
 
     void StateManager::reinflateCodeBiasVariance(const std::string& key,
@@ -2180,9 +2336,12 @@ namespace GnssProcessor {
         collectSatSpecificIndices(const StateManager& sm) {
             std::vector<Eigen::Index> out;
             out.reserve(sm.getIonosphereStates().size()
+                      + sm.getIonosphereRateStates().size()
                       + sm.getAmbiguities().size()
                       + sm.getSatBiasStates().size());
             for (const auto& [_, idx] : sm.getIonosphereStates())
+                out.push_back(static_cast<Eigen::Index>(idx));
+            for (const auto& [_, idx] : sm.getIonosphereRateStates())
                 out.push_back(static_cast<Eigen::Index>(idx));
             for (const auto& [_, idx] : sm.getAmbiguities())
                 out.push_back(static_cast<Eigen::Index>(idx));

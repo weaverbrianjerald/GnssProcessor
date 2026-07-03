@@ -12,6 +12,7 @@
  */
 
 #include "math/TimeUtils.hpp"
+#include <atomic>
 #include <cmath>
 #include <chrono>
 #include <stdexcept>
@@ -20,6 +21,23 @@
 #include <iomanip>
 
 namespace GnssProcessor {
+
+    namespace {
+        // RTB-1(c): GPS-UTC leap seconds used by the WALL-CLOCK → GPS
+        // conversion (nowContinuousGpsSeconds).  Defaults to the compiled
+        // constant; realtime.leap_seconds overrides it at RT startup so a
+        // future leap-second insertion doesn't strand the binary.  Atomic:
+        // set on the main thread, read from receive/processing threads.
+        std::atomic<double> g_leap_seconds_override{ TimeUtils::LEAP_SECONDS };
+    } // namespace
+
+    void TimeUtils::setLeapSecondsOverride(double leap_s) {
+        g_leap_seconds_override.store(leap_s, std::memory_order_relaxed);
+    }
+
+    double TimeUtils::currentLeapSeconds() {
+        return g_leap_seconds_override.load(std::memory_order_relaxed);
+    }
 
     // =================================================================
     // Leap second table
@@ -265,11 +283,24 @@ namespace GnssProcessor {
     double TimeUtils::nowContinuousGpsSeconds() {
         using namespace std::chrono;
         // POSIX system_clock is UTC (no leap seconds); GPS time runs ahead of UTC
-        // by LEAP_SECONDS (added exactly once, matching the rest of the codebase's
-        // UTC→GPS convention).  Returns continuous GPS seconds since the GPS epoch.
+        // by currentLeapSeconds() — the compiled LEAP_SECONDS unless overridden
+        // via realtime.leap_seconds (RTB-1(c)) — added exactly once, matching the
+        // rest of the codebase's UTC→GPS convention.  Returns continuous GPS
+        // seconds since the GPS epoch.
         const auto since = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
         constexpr int64_t kGpsEpochUnix = 315964800; // Jan 6 1980 00:00:00 UTC
-        return static_cast<double>(since - kGpsEpochUnix) + LEAP_SECONDS;
+        return static_cast<double>(since - kGpsEpochUnix) + currentLeapSeconds();
+    }
+
+    GnssTime TimeUtils::nowGpsTime() {
+        // Invert nowContinuousGpsSeconds() back into (week, tow) — one source of
+        // wall-clock→GPS truth (the leap-second offset lives in that helper).
+        const double s = nowContinuousGpsSeconds();
+        constexpr double kSecondsPerWeek = 604800.0;
+        GnssTime t;
+        t.week = static_cast<int>(std::floor(s / kSecondsPerWeek));
+        t.tow  = s - static_cast<double>(t.week) * kSecondsPerWeek;
+        return t;
     }
 
     // =================================================================

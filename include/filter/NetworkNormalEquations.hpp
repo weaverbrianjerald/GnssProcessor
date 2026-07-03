@@ -406,6 +406,33 @@ public:
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
         const Eigen::MatrixXd& cov_free_xs) const;
 
+    /**
+     * @brief Baarda per-row redundancy numbers for a batch of one station's
+     *        measurement rows (B2), using the cached Schur factors.
+     *
+     * For each row @f$i@f$ with design @f$a_i = [a^s_i \mid a^r_i]@f$ (shared border
+     * columns then this station's local columns) and information weight @f$w_i@f$,
+     * returns @f$r_i = 1 - w_i\,a_i^\top \mathrm{Cov}(\theta)\,a_i@f$ clamped to
+     * @f$[0,1]@f$.  The joint parameter covariance is assembled from @p cov_free_xs
+     * (the datum-frame shared covariance) and this station's cached
+     * @f$N_{rr}^{-1}, N_{sr}@f$ exactly as @ref reconstructStationCovariance does, so
+     * no re-solve is needed:
+     * @f$a_i^\top\mathrm{Cov}\,a_i = (a^s_i - M^\top a^r_i)^\top C_\text{free}
+     *   (a^s_i - M^\top a^r_i) + a^{r\top}_i N_{rr}^{-1} a^r_i@f$, @f$M = N_{rr}^{-1} N_{sr}^\top@f$.
+     *
+     * @param station     Station index (from @ref addStation).
+     * @param A_s_rows    Shared-border design rows (@c m × n_shared).
+     * @param A_r_rows    Local design rows (@c m × n_local).
+     * @param w_rows      Per-row information weights (@c 1/σ²; length @c m).
+     * @param cov_free_xs Datum-frame shared covariance (@c n_shared × n_shared).
+     * @return One redundancy number per row (length @c m), each in @f$[0,1]@f$.
+     */
+    Eigen::VectorXd rowRedundancy(std::size_t station,
+                                  const Eigen::MatrixXd& A_s_rows,
+                                  const Eigen::MatrixXd& A_r_rows,
+                                  const Eigen::VectorXd& w_rows,
+                                  const Eigen::MatrixXd& cov_free_xs) const;
+
     /// @return The reduced shared normal matrix @f$\tilde N_{ss}@f$ (after @ref reduce).
     const Eigen::MatrixXd& reducedSharedNormals() const { return reduced_N_ss_; }
     /// @return The reduced shared RHS @f$\tilde u_s@f$ (after @ref reduce).

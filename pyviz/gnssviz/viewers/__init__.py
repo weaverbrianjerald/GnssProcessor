@@ -41,6 +41,19 @@ from .network_iono_map import viewer as _network_iono_map
 from .network_health import viewer as _network_health
 from .network_products import viewer as _network_products
 from .network_closed_loop import viewer as _network_closed_loop
+# Network log-viz L-queue (QC timelines, V5 instruments, product/consumer inspection)
+from .network_epoch_status import viewer as _network_epoch_status
+from .network_events import viewer as _network_events
+from .network_flag_rates import viewer as _network_flag_rates
+from .network_clock_nis import viewer as _network_clock_nis
+from .network_dd_fractional import viewer as _network_dd_fractional
+from .network_anchor_info import viewer as _network_anchor_info
+from .network_zwd import viewer as _network_zwd
+from .network_product_file import viewer as _network_product_file
+from .ssr_consumer import viewer as _ssr_consumer
+from .network_discontinuities import viewer as _network_discontinuities
+from .network_station_strip import viewer as _network_station_strip
+from .network_manifest import viewer as _network_manifest
 
 REGISTRY = [
     _state, _wls, _baseline,
@@ -51,6 +64,11 @@ REGISTRY = [
     _graphic_trace, _gf_trace, _if_slip_trace,
     _network_map, _network_health, _network_products, _network_iono_map,
     _network_closed_loop,
+    # L-queue additions
+    _network_epoch_status, _network_events, _network_flag_rates, _network_clock_nis,
+    _network_dd_fractional, _network_anchor_info, _network_zwd,
+    _network_product_file, _ssr_consumer, _network_discontinuities,
+    _network_station_strip, _network_manifest,
 ]
 
 __all__ = ["Viewer", "ViewerResult", "REGISTRY"]

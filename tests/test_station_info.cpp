@@ -221,6 +221,39 @@ TEST_F(StationInfoTest, CoordinateResolutionPeriodicIsSmallNonzero) {
     EXPECT_LT(delta, 0.05);    // seasonal amplitude is cm-level, never > 5 cm
 }
 
+// RTA-12: the network-roster resolution helper — (registry, name, date) ->
+// optional<ECEF + epoch> — is the find() + resolveStationCoordinate composition
+// (periodic + PSD terms on) used by the config loader under
+// network.use_sif_coordinates.  Any of the three lookup keys works; an unknown
+// station returns nullopt (the loader then hard-errors).
+TEST_F(StationInfoTest, RosterCoordinateResolvesByNameAtRunDate) {
+    const double year = 2024.36;  // within the IGS fixture span
+
+    const auto roster = resolveRosterCoordinate(*sif_, "CIT100USA", year);
+    ASSERT_TRUE(roster.has_value());
+    EXPECT_DOUBLE_EQ(roster->epoch_year, year);
+
+    // Exactly the full SIF coordinate function at the run date.
+    const StationInfo* s = sif_->find("CIT100USA");
+    ASSERT_NE(s, nullptr);
+    const ResolvedStationCoord direct = resolveStationCoordinate(*s, year, true, true);
+    ASSERT_TRUE(direct.valid);
+    EXPECT_TRUE(roster->ecef.isApprox(direct.ecef, 1e-12));
+
+    // Velocity propagation actually applied: 4.36 years of ~ -2.9 cm/yr in X.
+    const SifOccupation& o = s->occupations.front();
+    EXPECT_GT((roster->ecef - o.coordinates).norm(), 0.05);
+    EXPECT_LT((roster->ecef - o.coordinates).norm(), 1.0);   // still survey-grade close
+
+    // 4-char prefix resolves to the same record (loader passes config names).
+    const auto by_prefix = resolveRosterCoordinate(*sif_, "cit1", year);
+    ASSERT_TRUE(by_prefix.has_value());
+    EXPECT_TRUE(by_prefix->ecef.isApprox(roster->ecef, 1e-12));
+
+    // Unknown station -> nullopt (never a zero coordinate).
+    EXPECT_FALSE(resolveRosterCoordinate(*sif_, "NOSUCHSTATION", year).has_value());
+}
+
 // Post-seismic deformation parses for a station with a seismic event (ANTC,
 // the 2010 Maule earthquake).
 TEST_F(StationInfoTest, PostSeismicDeformation) {

@@ -19,6 +19,7 @@
 #include "rtcm/RtcmSsrDecoder.hpp"
 #include "rtcm/RtcmMsmDecoder.hpp"
 #include "rtcm/RtcmNavDecoder.hpp"
+#include "rtcm/RtcmBitReader.hpp"
 #include "math/TimeUtils.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
@@ -27,18 +28,6 @@
 namespace GnssProcessor {
 
 namespace {
-
-// Best-effort current GPS week from the system clock.  Used to promote
-// the 20-bit GPS-TOW SSR epoch field into a full GnssTime.  In a future
-// pass this should come from the rover's most-recently-known time so the
-// SSR epoch and the rover epoch share a clock.
-int currentGpsWeekFromSystem() {
-    // Single source of truth for the UTC→GPS (leap-corrected) wall-clock math is
-    // TimeUtils::nowContinuousGpsSeconds(); this is just its week index.
-    const double gps_s = TimeUtils::nowContinuousGpsSeconds();
-    if (gps_s <= 0.0) return 0;
-    return static_cast<int>(gps_s / static_cast<double>(TimeUtils::SECONDS_IN_WEEK));
-}
 
 bool isLegacySsrType(uint16_t mt) {
     return (mt >= 1057 && mt <= 1068) ||
@@ -49,6 +38,12 @@ bool isMsm7Type(uint16_t mt) {
     // 1077 GPS, 1087 GLO, 1097 GAL, 1107 SBAS, 1117 QZS, 1127 BDS, 1137 NavIC.
     if (mt < 1071 || mt > 1137) return false;
     return ((mt - 1071) % 10) == 6;  // MSM7 sits at offset 6 within each per-system block.
+}
+
+bool isMsm5Type(uint16_t mt) {
+    // 1075 GPS, 1085 GLO, 1095 GAL, 1105 SBAS, 1115 QZS, 1125 BDS, 1135 NavIC.
+    if (mt < 1071 || mt > 1137) return false;
+    return ((mt - 1071) % 10) == 4;  // MSM5 sits at offset 4 within each per-system block.
 }
 
 bool isMsm4Type(uint16_t mt) {
@@ -84,6 +79,29 @@ void warnIfUnderConsumed(uint16_t mt, const char* label, std::size_t payload_byt
 RtcmParser::RtcmParser(std::filesystem::path file_path)
     : file_path_(std::move(file_path)) {}
 
+// ---------------------------------------------------------------------------
+// RTB-1(a): per-parser stream-time tracker (nearest-continuation promotion).
+// ---------------------------------------------------------------------------
+
+double RtcmParser::anchorGpsSeconds() {
+    if (time_anchor_gps_s_ > 0.0) return time_anchor_gps_s_;
+    // Cold start: the ONLY host-clock consultation on the promotion path.
+    // TimeUtils::nowContinuousGpsSeconds honours the realtime.leap_seconds
+    // override (RTB-1(c)).
+    const double now = TimeUtils::nowContinuousGpsSeconds();
+    if (now > 0.0) time_anchor_gps_s_ = now;
+    return now;
+}
+
+void RtcmParser::updateTimeAnchor(const GnssTime& epoch) {
+    // Only epochs with a resolved week advance the tracker: a week-0 epoch is
+    // the decoder's "no anchor available" degenerate output, and adopting it
+    // would re-cold-start every subsequent frame at January 1980.
+    if (epoch.week > 0) {
+        time_anchor_gps_s_ = TimeUtils::continuousGpsSeconds(epoch);
+    }
+}
+
 bool RtcmParser::parseHeader(const uint8_t* frame, std::size_t len,
                              uint16_t& payload_len, uint16_t& msg_type) {
     if (!frame || len < 5) return false;
@@ -113,6 +131,12 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
     if (msg_type == 1005 || msg_type == 1006) {
         return decodeStationCoords(payload, pl, msg_type);
     }
+    if (msg_type == 1033) {
+        return decodeReceiverAntennaDescriptor(payload, pl);
+    }
+    if (msg_type == 1230) {
+        return decodeGlonassBiases(payload, pl);
+    }
     if (msg_type == 4076) {
         return decodeIgsSsr4076(payload, pl);
     }
@@ -120,7 +144,14 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
         return decodeLegacySsr(payload, pl, msg_type);
     }
     if (RtcmNav::isBroadcastEphemerisType(msg_type)) {
-        const int week = currentGpsWeekFromSystem();
+        // The truncated broadcast week fields (10-bit GPS WN etc.) only need a
+        // week-scale hint; derive it from the stream-time tracker (RTB-1(a)).
+        // Nav content epochs (toe/toc, hours from "now") do NOT advance the
+        // tracker — the per-second MSM/SSR stream epochs own it.
+        const double anchor = anchorGpsSeconds();
+        const int week = anchor > 0.0
+            ? static_cast<int>(anchor / static_cast<double>(TimeUtils::SECONDS_IN_WEEK))
+            : 0;
         const auto res = RtcmNav::decodeBroadcast(payload, pl, msg_type, week, broadcast_eph_);
         if (!res.ok) {
             spdlog::warn("RTCM {}: broadcast-ephemeris decode incomplete (truncated payload?)", msg_type);
@@ -128,21 +159,30 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
         return res.ok;
     }
     if (isMsm7Type(msg_type)) {
-        const int week = currentGpsWeekFromSystem();
-        const auto res = RtcmMsm::decodeMsm7(payload, pl, msg_type, week, observations_);
+        const auto res = RtcmMsm::decodeMsm7(payload, pl, msg_type, anchorGpsSeconds(), observations_);
         if (!res.ok) {
             spdlog::warn("RTCM {}: MSM7 decode incomplete (truncated payload?)", msg_type);
         }
         warnIfUnderConsumed(msg_type, "MSM7", pl, res.bits_consumed, res.ok);
+        if (res.ok) updateTimeAnchor(res.epoch_time);
+        return res.ok;
+    }
+    if (isMsm5Type(msg_type)) {
+        const auto res = RtcmMsm::decodeMsm5(payload, pl, msg_type, anchorGpsSeconds(), observations_);
+        if (!res.ok) {
+            spdlog::warn("RTCM {}: MSM5 decode incomplete (truncated payload?)", msg_type);
+        }
+        warnIfUnderConsumed(msg_type, "MSM5", pl, res.bits_consumed, res.ok);
+        if (res.ok) updateTimeAnchor(res.epoch_time);
         return res.ok;
     }
     if (isMsm4Type(msg_type)) {
-        const int week = currentGpsWeekFromSystem();
-        const auto res = RtcmMsm::decodeMsm4(payload, pl, msg_type, week, observations_);
+        const auto res = RtcmMsm::decodeMsm4(payload, pl, msg_type, anchorGpsSeconds(), observations_);
         if (!res.ok) {
             spdlog::warn("RTCM {}: MSM4 decode incomplete (truncated payload?)", msg_type);
         }
         warnIfUnderConsumed(msg_type, "MSM4", pl, res.bits_consumed, res.ok);
+        if (res.ok) updateTimeAnchor(res.epoch_time);
         return res.ok;
     }
 
@@ -161,29 +201,123 @@ bool RtcmParser::decodeStationCoords(const uint8_t* payload, std::size_t len, ui
 }
 
 bool RtcmParser::decodeLegacySsr(const uint8_t* payload, std::size_t len, uint16_t msg_type) {
-    const int week = currentGpsWeekFromSystem();
     const auto result = RtcmSsr::decodeLegacy(
-        payload, len, msg_type, week,
+        payload, len, msg_type, anchorGpsSeconds(),
         ssr_orbits_, ssr_clocks_, ssr_combined_, ssr_code_biases_,
         ssr_phase_biases_, ssr_uras_, ssr_hrclocks_);
     last_ssr_header_ = result.header;
     if (!result.ok) {
         spdlog::warn("RTCM {}: legacy SSR decode incomplete (truncated payload?)", msg_type);
     }
+    if (result.ok) updateTimeAnchor(result.header.epoch_time);
     return result.ok;
 }
 
 bool RtcmParser::decodeIgsSsr4076(const uint8_t* payload, std::size_t len) {
-    const int week = currentGpsWeekFromSystem();
     const auto result = RtcmSsr::decodeIgs4076(
-        payload, len, week,
+        payload, len, anchorGpsSeconds(),
         ssr_orbits_, ssr_clocks_, ssr_combined_, ssr_code_biases_,
         ssr_phase_biases_, ssr_uras_, ssr_hrclocks_);
     last_ssr_header_ = result.header;
     if (!result.ok) {
         spdlog::trace("RTCM 4076: IGS-SSR decode incomplete or unsupported sub-type");
     }
+    if (result.ok) updateTimeAnchor(result.header.epoch_time);
     return result.ok;
+}
+
+// ---------------------------------------------------------------------------
+// RTCM 1033: receiver + antenna descriptors (RTB-2(d)).
+//
+// Layout (RTCM 10403.3 sec. 3.5.9): five counted ASCII strings + the antenna
+// setup id, all 8-bit fields.  Decoded into RtcmReceiverAntennaDescriptor and
+// surfaced on the parser output; logged once (per parser) at info.  Storage
+// for a future SIF (station-info) cross-check — deliberately not wired
+// further.
+// ---------------------------------------------------------------------------
+bool RtcmParser::decodeReceiverAntennaDescriptor(const uint8_t* payload, std::size_t len) {
+    RtcmBitReader r(payload, len);
+    r.skip(12);                                   // DF002 message type
+    RtcmReceiverAntennaDescriptor d;
+    d.reference_station_id = static_cast<int>(r.u(12));   // DF003
+
+    // Counted ASCII string: 8-bit count N (DF029/DF032/DF227/DF229/DF231)
+    // followed by N 8-bit characters.  Non-printable bytes are replaced with
+    // '.' so a malformed frame cannot inject control bytes into the logs.
+    auto readString = [&r](std::string& out) {
+        const int n = static_cast<int>(r.u(8));
+        out.clear();
+        out.reserve(static_cast<std::size_t>(n));
+        for (int i = 0; i < n; ++i) {
+            const auto c = static_cast<char>(r.u(8));
+            out.push_back((c >= 0x20 && c < 0x7f) ? c : '.');
+        }
+    };
+
+    readString(d.antenna_descriptor);             // DF029 + DF030
+    d.antenna_setup_id = static_cast<int>(r.u(8)); // DF031
+    readString(d.antenna_serial);                 // DF032 + DF033
+    readString(d.receiver_type);                  // DF227 + DF228
+    readString(d.receiver_firmware);              // DF229 + DF230
+    readString(d.receiver_serial);                // DF231 + DF232
+    if (!r.ok()) {
+        spdlog::warn("RTCM 1033: receiver/antenna descriptor decode incomplete (truncated payload?)");
+        return false;
+    }
+
+    if (!logged_1033_) {
+        logged_1033_ = true;
+        spdlog::info("RTCM 1033: station {} antenna '{}' (setup {}, s/n '{}'), "
+                     "receiver '{}' fw '{}' s/n '{}'",
+                     d.reference_station_id, d.antenna_descriptor, d.antenna_setup_id,
+                     d.antenna_serial, d.receiver_type, d.receiver_firmware,
+                     d.receiver_serial);
+    }
+    receiver_descriptors_.push_back(std::move(d));
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// RTCM 1230: GLONASS L1/L2 code-phase biases (RTB-2(d)).
+//
+// Layout (RTCM 10403.3 sec. 3.5.15): DF003 station id (12), DF421 code-phase
+// bias indicator (1), 3 reserved bits, DF422 FDMA signals mask (4, MSB = L1
+// C/A … LSB = L2 P), then one signed 16-bit bias (0.02 m units, DF423-DF426)
+// per SET mask bit, in mask order.  Surfaced + logged once only; NOT wired
+// into the GLONASS IFB estimation (see RtcmGlonassBias — RTF-scale change).
+// ---------------------------------------------------------------------------
+bool RtcmParser::decodeGlonassBiases(const uint8_t* payload, std::size_t len) {
+    RtcmBitReader r(payload, len);
+    r.skip(12);                                   // DF002 message type
+    RtcmGlonassBias b;
+    b.reference_station_id      = static_cast<int>(r.u(12));  // DF003
+    b.code_phase_bias_indicator = r.boolean();                // DF421
+    r.skip(3);                                                // reserved
+    b.fdma_signal_mask          = static_cast<int>(r.u(4));   // DF422
+
+    double* const slots[4] = { &b.l1_ca_bias_m, &b.l1_p_bias_m,
+                               &b.l2_ca_bias_m, &b.l2_p_bias_m };
+    for (int bit = 0; bit < 4; ++bit) {
+        if (b.fdma_signal_mask & (1 << (3 - bit))) {          // MSB-first mask order
+            *slots[bit] = r.s(16) * 0.02;                     // DF423..DF426, 0.02 m
+        }
+    }
+    if (!r.ok()) {
+        spdlog::warn("RTCM 1230: GLONASS code-phase bias decode incomplete (truncated payload?)");
+        return false;
+    }
+
+    if (!logged_1230_) {
+        logged_1230_ = true;
+        spdlog::info("RTCM 1230: station {} GLONASS code-phase biases (aligned={}, mask=0x{:X}): "
+                     "L1CA={:.2f} L1P={:.2f} L2CA={:.2f} L2P={:.2f} m "
+                     "(surfaced only; not consumed by the IFB path)",
+                     b.reference_station_id, b.code_phase_bias_indicator,
+                     b.fdma_signal_mask, b.l1_ca_bias_m, b.l1_p_bias_m,
+                     b.l2_ca_bias_m, b.l2_p_bias_m);
+    }
+    glonass_biases_.push_back(b);
+    return true;
 }
 
 bool RtcmParser::parse() {
@@ -236,6 +370,11 @@ void RtcmParser::clear() {
     ssr_hrclocks_.clear();
     station_coords_.clear();
     broadcast_eph_.clear();
+    receiver_descriptors_.clear();
+    glonass_biases_.clear();
+    // time_anchor_gps_s_ and the 1033/1230 log-once flags deliberately
+    // survive clear(): the tracker IS the stream-time continuity (RTB-1(a)),
+    // and clear() runs once per frame on the reused engine parser.
 }
 
 } // namespace GnssProcessor

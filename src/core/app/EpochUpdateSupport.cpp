@@ -192,8 +192,12 @@ void reinflateResetSatStates(const KalmanFilter& kalman_filter,
         // Values are preserved (slant iono / hardware delays don't change just
         // because phase lock was lost); only the diagonal variance is broken so
         // the filter re-partitions cleanly over the next several epochs.
-        if (io_std > 0.0)
+        if (io_std > 0.0) {
             state_manager.reinflateIonosphereVariance(sat_id, io_std * io_std);
+            // Constant-velocity model: decorrelate the companion rate too
+            // (no-op unless enableIonoRate; 0.0 => initial_std.ionosphere_rate default).
+            state_manager.reinflateIonosphereRateVariance(sat_id, 0.0);
+        }
         if (sb_std > 0.0)
             state_manager.reinflateSatBiasVariancesForSat(sat_id, sb_std * sb_std);
     }

@@ -27,10 +27,20 @@ namespace GnssProcessor {
  * @brief Dispatches RTCM 3.x frames to typed decoders.
  *
  * Construction is cheap; instances may be reused across frames.  Outputs
- * accumulate in per-type vectors until @c clear() is called.  The
- * realtime path constructs one parser per frame, drains the outputs
- * into the engine and discards the parser; the file-replay path uses
- * a single parser for the whole file.
+ * accumulate in per-type vectors until @c clear() is called.
+ *
+ * @par Time continuity (RTB-1(a))
+ * The parser keeps a per-instance continuous-GPS-seconds tracker of the last
+ * decoded stream epoch and promotes every mod-week / time-of-day epoch field
+ * (MSM ms-of-week, SSR 20-bit TOW, GLONASS TOD, broadcast-nav truncated
+ * weeks) by NEAREST CONTINUATION to that tracker (the week minimizing |Δt| —
+ * RTKLIB @c adjweek semantics).  The host clock is consulted ONLY at cold
+ * start (the first time-bearing frame after construction), so a skewed host
+ * clock or a promotion race at a week rollover cannot re-week an established
+ * stream.  @c clear() drops decoded outputs but deliberately PRESERVES the
+ * tracker — reuse one parser instance per stream/engine (as
+ * @c RealTimeEngine now does) to benefit; a parser-per-frame caller
+ * degenerates to the legacy host-clock-per-frame behaviour.
  */
 class RtcmParser {
 public:
@@ -85,9 +95,25 @@ public:
     const std::vector<SsrHighRateClock>&      getSsrHighRateClocks() const { return ssr_hrclocks_; }
     const std::vector<RtcmStationCoords>&     getStationCoords()     const { return station_coords_; }
     const std::vector<BroadcastEphemeris>&    getBroadcastEphemeris() const { return broadcast_eph_; }
+    /// RTB-2(d): decoded 1033 receiver+antenna descriptor blocks.  Surfaced
+    /// for a future SIF (station-info) cross-check; not consumed anywhere yet.
+    const std::vector<RtcmReceiverAntennaDescriptor>& getReceiverDescriptors() const { return receiver_descriptors_; }
+    /// RTB-2(d): decoded 1230 GLONASS code-phase bias blocks.  Surfaced only;
+    /// deliberately NOT wired into the GLONASS IFB path (see RtcmGlonassBias).
+    const std::vector<RtcmGlonassBias>&       getGlonassBiases()     const { return glonass_biases_; }
 
     /// The message type of the most recently decoded frame, or -1 if none.
     int lastMessageType() const { return last_msg_type_; }
+
+    /**
+     * @brief The per-parser stream-time tracker (continuous GPS seconds).
+     *
+     * The last decoded MSM / SSR epoch, promoted to a full GPS time; every
+     * subsequent mod-week epoch field is promoted by nearest continuation to
+     * this value (RTB-1(a)).  Negative until the first time-bearing frame
+     * (cold start pending).  Exposed for tests and diagnostics.
+     */
+    double timeAnchorGpsSeconds() const { return time_anchor_gps_s_; }
 
     /**
      * @brief The SSR header from the most recently decoded SSR message.
@@ -126,10 +152,33 @@ private:
     bool decodeStationCoords(const uint8_t* payload, std::size_t len, uint16_t msg_type);
     bool decodeLegacySsr(const uint8_t* payload, std::size_t len, uint16_t msg_type);
     bool decodeIgsSsr4076(const uint8_t* payload, std::size_t len);
+    bool decodeReceiverAntennaDescriptor(const uint8_t* payload, std::size_t len);  ///< RTCM 1033 (RTB-2(d)).
+    bool decodeGlonassBiases(const uint8_t* payload, std::size_t len);              ///< RTCM 1230 (RTB-2(d)).
+
+    /**
+     * @brief Anchor for nearest-continuation week promotion (RTB-1(a)).
+     *
+     * Returns the tracker when set; on cold start (tracker unset) seeds it
+     * from the host clock (@c TimeUtils::nowContinuousGpsSeconds) — the ONLY
+     * point where the host clock enters the promotion.
+     */
+    double anchorGpsSeconds();
+
+    /// Advance the tracker to a freshly decoded stream epoch (ignored unless
+    /// the epoch carries a resolved week, i.e. week > 0).
+    void updateTimeAnchor(const GnssTime& epoch);
 
     std::filesystem::path file_path_;
     int last_msg_type_{-1};
     SsrHeader last_ssr_header_{};
+
+    /// RTB-1(a): last decoded stream epoch as continuous GPS seconds
+    /// (week·604800 + tow); < 0 until the first time-bearing frame.
+    /// Preserved across clear() — see the class Doxygen.
+    double time_anchor_gps_s_{-1.0};
+
+    bool logged_1033_{false};  ///< RTB-2(d): 1033 content logged once per parser (info).
+    bool logged_1230_{false};  ///< RTB-2(d): 1230 content logged once per parser (info).
 
     std::vector<RinexObservation>      observations_;
     std::vector<SsrOrbitCorrection>    ssr_orbits_;
@@ -141,6 +190,8 @@ private:
     std::vector<SsrHighRateClock>      ssr_hrclocks_;
     std::vector<RtcmStationCoords>     station_coords_;
     std::vector<BroadcastEphemeris>    broadcast_eph_;
+    std::vector<RtcmReceiverAntennaDescriptor> receiver_descriptors_;  ///< RTCM 1033 (RTB-2(d)).
+    std::vector<RtcmGlonassBias>       glonass_biases_;                ///< RTCM 1230 (RTB-2(d)).
 };
 
 } // namespace GnssProcessor

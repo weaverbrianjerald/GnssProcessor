@@ -125,16 +125,22 @@ namespace GnssProcessor {
          * paths and attempts to parse each required product. Parsing errors are logged
          * via the configured @c LogManager.
          *
-         * @param load_precise_orbits_clocks When true (default), precise SP3 orbit
-         *        and CLK clock products are parsed into the cache.  Pass false in
-         *        real-time when a live broadcast+SSR orbit/clock source supplants
-         *        them (see @c GnssConfig::realtimeUsesLiveOrbitClockSource): the
-         *        SP3/CLK parse is skipped while the static products (ATX, BIA, ERP,
-         *        Klobuchar, Sun ephemeris) still load.  Leaving the orbit/clock
-         *        caches empty makes @c Geometry::getSatellitePV resolve directly
-         *        through the live store instead of routing around a stale fixture.
+         * @param load_precise_orbits When true (default), precise SP3 orbit products
+         *        are parsed into the cache.  Pass false in real-time when a live
+         *        broadcast+SSR orbit source supplants them (see
+         *        @c GnssConfig::realtimeUsesLiveOrbitSource).
+         * @param load_precise_clocks When true (default), precise CLK clock products
+         *        are parsed into the cache.  Pass false in real-time when a
+         *        live/network clock source supplants them (see
+         *        @c GnssConfig::realtimeUsesLiveOrbitClockSource).  RTB-4: these are
+         *        SEPARATE so a config can load precise (ultra-rapid) orbits while
+         *        taking clocks live ("ULT orbits + network clocks").  Leaving a
+         *        cache empty makes the corresponding @c Geometry / @c GnssCorrections
+         *        query resolve directly through the live store instead of routing
+         *        around a stale fixture.  The static products (ATX, BIA, ERP,
+         *        Klobuchar, Sun ephemeris) always load.
          */
-        void loadProducts(bool load_precise_orbits_clocks = true);
+        void loadProducts(bool load_precise_orbits = true, bool load_precise_clocks = true);
 
         /**
          * @brief Get parsed satellite clock entries.

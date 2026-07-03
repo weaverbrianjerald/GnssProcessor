@@ -577,6 +577,59 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     return out;
 }
 
+Eigen::VectorXd NetworkNormalEquations::rowRedundancy(
+    std::size_t station, const Eigen::MatrixXd& A_s_rows,
+    const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
+    const Eigen::MatrixXd& cov_free_xs) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::rowRedundancy: "
+                                "station index out of range");
+    }
+    const Eigen::Index m = A_s_rows.rows();
+    if (A_r_rows.rows() != m || w_rows.size() != m) {
+        fail("rowRedundancy: row count mismatch across A_s/A_r/w");
+    }
+    if (A_s_rows.cols() != n_shared_) {
+        fail("rowRedundancy: A_s column count != n_shared");
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("rowRedundancy: cov_free_xs size mismatch");
+    }
+    const Station& st = stations_[station];
+    if (A_r_rows.cols() != st.n_local) {
+        fail("rowRedundancy: A_r column count != station n_local");
+    }
+    // r_i = 1 − w_i · a_iᵀ Cov(θ) a_i,  a_i = [as_i | ar_i].
+    // a_iᵀ Cov a_i = (as_i − Mᵀ ar_i)ᵀ Cov_free (as_i − Mᵀ ar_i) + ar_iᵀ N_rr⁻¹ ar_i,
+    //   M = N_rr⁻¹ N_srᵀ  (n_local × n_shared).  Cov_free is the datum-frame shared cov.
+    Eigen::VectorXd r(m);
+    const bool has_local = st.n_local > 0;
+    const Eigen::MatrixXd M = (has_local && n_shared_ > 0)
+        ? Eigen::MatrixXd(st.Nrr_ldlt.solve(st.N_sr.transpose()))  // n_local × n_shared
+        : Eigen::MatrixXd();
+    for (Eigen::Index i = 0; i < m; ++i) {
+        const Eigen::VectorXd as_i = A_s_rows.row(i).transpose();      // n_shared
+        double lev;
+        if (has_local) {
+            const Eigen::VectorXd ar_i   = A_r_rows.row(i).transpose(); // n_local
+            const Eigen::VectorXd nrr_ar = st.Nrr_ldlt.solve(ar_i);     // N_rr⁻¹ ar_i
+            double lev_local  = ar_i.dot(nrr_ar);                       // ar_iᵀ N_rr⁻¹ ar_i
+            double lev_shared = 0.0;
+            if (n_shared_ > 0) {
+                const Eigen::VectorXd g = as_i - M.transpose() * ar_i;  // as_i − Mᵀ ar_i
+                lev_shared = g.dot(cov_free_xs * g);
+            }
+            lev = lev_shared + lev_local;
+        } else {
+            lev = (n_shared_ > 0) ? as_i.dot(cov_free_xs * as_i) : 0.0;
+        }
+        double r_i = 1.0 - w_rows(i) * lev;
+        r_i = std::isfinite(r_i) ? std::min(std::max(r_i, 0.0), 1.0) : 0.0;  // r_i ∈ [0,1]
+        r(i) = r_i;
+    }
+    return r;
+}
+
 Eigen::Index NetworkNormalEquations::numLocal(std::size_t station) const {
     if (station >= n_active_) {
         throw std::out_of_range("NetworkNormalEquations::numLocal: "

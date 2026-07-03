@@ -182,7 +182,8 @@ namespace GnssProcessor {
     }
 
     bool MeasurementModel::ssrCoversCodeSignal(const std::string& satellite,
-                                               const std::string& signal) const {
+                                               const std::string& signal,
+                                               const GnssTime& obs_time) const {
         // Match buildJacobianRow's ssr_bias_term gate exactly: the network
         // producer ESTIMATES satellite biases (importing them would render those
         // states unobservable), so it never imports SSR code biases and must
@@ -192,6 +193,13 @@ namespace GnssProcessor {
         // the same row would be redundant.  Empty store in post-processing -> false.
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
             return false;
+        // A5: with the staleness gate on, coverage must track the aged apply gate
+        // (same effective stale-hold limit) — once the gate drops a bias, the row
+        // is uncorrected, so the sat-bias state and no-BIA downweight re-engage.
+        if (config_.enableSsrBiasMaxAge())
+            return ssrStore().hasCodeBias(satellite, signal, obs_time,
+                                          config_.getSsrBiasMaxAge()
+                                              * config_.getSsrBiasStaleHoldFactor());
         return ssrStore().hasCodeBias(satellite, signal);
     }
 
@@ -973,7 +981,7 @@ namespace GnssProcessor {
                     // arrives mid-arc; ensureRequiredStates re-creates it if
                     // coverage later disappears.
                     if (ppp_model_.hasBiasEntry(obs.satellite, ref_type)
-                        || ssrCoversCodeSignal(obs.satellite, ref_type)) continue;
+                        || ssrCoversCodeSignal(obs.satellite, ref_type, obs.time)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
@@ -1400,11 +1408,24 @@ namespace GnssProcessor {
             constexpr double kSsrCodeBiasSign  = +1.0;
             constexpr double kSsrPhaseBiasSign = +1.0;
             const auto& ssr_store = ssrStore();
+            const bool   gate    = config_.enableSsrBiasMaxAge();  // A5: reject stale biases by obs-vs-record age
+            // A5 stale-hold: the APPLY limit is hold_factor × max_age — the last
+            // record keeps being applied over sub-limit staleness gaps so a provider
+            // interval hovering near max_age produces no model step (and no
+            // freshness-flip ambiguity reset; RealTimeEngine keys its flip detector
+            // to this SAME limit).  A held bias is applied at full weight — the
+            // network URA/staleness channel (consume_ura, ssr_max_age_s) is a
+            // separate knob and does not cover this hold zone.
+            const double max_age = config_.getSsrBiasMaxAge()
+                                 * config_.getSsrBiasStaleHoldFactor();
             if (is_phase) {
-                if (auto pb = ssr_store.getPhaseBias(obs.satellite, ref_type))
-                    ssr_bias_term = kSsrPhaseBiasSign * pb->bias_m;
+                auto pb = gate ? ssr_store.getPhaseBias(obs.satellite, ref_type, obs.time, max_age)
+                               : ssr_store.getPhaseBias(obs.satellite, ref_type);
+                if (pb) ssr_bias_term = kSsrPhaseBiasSign * pb->bias_m;
             } else {
-                ssr_bias_term = kSsrCodeBiasSign * ssr_store.getCodeBias(obs.satellite, ref_type);
+                ssr_bias_term = kSsrCodeBiasSign
+                    * (gate ? ssr_store.getCodeBias(obs.satellite, ref_type, obs.time, max_age)
+                            : ssr_store.getCodeBias(obs.satellite, ref_type));
             }
         }
 
@@ -1640,6 +1661,77 @@ namespace GnssProcessor {
                     update.innovations(row) = observed - predicted;
                     update.R_v(row) = obs.variances.at(ref_type);
 
+                    // B1: inflate R by the network URA on rows carrying this satellite's
+                    // SSR corrections (an independent clock/bias error variance), plus the
+                    // ZOH clock-staleness q²·dt³/3.  Gated (default off) + not on the
+                    // producer's own rows ⇒ R byte-identical when off.
+                    //
+                    // RTA-9(b): the clock stale-hold rung EXTENDS this machinery (never a
+                    // second inflation path).  With processing.ssr_clock_stale_hold_factor
+                    // > 1: (1) the URA freshness window widens to the SAME clockHoldWindow
+                    // the clock apply gate uses (a URA exactly as stale as the held clock
+                    // still qualifies, and the q²·dt³/3 term then grows with the true dt);
+                    // (2) when the URA channel does NOT deliver the staleness term for a
+                    // stale-HELD clock (consume_ura off, no URA record for the sat, or
+                    // ura_staleness_q2 explicitly 0), the same q²·dt³/3 form is applied
+                    // with a documented fallback q² so a held clock is never consumed at
+                    // full weight.  Factor 0 (default) leaves the original branch exactly.
+                    {
+                        const double clk_hold = config_.getSsrClockStaleHoldFactor();
+                        const bool consumer_rows =
+                            config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network;
+                        if ((config_.networkConsumeUra() || clk_hold > 1.0) && consumer_rows) {
+                            const auto& ssr = ssrStore();
+                            const double max_age = config_.getSsrMaxAge();
+                            // P1-3: gate URA freshness on the SAME window as the clock/orbit
+                            // overlay (getUra's own default is a looser 60 s — a URA up to
+                            // 60 s stale would qualify a clock the store rejects at 30 s).
+                            // RTA-9(b) widens BOTH windows together via clockHoldWindow.
+                            const double window =
+                                SsrCorrectionStore::clockHoldWindow(max_age, clk_hold);
+                            // Content-epoch age — the dt the clock polynomial extrapolates
+                            // over and the ZOH variance grows with.
+                            double dt = 0.0;
+                            bool   have_dt = false;
+                            if (auto ep = ssr.getSsrEpoch(obs.satellite)) {
+                                dt = TimeUtils::continuousGpsSeconds(obs.time)
+                                   - TimeUtils::continuousGpsSeconds(*ep);
+                                have_dt = true;
+                            }
+                            const double q2 = config_.networkUraStalenessQ2();
+                            double add_var = 0.0;
+                            bool staleness_folded = false;   // ZOH term already delivered by the URA channel
+                            if (config_.networkConsumeUra()) {
+                                if (auto ura = ssr.getUra(obs.satellite, obs.time, window)) {
+                                    add_var += (*ura) * (*ura);
+                                    if (q2 > 0.0 && have_dt && dt > 0.0) {
+                                        add_var += q2 * dt * dt * dt / 3.0;  // ZOH extrapolation var
+                                        staleness_folded = true;
+                                    }
+                                }
+                            }
+                            // RTA-9(b) fallback rung: a stale-HELD clock (age in
+                            // (max_age, window]) whose staleness the URA channel did not
+                            // fold gets the same q²·dt³/3 growth.  Fallback q² = 1.5e-7
+                            // m²/s³ — the network.clock_model_q2 default (the white-FM
+                            // random-walk density the producer's own clock model assumes),
+                            // so the held-clock variance grows at the rate the product's
+                            // clock is modelled to wander.  Only rows whose satellite
+                            // actually carries an applied (held) SSR clock qualify.
+                            if (clk_hold > 1.0 && !staleness_folded && have_dt
+                                && SsrCorrectionStore::classifyClockAge(dt, max_age, clk_hold)
+                                       == SsrCorrectionStore::ClockAgeRung::StaleHeld) {
+                                if (auto oc = ssr.getOrbitClock(obs.satellite, obs.time, window);
+                                    oc && oc->has_clock) {
+                                    constexpr double kSsrClockHoldFallbackQ2 = 1.5e-7;  // m²/s³
+                                    const double q2_eff = q2 > 0.0 ? q2 : kSsrClockHoldFallbackQ2;
+                                    add_var += q2_eff * dt * dt * dt / 3.0;
+                                }
+                            }
+                            if (add_var > 0.0) update.R_v(row) += add_var;
+                        }
+                    }
+
                     // Downweight code on signals without BIA coverage
                     if (!config_.estimateSatBiases()
                         && config_.noBiaCodeDownweight() > 1.0
@@ -1654,7 +1746,7 @@ namespace GnssProcessor {
                             ? !ifCombHasFullBia(obs.satellite, ref_type)
                             : (config_.isUncombinedEnabled()
                                && !ppp_model_.hasBiasEntry(obs.satellite, ref_type)
-                               && !ssrCoversCodeSignal(obs.satellite, ref_type));
+                               && !ssrCoversCodeSignal(obs.satellite, ref_type, obs.time));
                         if (missing_bia)
                             update.R_v(row) *= config_.noBiaCodeDownweight();
                     }

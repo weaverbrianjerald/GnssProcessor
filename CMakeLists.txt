@@ -56,6 +56,7 @@ add_library(gnss_core STATIC
     src/core/config/GnssConfigLoad.cpp
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
+    src/core/logging/CsvRotator.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/ProductCache.cpp
@@ -90,6 +91,8 @@ add_library(gnss_core STATIC
     src/core/rtcm/RtcmSignalMap.cpp
     src/core/rtcm/RtcmMsmDecoder.cpp
     src/core/rtcm/RtcmNavDecoder.cpp
+    src/core/rtcm/LockTimeTracker.cpp
+    src/core/common/CurlGlobalGuard.cpp
     src/core/sbf/SbfSignalMap.cpp
     src/core/sbf/SbfStreamReader.cpp
     src/core/sbf/SbfParser.cpp
@@ -133,6 +136,7 @@ add_library(gnss_core STATIC
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkProductIO.cpp
+    src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
@@ -150,9 +154,11 @@ add_library(gnss_core STATIC
 target_include_directories(gnss_core PUBLIC include)
 # KalmanFilter.cpp emits more COFF sections than the default object format
 # allows (template-heavy Eigen kernels); /bigobj raises the limit.  Side-effect
-# free build flag (MSVC only).
+# free build flag (MSVC only).  ApplicationNetwork.cpp is the large network-driver
+# TU and likewise crossed the section limit as it grew.
 if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
+        src/core/app/ApplicationNetwork.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)

@@ -63,6 +63,20 @@ def test_network_products(tmp_path):
     assert len(res.figures) >= 1
 
 
+def test_network_products_appends_contract_check(tmp_path):
+    # L14 hook: network_contract_check.csv (when present) is appended to the summary.
+    rows = ["week,tow,sat,kind,signal,value_m,disc_counter",
+            "2313,259200.000,G10,CLK,,0.4000,0"]
+    (tmp_path / "network_solution.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    (tmp_path / "network_contract_check.csv").write_text(
+        "check,status,detail\n"
+        "file_readable,PASS,\n"
+        "overall,PASS,1 realized pivot(s) serialized\n", encoding="utf-8")
+    res = build_network_products(_ctx(tmp_path))
+    assert "S-basis contract check" in res.summary
+    assert "overall" in res.summary and "PASS" in res.summary
+
+
 def test_network_iono_map(tmp_path):
     _roster(tmp_path)
     rows = ["week,tow,station,sat,iono_m,elevation_deg,azimuth_deg"]

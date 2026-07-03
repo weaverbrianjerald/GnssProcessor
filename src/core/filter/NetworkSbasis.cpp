@@ -20,12 +20,15 @@ namespace GnssProcessor {
 NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     const NetworkEstimator& est,
     const std::vector<std::string>& registered_clock_sats,
-    const SbasisDeclaration& decl) const {
+    const SbasisDeclaration& decl,
+    const std::map<std::string, std::string>* sticky_prev_pivot) const {
     Plan plan;
 
-    // Group the registered clock satellites by constellation, preserving a
-    // stable (lexical) order so the auto-picked pivot is deterministic across
-    // epochs (only changing when the incumbent sets — handover then re-declares).
+    // Group the registered clock satellites by constellation in a stable
+    // (lexical) order so the fallback auto-pick is deterministic.  NOTE: the
+    // lexical auto-pick is per-EPOCH, not sticky — a lexically lower satellite
+    // rising flips the pivot (a datum re-reference).  Stickiness is opt-in via
+    // sticky_prev_pivot (network.sticky_pivot, RTA-1) below.
     std::map<std::string, std::vector<std::string>> by_const;
     for (const auto& sat : registered_clock_sats) {
         if (sat.empty()) continue;
@@ -34,14 +37,32 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     for (auto& [c, sats] : by_const) std::sort(sats.begin(), sats.end());
 
     // One satellite-clock pin per constellation (the clock gauge per timing
-    // system).  Pivot = declared override if present in the registered set, else
-    // the first registered satellite of that constellation.
+    // system).  Pivot priority: (1) the declared config pin, if present in the
+    // registered set (BOTH modes — user intent wins, including the deliberate
+    // flip-back when a pinned satellite returns); (2) sticky mode only: the
+    // incumbent pivot from sticky_prev_pivot, kept as long as it is still
+    // registered; (3) the first registered satellite of that constellation.
     for (const auto& [c, sats] : by_const) {
+        const auto present = [&sats](const std::string& s) {
+            return std::find(sats.begin(), sats.end(), s) != sats.end();
+        };
         std::string pivot;
         auto it = decl.clock_pivot_sat.find(c);
         if (it != decl.clock_pivot_sat.end() && !it->second.empty()
-            && std::find(sats.begin(), sats.end(), it->second) != sats.end()) {
+            && present(it->second)) {
             pivot = it->second;
+        } else if (sticky_prev_pivot) {
+            // RTA-1 sticky mode: keep the incumbent while it is registered.  When
+            // it is absent, fall back to the lexical pick — the driver's emit-
+            // baseline map then advances to the NEW pivot at the next emit, so the
+            // NEW pivot is sticky in turn (no flip-back on the old one's return).
+            const auto pit = sticky_prev_pivot->find(c);
+            if (pit != sticky_prev_pivot->end() && !pit->second.empty()
+                && present(pit->second)) {
+                pivot = pit->second;
+            } else {
+                pivot = sats.front();
+            }
         } else {
             pivot = sats.front();
         }

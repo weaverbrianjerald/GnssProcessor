@@ -1436,11 +1436,21 @@ std::vector<std::string> activeFrequencyBands(
         const double slant_dry_delay = geom.tropo_zhd * ppp_obs.mf_d;
 
         const std::string rx_antenna_type = rinex_parser_.getReceiverAntennaType();
+        // RTB-5(c): under realtime.honor_ssr_reference_point, skip the
+        // satellite-PCO range term for satellites whose APPLIED SSR orbit
+        // correction this epoch is APC-referenced (legacy-SSR dialect) — the
+        // corrected orbit already points at the phase center, so the CoM->APC
+        // PCO would double-count 0.6-2.6 m along the LOS.  Geometry records
+        // the per-satellite flag at the orbit-overlay apply sites; with the
+        // toggle off (default) nothing is recorded and this is always false.
+        const bool skip_sat_pco =
+            config_.getRealTimeConfig().honor_ssr_reference_point
+            && geometry_.ssrOrbitApcApplied(obs.satellite);
         const double antenna_corr = antenna_.getAntennaCorrection(
             obs.satellite, signal_type, obs.system,
             geom.rx_pos, geom.sat_pos, geom.sat_vel,
             geom.elevation, geom.azimuth, rx_antenna_type, obs.time,
-            geometry_.getCachedSunPosition());
+            geometry_.getCachedSunPosition(), skip_sat_pco);
 
         const double bias_corr = config_.getModelCorrections().enable_code_phase_bias
             ? gnss_corrections_.getBiasCorrection(obs.satellite, signal_type, obs.time)

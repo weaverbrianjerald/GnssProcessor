@@ -388,7 +388,9 @@ namespace GnssProcessor {
         seedCovarianceDiagonals(P, state_size);
 
         const size_t num_amb = state_manager_.getAmbiguities().size();
-        const size_t core_size = state_size - num_amb - state_manager_.getIonosphereStates().size();
+        const size_t core_size = state_size - num_amb
+            - state_manager_.getIonosphereStates().size()
+            - state_manager_.getIonosphereRateStates().size();
         log_manager_.getLogger("kalman_filter")->info(
             "KalmanFilter initialized with state size: {} (core={}, time_offsets={}, ambiguities={}), mode: {}, P ({}x{}), x ({})",
             state_size, core_size, state_manager_.getNumSystemTimeOffsets(), num_amb,
@@ -476,10 +478,19 @@ namespace GnssProcessor {
                 freeze_state(state_manager_.getSystemTimeOffsetIndex(sys));
 
             // Freeze BSSD pivot ionosphere states (iono column zeroed in S-transform).
+            // Under the constant-velocity model the companion rate is frozen too:
+            // its F-coupling and Q are already suppressed for pivots, and
+            // PivotManager holds it at (0,0); freezing its cross-covariances here
+            // keeps stale correlations from leaking into the SD solution.
             for (const auto& sat : state_manager_.getFrozenPivotSatellites()) {
                 const int iono_idx = state_manager_.getIonosphereIndex(sat);
                 if (iono_idx >= 0)
                     freeze_state(static_cast<size_t>(iono_idx));
+                if (config_.enableIonoRate()) {
+                    const int rate_idx = state_manager_.getIonosphereRateIndex(sat);
+                    if (rate_idx >= 0)
+                        freeze_state(static_cast<size_t>(rate_idx));
+                }
             }
         }
 
@@ -1612,6 +1623,16 @@ namespace GnssProcessor {
                 if (idx < static_cast<size_t>(P.rows()))
                     P(idx, idx) = iono_var;
             }
+            // Constant-velocity model: the companion rate rows were just zeroed
+            // by P.setZero(); restore their cold-start variance so they are not
+            // mistaken for frozen (0-diagonal) pivots.
+            if (config_.enableIonoRate()) {
+                const double ir_var = initial_std.ionosphere_rate * initial_std.ionosphere_rate;
+                for (const auto& [sat, idx] : state_manager_.getIonosphereRateStates()) {
+                    if (idx < static_cast<size_t>(P.rows()))
+                        P(idx, idx) = ir_var;
+                }
+            }
         }
 
         // Ambiguities — reset all to initial variance, but keep BSSD pivot
@@ -1648,6 +1669,16 @@ namespace GnssProcessor {
                 auto piv_it = bssd_pivots.find(cons);
                 if (piv_it != bssd_pivots.end() && piv_it->second == sat)
                     P(idx, idx) = 0.0;  // keep frozen
+            }
+            // Freeze the companion pivot iono-rate states (constant-velocity model).
+            if (config_.enableIonoRate()) {
+                for (const auto& [sat, idx] : state_manager_.getIonosphereRateStates()) {
+                    if (idx >= static_cast<size_t>(P.rows())) continue;
+                    const std::string cons = PppUtils::getSystemString(sat);
+                    auto piv_it = bssd_pivots.find(cons);
+                    if (piv_it != bssd_pivots.end() && piv_it->second == sat)
+                        P(idx, idx) = 0.0;  // keep frozen
+                }
             }
         }
 

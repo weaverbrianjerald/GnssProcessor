@@ -69,7 +69,21 @@ def build_network_products(ctx) -> ViewerResult:
     if not figures:
         raise ViewerSkip("network_solution.csv has no CLK/PB/CB rows")
 
-    return ViewerResult(figures=figures, summary=_summary(df, sys_present))
+    summary = _summary(df, sys_present)
+    # L14 hook: append the machine-readable S-contract check (network_contract_check.csv,
+    # written by the producer under network.serialize_sbasis_contract) when present.  NOT
+    # a required_csv — the block simply does not appear on a run that never checked.
+    if ctx.has_data("network_contract_check.csv"):
+        cc = load_trace(ctx.path("network_contract_check.csv"))
+        if {"check", "status", "detail"}.issubset(cc.columns) and not cc.empty:
+            lines = ["", "=== S-basis contract check (network_contract_check.csv) ==="]
+            for _, r in cc.iterrows():
+                det = str(r.get("detail", "") or "").strip()
+                lines.append(f"  {str(r['check']):<20} {str(r['status']):<5}"
+                             + (f"  {det}" if det else ""))
+            summary += "\n" + "\n".join(lines)
+
+    return ViewerResult(figures=figures, summary=summary)
 
 
 # --------------------------------------------------------------------------- #

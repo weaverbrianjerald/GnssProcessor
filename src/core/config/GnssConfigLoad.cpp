@@ -27,11 +27,15 @@
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/BaselineFixtures.hpp"
+#include "math/TimeUtils.hpp"
 #include "products/StationInfoFile.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <fmt/format.h>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <spdlog/spdlog.h>
 
 // CMake-baked absolute path to the project root.  Used as the default
@@ -404,6 +408,73 @@ namespace GnssProcessor {
             log->warn("Non-positive ssr_max_age_s ({:.1f}) → 30 s default", ssr_max_age_s_);
             ssr_max_age_s_ = 30.0;
         }
+        // A5: SSR code/phase-bias staleness gate (default matches the clock max-age).
+        enable_ssr_bias_max_age_ = jval<bool>(json,
+            "processing.enable_ssr_bias_max_age", "enable_ssr_bias_max_age", false);
+        // RTA-9(a): remember whether the USER wrote the key (either form) — the
+        // network-consumer profile arms the gate under bias consumption only
+        // when the user expressed no preference (explicit false is respected).
+        enable_ssr_bias_max_age_explicit_ =
+            detail::resolvePath(json, "processing.enable_ssr_bias_max_age") != nullptr
+            || json.contains("enable_ssr_bias_max_age");
+        ssr_bias_max_age_s_ = jval<double>(json,
+            "processing.ssr_bias_max_age_s", "ssr_bias_max_age_s", ssr_max_age_s_);
+        if (ssr_bias_max_age_s_ <= 0.0) {
+            log->warn("Non-positive ssr_bias_max_age_s ({:.1f}) → {:.1f} s (ssr_max_age_s)",
+                      ssr_bias_max_age_s_, ssr_max_age_s_);
+            ssr_bias_max_age_s_ = ssr_max_age_s_;
+        }
+        // A5 stale-hold: the apply gate (and its freshness-flip ambiguity reset)
+        // drops a bias only past factor × ssr_bias_max_age_s, HOLDING the last value
+        // over shorter staleness gaps — a provider update interval hovering near the
+        // max age then produces no model step and no reset per update cycle.
+        ssr_bias_stale_hold_factor_ = jval<double>(json,
+            "processing.ssr_bias_stale_hold_factor", "ssr_bias_stale_hold_factor", 2.0);
+        if (ssr_bias_stale_hold_factor_ < 1.0) {
+            if (enable_ssr_bias_max_age_)   // warn only when the knob has any effect
+                log->warn("ssr_bias_stale_hold_factor {:.2f} < 1 → clamped to 1.0 (no hold)",
+                          ssr_bias_stale_hold_factor_);
+            ssr_bias_stale_hold_factor_ = 1.0;
+        }
+        if (enable_ssr_bias_max_age_)
+            log->info("SSR bias staleness gate ON: reject code/phase bias older than {:.1f}s "
+                      "(stale-hold to {:.1f}s = {:.2f}x before the applied bias drops)",
+                      ssr_bias_max_age_s_,
+                      ssr_bias_max_age_s_ * ssr_bias_stale_hold_factor_,
+                      ssr_bias_stale_hold_factor_);
+        // RTA-9(b): CLOCK stale-hold rung.  0 (default) = off — the historic
+        // two-state gate (fresh/rejected) is byte-identical.  >0 opens the
+        // middle rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is
+        // still applied (C0+C1*dt over the true dt) with URA-staleness R
+        // inflation on the consuming rows; beyond the window the original
+        // broadcast-grade cliff stands.  Values in (0,1] cannot shrink the base
+        // gate — clamp to 1 (no hold).
+        ssr_clock_stale_hold_factor_ = jval<double>(json,
+            "processing.ssr_clock_stale_hold_factor", "ssr_clock_stale_hold_factor", 0.0);
+        if (ssr_clock_stale_hold_factor_ < 0.0) {
+            log->warn("Negative ssr_clock_stale_hold_factor ({:.2f}) ignored; rung off",
+                      ssr_clock_stale_hold_factor_);
+            ssr_clock_stale_hold_factor_ = 0.0;
+        } else if (ssr_clock_stale_hold_factor_ > 0.0 && ssr_clock_stale_hold_factor_ <= 1.0) {
+            log->warn("ssr_clock_stale_hold_factor {:.2f} <= 1 -> clamped to 1.0 (no hold; "
+                      "the factor widens the clock apply window, it cannot shrink it)",
+                      ssr_clock_stale_hold_factor_);
+            ssr_clock_stale_hold_factor_ = 1.0;
+        }
+        if (ssr_clock_stale_hold_factor_ > 1.0)
+            log->info("SSR clock stale-hold rung ON (RTA-9b): clocks aged ({:.1f}, {:.1f}]s are "
+                      "still applied (C0+C1*dt) with ZOH q2*dt^3/3 R inflation on consuming rows; "
+                      "beyond {:.1f}s the broadcast-grade cliff applies",
+                      ssr_max_age_s_, ssr_max_age_s_ * ssr_clock_stale_hold_factor_,
+                      ssr_max_age_s_ * ssr_clock_stale_hold_factor_);
+        // RTA-13 (opt-in): CODE-domain band-wise bias fallback.  Armed on the
+        // stores by RealTimeEngine::initialize (singleton) / runRealTime (owned).
+        ssr_bias_band_fallback_ = jval<bool>(json,
+            "processing.ssr_bias_band_fallback", "ssr_bias_band_fallback", false);
+        if (ssr_bias_band_fallback_)
+            log->info("SSR code-bias band fallback ON (RTA-13): an exact-attribute code-bias "
+                      "miss consumes the same-band sibling attribute's bias (residual attribute "
+                      "DCB absorbed by receiver code-bias states); phase NEVER falls back.");
         // obs↔SSR sync: hold obs epochs newer than (freshest SSR content epoch +
         // ssr_max_age) so PPP-RTK consumes obs time-aligned with the corrections
         // rather than pinned to wall clock; a stalled SSR feed is bounded by the
@@ -610,6 +681,70 @@ namespace GnssProcessor {
                 }
             }
         }
+
+        // RTA-7: standalone AR MW-WL suppression + first-class network-consumer
+        // profile.  Both default OFF/inert — byte-identical when absent.
+        ar_ignore_mw_wl_ = jval<bool>(json, "processing.ar_ignore_mw_wl",
+                                      "ar_ignore_mw_wl", false);
+        if (ar_ignore_mw_wl_)
+            log->info("AR: processing.ar_ignore_mw_wl ON — the MW wide-lane feed into "
+                      "ambiguity resolution is dropped (pure MLAMBDA on the KF float).");
+        {
+            auto& nc = network_consumer_config_;
+            nc.enable        = jval<bool>(json, "processing.network_consumer.enable",
+                                          "network_consumer_enable", false);
+            nc.clock         = jval<bool>(json, "processing.network_consumer.clock",
+                                          "network_consumer_clock", true);
+            nc.bias          = jval<bool>(json, "processing.network_consumer.bias",
+                                          "network_consumer_bias", true);
+            nc.undifferenced = jval<bool>(json, "processing.network_consumer.undifferenced",
+                                          "network_consumer_undifferenced", true);
+            // RTA-8(a): orbit-overlay source for the injected-store wiring.
+            // "external" (default) keeps the orbit overlay on the singleton (the
+            // external RTS corrections stream); "network" points it at the
+            // injected product store (future orbit-bearing product).
+            nc.orbit_source  = detail::toLower(jval<std::string>(
+                json, "processing.network_consumer.orbit_source",
+                "network_consumer_orbit_source", std::string{"external"}));
+            if (nc.orbit_source != "external" && nc.orbit_source != "network") {
+                log->warn("Unknown processing.network_consumer.orbit_source '{}' "
+                          "(legal: \"external\", \"network\"); using \"external\"",
+                          nc.orbit_source);
+                nc.orbit_source = "external";
+            }
+            // Tri-state: only an EXPLICIT key becomes an override (-1 = derive
+            // exactly as the closed-loop driver does; see networkConsumerArIgnoreMwWl).
+            if (const auto* p = detail::resolvePath(json, "processing.network_consumer.ar_ignore_mw_wl"))
+                nc.ar_ignore_mw_wl = p->get<bool>() ? 1 : 0;
+            nc.expect_reference_receiver = jval<std::string>(
+                json, "processing.network_consumer.expect_reference_receiver",
+                "network_consumer_expect_reference_receiver", std::string{});
+            nc.expect_apriori_product_id = jval<std::string>(
+                json, "processing.network_consumer.expect_apriori_product_id",
+                "network_consumer_expect_apriori_product_id", std::string{});
+            // RTA-12: optional S-contract identity pins (frame=/atx=/oref= fields).
+            // Empty (default) = don't pin — checkContract only compares a field
+            // when the expectation declares it non-empty.
+            nc.expect_frame_id = jval<std::string>(
+                json, "processing.network_consumer.expect_frame_id",
+                "network_consumer_expect_frame_id", std::string{});
+            nc.expect_atx_id = jval<std::string>(
+                json, "processing.network_consumer.expect_atx_id",
+                "network_consumer_expect_atx_id", std::string{});
+            nc.expect_orbit_ref = jval<std::string>(
+                json, "processing.network_consumer.expect_orbit_ref",
+                "network_consumer_expect_orbit_ref", std::string{});
+            if (nc.enable)
+                log->info("Network-consumer profile (RTA-7) CONFIGURED: clock {}, bias {}, "
+                          "{} user model, orbit_source {}, ar_ignore_mw_wl {} — applied at "
+                          "real-time startup when realtime.network_products_path provides a "
+                          "product source.",
+                          nc.clock ? "on" : "off", nc.bias ? "on" : "off",
+                          nc.undifferenced ? "undifferenced" : "BSSD",
+                          nc.orbit_source,
+                          nc.ar_ignore_mw_wl < 0 ? "auto"
+                              : (nc.ar_ignore_mw_wl != 0 ? "true (explicit)" : "false (explicit)"));
+        }
     }
 
     // =================================================================
@@ -623,6 +758,8 @@ namespace GnssProcessor {
                                                 "estimate_phase_clock", false);
         estimate_velocity_        = jval<bool>(json, "estimation.estimate_velocity",
                                                 "estimate_velocity", false);
+        enable_iono_rate_         = jval<bool>(json, "estimation.enable_iono_rate",
+                                                "enable_iono_rate", false);
         estimate_ifb_             = jval<bool>(json, "estimation.estimate_ifb",
                                                 "estimate_ifb", false);
         code_bias_reinflate_std_  = jval<double>(json, "estimation.code_bias_reinflate_std",
@@ -1225,7 +1362,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
+        log->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -1234,6 +1371,7 @@ namespace GnssProcessor {
             accumulate_phase_windup_  ? "on" : "off",
             enable_between_satellite_sd_ ? "on" : "off",
             estimate_velocity_        ? "on" : "off",
+            enable_iono_rate_         ? "on" : "off",
             estimate_ifb_             ? "on" : "off",
             enable_glonass_ifb_       ? "on" : "off",
             lock_signals_to_clock_ref_ ? "on" : "off",
@@ -1268,6 +1406,7 @@ namespace GnssProcessor {
             process_noise_.clock               = pn.value("clock_bias_q", 1e4);
             process_noise_.troposphere         = pn.value("troposphere_q", 1e-8);
             process_noise_.ionosphere          = pn.value("ionosphere_q", 0.10);
+            process_noise_.iono_rate_psd       = pn.value("iono_rate_psd", 1e-10);
             process_noise_.system_time_offset  = pn.value("system_time_offset_q", 1e-7);
             process_noise_.code_bias           = pn.value("code_bias_q", 1e-4);
             process_noise_.tropo_gradient      = pn.value("tropo_gradient_q", 5e-12);
@@ -1308,6 +1447,7 @@ namespace GnssProcessor {
             initial_std_.clock               = is.value("clock", 1e3);
             initial_std_.troposphere         = is.value("troposphere", 0.5);
             initial_std_.ionosphere          = is.value("ionosphere", 5.0);
+            initial_std_.ionosphere_rate     = is.value("ionosphere_rate", 0.1);
             initial_std_.ambiguity           = is.value("ambiguity", 1e3);
             initial_std_.system_time_offset  = is.value("system_time_offset", 1e3);
             initial_std_.code_bias           = is.value("code_bias", 10.0);
@@ -2211,6 +2351,49 @@ namespace GnssProcessor {
             realtime_config_.output_type        = rt.value("output_type", "console");
             realtime_config_.output_path        = rt.value("output_path", "");
             realtime_config_.max_epoch_buffer   = rt.value("max_epoch_buffer", 100U);
+            // RTB-4: pin precise (ultra-rapid) orbits while clocks stay live/network.
+            realtime_config_.use_precise_orbits = rt.value("use_precise_orbits", false);
+            if (realtime_config_.use_precise_orbits) {
+                log->info("realtime.use_precise_orbits enabled — precise (ultra-rapid) "
+                          "SP3 orbits pinned; satellite clocks stay on the live/network "
+                          "source (RTB-4)");
+            }
+            // RTA-6: live network product file to tail (empty = off).  Consumed
+            // by runRealTime via NetworkProductTail into an OWNED SsrCorrectionStore.
+            realtime_config_.network_products_path = rt.value("network_products_path", "");
+            // RTA-12(3): blunder gate on the RTCM 1005/1006 a-priori seed (m).
+            // 0 (default) = off, legacy seed-always behaviour; suggested 10.0.
+            realtime_config_.arp_blunder_gate_m = rt.value("arp_blunder_gate_m", 0.0);
+            // RTB-1(c): GPS-UTC leap seconds for the RT wall-clock -> GPS
+            // conversion.  Default = the compiled TimeUtils::LEAP_SECONDS, so
+            // an absent key is byte-identical; a non-default value is applied
+            // via TimeUtils::setLeapSecondsOverride in RealTimeEngine::initialize.
+            realtime_config_.leap_seconds = rt.value(
+                "leap_seconds", static_cast<int>(TimeUtils::LEAP_SECONDS));
+            if (realtime_config_.leap_seconds != static_cast<int>(TimeUtils::LEAP_SECONDS)) {
+                log->info("realtime.leap_seconds override: {} s (compiled default {}) — "
+                          "applied to the RT wall-clock->GPS conversion; nav-derived "
+                          "leap seconds are the RTF-scale follow-on",
+                          realtime_config_.leap_seconds,
+                          static_cast<int>(TimeUtils::LEAP_SECONDS));
+            }
+            // RTB-3: MSM lock-time -> LLI loss-of-lock derivation (default off —
+            // arming changes slip-detection behaviour on RT replays).
+            realtime_config_.msm_lli_from_locktime =
+                rt.value("msm_lli_from_locktime", false);
+            if (realtime_config_.msm_lli_from_locktime) {
+                log->info("realtime.msm_lli_from_locktime enabled — LLI 0x1 derived "
+                          "from MSM lock-time decreases at epoch assembly (LockTimeTracker)");
+            }
+            // RTB-5(c): skip the satellite-PCO range term for satellites whose
+            // applied SSR orbit is APC-referenced (legacy-SSR dialect).  Default
+            // off = byte-identical (historical double count preserved).
+            realtime_config_.honor_ssr_reference_point =
+                rt.value("honor_ssr_reference_point", false);
+            if (realtime_config_.honor_ssr_reference_point) {
+                log->info("realtime.honor_ssr_reference_point enabled — satellite PCO "
+                          "skipped for APC-referenced (legacy-SSR) orbit corrections");
+            }
 
             // Optional SSR corrections stream (separate NTRIP mountpoint
             // or file-replay).  Default: disabled — single-stream behaviour.
@@ -2231,6 +2414,17 @@ namespace GnssProcessor {
                 c.input_path         = cc.value("input_path", std::string{});
                 c.tcp_host           = cc.value("tcp_host", std::string{});
                 c.tcp_port           = cc.value("tcp_port", 28784);
+                // RTA-8(b): per-stream SSR ingest accept policy.  "all" (default)
+                // = byte-identical unfiltered push; "orbit_only" drops this
+                // stream's clock/bias content and decomposes combined records so
+                // an RTS clock can never shadow an injected network clock.
+                c.accept             = detail::toLower(
+                    cc.value("corrections_accept", std::string{"all"}));
+                if (c.accept != "all" && c.accept != "orbit_only") {
+                    log->warn("Unknown realtime.corrections.corrections_accept '{}' "
+                              "(legal: \"all\", \"orbit_only\"); using \"all\"", c.accept);
+                    c.accept = "all";
+                }
             }
 
             // Optional third RTCM stream: dedicated broadcast ephemeris (nav),
@@ -2254,6 +2448,17 @@ namespace GnssProcessor {
                 e.input_path         = ec.value("input_path", std::string{});
                 e.tcp_host           = ec.value("tcp_host", std::string{});
                 e.tcp_port           = ec.value("tcp_port", 28784);
+                // RTA-8(b): same per-stream ingest policy as the corrections
+                // block (the two streams share the transport descriptor).  A nav
+                // stream normally carries no SSR, so this is a guard against a
+                // mixed mountpoint leaking clock content.
+                e.accept             = detail::toLower(
+                    ec.value("corrections_accept", std::string{"all"}));
+                if (e.accept != "all" && e.accept != "orbit_only") {
+                    log->warn("Unknown realtime.ephemeris.corrections_accept '{}' "
+                              "(legal: \"all\", \"orbit_only\"); using \"all\"", e.accept);
+                    e.accept = "all";
+                }
             }
 
             if (app_mode_ == AppMode::RealTime) {
@@ -2273,6 +2478,12 @@ namespace GnssProcessor {
                     } else {
                         log->info("Real-time corrections: file={}", c.input_path);
                     }
+                    // RTA-8(b): surface a non-default ingest policy once at startup.
+                    if (c.accept != "all")
+                        log->info("Real-time corrections ingest policy: {} — this stream's "
+                                  "standalone clock / code-bias / phase-bias / high-rate-clock "
+                                  "records are dropped; combined orbit+clock records are "
+                                  "decomposed to orbit-only.", c.accept);
                 }
                 if (realtime_config_.ephemeris.enabled) {
                     const auto& e = realtime_config_.ephemeris;
@@ -2283,6 +2494,10 @@ namespace GnssProcessor {
                     } else {
                         log->info("Real-time ephemeris (nav): file={}", e.input_path);
                     }
+                }
+                if (!realtime_config_.network_products_path.empty()) {
+                    log->info("Real-time network products (RTA-6): tailing file={}",
+                              realtime_config_.network_products_path);
                 }
             }
         }
@@ -2544,6 +2759,45 @@ namespace GnssProcessor {
         return true;
     }
 
+    namespace {
+
+        /**
+         * @brief RTA-12: parse a coordinate-epoch declaration into a decimal year.
+         *
+         * Accepts the two documented @c network.coord_epoch shapes: a decimal year
+         * ("2024.5") or an ISO calendar date ("2024-07-01", mapped to the day
+         * centre).  Anything else — including trailing junk — is rejected so the
+         * coordinate-age advisory can distinguish "unset" from "unparseable".
+         *
+         * @param s Epoch string as typed in the config.
+         * @return Decimal year, or @c std::nullopt when unparseable.
+         */
+        std::optional<double> parseCoordEpochYear(const std::string& s) {
+            if (s.empty()) return std::nullopt;
+            // ISO date YYYY-MM-DD -> decimal year at the day centre.
+            if (s.size() == 10 && s[4] == '-' && s[7] == '-') {
+                int y = 0, m = 0, d = 0;
+                if (std::sscanf(s.c_str(), "%4d-%2d-%2d", &y, &m, &d) == 3
+                    && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                    static const int cum[12] = { 0, 31, 59, 90, 120, 151, 181,
+                                                 212, 243, 273, 304, 334 };
+                    const bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+                    const double doy = cum[m - 1] + d + ((leap && m > 2) ? 1 : 0);
+                    return static_cast<double>(y) + (doy - 0.5) / (leap ? 366.0 : 365.0);
+                }
+                return std::nullopt;
+            }
+            // Decimal year (whole string must consume; sane geodetic range).
+            try {
+                std::size_t pos = 0;
+                const double v = std::stod(s, &pos);
+                if (pos == s.size() && v > 1900.0 && v < 2200.0) return v;
+            } catch (const std::exception&) {}
+            return std::nullopt;
+        }
+
+    } // namespace
+
     // =================================================================
     //  Section: network  (PPP_RTK_Network producer)
     // =================================================================
@@ -2583,7 +2837,33 @@ namespace GnssProcessor {
                        network_config_.stations.size());
             return false;
         }
-        for (const auto& s : network_config_.stations) {
+
+        // --- RTA-12: contract identity declarations + SIF roster coordinates ---
+        // frame_id / coord_epoch are pure declarations stamped into the product
+        // S-contract (frame=/cepoch= fields; empty = omitted, byte-identical).
+        network_config_.frame_id =
+            jval<std::string>(json, "network.frame_id", "frame_id", std::string{});
+        network_config_.coord_epoch =
+            jval<std::string>(json, "network.coord_epoch", "coord_epoch", std::string{});
+        network_config_.use_sif_coordinates =
+            jval<bool>(json, "network.use_sif_coordinates", "use_sif_coordinates", false);
+        network_config_.coord_age_warn_years =
+            jval<double>(json, "network.coord_age_warn_years", "coord_age_warn_years", 0.0);
+
+        // Run-date hint for SIF velocity propagation and the coordinate-age
+        // advisory: the data_download {year, doy} pair (loadDataDownloadSection_
+        // has already run), re-used as the generic date hint exactly as
+        // PathResolver does under data_source=internal.  0/0 = no hint.
+        std::optional<double> run_year;
+        if (download_config_.year > 0 && download_config_.doy > 0) {
+            const int  y    = download_config_.year;
+            const bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+            run_year = static_cast<double>(y)
+                     + (static_cast<double>(download_config_.doy) - 0.5) / (leap ? 366.0 : 365.0);
+        }
+
+        std::size_t n_sif_resolved = 0;
+        for (auto& s : network_config_.stations) {
             if (s.name.empty()) {
                 log->error("Network: every station needs a non-empty 'name'");
                 return false;
@@ -2591,9 +2871,86 @@ namespace GnssProcessor {
             // An empty rinex_path is tolerated (PathResolver fills it from the
             // internal tree by station name); a known position is required (the
             // network holds coordinates fixed, so it cannot bootstrap them).
+            // RTA-12: under network.use_sif_coordinates a missing position_ecef
+            // may be resolved from the loaded SIF registry — the ONLY relaxation
+            // of the hard error; explicit JSON ECEF always wins (this branch is
+            // never entered for it), and with the toggle off the pre-RTA-12 hard
+            // error below is unchanged.
+            if (!s.has_position && network_config_.use_sif_coordinates) {
+                if (!station_info_) {
+                    log->error("Network: station '{}' has no position_ecef and "
+                               "network.use_sif_coordinates is on, but no SIF registry is "
+                               "loaded — arm processing.enable_station_info (+ "
+                               "files.station_info_path/s) or supply position_ecef.",
+                               s.name);
+                    return false;
+                }
+                if (!run_year) {
+                    log->error("Network: station '{}' has no position_ecef and SIF "
+                               "velocity propagation needs a run date — set "
+                               "data_download.year/doy or supply position_ecef.",
+                               s.name);
+                    return false;
+                }
+                const auto rc = resolveRosterCoordinate(*station_info_, s.name, *run_year);
+                if (!rc) {
+                    log->error("Network: station '{}' has no position_ecef and could not "
+                               "be resolved from the SIF registry (unknown station or no "
+                               "usable occupation at {:.4f}) — supply position_ecef.",
+                               s.name, *run_year);
+                    return false;
+                }
+                s.position_ecef     = { rc->ecef.x(), rc->ecef.y(), rc->ecef.z() };
+                s.has_position      = true;
+                s.position_from_sif = true;
+                ++n_sif_resolved;
+            }
             if (!s.has_position) {
                 log->error("Network: station '{}' needs a known 'position_ecef' (held fixed)", s.name);
                 return false;
+            }
+        }
+        if (network_config_.use_sif_coordinates) {
+            // Default the declared coordinate epoch to the propagation date when the
+            // user left it empty and any coordinate was actually SIF-propagated —
+            // the S-contract cepoch= field then states the epoch the roster is
+            // really valid at.  An explicit network.coord_epoch always wins.
+            if (n_sif_resolved > 0 && network_config_.coord_epoch.empty()) {
+                network_config_.coord_epoch = fmt::format("{:.4f}", *run_year);
+                log->info("Network (RTA-12): network.coord_epoch defaulted to the SIF "
+                          "propagation date {} (decimal year).", network_config_.coord_epoch);
+            }
+            // Per-station provenance, once at roster build (toggle-gated so a
+            // default run's log is unchanged).
+            for (const auto& s : network_config_.stations)
+                log->info("Network roster: station '{}' coordinates {} "
+                          "({:.4f}, {:.4f}, {:.4f}) m",
+                          s.name,
+                          s.position_from_sif
+                              ? fmt::format("SIF-propagated to {:.4f}", *run_year)
+                              : "json-explicit",
+                          s.position_ecef[0], s.position_ecef[1], s.position_ecef[2]);
+        }
+        // RTA-12(4): cheap coordinate-age advisory.  Plate motion is ~2-7 cm/yr, so
+        // fixed roster coordinates more than coord_age_warn_years beyond their
+        // declared epoch should be re-propagated before they poison a cm-level
+        // product datum.  Advisory ONLY (single WARN) — datum-event machinery
+        // (automatic re-propagation / product re-basing on a coordinate update) is
+        // an RTF-scale follow-on, deliberately out of this card's scope.
+        if (network_config_.coord_age_warn_years > 0.0
+            && !network_config_.coord_epoch.empty() && run_year) {
+            const auto epoch_year = parseCoordEpochYear(network_config_.coord_epoch);
+            if (!epoch_year) {
+                log->warn("Network: network.coord_epoch '{}' is not parseable (decimal "
+                          "year or YYYY-MM-DD) — coordinate-age advisory skipped.",
+                          network_config_.coord_epoch);
+            } else if (*run_year - *epoch_year > network_config_.coord_age_warn_years) {
+                log->warn("Network: roster coordinate epoch {} is {:.2f} years before the "
+                          "run date ({:.4f}), beyond network.coord_age_warn_years = {:.2f} "
+                          "— plate motion is ~2-7 cm/yr; re-propagate the station "
+                          "coordinates (or arm network.use_sif_coordinates).",
+                          network_config_.coord_epoch, *run_year - *epoch_year,
+                          *run_year, network_config_.coord_age_warn_years);
             }
         }
 
@@ -2606,6 +2963,21 @@ namespace GnssProcessor {
             jval<double>(json, "network.epoch_sync_tolerance_s", "epoch_sync_tolerance_s", 0.01);
         network_config_.product_output_path =
             jval<std::string>(json, "network.product_output_path", "product_output_path", std::string{});
+        // RTA-6: per-epoch product-file flush for a live tail consumer.  Flushing
+        // changes no bytes (OFF run byte-identical); default false per the
+        // default-off toggle discipline.
+        network_config_.product_flush_per_epoch =
+            jval<bool>(json, "network.product_flush_per_epoch", "product_flush_per_epoch", false);
+        if (network_config_.product_flush_per_epoch) {
+            if (network_config_.product_output_path.empty())
+                log->warn("Network: network.product_flush_per_epoch is set but "
+                          "network.product_output_path is empty — no product file is "
+                          "written, so the knob is inert.");
+            else
+                log->info("Network producer (RTA-6): per-epoch product-file flush ON — a "
+                          "live tail consumer sees each epoch block as soon as it is "
+                          "emitted (no byte change; ordering/latency only).");
+        }
 
         // --- Per-station compute parallelism (geometry + measurement assembly) ---
         network_config_.parallel_stations =
@@ -2624,6 +2996,101 @@ namespace GnssProcessor {
             jval<bool>(json, "network.trace_ionosphere", "trace_ionosphere", false);
         network_config_.trace_slip_events =
             jval<bool>(json, "network.trace_slip_events", "trace_slip_events", false);
+        network_config_.trace_clock_full =
+            jval<bool>(json, "network.trace_clock_full", "trace_clock_full", false);
+        network_config_.trace_anchor_info =
+            jval<bool>(json, "network.trace_anchor_info", "trace_anchor_info", false);
+        network_config_.trace_dd_fractional =
+            jval<bool>(json, "network.trace_dd_fractional", "trace_dd_fractional", false);
+        network_config_.trace_flag_rates =
+            jval<bool>(json, "network.trace_flag_rates", "trace_flag_rates", false);
+        network_config_.trace_epoch_status =
+            jval<bool>(json, "network.trace_epoch_status", "trace_epoch_status", false);
+        network_config_.health_interval_s =
+            jval<double>(json, "network.health_interval_s", "health_interval_s", 0.0);
+        if (network_config_.health_interval_s < 0.0) {
+            log->warn("Network: network.health_interval_s {} < 0 clamped to 0 (no operator "
+                      "health heartbeat).", network_config_.health_interval_s);
+            network_config_.health_interval_s = 0.0;
+        }
+        // P1: size-based rotation of the unbounded service CSVs (network_trace /
+        // network_solution / network_service_health).  Default 0 = off ⇒ no
+        // close/rename ever happens (byte-identical).
+        network_config_.trace_rotate_mb =
+            jval<double>(json, "network.trace_rotate_mb", "trace_rotate_mb", 0.0);
+        network_config_.trace_rotate_keep =
+            jval<int>(json, "network.trace_rotate_keep", "trace_rotate_keep", 3);
+        if (network_config_.trace_rotate_mb < 0.0) {
+            log->warn("Network: network.trace_rotate_mb {} < 0 clamped to 0 (trace rotation "
+                      "off).", network_config_.trace_rotate_mb);
+            network_config_.trace_rotate_mb = 0.0;
+        }
+        if (network_config_.trace_rotate_keep < 1) {
+            log->warn("Network: network.trace_rotate_keep {} < 1 clamped to 1 (at least one "
+                      "rolled generation is kept when rotation is on).",
+                      network_config_.trace_rotate_keep);
+            network_config_.trace_rotate_keep = 1;
+        }
+        if (network_config_.trace_rotate_mb > 0.0)
+            log->info("Network (P1): trace-CSV rotation ON — network_trace.csv / "
+                      "network_solution.csv / network_service_health.csv roll at {:.1f} MiB, "
+                      "keeping {} rolled generation(s) (.1 oldest-shifted, header re-written; "
+                      "rotated suffixes are NOT auto-discovered by the pyviz viewers).",
+                      network_config_.trace_rotate_mb, network_config_.trace_rotate_keep);
+        network_config_.warmup_ura_floor_m =
+            jval<double>(json, "network.warmup_ura_floor_m", "warmup_ura_floor_m", 0.0);
+        network_config_.warmup_epochs =
+            jval<int>(json, "network.warmup_epochs", "warmup_epochs", 0);
+        // RTB-7(a): producer state snapshot + warm resume.  Path empty (default)
+        // = OFF, byte-identical; the interval is inert without the path.
+        network_config_.state_snapshot_path =
+            jval<std::string>(json, "network.state_snapshot_path", "state_snapshot_path",
+                              std::string{});
+        network_config_.state_snapshot_interval_s =
+            jval<double>(json, "network.state_snapshot_interval_s",
+                         "state_snapshot_interval_s", 10.0);
+        if (network_config_.state_snapshot_interval_s <= 0.0) {
+            log->warn("Network: network.state_snapshot_interval_s {} must be > 0; clamped to "
+                      "the default 10 s.", network_config_.state_snapshot_interval_s);
+            network_config_.state_snapshot_interval_s = 10.0;
+        }
+        if (!network_config_.state_snapshot_path.empty())
+            log->info("Network (RTB-7): producer state snapshot ON — atomic rewrite of '{}' "
+                      "every {:.0f} s of product time (driver carries/oscillators/pivots/"
+                      "pending bumps + emitter discontinuity state).  At startup a fresh, "
+                      "config-matching snapshot WARM-resumes (generation id preserved, no "
+                      "consumer reset); a stale/mismatched/corrupt one cold-starts with a "
+                      "new generation id.",
+                      network_config_.state_snapshot_path,
+                      network_config_.state_snapshot_interval_s);
+        network_config_.trace_events =
+            jval<bool>(json, "network.trace_events", "trace_events", false);
+        if (network_config_.trace_events)
+            log->info("Network: per-event QC trace ENABLED — network_events.csv logs every "
+                      "tiered QC action (T1-T6, GATE/SIGMA0/PIVOT/RETRO) in long format.");
+        network_config_.trace_zwd =
+            jval<bool>(json, "network.trace_zwd", "trace_zwd", false);
+        if (network_config_.trace_zwd)
+            log->info("Network: per-station ZWD trace ENABLED — network_zwd.csv logs each "
+                      "station's estimated ZWD + datum-conditioned formal sigma each emitted epoch.");
+        network_config_.trace_station_residuals =
+            jval<bool>(json, "network.trace_station_residuals", "trace_station_residuals", false);
+        network_config_.write_run_manifest =
+            jval<bool>(json, "network.write_run_manifest", "write_run_manifest", false);
+        if (network_config_.write_run_manifest)
+            log->info("Network: run-provenance manifest ENABLED — network_run_manifest.json "
+                      "records the config hash, build stamp, and full toggle set (JSONL).");
+        network_config_.trace_ssr_consumer =
+            jval<bool>(json, "network.trace_ssr_consumer", "trace_ssr_consumer", false);
+        if (network_config_.trace_ssr_consumer)
+            log->info("Network: consumer-side SSR trace ENABLED — the SSR consumer writes "
+                      "ssr_consumer_trace.csv (age, clk-applied, URA R-inflation, disc counters).");
+        network_config_.serialize_sbasis_contract =
+            jval<bool>(json, "network.serialize_sbasis_contract", "serialize_sbasis_contract", false);
+        if (network_config_.serialize_sbasis_contract)
+            log->info("Network: S-basis contract serialization ENABLED — product header carries the "
+                      "S-basis declaration, a-priori orbit/clock product identity, and phase-bias "
+                      "discontinuity threshold (v2 'S' line) for consumer cross-check.");
 
         if (network_config_.clock_datum_station.empty()) {
             network_config_.clock_datum_station = network_config_.stations.front().name;
@@ -2803,6 +3270,16 @@ namespace GnssProcessor {
             jval<double>(json, "network.phase_leveling_max_gap_s", "phase_leveling_max_gap_s", 120.0);
         network_phase_leveling_var_floor_m2_ =
             jval<double>(json, "network.phase_leveling_var_floor_m2", "phase_leveling_var_floor_m2", 0.0);
+        network_shared_carry_var_floor_pb_m2_ =
+            jval<double>(json, "network.shared_carry_var_floor_pb_m2", "shared_carry_var_floor_pb_m2", 0.0);
+        network_shared_carry_var_floor_cb_m2_ =
+            jval<double>(json, "network.shared_carry_var_floor_cb_m2", "shared_carry_var_floor_cb_m2", 0.0);
+        // ZWD random-walk carry (B9): carry per-station tropospheric ZWD across epochs as a
+        // diagonal RW prior via the same addStationPrior path as the ambiguity carry.
+        network_carry_zwd_ =
+            jval<bool>(json, "network.carry_zwd", "carry_zwd", false);
+        network_zwd_carry_q_ =
+            jval<double>(json, "network.zwd_carry_q", "zwd_carry_q", 1e-9);
         // T0 cycle-slip repair (Increment 2): only meaningful with the carry on.
         network_cycle_slip_turbo_edit_ =
             jval<bool>(json, "network.cycle_slip.turbo_edit", "network_cycle_slip_turbo_edit", false);
@@ -2848,6 +3325,467 @@ namespace GnssProcessor {
             jval<bool>(json, "network.raim_within_epoch", "network_raim_within_epoch", false);
         network_raim_sigma0_trigger_ =
             jval<double>(json, "network.raim_sigma0_trigger", "network_raim_sigma0_trigger", 3.0);
+        network_raim_withhold_sigma0_ =
+            jval<double>(json, "network.raim_withhold_sigma0", "network_raim_withhold_sigma0", 0.0);
+        // R11/R1: a σ̂0 withhold ceiling in (0,1] is pathological — a healthy epoch's reduced-
+        // χ² √ (the σ̂0 the gate compares against) sits at ~1, so a ceiling at or below 1 would
+        // WITHHOLD essentially every warm armed epoch (total availability loss), the opposite
+        // of the intended rare escape-hatch.  A sensible value is ~2× network.raim_sigma0_trigger.
+        // Treat it as a config error: warn and disable (0 = emit-anyway, the documented default)
+        // rather than silently withholding the whole run.  Done before the within-epoch coupling
+        // below so a clamped-to-0 ceiling does not spuriously arm within-epoch adaptation.
+        if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
+            log->warn("Network: network.raim_withhold_sigma0 {} is <= 1 — σ̂0 is floored at 1, so "
+                      "a ceiling at or below 1 would withhold most warm epochs (and a negative "
+                      "value is meaningless).  Disabling it (set ~2x network.raim_sigma0_trigger, "
+                      "e.g. 6, to use it).",
+                      network_raim_withhold_sigma0_);
+            network_raim_withhold_sigma0_ = 0.0;
+        }
+        // RTA-10: per-constellation carve-out of the A4 σ̂0 withhold.  Activates ONLY at a
+        // tripped withhold (raim_withhold_sigma0 > 0), so without that ceiling it is a silent
+        // no-op — warn rather than auto-arm (choosing a σ̂0 ceiling is a numeric decision the
+        // user must make; there is no safe default to inject).
+        network_per_const_withhold_ =
+            jval<bool>(json, "network.per_const_withhold", "network_per_const_withhold", false);
+        network_per_const_withhold_min_rows_ =
+            jval<int>(json, "network.per_const_withhold_min_rows",
+                      "network_per_const_withhold_min_rows", 20);
+        if (network_per_const_withhold_min_rows_ < 1) {
+            log->warn("Network (RTA-10): network.per_const_withhold_min_rows {} < 1 clamped to 1 "
+                      "(a constellation needs at least one standardized-residual row to be judged).",
+                      network_per_const_withhold_min_rows_);
+            network_per_const_withhold_min_rows_ = 1;
+        }
+        if (network_per_const_withhold_ && network_raim_withhold_sigma0_ <= 0.0)
+            log->warn("Network (RTA-10): network.per_const_withhold is on but "
+                      "network.raim_withhold_sigma0 is 0 (off) — the carve-out only runs when the "
+                      "A4 σ̂0 withhold trips, so it is a silent no-op.  Set a withhold ceiling "
+                      "(~2x network.raim_sigma0_trigger) to activate it.");
+        if (network_per_const_withhold_ && network_raim_withhold_sigma0_ > 0.0)
+            log->info("Network (RTA-10): per-constellation σ̂0 carve-out ON — a tripped withhold "
+                      "(ceiling {:.2f}) publishes each constellation whose own σ̂0_c passes the "
+                      "same ceiling with >= {} rows, and prunes the rest (whole-epoch withhold "
+                      "only when NO constellation passes).",
+                      network_raim_withhold_sigma0_, network_per_const_withhold_min_rows_);
+        network_raim_surgical_station_ =
+            jval<bool>(json, "network.raim_surgical_station", "network_raim_surgical_station", true);
+        network_raim_station_drop_bias_ =
+            jval<double>(json, "network.raim_station_drop_bias", "network_raim_station_drop_bias", 1.5);
+        network_raim_redundancy_normalize_ =
+            jval<bool>(json, "network.raim_redundancy_normalize", "network_raim_redundancy_normalize", false);
+        if (network_raim_station_drop_bias_ < 1.0) {
+            log->warn("Network: network.raim_station_drop_bias {} < 1 clamped to 1 (a bias below 1 "
+                      "would PREFER whole-station exclusion, the opposite of its purpose).",
+                      network_raim_station_drop_bias_);
+            network_raim_station_drop_bias_ = 1.0;
+        }
+        // A4/P0-4: the withhold ceiling reuses the WITHIN-EPOCH σ̂0 (published only when the
+        // within-epoch adaptation runs — otherwise sigma0_adapt stays 0 and the gate never
+        // fires).  So raim_withhold_sigma0 is a silent no-op without network.raim_within_epoch.
+        // Enable that tier (which then pulls in raim + attribution just below) so the
+        // diffuse-contamination escape-hatch is actually active, and say so.
+        if (network_raim_withhold_sigma0_ > 0.0 && !network_raim_within_epoch_) {
+            log->warn("Network: network.raim_withhold_sigma0 > 0 needs the within-epoch σ̂0 — "
+                      "enabling network.raim_within_epoch so the withhold escape-hatch is active "
+                      "(it is the tier that computes the σ̂0 the ceiling compares against).");
+            network_raim_within_epoch_ = true;
+        }
+        // The within-epoch adaptation REFLOATS (reinitializes) a contaminated sat/arc's carried
+        // ambiguity in-place — the re-solve lets it find its new value and the harvest re-stashes
+        // it, so within-epoch is self-contained (no lock-in even at zero process noise).  The
+        // post-fit RAIM prominence-attribution refloat is the COMPLEMENTARY tier: it catches
+        // slips too small to trip the within-epoch σ̂0 trigger yet large enough to standardized-
+        // residual-flag (e.g. a single-satellite spike that does not move the robust network σ̂0).
+        // They are the two halves of one backstop, so enable both together for complete coverage.
+        if (network_raim_within_epoch_ && (!network_raim_ || !network_raim_attribution_)) {
+            log->warn("Network: enabling network.raim + network.raim_attribution alongside "
+                      "network.raim_within_epoch — the post-fit attribution refloat is the "
+                      "complementary tier that catches slips below the within-epoch σ̂0 trigger.");
+            network_raim_ = true;
+            network_raim_attribution_ = true;
+        }
+
+        // Per-satellite carried-clock sanity monitor (the shared-parameter analogue of the
+        // carried-ambiguity refloat): detects a lone satellite whose clock has locked into a
+        // physically impossible value — invisible to the σ̂0 RAIM, which needs the shared
+        // residual level to move — and refloats its carried clock (+ coupled phase/code bias)
+        // so the stiff sat_clock_q carry can no longer freeze the wrong value.
+        network_clock_monitor_ =
+            jval<bool>(json, "network.clock_monitor", "network_clock_monitor", false);
+        network_clock_monitor_abs_max_m_ =
+            jval<double>(json, "network.clock_monitor_abs_max_m", "network_clock_monitor_abs_max_m", 20.0);
+        network_clock_monitor_jump_max_m_ =
+            jval<double>(json, "network.clock_monitor_jump_max_m", "network_clock_monitor_jump_max_m", 10.0);
+        network_clock_monitor_couple_raim_ =
+            jval<bool>(json, "network.clock_monitor_couple_raim", "network_clock_monitor_couple_raim", false);
+        // A flagged satellite's carried state is loosened to this σ (a soft large-q reinit that
+        // keeps a weak anchor at the previous value) rather than being withheld entirely; ≤0
+        // restores the hard skip-stash refloat.
+        network_clock_monitor_reinit_sigma_m_ =
+            jval<double>(json, "network.clock_monitor_reinit_sigma_m", "network_clock_monitor_reinit_sigma_m", 30.0);
+
+        // Two-state (offset+drift) oscillator model for the carried satellite clock, with
+        // Allan/Hadamard-derived process noise, replacing the scalar random-walk carry: the tight
+        // drift-following prediction turns a self-consistent lock-in into a large normalized
+        // innovation (a detectable dynamics fault) and sizes the detection band physically.
+        network_clock_model_ =
+            jval<bool>(json, "network.clock_model", "network_clock_model", false);
+        network_clock_model_q1_ =
+            jval<double>(json, "network.clock_model_q1", "network_clock_model_q1", 0.0);
+        network_clock_model_q2_ =
+            jval<double>(json, "network.clock_model_q2", "network_clock_model_q2", 1.5e-7);
+        network_clock_model_k_sigma_ =
+            jval<double>(json, "network.clock_model_k_sigma", "network_clock_model_k_sigma", 6.0);
+        network_clock_model_meas_std_m_ =
+            jval<double>(json, "network.clock_model_meas_std_m", "network_clock_model_meas_std_m", 0.05);
+        // R11: dedicated max-gap for the two-state clock-model carry (reseed / drift-reset /
+        // C1-ZOH bound), distinct from the ambiguity/ZWD phase-leveling max-gap.  Defaults to
+        // network_phase_leveling_max_gap_s_ (loaded above) so a config that does not set it is
+        // byte-identical to the previous behaviour, which borrowed that same value.
+        network_clock_model_max_gap_s_ =
+            jval<double>(json, "network.clock_model_max_gap_s", "network_clock_model_max_gap_s",
+                         network_phase_leveling_max_gap_s_);
+        if (!(network_clock_model_max_gap_s_ > 0.0)) {
+            // The phase-leveling gap is itself user-settable and unvalidated, so it
+            // cannot be the unconditional fallback (a pl gap <= 0 here would leave the
+            // clock model permanently reseeding: no prior, drift 0, C1 0).
+            const double gap_fallback = (network_phase_leveling_max_gap_s_ > 0.0)
+                                            ? network_phase_leveling_max_gap_s_ : 120.0;
+            log->warn("Network: network.clock_model_max_gap_s {} must be > 0; restoring "
+                      "{:.0f} s (phase-leveling max-gap, or 120 s when that is also invalid).",
+                      network_clock_model_max_gap_s_, gap_fallback);
+            network_clock_model_max_gap_s_ = gap_fallback;
+        }
+        if (network_clock_model_ &&
+            network_clock_model_max_gap_s_ != network_phase_leveling_max_gap_s_)
+            log->info("Network (R11): network.clock_model_max_gap_s = {:.0f} s (clock-model carry "
+                      "reseed / drift-reset / C1-ZOH bound; independent of the {:.0f} s "
+                      "ambiguity/ZWD phase-leveling max-gap).",
+                      network_clock_model_max_gap_s_, network_phase_leveling_max_gap_s_);
+        // --- RT0-4: product generation-time metadata ---
+        network_emit_generation_time_ =
+            jval<bool>(json, "network.emit_generation_time", "network_emit_generation_time", false);
+        if (network_emit_generation_time_)
+            log->info("Network: network.emit_generation_time on — each emitted epoch carries a "
+                      "wall-clock time-of-generation (G record) for consumer latency measurement. "
+                      "Note: the product is NO LONGER byte-reproducible (wall-clock stamps differ "
+                      "per run) — leave off for regression/byte-identity runs.");
+        // --- RT0-5: per-constellation clock-runaway quarantine ---
+        network_clock_runaway_check_ =
+            jval<bool>(json, "network.clock_runaway_check", "network_clock_runaway_check", false);
+        network_clock_runaway_mag_m_ =
+            jval<double>(json, "network.clock_runaway_mag_m", "network_clock_runaway_mag_m", 1000.0);
+        network_clock_runaway_rate_m_s_ =
+            jval<double>(json, "network.clock_runaway_rate_m_s", "network_clock_runaway_rate_m_s", 10.0);
+        if (network_clock_runaway_check_) {
+            log->info("Network (RT0-5): clock-runaway quarantine on — a constellation whose median "
+                      "|clock−global median| exceeds {:.0f} m or median |drift| exceeds {:.2f} m/s is "
+                      "dropped from the epoch's emission and flagged (scope-limits a runaway).",
+                      network_clock_runaway_mag_m_, network_clock_runaway_rate_m_s_);
+            if (!network_clock_model_)
+                log->info("Network (RT0-5): the rate ceiling ({:.2f} m/s) is inert without "
+                          "network.clock_model (no drift is estimated); the magnitude ceiling "
+                          "({:.0f} m) still applies.", network_clock_runaway_rate_m_s_,
+                          network_clock_runaway_mag_m_);
+            // Degenerate single-constellation run: the global clock median IS that
+            // constellation's own median, so the magnitude test measures only the
+            // constellation's INTERNAL scatter about its own center — a common-mode
+            // runaway (every satellite walking off together, the very BeiDou-style
+            // fault the check targets) is invisible to it.  Only the rate ceiling
+            // (which needs network.clock_model for a non-zero drift) can catch that.
+            if (active_systems_.size() == 1)
+                log->warn("Network (RT0-5): clock_runaway_check with a single active system ('{}') — "
+                          "the magnitude test degenerates to the constellation's own-median scatter, "
+                          "so a common-mode runaway of the whole constellation is invisible; only the "
+                          "rate ceiling ({:.2f} m/s, requires network.clock_model) can catch it.",
+                          active_systems_.front(), network_clock_runaway_rate_m_s_);
+        }
+        // --- RTA-10: product-level epoch-status heartbeat ---
+        network_emit_epoch_status_record_ =
+            jval<bool>(json, "network.emit_epoch_status_record",
+                       "network_emit_epoch_status_record", false);
+        if (network_emit_epoch_status_record_) {
+            log->info("Network (RTA-10): network.emit_epoch_status_record on — one positional H "
+                      "heartbeat line per epoch in the product file (including gate / σ̂0 "
+                      "withholds, which otherwise emit nothing), so a tail consumer can tell "
+                      "\"withheld\" from \"producer died\".  Coverage starts at the first emit "
+                      "(the deferred product writer opens then).");
+            if (!network_config_.product_flush_per_epoch)
+                log->info("Network (RTA-10): consider network.product_flush_per_epoch alongside "
+                          "the heartbeat — a live tail only sees the H line when the stream "
+                          "flushes.");
+        }
+        // --- B1: URA quality channel ---
+        network_emit_ura_ =
+            jval<bool>(json, "network.emit_ura", "network_emit_ura", false);
+        network_ura_ewma_alpha_ =
+            jval<double>(json, "network.ura_ewma_alpha", "network_ura_ewma_alpha", 0.1);
+        network_consume_ura_ =
+            jval<bool>(json, "network.consume_ura", "network_consume_ura", false);
+        // R5: network_ura_staleness_q2_ (which defaults to network_clock_model_q2_) is captured
+        // AFTER the clock_model validity-restore below, so it inherits the RESTORED q2 (not a
+        // rejected-then-reset value).  See the load just past that block.
+        network_ura_retro_bump_ =
+            jval<bool>(json, "network.ura_retro_bump", "network_ura_retro_bump", false);
+        network_ura_refloat_inflate_ =
+            jval<double>(json, "network.ura_refloat_inflate", "network_ura_refloat_inflate", 1.0);
+        // RTB-8: read the service profile flag EARLY so the coherence warnings
+        // below can suppress under it — service_mode arms network.raim + the
+        // flag-producing tiers later in this section, so a bare "raim is off"
+        // warning would contradict the final (coherent) armed state.  The arming
+        // ITSELF still runs later, after every armed toggle is parsed.
+        const bool service_mode =
+            jval<bool>(json, "network.service_mode", "network_service_mode", false);
+        if (network_emit_ura_)
+            log->info("Network: network.emit_ura on — per-satellite URA quality channel "
+                      "(EWMA α {:.2f}) written to the product; consumer R-inflation {}.",
+                      network_ura_ewma_alpha_, network_consume_ura_ ? "ON" : "off");
+        if (network_emit_ura_ && !network_raim_ && !service_mode)
+            log->warn("Network: network.emit_ura is on but network.raim is off — the σ̂0 EWMA that "
+                      "scales the URA is only updated by the post-fit RAIM pass, so the emitted URA "
+                      "is the FORMAL clock σ only (no robust variance-factor scaling).  Enable "
+                      "network.raim for σ̂0-scaled URA.");
+        // RTB-7(b): the warmup URA floor rides the URA channel — without emit_ura
+        // the URA pass never runs and the floor is a SILENT NO-OP.  Say so.
+        if (network_config_.warmup_ura_floor_m > 0.0 && !network_emit_ura_)
+            log->warn("Network (RTB-7): network.warmup_ura_floor_m {:.1f} is set but "
+                      "network.emit_ura is off — the startup quality ramp floors the EMITTED "
+                      "URA, so without the URA channel it is a silent no-op.  Enable "
+                      "network.emit_ura.", network_config_.warmup_ura_floor_m);
+        else if (network_config_.warmup_ura_floor_m > 0.0)
+            log->info("Network (RTB-7): startup quality ramp ON — emitted URA floored at "
+                      "{:.1f} m until n_emitted >= max(warmup_epochs {}, "
+                      "phase_leveling_warmup_epochs) AND the σ̂0 EWMA has received >= {} "
+                      "updates (count waived when the EWMA is structurally unavailable); "
+                      "cold-start-to-product-grade is logged at the lift.",
+                      network_config_.warmup_ura_floor_m, network_config_.warmup_epochs,
+                      network_config_.warmup_epochs);
+        if (network_ura_ewma_alpha_ <= 0.0 || network_ura_ewma_alpha_ > 1.0) {
+            log->warn("Network: network.ura_ewma_alpha {} out of (0,1]; clamped to 0.1.",
+                      network_ura_ewma_alpha_);
+            network_ura_ewma_alpha_ = 0.1;
+        }
+        if (network_clock_model_ &&
+            (!(network_clock_model_q2_ > 0.0) || network_clock_model_q1_ < 0.0 ||
+             !(network_clock_model_k_sigma_ > 0.0) || !(network_clock_model_meas_std_m_ > 0.0))) {
+            log->warn("Network: invalid network.clock_model_* parameters (q1={}, q2={}, k_sigma={}, "
+                      "meas_std={}); restoring defaults (q1=0, q2=1.5e-7, k_sigma=6, meas_std=0.05).",
+                      network_clock_model_q1_, network_clock_model_q2_,
+                      network_clock_model_k_sigma_, network_clock_model_meas_std_m_);
+            network_clock_model_q1_ = 0.0; network_clock_model_q2_ = 1.5e-7;
+            network_clock_model_k_sigma_ = 6.0; network_clock_model_meas_std_m_ = 0.05;
+        }
+        // R5: capture the ZOH clock-staleness q² AFTER the validity-restore above so its default
+        // inherits the RESTORED network_clock_model_q2_ (a rejected clock_model_q2 was reset to
+        // 1.5e-7 there; capturing before would have propagated the bad value into the default).
+        // P1-3: defaulting to clock_model_q2 (not 0) keeps the age inflation active whenever
+        // network.consume_ura is on; an explicit 0 disables it.  Consumer-side only.
+        network_ura_staleness_q2_ =
+            jval<double>(json, "network.ura_staleness_q2", "network_ura_staleness_q2",
+                         network_clock_model_q2_);
+        // A negative value (typo, or inherited from a user-set bad clock_model_q2 when
+        // clock_model is OFF and the validity-restore above never ran) is inert at the
+        // consumer (q2 > 0 guard) — surface it instead of silently disabling inflation.
+        if (network_ura_staleness_q2_ < 0.0) {
+            log->warn("Network: network.ura_staleness_q2 {} < 0 → 0 (ZOH staleness inflation "
+                      "off; check network.clock_model_q2, which supplies the default).",
+                      network_ura_staleness_q2_);
+            network_ura_staleness_q2_ = 0.0;
+        }
+        // R3: ON-only summary lines for the B1 producer/consumer knobs that previously logged
+        // nothing (emit_ura already logs above).  Purely informational; no behaviour change.
+        if (network_ura_retro_bump_)
+            log->info("Network (B1): network.ura_retro_bump on — a satellite flagged by any "
+                      "post-emit QC tier gets its discontinuity counter bumped on the NEXT emit "
+                      "(edge-triggered, per-satellite) so the consumer resets the ambiguity that "
+                      "integrated the contaminated epoch.");
+        if (network_ura_refloat_inflate_ > 1.0)
+            log->info("Network (B1): network.ura_refloat_inflate {:.2f}x — a recently-refloated "
+                      "satellite's URA is inflated for the phase-leveling warmup horizon (honest "
+                      "surrogate for the post-refloat DIA conditioning penalty).",
+                      network_ura_refloat_inflate_);
+        if (network_consume_ura_ && network_ura_staleness_q2_ > 0.0)
+            log->info("Network (B1): consumer ZOH clock-staleness q2 = {:.3e} m^2/s^3 (folded as "
+                      "q2*dt^3/3 into the applied clock variance as SSR corrections age).",
+                      network_ura_staleness_q2_);
+        if (network_clock_model_ && network_clock_monitor_) {
+            log->info("Network: network.clock_model on — the two-state oscillator normalized-"
+                      "innovation test supersedes the clock_monitor absolute/jump bounds for "
+                      "flagging; clock_monitor reinit action (refloat/inflate-q) still applies.");
+        }
+        if (network_clock_monitor_ &&
+            (!(network_clock_monitor_abs_max_m_ > 0.0) || !(network_clock_monitor_jump_max_m_ > 0.0))) {
+            log->warn("Network: network.clock_monitor_{{abs_max_m,jump_max_m}} must be > 0 "
+                      "(got {}, {}); a non-positive bound would flag every satellite — "
+                      "restoring defaults 20 / 10 m.",
+                      network_clock_monitor_abs_max_m_, network_clock_monitor_jump_max_m_);
+            network_clock_monitor_abs_max_m_ = 20.0;
+            network_clock_monitor_jump_max_m_ = 10.0;
+        }
+
+        // Datum-change signalling (A1/A2): vanish-return pivot handover detection +
+        // per-satellite clock discontinuity channel with per-constellation bump scoping.
+        network_pivot_vanish_return_signal_ =
+            jval<bool>(json, "network.pivot_vanish_return_signal",
+                       "network_pivot_vanish_return_signal", false);
+        network_emit_clock_disc_ =
+            jval<bool>(json, "network.emit_clock_disc", "network_emit_clock_disc", false);
+        // RTA-1/RTA-2: sticky clock-pivot selection + per-constellation scoping of the
+        // producer's INTERNAL handover response (carry skip / oscillator clear).
+        network_sticky_pivot_ =
+            jval<bool>(json, "network.sticky_pivot", "network_sticky_pivot", false);
+        network_scoped_handover_response_ =
+            jval<bool>(json, "network.scoped_handover_response",
+                       "network_scoped_handover_response", false);
+        // R4: the B1 retro-bump steps a flagged satellite's phase, code AND clock discontinuity
+        // counters, but the emitter only maintains/stamps the CLOCK counter when emit_clock_disc
+        // is on (otherwise disc_counter stays 0 for byte-identity).  So with ura_retro_bump on
+        // but emit_clock_disc off, the clock channel would silently never bump — the consumer
+        // would reset the phase/code ambiguities of a contaminated satellite but keep integrating
+        // its bad clock.  Couple them: arm the clock-disc channel so the retro-bump reaches it.
+        if (network_ura_retro_bump_ && !network_emit_clock_disc_) {
+            log->warn("Network (R4): enabling network.emit_clock_disc alongside "
+                      "network.ura_retro_bump — the per-satellite retro-bump only reaches the "
+                      "CLOCK discontinuity counter when the clock-disc channel is armed.  "
+                      "(This also scopes the handover datum bump per constellation, A2.)");
+            network_emit_clock_disc_ = true;
+        }
+        // The retro-bump's flag sources are the QC tiers: within-epoch/post-fit/attribution
+        // feed it only under the raim toggles, the clock tiers under clock_monitor/clock_model.
+        // With every source off the retro-bump can never fire, yet the R4 coupling above has
+        // already switched the product to the clock-disc format — a dead knob with a format
+        // side-effect deserves a loud note.
+        if (network_ura_retro_bump_ && !network_raim_ && !network_raim_within_epoch_ &&
+            !network_clock_monitor_ && !network_clock_model_ && !service_mode)
+            log->warn("Network (B1): network.ura_retro_bump is on but NO flag-producing QC tier "
+                      "is armed (raim / raim_within_epoch / clock_monitor / clock_model all "
+                      "off) — the retro-bump can never fire.  Enable at least network.raim.");
+        if (network_pivot_vanish_return_signal_)
+            log->info("Network producer (A1): vanish-return pivot handover signalling ON — a "
+                      "constellation absent for an epoch that returns with a different clock pivot "
+                      "now forces a discontinuity bump (persistent last-ever-pivot map).");
+        if (network_emit_clock_disc_)
+            log->info("Network producer (A2): clock discontinuity channel ON + per-constellation "
+                      "datum-bump scoping — the forced handover bump is scoped to the affected "
+                      "constellation(s) and satellite clocks carry a disc counter.");
+        if (network_sticky_pivot_)
+            log->info("Network producer (RTA-1): sticky clock-pivot selection ON — the incumbent "
+                      "pivot satellite (per constellation, from the last emitted product) is kept "
+                      "while it remains registered; a handover occurs only when it sets.  A "
+                      "config-pinned network.clock_datum_satellite still has priority.");
+        if (network_scoped_handover_response_)
+            log->info("Network producer (RTA-2): scoped handover response ON — the internal D2 "
+                      "carry skip / clock-oscillator clear / jump-test suppression on a pivot "
+                      "handover applies only to the constellation(s) whose datum changed, not "
+                      "network-wide (the SH-VTEC carry skip stays global).");
+
+        // RTA-3/RTA-4/RTA-5/RTA-11: product wire/contract hardening for late joiners
+        // and producer restarts.  All default OFF ⇒ store and file byte-identical.
+        network_emit_generation_id_ =
+            jval<bool>(json, "network.emit_generation_id", "network_emit_generation_id", false);
+        network_serialize_disc_counters_ =
+            jval<bool>(json, "network.serialize_disc_counters",
+                       "network_serialize_disc_counters", false);
+        network_contract_rebroadcast_s_ =
+            jval<double>(json, "network.contract_rebroadcast_s",
+                         "network_contract_rebroadcast_s", 0.0);
+        network_emitter_staleness_horizon_s_ =
+            jval<double>(json, "network.emitter_staleness_horizon_s",
+                         "network_emitter_staleness_horizon_s", 0.0);
+        if (network_contract_rebroadcast_s_ < 0.0) {
+            log->warn("Network: network.contract_rebroadcast_s {} < 0 clamped to 0 (no "
+                      "S-contract re-broadcast).", network_contract_rebroadcast_s_);
+            network_contract_rebroadcast_s_ = 0.0;
+        }
+        if (network_emitter_staleness_horizon_s_ < 0.0) {
+            log->warn("Network: network.emitter_staleness_horizon_s {} < 0 clamped to 0 "
+                      "(keep-forever emitter baselines).", network_emitter_staleness_horizon_s_);
+            network_emitter_staleness_horizon_s_ = 0.0;
+        }
+        if (network_emit_generation_id_)
+            log->info("Network producer (RTA-3): solution-generation ID ON — every emitted epoch "
+                      "carries a uint32 generation id derived from the first emitted epoch's GPS "
+                      "time (optional I record + S-line gid=); a consumer treats a CHANGE of a "
+                      "present id as a global datum break (producer restart).");
+        if (network_serialize_disc_counters_)
+            log->info("Network producer (RTA-4): discontinuity-counter VALUES serialized ON — "
+                      "C/B/P records gain optional trailing post-emit counter fields so a "
+                      "late-joining/tail reader reconstructs counters without a full replay "
+                      "(reader adopts present values, replay recompute kept as a self-check).");
+        if (network_contract_rebroadcast_s_ > 0.0) {
+            if (network_config_.serialize_sbasis_contract)
+                log->info("Network producer (RTA-5): S-contract re-broadcast ON — a CURRENT S line "
+                          "(refreshed realized pivots) every {:.0f} s of product time and on any "
+                          "datum-change emit.", network_contract_rebroadcast_s_);
+            else
+                log->warn("Network: network.contract_rebroadcast_s {} is set but "
+                          "network.serialize_sbasis_contract is OFF — there is no S contract to "
+                          "re-broadcast, so the knob is inert.  Enable serialize_sbasis_contract.",
+                          network_contract_rebroadcast_s_);
+        }
+
+        // --- RTB-8: curated service profile -------------------------------------
+        // One switch (network.service_mode) arms the coherent set of producer
+        // toggles a live PPP-RTK service needs, instead of hand-assembling ~10
+        // interlocking default-off flags (each with implicit couplings that were
+        // only ever wired up in scattered test configs).  "Fill if default": a
+        // toggle is armed to its service value ONLY when still at its factory
+        // default (false / 0), so an explicit value in THIS config wins — the one
+        // exception is an explicit `false` on a bool the profile arms, which the
+        // profile overrides (service_mode is an opinionated bundle; to keep a
+        // specific flag off, run without service_mode).  Placed after every armed
+        // toggle is parsed so it sees final values.  Default off ⇒ nothing armed
+        // (byte-identical).  Cross-validation of the realized product against the
+        // consumer is the S contract itself (RTA-5 re-broadcast + RTA-12 identity
+        // fields + checkContract), which this profile turns on.  service_mode was
+        // read EARLIER (URA section) so the coherence warnings could suppress under it.
+        if (service_mode) {
+            auto armBool   = [](bool& f)            { if (!f)          f = true; };
+            auto armDouble = [](double& f, double v){ if (f == 0.0)    f = v;    };
+            armBool(network_emit_clock_disc_);              // consumer resets on clock-pivot handover
+            armBool(network_emit_ura_);                     // per-sat quality → consumer weighting
+            armBool(network_ura_retro_bump_);               // per-sat post-fit disc
+            armBool(network_clock_model_);                  // two-state clock → C1 drift extrapolation
+            armBool(network_phase_leveling_);               // cross-epoch carry — carry_warm prerequisite of BOTH RAIM tiers
+            armBool(network_raim_);                         // post-fit RAIM: the σ̂0 EWMA that scales the emitted URA is fed by THIS base flag (NOT within_epoch), and its auto-coupling at the raim_within_epoch parse ran BEFORE this block, so arm it explicitly
+            armBool(network_raim_attribution_);             // complementary post-fit attribution refloat tier (the two halves of one backstop)
+            armBool(network_raim_within_epoch_);            // fault detect → drop-culprit → re-solve
+            armDouble(network_raim_withhold_sigma0_,        // withhold a still-contaminated epoch
+                      2.0 * network_raim_sigma0_trigger_);  //   at ~2× the trigger (design guidance)
+            armBool(network_emit_generation_id_);           // RTA-3 restart / datum-break detection
+            armBool(network_serialize_disc_counters_);      // RTA-4 late-joiner counter recovery
+            armBool(network_config_.serialize_sbasis_contract);   // v2 S contract header
+            armDouble(network_contract_rebroadcast_s_, 30.0);     // RTA-5 periodic re-broadcast
+            armBool(network_config_.product_flush_per_epoch);     // RTA-6 live-tail visibility
+            armDouble(network_config_.health_interval_s, 30.0);   // RTB-6 operator heartbeat
+            log->info("Network (RTB-8): service_mode ON — armed the RT-service producer set "
+                      "(clock/URA disc, clock-model, within-epoch RAIM + withhold @ {:.1f}, "
+                      "generation-id, disc-counter serialization, v2 contract + {:.0f} s "
+                      "re-broadcast, per-epoch flush, {:.0f} s health heartbeat).  Explicit "
+                      "config values in this file still win (fill-if-default).  NOTE: the "
+                      "RTA-10 withhold/status toggles fold into this set once that card lands.",
+                      network_raim_withhold_sigma0_, network_contract_rebroadcast_s_,
+                      network_config_.health_interval_s);
+        }
+
+        if (network_emitter_staleness_horizon_s_ > 0.0)
+            log->info("Network producer (RTA-11): emitter staleness horizon {:.0f} s ON — a "
+                      "(sat[,signal]) key returning after a longer product-time gap reseeds its "
+                      "phase/code/clock baselines as a first sighting (no discontinuity bump); "
+                      "the horizon travels in the S contract (stale=) for replay.",
+                      network_emitter_staleness_horizon_s_);
+
+        // Testing fast-forward: skip ahead to a late-hour event (e.g. the ~4.3 h lock-in) in a
+        // few warm-up epochs instead of hours of processing.  Cold-starts the carry at the
+        // offset, so it reproduces an externally-driven event, not the exact prior history.
+        network_start_offset_hours_ =
+            jval<double>(json, "network.start_offset_hours", "network_start_offset_hours", 0.0);
+        if (network_start_offset_hours_ < 0.0) {
+            log->warn("Network: network.start_offset_hours {} < 0 clamped to 0 (process from "
+                      "the start).", network_start_offset_hours_);
+            network_start_offset_hours_ = 0.0;
+        }
         if (network_phase_leveling_) {
             if (network_phase_leveling_q_amb_ < 0.0) {
                 log->error("Network: network.phase_leveling_q_amb must be >= 0 (got {}); a "
@@ -2881,10 +3819,33 @@ namespace GnssProcessor {
                           network_cycle_slip_turbo_edit_frac_max_,
                           network_cycle_slip_turbo_edit_dn_max_);
             }
+            if (network_shared_carry_var_floor_pb_m2_ > 0.0 || network_shared_carry_var_floor_cb_m2_ > 0.0)
+                log->info("Network producer (phase-leveling, B4): D2 shared-carry variance floors — "
+                          "sat phase-bias {:.2e} m², sat code-bias {:.2e} m² (caps Λ so a stiff zero-q "
+                          "carry cannot lock a biased product in; 0 = off).",
+                          network_shared_carry_var_floor_pb_m2_, network_shared_carry_var_floor_cb_m2_);
         } else if (network_cycle_slip_turbo_edit_) {
             log->warn("Network: network.cycle_slip.turbo_edit is on but network.phase_leveling is "
                       "off — T0 slip repair acts on the carried ambiguities, so it is INERT "
                       "without phase-leveling.  Enable network.phase_leveling too.");
+        }
+        if (network_carry_zwd_) {
+            if (network_zwd_carry_q_ < 0.0) {
+                log->error("Network: network.zwd_carry_q must be >= 0 (got {}); a negative carry "
+                           "process noise is meaningless.", network_zwd_carry_q_);
+                return false;
+            }
+            if (network_phase_leveling_)
+                log->info("Network producer (ZWD carry, B9): carrying per-station tropospheric ZWD "
+                          "across epochs with random-walk q {:.3e} m²/s (var_eff = var + q·Δt); slant "
+                          "iono left white.  Reuses the phase-leveling warmup ({} epochs) / max-gap "
+                          "({:.0f} s) housekeeping; non-pivot stations only.",
+                          network_zwd_carry_q_, network_phase_leveling_warmup_epochs_,
+                          network_phase_leveling_max_gap_s_);
+            else
+                log->warn("Network: network.carry_zwd is on but network.phase_leveling is off — the "
+                          "ZWD carry reuses the phase-leveling warmup gate, so it is INERT without "
+                          "phase-leveling.  Enable network.phase_leveling too.");
         }
         if (network_cycle_slip_if_phase_td_) {
             if (network_phase_leveling_)
@@ -2919,7 +3880,18 @@ namespace GnssProcessor {
                 log->warn("Network: network.raim is on but network.phase_leveling is off — the "
                           "post-fit RAIM protects the carried ambiguities, so it is INERT without "
                           "phase-leveling.  Enable network.phase_leveling too.");
+            if (network_raim_redundancy_normalize_)
+                log->info("Network producer (RAIM, B2): Baarda redundancy normalization ENABLED — "
+                          "residuals standardized by v/(σ·√r_i) using per-row redundancy from the "
+                          "cached Schur factors; low-redundancy setting arcs are no longer under-flagged.");
         }
+        // L13: the per-station residual field is emitted only inside the post-fit RAIM cell loop
+        // (gated raim_on && carry_warm; carry_warm needs phase_leveling) — warn if armed without
+        // its runtime prerequisites so an empty file is not a surprise.
+        if (network_config_.trace_station_residuals && !network_raim_)
+            log->warn("Network: network.trace_station_residuals is on but network.raim is off — "
+                      "the per-station residual field is emitted from the post-fit RAIM cell loop, "
+                      "so it will be EMPTY.  Enable network.raim AND network.phase_leveling.");
 
         // --- Optional closed-loop integer-recovery harness (held-out consumer) ---
         // A station deliberately NOT in network.stations that consumes the
@@ -2984,9 +3956,15 @@ namespace GnssProcessor {
             nar.wl_cascade           = jval<bool>  (json, "network.ambiguity_resolution.wl_cascade",           "network_ar_wl_cascade",           false);
             nar.min_epochs           = jval<int>   (json, "network.ambiguity_resolution.min_epochs",           "network_ar_min_epochs",           10);
             if (nar.enable) {
-                log->info("Network AR ENABLED (producer integer-leveled biases): FFR>={:.4f}, "
-                          "ratio>={:.1f} (<{:.0e}), per-pair frac<={:.2f} cyc, partial_ar {}, "
-                          "wl_cascade {}, min_epochs {}",
+                // RT0-2: the network.ambiguity_resolution section is fully parsed but has
+                // ZERO consumers — producer AR is designed (docs/network_ambiguity_resolution_design.md)
+                // but NOT built.  Warn loudly so a user who arms it is not misled into thinking a
+                // fixed product is emitted; the gates below are inert until the producer AR stage
+                // lands.  (Do NOT phrase this as "ENABLED" — that implies integer fixing runs.)
+                log->warn("Network AR CONFIGURED but NOT IMPLEMENTED — a FLOAT product is emitted "
+                          "(no integer fixing runs; the section parameters are parsed but unused). "
+                          "Parsed (inert) gates: FFR>={:.4f}, ratio>={:.1f} (<{:.0e}), "
+                          "per-pair frac<={:.2f} cyc, partial_ar {}, wl_cascade {}, min_epochs {}.",
                           nar.min_success_rate, nar.ratio_threshold, nar.ratio_upper_bound,
                           nar.nl_max_per_pair_frac, nar.enable_partial_ar ? "on" : "off",
                           nar.wl_cascade ? "on" : "off", nar.min_epochs);
@@ -3016,8 +3994,15 @@ namespace GnssProcessor {
         return true;
     }
 
-    GnssConfig GnssConfig::deriveClosedLoopConsumerConfig() const {
-        GnssConfig c = *this;
+    void GnssConfig::applyNetworkConsumerCouplings(GnssConfig& c, bool consume_clock,
+                                                   bool consume_bias, bool undifferenced) {
+        // RTA-7(a): the ONE place the network-consumer couplings live.  Pure
+        // extraction of the closed-loop derivation body — deriveClosedLoopConsumerConfig
+        // and applyNetworkConsumerProfile both call this, so the in-process
+        // closed-loop harness and the standalone real-time consumer can never
+        // diverge.  No coupling keys off consume_bias today; it is in the
+        // signature so a future bias-side coupling lands here (see header).
+        (void)consume_bias;
         // The consumer is an uncombined PPP-RTK USER (single receiver), not the
         // joint network producer.
         c.processing_mode_ = ProcessingMode::PPP_RTK;
@@ -3041,24 +4026,15 @@ namespace GnssProcessor {
         // there is no folded delay — the consumer is an ordinary PPP-RTK user and
         // SHOULD estimate residual per-(sat,signal) code biases for signals its
         // .BIA does not cover, or the uncorrected code pulls the position estimate.
-        const bool consuming_network_clock =
-            network_config_.closed_loop.consume_network_products &&
-            network_config_.closed_loop.consume_network_clock;
-        c.estimate_sat_biases_ = !consuming_network_clock;
+        c.estimate_sat_biases_ = !consume_clock;
         // The network SOLVE keeps code fully weighted (no_bia_code_downweight ≈ 1)
         // to separate the satellite clock from the phase bias.  A single-receiver
         // USER that inherits that fully weights code carrying uncorrected biases →
         // a systematic position pull.  Restore the user default so code on signals
         // without .BIA coverage is downweighted.
         c.no_bia_code_downweight_ = 100.0;
-        // Enable ambiguity resolution for the consumer (the producer itself is
-        // float): the closed loop validates integer RECOVERY on the held-out
-        // station from the producer's products.
-        c.ar_mode_    = network_config_.closed_loop.ar_mode;
-        if (!network_config_.closed_loop.ar_active_systems.empty())
-            c.ar_active_systems_ = network_config_.closed_loop.ar_active_systems;
 
-        if (network_config_.closed_loop.consumer_undifferenced) {
+        if (undifferenced) {
             // UNDIFFERENCED uncombined PPP-RTK USER (the end-state). No
             // observation-space differencing: the network satellite phase biases
             // are applied directly to the raw float (ssr_bias_term, undifferenced
@@ -3085,11 +4061,76 @@ namespace GnssProcessor {
             // clock/bias datum so the SD ambiguity is integer once the network
             // satellite phase bias is applied. The producer runs undifferenced
             // (no receiver datum to remove); a BSSD single receiver recovers
-            // integers through the pivot S-transform.
+            // integers through the pivot S-transform.  (The closed-loop wrapper
+            // overlays its configured ar_wl_only for this branch; the standalone
+            // profile keeps the user's own setting.)
             c.enable_between_satellite_sd_ = true;
-            c.ar_wl_only_ = network_config_.closed_loop.ar_wl_only;
         }
+    }
+
+    GnssConfig GnssConfig::deriveClosedLoopConsumerConfig() const {
+        GnssConfig c = *this;
+        const ClosedLoopConfig& cl = network_config_.closed_loop;
+        // Shared couplings (RTA-7(a) — one source of truth with the standalone
+        // profile).  consume_clock mirrors the pre-extraction local: the clock
+        // coupling applies only when products are actually consumed.
+        const bool consuming_network_clock =
+            cl.consume_network_products && cl.consume_network_clock;
+        applyNetworkConsumerCouplings(c, consuming_network_clock,
+                                      cl.consume_network_products,
+                                      cl.consumer_undifferenced);
+        // Closed-loop-specific overlay: enable ambiguity resolution for the
+        // consumer (the producer itself is float) — the closed loop validates
+        // integer RECOVERY on the held-out station from the producer's products.
+        c.ar_mode_    = cl.ar_mode;
+        if (!cl.ar_active_systems.empty())
+            c.ar_active_systems_ = cl.ar_active_systems;
+        if (!cl.consumer_undifferenced)
+            c.ar_wl_only_ = cl.ar_wl_only;   // BSSD consumer takes the harness's WL-only choice
         return c;
+    }
+
+    void GnssConfig::applyNetworkConsumerProfile(LogManager& log_manager) {
+        auto log = log_manager.getLogger("gnss_config");
+        const NetworkConsumerConfig& nc = network_consumer_config_;
+        applyNetworkConsumerCouplings(*this, nc.clock, nc.bias, nc.undifferenced);
+        // A standalone consumer of network CODE biases needs receiver code-bias
+        // states (estimate_ifb) to absorb a code-bias datum re-reference — the
+        // closed-loop consumer inherits estimate_ifb from the producer config,
+        // but a standalone user config has no producer to inherit from.  Arm it
+        // up front so the engine's one-shot A5 warning (kept for non-profile
+        // paths) never fires on the profile path.
+        if (nc.bias && !estimate_ifb_) {
+            estimate_ifb_ = true;
+            log->info("Network-consumer profile: arming estimation.estimate_ifb — receiver "
+                      "code-bias states are required to absorb network code-bias datum "
+                      "re-references (disc-counter driven reinflation).");
+        }
+        // RTA-9(a): bias consumption without the bias staleness gate silently
+        // applies unboundedly stale biases across producer withhold gaps — arm
+        // the gate by default UNDER CONSUMPTION.  Presence-checked at load
+        // (enable_ssr_bias_max_age_explicit_): an explicit user 'false' is
+        // respected; the closed-loop harness path never runs this (the coupling
+        // lives in the profile, not applyNetworkConsumerCouplings).
+        if (nc.bias && !enable_ssr_bias_max_age_ && !enable_ssr_bias_max_age_explicit_) {
+            enable_ssr_bias_max_age_ = true;
+            log->info("Network-consumer profile (RTA-9a): arming processing.enable_ssr_bias_max_age "
+                      "— consumed code/phase biases are age-gated at {:.1f}s (stale-hold to "
+                      "{:.1f}s = {:.2f}x).  Set the key explicitly false to opt out.",
+                      ssr_bias_max_age_s_,
+                      ssr_bias_max_age_s_ * ssr_bias_stale_hold_factor_,
+                      ssr_bias_stale_hold_factor_);
+        }
+        log->info("Network-consumer profile APPLIED: PPP-RTK user, consume clock {} / bias {}, "
+                  "{} model, orbit_source {}, estimate_sat_biases {}, ar_wl_only {}, "
+                  "ar_ignore_mw_wl {}, bias_max_age {} (effective).",
+                  nc.clock ? "on" : "off", nc.bias ? "on" : "off",
+                  nc.undifferenced ? "undifferenced" : "BSSD",
+                  nc.orbit_source,
+                  estimate_sat_biases_ ? "on" : "off",
+                  ar_wl_only_ ? "on" : "off",
+                  networkConsumerArIgnoreMwWl() ? "true" : "false",
+                  enable_ssr_bias_max_age_ ? "on" : "off");
     }
 
     // =================================================================

@@ -262,6 +262,21 @@ Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free);
 }
 
+Eigen::VectorXd NetworkEstimator::rowRedundancy(
+    std::size_t station, const Eigen::MatrixXd& A_s_rows,
+    const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
+    const Datum& datum) const {
+    // Datum-as-known frame: the pinned shared columns are EXACT gauges (variance 0).
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    return neq_.rowRedundancy(station, A_s_rows, A_r_rows, w_rows, cov_free);
+}
+
 const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
     neq_.reduce(reduce_threads_);
     return neq_.reducedSharedNormals();
@@ -343,14 +358,38 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
             case SharedParamKind::CodeBias:
                 s.code_bias_m[d.signal] = x_s(c);
                 break;
-            case SharedParamKind::PhaseBias:
-                s.phase_bias[d.signal].bias_m = x_s(c);
+            case SharedParamKind::PhaseBias: {
+                NetworkPhaseBias& npb = s.phase_bias[d.signal];
+                npb.bias_m = x_s(c);
+                // RT0-3: flag the bias as integer-preserving for CDMA constellations
+                // (GPS/GAL/BDS/QZSS).  Its uncombined satellite phase bias carries the
+                // pivot-receiver ambiguity lump (Odijk Eq. 4) but preserves the integer
+                // property a consumer's AR candidate selection can exploit.  GLONASS/FDMA
+                // ('R') biases fold in a per-slot inter-frequency bias and are NOT
+                // integer-recoverable, so they stay false.  Truthful metadata: no consumer
+                // reads it yet, but it is cheap insurance before FDMA biases enter the
+                // product (a consumer must not treat an 'R' bias as an integer candidate).
+                npb.signal_integer = !d.sat.empty() && d.sat[0] != 'R';
                 break;
+            }
             case SharedParamKind::VtecSh:
                 break;  // handled above
         }
     }
     return sol;
+}
+
+NetworkEstimator::PerConstWithholdDecision NetworkEstimator::decidePerConstWithhold(
+    const std::map<char, PerConstSigma0>& stats, double ceiling, int min_rows) {
+    // RTA-10 pure publish/withhold policy (see the header for the semantics).
+    // Publishable = clean by its OWN σ̂0_c under the SAME ceiling AND judgeable
+    // (enough rows).  Every input key lands in exactly one output set.
+    PerConstWithholdDecision dec;
+    for (const auto& [cst, st] : stats) {
+        if (st.sigma0_c <= ceiling && st.rows >= min_rows) dec.publish.insert(cst);
+        else                                               dec.withhold.insert(cst);
+    }
+    return dec;
 }
 
 } // namespace GnssProcessor

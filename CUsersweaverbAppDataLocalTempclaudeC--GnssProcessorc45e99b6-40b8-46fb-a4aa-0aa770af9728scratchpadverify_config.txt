@@ -1,0 +1,56 @@
+CROSS-CUTTING VERIFICATION CHECKLIST
+=====================================
+
+(a) NETWORK AR LOG WARNING:
+============================
+✓ Found in GnssConfigLoad.cpp line ~1909-1920 (after parsing network.ambiguity_resolution section):
+  "Network AR CONFIGURED but NOT IMPLEMENTED — a FLOAT product is emitted"
+✓ Zero consumers confirmed:
+  - grep -r "network_config_.ambiguity_resolution" src/ include/ → ZERO hits outside GnssConfigLoad.cpp
+  - nar.enable is parsed but never checked in any downstream code
+✓ Byte-identical: Only parsing happens, no state changes when OFF (default)
+✓ Log is WARN level (accurate description of unplugged feature)
+
+(b) CONFIG PLUMBING (4 new getters):
+=====================================
+Getter                          | Member                        | JSON keys                              | Default
+networkEmitGenerationTime()     | network_emit_generation_time_ | network.emit_generation_time          | false
+networkClockRunawayCheck()      | network_clock_runaway_check_  | network.clock_runaway_check           | false
+networkClockRunawayMagM()       | network_clock_runaway_mag_m_  | network.clock_runaway_mag_m           | 1000.0
+networkClockRunawayRateMps()    | network_clock_runaway_rate_m_s_| network.clock_runaway_rate_m_s       | 10.0
+
+✓ ALL names match members ✓ (e.g., "rate_m_s_" ↔ "networkClockRunawayRateMps")
+✓ ALL JSON keys match parse calls (GnssConfigLoad.cpp lines 3045-3058)
+✓ ALL defaults OFF/1000/10 confirmed in both header and load code
+✓ Byte-identity: defaults are false/1000.0/10.0 when OFF (no spurious emissions)
+
+(c) CMAKE /bigobj SYNTAX:
+==========================
+CMakeLists.txt lines 155-159:
+  if(MSVC)
+    set_source_files_properties(src/core/filter/KalmanFilter.cpp
+        src/core/app/ApplicationNetwork.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+  endif()
+
+✓ CORRECT syntax for multiple files in one call
+✓ MSVC-guarded ✓
+✓ ApplicationNetwork.cpp is included ✓
+
+(d) ATMOSPHERIC LOADING DEFAULT CHANGE:
+=========================================
+Changed from:  enable_atmospheric_loading = true   (old default)
+Changed to:    enable_atmospheric_loading = false  (new default)
+✓ Gated: only used when explicitly turned on in config
+✓ ModelGeometry.cpp checks enable_atmospheric_loading before using it
+✓ Config is metadata-only until explicitly enabled by user
+✓ Not a breaking change if infrastructure exists (just unused by default)
+
+(e) BYTE-IDENTITY CONFIRMATION:
+================================
+✓ RT0-4 (emit_gen_time): defaults false → no G record emitted (byte-identical when OFF)
+✓ RT0-5 (clk_runaway_on): defaults false → sol untouched (byte-identical when OFF)
+✓ network_emit_ura_: defaults false → no URA channel (byte-identical when OFF)
+✓ New satellite states (sat_code_bias, sat_clock): process noise defaults inherited
+✓ All network toggles default OFF → float product byte-identical with baseline
+

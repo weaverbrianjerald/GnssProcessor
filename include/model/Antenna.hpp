@@ -109,13 +109,25 @@ namespace GnssProcessor {
 		 * @param azimuth Satellite azimuth angle at receiver (radians or degrees depending on caller convention).
 		 * @param rx_antenna_type Receiver antenna model/type string (from RINEX header or configuration).
 		 * @param time Epoch time at which the correction is computed.
+		 * @param sun_pos_hint Optional precomputed Sun ECEF position (meters) —
+		 *        the rigorous per-epoch value cached by Geometry; near-zero
+		 *        means "compute internally".
+		 * @param skip_satellite_pco RTB-5(c): when true, the SATELLITE PCO
+		 *        range term is omitted (satellite PCV, receiver PCO/PCV and
+		 *        wind-up are unaffected).  Used by PppModel when the applied
+		 *        SSR orbit correction is APC-referenced (legacy-SSR dialect):
+		 *        the corrected orbit already points at the antenna phase
+		 *        center, so applying the CoM->APC PCO again would double-count
+		 *        its z-offset (0.6-2.6 m along the LOS).  Default false —
+		 *        every existing caller is byte-identical.
 		 * @return Antenna correction in meters. Positive values should be applied to measured ranges as defined by the caller's convention.
 		 */
 		double getAntennaCorrection(const std::string& satellite, const std::string& freq_type, System system,
 			const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos, const Eigen::Vector3d& sat_vel,
 			double elevation, double azimuth, const std::string& rx_antenna_type,
 			const GnssTime& time,
-			const Eigen::Vector3d& sun_pos_hint = Eigen::Vector3d::Zero()) const;
+			const Eigen::Vector3d& sun_pos_hint = Eigen::Vector3d::Zero(),
+			bool skip_satellite_pco = false) const;
 
 		/**
 		 * @brief Get receiver antenna type from the RINEX header.

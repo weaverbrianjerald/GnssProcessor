@@ -19,6 +19,7 @@
 #include "rtcm/RtcmSignalMap.hpp"
 #include "math/TimeUtils.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 namespace GnssProcessor::RtcmSsr {
@@ -115,25 +116,31 @@ double decodeUra(uint8_t ura_index) {
     return ura_mm * 1e-3;  // mm -> m
 }
 
-// Promote a mod-604800 GPS-TOW-second epoch into a full GnssTime using the
-// caller-supplied current week.  No leap seconds applied (GPS time scale).
-GnssTime promoteGpsEpoch(int current_week, uint32_t tow_s) {
-    if (current_week <= 0) {
-        return GnssTime{0, static_cast<double>(tow_s)};
-    }
-    return GnssTime{current_week, static_cast<double>(tow_s)};
+// Promote a mod-604800 GPS-TOW-second epoch into a full GnssTime by nearest
+// continuation to the caller's anchor (continuous GPS seconds; RTB-1(a),
+// RTKLIB adjweek): pick the week minimizing |week·604800 + tow − anchor|.
+// No leap seconds applied (GPS time scale).  A non-positive anchor keeps
+// the legacy week-0 behaviour for direct decoder calls.
+GnssTime promoteGpsEpoch(double anchor_gps_seconds, uint32_t tow_s) {
+    const double tow = static_cast<double>(tow_s);
+    if (anchor_gps_seconds <= 0.0) return GnssTime{0, tow};
+    int week = static_cast<int>(std::floor(
+        (anchor_gps_seconds - tow) / static_cast<double>(TimeUtils::SECONDS_IN_WEEK) + 0.5));
+    if (week < 0) week = 0;
+    return GnssTime{week, tow};
 }
 
 // Promote a GLONASS time-of-day field (DF389, seconds since the start of the
 // GLONASS UTC(SU)+3h day) into a GnssTime on the GPS scale.  Anchors on the
-// rover's current GPS time (the same wall-clock anchor the MSM observation and
-// 1020-ephemeris paths use) and carries the time-of-day back through UTC with
-// the epoch's leap seconds — see TimeUtils::glonassTodToGpsTime.  Without this
-// the SSR epoch lands at {0,0} and every GLONASS SSR record is dropped from the
-// store as stale / IOD-mismatched.
-GnssTime promoteGloTod(int /*current_week*/, uint32_t tod_s) {
+// caller's last-known continuous GPS stream time (RtcmParser's per-parser
+// tracker; host clock only at cold start — RTB-1(a)) and carries the
+// time-of-day back through UTC with the epoch's leap seconds — see
+// TimeUtils::glonassTodToGpsTime.  Without this the SSR epoch lands at {0,0}
+// and every GLONASS SSR record is dropped from the store as stale /
+// IOD-mismatched.
+GnssTime promoteGloTod(double anchor_gps_seconds, uint32_t tod_s) {
     return TimeUtils::glonassTodToGpsTime(static_cast<double>(tod_s),
-                                          TimeUtils::nowContinuousGpsSeconds());
+                                          anchor_gps_seconds);
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +148,7 @@ GnssTime promoteGloTod(int /*current_week*/, uint32_t tod_s) {
 // Returns false if the BitReader saturates.
 // ---------------------------------------------------------------------------
 bool decodeSsrHeader(RtcmBitReader& r, const SystemDescriptor& sys,
-                     bool is_orbit_message, int current_gps_week,
+                     bool is_orbit_message, double anchor_gps_seconds,
                      SsrHeader& hdr, int& num_sats, int& datum) {
     const uint32_t epoch_raw   = r.u(sys.epoch_bits);
     const int      upd_idx     = static_cast<int>(r.u(4));
@@ -159,8 +166,8 @@ bool decodeSsrHeader(RtcmBitReader& r, const SystemDescriptor& sys,
     if (!r.ok()) return false;
 
     hdr.epoch_time           = sys.uses_glo_tod
-                                ? promoteGloTod(current_gps_week, epoch_raw)
-                                : promoteGpsEpoch(current_gps_week, epoch_raw);
+                                ? promoteGloTod(anchor_gps_seconds, epoch_raw)
+                                : promoteGpsEpoch(anchor_gps_seconds, epoch_raw);
     hdr.update_interval_index = upd_idx;
     hdr.multi_message         = multi_msg;
     hdr.iod_ssr               = iod_ssr;
@@ -194,8 +201,25 @@ GnssTime nowReceiveTime() {
 // and appends one record to the output vector.
 // ---------------------------------------------------------------------------
 
+// RTB-5(a): normalize a decoded SSR IOD to the broadcast-side matching
+// convention.  The LEGACY Galileo orbit/combined messages (1240-series) carry
+// the full 10-bit IODnav, but the broadcast side compares under IODnav & 0xFF
+// (LiveEphemerisStore::ssrMatchIode) — so a raw IODnav >= 256 could NEVER
+// match and every such Galileo satellite silently dropped to broadcast grade.
+// Mask to 8 bits HERE, at decode, in exactly the legacy case (sys.iode_bits >
+// 8 — the IGS-SSR 4076 path overrides iode_bits to 8 before dispatch, so it is
+// never re-masked; its 8-bit value is already in convention).  BDS's legacy
+// 10-bit "toe-index" IOD is intentionally NOT masked: its broadcast-side
+// convention is toe/720 % 240, not a bit mask, and reconciling the two is a
+// separate (RTF-scale) contract question.
+int normalizeSsrIode(const SystemDescriptor& sys, int iode) {
+    if (sys.system == System::Galileo && sys.iode_bits > 8) return iode & 0xFF;
+    return iode;
+}
+
 void decodeOrbitBody(RtcmBitReader& r, const SystemDescriptor& sys,
                      const SsrHeader& hdr, const GnssTime& rx,
+                     SsrReferencePoint ref_point,
                      std::vector<SsrOrbitCorrection>& out) {
     const int sat_raw = static_cast<int>(r.u(sys.sat_id_bits));
     const int iode    = static_cast<int>(r.u(sys.iode_bits));
@@ -208,13 +232,14 @@ void decodeOrbitBody(RtcmBitReader& r, const SystemDescriptor& sys,
     if (!r.ok()) return;
 
     SsrOrbitCorrection o;
-    o.sat            = formatSat(sys, sat_raw);
-    o.iode           = iode;
-    o.delta_rac      = Eigen::Vector3d{dr, da, dc};
-    o.delta_rac_dot  = Eigen::Vector3d{drd, dad, dcd};
-    o.received_time  = rx;
-    o.epoch_time     = hdr.epoch_time;     // content reference epoch (orbit dt base)
-    o.iod_ssr        = hdr.iod_ssr;
+    o.sat             = formatSat(sys, sat_raw);
+    o.iode            = normalizeSsrIode(sys, iode);   // RTB-5(a): legacy GAL 10-bit → &0xFF
+    o.delta_rac       = Eigen::Vector3d{dr, da, dc};
+    o.delta_rac_dot   = Eigen::Vector3d{drd, dad, dcd};
+    o.received_time   = rx;
+    o.epoch_time      = hdr.epoch_time;     // content reference epoch (orbit dt base)
+    o.iod_ssr         = hdr.iod_ssr;
+    o.reference_point = ref_point;          // RTB-5(b): legacy=APC, 4076=CoM
     out.push_back(std::move(o));
 }
 
@@ -240,6 +265,7 @@ void decodeClockBody(RtcmBitReader& r, const SystemDescriptor& sys,
 
 void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
                         const SsrHeader& hdr, const GnssTime& rx,
+                        SsrReferencePoint ref_point,
                         std::vector<SsrCombinedCorrection>& out) {
     const int sat_raw = static_cast<int>(r.u(sys.sat_id_bits));
     const int iode    = static_cast<int>(r.u(sys.iode_bits));
@@ -255,16 +281,17 @@ void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
     if (!r.ok()) return;
 
     SsrCombinedCorrection cb;
-    cb.sat            = formatSat(sys, sat_raw);
-    cb.iode           = iode;
-    cb.delta_rac      = Eigen::Vector3d{dr, da, dc};
-    cb.delta_rac_dot  = Eigen::Vector3d{drd, dad, dcd};
-    cb.c0             = c0;
-    cb.c1             = c1;
-    cb.c2             = c2;
-    cb.received_time  = rx;
-    cb.epoch_time     = hdr.epoch_time;    // content reference epoch (orbit + clock dt base)
-    cb.iod_ssr        = hdr.iod_ssr;
+    cb.sat             = formatSat(sys, sat_raw);
+    cb.iode            = normalizeSsrIode(sys, iode);  // RTB-5(a): legacy GAL 10-bit → &0xFF
+    cb.delta_rac       = Eigen::Vector3d{dr, da, dc};
+    cb.delta_rac_dot   = Eigen::Vector3d{drd, dad, dcd};
+    cb.c0              = c0;
+    cb.c1              = c1;
+    cb.c2              = c2;
+    cb.received_time   = rx;
+    cb.epoch_time      = hdr.epoch_time;    // content reference epoch (orbit + clock dt base)
+    cb.iod_ssr         = hdr.iod_ssr;
+    cb.reference_point = ref_point;         // RTB-5(b): legacy=APC, 4076=CoM
     out.push_back(std::move(cb));
 }
 
@@ -369,7 +396,7 @@ DecodeResult decodeLegacy(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<SsrOrbitCorrection>&    orbits,
     std::vector<SsrClockCorrection>&    clocks,
     std::vector<SsrCombinedCorrection>& combined,
@@ -392,19 +419,24 @@ DecodeResult decodeLegacy(
                                cls.body == LegacyBody::Combined);
     int num_sats = 0;
     int datum    = 0;
-    if (!decodeSsrHeader(r, cls.sys, is_orbit_msg, current_gps_week,
+    if (!decodeSsrHeader(r, cls.sys, is_orbit_msg, anchor_gps_seconds,
                          result.header, num_sats, datum)) {
         return result;
     }
 
     const GnssTime rx = nowReceiveTime();
 
+    // RTB-5(b): legacy RTCM SSR corrects the broadcast orbit to the satellite
+    // ANTENNA PHASE CENTER (RTCM 10403.3 sec. 3.5.12) — tag orbit-bearing
+    // records APC so the user model can suppress its own satellite-PCO term.
+    constexpr SsrReferencePoint kRef = SsrReferencePoint::APC;
+
     for (int i = 0; i < num_sats; ++i) {
         switch (cls.body) {
-        case LegacyBody::Orbit:     decodeOrbitBody(r, cls.sys, result.header, rx, orbits);      break;
+        case LegacyBody::Orbit:     decodeOrbitBody(r, cls.sys, result.header, rx, kRef, orbits); break;
         case LegacyBody::Clock:     decodeClockBody(r, cls.sys, result.header, rx, clocks);      break;
         case LegacyBody::CodeBias:  decodeCodeBiasBody(r, cls.sys, result.header, rx, code_biases); break;
-        case LegacyBody::Combined:  decodeCombinedBody(r, cls.sys, result.header, rx, combined); break;
+        case LegacyBody::Combined:  decodeCombinedBody(r, cls.sys, result.header, rx, kRef, combined); break;
         case LegacyBody::Ura:       decodeUraBody(r, cls.sys, result.header, rx, uras);          break;
         case LegacyBody::HighRate:  decodeHighRateBody(r, cls.sys, result.header, rx, hrclocks); break;
         case LegacyBody::PhaseBias: decodePhaseBiasBody(r, cls.sys, result.header, rx, phase_biases); break;
@@ -466,7 +498,7 @@ bool classifyIgsIm(int im, const SystemDescriptor*& sys_out, LegacyBody& body_ou
 DecodeResult decodeIgs4076(
     const uint8_t* payload,
     std::size_t    len_bytes,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<SsrOrbitCorrection>&    orbits,
     std::vector<SsrClockCorrection>&    clocks,
     std::vector<SsrCombinedCorrection>& combined,
@@ -514,19 +546,27 @@ DecodeResult decodeIgs4076(
                                body == LegacyBody::Combined);
     int num_sats = 0;
     int datum    = 0;
-    if (!decodeSsrHeader(r, sys, is_orbit_msg, current_gps_week,
+    if (!decodeSsrHeader(r, sys, is_orbit_msg, anchor_gps_seconds,
                          result.header, num_sats, datum)) {
         return result;
     }
 
     const GnssTime rx = nowReceiveTime();
 
+    // RTB-5(b): IGS-SSR corrects the broadcast orbit to the satellite CENTER
+    // OF MASS (IGS SSR Format v1.00 sec. 4) — the SP3 convention, so the user
+    // model keeps applying its own satellite PCO.  Tag orbit-bearing records
+    // CoM.  The 8-bit 4076 IOD is already in the broadcast-side matching
+    // convention; normalizeSsrIode never re-masks it (iode_bits was overridden
+    // to 8 above), so there is no double-mask.
+    constexpr SsrReferencePoint kRef = SsrReferencePoint::CoM;
+
     for (int i = 0; i < num_sats; ++i) {
         switch (body) {
-        case LegacyBody::Orbit:     decodeOrbitBody(r, sys, result.header, rx, orbits);      break;
+        case LegacyBody::Orbit:     decodeOrbitBody(r, sys, result.header, rx, kRef, orbits); break;
         case LegacyBody::Clock:     decodeClockBody(r, sys, result.header, rx, clocks);      break;
         case LegacyBody::CodeBias:  decodeCodeBiasBody(r, sys, result.header, rx, code_biases); break;
-        case LegacyBody::Combined:  decodeCombinedBody(r, sys, result.header, rx, combined); break;
+        case LegacyBody::Combined:  decodeCombinedBody(r, sys, result.header, rx, kRef, combined); break;
         case LegacyBody::Ura:       decodeUraBody(r, sys, result.header, rx, uras);          break;
         case LegacyBody::HighRate:  decodeHighRateBody(r, sys, result.header, rx, hrclocks); break;
         case LegacyBody::PhaseBias: decodePhaseBiasBody(r, sys, result.header, rx, phase_biases); break;

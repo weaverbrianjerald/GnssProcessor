@@ -128,6 +128,12 @@ namespace GnssProcessor {
         }
 
         intersectMaps(sk.ionospheres, sk1.ionospheres, idx_k, idx_k1, exclude_keys);
+        // Constant-velocity model: keep the iono RATE in the common subspace next
+        // to its level so F_CC carries the F(level,rate)=dt coupling (the smoother
+        // then inherits the CV transition) and the rate is smoothed jointly.  The
+        // rate is keyed by satellite ID, so the handover exclude_keys (also sat
+        // IDs, added in prepareHandoverFrame) drop it in lockstep with the level.
+        intersectMaps(sk.iono_rates,  sk1.iono_rates,  idx_k, idx_k1, exclude_keys);
         intersectMaps(sk.code_biases, sk1.code_biases, idx_k, idx_k1, exclude_keys);
         intersectMaps(sk.sat_biases,  sk1.sat_biases,  idx_k, idx_k1, exclude_keys);
         intersectMaps(sk.sys_offsets, sk1.sys_offsets, idx_k, idx_k1, exclude_keys);

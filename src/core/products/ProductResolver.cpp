@@ -118,6 +118,19 @@ std::string ProductResolver::buildProductFilename(const std::string& tag,
 
     // PREFIX0TYPE_YYYYDOY0000_01D_RATE_PRODUCT.EXT.gz
     if (tag == "orb") {
+        // RTB-4: ultra-rapids are 02D products released 6-hourly with start
+        // hours 00/06/12/18 UTC (see the span-convention block above
+        // buildUltOrbFilename).  The single-name form built here is the
+        // (D, 00) anchor — the file whose OBSERVED half covers the whole
+        // requested day — with the per-centre sampling token (COD publishes
+        // 05M, the IGS combined ULT is 15M).  Start-hour walk-back and the
+        // alternate-token fallback live in resolveUltOrbits.
+        if (typ == "ULT") {
+            const int y = std::stoi(yyyydoy.substr(0, 4));
+            const int d = std::stoi(yyyydoy.substr(4, 3));
+            return buildUltOrbFilename(src, y, d, /*start_hour=*/0,
+                                       ultSamplingToken(src));
+        }
         return src + "0" + type_seg + "_" + yyyydoy + "0000_01D_05M_ORB.SP3.gz";
     } else if (tag == "clk") {
         return src + "0" + type_seg + "_" + yyyydoy + "0000_01D_30S_CLK.CLK.gz";
@@ -155,6 +168,189 @@ std::string ProductResolver::buildProductUrl(const std::string& tag,
     }
     // All other products are under /archive/gnss/products/GPSWEEK/
     return host + "/archive/gnss/products/" + std::to_string(gps_week) + "/" + filename;
+}
+
+// ---------------------------------------------------------------------------
+// Ultra-rapid (ULT) orbit naming + resolution
+//
+// SPAN-CONVENTION ASSUMPTION (load-bearing — every ordering decision below
+// follows from it):
+//
+//   <SRC>0OPSULT_<YYYYDDDHHMM>_02D_<SMP>_ORB.SP3.gz
+//
+//   * 02D = 48 h of orbit nodes starting at the filename epoch YYYYDDDHHMM
+//     (start hours 00/06/12/18 UTC, MM always 00).
+//   * The 48 h split into 24 h OBSERVED followed by 24 h PREDICTED; the
+//     filename epoch is the start of the OBSERVED half.
+//   * Release latency ≈ filename epoch + ~27 h (the observed half ends at
+//     epoch + 24 h; ~3 h of processing latency follow).
+//
+// The repository's prior knowledge is consistent with (but less specific
+// than) this: the pre-fix comment here stated that a day's 00:00 ULT file
+// "covers that whole day" plus the next (i.e. 48 h from the filename epoch),
+// and docs/rt_service_conventions.md treats RTB-4 ultra-rapids as carrying a
+// predicted portion whose file identity is a datum.  Nothing in the tree
+// contradicts the 24 h + 24 h split or the epoch-starts-observed-half rule;
+// they are standard IGS ultra-rapid convention (the legacy igu files carried
+// the same 24 h observed / 24 h predicted structure).
+//
+// Consequences:
+//   * The (D, 00) file is the best archived-replay source for day D: its
+//     OBSERVED half is exactly [D 00:00, D+1 00:00) and its predicted half
+//     provides the post-midnight interpolation margin — no next-day fetch.
+//   * Walking the start epoch back 6 h at a time degrades day-D coverage
+//     gracefully (observed until D 18:00 / 12:00 / 06:00, then fully
+//     predicted), which is exactly the live-session ladder: at wall-clock
+//     time T the newest published start epoch is the latest s with
+//     s + ~27 h <= T, up to ~33 h old just before a release lands.
+//   * A previous-day file is needed only for the PRE-midnight interpolation
+//     margin, and only when the obs-day pick starts exactly at D 00:00.
+// ---------------------------------------------------------------------------
+
+std::string ProductResolver::ultSamplingToken(const std::string& product_source) {
+    // Per-centre ULT orbit sampling.  CODE publishes 5-minute ultra-rapids
+    // (COD0OPSULT_*_02D_05M) — consistent with this resolver's COD FIN/RAP
+    // primary being 05M — while the IGS combined ultra-rapid is 15-minute
+    // (IGS0OPSULT_*_02D_15M).  Unknown centres default to the IGS-combined
+    // 15M: the alternate-token fallback in resolveUltOrbits self-heals a
+    // wrong guess at the cost of one extra 404.
+    if (product_source == "COD") return "05M";
+    if (product_source == "IGS") return "15M";
+    return "15M";
+}
+
+std::string ProductResolver::ultAlternateSamplingToken(const std::string& token) {
+    return (token == "15M") ? "05M" : "15M";
+}
+
+std::string ProductResolver::buildUltOrbFilename(const std::string& product_source,
+                                                 int year, int doy, int start_hour,
+                                                 const std::string& sampling_token) {
+    char epoch[16];
+    std::snprintf(epoch, sizeof(epoch), "%04d%03d%02d00", year, doy, start_hour);
+    return product_source + "0OPSULT_" + std::string(epoch) + "_02D_"
+        + sampling_token + "_ORB.SP3.gz";
+}
+
+std::vector<ProductResolver::UltStartEpoch> ProductResolver::ultStartCandidates(
+    int year, int doy, int first_hour, int count) {
+
+    std::vector<UltStartEpoch> out;
+    out.reserve(static_cast<size_t>(count > 0 ? count : 0));
+    int y = year, d = doy, h = first_hour;
+    for (int i = 0; i < count; ++i) {
+        out.push_back(UltStartEpoch{ y, d, h });
+        h -= 6;
+        if (h < 0) {
+            h = 18;
+            auto [py, pd] = shiftDate(y, d, -1);
+            y = py;
+            d = pd;
+        }
+    }
+    return out;
+}
+
+std::vector<std::filesystem::path> ProductResolver::resolveUltOrbits(int year, int doy) {
+    auto log = log_manager_.getLogger("resolver");
+    const std::string yyyydoy_obs = std::to_string(year) + padDoy(doy);
+    const std::string primary_tok = ultSamplingToken(config_.product_source);
+    const std::string alt_tok     = ultAlternateSamplingToken(primary_tok);
+
+    // Probe / download one start-epoch candidate.  Both sampling tokens are
+    // checked in the ready cache first (a prior run may have landed the
+    // alternate), then downloaded primary-token first.  Every attempted
+    // download name is appended to @p tried for failure diagnostics.  The
+    // file lands under its OWN filename-date directory, consistent with the
+    // date-first layout.
+    auto tryCandidate = [&](const UltStartEpoch& c,
+                            std::vector<std::string>& tried) -> std::filesystem::path {
+        const std::string ddir = dateDirName(c.year, c.doy);
+        const std::filesystem::path ready_dir = config_.data_root / ddir / "products";
+        const std::filesystem::path cache_dir = config_.data_root / "cache" / ddir;
+        const int week = gpsWeekFromDate(c.year, c.doy);
+
+        for (const std::string& tok : { primary_tok, alt_tok }) {
+            std::string ready_name = buildUltOrbFilename(
+                config_.product_source, c.year, c.doy, c.hour, tok);
+            ready_name = ready_name.substr(0, ready_name.size() - 3);  // strip ".gz"
+            const std::filesystem::path ready_path = ready_dir / ready_name;
+            if (std::filesystem::exists(ready_path)) {
+                log->info("Cached orb: {}", ready_path.string());
+                return ready_path;
+            }
+        }
+        for (const std::string& tok : { primary_tok, alt_tok }) {
+            const std::string filename_gz = buildUltOrbFilename(
+                config_.product_source, c.year, c.doy, c.hour, tok);
+            const std::string url = "https://cddis.nasa.gov/archive/gnss/products/"
+                + std::to_string(week) + "/" + filename_gz;
+            tried.push_back(filename_gz);
+            auto result = downloader_.downloadAndDecompress(url, cache_dir, ready_dir);
+            if (!result.empty()) return result;
+        }
+        return {};
+    };
+
+    // --- Obs-day file: (D, 00) first, then the 6-h start-hour walk-back ---
+    std::vector<std::string> tried;
+    std::filesystem::path obs_path;
+    UltStartEpoch obs_pick{};
+    for (const auto& c : ultStartCandidates(year, doy, /*first_hour=*/0)) {
+        auto p = tryCandidate(c, tried);
+        if (!p.empty()) { obs_path = p; obs_pick = c; break; }
+    }
+    if (obs_path.empty()) {
+        std::string names;
+        for (const auto& n : tried) {
+            if (!names.empty()) names += ", ";
+            names += n;
+        }
+        log->error("ULT orbit: no ultra-rapid file found for {} within the "
+                   "{}-candidate start-hour walk-back; tried: {}",
+                   yyyydoy_obs, kUltWalkBackTries, names);
+        return {};
+    }
+
+    // Obs-day file FIRST: SP3 epoch dedup in ProductParser::parseSp3 is
+    // first-file-wins in parse order (and parse order is this return order,
+    // preserved through setProductPaths / getPathsByExtension), so the
+    // obs-day file's nodes — observed for a (D, 00) pick — serve day D.
+    std::vector<std::filesystem::path> resolved;
+    resolved.push_back(obs_path);
+
+    const bool obs_start_on_day = (obs_pick.year == year && obs_pick.doy == doy);
+    log->info("ULT orbit: obs day {} served by {} ({}; its predicted half provides "
+              "the post-midnight interpolation margin)",
+              yyyydoy_obs, obs_path.filename().string(),
+              obs_start_on_day
+                  ? "observed half covers the full day"
+                  : "walked-back start — day-D coverage degrades toward the predicted half");
+
+    // --- Previous-day margin file (pre-midnight interpolation nodes) ---
+    // Needed only when the obs-day pick starts exactly at D 00:00; a
+    // walked-back pick already carries nodes before midnight.  Anchored at
+    // (D-1, 18): the freshest file whose start precedes D 00:00.  Parsed
+    // SECOND, so of its 48 h only the pre-midnight nodes survive dedup.
+    if (obs_start_on_day) {
+        auto [py, pd] = shiftDate(year, doy, -1);
+        std::vector<std::string> prev_tried;
+        std::filesystem::path prev_path;
+        for (const auto& c : ultStartCandidates(py, pd, /*first_hour=*/18)) {
+            auto p = tryCandidate(c, prev_tried);
+            if (!p.empty()) { prev_path = p; break; }
+        }
+        if (!prev_path.empty()) {
+            resolved.push_back(prev_path);
+        } else {
+            log->warn("ULT orbit: no previous-day margin file for {} ({} names "
+                      "tried) — interpolation at the first epochs of the day "
+                      "will be degraded",
+                      yyyydoy_obs, prev_tried.size());
+        }
+    }
+
+    return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,16 +407,31 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
             continue;
         }
 
-        // For orbits, try 15M fallback if 5M failed (typically a 404).
+        // For orbits, try an alternate-name fallback (typically a 404 on the
+        // primary).  FIN/RAP: the 15M re-issue of the 01D name.  ULT: the
+        // ALTERNATE sampling token at the same 02D name — a 01D rebuild is
+        // guaranteed dead for a 02D-only product class.  (The ULT resolve
+        // path normally goes through resolveUltOrbits, which does its own
+        // token fallback; this branch keeps any direct resolveProduct("orb")
+        // caller correct.)
         if (tag == "orb") {
-            std::string type_seg = typeSeg(eff_type);
-
-            std::string fallback_filename =
-                config_.product_source + "0" + type_seg + "_" + yyyydoy + "0000_01D_15M_ORB.SP3.gz";
+            std::string fallback_filename;
+            if (eff_type == "ULT") {
+                const int fy = std::stoi(yyyydoy.substr(0, 4));
+                const int fd = std::stoi(yyyydoy.substr(4, 3));
+                fallback_filename = buildUltOrbFilename(
+                    config_.product_source, fy, fd, /*start_hour=*/0,
+                    ultAlternateSamplingToken(ultSamplingToken(config_.product_source)));
+                log->info("Trying alternate-sampling ULT orbit fallback for {}", yyyydoy);
+            } else {
+                std::string type_seg = typeSeg(eff_type);
+                fallback_filename =
+                    config_.product_source + "0" + type_seg + "_" + yyyydoy + "0000_01D_15M_ORB.SP3.gz";
+                log->info("Trying 15M orbit fallback for {}", yyyydoy);
+            }
             std::string fallback_url = "https://cddis.nasa.gov/archive/gnss/products/"
                 + std::to_string(gps_week) + "/" + fallback_filename;
 
-            log->info("Trying 15M orbit fallback for {}", yyyydoy);
             auto fb_result = downloader_.downloadAndDecompress(fallback_url, cache_dir, ready_dir);
             if (!fb_result.empty()) {
                 resolved.push_back(fb_result);
@@ -266,13 +477,18 @@ std::pair<int, int> ProductResolver::shiftDate(int year, int doy, int delta) {
 std::filesystem::path ProductResolver::resolveErp(int year, int doy) {
     auto log = log_manager_.getLogger("resolver");
 
-    // ERP latency selection. A live real-time session (no precise orbit/clock
-    // download) cannot obtain a FINAL ERP for the current day — it does not
-    // exist yet — so prefer the short-latency RAPID product, whose polar motion
-    // / UT1 is current to within the pole-tide error budget. An explicitly-set
-    // RAP/ULT product_type is honoured as-is.
+    // ERP latency selection. A live real-time session cannot obtain a FINAL
+    // ERP for the current day — it does not exist yet at ~2-week FIN latency —
+    // so prefer the short-latency RAPID product, whose polar motion / UT1 is
+    // current to within the pole-tide error budget. The live predicate is
+    // !download_clocks ALONE: a session that skips the precise CLK is live
+    // regardless of whether it also pins precise ultra-rapid orbits (RTB-4
+    // realtime.use_precise_orbits re-arms download_orbits while clocks stay
+    // on the live/network source — keying on both flags would send that
+    // config on a doomed FIN walk-back and drop the pole tide). An
+    // explicitly-set RAP/ULT product_type is honoured as-is.
     std::string erp_type = config_.product_type;
-    if (!config_.download_orbits_clocks && erp_type == "FIN") {
+    if (!config_.download_clocks && erp_type == "FIN") {
         erp_type = "RAP";
         log->info("Real-time live source: using RAPID ERP (FINAL not yet "
                   "available for the current day)");
@@ -523,12 +739,28 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
         // them from broadcast+SSR, so skip the SP3/CLK fetch while still pulling
         // the obs-day BIA/ERP/BRDC the engine needs.
         std::vector<std::filesystem::path> orb_paths, clk_paths;
-        if (config_.download_orbits_clocks) {
-            orb_paths = resolveProduct("orb", orb_dates, orb_weeks);
-            clk_paths = resolveProduct("clk", clk_dates, clk_weeks);
+        // RTB-4: orbit and clock fetches are gated independently — a live session
+        // sources them from broadcast+SSR, but a "precise (ULT) orbits + network
+        // clocks" config pulls SP3 while still skipping the precise CLK.
+        if (config_.download_orbits) {
+            if (config_.product_type == "ULT") {
+                // Ultra-rapids are 48 h files: the generic prev/obs/next fetch
+                // over-fetches (next-day file redundant) and, worse, parses the
+                // prev-day file first so its PREDICTED half wins the
+                // first-file-wins SP3 dedup over the obs-day OBSERVED half.
+                // Dedicated fetch: obs-day file FIRST, then one previous-day
+                // margin file.  See resolveUltOrbits.
+                orb_paths = resolveUltOrbits(year, doy);
+            } else {
+                orb_paths = resolveProduct("orb", orb_dates, orb_weeks);
+            }
         } else {
-            log->info("Real-time live source: skipping orbit/clock download");
+            log->info("Real-time live orbit source: skipping SP3 download");
         }
+        if (config_.download_clocks)
+            clk_paths = resolveProduct("clk", clk_dates, clk_weeks);
+        else
+            log->info("Real-time live/network clock source: skipping CLK download");
         auto bia_paths = resolveProduct("dcb", day_dates, day_weeks);
         // ERP: real-time-aware (RAPID + most-recent-available) so a live "today"
         // session does not silently lose the pole tide / EOP frame.

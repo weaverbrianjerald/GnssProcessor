@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <optional>
@@ -50,6 +51,22 @@ public:
     /// Total bytes discarded while scanning for the preamble.
     uint64_t bytesDiscarded() const { return bytes_discarded_; }
 
+    /**
+     * @brief Receipt stamp of the most recent frame returned by nextFrame()
+     *        (RTB-1(b)).
+     *
+     * The @c std::chrono::steady_clock instant of the @c feed() call — the
+     * transport hand-off — that delivered the bytes completing that frame.
+     * This is the earliest point the process can observe a frame, so it is
+     * the reference for sub-second receive→process latency accounting (the
+     * poll loop forwards it into @c RealTimeEngine::feedRtcmFrame).  Steady
+     * clock by design: latency intervals must be immune to wall-clock steps.
+     * Default-constructed (epoch) until the first frame is extracted.
+     */
+    std::chrono::steady_clock::time_point lastFrameReceipt() const {
+        return last_frame_receipt_;
+    }
+
 private:
     /// Compute the RTCM3 24-bit CRC over [data, data+len).
     static uint32_t crc24q(const uint8_t* data, size_t len);
@@ -57,6 +74,11 @@ private:
     std::deque<uint8_t> buf_;
     uint64_t frames_extracted_{ 0 };
     uint64_t bytes_discarded_{ 0 };
+
+    /// Steady-clock instant of the most recent feed() (transport hand-off).
+    std::chrono::steady_clock::time_point last_feed_time_{};
+    /// Stamp of the feed() that completed the most recently extracted frame.
+    std::chrono::steady_clock::time_point last_frame_receipt_{};
 };
 
 } // namespace GnssProcessor

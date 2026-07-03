@@ -41,6 +41,29 @@ struct SsrHeader {
 };
 
 /**
+ * @brief Satellite reference point an SSR orbit correction is expressed for.
+ *
+ * The two SSR dialects disagree on WHERE the corrected orbit points:
+ *   - Legacy RTCM SSR (1057/1060, 1240-series, …) corrects the broadcast
+ *     orbit to the satellite ANTENNA PHASE CENTER (APC) — RTCM 10403.3
+ *     sec. 3.5.12: "the reference point … is the antenna phase centre".
+ *   - IGS-SSR (RTCM 4076) corrects it to the CENTER OF MASS (CoM) — IGS
+ *     SSR Format v1.00 sec. 4 — matching SP3/CLK convention, so the user
+ *     model must still apply the satellite PCO (ATX z-offset) itself.
+ *
+ * @c PppModel applies the satellite PCO unconditionally (correct for
+ * SP3/CoM and 4076/CoM baselines).  When an APC-referenced legacy-SSR
+ * orbit is in effect that PCO term double-counts the z-offset (0.6-2.6 m
+ * along the LOS); the tag lets the model skip it (see
+ * @c realtime.honor_ssr_reference_point).  Default is @c CoM so every
+ * existing construction (network products, tests) is unchanged.
+ */
+enum class SsrReferencePoint {
+    CoM,  ///< Corrected orbit points at the satellite center of mass (IGS-SSR 4076, SP3 convention).
+    APC   ///< Corrected orbit points at the satellite antenna phase center (legacy RTCM SSR).
+};
+
+/**
  * @brief Per-satellite orbit correction in radial / along-track / cross-track frame.
  *
  * Corrections are deltas relative to the broadcast ephemeris identified
@@ -57,6 +80,11 @@ struct SsrOrbitCorrection {
     GnssTime        received_time{0, 0.0};                   ///< When the correction was received (wall-clock; staleness gate).
     GnssTime        epoch_time{0, 0.0};                      ///< SSR content reference epoch (DF; dt base for delta_rac_dot propagation).
     int             iod_ssr{0};                              ///< Provider IOD-SSR at receive time.
+    /// Satellite reference point of the CORRECTED orbit (RTB-5): @c APC for
+    /// legacy 1057/1240-series decodes, @c CoM for IGS-SSR 4076.  Default
+    /// @c CoM keeps every non-decoder construction (network products, tests)
+    /// unchanged.  Consumed via @c SsrCorrectionStore::OrbitClockCorrection.
+    SsrReferencePoint reference_point{SsrReferencePoint::CoM};
 };
 
 /**
@@ -74,6 +102,17 @@ struct SsrClockCorrection {
     GnssTime    received_time{0, 0.0};  ///< Wall-clock receive time (staleness gate).
     GnssTime    epoch_time{0, 0.0};     ///< SSR content reference epoch — dt base for dC(t)=c0+c1·dt+c2·dt² (dt = t − epoch_time).
     int         iod_ssr{0};
+    /// Network clock discontinuity counter.  0 for RTCM/IGS-SSR-decoded clocks
+    /// (the wire standard has no such field) and whenever the network producer's
+    /// clock-disc channel (@c network.emit_clock_disc) is off — an internal
+    /// extension populated ONLY by @c NetworkProductEmitter.  Increments when the
+    /// producer's per-constellation clock DATUM re-references (a clock-pivot
+    /// handover for THIS satellite's constellation).  NOT serialized: recomputed
+    /// deterministically on replay from the per-epoch datum-change signal (mirrors
+    /// the phase/code disc counters).  The consumer reacts by noting the
+    /// re-reference (and, if it carries a stiff receiver-clock state, re-inflating
+    /// it) — the clock analog of the phase-bias → ambiguity reset.
+    int         disc_counter{0};
 };
 
 /**
@@ -92,6 +131,11 @@ struct SsrCombinedCorrection {
     GnssTime        received_time{0, 0.0};  ///< Wall-clock receive time (staleness gate).
     GnssTime        epoch_time{0, 0.0};     ///< SSR content reference epoch (shared orbit+clock dt base).
     int             iod_ssr{0};
+    /// Satellite reference point of the CORRECTED orbit (RTB-5): @c APC for
+    /// legacy 1060/1243-series decodes, @c CoM for IGS-SSR 4076.  Default
+    /// @c CoM keeps every non-decoder construction unchanged.  The clock part
+    /// is reference-point-agnostic (a scalar range bias).
+    SsrReferencePoint reference_point{SsrReferencePoint::CoM};
 };
 
 /**
@@ -192,6 +236,52 @@ struct RtcmStationCoords {
     Eigen::Vector3d arp_ecef{Eigen::Vector3d::Zero()};   ///< Antenna Reference Point ECEF (m).
     double          antenna_height{0.0};                 ///< 1006 only; 1005 leaves this 0.
     bool            has_height{false};
+};
+
+/**
+ * @brief A decoded RTCM 1033 receiver + antenna descriptor block (RTB-2(d)).
+ *
+ * Free-form metadata the reference station broadcasts about its own
+ * equipment: the IGS antenna type (20-char "model + radome" convention),
+ * setup id, serials, and the receiver type / firmware.  Surfaced on the
+ * parser output and logged once at info; retained as STORAGE for a future
+ * SIF (station-info) cross-check — deliberately NOT wired into the antenna
+ * model or anywhere else yet.
+ */
+struct RtcmReceiverAntennaDescriptor {
+    int         reference_station_id{0};  ///< DF003.
+    std::string antenna_descriptor;       ///< DF030: IGS antenna type (e.g. "TRM59800.00     NONE").
+    int         antenna_setup_id{0};      ///< DF031.
+    std::string antenna_serial;           ///< DF033.
+    std::string receiver_type;            ///< DF228: receiver type descriptor.
+    std::string receiver_firmware;        ///< DF230: receiver firmware version.
+    std::string receiver_serial;          ///< DF232.
+};
+
+/**
+ * @brief Decoded RTCM 1230 GLONASS L1/L2 code-phase biases (RTB-2(d)).
+ *
+ * Per-station biases the reference receiver applies (or declares) between
+ * its GLONASS code and phase observables, one per FDMA signal:
+ * L1 C/A (DF423), L1 P (DF424), L2 C/A (DF425), L2 P (DF426), each in
+ * meters at 0.02 m resolution.  @c fdma_signal_mask (DF422, 4 bits, MSB =
+ * L1 C/A … LSB = L2 P) says which of the four fields were present in the
+ * message; absent signals leave their bias at 0 with the mask bit clear.
+ *
+ * Surfaced on the parser output and logged once at info only.  NOT wired
+ * into the GLONASS inter-frequency-bias (IFB) estimation path: consuming a
+ * base-receiver code-phase bias in the per-FCN-slot IFB datum is an
+ * RTF-scale change (it re-references the k=0 datum the network/user IFB
+ * states are built on) and needs its own card.
+ */
+struct RtcmGlonassBias {
+    int    reference_station_id{0};   ///< DF003.
+    bool   code_phase_bias_indicator{false};  ///< DF421: biases ARE aligned by the receiver.
+    int    fdma_signal_mask{0};       ///< DF422 (4 bits): bit3=L1 C/A, bit2=L1 P, bit1=L2 C/A, bit0=L2 P.
+    double l1_ca_bias_m{0.0};         ///< DF423 (m), valid when mask bit3 set.
+    double l1_p_bias_m{0.0};          ///< DF424 (m), valid when mask bit2 set.
+    double l2_ca_bias_m{0.0};         ///< DF425 (m), valid when mask bit1 set.
+    double l2_p_bias_m{0.0};          ///< DF426 (m), valid when mask bit0 set.
 };
 
 } // namespace GnssProcessor

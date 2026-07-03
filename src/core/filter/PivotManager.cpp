@@ -457,6 +457,30 @@ void PivotManager::reReferenceIonosphere(
     }
 
     applyCovarianceReReference(iono_group, pi, P);
+
+    // Constant-velocity model: re-reference the companion iono RATE states the
+    // same way.  The slant iono (and thus its rate) is carried pivot-relative
+    // under BSSD; when the pivot changes, Idot_i must move to the new pivot's
+    // rate frame (Idot_i -= Idot_pivot, pivot -> 0) with its own covariance
+    // S-transform, or a rate discontinuity is injected at every handover.  The
+    // rate group is disjoint from the level group, so applying the two
+    // S-transforms in sequence composes to the correct joint transform.
+    if (config_.enableIonoRate()) {
+        const int new_piv_rate_idx = state_manager.getIonosphereRateIndex(pivot);
+        if (new_piv_rate_idx >= 0) {
+            const auto rpi = static_cast<Eigen::Index>(new_piv_rate_idx);
+            const double rate_piv = x(rpi);
+            std::vector<Eigen::Index> rate_group;
+            for (const auto& [sat, idx] : state_manager.getIonosphereRateStates()) {
+                if (PppUtils::getSystemString(sat) != cons) continue;
+                const auto ri = static_cast<Eigen::Index>(idx);
+                rate_group.push_back(ri);
+                const double old_val = x(ri);
+                x(ri) = (sat == pivot) ? 0.0 : (old_val - rate_piv);
+            }
+            applyCovarianceReReference(rate_group, rpi, P);
+        }
+    }
 }
 
 // ===========================================================================
@@ -849,9 +873,15 @@ void PivotManager::handlePivotHandover(
             std::string scrubbed;
             for (const auto& sat : sats) {
                 if (sat == new_piv) continue;  // now the frozen datum
-                if (sr_cfg.iono_std_m > 0.0)
+                if (sr_cfg.iono_std_m > 0.0) {
                     state_manager.reinflateIonosphereVariance(
                         sat, sr_cfg.iono_std_m * sr_cfg.iono_std_m);
+                    // Constant-velocity model: decorrelate the companion rate too,
+                    // else the CV coupling I(k+1)=I(k)+dt*Idot re-injects the stale
+                    // contaminated rate into the just-loosened level (no-op when
+                    // enableIonoRate is off; 0.0 => initial_std.ionosphere_rate).
+                    state_manager.reinflateIonosphereRateVariance(sat, 0.0);
+                }
                 if (sr_cfg.sat_bias_std_m > 0.0)
                     state_manager.reinflateSatBiasVariancesForSat(
                         sat, sr_cfg.sat_bias_std_m * sr_cfg.sat_bias_std_m);
@@ -925,6 +955,21 @@ void PivotManager::freezePivotIonoAndBiasCovariance(StateManager& state_manager)
                 Pf.row(idx).setZero();
                 Pf.col(idx).setZero();
                 any_frozen = true;
+            }
+        }
+
+        // Freeze companion iono rate (constant-velocity model): the pivot's
+        // Idot is held at (0,0) alongside the level, else its process noise /
+        // coupling would re-drive the pivot level off the SD datum.
+        if (config_.enableIonoRate()) {
+            const int rate_idx = state_manager.getIonosphereRateIndex(piv);
+            if (rate_idx >= 0) {
+                const auto ridx = static_cast<Eigen::Index>(rate_idx);
+                if (ridx < Pf.rows() && Pf(ridx, ridx) != 0.0) {
+                    Pf.row(ridx).setZero();
+                    Pf.col(ridx).setZero();
+                    any_frozen = true;
+                }
             }
         }
 

@@ -165,16 +165,28 @@ namespace GnssProcessor {
         // record far in the FUTURE relative to the obs (the −1.5 h desync), so a
         // stale/mis-timed SSR no longer detonates applyClockToBias.  Surface the
         // drop loudly (rate-limited by spdlog level) so it never hides again.
+        //
+        // RTA-9(b): the CLOCK apply window is widened by the stale-hold rung —
+        // with processing.ssr_clock_stale_hold_factor > 0 a clock aged in
+        // (ssr_max_age, factor × ssr_max_age] is still accepted here (the
+        // C0+C1·dt polynomial extrapolates over the true dt below) instead of
+        // dropping the satellite to broadcast-grade; MeasurementModel de-weights
+        // the consuming rows through the URA-staleness q²·dt³/3 machinery using
+        // the SAME clockHoldWindow.  Factor 0 (default) keeps the window at
+        // ssr_max_age exactly — byte-identical.
         const double ssr_max_age = config_ ? config_->getSsrMaxAge() : 60.0;
-        const auto ssr = ssrStore().getOrbitClock(satellite, time, ssr_max_age);
+        const double clk_hold    = config_ ? config_->getSsrClockStaleHoldFactor() : 0.0;
+        const double apply_window =
+            SsrCorrectionStore::clockHoldWindow(ssr_max_age, clk_hold);
+        const auto ssr = ssrStore().getOrbitClock(satellite, time, apply_window);
         if (!ssr) {
             if (auto se = ssrStore().getSsrEpoch(satellite)) {
                 const double age = TimeUtils::continuousGpsSeconds(time)
                                  - TimeUtils::continuousGpsSeconds(*se);
-                if (std::abs(age) > ssr_max_age)
+                if (std::abs(age) > apply_window)
                     log->warn("SSR for {} ({}) REJECTED stale: |age|={:.1f}s > {:.1f}s "
                               "(obs↔SSR desync) — falling back to broadcast-grade",
-                              satellite, PppUtils::getSystemString(satellite), age, ssr_max_age);
+                              satellite, PppUtils::getSystemString(satellite), age, apply_window);
             }
         }
         const int  ssr_iode = (ssr && ssr->has_clock) ? ssr->iode : -1;
@@ -246,6 +258,19 @@ namespace GnssProcessor {
                 clock_corr += SsrCorrectionStore::applyClockToBias(
                     ssr->c0, ssr->c1, ssr->c2, ssr->hr_clock, dt);
                 ssr_clock_applied = true;
+                // RTA-9(b): surface a stale-HELD application (middle rung).  The
+                // classification uses the content-epoch age — the same dt the
+                // polynomial just extrapolated over and the same dt the
+                // MeasurementModel R inflation grows with.
+                if (clk_hold > 1.0
+                    && SsrCorrectionStore::classifyClockAge(dt, ssr_max_age, clk_hold)
+                           == SsrCorrectionStore::ClockAgeRung::StaleHeld) {
+                    log->debug("SSR clock for {} ({}) STALE-HELD: age {:.1f}s in "
+                               "({:.1f}, {:.1f}]s — applied (C0+C1·dt) with URA-staleness "
+                               "R inflation on consuming rows",
+                               satellite, PppUtils::getSystemString(satellite), dt,
+                               ssr_max_age, apply_window);
+                }
             } else {
                 // Diagnostic: an SSR clock record IS present but was NOT applied —
                 // almost always an IODE-convention mismatch (brdc vs ssr).  Logging

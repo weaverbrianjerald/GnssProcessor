@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 
+#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -231,6 +232,37 @@ TEST(NetworkEstimatorTest, ToSolutionEpochMapsColumns) {
     EXPECT_EQ(e11.sat, "E11");
     EXPECT_NEAR(e11.clock_c0_m, 2.25, 1e-12);
     EXPECT_TRUE(e11.phase_bias.empty());
+}
+
+// RT0-3: toSolutionEpoch flags CDMA (GPS/GAL/BDS/QZSS) satellite phase biases as
+// integer-preserving (signal_integer=true) and leaves GLONASS/FDMA ('R') biases
+// false — truthful metadata a consumer's AR candidate selection can consult before
+// FDMA (per-slot inter-frequency-bias) biases ever enter the product.
+TEST(NetworkEstimatorTest, ToSolutionEpochSetsSignalIntegerForCdmaOnly) {
+    NetworkEstimator est;
+    const Eigen::Index g_pb = est.registerPhaseBias("G01", "L1");
+    const Eigen::Index e_pb = est.registerPhaseBias("E11", "L1");
+    const Eigen::Index c_pb = est.registerPhaseBias("C08", "L2");
+    const Eigen::Index j_pb = est.registerPhaseBias("J02", "L1");   // QZSS / CDMA
+    const Eigen::Index r_pb = est.registerPhaseBias("R05", "L1");   // GLONASS / FDMA
+
+    Eigen::VectorXd x_s(est.numShared());
+    x_s.setZero();
+    x_s(g_pb) = 0.10; x_s(e_pb) = 0.20; x_s(c_pb) = 0.30; x_s(j_pb) = 0.35; x_s(r_pb) = 0.40;
+
+    const NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, GnssTime{2300, 0.0});
+    ASSERT_EQ(sol.sats.size(), 5u);
+
+    auto findSat = [&](const std::string& id) -> const NetworkSatSolution& {
+        for (const auto& s : sol.sats) if (s.sat == id) return s;
+        ADD_FAILURE() << "sat not found: " << id;
+        return sol.sats.front();
+    };
+    EXPECT_TRUE (findSat("G01").phase_bias.at("L1").signal_integer);  // GPS  → integer
+    EXPECT_TRUE (findSat("E11").phase_bias.at("L1").signal_integer);  // GAL  → integer
+    EXPECT_TRUE (findSat("C08").phase_bias.at("L2").signal_integer);  // BDS  → integer
+    EXPECT_TRUE (findSat("J02").phase_bias.at("L1").signal_integer);  // QZSS → integer (CDMA)
+    EXPECT_FALSE(findSat("R05").phase_bias.at("L1").signal_integer);  // GLO  → NOT integer (FDMA)
 }
 
 // Registration is idempotent and rejected once the epoch is open.
@@ -498,6 +530,84 @@ TEST(NetworkSbasisTest, BuildsOneClockPinPerConstellation) {
                        if (p.column == est.clockColumn("G02")) return true; return false; }());
 }
 
+// RTA-1: sticky clock-pivot selection.  Passing the driver's emit-baseline map
+// keeps the incumbent pivot as long as it is still registered — a lexically
+// LOWER satellite rising no longer flips the datum (the constellation-wide
+// consumer reset the legacy per-epoch lexical pick forced).  Passing nullptr
+// (the default) preserves the legacy lexical selection byte-identically.
+TEST(NetworkSbasisTest, StickyPivotKeepsIncumbentWhenLexicallyLowerRises) {
+    NetworkEstimator est;
+    est.registerClock("G01"); est.registerClock("G03"); est.registerClock("G05");
+    est.registerClock("E11"); est.registerClock("E12");
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+    const std::vector<std::string> sats{"G01", "G03", "G05", "E11", "E12"};
+    // Incumbent G05 (e.g. it was the first sighting); G01/G03 have since risen.
+    const std::map<std::string, std::string> incumbent{{"G", "G05"}};
+
+    // Sticky OFF (nullptr): legacy lexical pick — the datum flips to G01.
+    const auto off = sb.buildSharedDatum(est, sats, decl);
+    EXPECT_EQ(off.clock_pivot.at("G"), "G01");
+
+    // Sticky ON: the incumbent survives the rise; the pin lands on ITS column.
+    const auto on = sb.buildSharedDatum(est, sats, decl, &incumbent);
+    EXPECT_EQ(on.clock_pivot.at("G"), "G05");
+    EXPECT_TRUE([&]{ for (const auto& p : on.shared_datum)
+                       if (p.column == est.clockColumn("G05")) return true; return false; }());
+    // A constellation with NO incumbent entry still falls back to the lexical pick.
+    EXPECT_EQ(on.clock_pivot.at("E"), "E11");
+    EXPECT_EQ(on.declared_dimension, 2);
+}
+
+// RTA-1: when the incumbent SETS, a new pivot is selected (existing lexical
+// fallback) — and after the emit-baseline advances, the NEW pivot is the sticky
+// incumbent: the OLD one returning must NOT flip the datum back.
+TEST(NetworkSbasisTest, StickyPivotReselectsOnLossAndDoesNotFlipBack) {
+    NetworkEstimator est;
+    est.registerClock("G03"); est.registerClock("G05"); est.registerClock("G07");
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+
+    // Epoch N: incumbent G05 has set — re-select (lexical fallback picks G03).
+    std::map<std::string, std::string> incumbent{{"G", "G05"}};
+    const auto n = sb.buildSharedDatum(est, {"G03", "G07"}, decl, &incumbent);
+    EXPECT_EQ(n.clock_pivot.at("G"), "G03");
+
+    // The driver's emit-baseline advances to the emitted plan (emit site, P0-1).
+    incumbent["G"] = n.clock_pivot.at("G");
+
+    // Epoch N+1: the old incumbent G05 returns — the NEW incumbent stays pivot.
+    const auto n1 = sb.buildSharedDatum(est, {"G03", "G05", "G07"}, decl, &incumbent);
+    EXPECT_EQ(n1.clock_pivot.at("G"), "G03");
+}
+
+// RTA-1: the config-pinned satellite (network.clock_datum_satellite) has
+// priority in BOTH modes — including over a sticky incumbent (a returning
+// pinned satellite deliberately reclaims the datum; that flip-back is user
+// intent).  When the pinned satellite is absent, sticky mode falls back to the
+// incumbent and legacy mode to the lexical pick.
+TEST(NetworkSbasisTest, PinnedSatellitePriorityRespectedInBothModes) {
+    NetworkEstimator est;
+    est.registerClock("G01"); est.registerClock("G03"); est.registerClock("G05");
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+    decl.clock_pivot_sat["G"] = "G05";
+    const std::map<std::string, std::string> incumbent{{"G", "G03"}};
+    const std::vector<std::string> sats{"G01", "G03", "G05"};
+
+    // Pinned present: it wins over BOTH the lexical pick and the incumbent.
+    EXPECT_EQ(sb.buildSharedDatum(est, sats, decl).clock_pivot.at("G"), "G05");
+    EXPECT_EQ(sb.buildSharedDatum(est, sats, decl, &incumbent).clock_pivot.at("G"), "G05");
+
+    // Pinned absent this epoch: sticky keeps the incumbent, legacy goes lexical.
+    decl.clock_pivot_sat["G"] = "G09";   // not in the registered set
+    EXPECT_EQ(sb.buildSharedDatum(est, sats, decl).clock_pivot.at("G"), "G01");
+    EXPECT_EQ(sb.buildSharedDatum(est, sats, decl, &incumbent).clock_pivot.at("G"), "G03");
+}
+
 // The SVD gate must count near-zero singular values == declared S-basis dimension.
 TEST(NetworkSbasisTest, NullSpaceGateCountsDeficiencies) {
     NetworkSbasis sb;
@@ -615,6 +725,77 @@ TEST(NetworkSbasisTest, DrivesSingleConstellationRecoveryAndGate) {
         EXPECT_NEAR(x_s(pbCol[s]), t.b[s] + t.M[0][s], 1e-6) << "sat phase bias " << s;
     }
     EXPECT_NEAR(x_s(clkCol[0]), 0.0, 1e-6);  // pivot clock pinned to the datum
+}
+
+// ---------------------------------------------------------------------------
+// RTA-10: per-constellation σ̂0 carve-out decision (network.per_const_withhold).
+// decidePerConstWithhold is PURE policy — rows + σ̂0_c per constellation, the A4
+// withhold ceiling, and the judgeability floor in; publish/withhold partition
+// out — so it is tested exhaustively here while the driver only maps the sets
+// onto the emission (RT0-5-style prune).
+// ---------------------------------------------------------------------------
+
+namespace {
+NetworkEstimator::PerConstSigma0 pcs(double sigma0_c, int rows) {
+    NetworkEstimator::PerConstSigma0 s;
+    s.sigma0_c = sigma0_c;
+    s.rows     = rows;
+    return s;
+}
+} // namespace
+
+// Every constellation individually clean and judgeable ⇒ all publish, none
+// withheld (the driver then publishes in full and counts the DIFFUSE edge).
+TEST(NetworkEstimatorTest, PerConstWithholdAllCleanPublishesAll) {
+    std::map<char, NetworkEstimator::PerConstSigma0> stats{
+        {'G', pcs(1.2, 120)}, {'E', pcs(2.5, 80)}, {'R', pcs(5.9, 40)}};
+    const auto dec = NetworkEstimator::decidePerConstWithhold(stats, /*ceiling=*/6.0,
+                                                              /*min_rows=*/20);
+    EXPECT_EQ(dec.publish, (std::set<char>{'G', 'E', 'R'}));
+    EXPECT_TRUE(dec.withhold.empty());
+}
+
+// One dirty constellation ⇒ exactly it is withheld; the clean ones publish
+// (localized fault degrades scope, not availability).
+TEST(NetworkEstimatorTest, PerConstWithholdOneDirtyIsolated) {
+    std::map<char, NetworkEstimator::PerConstSigma0> stats{
+        {'G', pcs(1.1, 200)}, {'E', pcs(1.4, 90)}, {'C', pcs(37.0, 60)}};
+    const auto dec = NetworkEstimator::decidePerConstWithhold(stats, 6.0, 20);
+    EXPECT_EQ(dec.publish, (std::set<char>{'G', 'E'}));
+    EXPECT_EQ(dec.withhold, (std::set<char>{'C'}));
+}
+
+// Every constellation dirty ⇒ empty publish set — the driver's signal that NO
+// healthy subset exists and the whole-epoch withhold applies unchanged.  An
+// EMPTY input (no judged constellations at all) yields the same empty publish.
+TEST(NetworkEstimatorTest, PerConstWithholdAllDirtyYieldsEmptyPublish) {
+    std::map<char, NetworkEstimator::PerConstSigma0> stats{
+        {'G', pcs(9.0, 200)}, {'E', pcs(6.01, 90)}};
+    const auto dec = NetworkEstimator::decidePerConstWithhold(stats, 6.0, 20);
+    EXPECT_TRUE(dec.publish.empty());
+    EXPECT_EQ(dec.withhold, (std::set<char>{'G', 'E'}));
+
+    const auto empty_dec = NetworkEstimator::decidePerConstWithhold({}, 6.0, 20);
+    EXPECT_TRUE(empty_dec.publish.empty());
+    EXPECT_TRUE(empty_dec.withhold.empty());
+}
+
+// Boundary semantics: rows == min_rows is judgeable (publishes); one fewer row
+// is UNJUDGEABLE and withheld even with a spotless σ̂0_c.  Ceiling is inclusive
+// (σ̂0_c == ceiling publishes; the smallest exceedance withholds), matching the
+// global withhold's strict '>' trip.  Zero-row entries are always withheld.
+TEST(NetworkEstimatorTest, PerConstWithholdMinRowsAndCeilingBoundaries) {
+    std::map<char, NetworkEstimator::PerConstSigma0> stats{
+        {'G', pcs(1.0, 20)},    // exactly min_rows, clean         -> publish
+        {'E', pcs(1.0, 19)},    // one row short, clean            -> withhold (unjudgeable)
+        {'C', pcs(6.0, 100)},   // exactly the ceiling             -> publish (inclusive)
+        {'R', pcs(6.0001, 100)},// smallest exceedance             -> withhold
+        {'J', pcs(1.0, 0)}};    // no rows at all                  -> withhold
+    const auto dec = NetworkEstimator::decidePerConstWithhold(stats, 6.0, 20);
+    EXPECT_EQ(dec.publish, (std::set<char>{'G', 'C'}));
+    EXPECT_EQ(dec.withhold, (std::set<char>{'E', 'R', 'J'}));
+    // Every input key lands in exactly one output set.
+    EXPECT_EQ(dec.publish.size() + dec.withhold.size(), stats.size());
 }
 
 } // namespace

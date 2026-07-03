@@ -35,6 +35,7 @@
 #include "common/StationInfo.hpp"
 #include "logging/LogManager.hpp"
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -129,5 +130,39 @@ namespace GnssProcessor {
         std::unordered_map<std::string, std::size_t> by_id4_;   ///< 4-char prefix (upper-case) -> index (first wins).
         std::unordered_map<std::string, std::size_t> by_domes_; ///< DOMES number -> index.
     };
+
+    /**
+     * @brief RTA-12: a network-roster station coordinate resolved from a SIF.
+     *
+     * Thin result carrier for @ref resolveRosterCoordinate: the survey-grade ECEF
+     * at the requested run date plus that date itself (the propagation epoch a
+     * product contract should declare as @c coord_epoch).
+     */
+    struct SifRosterCoordinate {
+        Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };  ///< ECEF at @ref epoch_year [m], SIF reference frame (typically ITRF2020).
+        double          epoch_year{ 0.0 };                ///< Decimal year the coordinate was propagated to.
+    };
+
+    /**
+     * @brief RTA-12: resolve a network-roster station's fixed ECEF by name at a run date.
+     *
+     * Composition of @c StationInfoFile::find (9-char ID / 4-char prefix / DOMES,
+     * case-insensitive) and @ref resolveStationCoordinate with periodic and
+     * post-seismic terms enabled — the full SIF coordinate function
+     * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum \text{PSD}(t) @f$
+     * evaluated at @p decimal_year.  Used by the config loader when
+     * @c network.use_sif_coordinates fills roster stations whose @c position_ecef
+     * was not typed in the JSON; factored out so the resolution is unit-testable
+     * in isolation from the loader.
+     *
+     * @param registry     Loaded SIF registry.
+     * @param station_name Station identifier (marker name, ID/prefix, or DOMES).
+     * @param decimal_year Run date to propagate the occupation coordinate to.
+     * @return ECEF + propagation epoch, or @c std::nullopt when the station is
+     *         unknown to the registry or has no usable occupation.
+     */
+    std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile& registry,
+                                                               const std::string& station_name,
+                                                               double decimal_year);
 
 } // namespace GnssProcessor

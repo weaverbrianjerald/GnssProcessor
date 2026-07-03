@@ -134,7 +134,8 @@ if (logging_config.enable_wls_trace) {
 
     if (ionosphere_trace_.is_open()) {
         ionosphere_trace_ << "week,tow_s,satellite,system,iono_m,std_m,elevation_deg,azimuth_deg,"
-                             "mapping_factor,vtec_m,is_pivot,pivot_satellite\n";
+                             "mapping_factor,vtec_m,is_pivot,pivot_satellite,"
+                             "iono_rate_m_s,iono_rate_std_m_s\n";
     }
 
     if (sat_bias_trace_.is_open()) {
@@ -439,13 +440,27 @@ void TraceLogger::logIonosphere(const GnssTime& time, const StateManager& state_
         auto pv_it = pivot_by_constellation.find(sys_prefix);
         const std::string pivot_sat = (pv_it != pivot_by_constellation.end()) ? pv_it->second : std::string();
 
+        // Constant-velocity model: emit the companion iono-rate estimate and its
+        // 1-sigma (m/s).  Empty columns when the rate model is off / absent, so
+        // the extra fields never disturb the fixed leading schema.
+        const int rate_idx = state_manager.getIonosphereRateIndex(sat);
+        const bool has_rate = rate_idx >= 0 && rate_idx < static_cast<int>(sv.size());
+
         ionosphere_trace_ << std::fixed
                           << time.week << "," << std::setprecision(3) << time.tow << ","
                           << sat << "," << sys_name << ","
                           << std::setprecision(6) << val << "," << sigma << ","
                           << std::setprecision(3) << elev << "," << az << ","
                           << std::setprecision(6) << mf << "," << vtec_m << ","
-                          << (is_pivot ? 1 : 0) << "," << pivot_sat << "\n";
+                          << (is_pivot ? 1 : 0) << "," << pivot_sat << ",";
+        if (has_rate) {
+            ionosphere_trace_ << std::setprecision(8)
+                              << sv(static_cast<Eigen::Index>(rate_idx)) << ","
+                              << std_at(static_cast<size_t>(rate_idx));
+        } else {
+            ionosphere_trace_ << ",";
+        }
+        ionosphere_trace_ << "\n";
     }
 }
 

@@ -85,9 +85,9 @@ constexpr SystemDesc kQzss    {System::QZSS,    'J', 30, false, false,   0,  0.0
 constexpr SystemDesc kBeidou  {System::BeiDou,  'C', 30, false, false,   0, 14.0};
 
 // ---------------------------------------------------------------------------
-// MSM variant (field widths and feature flags).  MSM4 and MSM7 share the
-// same overall structure but differ in per-cell and per-sat field widths.
-// MSM5/MSM6 sit between them; not yet emitted.
+// MSM variant (field widths and feature flags).  MSM4/MSM5/MSM7 share the
+// same overall structure but differ in per-cell / per-sat field widths and
+// capability flags.  MSM6 (high-precision, no Doppler) is not yet emitted.
 // ---------------------------------------------------------------------------
 struct MsmVariant {
     int    msm_subtype;            ///< 4 or 7.
@@ -120,6 +120,24 @@ constexpr MsmVariant kMsm4 {
     /*sentinel_fine_phase=*/-(1 << 21),  // -2097152
 };
 
+// MSM5 (RTB-2(c)): MSM4-precision range fields (DF400/DF401, 4-bit DF402
+// lock, whole-dB-Hz DF403 CNR) PLUS the Doppler capability of MSM7 (per-sat
+// DF399 rough + per-cell DF404 fine phase range rate) — and, because it is
+// an MSM5/7-family message, the per-sat DF419 extended-satellite-info block
+// IS present for every constellation (RTCM 10403.3 Table 3.5-75).
+constexpr MsmVariant kMsm5 {
+    /*msm_subtype=*/5,
+    /*bits_fine_pr=*/15,  /*bits_fine_phase=*/22,
+    /*bits_lock=*/4,      /*bits_cnr=*/6,
+    /*has_range_rate=*/true,
+    /*honour_ext_sat_info=*/true,
+    /*scale_fine_pr_ms=*/  1.0 / (1ull << 24),
+    /*scale_fine_phase_ms=*/1.0 / (1ull << 29),
+    /*cnr_unit_dbhz=*/1.0,
+    /*sentinel_fine_pr=*/-(1 << 14),     // -16384
+    /*sentinel_fine_phase=*/-(1 << 21),  // -2097152
+};
+
 constexpr MsmVariant kMsm7 {
     /*msm_subtype=*/7,
     /*bits_fine_pr=*/20,  /*bits_fine_phase=*/24,
@@ -135,6 +153,7 @@ constexpr MsmVariant kMsm7 {
 
 const SystemDesc* descForMsgType(uint16_t mt, int expected_sub, int& subtype_out) {
     // MSM4 messages: 1074, 1084, 1094, 1104, 1114, 1124.
+    // MSM5 messages: 1075, 1085, 1095, 1105, 1115, 1125.
     // MSM7 messages: 1077, 1087, 1097, 1107, 1117, 1127.
     if (mt < 1071) return nullptr;
     const int sys_index = (mt - 1071) / 10;
@@ -172,7 +191,19 @@ double lockTimeMsExtended(int n) {
     if (n < 448) return  131072.0 + (n - 416) *   4096.0;
     if (n < 480) return  262144.0 + (n - 448) *   8192.0;
     if (n < 512) return  524288.0 + (n - 480) *  16384.0;
-    return 0.0;  // n >= 512: invalid
+    // RTB-3 fix: DF407 is a full 10-bit field (0..1023); the doubling pattern of
+    // Table 3.5-101 continues past n=511.  n=512..703 are VALID long locks
+    // (~17.2 min .. ~18.6 h), NOT invalid — collapsing them to 0.0 makes a
+    // long-held carrier look like a lock reset to LockTimeTracker, fabricating a
+    // perpetual LLI slip on the healthiest satellites.  Continue the table, then
+    // saturate at the top level (2^26 ms) so a stable lock reads as equal maxima.
+    if (n < 544) return  1048576.0  + (n - 512) *   32768.0;
+    if (n < 576) return  2097152.0  + (n - 544) *   65536.0;
+    if (n < 608) return  4194304.0  + (n - 576) *  131072.0;
+    if (n < 640) return  8388608.0  + (n - 608) *  262144.0;
+    if (n < 672) return  16777216.0 + (n - 640) *  524288.0;
+    if (n < 704) return  33554432.0 + (n - 672) * 1048576.0;
+    return 67108864.0;  // n >= 704: saturate at the top step (~18.6 h)
 }
 
 // MSM4 4-bit lock time (DF402): n=0 → 0 ms; n=1..15 → 32·2^(n-1) ms.
@@ -285,7 +316,21 @@ std::string formatSat(const SystemDesc& sys, int bit_index) {
 // ---------------------------------------------------------------------------
 // Time conversions
 // ---------------------------------------------------------------------------
-GnssTime promoteEpoch(const SystemDesc& sys, uint32_t raw, int current_week) {
+
+// Nearest-continuation week promotion (RTB-1(a); RTKLIB adjweek).  Given a
+// mod-week time @p tow and a continuous-GPS-seconds anchor (the caller's
+// last-known stream time, host clock only at cold start), pick the week that
+// minimizes |week·604800 + tow − anchor|.  A non-positive anchor preserves
+// the legacy "no week available" behaviour (week 0), which direct decoder
+// calls (tests) rely on.
+int nearestWeek(double anchor_gps_seconds, double tow) {
+    if (anchor_gps_seconds <= 0.0) return 0;
+    const int w = static_cast<int>(std::floor(
+        (anchor_gps_seconds - tow) / static_cast<double>(TimeUtils::SECONDS_IN_WEEK) + 0.5));
+    return w < 0 ? 0 : w;
+}
+
+GnssTime promoteEpoch(const SystemDesc& sys, uint32_t raw, double anchor_gps_seconds) {
     if (sys.uses_glo_tod) {
         // GLONASS MSM epoch is a 30-bit field = 3-bit day-of-week (high bits)
         // + 27-bit time-of-day in ms (low bits) — NOT 27 bits total.  Reading
@@ -293,26 +338,26 @@ GnssTime promoteEpoch(const SystemDesc& sys, uint32_t raw, int current_week) {
         // the satellite mask and corrupting the whole GLONASS decode.
         //
         // GLONASS runs on the UTC(SU)+3h ("Moscow") day, so the ms-of-day is
-        // promoted to a full GPS-week GnssTime by anchoring on the rover's
-        // current GPS time and carrying it back through UTC (leap seconds) —
-        // see TimeUtils::glonassTodToGpsTime.  The wall-clock anchor mirrors how
-        // the ms-of-week systems get their week (currentGpsWeekFromSystem); the
-        // 3-bit DOW is redundant given that anchor (it only resolves ±12 h,
-        // which the anchor already does) and is left unread for the value.
+        // promoted to a full GPS-week GnssTime by anchoring on the caller's
+        // last-known continuous GPS time (host clock only at cold start —
+        // RTB-1(a)) and carrying it back through UTC (leap seconds) — see
+        // TimeUtils::glonassTodToGpsTime.  The 3-bit DOW is redundant given
+        // that anchor (it only resolves ±12 h, which the anchor already does)
+        // and is left unread for the value.
         const uint32_t tod_ms = raw & 0x7FFFFFFu;       // DF034 low 27 bits (ms-of-day)
         return TimeUtils::glonassTodToGpsTime(static_cast<double>(tod_ms) * 1e-3,
-                                              TimeUtils::nowContinuousGpsSeconds());
+                                              anchor_gps_seconds);
     }
-    // 30-bit ms-of-week.
+    // 30-bit ms-of-week, promoted to the week nearest the anchor.  The BDT→GPS
+    // +14 s shift can wrap the tow across the week boundary; after re-wrapping
+    // into [0, 604800) the nearest-continuation pick lands on the correct
+    // (possibly incremented) week automatically.
     double tow = static_cast<double>(raw) * 1e-3;
     if (sys.bdt_to_gps_offset_s != 0.0) {
         tow += sys.bdt_to_gps_offset_s;             // BDT -> GPS
-        if (tow >= TimeUtils::SECONDS_IN_WEEK) {
-            tow -= TimeUtils::SECONDS_IN_WEEK;
-            ++current_week;
-        }
+        if (tow >= TimeUtils::SECONDS_IN_WEEK) tow -= TimeUtils::SECONDS_IN_WEEK;
     }
-    return GnssTime{current_week, tow};
+    return GnssTime{nearestWeek(anchor_gps_seconds, tow), tow};
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +386,7 @@ MsmDecodeResult decodeMsmImpl(
     const uint8_t*    payload,
     std::size_t       len_bytes,
     uint16_t          msg_type,
-    int               current_gps_week,
+    double            anchor_gps_seconds,
     const MsmVariant& V,
     std::vector<RinexObservation>& observations)
 {
@@ -366,7 +411,7 @@ MsmDecodeResult decodeMsmImpl(
     /*bool smoothing     =*/ r.boolean();
     /*int smooth_int     =*/ r.u(3);
 
-    res.epoch_time = promoteEpoch(*sys, epoch_raw, current_gps_week);
+    res.epoch_time = promoteEpoch(*sys, epoch_raw, anchor_gps_seconds);
 
     // Satellite mask (64 bits) — bit i set => satellite (i+1) present.
     const uint64_t sat_mask_hi = r.u(32);
@@ -573,11 +618,21 @@ MsmDecodeResult decodeMsmImpl(
                     obs.measurements["D" + sig.suffix] = -rate_mps / wl;
                 }
             }
-            // LLI: bit 1 = half-cycle ambiguity present; bit 2 = lock-time
-            // less than the previous observation (proxy for cycle slip).
+            // LLI: the 0x2 half-cycle bit is set here from DF420.  The 0x1
+            // loss-of-lock bit needs HISTORY (lock-time decreased vs the
+            // previous epoch), which a stateless decoder cannot supply — the
+            // decoded lock time is therefore surfaced on lock_time_ms below
+            // and the epoch-assembly layer (RealTimeEngine + LockTimeTracker,
+            // behind realtime.msm_lli_from_locktime) derives the 0x1 bit.
             int lli = 0;
             if (half_amb[idx]) lli |= 0x2;
             obs.lli_flags["L" + sig.suffix] = lli;
+            // Decoded lock time (ms) for the assembly-layer LLI derivation:
+            // the 4-bit DF402 basic table (MSM4/MSM5) or the 10-bit DF407
+            // extended table (MSM7), selected by the variant's field width.
+            obs.lock_time_ms["L" + sig.suffix] =
+                (V.bits_lock >= 10) ? lockTimeMsExtended(lock_time[idx])
+                                    : lockTimeMsBasic(lock_time[idx]);
         }
 
         if (!obs.measurements.empty()) observations.push_back(std::move(obs));
@@ -589,8 +644,8 @@ MsmDecodeResult decodeMsmImpl(
 }
 
 // ---------------------------------------------------------------------------
-// Public entry points.  Both forward to decodeMsmImpl with the matching
-// variant.  The two variants share the same body code; the variant struct
+// Public entry points.  All forward to decodeMsmImpl with the matching
+// variant.  The variants share the same body code; the variant struct
 // supplies field widths, scale factors, and capability flags.
 // ---------------------------------------------------------------------------
 
@@ -598,21 +653,32 @@ MsmDecodeResult decodeMsm7(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<RinexObservation>& observations)
 {
-    return decodeMsmImpl(payload, len_bytes, msg_type, current_gps_week,
+    return decodeMsmImpl(payload, len_bytes, msg_type, anchor_gps_seconds,
                          kMsm7, observations);
+}
+
+MsmDecodeResult decodeMsm5(
+    const uint8_t* payload,
+    std::size_t    len_bytes,
+    uint16_t       msg_type,
+    double         anchor_gps_seconds,
+    std::vector<RinexObservation>& observations)
+{
+    return decodeMsmImpl(payload, len_bytes, msg_type, anchor_gps_seconds,
+                         kMsm5, observations);
 }
 
 MsmDecodeResult decodeMsm4(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<RinexObservation>& observations)
 {
-    return decodeMsmImpl(payload, len_bytes, msg_type, current_gps_week,
+    return decodeMsmImpl(payload, len_bytes, msg_type, anchor_gps_seconds,
                          kMsm4, observations);
 }
 
