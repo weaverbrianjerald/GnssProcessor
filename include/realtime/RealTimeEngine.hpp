@@ -354,6 +354,16 @@ private:
     /// from @c flush() (end-of-run).
     void logBiasAttrMismatchSummary(const char* tag);
 
+    /// @brief Card 7: log the one-line orbit/clock coherence-echo mismatch summary.
+    ///
+    /// Reads @c ssrStore().orbitEchoMismatchCounts() and logs one INFO line with
+    /// the total + the top offending (sat|reason) keys (reason ∈ noorbit / iod /
+    /// skew) and whether the withhold budget is armed.  Silent when no mismatch
+    /// was ever counted (every clean and every pre-Card-7 run).  Called from the
+    /// same two hooks as the RTA-13 summary: periodically from @c processEpoch
+    /// and once from @c flush() (end-of-run).
+    void logOrbitEchoMismatchSummary(const char* tag);
+
     GnssConfig&  config_;
     LogManager&  log_manager_;
 
@@ -393,6 +403,13 @@ private:
     /// Non-owning SSR store override; nullptr -> process-wide singleton.
     /// Set via setSsrStore() for the closed-loop consumer (see header).
     const SsrCorrectionStore* ssr_store_override_{ nullptr };
+
+    /// Card 7: the CLOCK-routed store (per setSsrStore's consume_clock), the
+    /// store GnssCorrections tallies orbit-echo mismatches on.  The engine's
+    /// ssr_store_override_ above is BIAS-routed (consume_bias), so under a
+    /// clock-on/bias-off profile the two differ — the echo summary must read
+    /// this one or a split consumer's mismatches stay invisible forever.
+    const SsrCorrectionStore* clock_store_override_{ nullptr };
 
     /// Most recent epoch's AR result + whether AR ran (closed-loop metrics).
     AmbiguityResolution last_ar_result_{};

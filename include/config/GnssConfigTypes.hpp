@@ -223,8 +223,10 @@ namespace GnssProcessor {
         // --- Visualization traces (consumed by the pyviz network viewers) ---
         bool trace_stations{ true };      ///< Emit a static @c network_stations.csv roster (station id, role, ECEF) once at startup.  Cheap (one tiny file); drives the worldmap viewer so it reflects the stations that actually loaded.
         bool trace_ionosphere{ false };   ///< Emit @c network_ionosphere.csv: per-station, per-satellite back-substituted slant ionosphere (m) + elevation/azimuth each emitted epoch, for the ionospheric pierce-point map.  O(stations x sats x epochs) — off by default; enable for the iono viz.
+        bool trace_estimability{ false }; ///< Emit the one-shot @c Network[estimability] warn dump on the first epoch that reaches the datum gate: the tail of the reduced shared-normal eigen-spectrum plus the shared parameters spanning each near-zero (unpinned-gauge) direction.  A full eigenVECTOR decomposition of the reduced normals (O(n_shared³) — ~1156³ at 305 stations), so it is OFF by default; enable only to debug an over/under-specified datum.  The @ref NetworkSbasis rank gate itself is unaffected and always runs.
         bool trace_clock_full{ false };   ///< L4: append @c nis,mode columns to @c network_clock_monitor.csv (the exception to the append-only column rule — a trailing-column format break) and, when true, write EVERY sat-epoch row (both mode filters replaced with @c true) instead of only near/over-threshold rows.  The file itself still only opens under @ref trace_slip_events && (@ref clock_monitor || @ref clock_model); this only widens/annotates what it records.  Off by default.
         bool trace_slip_events{ false };  ///< Emit the deep-investigation slip log: @c network_if_slip.csv (per-(station,sat,pair) between-epoch IF ΔΔφ + the elevation-normalized / per-station-EWMA threshold decision, every epoch) and @c network_raim.csv (per-(sat,station) post-fit standardized residual + cross-station consensus at any spike).  O(stations x sats x epochs) for the IF file — off by default; enable to debug IF-phase pre-detector and RAIM events.
+        bool trace_slip_raw{ false };     ///< Emit @c network_slip_raw.csv — per-(station,sat) RAW cycle-slip observables every epoch: Melbourne-Wübbena (m), geometry-free L1−L2 (m), first-signal phase-minus-code (m), and the per-band RINEX LLI flag, for the primary dual-frequency pair.  Computed directly from raw_observed and INDEPENDENT of whether any slip DETECTOR is enabled — so "was there a slip on ANY sat at this station/epoch?" is always answerable (in particular the receiver LLI, the ground-truth loss-of-lock flag that no other network CSV surfaces).  Epoch-to-epoch differences are trivially formed offline.  O(stations x sats x epochs); off by default.  Needs a wavelength provider (built lazily like the DD trace).
         bool trace_anchor_info{ false };  ///< B7: emit @c network_anchor_info.csv — per-satellite a-priori-clock-anchor information fraction (anchor_info / reduced-normals total_info) each emitted epoch, so validation runs can CERTIFY the estimable clock is data-dominated over the a-priori CODE-product anchor.  Pure diagnostic (anchor fold unchanged); off by default.  O(clock_sats x epochs).
         bool trace_dd_fractional{ false };///< B5: emit @c network_dd_fractional.csv — per-epoch cross-station between-satellite double-differenced float ambiguity (from reconstructStation), keyed (constellation,signal), with its fractional-cycle residual: a sign-convention self-check + empirical <0.1-cycle-support evidence for user AR.  O(stations x sats x epochs); off by default.  Pure additional CSV, no state mutation.
         bool trace_flag_rates{ false };   ///< B8: log a per-tier flag-rate summary at end of run — for each RAIM/QC tier (IF-phase slip, within-epoch trigger, post-fit RAIM cell/consensus, clock-model NIS, clock-monitor) accumulate {opportunities, flags} over the run and report realized rate vs the implied one-sided Gaussian α for the configured k.  Also writes @c network_flag_rates.csv + @c network_run_summary.csv (L3).  Measurement only — no threshold or decision change; OFF (default) = byte-identical.
@@ -515,6 +517,16 @@ namespace GnssProcessor {
      * additional margin for producer WITHHOLD gaps (RAIM/QC epochs that emit
      * nothing): held clocks stay applied with honest R inflation instead of
      * falling off the broadcast-grade cliff.
+     *
+     * Card 7 — the AGE-SKEW rung of the same ladder: beyond each product's OWN
+     * age, the ORBIT and CLOCK products must agree with each other.  A brdc_rts
+     * clock echoes the RTS orbit it was estimated against;
+     * @c orbit_clock_max_skew_s (below) withholds the clock when the applied
+     * orbit disagrees with that echo — the withheld satellite then rides the
+     * ordinary staleness rungs above (stale-held extrapolation, then
+     * broadcast-grade drop), and the per-sat mismatch counters (store-side,
+     * summarized by @c RealTimeEngine beside the RTA-13 counters) make the
+     * incoherence visible either way.
      */
     struct NetworkConsumerConfig {
         bool enable{ false };        ///< Master switch.  Only takes effect when a product source exists (realtime.network_products_path set).
@@ -545,6 +557,27 @@ namespace GnssProcessor {
         /// while the float carries NETWORK phase biases injects a conflicting WL
         /// datum, so the derived value is true for the undifferenced consumer.
         int  ar_ignore_mw_wl{ -1 };
+        /**
+         * @brief Card 7 (RTF-2): orbit/clock coherence age-skew budget (s)
+         *        (@c processing.network_consumer.orbit_clock_max_skew_s).
+         *
+         * A @c brdc_rts network clock record echoes the RTS orbit update it was
+         * estimated against (IOD-SSR + content epoch); broadcast radial-orbit
+         * error absorbs 1:1 into that clock, so consuming it against a
+         * DIFFERENT orbit update is a silent dm–m range bias invisible to
+         * residual QC.  With this budget set > 0 the consumer WITHHOLDS the
+         * clock for a satellite whose applied orbit disagrees with the echo
+         * (different IOD-SSR, no applied orbit at all, or a content epoch
+         * skewed by more than the budget) — the RTA-9 staleness ladder then
+         * governs (stale-hold rung, then broadcast-grade drop), exactly as for
+         * a missing clock.  Default 0 = the epoch-skew comparison and the
+         * withhold are OFF; IOD-SSR identity mismatches are still counted
+         * (per-sat counters on the store, RTA-13 count-only convention).
+         * Armed on the injected/owned product store and the singleton at the
+         * @c setCodeBiasBandFallback sites.  Size it to the producer's RTS
+         * orbit update interval (one generation ≈ 5–30 s).
+         */
+        double orbit_clock_max_skew_s{ 0.0 };
         std::string expect_reference_receiver;  ///< Optional S-contract expectation: producer reference receiver id ("" = don't pin).
         std::string expect_apriori_product_id;  ///< Optional S-contract expectation: a-priori orbit/clock product identity ("" = don't pin).
         std::string expect_frame_id;            ///< RTA-12 optional S-contract expectation: reference frame id, e.g. "IGS20" ("" = don't pin).

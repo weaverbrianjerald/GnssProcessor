@@ -339,6 +339,35 @@ TEST(NetworkConsumerProfile, OrbitSourceParsesAndValidates) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
 }
 
+// Card 7 (RTF-2): processing.network_consumer.orbit_clock_max_skew_s — defaults
+// 0 (echo skew check + withhold off), parses a positive budget, and a negative
+// value clamps back to 0 with a warning.
+TEST(NetworkConsumerProfile, OrbitClockMaxSkewParsesAndClamps) {
+    LogManager log;
+
+    const fs::path p1 = writeTempConfig("skew_default",
+        networkConfigRt("    \"network_consumer\": { \"enable\": true },\n", ""));
+    GnssConfig c1;
+    ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_DOUBLE_EQ(c1.getNetworkConsumerConfig().orbit_clock_max_skew_s, 0.0);
+
+    const fs::path p2 = writeTempConfig("skew_armed",
+        networkConfigRt("    \"network_consumer\": { \"enable\": true, "
+                        "\"orbit_clock_max_skew_s\": 30.0 },\n", ""));
+    GnssConfig c2;
+    ASSERT_TRUE(c2.loadFromJson(p2, log));
+    EXPECT_DOUBLE_EQ(c2.getNetworkConsumerConfig().orbit_clock_max_skew_s, 30.0);
+
+    const fs::path p3 = writeTempConfig("skew_negative",
+        networkConfigRt("    \"network_consumer\": { \"enable\": true, "
+                        "\"orbit_clock_max_skew_s\": -5.0 },\n", ""));
+    GnssConfig c3;
+    ASSERT_TRUE(c3.loadFromJson(p3, log));
+    EXPECT_DOUBLE_EQ(c3.getNetworkConsumerConfig().orbit_clock_max_skew_s, 0.0);
+
+    std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
+}
+
 // realtime.{corrections,ephemeris}.corrections_accept: defaults "all";
 // "orbit_only" parses (case-insensitive); unknown warns + falls back to "all".
 TEST(NetworkConsumerProfile, CorrectionsAcceptParsesPerStream) {

@@ -380,6 +380,11 @@ namespace GnssProcessor {
          */
         void setSsrOrbitStore(const SsrCorrectionStore* store) {
             geometry_.setSsrOrbitStore(store);
+            // Card 7: the model's OWN GnssCorrections applies clocks too
+            // (computeModels) — its orbit-coherence echo check must compare
+            // against the same store the geometry orbit overlay reads from
+            // (geometry's internal corrections is forwarded by geometry itself).
+            gnss_corrections_.setOrbitEchoStore(store);
         }
 
         /**

@@ -120,6 +120,31 @@ namespace GnssProcessor {
         void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
 
         /**
+         * @brief Card 7 (RTF-2): declare where the consumer's SSR ORBIT overlay
+         *        reads from, for the orbit-coherence echo check.
+         *
+         * A @c brdc_rts network clock record echoes the identity (IOD-SSR +
+         * content epoch) of the RTS orbit the producer estimated it against
+         * (conventions §2).  @c getSatelliteClockCorrection verifies that echo
+         * against the orbit record the consumer actually applies — which under
+         * the RTA-8 split routing lives in a DIFFERENT store than the clock
+         * (orbit on the external-RTS singleton, clock on the injected
+         * network-product store).  This seam names that orbit store; it is
+         * forwarded automatically by @c Model::Geometry::setSsrOrbitStore /
+         * @c PppModel::setSsrOrbitStore so it tracks the orbit overlay's real
+         * routing by construction.  Pass @c nullptr (the default) for the
+         * process-wide singleton — matching the orbit overlay's own default.
+         *
+         * Only consulted when a clock record carries an echo AND its merge does
+         * not already contain the matching orbit part (a combined record is
+         * self-coherent) — every pre-Card-7 stream never reads it.
+         *
+         * @param store Non-owning store pointer; must outlive this object, or
+         *        @c nullptr to use the singleton.
+         */
+        void setOrbitEchoStore(const SsrCorrectionStore* store) { orbit_echo_store_override_ = store; }
+
+        /**
          * @brief Get satellite clock correction in seconds.
          * @param satellite Satellite identifier string (e.g. "G01", "E11").
          * @param time Epoch at which the correction is requested.
@@ -492,10 +517,15 @@ namespace GnssProcessor {
         const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
         const SsrCorrectionStore* ssr_store_override_{ nullptr }; ///< Non-owning SSR store override; nullptr -> process-wide singleton (see setSsrStore).
+        const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Card 7: non-owning ORBIT-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore).
 
         /// Resolve the active SSR store: the injected override when set, else the
         /// process-wide singleton.  Defined in the .cpp where the full type is visible.
         const SsrCorrectionStore& ssrStore() const;
+
+        /// Card 7: resolve the ORBIT-overlay store for the echo check (override
+        /// when set, else the singleton).  Defined in the .cpp beside ssrStore().
+        const SsrCorrectionStore& orbitEchoStore() const;
 
         std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;
         void buildClockIndex();

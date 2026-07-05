@@ -139,6 +139,10 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         out.clock_iode       = rec_copy.combined->iode;
         out.orbit_iod_ssr    = rec_copy.combined->iod_ssr;
         out.orbit_epoch      = rec_copy.combined->epoch_time;
+        // Card 7: the APPLIED orbit's own identity — for a combined record it
+        // equals the echo above by construction (in-message coherence), so the
+        // consumer echo check short-circuits to Match without a second lookup.
+        out.applied_orbit_iod_ssr = rec_copy.combined->iod_ssr;
         // Orbit + clock share one content epoch in a combined message.  The dt
         // base is the SSR CONTENT reference epoch (not received_time): the clock
         // polynomial and RAC rates are defined relative to the provider's epoch,
@@ -154,6 +158,7 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.delta_rac_dot    = rec_copy.orbit->delta_rac_dot;
             out.iode             = rec_copy.orbit->iode;
             out.orbit_epoch_time = rec_copy.orbit->epoch_time;   // orbit dt base (content epoch)
+            out.applied_orbit_iod_ssr = rec_copy.orbit->iod_ssr; // Card 7: applied-orbit identity for the echo check
             out.has_orbit        = true;
             out.orbit_reference_point = rec_copy.orbit->reference_point;  // RTB-5(b)
         }
@@ -359,6 +364,77 @@ SsrCorrectionStore::biasAttributeMismatchCounts() const {
     return bias_attr_mismatch_;
 }
 
+// ---------------------------------------------------------------------------
+// Card 7 (RTF-2): orbit-coherence echo verification
+// ---------------------------------------------------------------------------
+
+SsrCorrectionStore::OrbitEchoVerdict SsrCorrectionStore::classifyOrbitEcho(
+    const OrbitClockCorrection&                rec,
+    const std::optional<OrbitClockCorrection>& applied,
+    double                                     max_skew_s) {
+    // No echo on the clock record → nothing to verify.  Every standard-SSR /
+    // pre-Card-7 stream lands here (orbit_iod_ssr defaults -1), so the check
+    // is free on all existing paths.
+    if (!rec.has_clock || rec.orbit_iod_ssr < 0) return OrbitEchoVerdict::NotStamped;
+    // The producer estimated its clock against an RTS orbit; the consumer
+    // applies NO SSR orbit for this satellite at all → the orbit delta the
+    // clock absorbed part of is missing entirely.
+    if (!applied || !applied->has_orbit) return OrbitEchoVerdict::NoAppliedOrbit;
+    // Different orbit update identity (4-bit IOD-SSR — equality is all the
+    // wire supports; a wrap collision is caught by the epoch-skew clause).
+    if (applied->applied_orbit_iod_ssr != rec.orbit_iod_ssr)
+        return OrbitEchoVerdict::IodSsrMismatch;
+    // Same IOD-SSR: compare orbit content epochs, but ONLY when the budget is
+    // armed — with max_skew_s == 0 the epoch clause is off (the "default 0 =
+    // check off" contract; IOD identity above still counts).
+    if (max_skew_s > 0.0
+        && std::abs(secondsBetween(applied->orbit_epoch_time, rec.orbit_epoch))
+               > max_skew_s)
+        return OrbitEchoVerdict::EpochSkew;
+    return OrbitEchoVerdict::Match;
+}
+
+SsrCorrectionStore::OrbitEchoVerdict SsrCorrectionStore::checkOrbitEcho(
+    const std::string&                         sat,
+    const OrbitClockCorrection&                rec,
+    const std::optional<OrbitClockCorrection>& applied) const {
+    double budget = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        budget = orbit_echo_max_skew_s_;
+    }
+    const OrbitEchoVerdict v = classifyOrbitEcho(rec, applied, budget);
+    const char* reason = nullptr;
+    switch (v) {
+        case OrbitEchoVerdict::NoAppliedOrbit: reason = "noorbit"; break;
+        case OrbitEchoVerdict::IodSsrMismatch: reason = "iod";     break;
+        case OrbitEchoVerdict::EpochSkew:      reason = "skew";    break;
+        case OrbitEchoVerdict::NotStamped:
+        case OrbitEchoVerdict::Match:          break;
+    }
+    if (reason) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        orbit_echo_mismatch_[sat + "|" + reason] += 1;
+    }
+    return v;
+}
+
+void SsrCorrectionStore::setOrbitEchoMaxSkew(double max_skew_s) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    orbit_echo_max_skew_s_ = max_skew_s;
+}
+
+double SsrCorrectionStore::orbitEchoMaxSkew() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return orbit_echo_max_skew_s_;
+}
+
+std::map<std::string, std::uint64_t>
+SsrCorrectionStore::orbitEchoMismatchCounts() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return orbit_echo_mismatch_;
+}
+
 std::optional<GnssTime> SsrCorrectionStore::getSsrEpoch(const std::string& sat) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = by_sat_.find(sat);
@@ -500,6 +576,7 @@ void SsrCorrectionStore::clear() {
     generation_id_ = 0;   // RTA-3: a cleared store carries no generation marker
     producer_status_.reset();      // RTA-10: a cleared store carries no producer heartbeat
     bias_attr_mismatch_.clear();   // RTA-13: mismatch tallies are per-run diagnostics
+    orbit_echo_mismatch_.clear();  // Card 7: ditto (the armed skew budget is CONFIG and survives)
 }
 
 // ---------------------------------------------------------------------------

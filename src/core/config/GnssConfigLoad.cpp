@@ -734,6 +734,27 @@ namespace GnssProcessor {
             nc.expect_orbit_ref = jval<std::string>(
                 json, "processing.network_consumer.expect_orbit_ref",
                 "network_consumer_expect_orbit_ref", std::string{});
+            // Card 7 (RTF-2): orbit/clock coherence age-skew budget.  0 (default)
+            // = the epoch-skew comparison + the clock withhold are OFF (IOD-SSR
+            // identity mismatches still count).  Armed on the stores at the
+            // setCodeBiasBandFallback sites (RealTimeEngine::initialize /
+            // Application::runRealTime).
+            nc.orbit_clock_max_skew_s = jval<double>(
+                json, "processing.network_consumer.orbit_clock_max_skew_s",
+                "network_consumer_orbit_clock_max_skew_s", 0.0);
+            if (nc.orbit_clock_max_skew_s < 0.0) {
+                log->warn("processing.network_consumer.orbit_clock_max_skew_s = {:.3f} is "
+                          "negative; clamping to 0 (echo skew check + withhold OFF).",
+                          nc.orbit_clock_max_skew_s);
+                nc.orbit_clock_max_skew_s = 0.0;
+            }
+            if (nc.orbit_clock_max_skew_s > 0.0)
+                log->info("Network-consumer orbit/clock coherence budget (Card 7): "
+                          "orbit_clock_max_skew_s = {:.1f}s — a network clock whose "
+                          "orbit echo disagrees with the applied SSR orbit (IOD-SSR, "
+                          "presence, or content-epoch skew beyond the budget) is "
+                          "WITHHELD for that satellite.",
+                          nc.orbit_clock_max_skew_s);
             if (nc.enable)
                 log->info("Network-consumer profile (RTA-7) CONFIGURED: clock {}, bias {}, "
                           "{} user model, orbit_source {}, ar_ignore_mw_wl {} — applied at "
@@ -3007,8 +3028,12 @@ namespace GnssProcessor {
             jval<bool>(json, "network.trace_stations", "trace_stations", true);
         network_config_.trace_ionosphere =
             jval<bool>(json, "network.trace_ionosphere", "trace_ionosphere", false);
+        network_config_.trace_estimability =
+            jval<bool>(json, "network.trace_estimability", "trace_estimability", false);
         network_config_.trace_slip_events =
             jval<bool>(json, "network.trace_slip_events", "trace_slip_events", false);
+        network_config_.trace_slip_raw =
+            jval<bool>(json, "network.trace_slip_raw", "trace_slip_raw", false);
         network_config_.trace_clock_full =
             jval<bool>(json, "network.trace_clock_full", "trace_clock_full", false);
         network_config_.trace_anchor_info =
@@ -3369,6 +3394,19 @@ namespace GnssProcessor {
             jval<double>(json, "network.shared_carry_var_floor_pb_m2", "shared_carry_var_floor_pb_m2", 0.0);
         network_shared_carry_var_floor_cb_m2_ =
             jval<double>(json, "network.shared_carry_var_floor_cb_m2", "shared_carry_var_floor_cb_m2", 0.0);
+        // C1: full dense cross-covariance carry of the shared border (information-form
+        // KF on the border; recovers the clock↔phase-bias off-diagonals the diagonal
+        // D2 stash discards).  Independent of phase_leveling — it acts on the SHARED
+        // D2 carry, not the per-station ambiguity carry — so parsed and announced here.
+        network_shared_carry_full_cov_ =
+            jval<bool>(json, "network.shared_carry_full_cov", "shared_carry_full_cov", false);
+        if (network_shared_carry_full_cov_)
+            log->info("Network producer (C1): FULL-COVARIANCE shared carry enabled — the D2 "
+                      "cross-epoch prior folds the dense (P_prev + Q)⁻¹ block over the carried "
+                      "clock/phase-bias/code-bias columns (information-form KF on the shared "
+                      "border) instead of independent per-key diagonals.  Departed/pinned/"
+                      "retired keys are marginalized; a non-PD carried block degrades to the "
+                      "diagonal fold for that epoch (warned).");
         // ZWD random-walk carry (B9): carry per-station tropospheric ZWD across epochs as a
         // diagonal RW prior via the same addStationPrior path as the ambiguity carry.
         network_carry_zwd_ =
@@ -3384,6 +3422,9 @@ namespace GnssProcessor {
         network_cycle_slip_turbo_edit_dn_max_ =
             jval<int>(json, "network.cycle_slip.turbo_edit_dn_max",
                       "network_cycle_slip_turbo_edit_dn_max", 50);
+        network_cycle_slip_mw_detect_ =
+            jval<bool>(json, "network.cycle_slip.mw_detect",
+                       "network_cycle_slip_mw_detect", false);
         // IF-phase triple-difference slip DETECTION (this increment): between-
         // satellite, between-epoch ionosphere-free phase OMC.  Detection-only — a
         // flagged IF pair refloats BOTH band ambiguities (pending-reseed) so the
@@ -3407,6 +3448,28 @@ namespace GnssProcessor {
         network_cycle_slip_if_phase_td_shrink_kappa_ =
             jval<double>(json, "network.cycle_slip.if_phase_td_shrink_kappa",
                          "network_cycle_slip_if_phase_td_shrink_kappa", 20.0);
+        // Carrying carrier-phase ambiguities as zero-process-noise random constants is only
+        // sound if an un-screened cycle slip cannot freeze a wrong value into the shared clock:
+        // a slip makes the post-slip phase self-consistent with the SLIPPED integer, so the
+        // stiff carry does not fight it — it locks it in.  Carrying phase therefore REQUIRES at
+        // least one pre-fit slip detector (mw_detect, if_phase_td, or the turbo_edit repair,
+        // which also runs the MW detector).  If a config enables phase-leveling with none, arm
+        // network.cycle_slip.mw_detect — the ROBUST default: the wide-lane + LLI detector needs
+        // NO a-priori position (works even when a station sits far from its reference), whereas
+        // IF-phase TD relies on accurate coordinates (fine in-network, where they are fixed at
+        // near-truth, but not in general).  Both are ionosphere-free and valid at the 30 s
+        // product rate (unlike the MW+GF integer REPAIR).  Mirrors the raim_within_epoch ⟹
+        // raim+attribution auto-arm below.  IF-phase TD stays an explicit opt-in for the
+        // complementary geometric-jump coverage where coordinates are trusted.
+        if (network_phase_leveling_ && !network_cycle_slip_mw_detect_
+            && !network_cycle_slip_if_phase_td_ && !network_cycle_slip_turbo_edit_) {
+            log->warn("Network: network.phase_leveling carries carrier-phase ambiguities but no "
+                      "pre-fit slip detector is enabled — an un-screened slip would freeze into "
+                      "the shared clock.  Enabling network.cycle_slip.mw_detect (wide-lane + LLI, "
+                      "needs no a-priori position).  Add network.cycle_slip.if_phase_td for "
+                      "complementary geometric-jump coverage where coordinates are trusted.");
+            network_cycle_slip_mw_detect_ = true;
+        }
         // Post-fit network RAIM (Increment 3, T2): the safety net for the zero-q carry.
         network_raim_ =
             jval<bool>(json, "network.raim", "network_raim", false);
@@ -3733,9 +3796,59 @@ namespace GnssProcessor {
         // producer's INTERNAL handover response (carry skip / oscillator clear).
         network_sticky_pivot_ =
             jval<bool>(json, "network.sticky_pivot", "network_sticky_pivot", false);
+        // Anchor-free clock gauge: fix each constellation's clock common-mode with a
+        // sum-to-zero over its own satellite clocks (folded like the code-bias gauge)
+        // instead of a hard pivot pin.  Removes the pivot/handover machinery entirely
+        // for the clock; ignores network.clock_datum_satellite (no pivot to place).
+        network_clock_datum_sum_to_zero_ =
+            jval<bool>(json, "network.clock_datum_sum_to_zero",
+                       "network_clock_datum_sum_to_zero", false);
         network_scoped_handover_response_ =
             jval<bool>(json, "network.scoped_handover_response",
                        "network_scoped_handover_response", false);
+        // Phase-bias gauge: single clock-pivot station (legacy) vs per-(sat,signal)
+        // prioritized anchor receiver.  The two sub-knobs (coverage-preference
+        // elevation, per-(sat,signal) stickiness) are INERT unless the master toggle
+        // is on.
+        network_phase_datum_prioritized_ =
+            jval<bool>(json, "network.phase_datum_prioritized",
+                       "network_phase_datum_prioritized", false);
+        network_phase_datum_pref_elev_deg_ =
+            jval<double>(json, "network.phase_datum_pref_elev_deg",
+                         "network_phase_datum_pref_elev_deg", 15.0);
+        network_phase_datum_sticky_ =
+            jval<bool>(json, "network.phase_datum_sticky",
+                       "network_phase_datum_sticky", true);
+        // Coverage-threshold gating of the anchored union: a shared phase-bias
+        // column enters the union only when >= this many present stations track it
+        // with a usable ambiguity.  1 (default) = every tracked key, the original
+        // prioritized-datum behavior (byte-identical); 2-3 excludes the thinly-
+        // tracked columns that eject marginal stations as non-PD, re-level on a
+        // one-station anchor pool, and leak their anchor lump into the clock↔PB
+        // split.  INERT unless network.phase_datum_prioritized.
+        network_phase_datum_min_stations_ =
+            jval<int>(json, "network.phase_datum_min_stations",
+                      "network_phase_datum_min_stations", 1);
+        if (network_phase_datum_min_stations_ < 1) {
+            log->error("Network: network.phase_datum_min_stations must be >= 1 (got {}); "
+                       "1 = no gating (every tracked key enters the anchored union).",
+                       network_phase_datum_min_stations_);
+            return false;
+        }
+        // Pin-aware station PD guard: reference the addStation local-block rank test
+        // to the MEDIAN |pivot| instead of the max, so a deliberate in-block 1e10
+        // anchor pin (prioritized phase datum) no longer inflates the rejection bar
+        // ~10 orders and ejects a healthy marginal station every epoch (the
+        // TWTF/VOIM class — proven pin-driven by the 2026-07-04 A/B: identical
+        // failing pivots with the coverage gate on/off).
+        network_station_pd_pin_aware_ =
+            jval<bool>(json, "network.station_pd_pin_aware",
+                       "network_station_pd_pin_aware", false);
+        if (network_station_pd_pin_aware_)
+            log->info("Network producer: PIN-AWARE station PD guard ON — the local-block "
+                      "rank test references the median |LDLᵀ pivot| (robust to gauge-pin "
+                      "rows) instead of the max; marginal stations carrying anchor pins "
+                      "are no longer ejected for a healthy ~1e-3 weakest parameter.");
         // R4: the B1 retro-bump steps a flagged satellite's phase, code AND clock discontinuity
         // counters, but the emitter only maintains/stamps the CLOCK counter when emit_clock_disc
         // is on (otherwise disc_counter stays 0 for byte-identity).  So with ura_retro_bump on
@@ -3772,11 +3885,53 @@ namespace GnssProcessor {
                       "pivot satellite (per constellation, from the last emitted product) is kept "
                       "while it remains registered; a handover occurs only when it sets.  A "
                       "config-pinned network.clock_datum_satellite still has priority.");
+        if (network_clock_datum_sum_to_zero_) {
+            log->info("Network producer: SUM-TO-ZERO clock datum ON — each constellation's clock "
+                      "common-mode is fixed by Σ δtˢ = 0 over its satellite clocks (folded like the "
+                      "code-bias gauge), NOT a pivot pin.  Anchor-free: no clock-pivot satellite, no "
+                      "handover seam, no pivot-absent epoch skip; the S-contract isb_datum records it.");
+            // A pivot pin and a sum-to-zero are mutually exclusive gauge realizations
+            // — sum-to-zero has no pivot to place, so an explicit pin is a no-op here.
+            if (!network_config_.clock_datum_satellite.empty())
+                log->warn("Network: network.clock_datum_satellite '{}' is IGNORED under "
+                          "network.clock_datum_sum_to_zero (the sum-to-zero clock datum has no pivot "
+                          "satellite).  Clear one of the two to silence this warning.",
+                          network_config_.clock_datum_satellite);
+            // Sticky-pivot / vanish-return signalling are pivot-handover machinery that
+            // the anchor-free datum removes; note the redundancy rather than silently
+            // ignoring a user knob.
+            if (network_sticky_pivot_ || network_pivot_vanish_return_signal_)
+                log->warn("Network: network.sticky_pivot / network.pivot_vanish_return_signal are "
+                          "INERT under network.clock_datum_sum_to_zero — the sum-to-zero clock datum "
+                          "never re-references (there is no pivot to keep or hand over).");
+        }
         if (network_scoped_handover_response_)
             log->info("Network producer (RTA-2): scoped handover response ON — the internal D2 "
                       "carry skip / clock-oscillator clear / jump-test suppression on a pivot "
                       "handover applies only to the constellation(s) whose datum changed, not "
                       "network-wide (the SH-VTEC carry skip stays global).");
+        if (network_phase_datum_prioritized_) {
+            log->info("Network producer: prioritized phase-bias anchor ON — the per-(sat,signal) "
+                      "phase-bias gauge is pinned at the highest-coverage receiver tracking each "
+                      "satellite (pref elevation {:.1f} deg, sticky={}), decoupled from the single "
+                      "clock-pivot station.  Cures the low-elevation gauge jump + the pivot-absent "
+                      "skip; per-(sat,signal) anchor handovers are signalled to the consumer as "
+                      "discontinuities.  Clock datum unchanged.",
+                      network_phase_datum_pref_elev_deg_,
+                      network_phase_datum_sticky_ ? "true" : "false");
+            if (network_phase_datum_min_stations_ > 1)
+                log->info("Network producer: anchored-union coverage gate ON — a shared "
+                          "phase-bias column is registered/emitted only when >= {} present "
+                          "stations track it with a usable ambiguity (thin columns are the "
+                          "non-PD-ejection / one-station-re-level / split-leak class; their "
+                          "phase data still serves the clock through the local blocks).",
+                          network_phase_datum_min_stations_);
+        } else if (network_phase_datum_min_stations_ > 1) {
+            log->warn("Network: network.phase_datum_min_stations = {} is INERT — the anchored-"
+                      "union coverage gate only applies under network.phase_datum_prioritized "
+                      "(the legacy pivot datum has no union to gate).",
+                      network_phase_datum_min_stations_);
+        }
 
         // RTA-3/RTA-4/RTA-5/RTA-11: product wire/contract hardening for late joiners
         // and producer restarts.  All default OFF ⇒ store and file byte-identical.
@@ -3899,10 +4054,18 @@ namespace GnssProcessor {
                     "network.per_const_withhold", "network_per_const_withhold");
             armBool(network_emit_epoch_status_record_,      // P2/RTA-10: H heartbeat — a service's live tail must distinguish "withheld" from "producer died"
                     "network.emit_epoch_status_record", "network_emit_epoch_status_record");
-            armBool(network_pivot_vanish_return_signal_,    // P2/A1: without it a vanish-return pivot change is an UNSIGNALLED datum break (emit_clock_disc cannot cover it)
-                    "network.pivot_vanish_return_signal", "network_pivot_vanish_return_signal");
-            armBool(network_sticky_pivot_,                  // P2/RTA-1: minimize handover rate (datum re-references the consumer pays for)
-                    "network.sticky_pivot", "network_sticky_pivot");
+            // Pivot-selection / handover-signalling machinery: PROVABLY INERT under the
+            // anchor-free sum-to-zero clock datum (no pivot exists, pivotHandoverSignalled
+            // always returns false), so don't force-arm dead knobs there — leaving them
+            // false keeps the operator from being misled that pivot machinery is active
+            // (and keeps the "INERT under sum-to-zero" warn above consistent with the
+            // realized flag state).  An EXPLICIT user set still stands and is warned above.
+            if (!network_clock_datum_sum_to_zero_) {
+                armBool(network_pivot_vanish_return_signal_,    // P2/A1: without it a vanish-return pivot change is an UNSIGNALLED datum break (emit_clock_disc cannot cover it)
+                        "network.pivot_vanish_return_signal", "network_pivot_vanish_return_signal");
+                armBool(network_sticky_pivot_,                  // P2/RTA-1: minimize handover rate (datum re-references the consumer pays for)
+                        "network.sticky_pivot", "network_sticky_pivot");
+            }
             armBool(network_scoped_handover_response_,      // P2/RTA-2: limit a handover's internal blast radius to the affected constellation(s)
                     "network.scoped_handover_response", "network_scoped_handover_response");
             armBool(network_emit_generation_id_,            // RTA-3 restart / datum-break detection
@@ -4073,6 +4236,20 @@ namespace GnssProcessor {
                           "positives dominate).  Non-pivot, raw-per-signal ambiguities only.",
                           network_cycle_slip_turbo_edit_frac_max_,
                           network_cycle_slip_turbo_edit_dn_max_);
+            }
+            if (network_cycle_slip_mw_detect_) {
+                if (network_cycle_slip_turbo_edit_)
+                    log->warn("Network: network.cycle_slip.mw_detect and .turbo_edit are BOTH on — "
+                              "TurboEdit already runs the MW detector for integer REPAIR; the "
+                              "mw_detect REFLOAT path is redundant with it and stays inert (repair "
+                              "wins).  Use mw_detect INSTEAD of turbo_edit at the 30 s product rate.");
+                else
+                    log->info("Network producer (phase-leveling): MW slip DETECTOR enabled (mw_detect) — "
+                              "a confident wide-lane integer jump (frac ≤ {:.2f}) OR a receiver LLI "
+                              "loss-of-lock REFLOATS the carried ambiguity (pending-reseed), never "
+                              "applying an integer.  Iono-safe at 30 s (no GF repair).  Complements "
+                              "the IF-phase TD detector; non-pivot only.",
+                              network_cycle_slip_turbo_edit_frac_max_);
             }
             if (network_shared_carry_var_floor_pb_m2_ > 0.0 || network_shared_carry_var_floor_cb_m2_ > 0.0)
                 log->info("Network producer (phase-leveling, B4): D2 shared-carry variance floors — "

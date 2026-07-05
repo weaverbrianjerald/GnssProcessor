@@ -16,10 +16,19 @@
  *  - **Clock gauge — one per constellation.**  Adding a constant to every
  *    satellite clock of a constellation and to the receivers' clock/ISB of that
  *    constellation cancels on every row.  Every constellation — GPS included —
- *    is gauged identically: the datum is realized as a SHARED hard pin on one
- *    satellite's clock column per constellation (@ref NetworkEstimator::Datum).
+ *    is gauged identically, in one of two configurable ways
+ *    (@ref SbasisDeclaration::IsbDatum):
+ *      * a SHARED hard pin on ONE satellite's clock column per constellation
+ *        (@ref NetworkEstimator::Datum) — the legacy anchor-based "pivot" datum; or
+ *      * a per-constellation SUM-TO-ZERO over that constellation's satellite
+ *        clocks (@c network.clock_datum_sum_to_zero), folded as a tight all-ones
+ *        gauge row exactly like the code-bias gauge below — anchor-free, so no
+ *        pivot and no handover seam.  In this mode the SHARED @ref Datum is EMPTY
+ *        (the clock gauge is pinned by the folded constraint before the rank gate,
+ *        so the reduced shared system is full-rank; @ref Plan::declared_dimension
+ *        is 0) and @ref Plan carries the constraint rows instead.
  *    No system is anchored to a receiver clock; each station's receiver
- *    clock/ISB stays a free local state that absorbs the pinned satellite's lump.
+ *    clock/ISB stays a free local state that absorbs the constellation's lump.
  *  - **Phase-bias↔ambiguity gauge — one per (satellite, signal).**  Each
  *    satellite's phase bias @f$b^s_\sigma@f$ is co-linear with that satellite's
  *    ambiguity column @f$\{N^s_{r,\sigma}\}_r@f$ (null vector
@@ -30,10 +39,13 @@
  *    rows by the driver (they enter the Schur reduction), so they do NOT appear
  *    in the shared @ref NetworkEstimator::Datum produced here.
  *
- * Hence the SHARED datum this builder emits is exactly the per-constellation
- * clock pins; after the local ambiguity pins are eliminated, the reduced shared
- * normals have precisely @c #constellations residual deficiencies, which the
- * @ref assertNullSpaceRank gate verifies before the solve.
+ * Hence in the legacy PIN datum the SHARED datum this builder emits is exactly
+ * the per-constellation clock pins; after the local ambiguity pins are
+ * eliminated, the reduced shared normals have precisely @c #constellations
+ * residual deficiencies, which the @ref assertNullSpaceRank gate verifies before
+ * the solve.  In the SUM-TO-ZERO datum the clock gauges are instead pinned by the
+ * folded constraint rows, so the reduced shared normals are full-rank and the
+ * gate's declared dimension is 0.
  *
  * Not a state owner (respects the StateManager-is-single-source-of-truth rule):
  * a pure, per-epoch builder operating on the live registered column set.
@@ -68,11 +80,27 @@ struct SbasisDeclaration {
     /// (the estimable phase bias carries that lump).  Recorded for the consumer.
     enum class AmbDatum { PivotReceiverZeroAmbiguity } amb_datum{ AmbDatum::PivotReceiverZeroAmbiguity };
     /// Inter-system / clock-gauge datum: every constellation (GPS included) has
-    /// its clock gauge fixed by a hard pin on one of its OWN satellite clocks; no
-    /// system is anchored to a receiver clock, and each station's receiver
-    /// clock/ISB stays a free local state.  (Enumerator names the realized basis,
-    /// mirroring the sibling AmbDatum / CodeBiasDatum style.)
-    enum class IsbDatum { PerConstellationSatClockPin }
+    /// its clock gauge fixed by pinning that constellation's OWN satellite clocks;
+    /// no system is anchored to a receiver clock, and each station's receiver
+    /// clock/ISB stays a free local state.  Two realizations (enumerator names the
+    /// realized basis, mirroring the sibling AmbDatum / CodeBiasDatum style):
+    ///  - @c PerConstellationSatClockPin (legacy default): a HARD pin on ONE
+    ///    satellite's clock per constellation (the "pivot").  Anchor-based — a
+    ///    pivot that sets / is deselected forces a constellation-wide datum
+    ///    re-reference (handover) the consumer pays for with an ambiguity reset,
+    ///    and an epoch missing every candidate pivot has no datum at all.
+    ///  - @c SumToZeroPerConstellation (@c network.clock_datum_sum_to_zero): the
+    ///    per-constellation clock common-mode is fixed by a SUM-TO-ZERO over that
+    ///    constellation's satellite clocks (Σ δtˢ = 0), realized exactly like the
+    ///    code-bias per-(constellation,signal) gauge — a tight all-ones constraint
+    ///    row folded into the shared normals BEFORE the rank gate.  Fully
+    ///    anchor-free: no pivot satellite, so no handover seam ever, and the datum
+    ///    is defined for any epoch with ≥1 clock satellite per constellation.  The
+    ///    absolute per-constellation level lands identically on the receiver
+    ///    clocks/ISB either way (the two datums differ by a per-constellation
+    ///    constant a consumer absorbs into its receiver clock), so this is a pure
+    ///    S-transform of the pin datum's estimable (between-satellite) solution.
+    enum class IsbDatum { PerConstellationSatClockPin, SumToZeroPerConstellation }
         isb_datum{ IsbDatum::PerConstellationSatClockPin };
     /// Satellite bias sign convention (matches kSsr*BiasSign at MeasurementModel).
     double bias_sign{ +1.0 };
@@ -99,10 +127,27 @@ class NetworkSbasis {
 public:
     /// One shared solution epoch's datum plan.
     struct Plan {
-        NetworkEstimator::Datum shared_datum;            ///< SHARED pins: one sat-clock pin per constellation.
-        int declared_dimension{ 0 };                     ///< Expected residual shared null-space dim (= shared_datum.size()).
-        std::map<std::string, std::string> clock_pivot;  ///< constellation char -> chosen pivot sat (for the declaration + handover detection).
+        NetworkEstimator::Datum shared_datum;            ///< SHARED hard pins: one sat-clock pin per constellation in PIN mode; EMPTY in SUM-TO-ZERO mode.
+        int declared_dimension{ 0 };                     ///< Expected residual shared null-space dim: #constellations in PIN mode (= shared_datum.size()); 0 in SUM-TO-ZERO mode (clock gauges folded before the gate).
+        std::map<std::string, std::string> clock_pivot;  ///< constellation char -> chosen pivot sat (for the declaration + handover detection).  EMPTY in SUM-TO-ZERO mode (no pivot).
+        /// SUM-TO-ZERO clock datum (@c network.clock_datum_sum_to_zero) only: one
+        /// all-ones gauge row per constellation over that constellation's
+        /// registered clock columns (Σ δtˢ = 0), to be folded onto the shared
+        /// border via @ref NetworkEstimator::addSharedConstraintRows BEFORE the
+        /// rank gate, exactly like the code-bias per-(const,signal) sum-to-zero.
+        /// EMPTY (0 rows) in PIN mode — the driver folds nothing then.
+        Eigen::MatrixXd clock_constraint_H;              ///< (#constellations × numShared) all-ones-per-constellation gauge Jacobian; empty in PIN mode.
+        Eigen::VectorXd clock_constraint_z;              ///< Constraint targets (zeros); empty in PIN mode.
+        double          clock_constraint_weight{ 0.0 };  ///< Row information weight for the sum-to-zero rows (@ref kClockGaugeWeight); 0 in PIN mode.
     };
+
+    /// Tight gauge-row information weight (= 1/σ²) for the SUM-TO-ZERO clock
+    /// constraint.  A pure GAUGE direction (zero data information), so any positive
+    /// weight fixes it exactly without biasing the estimable (between-satellite)
+    /// clock structure; chosen » the rank-gate cutoff (1e-9·σmax) and « σmax so it
+    /// neither trips nor inflates the spectrum the gate inspects.  Deliberately the
+    /// SAME value the code-bias gauge uses (ApplicationNetwork kCodeBiasGaugeWeight).
+    static constexpr double kClockGaugeWeight = 1.0e3;
 
     /**
      * @brief Map a RINEX satellite id to its constellation key (first char).
@@ -113,10 +158,21 @@ public:
     }
 
     /**
-     * @brief Build the SHARED-block datum: one satellite-clock pin per
-     *        constellation present in @p registered_clock_sats.
+     * @brief Build the SHARED-block clock datum for the constellations present in
+     *        @p registered_clock_sats, per @p decl.isb_datum.
      *
-     * Pivot selection per constellation, in priority order:
+     * @par SUM-TO-ZERO mode (@c decl.isb_datum == SumToZeroPerConstellation)
+     * The per-constellation clock common-mode is fixed by a sum-to-zero over that
+     * constellation's registered satellite clocks.  Returns a Plan with an EMPTY
+     * @ref Plan::shared_datum and EMPTY @ref Plan::clock_pivot (no pivot,
+     * @ref Plan::declared_dimension = 0) and one all-ones @ref Plan::clock_constraint_H
+     * row per constellation for the driver to fold BEFORE the rank gate.  Pivot
+     * overrides / stickiness are irrelevant and ignored.  Everything below (pivot
+     * selection) applies to the legacy PIN mode only.
+     *
+     * @par PIN mode (@c decl.isb_datum == PerConstellationSatClockPin, default)
+     * One satellite-clock pin per constellation.  Pivot selection per
+     * constellation, in priority order:
      *  1. **Config pin** — @p decl.clock_pivot_sat, when set and present in the
      *     registered set.  Honored in BOTH modes (pinning declares user intent,
      *     so the pinned satellite reclaims the datum on its return; that

@@ -208,10 +208,28 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
         const Eigen::VectorXd d = st.Nrr_ldlt.vectorD();
         const double d_min = d.minCoeff();
         const double d_max = d.cwiseAbs().maxCoeff();
-        if (d_min <= 0.0 || d_min < 1e-12 * d_max) {
+        // Reference scale for the relative rank test.  Legacy: the LARGEST pivot.
+        // Pin-aware (setStationPdMedianScale): the MEDIAN |pivot| — a deliberate
+        // huge-weight gauge-pin row in the block (the prioritized phase-datum
+        // anchor's 1e10 ambiguity pin) otherwise inflates the bar by ~10 orders
+        // and ejects a healthy marginal station whose weakest genuine parameter
+        // sits at a usable ~1e-3 (the TWTF/VOIM every-epoch non-PD class).  The
+        // median is robust to any minority of pin-scale pivots yet still catches
+        // a truly singular direction (a pivot many orders below block scale).
+        double d_ref = d_max;
+        if (station_pd_median_scale_ && d.size() > 0) {
+            Eigen::VectorXd a = d.cwiseAbs();
+            std::vector<double> v(a.data(), a.data() + a.size());
+            std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
+                             v.end());
+            d_ref = v[v.size() / 2];
+        }
+        if (d_min <= 0.0 || d_min < 1e-12 * d_ref) {
             std::ostringstream os;
             os << "addStation: N_rr_r is not positive-definite (min LDLᵀ pivot "
                << d_min << " vs max " << d_max
+               << (station_pd_median_scale_
+                       ? ", pin-aware median-scale test" : "")
                << ") — station prior too weak or an unobservable local parameter";
             fail(os.str());
         }

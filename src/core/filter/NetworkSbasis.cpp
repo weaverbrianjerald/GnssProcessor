@@ -36,6 +36,31 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     }
     for (auto& [c, sats] : by_const) std::sort(sats.begin(), sats.end());
 
+    // --- SUM-TO-ZERO clock datum (network.clock_datum_sum_to_zero) -----------
+    // Anchor-free: fix each constellation's clock common-mode with a sum-to-zero
+    // over its OWN satellite clocks (Σ δtˢ = 0), realized exactly like the
+    // code-bias per-(const,signal) gauge — a tight all-ones row folded onto the
+    // shared border BEFORE the rank gate.  No pivot satellite is chosen, so the
+    // shared hard-pin datum and the clock_pivot map stay EMPTY (no handover seam
+    // ever) and the declared residual dimension is 0 (the folded rows close the
+    // per-constellation clock deficiency).  Pivot overrides / stickiness are moot.
+    if (decl.isb_datum == SbasisDeclaration::IsbDatum::SumToZeroPerConstellation) {
+        const Eigen::Index nshared = est.numShared();
+        Eigen::MatrixXd H(static_cast<Eigen::Index>(by_const.size()), nshared);
+        H.setZero();
+        Eigen::Index r = 0;
+        for (const auto& [c, sats] : by_const) {
+            for (const std::string& s : sats) H(r, est.clockColumn(s)) = 1.0;
+            ++r;
+        }
+        plan.clock_constraint_H = std::move(H);
+        plan.clock_constraint_z =
+            Eigen::VectorXd::Zero(static_cast<Eigen::Index>(by_const.size()));
+        plan.clock_constraint_weight = kClockGaugeWeight;
+        plan.declared_dimension = 0;   // clock gauges pinned before the gate → full rank
+        return plan;                   // shared_datum + clock_pivot intentionally empty
+    }
+
     // One satellite-clock pin per constellation (the clock gauge per timing
     // system).  Pivot priority: (1) the declared config pin, if present in the
     // registered set (BOTH modes — user intent wins, including the deliberate

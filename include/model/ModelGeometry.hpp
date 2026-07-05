@@ -246,11 +246,17 @@ namespace GnssProcessor {
          * injected network-product store — the split the standalone
          * network-consumer wiring uses (@c processing.network_consumer.orbit_source).
          *
+         * Also forwards to the internal @c GnssCorrections' Card-7 echo seam
+         * (@c setOrbitEchoStore) so the orbit-coherence echo check always
+         * compares against the store THIS overlay actually applies from —
+         * the two routings cannot drift apart.
+         *
          * @param store Non-owning store pointer (must outlive this object) or
          *        @c nullptr for the singleton.
          */
         void setSsrOrbitStore(const SsrCorrectionStore* store) {
             ssr_store_override_ = store;
+            corrections_.setOrbitEchoStore(store);   // Card 7: echo check tracks the orbit routing
         }
 
         /**

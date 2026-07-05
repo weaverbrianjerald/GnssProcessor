@@ -1539,6 +1539,47 @@ namespace GnssProcessor {
         double networkSharedCarryVarFloorCbM2() const { return network_shared_carry_var_floor_cb_m2_; }
 
         /**
+         * @brief Whether the D2 shared-parameter carry keeps the FULL dense
+         *        cross-covariance of the shared border instead of per-key
+         *        variances only (@c network.shared_carry_full_cov, C1).
+         *
+         * Legacy (OFF): each carried shared parameter (satellite clock in
+         * scalar-carry mode, phase bias, code bias) is re-anchored next epoch by
+         * an INDEPENDENT diagonal prior @c Λ_k = 1/(var_k + q·dt) — every
+         * cross-covariance the solve produced is discarded at the stash.  For
+         * stiff carries (zero-q phase biases) that diagonal approximation is
+         * statistically inconsistent: information accumulates against a
+         * correlated error floor, the formal variance collapses, and a biased
+         * value can lock in (the mechanism the post-fit RAIM / clock-monitor
+         * tiers compensate for).  The strongest discarded terms are the
+         * clock↔phase-bias off-diagonals of each satellite.
+         *
+         * When ON, the stash keeps the dense posterior covariance block over the
+         * carried keys (@ref NetworkEstimator::sharedCovariance, identity-keyed
+         * so it survives layout changes) and the next epoch folds
+         * @c Λ = (P_prev + Q)⁻¹ as ONE dense information block
+         * (@ref NetworkEstimator::addSharedPriorDense) — the epoch loop becomes
+         * an information-form Kalman filter on the shared border.  Departed,
+         * datum-pinned, handover-retired, and clock-model-carried keys are
+         * MARGINALIZED (rows/cols of P dropped before inversion); per-key
+         * process noise, clock-monitor soft reinits (decorrelated), and the B4
+         * variance floors apply to P's diagonal exactly as they apply to the
+         * scalar path.  The SH-VTEC coefficients keep their own diagonal
+         * pre-gate fold (separate physics), and under @ref networkClockModel the
+         * satellite clock stays on the two-state oscillator carry, outside the
+         * dense block.  A numerically non-invertible carried block degrades to
+         * the legacy diagonal fold for that epoch (warned + event-logged), and a
+         * warm resume seeds diagonally from the v1 snapshot for one epoch — the
+         * toggle is therefore deliberately NOT part of the warm-resume config
+         * fingerprint (both modes carry the same per-key values/variances).
+         * Default false = the legacy diagonal carry (byte-identical).
+         *
+         * @see networkSharedCarryVarFloorPbM2, networkClockMonitorReinitSigmaM,
+         *      NetworkEstimator::addSharedPriorDense
+         */
+        bool networkSharedCarryFullCov() const { return network_shared_carry_full_cov_; }
+
+        /**
          * @brief Carry per-station tropospheric ZWD across epochs in the network
          *        producer as a diagonal random-walk prior (@c network.carry_zwd, B9).
          *
@@ -1607,6 +1648,28 @@ namespace GnssProcessor {
          * once external BIA makes the wide-lane integer trustworthy.
          */
         int networkCycleSlipTurboEditDnMax() const { return network_cycle_slip_turbo_edit_dn_max_; }
+
+        /**
+         * @brief Whether the MW detector runs as a pure DETECTOR in the network
+         *        (@c network.cycle_slip.mw_detect).
+         *
+         * A carried carrier-phase ambiguity is a zero-process-noise random
+         * constant: an un-screened cycle slip makes the post-slip phase
+         * self-consistent with the SLIPPED integer, so the stiff carry freezes
+         * the wrong value into the shared clock (the G29-class artifact).  This
+         * complements @ref networkCycleSlipIfPhaseTd (the ionosphere-free
+         * primary) with two more iono-safe signals: a CONFIDENT wide-lane
+         * integer jump from @ref MwSlipDetector::detectLargeMwResets, and the
+         * receiver's own LLI loss-of-lock flag.  Either REFLOATS the affected
+         * ambiguity (marks it pending-reseed so PASS B re-estimates it from this
+         * epoch's data) — it never applies an integer, so unlike the TurboEdit
+         * MW+GF REPAIR path it is valid at the 30 s product rate (the GF
+         * ionospheric drift that corrupts a 30 s integer repair is never used).
+         * Non-pivot stations only; the refloat is meaningful only with
+         * @ref networkPhaseLeveling on (cold, it is diagnostic).  Default false
+         * keeps the solve byte-identical.
+         */
+        bool networkCycleSlipMwDetect() const { return network_cycle_slip_mw_detect_; }
 
         /**
          * @brief Whether the network IF-phase triple-difference cycle-slip DETECTOR is on
@@ -1764,6 +1827,161 @@ namespace GnssProcessor {
          * false = the legacy per-epoch lexical selection (byte-identical).
          */
         bool networkStickyPivot() const { return network_sticky_pivot_; }
+
+        /**
+         * @brief Whether the per-constellation satellite-clock gauge is realized by
+         *        a SUM-TO-ZERO over that constellation's satellite clocks instead of
+         *        a hard pin on one pivot satellite (@c network.clock_datum_sum_to_zero).
+         *
+         * Legacy (OFF): the clock gauge for each constellation is fixed by pinning
+         * ONE satellite's clock (the "pivot"; @ref NetworkSbasis::buildSharedDatum,
+         * @ref networkStickyPivot).  Anchor-based — a pivot that sets or is
+         * deselected forces a constellation-wide datum re-reference (handover) the
+         * consumer pays for with an ambiguity reset, and an epoch missing every
+         * candidate pivot has no datum and is skipped wholesale.
+         *
+         * When ON, the gauge is instead the constellation-wide SUM-TO-ZERO Σ δtˢ = 0,
+         * folded as a tight all-ones constraint row onto the shared normals before
+         * the null-space gate — exactly how the satellite code-bias
+         * per-(constellation,signal) level is pinned (@c network.estimate_sat_code_bias).
+         * Fully anchor-free: there is NO pivot satellite, so no handover seam ever,
+         * the clock_pivot map and shared hard-pin datum stay empty, and the datum is
+         * defined for any epoch with ≥1 clock satellite per constellation.  The
+         * emitted product self-describes the change via the S-basis contract's
+         * @c isb_datum field (@ref SbasisDeclaration::IsbDatum::SumToZeroPerConstellation),
+         * and a per-constellation @c clock_datum_satellite pin is ignored (there is
+         * no pivot to place).  The two datums differ only by a per-constellation
+         * constant a consumer absorbs into its receiver clock — a pure S-transform of
+         * the estimable (between-satellite) clock solution — so the change is
+         * consumer-transparent for a float user and phase-bias/AR-frame-neutral.
+         * Default false = the legacy per-constellation pivot pin (byte-identical).
+         *
+         * @see networkStickyPivot, NetworkSbasis, SbasisDeclaration::IsbDatum
+         */
+        bool networkClockDatumSumToZero() const { return network_clock_datum_sum_to_zero_; }
+
+        /**
+         * @brief Whether the satellite phase-bias gauge is realized by a
+         *        per-(satellite,signal) PRIORITIZED ANCHOR RECEIVER instead of the
+         *        single clock-pivot station (@c network.phase_datum_prioritized).
+         *
+         * Legacy (OFF): the phase-bias↔ambiguity gauge for every emitted
+         * (satellite,signal) is pinned on the ONE clock-datum station's ambiguity
+         * (@c is_pivot, @ref NetworkSbasis header, Odijk Eq. 4), and the emittable
+         * phase-bias set is capped at exactly that station's tracked signals.  Two
+         * consequences the consumer pays for: (a) when the pivot loses a
+         * low-elevation satellite that satellite's phase bias vanishes from the
+         * product and its gauge re-references on re-acquisition — a gauge JUMP; and
+         * (b) an epoch in which the pivot is absent has no datum at all and is
+         * skipped wholesale (a single point of failure).
+         *
+         * When ON, the gauge is still a MINIMUM constraint — exactly one ambiguity
+         * pin per (satellite,signal) phase-bias freedom — but each such pin is
+         * placed at the HIGHEST-PRIORITY receiver that currently tracks that
+         * satellite with a usable ambiguity, decoupled from the clock pivot.  Per
+         * constellation the candidate receivers are ranked by descending coverage
+         * (satellites tracked above @ref networkPhaseDatumPrefElevDeg), so the
+         * majority of a constellation stays anchored to one high-coverage receiver
+         * (frame-consistent) and only a satellite that receiver cannot see falls
+         * back to the next — each such per-(satellite,signal) anchor HANDOVER is
+         * signalled to the consumer as a discontinuity (@c markSatDiscontinuity), so
+         * the emitted bias stays continuous-or-signalled rather than jumping
+         * silently.  The clock datum (one satellite-clock pin per constellation) is
+         * independent and unchanged.  Default false = the legacy single-pivot pins
+         * (byte-identical product + traces).
+         *
+         * @see networkPhaseDatumPrefElevDeg, networkPhaseDatumSticky
+         */
+        bool networkPhaseDatumPrioritized() const { return network_phase_datum_prioritized_; }
+
+        /**
+         * @brief Coverage-ranking elevation preference (deg) for the prioritized
+         *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
+         *
+         * A satellite counts toward a receiver's per-constellation coverage rank
+         * only when tracked at or above this elevation, so the elected anchor is a
+         * receiver seeing that constellation WELL (not merely at the horizon).  It
+         * does NOT mask the pin itself — a receiver that is the last remaining
+         * tracker of a setting satellite can still anchor it (any usable ambiguity
+         * qualifies), the preference only orders the candidates.  INERT unless
+         * @ref networkPhaseDatumPrioritized.  Default 15°.
+         */
+        double networkPhaseDatumPrefElevDeg() const { return network_phase_datum_pref_elev_deg_; }
+
+        /**
+         * @brief Whether a per-(satellite,signal) anchor is STICKY
+         *        (@c network.phase_datum_sticky).
+         *
+         * When on, the incumbent anchor for a (satellite,signal) is kept as long as
+         * it still tracks that satellite with a usable ambiguity, even if a peer
+         * gains marginally higher constellation coverage — a re-election (and its
+         * consumer-visible discontinuity) fires only when the incumbent actually
+         * loses the satellite.  This minimizes anchor-handover discontinuities, the
+         * exact analogue of @ref networkStickyPivot for the phase-bias gauge.  INERT
+         * unless @ref networkPhaseDatumPrioritized.  Default true.
+         */
+        bool networkPhaseDatumSticky() const { return network_phase_datum_sticky_; }
+
+        /**
+         * @brief Coverage threshold on the prioritized anchored union: minimum
+         *        number of present stations that must track a (satellite,signal)
+         *        with a usable ambiguity for its shared phase-bias column to be
+         *        registered and emitted (@c network.phase_datum_min_stations).
+         *
+         * Under @ref networkPhaseDatumPrioritized the shared phase-bias set is the
+         * anchored UNION over all present stations, which admits columns tracked by
+         * a single receiver.  Those thin columns are the pathology class the pdp
+         * validation surfaced: (a) a marginal tracking station's local block barely
+         * separates the column from its own ambiguity, ejecting the station as
+         * non-PD (the TWTF/VOIM 121-of-121 symptom); (b) a one-station anchor pool
+         * re-levels the bias by a full ambiguity lump whenever its only anchor sets
+         * (the −72.7 m G29 L2L event); (c) weakly-separated columns leak their
+         * anchor lump into the clock↔phase-bias split (median|dev| 0.8→10 m,
+         * cancelling for clock+bias users but polluting clock-only comparisons).
+         *
+         * A gated-out key costs the product nothing but that bias: the tracking
+         * stations' PHASE rows stay in the solve and serve the satellite clock
+         * through their own float ambiguities — exactly how legacy non-shared
+         * signals (and GLONASS network phase) have always contributed.  The
+         * allocated per-station phase-bias states of a gated key are pruned so the
+         * station column sets stay consistent with the gated union.
+         *
+         * 1 (default) = no gating — the original prioritized-union behavior,
+         * byte-identical.  2–3 recommended once armed.  INERT unless
+         * @ref networkPhaseDatumPrioritized.
+         *
+         * @see networkPhaseDatumPrioritized, networkPhaseDatumSticky
+         */
+        int networkPhaseDatumMinStations() const { return network_phase_datum_min_stations_; }
+
+        /**
+         * @brief Whether the network kernel's per-station local-block positive-
+         *        definiteness test uses the pin-aware MEDIAN-|pivot| reference
+         *        scale instead of the maximum pivot
+         *        (@c network.station_pd_pin_aware).
+         *
+         * The legacy test drops a station when its smallest local LDLᵀ pivot
+         * falls below 1e-12 × the LARGEST pivot.  Under
+         * @ref networkPhaseDatumPrioritized every station elected as a
+         * phase-bias anchor carries 1e10 gauge-pin rows in its OWN local block,
+         * inflating that bar by ~10 orders: a marginal station whose weakest
+         * genuine parameter sits at a perfectly usable ~1e-3 information is
+         * then ejected EVERY epoch (the TWTF/VOIM class — the identical block
+         * passes when the same station holds no anchor pin), permanently
+         * thinning the network.  The 2026-07-04 A/B showed this ejection class
+         * is UNTOUCHED by the anchored-union coverage gate (identical failing
+         * pivots with the gate on/off): the pins, not the thin columns, set the
+         * bar.  With this toggle the reference scale is the MEDIAN |pivot| —
+         * robust to any minority of pin-scale pivots, still catching a truly
+         * singular direction.  Applies to every network mode but only matters
+         * where huge in-block pins exist (the prioritized datum; the legacy
+         * single pivot station).  Default false = legacy max-pivot test
+         * (byte-identical).
+         *
+         * @see networkPhaseDatumPrioritized, networkPhaseDatumMinStations,
+         *      NetworkNormalEquations::setStationPdMedianScale
+         */
+        bool networkStationPdPinAware() const { return network_station_pd_pin_aware_; }
 
         /**
          * @brief Whether the producer's INTERNAL response to a clock-pivot handover
@@ -3357,11 +3575,13 @@ namespace GnssProcessor {
         double network_phase_leveling_var_floor_m2_{0.0}; ///< Floor (m²) on the carried prior variance (caps Λ — lock-in guard); 0 = off (no cap).
         double network_shared_carry_var_floor_pb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-PHASE-bias carried prior variance (caps Λ — bounds the zero-q lock-in while preserving Ge-2008 FCB averaging); 0 = off.
         double network_shared_carry_var_floor_cb_m2_{0.0}; ///< B4: floor (m²) on the D2 sat-CODE-bias carried prior variance (caps Λ); 0 = off.
+        bool   network_shared_carry_full_cov_{false};      ///< C1: carry the FULL dense cross-covariance of the shared border across epochs (information-form KF on the border; recovers the clock↔phase-bias off-diagonals the diagonal D2 stash discards) — fold Λ=(P_prev+Q)⁻¹ as one dense block, marginalize departed/pinned/retired keys, degrade to the diagonal fold on a non-PD block. OFF = legacy per-key diagonal carry (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.
         bool   network_cycle_slip_turbo_edit_{false};     ///< T0 per-station MW/GF cycle-slip REPAIR of the carried ambiguities (phase-leveling Increment 2); OFF = Increment-1 byte-identical.
         double network_cycle_slip_turbo_edit_frac_max_{0.15}; ///< Max rounding residual for a network T0 repair to be trusted (float-MW gate; default 0.15).
         int    network_cycle_slip_turbo_edit_dn_max_{50};      ///< Max |dN| (cycles) for a trusted network T0 repair; larger ⇒ DROP/re-float (float-MW magnitude guard).
+        bool   network_cycle_slip_mw_detect_{false};           ///< Use the MW detector as a pure DETECTOR (not the TurboEdit repair): a confident wide-lane integer jump OR a receiver LLI loss-of-lock REFLOATS the carried ambiguity (marks pending-reseed), never applying an integer.  Iono-safe at the 30 s product rate where MW+GF integer REPAIR is not.  Complements the IF-phase TD detector; OFF = byte-identical.
         bool   network_cycle_slip_if_phase_td_{false};         ///< IF-phase between-sat/between-epoch triple-difference slip DETECTION (refloats both bands of a flagged IF pair via pending-reseed when the carry is active); OFF = byte-identical.
         double network_cycle_slip_if_phase_td_k_mad_{8.0};      ///< k for the network IF-phase MAD gate: flag if |ΔΔφ_IF−med| > max(k·1.4826·MAD, floor). Loose (8–12); post-estimation phase validation is the sharp second pass.
         double network_cycle_slip_if_phase_td_floor_frac_{1.0}; ///< Floor as a fraction of the (1,1) IF jump c/(f1+f2)≈10.7 cm; 1.0 = the (1,1) jump itself (default; binds on a clean network), ~0.7 to catch a bare (1,1) reliably.
@@ -3393,7 +3613,13 @@ namespace GnssProcessor {
         bool   network_pivot_vanish_return_signal_{false}; ///< A1: also raise a datum-change (markDatumChange) when a constellation ABSENT last epoch RETURNS with a clock pivot != its last-ever pivot; OFF = only the adjacent-epoch pivot change signals (byte-identical).
         bool   network_emit_clock_disc_{false};            ///< A2: maintain a per-satellite CLOCK discontinuity counter (bumped on a per-constellation datum re-reference) and scope the forced phase/code bump to the affected constellation(s); OFF = no clock disc channel + a global bump (byte-identical).
         bool   network_sticky_pivot_{false};               ///< RTA-1: keep the incumbent clock-pivot satellite per constellation while it remains registered (re-select only when it sets; config-pinned satellite still wins); OFF = lexical first-registered auto-pick every epoch (byte-identical).
+        bool   network_clock_datum_sum_to_zero_{false};    ///< Realize the per-constellation clock gauge by a SUM-TO-ZERO over that constellation's satellite clocks (folded like the code-bias gauge) instead of a hard pivot pin — anchor-free, no handover seam, no pivot-absent SPOF; ignores clock_datum_satellite. OFF = legacy per-constellation pivot pin (byte-identical).
         bool   network_scoped_handover_response_{false};   ///< RTA-2: scope the producer's INTERNAL pivot-handover response (D2 carry skip, clock-oscillator clear, clock-monitor jump suppression) to the constellation(s) whose datum changed; OFF = global response (byte-identical).
+        bool   network_phase_datum_prioritized_{false};    ///< Realize the phase-bias gauge by a per-(sat,signal) PRIORITIZED ANCHOR receiver (highest-coverage tracker) instead of pinning only the single clock-pivot station; cures the low-elevation gauge jump + the pivot-absent SPOF, anchor handovers disc-signalled. OFF = legacy single-pivot pins (byte-identical).
+        double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
+        bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
+        int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
+        bool   network_station_pd_pin_aware_{false};       ///< Pin-aware station PD guard: the addStation local-block rank test references the MEDIAN |LDLᵀ pivot| instead of the max, so the prioritized datum's in-block 1e10 anchor pins no longer inflate the rejection bar ~10 orders and eject healthy marginal stations every epoch (TWTF/VOIM class). OFF = legacy max-pivot test (byte-identical).
         bool   network_emit_generation_id_{false};         ///< RTA-3: stamp a solution-GENERATION id (uint32 = first-emitted epoch's week·604800+⌊tow⌋) on every epoch (optional I record + store field + S-line gid=); a consumer treats a CHANGE as a global datum break; OFF = no I record, store generation unset (byte-identical).
         bool   network_serialize_disc_counters_{false};    ///< RTA-4: append the POST-EMIT discontinuity-counter VALUES as optional trailing fields (C field 5 clock / B field 5 code / P field 7 phase) so a tail reader reconstructs counters without replaying from epoch 1; OFF = old field counts (byte-identical).
         double network_contract_rebroadcast_s_{0.0};       ///< RTA-5: re-broadcast a CURRENT v2 'S' contract line (refreshed realized pivots) every N seconds of product time AND on any datum-change emit; requires serialize_sbasis_contract; 0 = single header S line (byte-identical).

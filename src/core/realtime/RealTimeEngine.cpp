@@ -115,6 +115,19 @@ bool RealTimeEngine::initialize() {
                   "attribute DCB absorbed by receiver code-bias states); PHASE never falls back.");
     }
 
+    // Card 7 (opt-in, same pattern): arm the orbit/clock coherence skew budget
+    // on the process-wide store.  An injected OWNED store is armed by its owner
+    // (Application::runRealTime) at creation.  Default 0 — the store is
+    // untouched and clock application byte-identical.
+    if (const double skew = config_.getNetworkConsumerConfig().orbit_clock_max_skew_s;
+        skew > 0.0) {
+        SsrCorrectionStore::getInstance().setOrbitEchoMaxSkew(skew);
+        log->info("Orbit/clock coherence budget ON "
+                  "(processing.network_consumer.orbit_clock_max_skew_s = {:.1f}s): a "
+                  "network clock whose orbit echo disagrees with the applied SSR orbit "
+                  "is withheld per satellite (RTA-9 ladder then governs).", skew);
+    }
+
     // ProductParser (loads static products: ATX, BIA, broadcast nav).  In a
     // live session orbits/clocks come from the broadcast ephemeris + IGS-SSR,
     // not precise SP3/CLK, so those are skipped below.
@@ -761,6 +774,8 @@ void RealTimeEngine::flush() {
     // RTA-13: end-of-run obs-code attribute-mismatch summary (flush is the
     // engine's end-of-stream hook).  Silent when no mismatch was counted.
     logBiasAttrMismatchSummary("end of run");
+    // Card 7: ditto for the orbit/clock coherence-echo mismatches.
+    logOrbitEchoMismatchSummary("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -2001,7 +2016,10 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // RTA-13: periodic obs-code attribute-mismatch visibility (one line every
     // 300 processed epochs; silent when no mismatch was ever counted).
-    if (epoch_count_ % 300 == 0) logBiasAttrMismatchSummary("periodic");
+    if (epoch_count_ % 300 == 0) {
+        logBiasAttrMismatchSummary("periodic");
+        logOrbitEchoMismatchSummary("periodic");   // Card 7: same cadence, same silence rule
+    }
 
     log->info("{}Epoch {}: pos=({:.3f},{:.3f},{:.3f}) clk={:.3f} zwd={:.4f} sats={}",
               epoch_prefix, epoch_count_,
@@ -2061,6 +2079,11 @@ void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
     // clock while consuming only the network phase bias (clean integer test).
     // Called after initialize(), so the models exist.
     ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
+    // Card 7: remember the CLOCK routing — the orbit-echo mismatch tallies land
+    // on the store GnssCorrections reads clocks from, which the echo summary
+    // must therefore read (it differs from the bias-routed override above
+    // whenever consume_clock != consume_bias).
+    clock_store_override_ = consume_clock ? store : nullptr;
     if (ppp_model_) {
         switch (orbit_source) {
         case SsrOrbitSource::FollowClock:
@@ -2110,6 +2133,38 @@ void RealTimeEngine::logBiasAttrMismatchSummary(const char* tag) {
         "sibling bias exists — code {} / phase {} lookups; top: {}{}",
         tag, code_total, phase_total, detail,
         top.size() > kMaxListed ? ", ..." : "");
+}
+
+void RealTimeEngine::logOrbitEchoMismatchSummary(const char* tag) {
+    // Read the CLOCK-routed store: that is where GnssCorrections tallies the
+    // echo mismatches (the engine-level ssrStore() is bias-routed and would
+    // stay empty forever under a clock-on/bias-off consumer profile).
+    const SsrCorrectionStore& clock_store =
+        clock_store_override_ ? *clock_store_override_
+                              : SsrCorrectionStore::getInstance();
+    const auto counts = clock_store.orbitEchoMismatchCounts();
+    if (counts.empty()) return;   // clean / pre-Card-7 run: never logs (byte-identical)
+    std::uint64_t total = 0;
+    for (const auto& [key, n] : counts) total += n;
+    // Top offenders by count (deterministic tie-break: map key order).
+    std::vector<std::pair<std::string, std::uint64_t>> top(counts.begin(), counts.end());
+    std::stable_sort(top.begin(), top.end(),
+                     [](const auto& a, const auto& b) { return a.second > b.second; });
+    constexpr std::size_t kMaxListed = 8;
+    std::string detail;
+    for (std::size_t i = 0; i < top.size() && i < kMaxListed; ++i) {
+        if (!detail.empty()) detail += ", ";
+        detail += fmt::format("{}={}", top[i].first, top[i].second);
+    }
+    const double budget = clock_store.orbitEchoMaxSkew();
+    log_manager_.getLogger("rt_engine")->info(
+        "[RT] orbit/clock coherence-echo mismatches ({}): {} clock records whose orbit "
+        "echo disagreed with the applied SSR orbit ({}); top: {}{}",
+        tag, total,
+        budget > 0.0
+            ? fmt::format("withheld — budget {:.1f}s", budget)
+            : "count-only — orbit_clock_max_skew_s unset, clocks still applied",
+        detail, top.size() > kMaxListed ? ", ..." : "");
 }
 
 Eigen::Vector3d RealTimeEngine::getPosition() const {

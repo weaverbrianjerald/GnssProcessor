@@ -13,6 +13,7 @@
 #include "filter/StateKeySchema.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace GnssProcessor {
@@ -299,6 +300,138 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         delta_rhs(c)     += p.info * p.value;
     }
     neq_.addSharedInfo(delta_info, delta_rhs);
+}
+
+std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
+                                                  const Eigen::MatrixXd& cov,
+                                                  Eigen::VectorXd* lambda_diag) {
+    const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
+    if (cov.rows() != nk || cov.cols() != nk) {
+        throw std::invalid_argument(
+            "NetworkEstimator::addSharedPriorDense: cov must be keys.size() square");
+    }
+    if (lambda_diag) *lambda_diag = Eigen::VectorXd::Zero(nk);
+    if (!epoch_open_ || solved_) {
+        throw std::logic_error(
+            "NetworkEstimator::addSharedPriorDense: call between beginEpoch() and "
+            "solve()");
+    }
+    if (nk == 0) return 0;
+
+    // Map identity keys onto this epoch's layout.  An absent key is MARGINALIZED:
+    // its rows/cols of the prior COVARIANCE are dropped before the inversion.
+    // (Dropping rows of Λ would instead condition on the departed key — wrong
+    // statistics for every survivor; see the header contract.)
+    std::vector<Eigen::Index> in_idx;   // position in `keys`
+    std::vector<Eigen::Index> col;      // shared-border column
+    in_idx.reserve(keys.size());
+    col.reserve(keys.size());
+    for (Eigen::Index i = 0; i < nk; ++i) {
+        const SharedPrior& p = keys[static_cast<std::size_t>(i)];
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
+        if (it == index_.end()) continue;   // not in this epoch's layout → marginalized
+        in_idx.push_back(i);
+        col.push_back(it->second);
+    }
+    const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
+    if (k == 0) return 0;
+
+    // Subset + symmetrize P, then invert in correlation scaling: P = D·C·D with
+    // D = diag(√P_ii) ⇒ Λ = D⁻¹·C⁻¹·D⁻¹.  C carries a unit diagonal, so the LDLT
+    // sees an O(1)-scaled matrix even when the block mixes stiff zero-q phase-bias
+    // carries (~1e-9 m²) with loose clock carries (~1e-2 m²).
+    Eigen::MatrixXd P(k, k);
+    Eigen::VectorXd v(k), dinv(k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        v(a) = keys[static_cast<std::size_t>(in_idx[a])].value;
+        for (Eigen::Index b = 0; b < k; ++b)
+            P(a, b) = 0.5 * (cov(in_idx[a], in_idx[b]) + cov(in_idx[b], in_idx[a]));
+    }
+    if (!P.allFinite() || !v.allFinite()) {
+        throw std::runtime_error(
+            "NetworkEstimator::addSharedPriorDense: non-finite carried value or "
+            "covariance in the retained block");
+    }
+    for (Eigen::Index a = 0; a < k; ++a) {
+        if (!(P(a, a) > 0.0)) {
+            throw std::runtime_error(
+                "NetworkEstimator::addSharedPriorDense: non-positive prior variance "
+                "on a retained key (caller must pre-screen var_eff > 0)");
+        }
+        dinv(a) = 1.0 / std::sqrt(P(a, a));
+    }
+    Eigen::MatrixXd C = dinv.asDiagonal() * P * dinv.asDiagonal();
+    const auto pdOk = [](const Eigen::LDLT<Eigen::MatrixXd>& f) {
+        if (f.info() != Eigen::Success) return false;
+        const Eigen::VectorXd dv = f.vectorD();
+        const double dmax = dv.maxCoeff();
+        const double dmin = dv.minCoeff();
+        // κ = 1e-6, deliberately MUCH tighter than the kernel's 1e-12 solve guard:
+        // this factor gets INVERTED and folded as information, so an admitted
+        // condition number becomes information AMPLIFICATION on the shared
+        // normals (Λ_aa = 1/(P_aa·(1−R²_a))).  Un-bounded, a near-gauge carried
+        // direction (multiple correlation R² → 1) can inflate the normals' max
+        // diagonal so far that the constrained solve's own relative-pivot guard
+        // (1e-12·dmax) rises above genuine weakly-observed columns and throws —
+        // and a solve-throw skips the epoch BEFORE the stash, so the identical
+        // block would re-fold every epoch (persistent skip).  Rejecting here
+        // routes the block to the driver's diagonal fallback instead (bounded at
+        // the legacy 1/var_eff), which re-stashes fresh next emit — self-healing.
+        return dmin > 0.0 && dmin >= 1e-6 * dmax;
+    };
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
+    if (!pdOk(ldlt)) {
+        // One ridge retry: +1e-9 on the unit diagonal ≈ inflating every prior
+        // variance by one part in 1e9 — statistically negligible, numerically
+        // decisive when a correlation brushes ±1 (near-gauge posterior directions).
+        C.diagonal().array() += 1e-9;
+        ldlt.compute(C);
+        if (!pdOk(ldlt)) {
+            throw std::runtime_error(
+                "NetworkEstimator::addSharedPriorDense: carried covariance block is "
+                "not positive-definite after the ridge retry — fall back to the "
+                "diagonal carry for this epoch");
+        }
+    }
+    Eigen::MatrixXd Lambda = ldlt.solve(Eigen::MatrixXd::Identity(k, k));
+    Lambda = (dinv.asDiagonal() * Lambda * dinv.asDiagonal()).eval();
+    // Explicit symmetry: the kernel symmetrizes only on the post-reduce fast path;
+    // the within-epoch RAIM replay re-folds this block PRE-reduce, and the two
+    // paths must agree bit-for-bit.
+    Lambda = (0.5 * (Lambda + Lambda.transpose())).eval();
+    // Absolute folded-information budget — the second half of the conditioning
+    // guard (the κ check above bounds the RELATIVE amplification; this bounds the
+    // ABSOLUTE injected stiffness, which is what the downstream solve guard sees).
+    // 1e13 m⁻² keeps the constrained solve's relative-pivot floor (1e-12·dmax)
+    // at or below ~10 m⁻² — under the weakest genuine reduced pivots (a single-
+    // station low-elevation riser is O(1–100)).  Only a near-singular carried
+    // block combined with an extreme zero-q variance (~1e-9 m²) can exceed it;
+    // with the B4 carry floors armed (the recommended C1 operating point) it is
+    // unreachable.  Max diagonal bounds max |Λ_ij| for a PSD matrix.
+    static constexpr double kMaxFoldedInfo = 1e13;  // 1/m²
+    if (Lambda.diagonal().maxCoeff() > kMaxFoldedInfo) {
+        throw std::runtime_error(
+            "NetworkEstimator::addSharedPriorDense: folded information exceeds the "
+            "conditioning budget (near-singular carried block) — fall back to the "
+            "diagonal carry for this epoch");
+    }
+    const Eigen::VectorXd eta = Lambda * v;
+
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        delta_rhs(col[static_cast<std::size_t>(a)]) += eta(a);
+        for (Eigen::Index b = 0; b < k; ++b)
+            delta_info(col[static_cast<std::size_t>(a)],
+                       col[static_cast<std::size_t>(b)]) += Lambda(a, b);
+        if (lambda_diag) (*lambda_diag)(in_idx[static_cast<std::size_t>(a)]) = Lambda(a, a);
+    }
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return static_cast<std::size_t>(k);
 }
 
 void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,

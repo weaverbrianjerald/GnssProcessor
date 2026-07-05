@@ -161,6 +161,12 @@ public:
         reduce_threads_ = n_threads > 1 ? n_threads : 1;
     }
 
+    /// Pin-aware station PD guard passthrough
+    /// (@ref NetworkNormalEquations::setStationPdMedianScale;
+    /// @c network.station_pd_pin_aware).  Configuration-level — set once before
+    /// the epoch loop; survives @ref beginEpoch / @ref reset.
+    void setStationPdMedianScale(bool on) { neq_.setStationPdMedianScale(on); }
+
     /**
      * @brief Solve the shared satellite parameters under the explicit @p datum.
      *
@@ -307,8 +313,57 @@ public:
      * Identity-keyed by (sat, kind, signal): a prior whose parameter is not in the
      * current epoch's layout (the satellite set) is skipped.  Call after
      * @ref beginEpoch and before @ref solve.
+     *
+     * @see addSharedPriorDense for the C1 full-covariance form of the same carry.
      */
     void addSharedPrior(const std::vector<SharedPrior>& priors);
+
+    /**
+     * @brief Inject ONE dense full-covariance carried-forward prior onto the
+     *        shared border (the C1 cross-epoch carry; forwards to
+     *        @ref NetworkNormalEquations::addSharedInfo as a single symmetric
+     *        information block).
+     *
+     * Folds @f$\Lambda = P^{-1}@f$ and @f$\eta = \Lambda\,v@f$ over the carried
+     * keys, where @p cov is the previous epoch's posterior covariance block plus
+     * process noise (P_prev + Q, per-key surgeries already applied by the caller)
+     * and @c v the carried values — the information-form Kalman time+prior update
+     * on the shared border.  Identity-keyed like @ref addSharedPrior, with one
+     * load-bearing difference in the absent-key policy: a key not present in this
+     * epoch's layout is MARGINALIZED — its rows/columns of @p cov are dropped
+     * BEFORE the inversion.  (Dropping rows of Λ instead would CONDITION on the
+     * departed key and bias every surviving parameter; this is why the API takes
+     * a covariance, not an information matrix.)
+     *
+     * Numerics: the retained block is symmetrized and inverted in correlation
+     * scaling (@f$P = D C D,\ \Lambda = D^{-1} C^{-1} D^{-1}@f$, @f$D=\sqrt{\mathrm
+     * {diag}\,P}@f$) via LDLT with a relative-pivot PD guard and one @c 1e-9 ridge
+     * retry on the unit diagonal, so blocks mixing stiff zero-q phase-bias carries
+     * (~1e-9 m²) with loose clock carries (~1e-2 m²) stay well-scaled.  The folded
+     * Λ is explicitly symmetrized so the pre-reduce (within-epoch RAIM replay) and
+     * post-reduce (primary fold fast-path) kernel paths agree bit-for-bit.
+     *
+     * @param keys        Identity + carried value per entry (@ref SharedPrior;
+     *                    the @c info field is IGNORED — the weight is @p cov).
+     *                    Order defines the row/column order of @p cov.
+     * @param cov         @c keys.size() × @c keys.size() prior covariance
+     *                    (P_prev + Q).  Must be finite with positive diagonal on
+     *                    every retained key (caller pre-screens per-key variance).
+     * @param lambda_diag Optional out: resized to @c keys.size(); the folded
+     *                    @f$\Lambda(c,c)@f$ per INPUT key (0 for marginalized
+     *                    keys) — feeds the B7 anchor-information trace.
+     * @return Number of keys retained (present in this epoch's layout).
+     * @throws std::invalid_argument on a dimension mismatch.
+     * @throws std::logic_error unless called between @ref beginEpoch and
+     *         @ref solve (guarded, unlike the legacy diagonal overload).
+     * @throws std::runtime_error when the retained block is non-finite, has a
+     *         non-positive retained variance, or stays non-PD after the ridge
+     *         retry — the caller (driver) owns the fallback policy (degrade to
+     *         the diagonal carry for the epoch).
+     */
+    std::size_t addSharedPriorDense(const std::vector<SharedPrior>& keys,
+                                    const Eigen::MatrixXd& cov,
+                                    Eigen::VectorXd* lambda_diag = nullptr);
 
     /**
      * @brief Fold an explicit linear gauge constraint onto the shared border.

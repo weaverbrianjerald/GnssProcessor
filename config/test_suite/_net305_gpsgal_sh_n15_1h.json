@@ -9,7 +9,7 @@
     ],
     "frequency_mode": "all",
     "channel_mode": "all",
-    "elevation_mask_deg": 10.0,
+    "elevation_mask_deg": 25.0,
     "exclude_eclipsing_satellites": true,
     "leap_seconds_tai": 37.0,
     "relinearize_geometry": false,
@@ -40,7 +40,7 @@
       "common_mode_sigma_m": 50.0,
       "std_scale": 1.0,
       "floor_m": 0.05,
-      "elevation_cutoff_deg": 10.0
+      "elevation_cutoff_deg": 25.0
     },
     "adaptive_iono_process_noise": {
       "enable": false

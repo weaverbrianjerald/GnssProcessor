@@ -134,9 +134,17 @@ public:
         /// RTF-2 (Card 3): orbit coherence echo carried from the winning clock /
         /// combined record (IOD-SSR + content epoch of the RTS orbit the clock was
         /// estimated against).  Default -1 / {0,0} = not stamped.  Consumed by the
-        /// Card-7 consumer echo check; unread today (byte-identical).
+        /// Card-7 consumer echo check (@ref checkOrbitEcho).
         int             orbit_iod_ssr{-1};
         GnssTime        orbit_epoch{0, 0.0};
+        /// Card 7 (RTF-2): the OWN IOD-SSR of the ORBIT record merged into this
+        /// correction (@c SsrOrbitCorrection.iod_ssr / @c SsrCombinedCorrection.iod_ssr)
+        /// — the APPLIED orbit's identity, as opposed to @c orbit_iod_ssr (the
+        /// producer's ECHO of the orbit it estimated against, carried on the clock
+        /// record).  The consumer echo check compares the two.  -1 = no orbit part
+        /// merged.  For a combined record the echo and this field are the same
+        /// value by construction (orbit/clock coherence is guaranteed in-message).
+        int             applied_orbit_iod_ssr{-1};
         bool            has_orbit{false};                         ///< True if orbit fields are valid.
         bool            has_clock{false};                         ///< True if clock fields are valid.
         /// RTB-5(b): satellite reference point of the ORBIT part (@c APC for
@@ -518,6 +526,102 @@ public:
      */
     std::map<std::string, std::uint64_t> biasAttributeMismatchCounts() const;
 
+    // -----------------------------------------------------------------
+    // Card 7 (RTF-2): orbit-coherence echo verification.
+    // -----------------------------------------------------------------
+
+    /**
+     * @brief Verdict of the Card-7 orbit-coherence echo check.
+     *
+     * A @c brdc_rts network clock is estimated against a specific RTS orbit
+     * update; broadcast radial-orbit error absorbs 1:1 into that clock, so a
+     * consumer applying a DIFFERENT orbit update introduces a silent dm–m
+     * range bias invisible to residual QC (conventions §2).  The producer
+     * therefore echoes the orbit identity (IOD-SSR + content epoch) on each
+     * clock record; the consumer compares it against the orbit it actually
+     * applies.
+     */
+    enum class OrbitEchoVerdict {
+        NotStamped,      ///< Clock record carries no echo (standard SSR / non-brdc_rts) — nothing to verify.
+        Match,           ///< Applied orbit identity agrees with the echo (within the skew budget when armed).
+        NoAppliedOrbit,  ///< Echo stamped but the consumer applies NO SSR orbit for this satellite (bare broadcast orbit — the producer's orbit delta is missing entirely).
+        IodSsrMismatch,  ///< Applied orbit's own IOD-SSR differs from the echoed one.
+        EpochSkew        ///< IOD-SSR agrees but the applied orbit's content epoch is further from the echoed epoch than the armed budget (older/newer orbit update generation).
+    };
+
+    /**
+     * @brief Pure classification of the orbit-coherence echo (Card 7).
+     *
+     * @param rec        Merged correction whose CLOCK is about to be applied
+     *                   (carries the producer echo @c orbit_iod_ssr /
+     *                   @c orbit_epoch).
+     * @param applied    Merged correction the consumer's ORBIT overlay would
+     *                   apply for the same satellite/epoch (from the orbit
+     *                   store — @c GnssCorrections::orbitEchoStore); pass the
+     *                   raw @ref getOrbitClock result.  @c nullopt or
+     *                   @c !has_orbit ⇒ @c NoAppliedOrbit.
+     * @param max_skew_s Orbit/clock age-skew budget (s).  The content-epoch
+     *                   comparison runs ONLY when > 0 — with the budget unset
+     *                   the check degrades to IOD-SSR identity + presence
+     *                   (count-only diagnostics, RTA-13 style).
+     * @return Verdict; @c NotStamped whenever @c rec carries no echo, so every
+     *         pre-Card-7 stream short-circuits to "nothing to verify".
+     */
+    static OrbitEchoVerdict classifyOrbitEcho(
+        const OrbitClockCorrection&                rec,
+        const std::optional<OrbitClockCorrection>& applied,
+        double                                     max_skew_s);
+
+    /**
+     * @brief Classify AND tally the orbit-coherence echo for one satellite.
+     *
+     * Calls @ref classifyOrbitEcho with this store's armed skew budget
+     * (@ref setOrbitEchoMaxSkew) and increments the per-satellite mismatch
+     * counter on any non-@c Match / non-@c NotStamped verdict — counted
+     * whether or not the caller withholds, so the incoherence stays visible
+     * even in count-only mode (the RTA-13 convention).  Keys are
+     * @c "sat|reason" with reason ∈ { @c noorbit, @c iod, @c skew }.
+     *
+     * The WITHHOLD policy stays with the caller (@c GnssCorrections drops the
+     * clock only when the budget is armed > 0); this method only observes.
+     *
+     * @param sat     Satellite ID (counter key prefix).
+     * @param rec     Merged correction whose CLOCK is about to be applied.
+     * @param applied The consumer's applied-orbit lookup for the same sat/epoch.
+     * @return The verdict, so the caller decides application in one call.
+     */
+    OrbitEchoVerdict checkOrbitEcho(
+        const std::string&                         sat,
+        const OrbitClockCorrection&                rec,
+        const std::optional<OrbitClockCorrection>& applied) const;
+
+    /**
+     * @brief Arm the Card-7 orbit/clock age-skew budget on this store (s).
+     *
+     * Config @c processing.network_consumer.orbit_clock_max_skew_s (default
+     * 0 = the epoch-skew comparison is OFF and clock application is never
+     * withheld; IOD-SSR identity mismatches are still counted when an echo is
+     * present).  Set on the OWNED network-product store by the injection site
+     * (@c Application::runRealTime) and on the singleton by
+     * @c RealTimeEngine::initialize — the @c setCodeBiasBandFallback pattern.
+     * Survives @ref clear (configuration, not data).
+     */
+    void setOrbitEchoMaxSkew(double max_skew_s);
+
+    /// Card 7: the armed orbit/clock age-skew budget (s); 0 = withhold off.
+    double orbitEchoMaxSkew() const;
+
+    /**
+     * @brief Card 7: per-satellite orbit-echo mismatch counters.
+     *
+     * Keys @c "sat|reason" (reason ∈ { @c noorbit, @c iod, @c skew }); see
+     * @ref checkOrbitEcho.  Reset by @ref clear.  @c RealTimeEngine logs a
+     * one-line summary periodically and at end-of-run, silent when empty.
+     *
+     * @return Copy of the counter map (taken under the store mutex).
+     */
+    std::map<std::string, std::uint64_t> orbitEchoMismatchCounts() const;
+
     /**
      * @brief Decide whether an SSR record is safe to apply to a given broadcast ephemeris.
      *
@@ -571,6 +675,15 @@ private:
     /// biasAttributeMismatchCounts).  Written from const lookup methods under
     /// mutex_, hence mutable.  std::map keeps summary output deterministic.
     mutable std::map<std::string, std::uint64_t> bias_attr_mismatch_;
+
+    /// Card 7: orbit/clock age-skew budget (s); 0 = epoch-skew check + withhold
+    /// off (see setOrbitEchoMaxSkew).  Configuration — survives clear().
+    double orbit_echo_max_skew_s_{0.0};
+
+    /// Card 7: per-"sat|reason" orbit-echo mismatch counters (see
+    /// checkOrbitEcho).  Written from the const check under mutex_, hence
+    /// mutable.  std::map keeps summary output deterministic.
+    mutable std::map<std::string, std::uint64_t> orbit_echo_mismatch_;
 
     /// RTA-13: find a same-band different-attribute sibling of @p code in a
     /// per-signal map (first two chars equal — type letter + band digit — key

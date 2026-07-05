@@ -123,6 +123,11 @@ namespace GnssProcessor {
                                    : SsrCorrectionStore::getInstance();
     }
 
+    const SsrCorrectionStore& GnssCorrections::orbitEchoStore() const {
+        return orbit_echo_store_override_ ? *orbit_echo_store_override_
+                                          : SsrCorrectionStore::getInstance();
+    }
+
     // =================================================================
     // Clock interpolation
     // =================================================================
@@ -189,7 +194,17 @@ namespace GnssProcessor {
                               satellite, PppUtils::getSystemString(satellite), age, apply_window);
             }
         }
-        const int  ssr_iode = (ssr && ssr->has_clock) ? ssr->iode : -1;
+        // Card 7 (RTF-2 / plan D7): the broadcast BASELINE is pinned to the
+        // version the CLOCK was referenced to.  A stamped clock IODE (brdc_rts
+        // network clock: C0 = delta vs broadcast(clock_iode)) WINS over the
+        // orbit anchor, so across a producer/consumer ephemeris-cutover skew
+        // the store's current+previous retention re-references the baseline to
+        // the producer's version instead of dropping the satellite.  Every
+        // unstamped path has clock_iode == iode (combined / inherited, Card 3)
+        // or clock_iode == -1 (falls through to iode) — byte-identical.
+        const int  ssr_iode = (ssr && ssr->has_clock)
+            ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
+            : -1;
 
         // Live broadcast SV clock, version-matched to the SSR.  Its IODE ALWAYS
         // drives the gate — so a precise-CLK baseline no longer forces the gate
@@ -251,13 +266,77 @@ namespace GnssProcessor {
                     eph_iode, ssr->clock_iode, brdc_iode,
                     SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode));
             }
+            // Card 7 (RTF-2 / conventions §2): orbit-coherence echo check.  A
+            // brdc_rts clock echoes the RTS orbit it was estimated against;
+            // broadcast radial-orbit error absorbs 1:1 into that clock, so
+            // applying it against a DIFFERENT orbit update is a silent dm-m
+            // range bias no residual QC can see.  Compare the echo against the
+            // orbit record the consumer's overlay applies (orbitEchoStore —
+            // under RTA-8 split routing a different store than the clock's).
+            // Self-coherent merges (a combined record: the clock's own orbit
+            // part IS the echoed orbit) short-circuit without a second lookup.
+            // Mismatches are COUNTED whenever an echo is present (RTA-13
+            // count-only convention); application is WITHHELD only when the
+            // skew budget (processing.network_consumer.orbit_clock_max_skew_s,
+            // armed on the clock store) is set > 0.  No pre-Card-7 stream
+            // stamps an echo on a separate clock record, so the default path
+            // never reaches the lookup — byte-identical.
+            bool echo_ok = true;
+            if (ssr->orbit_iod_ssr >= 0
+                && !(ssr->has_orbit
+                     && ssr->applied_orbit_iod_ssr == ssr->orbit_iod_ssr)) {
+                auto applied =
+                    orbitEchoStore().getOrbitClock(satellite, time, ssr_max_age);
+                // The echo contract is about the orbit the overlay ACTUALLY
+                // APPLIES, not merely a record's presence: Geometry's apply
+                // sites gate the RAC delta on iodeMatches(brdc_iode, iode)
+                // against the pinned broadcast pick.  Replicate that gate
+                // through the SAME pinned pick (pickForSsr serves both the PV
+                // and clock evaluations of one SatRecord) — a fresh orbit
+                // record whose referenced broadcast version is no longer held
+                // is NOT applied by the overlay, so for coherence purposes it
+                // counts as "no applied orbit" (fail-closed under the budget).
+                // Post-processing (empty live store) stays permissive, exactly
+                // like the overlay gate itself.
+                if (applied && applied->has_orbit) {
+                    const auto obc = LiveEphemerisStore::getInstance()
+                                         .computeSatelliteClock(satellite, time,
+                                                                applied->iode);
+                    const int orbit_brdc_iode = obc ? obc->iode : -1;
+                    if (!SsrCorrectionStore::iodeMatches(orbit_brdc_iode,
+                                                         applied->iode))
+                        applied.reset();
+                }
+                const auto verdict =
+                    ssrStore().checkOrbitEcho(satellite, *ssr, applied);
+                const double skew_budget = ssrStore().orbitEchoMaxSkew();
+                if (verdict != SsrCorrectionStore::OrbitEchoVerdict::Match
+                    && verdict != SsrCorrectionStore::OrbitEchoVerdict::NotStamped
+                    && skew_budget > 0.0) {
+                    echo_ok = false;
+                    log->debug(
+                        "SSR clock for {} ({}) WITHHELD: orbit echo incoherent "
+                        "({}) — echo oiod={} oepoch_tow={:.1f} vs applied "
+                        "oiod={} oepoch_tow={:.1f} (budget {:.1f}s)",
+                        satellite, PppUtils::getSystemString(satellite),
+                        verdict == SsrCorrectionStore::OrbitEchoVerdict::NoAppliedOrbit
+                            ? "no applied SSR orbit"
+                            : (verdict == SsrCorrectionStore::OrbitEchoVerdict::IodSsrMismatch
+                                   ? "IOD-SSR mismatch" : "content-epoch skew"),
+                        ssr->orbit_iod_ssr, ssr->orbit_epoch.tow,
+                        applied && applied->has_orbit ? applied->applied_orbit_iod_ssr : -1,
+                        applied && applied->has_orbit ? applied->orbit_epoch_time.tow : 0.0,
+                        skew_budget);
+                }
+            }
+
             // RTF-2 (Card 3): the CLOCK application gates on the CLOCK IODE
             // (clock_iode), not the orbit anchor (ssr->iode).  For every current
             // path clock_iode == ssr->iode (standard clocks inherit the orbit
             // anchor in getOrbitClock; standalone network clocks stay -1), so this
             // is byte-identical; only a brdc_rts producer's stamped clock IODE
             // makes it differ.  The ORBIT overlay gate (ModelGeometry) stays on iode.
-            if (std::isfinite(clock_corr)
+            if (std::isfinite(clock_corr) && echo_ok
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
                                 - TimeUtils::continuousGpsSeconds(ssr->epoch_time);
@@ -283,10 +362,13 @@ namespace GnssProcessor {
                 // both IODs lets a live run distinguish a decode problem (garbage
                 // ssr_iode) from a convention problem (sane-but-unequal) per
                 // constellation (GAL low-8-bit IODnav, BDS mod(toe/720,240)).
+                // echo_ok=false = the Card-7 orbit-coherence withhold (see the
+                // per-event debug line above for the echo detail).
                 log->trace("SSR clock present for {} ({}) but NOT applied: "
-                           "brdc_iode={} clock_iode={} clock_finite={}",
+                           "brdc_iode={} clock_iode={} clock_finite={} echo_ok={}",
                            satellite, PppUtils::getSystemString(satellite),
-                           brdc_iode, ssr->clock_iode, std::isfinite(clock_corr));
+                           brdc_iode, ssr->clock_iode, std::isfinite(clock_corr),
+                           echo_ok);
             }
         }
 

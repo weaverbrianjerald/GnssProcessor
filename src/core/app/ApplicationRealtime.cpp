@@ -359,6 +359,11 @@ int Application::runRealTime() {
         // OWNED store (the singleton is armed by RealTimeEngine::initialize).
         if (config_.ssrBiasBandFallback())
             network_store->setCodeBiasBandFallback(true);
+        // Card 7 (opt-in): arm the orbit/clock coherence skew budget on the
+        // OWNED store — the network clock records this store serves carry the
+        // producer's orbit echo, so this is where the withhold policy lives.
+        if (const double skew = ncc.orbit_clock_max_skew_s; skew > 0.0)
+            network_store->setOrbitEchoMaxSkew(skew);
         // Start-of-file join: replaying the whole file so far reconstructs every
         // discontinuity counter exactly (a fresh consumer start); a producer
         // restart mid-session is handled by the tail's rotation reopen.

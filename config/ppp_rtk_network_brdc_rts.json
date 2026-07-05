@@ -1,0 +1,287 @@
+// PPP-RTK NETWORK producer — brdc_rts ARMED VALIDATION (RTF-1 Card 8).
+//
+// Derived from ppp_rtk_network_internal.json, then RE-ARMED (2026-07-05) with the
+// VALIDATED all-features network set (runs/net_matrix_2024-129/configs/
+// net305_allfeat_10ep_em25.json — the "validated healthy set") per the Jul-4 audit:
+// a stripped/minimal config must never grade quality.  Validates Cards 5 (producer
+// brdc_rts core) + 6 (ephemeris-cutover re-level) + 7 (consumer pinned clock eval,
+// NOW IN TREE — closed loop re-enabled, criterion 4 live).  The a-priori clock is
+// the BROADCAST ephemeris (LiveEphemerisStore) instead of precise SP3/CLK; the
+// emitted C0 becomes a delta against broadcast(IODE).
+//
+// ── TURNKEY RUNBOOK (docs/rtf_card8_runbook.md) ─────────────────────────────
+// 1. Stage a brdc-only data root ONCE (strips the SP3/CLK that would trip the
+//    getOrbitCount()>0 || getClockCount()>0 hard-refuse):
+//        pwsh scripts/stage_brdc_only_root.ps1
+//    -> creates C:/GnssProcessor/data_brdc_rts (products minus SP3/CLK; obs+static junctioned).
+// 2. SMOKE (10 min): set "max_duration_s": 600.0 below, run:
+//        build/x64-Release/gnss_processor.exe --config config/ppp_rtk_network_brdc_rts.json
+//    Confirm the log shows "product cache loaded — 0 orbits, 0 clocks" and does NOT show
+//    the "precise products are loaded alongside apriori_source = brdc_rts" error.
+// 3. 1h run: restore "max_duration_s": 3600.0 and re-run.
+// 4. Judge: python scripts/check_card6_relevel.py <logdir>/network_events.csv <logdir>/network_solution.csv
+// 5. 50-sta then 305-sta: point files.internal_data_root at a brdc-only root staged from
+//    THAT run's date window and swap network.stations[].  Expect Galileo conditioning
+//    stress at 305 under metre-scale delta-clocks (3 m anchor sigma).
+//
+// Window: start 05:00 UTC (network.start_offset_hours=5.0) — the 05:00-06:00 window on this
+// fixture carries 185 IODE rolls incl. a full 32-satellite GPS batch, so Card 6's re-level
+// fires heavily (a naive 00:00 window has only ~2 GPS rolls).  Galileo rolls every ~10 min.
+//
+// Scope: producer + held-out closed-loop consumer (CIT100USA, FULL clock+bias consume —
+// the Card-7 pinned eval applies the network clock against broadcast(clock_iode)).
+{
+  "app_mode": "post",
+  "data_source": "internal",
+
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [ "GPS", "Galileo" ],
+    "frequency_mode": "all",
+    "channel_mode": "all",
+    "elevation_mask_deg": 25.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 10,
+    "max_duration_s": 3600.0,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ"
+    }
+  },
+
+  "files": {
+    // brdc-only staged root (SP3/CLK removed) — see scripts/stage_brdc_only_root.ps1.
+    // Only PRODUCT resolution uses this; obs are absolute-pathed in network.stations[].
+    "internal_data_root": "C:/GnssProcessor/data_brdc_rts",
+    "observation_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx"
+  },
+
+  "estimation": {
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "estimate_ifb": false,
+    "estimate_sat_biases": false,
+    "no_bia_code_downweight": 1.0,
+    "between_satellite_sd": { "enabled": false },
+    // Validated set: per-slant iono weighting + the SH-VTEC constraint field
+    // (network.estimate_iono_sh below forces sat code bias on — the legal
+    // brdc_rts combination per the Card-1 validation rule).
+    "ionosphere_weighting": {
+      "enable": true,
+      "common_mode_sigma_m": 50.0,
+      "std_scale": 1.0,
+      "floor_m": 0.05,
+      "elevation_cutoff_deg": 10.0
+    },
+    "adaptive_iono_process_noise": { "enable": false },
+    "global_vtec_sh": {
+      "max_degree": 15,
+      "layer_height_km": 450.0,
+      "earth_radius_km": 6371.0,
+      "kaula_scale_tecu": 10.0,
+      "q_per_degree": 0.01,
+      "mean_vtec_prior_tecu": 15.0,
+      "mean_vtec_prior_sigma_tecu": 30.0,
+      "representation_sigma_tecu": 5.0,
+      "sun_fixed": true,
+      "trace": false
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      "wl_only": true,
+      "active_systems": [ "GPS" ],
+      "ratio_threshold": 3.0,
+      "ratio_upper_bound": 1e4,
+      "min_success_rate": 0.999,
+      "nl_max_per_pair_frac": 0.15,
+      "elevation_mask": 25.0,
+      "min_epochs": 1,
+      "max_position_sigma_m": 10.0,
+      "hold_variance": 0.001,
+      "wl_max_frac": 0.40
+    }
+  },
+
+  "filter": {
+    "process_noise": {
+      "position_q": 1e2,
+      "clock_bias_q": 1e3,
+      "phase_clock_q": 1e-9,
+      "troposphere_q": 1e-9,
+      "ionosphere_q": 1e-3,
+      "code_bias_q": 1e-4,
+      "sat_bias_q": 1e-12,
+      "sat_code_bias_q": 1e-10,
+      "sat_phase_bias_q": 1e-12,
+      "sat_clock_q": 1e-2,
+      "system_time_offset_q": 1e-12,
+      "ambiguity_q": 1e-12
+    },
+    "initial_std": {
+      "position": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 1000.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "sat_phase_bias": 10.0,
+      "sat_clock": 1000.0,
+      "system_time_offset": 1000.0
+    },
+    "measurement_noise": {
+      "code_std_m": 0.300,
+      "phase_std_m": 0.002
+    },
+    "stochastic_model": "elevation"
+  },
+
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": true
+  },
+
+  "network": {
+    "clock_datum_station": "JPLM00USA",
+    "epoch_sync_tolerance_s": 1.0,
+
+    // ── RTF-1 brdc_rts ARMING ──────────────────────────────────────────────
+    // apriori_source and service_mode are ORTHOGONAL, separate keys (service_mode
+    // does NOT arm apriori_source — Card 1).  Both required for this run.
+    "apriori_source": "brdc_rts",
+    "service_mode": true,
+    // Start at 05:00 UTC (roll-rich window: 185 IODE rolls incl. a 32-sat GPS batch).
+    "start_offset_hours": 5.0,
+
+    // ── VALIDATED ALL-FEATURES SET (net305_allfeat em25; Jul-4 audit fix) ──
+    // Explicit even where service_mode would arm the same flag — the armed run
+    // must not depend on the arming bundle, and explicit values always win.
+    "estimate_iono_sh": true,
+    "phase_leveling": true,
+    "phase_leveling_q_amb": 0.0,
+    "phase_leveling_warmup_epochs": 6,
+    "phase_leveling_max_gap_s": 120.0,
+    // Zero-q leveling REQUIRES a slip detector (non-negotiable): MW pure-detect
+    // + IF-phase triple-difference, the validated pair.
+    "cycle_slip": {
+      "mw_detect": true,
+      "if_phase_td": true,
+      "if_phase_td_k_mad": 8.0,
+      "if_phase_td_floor_frac": 1.0,
+      "if_phase_td_min_pool": 30
+    },
+    "carry_zwd": true,
+    "zwd_carry_q": 1e-9,
+    "raim": true,
+    "raim_attribution": true,
+    "raim_within_epoch": true,
+    "raim_surgical_station": true,
+    "raim_k_sigma": 6.0,
+    "clock_monitor": true,
+    "clock_monitor_couple_raim": true,
+    "clock_model": true,
+    "clock_runaway_check": true,
+    "clock_datum_sum_to_zero": true,
+    "phase_datum_prioritized": true,
+    "phase_datum_sticky": true,
+    "emit_ura": true,
+    "ura_retro_bump": true,
+    "emit_clock_disc": true,
+    "serialize_sbasis_contract": true,
+    "emit_generation_id": true,
+    "serialize_disc_counters": true,
+    "emit_epoch_status_record": true,
+    "health_interval_s": 30.0,
+    "write_run_manifest": true,
+
+    // trace_events / trace_epoch_status are NOT armed by service_mode — set explicitly.
+    // network_events.csv RELEVEL rows are the ONLY machine-readable eph-roll-vs-fault
+    // attribution (criteria 2 & 3): eph_cutover_relevel = clean no-bump re-level;
+    // eph_cutover_disc/_landed = forced-bump fallback (previous eph version evicted).
+    "trace_events": true,
+    "trace_epoch_status": true,
+    "trace_stations": true,
+    "trace_ionosphere": false,
+
+    "product_output_path": "network_products.txt",
+    "stations": [
+      {
+        "name": "JPLM00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2493304.9886, -4655214.7866, 3565497.6745 ]
+      },
+      {
+        "name": "P38900USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/p38900usa/P38900USA_R_20241290000_01D_15S_MO.rnx",
+        "position_ecef": [ -2347409.5144, -3968716.0159, 4394004.5932 ]
+      },
+      {
+        "name": "GCGO00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [ -2281621.7499, -1453585.0819, 5756964.8917 ]
+      }
+    ],
+
+    // Card 7 IN TREE (2026-07-05): FULL closed-loop consumer re-enabled — the
+    // consumer applies the network clock against broadcast(clock_iode) via the
+    // pinned eval (D7), so consume_network_clock works under brdc_rts.
+    // Criterion 4: consumer converges; position degrades gracefully vs the
+    // sp3-mode baseline (broadcast orbit error rides in the clocks per D9).
+    "closed_loop": {
+      "enable": true,
+      "consumer_undifferenced": true,
+      "consume_network_products": true,
+      "consume_network_clock": true,
+      "ar_mode": 1,
+      "ar_wl_only": false,
+      "ar_active_systems": [ "GPS" ],
+      "station": {
+        "name": "CIT100USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cit1/cit11290.24o",
+        "position_ecef": [ -2491490.7172, -4660802.8495, 3559129.1872 ]
+      }
+    }
+  },
+
+  "data_download": {
+    "enabled": false,
+    "product_source": "COD",
+    "product_type": "FIN",
+    "year": 2024,
+    "doy": 129
+  },
+
+  "logging": {
+    "enable_main_log": true,
+    "enable_ambiguity_resolver": true,
+    "enable_state_trace": false,
+    "enable_ambiguity_trace": false,
+    "enable_residual_trace": false,
+    "enable_dop_trace": false,
+    "enable_sat_status_trace": false,
+    "levels": {
+      "measurement_model": "warn",
+      "state_manager": "warn",
+      "state_initializer": "warn",
+      "ppp_model": "warn",
+      "kalman_filter": "warn",
+      "ambiguity_resolver": "info"
+    }
+  }
+}

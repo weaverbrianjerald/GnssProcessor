@@ -461,6 +461,25 @@ public:
     ///         stray post-gate local injection would force a second full reduce).
     std::size_t reduceRecomputeCount() const { return reduce_recompute_count_; }
 
+    /**
+     * @brief Use the MEDIAN |LDLᵀ pivot| (instead of the maximum) as the
+     *        reference scale of @ref addStation's local-block positive-
+     *        definiteness test (@c network.station_pd_pin_aware).
+     *
+     * The legacy test rejects a station when its smallest pivot falls below
+     * @c 1e-12 × the LARGEST pivot.  A deliberate huge-weight gauge-pin row
+     * inside the local block — the prioritized phase-datum anchor's @c 1e10
+     * ambiguity pin — inflates that bar by ~10 orders, ejecting a healthy
+     * marginal station whose weakest genuine parameter sits at a perfectly
+     * usable ~1e-3 (the TWTF/VOIM every-epoch non-PD class; same relative
+     * floor a pin-free station passes easily).  The median |pivot| is robust
+     * to any minority of pin-scale pivots while still catching a truly
+     * singular direction (a pivot collapsing many orders below the block's
+     * typical scale).  Survives @ref reset (configuration-level, set once).
+     * Default off = the legacy max-pivot test, byte-identical.
+     */
+    void setStationPdMedianScale(bool on) { station_pd_median_scale_ = on; }
+
 private:
     /// Per-station cached state needed for reduction and back-substitution.
     struct Station {
@@ -480,6 +499,7 @@ private:
     Eigen::VectorXd reduced_u_s_;  ///< ũ_s  (valid when reduced_)
     bool reduced_{false};
     std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
+    bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()
 };
 
 } // namespace GnssProcessor

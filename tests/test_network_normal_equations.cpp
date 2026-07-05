@@ -816,6 +816,40 @@ TEST(NetworkNormalEquationsTest, AddStationPriorRejectsBadInputs) {
     EXPECT_THROW(neq.addStationPrior(0, {0}, neg, one), std::invalid_argument);  // negative info
 }
 
+// Pin-aware station PD guard (network.station_pd_pin_aware): with a deliberate
+// 1e10 gauge-pin pivot inside the local block (the prioritized phase-datum
+// anchor pin), the legacy max-pivot relative rank test rejects a healthy ~1e-3
+// weakest parameter (1e-3 < 1e-12·1e10 — the TWTF/VOIM every-epoch ejection
+// class); the median-scale test accepts the same block, while a truly singular
+// direction stays rejected under both.
+TEST(NetworkNormalEquationsTest, StationPdMedianScaleAcceptsPinnedMarginalBlock) {
+    const Eigen::Index n_s = 2;
+    const Eigen::MatrixXd N_ss = Eigen::MatrixXd::Zero(n_s, n_s);
+    const Eigen::MatrixXd N_sr = Eigen::MatrixXd::Zero(n_s, 3);
+    const Eigen::VectorXd u_s = Eigen::VectorXd::Zero(n_s);
+    const Eigen::VectorXd u_r = Eigen::VectorXd::Zero(3);
+    auto blk = [](double weak) {
+        Eigen::MatrixXd N_rr = Eigen::MatrixXd::Zero(3, 3);
+        N_rr(0, 0) = 1e10;   // gauge-pin row (deliberate, healthy)
+        N_rr(1, 1) = 1.0;    // ordinary local parameter
+        N_rr(2, 2) = weak;   // weakest parameter under test
+        return N_rr;
+    };
+
+    // Legacy guard: the pin inflates the reference scale → healthy 1e-3 rejected.
+    NetworkNormalEquations legacy(n_s);
+    EXPECT_THROW(legacy.addStation(N_ss, N_sr, blk(1e-3), u_s, u_r),
+                 std::invalid_argument);
+
+    // Pin-aware: median |pivot| = 1.0 → the same block is accepted…
+    NetworkNormalEquations aware(n_s);
+    aware.setStationPdMedianScale(true);
+    EXPECT_NO_THROW(aware.addStation(N_ss, N_sr, blk(1e-3), u_s, u_r));
+    // …and a truly singular direction is still rejected (1e-14 < 1e-12·median).
+    EXPECT_THROW(aware.addStation(N_ss, N_sr, blk(1e-14), u_s, u_r),
+                 std::invalid_argument);
+}
+
 // Reduce-once instrumentation: the carried-prior path (addStation → addStationPrior
 // → solve) must trigger EXACTLY ONE per-station Schur recompute, and a post-reduce
 // addStationPrior must correctly invalidate the cache (forcing a second recompute).
