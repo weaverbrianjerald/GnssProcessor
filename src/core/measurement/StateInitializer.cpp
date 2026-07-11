@@ -276,6 +276,20 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
         // predicted into every sat-bias and ambiguity seed for the
         // satellite.
         if (!ppp_model_.hasBiasEntry(obs.satellite, key)) continue;
+        // Coverage honesty (bias_coverage_requires_apply): this gate's
+        // contract is "the .BIA value has been REMOVED from (P - mod)".
+        // An entry that is loaded but not applied (enable_code_phase_bias
+        // off, e.g. forced by the estimate_iono_sh coupling and inherited
+        // by the derived closed-loop consumer) leaves the raw hardware
+        // bias in the innovation — exactly the error class this gate
+        // exists to keep out of the seed.  The network producer keeps
+        // legacy presence semantics, matching
+        // MeasurementModel::biaCoversSignal (its code rows are handled by
+        // network-estimated code-bias states, and an armed producer's
+        // emission stays byte-identical).
+        if (config_.getModelCorrections().bias_coverage_requires_apply
+            && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network
+            && !config_.getModelCorrections().enable_code_phase_bias) continue;
         const double freq = ppp_utils_.getFrequency(key, obs.system, obs.satellite);
         if (freq <= 0.0) continue;
         codes.push_back({key, val, freq, key[1]});

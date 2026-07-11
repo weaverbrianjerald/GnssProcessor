@@ -116,6 +116,161 @@ TEST(CodeBiasNetworkConfig, DefaultNetworkHasCodeBiasOff) {
     std::error_code ec; fs::remove(p, ec);
 }
 
+// bias_coverage_requires_apply: parses (default false), is NOT clobbered by the
+// estimate_sat_code_bias coupling that forces enable_code_phase_bias off, and is
+// inherited by the derived closed-loop consumer.  This is the exact defect chain
+// the toggle exists for: the coupling silently disables .BIA APPLICATION while
+// the loaded .BIA still reports phantom COVERAGE to the "already corrected?"
+// gates (sat-bias absorber allocation + no-BIA code downweight) — the toggle
+// makes those gates consult applied coverage instead.
+TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) {
+    LogManager log;
+    // Default: key absent -> false (legacy presence-only semantics, byte-identical).
+    {
+        const fs::path p = writeTempConfig("cov_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.getModelCorrections().bias_coverage_requires_apply);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed alongside the coupled code-bias slice: the coupling forces .BIA
+    // application OFF, and the toggle survives it unchanged — together the
+    // defect configuration (loaded .BIA, unapplied) now reads as uncovered.
+    {
+        const std::string body = std::string("{\n") +
+            "  \"processing\": {\n"
+            "    \"mode\": \"ppp-rtk-network\",\n"
+            "    \"active_systems\": " + kGpsGal + ",\n"
+            "    \"signal_priorities\": " + kPriosGps + "\n"
+            "  },\n"
+            "  \"model_corrections\": { \"bias_coverage_requires_apply\": true },\n"
+            "  \"network\": {\n"
+            "    \"clock_datum_station\": \"AAAA\",\n"
+            "    \"estimate_sat_code_bias\": true,\n"
+            "    \"stations\": [\n"
+            "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
+            "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
+            "    ]\n"
+            "  }\n"
+            "}\n";
+        const fs::path p = writeTempConfig("cov_armed", body);
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.getModelCorrections().enable_code_phase_bias);       // coupling forced .BIA off
+        EXPECT_TRUE(cfg.getModelCorrections().bias_coverage_requires_apply);  // toggle survives the coupling
+        const GnssConfig consumer = cfg.deriveClosedLoopConsumerConfig();
+        EXPECT_TRUE(consumer.getModelCorrections().bias_coverage_requires_apply);  // inherited by the consumer
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// clock_signal_basis_hold: parses (default false, so the per-epoch IF-pin
+// reference selection is byte-identical), and — armed alongside the W6 slice it
+// modifies — survives the estimate_sat_code_bias coupling (the toggle holds the
+// per-satellite clock↔code-bias IF-pin reference pair fixed in time; it is only
+// meaningful when the network estimates its own code biases, so it MUST coexist
+// with that flag rather than being clobbered by the coupling).
+TEST(CodeBiasNetworkConfig, ClockSignalBasisHoldParsesAndSurvivesCoupling) {
+    LogManager log;
+    // Default: key absent -> false (per-epoch reference re-selection, byte-identical).
+    {
+        const fs::path p = writeTempConfig("basis_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkClockSignalBasisHold());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed with the W6 code-bias slice: the coupling forces the prerequisites on,
+    // and the hold toggle survives it — both are true, so the emitted (δtˢ, dˢ)
+    // split is estimated (W6) AND held to a fixed signal basis in time.
+    {
+        const fs::path p = writeTempConfig("basis_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"estimate_sat_code_bias\": true,\n"
+                          "    \"clock_signal_basis_hold\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());       // coupled slice on
+        EXPECT_TRUE(cfg.networkClockSignalBasisHold());      // hold toggle survives the coupling
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// network.code_datum_time_linked (Card 2): parses (default false = the legacy zero-
+// target code-bias datum, byte-identical) and survives the estimate_sat_code_bias
+// coupling (the datum it re-times only exists in W6, so it must coexist with that flag
+// rather than be clobbered).
+TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
+    LogManager log;
+    // Default: key absent -> false (per-epoch zero-target datum, byte-identical).
+    {
+        const fs::path p = writeTempConfig("cbtl_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCodeDatumTimeLinked());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed with the W6 code-bias slice: the coupling forces the prerequisites on, and
+    // the time-linked toggle survives it — the datum is now imposed as a time datum.
+    {
+        const fs::path p = writeTempConfig("cbtl_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"estimate_sat_code_bias\": true,\n"
+                          "    \"code_datum_time_linked\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());       // coupled slice on
+        EXPECT_TRUE(cfg.networkCodeDatumTimeLinked());       // time-linked toggle survives
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// code_datum_time_linked and clock_signal_basis_hold BOTH re-target the per-satellite
+// IF-pin row (the clock↔code split): the time-linked datum subsumes the hold for the
+// pin value, so arming both is a hard load error rather than a silent last-wins.
+TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedWithSignalBasisHoldIsError) {
+    LogManager log;
+    const fs::path p = writeTempConfig("cbtl_conflict",
+        networkConfig(kGpsGal, kPriosGps,
+                      "    \"estimate_sat_code_bias\": true,\n"
+                      "    \"code_datum_time_linked\": true,\n"
+                      "    \"clock_signal_basis_hold\": true,\n"));
+    GnssConfig cfg;
+    EXPECT_FALSE(cfg.loadFromJson(p, log));
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// phase_bias_exclude_unmatched_antenna: parses (default false, so every station
+// contributes to phase-bias emission — byte-identical), and arms independently of
+// the W6 code-bias slice (it gates only which STATIONS feed the satellite phase
+// biases, orthogonal to whether the network also estimates code biases).
+TEST(CodeBiasNetworkConfig, PhaseBiasExcludeUnmatchedAntennaParses) {
+    LogManager log;
+    // Default: key absent -> false (every station contributes, byte-identical).
+    {
+        const fs::path p = writeTempConfig("pbexcl_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed on its own (no code-bias slice): the toggle is honoured — an unmatched-
+    // receiver-antenna station will be withheld from satellite phase-bias emission.
+    {
+        const fs::path p = writeTempConfig("pbexcl_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"phase_bias_exclude_unmatched_antenna\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
 // estimate_sat_code_bias and estimate_glonass cannot both be on in V1: admitting
 // GLONASS forces the receiver-bias allocation to skip the GPS/Galileo IFB that the
 // satellite code-bias separation needs.  Fail loud at load.
@@ -1090,4 +1245,276 @@ TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInBrdcRts) {
     ASSERT_EQ(cfg.networkAprioriSource(), NetworkAprioriSource::BrdcRts);
     EXPECT_DOUBLE_EQ(cfg.resolveNetworkAprioriClockAnchorSigmaM(), 5.0);
     std::error_code ec; fs::remove(p, ec);
+}
+
+// ===========================================================================
+// Producer datum-trajectory keys (wire defects 2-3): broadcast-anchored clock
+// datum, sum-to-zero set-change disc, code-bias value jump test, consumer ISB
+// reinflation, and the closed-loop bias-age arming counterpart of RTA-9(a)
+// ===========================================================================
+
+// network.clock_datum_broadcast_anchored defaults OFF (byte-identical) and is
+// only meaningful when the a-priori clock IS the broadcast reference: the datum
+// soft-anchors each satellite clock to its OWN a-priori, so under the default
+// sp3 a-priori the anchor would merely re-derive the precise product (and the
+// loose sp3 auto sigma leaves the gauge unrealized anyway).  Fail loud rather
+// than run with an undefined clock datum.
+TEST(NetworkClockDatumConfig, BroadcastAnchoredDefaultsOffAndRequiresBrdcRts) {
+    LogManager log;
+
+    // Default: key absent -> false (the OFF path — no anchors folded).
+    {
+        const fs::path p = writeTempConfig("ba_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkClockDatumBroadcastAnchored());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed without apriori_source='brdc_rts' (default sp3): hard error.
+    {
+        const fs::path p = writeTempConfig("ba_sp3",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"clock_datum_broadcast_anchored\": true,\n"));
+        GnssConfig cfg;
+        EXPECT_FALSE(cfg.loadFromJson(p, log));
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Legal combination: brdc_rts a-priori (whose auto anchor sigma resolves to
+    // the binding 3.0 m broadcast-grade default) -> loads, getter true.
+    {
+        const fs::path p = writeTempConfig("ba_brdc",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"apriori_source\": \"brdc_rts\",\n"
+                          "    \"clock_datum_broadcast_anchored\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkClockDatumBroadcastAnchored());
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// Exactly one clock-gauge realization may be selected — sum-to-zero and the
+// broadcast anchors both close the same rank deficiency, so together they
+// over-constrain and the rank gate CANNOT catch it (both look valid to it).
+// And the anchors ARE the gauge: a non-binding explicit sigma (>= 100 m)
+// leaves the clock common-mode eigenvalue at or below the rank-gate cutoff —
+// an undefined datum.  Both misconfigurations fail loud at load.
+TEST(NetworkClockDatumConfig, BroadcastAnchoredRejectsSumToZeroAndNonBindingSigma) {
+    LogManager log;
+
+    // Both clock gauges armed (brdc_rts satisfied so the mutual exclusion is
+    // the ONLY failing constraint): hard error.
+    {
+        const fs::path p = writeTempConfig("ba_s2z",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"apriori_source\": \"brdc_rts\",\n"
+                          "    \"clock_datum_sum_to_zero\": true,\n"
+                          "    \"clock_datum_broadcast_anchored\": true,\n"));
+        GnssConfig cfg;
+        EXPECT_FALSE(cfg.loadFromJson(p, log));
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Explicit anchor sigma at the 100 m boundary overrides the binding 3.0 m
+    // brdc_rts auto default with a value too weak to realize the datum: error.
+    {
+        const fs::path p = writeTempConfig("ba_weak_sigma",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"apriori_source\": \"brdc_rts\",\n"
+                          "    \"apriori_clock_anchor_sigma_m\": 100.0,\n"
+                          "    \"clock_datum_broadcast_anchored\": true,\n"));
+        GnssConfig cfg;
+        EXPECT_FALSE(cfg.loadFromJson(p, log));
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// network.clock_disc_on_set_change models "membership change = clock-datum
+// re-reference", which is true ONLY for the sum-to-zero gauge (the pivot pin
+// holds while the pivot is up; the broadcast anchors never move).  Armed under
+// any other datum it would mint spurious consumer resets — the exact churn
+// class (defect 3) this trigger exists to signal away — so it fails loud.
+// With s2z it loads and AUTO-ARMS network.emit_clock_disc: the set-change
+// trigger only reaches the wire through the clock discontinuity channel.
+TEST(NetworkDiscSignalConfig, ClockDiscOnSetChangeRequiresSumToZeroAndArmsEmit) {
+    LogManager log;
+
+    // Default: both the trigger and the disc channel stay off (byte-identical).
+    {
+        const fs::path p = writeTempConfig("setchg_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkClockDiscOnSetChange());
+        EXPECT_FALSE(cfg.networkEmitClockDisc());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed without the sum-to-zero gauge (default pivot datum): hard error.
+    {
+        const fs::path p = writeTempConfig("setchg_no_s2z",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"clock_disc_on_set_change\": true,\n"));
+        GnssConfig cfg;
+        EXPECT_FALSE(cfg.loadFromJson(p, log));
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed with s2z: loads, and emit_clock_disc (unset by the user) is
+    // auto-armed so the set-change counter bump actually travels on the wire.
+    {
+        const fs::path p = writeTempConfig("setchg_s2z",
+            networkConfig(kGpsGal, kPriosGps,
+                          "    \"clock_datum_sum_to_zero\": true,\n"
+                          "    \"clock_disc_on_set_change\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkClockDiscOnSetChange());
+        EXPECT_TRUE(cfg.networkEmitClockDisc());          // auto-armed by the coupling
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// network.code_bias_disc_jump_test (emitter-side VALUE-jump disc trigger for
+// weak-separation code-bias wander) and estimation.clock_disc_isb_reinflate_std
+// (consumer-side ISB covariance reinflation on a clock disc bump) parse with
+// inert defaults — both are default-OFF additions on the producer-wire-defect
+// path and must not perturb any existing config (the OFF byte-identity proxy).
+TEST(NetworkDiscSignalConfig, JumpTestAndIsbReinflateParseWithInertDefaults) {
+    LogManager log;
+
+    // Defaults: false / 0.0 — nothing armed, nothing reinflated.
+    {
+        const fs::path p = writeTempConfig("disc_defaults",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCodeBiasDiscJumpTest());
+        EXPECT_DOUBLE_EQ(cfg.clockDiscIsbReinflateStd(), 0.0);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Explicit values land in their getters.  The jump test without
+    // network.estimate_sat_code_bias is INERT (warn-only, no code biases are
+    // emitted) — the load must still succeed.
+    {
+        const fs::path p = writeTempConfig("disc_armed",
+            networkConfigRt("",
+                            "    \"code_bias_disc_jump_test\": true,\n",
+                            "  \"estimation\": { \"clock_disc_isb_reinflate_std\": 0.25 },\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCodeBiasDiscJumpTest());
+        EXPECT_DOUBLE_EQ(cfg.clockDiscIsbReinflateStd(), 0.25);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// deriveClosedLoopConsumerConfig arms processing.enable_ssr_bias_max_age on the
+// DERIVED config when network products are consumed and the user wrote no key —
+// bias consumption without the staleness gate silently applies unboundedly
+// stale biases across producer withhold gaps (the A5/RTA-9(a) defect class the
+// standalone profile already guards; this is its closed-loop counterpart).
+// The producer's own config is untouched, and an explicit user key (either
+// polarity) is respected via the same presence check as the profile path.
+TEST(ClosedLoopBiasGateConfig, DerivedConsumerArmsBiasMaxAge) {
+    LogManager log;
+
+    // No key written: producer stays off, the derived consumer is armed.
+    const fs::path p1 = writeTempConfig("cl_biasage_unset",
+        networkConfigRt("",
+            "    \"closed_loop\": { \"consume_network_products\": true },\n"));
+    GnssConfig c1;
+    ASSERT_TRUE(c1.loadFromJson(p1, log));
+    EXPECT_FALSE(c1.enableSsrBiasMaxAge());               // producer run untouched
+    const GnssConfig d1 = c1.deriveClosedLoopConsumerConfig();
+    EXPECT_TRUE(d1.enableSsrBiasMaxAge());                // armed under consumption
+
+    // Explicit false in the producer JSON: respected — the derived stays off.
+    const fs::path p2 = writeTempConfig("cl_biasage_false",
+        networkConfigRt("    \"enable_ssr_bias_max_age\": false,\n",
+            "    \"closed_loop\": { \"consume_network_products\": true },\n"));
+    GnssConfig c2;
+    ASSERT_TRUE(c2.loadFromJson(p2, log));
+    const GnssConfig d2 = c2.deriveClosedLoopConsumerConfig();
+    EXPECT_FALSE(d2.enableSsrBiasMaxAge());
+
+    // Explicit true: simply kept (no double-arm surprises).
+    const fs::path p3 = writeTempConfig("cl_biasage_true",
+        networkConfigRt("    \"enable_ssr_bias_max_age\": true,\n",
+            "    \"closed_loop\": { \"consume_network_products\": true },\n"));
+    GnssConfig c3;
+    ASSERT_TRUE(c3.loadFromJson(p3, log));
+    const GnssConfig d3 = c3.deriveClosedLoopConsumerConfig();
+    EXPECT_TRUE(d3.enableSsrBiasMaxAge());
+
+    // Consumption off (the A/B BASELINE consumer: precise SP3/CLK + .BIA only):
+    // nothing consumed, nothing to age-gate — not armed.
+    const fs::path p4 = writeTempConfig("cl_biasage_noconsume",
+        networkConfigRt("",
+            "    \"closed_loop\": { \"consume_network_products\": false },\n"));
+    GnssConfig c4;
+    ASSERT_TRUE(c4.loadFromJson(p4, log));
+    const GnssConfig d4 = c4.deriveClosedLoopConsumerConfig();
+    EXPECT_FALSE(d4.enableSsrBiasMaxAge());
+
+    std::error_code ec;
+    fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec); fs::remove(p4, ec);
+}
+
+// Card 3 (network.phase_datum_eq34): parses OFF by default, ON in isolation, and
+// with the two sub-knobs (preferred datum receiver, pin-to-round).
+TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
+    LogManager log;
+    // Default OFF, byte-identical.
+    {
+        const fs::path p = writeTempConfig("eq34_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkPhaseDatumEq34());
+        EXPECT_TRUE(cfg.networkPhaseDatumEq34PinRound());        // default true
+        EXPECT_TRUE(cfg.networkPhaseDatumEq34Receiver().empty());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // ON in isolation, with sub-knobs.
+    {
+        const fs::path p = writeTempConfig("eq34_on",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"phase_datum_eq34_receiver\": \"BBBB\",\n"
+                "    \"phase_datum_eq34_pin_round\": false,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkPhaseDatumEq34());
+        EXPECT_FALSE(cfg.networkPhaseDatumEq34PinRound());
+        EXPECT_EQ(cfg.networkPhaseDatumEq34Receiver(), "BBBB");
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// Card 3 mutual exclusion: eq34 + ensemble is two realizations of the SAME gauge
+// — the load must FAIL loud.  eq34 + prioritized is allowed (eq34 supersedes).
+TEST(CodeBiasNetworkConfig, Eq34EnsembleMutexFailsPrioritizedSupersedes) {
+    LogManager log;
+    // eq34 && ensemble -> load fails.
+    {
+        const fs::path p = writeTempConfig("eq34_ens",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"phase_datum_ensemble\": true,\n"));
+        GnssConfig cfg;
+        EXPECT_FALSE(cfg.loadFromJson(p, log))
+            << "phase_datum_eq34 + phase_datum_ensemble must be rejected at load.";
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // eq34 && prioritized -> loads (eq34 supersedes; both getters reflect config).
+    {
+        const fs::path p = writeTempConfig("eq34_prio",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"phase_datum_prioritized\": true,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkPhaseDatumEq34());
+        EXPECT_TRUE(cfg.networkPhaseDatumPrioritized());
+        std::error_code ec; fs::remove(p, ec);
+    }
 }

@@ -8,14 +8,70 @@
 #include "filter/NetworkSbasis.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <fmt/format.h>
 
 namespace GnssProcessor {
+
+std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
+    std::vector<std::string> sigs,
+    const std::function<double(const std::string&)>& freqOf) {
+    if (sigs.empty()) return {};
+    // Strict TOTAL order — (RINEX band digit, full signal name).  The band digit
+    // orders bands (GPS L1 before L2 before L5), and the full name breaks
+    // same-band ties (C1C before C1W, C2L before C2W) so the result is invariant
+    // to the order signals were registered/passed in — the whole point of the
+    // pin (a same-band swap would silently re-datum the emitted clock).
+    std::sort(sigs.begin(), sigs.end(),
+              [](const std::string& a, const std::string& b) {
+                  const char ba = a.size() >= 2 ? a[1] : '\0';  // RINEX band digit
+                  const char bb = b.size() >= 2 ? b[1] : '\0';
+                  if (ba != bb) return ba < bb;
+                  return a < b;
+              });
+    const std::string first = sigs.front();
+    const double      f1     = freqOf(first);
+    // second = first later signal on a DISTINCT frequency (skips a same-band,
+    // same-frequency co-channel like C1C vs C1W); empty ⇒ single-frequency sat.
+    for (std::size_t k = 1; k < sigs.size(); ++k) {
+        const double fk = freqOf(sigs[k]);
+        if (std::isfinite(fk) && fk > 0.0 && std::isfinite(f1) &&
+            std::abs(fk - f1) > 1.0)
+            return { first, sigs[k] };
+    }
+    return { first, std::string{} };
+}
+
+NetworkSbasis::CodeS2zTimeLink NetworkSbasis::codeS2zTimeLink(
+    const std::vector<std::string>& present_sats,
+    const std::map<std::string, double>& prev_vals) {
+    CodeS2zTimeLink out;
+    // Veterans = present satellites that also have a previous-epoch solved value.
+    // The row spans them with RHS Σ b̂_prev, pinning the CHANGE of their mean to zero
+    // (each referenced to itself → membership changes never move the target).
+    for (const auto& sat : present_sats) {
+        const auto it = prev_vals.find(sat);
+        if (it != prev_vals.end()) {
+            out.jac_sats.push_back(sat);
+            out.rhs += it->second;
+        }
+    }
+    // No veteran (cold start / warm-resume miss / every satellite fresh): fall back to
+    // the legacy all-present Σ = 0 seed — a REAL re-reference the driver must signal.
+    if (out.jac_sats.empty()) {
+        out.jac_sats = present_sats;
+        out.rhs      = 0.0;
+        out.reseed   = true;
+    }
+    return out;
+}
 
 NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     const NetworkEstimator& est,
@@ -35,6 +91,39 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
         by_const[constellationOf(sat)].push_back(sat);
     }
     for (auto& [c, sats] : by_const) std::sort(sats.begin(), sats.end());
+
+    // --- BROADCAST-ANCHORED clock datum (network.clock_datum_broadcast_anchored)
+    // brdc_rts only: each satellite's Δδtˢ (relative to its OWN broadcast
+    // a-priori) is anchored toward 0 by a soft per-satellite constraint row at
+    // 1/σ² — the anchors ARE the gauge, folded BEFORE the rank gate.  No pivot
+    // (no handover seam), and unlike sum-to-zero there is no redistribution
+    // when membership changes: the common-mode stays bound to the external
+    // broadcast reference, so the absolute clock-product frame holds still.
+    // Rows are per-SATELLITE (single-entry), deliberately soft (σ ≈ 3 m ≫ the
+    // between-sat data information) so the estimable clock structure stays
+    // data-driven; the rank gate still sees the common-mode at ≈ N/σ², far
+    // above the relative cutoff.
+    if (decl.isb_datum == SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite) {
+        const double sigma = decl.broadcast_anchor_sigma_m;
+        if (!(std::isfinite(sigma) && sigma > 0.0)) {
+            throw std::runtime_error(fmt::format(
+                "NetworkSbasis: broadcast-anchored clock datum with invalid anchor "
+                "sigma {} m — the gauge would be undefined", sigma));
+        }
+        Eigen::Index nsat = 0;
+        for (const auto& [c, sats] : by_const)
+            nsat += static_cast<Eigen::Index>(sats.size());
+        Eigen::MatrixXd H(nsat, est.numShared());
+        H.setZero();
+        Eigen::Index r = 0;
+        for (const auto& [c, sats] : by_const)
+            for (const std::string& s : sats) H(r++, est.clockColumn(s)) = 1.0;
+        plan.clock_constraint_H = std::move(H);
+        plan.clock_constraint_z = Eigen::VectorXd::Zero(nsat);
+        plan.clock_constraint_weight = 1.0 / (sigma * sigma);
+        plan.declared_dimension = 0;   // the anchors close every clock gauge pre-gate
+        return plan;                   // shared_datum + clock_pivot intentionally empty
+    }
 
     // --- SUM-TO-ZERO clock datum (network.clock_datum_sum_to_zero) -----------
     // Anchor-free: fix each constellation's clock common-mode with a sum-to-zero

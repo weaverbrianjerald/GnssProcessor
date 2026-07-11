@@ -934,6 +934,14 @@ namespace GnssProcessor {
         return false;
     }
 
+    bool Antenna::hasReceiverAntennaMatch() const {
+        // Same matching the correction path runs (rinex_parser_.getReceiverAntennaType()
+        // → findReceiverAntennaEntry, with the opt-in substitution fallback), but with
+        // warn_on_ambiguity=false so this pure query neither warns nor mutates state.
+        return findReceiverAntennaEntry(
+            rinex_parser_.getReceiverAntennaType(), /*warn_on_ambiguity=*/false) != nullptr;
+    }
+
     bool Antenna::wasAtxSubstituted(const std::string& satellite,
                                      const std::string& signal,
                                      System system) const {

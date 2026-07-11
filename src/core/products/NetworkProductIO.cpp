@@ -177,9 +177,16 @@ struct LineAssembler {
                 pb.bias_m            = std::stod(f[3]);
                 pb.signal_integer    = (std::stoi(f[4]) != 0);
                 pb.wide_lane_integer = std::stoi(f[5]);
+                // Fields >=6 (any order): the RTA-4 positional post-emit phase disc counter (a
+                // bare int) and/or the T3d σ token (sigma=<val>).  Scan + dispatch by shape so
+                // the two coexist (mirrors the S-line key=value dispatch).
+                for (std::size_t k = 6; k < f.size(); ++k) {
+                    if (f[k].rfind("sigma=", 0) == 0)
+                        pb.sigma_m = std::stod(f[k].substr(6));
+                    else if (f[k].find('=') == std::string::npos)
+                        cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[k]);
+                }
                 satSolution(f[1]).phase_bias[f[2]] = pb;
-                if (f.size() > 6)   // RTA-4: optional post-emit phase disc counter (field 7)
-                    cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[6]);
             } else if (tag == "R") {   // B1: retro-bump satellite set (per-sat disc)
                 if (!have_cur) { ok = false; return completed; }
                 for (std::size_t k = 1; k < f.size(); ++k)
@@ -243,6 +250,10 @@ struct LineAssembler {
                             c.generation_id = static_cast<uint32_t>(std::stoul(f[k].substr(4)));
                         } else if (f[k].rfind("stale=", 0) == 0) {
                             c.staleness_horizon_s = std::stod(f[k].substr(6));
+                        } else if (f[k].rfind("cbjump=", 0) == 0) {
+                            c.code_bias_jump_test = (std::stoi(f[k].substr(7)) != 0);
+                        } else if (f[k].rfind("clkset=", 0) == 0) {
+                            c.clock_disc_on_set_change = (std::stoi(f[k].substr(7)) != 0);
                         } else if (f[k].rfind("frame=", 0) == 0) {
                             c.frame_id = f[k].substr(6);
                         } else if (f[k].rfind("cepoch=", 0) == 0) {
@@ -251,6 +262,8 @@ struct LineAssembler {
                             c.atx_id = f[k].substr(4);
                         } else if (f[k].rfind("oref=", 0) == 0) {
                             c.orbit_ref = f[k].substr(5);
+                        } else if (f[k].rfind("pdr=", 0) == 0) {
+                            c.decl.eq34_datum_receiver = f[k].substr(4);   // Card 3 diagnostic
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -355,6 +368,10 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
         out_ << ",gid=" << contract.generation_id;
     if (contract.staleness_horizon_s > 0.0)   // RTA-11: only when armed (byte-identity)
         out_ << ",stale=" << fmt::format("{}", contract.staleness_horizon_s);
+    if (contract.code_bias_jump_test)         // only when armed (byte-identity)
+        out_ << ",cbjump=1";
+    if (contract.clock_disc_on_set_change)    // only when armed (byte-identity)
+        out_ << ",clkset=1";
     // RTA-12 identity fields: each ONLY when non-empty, so a producer that
     // declares none of them writes the pre-RTA-12 S line byte-for-byte.
     if (!contract.frame_id.empty())
@@ -365,6 +382,10 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
         out_ << ",atx=" << contract.atx_id;
     if (!contract.orbit_ref.empty())
         out_ << ",oref=" << contract.orbit_ref;
+    // Card 3 (SingleReceiverChain) diagnostic: the datum receiver r1.  ONLY when
+    // non-empty, so a non-eq34 producer writes the S line byte-for-byte.
+    if (!contract.decl.eq34_datum_receiver.empty())
+        out_ << ",pdr=" << contract.decl.eq34_datum_receiver;
     out_ << '\n';
 }
 
@@ -497,6 +518,11 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                  << ',' << (pb.signal_integer ? 1 : 0) << ',' << pb.wide_lane_integer;
             if (disc_source)
                 out_ << ',' << disc_source->discontinuityCounter(s.sat, signal);
+            // T3d (B1b): optional trailing σ as a key=value token so it never collides with the
+            // positional disc field.  pb.sigma_m is nonzero only when emit_phase_bias_sigma is
+            // armed ⇒ an OFF run emits no token ⇒ byte-identical.  Mirrors the C-line iode= tail.
+            if (pb.sigma_m > 0.0 && std::isfinite(pb.sigma_m))
+                out_ << ",sigma=" << fmt::format("{}", pb.sigma_m);
             out_ << '\n';
         }
         if (s.has_ura)   // B1: per-sat URA (emitted only when network.emit_ura on → no U lines otherwise)
@@ -695,9 +721,11 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
 NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContract& contract) {
     // present=false (v1 / pre-B6 file): the defaults reproduce the pre-B6 replay
     // behavior exactly (the emitter's default threshold, no clock-disc channel,
-    // no staleness horizon).
+    // no staleness horizon, no optional code-jump / clock-set channels).
     return NetworkProductEmitter(contract.disc_threshold_m, contract.emit_clock_disc,
-                                 contract.staleness_horizon_s);
+                                 contract.staleness_horizon_s,
+                                 contract.code_bias_jump_test,
+                                 contract.clock_disc_on_set_change);
 }
 
 // ===========================================================================

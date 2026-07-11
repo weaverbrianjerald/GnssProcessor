@@ -55,8 +55,10 @@
 
 #include <Eigen/Dense>
 
+#include <functional>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "filter/NetworkEstimator.hpp"
@@ -76,9 +78,33 @@ struct SbasisDeclaration {
     /// constellation char ("G","E",...) -> reference satellite pinned for that
     /// constellation's clock gauge.  Empty entry => auto-pick (first registered).
     std::map<std::string, std::string> clock_pivot_sat;
-    /// Ambiguity datum convention: the pivot receiver's ambiguities are pinned
-    /// (the estimable phase bias carries that lump).  Recorded for the consumer.
-    enum class AmbDatum { PivotReceiverZeroAmbiguity } amb_datum{ AmbDatum::PivotReceiverZeroAmbiguity };
+    /// Ambiguity datum convention (how the per-(satellite,signal) phase-bias↔
+    /// ambiguity gauge is fixed).  Recorded so the consumer knows which receiver
+    /// frame the emitted satellite phase bias references.
+    ///  - @c PivotReceiverZeroAmbiguity (default): ONE elected receiver's ambiguity
+    ///    is pinned to zero per (satellite,signal), so the estimable phase bias
+    ///    carries that receiver's integer lump (legacy single-pivot + prioritized
+    ///    anchor).
+    ///  - @c SumToZeroPerReceiver (@c network.phase_datum_ensemble, Fix A):
+    ///    anchor-free — the gauge is fixed by @f$\sum_r z^s_{r,\sigma}=0@f$ over the
+    ///    tracking receivers, so the phase bias references the receiver ENSEMBLE
+    ///    (no pivot, no handover, and a consistent between-satellite reference).
+    ///    Ambiguities are NOT directly integer (Odijk CC-S, needs Eq-34 recovery).
+    ///  - @c SingleReceiverChain (@c network.phase_datum_eq34, Card 3): the
+    ///    Eq-34 / de Jonge datum — per-(receiver,system,signal) RPB split states
+    ///    let the gauge be fixed by ONE datum-receiver RPB pin + a spanning-tree
+    ///    of ambiguity pins over the bipartite (receiver × satellite) graph, per
+    ///    (constellation,signal) connected component.  The emitted between-
+    ///    satellite reference is then integer-consistent across ALL satellites
+    ///    (each chain hop contributes only an integer, because the hop receiver's
+    ///    fractional bias is a separate estimable state) while staying full-rank
+    ///    at global scale.  Degenerates to the Odijk Eq-34 star (CC-R) in the
+    ///    full-visibility regional case.  Wire value 2 rides the existing v2 S
+    ///    line (no format bump); an old consumer's verifyContract flags
+    ///    "amb_datum differs" as designed.
+    enum class AmbDatum { PivotReceiverZeroAmbiguity, SumToZeroPerReceiver,
+                          SingleReceiverChain }
+        amb_datum{ AmbDatum::PivotReceiverZeroAmbiguity };
     /// Inter-system / clock-gauge datum: every constellation (GPS included) has
     /// its clock gauge fixed by pinning that constellation's OWN satellite clocks;
     /// no system is anchored to a receiver clock, and each station's receiver
@@ -100,8 +126,41 @@ struct SbasisDeclaration {
     ///    clocks/ISB either way (the two datums differ by a per-constellation
     ///    constant a consumer absorbs into its receiver clock), so this is a pure
     ///    S-transform of the pin datum's estimable (between-satellite) solution.
-    enum class IsbDatum { PerConstellationSatClockPin, SumToZeroPerConstellation }
+    ///    CAVEAT (measured, Jul 2026): the reference is the RAW satellite set
+    ///    present each epoch, so as satellites rise/set the survivors
+    ///    redistribute by ∓ΔC0/N to re-zero the sum — the absolute clock-product
+    ///    frame WANDERS with membership (position-invariant for a
+    ///    receiver-clock-estimating consumer, but a real contract issue for the
+    ///    absolute frame, clock-holding across gaps, and disc semantics).
+    ///  - @c BroadcastAnchoredPerSatellite (@c network.clock_datum_broadcast_anchored,
+    ///    @c apriori_source=brdc_rts only): each satellite's clock correction
+    ///    Δδtˢ is anchored to ITS OWN broadcast clock (the a-priori, so the
+    ///    anchor target is 0) by a soft pseudo-observation at
+    ///    @c broadcast_anchor_sigma_m, folded into the shared normals BEFORE the
+    ///    rank gate — the anchors ARE the gauge (declared dimension 0).  No
+    ///    pivot, no handover seam, and — because each satellite is anchored
+    ///    independently — NO redistribution wander when membership changes: the
+    ///    common-mode is bound to the stable EXTERNAL broadcast reference the
+    ///    consumer already reconstructs against.  Technically an over-constraint
+    ///    (N soft pins vs 1 gauge dof); at σ = 3 m against tight phase data the
+    ///    pull on the estimable between-satellite differences is sub-cm, and the
+    ///    absolute common-mode retains ~σ/√N of freedom the consumer absorbs
+    ///    into its receiver clock.
+    enum class IsbDatum { PerConstellationSatClockPin, SumToZeroPerConstellation,
+                          BroadcastAnchoredPerSatellite }
         isb_datum{ IsbDatum::PerConstellationSatClockPin };
+    /// BroadcastAnchoredPerSatellite only: 1σ (m) of the per-satellite
+    /// broadcast-clock anchor pseudo-observation that REALIZES the clock gauge
+    /// (the driver resolves it from @c network.apriori_clock_anchor_sigma_m /
+    /// the brdc_rts auto default of 3.0 m).  Unused in the other datums.
+    double broadcast_anchor_sigma_m{ 3.0 };
+    /// Card 3 (SingleReceiverChain) diagnostic: the component-0 datum receiver r1
+    /// (the receiver whose RPB was pinned).  Serialized as the optional S-line
+    /// token @c pdr=<station> when non-empty — DIAGNOSTIC ONLY (Odijk §6: the user
+    /// never needs the network pivot), and NOT part of @ref verifyContract's
+    /// compatibility check.  Empty ⇒ unset (nothing written; replay/back-compat
+    /// safe, exactly like @c gid=).
+    std::string eq34_datum_receiver;
     /// Satellite bias sign convention (matches kSsr*BiasSign at MeasurementModel).
     double bias_sign{ +1.0 };
     /// Declared wind-up / yaw-attitude model id (producer and consumer must agree;
@@ -130,15 +189,20 @@ public:
         NetworkEstimator::Datum shared_datum;            ///< SHARED hard pins: one sat-clock pin per constellation in PIN mode; EMPTY in SUM-TO-ZERO mode.
         int declared_dimension{ 0 };                     ///< Expected residual shared null-space dim: #constellations in PIN mode (= shared_datum.size()); 0 in SUM-TO-ZERO mode (clock gauges folded before the gate).
         std::map<std::string, std::string> clock_pivot;  ///< constellation char -> chosen pivot sat (for the declaration + handover detection).  EMPTY in SUM-TO-ZERO mode (no pivot).
-        /// SUM-TO-ZERO clock datum (@c network.clock_datum_sum_to_zero) only: one
-        /// all-ones gauge row per constellation over that constellation's
-        /// registered clock columns (Σ δtˢ = 0), to be folded onto the shared
-        /// border via @ref NetworkEstimator::addSharedConstraintRows BEFORE the
-        /// rank gate, exactly like the code-bias per-(const,signal) sum-to-zero.
-        /// EMPTY (0 rows) in PIN mode — the driver folds nothing then.
-        Eigen::MatrixXd clock_constraint_H;              ///< (#constellations × numShared) all-ones-per-constellation gauge Jacobian; empty in PIN mode.
+        /// Constraint-realized clock datums only: gauge rows to be folded onto
+        /// the shared border via @ref NetworkEstimator::addSharedConstraintRows
+        /// BEFORE the rank gate, exactly like the code-bias per-(const,signal)
+        /// sum-to-zero.  SUM-TO-ZERO mode: one all-ones row per constellation
+        /// over that constellation's registered clock columns (Σ δtˢ = 0), at
+        /// @ref kClockGaugeWeight.  BROADCAST-ANCHORED mode: one single-entry
+        /// row per registered clock satellite (Δδtˢ → 0 = its own broadcast
+        /// a-priori), at 1/σ² from
+        /// @ref SbasisDeclaration::broadcast_anchor_sigma_m — the soft anchors
+        /// ARE the datum.  EMPTY (0 rows) in PIN mode — the driver folds
+        /// nothing then.
+        Eigen::MatrixXd clock_constraint_H;              ///< Gauge-row Jacobian (see above); empty in PIN mode.
         Eigen::VectorXd clock_constraint_z;              ///< Constraint targets (zeros); empty in PIN mode.
-        double          clock_constraint_weight{ 0.0 };  ///< Row information weight for the sum-to-zero rows (@ref kClockGaugeWeight); 0 in PIN mode.
+        double          clock_constraint_weight{ 0.0 };  ///< Row information weight (@ref kClockGaugeWeight sum-to-zero; 1/σ² broadcast-anchored); 0 in PIN mode.
     };
 
     /// Tight gauge-row information weight (= 1/σ²) for the SUM-TO-ZERO clock
@@ -158,6 +222,82 @@ public:
     }
 
     /**
+     * @brief Deterministically select a satellite's ionosphere-free reference
+     *        pair (the clock-common code-bias pin) from its registered code
+     *        signals — a pure function of the signal SET and the frequency map.
+     *
+     * The two returned signals form the W6 satellite-clock IF pin
+     * (@f$a_1+a_2=1@f$): the constant added to every one of a satellite's code
+     * biases that its estimable clock absorbs is pinned by fixing this pair's
+     * ionosphere-free combination, keeping the emitted OSB pure-DCB.  Because the
+     * emitted @f$(\delta t^s,\,d^s)@f$ split is anchored to THIS pair, the choice
+     * must not depend on registration/coverage order — otherwise a same-band
+     * channel swap (C1C ↔ C1W) silently re-references the clock by the
+     * satellite's inter-channel bias (a per-satellite step no consumer is told
+     * about).
+     *
+     * Selection is a strict TOTAL order over the signal set:
+     *  - signals are sorted by @b (RINEX band digit, then full signal name), so
+     *    same-band channels tie-break deterministically on their name rather than
+     *    on the order they happen to be passed in;
+     *  - @c first  = the lowest-ordered signal;
+     *  - @c second = the first later signal on a DISTINCT carrier frequency
+     *    (@f$|f-f_{\text{first}}|>1@f$ Hz), or empty when the satellite has only a
+     *    single distinct frequency (a degenerate single-band pin).
+     *
+     * @param sigs   the satellite's registered code signals, in any order (taken
+     *               by value; the caller's container is not reordered).
+     * @param freqOf signal → carrier frequency (Hz); a non-finite or @f$\le 0@f$
+     *               result is treated as "frequency unavailable" for the
+     *               distinct-frequency test on @c second.
+     * @return @c {first, second}; @c second is empty when no distinct second
+     *         frequency exists (or @p sigs is empty, in which case both are empty).
+     */
+    static std::pair<std::string, std::string> selectIfPinPair(
+        std::vector<std::string> sigs,
+        const std::function<double(const std::string&)>& freqOf);
+
+    /// Result of @ref codeS2zTimeLink — the time-linked sum-to-zero target for one
+    /// (constellation,signal) code-bias channel (Card 2, @c network.code_datum_time_linked).
+    struct CodeS2zTimeLink {
+        std::vector<std::string> jac_sats;  ///< satellites getting @c +1 in the sum-to-zero row: the veterans when ≥1 exists, else every present satellite.
+        double                   rhs{0.0};  ///< RHS @f$\sum_{\text{vet}}\hat b_{s,k-1}@f$ over @ref jac_sats (0 when @ref reseed).
+        bool                     reseed{false}; ///< true ⇒ NO veteran present: the row re-seeds at @f$\sum=0@f$ (a real re-reference — the driver disc-bumps the channel's present satellites).
+    };
+
+    /**
+     * @brief Compute the time-linked sum-to-zero target for one code-bias channel
+     *        (Card 2): pin the CHANGE of the previous epoch's veteran mean to zero
+     *        rather than the current-set level to zero.
+     *
+     * The legacy datum spans every present satellite with target 0, so on a rise/set
+     * the target shifts by (departed bias)/@f$m'@f$ and the stiff near-zero-@f$q@f$
+     * carry then relaxes the level over many epochs — a hysteretic, unsignalled
+     * common-mode wander.  Time-linking instead spans the "veterans" (present
+     * satellites that ALSO have a previous-epoch solved value) with RHS
+     * @f$\sum_{\text{vet}}\hat b_{s,k-1}@f$: each veteran is referenced to itself, so
+     * membership changes no longer move the target and new satellites take their level
+     * from the network plus this row.  A channel with NO veterans (cold start, warm-
+     * resume miss, or every satellite fresh) falls back to the legacy all-present
+     * @f$\sum=0@f$ seed and flags @ref CodeS2zTimeLink::reseed so the driver can bump
+     * the disc counters — the one path where the emitted level genuinely re-references.
+     *
+     * Rank is preserved: exactly one row per channel either way, and one veteran
+     * suffices to pin the level gauge (the all-ones common shift changes the veteran
+     * sum by @f$m_{\text{vet}}\cdot c\neq 0@f$).  Pure — no estimator/emitter state.
+     *
+     * @param present_sats satellites present this epoch carrying this channel
+     *                      (order preserved into @ref CodeS2zTimeLink::jac_sats on the
+     *                      no-veteran fallback).
+     * @param prev_vals    satellite → previous-epoch solved bias for THIS channel; a
+     *                      present satellite is a veteran iff it is a key here.
+     * @return the row's spanned satellites, RHS, and re-seed flag.
+     */
+    static CodeS2zTimeLink codeS2zTimeLink(
+        const std::vector<std::string>& present_sats,
+        const std::map<std::string, double>& prev_vals);
+
+    /**
      * @brief Build the SHARED-block clock datum for the constellations present in
      *        @p registered_clock_sats, per @p decl.isb_datum.
      *
@@ -169,6 +309,20 @@ public:
      * row per constellation for the driver to fold BEFORE the rank gate.  Pivot
      * overrides / stickiness are irrelevant and ignored.  Everything below (pivot
      * selection) applies to the legacy PIN mode only.
+     *
+     * @par BROADCAST-ANCHORED mode (@c decl.isb_datum == BroadcastAnchoredPerSatellite)
+     * Each registered satellite clock is anchored to its own broadcast a-priori
+     * (Δδtˢ → 0) by one single-entry constraint row at information
+     * 1/@c decl.broadcast_anchor_sigma_m² — the soft anchors realize the gauge, so
+     * @ref Plan::shared_datum and @ref Plan::clock_pivot are EMPTY and
+     * @ref Plan::declared_dimension = 0.  The common-mode eigenvalue the rank gate
+     * sees is 1/σ² per constellation — independent of N, since the anchor block is
+     * (1/σ²)·I and the gauge direction lies in the clock subspace, so (N_ss+ΔN)·u =
+     * (1/σ²)·u (≈ 0.11 at σ = 3 m, far above the relative cutoff ~1e-9·smax; but a
+     * loose σ ≳ 60 m at ~305 stations drops it BELOW the cutoff — see the binding-σ
+     * gate in GnssConfigLoad).  It does NOT wander when membership changes
+     * (each anchor is independent — no redistribution).  Throws when the declared
+     * σ is non-finite or non-positive (the datum would be undefined).
      *
      * @par PIN mode (@c decl.isb_datum == PerConstellationSatClockPin, default)
      * One satellite-clock pin per constellation.  Pivot selection per

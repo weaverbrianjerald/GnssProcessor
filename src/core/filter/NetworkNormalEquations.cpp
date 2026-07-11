@@ -12,6 +12,7 @@
 #include "filter/NetworkNormalEquations.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -79,6 +80,29 @@ void requireFactorPd(const Eigen::LDLT<Eigen::MatrixXd>& ldlt,
     }
 }
 
+// --- Tier D0 section timers (network.trace_section_timers) -------------------
+// A zero-overhead-when-disabled RAII accumulator: when @p on is false it records
+// no timestamp and touches nothing (so an unarmed run makes NO clock reads and is
+// numerically byte-identical), and when true it adds its scope's wall-clock ms to
+// @p acc on destruction.  Used only by the instrumented kernel primitives below.
+using PerfClock = std::chrono::steady_clock;
+
+inline double perfMsSince(PerfClock::time_point t0) {
+    return std::chrono::duration<double, std::milli>(PerfClock::now() - t0).count();
+}
+
+struct ScopedAccum {
+    bool on;
+    double* acc;
+    PerfClock::time_point t0;
+    ScopedAccum(bool on_, double* acc_) : on(on_), acc(acc_) {
+        if (on) t0 = PerfClock::now();
+    }
+    ~ScopedAccum() {
+        if (on) *acc += perfMsSince(t0);
+    }
+};
+
 } // namespace
 
 NetworkNormalEquations::NetworkNormalEquations(Eigen::Index n_shared)
@@ -111,6 +135,9 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     n_active_ = 0;
     reduced_ = false;
     reduce_recompute_count_ = 0;
+    sumzero_gauges_.clear();
+    station_sumzero_.clear();
+    sumzero_folded_ = false;
 }
 
 void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
@@ -249,6 +276,8 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
 std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
     const Eigen::MatrixXd& W, const Eigen::VectorXd& y) {
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
+    if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
     const Eigen::Index n_r = A_r.cols();
 
@@ -279,6 +308,8 @@ std::size_t NetworkNormalEquations::addStationObservations(
 std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
     const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y) {
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
+    if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
     // Validate ALL dimensions before forming any product — the asDiagonal
     // products below would otherwise trip a hard Eigen assertion (Debug crash /
@@ -380,6 +411,20 @@ void NetworkNormalEquations::reduce(int n_threads) {
         return;
     }
 
+    // D0: time only a REAL recompute (the idempotent no-op above already returned).
+    ScopedAccum _perf(perf_timing_, &timers_.reduce_ms);
+    if (perf_timing_) ++timers_.reduce_recomputes;
+
+    // A recompute rebuilds the reduced system from scratch, so any previously
+    // folded anchor-free sum-to-zero gauge (@ref foldReducedSumZeroGauges) is
+    // dropped from it — its cached (g,β,γ) would be stale for both the reduced
+    // normals and the constrained reconstruction.  Clear them; the driver
+    // re-folds after the reduce (mirrors the code-bias / clock-constraint
+    // re-apply on the within-epoch RAIM re-solve).
+    sumzero_gauges_.clear();
+    station_sumzero_.clear();
+    sumzero_folded_ = false;
+
     // Start from the accumulated shared border (Σ_r N_ss^r + priors), then
     // subtract each station's Schur contribution N_sr (N_rr)^{-1} N_rs.
     reduced_N_ss_ = N_ss_;
@@ -474,6 +519,76 @@ void NetworkNormalEquations::reduce(int n_threads) {
     ++reduce_recompute_count_;  // reduce-once invariant instrumentation (this is a real recompute)
 }
 
+void NetworkNormalEquations::foldReducedSumZeroGauges(
+    const std::vector<SumZeroGauge>& gauges) {
+    if (!reduced_) {
+        reduce();  // need the reduced system + the cached per-station factors
+    }
+    // Idempotent within one reduce: the fold mutates reduced_N_ss_ in place, and
+    // both the null-space gate (via reducedSharedNormals) and the solve trigger it,
+    // so a second call must NOT double-add g gᵀ/β.  A reduce() recompute / reset()
+    // clears the flag.
+    if (sumzero_folded_) {
+        return;
+    }
+    sumzero_gauges_.clear();
+    station_sumzero_.assign(n_active_, {});
+    sumzero_folded_ = true;
+    if (gauges.empty() || n_shared_ == 0) {
+        return;
+    }
+
+    // Cache N_rr⁻¹ u_r per station lazily — a station appears in one gauge per
+    // (sat,signal) it tracks, so the u_r solve would otherwise repeat ~15×.  The
+    // per-column solve n_r = N_rr⁻¹ e_col is genuinely per (station,gauge).
+    std::vector<bool> have_ur(n_active_, false);
+    std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
+
+    for (const auto& gz : gauges) {
+        Eigen::VectorXd g = Eigen::VectorXd::Zero(n_shared_);
+        double beta = 0.0, gamma = 0.0;
+        for (const auto& [si, col] : gz.terms) {
+            if (si >= n_active_) {
+                throw std::out_of_range("NetworkNormalEquations::foldReducedSumZeroGauges: "
+                                        "station index out of range");
+            }
+            const Station& st = stations_[si];
+            if (col < 0 || col >= st.n_local) {
+                fail("foldReducedSumZeroGauges: local column out of range");
+            }
+            Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
+            e(col) = 1.0;
+            const Eigen::VectorXd n_r = st.Nrr_ldlt.solve(e);  // N_rr⁻¹ e_col
+            beta += n_r(col);                                  // (N_rr⁻¹)_{col,col} > 0
+            g.noalias() += st.N_sr * n_r;                      // N_sr n_r
+            if (!have_ur[si]) {
+                nrr_inv_ur[si] = st.Nrr_ldlt.solve(st.u_r);
+                have_ur[si] = true;
+            }
+            gamma += nrr_inv_ur[si](col);                      // (N_rr⁻¹ u_r)_{col}
+        }
+        if (!(beta > 0.0) || !std::isfinite(beta) || !std::isfinite(gamma)) {
+            continue;  // degenerate gauge (no valid terms) — skip
+        }
+        // Schur-projected rank-1 fold: Ñ_ss += g gᵀ/β,  ũ_s += g γ/β.
+        const double inv_beta = 1.0 / beta;
+        reduced_N_ss_.noalias() += (g * g.transpose()) * inv_beta;
+        reduced_u_s_.noalias() += g * (gamma * inv_beta);
+        const std::size_t gidx = sumzero_gauges_.size();
+        FoldedSumZeroGauge fg;
+        fg.terms = gz.terms;
+        fg.g = std::move(g);
+        fg.beta = beta;
+        fg.gamma = gamma;
+        for (const auto& [si, col] : fg.terms)
+            station_sumzero_[si].emplace_back(gidx, col);
+        sumzero_gauges_.push_back(std::move(fg));
+    }
+    // Symmetrize the rank-1 accumulation (g gᵀ is symmetric to ULP; keep the
+    // solve's factorization clean, matching reduce()'s own symmetrization).
+    reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+}
+
 Eigen::VectorXd NetworkNormalEquations::solveShared() {
     if (!reduced_) {
         reduce();
@@ -505,15 +620,30 @@ Eigen::VectorXd NetworkNormalEquations::solveSharedConstrained(
     // both the point solve and (optionally) the formal covariance — the inverse of
     // the same matrix — so the caller need not refactor it.  The PD guard below is
     // the single rank-deficiency safety net (an under-specified datum throws here).
+    //
+    // D0: the factorization + point solve accrue to solve_ms; the explicit full
+    // inverse (the D1 selected-inverse lever's direct cost) accrues to
+    // cov_inverse_ms.  Two disjoint sub-timers, so the profiler sees how much of the
+    // "solve" is actually the covariance the consumers below then propagate.
+    const bool pt = perf_timing_;
+    if (pt) ++timers_.solve_calls;
+    PerfClock::time_point t_fac;
+    if (pt) t_fac = PerfClock::now();
     Eigen::LDLT<Eigen::MatrixXd> ldlt(constrained_N_ss);
     requireFactorPd(ldlt,
                     "solveSharedConstrained: constrained shared block is not "
                     "positive-definite (the applied S-basis constraint did not "
                     "remove the datum deficiency)");
+    if (pt) timers_.solve_ms += perfMsSince(t_fac);
     if (cov_out) {
+        ScopedAccum _perf(pt, &timers_.cov_inverse_ms);
         *cov_out = ldlt.solve(Eigen::MatrixXd::Identity(n_shared_, n_shared_));
     }
-    return ldlt.solve(constrained_u_s);
+    PerfClock::time_point t_sol;
+    if (pt) t_sol = PerfClock::now();
+    Eigen::VectorXd x_s = ldlt.solve(constrained_u_s);
+    if (pt) timers_.solve_ms += perfMsSince(t_sol);
+    return x_s;
 }
 
 Eigen::VectorXd NetworkNormalEquations::reconstructStation(
@@ -531,7 +661,27 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
     }
     // x_r = N_rr^{-1} (u_r − N_rs x_s),  N_rs = N_sr^ᵀ.
     const Eigen::VectorXd rhs = st.u_r - st.N_sr.transpose() * x_s;
-    return st.Nrr_ldlt.solve(rhs);
+    Eigen::VectorXd x_r = st.Nrr_ldlt.solve(rhs);
+
+    // Anchor-free sum-to-zero gauge correction (@ref foldReducedSumZeroGauges):
+    // the fold constrained the reduced solve, so the matching CONSTRAINED locals
+    // are x_r −= n_r·(γ − gᵀ x_s)/β for each gauge this station is a term of
+    // (n_r = N_rr⁻¹ e_col; γ − gᵀ x_s = the total unconstrained ambiguity sum).
+    // Touches only the gauge (common-shift) direction, so every estimable
+    // (between-receiver, between-satellite) quantity is unchanged.  Empty on the
+    // anchor / OFF path → byte-identical.
+    if (!station_sumzero_.empty()) {
+        Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
+        for (const auto& [gidx, col] : station_sumzero_[station]) {
+            const FoldedSumZeroGauge& fg = sumzero_gauges_[gidx];
+            const double s_unc = fg.gamma - fg.g.dot(x_s);
+            e(col) = 1.0;
+            const Eigen::VectorXd n_r = st.Nrr_ldlt.solve(e);
+            e(col) = 0.0;
+            x_r.noalias() -= n_r * (s_unc / fg.beta);
+        }
+    }
+    return x_r;
 }
 
 Eigen::MatrixXd NetworkNormalEquations::reconstructStationCovariance(
@@ -593,6 +743,84 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
         out(i) = var;
     }
     return out;
+}
+
+NetworkNormalEquations::StationRegression
+NetworkNormalEquations::stationRegression(std::size_t station,
+                                          Eigen::Index local_col) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationRegression: "
+                                "station index out of range");
+    }
+    const Station& st = stations_[station];
+    if (local_col < 0 || local_col >= st.n_local) {
+        fail("stationRegression: local column out of range");
+    }
+    // One local solve n_c = N_rr⁻¹ e_r delivers BOTH outputs (the same primitive
+    // reconstructStationCovarianceDiag uses per column):
+    //   cond_var = (N_rr⁻¹)_{rr} = n_c(r)                — pure conditional variance
+    //   row      = M_rᵀ = N_sr n_c = N_sr N_rr⁻¹ e_r     — regression on the border.
+    StationRegression out;
+    Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
+    e_c(local_col) = 1.0;
+    const Eigen::VectorXd n_c = st.Nrr_ldlt.solve(e_c);   // N_rr⁻¹ e_r (n_local)
+    out.cond_var = n_c(local_col);                        // (N_rr⁻¹)_{rr}
+    out.row = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n_c)   // N_sr N_rr⁻¹ e_r (n_shared)
+                              : Eigen::VectorXd();
+    return out;
+}
+
+Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
+    const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+    const Eigen::MatrixXd& cov_free_xs) const {
+    const Eigen::Index k = static_cast<Eigen::Index>(requests.size());
+    if (k == 0) {
+        return Eigen::MatrixXd();
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("jointConditionalCovariance: cov_free_xs size mismatch");
+    }
+    // Per request: n_c = N_rr⁻¹ e_c (in its station's local space) and
+    // m_c = N_sr n_c (shared space).  One cached-factor solve each.
+    std::vector<Eigen::VectorXd> n(k), m(k);
+    std::vector<std::size_t>     sta(k);
+    std::vector<Eigen::Index>    col(k);
+    for (Eigen::Index i = 0; i < k; ++i) {
+        const std::size_t s = requests[i].first;
+        const Eigen::Index c = requests[i].second;
+        if (s >= n_active_) {
+            throw std::out_of_range("NetworkNormalEquations::jointConditionalCovariance: "
+                                    "station index out of range");
+        }
+        const Station& st = stations_[s];
+        if (c < 0 || c >= st.n_local) {
+            fail("jointConditionalCovariance: local column out of range");
+        }
+        Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
+        e_c(c) = 1.0;
+        n[i] = st.Nrr_ldlt.solve(e_c);                       // N_rr⁻¹ e_c
+        m[i] = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n[i])  // N_sr N_rr⁻¹ e_c
+                               : Eigen::VectorXd();
+        sta[i] = s;
+        col[i] = c;
+    }
+    // Cov_free · m_b (shared propagation), precomputed once per request.
+    std::vector<Eigen::VectorXd> cm(k);
+    for (Eigen::Index b = 0; b < k; ++b) {
+        cm[b] = (n_shared_ > 0) ? Eigen::VectorXd(cov_free_xs * m[b]) : Eigen::VectorXd();
+    }
+    Eigen::MatrixXd cov(k, k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        for (Eigen::Index b = a; b < k; ++b) {
+            double v = (n_shared_ > 0) ? m[a].dot(cm[b]) : 0.0;  // m_aᵀ Cov_free m_b
+            if (sta[a] == sta[b]) {
+                v += n[a](col[b]);  // (N_rr⁻¹)_{c_a,c_b} — same local space only
+            }
+            cov(a, b) = v;
+            cov(b, a) = v;
+        }
+    }
+    return cov;
 }
 
 Eigen::VectorXd NetworkNormalEquations::rowRedundancy(

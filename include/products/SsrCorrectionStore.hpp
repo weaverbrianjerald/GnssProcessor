@@ -102,6 +102,12 @@ public:
     void pushCodeBias(const SsrCodeBias& rec, const SsrHeader& header);
     void pushPhaseBias(const SsrPhaseBias& rec, const SsrHeader& header);
     void pushUra(const SsrUra& rec, const SsrHeader& header);
+    /// Push a per-satellite slant-iono supply record.  Unlike the other push*
+    /// methods this takes NO @c SsrHeader: the channel is an in-process consumer
+    /// supply that carries its own @c received_time for the freshness gate, and
+    /// it must NOT overwrite the shared @c SatRecord header that @c emitToStore
+    /// already stamped with the real IOD-SSR / provider for the same satellite.
+    void pushSlantIono(const SsrSlantIono& rec);
     void pushHighRateClock(const SsrHighRateClock& rec, const SsrHeader& header);
 
     /**
@@ -253,6 +259,23 @@ public:
      */
     std::optional<double> getUra(const std::string& sat, const GnssTime& query_time,
                                  double max_age_s = 60.0) const;
+
+    /**
+     * @brief Look up the per-satellite UNDIFFERENCED slant-iono supply record.
+     *
+     * Returns the pushed @c SsrSlantIono (slant delay on GPS L1 + per-LOS 1σ)
+     * when a record is present and fresh (within @p max_age_s of @p query_time),
+     * else @c std::nullopt.  Populated by the network producer for a closed-loop
+     * consumer (@c closed_loop.consume_network_iono on) by evaluating the
+     * co-estimated SH-VTEC field at the consumer's pierce points; the consumer
+     * folds it into a tight ionosphere-weighted (BLUP) pseudo-observation on its
+     * per-satellite slant-iono state.  Mirrors @c getUra's staleness gate.  The
+     * whole struct is returned (not a bare value) because the consumer needs both
+     * @c iono_m and @c sigma_m.
+     */
+    std::optional<SsrSlantIono> getSlantIono(const std::string& sat,
+                                             const GnssTime& query_time,
+                                             double max_age_s = 60.0) const;
 
     // --- A5: age-gated overloads (reject a code/phase-bias record older than
     // @p max_age_s relative to @p query_time, mirroring getOrbitClock's staleness
@@ -656,6 +679,7 @@ private:
         std::optional<SsrClockCorrection>    clock;
         std::optional<SsrCombinedCorrection> combined;
         std::optional<SsrUra>                ura;
+        std::optional<SsrSlantIono>          slant_iono;
         std::optional<SsrHighRateClock>      hrclock;
         std::optional<SsrCodeBias>           code_bias;
         std::optional<SsrPhaseBias>          phase_bias;

@@ -228,6 +228,27 @@ public:
                                                const Datum& datum) const;
 
     /**
+     * @brief Joint conditional covariance of local parameters drawn from one or
+     *        more stations, in the datum-as-known frame — the between-station
+     *        double-difference ambiguity covariance primitive (network AR, Phase 2).
+     *
+     * Zeros the @p datum-pinned columns (and any ensemble phase-gauge columns) of
+     * the last @ref solve's @ref sharedCovariance, then forwards to
+     * @ref NetworkNormalEquations::jointConditionalCovariance.  The @c (a,b) entry
+     * is @f$\mathrm{Cov}(x^{(i)}_{c_a}, x^{(j)}_{c_b}\mid x_s^{\text{free}})@f$;
+     * cross-station entries carry ONLY the shared-parameter propagation (the
+     * coupling that makes a between-station DD covariance correct).
+     *
+     * @param requests @c (station, local_col) pairs.
+     * @param datum    The same datum passed to @ref solve.
+     * @return The @c k×k joint conditional covariance; empty if @p requests is
+     *         empty.  Requires a prior @ref solve.
+     */
+    Eigen::MatrixXd jointConditionalCovariance(
+        const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+        const Datum& datum) const;
+
+    /**
      * @brief Diagonal conditional variances for a SUBSET of a station's local
      *        columns in the datum-as-known frame (the carried-ambiguity harvest).
      *
@@ -248,6 +269,28 @@ public:
     Eigen::VectorXd conditionalLocalVarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
         const Datum& datum) const;
+
+    /**
+     * @brief Regression of one local column on the shared border and its pure
+     *        conditional variance — the ingredients of the rigorous between-epoch
+     *        conditional carry (Card 1, @c network.carry_conditional_coupling).
+     *
+     * Thin forward to @ref NetworkNormalEquations::stationRegression: returns
+     * @f$M_r=N_{sr}N_{rr}^{-1}e_r@f$ (the shared-border regression row) and
+     * @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$ (the CONDITIONAL variance
+     * given the whole shared border, distinct from the MARGINAL
+     * @ref conditionalLocalVarianceDiag returns).  Both are pure functions of the
+     * accumulated normals — datum-independent — so no @ref Datum argument is taken;
+     * the driver restricts @f$M_r@f$ to the FREE (non-datum-pinned) shared columns
+     * itself.  Requires a station already added this epoch (a solve is not
+     * required — the cached @f$N_{rr}@f$ factor exists from @ref addStation).
+     *
+     * @param station   Index from @ref addStation.
+     * @param local_col Local column within that station's @c A_r block.
+     * @return @ref NetworkNormalEquations::StationRegression.
+     */
+    NetworkNormalEquations::StationRegression stationRegression(
+        std::size_t station, Eigen::Index local_col) const;
 
     /**
      * @brief Baarda per-row redundancy numbers for one station's measurement rows
@@ -272,6 +315,22 @@ public:
     ///         epoch — asserts the carried prior did not force a second reduction.
     std::size_t reduceRecomputeCount() const { return neq_.reduceRecomputeCount(); }
 
+    /// @name Tier D0 section-timer passthroughs (@c network.trace_section_timers)
+    ///
+    /// Arm/reset/read the kernel's per-section wall-clock accumulators (assembly /
+    /// reduce / solve / shared-covariance inverse / per-station covariance
+    /// consumers).  Configuration-level: @ref setPerfTiming once before the epoch
+    /// loop (survives @ref reset / @ref beginEpoch, like @ref setStationPdMedianScale).
+    /// OFF (default) ⇒ no clock reads, numerically byte-identical.  See
+    /// @ref NetworkNormalEquations::SectionTimers.
+    /// @{
+    void setPerfTiming(bool on) { neq_.setPerfTiming(on); }
+    void resetSectionTimers() const { neq_.resetSectionTimers(); }
+    const NetworkNormalEquations::SectionTimers& sectionTimers() const {
+        return neq_.sectionTimers();
+    }
+    /// @}
+
     /**
      * @brief Covariance of the shared estimate from the most recent @ref solve.
      *
@@ -283,6 +342,33 @@ public:
      * NetworkNormalEquations::addSharedInfo.  Empty until @ref solve is called.
      */
     const Eigen::MatrixXd& sharedCovariance() const { return shared_cov_; }
+
+    /**
+     * @brief Zero the ROWS AND COLUMNS of every folded ensemble phase-bias gauge
+     *        column in a shared-covariance matrix — treat each @f$\sum_r z^s_r=0@f$
+     *        gauge as an EXACT datum (variance 0).
+     *
+     * Fix A (covariance-carry consistency): the anchor-free ensemble datum fixes each
+     * satellite phase bias POST-reduce via the rank-1 @f$g g^\top/\beta@f$ fold
+     * (@ref NetworkNormalEquations::foldReducedSumZeroGauges).  A gauge's shared
+     * column is the gauge (null) direction of the un-reduced normals, so its slot of
+     * @ref sharedCovariance carries the fold's ARTIFICIAL gauge-direction variance +
+     * phase↔clock/code cross terms — not a physical uncertainty.  Any consumer that
+     * propagates the shared covariance across epochs (the driver's D2 carry) or into
+     * the station locals (the datum-frame conditional covariance) must treat those
+     * columns as exact, EXACTLY as the datum-pinned columns are zeroed.  Without this
+     * the fold's over-tight/cross-coupled gauge covariance (i) over-tightens the D2
+     * phase-bias prior → biases the coupled clock, and (ii) INFLATES the
+     * conditional-ambiguity variance the phase-leveling carry seeds from → the carry
+     * goes inert → the ensemble reference re-realizes every epoch → the emitted phase
+     * bias churns → the co-estimated iono (SH-VTEC) absorbs the churn and feeds it
+     * back → exponential clock/bias runaway.  No-op (byte-identical) when no ensemble
+     * gauge is folded (anchor / OFF path).
+     *
+     * @param cov In/out shared covariance (@c numShared × @c numShared); untouched
+     *            when it is not that size or no gauge column is in range.
+     */
+    void zeroPhaseGaugeColumns(Eigen::MatrixXd& cov) const;
 
     /**
      * @brief The reduced shared normals @f$\tilde N_{ss}@f$ after Schur reduction
@@ -392,16 +478,48 @@ public:
                                  double weight);
 
     /**
+     * @brief Set the anchor-free sum-to-zero phase-bias gauges for this epoch
+     *        (Fix A, @c network.phase_datum_ensemble).
+     *
+     * The ensemble realization of the phase-bias↔ambiguity datum: instead of
+     * pinning ONE anchor receiver's ambiguity per (satellite, signal), fix the
+     * gauge by @f$\sum_r z^s_{r,\sigma}=0@f$ over the RECEIVERS tracking it — no
+     * pivot, no handover, no single-anchor SPOF, and every satellite referenced to
+     * the same receiver ensemble (so the user's between-satellite fractional bias
+     * cancels and its DD ambiguity stays integer; Odijk S-system).  Each gauge's
+     * terms are (station index, local ambiguity column) — the caller (driver)
+     * builds them from its own @c A_r layout.  Stored and folded through the kernel
+     * (@ref NetworkNormalEquations::foldReducedSumZeroGauges) at @ref solve /
+     * @ref reducedSharedNormals, AFTER the Schur reduction and BEFORE the datum
+     * pins / null-space gate.  Pass an empty vector (the default) for the
+     * legacy anchor-pin datum — then @ref reconstructStation and the reduced system
+     * are byte-identical.  Cleared by @ref reset.
+     *
+     * @param gauges One sum-to-zero gauge per (satellite, signal) shared phase bias.
+     */
+    void setPhaseSumZeroGauges(std::vector<NetworkNormalEquations::SumZeroGauge> gauges) {
+        phase_sumzero_gauges_ = std::move(gauges);
+    }
+
+    /**
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
      * @param iod_ssr / provider_id / solution_id IGS-SSR stamps (pass-through).
+     * @param ambiguity_datum_ensemble T3a: true when the phase-bias gauge is the
+     *        anchor-free receiver ENSEMBLE (@c network.phase_datum_ensemble,
+     *        @c SbasisDeclaration::AmbDatum::SumToZeroPerReceiver).  The ensemble
+     *        references the satellite phase bias to the mean of the tracking
+     *        receivers' float ambiguities, so the emitted bias is NON-integer — the
+     *        @c signal_integer flag is forced false so no consumer treats it as an
+     *        AR candidate.  Default false = the pivot-receiver datum (byte-identical).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
-                                         int provider_id = 0, int solution_id = 0) const;
+                                         int provider_id = 0, int solution_id = 0,
+                                         bool ambiguity_datum_ensemble = false) const;
 
     // --- RTA-10: per-constellation σ̂0 carve-out decision --------------------
 
@@ -466,6 +584,7 @@ private:
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
+    std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()

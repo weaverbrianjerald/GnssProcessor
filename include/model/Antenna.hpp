@@ -181,6 +181,23 @@ namespace GnssProcessor {
 		bool hasReceiverAtxEntry(const std::string& signal, System system) const;
 
 		/**
+		 * @brief Whether the RINEX receiver antenna type matched an ATX model entry.
+		 *
+		 * Runs the same receiver-antenna matching as getAntennaCorrection()
+		 * (@ref findReceiverAntennaEntry on the RINEX-header antenna string, honouring
+		 * the opt-in rule-driven substitution when
+		 * @c GnssConfig::enableRxAntennaSubstitution() is set) and reports whether ANY
+		 * entry matched.  When false, EVERY receiver PCO/PCV correction is silently
+		 * zero for this station — getAntennaCorrection() returns only the satellite-side
+		 * terms — so the caller can surface a startup diagnostic instead of relying on
+		 * the per-observation trace being the sole signal.  Does not warn or mutate
+		 * state (unlike the correction path, which passes @c warn_on_ambiguity=true).
+		 *
+		 * @return True iff an ATX entry matches the receiver antenna type.
+		 */
+		bool hasReceiverAntennaMatch() const;
+
+		/**
 		 * @brief Strict ATX coverage check: both satellite and receiver
 		 *        antenna entries must supply finite PCO and populated
 		 *        PCV grids for the *exact* requested frequency.

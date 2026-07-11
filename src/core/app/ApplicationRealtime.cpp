@@ -342,6 +342,20 @@ int Application::runRealTime() {
     if (consumer_profile_on)
         config_.applyNetworkConsumerProfile(log_manager_);
 
+    // T3d: one-shot honesty warnings for a file-tail consumer profile — some correction
+    // channels are only conditionally (σ) or never (in-process iono) present on the wire.
+    if (consumer_profile_on) {
+        if (config_.networkConsumePhaseBiasSigma())
+            log->warn("Consumer: network.consume_phase_bias_sigma is on — the per-phase-bias σ "
+                      "is received ONLY if the tailed producer emitted network.emit_phase_bias_sigma "
+                      "(the P-record sigma= token, T3d); without it the σ is absent and the "
+                      "R-inflation is inert.");
+        if (config_.getNetworkConfig().closed_loop.consume_network_iono)
+            log->warn("Consumer: consume_network_iono is on with a file-tail source — the SH-VTEC "
+                      "slant iono is an IN-PROCESS supply (pushSlantIono) with NO product wire "
+                      "record, so a file-tail consumer cannot receive it (the setting is inert here).");
+    }
+
     // Declared BEFORE the engine so they outlive it (the engine holds a
     // non-owning pointer to the store via setSsrStore).
     std::unique_ptr<SsrCorrectionStore> network_store;

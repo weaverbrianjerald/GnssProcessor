@@ -280,6 +280,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether the RINEX receiver antenna type matched an ATX model entry.
+         *
+         * Delegates to @c Antenna::hasReceiverAntennaMatch().  False means every
+         * receiver PCO/PCV correction is silently zero for this station's carrier
+         * phase; the network driver surfaces this as a startup warning and can
+         * withhold the station from phase-bias emission
+         * (@c network.phase_bias_exclude_unmatched_antenna).
+         *
+         * @return True iff an ATX entry matches the receiver antenna type.
+         */
+        bool hasReceiverAntennaMatch() const {
+            return antenna_.hasReceiverAntennaMatch();
+        }
+
+        /**
          * @brief Check whether both satellite and receiver ATX entries
          *        are fully populated for a (sat, signal) pair.
          *
@@ -432,6 +447,23 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Install a network-wide signal allowlist (coverage gate).
+         *
+         * Keyed by system display name (e.g. "GPS") → the set of RINEX codes
+         * (e.g. {"C1C","L1C","C2W","L2W","C5Q","L5Q"}) admitted to the solve.
+         * A constellation absent from the map, or an empty map, admits every
+         * tracked code (default — byte-identical).  When a constellation IS
+         * present, only its listed codes are used: the canonical per-band pick
+         * (@ref decideConstellationCanonicals) and the @c channel_mode="all"
+         * augmentation both skip non-admitted codes, so the canonical falls
+         * through to the best admitted channel.  Populated by the network
+         * producer from per-station coverage (@c network.signal_min_station_fraction).
+         */
+        void setSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
+            signal_allowlist_ = std::move(allowlist);
+        }
+
+        /**
          * @brief Compute the per-signal I₂ + I₃ correction (m) to add
          *        to the modeled observable.
          *
@@ -515,6 +547,24 @@ namespace GnssProcessor {
                  std::map<std::pair<std::string, char>, std::string>>
                 constellation_canonical_;
         std::set<std::string> constellation_canonical_decided_; /**< Constellations whose canonical set is locked. */
+
+        /**
+         * @brief Network-wide signal coverage allowlist (see @ref setSignalAllowlist).
+         *        system → admitted RINEX codes.  Empty (default) = admit all.
+         */
+        std::map<std::string, std::set<std::string>> signal_allowlist_;
+
+        /**
+         * @brief Whether a RINEX code is admitted for @p system under the coverage
+         *        allowlist.  True (admit) when the feature is off (empty allowlist)
+         *        or the system is not gated; otherwise membership in its admitted set.
+         */
+        bool signalAdmitted(const std::string& system, const std::string& code) const {
+            if (signal_allowlist_.empty()) return true;
+            auto it = signal_allowlist_.find(system);
+            if (it == signal_allowlist_.end()) return true;
+            return it->second.count(code) > 0;
+        }
 
         /**
          * @brief Decide the per-constellation canonical signal set from

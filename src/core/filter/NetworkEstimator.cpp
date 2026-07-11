@@ -13,10 +13,36 @@
 #include "filter/StateKeySchema.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
 namespace GnssProcessor {
+
+namespace {
+
+/// Tier D0 (network.trace_section_timers): RAII wall-clock accumulator for the
+/// covariance-consumer wrappers.  Timed HERE (not in the kernel) so the measured
+/// span includes each wrapper's full-shared-covariance COPY + datum-column
+/// zeroing — the per-call O(n_shared²) overhead that dominates when a wrapper is
+/// invoked per station (e.g. the per-station carried-ambiguity harvest) and that
+/// the D1 selected-inverse rewrite removes.  Zero-overhead + no clock read when
+/// the kernel's timing is not armed (@ref NetworkNormalEquations::perfTiming).
+struct CovTimer {
+    const NetworkNormalEquations& neq;
+    bool on;
+    std::chrono::steady_clock::time_point t0;
+    explicit CovTimer(const NetworkNormalEquations& n) : neq(n), on(n.perfTiming()) {
+        if (on) t0 = std::chrono::steady_clock::now();
+    }
+    ~CovTimer() {
+        if (on)
+            neq.accumulateCovConsumer(std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count());
+    }
+};
+
+} // namespace
 
 std::string NetworkEstimator::key_(const std::string& sat, SharedParamKind kind,
                                    const std::string& signal) {
@@ -115,6 +141,7 @@ void NetworkEstimator::reset() {
     index_.clear();
     columns_.clear();
     shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
+    phase_sumzero_gauges_.clear();  // Fix A: the ensemble datum is per-epoch
     epoch_open_ = false;
     solved_ = false;
 }
@@ -160,6 +187,12 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
         throw std::logic_error("NetworkEstimator::solve: call beginEpoch() first");
     }
     neq_.reduce(reduce_threads_);
+    // Fix A: fold the anchor-free sum-to-zero phase-bias gauges onto the reduced
+    // system (idempotent within the reduce — the gate path may have folded them
+    // already).  Empty on the anchor / OFF path → no-op, byte-identical.
+    if (!phase_sumzero_gauges_.empty()) {
+        neq_.foldReducedSumZeroGauges(phase_sumzero_gauges_);
+    }
 
     // Apply the explicit minimum-constraint datum to a COPY of the reduced
     // shared system (the kernel's W5 seam), so the kernel's own reduced normals
@@ -231,11 +264,28 @@ void NetworkEstimator::addStationPrior(std::size_t station,
 
 Eigen::VectorXd NetworkEstimator::reconstructStation(
     std::size_t station, const Eigen::VectorXd& x_s) const {
+    CovTimer _t(neq_);  // D0 (cov consumer)
     return neq_.reconstructStation(station, x_s);
+}
+
+void NetworkEstimator::zeroPhaseGaugeColumns(Eigen::MatrixXd& cov) const {
+    // Fix A: each folded ensemble sum-to-zero gauge fixes a satellite phase-bias
+    // shared column POST-reduce; that column is the gauge direction, so its slot of
+    // shared_cov_ carries the fold's artificial variance/cross terms.  Treat it as an
+    // exact datum column (zero row + col), mirroring the datum-pin zeroing.  Empty on
+    // the anchor / OFF path → byte-identical no-op.
+    for (const auto& gz : phase_sumzero_gauges_) {
+        const Eigen::Index c = gz.shared_col;
+        if (c >= 0 && c < cov.rows() && c < cov.cols()) {
+            cov.row(c).setZero();
+            cov.col(c).setZero();
+        }
+    }
 }
 
 Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
     std::size_t station, const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
     // (variance 0), not as carrying the Dirichlet pin's artificial 1/pin_scale.
     Eigen::MatrixXd cov_free = shared_cov_;
@@ -245,12 +295,33 @@ Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
             cov_free.col(pin.column).setZero();
         }
     }
+    // Fix A: the ensemble phase-bias gauges are exact datum columns too.
+    zeroPhaseGaugeColumns(cov_free);
     return neq_.reconstructStationCovariance(station, cov_free);
+}
+
+Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
+    const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+    const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
+    // (variance 0), mirroring conditionalLocalCovariance so the between-station
+    // DD covariance is differenced in the datum-as-known frame.
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    zeroPhaseGaugeColumns(cov_free);
+    return neq_.jointConditionalCovariance(requests, cov_free);
 }
 
 Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     std::size_t station, const std::vector<Eigen::Index>& local_cols,
     const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Same datum-as-known frame as conditionalLocalCovariance: the pinned shared
     // columns are EXACT (variance 0), not carrying the Dirichlet pin's 1/pin_scale.
     Eigen::MatrixXd cov_free = shared_cov_;
@@ -260,13 +331,26 @@ Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
             cov_free.col(pin.column).setZero();
         }
     }
+    // Fix A: the ensemble phase-bias gauges are exact datum columns too.  Without
+    // this the folded gauge-direction variance inflates the carried ambiguity
+    // conditional variance → the phase-leveling carry goes inert → the ensemble
+    // reference churns → runaway (see zeroPhaseGaugeColumns).
+    zeroPhaseGaugeColumns(cov_free);
     return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free);
+}
+
+NetworkNormalEquations::StationRegression NetworkEstimator::stationRegression(
+    std::size_t station, Eigen::Index local_col) const {
+    CovTimer _t(neq_);  // D0 (cov consumer)
+    // Pure normals — no datum frame (M_r and (N_rr⁻¹)_{rr} are datum-independent).
+    return neq_.stationRegression(station, local_col);
 }
 
 Eigen::VectorXd NetworkEstimator::rowRedundancy(
     std::size_t station, const Eigen::MatrixXd& A_s_rows,
     const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
     const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Datum-as-known frame: the pinned shared columns are EXACT gauges (variance 0).
     Eigen::MatrixXd cov_free = shared_cov_;
     for (const auto& pin : datum) {
@@ -275,11 +359,20 @@ Eigen::VectorXd NetworkEstimator::rowRedundancy(
             cov_free.col(pin.column).setZero();
         }
     }
+    // Fix A: the ensemble phase-bias gauges are exact datum columns too.
+    zeroPhaseGaugeColumns(cov_free);
     return neq_.rowRedundancy(station, A_s_rows, A_r_rows, w_rows, cov_free);
 }
 
 const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
     neq_.reduce(reduce_threads_);
+    // Fix A: fold the anchor-free phase-bias gauges BEFORE the null-space gate
+    // inspects the reduced normals, so the phase gauge reads as fixed (the gate's
+    // declared dimension stays = the clock deficiency count, as in the anchor mode
+    // whose local pins were pre-eliminated).  Idempotent with the solve()-side fold.
+    if (!phase_sumzero_gauges_.empty()) {
+        neq_.foldReducedSumZeroGauges(phase_sumzero_gauges_);
+    }
     return neq_.reducedSharedNormals();
 }
 
@@ -450,7 +543,8 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
 NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_s,
                                                        const GnssTime& epoch_time,
                                                        int iod_ssr, int provider_id,
-                                                       int solution_id) const {
+                                                       int solution_id,
+                                                       bool ambiguity_datum_ensemble) const {
     if (x_s.size() != numShared()) {
         throw std::invalid_argument(
             "NetworkEstimator::toSolutionEpoch: x_s size != numShared()");
@@ -502,7 +596,15 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
                 // integer-recoverable, so they stay false.  Truthful metadata: no consumer
                 // reads it yet, but it is cheap insurance before FDMA biases enter the
                 // product (a consumer must not treat an 'R' bias as an integer candidate).
-                npb.signal_integer = !d.sat.empty() && d.sat[0] != 'R';
+                // T3a: under the anchor-free ensemble datum the bias references the
+                // receivers' float-ambiguity mean (Odijk Eq. 34 non-integer), so it is
+                // NOT an AR candidate regardless of constellation.  Otherwise — the
+                // pivot-receiver anchor datum OR the Card-3 Eq-34 single-receiver-chain
+                // datum (network.phase_datum_eq34), which is mutually exclusive with the
+                // ensemble so it passes false here — the emitted bias carries only
+                // integer lumps and preserves the integer property for CDMA sats.
+                npb.signal_integer = !ambiguity_datum_ensemble
+                                     && !d.sat.empty() && d.sat[0] != 'R';
                 break;
             }
             case SharedParamKind::VtecSh:

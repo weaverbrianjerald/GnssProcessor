@@ -70,6 +70,12 @@ inline constexpr std::string_view kGlonassFcnMarker = "_k";
 /// Receiver differential code bias infix in code-bias keys ("GPS_DCB").
 inline constexpr std::string_view kDcbInfix = "DCB";
 
+/// Receiver PHASE-bias infix in receiver-phase-bias keys ("GPS_RPB_L1C").
+/// The surrounding underscores ("_RPB_") make the infix un-producible by
+/// @c makeIfbKey / @c makeDcbKey, so the receiver-phase-bias namespace stays
+/// disjoint from the receiver code-bias namespace (Card 3, §4c).
+inline constexpr std::string_view kRpbInfix = "RPB";
+
 /// Narrow-lane infix in NlWl-basis ambiguity keys ("G01_NL_1").
 inline constexpr std::string_view kNlInfix = "NL";
 
@@ -505,6 +511,76 @@ inline std::optional<std::string> parseDcbKey(std::string_view key) {
     if (key[dcb - 1] != kCodeBiasDelimiter) return std::nullopt;     // need "<sys>_DCB"
     if (dcb + kDcbInfix.size() != key.size()) return std::nullopt;   // nothing after "DCB"
     return std::string(key.substr(0, dcb - 1));
+}
+
+// ===========================================================================
+// 4c. Receiver PHASE-bias keys — "<system>_RPB_<signal>"
+// ---------------------------------------------------------------------------
+// Examples: "GPS_RPB_L1C", "Galileo_RPB_L5Q"
+//
+//   system : system name string from PppUtils::getSystemString()
+//            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
+//   signal : full RINEX signal code (3 chars; the network allocates these on
+//            RAW phase signals only, so no embedded '_' iono-free combos).
+//
+// The per-(receiver, system, signal) satellite-phase-bias split state
+// δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum (Card 3,
+// network.phase_datum_eq34).  Giving the receiver fractional phase bias its
+// OWN estimable state stops it lumping into the emitted satellite phase bias,
+// so the emitted between-satellite reference stays integer-consistent across
+// ALL satellites (each chain hop contributes only an integer).  These are
+// LOCAL states (observed by exactly one station), kept in the SEPARATE map
+// StateManager::receiver_phase_bias_indices_.  The "_RPB_" infix keeps the
+// namespace disjoint from the receiver code-bias keys (§4) — parseIfbKey /
+// parseDcbKey look for the "IFB"/"DCB" infix and never match "RPB".
+//
+// Constructed in:  the network driver / MeasurementModel (eq34 branch only)
+// Stored in:       StateManager::receiver_phase_bias_indices_
+// Parsed in:       the network driver (RPB pin fold, prune bookkeeping)
+// ===========================================================================
+
+/// Decomposed receiver phase-bias key ("<system>_RPB_<signal>").
+struct ReceiverPhaseBiasKeyParts {
+    std::string system;  ///< system name string (e.g. "GPS", "Galileo").
+    std::string signal;  ///< full RINEX signal code (e.g. "L1C").
+};
+
+/// Build a receiver phase-bias key "<system>_RPB_<signal>".
+inline std::string makeReceiverPhaseBiasKey(std::string_view system,
+                                            std::string_view signal) {
+    std::string out;
+    out.reserve(system.size() + 2 + kRpbInfix.size() + signal.size());
+    out.append(system);
+    out.push_back(kCodeBiasDelimiter);   // '_'
+    out.append(kRpbInfix);
+    out.push_back(kCodeBiasDelimiter);   // '_'
+    out.append(signal);
+    return out;
+}
+
+/// True iff @p key carries the "_RPB_" infix (cheap namespace test).
+inline bool isReceiverPhaseBiasKey(std::string_view key) {
+    // Need "<sys>_RPB_<sig>": at least one char of system before "_RPB_" and
+    // at least one signal char after it.
+    const std::string_view needle = "_RPB_";
+    const auto pos = key.find(needle);
+    return pos != std::string_view::npos
+        && pos > 0
+        && pos + needle.size() < key.size();
+}
+
+/// Parse a receiver phase-bias key.  Returns @c std::nullopt unless the key
+/// has the exact form "<system>_RPB_<signal>" with non-empty system and signal.
+inline std::optional<ReceiverPhaseBiasKeyParts>
+parseReceiverPhaseBiasKey(std::string_view key) {
+    const std::string_view needle = "_RPB_";
+    const auto pos = key.find(needle);
+    if (pos == std::string_view::npos) return std::nullopt;
+    if (pos == 0 || pos + needle.size() >= key.size()) return std::nullopt;
+    return ReceiverPhaseBiasKeyParts{
+        std::string(key.substr(0, pos)),
+        std::string(key.substr(pos + needle.size())),
+    };
 }
 
 // ===========================================================================

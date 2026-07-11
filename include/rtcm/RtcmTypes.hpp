@@ -196,6 +196,14 @@ struct SsrPhaseBiasEntry {
     bool   signal_integer{false};       ///< Bias preserves integer ambiguity (per IGS-SSR).
     int    wide_lane_integer{0};        ///< Wide-lane integer indicator (2 bits).
     int    discontinuity_counter{0};    ///< Increments on bias discontinuity (forces AR reset).
+    /// B1b: 1σ formal uncertainty (m) of this phase-bias correction, from the network
+    /// shared covariance (EWMA(σ̂0)×√var, gauge-exact).  0 for every RTCM/IGS-SSR-decoded
+    /// bias and for network products emitted with @c network.emit_phase_bias_sigma off —
+    /// the wire format has NO such field, so this is an internal in-process-store
+    /// extension (closed-loop consumer only).  The consumer folds sigma_m² into the
+    /// measurement variance of that phase row when @c network.consume_phase_bias_sigma is
+    /// on (the Tienstra §6.6 phase-bias block of Qŷ_B1 the diagonal-only URA channel omits).
+    double sigma_m{0.0};
 };
 
 /**
@@ -226,6 +234,29 @@ struct SsrPhaseBias {
 struct SsrUra {
     std::string sat;
     double      ura_m{0.0};
+    GnssTime    received_time{0, 0.0};
+    int         iod_ssr{0};
+};
+
+/**
+ * @brief Per-satellite UNDIFFERENCED slant ionospheric delay supplied by the
+ *        network producer to a closed-loop consumer.
+ *
+ * The producer evaluates its co-estimated single-layer SH-VTEC field at the
+ * consumer's ionospheric pierce point for each satellite, maps VTEC→slant with
+ * the thin-shell obliquity, and expresses the result as a range delay on GPS L1
+ * (the same reference the consumer's per-satellite slant-iono STATE uses — see
+ * @c MeasurementModel's iono Jacobian, α=(f_L1/f)²).  It is emitted UNDIFFERENCED
+ * per satellite (Odijk 2016 Table 11: a vertical→slant mapping intervenes at the
+ * user, so it must NOT be between-satellite differenced) and carries a per-LOS
+ * 1σ so the consumer can weight it as an ionosphere-weighted / BLUP prior rather
+ * than trusting it as exact.  Carried in-process only (an owned
+ * @c SsrCorrectionStore channel); it is NOT part of the on-disk product stream.
+ */
+struct SsrSlantIono {
+    std::string sat;
+    double      iono_m{0.0};             ///< Slant ionospheric delay on GPS L1 (m), undifferenced.
+    double      sigma_m{0.0};            ///< Per-LOS representativeness 1σ (m).
     GnssTime    received_time{0, 0.0};
     int         iod_ssr{0};
 };

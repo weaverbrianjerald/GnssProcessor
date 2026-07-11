@@ -26,10 +26,13 @@
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 
+#include <cmath>
+#include <limits>
 #include <map>
 #include <random>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "filter/NetworkEstimator.hpp"
@@ -195,6 +198,675 @@ TEST(NetworkEstimatorTest, MultiPinDatumWithIndependentGauge) {
         EXPECT_NEAR(x_s(clkCol[s]), t.c[s] - c0, 1e-6) << "sat clock " << s;
         EXPECT_NEAR(x_s(pbCol[s]), t.b[s] + t.M[0][s], 1e-6) << "sat phase bias " << s;
     }
+}
+
+// Fix A — anchor-free ENSEMBLE phase-bias datum: instead of pinning ONE anchor
+// receiver's ambiguity per satellite (M_{0,s}=0), fix the phase-bias↔ambiguity
+// gauge by a SUM-TO-ZERO over the receivers (Σ_r M_{r,s}=0), folded through the
+// kernel's Schur-projected rank-1 correction (foldReducedSumZeroGauges).  The
+// estimable satellite phase bias then references the receiver ENSEMBLE MEAN
+// (b_s + mean_r M_{r,s}), the ambiguities are M_{r,s} − mean_r (summing to zero),
+// and the between-receiver differences equal the truth — a pure S-transform of
+// the anchor datum (same estimable quantities, different gauge).  No pivot, no
+// pin rows in any station's block.
+TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
+    const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s] = est.registerPhaseBias(t.sats[s], signal);
+    }
+
+    est.beginEpoch();
+    std::vector<std::size_t> ids;
+    for (int r = 0; r < t.R; ++r) {
+        // Every station symmetric — NO pivot pin rows (the ensemble datum needs none).
+        const int S = t.S;
+        const Eigen::Index n_local = 1 + S;      // [a_r, M_{r,0..S-1}]
+        const Eigen::Index m = 2 * S;
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(m, est.numShared());
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(m, n_local);
+        Eigen::VectorXd w = Eigen::VectorXd::Ones(m);
+        Eigen::VectorXd y = Eigen::VectorXd::Zero(m);
+        Eigen::Index row = 0;
+        for (int s = 0; s < S; ++s) {
+            A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0;
+            y(row) = t.a[r] - t.c[s]; ++row;
+            A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+            A_r(row, 0) = 1.0; A_r(row, 1 + s) = 1.0;
+            y(row) = t.a[r] - t.c[s] + t.b[s] + t.M[r][s]; ++row;
+        }
+        ids.push_back(est.addStation(A_s, A_r, w, y));
+    }
+
+    // Ensemble phase-bias datum: one Σ_r M_{r,s}=0 gauge per satellite, over every
+    // receiver's ambiguity to that satellite (local column 1+s in each station).
+    std::vector<NetworkNormalEquations::SumZeroGauge> gauges(t.S);
+    for (int s = 0; s < t.S; ++s)
+        for (int r = 0; r < t.R; ++r)
+            gauges[s].terms.emplace_back(ids[r], static_cast<Eigen::Index>(1 + s));
+    est.setPhaseSumZeroGauges(gauges);
+
+    // Clock datum unchanged: a SHARED pin on the reference satellite clock.
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+    const Eigen::VectorXd x_s = est.solve(datum);
+
+    const double c0 = t.c[0];
+    for (int s = 0; s < t.S; ++s) {
+        double meanM = 0.0;
+        for (int r = 0; r < t.R; ++r) meanM += t.M[r][s];
+        meanM /= t.R;
+        EXPECT_NEAR(x_s(clkCol[s]), t.c[s] - c0, 1e-6) << "sat clock " << s;
+        EXPECT_NEAR(x_s(pbCol[s]), t.b[s] + meanM, 1e-6)   // ENSEMBLE-mean reference
+            << "sat phase bias " << s;
+    }
+
+    std::vector<Eigen::VectorXd> xr(t.R);
+    for (int r = 0; r < t.R; ++r) xr[r] = est.reconstructStation(ids[r], x_s);
+    for (int s = 0; s < t.S; ++s) {
+        double meanM = 0.0, sum = 0.0;
+        for (int r = 0; r < t.R; ++r) meanM += t.M[r][s];
+        meanM /= t.R;
+        for (int r = 0; r < t.R; ++r) {
+            EXPECT_NEAR(xr[r](1 + s), t.M[r][s] - meanM, 1e-6)
+                << "ambiguity r=" << r << " s=" << s;
+            sum += xr[r](1 + s);
+        }
+        EXPECT_NEAR(sum, 0.0, 1e-6) << "sum-to-zero gauge, sat " << s;
+        // Pure S-transform: between-receiver differences match the truth exactly.
+        for (int r = 1; r < t.R; ++r)
+            EXPECT_NEAR(xr[r](1 + s) - xr[0](1 + s), t.M[r][s] - t.M[0][s], 1e-6)
+                << "DD-invariant r=" << r << " s=" << s;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Eq-34 integer-recovery gate (S-system theory reference §6, docs/
+// ssystem_theory_reference_2026-07-09.md).  A network phase-bias datum yields an
+// INTEGER-fixable product for a held-out PPP-RTK user IFF the emitted per-
+// satellite datum reference has INTEGER between-satellite differences.
+//
+// The user applies the emitted bias δ̃_s to its phase; its float ambiguity
+// absorbs  M_u,s − ref_s  with  ref_s = δ̃_s − b_s  (the physical satellite bias
+// b_s cancels between the observation's true bias and the emitted product).  The
+// user's fixable between-satellite single-difference is
+//     (M_u,s − M_u,p) − (ref_s − ref_p).
+// With integer user ambiguities this is integer IFF  D_sp = ref_s − ref_p  is an
+// integer for every satellite pair (s,p).
+//
+//   CC-R  (single pivot receiver 0, M_{0,s}=0 pin):  ref_s = M_{0,s}  (integer)
+//         ⇒ D_sp = M_{0,s} − M_{0,p} integer ⇒ user DD integer ⇒ FIXABLE.
+//   Ensemble (Σ_r M_{r,s}=0):  ref_s = mean_r M_{r,s}
+//         ⇒ D_sp = mean_r(M_{r,s} − M_{r,p}) = k_sp / R  ⇒ NON-integer
+//         ⇒ user DD non-integer ⇒ NOT FIXABLE (Odijk CC-S "not directly integer").
+//
+// This is the decisive gate the theory reference mandates before trusting the
+// ensemble datum: churn suppression via the ensemble CANNOT unlock integer AR,
+// because the ensemble product is structurally non-integer (a mean of integers).
+TEST(NetworkEstimatorTest, Eq34UserIntegerRecovery_CCRIntegerEnsembleFractional) {
+    // Integer network ambiguities.  In real GNSS M_{r,s} = integer + a receiver-
+    // common fractional phase bias; here pure integers so the ONLY non-integer
+    // source under test is the datum's own averaging (not receiver biases).
+    Truth t = makeTruth(/*seed=*/99, /*R=*/5, /*S=*/6);
+    for (auto& row : t.M)
+        for (auto& v : row) v = std::round(v);
+
+    const std::string signal = "L1";
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+
+    // ---- CC-R solve: pivot receiver 0 pins M_{0,s}=0 (buildStation pivot rows) ----
+    std::vector<double> ref_ccr(t.S);
+    {
+        NetworkEstimator est;
+        std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+        for (int s = 0; s < t.S; ++s) {
+            clkCol[s] = est.registerClock(t.sats[s]);
+            pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+        }
+        est.beginEpoch();
+        for (int r = 0; r < t.R; ++r) {
+            Eigen::MatrixXd A_s, A_r;
+            Eigen::VectorXd w, y;
+            buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
+            est.addStation(A_s, A_r, w, y);
+        }
+        const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+        const Eigen::VectorXd x_s = est.solve(datum);
+        for (int s = 0; s < t.S; ++s)
+            ref_ccr[s] = x_s(pbCol[s]) - t.b[s];   // ref_s = δ̃_s − b_s
+    }
+
+    // ---- Ensemble solve: Σ_r M_{r,s}=0, no pivot pins ----
+    std::vector<double> ref_ens(t.S);
+    {
+        NetworkEstimator est;
+        std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+        for (int s = 0; s < t.S; ++s) {
+            clkCol[s] = est.registerClock(t.sats[s]);
+            pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+        }
+        est.beginEpoch();
+        std::vector<std::size_t> ids;
+        for (int r = 0; r < t.R; ++r) {
+            const int S = t.S;
+            const Eigen::Index n_local = 1 + S;
+            const Eigen::Index m = 2 * S;
+            Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(m, est.numShared());
+            Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(m, n_local);
+            Eigen::VectorXd w = Eigen::VectorXd::Ones(m);
+            Eigen::VectorXd y = Eigen::VectorXd::Zero(m);
+            Eigen::Index row = 0;
+            for (int s = 0; s < S; ++s) {
+                A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0;
+                y(row) = t.a[r] - t.c[s]; ++row;
+                A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+                A_r(row, 0) = 1.0; A_r(row, 1 + s) = 1.0;
+                y(row) = t.a[r] - t.c[s] + t.b[s] + t.M[r][s]; ++row;
+            }
+            ids.push_back(est.addStation(A_s, A_r, w, y));
+        }
+        std::vector<NetworkNormalEquations::SumZeroGauge> gauges(t.S);
+        for (int s = 0; s < t.S; ++s)
+            for (int r = 0; r < t.R; ++r)
+                gauges[s].terms.emplace_back(ids[r], static_cast<Eigen::Index>(1 + s));
+        est.setPhaseSumZeroGauges(gauges);
+        const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+        const Eigen::VectorXd x_s = est.solve(datum);
+        for (int s = 0; s < t.S; ++s)
+            ref_ens[s] = x_s(pbCol[s]) - t.b[s];
+    }
+
+    // ---- The gate: D_sp = ref_s − ref_p must be integer for the user to fix ----
+    bool ens_has_fraction = false;
+    for (int s = 0; s < t.S; ++s) {
+        for (int p = 0; p < t.S; ++p) {
+            const double d_ccr = ref_ccr[s] - ref_ccr[p];
+            const double d_ens = ref_ens[s] - ref_ens[p];
+            EXPECT_LT(fracDist(d_ccr), 1e-6)
+                << "CC-R between-sat reference D(" << s << "," << p << ")="
+                << d_ccr << " must be integer (user DD fixable)";
+            if (fracDist(d_ens) > 1e-3) ens_has_fraction = true;
+        }
+    }
+    // Ensemble: at least one between-sat reference is a NON-integer k/R fraction
+    // ⇒ the held-out user's DD is non-integer ⇒ the product is NOT integer-fixable.
+    EXPECT_TRUE(ens_has_fraction)
+        << "Ensemble datum should yield a non-integer between-satellite reference "
+           "(mean-of-integers / R) — the structural obstruction to user integer AR.";
+
+    // The ensemble reference is exactly the receiver mean (reproduces the k/R form).
+    for (int s = 0; s < t.S; ++s) {
+        double meanM = 0.0;
+        for (int r = 0; r < t.R; ++r) meanM += t.M[r][s];
+        meanM /= t.R;
+        EXPECT_NEAR(ref_ens[s], meanM, 1e-6) << "ensemble ref = receiver mean, sat " << s;
+    }
+}
+
+// ===========================================================================
+// Card 3 — Eq-34 / de Jonge SINGLE-RECEIVER-CHAIN phase-bias datum.
+//
+// Unlike the fixtures above (which lump the receiver fractional bias into the
+// ambiguity M_{r,s}), the eq34 model gives the receiver fractional phase bias
+// its OWN estimable state δ_r and keeps the ambiguity a true integer z_{r,s}:
+//     code  P_{r,s} = a_r − c_s
+//     phase Φ_{r,s} = a_r − c_s + b_s + δ_r + z_{r,s}   (z ∈ ℤ, δ_r fractional)
+// The datum is realized by a SHARED clock pin (c_{s0}=0) + ONE datum-receiver
+// RPB pin (δ_{r1}=0) + a spanning tree of ambiguity pins over the bipartite
+// (receiver × satellite) observation graph.  Then EVERY emitted between-
+// satellite reference difference is an integer — including for satellites the
+// datum receiver never sees — because each chain hop contributes only an
+// integer while the SAME common receiver fractional δ_{r1} rides every ref_s
+// and cancels in the difference.
+// ===========================================================================
+namespace {
+
+struct Eq34Truth {
+    int R, S;
+    std::vector<double> a, c, b, d;         // rx clk, sat clk, sat pbias, rx frac
+    std::vector<std::vector<int>> z;        // integer ambiguities [R][S]
+    std::vector<std::string> sats;
+    std::vector<std::set<int>> vis;         // vis[r] = sats station r sees
+};
+
+// One spanning-tree ambiguity pin: drive station r's ambiguity for sat s to the
+// integer target (cycles, λ≡1 in these synthetic units).
+struct AmbPin { int r; int s; double target; };
+
+Eq34Truth makeEq34Truth() {
+    Eq34Truth t;
+    t.R = 4; t.S = 5;
+    t.a = {3.0, -2.0, 5.0, 1.0};
+    t.c = {7.0, -4.0, 2.0, 9.0, -1.0};
+    t.b = {0.10, -0.20, 0.35, 0.05, -0.15};   // physical satellite phase bias
+    t.d = {0.30, -0.40, 0.15, 0.45};           // receiver fractional bias (all ≠ 0)
+    t.sats = {"G01", "G02", "G03", "G04", "G05"};
+    const int zz[4][5] = {{ 2, -3,  1,  4, -2},
+                          { 5,  1, -4,  2,  3},
+                          {-1,  2,  6, -5,  1},
+                          { 3, -2,  4,  1, -6}};
+    t.z.assign(4, std::vector<int>(5, 0));
+    for (int r = 0; r < 4; ++r) for (int s = 0; s < 5; ++s) t.z[r][s] = zz[r][s];
+    // No receiver sees all sats; r0 (a natural datum receiver) misses s3,s4.
+    t.vis = { {0, 1, 2}, {2, 3}, {3, 4}, {0, 4} };
+    return t;
+}
+
+// Solve one epoch under the eq34 chain datum: clock pin c_{s0}=0 + r1's RPB pin
+// (δ_{r1}=0) + the given spanning-tree ambiguity pins.  Only present stations
+// (present==nullptr ⇒ all) and their visible sats contribute.  Returns
+// ref[s] = x_s(pbCol[s]) − b[s] (the emitted between-satellite frame reference),
+// or NaN for a satellite no present station sees.
+std::vector<double> solveEq34Chain(const Eq34Truth& t, int r1,
+                                   const std::vector<AmbPin>& pins,
+                                   const std::vector<bool>* present = nullptr) {
+    const std::string signal = "L1";
+    auto here = [&](int r) { return !present || (*present)[r]; };
+
+    // Register only satellites some present station sees (a phantom all-zero
+    // shared column would trip the estimator's own gauge bookkeeping).
+    std::set<int> seen;
+    for (int r = 0; r < t.R; ++r) if (here(r))
+        for (int s : t.vis[r]) seen.insert(s);
+
+    NetworkEstimator est;
+    std::map<int, Eigen::Index> clkCol, pbCol;
+    for (int s : seen) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+    }
+
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        if (!here(r)) continue;
+        std::vector<int> vs(t.vis[r].begin(), t.vis[r].end());  // sorted
+        const int nv = static_cast<int>(vs.size());
+        std::map<int, int> ambCol;                       // sat -> local col
+        for (int k = 0; k < nv; ++k) ambCol[vs[k]] = 2 + k;  // [0]=a_r [1]=δ_r [2+]=z
+        std::vector<AmbPin> myPins;
+        for (const auto& p : pins) if (p.r == r && t.vis[r].count(p.s)) myPins.push_back(p);
+        const bool rpbPin = (r == r1);
+        const int nrows = 2 * nv + static_cast<int>(myPins.size()) + (rpbPin ? 1 : 0);
+        const int nloc  = 2 + nv;
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(nrows, est.numShared());
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(nrows, nloc);
+        Eigen::VectorXd w   = Eigen::VectorXd::Ones(nrows);
+        Eigen::VectorXd y   = Eigen::VectorXd::Zero(nrows);
+        int row = 0;
+        for (int s : vs) {
+            // code: P = a_r − c_s
+            A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0;
+            y(row) = t.a[r] - t.c[s]; ++row;
+            // phase: Φ = a_r − c_s + b_s + δ_r + z_{r,s}
+            A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+            A_r(row, 0) = 1.0;             // a_r
+            A_r(row, 1) = 1.0;             // δ_r (RPB split state)
+            A_r(row, ambCol[s]) = 1.0;     // z_{r,s}
+            y(row) = t.a[r] - t.c[s] + t.b[s] + t.d[r] + static_cast<double>(t.z[r][s]);
+            ++row;
+        }
+        for (const auto& p : myPins) {     // spanning-tree ambiguity pins
+            A_r(row, ambCol[p.s]) = 1.0; y(row) = p.target; w(row) = 1e10; ++row;
+        }
+        if (rpbPin) {                       // r1's RPB pin: δ_{r1}=0
+            A_r(row, 1) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row;
+        }
+        est.addStation(A_s, A_r, w, y);
+    }
+
+    // The clock datum must pin a PRESENT satellite's clock; s0 is seen by r0 and
+    // r3 in this fixture, so pin s0 when present else the lowest seen sat.
+    const int clk_pin_sat = seen.count(0) ? 0 : *seen.begin();
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[clk_pin_sat]), 0.0}};
+    const Eigen::VectorXd x_s = est.solve(datum);
+
+    std::vector<double> ref(t.S, std::numeric_limits<double>::quiet_NaN());
+    for (int s : seen) ref[s] = x_s(pbCol[s]) - t.b[s];
+    return ref;
+}
+
+}  // namespace
+
+// GATE 1: the eq34 chain datum yields an INTEGER user double difference for
+// EVERY satellite pair — including pairs whose chain paths differ and pairs
+// involving satellites the datum receiver never sees — despite a non-zero
+// receiver fractional bias d_r.  Negative control in the same fixture: the
+// prioritized per-satellite anchor election yields a fractional cross-anchor
+// pair (the structural obstruction the chain datum removes).
+TEST(NetworkEstimatorTest, Eq34ChainDatumUserDdInteger) {
+    const Eq34Truth t = makeEq34Truth();
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+
+    // Spanning tree rooted at r1 = station 0 (BFS): r0-{s0,s1,s2}, s0-r3, s2-r1,
+    // r3-s4, r1-s3, s4-r2.  8 edges over 9 vertices + 1 RPB pin = 9 = R + S.
+    const std::vector<AmbPin> pins = {
+        {0, 0, 0.0}, {0, 1, 0.0}, {0, 2, 0.0},   // r1's child edges
+        {3, 0, 0.0},                              // s0 -> r3
+        {1, 2, 0.0},                              // s2 -> r1
+        {3, 4, 0.0},                              // r3 -> s4
+        {1, 3, 0.0},                              // r1 -> s3
+        {2, 4, 0.0},                              // s4 -> r2
+    };
+    // Rank bookkeeping (D3): #pins == n_c + m_c = R + S for the single component.
+    EXPECT_EQ(static_cast<int>(pins.size()) + 1 /*RPB*/, t.R + t.S);
+
+    const std::vector<double> ref = solveEq34Chain(t, /*r1=*/0, pins);
+    for (int s = 0; s < t.S; ++s) ASSERT_TRUE(std::isfinite(ref[s])) << "sat " << s;
+
+    // Every between-satellite reference difference is an integer (the common
+    // receiver fractional δ_{r1} rides every ref_s and cancels).
+    for (int s = 0; s < t.S; ++s)
+        for (int p = 0; p < t.S; ++p)
+            EXPECT_LT(fracDist(ref[s] - ref[p]), 1e-6)
+                << "chain-datum D(" << s << "," << p << ")=" << (ref[s] - ref[p])
+                << " must be an integer (user DD fixable)";
+
+    // Every ref_s carries the SAME common fractional (its distance to the nearest
+    // integer equals that of ref_0) — the mechanism behind the integer DDs.
+    const double frac0 = ref[0] - std::round(ref[0]);
+    for (int s = 1; s < t.S; ++s) {
+        double frac = ref[s] - std::round(ref[s]);
+        // fold to (−0.5, 0.5] and compare to frac0 modulo 1.
+        double diff = std::fmod(frac - frac0, 1.0);
+        if (diff > 0.5) diff -= 1.0; if (diff < -0.5) diff += 1.0;
+        EXPECT_LT(std::abs(diff), 1e-6) << "sat " << s << " frac " << frac << " vs " << frac0;
+    }
+
+    // ---- Negative control: prioritized per-satellite anchor election ----
+    // Lumped legacy model M_{r,s}=d_r+z_{r,s} (no RPB), anchors: s0-2->r0,
+    // s3->r1, s4->r2.  ref_s = M_{anchor(s),s}, so a cross-anchor pair carries
+    // d_{anchor(s)} − d_{anchor(p)} ∉ ℤ.
+    std::vector<double> ref_prio(t.S, 0.0);
+    {
+        const std::string signal = "L1";
+        const int anchorOf[5] = {0, 0, 0, 1, 2};
+        NetworkEstimator est;
+        std::map<int, Eigen::Index> clkCol, pbCol;
+        for (int s = 0; s < t.S; ++s) {
+            clkCol[s] = est.registerClock(t.sats[s]);
+            pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+        }
+        est.beginEpoch();
+        for (int r = 0; r < t.R; ++r) {
+            std::vector<int> vs(t.vis[r].begin(), t.vis[r].end());
+            const int nv = static_cast<int>(vs.size());
+            std::map<int, int> ambCol;
+            for (int k = 0; k < nv; ++k) ambCol[vs[k]] = 1 + k;   // [0]=a_r [1+]=M
+            std::vector<int> anchoredHere;
+            for (int s : vs) if (anchorOf[s] == r) anchoredHere.push_back(s);
+            const int nrows = 2 * nv + static_cast<int>(anchoredHere.size());
+            const int nloc  = 1 + nv;
+            Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(nrows, est.numShared());
+            Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(nrows, nloc);
+            Eigen::VectorXd w   = Eigen::VectorXd::Ones(nrows);
+            Eigen::VectorXd y   = Eigen::VectorXd::Zero(nrows);
+            int row = 0;
+            for (int s : vs) {
+                A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0;
+                y(row) = t.a[r] - t.c[s]; ++row;
+                A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+                A_r(row, 0) = 1.0; A_r(row, ambCol[s]) = 1.0;   // M lumps δ_r + z
+                y(row) = t.a[r] - t.c[s] + t.b[s] + t.d[r] + static_cast<double>(t.z[r][s]);
+                ++row;
+            }
+            for (int s : anchoredHere) {   // pin M_{anchor,s}=0
+                A_r(row, ambCol[s]) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row;
+            }
+            est.addStation(A_s, A_r, w, y);
+        }
+        const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+        const Eigen::VectorXd x_s = est.solve(datum);
+        for (int s = 0; s < t.S; ++s) ref_prio[s] = x_s(pbCol[s]) - t.b[s];
+    }
+    bool prio_has_fraction = false;
+    for (int s = 0; s < t.S; ++s)
+        for (int p = 0; p < t.S; ++p)
+            if (fracDist(ref_prio[s] - ref_prio[p]) > 1e-3) prio_has_fraction = true;
+    EXPECT_TRUE(prio_has_fraction)
+        << "prioritized anchor election must yield >= 1 fractional cross-anchor pair "
+           "(the obstruction the eq34 chain datum removes).";
+}
+
+// GATE 3: datum-receiver handover — electing a DIFFERENT datum receiver r1'
+// still yields integer between-satellite DDs (the common fractional cancels),
+// though the absolute references move by a common fractional + integers.
+TEST(NetworkEstimatorTest, Eq34DatumReceiverHandoverBetweenSatInteger) {
+    const Eq34Truth t = makeEq34Truth();
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+
+    const std::vector<AmbPin> pins0 = {
+        {0, 0, 0.0}, {0, 1, 0.0}, {0, 2, 0.0}, {3, 0, 0.0},
+        {1, 2, 0.0}, {3, 4, 0.0}, {1, 3, 0.0}, {2, 4, 0.0},
+    };
+    // Spanning tree rooted at r1' = station 3 (BFS): r3-{s0,s4}, s0-r0, s4-r2,
+    // r0-{s1,s2}, r2-s3, s2-r1.  8 edges + 1 RPB pin = 9.
+    const std::vector<AmbPin> pins3 = {
+        {3, 0, 0.0}, {3, 4, 0.0}, {0, 0, 0.0}, {2, 4, 0.0},
+        {0, 1, 0.0}, {0, 2, 0.0}, {2, 3, 0.0}, {1, 2, 0.0},
+    };
+    const std::vector<double> ref0 = solveEq34Chain(t, /*r1=*/0, pins0);
+    const std::vector<double> ref3 = solveEq34Chain(t, /*r1=*/3, pins3);
+
+    for (int s = 0; s < t.S; ++s) {
+        ASSERT_TRUE(std::isfinite(ref0[s])) << "s=" << s;
+        ASSERT_TRUE(std::isfinite(ref3[s])) << "s=" << s;
+    }
+    // Both datums give integer between-satellite DDs.
+    for (int s = 0; s < t.S; ++s)
+        for (int p = 0; p < t.S; ++p) {
+            EXPECT_LT(fracDist(ref0[s] - ref0[p]), 1e-6) << "r1=0 D(" << s << "," << p << ")";
+            EXPECT_LT(fracDist(ref3[s] - ref3[p]), 1e-6) << "r1=3 D(" << s << "," << p << ")";
+        }
+    // The absolute frame moved (a different common fractional d_{r1}); at least
+    // one satellite's reference differs by a non-integer between the two datums.
+    bool moved = false;
+    for (int s = 0; s < t.S; ++s)
+        if (fracDist(ref0[s] - ref3[s]) > 1e-3) moved = true;
+    EXPECT_TRUE(moved) << "handover to a different datum receiver should move the "
+                          "absolute frame by a common fractional.";
+}
+
+// GATE 2: a tree-edge REATTACH (satellite re-pinned at a different station,
+// same datum receiver) steps the emitted satellite phase bias by an EXACT
+// integer number of cycles — the frame's common fractional δ_{r1} is unchanged,
+// so only an integer moves.  (Pin-to-round, a driver feature, would then pick
+// the |·|-minimizing integer; at the estimator level we pin target 0 and check
+// the step is integral.)
+TEST(NetworkEstimatorTest, Eq34ReattachStepsByExactInteger) {
+    const Eq34Truth t = makeEq34Truth();
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+
+    // Datum receiver r1 = station 0 in BOTH solves.  s3 (index 3) is tracked by
+    // station 1 AND station 2; the two spanning trees differ ONLY in s3's edge.
+    const std::vector<AmbPin> pinsA = {   // s3 pinned at station 1
+        {0, 0, 0.0}, {0, 1, 0.0}, {0, 2, 0.0}, {3, 0, 0.0},
+        {1, 2, 0.0}, {3, 4, 0.0}, {1, 3, 0.0}, {2, 4, 0.0},
+    };
+    const std::vector<AmbPin> pinsB = {   // s3 REATTACHED to station 2
+        {0, 0, 0.0}, {0, 1, 0.0}, {0, 2, 0.0}, {3, 0, 0.0},
+        {1, 2, 0.0}, {3, 4, 0.0}, {2, 3, 0.0}, {2, 4, 0.0},
+    };
+    const std::vector<double> refA = solveEq34Chain(t, /*r1=*/0, pinsA);
+    const std::vector<double> refB = solveEq34Chain(t, /*r1=*/0, pinsB);
+
+    // The reattached satellite's emitted bias stepped by an exact integer.
+    EXPECT_LT(fracDist(refB[3] - refA[3]), 1e-6)
+        << "reattach step " << (refB[3] - refA[3]) << " must be an integer number of cycles.";
+    // Between-satellite DDs remain integer in both frames.
+    for (int s = 0; s < t.S; ++s)
+        for (int p = 0; p < t.S; ++p) {
+            EXPECT_LT(fracDist(refA[s] - refA[p]), 1e-6) << "A D(" << s << "," << p << ")";
+            EXPECT_LT(fracDist(refB[s] - refB[p]), 1e-6) << "B D(" << s << "," << p << ")";
+        }
+}
+
+// GATE 4: component-split integrity — when a cut station leaves and the graph
+// splits, within-component DDs stay integer while a cross-component pair is
+// fractional (the accepted, unavoidable limitation: no data connects them).
+TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
+    // Two disjoint components on the SAME signal: {r0,r1} see {s0,s1};
+    // {r2,r3} see {s2,s3}.  No station bridges them.
+    Eq34Truth t;
+    t.R = 4; t.S = 4;
+    t.a = {3.0, -2.0, 5.0, 1.0};
+    t.c = {7.0, -4.0, 2.0, 9.0};
+    t.b = {0.10, -0.20, 0.35, 0.05};
+    t.d = {0.30, -0.40, 0.15, 0.45};
+    t.sats = {"G01", "G02", "G03", "G04"};
+    const int zz[4][4] = {{2, -3, 0, 0}, {5, 1, 0, 0}, {0, 0, 6, -5}, {0, 0, 4, 1}};
+    t.z.assign(4, std::vector<int>(4, 0));
+    for (int r = 0; r < 4; ++r) for (int s = 0; s < 4; ++s) t.z[r][s] = zz[r][s];
+    t.vis = { {0, 1}, {0, 1}, {2, 3}, {2, 3} };
+
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+    // Component A: r1=0 (RPB pin), tree r0-s0, r0-s1, s0-r1.  Component B: r1=2
+    // (RPB pin), tree r2-s2, r2-s3, s2-r3.
+    const std::vector<AmbPin> pins = {
+        {0, 0, 0.0}, {0, 1, 0.0}, {1, 0, 0.0},   // component A (root r0)
+        {2, 2, 0.0}, {2, 3, 0.0}, {3, 2, 0.0},   // component B (root r2)
+    };
+    // Both roots pin their RPB.  solveEq34Chain pins only r1; component B's root
+    // (r2) needs its RPB pinned too, so drive a second solve is unnecessary — we
+    // fold r2's RPB pin by treating the whole network as one solve with TWO RPB
+    // pins.  Build inline to pin both roots.
+    const std::string signal = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+    }
+    const int rootOf[4] = {0, 0, 2, 2};   // datum receiver per station's component
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        std::vector<int> vs(t.vis[r].begin(), t.vis[r].end());
+        const int nv = static_cast<int>(vs.size());
+        std::map<int, int> ambCol;
+        for (int k = 0; k < nv; ++k) ambCol[vs[k]] = 2 + k;
+        std::vector<AmbPin> myPins;
+        for (const auto& p : pins) if (p.r == r) myPins.push_back(p);
+        const bool rpbPin = (rootOf[r] == r);
+        const int nrows = 2 * nv + static_cast<int>(myPins.size()) + (rpbPin ? 1 : 0);
+        const int nloc  = 2 + nv;
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(nrows, est.numShared());
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(nrows, nloc);
+        Eigen::VectorXd w   = Eigen::VectorXd::Ones(nrows);
+        Eigen::VectorXd y   = Eigen::VectorXd::Zero(nrows);
+        int row = 0;
+        for (int s : vs) {
+            A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0;
+            y(row) = t.a[r] - t.c[s]; ++row;
+            A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+            A_r(row, 0) = 1.0; A_r(row, 1) = 1.0; A_r(row, ambCol[s]) = 1.0;
+            y(row) = t.a[r] - t.c[s] + t.b[s] + t.d[r] + static_cast<double>(t.z[r][s]);
+            ++row;
+        }
+        for (const auto& p : myPins) { A_r(row, ambCol[p.s]) = 1.0; y(row) = p.target; w(row) = 1e10; ++row; }
+        if (rpbPin) { A_r(row, 1) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row; }
+        est.addStation(A_s, A_r, w, y);
+    }
+    // One clock pin per component (each component's clock gauge is independent).
+    const NetworkEstimator::Datum datum = {
+        {est.clockColumn(t.sats[0]), 0.0},   // component A gauge
+        {est.clockColumn(t.sats[2]), 0.0},   // component B gauge
+    };
+    const Eigen::VectorXd x_s = est.solve(datum);
+    std::vector<double> ref(t.S);
+    for (int s = 0; s < t.S; ++s) ref[s] = x_s(pbCol[s]) - t.b[s];
+
+    // Within-component DDs are integer …
+    EXPECT_LT(fracDist(ref[0] - ref[1]), 1e-6) << "component A within-DD";
+    EXPECT_LT(fracDist(ref[2] - ref[3]), 1e-6) << "component B within-DD";
+    // … a cross-component pair is fractional (different, uncoupled r1 fractionals).
+    const bool cross_fractional =
+        fracDist(ref[0] - ref[2]) > 1e-3 || fracDist(ref[0] - ref[3]) > 1e-3 ||
+        fracDist(ref[1] - ref[2]) > 1e-3 || fracDist(ref[1] - ref[3]) > 1e-3;
+    EXPECT_TRUE(cross_fractional)
+        << "cross-component DDs must be fractional (no data connects the two "
+           "datum receivers — the accepted eq34 limitation).";
+}
+
+// jointConditionalCovariance (the between-station DD ambiguity covariance
+// primitive for producer-side network AR) must match a dense brute-force full
+// inverse of the bordered normal system conditioned on the datum.  This is the
+// risk-#1 correctness check from docs/network_ambiguity_resolution_design.md §7:
+// getting the conditional covariance wrong feeds LAMBDA a wrong Q → spurious
+// fixes.  Exercises cross-station blocks (the term reconstructStationCovariance
+// does not carry) and same-station off-diagonals.
+TEST(NetworkEstimatorTest, JointConditionalCovarianceMatchesBruteForce) {
+    const Truth t = makeTruth(/*seed=*/2025, /*R=*/4, /*S=*/5);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+    }
+    const int nS = static_cast<int>(est.numShared());
+
+    est.beginEpoch();
+    std::vector<Eigen::MatrixXd> As(t.R), Ar(t.R);
+    std::vector<Eigen::VectorXd> Wv(t.R);
+    std::vector<std::size_t> ids(t.R);
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::VectorXd w, y;
+        buildStation(t, r, est, clkCol, pbCol, As[r], Ar[r], w, y);
+        Wv[r] = w;
+        ids[r] = est.addStation(As[r], Ar[r], w, y);
+    }
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+    (void)est.solve(datum);
+
+    // --- Brute force: assemble the full bordered N over θ = [x_s ; locals...] ---
+    std::vector<int> off(t.R);
+    int total = nS;
+    for (int r = 0; r < t.R; ++r) { off[r] = total; total += static_cast<int>(Ar[r].cols()); }
+    Eigen::MatrixXd Nfull = Eigen::MatrixXd::Zero(total, total);
+    for (int r = 0; r < t.R; ++r) {
+        const int nl = static_cast<int>(Ar[r].cols());
+        const Eigen::MatrixXd Wm  = Wv[r].asDiagonal();
+        const Eigen::MatrixXd WAs = Wm * As[r];
+        const Eigen::MatrixXd WAr = Wm * Ar[r];
+        Nfull.block(0, 0, nS, nS)            += As[r].transpose() * WAs;
+        Nfull.block(0, off[r], nS, nl)       += As[r].transpose() * WAr;
+        Nfull.block(off[r], 0, nl, nS)       += Ar[r].transpose() * WAs;
+        Nfull.block(off[r], off[r], nl, nl)  += Ar[r].transpose() * WAr;
+    }
+    // Condition on the datum clock (shared col p) as KNOWN: drop its row/col, invert.
+    const int p = static_cast<int>(est.clockColumn(t.sats[0]));
+    std::vector<int> freeIdx;
+    for (int i = 0; i < total; ++i) if (i != p) freeIdx.push_back(i);
+    const int nf = static_cast<int>(freeIdx.size());
+    Eigen::MatrixXd Nf(nf, nf);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < nf; ++b) Nf(a, b) = Nfull(freeIdx[a], freeIdx[b]);
+    const Eigen::MatrixXd Cfull = Nf.inverse();
+    std::vector<int> gToFree(total, -1);
+    for (int a = 0; a < nf; ++a) gToFree[freeIdx[a]] = a;
+
+    // --- Requests: non-pivot ambiguities across stations (local col 1+s per sat) ---
+    const std::vector<std::pair<std::size_t, Eigen::Index>> req = {
+        {ids[1], 1 + 0}, {ids[1], 1 + 2}, {ids[2], 1 + 0}, {ids[3], 1 + 3}, {ids[2], 1 + 4},
+    };
+    const Eigen::MatrixXd J = est.jointConditionalCovariance(req, datum);
+    ASSERT_EQ(J.rows(), static_cast<Eigen::Index>(req.size()));
+    ASSERT_EQ(J.cols(), static_cast<Eigen::Index>(req.size()));
+    for (std::size_t a = 0; a < req.size(); ++a) {
+        for (std::size_t b = 0; b < req.size(); ++b) {
+            const int ga = off[req[a].first] + static_cast<int>(req[a].second);
+            const int gb = off[req[b].first] + static_cast<int>(req[b].second);
+            const double expect = Cfull(gToFree[ga], gToFree[gb]);
+            EXPECT_NEAR(J(a, b), expect, 1e-4)
+                << "joint cov entry (" << a << "," << b << ")"
+                << (req[a].first == req[b].first ? " [same-station]" : " [cross-station]");
+        }
+    }
+    // Symmetric by construction.
+    EXPECT_LT((J - J.transpose()).cwiseAbs().maxCoeff(), 1e-12);
 }
 
 // The shared solution maps onto an emittable NetworkSolutionEpoch correctly.
@@ -650,6 +1322,908 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
         << "the dense carry should be orders of magnitude closer to batch";
 }
 
+// Card 1 (network.carry_conditional_coupling): the CONDITIONAL local carry.  The
+// sequential recursion with {dense border carry + per-column conditional coupling
+// rows} must reproduce the BATCH solve for the shared border AND the carried LOCAL
+// ambiguities — where the legacy diagonal (marginal) carry does NOT.  This test
+// FAILING with the diagonal carry and PASSING with the coupling rows is the whole
+// point of the card.
+//
+// Model (chosen so the coupling row is EXACT): shared per satellite = clock c_s +
+// phase bias b_s; local per station = ambiguity M_{r,s}, one per satellite.  Each
+// M_{r,s} appears in exactly ONE phase row (Φ = −c_s + b_s + M_{r,s}); a code row
+// P = −c_s makes c_s observable.  So the local block N_rr is DIAGONAL → the carried
+// ambiguities are conditionally INDEPENDENT given the shared border, the regime a
+// per-column coupling row carries exactly.  Datum: pin c_0 (shared) + M_{0,s}=0
+// (pivot local).  Two epochs, SAME truth, DIFFERENT noise, zero process noise → an
+// exact recursive-least-squares recursion.
+TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
+    const int R = 3, S = 4;   // station 0 = pivot (M_{0,s}=0); 1,2 carry their M
+    const std::string signal = "L1";
+
+    std::mt19937 gen(4242);
+    std::uniform_real_distribution<double> clk(-10.0, 10.0), bias(-1.0, 1.0), amb(-5.0, 5.0);
+    std::vector<std::string> sats(static_cast<std::size_t>(S));
+    std::vector<double> c(static_cast<std::size_t>(S)), b(static_cast<std::size_t>(S));
+    std::vector<std::vector<double>> M(static_cast<std::size_t>(R), std::vector<double>(static_cast<std::size_t>(S)));
+    for (int s = 0; s < S; ++s) {
+        char id[8]; std::snprintf(id, sizeof(id), "G%02d", s + 1);
+        sats[static_cast<std::size_t>(s)] = id;
+        c[static_cast<std::size_t>(s)] = clk(gen);
+        b[static_cast<std::size_t>(s)] = bias(gen);
+    }
+    for (int r = 0; r < R; ++r)
+        for (int s = 0; s < S; ++s) M[static_cast<std::size_t>(r)][static_cast<std::size_t>(s)] = amb(gen);
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(static_cast<std::size_t>(S)), pbCol(static_cast<std::size_t>(S));
+    for (int s = 0; s < S; ++s) {
+        clkCol[static_cast<std::size_t>(s)] = est.registerClock(sats[static_cast<std::size_t>(s)]);
+        pbCol[static_cast<std::size_t>(s)]  = est.registerPhaseBias(sats[static_cast<std::size_t>(s)], signal);
+    }
+    const Eigen::Index nshared = est.numShared();
+    const NetworkEstimator::Datum datum = {{est.clockColumn(sats[0]), 0.0}};
+
+    struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
+    // Build station r's block for one epoch (local block = [M_{r,0..S-1}]).
+    auto build = [&](int r, unsigned seed) {
+        const bool pivot = (r == 0);
+        const Eigen::Index m = 2 * S + (pivot ? S : 0);
+        Blk blk;
+        blk.A_s = Eigen::MatrixXd::Zero(m, nshared);
+        blk.A_r = Eigen::MatrixXd::Zero(m, S);
+        blk.w   = Eigen::VectorXd::Ones(m);
+        blk.y   = Eigen::VectorXd::Zero(m);
+        std::mt19937 g(seed);
+        std::normal_distribution<double> nd(0.0, 1.0);
+        Eigen::Index row = 0;
+        for (int s = 0; s < S; ++s) {
+            const auto su = static_cast<std::size_t>(s);
+            // code: P = -c_s  (σ = 0.5 m)
+            blk.A_s(row, clkCol[su]) = -1.0;
+            blk.w(row) = 4.0;
+            blk.y(row) = -c[su] + 0.5 * nd(g);
+            ++row;
+            // phase: Φ = -c_s + b_s + M_{r,s}  (σ = 0.1 m)
+            blk.A_s(row, clkCol[su]) = -1.0;
+            blk.A_s(row, pbCol[su])  = 1.0;
+            blk.A_r(row, s)          = 1.0;
+            blk.w(row) = 100.0;
+            blk.y(row) = -c[su] + b[su] + M[static_cast<std::size_t>(r)][su] + 0.1 * nd(g);
+            ++row;
+        }
+        if (pivot)
+            for (int s = 0; s < S; ++s) { blk.A_r(row, s) = 1.0; blk.w(row) = 1e10; blk.y(row) = 0.0; ++row; }
+        return blk;
+    };
+
+    std::vector<Blk> ep1(static_cast<std::size_t>(R)), ep2(static_cast<std::size_t>(R));
+    for (int r = 0; r < R; ++r) {
+        ep1[static_cast<std::size_t>(r)] = build(r, 1000u + static_cast<unsigned>(r));
+        ep2[static_cast<std::size_t>(r)] = build(r, 2000u + static_cast<unsigned>(r));
+    }
+
+    // --- Epoch 1: solve; stash the dense border cov + per-carried-ambiguity
+    //     {value, regression M_r, conditional variance, marginal variance}. ------
+    est.beginEpoch();
+    std::vector<std::size_t> stidx(static_cast<std::size_t>(R));
+    for (int r = 0; r < R; ++r)
+        stidx[static_cast<std::size_t>(r)] = est.addStation(ep1[static_cast<std::size_t>(r)].A_s,
+            ep1[static_cast<std::size_t>(r)].A_r, ep1[static_cast<std::size_t>(r)].w,
+            ep1[static_cast<std::size_t>(r)].y);
+    const Eigen::VectorXd x1 = est.solve(datum);
+    const Eigen::MatrixXd P1 = est.sharedCovariance();
+
+    // Border dense carry over the free shared columns (clkCol[1..], pbCol[0..]).
+    std::vector<NetworkEstimator::SharedPrior> keys;
+    std::vector<Eigen::Index> kcol;
+    for (int s = 0; s < S; ++s) {
+        const auto su = static_cast<std::size_t>(s);
+        if (s != 0) {
+            NetworkEstimator::SharedPrior p;
+            p.kind = SharedParamKind::Clock; p.sat = sats[su]; p.value = x1(clkCol[su]);
+            keys.push_back(p); kcol.push_back(clkCol[su]);
+        }
+        NetworkEstimator::SharedPrior p;
+        p.kind = SharedParamKind::PhaseBias; p.sat = sats[su]; p.signal = signal; p.value = x1(pbCol[su]);
+        keys.push_back(p); kcol.push_back(pbCol[su]);
+    }
+    const Eigen::Index k = static_cast<Eigen::Index>(keys.size());
+    Eigen::MatrixXd Pk(k, k);
+    for (Eigen::Index a = 0; a < k; ++a)
+        for (Eigen::Index bb = 0; bb < k; ++bb)
+            Pk(a, bb) = P1(kcol[static_cast<std::size_t>(a)], kcol[static_cast<std::size_t>(bb)]);
+
+    // Per-carried-ambiguity harvest (non-pivot stations 1..R-1, all S columns).
+    struct Carry { int r; Eigen::Index col; double value; double cond_var; double marg_var; Eigen::VectorXd Mr; };
+    std::vector<Carry> carries;
+    const Eigen::Index pin0 = est.clockColumn(sats[0]);   // the datum-pinned shared column
+    for (int r = 1; r < R; ++r) {
+        const std::size_t si = stidx[static_cast<std::size_t>(r)];
+        const Eigen::VectorXd x1r = est.reconstructStation(si, x1);
+        std::vector<Eigen::Index> cols(static_cast<std::size_t>(S));
+        for (int s = 0; s < S; ++s) cols[static_cast<std::size_t>(s)] = s;
+        const Eigen::VectorXd marg = est.conditionalLocalVarianceDiag(si, cols, datum);
+        for (int s = 0; s < S; ++s) {
+            const auto reg = est.stationRegression(si, s);
+            carries.push_back(Carry{r, s, x1r(s), reg.cond_var,
+                                    marg(s), reg.row});
+        }
+    }
+
+    // Append one conditional coupling row per carried ambiguity to a copy of ep2.
+    auto with_coupling = [&](std::vector<Blk> blks) {
+        for (const Carry& cr : carries) {
+            Blk& blk = blks[static_cast<std::size_t>(cr.r)];
+            const Eigen::Index m0 = blk.A_s.rows();
+            blk.A_s.conservativeResize(m0 + 1, Eigen::NoChange); blk.A_s.bottomRows(1).setZero();
+            blk.A_r.conservativeResize(m0 + 1, Eigen::NoChange); blk.A_r.bottomRows(1).setZero();
+            blk.w.conservativeResize(m0 + 1);
+            blk.y.conservativeResize(m0 + 1);
+            blk.A_r(m0, cr.col) = 1.0;
+            double yv = cr.value;                       // (r̂_prev − r_lin), r_lin = 0
+            for (Eigen::Index j = 0; j < nshared; ++j) {
+                if (j == pin0) continue;                // FREE-column restriction
+                const double mj = cr.Mr(j);
+                blk.A_s(m0, j) = mj;
+                yv += mj * x1(j);                       // + M_rj · ŝ_prev,j
+            }
+            blk.w(m0) = 1.0 / cr.cond_var;
+            blk.y(m0) = yv;
+        }
+        return blks;
+    };
+    // The legacy diagonal (marginal) carry, for the discrimination check.
+    auto with_diagonal = [&](std::vector<Blk> blks) { return blks; };
+
+    // --- Epoch 2 (COUPLING rows + dense border): the rigorous recursion. --------
+    std::vector<Blk> ep2c = with_coupling(ep2);
+    est.beginEpoch();
+    std::vector<std::size_t> stidx2(static_cast<std::size_t>(R));
+    for (int r = 0; r < R; ++r)
+        stidx2[static_cast<std::size_t>(r)] = est.addStation(ep2c[static_cast<std::size_t>(r)].A_s,
+            ep2c[static_cast<std::size_t>(r)].A_r, ep2c[static_cast<std::size_t>(r)].w,
+            ep2c[static_cast<std::size_t>(r)].y);
+    EXPECT_EQ(est.addSharedPriorDense(keys, Pk), static_cast<std::size_t>(k));
+    const Eigen::VectorXd x2_coupled = est.solve(datum);
+    std::vector<Eigen::VectorXd> loc_coupled(static_cast<std::size_t>(R));
+    for (int r = 1; r < R; ++r)
+        loc_coupled[static_cast<std::size_t>(r)] =
+            est.reconstructStation(stidx2[static_cast<std::size_t>(r)], x2_coupled);
+
+    // --- Epoch 2 (DIAGONAL marginal carry + dense border): the legacy path. -----
+    std::vector<Blk> ep2d = with_diagonal(ep2);
+    est.beginEpoch();
+    std::vector<std::size_t> stidxd(static_cast<std::size_t>(R));
+    for (int r = 0; r < R; ++r)
+        stidxd[static_cast<std::size_t>(r)] = est.addStation(ep2d[static_cast<std::size_t>(r)].A_s,
+            ep2d[static_cast<std::size_t>(r)].A_r, ep2d[static_cast<std::size_t>(r)].w,
+            ep2d[static_cast<std::size_t>(r)].y);
+    for (const Carry& cr : carries) {
+        const std::size_t si = stidxd[static_cast<std::size_t>(cr.r)];
+        Eigen::VectorXd dN(1), du(1);
+        dN(0) = 1.0 / cr.marg_var;                 // MARGINAL variance (the double-count)
+        du(0) = (1.0 / cr.marg_var) * cr.value;
+        est.addStationPrior(si, {cr.col}, dN, du);
+    }
+    est.addSharedPriorDense(keys, Pk);
+    const Eigen::VectorXd x2_diag = est.solve(datum);
+    std::vector<Eigen::VectorXd> loc_diag(static_cast<std::size_t>(R));
+    for (int r = 1; r < R; ++r)
+        loc_diag[static_cast<std::size_t>(r)] = est.reconstructStation(stidxd[static_cast<std::size_t>(r)], x2_diag);
+
+    // --- Batch: each station added ONCE with BOTH epochs' rows stacked (its M
+    //     persists; the shared border persists) — the joint reference. ----------
+    NetworkEstimator estb;
+    for (int s = 0; s < S; ++s) {
+        estb.registerClock(sats[static_cast<std::size_t>(s)]);
+        estb.registerPhaseBias(sats[static_cast<std::size_t>(s)], signal);
+    }
+    estb.beginEpoch();
+    std::vector<std::size_t> bidx(static_cast<std::size_t>(R));
+    for (int r = 0; r < R; ++r) {
+        const Blk& a = ep1[static_cast<std::size_t>(r)];
+        const Blk& bB = ep2[static_cast<std::size_t>(r)];
+        const Eigen::Index m1 = a.A_s.rows(), m2 = bB.A_s.rows();
+        Blk cb;
+        cb.A_s.resize(m1 + m2, nshared); cb.A_s << a.A_s, bB.A_s;
+        cb.A_r.resize(m1 + m2, S);       cb.A_r << a.A_r, bB.A_r;
+        cb.w.resize(m1 + m2);            cb.w   << a.w,   bB.w;
+        cb.y.resize(m1 + m2);            cb.y   << a.y,   bB.y;
+        bidx[static_cast<std::size_t>(r)] = estb.addStation(cb.A_s, cb.A_r, cb.w, cb.y);
+    }
+    const Eigen::VectorXd xb = estb.solve(datum);
+
+    // --- Assertions -----------------------------------------------------------
+    const double shared_coupled = (x2_coupled - xb).cwiseAbs().maxCoeff();
+    const double shared_diag    = (x2_diag    - xb).cwiseAbs().maxCoeff();
+    double local_coupled = 0.0, local_diag = 0.0;
+    for (int r = 1; r < R; ++r) {
+        const Eigen::VectorXd lb = estb.reconstructStation(bidx[static_cast<std::size_t>(r)], xb);
+        local_coupled = std::max(local_coupled,
+            (loc_coupled[static_cast<std::size_t>(r)] - lb).cwiseAbs().maxCoeff());
+        local_diag = std::max(local_diag,
+            (loc_diag[static_cast<std::size_t>(r)] - lb).cwiseAbs().maxCoeff());
+    }
+    EXPECT_LT(shared_coupled, 1e-9)
+        << "conditional coupling rows must reproduce the batch shared solve";
+    EXPECT_LT(local_coupled, 1e-9)
+        << "conditional coupling rows must reproduce the batch LOCAL (ambiguity) solve";
+    EXPECT_GT(shared_diag + local_diag, 1e-6)
+        << "the diagonal (marginal) carry should NOT match batch — the fixture lost its "
+           "discrimination (double-counting the shared border via the marginal variance)";
+}
+
+// ── Card 1c ──────────────────────────────────────────────────────────────────
+// Numerical trace of the between-epoch conditional-coupling carry (Card 1,
+// network.carry_conditional_coupling) over an 8-epoch SURVIVING arc.  Field fact
+// (memory project_network_ddfrac_rootcause_shvtec): arcs survive 16-43 epochs,
+// dep_var≈0 (clock_model off ⇒ M_w empty, Card-1b joint whitening a no-op), yet the
+// DD formal σ stays FLAT at var_eff≈5.6 cyc rather than contracting ~1/√k.  This test
+// drives the PRODUCTION harvest→inject path each epoch — solve → stationRegression
+// (cond_var + M_r) + conditionalLocalVarianceDiag → inject a coupling row next epoch,
+// plus the C1 dense-border carry — and PRINTS, per epoch for the tracked ambiguity:
+// the injected row σ² (last epoch's q_cond), the harvested q_cond, the M_r
+// coefficients, the jointConditionalCovariance σ (the dd_sigma path), and the value
+// error vs truth.  The σ(k) trajectory is read directly from the table.
+//
+// Geometry: 2 stations, 2 satellites.  Gauge = datum pins sat-0's clock (clk0) + station 0
+// pins sat-0's phase bias (pb0=0) — so BOTH stations' sat-1 ambiguities stay FREE and carried,
+// letting the DD N_{1,1}−N_{0,1} cancel the shared clk1/pb1 EXACTLY (the field dd_sigma
+// contrast).  The FREE carried border the arc regresses onto is exactly {clk_1 (LARGE per-epoch
+// q ⇒ loosely carried), pb_1 (small q ⇒ tightly carried)} — the card's "1 clock-like + 1
+// bias-like column".  Two σ's are traced: the single-ambiguity conditional σ (carries the
+// shared-border propagation) and the border-cancelling DD σ.  Per station per sat: a phase row
+// (σ 0.002 m; amb + iono + clock + bias) and a code row (σ 0.3 m; iono + clock).  Zero
+// ambiguity process noise (constant arc).  The `correlated_iono` variant (the branch-(a)
+// probe) ties BOTH stations' ionos to ONE carried SH-like shared column with a
+// representativeness σ — the correlated per-epoch iono error hypothesised to be the
+// field floor.  PURE DIAGNOSTIC: asserts only that the harvest stayed finite/positive
+// (green in every branch); the verdict is read from the printed table.
+TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
+    struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
+    const int NEP = 8;
+    const double sig_ph = 0.002, sig_cd = 0.3;
+    // clk1 is confounded with common-mode iono in this 2-sat toy (a single free satellite's
+    // clock is unobservable), so it is carried with a SMALL q that holds its variance at a
+    // stable nonzero floor (~seed 1 m²) — that floor is what the single-ambiguity σ can never
+    // beat, while the between-station DD cancels clk1 and pb1 exactly.  pb1 = the small-q
+    // carried bias.  (A truly large-q free clock would diverge here; the field breaks the
+    // clock/iono null with many satellites + the SH-VTEC constraint, which this toy omits.)
+    const double q_clk = 1e-3, q_pb = 1e-8;
+    const double pb_true[2]   = { 0.37, -0.52 };
+    const double N_true[2][2] = { {0.0, 0.0}, {2.3, -4.1} };  // gauge: pivot r0 ambiguities = 0
+
+    // Card 1d: `fixed` arms inject each coupling row with the border TIME UPDATE
+    // (per-column κ shrink + M²κq inflation, q ladder = the border carry's own
+    // {q_clk, q_pb, q_sh}) — the docs/HANDOFF_carry_timeupdate_card1d.md fix.
+    struct Trace { std::vector<double> single_sig, dd_sig, err_ratio; };
+    auto run_trace = [&](bool correlated_iono, bool fixed) -> Trace {
+        NetworkEstimator est;
+        const Eigen::Index clk0 = est.registerClock("G01");
+        const Eigen::Index clk1 = est.registerClock("G02");
+        const Eigen::Index pb0  = est.registerPhaseBias("G01", "L1");
+        const Eigen::Index pb1  = est.registerPhaseBias("G02", "L1");
+        const Eigen::Index shc  = correlated_iono ? est.registerClock("SH99") : Eigen::Index(-1);
+        const Eigen::Index nshared = est.numShared();
+        const NetworkEstimator::Datum datum = {{clk0, 0.0}};
+        const Eigen::Index clkc[2] = { clk0, clk1 };
+        const Eigen::Index pbc[2]  = { pb0, pb1 };
+        // per-station local layout: 0,1 = ambiguities N_{r,0},N_{r,1}; 2,3 = ionos I_{r,0},I_{r,1}
+        auto ncol = [](int s){ return static_cast<Eigen::Index>(s); };
+        auto icol = [](int s){ return static_cast<Eigen::Index>(2 + s); };
+        const Eigen::Index NL = 4;
+
+        std::mt19937 gen(90210u + (correlated_iono ? 7u : 0u));
+        std::normal_distribution<double> ndph(0.0, sig_ph), ndcd(0.0, sig_cd);
+        std::normal_distribution<double> ndI(0.0, 5.0), nd1(0.0, 1.0), ndrep(0.0, 0.1);
+        // Model-CONSISTENT truths (mirroring the Card-1c falsifier convention,
+        // card1c_falsify.py): clk0 ≡ 0 (the datum), clk1 = a genuine RW(q_clk)
+        // seeded N(0,1) (exactly the border carry's model), pb constant.  The SH
+        // truth stays WHITE N(0,25) against the border's RW q_sh=5 — Opus's probe
+        // mismatch, kept DELIBERATELY: it is the representativeness error the σ
+        // trajectory is graded under.  With consistent truths the dd_val_err/σ
+        // ratio is a meaningful consistency metric (formal σ itself is truth-
+        // independent, so the printed σ trajectories are unchanged).
+        double clk1_true = nd1(gen);
+
+        struct Cpl { Eigen::Index col; double value; double cond_var; Eigen::VectorXd Mr; };
+        std::vector<std::vector<Cpl>> carry(2);          // per-station coupling rows (empty at ep0)
+        Eigen::VectorXd prev_xs;                         // last epoch's shared solution (ŝ_prev RHS)
+        Eigen::VectorXd prev_pdiag;                      // Card 1d: last epoch's posterior border variances (κ inputs)
+
+        // Gauge: datum pins clk0 (reference clock); station 0 pins pb0=0 (reference bias) with a
+        // tight row.  This leaves BOTH stations' sat-1 ambiguities FREE and carried, so the DD
+        // N_{1,1}−N_{0,1} cancels the shared clk1/pb1 EXACTLY (the field dd_sigma contrast) — the
+        // decisive check that the single-ambiguity plateau is the shared-border-propagation floor.
+        //
+        // Dense border carry = {clk1 (large q), pb1 (small q, the carried bias) (+SH)}.  Seeded
+        // with a weak diagonal prior so epoch 0 is full-rank (the free sat's clock/bias share the
+        // classic null until the small-q bias is carried); rebuilt from posterior + q each epoch.
+        std::vector<NetworkEstimator::SharedPrior> bkeys;
+        std::vector<Eigen::Index> bcol;
+        auto addKey = [&](SharedParamKind kind, const std::string& sat, const std::string& sig, Eigen::Index col){
+            NetworkEstimator::SharedPrior p; p.kind = kind; p.sat = sat; p.signal = sig; p.value = 0.0;
+            bkeys.push_back(p); bcol.push_back(col);
+        };
+        addKey(SharedParamKind::Clock, "G02", "", clk1);
+        addKey(SharedParamKind::PhaseBias, "G02", "L1", pb1);
+        if (correlated_iono) addKey(SharedParamKind::Clock, "SH99", "", shc);
+        const Eigen::Index k = static_cast<Eigen::Index>(bcol.size());
+        // Epoch-0 seed prior: TIGHT (variance 1 m²) on every free border column so the
+        // uncarried (clk1,pb1) gauge null is PD for the first solve.  From epoch 1 the q
+        // inflation (clk1 += q_clk = 1e4) loosens the clock to the intended large-q regime;
+        // the DD cancels clk1, so its epoch-0 seed does not bias the tracked contrast.
+        // The SH seed matches its white-truth variance (25 m²) so epoch 0 is honest —
+        // the probe's mismatch is the RW q=5 CARRY, not the seed.
+        Eigen::MatrixXd Pk = Eigen::MatrixXd::Identity(k, k);
+        if (correlated_iono) Pk(k - 1, k - 1) = 25.0;   // bcol.back() == shc
+
+        std::vector<double> single_traj, dd_traj, err_ratio;
+        std::printf("\n=== Card 1c contraction trace | correlated_iono=%d fixed=%d | DD sat1 truth N_{1,1}-N_{0,1}=%+.3f m ===\n",
+                    correlated_iono ? 1 : 0, fixed ? 1 : 0, N_true[1][1] - N_true[0][1]);
+        std::printf(" ep | inj_sig2   q_cond(N11) | Mr[clk1  pb1    sh  ] |  single_sig  |   DD_sig    | DD_val_err\n");
+
+        for (int ep = 0; ep < NEP; ++ep) {
+            if (ep > 0) clk1_true += std::sqrt(q_clk) * nd1(gen);
+            const double clk[2] = { 0.0, clk1_true };
+            double I[2][2];
+            for (int r = 0; r < 2; ++r) for (int s = 0; s < 2; ++s) I[r][s] = ndI(gen);
+            const double sh_true = correlated_iono ? ndI(gen) : 0.0;
+
+            auto build = [&](int r) {
+                const bool ref = (r == 0);                       // station 0 also pins pb0 = 0 (bias gauge)
+                const Eigen::Index nrow = 4 + (correlated_iono ? 2 : 0) + (ref ? 1 : 0);
+                Blk b; b.A_s = Eigen::MatrixXd::Zero(nrow, nshared); b.A_r = Eigen::MatrixXd::Zero(nrow, NL);
+                b.w = Eigen::VectorXd::Ones(nrow); b.y = Eigen::VectorXd::Zero(nrow);
+                Eigen::Index row = 0;
+                for (int s = 0; s < 2; ++s) {
+                    // code: P = -clk_s + I_{r,s}   (σ 0.3)
+                    b.A_s(row, clkc[s]) = -1.0; b.A_r(row, icol(s)) = 1.0;
+                    b.w(row) = 1.0 / (sig_cd * sig_cd);
+                    b.y(row) = -clk[s] + I[r][s] + ndcd(gen); ++row;
+                    // phase: Φ = -clk_s + pb_s + N_{r,s} - I_{r,s}   (σ 0.002)
+                    b.A_s(row, clkc[s]) = -1.0; b.A_s(row, pbc[s]) = 1.0;
+                    b.A_r(row, ncol(s)) = 1.0; b.A_r(row, icol(s)) = -1.0;
+                    b.w(row) = 1.0 / (sig_ph * sig_ph);
+                    b.y(row) = -clk[s] + pb_true[s] + N_true[r][s] - I[r][s] + ndph(gen); ++row;
+                }
+                if (correlated_iono) {
+                    // Pin I_{r,s} = map_r·SH + rep.  The mapping map_r DIFFERS per station (the
+                    // field's SH→slant map at each station's pierce point), so SH does NOT cancel
+                    // in the between-station DD (unlike the sat clock) — the ambiguity DD inherits
+                    // (map_1−map_0)·SH.  SH is carried with a LARGE q (re-applied ~white against a
+                    // representativeness σ), so its posterior variance never converges to 0 → a
+                    // PERSISTENT floor on the DD σ.  This is the project_network_ddfrac_rootcause_shvtec
+                    // SH-VTEC iono-error mechanism.
+                    const double map_r = (r == 0) ? 1.0 : 1.4;
+                    for (int s = 0; s < 2; ++s) {
+                        b.A_r(row, icol(s)) = 1.0; b.A_s(row, shc) = -map_r;
+                        b.w(row) = 1.0 / (0.3 * 0.3);           // representativeness σ 0.3 m (loose pin)
+                        b.y(row) = (I[r][s] - map_r * sh_true) + ndrep(gen); ++row;
+                    }
+                }
+                if (ref) { b.A_s(row, pb0) = 1.0; b.w(row) = 1e10; b.y(row) = 0.0; ++row; }  // pin pb0 = 0
+                return b;
+            };
+            std::vector<Blk> blk = { build(0), build(1) };
+
+            // Inject BOTH stations' coupling rows from last epoch's harvest.
+            double inj_sig2_11 = -1.0;
+            for (int r = 0; r < 2; ++r)
+                for (const Cpl& cr : carry[static_cast<std::size_t>(r)]) {
+                    if (r == 1 && cr.col == ncol(1)) inj_sig2_11 = cr.cond_var;
+                    Blk& b = blk[static_cast<std::size_t>(r)];
+                    const Eigen::Index m0 = b.A_s.rows();
+                    b.A_s.conservativeResize(m0 + 1, Eigen::NoChange); b.A_s.bottomRows(1).setZero();
+                    b.A_r.conservativeResize(m0 + 1, Eigen::NoChange); b.A_r.bottomRows(1).setZero();
+                    b.w.conservativeResize(m0 + 1); b.y.conservativeResize(m0 + 1);
+                    b.A_r(m0, cr.col) = 1.0;
+                    double yv = cr.value;                               // (r̂_prev − r_lin), r_lin = 0
+                    double tu = 0.0;                                    // Card 1d: Σ M²·κ·q inflation
+                    for (Eigen::Index j = 0; j < nshared; ++j) {
+                        if (j == clk0 || j == pb0) continue;            // FREE-column restriction (both pinned)
+                        const double mj = cr.Mr(j);
+                        if (fixed) {
+                            // Border time update: same per-column q the Pk rebuild applies below.
+                            const double qj = (j == clk1) ? q_clk : (j == pb1) ? q_pb
+                                            : (j == shc)  ? 5.0   : 0.0;
+                            const double pj = (prev_pdiag.size() > j) ? prev_pdiag(j) : 0.0;
+                            if (qj > 0.0 && pj > 0.0) {
+                                const double kap = pj / (pj + qj);
+                                b.A_s(m0, j) = kap * mj; yv += kap * mj * prev_xs(j);
+                                tu += mj * mj * kap * qj;
+                                continue;
+                            }
+                        }
+                        b.A_s(m0, j) = mj; yv += mj * prev_xs(j);       // + M_rj · ŝ_prev,j
+                    }
+                    b.w(m0) = 1.0 / (cr.cond_var + tu); b.y(m0) = yv;
+                }
+
+            est.beginEpoch();
+            const std::size_t s0 = est.addStation(blk[0].A_s, blk[0].A_r, blk[0].w, blk[0].y);
+            const std::size_t s1 = est.addStation(blk[1].A_s, blk[1].A_r, blk[1].w, blk[1].y);
+            est.addSharedPriorDense(bkeys, Pk);
+            const Eigen::VectorXd xs = est.solve(datum);
+
+            // Single-ambiguity σ (includes shared-border propagation) vs the between-station DD σ
+            // N_{1,1}−N_{0,1} (cancels the shared clk1/pb1 — the field dd_sigma contrast).
+            const Eigen::MatrixXd J1 = est.jointConditionalCovariance({{s1, ncol(1)}}, datum);
+            const double single_sig = (J1.rows() == 1 && J1(0, 0) > 0.0) ? std::sqrt(J1(0, 0)) : -1.0;
+            const Eigen::MatrixXd J2 =
+                est.jointConditionalCovariance({{s0, ncol(1)}, {s1, ncol(1)}}, datum);
+            double dd_sig = -1.0;
+            if (J2.rows() == 2) {
+                const double vdd = J2(0, 0) + J2(1, 1) - 2.0 * J2(0, 1);   // g = [+1,-1]
+                dd_sig = (vdd > 0.0) ? std::sqrt(vdd) : -1.0;
+            }
+
+            // Harvest BOTH stations' ambiguities → next epoch's coupling rows (production path).
+            const Eigen::VectorXd x0 = est.reconstructStation(s0, xs);
+            const Eigen::VectorXd x1 = est.reconstructStation(s1, xs);
+            const std::vector<Eigen::Index> ambcols = { ncol(0), ncol(1) };
+            (void)est.conditionalLocalVarianceDiag(s1, ambcols, datum);   // exercise the marginal harvest too
+            std::vector<std::vector<Cpl>> next(2);
+            double q_cond_11 = -1.0; Eigen::VectorXd Mr_11 = Eigen::VectorXd::Zero(nshared);
+            for (int r = 0; r < 2; ++r) {
+                const std::size_t sid = (r == 0) ? s0 : s1;
+                const Eigen::VectorXd& xl = (r == 0) ? x0 : x1;
+                for (int s = 0; s < 2; ++s) {
+                    const auto reg = est.stationRegression(sid, ncol(s));
+                    next[static_cast<std::size_t>(r)].push_back(Cpl{ ncol(s), xl(ncol(s)), reg.cond_var, reg.row });
+                    if (r == 1 && s == 1) { q_cond_11 = reg.cond_var; Mr_11 = reg.row; }
+                }
+            }
+            const double dd_val_err = (x1(ncol(1)) - x0(ncol(1))) - (N_true[1][1] - N_true[0][1]);
+
+            // Rebuild the dense border {clk1, pb1 (+SH)} from the posterior + q inflation.
+            const Eigen::MatrixXd P = est.sharedCovariance();
+            for (std::size_t a = 0; a < bkeys.size(); ++a) bkeys[a].value = xs(bcol[a]);
+            for (Eigen::Index a = 0; a < k; ++a)
+                for (Eigen::Index bb = 0; bb < k; ++bb) Pk(a, bb) = P(bcol[a], bcol[bb]);
+            for (Eigen::Index a = 0; a < k; ++a)
+                Pk(a, a) += (bcol[a] == clk1) ? q_clk : (bcol[a] == shc ? 5.0 : q_pb);
+            carry = std::move(next);
+            prev_xs = xs;
+            prev_pdiag = P.diagonal();   // Card 1d: κ inputs for the next inject
+
+            const double mr_sh = (shc >= 0) ? Mr_11(shc) : 0.0;
+            std::printf("  %d | %.3e %.4e | %+7.3f %+6.3f %+6.3f | %11.4e | %11.4e | %+9.4f\n",
+                        ep, inj_sig2_11, q_cond_11, Mr_11(clk1), Mr_11(pb1), mr_sh,
+                        single_sig, dd_sig, dd_val_err);
+            single_traj.push_back(single_sig); dd_traj.push_back(dd_sig);
+            err_ratio.push_back((dd_sig > 0.0) ? std::abs(dd_val_err) / dd_sig : -1.0);
+            EXPECT_TRUE(std::isfinite(q_cond_11) && q_cond_11 > 0.0)
+                << "harvest produced a non-finite/non-positive conditional variance at ep " << ep;
+            EXPECT_TRUE(std::isfinite(single_sig) && std::isfinite(dd_sig))
+                << "jointConditionalCovariance non-finite at ep " << ep;
+        }
+        auto ratio = [&](const std::vector<double>& v) {
+            return (v.size() == static_cast<std::size_t>(NEP) && v.front() > 0 && v.back() > 0)
+                       ? v.front() / v.back() : 0.0;
+        };
+        std::printf(" contraction σ(0)/σ(7):  single=%.2f   DD=%.2f   (1/√8 accumulation ⇒ ~%.2f)\n",
+                    ratio(single_traj), ratio(dd_traj), std::sqrt(static_cast<double>(NEP)));
+        return Trace{single_traj, dd_traj, err_ratio};
+    };
+
+    const Trace plain     = run_trace(false, false);
+    const Trace corr      = run_trace(true,  false);
+    const Trace plain_fix = run_trace(false, true);
+    const Trace corr_fix  = run_trace(true,  true);
+    (void)plain;
+
+    // ── Card 1d assertions (the unfixed arms above stay pure diagnostics) ──────
+    auto maxr = [](const std::vector<double>& v) {
+        double m = 0.0; for (double x : v) m = std::max(m, x); return m;
+    };
+    auto contraction = [&](const std::vector<double>& v) {
+        return (!v.empty() && v.front() > 0 && v.back() > 0) ? v.front() / v.back() : 0.0;
+    };
+    // The asymmetric correlated-iono probe (map 1.0 vs 1.4) leaks the stale-row
+    // defect into the DD (the "σ-incest" ±5 m, 30-50× overconfident signature) —
+    // the discrimination arm.  The fix must keep the SAME probe honest.
+    EXPECT_GT(maxr(corr.err_ratio), 4.0)
+        << "unfixed correlated-iono arm should be grossly overconfident (the Card-1c "
+           "defect) — the fixture lost its discrimination";
+    EXPECT_LT(maxr(corr_fix.err_ratio), 3.0)
+        << "Card 1d: fixed correlated-iono arm must stay consistent (|err|/sigma <= 3)";
+    EXPECT_LT(maxr(plain_fix.err_ratio), 3.0)
+        << "Card 1d: fixed plain arm must stay consistent (|err|/sigma <= 3)";
+    // Honest accumulation: the DD σ keeps contracting under the fix (no incest
+    // floor, no divergence) in both geometries.
+    EXPECT_GT(contraction(plain_fix.dd_sig), 1.8)
+        << "Card 1d: fixed plain arm DD sigma should contract ~1/sqrt(k)";
+    EXPECT_GT(contraction(corr_fix.dd_sig), 1.3)
+        << "Card 1d: fixed correlated-iono arm DD sigma should still contract";
+}
+
+// ── Card 1d ──────────────────────────────────────────────────────────────────
+// Border TIME UPDATE of the coupling rows (network.carry_coupling_time_update).
+// ConditionalCarryRecursiveEqualsBatch above passes only because its shared
+// border is STATIC between epochs (zero process noise) — the exact test gap that
+// shipped the Card-1c defect.  Here the border MOVES: c_{s,2} = c_{s,1} + w,
+// w ~ N(0, q) with the card-spec LARGE q (1e4 m², a free-running clock), and the
+// recursion equals batch only when each injected coupling row is re-independenced
+// against the moved border: per-column shrink κ_j = P_prev/(P_prev + q) applied
+// to the coefficient AND its ŝ_prev RHS term, plus the row-variance inflation
+// M²·κ_j·q = Mᵀ(P⁻¹+Q⁻¹)⁻¹M.  Geometry chosen so the scalar per-column κ is
+// EXACT: ONE carried station (no cross-station conditional correlation to drop),
+// shared = one clock per satellite ONLY, each ambiguity couples to exactly one
+// clock, and different satellites never share a row or a local — so the border
+// posterior is diagonal across the coupled columns and each row has a single
+// coupled column.  The batch reference is hand-built per satellite over
+// (c₁, c₂, M₀, M₁) with an explicit link row c₂−c₁ ~ N(0,q).  The RAW (unfixed
+// Card-1) recursion must FAIL against the moving border — that failing arm IS
+// the Card-1c defect.
+namespace card1d {
+
+struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
+
+// Coupling-row construction mode for epoch 2.
+enum class Mode {
+    Raw,       ///< unfixed Card 1: full-strength harvested row, σ² = cond_var
+    Fixed,     ///< Card 1d: κ-shrunk coefficients + M²κq inflation
+    Departed   ///< full marginalization: coupled terms dropped, σ² += M²·P_prev
+};
+
+constexpr int R = 2, S = 3;   // station 0 = pivot (M₀ₛ pinned), station 1 carried
+constexpr double W_CD = 4.0, W_PH = 100.0, W_PIN = 1e10;
+
+struct Fixture {
+    std::vector<std::string> sats;
+    std::vector<double> c1, c2;              // per-sat truth clock, epochs 1 / 2
+    double M[R][S];                          // truth ambiguities (row 0 = gauge 0)
+    double q;                                // clock process noise between epochs (m²)
+
+    explicit Fixture(double q_carry, double truth_drift_sigma, unsigned seed = 777u)
+            : q(q_carry) {
+        std::mt19937 gen(seed);
+        std::uniform_real_distribution<double> clk(-10.0, 10.0), amb(-5.0, 5.0);
+        std::normal_distribution<double> nd(0.0, 1.0);
+        sats.resize(S);
+        c1.resize(static_cast<std::size_t>(S));
+        c2.resize(static_cast<std::size_t>(S));
+        for (int s = 0; s < S; ++s) {
+            char id[8]; std::snprintf(id, sizeof(id), "G%02d", s + 1);
+            sats[static_cast<std::size_t>(s)] = id;
+            c1[static_cast<std::size_t>(s)] = clk(gen);
+            c2[static_cast<std::size_t>(s)] =
+                c1[static_cast<std::size_t>(s)] + truth_drift_sigma * nd(gen);
+        }
+        for (int s = 0; s < S; ++s) { M[0][s] = 0.0; M[1][s] = amb(gen); }
+    }
+
+    // One station-epoch block: per sat a code row P = −c_s (σ 0.5) and a phase
+    // row Φ = −c_s + M_{r,s} (σ 0.1); the pivot adds M₀ₛ = 0 pins (w 1e10).
+    Blk build(int r, const std::vector<double>& c, unsigned seed,
+              const std::vector<Eigen::Index>& clkCol, Eigen::Index nshared) const {
+        const bool pivot = (r == 0);
+        const Eigen::Index m = 2 * S + (pivot ? S : 0);
+        Blk b;
+        b.A_s = Eigen::MatrixXd::Zero(m, nshared);
+        b.A_r = Eigen::MatrixXd::Zero(m, S);
+        b.w   = Eigen::VectorXd::Ones(m);
+        b.y   = Eigen::VectorXd::Zero(m);
+        std::mt19937 g(seed);
+        std::normal_distribution<double> nd(0.0, 1.0);
+        Eigen::Index row = 0;
+        for (int s = 0; s < S; ++s) {
+            const auto su = static_cast<std::size_t>(s);
+            b.A_s(row, clkCol[su]) = -1.0;
+            b.w(row) = W_CD;
+            b.y(row) = -c[su] + 0.5 * nd(g); ++row;
+            b.A_s(row, clkCol[su]) = -1.0; b.A_r(row, s) = 1.0;
+            b.w(row) = W_PH;
+            b.y(row) = -c[su] + M[r][s] + 0.1 * nd(g); ++row;
+        }
+        if (pivot)
+            for (int s = 0; s < S; ++s) { b.A_r(row, s) = 1.0; b.w(row) = W_PIN; b.y(row) = 0.0; ++row; }
+        return b;
+    }
+};
+
+// Harvested carry of one epoch-1 ambiguity of the carried station.
+struct Carry {
+    Eigen::Index col;      ///< local (A_r) column = satellite index
+    double value;          ///< reconstructed absolute value
+    double cond_var;       ///< pure conditional variance (N_rr⁻¹)_cc
+    Eigen::VectorXd Mr;    ///< regression on the shared border (spans nshared)
+};
+
+// Append one coupling row per carry to the carried station's epoch-2 block,
+// built per `mode` (κ uses the harvest-epoch border variances `pdiag` and the
+// per-column process noise `q`).
+inline void appendCplRows(Blk& blk, const std::vector<Carry>& carries,
+                          const Eigen::VectorXd& x1, const Eigen::VectorXd& pdiag,
+                          double q, Mode mode) {
+    for (const Carry& cr : carries) {
+        const Eigen::Index m0 = blk.A_s.rows();
+        blk.A_s.conservativeResize(m0 + 1, Eigen::NoChange); blk.A_s.bottomRows(1).setZero();
+        blk.A_r.conservativeResize(m0 + 1, Eigen::NoChange); blk.A_r.bottomRows(1).setZero();
+        blk.w.conservativeResize(m0 + 1);
+        blk.y.conservativeResize(m0 + 1);
+        blk.A_r(m0, cr.col) = 1.0;
+        double yv = cr.value;                       // (r̂_prev − r_lin), r_lin = 0
+        double sig2 = cr.cond_var;
+        for (Eigen::Index j = 0; j < cr.Mr.size(); ++j) {
+            const double mj = cr.Mr(j);
+            if (mj == 0.0) continue;
+            switch (mode) {
+                case Mode::Raw:
+                    blk.A_s(m0, j) = mj; yv += mj * x1(j);
+                    break;
+                case Mode::Fixed: {
+                    const double kap = pdiag(j) / (pdiag(j) + q);   // κ = 1 exactly at q = 0
+                    blk.A_s(m0, j) = kap * mj; yv += kap * mj * x1(j);
+                    sig2 += mj * mj * kap * q;
+                    break;
+                }
+                case Mode::Departed:
+                    sig2 += mj * mj * pdiag(j);
+                    break;
+            }
+        }
+        blk.w(m0) = 1.0 / sig2;
+        blk.y(m0) = yv;
+    }
+}
+
+// Run epoch 1 (harvest) + epoch 2 (inject per `mode` + dense border carry
+// inflated by q) through NetworkEstimator; return the epoch-2 shared solution,
+// the carried station's locals, and the locals' joint covariance.
+struct EpochTwo {
+    Eigen::VectorXd x_s;      ///< shared solution (clock columns)
+    Eigen::VectorXd x_loc;    ///< carried station's locals (ambiguities)
+    Eigen::MatrixXd P_loc;    ///< their joint (marginal) covariance
+    Eigen::MatrixXd P_s;      ///< shared covariance
+};
+
+inline EpochTwo runRecursion(const Fixture& fx, Mode mode) {
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(static_cast<std::size_t>(S));
+    for (int s = 0; s < S; ++s)
+        clkCol[static_cast<std::size_t>(s)] = est.registerClock(fx.sats[static_cast<std::size_t>(s)]);
+    const Eigen::Index nshared = est.numShared();
+    const NetworkEstimator::Datum datum;   // clocks absolutely observed — no pin needed
+
+    // Epoch 1: solve + harvest.
+    est.beginEpoch();
+    Blk b0 = fx.build(0, fx.c1, 11u, clkCol, nshared);
+    Blk b1 = fx.build(1, fx.c1, 22u, clkCol, nshared);
+    const std::size_t s0 = est.addStation(b0.A_s, b0.A_r, b0.w, b0.y);
+    const std::size_t s1 = est.addStation(b1.A_s, b1.A_r, b1.w, b1.y);
+    (void)s0;
+    const Eigen::VectorXd x1 = est.solve(datum);
+    const Eigen::MatrixXd P1 = est.sharedCovariance();
+    const Eigen::VectorXd x1r = est.reconstructStation(s1, x1);
+    std::vector<Carry> carries;
+    for (int s = 0; s < S; ++s) {
+        const auto reg = est.stationRegression(s1, s);
+        carries.push_back(Carry{s, x1r(s), reg.cond_var, reg.row});
+    }
+    std::vector<NetworkEstimator::SharedPrior> keys(static_cast<std::size_t>(S));
+    Eigen::MatrixXd Pk(S, S);
+    for (int a = 0; a < S; ++a) {
+        keys[static_cast<std::size_t>(a)].kind  = SharedParamKind::Clock;
+        keys[static_cast<std::size_t>(a)].sat   = fx.sats[static_cast<std::size_t>(a)];
+        keys[static_cast<std::size_t>(a)].value = x1(clkCol[static_cast<std::size_t>(a)]);
+        for (int bb = 0; bb < S; ++bb)
+            Pk(a, bb) = P1(clkCol[static_cast<std::size_t>(a)], clkCol[static_cast<std::size_t>(bb)]);
+    }
+    Pk += fx.q * Eigen::MatrixXd::Identity(S, S);   // the border carry's time update
+
+    // Epoch 2: fresh data + coupling rows (per mode) + dense border carry.
+    est.beginEpoch();
+    Blk c0 = fx.build(0, fx.c2, 33u, clkCol, nshared);
+    Blk c1b = fx.build(1, fx.c2, 44u, clkCol, nshared);
+    appendCplRows(c1b, carries, x1, P1.diagonal(), fx.q, mode);
+    est.addStation(c0.A_s, c0.A_r, c0.w, c0.y);
+    const std::size_t t1 = est.addStation(c1b.A_s, c1b.A_r, c1b.w, c1b.y);
+    EXPECT_EQ(est.addSharedPriorDense(keys, Pk), static_cast<std::size_t>(S));
+    EpochTwo out;
+    const Eigen::VectorXd xs_full = est.solve(datum);
+    out.x_loc = est.reconstructStation(t1, xs_full);
+    std::vector<std::pair<std::size_t, Eigen::Index>> pairs;
+    for (int s = 0; s < S; ++s) pairs.emplace_back(t1, static_cast<Eigen::Index>(s));
+    out.P_loc = est.jointConditionalCovariance(pairs, datum);
+    // Re-index the shared solution/covariance to satellite order (clkCol[s] need
+    // not equal s in general).
+    const Eigen::MatrixXd Ps_full = est.sharedCovariance();
+    out.x_s.resize(S);
+    out.P_s.resize(S, S);
+    for (int a = 0; a < S; ++a) {
+        out.x_s(a) = xs_full(clkCol[static_cast<std::size_t>(a)]);
+        for (int bb = 0; bb < S; ++bb)
+            out.P_s(a, bb) = Ps_full(clkCol[static_cast<std::size_t>(a)],
+                                     clkCol[static_cast<std::size_t>(bb)]);
+    }
+    return out;
+}
+
+// Hand-built exact batch per satellite: unknowns z = [c₁, c₂, M₀, M₁], rows =
+// both epochs' code/phase + BOTH epochs' pivot pins + the link c₂−c₁ ~ N(0,q).
+// Noise realizations MUST match runRecursion's builds (same seeds), so the two
+// see identical data.
+struct Batch { double c2, m1; double var_c2, var_m1; };
+
+inline Batch runBatch(const Fixture& fx, int s) {
+    // Reproduce the per-row noise stream: build() draws 2 gaussians per sat in
+    // sat order from one generator per (station, epoch) — replay them all.
+    auto noise = [&](unsigned seed) {
+        std::mt19937 g(seed);
+        std::normal_distribution<double> nd(0.0, 1.0);
+        std::vector<std::pair<double,double>> v(static_cast<std::size_t>(S));
+        for (int k = 0; k < S; ++k) { const double a = nd(g); const double b = nd(g); v[static_cast<std::size_t>(k)] = {a, b}; }
+        return v;
+    };
+    const auto n0e1 = noise(11u), n1e1 = noise(22u), n0e2 = noise(33u), n1e2 = noise(44u);
+    const auto su = static_cast<std::size_t>(s);
+
+    Eigen::MatrixXd N = Eigen::MatrixXd::Zero(4, 4);
+    Eigen::VectorXd u = Eigen::VectorXd::Zero(4);
+    auto addRow = [&](const Eigen::Vector4d& a, double w, double y) {
+        N += w * a * a.transpose();
+        u += w * a * y;
+    };
+    // z = [c1, c2, M0, M1]
+    for (int ep = 0; ep < 2; ++ep) {
+        const double c = (ep == 0) ? fx.c1[su] : fx.c2[su];
+        const int ci = ep;   // c1 or c2 column
+        const auto& np = (ep == 0) ? n0e1 : n0e2;   // pivot noise
+        const auto& nc = (ep == 0) ? n1e1 : n1e2;   // carried-station noise
+        // pivot: code, phase (M0), pin
+        addRow(Eigen::Vector4d((ci == 0 ? -1 : 0), (ci == 1 ? -1 : 0), 0, 0), W_CD,
+               -c + 0.5 * np[su].first);
+        addRow(Eigen::Vector4d((ci == 0 ? -1 : 0), (ci == 1 ? -1 : 0), 1, 0), W_PH,
+               -c + fx.M[0][s] + 0.1 * np[su].second);
+        addRow(Eigen::Vector4d(0, 0, 1, 0), W_PIN, 0.0);
+        // carried station: code, phase (M1)
+        addRow(Eigen::Vector4d((ci == 0 ? -1 : 0), (ci == 1 ? -1 : 0), 0, 0), W_CD,
+               -c + 0.5 * nc[su].first);
+        addRow(Eigen::Vector4d((ci == 0 ? -1 : 0), (ci == 1 ? -1 : 0), 0, 1), W_PH,
+               -c + fx.M[1][s] + 0.1 * nc[su].second);
+    }
+    addRow(Eigen::Vector4d(-1, 1, 0, 0), 1.0 / fx.q, 0.0);   // link c2 − c1 ~ N(0, q)
+    const Eigen::MatrixXd Ninv = N.inverse();
+    const Eigen::VectorXd z = Ninv * u;
+    return Batch{z(1), z(3), Ninv(1, 1), Ninv(3, 3)};
+}
+
+}  // namespace card1d
+
+// Card 1d gate: with the LARGE-q moving clock border, the κ-fixed recursion
+// equals the hand-built batch (values AND formal variances) while the raw
+// Card-1 recursion fails grossly; a moderate q exercises κ away from both
+// limits.  See docs/HANDOFF_carry_timeupdate_card1d.md.
+TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
+    using namespace card1d;
+    for (const double q : {1e4, 1.0}) {
+        const Fixture fx(q, std::sqrt(q));
+        const EpochTwo fixed = runRecursion(fx, Mode::Fixed);
+        const EpochTwo raw   = runRecursion(fx, Mode::Raw);
+        double fixed_err = 0.0, raw_err = 0.0;
+        for (int s = 0; s < S; ++s) {
+            const Batch bt = runBatch(fx, s);
+            fixed_err = std::max(fixed_err, std::abs(fixed.x_s(s) - bt.c2));
+            fixed_err = std::max(fixed_err, std::abs(fixed.x_loc(s) - bt.m1));
+            raw_err = std::max(raw_err, std::abs(raw.x_s(s) - bt.c2));
+            raw_err = std::max(raw_err, std::abs(raw.x_loc(s) - bt.m1));
+            EXPECT_NEAR(fixed.P_s(s, s), bt.var_c2, 1e-6 * bt.var_c2)
+                << "q=" << q << " sat " << s << ": fixed recursion clock variance != batch";
+            EXPECT_NEAR(fixed.P_loc(s, s), bt.var_m1, 1e-6 * bt.var_m1)
+                << "q=" << q << " sat " << s << ": fixed recursion ambiguity variance != batch";
+        }
+        EXPECT_LT(fixed_err, 1e-8)
+            << "q=" << q << ": κ-fixed recursion must equal the batch solve";
+        if (q == 1e4) {
+            EXPECT_GT(raw_err, 0.05)
+                << "raw Card-1 rows should fail against the large-q moving border "
+                   "(the Card-1c defect) — the fixture lost its discrimination";
+            EXPECT_GT(raw_err, 1e3 * std::max(fixed_err, 1e-12))
+                << "the fixed recursion should be orders of magnitude closer to batch";
+        }
+    }
+}
+
+// Card 1d limits: q = 0 must reproduce the raw (unfixed) rows EXACTLY (κ = 1,
+// zero inflation — guards the OFF-adjacent behavior), and q → ∞ must reproduce
+// the departed-column marginalization (κ = 0, σ² += M²·P_prev) — the fix's two
+// analytic limits.
+TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
+    using namespace card1d;
+    {   // q = 0: κ-fixed construction == raw construction, bit-for-bit behavior
+        const Fixture fx(0.0, 1.0);
+        const EpochTwo fixed = runRecursion(fx, Mode::Fixed);
+        const EpochTwo raw   = runRecursion(fx, Mode::Raw);
+        EXPECT_LT((fixed.x_s - raw.x_s).cwiseAbs().maxCoeff(), 1e-13)
+            << "q=0: the κ formula must degenerate to the unfixed rows exactly";
+        EXPECT_LT((fixed.x_loc - raw.x_loc).cwiseAbs().maxCoeff(), 1e-13);
+        EXPECT_LT((fixed.P_loc - raw.P_loc).cwiseAbs().maxCoeff(), 1e-13);
+    }
+    {   // q → ∞ (1e30): κ-fixed == full departed-column marginalization
+        const Fixture fx(1e30, 1.0);   // truth drift kept moderate — equivalence is data-identical
+        const EpochTwo fixed = runRecursion(fx, Mode::Fixed);
+        const EpochTwo dep   = runRecursion(fx, Mode::Departed);
+        EXPECT_LT((fixed.x_s - dep.x_s).cwiseAbs().maxCoeff(), 1e-9)
+            << "q→∞: the κ formula must reproduce the departed-column branch";
+        EXPECT_LT((fixed.x_loc - dep.x_loc).cwiseAbs().maxCoeff(), 1e-9);
+        EXPECT_LT((fixed.P_loc - dep.P_loc).cwiseAbs().maxCoeff(), 1e-9);
+    }
+}
+
+// Card 1b (network.carry_coupling_joint_whiten): when >=2 of a station's carried
+// ambiguities regress on the SAME shared column that has DEPARTED the layout, that
+// column must be marginalized JOINTLY — the coupling rows' noise covariance
+// R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ — not per-row into a scalar.  This test
+// isolates the mathematical claim on a minimal system (two locals r0,r1 + one
+// departed shared W): the joint covariance equals the exact batch marginal of W, so
+// the recursive posterior matches the batch; the Card-1 per-row SCALAR variance is
+// exactly the DIAGONAL of that joint covariance (it drops the between-row correlation
+// the shared departed column induces) and does NOT match.  Self-contained linear
+// algebra — validates the mechanism the driver's whitenCouplingRows() implements.
+TEST(NetworkEstimatorTest, JointWhitenCouplingMarginalizationEqualsBatch) {
+    using Eigen::MatrixXd;
+    using Eigen::Vector2d;
+
+    // Epoch-1 information over θ = [r0, r1, W] accumulated from a small obs set: a
+    // "phase" obs couples each local r_i to the shared W; a direct obs on each local
+    // and a prior on W keep the 3×3 information SPD.
+    const double M0 = 0.7, M1 = -1.3;
+    MatrixXd Lam1 = MatrixXd::Zero(3, 3);
+    auto addObs = [&](double a_r0, double a_r1, double a_W, double var) {
+        Eigen::Vector3d a(a_r0, a_r1, a_W);
+        Lam1 += (a * a.transpose()) / var;
+    };
+    addObs(1.0, 0.0, M0, 0.01);   // phase: r0 + M0·W
+    addObs(0.0, 1.0, M1, 0.01);   // phase: r1 + M1·W
+    addObs(1.0, 0.0, 0.0, 1.0);   // direct r0
+    addObs(0.0, 1.0, 0.0, 1.0);   // direct r1
+    addObs(0.0, 0.0, 1.0, 100.0); // W prior (a-priori var 100)
+
+    const MatrixXd Sig1 = Lam1.inverse();            // epoch-1 covariance
+    const MatrixXd Srr  = Sig1.topLeftCorner(2, 2);  // marginal (r0,r1) cov (the batch's epoch-1 marginal)
+    const Vector2d SrW  = Sig1.block<2, 1>(0, 2);
+    const double   SWW  = Sig1(2, 2);                 // W marginal variance = P_w
+    const Vector2d Mr   = SrW / SWW;                  // regression of (r0,r1) on W
+    const MatrixXd Scond = Srr - SWW * (Mr * Mr.transpose());  // conditional cov (var_eff diagonal)
+
+    // JOINT whitening covariance R = diag(var_eff) + M_w·P_w·M_wᵀ, with M_w=[Mr0;Mr1],
+    // var_eff_i = Scond(i,i).  By the marginalization identity it equals the marginal Srr.
+    MatrixXd Rjoint = SWW * (Mr * Mr.transpose());
+    for (int i = 0; i < 2; ++i) Rjoint(i, i) += Scond(i, i);
+    EXPECT_LT((Rjoint - Srr).cwiseAbs().maxCoeff(), 1e-12)
+        << "joint departed-column marginalization must equal the exact batch marginal cov";
+
+    // Card-1 SCALAR path: σ²_i = var_eff_i + M_i²·P_w = Srr(i,i) — a DIAGONAL R that
+    // discards the off-diagonal M0·M1·P_w the two rows share through W.
+    MatrixXd Rscalar = MatrixXd::Zero(2, 2);
+    for (int i = 0; i < 2; ++i) Rscalar(i, i) = Scond(i, i) + SWW * Mr(i) * Mr(i);
+
+    // Epoch-2 information on the LOCALS only (W has departed — not touched).  The
+    // recursive posterior = epoch-1 marginal r-info (R⁻¹) + epoch-2 info; the batch =
+    // full (r0,r1,W) info + epoch-2 r-info, marginalized over W.  They agree iff the
+    // marginalization is exact (joint), and epoch-2's r-only update commutes with it.
+    MatrixXd I2 = MatrixXd::Zero(2, 2);
+    I2(0, 0) = 1.0 / 0.02;
+    I2(1, 1) = 1.0 / 0.03;
+
+    MatrixXd Lam_full = Lam1;
+    Lam_full.topLeftCorner(2, 2) += I2;
+    const MatrixXd batch_rr = Lam_full.inverse().topLeftCorner(2, 2);
+
+    const MatrixXd cov_joint  = (Rjoint.inverse()  + I2).inverse();
+    const MatrixXd cov_scalar = (Rscalar.inverse() + I2).inverse();
+
+    EXPECT_LT((cov_joint - batch_rr).cwiseAbs().maxCoeff(), 1e-9)
+        << "joint whitening of the shared departed column reproduces the batch (r0,r1) "
+           "posterior covariance — the σ the scalar path flattens";
+    EXPECT_GT((cov_scalar - batch_rr).cwiseAbs().maxCoeff(), 1e-6)
+        << "the per-row scalar (diagonal) marginalization must NOT match batch — dropping "
+           "the between-row correlation is exactly the Card-1 inert-carry flaw Card 1b fixes";
+}
+
 // Input validation + numerical rejection: bad dims throw invalid_argument, an
 // un-begun epoch throws logic_error, an indefinite or negative-variance block
 // throws runtime_error (after the ridge retry) — and a rejected fold leaves the
@@ -892,6 +2466,165 @@ TEST(NetworkSbasisTest, BuildsOneClockPinPerConstellation) {
     EXPECT_EQ(plan2.clock_pivot.at("G"), "G02");
     EXPECT_TRUE([&]{ for (const auto& p : plan2.shared_datum)
                        if (p.column == est.clockColumn("G02")) return true; return false; }());
+}
+
+// W6 IF-pin reference-pair selection must be a DETERMINISTIC function of the
+// satellite's registered signal SET — independent of the order the signals are
+// passed in.  The emitted (δtˢ, dˢ) split is anchored to this pair, so an
+// order-dependent same-band swap (C1C ↔ C1W) would silently re-datum the clock
+// by the satellite's inter-channel bias — the bug selectIfPinPair fixes.
+TEST(NetworkSbasisTest, SelectIfPinPairIsDeterministicInSignalSet) {
+    using Pair = std::pair<std::string, std::string>;
+    // GPS carrier frequencies by RINEX band digit (L1 / L2 / L5); '9' (below) is
+    // an unavailable-frequency stand-in (freqOf -> 0).
+    auto gpsFreq = [](const std::string& s) -> double {
+        if (s.size() < 2) return 0.0;
+        switch (s[1]) {
+            case '1': return 1575.42e6;
+            case '2': return 1227.60e6;
+            case '5': return 1176.45e6;
+            default:  return 0.0;
+        }
+    };
+
+    // Same-band channels tie-break on the FULL signal name (C1C < C1W), and the
+    // result is invariant to input order — three permutations, one answer.
+    const Pair expected{ "C1C", "C2W" };
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1C", "C1W", "C2W" }, gpsFreq), expected);
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C2W", "C1W", "C1C" }, gpsFreq), expected);
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1W", "C2W", "C1C" }, gpsFreq), expected);
+
+    // `second` skips a same-FREQUENCY co-channel (C1L is L1 like C1C) and takes the
+    // first genuinely distinct frequency.
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1L", "C1C", "C2W" }, gpsFreq),
+              (Pair{ "C1C", "C2W" }));
+
+    // Two LOWEST distinct frequencies: L2 wins over L5 (first = L1, second = the
+    // first distinct frequency = L2), regardless of where L5 sorts.
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C5Q", "C2W", "C1C" }, gpsFreq),
+              (Pair{ "C1C", "C2W" }));
+
+    // Single distinct frequency (both L1) => no second signal (degenerate pin).
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1W", "C1C" }, gpsFreq),
+              (Pair{ "C1C", std::string{} }));
+
+    // A signal whose frequency is unavailable (freqOf == 0) is never chosen as the
+    // distinct second; with no other real band there is no second.
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1C", "C9X" }, gpsFreq),
+              (Pair{ "C1C", std::string{} }));
+
+    // Empty set => empty pair.
+    EXPECT_EQ(NetworkSbasis::selectIfPinPair(std::vector<std::string>{}, gpsFreq),
+              (Pair{ std::string{}, std::string{} }));
+}
+
+// Card 2 (network.code_datum_time_linked): the pure time-linked sum-to-zero target.
+// Veterans (present satellites WITH a previous solved value) span the row and are
+// referenced to themselves (RHS Σ b̂_prev), so a membership change never moves the
+// target.  A channel with NO veteran falls back to the legacy all-present Σ = 0 seed
+// and flags reseed so the driver disc-bumps the re-reference.
+TEST(NetworkSbasisTest, CodeS2zTimeLinkVeteranReferenceAndReseed) {
+    const std::vector<std::string> present = { "G01", "G02", "G03" };
+
+    // All veterans: row spans all three, RHS = Σ prev, no reseed.
+    {
+        const std::map<std::string, double> prev =
+            { { "G01", 0.3 }, { "G02", -0.1 }, { "G03", 0.5 } };
+        const auto tl = NetworkSbasis::codeS2zTimeLink(present, prev);
+        EXPECT_FALSE(tl.reseed);
+        EXPECT_EQ(tl.jac_sats, present);
+        EXPECT_NEAR(tl.rhs, 0.3 - 0.1 + 0.5, 1e-12);
+    }
+    // Mixed (G02 fresh): the row spans the VETERANS {G01,G03} only — the target is the
+    // veteran sum, so the new satellite takes its level from the network + this row.
+    {
+        const std::map<std::string, double> prev = { { "G01", 0.3 }, { "G03", 0.5 } };
+        const auto tl = NetworkSbasis::codeS2zTimeLink(present, prev);
+        EXPECT_FALSE(tl.reseed);
+        EXPECT_EQ(tl.jac_sats, (std::vector<std::string>{ "G01", "G03" }));
+        EXPECT_NEAR(tl.rhs, 0.8, 1e-12);
+    }
+    // No veteran: fall back to the all-present Σ = 0 seed, reseed flagged.
+    {
+        const auto tl = NetworkSbasis::codeS2zTimeLink(present, {});
+        EXPECT_TRUE(tl.reseed);
+        EXPECT_EQ(tl.jac_sats, present);
+        EXPECT_NEAR(tl.rhs, 0.0, 1e-12);
+    }
+}
+
+// Card 2: set-change CONTINUITY of the sum-to-zero code-bias datum, solved through the
+// real estimator.  A channel of satellite code biases is observable only up to a common
+// LEVEL — each observation is (d_r + b_s), the receiver code bias d_r absorbing the
+// level, so the sum-to-zero row is the gauge that fixes it.  When a satellite LEAVES
+// between epochs, the legacy zero target (Σ b = 0 over the CURRENT set) STEPS every
+// surviving bias by the departed bias / (m−1) (a common-mode shift); the time-linked
+// veteran target (Σ_vet b = Σ b̂_prev) reproduces the previous epoch EXACTLY.  This is
+// the falsifiable core of the card — the same layout either way (rank unchanged).
+TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
+    const std::string sig = "C1W";
+    const std::vector<std::string> sats = { "G01", "G02", "G03", "G04" };
+    const std::vector<double>      O    = { 12.3, 12.9, 11.7, 13.4 };  // observed d_r + b_s
+
+    // Solve one epoch over `present` (indices into sats) with a sum-to-zero code-bias
+    // gauge at RHS `z_target`; return the solved b_s keyed by satellite.
+    auto solveEpoch = [&](const std::vector<int>& present, double z_target) {
+        NetworkEstimator est;
+        std::map<std::string, Eigen::Index> cb;
+        for (int i : present) cb[sats[static_cast<std::size_t>(i)]] =
+            est.registerCodeBias(sats[static_cast<std::size_t>(i)], sig);
+        const Eigen::Index nshared = est.numShared();
+        est.beginEpoch();
+        // One station: m code observations P_s = d_r + b_s (local d_r absorbs the level).
+        const Eigen::Index m = static_cast<Eigen::Index>(present.size());
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(m, nshared);
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(m, 1);        // receiver code bias d_r
+        Eigen::VectorXd w   = Eigen::VectorXd::Ones(m);
+        Eigen::VectorXd y   = Eigen::VectorXd::Zero(m);
+        for (Eigen::Index k = 0; k < m; ++k) {
+            const int i = present[static_cast<std::size_t>(k)];
+            A_s(k, cb[sats[static_cast<std::size_t>(i)]]) = 1.0;
+            A_r(k, 0)                                     = 1.0;
+            y(k)                                          = O[static_cast<std::size_t>(i)];
+        }
+        est.addStation(A_s, A_r, w, y);
+        // Sum-to-zero gauge over the present code biases at RHS z_target (weight 1e3 —
+        // the driver's kCodeBiasGaugeWeight).
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(1, nshared);
+        for (int i : present) H(0, cb[sats[static_cast<std::size_t>(i)]]) = 1.0;
+        Eigen::VectorXd z(1); z(0) = z_target;
+        est.addSharedConstraintRows(H, z, 1.0e3);
+        const Eigen::VectorXd x = est.solve(NetworkEstimator::Datum{});   // soft s2z pins the level
+        std::map<std::string, double> out;
+        for (int i : present) out[sats[static_cast<std::size_t>(i)]] = x(cb[sats[static_cast<std::size_t>(i)]]);
+        return out;
+    };
+
+    // Epoch 1: all four satellites, legacy Σ = 0.
+    const auto b1 = solveEpoch({ 0, 1, 2, 3 }, 0.0);
+    const std::vector<int> surv = { 0, 1, 2 };   // Epoch 2: G04 leaves.
+
+    // OLD (toggle off): Σ = 0 over the survivors → every survivor steps by the SAME
+    // common-mode shift (the mean change).
+    const auto b2_old = solveEpoch(surv, 0.0);
+    // NEW (toggle on): Σ_vet = Σ b̂_prev over the survivors → survivors continuous.
+    double z_vet = 0.0;
+    for (int i : surv) z_vet += b1.at(sats[static_cast<std::size_t>(i)]);
+    const auto b2_new = solveEpoch(surv, z_vet);
+
+    double step_min = 1e300, step_max = -1e300;
+    for (int i : surv) {
+        const std::string& s = sats[static_cast<std::size_t>(i)];
+        const double step = b2_old.at(s) - b1.at(s);
+        step_min = std::min(step_min, step);
+        step_max = std::max(step_max, step);
+        // Time-linked: reproduces epoch 1 exactly.
+        EXPECT_NEAR(b2_new.at(s), b1.at(s), 1e-6)
+            << "time-linked datum must hold " << s << " continuous across the set change";
+    }
+    // Legacy: a visible, uniform (common-mode) step — the very wander the card cures.
+    EXPECT_GT(std::abs(step_min), 1e-3) << "legacy zero-target datum should step the survivors";
+    EXPECT_NEAR(step_min, step_max, 1e-9) << "the legacy step is a pure common-mode shift";
 }
 
 // RTA-1: sticky clock-pivot selection.  Passing the driver's emit-baseline map
@@ -1196,6 +2929,111 @@ TEST(NetworkSbasisTest, SumToZeroDatumRecoversSTransformAndGate) {
         EXPECT_NEAR(x_z(pbZ[s]), x_pin(pbP[s]), 1e-6) << "phase bias parity " << s;
         EXPECT_NEAR(x_z(pbZ[s]), t.b[s] + t.M[0][s], 1e-6) << "phase bias truth " << s;
     }
+}
+
+// BROADCAST-ANCHORED clock datum (network.clock_datum_broadcast_anchored,
+// brdc_rts RT): buildSharedDatum emits ONE single-entry soft anchor row per
+// registered clock satellite (Δδtˢ → 0 = its own broadcast a-priori) at
+// information 1/σ² — the anchors ARE the gauge.  Like sum-to-zero there is no
+// pivot and no hard pin (declared dimension 0, gauges folded before the rank
+// gate); UNLIKE sum-to-zero the rows are per-SATELLITE, so membership changes
+// cause no redistribution wander of the absolute clock-product frame.  This
+// test pins the exact Plan shape the driver folds: row count, row order
+// (constellation groups in map order, lexical satellite order within), the
+// single-1.0 column per row, zero targets, and the 1/σ² weight.
+TEST(NetworkSbasisTest, BroadcastAnchoredPlanShape) {
+    NetworkEstimator est;
+    est.registerClock("G01"); est.registerClock("G02");
+    est.registerClock("E01");
+    est.registerPhaseBias("G01", "L1");   // a non-clock column that must stay 0 in the rows
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+    decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
+    // decl.broadcast_anchor_sigma_m keeps the declared default of 3.0 m.
+
+    const auto plan = sb.buildSharedDatum(est, {"G01", "G02", "E01"}, decl);
+
+    EXPECT_TRUE(plan.shared_datum.empty());          // no hard pins — the soft anchors are the datum
+    EXPECT_TRUE(plan.clock_pivot.empty());           // no pivot satellite → no handover seam ever
+    EXPECT_EQ(plan.declared_dimension, 0);           // anchors close every clock gauge pre-gate
+    EXPECT_DOUBLE_EQ(plan.clock_constraint_weight, 1.0 / 9.0);   // 1/σ² at σ = 3 m
+
+    // One row per registered clock SATELLITE (not per constellation): 3 sats.
+    ASSERT_EQ(plan.clock_constraint_H.rows(), 3);
+    EXPECT_EQ(plan.clock_constraint_H.cols(), est.numShared());
+    ASSERT_EQ(plan.clock_constraint_z.size(), 3);
+    EXPECT_TRUE(plan.clock_constraint_z.isZero());   // target = own broadcast a-priori = 0
+
+    // Rows are grouped by constellation (lexical constellation order: E before
+    // G) with lexical satellite order within each group — E01, G01, G02.
+    const std::vector<std::string> expected_order{"E01", "G01", "G02"};
+    for (Eigen::Index r = 0; r < plan.clock_constraint_H.rows(); ++r) {
+        const Eigen::VectorXd row = plan.clock_constraint_H.row(r);
+        const std::string& sat = expected_order[static_cast<std::size_t>(r)];
+        EXPECT_EQ(row(est.clockColumn(sat)), 1.0) << "row " << r << " must anchor " << sat;
+        EXPECT_EQ(row.sum(), 1.0);                              // exactly ONE entry per row
+        EXPECT_EQ(row(est.phaseBiasColumn("G01", "L1")), 0.0);  // non-clock column untouched
+    }
+}
+
+// The broadcast-anchored datum has NO pivot, so BOTH pivot-selection inputs —
+// the config pin (network.clock_datum_satellite → decl.clock_pivot_sat) and
+// the RTA-1 sticky incumbent map — must be completely inert: the plan is
+// IDENTICAL with and without them.  Guards against a future refactor threading
+// pivot state into the anchor rows, which would silently reintroduce the
+// handover seam this datum exists to eliminate.
+TEST(NetworkSbasisTest, BroadcastAnchoredIgnoresPivotOverridesAndSticky) {
+    NetworkEstimator est;
+    est.registerClock("G01"); est.registerClock("G02");
+    est.registerClock("E01");
+
+    NetworkSbasis sb;
+    const std::vector<std::string> sats{"G01", "G02", "E01"};
+
+    SbasisDeclaration base;
+    base.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
+    const auto ref = sb.buildSharedDatum(est, sats, base);
+
+    SbasisDeclaration pinned = base;
+    pinned.clock_pivot_sat["G"] = "G02";   // stray config pin — meaningless here
+    const std::map<std::string, std::string> incumbent{{"G", "G02"}, {"E", "E01"}};
+    const auto plan = sb.buildSharedDatum(est, sats, pinned, &incumbent);
+
+    // Field-by-field identity with the un-pinned / non-sticky baseline.
+    EXPECT_TRUE(plan.shared_datum.empty());
+    EXPECT_TRUE(plan.clock_pivot.empty());
+    EXPECT_EQ(plan.declared_dimension, ref.declared_dimension);
+    EXPECT_EQ(plan.clock_constraint_weight, ref.clock_constraint_weight);
+    ASSERT_EQ(plan.clock_constraint_H.rows(), ref.clock_constraint_H.rows());
+    ASSERT_EQ(plan.clock_constraint_H.cols(), ref.clock_constraint_H.cols());
+    EXPECT_TRUE(plan.clock_constraint_H == ref.clock_constraint_H);   // bit-identical rows
+    EXPECT_TRUE(plan.clock_constraint_z == ref.clock_constraint_z);
+}
+
+// An anchor σ of zero, negative, or non-finite makes the 1/σ² row weight (and
+// hence the gauge) undefined — buildSharedDatum must throw loudly rather than
+// return a datum-less plan the downstream solve would silently least-norm.
+TEST(NetworkSbasisTest, BroadcastAnchoredThrowsOnInvalidSigma) {
+    NetworkEstimator est;
+    est.registerClock("G01");
+
+    NetworkSbasis sb;
+    SbasisDeclaration decl;
+    decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
+
+    decl.broadcast_anchor_sigma_m = 0.0;   // 1/σ² → ∞: gauge undefined
+    EXPECT_THROW(sb.buildSharedDatum(est, {"G01"}, decl), std::runtime_error);
+
+    decl.broadcast_anchor_sigma_m = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_THROW(sb.buildSharedDatum(est, {"G01"}, decl), std::runtime_error);
+
+    decl.broadcast_anchor_sigma_m = -3.0;  // negative σ is equally meaningless
+    EXPECT_THROW(sb.buildSharedDatum(est, {"G01"}, decl), std::runtime_error);
+
+    // The declared default (3.0 m) stays valid — the guard must not overfire.
+    decl.broadcast_anchor_sigma_m = 3.0;
+    EXPECT_NO_THROW(sb.buildSharedDatum(est, {"G01"}, decl));
 }
 
 // ---------------------------------------------------------------------------

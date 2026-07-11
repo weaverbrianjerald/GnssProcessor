@@ -943,6 +943,349 @@ TEST(NetworkProductIoTest, ReplayEmitterFromContractReproducesClockDisc) {
     std::filesystem::remove(v1);
 }
 
+// The two optional replay-emitter channel flags (code_bias_jump_test — the
+// opt-in CODE-bias magnitude jump test — and clock_disc_on_set_change — the
+// sum-to-zero clock-set datum-move signal) travel in the S contract as trailing
+// cbjump=1 / clkset=1 key=value tokens, written ONLY when armed.  Guards the
+// default-OFF byte-identity discipline at the wire level: an OFF S line carries
+// NEITHER token (byte-identical to the pre-channel format), and the armed file
+// differs from the off file by EXACTLY those token bytes and nothing else.
+TEST(NetworkProductIoTest, ContractRoundTripOptionalDiscChannels) {
+    const std::string on  = tempFile("gnss_netprod_channels_on.txt");
+    const std::string off = tempFile("gnss_netprod_channels_off.txt");
+    std::filesystem::remove(on);
+    std::filesystem::remove(off);
+
+    SbasisContract base;
+    base.decl.reference_receiver_id = "CIT100USA";
+    base.disc_threshold_m           = 0.05;
+    base.present                    = true;
+    // ON: both channels armed.  OFF: the same contract with both at the default.
+    SbasisContract armed = base;
+    armed.code_bias_jump_test      = true;
+    armed.clock_disc_on_set_change = true;
+
+    {
+        NetworkProductWriter w(on, armed);
+        ASSERT_TRUE(w.good());
+        w.write(makeEpoch(kT0, /*pb01=*/-0.7));
+    }
+    {
+        NetworkProductWriter w(off, base);
+        ASSERT_TRUE(w.good());
+        w.write(makeEpoch(kT0, /*pb01=*/-0.7));   // identical epoch content
+    }
+
+    // Round-trip: the armed file parses both flags back true...
+    bool           ok = false;
+    SbasisContract parsed_on;
+    NetworkProductReader::read(on, &parsed_on, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(parsed_on.present);
+    EXPECT_TRUE(parsed_on.code_bias_jump_test);
+    EXPECT_TRUE(parsed_on.clock_disc_on_set_change);
+
+    // ...and the off file parses both back false (absent token = default).
+    SbasisContract parsed_off;
+    ok = false;
+    NetworkProductReader::read(off, &parsed_off, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(parsed_off.present);
+    EXPECT_FALSE(parsed_off.code_bias_jump_test);
+    EXPECT_FALSE(parsed_off.clock_disc_on_set_change);
+
+    // Byte identity (OFF): neither token appears ANYWHERE in the off file.
+    const std::string off_bytes = readAllBytes(off);
+    EXPECT_EQ(off_bytes.find("cbjump="), std::string::npos);
+    EXPECT_EQ(off_bytes.find("clkset="), std::string::npos);
+
+    // Byte surgery (ON): deleting exactly ",cbjump=1,clkset=1" from the armed
+    // file reproduces the off file byte-for-byte — arming the flags adds those
+    // bytes and changes NOTHING else in the header or the epoch blocks.
+    std::string on_bytes = readAllBytes(on);
+    const std::string tokens = ",cbjump=1,clkset=1";
+    const std::size_t tpos   = on_bytes.find(tokens);
+    ASSERT_NE(tpos, std::string::npos);
+    on_bytes.erase(tpos, tokens.size());
+    EXPECT_EQ(on_bytes, off_bytes);
+
+    std::filesystem::remove(on);
+    std::filesystem::remove(off);
+}
+
+// The third IsbDatum enumerator (BroadcastAnchoredPerSatellite — the brdc_rts
+// broadcast-anchored clock gauge) rides the EXISTING static_cast<int>
+// serialization path as wire int 2 and must round-trip.  The anchors ARE the
+// gauge in this mode, so the realized clock_pivot_sat list is EMPTY — the S
+// line is exactly the 11 positional fields, and the empty pivot list must
+// round-trip too (no phantom pivot entries on the consumer side).
+TEST(NetworkProductIoTest, ContractRoundTripBroadcastAnchoredIsbDatum) {
+    const std::string path = tempFile("gnss_netprod_contract_brdcanchor.txt");
+    std::filesystem::remove(path);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "CIT100USA";
+    c.decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
+    // No clock_pivot_sat entries — the anchor-free datum publishes no pivots.
+    c.apriori_product_id = "BRDC00IGS_RTS";   // non-empty (comma-free) so the S
+                                              // line has no trailing empty field
+    c.present            = true;
+
+    {
+        NetworkProductWriter w(path, c);
+        ASSERT_TRUE(w.good());
+        w.write(makeEpoch(kT0, /*pb01=*/-0.7));
+    }
+
+    bool           ok = false;
+    SbasisContract parsed;
+    const auto recs = NetworkProductReader::read(path, &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_EQ(parsed.decl.isb_datum,
+              SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite);
+    EXPECT_EQ(static_cast<int>(parsed.decl.isb_datum), 2);   // the wire int
+    EXPECT_TRUE(parsed.decl.clock_pivot_sat.empty());        // empty pivot list round-trips
+
+    // Wire level: the S line's isb_datum positional field (reader f[5]) is "2",
+    // and with no pivots and no optional key=value tokens the line is exactly
+    // the 11 positional fields — nothing new was invented for enumerator 2.
+    const std::string content = readAllBytes(path);
+    const std::size_t s_pos   = content.find("\nS,");
+    ASSERT_NE(s_pos, std::string::npos);
+    const std::size_t s_end   = content.find('\n', s_pos + 1);
+    ASSERT_NE(s_end, std::string::npos);
+    const std::string s_line  = content.substr(s_pos + 1, s_end - s_pos - 1);
+    std::vector<std::string> f;
+    std::stringstream ss(s_line);
+    for (std::string tok; std::getline(ss, tok, ',');) f.push_back(tok);
+    ASSERT_EQ(f.size(), 11u);
+    EXPECT_EQ(f[5], "2");
+
+    // checkContract: a consumer declaring the SAME datum passes; one expecting
+    // the legacy pin datum is flagged — the enum participates in the contract.
+    std::vector<std::string> mism;
+    EXPECT_TRUE(NetworkProductReader::checkContract(parsed, c, &mism));
+    EXPECT_TRUE(mism.empty());
+    SbasisContract pin = c;
+    pin.decl.isb_datum = SbasisDeclaration::IsbDatum::PerConstellationSatClockPin;
+    mism.clear();
+    EXPECT_FALSE(NetworkProductReader::checkContract(parsed, pin, &mism));
+    EXPECT_FALSE(mism.empty());
+
+    std::filesystem::remove(path);
+}
+
+// T3b: the ensemble (anchor-free Σ_r z=0) phase-bias datum round-trips through the S
+// contract — the on-disk declaration must carry amb_datum (S-line field 4), not silently
+// default to the pivot-receiver frame, so a consumer knows the emitted bias references the
+// receiver ENSEMBLE (and is not integer-recoverable).
+TEST(NetworkProductIoTest, ContractRoundTripEnsembleAmbDatum) {
+    const std::string path = tempFile("gnss_netprod_contract_ensembleamb.txt");
+    std::filesystem::remove(path);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "CIT100USA";
+    c.decl.amb_datum     = SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
+    c.apriori_product_id = "BRDC00IGS_RTS";   // non-empty (comma-free): no trailing empty field
+    c.present            = true;
+
+    {
+        NetworkProductWriter w(path, c);
+        ASSERT_TRUE(w.good());
+        w.write(makeEpoch(kT0, /*pb01=*/-0.7));
+    }
+
+    bool           ok = false;
+    SbasisContract parsed;
+    const auto recs = NetworkProductReader::read(path, &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_EQ(parsed.decl.amb_datum,
+              SbasisDeclaration::AmbDatum::SumToZeroPerReceiver);
+    EXPECT_EQ(static_cast<int>(parsed.decl.amb_datum), 1);   // the wire int
+
+    // Wire level: the S line's amb_datum positional field (reader f[4]) is "1".
+    const std::string content = readAllBytes(path);
+    const std::size_t s_pos   = content.find("\nS,");
+    ASSERT_NE(s_pos, std::string::npos);
+    const std::size_t s_end   = content.find('\n', s_pos + 1);
+    ASSERT_NE(s_end, std::string::npos);
+    const std::string s_line  = content.substr(s_pos + 1, s_end - s_pos - 1);
+    std::vector<std::string> f;
+    std::stringstream ss(s_line);
+    for (std::string tok; std::getline(ss, tok, ',');) f.push_back(tok);
+    ASSERT_GE(f.size(), 5u);
+    EXPECT_EQ(f[4], "1");
+
+    // checkContract: a consumer declaring the SAME datum passes; one expecting the
+    // legacy pivot datum is flagged — the enum participates in the contract.
+    std::vector<std::string> mism;
+    EXPECT_TRUE(NetworkProductReader::checkContract(parsed, c, &mism));
+    SbasisContract pivot = c;
+    pivot.decl.amb_datum = SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity;
+    mism.clear();
+    EXPECT_FALSE(NetworkProductReader::checkContract(parsed, pivot, &mism));
+    EXPECT_FALSE(mism.empty());
+
+    std::filesystem::remove(path);
+}
+
+// T3d: the optional per-phase-bias σ (B1b) round-trips through the P record as a
+// key=value token (sigma=), coexisting with the positional disc field; and a bias with
+// σ=0 emits NO token (byte-identical to the pre-T3d wire).
+TEST(NetworkProductIoTest, PhaseBiasSigmaRoundTrip) {
+    const std::string path = tempFile("gnss_netprod_pbsigma.txt");
+    std::filesystem::remove(path);
+
+    NetworkSolutionEpoch sol;
+    sol.epoch_time = kT0;
+    NetworkSatSolution g;
+    g.sat = "G01";
+    NetworkPhaseBias with_sigma;   // σ populated → sigma= token emitted
+    with_sigma.bias_m = -0.7; with_sigma.signal_integer = true;
+    with_sigma.wide_lane_integer = 1; with_sigma.sigma_m = 0.012345;
+    g.phase_bias["L1C"] = with_sigma;
+    NetworkPhaseBias no_sigma;      // σ == 0 → NO token (OFF-path byte-identity)
+    no_sigma.bias_m = 1.5; no_sigma.signal_integer = false; no_sigma.wide_lane_integer = -2;
+    g.phase_bias["L2W"] = no_sigma;
+    sol.sats.push_back(g);
+
+    {
+        NetworkProductWriter w(path);
+        ASSERT_TRUE(w.good());
+        w.write(sol);
+    }
+
+    const std::string content = readAllBytes(path);
+    EXPECT_NE(content.find("sigma=0.012345"), std::string::npos);   // armed bias carries it
+    // The σ==0 L2W bias emits no token: exactly one "sigma=" in the file.
+    EXPECT_EQ(content.find("sigma=", content.find("sigma=") + 1), std::string::npos);
+
+    bool ok = false;
+    const auto recs = NetworkProductReader::read(path, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_FALSE(recs[0].epoch.sats.empty());
+    const NetworkSatSolution& g1 = recs[0].epoch.sats[0];
+    EXPECT_EQ(g1.sat, "G01");
+    EXPECT_NEAR(g1.phase_bias.at("L1C").sigma_m, 0.012345, 1e-9);   // survives round-trip
+    EXPECT_DOUBLE_EQ(g1.phase_bias.at("L2W").sigma_m, 0.0);         // absent → default 0
+    EXPECT_DOUBLE_EQ(g1.phase_bias.at("L1C").bias_m, -0.7);         // positional fields intact
+    EXPECT_EQ(g1.phase_bias.at("L1C").wide_lane_integer, 1);
+
+    std::filesystem::remove(path);
+}
+
+// Producer datum-stability (Jul 2026): with cbjump=1 in the contract,
+// makeReplayEmitter arms the opt-in CODE-bias magnitude jump test on the replay
+// emitter — a 0.2 m value step (same sat set, same band tuple, no datum change:
+// every structural trigger silent) bumps the replayed store's code-bias
+// discontinuity exactly as it did on the live producer.  The SAME epoch data
+// under a flag-false contract replays with NO bump: the behavior travels in the
+// contract, not the epoch records, so a consumer needs no out-of-band config.
+TEST(NetworkProductIoTest, ReplayEmitterHonoursJumpTestFlag) {
+    auto codeEpoch = [](const GnssTime& t, double bias) {
+        NetworkSolutionEpoch sol;
+        sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
+        NetworkSatSolution s;
+        s.sat = "G01"; s.has_clock = true; s.clock_c0_m = 1.0;
+        s.code_bias_m["C1C"] = bias;
+        sol.sats.push_back(s);
+        return sol;
+    };
+    // Two epochs, one sat, one signal: bias 0.10 -> 0.30, a 0.2 m step well
+    // above the 0.05 m threshold and invisible to the structural triggers.
+    const double biases[] = {0.10, 0.30};
+
+    // The SAME epoch sequence written under two contracts (flag on / off).
+    auto writeProduct = [&](const std::string& path, const SbasisContract& c) {
+        NetworkProductWriter w(path, c);
+        ASSERT_TRUE(w.good());
+        GnssTime t = kT0;
+        for (double b : biases) {
+            w.write(codeEpoch(t, b));
+            t.tow += 30.0;
+        }
+    };
+
+    SbasisContract con_on;
+    con_on.decl.reference_receiver_id = "CIT100USA";
+    con_on.disc_threshold_m           = 0.05;
+    con_on.code_bias_jump_test        = true;
+    con_on.present                    = true;
+    SbasisContract con_off = con_on;
+    con_off.code_bias_jump_test = false;
+
+    const std::string p_on  = tempFile("gnss_netprod_cbjump_on.txt");
+    const std::string p_off = tempFile("gnss_netprod_cbjump_off.txt");
+    std::filesystem::remove(p_on);
+    std::filesystem::remove(p_off);
+    writeProduct(p_on,  con_on);
+    writeProduct(p_off, con_off);
+
+    // Live reference: an emitter constructed as the armed producer's — the value
+    // step bumps the code counter once (0 at first sight, 1 after the jump).
+    {
+        SsrCorrectionStore    store_live;
+        NetworkProductEmitter emit_live(con_on.disc_threshold_m,
+                                        /*emit_clock_disc=*/false,
+                                        /*staleness_horizon_s=*/0.0,
+                                        /*code_bias_jump_test=*/true);
+        GnssTime t = kT0;
+        for (double b : biases) {
+            emit_live.emitToStore(codeEpoch(t, b), store_live);
+            t.tow += 30.0;
+        }
+        EXPECT_EQ(emit_live.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+        ASSERT_TRUE(store_live.getCodeBiasDiscontinuity("G01", "C1C").has_value());
+        EXPECT_EQ(*store_live.getCodeBiasDiscontinuity("G01", "C1C"), 1);
+    }
+
+    // Armed file: contract -> makeReplayEmitter arms the jump test -> the bump
+    // shows in the replayed store, matching the live reference above.
+    {
+        bool           ok = false;
+        SbasisContract parsed;
+        const auto recs = NetworkProductReader::read(p_on, &parsed, &ok);
+        ASSERT_TRUE(ok);
+        ASSERT_TRUE(parsed.present);
+        EXPECT_TRUE(parsed.code_bias_jump_test);
+        ASSERT_EQ(recs.size(), 2u);
+        SsrCorrectionStore    store;
+        NetworkProductEmitter emit = NetworkProductReader::makeReplayEmitter(parsed);
+        for (const auto& r : recs) NetworkProductReader::replay(r, store, emit);
+        EXPECT_EQ(emit.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+        const auto d = store.getCodeBiasDiscontinuity("G01", "C1C");
+        ASSERT_TRUE(d.has_value());
+        EXPECT_EQ(*d, 1);   // the replayed store carries the bump
+    }
+
+    // Off file: the SAME records under a flag-false contract -> NO bump on the
+    // emitter or in the store (the counter exists — first sighting — but stays 0).
+    {
+        bool           ok = false;
+        SbasisContract parsed;
+        const auto recs = NetworkProductReader::read(p_off, &parsed, &ok);
+        ASSERT_TRUE(ok);
+        ASSERT_TRUE(parsed.present);
+        EXPECT_FALSE(parsed.code_bias_jump_test);
+        ASSERT_EQ(recs.size(), 2u);
+        SsrCorrectionStore    store;
+        NetworkProductEmitter emit = NetworkProductReader::makeReplayEmitter(parsed);
+        for (const auto& r : recs) NetworkProductReader::replay(r, store, emit);
+        EXPECT_EQ(emit.codeBiasDiscontinuityCounter("G01", "C1C"), 0);
+        const auto d = store.getCodeBiasDiscontinuity("G01", "C1C");
+        ASSERT_TRUE(d.has_value());
+        EXPECT_EQ(*d, 0);   // steady counter — no discontinuity signalled
+    }
+
+    std::filesystem::remove(p_on);
+    std::filesystem::remove(p_off);
+}
+
 // RTA-3: the optional solution-generation id round-trips as an I record, reaches
 // the replayed store's epoch surface, and is deterministic across replays of the
 // same file (the id comes out of the file, not out of process state).  A file

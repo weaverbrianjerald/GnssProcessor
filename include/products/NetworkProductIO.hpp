@@ -116,6 +116,17 @@ struct SbasisContract {
     /// Serialized as an optional trailing @c stale= field on the S line ONLY when
     /// non-zero, so an OFF run's v2 header is byte-identical to pre-RTA-11.
     double            staleness_horizon_s{0.0};
+    /// Whether the producer's emitter ran the opt-in CODE-bias magnitude jump
+    /// test (@c network.code_bias_disc_jump_test) — the fourth replay-emitter
+    /// construction parameter.  Serialized as an optional trailing @c cbjump=1
+    /// field ONLY when true (byte-identical OFF).
+    bool              code_bias_jump_test{false};
+    /// Whether the producer's emitter bumped clock disc counters on a
+    /// constellation clock-set change (@c network.clock_disc_on_set_change, the
+    /// sum-to-zero datum-move signal) — the fifth replay-emitter construction
+    /// parameter.  Serialized as an optional trailing @c clkset=1 field ONLY
+    /// when true (byte-identical OFF).
+    bool              clock_disc_on_set_change{false};
     /// RTA-3: the producer's solution-generation id (0 = not stamped).  Serialized
     /// as an optional trailing @c gid= field on the S line ONLY when non-zero, so
     /// an OFF run's v2 header is byte-identical.  Lets a late joiner recover the

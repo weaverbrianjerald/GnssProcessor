@@ -162,6 +162,7 @@ namespace GnssProcessor {
         for (auto& kv : code_bias_indices_)      if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_bias_indices_)       if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
+        for (auto& kv : receiver_phase_bias_indices_) if (kv.second > rem_idx) --kv.second;
         for (auto& kv : sat_clock_indices_)      if (kv.second > rem_idx) --kv.second;
         for (auto& kv : ionosphere_indices_)     if (kv.second > rem_idx) --kv.second;
         for (auto& kv : iono_rate_indices_)      if (kv.second > rem_idx) --kv.second;
@@ -484,7 +485,8 @@ namespace GnssProcessor {
 
     size_t StateManager::getStateSize() const {
         return core_state_size_ + code_bias_indices_.size() + sat_bias_indices_.size()
-             + sat_phase_bias_indices_.size() + sat_clock_indices_.size()
+             + sat_phase_bias_indices_.size() + receiver_phase_bias_indices_.size()
+             + sat_clock_indices_.size()
              + ionosphere_indices_.size() + iono_rate_indices_.size()
              + ambiguity_indices_.size();
     }
@@ -965,6 +967,7 @@ namespace GnssProcessor {
         for (const auto& kv : getCodeBiasStates())     put(kv.second, "CBIAS:" + kv.first);
         for (const auto& kv : getSatBiasStates())      put(kv.second, "SATB:"  + kv.first);
         for (const auto& kv : getSatPhaseBiasStates()) put(kv.second, "SATPB:" + kv.first);
+        for (const auto& kv : getReceiverPhaseBiasStates()) put(kv.second, "RPB:" + kv.first);
         for (const auto& kv : getSatClockStates())     put(kv.second, "SATCLK:" + kv.first);
 
         return labels;
@@ -1569,6 +1572,60 @@ namespace GnssProcessor {
                      std::sqrt(new_variance));
     }
 
+    void StateManager::reinflateSystemTimeOffsetVariance(const std::string& system_name,
+                                                         double new_variance) {
+        auto logger = log_manager_.getLogger("state_manager");
+
+        const size_t oi = getSystemTimeOffsetIndex(system_name);
+        if (oi == std::numeric_limits<size_t>::max()) {
+            logger->debug("reinflateSystemTimeOffsetVariance: no ISB state for {}",
+                          system_name);
+            return;
+        }
+        const auto idx = static_cast<Eigen::Index>(oi);
+        if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+            logger->error("reinflateSystemTimeOffsetVariance index out of bounds for {}: "
+                          "idx={}, state_size={}, cov={}x{}",
+                          system_name, idx, state_vector_.size(), covariance_.rows(),
+                          covariance_.cols());
+            return;
+        }
+
+        // Refuse to disturb a frozen row, mirroring reinflateCodeBiasVariance.
+        const double current_diag = covariance_(idx, idx);
+        if (!(current_diag > 0.0)) {
+            logger->warn("reinflateSystemTimeOffsetVariance refused on frozen state ISB_{} "
+                         "(idx={}, P_diag={:.3e}); invariant preserved",
+                         system_name, idx, current_diag);
+            return;
+        }
+
+        if (!(new_variance > 0.0)) {
+            const double isb_std = config_.getInitialStd().system_time_offset;
+            logger->warn("reinflateSystemTimeOffsetVariance: non-positive variance {} for {}; "
+                         "falling back to initial_std.system_time_offset² = {}",
+                         new_variance, system_name, isb_std * isb_std);
+            new_variance = isb_std * isb_std;
+        }
+
+        const double prev_value = state_vector_(idx);
+        const double prev_diag  = current_diag;
+
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = new_variance;
+        // Value intentionally preserved: the receiver inter-system hardware
+        // offset did not change — only the constellation's clock gauge it is
+        // referenced to stepped.  Breaking the (ISB, rest) partition lets the
+        // next update re-absorb the differential datum step in one epoch.
+
+        logger->info("Reinflated system-time-offset state ISB_{} at index {}: "
+                     "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m",
+                     system_name, idx, prev_value,
+                     std::sqrt(std::max(prev_diag, 0.0)),
+                     std::sqrt(new_variance));
+    }
+
     void StateManager::setIonosphereElevation(const std::string& satellite, double elevation_deg) {
         ionosphere_elevations_[satellite] = elevation_deg;
     }
@@ -2057,6 +2114,64 @@ namespace GnssProcessor {
             sat_phase_bias_indices_.erase(key);
 
             logger->debug("Removed sat phase-bias state for {} at former index {}", key, rem_idx);
+        }
+    }
+
+    // ===================================================================
+    // RECEIVER phase-bias states (Card 3, network.phase_datum_eq34) —
+    // per-(receiver,system,signal) split δ_{r,σ}, keyed "<sys>_RPB_<sig>",
+    // LOCAL and re-estimated fresh each epoch (no process noise, no carry).
+    // ===================================================================
+
+    int StateManager::getReceiverPhaseBiasIndex(const std::string& key) const {
+        auto it = receiver_phase_bias_indices_.find(key);
+        return it != receiver_phase_bias_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getReceiverPhaseBiasStates() const {
+        return receiver_phase_bias_indices_;
+    }
+
+    size_t StateManager::addReceiverPhaseBiasState(const std::string& key, double initial_value) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (receiver_phase_bias_indices_.count(key)) {
+            logger->trace("Receiver phase-bias state for {} already exists at index {}",
+                          key, receiver_phase_bias_indices_[key]);
+            return receiver_phase_bias_indices_[key];
+        }
+        const double rpb_std = config_.getInitialStd().sat_phase_bias;
+        const size_t index = appendState(initial_value, rpb_std * rpb_std);
+        receiver_phase_bias_indices_[key] = index;
+        logger->debug("Added receiver phase-bias state for {} at index {}, initial={:.3f} m",
+                      key, index, initial_value);
+        return index;
+    }
+
+    void StateManager::pruneReceiverPhaseBiasStatesExcept(const std::set<std::string>& keep_keys) {
+        auto logger = log_manager_.getLogger("state_manager");
+        if (receiver_phase_bias_indices_.empty()) return;
+
+        std::vector<std::string> to_remove;
+        for (const auto& [key, idx] : receiver_phase_bias_indices_)
+            if (keep_keys.find(key) == keep_keys.end())
+                to_remove.push_back(key);
+        if (to_remove.empty()) return;
+
+        for (const auto& key : to_remove) {
+            auto it = receiver_phase_bias_indices_.find(key);
+            if (it == receiver_phase_bias_indices_.end()) continue;
+
+            const size_t rem_idx = it->second;
+            if (rem_idx < core_state_size_ || getStateSize() <= core_state_size_) {
+                logger->warn("pruneReceiverPhaseBiasStatesExcept: invalid index {} for {}", rem_idx, key);
+                continue;
+            }
+            // removeStateAtIndex decrements all higher indices across every
+            // dynamic map (incl. receiver_phase_bias_indices_), so the next
+            // key's index is re-read fresh from the map on the next iteration.
+            removeStateAtIndex(rem_idx);
+            receiver_phase_bias_indices_.erase(key);
+            logger->trace("Removed receiver phase-bias state for {} at former index {}", key, rem_idx);
         }
     }
 

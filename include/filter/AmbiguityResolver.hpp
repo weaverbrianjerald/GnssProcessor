@@ -39,6 +39,14 @@ struct AmbiguityResolution {
     int num_candidates{ 0 };           ///< Number of SD ambiguity candidates.
     Eigen::VectorXd fixed_state;       ///< Full state vector with fixed ambiguities applied.
     Eigen::MatrixXd fixed_covariance;  ///< Covariance after ambiguity fixing.
+    /// T2c gate attribution — WHICH early gate zeroed AR (so a run that never fixes is
+    /// diagnosable).  Set ONLY at the pre-MLAMBDA early-return gates; 0 means MLAMBDA was
+    /// reached (the outcome — fixed / ratio-battery reject / MLAMBDA fail — is then read
+    /// from @ref success + @ref ratio).  0=reached-MLAMBDA, 1=disabled(ar_mode=0),
+    /// 2=min_epochs guard, 3=position-σ gate (see @ref gate_sigma_3d), 4=no candidates
+    /// (empty DD pairs / no WL integers this epoch).
+    int gate_reason{ 0 };
+    double gate_sigma_3d{ -1.0 };      ///< 3D position σ (m) recorded when the σ-gate (gate_reason=3) fired; −1 otherwise.
 };
 
 /**

@@ -76,6 +76,7 @@
 #include <Eigen/Dense>
 
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -271,6 +272,70 @@ public:
                          const Eigen::VectorXd& delta_Nrr_diag,
                          const Eigen::VectorXd& delta_ur);
 
+    /// One anchor-free sum-to-zero-over-stations gauge (Fix A, the ensemble
+    /// phase-bias↔ambiguity datum): @f$\sum_{\text{terms}} x_{\text{local}} = 0@f$,
+    /// each term a (station, local column) — e.g. every receiver's ambiguity to
+    /// one (satellite, signal).  Realizes the datum WITHOUT a pivot receiver, so
+    /// the emitted satellite phase bias references the whole receiver ensemble
+    /// (no handover, no single-anchor SPOF, and a consistent between-satellite
+    /// reference that keeps the user's DD ambiguity integer — Odijk S-system).
+    struct SumZeroGauge {
+        std::vector<std::pair<std::size_t, Eigen::Index>> terms;  ///< (station index, local column)
+        /// The SHARED (border) column this gauge fixes — the satellite phase-bias
+        /// column referenced by the receiver ensemble.  Set by the driver.  It is
+        /// the gauge (null) DIRECTION of the unreduced normals, so the rank-1 fold
+        /// leaves its slot of the reduced covariance carrying an ARTIFICIAL
+        /// gauge-direction variance + phase↔clock/code cross terms (not a physical
+        /// uncertainty).  Consumers of the datum-frame conditional covariance must
+        /// treat it as EXACT (variance 0) — @ref conditionalLocalVarianceDiag /
+        /// @ref conditionalLocalCovariance / @ref rowRedundancy zero it exactly as
+        /// they zero the datum-pinned columns.  -1 = unset (e.g. the unit tests that
+        /// exercise only the point solve, which does not read this).
+        Eigen::Index shared_col{-1};
+    };
+
+    /**
+     * @brief Fold anchor-free sum-to-zero gauges onto the reduced shared system as
+     *        Schur-projected rank-1 corrections (the ensemble phase-bias datum).
+     *
+     * Each gauge @f$\sum_r z_r = 0@f$ couples LOCAL ambiguity columns across
+     * stations, so it cannot be a shared-border row.  As the hard limit
+     * (@f$w\to\infty@f$) of the soft constraint @f$w(\sum_r z_r)^2@f$, Woodbury
+     * through the block-diagonal local normals yields a rank-1 update of the reduced
+     * shared normals computed entirely from the cached per-station LDLᵀ factors:
+     * @f[
+     *   n_r = N_{rr}^{-1} e_{z_r},\quad
+     *   \beta = \sum_r (n_r)_{z_r},\quad
+     *   g = \sum_r N_{sr} n_r,\quad
+     *   \gamma = \sum_r (N_{rr}^{-1} u_r)_{z_r},
+     * @f]
+     * @f[
+     *   \tilde N_{ss} \mathrel{+}= g g^\top/\beta,\qquad
+     *   \tilde u_s \mathrel{+}= g\,\gamma/\beta .
+     * @f]
+     * The stored @f$(g,\beta,\gamma)@f$ + per-station term index let
+     * @ref reconstructStation return the CONSTRAINED locals
+     * (@f$x_r \mathrel{-}= n_r(\gamma - g^\top x_s)/\beta@f$), so the carried /
+     * QC ambiguities live in the same sum-to-zero gauge as the emitted bias.
+     *
+     * @par Ordering
+     * Lazily @ref reduce()s, then folds.  Call AFTER any @ref reduce that rebuilt
+     * the reduced system and BEFORE the null-space gate reads
+     * @ref reducedSharedNormals (the fold fixes the phase gauge, so the gate's
+     * declared dimension stays = the clock deficiency count, exactly as the anchor
+     * mode whose local pins were pre-eliminated).  A subsequent @ref reduce
+     * recompute or @ref reset CLEARS the stored gauges — the rebuilt reduced system
+     * no longer carries the fold, so the driver MUST re-call this after any
+     * re-reduce (mirrors the code-bias / clock-constraint re-apply on the
+     * within-epoch RAIM re-solve).  A gauge with @f$\beta\le0@f$ (no valid terms)
+     * is skipped.
+     *
+     * @param gauges The sum-to-zero gauges to fold.  A term's station must be
+     *        active this epoch and its column within that station's local block.
+     * @throws std::out_of_range / std::invalid_argument on a bad station/column.
+     */
+    void foldReducedSumZeroGauges(const std::vector<SumZeroGauge>& gauges);
+
     /**
      * @brief Schur-eliminate every station's nuisance block onto the shared
      *        border, producing @f$\tilde N_{ss},\ \tilde u_s@f$.
@@ -406,6 +471,81 @@ public:
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
         const Eigen::MatrixXd& cov_free_xs) const;
 
+    /// The regression of one local column on the shared border plus that column's
+    /// PURE conditional variance — the two ingredients of a rigorous between-epoch
+    /// conditional carry (Card 1, @c network.carry_conditional_coupling).
+    struct StationRegression {
+        Eigen::VectorXd row;   ///< @f$M_r^\top = N_{sr}N_{rr}^{-1}e_r@f$ (length @c n_shared): row @c r of @f$N_{rr}^{-1}N_{rs}@f$, i.e. the coefficients of the local's linear regression on the shared border.  Empty when @c n_shared is 0.
+        double cond_var{0.0};  ///< @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$: the local's variance CONDITIONAL on the whole shared border (NOT the marginal @ref reconstructStationCovarianceDiag returns).
+    };
+
+    /**
+     * @brief Regression row @f$M_r=(N_{rr}^{-1}e_r)^\top N_{rs}@f$ and the pure
+     *        conditional variance @f$(N_{rr}^{-1})_{rr}@f$ for one local column.
+     *
+     * The exact recursion carries a persistent local parameter (a phase-leveling
+     * ambiguity or ZWD) forward as the conditional distribution @f$r\mid x_s@f$
+     * rather than as an independent marginal.  That conditional is a
+     * pseudo-observation ROW spanning @f$(x_s\mid x_r)@f$ with coefficient @c +1 on
+     * the local column, coefficients @f$M_{r}@f$ on the shared border (so the prior
+     * says "the local moves WITH the border per its posterior regression"), and
+     * measurement variance = the conditional variance @f$(N_{rr}^{-1})_{rr}@f$.
+     * Combined with the dense border carry (which supplies the border's marginal
+     * information), this reproduces the exact joint recursion — no double count of
+     * the border information the local value also encodes.
+     *
+     * Both outputs reuse the cached @f$N_{rr}@f$ LDLᵀ factor via ONE local solve
+     * @f$n_c=N_{rr}^{-1}e_r@f$: @c cond_var @f$=n_c(r)@f$ and
+     * @c row @f$=N_{sr}\,n_c@f$.  Deterministic S-basis matters not at all here —
+     * both are pure functions of the accumulated normals, independent of any datum
+     * or covariance frame (the datum-driven FREE-column restriction of @c row lives
+     * in the caller).
+     *
+     * @param station   Index from @ref addStation (must have local state).
+     * @param local_col Local column within this station's @c A_r block.
+     * @return @ref StationRegression (empty @c row when @c n_shared is 0).
+     * @throws std::out_of_range / std::invalid_argument on a bad index or column.
+     */
+    StationRegression stationRegression(std::size_t station,
+                                        Eigen::Index local_col) const;
+
+    /**
+     * @brief Joint conditional covariance of an arbitrary set of local parameters
+     *        drawn from ONE OR MORE stations, in the datum-as-known frame — the
+     *        primitive for between-station double-difference ambiguity covariance
+     *        (producer-side network AR, Phase 2).
+     *
+     * Each request is a @c (station, local_col) pair.  Returns the @c k×k joint
+     * covariance whose @f$(a,b)@f$ entry is the covariance of the two requested
+     * local parameters under the full bordered inverse:
+     * @f[
+     *   \mathrm{Cov}\big(x^{(i)}_{c_a}, x^{(j)}_{c_b}\big)
+     *     = m_{c_a}^\top\,\mathrm{Cov}_\text{free}\,m_{c_b}
+     *       + [\,i=j\,]\,(N_{ii}^{-1})_{c_a c_b},
+     *   \qquad m_c = N_{sr}^{(i)}\,N_{ii}^{-1} e_c .
+     * @f]
+     * The shared-propagation term @f$m^\top\mathrm{Cov}_\text{free}\,m@f$ is present
+     * for EVERY pair — it is the only coupling between different stations (they
+     * correlate solely through the shared satellite parameters); the local
+     * @f$N_{ii}^{-1}@f$ term is added only for same-station pairs.  This equals
+     * @ref reconstructStationCovariance restricted to a column subset on the
+     * diagonal blocks, plus the cross-station blocks
+     * @f$M_i\,\mathrm{Cov}_\text{free}\,M_j^\top@f$ the DD covariance needs.  Costs
+     * one local solve @f$N_{ii}^{-1}e_c@f$ per request.
+     *
+     * @param requests    @c (station, local_col) pairs; each column must be valid
+     *                    in that station's local block.
+     * @param cov_free_xs Shared-parameter covariance (@c n_shared × n_shared) with
+     *                    the datum-pinned rows/cols zeroed (the conditional frame).
+     * @return The @c k×k joint conditional covariance (symmetric); empty if
+     *         @p requests is empty.
+     * @throws std::out_of_range / std::invalid_argument on a bad station, column,
+     *         or @p cov_free_xs size.
+     */
+    Eigen::MatrixXd jointConditionalCovariance(
+        const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+        const Eigen::MatrixXd& cov_free_xs) const;
+
     /**
      * @brief Baarda per-row redundancy numbers for a batch of one station's
      *        measurement rows (B2), using the cached Schur factors.
@@ -461,6 +601,64 @@ public:
     ///         stray post-gate local injection would force a second full reduce).
     std::size_t reduceRecomputeCount() const { return reduce_recompute_count_; }
 
+    /// @name Tier D0 section timers (@c network.trace_section_timers)
+    ///
+    /// Wall-clock accumulators (milliseconds) over the primitive kernel operations
+    /// the network per-epoch cost decomposes into, so the driver can attribute that
+    /// cost across assembly / reduce / solve / covariance and decide which Tier-D
+    /// scaling lever (D1 selected inverse, D2 rate-split, ...) is worth pulling.
+    ///
+    /// OFF by default: when @ref setPerfTiming is false every instrumented method
+    /// skips the clock reads entirely — no measurable overhead and numerically
+    /// byte-identical (the timers touch nothing the solution depends on).  The
+    /// accumulators sum CONTINUOUSLY across calls (they are never auto-reset by
+    /// @ref reset — they are a whole-run measurement, orthogonal to the per-epoch
+    /// state churn); the driver snapshots them for per-epoch deltas and reads the
+    /// run total at exit.  @ref resetSectionTimers zeroes them.
+    /// @{
+
+    /// Per-section wall-clock accumulators + call counts (see @ref sectionTimers).
+    struct SectionTimers {
+        double add_station_ms{0.0};    ///< @ref addStationObservations: forming @f$A_s^\top W A_s@f$ etc. + the @f$N_{rr}@f$ LDLᵀ factorization (the assembly/scatter primitive).
+        double reduce_ms{0.0};         ///< @ref reduce: the per-station Schur elimination onto the shared border (timed only on a real recompute).
+        double solve_ms{0.0};          ///< @ref solveSharedConstrained: the constrained factorization + the point solve for @c x_s.
+        double cov_inverse_ms{0.0};    ///< @ref solveSharedConstrained: the explicit shared-covariance FULL inverse (@f$\tilde N_{ss}^{-1}@f$) — the D1 selected-inverse lever's direct cost.
+        double cov_consumers_ms{0.0};  ///< The per-station covariance back-propagations (the D1 per-station lever): reconstructStation (+ ...Covariance / ...Diag / jointConditionalCovariance / rowRedundancy / stationRegression).  Timed at the @ref NetworkEstimator wrapper layer (via @ref accumulateCovConsumer), so the span ALSO includes that layer's shared-covariance COPY + datum-column zeroing — the per-call @f$O(n_s^2)@f$ overhead the D1 selected-inverse rewrite removes.
+        std::size_t add_station_calls{0};   ///< #@ref addStationObservations calls timed.
+        std::size_t reduce_recomputes{0};   ///< #real @ref reduce recomputes timed (mirrors @ref reduceRecomputeCount but gated on timing).
+        std::size_t solve_calls{0};         ///< #@ref solveSharedConstrained calls timed.
+        std::size_t cov_consumer_calls{0};  ///< #covariance-consumer calls timed (all methods above pooled).
+    };
+
+    /// Arm/disarm the section timers (@c network.trace_section_timers).  Configuration
+    /// level — set once before the epoch loop; survives @ref reset (like
+    /// @ref setStationPdMedianScale).  Default off = no clock reads, byte-identical.
+    void setPerfTiming(bool on) { perf_timing_ = on; }
+
+    /// Zero the section-timer accumulators (see @ref SectionTimers).
+    void resetSectionTimers() const { timers_ = SectionTimers{}; }
+
+    /// @return The section-timer accumulators (cumulative since construction /
+    ///         the last @ref resetSectionTimers).  Meaningful only when
+    ///         @ref setPerfTiming was armed.
+    const SectionTimers& sectionTimers() const { return timers_; }
+
+    /// @return Whether the section timers are armed (@ref setPerfTiming).  Lets the
+    ///         @ref NetworkEstimator covariance wrappers decide, per call, whether to
+    ///         read the clock before accumulating via @ref accumulateCovConsumer.
+    bool perfTiming() const { return perf_timing_; }
+
+    /// Add @p ms to @ref SectionTimers::cov_consumers_ms and bump its call count.
+    /// Called by the @ref NetworkEstimator covariance wrappers so the measured span
+    /// includes their shared-covariance COPY + datum-column zeroing, not only this
+    /// kernel's propagation.  The caller guards on @ref perfTiming; this only mutates
+    /// the (mutable) diagnostic accumulators, hence @c const.
+    void accumulateCovConsumer(double ms) const {
+        timers_.cov_consumers_ms += ms;
+        ++timers_.cov_consumer_calls;
+    }
+    /// @}
+
     /**
      * @brief Use the MEDIAN |LDLᵀ pivot| (instead of the maximum) as the
      *        reference scale of @ref addStation's local-block positive-
@@ -498,8 +696,23 @@ private:
     Eigen::MatrixXd reduced_N_ss_; ///< Ñ_ss (valid when reduced_)
     Eigen::VectorXd reduced_u_s_;  ///< ũ_s  (valid when reduced_)
     bool reduced_{false};
+
+    /// A folded sum-to-zero gauge's cached data for the constrained reconstruction
+    /// (@ref foldReducedSumZeroGauges).  Empty on the anchor / OFF path, so
+    /// @ref reconstructStation is then byte-identical.
+    struct FoldedSumZeroGauge {
+        std::vector<std::pair<std::size_t, Eigen::Index>> terms;  ///< (station, local col)
+        Eigen::VectorXd g;       ///< Σ_r N_sr n_r (n_shared)
+        double beta{0.0};        ///< Σ_r (N_rr⁻¹)_{z_r z_r} (> 0)
+        double gamma{0.0};       ///< Σ_r (N_rr⁻¹ u_r)_{z_r}
+    };
+    std::vector<FoldedSumZeroGauge> sumzero_gauges_;              ///< folded gauges (cleared by reduce()/reset())
+    std::vector<std::vector<std::pair<std::size_t, Eigen::Index>>> station_sumzero_;  ///< station → list of (gauge idx, local col) for the reconstruction correction
+    bool sumzero_folded_{false};                                 ///< guards double-folding into reduced_N_ss_ within one reduce (fold is applied in place; the gate + solve both trigger it)
     std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
     bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()
+    bool perf_timing_{false};               ///< D0: section timers armed (survives reset(); set once by the driver)
+    mutable SectionTimers timers_;          ///< D0: wall-clock accumulators (mutable — the const covariance/solve paths accumulate too)
 };
 
 } // namespace GnssProcessor

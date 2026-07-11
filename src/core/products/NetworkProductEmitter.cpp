@@ -72,9 +72,13 @@ bool parseStateI(const std::string& s, int& v) {
 } // namespace
 
 NetworkProductEmitter::NetworkProductEmitter(double disc_threshold_m, bool emit_clock_disc,
-                                             double staleness_horizon_s)
+                                             double staleness_horizon_s,
+                                             bool code_bias_jump_test,
+                                             bool clock_disc_on_set_change)
     : disc_threshold_m_(disc_threshold_m), emit_clock_disc_(emit_clock_disc),
-      staleness_horizon_s_(staleness_horizon_s) {}
+      staleness_horizon_s_(staleness_horizon_s),
+      code_bias_jump_test_(code_bias_jump_test),
+      clock_disc_on_set_change_(clock_disc_on_set_change) {}
 
 void NetworkProductEmitter::markDatumChange(const std::set<char>& constellations) {
     if (constellations.empty()) force_all_bump_ = true;   // global (pre-A2 semantics)
@@ -169,6 +173,28 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             changed_channels.insert(chan);
     }
 
+    // --- Clock set-change pre-pass (sum-to-zero datum signalling) ---------
+    // Under Σδtˢ=0 the clock gauge is re-imposed on each epoch's satellite set,
+    // so a membership change redistributes the departing/arriving common-mode
+    // onto every survivor — a genuine datum re-reference the pivot channel never
+    // signals (there is no pivot).  Derived from the emitted epoch itself like
+    // the code set trigger, so replay reproduces the counters with no new
+    // serialization.  First-sighting constellations (absent from prev) are
+    // excluded — no consumer holds their old datum yet.  State is only tracked
+    // when the toggle is armed (OFF path byte-identical, including the
+    // serialized emitter section).
+    std::set<char> clock_set_changed;
+    std::map<char, std::set<std::string>> cur_clock_satset;
+    if (clock_disc_on_set_change_) {
+        for (const auto& s : sol.sats)
+            if (s.has_clock && !s.sat.empty()) cur_clock_satset[s.sat[0]].insert(s.sat);
+        for (const auto& [cst, sats] : cur_clock_satset) {
+            const auto it = prev_clock_satset_.find(cst);
+            if (it != prev_clock_satset_.end() && it->second != sats)
+                clock_set_changed.insert(cst);
+        }
+    }
+
     // Whether a constellation's datum was force-bumped this emit (A2 per-
     // constellation scoping).  An empty-arg markDatumChange sets force_all_bump_
     // (every constellation — the pre-A2 global bump); a scoped call bumps only the
@@ -219,14 +245,17 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             if (emit_clock_disc_) {
                 int&       cctr        = clock_disc_counter_[s.sat];  // value-inits to 0
                 const bool seen_before = seen_clock_sats_.count(s.sat) != 0;
-                // RTA-11 fix: the clock counter has ONLY the forced-datum
-                // component (no jump test), so a genuine clock-pivot handover /
-                // re-declaration must still step it even when the satellite
-                // returns beyond the staleness horizon — a consumer that kept its
-                // state across the gap needs the reset.  (staleKey only exists to
-                // suppress the SPURIOUS jump test on the phase/code channels.)
+                // RTA-11 fix: the clock counter has ONLY datum-change components
+                // (no magnitude jump test), so a genuine clock datum move — a
+                // pivot handover / re-declaration, or under the sum-to-zero datum
+                // a constellation clock-set change (clock_disc_on_set_change) —
+                // must still step it even when the satellite returns beyond the
+                // staleness horizon: a consumer that kept its state across the
+                // gap needs the reset.  (staleKey only exists to suppress the
+                // SPURIOUS jump test on the phase/code channels.)
                 if (seen_before && !s.sat.empty()
-                    && (constForced(s.sat[0]) || satForced(s.sat))) ++cctr;
+                    && (constForced(s.sat[0]) || satForced(s.sat)
+                        || clock_set_changed.count(s.sat[0]) != 0)) ++cctr;
                 seen_clock_sats_.insert(s.sat);
                 if (staleness_horizon_s_ > 0.0) clock_last_seen_s_[s.sat] = epoch_s;
                 rec.disc_counter = cctr;
@@ -271,18 +300,28 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // leaves the counter at 0 — the consumer's noteSsrDiscontinuity
                 // reacts only to CHANGES, so a steady counter never triggers.
                 int&       ctr           = code_disc_counter_[key];  // value-inits to 0 on first sight
-                const bool have_baseline = last_code_bias_.count(key) != 0;
+                const auto cb_last_it    = last_code_bias_.find(key);
+                const bool have_baseline = (cb_last_it != last_code_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(code_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
                                            || satForced(s.sat);       // B1 retro-bump (per-sat)
+                // Opt-in magnitude test (network.code_bias_disc_jump_test): the
+                // phase jump test applied to code, catching the weak-separation
+                // VALUE wander the structural triggers cannot see (they detect
+                // gauge re-references only, not the estimate walking).  Same
+                // fresh-baseline suppression as phase.
+                const bool value_jump = code_bias_jump_test_ && have_baseline
+                    && std::abs(bias - cb_last_it->second) > disc_threshold_m_;
                 // RTA-11 fix: a genuine forced datum change steps the counter even
                 // on a beyond-horizon return (the consumer may still hold
                 // old-datum state), but the STRUCTURAL re-reference signals
                 // (per-(const,signal) sum-to-zero channel change, IF-pin band-set
-                // change) are suppressed on a stale baseline — exactly like the
-                // phase jump test — since they are computed against stale state.
+                // change) and the opt-in value-jump test are suppressed on a stale
+                // baseline — exactly like the phase jump test — since they are
+                // computed against stale state.
                 if (have_baseline && (forced
-                        || (fresh && (changed_channels.count(chan) || sat_band_changed)))) {
+                        || (fresh && (changed_channels.count(chan) || sat_band_changed
+                                      || value_jump)))) {
                     ++ctr;
                 }
                 last_code_bias_[key]        = bias;
@@ -330,6 +369,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 entry.signal_integer        = npb.signal_integer;
                 entry.wide_lane_integer     = npb.wide_lane_integer;
                 entry.discontinuity_counter = ctr;
+                entry.sigma_m               = npb.sigma_m;   // B1b: 0 unless emit_phase_bias_sigma populated it (gauge-exact); no wire record, in-process store only.
                 rec.bias_per_signal[signal] = entry;
             }
             store.pushPhaseBias(rec, header);
@@ -342,6 +382,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // reproduce deterministically.
     prev_code_satset_ = std::move(cur_code_satset);
     prev_band_tuple_  = std::move(cur_band_tuple);
+    if (clock_disc_on_set_change_) prev_clock_satset_ = std::move(cur_clock_satset);
 
     // Forced-bump consumption (RT0-5 seam, P0-1 precedent: the emitter's stream
     // state must describe the last EMITTED product).  A constellation's forced
@@ -394,12 +435,24 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
 }
 
 void NetworkProductEmitter::serializeState(std::ostream& os) const {
-    // Header carries the three construction parameters so a restore into a
+    // Header carries the construction parameters so a restore into a
     // differently-configured emitter fails (belt-and-suspenders on top of the
     // snapshot's config fingerprint).  fmt "{}" = shortest round-trip double.
-    os << "EMITTER,v1," << fmt::format("{}", disc_threshold_m_) << ','
-       << (emit_clock_disc_ ? 1 : 0) << ',' << fmt::format("{}", staleness_horizon_s_)
-       << '\n';
+    // v1 (three parameters) is written whenever the two optional discontinuity
+    // channels are OFF, so a default-config snapshot is byte-identical to
+    // pre-channel builds and old snapshots restore into off-emitters; v2 appends
+    // the two channel flags only when one is armed.
+    if (!code_bias_jump_test_ && !clock_disc_on_set_change_) {
+        os << "EMITTER,v1," << fmt::format("{}", disc_threshold_m_) << ','
+           << (emit_clock_disc_ ? 1 : 0) << ','
+           << fmt::format("{}", staleness_horizon_s_) << '\n';
+    } else {
+        os << "EMITTER,v2," << fmt::format("{}", disc_threshold_m_) << ','
+           << (emit_clock_disc_ ? 1 : 0) << ','
+           << fmt::format("{}", staleness_horizon_s_) << ','
+           << (code_bias_jump_test_ ? 1 : 0) << ','
+           << (clock_disc_on_set_change_ ? 1 : 0) << '\n';
+    }
     for (const auto& [k, v] : disc_counter_)       os << "ep," << k << ',' << v << '\n';
     for (const auto& [k, v] : last_phase_bias_)
         os << "epb," << k << ',' << fmt::format("{}", v) << '\n';
@@ -421,6 +474,18 @@ void NetworkProductEmitter::serializeState(std::ostream& os) const {
     for (const auto& [sat, bands] : prev_band_tuple_) {
         os << "ebt," << sat << ',';
         for (char b : bands) os << b;
+        os << '\n';
+    }
+    // Clock set-change tracker (only populated when clock_disc_on_set_change_ is
+    // armed, so a default-config section carries no eks lines).
+    for (const auto& [cst, sats] : prev_clock_satset_) {
+        os << "eks," << cst << ',';
+        bool first = true;
+        for (const auto& s : sats) {
+            if (!first) os << ';';
+            os << s;
+            first = false;
+        }
         os << '\n';
     }
     for (const auto& [k, v] : phase_last_seen_s_)
@@ -448,16 +513,25 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     {
         const std::vector<std::string> h = splitStateLine(line);
-        if (h.size() != 5 || h[0] != "EMITTER" || h[1] != "v1") return false;
+        // v1 = the three legacy parameters (both optional channels implicitly
+        // OFF); v2 appends the code-bias jump-test + clock set-change flags.
+        const bool v1 = (h.size() == 5 && h[0] == "EMITTER" && h[1] == "v1");
+        const bool v2 = (h.size() == 7 && h[0] == "EMITTER" && h[1] == "v2");
+        if (!v1 && !v2) return false;
         double thr = 0.0, stale = 0.0;
-        int clk = 0;
+        int clk = 0, cbj = 0, cks = 0;
         if (!parseStateD(h[2], thr) || !parseStateI(h[3], clk) || !parseStateD(h[4], stale))
+            return false;
+        if (v2 && (!parseStateI(h[5], cbj) || !parseStateI(h[6], cks)))
             return false;
         // Parameter mismatch = the snapshotting producer ran a different emitter
         // config than this one — the stream state would be interpreted under the
-        // wrong rules (jump threshold, clock channel, staleness horizon).  Cold.
+        // wrong rules (jump threshold, clock channel, staleness horizon, optional
+        // discontinuity channels).  Cold.
         if (thr != disc_threshold_m_ || (clk != 0) != emit_clock_disc_
-            || stale != staleness_horizon_s_)
+            || stale != staleness_horizon_s_
+            || (cbj != 0) != code_bias_jump_test_
+            || (cks != 0) != clock_disc_on_set_change_)
             return false;
     }
 
@@ -467,6 +541,7 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     std::set<std::string>         st_seen_clock, st_forced_sats;
     std::map<std::string, std::set<std::string>> st_satset;
     std::map<std::string, std::vector<char>>     st_band;
+    std::map<char, std::set<std::string>>        st_clock_satset;
     std::map<std::string, double> st_seen_p, st_seen_c, st_seen_k;
     bool           st_force_all = false;
     std::set<char> st_forced_consts;
@@ -506,6 +581,20 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
         } else if (tag == "ebt") {
             if (f.size() != 3 || f[2].empty()) return false;
             st_band[f[1]] = std::vector<char>(f[2].begin(), f[2].end());
+        } else if (tag == "eks") {
+            if (f.size() != 3 || f[1].size() != 1) return false;
+            std::set<std::string>& sats = st_clock_satset[f[1][0]];
+            std::size_t start = 0;
+            const std::string& v = f[2];
+            while (start <= v.size()) {
+                const std::size_t pos = v.find(';', start);
+                const std::string one =
+                    v.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
+                if (!one.empty()) sats.insert(one);
+                if (pos == std::string::npos) break;
+                start = pos + 1;
+            }
+            if (sats.empty()) return false;   // an eks line always carries ≥1 sat
         } else if (tag == "elp" || tag == "elc" || tag == "elk") {
             if (f.size() != 3 || !parseStateD(f[2], dv)) return false;
             (tag == "elp" ? st_seen_p : tag == "elc" ? st_seen_c : st_seen_k)[f[1]] = dv;
@@ -533,6 +622,7 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     last_code_bias_     = std::move(st_last_cb);
     prev_code_satset_   = std::move(st_satset);
     prev_band_tuple_    = std::move(st_band);
+    prev_clock_satset_  = std::move(st_clock_satset);
     phase_last_seen_s_  = std::move(st_seen_p);
     code_last_seen_s_   = std::move(st_seen_c);
     clock_last_seen_s_  = std::move(st_seen_k);

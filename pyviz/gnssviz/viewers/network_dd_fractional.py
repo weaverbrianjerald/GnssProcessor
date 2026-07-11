@@ -92,10 +92,14 @@ def build_network_dd_fractional(ctx) -> ViewerResult:
     df["cons"] = df["cons"].astype(str)
     df["signal"] = df["signal"].fillna("").astype(str)
     df["frac"] = wrap_half(df["frac_cyc"].to_numpy(float))
+    # T2a: optional formal DD sigma (cycles).  −1/absent = "covariance unavailable".
+    has_sigma = "dd_sigma_cyc" in df.columns
+    if has_sigma:
+        df["dd_sigma_cyc"] = df["dd_sigma_cyc"].astype(float)
     df = add_utc(df)
 
     # --- Aggregate per (cons, signal) ONCE (the file is O(sta*sat*epoch)). ---
-    groups = []   # list of dicts: cons, signal, sys, n, sigma, pct, frac(np), color
+    groups = []   # list of dicts: cons, signal, sys, n, sigma, pct, frac(np), color, ...
     for (cons, sig), sub in df.groupby(["cons", "signal"], sort=True):
         frac = sub["frac"].to_numpy(float)
         n = frac.size
@@ -103,9 +107,32 @@ def build_network_dd_fractional(ctx) -> ViewerResult:
             continue
         sys = system_of(cons)                 # single-letter -> canonical name
         within = float(np.sum(np.abs(frac) < _WITHIN)) / n * 100.0
+        mean_abs = float(np.mean(np.abs(frac)))                    # unif -> 0.25
+        circ_R = float(np.abs(np.mean(np.exp(2j * np.pi * frac)))) # unif -> 0
+        # Per-series std of dd_cyc per (sat,ref,sta_a,sta_b): the temporal-drift signature.
+        ser_std_med = float("nan")
+        if "dd_cyc" in sub.columns:
+            gk = sub.groupby(["sat_i", "ref_sat", "sta_a", "sta_b"])["dd_cyc"]
+            stds = gk.std().to_numpy(float)
+            stds = stds[np.isfinite(stds)]
+            if stds.size:
+                ser_std_med = float(np.median(stds))
+        # σ calibration (χ² intent): per-series TEMPORAL scatter vs the formal DD σ.
+        # calib = scatter/formal — ~1 honest, >>1 overconfident (σ-incest), <<1 conservative.
+        med_sig = float("nan")
+        calib = float("nan")
+        if has_sigma:
+            sv = sub["dd_sigma_cyc"].to_numpy(float)
+            sv = sv[np.isfinite(sv) & (sv > 0.0)]
+            if sv.size:
+                med_sig = float(np.median(sv))
+                if med_sig > 0.0 and ser_std_med == ser_std_med:
+                    calib = ser_std_med / med_sig
         groups.append({
             "cons": cons, "signal": sig, "sys": sys,
             "n": n, "sigma": robust_std(frac), "pct": within,
+            "mean_abs": mean_abs, "circ_R": circ_R, "med_sig": med_sig,
+            "calib": calib, "ser_std_med": ser_std_med,
             "frac": frac, "utc": sub["utc"], "color": system_color(sys),
         })
 
@@ -217,15 +244,20 @@ def _summary(groups, total_groups, capped) -> str:
     out.append(f"Groups (cons,signal): {total_groups}"
                + (f"  (Figure A shows the {_MAX_TILES} largest-n)" if capped else ""))
     out.append("Pivot station and GLONASS already excluded by the producer.")
+    out.append("UNIFORM BENCHMARK (no integer info): mean|frac|=0.250  P(<0.1)=20.0%  R=0.00")
     out.append("")
-    out.append(f"{'Group':<14} {'N':>8} {'sigma(cyc)':>11} "
-               f"{'within0.1(%)':>13}  verdict")
-    out.append("-" * 62)
+    out.append(f"{'Group':<12} {'N':>7} {'mean|f|':>8} {'P<0.1%':>7} {'R':>6} "
+               f"{'sig(cyc)':>9} {'calib':>6} {'ser_std':>8}  verdict")
+    out.append("-" * 82)
     for g in groups:
         verdict = "GO" if g["pct"] >= _GO_PCT else "NO-GO"
         label = f"{g['sys']} {g['signal']}"
-        out.append(f"{label:<14} {g['n']:>8} {g['sigma']:>11.3f} "
-                   f"{g['pct']:>13.1f}  {verdict}")
+        calib = g.get("calib", float("nan"))
+        calib_s = f"{calib:>6.2f}" if calib == calib else f"{'--':>6}"   # nan -> --
+        sser = g.get("ser_std_med", float("nan"))
+        sser_s = f"{sser:>8.3f}" if sser == sser else f"{'--':>8}"
+        out.append(f"{label:<12} {g['n']:>7} {g['mean_abs']:>8.3f} {g['pct']:>7.1f} "
+                   f"{g['circ_R']:>6.3f} {g['sigma']:>9.3f} {calib_s} {sser_s}  {verdict}")
     out.append("")
     n_go = sum(1 for g in groups if g["pct"] >= _GO_PCT)
     if n_go == total_groups:

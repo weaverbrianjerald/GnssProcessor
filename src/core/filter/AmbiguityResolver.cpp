@@ -277,6 +277,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
 
     if (config_.ar_mode == 0) {
         log->debug("AR disabled (ar_mode=0)");
+        result.gate_reason = 1;   // T2c: disabled
         return result;
     }
 
@@ -291,6 +292,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
     if (epoch_count_ <= config_.min_epochs) {
         log->debug("AR skipped: epoch {}/{} (min_epochs convergence guard)",
                    epoch_count_, config_.min_epochs);
+        result.gate_reason = 2;   // T2c: min_epochs guard
         return result;
     }
 
@@ -309,6 +311,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
             if (sigma_3d > config_.max_position_sigma_m) {
                 log->debug("AR (NlWl) skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
                            sigma_3d, config_.max_position_sigma_m);
+                result.gate_reason = 3;   // T2c: position-σ gate
+                result.gate_sigma_3d = sigma_3d;
                 return result;
             }
         }
@@ -354,6 +358,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
 
     if (pairs.empty()) {
         log->debug("No DD ambiguity pairs available for AR");
+        result.gate_reason = 4;   // T2c: no candidates
         return result;
     }
 
@@ -370,6 +375,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
         if (sigma_3d > config_.max_position_sigma_m) {
             log->debug("AR skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
                        sigma_3d, config_.max_position_sigma_m);
+            result.gate_reason = 3;   // T2c: position-σ gate
+            result.gate_sigma_3d = sigma_3d;
             return result;
         }
     }
@@ -382,6 +389,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
     if (config_.wl_only) {
         if (wl_ambiguities.empty()) {
             log->debug("WL-only mode: no MW-resolved WL integers available this epoch");
+            result.gate_reason = 4;   // T2c: no candidates (no WL integers)
             return result;
         }
         auto wl_only_result = resolveWlOnly(pairs, x, P, wl_ambiguities,

@@ -101,6 +101,14 @@ void SsrCorrectionStore::pushUra(const SsrUra& rec, const SsrHeader& header) {
     auto& r = by_sat_[rec.sat]; r.ura = rec; r.header = header;
 }
 
+void SsrCorrectionStore::pushSlantIono(const SsrSlantIono& rec) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Deliberately does NOT touch r.header — the slant-iono channel uses its own
+    // received_time for freshness, and clobbering the header would strip the real
+    // IOD-SSR / provider emitToStore stamped for this satellite the same epoch.
+    by_sat_[rec.sat].slant_iono = rec;
+}
+
 void SsrCorrectionStore::pushHighRateClock(const SsrHighRateClock& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& r = by_sat_[rec.sat]; r.hrclock = rec; r.header = header;
@@ -262,6 +270,17 @@ std::optional<double> SsrCorrectionStore::getUra(const std::string& sat,
     if (it == by_sat_.end() || !it->second.ura) return std::nullopt;
     if (!freshEnough(it->second.ura->received_time, query_time, max_age_s)) return std::nullopt;
     return it->second.ura->ura_m;
+}
+
+std::optional<SsrSlantIono> SsrCorrectionStore::getSlantIono(const std::string& sat,
+                                                             const GnssTime& query_time,
+                                                             double max_age_s) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = by_sat_.find(sat);
+    if (it == by_sat_.end() || !it->second.slant_iono) return std::nullopt;
+    if (!freshEnough(it->second.slant_iono->received_time, query_time, max_age_s))
+        return std::nullopt;
+    return *it->second.slant_iono;
 }
 
 // --- A5: age-gated code/phase-bias getters (reuse the file-local freshEnough) ---

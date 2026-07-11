@@ -294,6 +294,22 @@ public:
     /// @c Application::runRealTime.
     void setArIgnoreMwWl(bool ignore) { ar_ignore_mw_wl_ = ignore; }
 
+    /// @brief Arm consumption of the network's UNDIFFERENCED per-satellite slant
+    ///        ionosphere as an ionosphere-weighted (BLUP) prior.
+    ///
+    /// When on, @ref processEpoch (after the measurement update, before AR)
+    /// queries the injected SSR store's slant-iono channel
+    /// (@c SsrCorrectionStore::getSlantIono) for each tracked satellite and pulls
+    /// the corresponding per-satellite slant-iono state toward the supplied value
+    /// via a common-mode-free pseudo-observation — replacing the loose
+    /// @c ionosphere_q random walk with a strong (ionosphere-corrected) user model.
+    /// Reads the store routed by @ref setSsrStore's @c consume_bias (the
+    /// closed-loop consumer always routes bias, so this is the OWNED network
+    /// store).  Default false ⇒ no pseudo-observation is built and the epoch is
+    /// byte-identical.  Set by the closed-loop harness from
+    /// @c closed_loop.consume_network_iono.
+    void setConsumeNetworkIono(bool on) { consume_network_iono_ = on; }
+
     /**
      * @brief RTA-6: product-arrival wake for the obs↔SSR hold buffer.
      *
@@ -411,6 +427,11 @@ private:
     /// this one or a split consumer's mismatches stay invisible forever.
     const SsrCorrectionStore* clock_store_override_{ nullptr };
 
+    /// Consume the network slant-iono supply as a tight per-sat prior (see
+    /// @ref setConsumeNetworkIono).  Default false ⇒ processEpoch builds no iono
+    /// pseudo-observation (byte-identical).
+    bool consume_network_iono_{ false };
+
     /// Most recent epoch's AR result + whether AR ran (closed-loop metrics).
     AmbiguityResolution last_ar_result_{};
     bool last_ar_ran_{ false };
@@ -445,6 +466,13 @@ private:
     // staleness gate (enable_ssr_bias_max_age) is on; a fresh↔stale flip is a full-bias
     // phase step with no producer disc-counter change, so the ambiguity is reset on the flip.
     std::map<std::string, bool> ssr_phase_bias_applied_;
+    // A5 code analog: per-("CB|sat|signal") record of whether the SSR code bias was
+    // APPLIED (present + fresh within the staleness gate) at the previous epoch.  Only
+    // maintained when the gate is on; a fresh↔absent flip — including a signal silently
+    // VANISHING from a wholesale-replacing producer push, which carries no disc counter —
+    // steps the applied code correction by the full bias, so the affected constellation's
+    // receiver code-bias states are re-inflated on the flip.
+    std::map<std::string, bool> ssr_code_bias_applied_;
     /// RTA-3: last observed network solution-generation id from the SSR store
     /// (0 = never seen).  A CHANGE of a present id means the producer RESTARTED
     /// and re-realized its whole datum (every phase-bias lump / code-bias level
