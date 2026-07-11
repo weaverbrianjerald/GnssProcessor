@@ -2386,6 +2386,66 @@ namespace GnssProcessor {
         bool networkPhaseDatumEq34CarryShift() const { return network_phase_datum_eq34_carry_shift_; }
 
         /**
+         * @brief Card 3 (I4): longevity-aware BFS growth of the eq34 spanning tree
+         *        (@c network.phase_datum_eq34_longevity_election).
+         *
+         * Spec D2 step 3 asks the spanning tree to be grown from r1 "preferring
+         * high-coverage stations and high-elevation arcs" — the preference was
+         * dropped in the sticky two-queue BFS build, so a NEW tree edge is chosen
+         * by lexical sat/station order, blind to how long the arc will survive.
+         * A tree edge that dies (its arc sets) forces a b_s re-reference + carry
+         * erase; picking the LONGEST-LIVED available edge cuts that churn at the
+         * source (the de Jonge-spirit interim mitigation, complementary to the
+         * extend-only membership item).  When ON, the NEW-edge frontier of the BFS
+         * (the incumbent-edge seed is untouched) is ordered by arc longevity: a
+         * RISING arc (elevation increased vs last epoch — won't set for a long
+         * time) is lifted above every setting arc, and within a class higher
+         * elevation wins; receiver choice prefers high per-constellation coverage
+         * first (the more robust tracker).  Ties break deterministically
+         * (sat name / station index) exactly as the legacy order.  Pure edge-
+         * selection change: the gauge dimension, pins, and every emitted value are
+         * unchanged for any tree it happens to reproduce.  Default false =
+         * legacy lexical growth (the B9 resting baseline, for a clean reref-counter
+         * A/B).  INERT unless @ref networkPhaseDatumEq34.
+         *
+         * @see networkPhaseDatumEq34
+         */
+        bool networkPhaseDatumEq34LongevityElection() const {
+            return network_phase_datum_eq34_longevity_election_;
+        }
+
+        /**
+         * @brief Card 3 (I2): extend-only sticky-tree membership across momentary
+         *        row gaps (@c network.phase_datum_eq34_longevity_election's sibling,
+         *        @c network.phase_datum_eq34_extend_only).
+         *
+         * de Jonge §3.5: the S-basis is EXTEND-ONLY over time — a basis edge is
+         * removed only on a true arc death, never on a per-epoch usability flap.
+         * In this running filter the sound realization is to RETAIN a tree edge's
+         * sticky identity (its sat-side / receiver-side parent, component root, and
+         * pinned integer) while its phase-leveling memory (@c local_carry) is still
+         * alive, so the epoch its arc RESUMES it is a recognized incumbent that
+         * re-pins to the SAME integer (emitted-bias step ≈ 0, DDs continuous)
+         * instead of re-leveling from a first-sighting 0 — the silent integer
+         * re-reference that otherwise poisons every peer station's surviving carry
+         * for that satellite.  @c local_carry liveness is the age stamp: it is
+         * gap-pruned at @c network.phase_leveling_max_gap_s, the same horizon that
+         * bounds the carries the whole datum rides on, so an edge absent longer than
+         * that (or whose carry was erased by a genuine reroute/handover) is NOT
+         * retained and correctly re-floats as a first sighting — by which point the
+         * peer carries are gone too.  Tree GROWTH is unchanged (the seed admits LIVE
+         * arcs only ⇒ a retained-but-absent edge is inert until its arc returns, so
+         * the spanning-forest invariant holds); reroute/handover churn is out of
+         * scope (Card 4).  Default false = legacy wholesale replace (the B9
+         * baseline).  INERT unless @ref networkPhaseDatumEq34.
+         *
+         * @see networkPhaseDatumEq34, networkPhaseLevelingMaxGapS
+         */
+        bool networkPhaseDatumEq34ExtendOnly() const {
+            return network_phase_datum_eq34_extend_only_;
+        }
+
+        /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
          *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
          *
@@ -3070,6 +3130,31 @@ namespace GnssProcessor {
         ///        exact.  Per-(sat,signal) via @c getPhaseBias; IF rows carry no per-signal
         ///        bias and are untouched.  Default off ⇒ R byte-identical.
         bool networkConsumePhaseBiasSigma() const { return network_consume_phase_bias_sigma_; }
+
+        /// @brief M4 (contract v2): producer emits the per-key COMBINED-correction σ
+        ///        (@c network.emit_combined_sigma).  When on, the driver computes the
+        ///        combined PHASE σ (clock + phase bias) into @c NetworkPhaseBias.sigc_m and
+        ///        the combined CODE σ + code/phase correlation (clock + code bias) into
+        ///        @c NetworkSatSolution.sigcc_m / @c rho from the shared posterior
+        ///        covariance's cross-terms, serialized as the @c sigc= / @c sigcc= /
+        ///        @c rho= wire tokens.  Off ⇒ every value 0 ⇒ no token ⇒ product/store
+        ///        byte-identical.  (Zhang 2021 / Psychas 2024b: the combined σ is mm-level
+        ///        where the individual clock/bias σ are cm-level during rise-reconvergence.)
+        bool networkEmitCombinedSigma() const { return network_emit_combined_sigma_; }
+        /// @brief M4 (contract v2): age-scaling coefficient the producer advertises on the
+        ///        S-line (@c network.combined_sigma_agek).  A consumer inflates the combined
+        ///        variance as σc²·(1 + agek·Δt_age²) (correction content age Δt_age in s),
+        ///        replacing the ad-hoc URA staleness ramp for network-corrected rows.
+        ///        Default 0 ⇒ no @c agek= token ⇒ no age inflation (byte-identical).
+        double networkCombinedSigmaAgek() const { return network_combined_sigma_agek_; }
+        /// @brief M4 (contract v2): consumer folds the combined-correction σ (age-inflated)
+        ///        into a network-corrected row's measurement variance INSTEAD OF the URA +
+        ///        phase-bias-σ RSS (@c closed_loop.consume_combined_sigma).  Convenience
+        ///        accessor onto the closed-loop sub-config so measurement-side callers match
+        ///        the flat B1b getter style.  Default off ⇒ v1 weighting (byte-identical).
+        bool networkConsumeCombinedSigma() const {
+            return getNetworkConfig().closed_loop.consume_combined_sigma;
+        }
 
         /// @brief T3a: gate consumer AR-eligibility on the product's @c signal_integer flag
         ///        (@c network.require_signal_integer_for_ar).  OFF = coverage-only gate (byte-identical).
@@ -4274,6 +4359,8 @@ namespace GnssProcessor {
         double network_phase_datum_eq34_rpb_prior_sigma_m_{1.0}; ///< Card 3: loose per-epoch zero-mean prior σ (m) on every RPB column — the station-local information floor for the near-null RPB↔ambiguity split (Jul-10 field A/B instrument); 0 disables. INERT unless network_phase_datum_eq34_.
         double network_phase_datum_eq34_rpb_q_m2s_{3E-06};       ///< Card 3: q (m²/s) of the LOCAL δ_{r,σ} time-linking carry (D6 v2, local form) — suppresses the per-epoch RPB re-estimation bounce that poisons the individual-float phase-leveling carries; 0 = v1 fresh re-estimation. INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_carry_shift_{false};     ///< Card 3 EXPERIMENTAL: S-transform carried values on pin displacement instead of erase/skip (exact in the chain algebra; field Jul-11: injects error through the weakly-held δ split — DD step 86 vs 11-15 cyc/ep erase-based — root open). OFF = erase-based hygiene. INERT unless network_phase_datum_eq34_.
+        bool   network_phase_datum_eq34_longevity_election_{false}; ///< Card 3 (I4): grow the eq34 spanning tree's NEW edges by arc longevity (rising arcs first, then high elevation; high-coverage receivers first) instead of lexical order, so tree edges are chosen to outlive the epoch — cuts b_s re-reference churn at the source (spec D2 step 3's dropped preference). Incumbent-edge seed untouched; deterministic tie-break; OFF = legacy lexical growth (B9 baseline). INERT unless network_phase_datum_eq34_.
+        bool   network_phase_datum_eq34_extend_only_{false};       ///< Card 3 (I2): de Jonge §3.5 extend-only membership — retain a tree edge's sticky identity (parents/root/pinned integer) across a momentary row gap while its local_carry is alive (age-stamped to phase_leveling_max_gap_s), so a returning arc re-pins to its pre-gap integer (step ≈0) instead of silently re-leveling to a first-sighting 0. Tree growth unchanged (live arcs only); reroute/handover out of scope. OFF = legacy wholesale replace (B9 baseline). INERT unless network_phase_datum_eq34_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
@@ -4301,6 +4388,8 @@ namespace GnssProcessor {
         // --- B1b: phase-bias σ channel (Tienstra product-covariance, phase-bias block) ---
         bool   network_emit_phase_bias_sigma_{false};    ///< B1b: producer emits per-(sat,signal) phase-bias formal σ (EWMA(σ̂0)×√(shared-cov diag), gauge-exact) into SsrPhaseBiasEntry.sigma_m; OFF = σ 0, byte-identical.
         bool   network_consume_phase_bias_sigma_{false}; ///< B1b: consumer inflates R on a phase row by the network phase-bias σ²; OFF = R byte-identical.
+        bool   network_emit_combined_sigma_{false};      ///< M4 (contract v2): producer emits per-key COMBINED-correction σ (sigc phase, sigcc code) + code/phase corr (rho) from the shared-cov cross-terms → sigc=/sigcc=/rho= wire tokens; OFF = every value 0, no token, byte-identical.
+        double network_combined_sigma_agek_{0.0};        ///< M4 (contract v2): age-scaling coefficient advertised on the S-line (agek=); consumer inflates combined variance as σc²·(1+agek·Δt_age²). 0 = no token, no age inflation (byte-identical).
         bool   network_require_signal_integer_for_ar_{false}; ///< T3a: consumer marks an ambiguity UNRESOLVABLE (AR-ineligible) when its covering network phase bias declares signal_integer=false (e.g. the anchor-free ensemble datum, whose bias references the receiver-ensemble mean and is NOT integer-preserving). OFF = the historical coverage-only gate (byte-identical); no consumer reads signal_integer today.
         double network_start_offset_hours_{0.0};        ///< Testing fast-forward: skip epochs until this many hours of data have elapsed from the first synced epoch, then cold-start (0 = process from the start).
         bool enable_cio_frame_{false};                    ///< Use the CIO IAU 2000A/2006 ECI↔ECEF transform (SOFA) for Sun/Moon; legacy equinox chain when off.

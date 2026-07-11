@@ -789,6 +789,512 @@ TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
            "datum receivers — the accepted eq34 limitation).";
 }
 
+// ===========================================================================
+// Card 3 / I1 — SHIFT-WALK (carry S-transformation) unit test.
+//
+// The experimental `phase_datum_eq34_carry_shift` walk claims that when the
+// chain datum re-pins a tree edge, the carried quantities can be transformed
+// EXACTLY into the new emission frame instead of erased.  It is an
+// alternating-sign forward pass over the spanning tree (parents strictly before
+// children; the datum receiver's RPB is pinned so its shift is 0):
+//     Δb_s     = −Δδ_parent − pinmove(edge)     (satellite child of a receiver)
+//     Δδ_r     = −Δb_parent − pinmove(edge)     (receiver child of a satellite)
+//     Δz_{r,s} = −Δb_s − Δδ_r                    (every carried ambiguity)
+// where `pinmove` is this pin's displacement of its pinned float vs the frame it
+// last sat in.  It FIELD-FAILED (B8': 86 cyc/ep injected error).  These tests
+// decide, in a controlled noise-free box, whether the ALGEBRA is exact — so the
+// field failure is a model-coupling defect (iono / weak δ split feeding a wrong
+// carried float), NOT a bookkeeping bug in the walk itself.
+//
+// Setup: the code datum (clock pin) is held fixed across the two epochs, so a_r
+// and c_s are invariant and cancel — φ_{r,s} := Φ_{r,s} − (a_r − c_s) =
+// b_s + δ_r + z_{r,s}.  A spanning tree over the connected bipartite graph, plus
+// one RPB pin, makes the phase subsystem square and full rank, so exact tree
+// propagation IS the estimator's solution (no Eigen solve needed here — GATE 1-4
+// above already exercise NetworkEstimator; these target the walk arithmetic).
+//
+// KEY FACT that shapes the negative results: in a NOISE-FREE box every floated
+// (non-tree) ambiguity lands on an exact integer (the frame's single common
+// fractional δ_{r1} rides b_s and δ_r and cancels in z = φ − b − δ).  So a
+// FAITHFUL carry ⇒ pin-to-round reproduces the true integer ⇒ pinmove 0 ⇒ the
+// reattach is a perfect no-op (I1b).  The shift only moves — and only mis-fires
+// (I1c) — when the CARRIED float has drifted off its true value, which is
+// exactly what phase-leveling with iono/δ coupling does in the field.
+//
+// SCOPE / what these tests do and do NOT cover.  The production carry walk lives
+// in two [&]-capturing lambdas inside the per-epoch election loop of
+// ApplicationNetwork.cpp (recordEdge + the vshift forward pass) — there is no
+// callable seam to drive from a unit test.  `shiftWalk`/`propagateChain` below
+// are therefore an INDEPENDENT reference reimplementation, kept byte-faithful to
+// the production recurrence.  These tests FALSIFY/CONFIRM the ALGEBRA (the
+// roadmap I1 goal) and stand as an executable reference to diff production
+// against — they do NOT auto-detect a regression in the shipped walk (a sign
+// flip or mis-key in production would leave them green), and they deliberately
+// do not exercise production's pin-to-round target derivation (they supply the
+// already-rounded target), its per-satellite eq34_sat_root root gating (I1d
+// blanket-flags on a single-component handover), or the station-keyed maps whose
+// mis-keying was the "collision class bit twice" field bug.  Wiring the shipped
+// lambdas to a testable seam is a separate (src/-touching) follow-up.
+// ===========================================================================
+namespace {
+
+// One directed tree edge pinning ambiguity z_{r,s}=target.  sat_is_child mirrors
+// the production recordEdge flag: true = the satellite attaches under receiver r;
+// false = the receiver attaches under satellite s.  Edges are listed in
+// attachment order (each edge's parent already attached or is the root).
+struct ChainEdge { bool sat_is_child; int r; int s; double target; };
+
+// A chain datum: root receiver r1 (δ_{r1}=0) + its spanning-tree edges.
+struct ChainTree { int r1; std::vector<ChainEdge> edges; };
+
+// φ_{r,s} = b_s + δ_r + z_{r,s}  (code removed; exact in the noise-free box).
+inline double eq34Phi(const Eq34Truth& t, int r, int s) {
+    return t.b[s] + t.d[r] + static_cast<double>(t.z[r][s]);
+}
+
+// Full eq34 state under a chain datum, by exact tree propagation.
+struct Eq34FullState {
+    std::vector<double> b;                       // [S] emitted sat phase-bias frame
+    std::vector<double> d;                       // [R] receiver fractional δ
+    std::map<std::pair<int, int>, double> z;     // (r,s) -> ambiguity, all visible
+};
+
+Eq34FullState propagateChain(const Eq34Truth& t, const ChainTree& tree) {
+    Eq34FullState st;
+    st.b.assign(t.S, std::numeric_limits<double>::quiet_NaN());
+    st.d.assign(t.R, std::numeric_limits<double>::quiet_NaN());
+    st.d[tree.r1] = 0.0;                          // RPB pin δ_{r1}=0
+    for (const auto& e : tree.edges) {
+        st.z[{e.r, e.s}] = e.target;              // hard ambiguity pin
+        if (e.sat_is_child)                       // parent = receiver e.r (δ known)
+            st.b[e.s] = eq34Phi(t, e.r, e.s) - st.d[e.r] - e.target;
+        else                                      // parent = satellite e.s (b known)
+            st.d[e.r] = eq34Phi(t, e.r, e.s) - st.b[e.s] - e.target;
+    }
+    // Floated (non-tree) ambiguities: z = φ − b − δ (integer in the noise-free box).
+    for (int r = 0; r < t.R; ++r)
+        for (int s : t.vis[r])
+            if (!st.z.count({r, s}))
+                st.z[{r, s}] = eq34Phi(t, r, s) - st.b[s] - st.d[r];
+    return st;
+}
+
+// Result of the alternating-sign walk over tree B relative to incumbent tree A.
+struct ShiftWalk {
+    std::map<int, double> db, dd;            // Δb per sat idx, Δδ per rx idx (0 if unknown)
+    std::map<int, bool>   db_known, dd_known;
+    long long             n_unknown = 0;     // edges whose child was flagged unknown
+};
+
+// Independent reference reimplementation of the production carry S-transformation
+// walk (ApplicationNetwork.cpp recordEdge + the vshift forward pass) on explicit
+// trees — a parallel copy for algebra falsification, NOT a call into production
+// (see the SCOPE note above).  `carry` supplies the value each floated ambiguity
+// is believed to sit at when a re-pin lands at a NEW station — in the estimator
+// this is local_carry (phase-leveling); here we pass it in so a test can feed
+// either the faithful float (state_A.z) or a drifted one.
+ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
+                    const std::map<std::pair<int, int>, double>& carry,
+                    bool shift_on) {
+    // Incumbent maps from tree A (mirror anchor_incumbent / eq34_rx_parent /
+    // eq34_sat_root / eq34_prev_target).
+    std::map<int, int>    A_sat_parent;                 // sat -> its parent station
+    std::map<int, int>    A_rx_parent;                  // rx  -> its parent sat
+    std::map<std::pair<int, int>, double> A_target;     // (r,s) -> tree-A pin target
+    for (const auto& e : treeA.edges) {
+        A_target[{e.r, e.s}] = e.target;
+        if (e.sat_is_child) A_sat_parent[e.s] = e.r;
+        else                A_rx_parent[e.r] = e.s;
+    }
+    const int rootA = treeA.r1;   // every tree-A sat's recorded component root
+
+    ShiftWalk sw;
+    sw.dd[treeB.r1] = 0.0;        // datum receiver: RPB pinned 0 in both epochs
+    sw.dd_known[treeB.r1] = true;
+
+    for (const auto& e : treeB.edges) {
+        // --- pinmove + known, mirroring production recordEdge (reference copy) ---
+        double pinmove = 0.0;
+        bool   known = true;
+        bool   edge_changed;
+        if (e.sat_is_child) {
+            auto it = A_sat_parent.find(e.s);
+            edge_changed = (it != A_sat_parent.end() && it->second != e.r);
+            // Root handover: the sat's recorded root differs from this epoch's r1
+            // ⇒ the frame steps by the datum receivers' fractional δ difference,
+            // not an integer, not computable here.
+            if (rootA != treeB.r1) known = false;
+        } else {
+            auto it = A_rx_parent.find(e.r);
+            edge_changed = (it != A_rx_parent.end() && it->second != e.s);
+        }
+        if (edge_changed) {
+            auto cv = carry.find({e.r, e.s});           // carry at the NEW station
+            if (cv != carry.end()) pinmove = e.target - cv->second;
+            else known = false;                         // re-pin with no carry
+        } else {
+            auto pt = A_target.find({e.r, e.s});        // same station: exact target diff
+            pinmove = e.target - (pt != A_target.end() ? pt->second : 0.0);
+        }
+        // --- alternating-sign forward pass (vshift[v] = −vshift[parent] − pinmove) ---
+        const int   parent_idx = e.sat_is_child ? e.r : e.s;
+        const auto& pk_map = e.sat_is_child ? sw.dd_known : sw.db_known;
+        const auto& pv_map = e.sat_is_child ? sw.dd : sw.db;
+        const bool  pk = pk_map.count(parent_idx) ? pk_map.at(parent_idx) : false;
+        const double pv = pv_map.count(parent_idx) ? pv_map.at(parent_idx) : 0.0;
+        const bool  k = known && pk && (shift_on || pinmove == 0.0);
+        const double s = k ? (-pv - pinmove) : 0.0;
+        if (e.sat_is_child) { sw.db[e.s] = s; sw.db_known[e.s] = k; }
+        else                { sw.dd[e.r] = s; sw.dd_known[e.r] = k; }
+        if (!k) ++sw.n_unknown;
+    }
+    return sw;
+}
+
+// Assert state_A + shift == state_B on every KNOWN vertex + every ambiguity whose
+// endpoints are both known.  Returns the count of checked cells (so a test can
+// assert the check was non-vacuous).
+int expectShiftReproduces(const Eq34Truth& t, const Eq34FullState& A,
+                          const Eq34FullState& B, const ShiftWalk& sw, double tol) {
+    int checked = 0;
+    for (int s = 0; s < t.S; ++s) {
+        if (!std::isfinite(A.b[s]) || !std::isfinite(B.b[s])) continue;
+        if (!(sw.db_known.count(s) ? sw.db_known.at(s) : false)) continue;
+        EXPECT_NEAR(A.b[s] + sw.db.at(s), B.b[s], tol) << "b_s reproduce, sat " << s;
+        ++checked;
+    }
+    for (int r = 0; r < t.R; ++r) {
+        if (!std::isfinite(A.d[r]) || !std::isfinite(B.d[r])) continue;
+        if (!(sw.dd_known.count(r) ? sw.dd_known.at(r) : false)) continue;
+        EXPECT_NEAR(A.d[r] + sw.dd.at(r), B.d[r], tol) << "delta_r reproduce, rx " << r;
+        ++checked;
+    }
+    for (int r = 0; r < t.R; ++r)
+        for (int s : t.vis[r]) {
+            const bool sk = sw.db_known.count(s) ? sw.db_known.at(s) : false;
+            const bool rk = sw.dd_known.count(r) ? sw.dd_known.at(r) : false;
+            if (!sk || !rk) continue;
+            const double dz = -sw.db.at(s) - sw.dd.at(r);       // Δz = −Δb_s − Δδ_r
+            EXPECT_NEAR(A.z.at({r, s}) + dz, B.z.at({r, s}), tol)
+                << "z reproduce, (" << r << "," << s << ")";
+            ++checked;
+        }
+    return checked;
+}
+
+// Tree A of the makeEq34Truth() fixture, rooted at r1=0, s3 pinned at station 1
+// (BFS attachment order; parents strictly precede children).  8 edges + RPB = 9.
+ChainTree eq34TreeA() {
+    return {0, {
+        {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},  // R0 -> S0,S1,S2
+        {false, 3, 0, 0.0},                                       // S0 -> R3
+        {false, 1, 2, 0.0},                                       // S2 -> R1
+        {true, 3, 4, 0.0},                                        // R3 -> S4
+        {true, 1, 3, 0.0},                                        // R1 -> S3
+        {false, 2, 4, 0.0},                                       // S4 -> R2
+    }};
+}
+
+}  // namespace
+
+// I1a — EXACTNESS under a same-station re-pin (pin-to-round lands on a different
+// integer).  Tree topology unchanged; edge S2->R1's target bumped +1 cycle.  The
+// walk must propagate the alternating-sign step through depth (Δδ_1=−1 ⇒ Δb_3=+1
+// ⇒ floated Δz=∓1) and reproduce the re-solved state EXACTLY.  The default-OFF
+// behavior (shift_on=false) must instead flag the affected subtree unknown.
+TEST(NetworkEstimatorTest, Eq34ShiftWalkReproducesRepinExactly) {
+    const Eq34Truth t = makeEq34Truth();
+    const ChainTree A = eq34TreeA();
+    ChainTree B = A;
+    B.edges[4].target = 1.0;   // S2 -> R1 (z_{1,2}) re-pinned 0 -> 1 (same station)
+
+    const Eq34FullState sA = propagateChain(t, A);
+    const Eq34FullState sB = propagateChain(t, B);
+
+    // Shift ON: exact reproduction, and the step genuinely propagated (Δδ_1, Δb_3
+    // are the −1/+1 the algebra predicts, not zero).
+    const ShiftWalk on = shiftWalk(A, B, sA.z, /*shift_on=*/true);
+    ASSERT_TRUE(on.dd_known.at(1)) << "rx1 must be a known (shiftable) vertex";
+    ASSERT_TRUE(on.db_known.at(3)) << "sat3 must be a known (shiftable) vertex";
+    EXPECT_NEAR(on.dd.at(1), -1.0, 1e-9) << "Δδ_1 = −Δb_2 − pinmove = −0 − 1";
+    EXPECT_NEAR(on.db.at(3), +1.0, 1e-9) << "Δb_3 = −Δδ_1 − pinmove = +1 − 0";
+    const int checked = expectShiftReproduces(t, sA, sB, on, 1e-9);
+    EXPECT_GE(checked, 10) << "reproduction check must be non-vacuous";
+
+    // Shift OFF (default): a non-zero pin displacement is treated as unknown, so
+    // the re-pinned edge's subtree (rx1 and its child sat3) is flagged for erase.
+    const ShiftWalk off = shiftWalk(A, B, sA.z, /*shift_on=*/false);
+    EXPECT_FALSE(off.dd_known.at(1)) << "shift OFF must NOT shift rx1 (erase path)";
+    EXPECT_FALSE(off.db_known.at(3)) << "shift OFF must NOT shift sat3 (erase path)";
+    EXPECT_GT(off.n_unknown, 0);
+}
+
+// I1b — a CLEAN reattach with a FAITHFUL carry is a perfect no-op.  s3 moves from
+// station 1 to station 2; the carry equals the estimator's true float there, so
+// pin-to-round reproduces the integer it already sits at (pinmove 0) and the
+// emission frame does not move.  Every vertex stays known; state is unchanged.
+TEST(NetworkEstimatorTest, Eq34ShiftWalkCleanReattachIsNoOp) {
+    const Eq34Truth t = makeEq34Truth();
+    const ChainTree A = eq34TreeA();
+    const Eq34FullState sA = propagateChain(t, A);
+
+    // Reattach s3: drop R1->S3, attach R2->S3 (R2 already lit via S4->R2), pinning
+    // z_{2,3} to round(true float there) — the pin-to-round production does.
+    const double carry23 = sA.z.at({2, 3});
+    ChainTree B{0, {
+        {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
+        {false, 3, 0, 0.0}, {false, 1, 2, 0.0}, {true, 3, 4, 0.0},
+        {false, 2, 4, 0.0},                              // S4 -> R2
+        {true, 2, 3, std::round(carry23)},               // R2 -> S3 (reattached)
+    }};
+    const Eq34FullState sB = propagateChain(t, B);
+
+    const ShiftWalk sw = shiftWalk(A, B, sA.z, /*shift_on=*/true);
+    EXPECT_EQ(sw.n_unknown, 0) << "a faithful-carry reattach must not erase anything";
+    const int checked = expectShiftReproduces(t, sA, sB, sw, 1e-9);
+    EXPECT_GE(checked, 10);
+    // The frame genuinely did not move (clean integer handover).
+    for (int s = 0; s < t.S; ++s) EXPECT_NEAR(sw.db.at(s), 0.0, 1e-9) << "sat " << s;
+}
+
+// I1c — the B8 FAILURE, reproduced and localized.  Same reattach as I1b, but the
+// carried float has DRIFTED by ε off its true value (what phase-leveling does).
+// pin-to-round still lands on the true integer, so the estimator's actual state
+// is UNCHANGED (Δb_3 = 0) — but the walk computes pinmove from the drifted carry
+// and predicts Δb_3 = +ε.  The shift therefore injects exactly the carry error.
+// This establishes the CONDITIONAL: the alternating-sign arithmetic is exact
+// given a faithful carry (I1b), and any carry drift ε propagates verbatim into
+// the frame.  That is consistent with the B8 field failure being carry-driven
+// (phase-leveling / iono / weak-δ coupling feeding a drifted float) — but this
+// box does not by itself rule out the other B8 candidates (sat-pass churn, the
+// station-keyed map collisions), so read it as mechanism-plausible, not as a
+// closed attribution of the field failure.
+TEST(NetworkEstimatorTest, Eq34ShiftWalkCarryDriftInjectsError) {
+    const Eq34Truth t = makeEq34Truth();
+    const ChainTree A = eq34TreeA();
+    const Eq34FullState sA = propagateChain(t, A);
+
+    const double true_float = sA.z.at({2, 3});          // exact integer in the box
+    const double eps = 0.23;                            // leveling drift on the carry
+    std::map<std::pair<int, int>, double> drifted = sA.z;
+    drifted[{2, 3}] = true_float + eps;
+
+    const double target = std::round(true_float + eps); // == true_float (|eps|<0.5)
+    ChainTree B{0, {
+        {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
+        {false, 3, 0, 0.0}, {false, 1, 2, 0.0}, {true, 3, 4, 0.0},
+        {false, 2, 4, 0.0}, {true, 2, 3, target},
+    }};
+    const Eq34FullState sB = propagateChain(t, B);       // estimator sees target only
+
+    const ShiftWalk sw = shiftWalk(A, B, drifted, /*shift_on=*/true);
+    ASSERT_TRUE(sw.db_known.at(3));
+    EXPECT_NEAR(std::round(true_float), true_float, 1e-9)
+        << "box invariant: the true floated carry is an exact integer";
+    // Estimator truth: the frame did NOT move (pinned to the integer it sat at).
+    EXPECT_NEAR(sB.b[3] - sA.b[3], 0.0, 1e-9);
+    // The walk, trusting the drifted carry, predicts a non-zero step == the drift…
+    EXPECT_NEAR(sw.db.at(3), eps, 1e-9) << "injected step equals the carry drift";
+    // …so shift-applied b_3 mismatches the re-solved b_3 by exactly ε.
+    EXPECT_NEAR((sA.b[3] + sw.db.at(3)) - sB.b[3], eps, 1e-9)
+        << "carry drift ε propagates verbatim into the shifted frame (the B8 defect)";
+}
+
+// I1d — ROOT-HANDOVER negative control.  Electing a different datum receiver
+// (r1: 0 -> 3) steps the whole frame by the receivers' common FRACTIONAL δ
+// difference — not expressible as any integer chain transform.  The walk must
+// refuse: every sat is flagged unknown (erase), never shifted.  We also confirm
+// the refusal is NECESSARY — the true frame step is genuinely non-integer.
+TEST(NetworkEstimatorTest, Eq34ShiftWalkRootHandoverIsUnknown) {
+    const Eq34Truth t = makeEq34Truth();
+    const ChainTree A = eq34TreeA();
+    // Tree B rooted at r1'=3 (BFS: R3->{S0,S4}, S0->R0, S4->R2, R0->{S1,S2},
+    // R2->S3, S2->R1) — the GATE-3 handover tree, as ChainEdges.
+    const ChainTree B{3, {
+        {true, 3, 0, 0.0}, {true, 3, 4, 0.0},
+        {false, 0, 0, 0.0}, {false, 2, 4, 0.0},
+        {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
+        {true, 2, 3, 0.0}, {false, 1, 2, 0.0},
+    }};
+    const Eq34FullState sA = propagateChain(t, A);
+    const Eq34FullState sB = propagateChain(t, B);
+
+    const ShiftWalk sw = shiftWalk(A, B, sA.z, /*shift_on=*/true);
+    // Every satellite is flagged unknown (recorded root != new r1) ⇒ erase, not shift.
+    for (int s = 0; s < t.S; ++s)
+        EXPECT_FALSE(sw.db_known.count(s) && sw.db_known.at(s))
+            << "sat " << s << " must be unknown on a root handover";
+    EXPECT_GT(sw.n_unknown, 0);
+
+    // The refusal is necessary: the true frame step carries a common fractional
+    // (δ_{3} − δ_{0} in tree A's frame), so at least one sat's Δb is non-integer —
+    // no integer walk could have reproduced it.
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+    bool some_fractional = false;
+    for (int s = 0; s < t.S; ++s)
+        if (std::isfinite(sA.b[s]) && std::isfinite(sB.b[s]) &&
+            fracDist(sB.b[s] - sA.b[s]) > 1e-3)
+            some_fractional = true;
+    EXPECT_TRUE(some_fractional)
+        << "root handover must move the frame by a non-integer common fractional "
+           "(the reason the walk is right to erase rather than shift).";
+}
+
+// ===========================================================================
+// I2 — extend-only membership (network.phase_datum_eq34_extend_only, de Jonge
+// §3.5).  Production retains an incumbent tree edge's sticky identity across a
+// momentary row gap while its phase-leveling carry is still alive (age-stamped
+// to phase_leveling_max_gap_s), so a returning arc re-pins to its pre-gap
+// integer (frame step ≈ 0) instead of re-leveling from a first-sighting 0.  The
+// mirror below reproduces ONLY the retention decision (carry-alive ⇒ keep); the
+// frame CONSEQUENCE of that decision is checked against the independent
+// propagateChain oracle, so the gates are not self-referential.
+// ===========================================================================
+namespace {
+
+// (r,s) pin target to carry into next epoch + the set kept across a gap.
+struct RetainResult {
+    std::map<std::pair<int, int>, double> targets;   // edge -> pin target next epoch
+    std::set<std::pair<int, int>>         retained;  // edges kept across the gap
+};
+
+// Mirror of ApplicationNetwork.cpp's extend-only retention: an incumbent edge
+// not seen this epoch keeps its identity iff its carry is alive; else it drops
+// (a reroute erases the carry; a gap past the horizon prunes it) and re-floats.
+template <class CarryAlive>
+RetainResult retainIdentity(
+    const std::map<std::pair<int, int>, double>& incumbentTargets,
+    const std::set<std::pair<int, int>>&         seenThisEpoch,
+    CarryAlive carryAlive) {
+    RetainResult out;
+    for (const auto& kv : incumbentTargets) {
+        const std::pair<int, int>& rs = kv.first;
+        if (seenThisEpoch.count(rs)) { out.targets[rs] = kv.second; continue; }  // live
+        if (carryAlive(rs.first, rs.second)) {          // absent, carry alive ⇒ retain
+            out.targets[rs] = kv.second;
+            out.retained.insert(rs);
+        }
+        // else: carry gone ⇒ dropped ⇒ first sighting on return
+    }
+    return out;
+}
+
+}  // namespace
+
+// I2a — a returning arc (row gap, carry alive) re-pins to its pre-gap integer,
+// so the emitted between-satellite frame does NOT step; a wholesale replace
+// (first-sighting target 0) re-levels it by that integer — the silent
+// re-reference that poisons every peer station's surviving carry.
+TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapReturnStepsZero) {
+    const Eq34Truth t = makeEq34Truth();
+    ChainTree A = eq34TreeA();
+    A.edges[6].target = 1.0;                     // pre-gap: R1->S3 pinned to integer 1
+    const Eq34FullState sA = propagateChain(t, A);
+
+    std::map<std::pair<int, int>, double> incumbent;   // mirror eq34_prev_target
+    for (const auto& e : A.edges) incumbent[{e.r, e.s}] = e.target;
+
+    // GAP epoch: S3 absent everywhere; its phase-leveling carry is still alive.
+    std::set<std::pair<int, int>> seen;
+    for (const auto& e : A.edges) if (e.s != 3) seen.insert({e.r, e.s});
+    const RetainResult ret =
+        retainIdentity(incumbent, seen, [](int, int) { return true; });
+    ASSERT_TRUE(ret.retained.count({1, 3}))
+        << "a carry-alive gapped edge must retain its identity";
+    EXPECT_NEAR(ret.targets.at({1, 3}), 1.0, 1e-12)
+        << "the retained pin target is the pre-gap integer";
+
+    // RESUME: S3 back at R1; pin-to-round of the surviving carry reproduces the
+    // retained integer ⇒ the tree and the emitted frame are unchanged (step 0).
+    ChainTree resume = A;
+    resume.edges[6].target = ret.targets.at({1, 3});
+    const Eq34FullState sR = propagateChain(t, resume);
+    EXPECT_NEAR(sR.b[3] - sA.b[3], 0.0, 1e-9)
+        << "returning arc re-pins to its pre-gap integer ⇒ emitted b_3 does not step";
+
+    // Contrast — wholesale replace forgets the identity ⇒ first-sighting 0 ⇒ b_3
+    // silently re-levels by the full integer.
+    ChainTree wholesale = A;
+    wholesale.edges[6].target = 0.0;
+    const Eq34FullState sW = propagateChain(t, wholesale);
+    EXPECT_NEAR(sW.b[3] - sA.b[3], 1.0, 1e-9)
+        << "wholesale replace re-levels b_3 by the pre-gap integer (step != 0)";
+}
+
+// I2b — a gap LONGER than the carry horizon (phase_leveling_max_gap_s) drops the
+// identity, so the return is a genuine first sighting (target 0, frame re-levels)
+// — correct, because the peer carries are gone by then too.
+TEST(NetworkEstimatorTest, Eq34ExtendOnlyBeyondHorizonFirstSighting) {
+    const Eq34Truth t = makeEq34Truth();
+    ChainTree A = eq34TreeA();
+    A.edges[6].target = 1.0;
+    const Eq34FullState sA = propagateChain(t, A);
+
+    std::map<std::pair<int, int>, double> incumbent;
+    for (const auto& e : A.edges) incumbent[{e.r, e.s}] = e.target;
+    std::set<std::pair<int, int>> seen;
+    for (const auto& e : A.edges) if (e.s != 3) seen.insert({e.r, e.s});
+
+    const RetainResult ret =
+        retainIdentity(incumbent, seen, [](int, int) { return false; });  // carry pruned
+    EXPECT_TRUE(ret.retained.empty())
+        << "an edge absent past the carry horizon must NOT be retained";
+    EXPECT_EQ(ret.targets.count({1, 3}), 0u)
+        << "its identity is dropped ⇒ the return is a genuine first sighting";
+
+    ChainTree resume = A;
+    resume.edges[6].target = ret.targets.count({1, 3}) ? ret.targets.at({1, 3}) : 0.0;
+    const Eq34FullState sR = propagateChain(t, resume);
+    EXPECT_NEAR(sR.b[3] - sA.b[3], 1.0, 1e-9)
+        << "beyond the horizon the returning arc re-floats from a first-sighting 0";
+}
+
+// I2c — a gap FOLLOWED BY A REROUTE (the arc returns at a DIFFERENT station with
+// no carry there) must flag a re-reference: with the incumbent identity retained
+// the resume is an edge change with no carry ⇒ unknown ⇒ erase (correct — the
+// emitted b_s stepped by a full integer, so the peer leveling carries are stale).
+// A wholesale replace would have silently dropped the incumbent and left the
+// reroute unflagged — the "gap+reroute now flags a reref" gate.
+TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapRerouteFlagsReref) {
+    const Eq34Truth t = makeEq34Truth();
+    const ChainTree A = eq34TreeA();                 // S3 incumbent under R1 (edge 6)
+    const ChainTree B{0, {                            // resume: S3 rerouted to R2
+        {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
+        {false, 3, 0, 0.0}, {false, 1, 2, 0.0}, {true, 3, 4, 0.0},
+        {false, 2, 4, 0.0}, {true, 2, 3, 0.0},        // R2->S3 (was R1->S3)
+    }};
+    const Eq34FullState sA = propagateChain(t, A);
+    const Eq34FullState sB = propagateChain(t, B);
+
+    std::map<std::pair<int, int>, double> carry = sA.z;  // faithful floats…
+    carry.erase({2, 3});                                 // …but none at the reroute station
+
+    const ShiftWalk with_retain = shiftWalk(A, B, carry, /*shift_on=*/false);
+    EXPECT_GT(with_retain.n_unknown, 0)
+        << "gap+reroute with the incumbent retained flags a reref (no carry at R2)";
+
+    // Necessity — with a COMMON root the reroute's receiver fractional cancels and
+    // b_3 steps by an exact NON-ZERO INTEGER (the chain-path difference; here −13
+    // cycles).  There is no carry at R2 to pin-to-round against, so the step is real
+    // ⇒ the peer stations' leveling carries for S3 go stale by that integer ⇒ the
+    // erase/reref is correct.  (This is also the Card-3 integer-user-DD property in
+    // miniature: the fractional never leaks, so a re-reference is only ever integer.)
+    const double step = sB.b[3] - sA.b[3];
+    auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
+    EXPECT_GT(std::abs(step), 0.5)
+        << "reroute steps b_3 by a full cycle ⇒ peer carries go stale ⇒ erase, not shift";
+    EXPECT_LT(fracDist(step), 1e-6)
+        << "common root ⇒ the step is an exact integer (the receiver fractional cancels)";
+
+    // Contrast — had the incumbent been dropped (wholesale), the same resume edge
+    // is a fresh first sighting (no edge change) and the reroute goes unflagged.
+    ChainTree A_dropped = A;
+    A_dropped.edges.erase(A_dropped.edges.begin() + 6);  // S3 not in the incumbent tree
+    const ShiftWalk wholesale = shiftWalk(A_dropped, B, carry, /*shift_on=*/false);
+    EXPECT_LT(wholesale.n_unknown, with_retain.n_unknown)
+        << "the reref surfaces only once the incumbent identity is retained (I2)";
+}
+
 // jointConditionalCovariance (the between-station DD ambiguity covariance
 // primitive for producer-side network AR) must match a dense brute-force full
 // inverse of the bordered normal system conditioned on the datum.  This is the

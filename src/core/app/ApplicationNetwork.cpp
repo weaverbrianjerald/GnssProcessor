@@ -67,6 +67,7 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
+#include "products/CombinedCorrectionSigma.hpp"   // M4: combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // RTB-7: atomic state snapshot + warm resume
 #include "products/LiveEphemerisStore.hpp"     // Card 5 (RTF-1): broadcast a-priori store for brdc_rts
 #include "products/RinexNavParser.hpp"         // Card 5 (RTF-1): RINEX-nav → LiveEphemerisStore loader
@@ -1347,6 +1348,11 @@ int Application::runNetwork() {
             pending_contract.staleness_horizon_s = config_.networkEmitterStalenessHorizonS();
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
+            // M4 (contract v2): advertise the combined-σ age-scaling coefficient on the
+            // S line ONLY when the combined-σ channel is on and a coefficient is set, so
+            // an OFF (or agek=0) run's v2 header is byte-identical (agek= token absent).
+            if (config_.networkEmitCombinedSigma())
+                pending_contract.age_scale_k = config_.networkCombinedSigmaAgek();
             pending_contract.present            = true;
             contract_pending = true;
             // The deferred writer only opens (and truncates) at the FIRST emit; a run
@@ -1920,6 +1926,11 @@ int Application::runNetwork() {
     std::map<std::string, std::string> eq34_datum_rx;
     std::map<std::string, std::string> eq34_rx_parent;
     std::map<std::string, std::string> eq34_sat_root;
+    // Card 3 (I4 longevity election): last epoch's per-(station idx, sat) arc
+    // elevation, for the rising-vs-setting test that ranks NEW spanning-tree edges
+    // by how long they will survive.  Rebuilt each epoch from sat_el; empty and
+    // unread unless network.phase_datum_eq34_longevity_election.
+    std::map<std::pair<size_t, std::string>, double> eq34_prev_el;
     // Card 3: the datum receiver r1 (pdr=) of the LAST EMITTED contract, so a root
     // handover triggers an S-line re-broadcast (advanced only at emit, like the
     // pivot baselines).  Empty on every non-eq34 run.
@@ -1932,7 +1943,13 @@ int Application::runNetwork() {
     // Jul-10 field A/B blind to the reref volume).  Untouched on non-eq34 runs.
     long long eq34_reref_total = 0, eq34_erase_total = 0;
     long long eq34_shift_total = 0;   // carry values S-transformed (v2-shift) over the run
+    long long eq34_gap_repin_total = 0;   // I2: tree edges resumed from a carry-alive gap (re-pinned to their pre-gap integer instead of re-leveling from 0)
     int eq34_mismatch_epochs = 0;
+    // Card 3 (I2 extend-only): tree edges retained across the current gap because
+    // their local_carry is still alive — {receiver index, "sat_signal"}.  Rebuilt at
+    // each election's sticky-map update; read at the next election's recordEdge to
+    // count a gap re-pin.  Empty unless network.phase_datum_eq34_extend_only.
+    std::set<std::pair<int, std::string>> eq34_retained_edges;
     // Card 3: last epoch's pin target per (STATION index, "sat_signal") — the
     // exact same-station pinmove baseline for the shift walk.  MUST be keyed per
     // station: an interior sat carries several pins (its parent edge + one per
@@ -2383,6 +2400,10 @@ int Application::runNetwork() {
     const double eq34_rpb_q = phase_datum_eq34 ? config_.networkPhaseDatumEq34RpbQ() : 0.0;
     // Card 3 EXPERIMENTAL: S-transform carries on pin displacement (OFF = erase-based hygiene).
     const bool eq34_shift_on = phase_datum_eq34 && config_.networkPhaseDatumEq34CarryShift();
+    // Card 3 (I4): grow NEW spanning-tree edges by arc longevity (OFF = legacy lexical growth).
+    const bool eq34_longevity = phase_datum_eq34 && config_.networkPhaseDatumEq34LongevityElection();
+    // Card 3 (I2): retain sticky-tree identity across carry-alive row gaps (OFF = wholesale replace).
+    const bool eq34_extend_only = phase_datum_eq34 && config_.networkPhaseDatumEq34ExtendOnly();
     const bool phase_datum_prioritized = config_.networkPhaseDatumPrioritized()
                                        || phase_datum_ensemble
                                        || phase_datum_eq34;
@@ -4160,6 +4181,23 @@ int Application::runNetwork() {
                     auto rV = [](size_t i){ return "R" + std::to_string(i); };
                     auto sV = [](const std::string& s){ return "S" + s; };
 
+                    // I4 longevity score of arc (station ri, sat): higher = longer
+                    // expected life ⇒ a better NEW tree edge (fewer future deaths ⇒
+                    // fewer b_s re-references).  A RISING arc (elevation grew vs last
+                    // epoch, tracked in eq34_prev_el) will not set for a long time, so
+                    // it is lifted above EVERY setting arc (+90°, one full quadrant);
+                    // within a class higher elevation wins.  The churn source is the
+                    // low-elevation SETTING arc — this ranks it dead last.  Unread
+                    // unless eq34_longevity (sat_el/eq34_prev_el stay valid here).
+                    auto arcLife = [&](size_t ri, const std::string& sat) -> double {
+                        auto ei = sat_el[ri].find(sat);
+                        if (ei == sat_el[ri].end()) return -1e9;   // no elevation (unreachable for a live arc)
+                        const double el = ei->second;
+                        auto pe = eq34_prev_el.find({ri, sat});
+                        const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
+                        return el + (rising ? 90.0 : 0.0);
+                    };
+
                     // STICKY-tree seed (spec D2 step 3): the incumbent tree edges —
                     // sat-side parents in anchor_incumbent ("sat_signal" → station),
                     // receiver-side parents in eq34_rx_parent ("station|c|σ" → sat) —
@@ -4309,6 +4347,15 @@ int Application::runNetwork() {
                         auto recordEdge = [&](size_t ri, const std::string& sat,
                                               bool sat_is_child) {
                             const std::string amb = sat + "_" + grp_sig;
+                            // I2 metric: this edge was retained across a gap (its
+                            // carry outlived the row absence) and is resuming now —
+                            // the incumbent seed made it a recognized edge, so the
+                            // pin-to-round below re-pins it to its pre-gap integer
+                            // (step ~0) instead of the first-sighting 0 a wholesale
+                            // replace would have forced.  Count the save.
+                            if (eq34_extend_only
+                                && eq34_retained_edges.count({static_cast<int>(ri), amb}))
+                                ++eq34_gap_repin_total;
                             // Pin target: 0 on first sighting; else λ·round(carry/λ)
                             // at the (possibly new) edge station.  carry_val also
                             // feeds the pinmove computation below.
@@ -4399,7 +4446,20 @@ int Application::runNetwork() {
                                     const size_t ri =
                                         static_cast<size_t>(std::stoul(v.substr(1)));
                                     std::vector<std::string> ss = arcs[ri];
-                                    std::sort(ss.begin(), ss.end());
+                                    // I4: attach this receiver's longest-lived
+                                    // unvisited sats first (rising/high-elevation),
+                                    // so the NEW edge is picked to outlive the epoch.
+                                    // OFF = legacy sat-name order (byte-identical).
+                                    if (eq34_longevity)
+                                        std::sort(ss.begin(), ss.end(),
+                                                  [&](const std::string& a, const std::string& b) {
+                                                      const double la = arcLife(ri, a),
+                                                                   lb = arcLife(ri, b);
+                                                      if (la != lb) return la > lb;
+                                                      return a < b;   // deterministic tie-break
+                                                  });
+                                    else
+                                        std::sort(ss.begin(), ss.end());
                                     for (const auto& s : ss) {
                                         if (visited.count(sV(s))) continue;
                                         recordEdge(ri, s, /*sat_is_child=*/true);
@@ -4408,7 +4468,24 @@ int Application::runNetwork() {
                                 } else {
                                     const std::string s = v.substr(1);
                                     std::vector<size_t> rr = satrx[s];
-                                    std::sort(rr.begin(), rr.end());
+                                    // I4: attach this sat through its most durable
+                                    // unvisited tracker first — high per-constellation
+                                    // coverage (the robust receiver, spec D2 step 3),
+                                    // then the arc's own longevity at that station.
+                                    // OFF = legacy station-index order (byte-identical).
+                                    if (eq34_longevity)
+                                        std::sort(rr.begin(), rr.end(),
+                                                  [&](size_t a, size_t b) {
+                                                      const int ca = cov(grp_cons, a),
+                                                                cb = cov(grp_cons, b);
+                                                      if (ca != cb) return ca > cb;
+                                                      const double la = arcLife(a, s),
+                                                                   lb = arcLife(b, s);
+                                                      if (la != lb) return la > lb;
+                                                      return a < b;   // deterministic tie-break
+                                                  });
+                                    else
+                                        std::sort(rr.begin(), rr.end());
                                     for (size_t ri : rr) {
                                         if (visited.count(rV(ri))) continue;
                                         recordEdge(ri, s, /*sat_is_child=*/false);
@@ -4551,10 +4628,95 @@ int Application::runNetwork() {
                 // and each pin remembers its target for the same-station pinmove.
                 // anchor_incumbent doubles as the was-lit gate for pin-to-round
                 // (every tree sat has exactly one parent edge).
+                //
+                // I2 (de Jonge §3.5 extend-only) — before the wholesale swap, MERGE
+                // back the identity of any tree edge that was NOT seen this epoch but
+                // whose phase-leveling memory (local_carry) is still alive: its
+                // sat-side parent (this_epoch_anchor), receiver-side parent
+                // (new_rx_parent), component root (new_sat_root) and pinned integer
+                // (new_prev_target).  A momentary row gap is then NOT a dead arc — the
+                // edge sits inertly in the incumbent maps (never seeded, because the
+                // seed admits LIVE arcs only ⇒ the spanning-forest invariant holds),
+                // and the epoch its arc RESUMES it is a recognized incumbent whose
+                // pin-to-round re-pins to the SAME integer (emitted-bias step ≈ 0)
+                // rather than re-leveling from a first-sighting 0.  local_carry
+                // liveness is the age stamp: it is gap-pruned at phase_leveling_max
+                // _gap_s, and a genuine reroute/handover erases it — so an edge past
+                // that horizon (or truly re-referenced) is dropped and re-floats as a
+                // first sighting, by which point the peer carries are gone too.  Keys
+                // are all receiver-indexed pins {receiver idx, "sat_signal"}; the two
+                // parent maps hold each edge in exactly one direction (unchanged).
+                if (eq34_extend_only) {
+                    std::map<std::string, size_t> gname2idx;
+                    for (size_t i = 0; i < stations.size(); ++i)
+                        gname2idx[stations[i].name] = i;
+                    auto splitAmb = [](const std::string& a, std::string& sat,
+                                       std::string& sig) -> bool {
+                        const auto us = a.find('_');
+                        if (us == std::string::npos) return false;
+                        sat = a.substr(0, us); sig = a.substr(us + 1); return true;
+                    };
+                    auto carryAlive = [&](size_t idx, const std::string& sat,
+                                          const std::string& sig) -> bool {
+                        return local_carry.count(std::make_tuple(
+                            static_cast<int>(idx), sat, sig)) != 0;
+                    };
+                    eq34_retained_edges.clear();
+                    // Sat-side parents (amb → parent station) + their component roots.
+                    for (const auto& [amb, sta] : anchor_incumbent) {
+                        if (this_epoch_anchor.count(amb)) continue;    // re-seen live
+                        std::string sat, sig;
+                        if (!splitAmb(amb, sat, sig)) continue;
+                        auto gi = gname2idx.find(sta);
+                        if (gi == gname2idx.end()
+                            || !carryAlive(gi->second, sat, sig)) continue;  // dead ⇒ drop
+                        this_epoch_anchor.emplace(amb, sta);
+                        eq34_retained_edges.emplace(static_cast<int>(gi->second), amb);
+                        auto sr = eq34_sat_root.find(amb);
+                        if (sr != eq34_sat_root.end())
+                            new_sat_root.emplace(amb, sr->second);
+                    }
+                    // Receiver-side parents ("<name>|<c>|<σ>" → sat).
+                    for (const auto& [rxkey, sat] : eq34_rx_parent) {
+                        if (new_rx_parent.count(rxkey)) continue;
+                        const auto p2 = rxkey.rfind('|');
+                        if (p2 == std::string::npos || p2 == 0) continue;
+                        const auto p1 = rxkey.rfind('|', p2 - 1);
+                        if (p1 == std::string::npos) continue;
+                        const std::string name = rxkey.substr(0, p1);
+                        const std::string sig  = rxkey.substr(p2 + 1);
+                        auto gi = gname2idx.find(name);
+                        if (gi == gname2idx.end()
+                            || !carryAlive(gi->second, sat, sig)) continue;
+                        new_rx_parent.emplace(rxkey, sat);
+                        eq34_retained_edges.emplace(static_cast<int>(gi->second),
+                                                    sat + "_" + sig);
+                    }
+                    // Pinned integers ({receiver idx, "sat_signal"} → target).
+                    for (const auto& [k, tgt] : eq34_prev_target) {
+                        if (new_prev_target.count(k)) continue;
+                        std::string sat, sig;
+                        if (!splitAmb(k.second, sat, sig)) continue;
+                        if (!carryAlive(static_cast<size_t>(k.first), sat, sig)) continue;
+                        new_prev_target.emplace(k, tgt);
+                    }
+                }
                 anchor_incumbent = this_epoch_anchor;
                 eq34_rx_parent   = std::move(new_rx_parent);
                 eq34_sat_root    = std::move(new_sat_root);
                 eq34_prev_target = std::move(new_prev_target);
+                // I4: snapshot this epoch's arc elevations so next epoch's arcLife
+                // can tell a rising arc from a setting one.  Rebuilt wholesale (a
+                // pruned arc simply drops out); skipped entirely when longevity
+                // election is off, so it stays empty on the B9 baseline.
+                if (eq34_longevity) {
+                    eq34_prev_el.clear();
+                    for (size_t i = 0; i < stations.size(); ++i) {
+                        if (!present[i]) continue;
+                        for (const auto& [sat, el] : sat_el[i])
+                            eq34_prev_el[{i, sat}] = el;
+                    }
+                }
             } else {
             std::map<char, std::vector<size_t>> cand;
             for (auto& [c, s] : cand_set) {
@@ -8261,6 +8423,76 @@ int Application::runNetwork() {
                 product_writer.reset();
             }
         }
+        // M4 (contract v2): per-key COMBINED-correction σ (sigc phase, sigcc code) +
+        // code/phase correlation (rho) from the shared posterior covariance's
+        // cross-terms.  The individual clock / phase-bias / code-bias formal σ (the
+        // URA and B1b channels) are cm-level during a satellite's rise-reconvergence,
+        // yet the COMBINED correction the user applies (clock + bias) is mm-level
+        // because the errors are strongly correlated (Zhang 2021 Figs. 2–5; Psychas
+        // 2024b Eq. 12).  A consumer weighting by sigc/sigcc keeps USING a fresh
+        // satellite's products through reinitialization instead of deweighting them
+        // 10–100×.  Iono is EXCLUDED (network iono is a global SH-VTEC field, not a
+        // co-resident column, and is supplied separately via SsrSlantIono with its own
+        // σ — bundling it here would double-count).  Gauge-nulled covariance copy +
+        // datum-pin skip + positive-variance guard, exactly like B1b; a folded/zeroed
+        // phase gauge (ensemble datum) yields no honest phase column ⇒ no token.
+        // Scaled by the SAME σ̂0 EWMA (cancels in rho).  Off ⇒ every value 0 ⇒ no wire
+        // token ⇒ product/store byte-identical.
+        if (config_.networkEmitCombinedSigma()) {
+            Eigen::MatrixXd cbcov = est.sharedCovariance();   // copy; treat gauges as exact
+            est.zeroPhaseGaugeColumns(cbcov);
+            std::set<Eigen::Index> cb_pinned;
+            for (const auto& pin : plan.shared_datum) cb_pinned.insert(pin.column);
+            const double s0 = std::max(1.0, ura_sigma0_ewma);
+            // A column is usable only when present, in range, NOT a datum pin (its
+            // 1/pin_scale variance is a gauge artefact), and carrying real positive
+            // variance (rejects a zeroed phase gauge under the ensemble datum).
+            auto colOrNeg = [&](auto fn) -> Eigen::Index {
+                try {
+                    const Eigen::Index c = fn();
+                    if (c < 0 || c >= cbcov.rows() || c >= cbcov.cols() || cb_pinned.count(c))
+                        return -1;
+                    if (!(cbcov(c, c) > 0.0) || !std::isfinite(cbcov(c, c))) return -1;
+                    return c;
+                } catch (...) { return -1; }
+            };
+            for (auto& s : sol.sats) {
+                if (!s.has_clock) continue;
+                const Eigen::Index c = colOrNeg([&]{ return est.clockColumn(s.sat); });
+                if (c < 0) continue;   // no honest clock column ⇒ nothing to combine
+                // Per-signal combined PHASE σ (sigc) for every emitted phase bias.
+                for (auto& [signal, npb] : s.phase_bias) {
+                    const Eigen::Index p =
+                        colOrNeg([&]{ return est.phaseBiasColumn(s.sat, signal); });
+                    const auto cc = computeCombinedCorrectionSigma(cbcov, c, p, -1, s0);
+                    if (cc.sigc > 0.0) npb.sigc_m = cc.sigc;
+                }
+                // Per-sat combined CODE σ (sigcc) + code/phase corr (rho) at a REFERENCE
+                // signal: prefer the first code signal whose PHASE sibling is present (so
+                // rho pairs a real code/phase observable), else the first code signal (rho
+                // then absent).  Code and phase biases live in DISJOINT key namespaces
+                // (code "C1W" vs phase "L1W"), so the pairing needs the RINEX obs-type
+                // swap selectCombinedCodeRef performs — a raw key equality never matches.
+                // The C record is per-sat and the combined code σ is clock-dominated, so
+                // this per-sat summary is a faithful proxy across the satellite's code
+                // signals (documented approximation).
+                std::vector<std::string> code_sigs;
+                code_sigs.reserve(s.code_bias_m.size());
+                for (const auto& [signal, bias] : s.code_bias_m) { (void)bias; code_sigs.push_back(signal); }
+                std::set<std::string> phase_sigs;
+                for (const auto& [signal, npb] : s.phase_bias) { (void)npb; phase_sigs.insert(signal); }
+                const auto ref = selectCombinedCodeRef(code_sigs, phase_sigs);
+                if (!ref.code.empty()) {
+                    const Eigen::Index b =
+                        colOrNeg([&]{ return est.codeBiasColumn(s.sat, ref.code); });
+                    const Eigen::Index p = ref.phase.empty()
+                        ? Eigen::Index(-1)
+                        : colOrNeg([&]{ return est.phaseBiasColumn(s.sat, ref.phase); });
+                    const auto cc = computeCombinedCorrectionSigma(cbcov, c, p, b, s0);
+                    if (cc.sigcc > 0.0) { s.sigcc_m = cc.sigcc; s.rho = cc.rho; }
+                }
+            }
+        }
         emitter.emitToStore(sol, network_store);
         // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
         // realized pivots) every N seconds of PRODUCT time, and additionally on any
@@ -10596,9 +10828,10 @@ int Application::runNetwork() {
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "
                   "value(s) erased, {} carry value(s) S-transformed (v2-shift), "
-                  "{} pin/gauge-mismatch epoch(s) over the run.",
+                  "{} gap re-pin(s) (I2 extend-only: arcs resumed to their pre-gap "
+                  "integer), {} pin/gauge-mismatch epoch(s) over the run.",
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
-                  eq34_mismatch_epochs);
+                  eq34_gap_repin_total, eq34_mismatch_epochs);
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",

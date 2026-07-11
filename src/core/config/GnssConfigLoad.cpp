@@ -3900,6 +3900,11 @@ namespace GnssProcessor {
             jval<bool>(json, "network.emit_phase_bias_sigma", "network_emit_phase_bias_sigma", false);
         network_consume_phase_bias_sigma_ =
             jval<bool>(json, "network.consume_phase_bias_sigma", "network_consume_phase_bias_sigma", false);
+        // --- M4 (contract v2): combined-correction σ channel (Zhang 2021 / Psychas 2024b) ---
+        network_emit_combined_sigma_ =
+            jval<bool>(json, "network.emit_combined_sigma", "network_emit_combined_sigma", false);
+        network_combined_sigma_agek_ =
+            jval<double>(json, "network.combined_sigma_agek", "network_combined_sigma_agek", 0.0);
         // T3a: consumer AR-eligibility veto on the product signal_integer flag (default OFF).
         network_require_signal_integer_for_ar_ =
             jval<bool>(json, "network.require_signal_integer_for_ar",
@@ -3909,6 +3914,17 @@ namespace GnssProcessor {
                       "formal σ (EWMA(σ̂0)×√shared-cov, gauge-exact) written to SsrPhaseBiasEntry."
                       "sigma_m; consumer R-inflation {}.  (B1b: Tienstra phase-bias block of Qŷ_B1.)",
                       network_consume_phase_bias_sigma_ ? "ON" : "off");
+        if (network_emit_combined_sigma_)
+            log->info("Network: network.emit_combined_sigma on — per-key COMBINED-correction σ "
+                      "(sigc=clock+phasebias, sigcc=clock+codebias, cross-cov included) + code/phase "
+                      "correlation rho written to the sigc=/sigcc=/rho= wire tokens{}.  Consumer folds "
+                      "them (age-inflated) instead of the URA+phase-bias-σ RSS when "
+                      "closed_loop.consume_combined_sigma is on.  (M4: Zhang 2021 / Psychas 2024b — "
+                      "combined σ is mm-level where the individual σ are cm-level during "
+                      "rise-reconvergence.)",
+                      network_combined_sigma_agek_ != 0.0
+                          ? fmt::format("; age scaling agek={} on the S-line", network_combined_sigma_agek_)
+                          : std::string(" (no age scaling: combined_sigma_agek=0)"));
         // R5: network_ura_staleness_q2_ (which defaults to network_clock_model_q2_) is captured
         // AFTER the clock_model validity-restore below, so it inherits the RESTORED q2 (not a
         // rejected-then-reset value).  See the load just past that block.
@@ -4105,6 +4121,12 @@ namespace GnssProcessor {
         network_phase_datum_eq34_carry_shift_ =
             jval<bool>(json, "network.phase_datum_eq34_carry_shift",
                        "network_phase_datum_eq34_carry_shift", false);
+        network_phase_datum_eq34_longevity_election_ =
+            jval<bool>(json, "network.phase_datum_eq34_longevity_election",
+                       "network_phase_datum_eq34_longevity_election", false);
+        network_phase_datum_eq34_extend_only_ =
+            jval<bool>(json, "network.phase_datum_eq34_extend_only",
+                       "network_phase_datum_eq34_extend_only", false);
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -4414,6 +4436,21 @@ namespace GnssProcessor {
                           "phase-bias column enters the graph only when >= {} present stations "
                           "track it (gated keys keep legacy per-station lumping).",
                           network_phase_datum_min_stations_);
+            if (network_phase_datum_eq34_longevity_election_)
+                log->info("Network producer: eq34 LONGEVITY-AWARE tree growth ON (I4) — new "
+                          "spanning-tree edges are grown from r1 by arc longevity (rising arcs "
+                          "first, then high elevation; high-coverage receivers first) instead of "
+                          "lexical order, so tree edges outlive the epoch and b_s re-references "
+                          "fewer times (spec D2 step 3).  Incumbent-edge seed unchanged.");
+            if (network_phase_datum_eq34_extend_only_)
+                log->info("Network producer: eq34 EXTEND-ONLY membership ON (I2, de Jonge §3.5) — "
+                          "a tree edge's sticky identity is retained across a momentary row gap "
+                          "while its phase-leveling carry is alive (age-stamped to "
+                          "phase_leveling_max_gap_s = {} s), so a returning arc re-pins to its "
+                          "pre-gap integer (step ~0) instead of re-leveling from a first-sighting "
+                          "0.  Tree growth unchanged (live arcs only); watch the gap-repin counter "
+                          "in the run-end producer summary.",
+                          network_phase_leveling_max_gap_s_);
         } else if (network_phase_datum_ensemble_) {
             log->info("Network producer: ANCHOR-FREE ENSEMBLE phase-bias datum ON (Fix A) — the "
                       "per-(sat,signal) phase-bias gauge is fixed by a sum-to-zero over the "
@@ -4874,6 +4911,7 @@ namespace GnssProcessor {
             clc.consume_network_products = cl.value("consume_network_products", true);
             clc.consume_network_clock    = cl.value("consume_network_clock", true);
             clc.consume_network_iono     = cl.value("consume_network_iono", false);
+            clc.consume_combined_sigma   = cl.value("consume_combined_sigma", false);  // M4 (contract v2)
             clc.consumer_undifferenced   = cl.value("consumer_undifferenced", false);
             if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
                 for (const auto& s : cl["ar_active_systems"])
