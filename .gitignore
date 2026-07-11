@@ -119,3 +119,24 @@ data_nobia/
 # Windows redirect-mishap artifact (a file literally named "nul.*")
 # occasionally created at the repo root by cmd subshells.
 /nul.*
+
+# -------------------------------------------------------------------
+# Global guards for bulk GNSS product/observation files (tens of MB
+# each, text — autocrlf scanning makes `git add` appear to hang on
+# them).  These belong in ignored data roots, but a stray copy or a
+# new experiment root (e.g. a future data_<variant>/) must never
+# wedge staging again.  Already-tracked fixtures are unaffected
+# (data/rinex/debug/*.rnx, data/sbf/COVL1450.26O); add future
+# deliberate fixtures with `git add -f`.
+# -------------------------------------------------------------------
+*.CLK
+*.clk
+*.SP3
+*.sp3
+*.BIA
+*.bia
+*.ERP
+*.erp
+*.rnx
+*.crx
+*.crx.gz
