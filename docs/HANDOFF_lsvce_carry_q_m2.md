@@ -1,12 +1,25 @@
-# M2 — LS-VCE estimation of carry process noise (replacing hand-set floors)
+# M2 — LS-VCE estimation of carry process noise (calibration/honesty instrument)
 
-*Fable-specced 2026-07-11. Foundation: Teunissen & Amiri-Simkooei 2008 (J Geod
-82:65–82, LS-VCE). Motivation: the `_golden_carrylive_tu_12h` divergence at
-content-hour 3.9 (docs/GOLDEN_carrylive_baseline.md "Open question") — leading
-hypothesis is that the hand-set phase-leveling variance floor
-(`phase_leveling_var_floor_m2`, 4e-5) sets the arming time and over-weights
-carried rows after ~4 h. M3 (the 12h 4e-4 vs 1e-5 discriminator pair) tests
-the premise; this card replaces the hand floor with a measured q.*
+*Fable-specced 2026-07-11; REFRAMED same day after M3 falsified the original
+motivation. Foundation: Teunissen & Amiri-Simkooei 2008 (J Geod 82:65–82,
+LS-VCE).*
+
+*STATUS OF THE ORIGINAL PREMISE: FALSIFIED. The hr-4 divergence of
+`_golden_carrylive_tu_12h` is NOT floor-driven: the M3 three-point ladder
+(4e-4 / 4e-5 / 1e-5 — a 40× swing, knob demonstrably active via monotone
+clean-window formal dd_σ) shows all arms clean hr 0–3 and ALL cliffing at
+content-hr 4 with the same signature. The cliff is EVENT-DRIVEN (the 04:00
+UTC PB-set datum reshuffle → silent re-level → stale coupling rows integrate;
+memory `card1e-gauge-amputation`), and its cure is the event response /
+datum-invariant carry (Card 4), not any carry q.*
+
+*SURVIVING PURPOSE (demoted priority): principled calibration of the carry
+stochastic model — replace hand floors with measured σ̂ for HONESTY (formal σ
+that means something; the M3 ladder itself showed formal dd_σ varying 14%
+across floors while actual behavior was identical — i.e., today's formal
+numbers are floor artifacts). Serves as the independent cross-check of Card
+4's Lemma-1 actual-covariance instrument, and as general floor hygiene.
+It is NOT expected to move any divergence.*
 
 ## Theory mapping (LS-VCE → our carry rows)
 
@@ -77,8 +90,10 @@ OFF byte-identical (no accumulator, no logging). `carry_vce_apply` without
    recovers both within formal STD; exp-reparam never yields q<0.
 2. Unit: contaminated fixture (injected level shift) — gated accumulator
    unbiased, ungated biased (documents WHY the gate exists).
-3. Field v1: 3h golden — σ̂_pl vs the 4e-5 floor; 12h pair (M3 arms) — σ̂_pl
-   trajectory before/at the cliff. ACCEPTANCE: σ̂ explains the M3 outcome
-   (predicts which arm diverges).
-4. Field v2: 12h golden with apply ON — no hr-3.9 cliff, dd-step ≤ tu-arm
-   baseline.
+3. Field v1: 3h golden — σ̂_pl vs the 4e-5 floor (is the hand floor honest?);
+   ACCEPTANCE: formal dd_σ under σ̂-weighting matches empirical DD-step
+   statistics (calibration ratio → ~1× from today's floor-dependent 14%
+   spread; the M3 ladder documents the artifact).
+4. Field v2 (apply ON): 3h golden dd-step and withhold counts not degraded vs
+   the hand-floor baseline, with honest formal σ. NOTE: no divergence-related
+   acceptance — the hr-4 cliff is event-driven and out of this card's scope.

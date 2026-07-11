@@ -54,10 +54,21 @@ pb/cb floors ×10 (`runs/t7e_pbcbfloor_12h`), raw rows without 1d
 (`runs/t7d_off_12h`), SH couplings fully marginalized
 (`runs/t7f_shmarg_12h`, Card 1d-SH toggle `carry_coupling_sh_marginalize` —
 kept in tree, conservative).  C1 non-PD folds at hr 4.77/7.85 are symptoms.
-Dead-carry T7 was gradual ⇒ live rows necessary.  LEADING HYPOTHESIS: the PL
-var floor sets the arming time (4e-5 caps row weight only below σ≈0.033 cyc ≈
-hr 3.9; full 4e-4 caps at 0.105 cyc ≈ hr 1 and was always stable).  Next-session
-test pair: 12h @ pl_floor 4e-4 + 1d ON (predict no cliff) vs pl_floor 1e-5
-(predict earlier cliff ~hr 2-2.5).  If confirmed: replace the hand floor with a
-stability-derived cap or q_amb>0, and/or build the shared-local cross-block
-time-linking (audit finding [0]) as the rigorous cure.
+Dead-carry T7 was gradual ⇒ live rows necessary.
+
+**RESOLVED 2026-07-11 (roadmap M3): the floor hypothesis is FALSIFIED.**
+The three-point ladder (runs/t7g_fullfloor_12h = 4e-4, runs/t7d_tu_12h = 4e-5,
+runs/t7g_lowfloor10_12h = 1e-5; 40× swing, knob demonstrably active — clean-
+window formal dd_σ 0.178/0.181/0.203 monotone in floor) shows all arms clean
+hr 0–3 and ALL cliffing at content-hr 4 with identical signatures (DD-step p50
+27–29 cyc/ep, a00 → −3000..−3400).  The floor modulates carry weight but does
+not move arming by even one hour.  The divergence is EVENT-DRIVEN: the 04:00
+UTC PB-set datum reshuffle (03:46 E14-out/G31-in) → silent re-level → stale
+coupling-row references integrate → runaway (the t7h offset verdict; memory
+card1e-gauge-amputation).  Cure path: the event response — datum-continuous
+PB handover, and structurally the invariant-function carry
+(docs/HANDOFF_card4_invariant_carry.md), under which a PB-set reshuffle cannot
+poison anything the filter remembers.  The LS-VCE card
+(docs/HANDOFF_lsvce_carry_q_m2.md) survives only as a formal-σ honesty
+instrument — the 14% formal-σ spread across the ladder with identical actual
+behavior shows today's formal numbers are floor artifacts.
