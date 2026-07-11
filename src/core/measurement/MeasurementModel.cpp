@@ -1798,6 +1798,86 @@ namespace GnssProcessor {
                     update.innovations(row) = observed - predicted;
                     update.R_v(row) = obs.variances.at(ref_type);
 
+                    // M4 (contract v2): when the network product carries a per-key
+                    // COMBINED-correction σ and closed_loop.consume_combined_sigma is on,
+                    // fold THAT σ (age-inflated) into this row's variance INSTEAD OF the
+                    // individual URA + phase-bias-σ RSS below.  The combined σ is mm-level
+                    // for a fresh (reconverging) satellite whose individual clock/bias σ
+                    // are cm-level, so the row keeps its weight instead of being deweighted
+                    // 10–100× off (Zhang 2021 / Psychas 2024b).  Using BOTH the combined σ
+                    // AND the URA/B1b terms would DOUBLE-COUNT the shared clock variance and
+                    // REINTRODUCE that very cliff, so an active combined row SUPPRESSES the
+                    // two blocks below (guarded by !combined_active).  Per-key fallback to
+                    // v1 when the token is absent — a too-stale correction fails the
+                    // freshness gate → nullopt → combined_active false → the v1 URA path
+                    // (which owns staleness) handles it — so mixed streams stay safe.  The
+                    // product's rho is NOT applied here: the measurement R is diagonal (no
+                    // off-diagonal code/phase slot); a correlated-measurement consumer is
+                    // future work.  Off / non-network / producer rows ⇒ combined_active
+                    // false ⇒ R byte-identical.
+                    bool   combined_active = false;
+                    double combined_var    = 0.0;
+                    if (config_.networkConsumeCombinedSigma()
+                        && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network
+                        && ref_type.size() >= 2) {
+                        const auto&  ssr      = ssrStore();
+                        const double clk_hold = config_.getSsrClockStaleHoldFactor();
+                        const double window   = SsrCorrectionStore::clockHoldWindow(
+                            config_.getSsrMaxAge(), clk_hold);
+                        // Apply the combined σ only to a FRESH network correction.  A
+                        // stale-HELD clock (RTA-9(b): content age in (max_age, hold_window])
+                        // keeps the v1 URA path below, so its ZOH clock-staleness growth
+                        // (q²·dt³/3) is NOT lost — combined_var carries no staleness term
+                        // when the producer advertised no agek, and a held clock must never
+                        // be consumed at full weight.  agek covers latency WITHIN the fresh
+                        // window; beyond it the conservative v1 staleness model owns the
+                        // weighting.  With clk_hold ≤ 1 (default) every accepted clock is
+                        // Fresh, so this never changes the common case.
+                        bool clock_fresh = true;
+                        if (clk_hold > 1.0) {
+                            if (auto ep = ssr.getSsrEpoch(obs.satellite)) {
+                                const double age = TimeUtils::continuousGpsSeconds(obs.time)
+                                                 - TimeUtils::continuousGpsSeconds(*ep);
+                                clock_fresh = SsrCorrectionStore::classifyClockAge(
+                                                  age, config_.getSsrMaxAge(), clk_hold)
+                                              == SsrCorrectionStore::ClockAgeRung::Fresh;
+                            }
+                        }
+                        double sig_c = 0.0;
+                        if (ref_type[0] == 'L') {          // PHASE row: combined phase σ (sigc)
+                            const bool   pb_gate    = config_.enableSsrBiasMaxAge();
+                            const double pb_max_age = config_.getSsrBiasMaxAge()
+                                                    * config_.getSsrBiasStaleHoldFactor();
+                            auto pb = pb_gate
+                                ? ssr.getPhaseBias(obs.satellite, ref_type, obs.time, pb_max_age)
+                                : ssr.getPhaseBias(obs.satellite, ref_type);
+                            if (pb && pb->combined_sigma_m > 0.0
+                                   && std::isfinite(pb->combined_sigma_m))
+                                sig_c = pb->combined_sigma_m;
+                        } else if (ref_type[0] == 'C') {   // CODE row: combined code σ (sigcc, per-sat)
+                            if (auto oc = ssr.getOrbitClock(obs.satellite, obs.time, window);
+                                oc && oc->has_clock && oc->combined_code_sigma_m > 0.0
+                                   && std::isfinite(oc->combined_code_sigma_m))
+                                sig_c = oc->combined_code_sigma_m;
+                        }
+                        if (sig_c > 0.0 && clock_fresh) {
+                            // Age inflation σc²·(1 + agek·Δt_age²): Δt_age is the correction
+                            // content age (obs.time − SSR content epoch), the same dt the URA
+                            // ZOH term uses.  agek 0 (producer advertised none) ⇒ plain σc².
+                            double       infl = 1.0;
+                            const double agek = ssr.combinedSigmaAgeCoeff();
+                            if (agek > 0.0) {
+                                if (auto ep = ssr.getSsrEpoch(obs.satellite)) {
+                                    const double dt = TimeUtils::continuousGpsSeconds(obs.time)
+                                                    - TimeUtils::continuousGpsSeconds(*ep);
+                                    if (dt > 0.0) infl = 1.0 + agek * dt * dt;
+                                }
+                            }
+                            combined_var    = sig_c * sig_c * infl;
+                            combined_active = true;
+                        }
+                    }
+
                     // B1: inflate R by the network URA on rows carrying this satellite's
                     // SSR corrections (an independent clock/bias error variance), plus the
                     // ZOH clock-staleness q²·dt³/3.  Gated (default off) + not on the
@@ -1817,7 +1897,8 @@ namespace GnssProcessor {
                         const double clk_hold = config_.getSsrClockStaleHoldFactor();
                         const bool consumer_rows =
                             config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network;
-                        if ((config_.networkConsumeUra() || clk_hold > 1.0) && consumer_rows) {
+                        if ((config_.networkConsumeUra() || clk_hold > 1.0) && consumer_rows
+                            && !combined_active) {   // M4: combined σ supersedes URA on this row
                             const auto& ssr = ssrStore();
                             const double max_age = config_.getSsrMaxAge();
                             // P1-3: gate URA freshness on the SAME window as the clock/orbit
@@ -1878,7 +1959,7 @@ namespace GnssProcessor {
                     // biases only) and are untouched.  Producer rows are excluded.  σ is 0
                     // for RTCM/IGS-SSR biases and when emit_phase_bias_sigma is off, so
                     // OFF (or a non-network stream) ⇒ R byte-identical.
-                    if (config_.networkConsumePhaseBiasSigma()
+                    if (config_.networkConsumePhaseBiasSigma() && !combined_active
                         && ref_type.size() >= 2 && ref_type[0] == 'L'
                         && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
                         // T3e: use the SAME freshness decision as the apply site
@@ -1897,6 +1978,11 @@ namespace GnssProcessor {
                             update.R_v(row) += pb->sigma_m * pb->sigma_m;
                         }
                     }
+
+                    // M4 (contract v2): apply the combined-correction variance for this row
+                    // (the URA + B1b additions above were suppressed by !combined_active).
+                    if (combined_active)
+                        update.R_v(row) += combined_var;
 
                     // Downweight code on signals without BIA coverage
                     if (!config_.estimateSatBiases()

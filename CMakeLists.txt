@@ -246,6 +246,7 @@ add_executable(gnss_tests
     tests/test_network_emit.cpp
     tests/test_sh_ionosphere.cpp
     tests/test_network_product_io.cpp
+    tests/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp

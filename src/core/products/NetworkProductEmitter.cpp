@@ -236,6 +236,12 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             rec.iode          = s.clock_iode;
             rec.orbit_iod_ssr = s.orbit_iod_ssr;
             rec.orbit_epoch   = s.orbit_epoch;
+            // M4 (contract v2): carry the per-sat combined CODE-correction σ + code/phase
+            // correlation into the store record so the live closed loop AND file replay
+            // stamp it identically.  Both default 0 (unstamped) unless
+            // network.emit_combined_sigma populated them ⇒ byte-identical store otherwise.
+            rec.combined_code_sigma_m = s.sigcc_m;
+            rec.code_phase_corr       = s.rho;
 
             // Clock discontinuity bookkeeping (A2): bump on a scoped datum change
             // for THIS satellite's constellation (a clock-pivot handover).  First
@@ -370,6 +376,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 entry.wide_lane_integer     = npb.wide_lane_integer;
                 entry.discontinuity_counter = ctr;
                 entry.sigma_m               = npb.sigma_m;   // B1b: 0 unless emit_phase_bias_sigma populated it (gauge-exact); no wire record, in-process store only.
+                entry.combined_sigma_m      = npb.sigc_m;     // M4: combined phase-correction σ (clock+phasebias); 0 unless emit_combined_sigma populated it.
                 rec.bias_per_signal[signal] = entry;
             }
             store.pushPhaseBias(rec, header);

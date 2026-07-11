@@ -72,6 +72,7 @@ struct NetworkPhaseBias {
     bool   signal_integer{false}; ///< Bias preserves the integer ambiguity property (IGS-SSR).
     int    wide_lane_integer{0};  ///< Wide-lane integer indicator (2-bit, IGS-SSR).
     double sigma_m{0.0};          ///< B1b: formal 1σ (m) of this phase-bias correction; 0 unless the driver populated it (network.emit_phase_bias_sigma, gauge-exact shared-cov diagonal).
+    double sigc_m{0.0};           ///< M4 (contract v2): formal 1σ (m) of the COMBINED PHASE correction (clock + phase bias, cross-cov included; NO iono); 0 unless network.emit_combined_sigma populated it. Serialized as the P-record sigc= token; consumed via SsrPhaseBiasEntry::combined_sigma_m.
 };
 
 /// One satellite's estimated satellite-side solution for a single epoch.
@@ -82,6 +83,16 @@ struct NetworkSatSolution {
     double                                  clock_c1_m_s{0.0}; ///< Estimable satellite clock drift C1 (m/s); 0 unless network.clock_model on (B3b — the two-state oscillator drift the consumer extrapolates as c0+c1·dt).
     double                                  clock_ura_m{0.0}; ///< B1: per-sat URA 1σ (m) = EWMA(σ̂0)×formal clock σ; 0 unless has_ura.
     bool                                    has_ura{false};   ///< B1: whether clock_ura_m is populated (network.emit_ura on).
+    /// M4 (contract v2): formal 1σ (m) of the COMBINED CODE correction (clock +
+    /// code bias at a reference signal, cross-cov included); 0 unless
+    /// network.emit_combined_sigma populated it.  Per-sat (the C record).
+    /// Serialized as the C-record sigcc= token; store home
+    /// SsrClockCorrection::combined_code_sigma_m.
+    double                                  sigcc_m{0.0};
+    /// M4 (contract v2): correlation ρ between the combined CODE and combined PHASE
+    /// corrections at the reference signal (both share the clock term ⇒ ~0.6–0.9);
+    /// 0 unless populated.  Serialized as the C-record rho= token.
+    double                                  rho{0.0};
     /// RTF-2 (Card 5): broadcast ephemeris version (IODE, in the IGS-SSR matching
     /// convention) the estimable clock @c clock_c0_m is a delta against, threaded
     /// from the producer emission path in @c brdc_rts mode.  -1 = sp3 mode /

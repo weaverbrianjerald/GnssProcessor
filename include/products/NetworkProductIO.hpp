@@ -50,8 +50,13 @@
  *                                           #   c1/clock_disc parse)
  *   B,<sat>,<signal>,<bias>[,<code_disc>]   # RTA-4 code disc counter (field 5)
  *   P,<sat>,<sig>,<b>,<si>,<wl>[,<ph_disc>] # RTA-4 phase disc counter (field 7)
+ *     [,sigma=<m>][,sigc=<m>]               # B1b phase-bias σ (sigma=) + M4 combined
+ *                                           #   phase-correction σ (sigc=; clock+phasebias)
+ *   C,...[,sigcc=<m>][,rho=<val>]           # M4 per-sat combined code-correction σ
+ *                                           #   (sigcc=) + code/phase corr (rho=)
  *   S,...[,gid=<id>][,stale=<sec>]          # RTA-3/RTA-11 trailing key=value fields;
  *     [,frame=<id>][,cepoch=<epoch>]        #   RTA-12 contract identity fields
+ *     [,agek=<val>]                         #   M4 combined-σ age-scaling coefficient
  *     [,atx=<file>][,oref=<CoM|APC>]        #   (each absent when empty);
  *                                           #   repeated S lines mid-file are RTA-5
  *                                           #   contract re-broadcasts (positional)
@@ -116,6 +121,15 @@ struct SbasisContract {
     /// Serialized as an optional trailing @c stale= field on the S line ONLY when
     /// non-zero, so an OFF run's v2 header is byte-identical to pre-RTA-11.
     double            staleness_horizon_s{0.0};
+    /// M4 (contract v2): age-scaling coefficient the consumer uses to inflate the
+    /// combined-correction variance as σc²·(1 + agek·Δt_age²) (Δt_age = correction
+    /// content age, s), replacing the ad-hoc URA staleness ramp for network-corrected
+    /// rows.  From the producer's @c network.combined_sigma_agek.  Serialized as an
+    /// optional trailing @c agek= S-line field ONLY when non-zero, so a producer that
+    /// does not declare it writes a byte-identical S line.  A quality hint, not a
+    /// replay-emitter parameter — @c makeReplayEmitter ignores it and @c checkContract
+    /// does not compare it.
+    double            age_scale_k{0.0};
     /// Whether the producer's emitter ran the opt-in CODE-bias magnitude jump
     /// test (@c network.code_bias_disc_jump_test) — the fourth replay-emitter
     /// construction parameter.  Serialized as an optional trailing @c cbjump=1

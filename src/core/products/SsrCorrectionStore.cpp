@@ -196,6 +196,12 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.clock_iode    = (rec_copy.clock->iode >= 0) ? rec_copy.clock->iode : out.iode;
             out.orbit_iod_ssr = rec_copy.clock->orbit_iod_ssr;
             out.orbit_epoch   = rec_copy.clock->orbit_epoch;
+            // M4 (contract v2): carry the per-sat combined CODE-correction σ + code/phase
+            // correlation from the (network-produced) clock record.  0 for decoded
+            // clocks / when emit_combined_sigma is off (a combined-message satellite
+            // never carries them — the network producer pushes separate clock records).
+            out.combined_code_sigma_m = rec_copy.clock->combined_code_sigma_m;
+            out.code_phase_corr       = rec_copy.clock->code_phase_corr;
         }
     }
 
@@ -446,6 +452,16 @@ void SsrCorrectionStore::setOrbitEchoMaxSkew(double max_skew_s) {
 double SsrCorrectionStore::orbitEchoMaxSkew() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return orbit_echo_max_skew_s_;
+}
+
+void SsrCorrectionStore::setCombinedSigmaAgeCoeff(double agek) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    combined_sigma_age_coeff_ = agek;
+}
+
+double SsrCorrectionStore::combinedSigmaAgeCoeff() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return combined_sigma_age_coeff_;
 }
 
 std::map<std::string, std::uint64_t>

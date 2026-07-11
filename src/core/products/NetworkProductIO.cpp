@@ -163,6 +163,10 @@ struct LineAssembler {
                             s.orbit_epoch.week = std::stoi(v.substr(0, colon));
                             s.orbit_epoch.tow  = std::stod(v.substr(colon + 1));
                         }
+                    } else if (f[k].rfind("sigcc=", 0) == 0) {   // M4: combined code-correction σ
+                        s.sigcc_m = std::stod(f[k].substr(6));
+                    } else if (f[k].rfind("rho=", 0) == 0) {     // M4: code/phase correction correlation
+                        s.rho = std::stod(f[k].substr(4));
                     }
                     // Unknown key=value tokens are ignored (forward-compatible).
                 }
@@ -183,6 +187,8 @@ struct LineAssembler {
                 for (std::size_t k = 6; k < f.size(); ++k) {
                     if (f[k].rfind("sigma=", 0) == 0)
                         pb.sigma_m = std::stod(f[k].substr(6));
+                    else if (f[k].rfind("sigc=", 0) == 0)   // M4: combined phase-correction σ
+                        pb.sigc_m = std::stod(f[k].substr(5));
                     else if (f[k].find('=') == std::string::npos)
                         cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[k]);
                 }
@@ -264,6 +270,8 @@ struct LineAssembler {
                             c.orbit_ref = f[k].substr(5);
                         } else if (f[k].rfind("pdr=", 0) == 0) {
                             c.decl.eq34_datum_receiver = f[k].substr(4);   // Card 3 diagnostic
+                        } else if (f[k].rfind("agek=", 0) == 0) {
+                            c.age_scale_k = std::stod(f[k].substr(5));      // M4: age-scaling coeff
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -386,6 +394,12 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // non-empty, so a non-eq34 producer writes the S line byte-for-byte.
     if (!contract.decl.eq34_datum_receiver.empty())
         out_ << ",pdr=" << contract.decl.eq34_datum_receiver;
+    // M4 (contract v2): age-scaling coefficient for the combined-correction variance.
+    // ONLY when non-zero, so a producer that does not advertise age scaling writes the
+    // pre-M4 S line byte-for-byte.  A quality hint (not a replay-emitter param), so
+    // makeReplayEmitter / checkContract ignore it.
+    if (contract.age_scale_k != 0.0)
+        out_ << ",agek=" << fmt::format("{}", contract.age_scale_k);
     out_ << '\n';
 }
 
@@ -505,6 +519,18 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                     out_ << ",oepoch=" << s.orbit_epoch.week << ':'
                          << fmt::format("{}", s.orbit_epoch.tow);
             }
+            // M4 (contract v2): optional per-sat COMBINED code-correction σ + code/phase
+            // correlation as key=value tokens (self-describing, position-independent — a
+            // field with '=' ends the reader's positional c1/clock_disc parse, so they
+            // coexist with the disc counter exactly as iode= does).  Nonzero only when
+            // network.emit_combined_sigma is armed ⇒ OFF run emits nothing ⇒
+            // byte-identical.  rho is written ONLY alongside sigcc (it correlates the
+            // combined code with the combined phase, meaningless without a combined code σ).
+            if (s.sigcc_m > 0.0 && std::isfinite(s.sigcc_m)) {
+                out_ << ",sigcc=" << fmt::format("{}", s.sigcc_m);
+                if (std::isfinite(s.rho))
+                    out_ << ",rho=" << fmt::format("{}", s.rho);
+            }
             out_ << '\n';
         }
         for (const auto& [signal, bias_m] : s.code_bias_m) {
@@ -523,6 +549,13 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             // armed ⇒ an OFF run emits no token ⇒ byte-identical.  Mirrors the C-line iode= tail.
             if (pb.sigma_m > 0.0 && std::isfinite(pb.sigma_m))
                 out_ << ",sigma=" << fmt::format("{}", pb.sigma_m);
+            // M4 (contract v2): optional COMBINED phase-correction σ as a key=value
+            // token beside sigma=.  pb.sigc_m is nonzero only when
+            // network.emit_combined_sigma is armed ⇒ an OFF run emits no token ⇒
+            // byte-identical.  Distinct from sigma= (the phase-bias term alone):
+            // sigc = σ of clock + phase bias combined.
+            if (pb.sigc_m > 0.0 && std::isfinite(pb.sigc_m))
+                out_ << ",sigc=" << fmt::format("{}", pb.sigc_m);
             out_ << '\n';
         }
         if (s.has_ura)   // B1: per-sat URA (emitted only when network.emit_ura on → no U lines otherwise)
@@ -902,6 +935,14 @@ std::vector<NetworkProductRecord> NetworkProductTail::pollInto(SsrCorrectionStor
         NetworkProductReader::replay(rec, store, impl_->emitter);
         ++impl_->delivered;
     }
+    // M4 (contract v2): propagate the producer's advertised combined-σ age-scaling
+    // coefficient (the S-line agek= token) into the consumer's store so the
+    // measurement model can age-inflate the combined variance.  The S line does not
+    // feed replay, so this is the only channel that carries agek to the consumer; it
+    // is a store-wide scalar (default 0 = no inflation), refreshed from the current
+    // contract each poll (cheap, idempotent).  Only when a contract has been seen.
+    if (impl_->assembler.contract.present)
+        store.setCombinedSigmaAgeCoeff(impl_->assembler.contract.age_scale_k);
     return recs;
 }
 

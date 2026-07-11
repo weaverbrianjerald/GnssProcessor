@@ -1179,6 +1179,115 @@ TEST(NetworkProductIoTest, PhaseBiasSigmaRoundTrip) {
     std::filesystem::remove(path);
 }
 
+// M4 (contract v2): the combined-correction σ tokens (P-record sigc=, C-record
+// sigcc=/rho=) survive a write→read round-trip, coexist with the B1b sigma= token
+// on the same P line, and emit NOTHING when their value is 0 (OFF-path byte-identity).
+TEST(NetworkProductIoTest, CombinedSigmaRoundTrip) {
+    const std::string path = tempFile("gnss_netprod_combsigma.txt");
+    std::filesystem::remove(path);
+
+    NetworkSolutionEpoch sol;
+    sol.epoch_time = kT0;
+
+    NetworkSatSolution g1;                    // combined-σ populated → tokens emitted
+    g1.sat = "G01"; g1.has_clock = true; g1.clock_c0_m = 12.5;
+    g1.sigcc_m = 0.037;                       // C-record sigcc=
+    g1.rho     = 0.73;                        // C-record rho=
+    NetworkPhaseBias pb1;                     // both sigma= (B1b) and sigc= (M4) on one P line
+    pb1.bias_m = -0.7; pb1.signal_integer = true; pb1.wide_lane_integer = 1;
+    pb1.sigma_m = 0.011; pb1.sigc_m = 0.0026;
+    g1.phase_bias["L1C"] = pb1;
+    NetworkPhaseBias pb1b;                    // no combined σ → no sigc= token
+    pb1b.bias_m = 1.5; pb1b.signal_integer = false; pb1b.wide_lane_integer = -2;
+    g1.phase_bias["L2W"] = pb1b;
+    sol.sats.push_back(g1);
+
+    NetworkSatSolution g2;                    // no combined σ at all → no C-record tokens
+    g2.sat = "G02"; g2.has_clock = true; g2.clock_c0_m = -8.75;
+    g2.phase_bias["L1C"] = NetworkPhaseBias{10.0, true, 1};
+    sol.sats.push_back(g2);
+
+    {
+        NetworkProductWriter w(path);
+        ASSERT_TRUE(w.good());
+        w.write(sol);
+    }
+
+    const std::string content = readAllBytes(path);
+    EXPECT_NE(content.find("sigc=0.0026"), std::string::npos);
+    EXPECT_NE(content.find("sigcc=0.037"), std::string::npos);
+    EXPECT_NE(content.find("rho=0.73"),   std::string::npos);
+    // Exactly one sigc= / sigcc= / rho= (G01 armed; G02 and L2W emit none).
+    EXPECT_EQ(content.find("sigc=",  content.find("sigc=")  + 1), std::string::npos);
+    EXPECT_EQ(content.find("sigcc=", content.find("sigcc=") + 1), std::string::npos);
+    EXPECT_EQ(content.find("rho=",   content.find("rho=")   + 1), std::string::npos);
+
+    bool ok = false;
+    const auto recs = NetworkProductReader::read(path, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_EQ(recs[0].epoch.sats.size(), 2u);
+    const NetworkSatSolution& r1 = recs[0].epoch.sats[0];
+    const NetworkSatSolution& r2 = recs[0].epoch.sats[1];
+    ASSERT_EQ(r1.sat, "G01");
+    EXPECT_NEAR(r1.sigcc_m, 0.037, 1e-9);
+    EXPECT_NEAR(r1.rho,     0.73,  1e-9);
+    EXPECT_NEAR(r1.phase_bias.at("L1C").sigc_m,  0.0026, 1e-9);   // M4 token
+    EXPECT_NEAR(r1.phase_bias.at("L1C").sigma_m, 0.011,  1e-9);   // B1b token still intact
+    EXPECT_EQ(r1.phase_bias.at("L1C").bias_m, -0.7);              // positional fields intact
+    EXPECT_DOUBLE_EQ(r1.phase_bias.at("L2W").sigc_m, 0.0);        // absent → default 0
+    EXPECT_DOUBLE_EQ(r2.sigcc_m, 0.0);                            // absent → default 0
+    EXPECT_DOUBLE_EQ(r2.rho, 0.0);
+
+    std::filesystem::remove(path);
+}
+
+// M4 (contract v2): the age-scaling coefficient rides the S-line agek= token, only
+// when non-zero, and round-trips through the v2 header contract.
+TEST(NetworkProductIoTest, CombinedSigmaAgekRoundTrip) {
+    const std::string path  = tempFile("gnss_netprod_agek.txt");
+    const std::string pathz = tempFile("gnss_netprod_agek_zero.txt");
+    std::filesystem::remove(path);
+    std::filesystem::remove(pathz);
+
+    NetworkSolutionEpoch sol;
+    sol.epoch_time = kT0;
+    NetworkSatSolution g;
+    g.sat = "G01"; g.has_clock = true; g.clock_c0_m = 1.0;
+    sol.sats.push_back(g);
+
+    SbasisContract contract;
+    contract.present = true;
+    contract.decl.reference_receiver_id = "REF1";
+    contract.age_scale_k = 0.0625;
+    {
+        NetworkProductWriter w(path, contract);
+        ASSERT_TRUE(w.good());
+        w.write(sol);
+    }
+    EXPECT_NE(readAllBytes(path).find("agek=0.0625"), std::string::npos);
+
+    bool ok = false;
+    SbasisContract parsed;
+    NetworkProductReader::read(path, &parsed, &ok);
+    EXPECT_TRUE(ok);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_NEAR(parsed.age_scale_k, 0.0625, 1e-12);
+
+    // agek == 0 ⇒ no token (byte-identity vs a pre-M4 v2 header).
+    SbasisContract zero = contract;
+    zero.age_scale_k = 0.0;
+    {
+        NetworkProductWriter w(pathz, zero);
+        ASSERT_TRUE(w.good());
+        w.write(sol);
+    }
+    EXPECT_EQ(readAllBytes(pathz).find("agek="), std::string::npos);
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(pathz);
+}
+
 // Producer datum-stability (Jul 2026): with cbjump=1 in the contract,
 // makeReplayEmitter arms the opt-in CODE-bias magnitude jump test on the replay
 // emitter — a 0.2 m value step (same sat set, same band tuple, no datum change:

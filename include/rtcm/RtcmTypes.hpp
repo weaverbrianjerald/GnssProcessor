@@ -132,6 +132,24 @@ struct SsrClockCorrection {
     /// (the other operand of the consumer orbit/clock age-skew budget).  {0,0} =
     /// not stamped.
     GnssTime    orbit_epoch{0, 0.0};
+    /// M4 (contract v2): formal 1σ (m) of the COMBINED CODE correction for this
+    /// satellite (clock + code bias at a reference signal), from the network
+    /// shared covariance (EWMA(σ̂0)×√Var(clk+cb), cross-covariance included).  0
+    /// for every RTCM/IGS-SSR-decoded clock and when @c network.emit_combined_sigma
+    /// is off — an internal extension populated ONLY by @c NetworkProductEmitter,
+    /// carried on the C-record @c sigcc= wire token.  During satellite-rise
+    /// reconvergence the individual clock/bias σ are cm-level but this COMBINED σ
+    /// is mm-level (the components are strongly correlated), so a consumer weighting
+    /// by it (rather than the individual-σ RSS) can keep using a fresh satellite's
+    /// products instead of deweighting them 10–100× (Zhang 2021 / Psychas 2024b).
+    double      combined_code_sigma_m{0.0};
+    /// M4 (contract v2): correlation ρ (dimensionless, [-1,1]) between this
+    /// satellite's COMBINED CODE and COMBINED PHASE corrections at the reference
+    /// signal — both share the clock term, so ρ is typically 0.6–0.9 (Psychas Fig.
+    /// 5).  0 for decoded clocks / when the channel is off; C-record @c rho= wire
+    /// token.  Carried for a future correlated-measurement (full-R) consumer; the
+    /// present diagonal-R consumer does not apply it (it has no off-diagonal slot).
+    double      code_phase_corr{0.0};
 };
 
 /**
@@ -204,6 +222,18 @@ struct SsrPhaseBiasEntry {
     /// measurement variance of that phase row when @c network.consume_phase_bias_sigma is
     /// on (the Tienstra §6.6 phase-bias block of Qŷ_B1 the diagonal-only URA channel omits).
     double sigma_m{0.0};
+    /// M4 (contract v2): formal 1σ (m) of the COMBINED PHASE correction for this
+    /// (sat, signal) — clock + phase bias, cross-covariance included (NOT iono: the
+    /// network iono is SH-VTEC, supplied separately via @c SsrSlantIono with its own
+    /// σ; bundling it here would double-count).  Distinct from @c sigma_m (the
+    /// phase-bias term ALONE): this is the honest quality of the whole satellite-side
+    /// phase correction the consumer applies.  0 for decoded biases / when
+    /// @c network.emit_combined_sigma is off; carried on the P-record @c sigc= wire
+    /// token.  When @c closed_loop.consume_combined_sigma is on the consumer folds
+    /// @c combined_sigma_m² (age-inflated) into the phase row variance INSTEAD OF the
+    /// URA + @c sigma_m RSS — mm-level for a fresh satellite where the individual σ
+    /// are cm-level, so a reconverging satellite is no longer deweighted off.
+    double combined_sigma_m{0.0};
 };
 
 /**

@@ -153,6 +153,17 @@ public:
         int             applied_orbit_iod_ssr{-1};
         bool            has_orbit{false};                         ///< True if orbit fields are valid.
         bool            has_clock{false};                         ///< True if clock fields are valid.
+        /// M4 (contract v2): formal 1σ (m) of the COMBINED CODE correction for this
+        /// satellite (clock + code bias at a reference signal, cross-cov included),
+        /// carried from the winning clock/combined record.  0 for decoded streams and
+        /// when the producer's @c network.emit_combined_sigma is off.  The consumer
+        /// folds it (age-inflated) into a CODE row's variance under
+        /// @c closed_loop.consume_combined_sigma.  Meaningful only when @c has_clock.
+        double          combined_code_sigma_m{0.0};
+        /// M4 (contract v2): correlation of this satellite's combined code & combined
+        /// phase corrections (0 = absent).  Carried for a future correlated-measurement
+        /// consumer; the present diagonal-R consumer does not apply it.
+        double          code_phase_corr{0.0};
         /// RTB-5(b): satellite reference point of the ORBIT part (@c APC for
         /// legacy-SSR decodes, @c CoM for IGS-SSR 4076 / network products) —
         /// copied from the winning orbit/combined record.  Meaningful only
@@ -365,6 +376,22 @@ public:
      * consumer gating on presence never reacts to legacy content.
      */
     std::optional<NetworkProducerStatus> getProducerStatus() const;
+
+    /**
+     * @brief M4 (contract v2): set the combined-correction age-scaling coefficient.
+     *
+     * Store-wide (not per-satellite), the producer's @c network.combined_sigma_agek
+     * advertised on the product S-line.  A consumer inflates a network-corrected
+     * row's combined variance as σc²·(1 + agek·Δt_age²) (correction content age
+     * Δt_age in s).  Set by the file-tail wiring when it parses an S contract
+     * carrying an @c agek= token (or by an in-process producer driver from config).
+     * 0 (the default) ⇒ no age inflation.  Survives @ref clear (configuration, not
+     * data), like @ref setOrbitEchoMaxSkew.
+     */
+    void setCombinedSigmaAgeCoeff(double agek);
+
+    /// M4 (contract v2): the combined-correction age-scaling coefficient (0 = none).
+    double combinedSigmaAgeCoeff() const;
 
     /// True iff no records have been pushed.
     bool isEmpty() const;
@@ -703,6 +730,11 @@ private:
     /// Card 7: orbit/clock age-skew budget (s); 0 = epoch-skew check + withhold
     /// off (see setOrbitEchoMaxSkew).  Configuration — survives clear().
     double orbit_echo_max_skew_s_{0.0};
+
+    /// M4 (contract v2): combined-correction age-scaling coefficient
+    /// (see setCombinedSigmaAgeCoeff); 0 = no age inflation.  Configuration —
+    /// survives clear().
+    double combined_sigma_age_coeff_{0.0};
 
     /// Card 7: per-"sat|reason" orbit-echo mismatch counters (see
     /// checkOrbitEcho).  Written from the const check under mutex_, hence
