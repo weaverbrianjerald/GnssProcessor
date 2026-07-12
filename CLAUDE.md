@@ -179,15 +179,11 @@ under `data_source = internal`), (3) the earliest `<YYYY-DOY>/`
 subdir under `<root>` (lex sort).  Step (3) makes a single-fixture
 data root work without any config knobs at all.
 
-**Migrating from the old flat layout.**  Pre-refactor data trees had
-`<root>/products/{orbit,clock,dcb,erp,brdc,rinex}/{zip,unzip}/` plus
-`products/{atx,nc}/` and `observations/`.  Run
-`python scripts/migrate_data_layout.py <root>` to relocate everything
-in-place (`--dry-run` previews).  Idempotent and safe on the bundled
-`data/`, an ad-hoc project-tree production cache, or a user-owned
-root like `C:/GnssProcessorSupport/products/`.  User-managed dirs
-outside the canonical scan paths (e.g. a hand-curated
-`data/rinex/debug/`) are preserved.
+**Migrating from the old flat layout.**  For pre-refactor data trees
+(`<root>/products/{orbit,clock,...}/{zip,unzip}/` + `observations/`):
+`python scripts/migrate_data_layout.py <root>` relocates in-place
+(`--dry-run` previews; idempotent; preserves user-managed dirs outside
+the canonical scan paths).
 
 **CDDIS authentication.** Production-mode downloads use HTTP Basic auth
 via `.netrc`. `DataDownloader` resolves the file at startup in this
@@ -196,25 +192,15 @@ order: `data_download.netrc_path` (if set) → `~/.netrc` → `~/_netrc`
 HTTP 401 / 403 responses include the resolved-path and a hint pointing
 at the CDDIS netrc-creation guide.
 
-**crx2rnx (Hatanaka decompression).** The Python data scripts
-(`bootstrap_internal_data.py`, `fetch_global_obs.py`) decompress via
-the **`hatanaka`** library (pinned in `requirements.txt`; bundles
-RNXCMP 4.x, so RINEX 2/3/**4** all work — the old standalone crx2rnx
-4.0.x rejects RINEX 4 with "format version not valid" and leaves an
-82-byte stub). `bootstrap`'s `crx_to_rnx` keeps the external crx2rnx
-subprocess as a legacy fallback when hatanaka isn't installed.
-
-The C++ production path (`ProductResolver` → `DataDownloader`) still
-shells out: RNXCMP's `crx2rnx` is invoked with stderr+stdout captured
-(via `_popen` / `popen`); failures are logged at error level with the
-exit code and the first ~10 lines of output. Resolution order for the
-executable: `data_download.crx2rnx_path` → well-known install dirs
-(incl. `C:/GnssProcessorSupport/exe/crx2rnx.exe`, upgraded in-place to
-RNXCMP 4.1.0 for RINEX-4 support; the 2015 binary is kept beside it as
-`crx2rnx_2015_rnxcmp.exe.bak`) → `where crx2rnx.exe` (Windows) /
-`which crx2rnx` (Unix). When a `.crx.gz` download succeeds but
-conversion fails, ProductResolver hard-errors rather than masking the
-problem with a `.rnx.gz` fallback.
+**crx2rnx (Hatanaka decompression).** Python data scripts decompress
+via the **`hatanaka`** library (pinned in `requirements.txt`; handles
+RINEX 2/3/**4** — standalone crx2rnx 4.0.x rejects RINEX 4), with the
+external exe as legacy fallback. The C++ production path shells out to
+RNXCMP `crx2rnx` (output captured; failures logged with exit code);
+exe resolution: `data_download.crx2rnx_path` → well-known dirs (incl.
+`C:/GnssProcessorSupport/exe/crx2rnx.exe`, RNXCMP 4.1.0) → PATH. A
+successful `.crx.gz` download whose conversion fails is a hard error,
+never masked by a `.rnx.gz` fallback.
 
 Either mode produces a `PathResolver::ResolvedPaths` struct that the
 `Application` driver merges into `GnssConfig` via the
@@ -277,7 +263,7 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs a substantial GoogleTest suite (~550 cases across 33 files; see docs/test_suite.md) — filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. It guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + user runs on real data + trace inspection.
+- **Test suite.** `gnss_tests.exe` runs a substantial GoogleTest suite (~670 cases across ~37 files; see docs/test_suite.md) — filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. It guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.
