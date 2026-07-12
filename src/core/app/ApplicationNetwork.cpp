@@ -75,6 +75,7 @@
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
+#include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
 #include "filter/StateKeySchema.hpp"
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
 #include "slip/MwSlipDetector.hpp"      // T0 phase-leveling slip repair (Increment 2)
@@ -1580,6 +1581,18 @@ int Application::runNetwork() {
     // cell (non-pivot station x sat) with s_raw / s_norm / σ̂0.  Heavy opt-in deep trace.
     std::ofstream station_res_trace;
     const std::filesystem::path station_res_trace_path = log_dir_ / "network_station_residuals.csv";
+    // M2 (LS-VCE): per-hour measured carry-variance components — one row per
+    // (family, constellation) whenever the content hour rolls over.  floor_m2 is
+    // the honest constant-cofactor σ̂ to compare against the hand var_floor;
+    // rate_m2ps the honest Δt-cofactor σ̂ to compare against q_amb; ratio =
+    // floor_m2 / config floor (>1 ⇒ the hand floor is optimistic).  Off by
+    // default (byte-identical: no file, no rows).
+    std::ofstream carry_vce_trace;
+    const std::filesystem::path carry_vce_trace_path = log_dir_ / "network_carry_vce.csv";
+    static constexpr const char* kCarryVceHeader =
+        "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
+        "mean_floor_std,rate_m2ps,rate_std,cond,rate_frozen,cfg_floor_m2,"
+        "robust_ratio,mean_ratio,floor_clamp,rate_clamp\n";
     {
         std::error_code ec;
         std::filesystem::create_directories(log_dir_, ec);
@@ -1785,6 +1798,14 @@ int Application::runNetwork() {
                           "sentinel for this run.",
                           config_.networkEmitUra(), config_.networkRaim(),
                           config_.networkPhaseLeveling());
+        }
+        if (config_.networkCarryVce()) {
+            carry_vce_trace.open(carry_vce_trace_path);
+            if (carry_vce_trace)
+                carry_vce_trace << kCarryVceHeader;
+            else
+                log->warn("Network (M2/LS-VCE): failed to open carry-VCE trace {}",
+                          carry_vce_trace_path.string());
         }
         if (nc.trace_events) {
             events_trace.open(events_trace_path);
@@ -2109,6 +2130,28 @@ int Application::runNetwork() {
     const bool   carry_cpl_shmarg = config_.networkCarryCouplingShMarginalize(); // Card 1d-SH: fully marginalize VtecSh coupling terms (GM border ≠ RW κ model — severs the amb↔SH carry feedback) — requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = config_.networkCarryZwd();                 // B9: carry per-station ZWD across epochs
     const double zwd_q         = config_.networkZwdCarryQ();                // B9: ZWD carry random-walk process noise (m²/s)
+    // M2 (LS-VCE carry-q): the carry-row variance-component MONITOR.  Accumulates
+    // the post-fit carry innovations (carried − solved) into a residual-form
+    // LS-VCE estimator and logs σ̂ (Floor m² + Rate m²/s) per family per
+    // constellation against the hand floors.  NO feedback into the solve — the
+    // whole path is gated on carry_vce, so OFF is byte-identical.  The estimator
+    // is seeded with the PL floor/q as its weak a-priori (worth ~1 row; immaterial
+    // vs the thousands of carry rows/epoch — pb/cb families share that weak PL-
+    // scale prior, which only sets the regularisation and the no-data fallback).
+    const bool   carry_vce     = config_.networkCarryVce();
+    const std::vector<std::string> vce_families =
+        carry_vce ? NetworkCarryVce::parseComponents(config_.networkCarryVceComponents())
+                  : std::vector<std::string>{};
+    const bool   vce_wants_pb = std::find(vce_families.begin(), vce_families.end(),
+                                          std::string("pb")) != vce_families.end();
+    const bool   vce_wants_cb = std::find(vce_families.begin(), vce_families.end(),
+                                          std::string("cb")) != vce_families.end();
+    NetworkCarryVce carry_vce_est(vce_families,
+        static_cast<double>(config_.networkCarryVceWindowEpochs()),
+        /*split_by_const=*/true,
+        /*seed_floor=*/pl_var_floor, /*seed_rate=*/pl_q_amb);
+    int last_vce_hour = -1;   // content-hour bucket for the per-hour VCE log line
+    double first_vce_s = -1.0;  // content time of the first monitored epoch (hour anchor)
     const bool   ura_on        = config_.networkEmitUra();                  // B1: emit per-sat URA quality channel
     const double ura_alpha     = config_.networkUraEwmaAlpha();             // B1: σ̂0 EWMA smoothing
     const bool   ura_retro     = config_.networkUraRetroBump();             // B1: retro-bump flagged SATELLITE(s) on next emit
@@ -9317,6 +9360,48 @@ int Application::runNetwork() {
             }
         }
 
+        // M2 (LS-VCE): advance the carry-variance monitor for this emitted epoch —
+        // apply exponential forgetting and set the clean-epoch gate (a datum /
+        // pivot handover contaminates every carried prior, so the whole epoch's
+        // rows are dropped).  On the content-hour roll, flush the just-completed
+        // hour's σ̂ for every (family, constellation) to network_carry_vce.csv.
+        // All gated on carry_vce ⇒ OFF is byte-identical.
+        if (carry_vce) {
+            if (first_vce_s < 0.0) first_vce_s = pl_now_s;
+            const int cur_hour = static_cast<int>((pl_now_s - first_vce_s) / 3600.0);
+            if (cur_hour != last_vce_hour) {
+                if (last_vce_hour >= 0 && carry_vce_trace.is_open()) {
+                    for (const auto& fc : carry_vce_est.keys()) {
+                        const auto e = carry_vce_est.estimate(fc.first, fc.second);
+                        const double cfg_floor = (fc.first == "pb") ? pb_var_floor
+                                               : (fc.first == "cb") ? cb_var_floor
+                                                                    : pl_var_floor;
+                        const double rrat = (cfg_floor > 0.0) ? e.robust_floor / cfg_floor : 0.0;
+                        const double mrat = (cfg_floor > 0.0)
+                            ? e.sigma[NetworkCarryVce::kFloor] / cfg_floor : 0.0;
+                        carry_vce_trace
+                            << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
+                            << ',' << last_vce_hour << ',' << fc.first << ',' << fc.second
+                            << ',' << e.n_rows << ',' << fmt::format("{:.1f}", e.n_eff)
+                            << ',' << fmt::format("{:.6e}", e.robust_floor)
+                            << ',' << fmt::format("{:.6e}", e.sigma[NetworkCarryVce::kFloor])
+                            << ',' << fmt::format("{:.6e}", e.std[NetworkCarryVce::kFloor])
+                            << ',' << fmt::format("{:.6e}", e.sigma[NetworkCarryVce::kRate])
+                            << ',' << fmt::format("{:.6e}", e.std[NetworkCarryVce::kRate])
+                            << ',' << fmt::format("{:.3e}", e.cond)
+                            << ',' << (e.rate_frozen ? 1 : 0)
+                            << ',' << fmt::format("{:.6e}", cfg_floor)
+                            << ',' << fmt::format("{:.4f}", rrat)
+                            << ',' << fmt::format("{:.4f}", mrat)
+                            << ',' << e.floor_clamped << ',' << e.rate_clamped << '\n';
+                    }
+                    carry_vce_trace.flush();
+                }
+                last_vce_hour = cur_hour;
+            }
+            carry_vce_est.beginEpoch(pl_now_s, !datum_changed);
+        }
+
         // --- Phase-leveling carry: harvest posterior + stash (Increment 1) ----
         // For each present non-pivot station, recover its ambiguities' ABSOLUTE
         // values (x_lin + back-substituted Δx) and their conditional variances
@@ -9451,6 +9536,30 @@ int Application::runNetwork() {
                         var = (a < static_cast<size_t>(vard.size())) ? vard(a) : -1.0;
                     }
                     if (!(var > 0.0) || !std::isfinite(var)) continue;
+                    // M2 (LS-VCE): fold this ambiguity carry's post-fit innovation
+                    // (carried prior − freshly solved) into the monitor BEFORE the
+                    // stash overwrites the prior.  Qualify only rows that actually
+                    // carried a prior this epoch — mirror the inject predicate: a
+                    // live prior within max-gap, not a slip/refloat (pending reseed),
+                    // and not a Card-3 re-referenced arc (a frame step, not noise).
+                    if (carry_vce) {
+                        const auto oc = local_carry.find(
+                            std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
+                        if (oc != local_carry.end()
+                            && !stations[i].sm->isAmbiguityPendingReseed(pa.amb_key)
+                            && !eq34_reref.count({pa.sat, pa.signal})) {
+                            const double gapv = pl_now_s - oc->second.last_seen_s;
+                            if (gapv >= 0.0 && gapv <= pl_max_gap_s) {
+                                double fold_var =
+                                    oc->second.var + pl_q_amb * std::max(0.0, gapv);
+                                if (pl_var_floor > 0.0)
+                                    fold_var = std::max(fold_var, pl_var_floor);
+                                carry_vce_est.addRow(
+                                    "pl", pa.sat, oc->second.value_abs - value_abs,
+                                    gapv, var, fold_var);
+                            }
+                        }
+                    }
                     local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)] =
                         LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
                     // One-shot IF-phase refloat: the fresh post-slip value is now
@@ -10368,6 +10477,29 @@ int Application::runNetwork() {
                 }
         }
 
+        // M2 (LS-VCE): snapshot the D2 shared-carry priors that were FOLDED this
+        // epoch, keyed by identity, BEFORE the clear — their innovations against
+        // the fresh solve are formed after the re-stash below.  Mirror the fold's
+        // skip predicate so only ordinary (non-reinit, non-held, non-retired,
+        // non-re-referenced) carries qualify.
+        std::map<std::string, std::pair<double, double>> vce_shared_prior;  // key -> (prior value, var)
+        if (carry_vce && (vce_wants_pb || vce_wants_cb)) {
+            for (const CarryPrior& cp : prev_carry) {
+                if (cp.inflate_q) continue;                       // clock-monitor reinit, not an ordinary carry
+                if (cp.kind == SharedParamKind::PhaseBias) {
+                    if (!vce_wants_pb || phase_hold_on) continue;                 // hold path ≠ a q-carry
+                    if (eq34_reref.count({cp.sat, cp.signal})) continue;         // Card 3 D4: marginalized
+                } else if (cp.kind == SharedParamKind::CodeBias) {
+                    if (!vce_wants_cb) continue;
+                } else {
+                    continue;                                     // Clock / VtecSh out of scope (own models)
+                }
+                if (handover_affects(cp.sat)) continue;           // RTA-2 retired-datum (scoped mode)
+                vce_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
+                                         std::make_pair(cp.value, cp.var));
+            }
+        }
+
         // --- D2 stash for the next epoch ------------------------------------
         prev_carry.clear();
         prev_carry_cov.clear();   // C1: rebuilt below when the dense carry is on
@@ -10554,6 +10686,33 @@ int Application::runNetwork() {
                 cp.sh_n = c.n; cp.sh_m = c.m; cp.sh_trig = c.trig;
                 cp.value = val; cp.var = var;
                 prev_carry.push_back(cp);
+            }
+        }
+
+        // M2 (LS-VCE): form the PB/CB shared-carry innovations against this epoch's
+        // fresh solve and fold them into the monitor (the D2 analogue of the
+        // ambiguity-carry feed above).  In the re-stashed prev_carry, cp.value /
+        // cp.var are the SOLVED value / posterior variance; the fold prior is the
+        // snapshot taken before the clear.  Gated + best-effort skip-mirroring, so
+        // OFF is byte-identical and a mis-mirrored contaminated key at most nudges
+        // a monitor number (never the solve).
+        if (carry_vce && !vce_shared_prior.empty()) {
+            for (const CarryPrior& cp : prev_carry) {
+                if (cp.inflate_q) continue;
+                const bool is_pb = (cp.kind == SharedParamKind::PhaseBias) && vce_wants_pb;
+                const bool is_cb = (cp.kind == SharedParamKind::CodeBias)  && vce_wants_cb;
+                if (!is_pb && !is_cb) continue;
+                const auto it = vce_shared_prior.find(
+                    sharedCarryKey(cp.kind, cp.sat, cp.signal));
+                if (it == vce_shared_prior.end()) continue;      // no folded prior last epoch
+                const double var_prev = it->second.second;
+                const double q     = is_cb ? q_cb : q_pb;
+                const double floor = is_cb ? cb_var_floor : pb_var_floor;
+                double fold_var = var_prev + q * std::max(0.0, dt);
+                if (floor > 0.0) fold_var = std::max(fold_var, floor);
+                carry_vce_est.addRow(is_cb ? "cb" : "pb", cp.sat,
+                                     it->second.first - cp.value,   // carried − solved
+                                     dt, cp.var, fold_var);
             }
         }
 
@@ -10820,6 +10979,7 @@ int Application::runNetwork() {
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
+    if (carry_vce_trace.is_open()) carry_vce_trace.close();
 
     log->info("Network producer complete: {} epochs emitted, {} skipped "
               "({} of those withheld by the observability gate, {} by the A4 σ̂0 ceiling) — "
@@ -10853,6 +11013,31 @@ int Application::runNetwork() {
                   n_cpl_stash, n_cpl_stash_empty, n_cpl_harvest_fail,
                   n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                   carry_cpl_tu ? "ON" : "OFF");
+    if (carry_vce) {
+        // M2 (LS-VCE): run-end honesty summary — the trailing-window measured
+        // carry-variance FLOOR σ̂ vs the hand floor, per (family, constellation).
+        // ratio > 1 ⇒ the hand floor is optimistic (real carry disagreement
+        // exceeds it); ratio < 1 ⇒ the hand floor is conservative.  The per-hour
+        // series is in network_carry_vce.csv.
+        log->info("Network (M2/LS-VCE): carry-variance monitor summary "
+                  "(components='{}', window={} ep) — ROBUST (geometric-mean, tail-safe) "
+                  "carry-innovation variance vs the hand floor:",
+                  config_.networkCarryVceComponents(), config_.networkCarryVceWindowEpochs());
+        for (const auto& fc : carry_vce_est.keys()) {
+            const auto e = carry_vce_est.estimate(fc.first, fc.second);
+            const double cfg_floor = (fc.first == "pb") ? pb_var_floor
+                                   : (fc.first == "cb") ? cb_var_floor
+                                                        : pl_var_floor;
+            const double rrat = (cfg_floor > 0.0) ? e.robust_floor / cfg_floor : 0.0;
+            const double mrat = (cfg_floor > 0.0)
+                ? e.sigma[NetworkCarryVce::kFloor] / cfg_floor : 0.0;
+            log->info("  [{}|{}] robust σ̂ = {:.3e} m² (hand {:.3e}, ratio {:.1f}); "
+                      "mean σ̂ = {:.3e} m² (ratio {:.0f}, event-incl.); {} rows.",
+                      fc.first, fc.second.empty() ? std::string("*") : fc.second,
+                      e.robust_floor, cfg_floor, rrat,
+                      e.sigma[NetworkCarryVce::kFloor], mrat, e.n_rows);
+        }
+    }
     if (n_gated_epochs > 0)
         log->info("Network: anchored-union coverage gate (< {} trackers) excluded thin shared "
                   "phase-bias column(s) on {} epoch(s) ({} column-epoch(s) total; their phase "

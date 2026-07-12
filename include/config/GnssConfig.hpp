@@ -1758,6 +1758,56 @@ namespace GnssProcessor {
         double networkZwdCarryQ() const { return network_zwd_carry_q_; }
 
         /**
+         * @brief Run the M2 LS-VCE carry-row variance-component MONITOR
+         *        (@c network.carry_vce).
+         *
+         * When on, the network producer accumulates the post-fit innovations of
+         * the carry pseudo-observations (carried value − freshly-solved value)
+         * into a sequential LS-VCE estimator and logs, per carry family per
+         * constellation, a measured σ̂ decomposed into a Floor component (m²,
+         * cofactor 1 — the honest replacement for the hand @c var_floor) and a
+         * Rate component (m²/s, cofactor Δt — the honest replacement for the
+         * hand @c q_amb).  It is a CALIBRATION / honesty instrument: it never
+         * feeds back into the solve (that is the deferred @ref networkCarryVceApply
+         * v2 path), so the solution is byte-identical to the monitor-off run.
+         * Foundation: Teunissen & Amiri-Simkooei 2008 (LS-VCE), residual form.
+         * Default false = no accumulator, no logging (byte-identical).
+         */
+        bool networkCarryVce() const { return network_carry_vce_; }
+
+        /**
+         * @brief M2 v2 APPLY path — feed the estimated σ̂ back into the carry
+         *        stochastic model (@c network.carry_vce_apply).
+         *
+         * NOT IMPLEMENTED in this build: v1 is monitor-only.  Requires
+         * @ref networkCarryVce; setting it true is a hard load error (rather than
+         * a silent no-op).  Reserved so configs and the loader validate the
+         * dependency now.
+         */
+        bool networkCarryVceApply() const { return network_carry_vce_apply_; }
+
+        /**
+         * @brief Carry families the M2 monitor accumulates
+         *        (@c network.carry_vce_components, comma list of @c pl/@c pb/@c cb).
+         *
+         * @c pl = phase-leveling ambiguity carry (the primary floor, default);
+         * @c pb / @c cb = the D2 shared satellite phase-/code-bias carries.  Each
+         * requested family is estimated per constellation.  Only used when
+         * @ref networkCarryVce.
+         */
+        const std::string& networkCarryVceComponents() const { return network_carry_vce_components_; }
+
+        /**
+         * @brief Exponential-forgetting half-life (emitted epochs) of the M2
+         *        VCE accumulator (@c network.carry_vce_window_epochs).
+         *
+         * The running σ̂ tracks a trailing window of this many emitted epochs;
+         * @c <=0 accumulates over the whole run.  Clamped to @c >=1 at load.
+         * Only used when @ref networkCarryVce.
+         */
+        int networkCarryVceWindowEpochs() const { return network_carry_vce_window_epochs_; }
+
+        /**
          * @brief Per-station T0 cycle-slip REPAIR for the carried ambiguities
          *        (phase-leveling Increment 2; @c network.cycle_slip.turbo_edit).
          *
@@ -4301,6 +4351,10 @@ namespace GnssProcessor {
         bool   network_carry_coupling_time_update_{false};  ///< Card 1d: apply the border TIME UPDATE to each coupling row at injection — shrink every PRESENT coupled column by κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and inflate the row variance by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly the dense fold's (clock-monitor-reinit sats: q=∞ ⇒ full marginalization).  Without it the rows re-assert the harvest-epoch border at full strength every epoch (the carried-DD random-walk / flat-σ defect, Card 1c). REQUIRES carry_conditional_coupling (hard error otherwise). OFF = raw harvested rows (byte-identical).
         bool   network_carry_zwd_{false};                 ///< B9: carry per-station tropospheric ZWD across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ambiguity carry); OFF = per-epoch white-noise ZWD (byte-identical).
         double network_zwd_carry_q_{1e-9};                ///< B9: ZWD carry random-walk process noise (m²/s) inflating the carried ZWD variance over the inter-epoch gap (var_eff = var + q·Δt). Only used when network.carry_zwd.
+        bool   network_carry_vce_{false};                 ///< M2 (LS-VCE): run the carry-row variance-component MONITOR — estimate σ̂ (Floor m² + Rate m²/s) per carry family per constellation from the post-fit carry innovations and log it against the hand floors. Calibration/honesty instrument ONLY; no feedback into the solve. OFF = byte-identical (no accumulator, no logging).
+        bool   network_carry_vce_apply_{false};           ///< M2 v2: feed σ̂ back into the carry stochastic model (replace the hand floors). REQUIRES carry_vce. NOT IMPLEMENTED in this build (monitor v1 only) — setting it true is a hard load error.
+        std::string network_carry_vce_components_{"pl"};  ///< M2: carry families the monitor accumulates (comma list of pl / pb / cb). Default "pl" (the phase-leveling ambiguity carry — the primary floor). Only used when carry_vce.
+        int    network_carry_vce_window_epochs_{60};      ///< M2: exponential-forgetting half-life (emitted epochs) of the VCE accumulator; ≤0 ⇒ whole-run accumulation. Only used when carry_vce.
         bool   network_cycle_slip_turbo_edit_{false};     ///< T0 per-station MW/GF cycle-slip REPAIR of the carried ambiguities (phase-leveling Increment 2); OFF = Increment-1 byte-identical.
         double network_cycle_slip_turbo_edit_frac_max_{0.15}; ///< Max rounding residual for a network T0 repair to be trusted (float-MW gate; default 0.15).
         int    network_cycle_slip_turbo_edit_dn_max_{50};      ///< Max |dN| (cycles) for a trusted network T0 repair; larger ⇒ DROP/re-float (float-MW magnitude guard).

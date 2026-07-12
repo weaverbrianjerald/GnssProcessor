@@ -250,6 +250,7 @@ add_executable(gnss_tests
     tests/test_rinex_nav_parser.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
+    tests/test_network_carry_vce.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp

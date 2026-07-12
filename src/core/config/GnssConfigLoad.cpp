@@ -3597,6 +3597,39 @@ namespace GnssProcessor {
             jval<bool>(json, "network.carry_zwd", "carry_zwd", false);
         network_zwd_carry_q_ =
             jval<double>(json, "network.zwd_carry_q", "zwd_carry_q", 1e-9);
+        // M2 (LS-VCE carry-q): the carry-row variance-component MONITOR.  A
+        // calibration/honesty instrument — accumulates carry innovations and logs
+        // σ̂ against the hand floors; NO feedback into the solve (v1).  Default OFF
+        // keeps the accumulator + logging inert → byte-identical.
+        network_carry_vce_ =
+            jval<bool>(json, "network.carry_vce", "carry_vce", false);
+        network_carry_vce_apply_ =
+            jval<bool>(json, "network.carry_vce_apply", "carry_vce_apply", false);
+        if (network_carry_vce_apply_ && !network_carry_vce_)
+            throw std::runtime_error(
+                "network.carry_vce_apply requires network.carry_vce = true "
+                "(the apply path feeds back the estimator's σ̂, which only runs when the monitor does).");
+        if (network_carry_vce_apply_)
+            throw std::runtime_error(
+                "network.carry_vce_apply (M2 v2 — feed σ̂ back into the carry stochastic model) is "
+                "NOT IMPLEMENTED in this build; v1 is monitor-only.  Set network.carry_vce = true for "
+                "the monitor and leave carry_vce_apply = false.");
+        network_carry_vce_components_ =
+            jval<std::string>(json, "network.carry_vce_components", "carry_vce_components", "pl");
+        network_carry_vce_window_epochs_ =
+            jval<int>(json, "network.carry_vce_window_epochs", "carry_vce_window_epochs", 60);
+        if (network_carry_vce_ && network_carry_vce_window_epochs_ < 1) {
+            log->warn("Network (M2/LS-VCE): network.carry_vce_window_epochs {} < 1 — treating as "
+                      "whole-run accumulation (no forgetting).",
+                      network_carry_vce_window_epochs_);
+        }
+        if (network_carry_vce_)
+            log->info("Network producer (M2/LS-VCE): carry-row variance-component MONITOR enabled "
+                      "(components='{}', window={} epochs) — per family per constellation the "
+                      "post-fit carry innovations are folded into a residual-form LS-VCE estimator "
+                      "and logged as σ̂ (Floor m² + Rate m²/s) against the hand floors.  No feedback "
+                      "into the solve (calibration/honesty instrument; solution byte-identical).",
+                      network_carry_vce_components_, network_carry_vce_window_epochs_);
         // T0 cycle-slip repair (Increment 2): only meaningful with the carry on.
         network_cycle_slip_turbo_edit_ =
             jval<bool>(json, "network.cycle_slip.turbo_edit", "network_cycle_slip_turbo_edit", false);
