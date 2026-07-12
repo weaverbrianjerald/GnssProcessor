@@ -2471,9 +2471,11 @@ int Application::runNetwork() {
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
     std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
     std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
+    bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
     double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
     long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
-              carry_merges_total = 0, carry_splits_total = 0, carry_zdim_last = 0;
+              carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
+              carry_zdim_last = 0;
     const bool phase_datum_prioritized = config_.networkPhaseDatumPrioritized()
                                        || phase_datum_ensemble
                                        || phase_datum_eq34;
@@ -6050,7 +6052,15 @@ int Application::runNetwork() {
                     const auto parts = StateKeys::parseAmbiguityKey(key);
                     if (!parts || parts->satellite.empty()) continue;
                     const char cons = parts->satellite.front();
-                    if (cons == 'R') continue;   // GLONASS FDMA: no common-λ integer DD
+                    if (cons == 'R') {   // GLONASS FDMA: no common-λ integer DD (spec OPEN-3)
+                        if (!carry_glonass_warned) {
+                            log->warn("Network[Card4]: GLONASS ambiguities are EXCLUDED from the "
+                                      "invariant carry (FDMA — no common wavelength for an integer "
+                                      "DD; IE-FDMA is a v2 item).  They keep their legacy treatment.");
+                            carry_glonass_warned = true;
+                        }
+                        continue;
+                    }
                     // The satellite phase-bias key is per-SATELLITE ("<sat>|<sig>|PB") — NOT
                     // the per-system receiver-bias key.  Only ambiguities backing an ungated
                     // shared phase bias (a vertex of the eq34 graph) become DD arcs.
@@ -7785,6 +7795,7 @@ int Application::runNetwork() {
             carry_marg_total   = cc.chords_marginalized;
             carry_merges_total = cc.merges;
             carry_splits_total = cc.splits;
+            carry_swaps_total  = cc.tree_swaps;
             carry_zdim_last    = cc.z_dim;
         }
 
@@ -11120,10 +11131,12 @@ int Application::runNetwork() {
                   eq34_gap_repin_total, eq34_mismatch_epochs);
     if (carry_invariant)
         log->info("Network (Card 4/M1 invariant carry): {} epoch(s) driven, {} carried DD(s) at "
-                  "run end; {} chord birth(s), {} marginalization(s), {} component merge(s), "
-                  "{} split(s) over the run (S-system-invariant DDs; q_z={} m²/s).",
+                  "run end; {} chord birth(s), {} marginalization(s), {} tree swap(s) (basis "
+                  "re-expression), {} component merge(s), {} split(s) over the run "
+                  "(S-system-invariant DDs; q_z={} m²/s).",
                   carry_epochs, carry_zdim_last, carry_born_total, carry_marg_total,
-                  carry_merges_total, carry_splits_total, config_.networkCarryInvariantQz());
+                  carry_swaps_total, carry_merges_total, carry_splits_total,
+                  config_.networkCarryInvariantQz());
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",

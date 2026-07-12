@@ -347,6 +347,12 @@ TEST(NetworkInvariantCarryDriverTest, ProductionSeamDatumFreedom) {
     ASSERT_GT(varA.front(), 0.0);
     EXPECT_LT(varA.back(), varA.front())
         << "the DD carry must accumulate information across epochs (else the gate is vacuous)";
+    // ...and the divergent arms actually re-based the carry (Fable §3: tree_swaps ≥ 1 on
+    // an informative store — the pivot the DatumFreedom claim is about really happened).
+    EXPECT_GT(drvA.counters().tree_swaps, 0)
+        << "arm A varied the receiver pivot every epoch — the carry must have been re-based";
+    EXPECT_GT(drvB.counters().tree_swaps, 0)
+        << "arm B varied the satellite pivot every epoch — the carry must have been re-based";
     // ...and both converge to the same integer truth.
     const double trueDD = double(n.z[2][3] - n.z[2][0] - n.z[0][3] + n.z[0][0]);
     EXPECT_NEAR(ddA.back(), trueDD, 0.05);
@@ -420,6 +426,97 @@ TEST(NetworkInvariantCarryDriverTest, ResetPredictAndOff) {
     EXPECT_EQ(drv.totalZDim(), 0) << "reset() must cold-start the carry";
     EXPECT_TRUE(drv.buildDdPriors({}).empty()) << "an empty epoch emits no blocks (OFF path)";
     EXPECT_EQ(drv.numBlocks(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// GATE 6 — (ẑ⁺, Pᶻ⁺) are estimable ⇒ datum-invariant (Fable §1 gate assertion).
+// Fold the SAME carried DD prior, solve the SAME network under two different clock
+// datums, and assert BOTH the posterior mean AND covariance readbacks are identical.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, PosteriorMeanAndCovDatumInvariant) {
+    const int R = 4, S = 4;
+    const Net n = makeNet(88, R, S);
+    const int p = 0, q = 0;
+    std::vector<ArcKey> chords;
+    for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) chords.emplace_back(rxV(r), satV(s));
+    std::set<int> verts; std::set<ArcKey> arcs;
+    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) arcs.insert(ArcKey(rxV(r), satV(s)));
+    const Eigen::Index K = static_cast<Eigen::Index>(chords.size());
+    std::mt19937 g(5); std::uniform_real_distribution<double> u(-1, 1);
+    Eigen::VectorXd zc(K); for (Eigen::Index i = 0; i < K; ++i) zc(i) = u(g);
+    Eigen::MatrixXd Mr(K, K); for (Eigen::Index i = 0; i < K; ++i) for (Eigen::Index j = 0; j < K; ++j) Mr(i, j) = u(g);
+    const Eigen::MatrixXd Pz = 0.02 * (Mr * Mr.transpose()) + 0.3 * Eigen::MatrixXd::Identity(K, K);
+
+    NetworkInvariantCarryDriver drv;
+    drv.seedCarriedForTest(0, chords, zc, Pz, verts, arcs);
+
+    const std::string sig = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(S), pbCol(S);
+    for (int s = 0; s < S; ++s) { clkCol[s] = est.registerClock(n.sats[s]); pbCol[s] = est.registerPhaseBias(n.sats[s], sig); }
+    est.beginEpoch();
+    std::vector<std::size_t> ids(R);
+    for (int r = 0; r < R; ++r) ids[r] = addNetStation(est, n, r, clkCol, pbCol, p, q, nullptr, p);
+    est.setDdPriors(drv.buildDdPriors({makeGroup(n, ids, p, q)}));
+
+    const NetworkEstimator::Datum dA = {{est.clockColumn(n.sats[0]), 0.0}};
+    const Eigen::VectorXd xsA = est.solve(dA);
+    const Eigen::VectorXd meanA = est.ddPriorPosteriorMean(0, xsA);
+    const Eigen::MatrixXd covA  = est.ddPriorPosteriorCovariance(0, dA);
+
+    const NetworkEstimator::Datum dB = {{est.clockColumn(n.sats[1]), 0.0}};
+    const Eigen::VectorXd xsB = est.solve(dB);   // re-solve, DIFFERENT clock datum
+    const Eigen::VectorXd meanB = est.ddPriorPosteriorMean(0, xsB);
+    const Eigen::MatrixXd covB  = est.ddPriorPosteriorCovariance(0, dB);
+
+    EXPECT_TRUE(meanA.isApprox(meanB, 1e-7)) << "ẑ⁺ leaked the datum choice";
+    EXPECT_TRUE(covA.isApprox(covB, 1e-7))   << "Pᶻ⁺ leaked the datum choice";
+    // Non-vacuous: the two datums genuinely move the shared solution, and information
+    // was folded (posterior below the prior).
+    EXPECT_GT((xsA - xsB).cwiseAbs().maxCoeff(), 1e-3);
+    EXPECT_LT(covA.diagonal().maxCoeff(), Pz.diagonal().maxCoeff());
+}
+
+// ---------------------------------------------------------------------------
+// GATE 7 — multi-birth joint covariance is COUPLED (Fable §2.5): on a bootstrap
+// (empty store) epoch every chord is born; chords whose fundamental cycles share a
+// tree edge must have a NONZERO carried cross-covariance (a per-chord-independent
+// harvest would leave it exactly zero).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, MultiBirthJointCovarianceIsCoupled) {
+    const int R = 3, S = 3;
+    const Net n = makeNet(21, R, S);
+    const int p = 0, q = 0;
+    NetworkInvariantCarryDriver drv;   // empty store → bootstrap epoch, all chords fresh
+
+    const std::string sig = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(S), pbCol(S);
+    for (int s = 0; s < S; ++s) { clkCol[s] = est.registerClock(n.sats[s]); pbCol[s] = est.registerPhaseBias(n.sats[s], sig); }
+    est.beginEpoch();
+    std::vector<std::size_t> ids(R);
+    for (int r = 0; r < R; ++r) ids[r] = addNetStation(est, n, r, clkCol, pbCol, p, q, nullptr, p);
+    const auto blocks = drv.buildDdPriors({makeGroup(n, ids, p, q)});
+    ASSERT_EQ(blocks.size(), 1u);
+    EXPECT_EQ(drv.counters().chords_born, static_cast<long long>(blocks[0].zhat.size()));
+    EXPECT_EQ(drv.counters().chords_carried, 0);
+
+    est.setDdPriors(blocks);
+    const NetworkEstimator::Datum d = {{est.clockColumn(n.sats[0]), 0.0}};
+    const Eigen::VectorXd x_s = est.solve(d);
+    drv.installPosterior(est, x_s, d);
+
+    // Chords (1,1) and (1,2) both close through the star(0,0) tree edges at receiver 1
+    // and receiver 0 — their cycles share tree edges, so their DDs are correlated.
+    double cov = 0.0, v11 = 0.0, v12 = 0.0, z;
+    ASSERT_TRUE(drv.carriedCrossForTest(0, ArcKey(rxV(1), satV(1)), ArcKey(rxV(1), satV(2)), cov));
+    ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v11));
+    ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(2)), z, v12));
+    EXPECT_GT(std::abs(cov), 1e-6) << "shared-tree-edge chords must be coupled (joint fold, not per-chord)";
+    // A valid covariance: |cross| ≤ √(var·var).
+    EXPECT_LE(std::abs(cov), std::sqrt(v11 * v12) + 1e-9);
 }
 
 }  // namespace GnssProcessor

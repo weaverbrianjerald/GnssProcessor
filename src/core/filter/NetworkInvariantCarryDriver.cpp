@@ -205,6 +205,14 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 if (Wrows[static_cast<std::size_t>(i)].size() == n_old && n_old > 0)
                     W.row(i) = Wrows[static_cast<std::size_t>(i)].transpose();
 
+            // Tree swap: the carry was re-expressed in a genuinely different cycle basis
+            // iff some carried chord's projection row mixes ≥2 old chords (W is not a
+            // signed permutation) — the projection analogue of a phase-B unimodular pivot.
+            for (const Eigen::VectorXd& wr : Wrows) {
+                if (wr.size() != n_old || n_old == 0) continue;   // fresh chord
+                if ((wr.array() != 0.0).count() >= 2) { ++counters_.tree_swaps; break; }
+            }
+
             NetworkNormalEquations::DdPriorBlock blk;
             blk.rows = std::move(rows);
             blk.zhat = (n_old > 0) ? (W * z_old).eval() : Eigen::VectorXd::Zero(K);
@@ -257,6 +265,19 @@ bool NetworkInvariantCarryDriver::carriedDdForTest(
         const Eigen::Index i = it - cb.chords.begin();
         z = cb.z(i);
         var = cb.Pz(i, i);
+        return true;
+    }
+    return false;
+}
+
+bool NetworkInvariantCarryDriver::carriedCrossForTest(
+    int group, const ArcKey& a, const ArcKey& b, double& cov) const {
+    for (const CarriedBlock& cb : carried_) {
+        if (cb.group != group) continue;
+        auto ia = std::find(cb.chords.begin(), cb.chords.end(), a);
+        auto ib = std::find(cb.chords.begin(), cb.chords.end(), b);
+        if (ia == cb.chords.end() || ib == cb.chords.end()) continue;
+        cov = cb.Pz(ia - cb.chords.begin(), ib - cb.chords.begin());
         return true;
     }
     return false;

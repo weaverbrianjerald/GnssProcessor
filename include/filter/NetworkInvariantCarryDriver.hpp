@@ -126,6 +126,7 @@ public:
         long long chords_dropped{0};      ///< chords skipped this epoch (an unresolvable cycle arc — v1 refloat).
         long long merges{0};              ///< components formed from ≥2 previous components.
         long long splits{0};              ///< previous components spread across ≥2 new components.
+        long long tree_swaps{0};          ///< components whose carry was re-expressed in a genuinely different fundamental-cycle basis (a projection W that is not a signed permutation — the analogue of the phase-B unimodular pivot).
         long long z_dim{0};               ///< total carried DD dimension at the end of the last epoch.
     };
 
@@ -190,6 +191,11 @@ public:
     }
     /// The carried DD mean+variance of @p chord in @p group (false if not carried).
     bool carriedDdForTest(int group, const ArcKey& chord, double& z, double& var) const;
+
+    /// The carried DD cross-covariance between @p a and @p b in @p group (false unless
+    /// both are chords of the same carried component).  The Fable §2.5 probe that the
+    /// multi-birth joint fold coupled them (a per-chord-independent fold gives 0).
+    bool carriedCrossForTest(int group, const ArcKey& a, const ArcKey& b, double& cov) const;
 
     /// Read a gauge-free estimable double difference straight from the carry: the
     /// value @f$\sum_j \chi_{\text{target}}(\text{arc}_j)\,\hat z_j@f$ over the carried

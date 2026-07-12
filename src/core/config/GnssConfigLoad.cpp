@@ -4518,6 +4518,18 @@ namespace GnssProcessor {
                           network_carry_invariant_qz_,
                           network_carry_invariant_emit_rebase_ ? "true" : "false",
                           network_carry_invariant_honesty_ ? "true" : "false");
+            // Warn-INERT (spec D7): the eq34 frame-continuity hygiene is subsumed by the
+            // invariant carry — the datum targets are plain 0 and continuity lives in the
+            // carried DDs, so pin_round / carry_shift / rpb_q are forced off when armed.
+            if (network_phase_datum_eq34_pin_round_)
+                log->warn("Network: network.phase_datum_eq34_pin_round is INERT under "
+                          "carry_invariant (per-epoch datum targets are 0; DD continuity is the carry).");
+            if (network_phase_datum_eq34_carry_shift_)
+                log->warn("Network: network.phase_datum_eq34_carry_shift is INERT under "
+                          "carry_invariant (no carry S-transform — the datum is re-realized freely).");
+            if (network_phase_datum_eq34_rpb_q_m2s_ > 0.0)
+                log->warn("Network: network.phase_datum_eq34_rpb_q_m2s is INERT under carry_invariant "
+                          "(the RPB re-estimates fresh; the DD carry is the phase time-link).");
         } else if (network_phase_datum_ensemble_) {
             log->info("Network producer: ANCHOR-FREE ENSEMBLE phase-bias datum ON (Fix A) — the "
                       "per-(sat,signal) phase-bias gauge is fixed by a sum-to-zero over the "
