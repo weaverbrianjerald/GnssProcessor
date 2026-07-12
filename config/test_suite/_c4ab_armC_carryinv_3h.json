@@ -1,0 +1,660 @@
+{
+  "app_mode": "post",
+  "data_source": "internal",
+  "processing": {
+    "mode": "ppp-rtk-network",
+    "active_systems": [
+      "GPS",
+      "Galileo"
+    ],
+    "frequency_mode": "Triple",
+    "channel_mode": "all",
+    "elevation_mask_deg": 25.0,
+    "exclude_eclipsing_satellites": true,
+    "leap_seconds_tai": 37.0,
+    "relinearize_geometry": false,
+    "eigen_threads": 20,
+    "satellite_interpolation_mode": "lagrange",
+    "satellite_clock_interpolation_mode": "linear",
+    "signal_priorities": {
+      "GPS": "WCSLXPYMIQ",
+      "Galileo": "CBXIQ"
+    },
+    "max_duration_s": 12000.0
+  },
+  "files": {
+    "internal_data_root": "C:/GnssProcessor/data",
+    "observation_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx"
+  },
+  "estimation": {
+    "estimate_velocity": false,
+    "estimate_phase_clock": false,
+    "estimate_ifb": false,
+    "estimate_sat_biases": false,
+    "no_bia_code_downweight": 1.0,
+    "between_satellite_sd": {
+      "enabled": false
+    },
+    "ambiguity_resolution": {
+      "mode": 0,
+      "wl_only": false,
+      "active_systems": [
+        "GPS",
+        "Galileo"
+      ],
+      "ratio_threshold": 3.0,
+      "ratio_upper_bound": 10000.0,
+      "min_success_rate": 0.999,
+      "nl_max_per_pair_frac": 0.15,
+      "elevation_mask": 25.0,
+      "min_epochs": 1,
+      "max_position_sigma_m": 0.2,
+      "hold_variance": 0.001,
+      "wl_max_frac": 0.4
+    },
+    "adaptive_iono_process_noise": {
+      "enable": false
+    },
+    "ionosphere_weighting": {
+      "enable": true,
+      "common_mode_sigma_m": 50.0,
+      "std_scale": 1.0,
+      "floor_m": 0.05,
+      "elevation_cutoff_deg": 25.0
+    },
+    "global_vtec_sh": {
+      "max_degree": 4,
+      "layer_height_km": 450.0,
+      "earth_radius_km": 6371.0,
+      "kaula_scale_tecu": 10.0,
+      "q_per_degree": 0.01,
+      "mean_vtec_prior_tecu": 15.0,
+      "mean_vtec_prior_sigma_tecu": 15.0,
+      "representation_sigma_tecu": 5.0,
+      "sun_fixed": true,
+      "trace": true,
+      "row_decimation_epochs": 3
+    },
+    "cycle_slip": {
+      "mw": true,
+      "graphic": false
+    }
+  },
+  "filter": {
+    "process_noise": {
+      "position_q": 100.0,
+      "clock_bias_q": 1000.0,
+      "phase_clock_q": 1e-09,
+      "troposphere_q": 1e-09,
+      "ionosphere_q": 0.001,
+      "code_bias_q": 0.0001,
+      "sat_bias_q": 1e-12,
+      "sat_phase_bias_q": 1e-12,
+      "sat_clock_q": 0.01,
+      "system_time_offset_q": 1e-12,
+      "ambiguity_q": 1e-12,
+      "sat_code_bias_q": 1e-10
+    },
+    "initial_std": {
+      "position": 100.0,
+      "clock": 1000.0,
+      "troposphere": 0.5,
+      "ionosphere": 5.0,
+      "ambiguity": 1000.0,
+      "code_bias": 10.0,
+      "sat_bias": 10.0,
+      "sat_phase_bias": 10.0,
+      "sat_clock": 1000.0,
+      "system_time_offset": 1000.0
+    },
+    "measurement_noise": {
+      "code_std_m": 0.3,
+      "phase_std_m": 0.002
+    },
+    "stochastic_model": "elevation"
+  },
+  "model_corrections": {
+    "enable_troposphere": true,
+    "enable_relativistic_correction": true,
+    "enable_shapiro_delay": true,
+    "enable_solid_earth_tide": true,
+    "enable_ocean_tide_loading": false,
+    "enable_pole_tide": true,
+    "enable_atmospheric_loading": false,
+    "enable_satellite_pco": true,
+    "enable_satellite_pcv": true,
+    "enable_receiver_pco": true,
+    "enable_receiver_pcv": true,
+    "enable_phase_windup": true,
+    "enable_higher_order_ionosphere": false,
+    "enable_code_phase_bias": true
+  },
+  "network": {
+    "clock_datum_station": "JPLM00USA",
+    "epoch_sync_tolerance_s": 1.0,
+    "trace_stations": true,
+    "trace_ionosphere": false,
+    "parallel_stations": true,
+    "parallel_min_stations": 8,
+    "product_output_path": "network_products_gps_l1l2.txt",
+    "stations": [
+      {
+        "name": "JPLM00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/jplm00usa/JPLM00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -2493304.9886,
+          -4655214.7866,
+          3565497.6745
+        ]
+      },
+      {
+        "name": "GCGO00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/gcgo00usa/GCGO00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -2281621.7499,
+          -1453585.0819,
+          5756964.8917
+        ]
+      },
+      {
+        "name": "KRGG00ATF",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/krgg00atf/KRGG00ATF_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1406336.1576,
+          3918154.5954,
+          -4816172.8992
+        ]
+      },
+      {
+        "name": "SAVO00BRA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/savo00bra/SAVO00BRA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          4870283.7447,
+          -3864605.3986,
+          -1418872.3211
+        ]
+      },
+      {
+        "name": "SOLO00SLB",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/solo00slb/SOLO00SLB_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -5911340.1223,
+          2156887.9188,
+          -1038663.4273
+        ]
+      },
+      {
+        "name": "BSHM00ISR",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/bshm00isr/BSHM00ISR_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          4395951.0647,
+          3080707.3011,
+          3433498.3539
+        ]
+      },
+      {
+        "name": "CUSV00THA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cusv00tha/CUSV00THA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -1132915.0926,
+          6092528.5166,
+          1504633.1147
+        ]
+      },
+      {
+        "name": "GAMB00PYF",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/gamb00pyf/GAMB00PYF_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -4147127.4937,
+          -4152221.6682,
+          -2490032.7642
+        ]
+      },
+      {
+        "name": "PALM00ATA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/palm00ata/PALM00ATA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1192672.2373,
+          -2450887.7174,
+          -5747096.0437
+        ]
+      },
+      {
+        "name": "STJO00CAN",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/stjo00can/STJO00CAN_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          2612630.7477,
+          -3426807.0566,
+          4686758.0378
+        ]
+      },
+      {
+        "name": "WIND00NAM",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/wind00nam/WIND00NAM_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          5633708.7989,
+          1732018.1244,
+          -2433985.4318
+        ]
+      },
+      {
+        "name": "MAC100AUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mac100aus/MAC100AUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -3464039.0224,
+          1334173.3276,
+          -5169223.7734
+        ]
+      },
+      {
+        "name": "MIZU00JPN",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mizu00jpn/MIZU00JPN_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -3857169.9416,
+          3108693.7043,
+          4004040.6697
+        ]
+      },
+      {
+        "name": "GLPS00ECU",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/glps00ecu/GLPS00ECU_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -33800.6802,
+          -6377516.5138,
+          -82154.1852
+        ]
+      },
+      {
+        "name": "MRO100AUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mro100aus/MRO100AUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -2556630.2457,
+          5097138.3137,
+          -2848384.5613
+        ]
+      },
+      {
+        "name": "SEYG00SYC",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/seyg00syc/SEYG00SYC_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          3597835.802,
+          5240884.171,
+          -516780.9054
+        ]
+      },
+      {
+        "name": "NVSK00RUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/nvsk00rus/NVSK00RUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          433605.0726,
+          3655558.5873,
+          5191286.6609
+        ]
+      },
+      {
+        "name": "KOKV00USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/kokv00usa/KOKV00USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -5543838.3744,
+          -2054585.5359,
+          2387810.5802
+        ]
+      },
+      {
+        "name": "YKRO00CIV",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/ykro00civ/YKRO00CIV_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          6306439.9684,
+          -578380.4475,
+          757956.7769
+        ]
+      },
+      {
+        "name": "OAFA00ARG",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/oafa00arg/OAFA00ARG_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1984093.387,
+          -5068868.0957,
+          -3314487.8678
+        ]
+      },
+      {
+        "name": "NYA200NOR",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/nya200nor/NYA200NOR_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1202379.2205,
+          252474.7118,
+          6237786.638
+        ]
+      },
+      {
+        "name": "LMMF00MTQ",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/lmmf00mtq/LMMF00MTQ_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          2993387.4355,
+          -5399363.7811,
+          1596748.226
+        ]
+      },
+      {
+        "name": "CEBR00ESP",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cebr00esp/CEBR00ESP_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          4846664.7903,
+          -370194.9204,
+          4116929.695
+        ]
+      },
+      {
+        "name": "NIUM00NIU",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/nium00niu/NIUM00NIU_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -5937161.0125,
+          -1054674.9348,
+          -2071385.8593
+        ]
+      },
+      {
+        "name": "CAS100ATA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cas100ata/CAS100ATA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -901776.1304,
+          2409383.1971,
+          -5816748.5796
+        ]
+      },
+      {
+        "name": "GUAM00GUM",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/guam00gum/GUAM00GUM_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -5071312.6451,
+          3568363.6556,
+          1488904.4182
+        ]
+      },
+      {
+        "name": "CHUR00CAN",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/chur00can/CHUR00CAN_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -236439.2256,
+          -3307616.9824,
+          5430049.3667
+        ]
+      },
+      {
+        "name": "MBAR00UGA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mbar00uga/MBAR00UGA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          5482951.0692,
+          3260442.9625,
+          -66519.5412
+        ]
+      },
+      {
+        "name": "SYOG00ATA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/syog00ata/SYOG00ATA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1766207.9563,
+          1460290.3084,
+          -5932297.6567
+        ]
+      },
+      {
+        "name": "COCO00AUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/coco00aus/COCO00AUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -741951.2552,
+          6190961.7394,
+          -1337767.1756
+        ]
+      },
+      {
+        "name": "MDVJ00RUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mdvj00rus/MDVJ00RUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          2845455.6671,
+          2160954.4821,
+          5265993.3464
+        ]
+      },
+      {
+        "name": "POVE00BRA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/pove00bra/POVE00BRA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          2774265.5701,
+          -5662060.1926,
+          -959415.6986
+        ]
+      },
+      {
+        "name": "PARK00AUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/park00aus/PARK00AUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -4554255.4412,
+          2816652.4444,
+          -3454059.4849
+        ]
+      },
+      {
+        "name": "LCK400IND",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/lck400ind/LCK400IND_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          894678.0969,
+          5620594.9058,
+          2869567.72
+        ]
+      },
+      {
+        "name": "STHL00GBR",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/sthl00gbr/STHL00GBR_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          6104817.2908,
+          -605827.7103,
+          -1740738.6063
+        ]
+      },
+      {
+        "name": "TWTF00TWN",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/twtf00twn/TWTF00TWN_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -2994428.7498,
+          4951309.0205,
+          2674496.6651
+        ]
+      },
+      {
+        "name": "WARK00NZL",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/wark00nzl/WARK00NZL_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -5115333.5915,
+          477886.8682,
+          -3767146.9767
+        ]
+      },
+      {
+        "name": "MRC100USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mrc100usa/MRC100USA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1092811.7187,
+          -4877221.9757,
+          3948968.1232
+        ]
+      },
+      {
+        "name": "MAJU00MHL",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/maju00mhl/MAJU00MHL_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -6257572.0592,
+          950333.7779,
+          785215.7283
+        ]
+      },
+      {
+        "name": "SGOC00LKA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/sgoc00lka/SGOC00LKA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1113279.4836,
+          6233644.3328,
+          760277.3738
+        ]
+      },
+      {
+        "name": "CPVG00CPV",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cpvg00cpv/CPVG00CPV_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          5626883.4548,
+          -2380932.2625,
+          1824484.0515
+        ]
+      },
+      {
+        "name": "SCTB00ATA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/sctb00ata/SCTB00ATA_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -1311028.5993,
+          308512.4284,
+          -6213390.8828
+        ]
+      },
+      {
+        "name": "DARW00AUS",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/darw00aus/DARW00AUS_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -4091359.7694,
+          4684606.3629,
+          -1408578.8742
+        ]
+      },
+      {
+        "name": "VOIM00MDG",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/voim00mdg/VOIM00MDG_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          4054014.0479,
+          4316070.4168,
+          -2365223.8732
+        ]
+      },
+      {
+        "name": "INEG00MEX",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/ineg00mex/INEG00MEX_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -1260435.7054,
+          -5788546.4465,
+          2360339.7381
+        ]
+      },
+      {
+        "name": "REYK00ISL",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/reyk00isl/REYK00ISL_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          2587383.9066,
+          -1043033.5603,
+          5716564.1753
+        ]
+      },
+      {
+        "name": "HOLB00CAN",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/holb00can/HOLB00CAN_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -2503040.8237,
+          -3188233.3421,
+          4908701.3939
+        ]
+      },
+      {
+        "name": "DJIG00DJI",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/djig00dji/DJIG00DJI_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          4583085.8342,
+          4250982.7457,
+          1266243.2749
+        ]
+      },
+      {
+        "name": "KIT300UZB",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/kit300uzb/KIT300UZB_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          1944944.6112,
+          4556652.3836,
+          4004326.0709
+        ]
+      },
+      {
+        "name": "ULAB00MNG",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/ulab00mng/ULAB00MNG_R_20241290000_01D_30S_MO.rnx",
+        "position_ecef": [
+          -1257409.1125,
+          4099404.3184,
+          4707992.5358
+        ]
+      }
+    ],
+    "closed_loop": {
+      "enable": true,
+      "consumer_undifferenced": true,
+      "consume_network_products": true,
+      "consume_network_clock": false,
+      "ar_mode": 1,
+      "ar_wl_only": false,
+      "ar_active_systems": [
+        "GPS",
+        "Galileo"
+      ],
+      "station": {
+        "name": "CIT100USA",
+        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/cit1/cit11290.24o",
+        "position_ecef": [
+          -2491490.7172,
+          -4660802.8495,
+          3559129.1872
+        ]
+      },
+      "consume_network_iono": true
+    },
+    "estimate_sat_code_bias": false,
+    "estimate_glonass": false,
+    "estimate_iono_sh": true,
+    "phase_leveling": true,
+    "phase_leveling_q_amb": 0.0,
+    "phase_leveling_warmup_epochs": 6,
+    "phase_leveling_max_gap_s": 120.0,
+    "trace_dd_fractional": true,
+    "trace_dd_fractional_max_pairs": 2000,
+    "trace_dd_fractional_epoch_stride": 1,
+    "epoch_decimation_n": 2,
+    "phase_leveling_var_floor_m2": 4e-05,
+    "shared_carry_var_floor_pb_m2": 3e-07,
+    "shared_carry_var_floor_cb_m2": 2.9999999999999997e-05,
+    "phase_leveling_warmup_on_convergence": true,
+    "phase_leveling_refloat_at_convergence": true,
+    "phase_leveling_conv_rms_thresh_tecu": 0.5,
+    "carry_conditional_coupling": true,
+    "carry_coupling_joint_whiten": false,
+    "shared_carry_full_cov": true,
+    "code_datum_time_linked": true,
+    "trace_section_timers": true,
+    "carry_coupling_time_update": true,
+    "phase_datum_eq34": true,
+    "carry_invariant": true,
+    "carry_invariant_qz": 0.0001
+  },
+  "data_download": {
+    "enabled": false,
+    "product_source": "COD",
+    "product_type": "FIN",
+    "year": 2024,
+    "doy": 129
+  },
+  "logging": {
+    "enable_main_log": true,
+    "enable_ambiguity_resolver": true,
+    "levels": {
+      "measurement_model": "warn",
+      "state_manager": "warn",
+      "state_initializer": "warn",
+      "ppp_model": "warn",
+      "kalman_filter": "warn",
+      "ambiguity_resolver": "info"
+    }
+  }
+}
