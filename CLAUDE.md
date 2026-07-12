@@ -15,6 +15,14 @@ Targets: `gnss_core` (static lib), `gnss_processor` (exe), `gnss_tests` (exe), `
 
 Build tree: `build/x64-Debug` and `build/x64-Release`.
 
+**NEVER run `gnss_processor` on data from the Debug tree** (standing user
+directive). Debug's unoptimized Eigen is 50–100× slower — a Release run of
+minutes becomes hours. Debug is for compile checks and `gnss_tests` only;
+every data run (smoke, field grade, A/B, timing) uses
+`build/x64-Release/gnss_processor.exe`. When another session may rebuild
+concurrently, run a renamed copy (e.g. `gnss_processor_fable_run.exe`) so the
+linker never hits a locked exe.
+
 ## Layout
 
 ```
