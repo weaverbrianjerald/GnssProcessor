@@ -100,14 +100,23 @@ A DD prior row touches 4 local ambiguity columns at TWO stations: it is a
 cross-local-block row, which the current border solve (stations independent
 given the shared border) cannot represent. Three options, assessed:
 
-- **(i) RECOMMENDED — sparse cross-block prior rows in the reduce step.**
-  Extend NeqAccumulator/the reduction with a "coupling rows" pass that folds
-  rows spanning two stations' local blocks (plus nothing shared). Cost: the
-  two blocks' reduction couples — handle by folding DD priors AFTER per-
-  station reduction, on the RETAINED ambiguity columns (the reduction already
-  keeps ambiguity columns for the pin fold; verify splitStation exposes them
-  post-reduce). Exactness preserved; implementation is a bounded extension of
-  existing machinery.
+- **(i) RECOMMENDED — ADJUDICATED per the phase-A scout
+  (docs/HANDOFF_card4_phaseA_scout.md): a JOINT rank-K per-component Woodbury
+  fold on the retained reduction factors.** The DD/chord constraint is
+  gauge-free (only local ambiguity columns; no shared column) — exactly the
+  `SumZeroGauge::terms` (station, local_col) shape. Ambiguity columns are
+  Schur-ELIMINATED post-reduce (not "addressable" as previously worded), but
+  the kernel retains per-station N_sr / u_r / N_rr-LDLᵀ, and
+  `foldReducedSumZeroGauges` (NetworkNormalEquations.cpp:522–590) already
+  folds a cross-station local-column constraint post-reduce EXACTLY via
+  Woodbury from those factors, no re-reduce. Generalize rank-1 → rank-K:
+  Ñ_ss += G (Pᶻ + B)⁻¹ Gᵀ with B = Cᴸᵀ N_LL⁻¹ Cᴸ, folded JOINTLY per
+  component (fundamental cycles SHARE tree edges and Pᶻ is dense —
+  independent rank-1 scalar folds are INEXACT; the scout's adversarial pass
+  caught this). Needs: `SumZeroGauge::terms` extended with signed
+  coefficients + multiple columns per station; store the K×K (Pᶻ+B) factor
+  and G for the post-solve z reconstruction. Per-component K bounds the
+  cost — no O(n³) border blowup.
 - (ii) Border augmentation: add z as shared border states + hard consistency
   rows per station pair. Rejected v1: border grows by ~#chords (≫ current
   border), O(n³) blowup — the D6-v2 cost class again.
@@ -115,10 +124,11 @@ given the shared border) cannot represent. Three options, assessed:
   the observations). Rejected: reintroduces correlated-obs bookkeeping and
   breaks the per-station assembly (the BSSD cost, network-wide).
 
-v1 fallback if (i) proves invasive: fold the DD prior as TWO half-rows via an
-auxiliary per-DD nuisance column (splits the 4-column row into 2×2-column
-rows sharing the auxiliary) — algebraically exact, keeps blocks separable,
-+1 local column per chord at one station.
+The auxiliary-column fallback is RETIRED by the phase-A scout: option (i) is
+buildable exactly on existing retained-factor machinery
+(foldReducedSumZeroGauges is the unique cross-station injection path;
+Card-1's stationRegression/addStationPrior are single-station-on-border and
+NOT templates for this).
 
 ### D4. Per-epoch datum and the emission frame (the consumer contract)
 
@@ -207,11 +217,17 @@ is a separate axis).
   Card 4 must survive; I1 settles the B8 algebra question for the record).
   Independent of M2 (LS-VCE) — but wire the D5 honesty instrument so M2 has
   its measurement.
-- OPEN-1: reduction-layer contract for (i) — verify post-reduce ambiguity
-  columns are addressable across station pairs; else fall back to the
-  auxiliary-column trick (D3).
-- OPEN-2: component merge (two z-stores unify): union tree + re-derived
-  chord set; T is block-unimodular; spec the deterministic merge order.
+- OPEN-1: ✅ RESOLVED (phase-A scout) — see D3 option (i): joint rank-K
+  per-component Woodbury on retained factors; aux fallback retired.
+- OPEN-2: ✅ RESOLVED (phase-A scout) — merge is EASY-direction: the bridge is
+  a cut edge, so every pre-existing chord's fundamental cycle is UNCHANGED
+  (T = block-IDENTITY, stronger than unimodular); carried ẑ/Pᶻ transfer
+  verbatim; one bridge→tree edge, surplus bridges→new chords via tap-off.
+  Component id: PER-EPOCH CANONICAL (min sat label — anchor on satellite
+  labels, receiver pool indices are reused), not cross-epoch stable; the
+  z-store is keyed by CHORD identity, never component label. An r1 re-root at
+  merge forces NO z transform (cycles are fixed by the edge SET, not the
+  root); any co-occurring tree-edge death is a separate D1 unimodular swap.
 - OPEN-3: GLONASS — z entries for FDMA via the IE-FDMA (Λ⊗L)Ẑ transform
   (literature pack §7) — v2, after CDMA fields prove out.
 - OPEN-4: warm-resume — snapshot ẑ/Pᶻ (add to NetworkStateSnapshot,
