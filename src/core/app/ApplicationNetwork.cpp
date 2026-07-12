@@ -66,6 +66,7 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
+#include "products/NetworkEmitRebase.hpp"   // Card 4 (M1) phase D: emit-layer frame re-base
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // M4: combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // RTB-7: atomic state snapshot + warm resume
@@ -2469,6 +2470,15 @@ int Application::runNetwork() {
     NetworkInvariantCarryDriver::Config carry_cfg;
     carry_cfg.qz = config_.networkCarryInvariantQz();
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
+    // Card 4 (M1) phase D: the emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md).
+    // Re-references the emitted per-(sat,σ) phase biases onto the previous EMISSION
+    // frame so the freely-re-realized eq34 datum's per-epoch gauge churn does not
+    // storm the consumer with spurious ambiguity resets; a genuine reference-path
+    // slip's integer step is left intact so the emitter jump test still fires.
+    // Default-ON when carry_invariant is armed (spec D7); the OFF path is
+    // carry_invariant=false (byte-identical — the engine is never touched).
+    const bool emit_rebase_on = carry_invariant && config_.networkCarryInvariantEmitRebase();
+    NetworkEmitRebase emit_rebase_engine;
     std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
     std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
     bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
@@ -8719,6 +8729,113 @@ int Application::runNetwork() {
                 }
             }
         }
+        // Card 4 (M1) phase D: emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md
+        // §1).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
+        // emitted per-(sat,σ) phase bias churns every epoch by a gauge element (a common
+        // per-component fractional + a per-sat integer×λ) that leaves user DDs invariant
+        // but would trip the emitter's 0.05 m jump test and storm the consumer with
+        // spurious resets.  Re-reference the emitted biases onto the PREVIOUS EMISSION
+        // frame BEFORE the store push + on-disk write, so both the in-process consumer
+        // and a NetworkProductIO replay carry the re-based values (the transform is baked
+        // into the product — replay reproduces the disc counters with no re-base rerun).
+        // A genuine reference-path (tree-edge) slip's integer step is left INTACT so the
+        // jump test still fires (never laundered — standing invariant #1).  Gated on
+        // carry_invariant && emit_rebase ⇒ OFF path (carry_invariant=false) byte-identical.
+        if (emit_rebase_on && !sol.sats.empty()) {
+            // (a) Reference-path slip set: (sat,σ) whose emission reference — a spanning-
+            //     tree/chain (pinned_amb_targets) edge — slipped this epoch.  Only a
+            //     tree-edge slip moves the emitted b_s; a chord slip refloats its DD
+            //     without touching the reference, so it is NOT a re-base survivor.
+            std::set<std::pair<std::string, std::string>> rb_slipped_ref;   // (sat, signal)
+            for (const auto& [sta_i, amb_key] : carry_slipped_ambs) {
+                if (sta_i < 0 || sta_i >= static_cast<int>(stations.size())) continue;
+                if (!stations[sta_i].pinned_amb_targets.count(amb_key)) continue;   // tree edge only
+                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+                if (parts && !parts->satellite.empty())
+                    rb_slipped_ref.insert({parts->satellite, parts->signal});
+            }
+
+            // (b) Connected-component partition of the (receiver,satellite) bipartite
+            //     graph per (const,signal): the common fractional δ is shared only within
+            //     a component (each elects its OWN datum receiver r1).  Union-find over
+            //     this epoch's shared arcs — the same walk buildCarryDdPriors does.
+            std::map<std::pair<char, std::string>, std::map<std::string, std::string>> dsu;
+            auto findRoot = [](const std::map<std::string, std::string>& p,
+                               std::string v) -> std::string {
+                auto it = p.find(v);
+                while (it != p.end() && it->second != v) { v = it->second; it = p.find(v); }
+                return v;
+            };
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i] || est_index_of[i] < 0) continue;
+                for (const auto& [amb, sidx] : stations[i].sm->getAmbiguities()) {
+                    (void)sidx;
+                    const auto parts = StateKeys::parseAmbiguityKey(amb);
+                    if (!parts || parts->satellite.empty() || parts->satellite.front() == 'R')
+                        continue;   // GLONASS FDMA excluded (no common-λ integer DD)
+                    if (!shared_phase_keys.count(
+                            StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal)))
+                        continue;   // not an eq34 graph arc (gated/legacy lump)
+                    auto& p = dsu[{parts->satellite.front(), parts->signal}];
+                    const std::string rv = "R" + std::to_string(i);
+                    const std::string sv = "S" + parts->satellite;
+                    if (!p.count(rv)) p[rv] = rv;
+                    if (!p.count(sv)) p[sv] = sv;
+                    p[findRoot(p, rv)] = findRoot(p, sv);   // union
+                }
+            }
+            // (sat,signal) -> global component id (1-based; 0 = unassigned sentinel).
+            std::map<std::string, int> comp_of;
+            int next_comp = 0;
+            for (auto& [g, p] : dsu) {
+                std::map<std::string, int> root2id;
+                for (const auto& [v, par] : p) {
+                    (void)par;
+                    if (v.empty() || v[0] != 'S') continue;   // satellite vertices only
+                    const std::string root = findRoot(p, v);
+                    int& id = root2id[root];
+                    if (id == 0) id = ++next_comp;
+                    comp_of[v.substr(1) + "|" + g.second] = id;
+                }
+            }
+
+            // (c) Build re-base entries from the emitted phase biases (GLONASS + non-eq34
+            //     keys excluded ⇒ their raw emitted frame is untouched).  λ per (const,σ).
+            std::vector<NetworkEmitRebase::Entry> rb_entries;
+            std::map<std::pair<char, std::string>, double> lambda_of;
+            auto sysOfChar = [](char c) -> System {
+                switch (c) { case 'G': return System::GPS;    case 'E': return System::Galileo;
+                             case 'C': return System::BeiDou; case 'J': return System::QZSS;
+                             default:  return System::Unknown; }
+            };
+            for (auto& s : sol.sats) {
+                if (s.sat.empty() || s.sat.front() == 'R') continue;
+                const char cons = s.sat.front();
+                for (auto& [signal, npb] : s.phase_bias) {
+                    const auto cit = comp_of.find(s.sat + "|" + signal);
+                    if (cit == comp_of.end()) continue;   // legacy/gated key: keep raw frame
+                    const std::pair<char, std::string> g{cons, signal};
+                    double& lam = lambda_of[g];
+                    if (lam == 0.0 && eq34_ppp_utils)
+                        lam = eq34_ppp_utils->getWavelength(sysOfChar(cons), signal, s.sat);
+                    NetworkEmitRebase::Entry e;
+                    e.sat = s.sat; e.signal = signal; e.component = cit->second;
+                    e.lambda_m = lam; e.bias_m = npb.bias_m;
+                    e.slipped = rb_slipped_ref.count({s.sat, signal}) != 0;
+                    rb_entries.push_back(std::move(e));
+                }
+            }
+            emit_rebase_engine.rebaseEpoch(rb_entries);
+            // Write the re-based biases back into the emitted epoch (match by key; the
+            // engine mutates in place but a key match is robust to any future reorder).
+            std::map<std::string, double> rb_out;
+            for (const auto& e : rb_entries) rb_out[e.sat + "|" + e.signal] = e.bias_m;
+            for (auto& s : sol.sats)
+                for (auto& [signal, npb] : s.phase_bias) {
+                    const auto it = rb_out.find(s.sat + "|" + signal);
+                    if (it != rb_out.end()) npb.bias_m = it->second;
+                }
+        }
         emitter.emitToStore(sol, network_store);
         // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
         // realized pivots) every N seconds of PRODUCT time, and additionally on any
@@ -11189,6 +11306,22 @@ int Application::runNetwork() {
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
+    if (emit_rebase_on) {
+        // Card 4 (M1) phase D: the emit-layer re-base telemetry (spec §3) — the
+        // integer cycles + common-fractional shift removed onto the previous emission
+        // frame (an S-selection on OUTPUTS ONLY; user DDs are invariant to it).  Feeds
+        // the consumer A/B: high integer/frac churn with a silent disc counter is the
+        // datum-freedom the carry buys; a surviving disc step is a genuine event.
+        const auto& rb = emit_rebase_engine.counters();
+        log->info("Network (Card 4/M1 phase D emit re-base): {} emit epoch(s), {} component "
+                  "re-base(s), {} integer cycle(s) removed across {} key(s), {} reference-path "
+                  "slip step(s) preserved; mean |common-fractional δ| = {:.4f} m over the run "
+                  "(OUTPUTS-only S-selection; DDs invariant).",
+                  rb.epochs, rb.components, rb.integer_cycles, rb.keys_rebased,
+                  rb.slips_preserved,
+                  rb.frac_shift_n ? rb.frac_shift_abs_sum / static_cast<double>(rb.frac_shift_n)
+                                  : 0.0);
+    }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",

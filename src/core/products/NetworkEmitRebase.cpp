@@ -1,0 +1,109 @@
+/**
+ * @file NetworkEmitRebase.cpp
+ * @brief Implementation of the Card 4 (M1) phase-D emit-layer frame re-base.
+ */
+
+#include "products/NetworkEmitRebase.hpp"
+
+#include <algorithm>
+
+namespace GnssProcessor {
+
+void NetworkEmitRebase::reset() {
+    last_emit_.clear();
+    // Counters accumulate over the whole run (like the carry driver's) — a mid-run
+    // reset() is a carry cold start, not a counter reset, so leave counters_ intact.
+}
+
+bool NetworkEmitRebase::lastEmittedForTest(const std::string& sat,
+                                           const std::string& signal,
+                                           double& value) const {
+    const auto it = last_emit_.find(sat + "|" + signal);
+    if (it == last_emit_.end()) return false;
+    value = it->second;
+    return true;
+}
+
+void NetworkEmitRebase::rebaseEpoch(std::vector<Entry>& entries) {
+    if (entries.empty()) return;
+    ++counters_.epochs;
+
+    // Bucket entry indices by connected-component id (the common fractional δ is
+    // per component — the datum receiver r1 is elected per connected component of
+    // the bipartite (rx,sat) graph, so its fractional lump is shared only within).
+    std::map<int, std::vector<std::size_t>> by_comp;
+    for (std::size_t i = 0; i < entries.size(); ++i)
+        by_comp[entries[i].component].push_back(i);
+
+    for (const auto& [comp, idxs] : by_comp) {
+        (void)comp;
+        ++counters_.components;
+
+        // Wavelength for the component (all its entries share a signal ⇒ one λ;
+        // GLONASS FDMA is excluded upstream so a per-sat λ never arises here).
+        double lambda = 0.0;
+        for (const std::size_t i : idxs)
+            if (entries[i].lambda_m > 0.0) { lambda = entries[i].lambda_m; break; }
+
+        // The CLEAN per-key steps Δ_s = raw_s − last_emit_s, over non-slipped,
+        // baselined keys only — the estimator of the common fractional δ.  A
+        // slipped or first-sighting key is deliberately excluded so it cannot
+        // pull δ (and its own integer step is preserved below).
+        struct Clean { std::size_t i; double delta_step; };
+        std::vector<Clean> clean;
+        clean.reserve(idxs.size());
+        for (const std::size_t i : idxs) {
+            const Entry& e = entries[i];
+            if (e.slipped) continue;
+            const auto it = last_emit_.find(e.sat + "|" + e.signal);
+            if (it == last_emit_.end()) continue;   // first sighting: not a δ witness
+            clean.push_back({i, e.bias_m - it->second});
+        }
+
+        // Common fractional δ by robust coordinate descent: alternate integer
+        // rounding (per key) with a MEDIAN of the residuals (robust to the
+        // minority of clean keys whose Δ carries a genuine per-sat integer, e.g.
+        // an undetected reattach).  Two sweeps converge — between 30 s epochs a
+        // carried DD drifts ≪ ½ cycle, so the integers are unambiguous.
+        double delta = 0.0;
+        if (lambda > 0.0 && !clean.empty()) {
+            std::vector<double> resid(clean.size());
+            for (int sweep = 0; sweep < 2; ++sweep) {
+                for (std::size_t j = 0; j < clean.size(); ++j) {
+                    const double k = std::round((clean[j].delta_step - delta) / lambda);
+                    resid[j] = clean[j].delta_step - k * lambda;
+                }
+                std::nth_element(resid.begin(), resid.begin() + resid.size() / 2,
+                                 resid.end());
+                delta = resid[resid.size() / 2];   // median residual = the shared fractional
+            }
+        }
+
+        // Apply.  δ is common to the whole component (keeps every satellite — even
+        // a fresh birth — in one re-based frame); the per-sat integer is removed
+        // ONLY for a clean, baselined key.  A slipped key keeps k_s=0 so its
+        // integer step survives → emitter jump test fires (never laundered).
+        for (const std::size_t i : idxs) {
+            Entry& e = entries[i];
+            const std::string key = e.sat + "|" + e.signal;
+            const auto it = last_emit_.find(key);
+            const bool baselined = (it != last_emit_.end());
+
+            long long k = 0;
+            if (!e.slipped && baselined && lambda > 0.0)
+                k = std::llround((e.bias_m - it->second - delta) / lambda);
+
+            e.bias_m = e.bias_m - static_cast<double>(k) * lambda - delta;
+            last_emit_[key] = e.bias_m;   // advance the emission frame (== emitter's last_phase_bias_)
+
+            counters_.integer_cycles += std::llabs(k);
+            if (k != 0) ++counters_.keys_rebased;
+            if (e.slipped && baselined) ++counters_.slips_preserved;
+        }
+
+        counters_.frac_shift_abs_sum += std::abs(delta);
+        ++counters_.frac_shift_n;
+    }
+}
+
+}  // namespace GnssProcessor

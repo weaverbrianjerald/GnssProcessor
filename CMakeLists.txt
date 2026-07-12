@@ -136,6 +136,7 @@ add_library(gnss_core STATIC
     src/core/products/StationInfoFile.cpp
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
+    src/core/products/NetworkEmitRebase.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -254,6 +255,7 @@ add_executable(gnss_tests
     tests/test_network_carry_vce.cpp
     tests/test_network_zstore.cpp
     tests/test_network_invariant_carry_driver.cpp
+    tests/test_card4_emit_rebase.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
