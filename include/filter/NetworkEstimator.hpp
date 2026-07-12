@@ -528,6 +528,22 @@ public:
     Eigen::VectorXd ddPriorPosteriorMean(std::size_t b, const Eigen::VectorXd& x_s) const {
         return neq_.ddPriorPosteriorMean(b, x_s);
     }
+
+    /**
+     * @brief Posterior COVARIANCE of DD-prior block @p b — the @f$P^z@f$ the z-store
+     *        carries forward (Card 4 / M1 phase C3b).
+     *
+     * Builds the datum-as-known shared covariance @c cov_free from the last solve's
+     * @c shared_cov_ (the datum-pinned columns zeroed as EXACT gauges, identical to
+     * @ref conditionalLocalCovariance) and forwards to
+     * @ref NetworkNormalEquations::ddPriorPosteriorCovariance.  The DD is gauge-free,
+     * so the K×K result is datum-invariant.
+     *
+     * @param b     DD-prior block index (input order; see @ref ddPriorPosteriorMean).
+     * @param datum The same minimum-constraint datum passed to @ref solve.
+     */
+    Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Datum& datum) const;
+
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 

@@ -851,6 +851,81 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsMatchesDenseAugmentedSolve) 
     EXPECT_EQ(neq.numDdPriorBlocks(), 1u);
 }
 
+// Phase C3b — the posterior COVARIANCE readout (ddPriorPosteriorCovariance) must
+// equal C_L Σ_LL C_Lᵀ of the dense augmented solve: the same closed form the z-store
+// carries forward.  Independent dense reference (augment N += Cᵀ Pz⁻¹ C, invert,
+// project), fed the datum-free shared covariance Σ_ss = [N_aug⁻¹]_ss.
+TEST(NetworkNormalEquationsTest, DdPriorPosteriorCovarianceMatchesDenseAugmentedSolve) {
+    std::mt19937 gen(20260714);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, /*n_locals=*/{3, 3, 3},
+                                       /*m_obs=*/{10, 11, 12}, /*correlated=*/true);
+    const double sp = 1e-2, lp = 1e-2;
+
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {
+        {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+        {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+    };
+    blk.Pz = (Eigen::MatrixXd(2, 2) << 0.04, 0.01, 0.01, 0.09).finished();
+    blk.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+
+    // Dense reference: N_aug = N + Cᵀ Pz⁻¹ C; Σ_aug = N_aug⁻¹; Pᶻ_post = C Σ_aug Cᵀ.
+    DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+    const Eigen::Index P = dense.N.rows();
+    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(2, P);
+    for (Eigen::Index k = 0; k < 2; ++k)
+        for (const auto& t : blk.rows[static_cast<std::size_t>(k)])
+            C(k, dense.local_offset[t.station] + t.local_col) += t.coeff;
+    const Eigen::MatrixXd PzInv = blk.Pz.inverse();
+    const Eigen::MatrixXd N_aug = dense.N + C.transpose() * PzInv * C;
+    const Eigen::MatrixXd Sigma_aug = N_aug.inverse();
+    const Eigen::MatrixXd Pz_post_ref = C * Sigma_aug * C.transpose();
+    const Eigen::MatrixXd cov_free = Sigma_aug.topLeftCorner(n_shared, n_shared);  // Σ_ss
+
+    // Schur path: fold, then read the posterior covariance from the cached factors.
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr =
+            s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                       WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq.reduce();
+    neq.foldReducedDdPriors({blk});
+
+    const Eigen::MatrixXd Pz_post = neq.ddPriorPosteriorCovariance(0, cov_free);
+    EXPECT_TRUE(Pz_post.isApprox(Pz_post_ref, 1e-9))
+        << "Pᶻ_post=\n" << Pz_post << "\nref=\n" << Pz_post_ref;
+    // Sanity: symmetric, and strictly tighter than the prior (information was folded).
+    EXPECT_LT((Pz_post - Pz_post.transpose()).cwiseAbs().maxCoeff(), 1e-12);
+    EXPECT_LT(Pz_post(0, 0), blk.Pz(0, 0)) << "posterior variance must be below the prior";
+    EXPECT_LT(Pz_post(1, 1), blk.Pz(1, 1));
+    // Degenerate/inert path: a non-PD block returns the untouched prior covariance.
+    NetworkNormalEquations::DdPriorBlock bad = blk;
+    bad.Pz(0, 0) = -1.0;   // not SPD ⇒ M=0 ⇒ inert
+    NetworkNormalEquations neq2(n_shared);
+    neq2.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                       Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr =
+            s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq2.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                        WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq2.reduce();
+    neq2.foldReducedDdPriors({bad});
+    EXPECT_TRUE(neq2.ddPriorPosteriorCovariance(0, cov_free).isApprox(bad.Pz, 1e-12))
+        << "an inert (non-PD) block returns the prior covariance unchanged";
+}
+
 // The hard-constraint limit: a K=1 DD prior with Pz→0 and zhat=0 (a "sum of two
 // columns = 0" constraint) must coincide with the shipped sum-to-zero gauge fold on
 // the same columns — the generalization is exact, not a new mechanism.

@@ -433,6 +433,42 @@ public:
     Eigen::VectorXd ddPriorPosteriorMean(std::size_t block_index,
                                          const Eigen::VectorXd& x_s) const;
 
+    /**
+     * @brief Posterior COVARIANCE of a folded block's K double differences — the
+     *        @f$P^z@f$ the z-store carries forward (the Card-4 phase-C posterior
+     *        readout the kernel's mean-only fold left open).
+     *
+     * The block's DD @f$z=C_L x_L@f$ is a gauge-free function of the local
+     * ambiguities, whose full posterior covariance (prior + all network data,
+     * including the shared-parameter coupling) has the closed form
+     * @f[
+     *   P^z_{\text{post}}
+     *     = \underbrace{(P^z - P^z M P^z)}_{=\,(P^{z-1}+B^{-1})^{-1}=C_L N_{LL}'^{-1}C_L^\top}
+     *     + (P^z M G^\top)\,\Sigma_{ss}\,(G M P^z),
+     * @f]
+     * built entirely from the cached fold factors @f$(P^z,M,G)@f$ (see
+     * @ref foldReducedDdPriors) and the datum-as-known shared covariance
+     * @f$\Sigma_{ss}@f$.  Derivation (@f$N_{LL}'=N_{LL}+C_L^\top P^{z-1}C_L@f$,
+     * @f$\Sigma_{LL}=N_{LL}'^{-1}+N_{LL}'^{-1}N_{Ls}\Sigma_{ss}N_{sL}N_{LL}'^{-1}@f$,
+     * Woodbury): the first term is @f$C_L N_{LL}'^{-1} C_L^\top = B-BMB = P^z-P^zMP^z@f$
+     * (the conditional-given-@f$x_s@f$ posterior) and the coupling term uses
+     * @f$C_L N_{LL}'^{-1} N_{Ls} = (I-BM)G^\top = P^z M G^\top@f$ (since
+     * @f$P^zM+BM=(P^z+B)M=I@f$).  The DD is estimable, so the result is
+     * datum-invariant despite @f$\Sigma_{ss}@f$ being datum-constrained.
+     *
+     * @param block_index INPUT block index (input order is preserved; see
+     *        @ref ddPriorPosteriorMean).
+     * @param cov_free_xs The shared covariance with the datum-pinned columns treated
+     *        as EXACT (variance 0) — the same @c cov_free the
+     *        @ref reconstructStationCovariance consumers build (n_shared × n_shared).
+     * @return The K×K posterior DD covariance (the prior @c Pz unchanged for an inert
+     *         degenerate block since @f$M=0@f$; empty for a chordless @f$K=0@f$ slot).
+     * @throws std::out_of_range on a bad index; std::invalid_argument on a
+     *         @p cov_free_xs size mismatch.
+     */
+    Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t block_index,
+                                               const Eigen::MatrixXd& cov_free_xs) const;
+
     /// @return Number of DD-prior blocks (== the input count of the last
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }

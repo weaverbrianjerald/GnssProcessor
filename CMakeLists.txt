@@ -148,6 +148,7 @@ add_library(gnss_core STATIC
     src/core/filter/CovarianceReReference.cpp
     src/core/filter/NetworkNormalEquations.cpp
     src/core/filter/NetworkEstimator.cpp
+    src/core/filter/NetworkInvariantCarryDriver.cpp
     src/core/filter/NetworkSbasis.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
@@ -252,6 +253,7 @@ add_executable(gnss_tests
     tests/test_network_estimator.cpp
     tests/test_network_carry_vce.cpp
     tests/test_network_zstore.cpp
+    tests/test_network_invariant_carry_driver.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp

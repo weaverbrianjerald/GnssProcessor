@@ -325,6 +325,26 @@ Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
     return neq_.reconstructStationCovariance(station, cov_free);
 }
 
+Eigen::MatrixXd NetworkEstimator::ddPriorPosteriorCovariance(
+    std::size_t b, const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
+    // (variance 0), mirroring conditionalLocalCovariance so the carried DD posterior
+    // is the datum-as-known covariance (the DD is gauge-free ⇒ datum-invariant).
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    // Under carry_invariant the ensemble phase gauge is OFF (mutually exclusive with
+    // the DD priors), so this is a no-op there; kept for symmetry with the other
+    // datum-frame covariance consumers.
+    zeroPhaseGaugeColumns(cov_free);
+    return neq_.ddPriorPosteriorCovariance(b, cov_free);
+}
+
 Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
     const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
     const Datum& datum) const {

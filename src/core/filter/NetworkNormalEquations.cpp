@@ -717,6 +717,34 @@ Eigen::VectorXd NetworkNormalEquations::ddPriorPosteriorMean(
     return fd.zhat + fd.Pz * (fd.M * innov);
 }
 
+Eigen::MatrixXd NetworkNormalEquations::ddPriorPosteriorCovariance(
+    std::size_t block_index, const Eigen::MatrixXd& cov_free_xs) const {
+    if (block_index >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorPosteriorCovariance: "
+                                "block index out of range");
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("ddPriorPosteriorCovariance: cov_free_xs size mismatch");
+    }
+    const FoldedDdPrior& fd = dd_priors_[block_index];
+    const Eigen::Index K = fd.Pz.rows();
+    if (K == 0) {
+        return Eigen::MatrixXd();            // chordless slot → empty
+    }
+    // Pᶻ_post = (Pᶻ − Pᶻ M Pᶻ) + (Pᶻ M Gᵀ) Σ_ss (G M Pᶻ).  An inert degenerate block
+    // has M=0 ⇒ Pᶻ_post = Pᶻ (the untouched prior — no information was folded).
+    const Eigen::MatrixXd PzM = fd.Pz * fd.M;                 // Pᶻ M            (K×K)
+    Eigen::MatrixXd cov = fd.Pz - PzM * fd.Pz;                // conditional-given-x_s
+    // Coupling through the shared-parameter uncertainty: the DD depends on x_s via
+    // −Pᶻ M Gᵀ, so add (Pᶻ M Gᵀ) Σ_ss (Pᶻ M Gᵀ)ᵀ.  Empty on a zero shared block.
+    if (n_shared_ > 0) {
+        const Eigen::MatrixXd PzMGt = PzM * fd.G.transpose(); // Pᶻ M Gᵀ         (K×n_s)
+        cov.noalias() += PzMGt * cov_free_xs * PzMGt.transpose();
+    }
+    cov = (0.5 * (cov + cov.transpose())).eval();             // symmetrize round-off
+    return cov;
+}
+
 Eigen::VectorXd NetworkNormalEquations::solveShared() {
     if (!reduced_) {
         reduce();
