@@ -108,6 +108,34 @@ JSON section is `processing` (loop-level toggles) or `estimation` (state-vector 
 
 **State-vector discipline.** `StateManager` is the single source of truth for state layout and dynamic key→index maps (ambiguities, per-sat iono, code biases, sat biases, system time offsets). `KalmanFilter` operates on state owned by `StateManager`. Don't add sibling classes that own parallel state; extend `StateManager`.
 
+## Standing invariants — pre-flight EVERY new estimation card against these
+
+Mechanism-independent lessons paid for in field time. Check them at SPEC time
+and again at the validation gate; "my mechanism is different" is not an
+exemption (each was re-learned on a "different" mechanism).
+
+1. **Any zero-q / stiff time-linked quantity MUST have a wired, tested
+   slip/jump/event response** (erase, refloat, or re-tap — mechanism-specific)
+   before an ON field run. A stiff prior carrying a stale value past a jump
+   does not degrade gracefully — it warps the whole solution (iono/clock
+   absorb the tension). Instances: phase-leveling zero-q carry (needs slip
+   detector), Card-4 invariant DD carry (slip hole → 10.9 cyc/ep field FAIL,
+   Jul 2026).
+2. **Field runs are Release-only** (see Build). Debug perf numbers are
+   artifacts; never profile or grade in Debug.
+3. **Every deferral in a card is triaged field-blocking vs field-inert, with
+   DATA for "inert"** (e.g. I2 measured 0 gap events ⇒ prediction-only chords
+   deferrable). A field-blocking deferral means the toggle is NOT
+   field-runnable and the report must say so.
+4. **Run-end counters are the ON-path telemetry.** "0 driven / 0 folded" means
+   the wiring is inert no matter how clean the log looks. Check counters, not
+   absence of crashes.
+5. **Grade only datum-invariant / SD quantities** (Psychas single-realization
+   mandate); raw wire steps confound benign frame drift with real defects.
+6. **New work is default-OFF with structural byte-identity**; shared-path
+   edits require same-build golden comparison (verification integers are
+   build-config-sensitive at the ppm level — never compare Debug vs Release).
+
 ## File management (RINEX, products, downloads)
 
 Input-file location goes through one class — `PathResolver` — driven
