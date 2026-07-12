@@ -70,6 +70,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
         // --- (1) Assemble this epoch's graph for the group. -------------------
         struct ArcInfo { int est_station; int local_col; bool tree_edge; };
         std::map<ArcKey, ArcInfo> arcinfo;
+        std::set<ArcKey>          slipped_arcs;   // C3c: arcs whose carried ambiguity slipped this epoch
         UnionFind uf;
         std::vector<ArcKey> group_tree_edges;   // for per-component tree extraction
         for (const ArcInput& a : g.arcs) {
@@ -78,6 +79,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             arcinfo[k] = {a.est_station, a.local_col, a.tree_edge};
             uf.unite(a.rx_vertex, a.sat_vertex);
             if (a.tree_edge) group_tree_edges.push_back(k);
+            if (a.slipped) slipped_arcs.insert(k);
         }
         if (arcinfo.empty()) continue;
 
@@ -174,12 +176,24 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 }
                 if (!foldable) { ++counters_.chords_dropped; continue; }
 
-                // Carried ⇔ the whole cycle lived last epoch (⊆ A_old); then the DD is a
-                // linear combination of the old chords with w_j = χ_c(arc of old chord j).
-                bool carried = n_old > 0;
-                if (carried)
+                // Carried ⇔ the whole cycle lived last epoch (⊆ A_old) AND no cycle arc
+                // slipped this epoch; then the DD is a linear combination of the old
+                // chords with w_j = χ_c(arc of old chord j).  A cycle slip shifts the
+                // true DD by an integer, so the q_z=0 carry pins a stiff WRONG prior
+                // (Card 4 C3c) — EXCLUDE the slipped arc from the A_old membership so a
+                // cycle through it re-taps fresh (data-only tap-off).  This is exact in
+                // the projection-W architecture: for a surviving carried chord the
+                // slipped-arc terms cancel from the sum (its cycle avoids the slipped
+                // arc), so keeping the (zero-weighted) old chords needs no explicit drop.
+                bool would_carry = n_old > 0;
+                if (would_carry)
                     for (const auto& [arc, coeff] : cyc)
-                        if (!A_old.count(arc)) { carried = false; break; }
+                        if (!A_old.count(arc)) { would_carry = false; break; }
+                bool slip_in_cycle = false;
+                if (!slipped_arcs.empty())
+                    for (const auto& [arc, coeff] : cyc)
+                        if (slipped_arcs.count(arc)) { slip_in_cycle = true; break; }
+                const bool carried = would_carry && !slip_in_cycle;
 
                 Eigen::VectorXd w;
                 if (carried) {
@@ -191,6 +205,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     ++counters_.chords_carried;
                 } else {
                     ++counters_.chords_born;
+                    if (would_carry && slip_in_cycle) ++counters_.slip_kills;  // a carried DD lost to a slip
                 }
                 fold_chords.push_back(c);
                 rows.push_back(std::move(terms));

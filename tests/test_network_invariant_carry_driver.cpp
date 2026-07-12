@@ -122,21 +122,27 @@ std::size_t addNetStation(NetworkEstimator& est, const Net& n, int r,
 }
 
 // Build the driver's one (const,signal) group for a full-vis epoch under star(p,q).
+// @p slipped (optional): the (r,s) arcs to tag slipped this epoch (Card 4 C3c feed).
 NetworkInvariantCarryDriver::GroupInput
-makeGroup(const Net& n, const std::vector<std::size_t>& ids, int p, int q) {
+makeGroup(const Net& n, const std::vector<std::size_t>& ids, int p, int q,
+          const std::set<std::pair<int, int>>* slipped = nullptr) {
     NetworkInvariantCarryDriver::GroupInput g; g.key = 0;
     const StationCols col = ambLayout(n.S);
     for (int r = 0; r < n.R; ++r)
-        for (int s = 0; s < n.S; ++s)
+        for (int s = 0; s < n.S; ++s) {
+            const bool sl = slipped && slipped->count({r, s}) != 0;
             g.arcs.push_back({rxV(r), satV(s), isStarTreeEdge(p, q, r, s),
-                              static_cast<int>(ids[r]), static_cast<int>(col.z[s])});
+                              static_cast<int>(ids[r]), static_cast<int>(col.z[s]), sl});
+        }
     return g;
 }
 
 // One full driven epoch under star(p,q); returns the reconstructed ambiguities.
+// @p slipped (optional): the (r,s) arcs signaled as cycle slips this epoch.
 std::vector<Eigen::VectorXd> driveEpoch(NetworkInvariantCarryDriver& drv, const Net& n,
                                         int p, int q, const std::vector<std::vector<double>>* noise,
-                                        double dt) {
+                                        double dt,
+                                        const std::set<std::pair<int, int>>* slipped = nullptr) {
     const std::string sig = "L1";
     NetworkEstimator est;
     std::vector<Eigen::Index> clkCol(n.S), pbCol(n.S);
@@ -147,7 +153,7 @@ std::vector<Eigen::VectorXd> driveEpoch(NetworkInvariantCarryDriver& drv, const 
         ids[r] = addNetStation(est, n, r, clkCol, pbCol, p, q,
                                noise ? &(*noise)[r] : nullptr, /*r1=*/p);
     drv.beginEpoch(dt);
-    est.setDdPriors(drv.buildDdPriors({makeGroup(n, ids, p, q)}));
+    est.setDdPriors(drv.buildDdPriors({makeGroup(n, ids, p, q, slipped)}));
     const NetworkEstimator::Datum datum = {{est.clockColumn(n.sats[0]), 0.0}};
     const Eigen::VectorXd x_s = est.solve(datum);
     drv.installPosterior(est, x_s, datum);
@@ -517,6 +523,113 @@ TEST(NetworkInvariantCarryDriverTest, MultiBirthJointCovarianceIsCoupled) {
     EXPECT_GT(std::abs(cov), 1e-6) << "shared-tree-edge chords must be coupled (joint fold, not per-chord)";
     // A valid covariance: |cross| ≤ √(var·var).
     EXPECT_LE(std::abs(cov), std::sqrt(v11 * v12) + 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// GATE 8 — Card 4 C3c slip integration on a CHORD arc, A/B with a NEGATIVE control.
+// After warming a tight carry, inject an integer jump on a chord's true ambiguity.
+// SIGNALED (drvSig): the driver re-taps that DD fresh (uncontaminated by the stale
+// carry), refloating EXACTLY that one chord and leaving its neighbours' carry intact.
+// UNSIGNALED (drvCtl, the negative control): the stiff q_z=0 carry pins the stale DD
+// ⇒ contamination visible — proving the slip feed is load-bearing, not decorative.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, SlippedChordArcRefloatsFreshVsContaminatingControl) {
+    const int R = 4, S = 4, WARM = 8;
+    Net n = makeNet(31, R, S);
+    const int p = 0, q = 0;
+    const ArcKey slipArc(rxV(2), satV(3));   // a chord under star(0,0)
+    const ArcKey keepArc(rxV(1), satV(1));   // an untouched chord
+
+    // One shared noise stream so the two drivers warm IDENTICALLY (A/B differs only
+    // in whether the slip is signaled at the jump epoch).
+    std::mt19937 gen(7);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    std::vector<std::vector<std::vector<double>>> warmNoise;
+    for (int e = 0; e < WARM; ++e) warmNoise.push_back(noiseEpoch());
+    const auto jumpNoise = noiseEpoch();
+
+    NetworkInvariantCarryDriver drvSig, drvCtl;
+    for (int e = 0; e < WARM; ++e) {
+        driveEpoch(drvSig, n, p, q, &warmNoise[e], 1.0);
+        driveEpoch(drvCtl, n, p, q, &warmNoise[e], 1.0);
+    }
+    double zk, v_keep_before; ASSERT_TRUE(drvSig.carriedDdForTest(0, keepArc, zk, v_keep_before));
+    const double trueDD_old = double(n.z[2][3] - n.z[2][0] - n.z[0][3] + n.z[0][0]);
+    const long long sk_sig_before = drvSig.counters().slip_kills;
+
+    // The integer jump on the chord's ambiguity.
+    n.z[2][3] += 5;
+    const double trueDD_new = trueDD_old + 5.0;
+    const std::set<std::pair<int, int>> slip{{2, 3}};
+
+    const auto xrSig = driveEpoch(drvSig, n, p, q, &jumpNoise, 1.0, &slip);         // signaled
+    const auto xrCtl = driveEpoch(drvCtl, n, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr); // control
+    const double dd_sig = estimableDD(xrSig, 2, 3, 0, 0);
+    const double dd_ctl = estimableDD(xrCtl, 2, 3, 0, 0);
+
+    // Signaled: EXACTLY the slipped chord refloated (no collateral erasure of neighbours).
+    EXPECT_EQ(drvSig.counters().slip_kills - sk_sig_before, 1)
+        << "a chord-arc slip must refloat exactly its own chord";
+    EXPECT_EQ(drvCtl.counters().slip_kills, 0) << "the unsignaled control refloats nothing";
+    // Signaled re-taps to the post-slip truth; control stays pinned near the pre-slip value.
+    EXPECT_LT(std::abs(dd_sig - trueDD_new), 0.3)
+        << "signaled slip must re-tap the DD fresh to the post-slip integer";
+    EXPECT_GT(std::abs(dd_ctl - trueDD_new), std::abs(dd_sig - trueDD_new) + 1.0)
+        << "the unsignaled stale carry must contaminate the DD (load-bearing wiring)";
+    // The untouched neighbour kept its accumulated (tight) carry — not refloated.
+    double v_keep_after; ASSERT_TRUE(drvSig.carriedDdForTest(0, keepArc, zk, v_keep_after));
+    EXPECT_LT(v_keep_after, v_keep_before + 1e-9) << "no collateral erasure of an unrelated chord";
+
+    // ...and after the slip the signaled arm re-converges to the post-slip integer.
+    double dd_last = 0.0;
+    for (int e = 0; e < 6; ++e) { auto ns = noiseEpoch(); dd_last = estimableDD(driveEpoch(drvSig, n, p, q, &ns, 1.0), 2, 3, 0, 0); }
+    EXPECT_NEAR(dd_last, trueDD_new, 0.05) << "the DD must re-converge to the post-slip integer truth";
+}
+
+// ---------------------------------------------------------------------------
+// GATE 9 — a slip on a TREE arc poisons EVERY fundamental cycle through it, so all
+// dependent chords refloat while chords not touching it survive (spec §2: a slipped
+// arc excluded from the A_old membership ⇒ any cycle whose support includes it re-taps).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, SlippedTreeArcRefloatsDependentChordsOnly) {
+    const int R = 4, S = 4, WARM = 8;
+    Net n = makeNet(41, R, S);
+    const int p = 0, q = 0;
+    std::mt19937 gen(13);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    NetworkInvariantCarryDriver drv;
+    for (int e = 0; e < WARM; ++e) { auto ns = noiseEpoch(); driveEpoch(drv, n, p, q, &ns, 1.0); }
+    double z, v_keep_before; ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v_keep_before));
+
+    // Tree edge (2,0) under star(0,0) (s==q).  Chords (2,1),(2,2),(2,3) close through it;
+    // chords at other receivers do not.  Jump its ambiguity + signal the slip on it.
+    n.z[2][0] += 4;
+    const double trueDD_new = double(n.z[2][3] - n.z[2][0] - n.z[0][3] + n.z[0][0]);
+    const std::set<std::pair<int, int>> slip{{2, 0}};
+    const long long sk_before = drv.counters().slip_kills;
+    auto ns = noiseEpoch();
+    const auto xr = driveEpoch(drv, n, p, q, &ns, 1.0, &slip);
+
+    // Exactly the three chords through (2,0) refloated (nothing else).
+    EXPECT_EQ(drv.counters().slip_kills - sk_before, 3)
+        << "a tree-edge slip must refloat every chord whose cycle passes through it (3), no more";
+    // A refloated chord (2,3) re-tapped to the post-slip truth...
+    EXPECT_LT(std::abs(estimableDD(xr, 2, 3, 0, 0) - trueDD_new), 0.3)
+        << "a chord through the slipped tree edge must re-tap fresh";
+    // ...while a chord NOT through (2,0) kept its tight carry.
+    double v_keep_after; ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v_keep_after));
+    EXPECT_LT(v_keep_after, v_keep_before + 1e-9)
+        << "chords not touching the slipped tree edge survive with their accumulated carry";
 }
 
 }  // namespace GnssProcessor

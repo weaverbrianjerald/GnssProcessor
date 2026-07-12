@@ -1,5 +1,25 @@
 # CARD 4 phase C3c — slip integration for the invariant carry (Opus builds, Fable gates)
 
+> **IMPLEMENTED 2026-07-12 (Opus, uncommitted) — falsifier FIXED; NOT golden.**
+> Membership-exclusion re-tap of slipped chords; slip feed tapped at the PASS-A DETECTOR
+> (`carry_slipped_ambs`), NOT pending-reseed — PASS-B `MeasurementModel::compute` clears that
+> flag before the fold (the debug lesson; first run was inert, 0 refloats). Recorded from
+> epoch 1 (independent of `carry_warm`) so the carry is slip-protected through warmup.
+> **3h eq34 Release, 1h tail:** ON went 10.88 (WORSE than control) → **2.43 (q_z=0) / 1.50
+> (q_z=1e-4)**, a00 +498 diverged → +11.4 / +22.1 physical, SH conv ep 158→19, **742 slip
+> refloats** load-bearing. Beats control 8.29 AND probe 5.98 (§6 interim-sanity PASS), HONEST
+> calib ≤1 (control's tight σ is dishonest σ-incest, calib 22×). Two unit gates (chord A/B +
+> negative control, tree fan-out) pass with exact slip_kill counts; suite 674/1; OFF
+> byte-identity field-proven same-build. **q_z=1e-4 WINS** — refines the "stiff wins" call.
+> Details + triage: memory `project-m1-card4-phasec3c`.
+>
+> **NOT the 0.085 golden class** — residual is a SEPARATE axis, not slips (§6: ON beats 5.98 ⇒
+> event feed complete): honest shared-parameter σ-floor (~2 cyc, uniform) + graph-churn
+> new-arc births (3276 births, **0 unresolvable drops** ⇒ genuine sat-rises, not gaps ⇒
+> prediction-only is field-INERT here; lever is eq34 election stability I4/I2). Within-epoch
+> RAIM §3 culprit-withhold is WIRED but inert under carry_invariant (pl_amb empty ⇒ RAIM
+> never adapts). Emit re-basing + consumer A/B (with q_z=1e-4) = phase D.
+
 *Fable-specced 2026-07-12 from the field-falsifier FAIL. Parent: spec D1
 (docs/HANDOFF_card4_invariant_carry.md), C3b handoff (docs/HANDOFF_card4_c3b.md),
 evidence in memory `project-m1-card4-phasec3b`. Build on HEAD (85a9587+).

@@ -2475,7 +2475,7 @@ int Application::runNetwork() {
     double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
     long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
               carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
-              carry_zdim_last = 0;
+              carry_zdim_last = 0, carry_slipkills_total = 0, carry_dropped_total = 0;
     const bool phase_datum_prioritized = config_.networkPhaseDatumPrioritized()
                                        || phase_datum_ensemble
                                        || phase_datum_eq34;
@@ -3444,6 +3444,17 @@ int Application::runNetwork() {
                                                 ? sh_converged_latch
                                                 : (static_cast<int>(n_emitted) >= pl_warmup));
 
+        // Card 4 (M1) C3c: this epoch's slip event feed for the DD invariant carry —
+        // (app station index, ambiguity key) pairs the PASS-A slip detectors flagged.
+        // Populated at the DETECTION site (below, in refloat_signal / refloat_pair)
+        // rather than read from pending-reseed at fold time, because PASS-B
+        // MeasurementModel::compute re-seeds and CLEARS the pending-reseed flag before
+        // buildCarryDdPriors runs (the flag is a one-shot the assembly consumes).  Also
+        // recorded REGARDLESS of carry_warm (the detectors run cold, and the DD carry is
+        // live from epoch 1) so the carry is slip-protected through the whole warmup —
+        // not only after the SH field's convergence gate releases.  carry_invariant-only.
+        std::set<std::pair<int, std::string>> carry_slipped_ambs;
+
         // --- PASS A: per-station geometry + shared-state layout -------------
         std::vector<std::vector<PppObservation>> modeled(stations.size());
         std::vector<bool> present(stations.size(), false);
@@ -3670,15 +3681,19 @@ int Application::runNetwork() {
             if (config_.networkCycleSlipMwDetect()) {
                 auto refloat_signal = [&](int i, const std::string& sat,
                                           const std::string& signal) -> bool {
-                    if (!carry_warm) return false;
                     bool any = false;
                     StateManager& sm = *stations[i].sm;
                     for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                         const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                         if (!parts || parts->satellite != sat) continue;
                         if (parts->signal == signal) {
-                            sm.markAmbiguityPendingReseed(amb_key);
-                            any = true;
+                            // Card 4 C3c: feed the DD invariant carry from epoch 1,
+                            // independent of the legacy carry's warm gate (the DD carry is
+                            // live throughout; pending-reseed cannot serve it — PASS-B
+                            // MeasurementModel consumes+clears it before the fold).
+                            if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
+                            // Legacy phase-leveling refloat: only meaningful once warm.
+                            if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); any = true; }
                         }
                     }
                     return any;
@@ -3769,13 +3784,15 @@ int Application::runNetwork() {
                 // when the carry is active; cold, the detection is diagnostic only).
                 auto refloat_pair = [&](int i, const std::string& sat,
                                         const std::string& sig1, const std::string& sig2) {
-                    if (!carry_warm) return;
                     StateManager& sm = *stations[i].sm;
                     for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                         const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                         if (!parts || parts->satellite != sat) continue;
-                        if (parts->signal == sig1 || parts->signal == sig2)
-                            sm.markAmbiguityPendingReseed(amb_key);
+                        if (parts->signal == sig1 || parts->signal == sig2) {
+                            // Card 4 C3c: feed the DD carry from epoch 1 (see refloat_signal).
+                            if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
+                            if (carry_warm) sm.markAmbiguityPendingReseed(amb_key);
+                        }
                     }
                 };
 
@@ -6032,6 +6049,14 @@ int Application::runNetwork() {
         };
         buildEnsembleGauges();
 
+        // Card 4 (M1) C3c: within-epoch RAIM culprit set forwarded into the DD-carry
+        // re-solve rebuild (spec §3 culprit-withhold).  The pointers alias the RAIM
+        // block's drop sets while it runs, else null.  The PASS-A slip feed
+        // (carry_slipped_ambs, above) is the primary source; both are carry_invariant-only
+        // ⇒ OFF byte-identical (buildCarryDdPriors early-returns when the toggle is off).
+        const std::set<std::string>*                carry_we_drop_sats = nullptr;
+        const std::map<int, std::set<std::string>>* carry_we_drop_arcs = nullptr;
+
         // Card 4 (M1) C3b: build this epoch's DD-prior blocks from the eq34 election
         // tree and fold the carried invariant DDs into the producer solve.  Each arc
         // (receiver, satellite) ambiguity on a (const,signal) is resolved to its
@@ -6079,6 +6104,19 @@ int Application::runNetwork() {
                     a.tree_edge   = stations[i].pinned_amb_targets.count(key) != 0;
                     a.est_station = est_index_of[i];
                     a.local_col   = static_cast<int>(hit->second);
+                    // C3c slip feed: a PASS-A slip detection (MW wide-lane / LLI / IF-phase,
+                    // recorded at the detector so the PASS-B pending-reseed clear can't hide
+                    // it) or a within-epoch RAIM culprit (§3) invalidates this arc's carried
+                    // DD — re-tap it fresh this epoch instead of folding a stiff pre-slip prior.
+                    bool slipped = carry_slipped_ambs.count({static_cast<int>(i), key}) != 0;
+                    if (!slipped && carry_we_drop_sats
+                        && carry_we_drop_sats->count(parts->satellite)) slipped = true;
+                    if (!slipped && carry_we_drop_arcs) {
+                        const auto dit = carry_we_drop_arcs->find(static_cast<int>(i));
+                        if (dit != carry_we_drop_arcs->end()
+                            && dit->second.count(parts->satellite)) slipped = true;
+                    }
+                    a.slipped     = slipped;
                     groups[gk].key = gk;
                     groups[gk].arcs.push_back(a);
                 }
@@ -7310,6 +7348,12 @@ int Application::runNetwork() {
             std::set<std::string> drop_sats;                       // refloat that sat's ambiguities network-wide
             std::set<int>         drop_stations;                   // excluded entirely (bad-data case)
             std::map<int, std::set<std::string>> drop_arcs;        // (station → sats) refloat at that station ONLY
+            // C3c §3: the DD-carry re-solve (buildCarryDdPriors, via resolve_dropping)
+            // treats a mid-epoch RAIM culprit as slipped, so its stale carry is not
+            // re-folded (refold from unchanged predicted state, H13 + culprit-withhold).
+            // Aliases live only while this block runs; nulled before the sets leave scope.
+            carry_we_drop_sats = &drop_sats;
+            carry_we_drop_arcs = &drop_arcs;
 
             // σ̂0 + median-polish effects of the CURRENT shared solution.  The (station × sat)
             // residual table (carried-ambiguity PHASE rows only) decomposes additively into a
@@ -7654,6 +7698,10 @@ int Application::runNetwork() {
 
             sigma0_adapt = sigma0;   // A4: publish the final within-epoch σ̂0 for the withhold gate
         }
+        // C3c §3: drop_sats/drop_arcs leave scope with the RAIM block — retire the aliases
+        // so the next epoch's primary buildCarryDdPriors never dereferences a dangling set.
+        carry_we_drop_sats = nullptr;
+        carry_we_drop_arcs = nullptr;
 
         // Reduce-once invariant (design §3.5): the carried prior is injected
         // pre-gate, so the single gate reduce() must be the ONLY per-station Schur
@@ -7797,6 +7845,8 @@ int Application::runNetwork() {
             carry_splits_total = cc.splits;
             carry_swaps_total  = cc.tree_swaps;
             carry_zdim_last    = cc.z_dim;
+            carry_slipkills_total = cc.slip_kills;
+            carry_dropped_total   = cc.chords_dropped;
         }
 
         // --- Producer-side network AR (Phase 2: DD fixability attempt, LOG ONLY) ---
@@ -11131,10 +11181,12 @@ int Application::runNetwork() {
                   eq34_gap_repin_total, eq34_mismatch_epochs);
     if (carry_invariant)
         log->info("Network (Card 4/M1 invariant carry): {} epoch(s) driven, {} carried DD(s) at "
-                  "run end; {} chord birth(s), {} marginalization(s), {} tree swap(s) (basis "
-                  "re-expression), {} component merge(s), {} split(s) over the run "
+                  "run end; {} chord birth(s), {} marginalization(s), {} slip refloat(s), "
+                  "{} unresolvable-cycle drop(s), {} tree swap(s) (basis re-expression), "
+                  "{} component merge(s), {} split(s) over the run "
                   "(S-system-invariant DDs; q_z={} m²/s).",
                   carry_epochs, carry_zdim_last, carry_born_total, carry_marg_total,
+                  carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
     if (clk_runaway_on && n_runaway_epochs > 0)

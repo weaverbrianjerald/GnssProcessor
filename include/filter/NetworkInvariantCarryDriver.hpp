@@ -106,6 +106,7 @@ public:
         bool tree_edge{false};   ///< election spanning-tree edge (gauge pin) vs chord (a carried DD).
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
+        bool slipped{false};     ///< Card 4 C3c: a cycle slip / refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD is a stiff WRONG prior). The caller sets it from the network's authoritative slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit). Excluded from the A_old membership so any new cycle whose support includes it is re-tapped FRESH (data-only), exactly the birth path; a carried chord it refloats is counted in @ref Counters::slip_kills.
     };
 
     /// One (const,signal) group's arcs this epoch.  Groups are independent z-store
@@ -123,7 +124,8 @@ public:
         long long chords_carried{0};      ///< chords whose DD was carried from the previous epoch (basis-projected).
         long long chords_born{0};         ///< fresh chords (diffuse prior → data-only tap-off).
         long long chords_marginalized{0}; ///< old carried chords not carried forward (dead arc).
-        long long chords_dropped{0};      ///< chords skipped this epoch (an unresolvable cycle arc — v1 refloat).
+        long long chords_dropped{0};      ///< chords skipped this epoch (an unresolvable cycle arc — a data-gap refloat, distinct from a slip).
+        long long slip_kills{0};          ///< Card 4 C3c: chords that would have been carried but were refloated FRESH because a cycle slip / RAIM culprit invalidated an arc of their fundamental cycle (≈ the slip rate the carry saw).
         long long merges{0};              ///< components formed from ≥2 previous components.
         long long splits{0};              ///< previous components spread across ≥2 new components.
         long long tree_swaps{0};          ///< components whose carry was re-expressed in a genuinely different fundamental-cycle basis (a projection W that is not a signed permutation — the analogue of the phase-B unimodular pivot).
