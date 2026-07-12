@@ -2495,6 +2495,15 @@ namespace GnssProcessor {
             return network_phase_datum_eq34_extend_only_;
         }
 
+        /// Card 4 (M1): time-link the DD cycle-basis invariant carry (@c network.carry_invariant).
+        bool networkCarryInvariant() const { return network_carry_invariant_; }
+        /// Card 4 (M1): z process noise m²/s (@c network.carry_invariant_qz).
+        double networkCarryInvariantQz() const { return network_carry_invariant_qz_; }
+        /// Card 4 (M1, phase D): emit-layer frame re-basing (@c network.carry_invariant_emit_rebase).
+        bool networkCarryInvariantEmitRebase() const { return network_carry_invariant_emit_rebase_; }
+        /// Card 4 (M1, D5): Lemma-1 honesty instrument (@c network.carry_invariant_honesty).
+        bool networkCarryInvariantHonesty() const { return network_carry_invariant_honesty_; }
+
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
          *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
@@ -4415,6 +4424,10 @@ namespace GnssProcessor {
         bool   network_phase_datum_eq34_carry_shift_{false};     ///< Card 3 EXPERIMENTAL: S-transform carried values on pin displacement instead of erase/skip (exact in the chain algebra; field Jul-11: injects error through the weakly-held δ split — DD step 86 vs 11-15 cyc/ep erase-based — root open). OFF = erase-based hygiene. INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_longevity_election_{false}; ///< Card 3 (I4): grow the eq34 spanning tree's NEW edges by arc longevity (rising arcs first, then high elevation; high-coverage receivers first) instead of lexical order, so tree edges are chosen to outlive the epoch — cuts b_s re-reference churn at the source (spec D2 step 3's dropped preference). Incumbent-edge seed untouched; deterministic tie-break; OFF = legacy lexical growth (B9 baseline). INERT unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_extend_only_{false};       ///< Card 3 (I2): de Jonge §3.5 extend-only membership — retain a tree edge's sticky identity (parents/root/pinned integer) across a momentary row gap while its local_carry is alive (age-stamped to phase_leveling_max_gap_s), so a returning arc re-pins to its pre-gap integer (step ≈0) instead of silently re-leveling to a first-sighting 0. Tree growth unchanged (live arcs only); reroute/handover out of scope. OFF = legacy wholesale replace (B9 baseline). INERT unless network_phase_datum_eq34_.
+        bool   network_carry_invariant_{false};            ///< Card 4 (M1): time-link the DD cycle-basis invariant carry (NetworkInvariantCarryDriver) through the producer solve — the S-system-invariant replacement for the S-dependent PB/local/rpb carries. Per (const,signal) component the eq34 tree's chords are the carried DDs (q_z=0); each epoch the carry is basis-projected, folded as a rank-K DD prior, and the posterior read back. REQUIRES phase_datum_eq34 (needs the RPB split + spanning tree; load-time reject otherwise); GLONASS excluded (FDMA). SUPERSEDES the PhaseBias shared carry + phase-leveling local carry + rpb carry + eq34 pin-round/shift/reref hygiene for phase keys. OFF = no z-store allocated, all folds gated (byte-identical).
+        double network_carry_invariant_qz_{0.0};           ///< Card 4 (M1): z process noise (m²/s) on the carried DDs; 0 = constant ambiguities (correct absent slips). INERT unless network_carry_invariant_.
+        bool   network_carry_invariant_emit_rebase_{true}; ///< Card 4 (M1, phase D): re-base the emitted per-key biases onto the previous EMISSION frame (integer + common-fractional continuity vs the last emission) — an S-selection on the outputs only; user DDs are invariant. INERT unless network_carry_invariant_ (phase-D emit layer; parsed now for the config contract).
+        bool   network_carry_invariant_honesty_{false};    ///< Card 4 (M1, D5): Lemma-1 parallel actual-covariance instrument (honesty audit for q/R misspecification; also the M2 LS-VCE measurement). INERT unless network_carry_invariant_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.

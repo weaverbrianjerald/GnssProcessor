@@ -76,6 +76,7 @@
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
+#include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
 #include "slip/MwSlipDetector.hpp"      // T0 phase-leveling slip repair (Increment 2)
@@ -2327,6 +2328,12 @@ int Application::runNetwork() {
                << "\"pivot_vanish_return_signal\":" << (pivot_vr_signal ? "true" : "false") << ','
                << "\"emit_clock_disc\":" << (emit_clock_disc ? "true" : "false") << ','
                << "\"sticky_pivot\":" << (sticky_pivot ? "true" : "false") << ','
+               << "\"carry_invariant\":" << (config_.networkCarryInvariant() ? "true" : "false") << ','
+               << fmt::format("\"carry_invariant_qz\":{},", config_.networkCarryInvariantQz())
+               << "\"carry_invariant_emit_rebase\":"
+               << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','
+               << "\"carry_invariant_honesty\":"
+               << (config_.networkCarryInvariantHonesty() ? "true" : "false") << ','
                << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
                << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
@@ -2434,19 +2441,39 @@ int Application::runNetwork() {
     // the pin fold (per-tree-edge ambiguity pins with a target + a datum-receiver
     // RPB pin).  Mutually exclusive with the ensemble (enforced at config load).
     const bool phase_datum_eq34        = config_.networkPhaseDatumEq34();
+    // Card 4 (M1) C3b: the DD cycle-basis invariant carry gate (declared early so the
+    // superseded eq34 hygiene knobs below can gate on it).  Requires phase_datum_eq34.
+    const bool carry_invariant         = phase_datum_eq34 && config_.networkCarryInvariant();
     // Card 3: information weight (1/σ²) of the per-epoch zero-mean RPB soft prior
     // (the station-local floor for the near-null RPB split); 0 = disabled.
     const double eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     const double eq34_rpb_prior_w = (phase_datum_eq34 && eq34_rpb_prior_sigma > 0.0)
         ? 1.0 / (eq34_rpb_prior_sigma * eq34_rpb_prior_sigma) : 0.0;
     // Card 3: q (m²/s) of the local RPB time-linking carry; 0 = v1 fresh re-estimation.
-    const double eq34_rpb_q = phase_datum_eq34 ? config_.networkPhaseDatumEq34RpbQ() : 0.0;
+    // Card 4 supersedes the local δ_{r,σ} time-link (the DD carry is the phase time-link);
+    // under carry_invariant the RPB re-estimates fresh (δ cancels in the gauge-free DD).
+    const double eq34_rpb_q = (phase_datum_eq34 && !carry_invariant)
+                                  ? config_.networkPhaseDatumEq34RpbQ() : 0.0;
     // Card 3 EXPERIMENTAL: S-transform carries on pin displacement (OFF = erase-based hygiene).
-    const bool eq34_shift_on = phase_datum_eq34 && config_.networkPhaseDatumEq34CarryShift();
+    // Card 4 supersedes the carry S-transform hygiene (the datum is re-realized freely).
+    const bool eq34_shift_on = phase_datum_eq34 && config_.networkPhaseDatumEq34CarryShift()
+                             && !carry_invariant;
     // Card 3 (I4): grow NEW spanning-tree edges by arc longevity (OFF = legacy lexical growth).
     const bool eq34_longevity = phase_datum_eq34 && config_.networkPhaseDatumEq34LongevityElection();
     // Card 3 (I2): retain sticky-tree identity across carry-alive row gaps (OFF = wholesale replace).
     const bool eq34_extend_only = phase_datum_eq34 && config_.networkPhaseDatumEq34ExtendOnly();
+    // Card 4 (M1) C3b: the DD cycle-basis invariant carry driver + its persistent state
+    // (the carried z-store lives across epochs).  SUPERSEDES the S-dependent PhaseBias/
+    // local/rpb carries + eq34 pin-round/shift hygiene for phase keys (bypassed below);
+    // GLONASS (FDMA) excluded.  OFF = no z-store, all folds gated (byte-identical).
+    NetworkInvariantCarryDriver::Config carry_cfg;
+    carry_cfg.qz = config_.networkCarryInvariantQz();
+    NetworkInvariantCarryDriver carry_driver(carry_cfg);
+    std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
+    std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
+    double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
+    long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
+              carry_merges_total = 0, carry_splits_total = 0, carry_zdim_last = 0;
     const bool phase_datum_prioritized = config_.networkPhaseDatumPrioritized()
                                        || phase_datum_ensemble
                                        || phase_datum_eq34;
@@ -2936,6 +2963,10 @@ int Application::runNetwork() {
         // or ensemble datums; a resume across a toggle flip must cold-start.
         // Appended ONLY when armed, so every non-eq34 snapshot stays byte-identical.
         if (phase_datum_eq34) add("phdatum:eq34");
+        // Card 4 (M1) OPEN-4: the invariant carry snapshots a DD z-store the legacy
+        // carries don't have; a resume across a carry_invariant flip must cold-start.
+        // Appended ONLY when armed, so every non-carry snapshot stays byte-identical.
+        if (carry_invariant) add("carry:inv");
         add(fmt::format("{}", pl_on));           add(fmt::format("{}", pl_q_amb));
         add(fmt::format("{}", pl_warmup));       add(fmt::format("{}", pl_max_gap_s));
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
@@ -4164,7 +4195,10 @@ int Application::runNetwork() {
                 std::map<std::pair<int, std::string>, double>         shift_rpb;
 
                 const std::string eq34_pref_rx = config_.networkPhaseDatumEq34Receiver();
-                const bool        eq34_round   = config_.networkPhaseDatumEq34PinRound();
+                // Card 4: the per-epoch datum targets are plain 0 (the frame is re-realized
+                // freely; continuity moves to the invariant DD carry), so pin-to-round is off.
+                const bool        eq34_round   = config_.networkPhaseDatumEq34PinRound()
+                                              && !carry_invariant;
                 auto eqSysOfChar = [](char c) -> System {
                     switch (c) {
                         case 'G': return System::GPS;    case 'E': return System::Galileo;
@@ -5562,7 +5596,11 @@ int Application::runNetwork() {
                     // Inject and harvest partition on the SAME predicate so a pinned
                     // amb never gets a spurious carry that fights its pin.  B9 (P1-4)
                     // keeps the ZWD carry below OUT of any pivot/anchor exclusion.
-                    const bool do_amb_carry = phase_datum_prioritized || !st.is_pivot;
+                    // Card 4 supersedes the phase-leveling ambiguity carry as a solve input
+                    // (the DD carry is the ambiguity time-link); skip the inject to avoid
+                    // double-counting.  Its harvest still feeds the VCE monitor + sticky tree.
+                    const bool do_amb_carry =
+                        (phase_datum_prioritized || !st.is_pivot) && !carry_invariant;
                     if (do_amb_carry)
                     for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
                         const auto parts = StateKeys::parseAmbiguityKey(key);
@@ -5991,6 +6029,59 @@ int Application::runNetwork() {
             est.setPhaseSumZeroGauges(std::move(gauges));
         };
         buildEnsembleGauges();
+
+        // Card 4 (M1) C3b: build this epoch's DD-prior blocks from the eq34 election
+        // tree and fold the carried invariant DDs into the producer solve.  Each arc
+        // (receiver, satellite) ambiguity on a (const,signal) is resolved to its
+        // estimator (station, local ambiguity column); pinned_amb_targets marks the
+        // spanning-tree edges (the gauge), the rest are chords (the carried DDs).
+        // GLONASS (FDMA) excluded.  Vertex/group ids are stable across epochs (sat
+        // label anchored; receiver = app index).  Re-invoked on the RAIM re-solve
+        // (est.beginEpoch there clears the priors + rebuilds est_index_of), mirroring
+        // buildEnsembleGauges.  No-op / OFF byte-identical unless carry_invariant.
+        auto buildCarryDdPriors = [&]() {
+            if (!carry_invariant) return;
+            constexpr int kSatBase = 1000000;   // satellite vertices sit above every receiver index
+            std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (est_index_of[i] < 0) continue;
+                const auto& h2l = asm_res[i].h2local;
+                for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
+                    const auto parts = StateKeys::parseAmbiguityKey(key);
+                    if (!parts || parts->satellite.empty()) continue;
+                    const char cons = parts->satellite.front();
+                    if (cons == 'R') continue;   // GLONASS FDMA: no common-λ integer DD
+                    const std::string pbkey = StateKeys::makeSatPhaseBiasKey(
+                        PppUtils::getSystemString(parts->satellite), parts->signal);
+                    if (!shared_phase_keys.count(pbkey)) continue;   // not an eq34 arc (gated/legacy lump)
+                    const auto hit = h2l.find(static_cast<int>(sidx));
+                    if (hit == h2l.end() || hit->second < 0) continue;   // unresolvable ⇒ chord refloats
+                    int& sv = carry_sat_vertex[parts->satellite];
+                    if (sv == 0) sv = kSatBase + static_cast<int>(carry_sat_vertex.size());
+                    int& gk = carry_group_id[{cons, parts->signal}];
+                    if (gk == 0) gk = static_cast<int>(carry_group_id.size());
+                    NetworkInvariantCarryDriver::ArcInput a;
+                    a.rx_vertex   = static_cast<int>(i);
+                    a.sat_vertex  = sv;
+                    a.tree_edge   = stations[i].pinned_amb_targets.count(key) != 0;
+                    a.est_station = est_index_of[i];
+                    a.local_col   = static_cast<int>(hit->second);
+                    groups[gk].key = gk;
+                    groups[gk].arcs.push_back(a);
+                }
+            }
+            std::vector<NetworkInvariantCarryDriver::GroupInput> glist;
+            glist.reserve(groups.size());
+            for (auto& [k, g] : groups) glist.push_back(std::move(g));
+            est.setDdPriors(carry_driver.buildDdPriors(glist));
+        };
+        if (carry_invariant) {
+            // The z-store predict (q_z·Δt on the carried DD covariance) runs ONCE per
+            // epoch; the build/fold may re-run on the RAIM re-solve.
+            const double dt = std::isfinite(carry_prev_tow) ? (se.time.tow - carry_prev_tow) : 0.0;
+            carry_driver.beginEpoch(dt > 0.0 ? dt : 0.0);
+        }
+        buildCarryDdPriors();
 
         // --- Satellite code-bias datum constraints (W6, full multi-band) -----
         // Each shared per-(sat,signal) code bias opens gauge freedoms the data
@@ -7413,6 +7504,10 @@ int Application::runNetwork() {
                 // refloated stations may have dropped, so the stored gauges' station
                 // indices are stale).  No-op when OFF.
                 buildEnsembleGauges();
+                // Card 4 (M1) C3b: rebuild the DD-prior blocks on the fresh arrowhead
+                // (beginEpoch cleared them + est_index_of was rebuilt above).  The
+                // predict is NOT re-run — only the fold is rebuilt.  No-op when OFF.
+                buildCarryDdPriors();
                 return est.solve(plan.shared_datum);
             };
 
@@ -7532,6 +7627,27 @@ int Application::runNetwork() {
                         emitEvent("T2_within_epoch", "we_exclude_station", "",
                                   stations[sta].name, sigma0, trig, "exclude", span);
                 }
+            }
+
+            // Card 4 (M1) C3b: install the DD posterior (mean + covariance) back into
+            // the carry from the FINAL x_s + datum — the invariant DDs the next epoch
+            // projects forward.  Uses the same plan.shared_datum the (re-)solve folded.
+            // A failure resets the carry (safe cold start) rather than poisoning it.
+            if (carry_invariant) {
+                try { carry_driver.installPosterior(est, x_s, plan.shared_datum); }
+                catch (const std::exception& ex) {
+                    log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
+                              "carry reset (refloats next epoch).", se.time.tow, ex.what());
+                    carry_driver.reset();
+                }
+                carry_prev_tow = se.time.tow;
+                const auto& cc = carry_driver.counters();
+                carry_epochs       = cc.epochs;
+                carry_born_total   = cc.chords_born;
+                carry_marg_total   = cc.chords_marginalized;
+                carry_merges_total = cc.merges;
+                carry_splits_total = cc.splits;
+                carry_zdim_last    = cc.z_dim;
             }
 
             // A within-epoch satellite refloat reinitialized that sat's AMBIGUITY at every
@@ -10591,6 +10707,10 @@ int Application::runNetwork() {
         for (const auto& pk : shared_phase_keys) {
             const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
             if (!parts) continue;
+            // Card 4: the DD invariant carry is the phase time-link — do NOT also stash the
+            // S-dependent shared PhaseBias carry (it would double-count in next epoch's D2 /
+            // hold / dense fold).  Clock / code / SH / ZWD carries are unaffected.
+            if (carry_invariant) continue;
             const bool flagged = clock_refloat_sats.count(parts->satellite) > 0;
             if (flagged && full_refloat) continue;
             const Eigen::Index col =
@@ -10992,6 +11112,12 @@ int Application::runNetwork() {
                   "integer), {} pin/gauge-mismatch epoch(s) over the run.",
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
                   eq34_gap_repin_total, eq34_mismatch_epochs);
+    if (carry_invariant)
+        log->info("Network (Card 4/M1 invariant carry): {} epoch(s) driven, {} carried DD(s) at "
+                  "run end; {} chord birth(s), {} marginalization(s), {} component merge(s), "
+                  "{} split(s) over the run (S-system-invariant DDs; q_z={} m²/s).",
+                  carry_epochs, carry_zdim_last, carry_born_total, carry_marg_total,
+                  carry_merges_total, carry_splits_total, config_.networkCarryInvariantQz());
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "
                   "runaway (magnitude ceiling {:.0f} m / rate ceiling {:.2f} m/s).",

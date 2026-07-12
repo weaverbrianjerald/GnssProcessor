@@ -4160,6 +4160,19 @@ namespace GnssProcessor {
         network_phase_datum_eq34_extend_only_ =
             jval<bool>(json, "network.phase_datum_eq34_extend_only",
                        "network_phase_datum_eq34_extend_only", false);
+        // Card 4 (M1): the DD cycle-basis invariant carry (network.carry_invariant*).
+        network_carry_invariant_ =
+            jval<bool>(json, "network.carry_invariant",
+                       "network_carry_invariant", false);
+        network_carry_invariant_qz_ =
+            jval<double>(json, "network.carry_invariant_qz",
+                         "network_carry_invariant_qz", 0.0);
+        network_carry_invariant_emit_rebase_ =
+            jval<bool>(json, "network.carry_invariant_emit_rebase",
+                       "network_carry_invariant_emit_rebase", true);
+        network_carry_invariant_honesty_ =
+            jval<bool>(json, "network.carry_invariant_honesty",
+                       "network_carry_invariant_honesty", false);
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -4426,6 +4439,16 @@ namespace GnssProcessor {
                       "carry skip / clock-oscillator clear / jump-test suppression on a pivot "
                       "handover applies only to the constellation(s) whose datum changed, not "
                       "network-wide (the SH-VTEC carry skip stays global).");
+        // Card 4 (M1) dependency: the DD cycle-basis carry lives on the eq34 chain
+        // datum (it needs the per-receiver RPB split + the spanning tree that supply
+        // the fundamental-cycle DDs).  Reject the incoherent combination fail-loud.
+        if (network_carry_invariant_ && !network_phase_datum_eq34_) {
+            log->error("Network: network.carry_invariant requires network.phase_datum_eq34 — the DD "
+                       "cycle-basis carry is defined only on the eq34 chain datum (RPB split + "
+                       "spanning tree supply the invariant DDs).  Enable phase_datum_eq34 or disable "
+                       "carry_invariant.");
+            return false;
+        }
         if (network_phase_datum_eq34_) {
             // Card 3 mutual exclusion (mirror the clock-gauge fail-loud at
             // network_clock_datum_broadcast_anchored above): eq34 and the
@@ -4484,6 +4507,17 @@ namespace GnssProcessor {
                           "0.  Tree growth unchanged (live arcs only); watch the gap-repin counter "
                           "in the run-end producer summary.",
                           network_phase_leveling_max_gap_s_);
+            if (network_carry_invariant_)
+                log->info("Network producer: Card 4 (M1) INVARIANT CARRY ON — the DD cycle-basis "
+                          "z-store time-links the S-system-invariant double differences (chords of "
+                          "the eq34 spanning tree, q_z={} m²/s) through the producer solve, "
+                          "SUPERSEDING the PhaseBias shared carry + phase-leveling local carry + RPB "
+                          "carry + eq34 pin-round/shift/reref hygiene for phase keys (GLONASS "
+                          "excluded, FDMA).  The per-epoch datum is re-realized freely; basis churn "
+                          "is a non-event by construction.  emit_rebase={}, honesty={}.",
+                          network_carry_invariant_qz_,
+                          network_carry_invariant_emit_rebase_ ? "true" : "false",
+                          network_carry_invariant_honesty_ ? "true" : "false");
         } else if (network_phase_datum_ensemble_) {
             log->info("Network producer: ANCHOR-FREE ENSEMBLE phase-bias datum ON (Fix A) — the "
                       "per-(sat,signal) phase-bias gauge is fixed by a sum-to-zero over the "
