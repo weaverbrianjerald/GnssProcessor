@@ -283,6 +283,125 @@ TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
     }
 }
 
+// Card 4 (M1) phase C — gate 4 (DatumFreedom) through the production NetworkEstimator
+// API: a folded rank-K DD prior yields a DD ambiguity estimate INVARIANT to the shared
+// datum choice.  Same network + sum-to-zero phase gauge + DD prior, solved under two
+// different clock datums (pin sat0 vs sat1) ⇒ identical reconstructed AMBIGUITIES (the
+// receiver-clock column legitimately shifts with the datum; the ambiguities do not) and
+// an identical DD posterior.  Exercises setDdPriors → solve → reconstruct →
+// ddPriorPosteriorMean end-to-end.
+TEST(NetworkEstimatorTest, DdPriorDatumFreedomThroughEstimator) {
+    Truth t = makeTruth(/*seed=*/321, /*R=*/4, /*S=*/4);
+    for (auto& mrow : t.M) for (auto& v : mrow) v = std::round(v);   // integer ambiguities
+    const std::string signal = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s] = est.registerPhaseBias(t.sats[s], signal);
+    }
+    est.beginEpoch();
+    std::vector<std::size_t> ids;
+    for (int r = 0; r < t.R; ++r) {
+        const int S = t.S;
+        const Eigen::Index n_local = 1 + S;   // [a_r, M_{r,0..S-1}]
+        const Eigen::Index m = 2 * S;
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(m, est.numShared());
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(m, n_local);
+        Eigen::VectorXd w = Eigen::VectorXd::Ones(m), y = Eigen::VectorXd::Zero(m);
+        Eigen::Index row = 0;
+        for (int s = 0; s < S; ++s) {
+            A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0;
+            y(row) = t.a[r] - t.c[s]; ++row;
+            A_s(row, clkCol[s]) = -1.0; A_s(row, pbCol[s]) = 1.0;
+            A_r(row, 0) = 1.0; A_r(row, 1 + s) = 1.0;
+            y(row) = t.a[r] - t.c[s] + t.b[s] + t.M[r][s]; ++row;
+        }
+        ids.push_back(est.addStation(A_s, A_r, w, y));
+    }
+    // Phase datum: PIN receiver 0's ambiguities to 0 (the anchor/tree pins) via
+    // addStationPrior — a PRE-reduce local prior that composes EXACTLY with the
+    // post-reduce DD fold (the fold reads the already-pinned N_rr).  NOT the
+    // sum-to-zero ensemble gauge: that is itself a post-reduce fold and is mutually
+    // exclusive with the DD priors (NetworkEstimator::solve throws if both are set).
+    {
+        std::vector<Eigen::Index> pin_cols(t.S);
+        for (int s = 0; s < t.S; ++s) pin_cols[s] = 1 + s;
+        est.addStationPrior(ids[0], pin_cols, Eigen::VectorXd::Constant(t.S, 1e10),
+                            Eigen::VectorXd::Zero(t.S));   // M_{0,s} = 0
+    }
+
+    // A DD prior between receivers {0,1} and satellites {0,1} (ambiguity col 1+s).
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {{Term{ids[0], 1, +1.0}, Term{ids[0], 2, -1.0},
+                 Term{ids[1], 1, -1.0}, Term{ids[1], 2, +1.0}}};
+    blk.Pz = (Eigen::MatrixXd(1, 1) << 0.05).finished();
+    blk.zhat = (Eigen::VectorXd(1) << 0.0).finished();   // pull the DD toward 0
+    est.setDdPriors({blk});
+
+    const NetworkEstimator::Datum datumA = {{est.clockColumn(t.sats[0]), 0.0}};
+    const Eigen::VectorXd xsA = est.solve(datumA);
+    std::vector<Eigen::VectorXd> xrA(t.R);
+    for (int r = 0; r < t.R; ++r) xrA[r] = est.reconstructStation(ids[r], xsA);
+    const Eigen::VectorXd zA = est.ddPriorPosteriorMean(0, xsA);
+
+    const NetworkEstimator::Datum datumB = {{est.clockColumn(t.sats[1]), 0.0}};
+    const Eigen::VectorXd xsB = est.solve(datumB);   // re-solve, DIFFERENT datum
+    std::vector<Eigen::VectorXd> xrB(t.R);
+    for (int r = 0; r < t.R; ++r) xrB[r] = est.reconstructStation(ids[r], xsB);
+    const Eigen::VectorXd zB = est.ddPriorPosteriorMean(0, xsB);
+
+    for (int r = 0; r < t.R; ++r)
+        EXPECT_LT((xrA[r].tail(t.S) - xrB[r].tail(t.S)).cwiseAbs().maxCoeff(), 1e-7)
+            << "station " << r << " ambiguities must be invariant to the clock datum";
+    const double ddA = xrA[0](1) - xrA[0](2) - xrA[1](1) + xrA[1](2);
+    EXPECT_NEAR(zA(0), ddA, 1e-7) << "posterior == DD of the reconstructed ambiguities";
+    EXPECT_NEAR(zA(0), zB(0), 1e-7) << "DD posterior must be datum-invariant";
+    EXPECT_EQ(est.numDdPriorBlocks(), 1u);
+}
+
+// The DD priors and the sum-to-zero ensemble gauge are mutually exclusive (both are
+// post-reduce Woodbury folds on the same local block; composing them drops the cross
+// term and silently biases the solve).  Setting both must fail fast at solve().
+TEST(NetworkEstimatorTest, DdPriorAndSumZeroGaugeAreMutuallyExclusive) {
+    Truth t = makeTruth(/*seed=*/7, /*R=*/3, /*S=*/3);
+    const std::string signal = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        est.registerPhaseBias(t.sats[s], signal);
+    }
+    est.beginEpoch();
+    std::vector<std::size_t> ids;
+    for (int r = 0; r < t.R; ++r) {
+        const int S = t.S;
+        const Eigen::Index n_local = 1 + S, m = 2 * S;
+        Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(m, est.numShared());
+        Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(m, n_local);
+        Eigen::VectorXd w = Eigen::VectorXd::Ones(m), y = Eigen::VectorXd::Zero(m);
+        Eigen::Index row = 0;
+        for (int s = 0; s < S; ++s) {
+            A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0; ++row;
+            A_s(row, clkCol[s]) = -1.0; A_r(row, 0) = 1.0; A_r(row, 1 + s) = 1.0; ++row;
+        }
+        ids.push_back(est.addStation(A_s, A_r, w, y));
+    }
+    std::vector<NetworkNormalEquations::SumZeroGauge> gauges(1);
+    for (int r = 0; r < t.R; ++r)
+        gauges[0].terms.emplace_back(ids[r], static_cast<Eigen::Index>(1));
+    est.setPhaseSumZeroGauges(gauges);
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {{Term{ids[0], 1, +1.0}, Term{ids[1], 1, -1.0}}};
+    blk.Pz = (Eigen::MatrixXd(1, 1) << 0.05).finished();
+    blk.zhat = Eigen::VectorXd::Zero(1);
+    est.setDdPriors({blk});
+    const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
+    EXPECT_THROW(est.solve(datum), std::logic_error);
+}
+
 // ---------------------------------------------------------------------------
 // Eq-34 integer-recovery gate (S-system theory reference §6, docs/
 // ssystem_theory_reference_2026-07-09.md).  A network phase-bias datum yields an

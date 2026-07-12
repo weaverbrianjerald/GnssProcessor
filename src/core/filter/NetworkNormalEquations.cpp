@@ -14,10 +14,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -138,6 +140,9 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     sumzero_gauges_.clear();
     station_sumzero_.clear();
     sumzero_folded_ = false;
+    dd_priors_.clear();
+    station_ddprior_.clear();
+    ddprior_folded_ = false;
 }
 
 void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
@@ -424,6 +429,11 @@ void NetworkNormalEquations::reduce(int n_threads) {
     sumzero_gauges_.clear();
     station_sumzero_.clear();
     sumzero_folded_ = false;
+    // Same for the Card-4 DD priors (@ref foldReducedDdPriors): a rebuilt reduced
+    // system drops the folded G M Gᵀ; the driver re-folds after the reduce.
+    dd_priors_.clear();
+    station_ddprior_.clear();
+    ddprior_folded_ = false;
 
     // Start from the accumulated shared border (Σ_r N_ss^r + priors), then
     // subtract each station's Schur contribution N_sr (N_rr)^{-1} N_rs.
@@ -589,6 +599,124 @@ void NetworkNormalEquations::foldReducedSumZeroGauges(
     reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
 }
 
+void NetworkNormalEquations::foldReducedDdPriors(
+    const std::vector<DdPriorBlock>& blocks) {
+    if (!reduced_) {
+        reduce();  // need the reduced system + the cached per-station factors
+    }
+    // Idempotent within one reduce (mirrors foldReducedSumZeroGauges): the fold
+    // mutates reduced_N_ss_ in place, so a second call must not double-add G M Gᵀ.
+    if (ddprior_folded_) {
+        return;
+    }
+    dd_priors_.clear();
+    station_ddprior_.assign(n_active_, {});
+    ddprior_folded_ = true;
+    if (blocks.empty() || n_shared_ == 0) {
+        return;
+    }
+
+    // Cache N_rr⁻¹ u_r per station (reused across every block/row that touches it).
+    std::vector<bool> have_ur(n_active_, false);
+    std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
+
+    for (const auto& blk : blocks) {
+        const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
+        if (blk.Pz.rows() != K || blk.Pz.cols() != K || blk.zhat.size() != K) {
+            fail("foldReducedDdPriors: Pz/zhat dimension mismatch with the row count");
+        }
+        // EVERY input block occupies exactly one slot (bidx == input index), so a
+        // chordless (K=0) or degenerate (non-PD) block stays index-aligned for the
+        // z-store's per-block posterior readback (ddPriorPosteriorMean/numDdPriorBlocks).
+        const std::size_t bidx = dd_priors_.size();
+        FoldedDdPrior fd;
+        fd.zhat = blk.zhat;
+        fd.Pz = blk.Pz;
+        if (K == 0) {
+            dd_priors_.push_back(std::move(fd));   // chordless component → inert slot
+            continue;
+        }
+
+        // Group the block's terms by station so each station's C_{L,r}ᵀ (n_local × K)
+        // is assembled once and solved against the cached N_rr factor in one shot.
+        std::map<std::size_t, std::vector<DdStationTerm>> by_station;
+        for (Eigen::Index k = 0; k < K; ++k) {
+            for (const auto& t : blk.rows[static_cast<std::size_t>(k)]) {
+                if (t.station >= n_active_) {
+                    throw std::out_of_range("NetworkNormalEquations::foldReducedDdPriors: "
+                                            "station index out of range");
+                }
+                if (t.local_col < 0 || t.local_col >= stations_[t.station].n_local) {
+                    fail("foldReducedDdPriors: local column out of range");
+                }
+                by_station[t.station].push_back({bidx, k, t.local_col, t.coeff});
+            }
+        }
+
+        Eigen::MatrixXd B = Eigen::MatrixXd::Zero(K, K);
+        Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n_shared_, K);
+        Eigen::VectorXd z_free = Eigen::VectorXd::Zero(K);
+        for (const auto& [si, terms] : by_station) {
+            const Station& st = stations_[si];
+            Eigen::MatrixXd CrT = Eigen::MatrixXd::Zero(st.n_local, K);  // C_{L,r}ᵀ
+            for (const auto& t : terms) {
+                CrT(t.col, t.row) += t.coeff;
+            }
+            const Eigen::MatrixXd Y = st.Nrr_ldlt.solve(CrT);   // N_rr⁻¹ C_{L,r}ᵀ
+            B.noalias() += CrT.transpose() * Y;                 // C_{L,r} N_rr⁻¹ C_{L,r}ᵀ
+            G.noalias() += st.N_sr * Y;                         // N_sr N_rr⁻¹ C_{L,r}ᵀ
+            if (!have_ur[si]) {
+                nrr_inv_ur[si] = st.Nrr_ldlt.solve(st.u_r);
+                have_ur[si] = true;
+            }
+            z_free.noalias() += CrT.transpose() * nrr_inv_ur[si];  // C_{L,r} N_rr⁻¹ u_r
+        }
+
+        // Middle inverse M = (Pᶻ + B)⁻¹ (PD: SPD prior + PSD B).  A degenerate block
+        // (non-PD, e.g. a malformed prior) folds INERTLY (M=0) — a no-op that keeps its
+        // index slot rather than corrupting the reduced system or shifting the keys.
+        Eigen::MatrixXd PzB = blk.Pz + B;
+        PzB = (0.5 * (PzB + PzB.transpose())).eval();
+        Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);
+        Eigen::MatrixXd M;
+        if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
+            M = Eigen::MatrixXd::Zero(K, K);
+        } else {
+            M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
+            M = (0.5 * (M + M.transpose())).eval();
+        }
+
+        // Joint rank-K Woodbury fold onto the reduced shared system (a no-op when M=0).
+        reduced_N_ss_.noalias() += G * M * G.transpose();
+        reduced_u_s_.noalias()  += G * (M * (z_free - blk.zhat));
+
+        fd.G = std::move(G);
+        fd.M = std::move(M);
+        fd.z_free = std::move(z_free);
+        for (const auto& [si, terms] : by_station) {
+            auto& dst = station_ddprior_[si];
+            dst.insert(dst.end(), terms.begin(), terms.end());
+        }
+        dd_priors_.push_back(std::move(fd));
+    }
+    reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+}
+
+Eigen::VectorXd NetworkNormalEquations::ddPriorPosteriorMean(
+    std::size_t block_index, const Eigen::VectorXd& x_s) const {
+    if (block_index >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorPosteriorMean: "
+                                "block index out of range");
+    }
+    if (x_s.size() != n_shared_) {
+        fail("ddPriorPosteriorMean: x_s size mismatch");
+    }
+    const FoldedDdPrior& fd = dd_priors_[block_index];
+    // ẑ_post = ẑ + Pᶻ M (z_free − Gᵀ x_s − ẑ): the prior shrunk toward the data DD.
+    const Eigen::VectorXd innov = fd.z_free - fd.G.transpose() * x_s - fd.zhat;
+    return fd.zhat + fd.Pz * (fd.M * innov);
+}
+
 Eigen::VectorXd NetworkNormalEquations::solveShared() {
     if (!reduced_) {
         reduce();
@@ -680,6 +808,25 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
             e(col) = 0.0;
             x_r.noalias() -= n_r * (s_unc / fg.beta);
         }
+    }
+
+    // Card-4 DD-prior correction (@ref foldReducedDdPriors): the constrained locals
+    // are x_r −= N_rr⁻¹ C_{L,r}ᵀ κ, with κ = M(z_free − Gᵀ x_s − ẑ) shared across this
+    // station's terms of each block.  Touches only the DD (cycle) directions; empty
+    // on the OFF path → byte-identical to the pre-Card-4 reconstruction.
+    if (station < station_ddprior_.size() && !station_ddprior_[station].empty()) {
+        std::vector<Eigen::VectorXd> kappa(dd_priors_.size());
+        std::vector<bool> have_kappa(dd_priors_.size(), false);
+        Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
+        for (const auto& t : station_ddprior_[station]) {
+            if (!have_kappa[t.block]) {
+                const FoldedDdPrior& fd = dd_priors_[t.block];
+                kappa[t.block] = fd.M * (fd.z_free - fd.G.transpose() * x_s - fd.zhat);
+                have_kappa[t.block] = true;
+            }
+            e(t.col) += t.coeff * kappa[t.block](t.row);
+        }
+        x_r.noalias() -= st.Nrr_ldlt.solve(e);
     }
     return x_r;
 }

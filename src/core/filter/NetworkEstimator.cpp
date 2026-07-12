@@ -142,6 +142,7 @@ void NetworkEstimator::reset() {
     columns_.clear();
     shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
     phase_sumzero_gauges_.clear();  // Fix A: the ensemble datum is per-epoch
+    dd_priors_.clear();             // Card 4 (M1): the DD priors are per-epoch too
     epoch_open_ = false;
     solved_ = false;
 }
@@ -151,6 +152,11 @@ void NetworkEstimator::beginEpoch() {
     // a fresh NetworkNormalEquations (which would free + reallocate every station
     // block each epoch — the memory-churn the network producer accumulates).
     neq_.reset(numShared());
+    // Card 4 (M1): the DD priors are strictly per-epoch (the z-store re-sets them
+    // each epoch from the carried DDs).  Clear at the epoch boundary so an epoch
+    // that sets none cannot re-fold a stale block — keeps the OFF path byte-identical
+    // and makes carry_invariant robust to an epoch with no carry available.
+    dd_priors_.clear();
     epoch_open_ = true;
     solved_ = false;
 }
@@ -192,6 +198,25 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
     // already).  Empty on the anchor / OFF path → no-op, byte-identical.
     if (!phase_sumzero_gauges_.empty()) {
         neq_.foldReducedSumZeroGauges(phase_sumzero_gauges_);
+    }
+    // Card 4 (M1): fold the invariant-carry DD priors onto the reduced system
+    // (idempotent within the reduce).  The DD fold and the sum-to-zero gauge fold are
+    // BOTH post-reduce Woodbury folds on the pristine per-station N_rr, so composing
+    // them over coupled local ambiguity columns is INEXACT (drops the cross term) — a
+    // silent bias.  They are mutually exclusive by design: under carry_invariant the DD
+    // priors SUPERSEDE the ensemble phase datum (spec D6, its gauge OFF), and the phase
+    // datum is instead the PRE-REDUCE tree pins (addStationPrior, folded into N_rr before
+    // the reduce → exact composition with this fold).  Fail fast rather than bias.
+    if (!dd_priors_.empty()) {
+        if (!phase_sumzero_gauges_.empty()) {
+            throw std::logic_error(
+                "NetworkEstimator::solve: the Card-4 DD priors and the sum-to-zero "
+                "phase-bias ensemble gauge are mutually exclusive (both are post-reduce "
+                "Woodbury folds on the same local block; composing them is inexact). Under "
+                "carry_invariant the ensemble datum is superseded — realize the phase datum "
+                "with the pre-reduce tree pins (addStationPrior) instead.");
+        }
+        neq_.foldReducedDdPriors(dd_priors_);
     }
 
     // Apply the explicit minimum-constraint datum to a COPY of the reduced

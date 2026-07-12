@@ -502,6 +502,36 @@ public:
     }
 
     /**
+     * @brief Card-4 (M1) invariant carry: set the rank-K double-difference priors the
+     *        z-store folds onto the reduced system this epoch
+     *        (@ref NetworkNormalEquations::foldReducedDdPriors).
+     *
+     * One @c DdPriorBlock per connected (const,signal) component — the z-store's
+     * carried DD ambiguities (mean + dense covariance) as gauge-free constraints on
+     * the local ambiguity columns.  Folded at @ref solve AFTER the Schur reduction,
+     * BEFORE the W5 datum constraint.  MUTUALLY EXCLUSIVE with the sum-to-zero
+     * ensemble gauges (both are post-reduce Woodbury folds reading the pristine
+     * per-station @f$N_{rr}@f$; composing them over coupled columns drops the cross
+     * term — @ref solve throws if both are set).  The Card-4 phase datum is the
+     * PRE-reduce tree pins (@ref addStationPrior), which compose exactly with this
+     * fold.  Empty (the default) → byte-identical OFF path.  Cleared per epoch (like
+     * the sum-to-zero gauges), so the driver re-sets them each epoch from the z-store.
+     *
+     * @param blocks One rank-K DD-prior block per component.
+     */
+    void setDdPriors(std::vector<NetworkNormalEquations::DdPriorBlock> blocks) {
+        dd_priors_ = std::move(blocks);
+    }
+
+    /// Posterior mean of DD-prior block @p b given the solved shared estimate @p x_s
+    /// — the value the z-store carries forward (forwards to the kernel).
+    Eigen::VectorXd ddPriorPosteriorMean(std::size_t b, const Eigen::VectorXd& x_s) const {
+        return neq_.ddPriorPosteriorMean(b, x_s);
+    }
+    /// @return Number of DD-prior blocks folded this epoch.
+    std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
+
+    /**
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
@@ -585,6 +615,7 @@ private:
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
+    std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< Card 4 (M1): per-component invariant-carry DD priors (empty = OFF, byte-identical)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()

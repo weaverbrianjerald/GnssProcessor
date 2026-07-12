@@ -336,6 +336,107 @@ public:
      */
     void foldReducedSumZeroGauges(const std::vector<SumZeroGauge>& gauges);
 
+    /// One connected (const,signal) component's rank-K double-difference PRIOR — the
+    /// Card-4 invariant-carry z-store's contribution to the producer solve (M1
+    /// phase C).  Each of the K rows is a DD ambiguity constraint
+    /// @f$z_k=\sum(\text{coeff}\cdot x_{\text{local}})@f$ with signed coefficients on
+    /// four (or, for higher-order fundamental cycles, more) LOCAL ambiguity columns
+    /// spanning up to four stations — a GAUGE-FREE quantity (the receiver + satellite
+    /// phase biases cancel, so it touches NO shared column).  The K carried DDs have
+    /// prior mean @c zhat and a DENSE prior covariance @c Pz (fundamental cycles share
+    /// tree edges ⇒ correlated ⇒ a JOINT rank-K fold, NOT K independent rank-1 folds —
+    /// the phase-A scout's adversarial correction).
+    struct DdPriorBlock {
+        struct Term {
+            std::size_t   station;    ///< station index (from @ref addStation).
+            Eigen::Index  local_col;  ///< ambiguity column within that station's @c A_r.
+            double        coeff;      ///< signed cycle coefficient (±1 for a plain DD).
+        };
+        std::vector<std::vector<Term>> rows;  ///< K rows; row k = the k-th DD's signed terms.
+        Eigen::MatrixXd Pz;                   ///< K×K prior covariance (symmetric positive-definite).
+        Eigen::VectorXd zhat;                 ///< K prior means (the carried DD values).
+    };
+
+    /**
+     * @brief Fold rank-K double-difference priors onto the reduced shared system as
+     *        per-component JOINT Woodbury corrections — the ONE structural change of
+     *        Card 4 (M1 phase C, spec D3 option (i)).
+     *
+     * A DD prior @f$z\sim N(\hat z,P^z),\ z=C_L x_L@f$ on LOCAL ambiguity columns
+     * couples columns ACROSS stations, so it cannot be a per-station @c N_rr
+     * increment (that would break the block-diagonal arrowhead).  As the soft
+     * generalization of @ref foldReducedSumZeroGauges (which is exactly the hard-
+     * constraint @f$P^z\!\to\!0,\ K\!=\!1,\ \hat z\!=\!0@f$ limit of this), Woodbury
+     * through the block-diagonal local normals yields, per component,
+     * @f[
+     *   B=\sum_r C_{L,r}N_{rr}^{-1}C_{L,r}^\top,\quad
+     *   G=\sum_r N_{sr}N_{rr}^{-1}C_{L,r}^\top,\quad
+     *   z_{\text{free}}=\sum_r C_{L,r}N_{rr}^{-1}u_r,\quad
+     *   M=(P^z+B)^{-1},
+     * @f]
+     * @f[
+     *   \tilde N_{ss}\mathrel{+}=G\,M\,G^\top,\qquad
+     *   \tilde u_s\mathrel{+}=G\,M\,(z_{\text{free}}-\hat z).
+     * @f]
+     * @f$C_{L,r}@f$ is the block's @f$K\times n_r@f$ signed sub-matrix on station
+     * @f$r@f$'s columns; @f$B,G,z_{\text{free}}@f$ accumulate from the CACHED
+     * per-station LDLᵀ factors (no re-reduce, factors left pristine), and the
+     * @f$K\times K@f$ middle inverse @f$M@f$ is per-component and bounded (no
+     * @f$O(n^3)@f$ border blow-up — the rejected option (ii) cost).  The stored
+     * @f$(G,M,z_{\text{free}},\hat z)@f$ drive the matching @ref reconstructStation
+     * correction
+     * @f$x_r\mathrel{-}=N_{rr}^{-1}C_{L,r}^\top M\,(z_{\text{free}}-G^\top x_s-\hat z)@f$,
+     * so the reconstructed locals are the CONSTRAINED (prior-folded) solution.
+     *
+     * @par Ordering / mutual exclusivity with the sum-to-zero gauge fold
+     * Lazily @ref reduce()s, then folds ONCE (a second call is a no-op until a
+     * @ref reduce recompute / @ref reset clears the stored blocks — mirrors
+     * @ref foldReducedSumZeroGauges).  Call AFTER @ref reduce and BEFORE the solve.
+     * @warning This and @ref foldReducedSumZeroGauges are BOTH post-reduce Woodbury
+     * folds that read the PRISTINE per-station @f$N_{rr}@f$ factor.  Composing the two
+     * over COUPLED local columns is INEXACT — it drops the cross term
+     * @f$C_L N_{rr}^{-1} C_{L,\text{gauge}}^\top@f$ of the joint middle inverse (each
+     * fold sees the base @f$N_{rr}@f$, not the other's augmentation).  They are
+     * therefore MUTUALLY EXCLUSIVE by design: under @c carry_invariant the DD priors
+     * SUPERSEDE the sum-to-zero phase-bias ensemble datum (spec D6), and the Card-4
+     * per-epoch phase datum is instead the PRE-REDUCE tree pins (@ref addStationPrior),
+     * which fold into @f$N_{rr}@f$ BEFORE the reduce and so compose EXACTLY with this
+     * post-reduce DD fold (it reads the already-pinned factor).
+     * @ref NetworkEstimator::solve throws if both are set.  A block whose
+     * @f$P^z+B@f$ is not positive-definite folds INERTLY (@f$M=0@f$, an index-stable
+     * no-op) rather than being dropped, so @ref ddPriorPosteriorMean / @ref numDdPriorBlocks
+     * keys stay aligned with the INPUT block order (a chordless @f$K=0@f$ block is an
+     * inert slot too).
+     *
+     * @param blocks One rank-K prior block per connected component.
+     * @throws std::out_of_range / std::invalid_argument on a bad station, column,
+     *         or a @c Pz / @c zhat dimension mismatch.
+     */
+    void foldReducedDdPriors(const std::vector<DdPriorBlock>& blocks);
+
+    /**
+     * @brief Posterior mean of a folded block's K double differences given the
+     *        solved shared estimate — the value the z-store carries forward.
+     *
+     * @f$\hat z_{\text{post}}=\hat z+P^z M\,(z_{\text{free}}-G^\top x_s-\hat z)@f$
+     * (equivalently @f$C_L\hat x_L@f$ of the constrained locals): the shrinkage of
+     * the prior @f$\hat z@f$ toward the data-implied DD @f$C_L x^0@f$.
+     *
+     * @param block_index INPUT block index — @ref foldReducedDdPriors preserves the
+     *        input order (a degenerate/chordless block is an inert slot), so the index
+     *        stays aligned with the caller's z-store block list.
+     * @param x_s The solved shared estimate (length @c n_shared).
+     * @return The K posterior DD means (empty for a chordless @f$K=0@f$ slot; the prior
+     *         @c zhat unchanged for an inert degenerate block, since @f$M=0@f$).
+     * @throws std::out_of_range on a bad index; std::invalid_argument on an x_s size mismatch.
+     */
+    Eigen::VectorXd ddPriorPosteriorMean(std::size_t block_index,
+                                         const Eigen::VectorXd& x_s) const;
+
+    /// @return Number of DD-prior blocks (== the input count of the last
+    ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
+    std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
+
     /**
      * @brief Schur-eliminate every station's nuisance block onto the shared
      *        border, producing @f$\tilde N_{ss},\ \tilde u_s@f$.
@@ -709,6 +810,22 @@ private:
     std::vector<FoldedSumZeroGauge> sumzero_gauges_;              ///< folded gauges (cleared by reduce()/reset())
     std::vector<std::vector<std::pair<std::size_t, Eigen::Index>>> station_sumzero_;  ///< station → list of (gauge idx, local col) for the reconstruction correction
     bool sumzero_folded_{false};                                 ///< guards double-folding into reduced_N_ss_ within one reduce (fold is applied in place; the gate + solve both trigger it)
+
+    /// A folded rank-K DD-prior block's cached data (@ref foldReducedDdPriors) for
+    /// the constrained reconstruction + the posterior-mean carry.  Empty on the OFF
+    /// path, so @ref reconstructStation stays byte-identical.
+    struct FoldedDdPrior {
+        Eigen::MatrixXd G;       ///< Σ_r N_sr N_rr⁻¹ C_{L,r}ᵀ  (n_shared × K)
+        Eigen::MatrixXd M;       ///< (Pᶻ + B)⁻¹                 (K × K)
+        Eigen::VectorXd z_free;  ///< Σ_r C_{L,r} N_rr⁻¹ u_r     (K)
+        Eigen::VectorXd zhat;    ///< prior means                (K)
+        Eigen::MatrixXd Pz;      ///< prior covariance           (K × K, for the posterior shrink)
+    };
+    std::vector<FoldedDdPrior> dd_priors_;   ///< folded DD-prior blocks (cleared by reduce()/reset())
+    /// One (block, row, col, coeff) term of a station's DD-prior reconstruction correction.
+    struct DdStationTerm { std::size_t block; Eigen::Index row; Eigen::Index col; double coeff; };
+    std::vector<std::vector<DdStationTerm>> station_ddprior_;  ///< station → its DD-prior terms
+    bool ddprior_folded_{false};             ///< guards double-folding the DD priors within one reduce
     std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
     bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()
     bool perf_timing_{false};               ///< D0: section timers armed (survives reset(); set once by the driver)
