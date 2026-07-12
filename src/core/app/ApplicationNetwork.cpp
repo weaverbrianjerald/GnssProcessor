@@ -6051,8 +6051,11 @@ int Application::runNetwork() {
                     if (!parts || parts->satellite.empty()) continue;
                     const char cons = parts->satellite.front();
                     if (cons == 'R') continue;   // GLONASS FDMA: no common-λ integer DD
-                    const std::string pbkey = StateKeys::makeSatPhaseBiasKey(
-                        PppUtils::getSystemString(parts->satellite), parts->signal);
+                    // The satellite phase-bias key is per-SATELLITE ("<sat>|<sig>|PB") — NOT
+                    // the per-system receiver-bias key.  Only ambiguities backing an ungated
+                    // shared phase bias (a vertex of the eq34 graph) become DD arcs.
+                    const std::string pbkey =
+                        StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal);
                     if (!shared_phase_keys.count(pbkey)) continue;   // not an eq34 arc (gated/legacy lump)
                     const auto hit = h2l.find(static_cast<int>(sidx));
                     if (hit == h2l.end() || hit->second < 0) continue;   // unresolvable ⇒ chord refloats
@@ -7629,27 +7632,6 @@ int Application::runNetwork() {
                 }
             }
 
-            // Card 4 (M1) C3b: install the DD posterior (mean + covariance) back into
-            // the carry from the FINAL x_s + datum — the invariant DDs the next epoch
-            // projects forward.  Uses the same plan.shared_datum the (re-)solve folded.
-            // A failure resets the carry (safe cold start) rather than poisoning it.
-            if (carry_invariant) {
-                try { carry_driver.installPosterior(est, x_s, plan.shared_datum); }
-                catch (const std::exception& ex) {
-                    log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
-                              "carry reset (refloats next epoch).", se.time.tow, ex.what());
-                    carry_driver.reset();
-                }
-                carry_prev_tow = se.time.tow;
-                const auto& cc = carry_driver.counters();
-                carry_epochs       = cc.epochs;
-                carry_born_total   = cc.chords_born;
-                carry_marg_total   = cc.chords_marginalized;
-                carry_merges_total = cc.merges;
-                carry_splits_total = cc.splits;
-                carry_zdim_last    = cc.z_dim;
-            }
-
             // A within-epoch satellite refloat reinitialized that sat's AMBIGUITY at every
             // station; its coupled shared clock is just as suspect, so refloat the carried
             // clock too (the stash below skips it).  Opt-in (clock_monitor_couple_raim).
@@ -7780,6 +7762,30 @@ int Application::runNetwork() {
             }
             prev_week = se.time.week; prev_tow = se.time.tow;
             continue;
+        }
+
+        // Card 4 (M1) C3b: install the DD posterior (mean + covariance) back into the
+        // carry from the FINAL accepted x_s + datum — the invariant DDs the next epoch
+        // projects forward.  POST-ACCEPTANCE (after the observability + σ̂0 withhold
+        // gates' skip-paths above), so a withheld/contaminated epoch never poisons the
+        // carry; and OUTSIDE the within-epoch RAIM block, so it runs every accepted
+        // epoch (not only RAIM-armed ones).  A failure resets the carry (safe cold
+        // start).  No-op when OFF.
+        if (carry_invariant) {
+            try { carry_driver.installPosterior(est, x_s, plan.shared_datum); }
+            catch (const std::exception& ex) {
+                log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
+                          "carry reset (refloats next epoch).", se.time.tow, ex.what());
+                carry_driver.reset();
+            }
+            carry_prev_tow = se.time.tow;
+            const auto& cc = carry_driver.counters();
+            carry_epochs       = cc.epochs;
+            carry_born_total   = cc.chords_born;
+            carry_marg_total   = cc.chords_marginalized;
+            carry_merges_total = cc.merges;
+            carry_splits_total = cc.splits;
+            carry_zdim_last    = cc.z_dim;
         }
 
         // --- Producer-side network AR (Phase 2: DD fixability attempt, LOG ONLY) ---
