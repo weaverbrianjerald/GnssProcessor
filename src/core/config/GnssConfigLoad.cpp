@@ -3096,6 +3096,8 @@ namespace GnssProcessor {
             jval<int>(json, "network.parallel_max_threads", "parallel_max_threads", 0);
         network_config_.parallel_reduce =
             jval<bool>(json, "network.parallel_reduce", "parallel_reduce", false);
+        network_config_.parallel_seam =
+            jval<bool>(json, "network.parallel_seam", "parallel_seam", false);
 
         // --- Visualization traces (pyviz network viewers) ---
         network_config_.trace_stations =
@@ -5122,6 +5124,11 @@ namespace GnssProcessor {
             log->info("Network: per-station compute runs SERIALLY ({} stations <= threshold {} or "
                       "parallel_stations=false)", network_config_.stations.size(),
                       network_config_.parallel_min_stations);
+        }
+        if (network_config_.parallel_seam) {
+            log->info("Network: deterministic-parallel post-solve seam ENABLED "
+                      "(carry-fold + D5 readouts computed per-block in parallel, merged in "
+                      "fixed block order — byte-identical to the serial fold)");
         }
         return true;
     }

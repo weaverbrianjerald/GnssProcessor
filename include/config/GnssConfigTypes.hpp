@@ -221,6 +221,21 @@ namespace GnssProcessor {
         // serial-vs-parallel byte-diff for regression.  Uses the same thread budget
         // (@ref parallel_max_threads) and only when @ref parallel_stations is active.
         bool parallel_reduce{ false };    ///< Parallelize the Schur reduce loop (opt-in; trades serial≡parallel byte-identity for speed).
+        // Deterministic-parallel fan-out of the post-solve SERIAL SEAM (the ~72% of a
+        // 305-station epoch that reduce/assembly parallelism does NOT cover: the Card-4
+        // DD carry-fold @ref NetworkNormalEquations::foldReducedDdPriors and the D5
+        // innovation-gate readouts in @ref NetworkInvariantCarryDriver::installPosterior).
+        // Unlike @ref parallel_reduce this preserves serial≡parallel BYTE-IDENTITY: the
+        // independent per-(const,signal)-block algebra (G, M=(Pᶻ+B)⁻¹, GMGᵀ, the posterior
+        // mean/cov + innovation GᵀΣG products) is computed into pre-sized per-block slots,
+        // then ACCUMULATED / installed SERIALLY in a fixed block-index order — so the
+        // floating-point summation order never changes and the output is bit-identical to
+        // the serial fold regardless of thread count.  Only takes effect when
+        // @ref parallel_stations is active (the win exists only at scale, where Eigen is
+        // already pinned to one thread for the epoch — the deterministic-parallel region
+        // reuses that pin).  Default OFF ⇒ the seam runs its original serial path, so an
+        // OFF run is byte-for-byte the pre-seam producer (no new code on the OFF path).
+        bool parallel_seam{ false };      ///< Deterministic-parallel the post-solve carry-fold / D5-readout seam (byte-identical, opt-in; needs @ref parallel_stations).
 
         // --- Visualization traces (consumed by the pyviz network viewers) ---
         bool trace_stations{ true };      ///< Emit a static @c network_stations.csv roster (station id, role, ECEF) once at startup.  Cheap (one tiny file); drives the worldmap viewer so it reflects the stations that actually loaded.

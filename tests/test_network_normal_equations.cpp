@@ -1168,6 +1168,100 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDegenerateBlockIsInertAndInd
     EXPECT_EQ(n_both.ddPriorPosteriorMean(1, xb).size(), 1);   // healthy block still valid
 }
 
+// Deterministic-parallel fold (network.parallel_seam): foldReducedDdPriors(blocks,
+// n_threads > 1) computes each block's algebra in parallel but ACCUMULATES the GMGᵀ /
+// GM(z_free−ẑ) contributions SERIALLY in block-index order, so the reduced system, the
+// solve, the per-station reconstruction and every per-block readout are BYTE-IDENTICAL
+// to the serial fold (n_threads == 1) — unlike the ULP-reassociating parallel_reduce.
+// Exercises a multi-block set incl. a chordless (K=0) inert slot and a degenerate
+// (non-PD) inert slot, so the slot bookkeeping is covered too.
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsParallelMatchesSerialByteForByte) {
+    std::mt19937 gen(20260713);
+    const Eigen::Index n_shared = 5;
+    const auto stations = makeStations(gen, n_shared, {3, 3, 3, 3}, {11, 12, 13, 14}, true);
+    const double sp = 1e-2, lp = 1e-2;
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations) {
+            const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+            const Eigen::Index n_r = s.A_r.cols();
+            Eigen::MatrixXd N_rr =
+                s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+    };
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    std::vector<NetworkNormalEquations::DdPriorBlock> blocks;
+    {   // (0) rank-2 JOINT block spanning 3 stations (shares station-1 col 0)
+        NetworkNormalEquations::DdPriorBlock b;
+        b.rows = {
+            {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+            {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+        };
+        b.Pz   = (Eigen::MatrixXd(2, 2) << 0.04, 0.01, 0.01, 0.09).finished();
+        b.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+        blocks.push_back(b);
+    }
+    blocks.push_back(NetworkNormalEquations::DdPriorBlock{});   // (1) chordless (K=0) → inert slot
+    {   // (2) rank-1 block on other columns/stations
+        NetworkNormalEquations::DdPriorBlock b;
+        b.rows = {{Term{2, 1, +1.0}, Term{3, 1, -1.0}}};
+        b.Pz   = (Eigen::MatrixXd(1, 1) << 0.05).finished();
+        b.zhat = (Eigen::VectorXd(1) << -0.3).finished();
+        blocks.push_back(b);
+    }
+    {   // (3) degenerate (non-PD Pᶻ) block → M=0 inert slot
+        NetworkNormalEquations::DdPriorBlock b;
+        b.rows = {{Term{0, 2, +1.0}, Term{3, 2, -1.0}}};
+        b.Pz   = (Eigen::MatrixXd(1, 1) << -1.0).finished();
+        b.zhat = (Eigen::VectorXd(1) << 2.0).finished();
+        blocks.push_back(b);
+    }
+
+    NetworkNormalEquations serial(n_shared);  build(serial);  serial.reduce();
+    serial.foldReducedDdPriors(blocks, /*n_threads=*/1);
+    NetworkNormalEquations par(n_shared);     build(par);     par.reduce();
+    par.foldReducedDdPriors(blocks, /*n_threads=*/8);
+
+    // Byte-exact reduced system, RHS, solve, and block count.
+    EXPECT_EQ((serial.reducedSharedNormals() - par.reducedSharedNormals()).cwiseAbs().maxCoeff(), 0.0);
+    EXPECT_EQ((serial.reducedSharedRhs() - par.reducedSharedRhs()).cwiseAbs().maxCoeff(), 0.0);
+    const Eigen::VectorXd xs = serial.solveShared();
+    const Eigen::VectorXd xp = par.solveShared();
+    EXPECT_EQ((xs - xp).cwiseAbs().maxCoeff(), 0.0);
+    ASSERT_EQ(serial.numDdPriorBlocks(), par.numDdPriorBlocks());
+    EXPECT_EQ(serial.numDdPriorBlocks(), blocks.size());
+
+    // Byte-exact per-block posterior mean / covariance / innovation, and per-station
+    // reconstruction (the latter also exercises the station_ddprior_ append order under
+    // the parallel merge).
+    const Eigen::MatrixXd cov_free =
+        0.1 * Eigen::MatrixXd::Identity(n_shared, n_shared);   // arbitrary shared cov (same for both)
+    for (std::size_t b = 0; b < blocks.size(); ++b) {
+        if (blocks[b].rows.empty()) continue;   // chordless (K=0) inert slot: readouts are N/A
+        const Eigen::VectorXd ms = serial.ddPriorPosteriorMean(b, xs);
+        const Eigen::VectorXd mp = par.ddPriorPosteriorMean(b, xp);
+        ASSERT_EQ(ms.size(), mp.size());
+        EXPECT_EQ((ms - mp).cwiseAbs().maxCoeff(), 0.0) << "mean block " << b;
+        const Eigen::MatrixXd cs = serial.ddPriorPosteriorCovariance(b, cov_free);
+        const Eigen::MatrixXd cp = par.ddPriorPosteriorCovariance(b, cov_free);
+        ASSERT_EQ(cs.rows(), cp.rows());
+        EXPECT_EQ((cs - cp).cwiseAbs().maxCoeff(), 0.0) << "cov block " << b;
+        Eigen::VectorXd vs, vp; Eigen::MatrixXd cvs, cvp;
+        serial.ddPriorInnovation(b, xs, cov_free, vs, cvs);
+        par.ddPriorInnovation(b, xp, cov_free, vp, cvp);
+        ASSERT_EQ(vs.size(), vp.size());
+        EXPECT_EQ((vs - vp).cwiseAbs().maxCoeff(), 0.0) << "innov v block " << b;
+        EXPECT_EQ((cvs - cvp).cwiseAbs().maxCoeff(), 0.0) << "innov cov block " << b;
+    }
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        EXPECT_EQ((serial.reconstructStation(r, xs) - par.reconstructStation(r, xp))
+                      .cwiseAbs().maxCoeff(), 0.0) << "station " << r;
+    }
+}
+
 // An EMPTY addStationPrior is a genuine no-op: byte-identical to never calling it
 // (the OFF-state byte-identity guarantee at the kernel level).
 TEST(NetworkNormalEquationsTest, AddStationPriorEmptyIsNoOp) {

@@ -409,10 +409,20 @@ public:
      * inert slot too).
      *
      * @param blocks One rank-K prior block per connected component.
+     * @param n_threads Optional deterministic fan-out of the per-block fold
+     *        (@c network.parallel_seam; default 1 = the serial fold, byte-identical to
+     *        the historical loop).  With @p n_threads > 1 and OpenMP, each block's
+     *        algebra + its @f$G M G^\top@f$ / @f$G M(z_{\text{free}}-\hat z)@f$ Woodbury
+     *        contribution is computed into a per-block slot in parallel, then the slots
+     *        are ACCUMULATED SERIALLY in block-index order — the floating-point
+     *        summation order is unchanged, so the reduced system is BIT-IDENTICAL for
+     *        ANY thread count (unlike @ref reduce's opt-in ULP-reassociating fan-out).
+     *        The dense kernels must run single-threaded (the driver pins Eigen to one
+     *        thread for the epoch) to avoid nested oversubscription.
      * @throws std::out_of_range / std::invalid_argument on a bad station, column,
      *         or a @c Pz / @c zhat dimension mismatch.
      */
-    void foldReducedDdPriors(const std::vector<DdPriorBlock>& blocks);
+    void foldReducedDdPriors(const std::vector<DdPriorBlock>& blocks, int n_threads = 1);
 
     /**
      * @brief Posterior mean of a folded block's K double differences given the

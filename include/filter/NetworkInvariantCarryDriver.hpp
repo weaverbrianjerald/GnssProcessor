@@ -189,9 +189,16 @@ public:
      * @param est   The estimator that folded @ref buildDdPriors's blocks this epoch.
      * @param x_s   The solved shared estimate.
      * @param datum The minimum-constraint datum passed to @ref NetworkEstimator::solve.
+     * @param n_threads Optional deterministic fan-out (@c network.parallel_seam;
+     *        default 1 = serial, byte-identical).  With @p n_threads > 1 the per-block
+     *        posterior mean/covariance + innovation (all const kernel readouts) are
+     *        computed into per-block slots in parallel, while the order-sensitive σ̂₀
+     *        accumulator feed, gate decision, flag/counter appends and the carry install
+     *        stay SERIAL in the exact (block, chord) order — so σ̂₀ (which gates the next
+     *        epoch), the counters, and @c carried_ are BIT-IDENTICAL at any thread count.
      */
     void installPosterior(const NetworkEstimator& est, const Eigen::VectorXd& x_s,
-                          const NetworkEstimator::Datum& datum);
+                          const NetworkEstimator::Datum& datum, int n_threads = 1);
 
     const Counters& counters() const { return counters_; }
 

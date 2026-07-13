@@ -161,6 +161,22 @@ public:
         reduce_threads_ = n_threads > 1 ? n_threads : 1;
     }
 
+    /**
+     * @brief Set the thread budget for the deterministic-parallel DD carry-fold
+     *        (@c network.parallel_seam) — the per-block fan-out of
+     *        @ref NetworkNormalEquations::foldReducedDdPriors.
+     *
+     * Default 1 (serial fold, byte-identical).  Unlike @ref setReduceThreads this is
+     * BYTE-IDENTITY-PRESERVING at any thread count: the per-block algebra is computed
+     * in parallel but accumulated serially in block-index order.  Takes effect on the
+     * next @ref solve.
+     *
+     * @param n_threads Thread count (clamped to ≥ 1).
+     */
+    void setSeamThreads(int n_threads) {
+        seam_threads_ = n_threads > 1 ? n_threads : 1;
+    }
+
     /// Pin-aware station PD guard passthrough
     /// (@ref NetworkNormalEquations::setStationPdMedianScale;
     /// @c network.station_pd_pin_aware).  Configuration-level — set once before
@@ -673,6 +689,7 @@ private:
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< Card 4 (M1): per-component invariant-carry DD priors (empty = OFF, byte-identical)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
+    int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };

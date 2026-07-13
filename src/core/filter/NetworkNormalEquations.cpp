@@ -600,7 +600,7 @@ void NetworkNormalEquations::foldReducedSumZeroGauges(
 }
 
 void NetworkNormalEquations::foldReducedDdPriors(
-    const std::vector<DdPriorBlock>& blocks) {
+    const std::vector<DdPriorBlock>& blocks, int n_threads) {
     if (!reduced_) {
         reduce();  // need the reduced system + the cached per-station factors
     }
@@ -616,6 +616,141 @@ void NetworkNormalEquations::foldReducedDdPriors(
         return;
     }
 
+    // ---- Deterministic-parallel fold (network.parallel_seam) --------------------
+    // Compute every block's per-(const,signal) algebra AND its rank-K Woodbury
+    // contribution (dN = G M Gᵀ, du = G M (z_free − ẑ)) into pre-sized per-block SLOTS
+    // in parallel, then ACCUMULATE the slots SERIALLY in block-index order below.  The
+    // per-block compute mirrors the serial fold that follows EXACTLY (same operations,
+    // same by_station sorted reduction order), and the serial accumulation order is
+    // identical, so the reduced system is BIT-IDENTICAL to the n_threads == 1 path
+    // regardless of thread count (unlike the FP-reassociating parallel_reduce).  The
+    // serial fold below (n_threads == 1, the default) is left completely UNTOUCHED —
+    // keep the two block-algebra bodies in lockstep.
+    if (n_threads > 1) {
+        const std::size_t NB = blocks.size();
+
+        // (0, serial) Validate every block up front so the ONLY throws stay on the
+        // serial thread (an exception escaping the OpenMP region is UB), and precompute
+        // N_rr⁻¹ u_r for every referenced station — this kills the cross-block cache
+        // race (the value is a deterministic per-station solve, so precomputing it is
+        // byte-identical to the serial path's lazy fill).
+        std::vector<bool> have_ur(n_active_, false);
+        std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
+        for (const auto& blk : blocks) {
+            const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
+            if (blk.Pz.rows() != K || blk.Pz.cols() != K || blk.zhat.size() != K) {
+                fail("foldReducedDdPriors: Pz/zhat dimension mismatch with the row count");
+            }
+            for (Eigen::Index k = 0; k < K; ++k) {
+                for (const auto& t : blk.rows[static_cast<std::size_t>(k)]) {
+                    if (t.station >= n_active_) {
+                        throw std::out_of_range("NetworkNormalEquations::foldReducedDdPriors: "
+                                                "station index out of range");
+                    }
+                    if (t.local_col < 0 || t.local_col >= stations_[t.station].n_local) {
+                        fail("foldReducedDdPriors: local column out of range");
+                    }
+                    if (!have_ur[t.station]) {
+                        nrr_inv_ur[t.station] =
+                            stations_[t.station].Nrr_ldlt.solve(stations_[t.station].u_r);
+                        have_ur[t.station] = true;
+                    }
+                }
+            }
+        }
+
+        // Per-block slots (separate vectors, using the fold's own private types the same
+        // way the serial path does — no local struct at function scope).  Each block
+        // writes ONLY its own index.  We store the per-block G / M / z_free (NOT the
+        // materialized G M Gᵀ product): the SERIAL merge below recomputes the product
+        // with the SAME fused Eigen expression the serial fold uses, so the += rounds
+        // BIT-IDENTICALLY.  (Pre-forming dN = (G M Gᵀ).eval() and adding it instead
+        // drifts by a ULP at large n_shared — Eigen's blocked GEMM rounds a beta=0
+        // product-then-add differently from the beta=1 fused accumulate; the network's
+        // ill-conditioning then amplifies that over the carry-forward epochs, exactly the
+        // parallel_reduce failure mode.  Only the per-station B/G/z_free solves and the
+        // K×K middle inverse — the block-local work — run in the parallel region.)
+        std::vector<FoldedDdPrior>   fd_slot(NB);
+        std::vector<std::vector<std::pair<std::size_t, std::vector<DdStationTerm>>>> terms_slot(NB);
+        std::vector<char> has_merge(NB, 0);         // K > 0 ⇒ G/M/terms carry a contribution
+
+        // (1, PARALLEL over block index) The driver pins Eigen to one thread for the
+        // whole epoch, so these dense kernels do not nest-thread.  Each iteration writes
+        // ONLY its own slot index; nrr_inv_ur / stations_ are read-only here.  No throw
+        // can escape (all validation ran serially above).
+        #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
+        for (long long bi = 0; bi < static_cast<long long>(NB); ++bi) {
+            const std::size_t bidx = static_cast<std::size_t>(bi);
+            const auto& blk = blocks[bidx];
+            const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
+            fd_slot[bidx].zhat = blk.zhat;
+            fd_slot[bidx].Pz   = blk.Pz;
+            if (K == 0) {
+                continue;   // chordless component → inert slot, no merge (index preserved)
+            }
+            std::map<std::size_t, std::vector<DdStationTerm>> by_station;
+            for (Eigen::Index k = 0; k < K; ++k) {
+                for (const auto& t : blk.rows[static_cast<std::size_t>(k)]) {
+                    by_station[t.station].push_back({bidx, k, t.local_col, t.coeff});
+                }
+            }
+            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(K, K);
+            Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n_shared_, K);
+            Eigen::VectorXd z_free = Eigen::VectorXd::Zero(K);
+            for (const auto& [si, terms] : by_station) {
+                const Station& st = stations_[si];
+                Eigen::MatrixXd CrT = Eigen::MatrixXd::Zero(st.n_local, K);
+                for (const auto& t : terms) {
+                    CrT(t.col, t.row) += t.coeff;
+                }
+                const Eigen::MatrixXd Y = st.Nrr_ldlt.solve(CrT);
+                B.noalias()      += CrT.transpose() * Y;
+                G.noalias()      += st.N_sr * Y;
+                z_free.noalias() += CrT.transpose() * nrr_inv_ur[si];
+            }
+            Eigen::MatrixXd PzB = blk.Pz + B;
+            PzB = (0.5 * (PzB + PzB.transpose())).eval();
+            fd_slot[bidx].Minv = PzB;
+            Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);
+            Eigen::MatrixXd M;
+            if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
+                M = Eigen::MatrixXd::Zero(K, K);
+            } else {
+                M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
+                M = (0.5 * (M + M.transpose())).eval();
+            }
+            fd_slot[bidx].G      = std::move(G);
+            fd_slot[bidx].M      = std::move(M);
+            fd_slot[bidx].z_free = std::move(z_free);
+            terms_slot[bidx].reserve(by_station.size());
+            for (auto& [si, terms] : by_station) {
+                terms_slot[bidx].emplace_back(si, std::move(terms));
+            }
+            has_merge[bidx] = 1;
+        }
+
+        // (2, SERIAL in block-index order) accumulate with the SAME fused Eigen
+        // expression the serial fold uses (@ref 691-692) — identical operands (the
+        // parallel-computed G / M / z_free are bit-identical to the serial fold's) AND
+        // identical += sequence ⇒ bit-identical reduced system.
+        dd_priors_.reserve(NB);
+        for (std::size_t b = 0; b < NB; ++b) {
+            FoldedDdPrior& fd = fd_slot[b];
+            if (has_merge[b]) {
+                reduced_N_ss_.noalias() += fd.G * fd.M * fd.G.transpose();
+                reduced_u_s_.noalias()  += fd.G * (fd.M * (fd.z_free - fd.zhat));
+                for (auto& [si, terms] : terms_slot[b]) {
+                    auto& dst = station_ddprior_[si];
+                    dst.insert(dst.end(), terms.begin(), terms.end());
+                }
+            }
+            dd_priors_.push_back(std::move(fd));
+        }
+        reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+        return;
+    }
+
+    // ---- Serial fold (n_threads == 1, the default; byte-identical OFF path) ------
     // Cache N_rr⁻¹ u_r per station (reused across every block/row that touches it).
     std::vector<bool> have_ur(n_active_, false);
     std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);

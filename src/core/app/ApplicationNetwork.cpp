@@ -1205,6 +1205,17 @@ int Application::runNetwork() {
                ? std::min(nc.parallel_max_threads, hw_max_threads)
                : hw_max_threads)
         : 1;
+    // Deterministic-parallel post-solve seam (network.parallel_seam): the per-block
+    // DD carry-fold + D5 innovation-gate readouts.  Rides on the per-station parallel
+    // path (same thread budget, Eigen already pinned to one thread for the epoch) and,
+    // unlike parallel_reduce, is BYTE-IDENTICAL at any thread count (compute per block
+    // in parallel, accumulate/install serially in fixed block order).  seam_threads == 1
+    // ⇒ the seam runs its original serial path (OFF is byte-for-byte the pre-seam run).
+    const bool seam_on      = parallel_on && nc.parallel_seam;
+    const int  seam_threads = seam_on ? n_threads : 1;
+    if (seam_on)
+        log->info("Network: post-solve carry-fold/D5 seam PARALLEL across {} threads "
+                  "(deterministic — byte-identical to the serial fold)", n_threads);
 #ifndef _OPENMP
     if (nc.parallel_stations && n_sta_total > nc.parallel_min_stations)
         log->warn("Network: parallel_stations requested but this build has no OpenMP "
@@ -2265,6 +2276,7 @@ int Application::runNetwork() {
                << "\"parallel_min_stations\":" << nc.parallel_min_stations << ','
                << "\"parallel_max_threads\":" << nc.parallel_max_threads << ','
                << "\"parallel_reduce\":" << (nc.parallel_reduce ? "true" : "false") << ','
+               << "\"parallel_seam\":" << (nc.parallel_seam ? "true" : "false") << ','
                << "\"n_threads\":" << n_threads << ','
                << "\"trace_stations\":" << (nc.trace_stations ? "true" : "false") << ','
                << "\"trace_ionosphere\":" << (nc.trace_ionosphere ? "true" : "false") << ','
@@ -2934,6 +2946,8 @@ int Application::runNetwork() {
     // reuse) still apply.  Enable network.parallel_reduce for max-speed runs.
     const int reduce_threads = (parallel_on && nc.parallel_reduce) ? n_threads : 1;
     est.setReduceThreads(reduce_threads);
+    // Deterministic-parallel DD carry-fold fan-out (network.parallel_seam); 1 = serial.
+    est.setSeamThreads(seam_threads);
     // Pin-aware station PD guard (network.station_pd_pin_aware): median-|pivot|
     // reference scale for the local-block rank test — the prioritized datum's
     // in-block 1e10 anchor pins otherwise eject marginal stations every epoch.
@@ -7892,7 +7906,7 @@ int Application::runNetwork() {
         // epoch (not only RAIM-armed ones).  A failure resets the carry (safe cold
         // start).  No-op when OFF.
         if (carry_invariant) {
-            try { carry_driver.installPosterior(est, x_s, plan.shared_datum); }
+            try { carry_driver.installPosterior(est, x_s, plan.shared_datum, seam_threads); }
             catch (const std::exception& ex) {
                 log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
                           "carry reset (refloats next epoch).", se.time.tow, ex.what());

@@ -535,6 +535,76 @@ TEST(NetworkInvariantCarryDriverTest, MultiBirthJointCovarianceIsCoupled) {
 }
 
 // ---------------------------------------------------------------------------
+// Deterministic-parallel installPosterior (network.parallel_seam): the per-block
+// posterior mean/cov + innovation are computed in parallel, but the σ̂₀ accumulator
+// feed (NetworkCarryVce::addRow), the D5 gate decisions, the flag/counter appends and
+// the carry install stay SERIAL in (block, chord) order — so the carried DDs, the run
+// counters, AND the σ̂₀ that gates the NEXT epoch are BYTE-IDENTICAL to the serial
+// install at any thread count.  Driven over a multi-epoch history with the D5 gate +
+// LS-VCE calibration ON, comparing after EVERY epoch, so a σ̂₀ carry-over divergence
+// (which would flip a later gate decision) is caught the epoch it first appears.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InstallPosteriorParallelMatchesSerialByteForByte) {
+    const int R = 4, S = 4;
+    const Net n = makeNet(4242, R, S);
+    const int p = 0, q = 0;
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.innov_gate = true;
+    cfg.innov_calibrate = true;
+    cfg.innov_calibrate_window = 20.0;
+    cfg.innov_k = 4.0;
+    NetworkInvariantCarryDriver drvS(cfg), drvP(cfg);   // serial vs parallel install
+
+    auto oneEpoch = [&](NetworkInvariantCarryDriver& drv, int n_threads,
+                        const std::vector<std::vector<double>>& noise) {
+        NetworkEstimator est;
+        std::vector<Eigen::Index> clkCol(S), pbCol(S);
+        for (int s = 0; s < S; ++s) {
+            clkCol[s] = est.registerClock(n.sats[s]);
+            pbCol[s]  = est.registerPhaseBias(n.sats[s], "L1");
+        }
+        est.beginEpoch();
+        std::vector<std::size_t> ids(R);
+        for (int r = 0; r < R; ++r) ids[r] = addNetStation(est, n, r, clkCol, pbCol, p, q, &noise[r], p);
+        drv.beginEpoch(1.0);
+        est.setDdPriors(drv.buildDdPriors({makeGroup(n, ids, p, q)}));
+        const NetworkEstimator::Datum d = {{est.clockColumn(n.sats[0]), 0.0}};
+        const Eigen::VectorXd x_s = est.solve(d);
+        drv.installPosterior(est, x_s, d, n_threads);
+    };
+
+    std::mt19937 g(7);
+    std::normal_distribution<double> nz(0.0, 0.02);
+    for (int ep = 0; ep < 12; ++ep) {
+        std::vector<std::vector<double>> noise(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) noise[r][s] = nz(g);
+        oneEpoch(drvS, /*n_threads=*/1, noise);
+        oneEpoch(drvP, /*n_threads=*/8, noise);
+
+        ASSERT_EQ(drvS.totalZDim(), drvP.totalZDim()) << "epoch " << ep;
+        for (int r = 1; r < R; ++r)
+            for (int s = 1; s < S; ++s) {
+                double zS, vS, zP, vP;
+                const bool okS = drvS.carriedDdForTest(0, ArcKey(rxV(r), satV(s)), zS, vS);
+                const bool okP = drvP.carriedDdForTest(0, ArcKey(rxV(r), satV(s)), zP, vP);
+                ASSERT_EQ(okS, okP) << "epoch " << ep << " chord " << r << "," << s;
+                if (okS) {
+                    EXPECT_EQ(zS, zP) << "epoch " << ep << " chord " << r << "," << s;
+                    EXPECT_EQ(vS, vP) << "epoch " << ep << " chord " << r << "," << s;
+                }
+            }
+        const auto& cS = drvS.counters();
+        const auto& cP = drvP.counters();
+        EXPECT_EQ(cS.innov_flags, cP.innov_flags)     << "epoch " << ep;
+        EXPECT_EQ(cS.innov_retaps, cP.innov_retaps)   << "epoch " << ep;
+        EXPECT_EQ(cS.chords_carried, cP.chords_carried) << "epoch " << ep;
+        // σ̂₀ gates the NEXT epoch — it must be bit-identical, not just approximately.
+        EXPECT_EQ(drvS.innovInflationSigma0(), drvP.innovInflationSigma0()) << "epoch " << ep;
+    }
+    EXPECT_GT(drvS.totalZDim(), 0) << "non-vacuous: the carry must have accumulated DDs";
+}
+
+// ---------------------------------------------------------------------------
 // GATE 8 — Card 4 C3c slip integration on a CHORD arc, A/B with a NEGATIVE control.
 // After warming a tight carry, inject an integer jump on a chord's true ambiguity.
 // SIGNALED (drvSig): the driver re-taps that DD fresh (uncontaminated by the stale

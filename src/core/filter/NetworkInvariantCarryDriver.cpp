@@ -337,7 +337,7 @@ double NetworkInvariantCarryDriver::carriedEstimableForTest(
 
 void NetworkInvariantCarryDriver::installPosterior(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
-    const NetworkEstimator::Datum& datum) {
+    const NetworkEstimator::Datum& datum, int n_threads) {
     last_innov_flags_.clear();
     // Hoist the datum-frame shared covariance (the n_shared² Σ_ss copy) to ONCE per install —
     // every block's posterior-cov AND innovation readout consumes the same matrix.
@@ -349,6 +349,82 @@ void NetworkInvariantCarryDriver::installPosterior(
     const double sigma0 = innovInflationSigma0();
     const double k2f    = cfg_.innov_k * cfg_.innov_k * sigma0 * sigma0;   // (k·σ̂₀)²
 
+    // ---- Deterministic-parallel readout (network.parallel_seam) -----------------
+    // The per-block posterior mean/cov + innovation are CONST readouts of the folded
+    // kernel (each reads only dd_priors_[b] + the shared read-only x_s / cov_free), so
+    // they parallelize cleanly.  Everything ORDER-SENSITIVE — the σ̂₀ accumulator feed
+    // (NetworkCarryVce::addRow), the gate decision, the flag/counter appends and the
+    // carried_ install — stays SERIAL in the exact (block b, chord i) order below, so
+    // the σ̂₀ that gates the NEXT epoch, the counters, and carried_ are all BIT-IDENTICAL
+    // to the serial install regardless of thread count.  The serial path (n_threads == 1,
+    // the default) is left completely UNTOUCHED — keep the two per-chord bodies in lockstep.
+    if (n_threads > 1) {
+        const std::size_t NB = block_meta_.size();
+        struct InstallSlot {
+            CarriedBlock    cb;
+            Eigen::VectorXd v;                 // innovation (only when innov_gate && K > 0)
+            Eigen::MatrixXd cov_v;             // its H0 covariance
+            bool            has_innov{false};
+        };
+        std::vector<InstallSlot> slots(NB);
+
+        // (1, PARALLEL over block index) const readouts into per-block slots only.
+        // Eigen is pinned to one thread by the driver ⇒ no nested threading.
+        #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
+        for (long long bi = 0; bi < static_cast<long long>(NB); ++bi) {
+            const std::size_t b = static_cast<std::size_t>(bi);
+            const BlockMeta& bm = block_meta_[b];
+            InstallSlot& S = slots[b];
+            S.cb.group    = bm.group;
+            S.cb.chords   = bm.chords;
+            S.cb.vertices = bm.vertices;
+            S.cb.arcs     = bm.arcs;
+            S.cb.z  = est.ddPriorPosteriorMean(b, x_s);
+            S.cb.Pz = est.ddPriorPosteriorCovariance(b, cov_free);
+            if (cfg_.innov_gate && static_cast<Eigen::Index>(bm.chords.size()) > 0) {
+                est.ddPriorInnovation(b, x_s, cov_free, S.v, S.cov_v);
+                S.has_innov = true;
+            }
+        }
+
+        // (2, SERIAL in (block b, chord i) order) the σ̂₀ feed + gate + flags + install —
+        // identical call sequence ⇒ identical σ̂₀ / counters / carried_.
+        std::vector<CarriedBlock> next;
+        next.reserve(NB);
+        for (std::size_t b = 0; b < NB; ++b) {
+            const BlockMeta& bm = block_meta_[b];
+            InstallSlot& S = slots[b];
+            const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
+            if (cfg_.innov_gate && K > 0 && S.has_innov) {
+                const bool have_carried = static_cast<Eigen::Index>(bm.chord_carried.size()) == K;
+                if (S.v.size() == K && S.cov_v.rows() == K && S.cov_v.cols() == K
+                    && bm.zhat.size() == K) {
+                    for (Eigen::Index i = 0; i < K; ++i) {
+                        const double var = S.cov_v(i, i);
+                        if (!(var > 0.0)) continue;
+                        if (inflation_ && (!have_carried || bm.chord_carried[static_cast<std::size_t>(i)]))
+                            inflation_->addRow(kInflationFamily, kInflationSat,
+                                               S.v(i) / std::sqrt(var), /*gap_s=*/0.0,
+                                               /*post_var=*/0.0, /*fold_var=*/1.0);
+                        if (S.v(i) * S.v(i) <= k2f * var) continue;
+                        S.cb.z(i) = bm.zhat(i) + S.v(i);
+                        S.cb.Pz.row(i).setZero();
+                        S.cb.Pz.col(i).setZero();
+                        S.cb.Pz(i, i) = sigma0 * sigma0 * var;
+                        last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
+                        ++counters_.innov_flags;
+                        ++counters_.innov_retaps;
+                    }
+                }
+            }
+            next.push_back(std::move(S.cb));
+        }
+        carried_.swap(next);
+        counters_.z_dim = static_cast<long long>(totalZDim());
+        return;
+    }
+
+    // ---- Serial install (n_threads == 1, the default; byte-identical OFF path) ---
     std::vector<CarriedBlock> next;
     next.reserve(block_meta_.size());
     for (std::size_t b = 0; b < block_meta_.size(); ++b) {

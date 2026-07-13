@@ -216,7 +216,7 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
                 "carry_invariant the ensemble datum is superseded — realize the phase datum "
                 "with the pre-reduce tree pins (addStationPrior) instead.");
         }
-        neq_.foldReducedDdPriors(dd_priors_);
+        neq_.foldReducedDdPriors(dd_priors_, seam_threads_);
     }
 
     // Apply the explicit minimum-constraint datum to a COPY of the reduced
