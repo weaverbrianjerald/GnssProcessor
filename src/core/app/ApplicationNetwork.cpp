@@ -2338,6 +2338,8 @@ int Application::runNetwork() {
                << "\"carry_invariant_innov_gate\":"
                << (config_.networkCarryInvariantInnovGate() ? "true" : "false") << ','
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
+               << "\"carry_invariant_innov_calibrate\":"
+               << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
                << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
                << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
@@ -2478,6 +2480,9 @@ int Application::runNetwork() {
     const bool carry_innov_gate = carry_invariant && config_.networkCarryInvariantInnovGate();
     carry_cfg.innov_gate = carry_innov_gate;
     carry_cfg.innov_k    = config_.networkCarryInvariantInnovK();
+    // D5 v2: LS-VCE calibration of the gate threshold (σ̂₀²); requires innov_gate (config-rejected).
+    carry_cfg.innov_calibrate        = carry_innov_gate && config_.networkCarryInvariantInnovCalibrate();
+    carry_cfg.innov_calibrate_window = config_.networkCarryInvariantInnovCalibrateWindow();
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
     // Card 4 (M1) phase D: the emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md).
     // Re-references the emitted per-(sat,σ) phase biases onto the previous EMISSION
@@ -2501,6 +2506,7 @@ int Application::runNetwork() {
     // per-epoch carry_slipped_ambs is rebuilt each epoch).  Empty unless carry_innov_gate.
     std::set<std::pair<int, std::string>> carry_innov_pending;
     long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
+    long long carry_innov_map_miss = 0;   // D5 flag→ambiguity reverse-map misses (should stay 0)
     const bool phase_datum_prioritized = config_.networkPhaseDatumPrioritized()
                                        || phase_datum_ensemble
                                        || phase_datum_eq34;
@@ -6171,9 +6177,12 @@ int Application::runNetwork() {
         };
         if (carry_invariant) {
             // The z-store predict (q_z·Δt on the carried DD covariance) runs ONCE per
-            // epoch; the build/fold may re-run on the RAIM re-solve.
+            // epoch; the build/fold may re-run on the RAIM re-solve.  D5 v2: the epoch time
+            // (σ̂₀² reporting bucket) + clean flag (always clean here — under carry_invariant
+            // the eq34 datum re-realizes freely, so there is no re-level storm to gate; the
+            // robust geo-mean shrugs off the content-hr-4 event tail on its own).
             const double dt = std::isfinite(carry_prev_tow) ? (se.time.tow - carry_prev_tow) : 0.0;
-            carry_driver.beginEpoch(dt > 0.0 ? dt : 0.0);
+            carry_driver.beginEpoch(dt > 0.0 ? dt : 0.0, se.time.tow, /*clean=*/true);
         }
         buildCarryDdPriors();
 
@@ -7899,9 +7908,21 @@ int Application::runNetwork() {
             if (carry_innov_gate) {
                 for (const auto& [gk, chord] : carry_driver.lastInnovFlags()) {
                     const auto git = carry_arc_amb_key.find(gk);
-                    if (git == carry_arc_amb_key.end()) continue;
-                    const auto ait = git->second.find(chord);
-                    if (ait == git->second.end()) continue;
+                    const auto ait = (git != carry_arc_amb_key.end())
+                                         ? git->second.find(chord) : std::map<ArcKey, std::string>::const_iterator{};
+                    if (git == carry_arc_amb_key.end() || ait == git->second.end()) {
+                        // A flagged chord that the reverse map (built with THIS epoch's blocks)
+                        // cannot resolve should never happen — both come from the same
+                        // buildCarryDdPriors.  Warn once so a wiring regression is not silent;
+                        // the flag is dropped (safe: q_z + next-epoch detection are the backstop).
+                        if (++carry_innov_map_miss == 1)
+                            log->warn("Network[Card4 D5]: an innovation flag (group {}, arc {}→{}) did "
+                                      "not resolve to an ambiguity in the reverse map at TOW {:.1f} — "
+                                      "the next-epoch re-tap is skipped for it (reverse-map/block "
+                                      "mismatch; investigate if this recurs).",
+                                      gk, chord.u, chord.v, se.time.tow);
+                        continue;
+                    }
                     carry_innov_pending.insert({chord.u, ait->second});
                 }
             }
@@ -11361,6 +11382,16 @@ int Application::runNetwork() {
                   "chord re-taps data-only + marks its arc slipped for the next epoch).",
                   carry_innov_flags_total, carry_innov_retaps_total,
                   config_.networkCarryInvariantInnovK());
+    if (carry_innov_gate && config_.networkCarryInvariantInnovCalibrate())
+        log->info("Network (Card 4/M1 D5 v2 LS-VCE calibration): final empirical inflation σ̂₀ = "
+                  "{:.2f}× (the gate threshold is k·σ̂₀ = {:.1f} formal-σ; σ̂₀>1 quantifies how "
+                  "optimistic the formal Cov(v) is — the M2 monitor's finding, now closing the loop "
+                  "on the gate itself).", carry_driver.innovInflationSigma0(),
+                  config_.networkCarryInvariantInnovK() * carry_driver.innovInflationSigma0());
+    if (carry_innov_gate && carry_innov_map_miss > 0)
+        log->warn("Network (Card 4/M1 D5): {} innovation flag(s) over the run did not resolve in the "
+                  "flag→ambiguity reverse map (next-epoch re-tap skipped for them) — a reverse-map/"
+                  "block wiring inconsistency; investigate.", carry_innov_map_miss);
     if (emit_rebase_on) {
         // Card 4 (M1) phase D: the emit-layer re-base telemetry (spec §3) — the
         // integer cycles + common-fractional shift removed onto the previous emission

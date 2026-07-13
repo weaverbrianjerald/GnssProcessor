@@ -325,12 +325,13 @@ Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
     return neq_.reconstructStationCovariance(station, cov_free);
 }
 
-Eigen::MatrixXd NetworkEstimator::ddPriorPosteriorCovariance(
-    std::size_t b, const Datum& datum) const {
-    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
-    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
-    // (variance 0), mirroring conditionalLocalCovariance so the carried DD posterior
-    // is the datum-as-known covariance (the DD is gauge-free ⇒ datum-invariant).
+Eigen::MatrixXd NetworkEstimator::datumFrameSharedCov(const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (the n_shared² shared_cov_ copy + gauge zeroing)
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT (variance
+    // 0), mirroring conditionalLocalCovariance so a carried-DD readout is the datum-as-
+    // known covariance (the DD is gauge-free ⇒ datum-invariant).  Under carry_invariant
+    // the ensemble phase gauge is OFF (mutually exclusive with the DD priors), so
+    // zeroPhaseGaugeColumns is a no-op there; kept for symmetry with the other consumers.
     Eigen::MatrixXd cov_free = shared_cov_;
     for (const auto& pin : datum) {
         if (pin.column >= 0 && pin.column < cov_free.rows()) {
@@ -338,29 +339,19 @@ Eigen::MatrixXd NetworkEstimator::ddPriorPosteriorCovariance(
             cov_free.col(pin.column).setZero();
         }
     }
-    // Under carry_invariant the ensemble phase gauge is OFF (mutually exclusive with
-    // the DD priors), so this is a no-op there; kept for symmetry with the other
-    // datum-frame covariance consumers.
     zeroPhaseGaugeColumns(cov_free);
-    return neq_.ddPriorPosteriorCovariance(b, cov_free);
+    return cov_free;
+}
+
+Eigen::MatrixXd NetworkEstimator::ddPriorPosteriorCovariance(
+    std::size_t b, const Datum& datum) const {
+    return neq_.ddPriorPosteriorCovariance(b, datumFrameSharedCov(datum));
 }
 
 void NetworkEstimator::ddPriorInnovation(
     std::size_t b, const Eigen::VectorXd& x_s, const Datum& datum,
     Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
-    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
-    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT (variance
-    // 0), the SAME datum-as-known frame ddPriorPosteriorCovariance uses (the DD is
-    // gauge-free, so the innovation covariance is datum-invariant).
-    Eigen::MatrixXd cov_free = shared_cov_;
-    for (const auto& pin : datum) {
-        if (pin.column >= 0 && pin.column < cov_free.rows()) {
-            cov_free.row(pin.column).setZero();
-            cov_free.col(pin.column).setZero();
-        }
-    }
-    zeroPhaseGaugeColumns(cov_free);
-    neq_.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
+    neq_.ddPriorInnovation(b, x_s, datumFrameSharedCov(datum), v, cov_v);
 }
 
 Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(

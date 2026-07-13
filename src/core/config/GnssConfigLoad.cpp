@@ -4182,6 +4182,12 @@ namespace GnssProcessor {
         network_carry_invariant_innov_refold_ =
             jval<bool>(json, "network.carry_invariant_innov_refold",
                        "network_carry_invariant_innov_refold", false);
+        network_carry_invariant_innov_calibrate_ =
+            jval<bool>(json, "network.carry_invariant_innov_calibrate",
+                       "network_carry_invariant_innov_calibrate", false);
+        network_carry_invariant_innov_calibrate_window_ =
+            jval<double>(json, "network.carry_invariant_innov_calibrate_window",
+                         "network_carry_invariant_innov_calibrate_window", 60.0);
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -4466,6 +4472,14 @@ namespace GnssProcessor {
                        "carry_invariant or disable the innovation gate.");
             return false;
         }
+        // Card 4 (M1) D5 v2: the LS-VCE calibration only re-scales the gate's threshold.
+        if (network_carry_invariant_innov_calibrate_ && !network_carry_invariant_innov_gate_) {
+            log->error("Network: network.carry_invariant_innov_calibrate requires "
+                       "network.carry_invariant_innov_gate — it standardizes the gate's innovation by "
+                       "the empirical σ̂₀²; with the gate off there is nothing to calibrate.  Enable "
+                       "the innovation gate or disable the calibration.");
+            return false;
+        }
         if (network_phase_datum_eq34_) {
             // Card 3 mutual exclusion (mirror the clock-gauge fail-loud at
             // network_clock_datum_broadcast_anchored above): eq34 and the
@@ -4543,6 +4557,15 @@ namespace GnssProcessor {
                           "epoch (the C3c membership-exclusion path).  The Card-4-native replacement "
                           "for the RAIM fine-slip layer the invariant bypass empties; watch "
                           "innov_flags/retaps in the run-end summary.", network_carry_invariant_innov_k_);
+                if (network_carry_invariant_innov_calibrate_)
+                    log->info("Network producer: Card 4 (M1) D5 v2 LS-VCE CALIBRATION ON — the gate "
+                              "standardizes by the empirical innovation inflation σ̂₀² (robust geo-mean "
+                              "of the standardized innovations, the M2 NetworkCarryVce instrument; "
+                              "forgetting half-life {} epochs) instead of the raw formal Cov(v) that the "
+                              "M2 monitor measured 10-30× optimistic — so k={} is now a TRUE Nσ gate "
+                              "that auto-adapts per regime (one k for both em10/em25).  σ̂₀ is reported "
+                              "in the run-end summary.", network_carry_invariant_innov_calibrate_window_,
+                              network_carry_invariant_innov_k_);
                 if (network_carry_invariant_innov_k_ < 3.0)
                     log->warn("Network: network.carry_invariant_innov_k = {} is BELOW 3 — a low "
                               "threshold storms the carry with false-alarm refloats (each shreds the "

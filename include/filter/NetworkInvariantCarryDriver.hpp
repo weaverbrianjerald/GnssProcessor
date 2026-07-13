@@ -77,10 +77,12 @@
 
 #include "filter/NetworkZStore.hpp"          // ArcKey + ZComponent cycle algebra
 #include "filter/NetworkEstimator.hpp"       // DdPriorBlock, Pin/Datum, posterior readout
+#include "filter/NetworkCarryVce.hpp"        // Card 4 D5 v2: LS-VCE robust inflation of Cov(v)
 
 #include <Eigen/Dense>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -98,6 +100,8 @@ public:
         double fresh_prior_var{1.0e6};  ///< diffuse prior variance for a fresh chord (state units²) — large ⇒ ~zero prior information; its posterior is the data-only tap-off.
         bool   innov_gate{false};       ///< Card 4 D5: enable the estimation-side fine-slip innovation test on the carried DDs (@ref installPosterior). OFF = the posterior is installed unconditionally (byte-identical to C3c).
         double innov_k{4.0};            ///< D5 per-chord standardized flag threshold |v_i|/√Cov(v)_ii; a flagged chord is re-tapped fresh. INERT unless @c innov_gate.
+        bool   innov_calibrate{false};  ///< D5 v2: standardize by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations), not the raw formal Cov(v) — makes @c innov_k a true Nσ gate (the formal Cov(v) is 10-30× optimistic). OFF = raw formal (v1). INERT unless @c innov_gate.
+        double innov_calibrate_window{60.0};  ///< D5 v2: exponential-forgetting half-life (epochs) of the σ̂₀² accumulator. INERT unless @c innov_calibrate.
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -136,7 +140,15 @@ public:
         long long z_dim{0};               ///< total carried DD dimension at the end of the last epoch.
     };
 
-    explicit NetworkInvariantCarryDriver(Config cfg = {}) : cfg_(cfg) {}
+    explicit NetworkInvariantCarryDriver(Config cfg = {}) : cfg_(cfg) {
+        // D5 v2: one pooled "dd" accumulator (no per-constellation split) whose robust
+        // geo-mean floor of the STANDARDIZED innovations is σ̂₀² (they carry formal
+        // variance 1, so the floor IS the empirical inflation).  Seed floor 1.0 = the H0
+        // expectation.  Only allocated when calibration is armed.
+        if (cfg_.innov_calibrate)
+            inflation_.emplace(std::vector<std::string>{"dd"}, cfg_.innov_calibrate_window,
+                               /*split_by_const=*/false, /*seed_floor_m2=*/1.0);
+    }
 
     /// Drop all carry (a toggle-flip cold start; the DDs re-tap-off next epoch).
     void reset();
@@ -146,8 +158,12 @@ public:
      *        the diagonal (default @f$q_z=0@f$ ⇒ no-op — DDs are constant between
      *        slips).  Call once at the top of the epoch, before @ref buildDdPriors.
      * @param dt_s Elapsed time since the previous epoch (s).
+     * @param content_s Epoch content time (continuous GPS s) — D5 v2 σ̂₀² reporting bucket
+     *        (ignored unless @c Config::innov_calibrate).
+     * @param clean False marks a contaminated epoch whose innovations are excluded from the
+     *        σ̂₀² accumulator (D5 v2; ignored unless @c innov_calibrate).
      */
-    void beginEpoch(double dt_s);
+    void beginEpoch(double dt_s, double content_s = 0.0, bool clean = true);
 
     /**
      * @brief Reconcile the carry to this epoch's election tree and emit one
@@ -184,6 +200,11 @@ public:
     /// and feeds it into the NEXT epoch's slip funnel (the C3c membership-exclusion re-tap).
     /// Empty unless @c Config::innov_gate; refreshed every @ref installPosterior.
     const std::vector<std::pair<int, ArcKey>>& lastInnovFlags() const { return last_innov_flags_; }
+
+    /// D5 v2: the current empirical innovation-inflation σ̂₀ (= √σ̂₀², the factor the
+    /// standardized innovation is divided by), or 1.0 when calibration is off / still in
+    /// warm-up.  The run-end telemetry (how far the formal Cov(v) was off).
+    double innovInflationSigma0() const;
 
     /// Total carried DD dimension right now (across all components).
     Eigen::Index totalZDim() const;
@@ -234,13 +255,27 @@ private:
         std::set<ArcKey> arcs;        ///< A_new for this component (becomes next epoch's A_old).
         Eigen::VectorXd  zhat;        ///< D5: the block's prior means (== fold zhat) so the innovation
                                       ///< gate can install a flagged chord's data-only mean d = v + ẑ.
+        std::vector<char> chord_carried; ///< D5 v2: 1 = chord carried a tight prior this epoch, 0 = born
+                                      ///< fresh (diffuse).  Only carried chords feed the σ̂₀² accumulator
+                                      ///< (a born chord's diffuse Cov(v) would corrupt the inflation).
     };
 
     Config cfg_;
     std::vector<CarriedBlock> carried_;      ///< the carry as of the previous @ref installPosterior.
     std::vector<BlockMeta>    block_meta_;   ///< layout of the blocks returned by the last @ref buildDdPriors.
     std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< D5: (group, chord) flagged at the last install.
+    std::optional<NetworkCarryVce> inflation_;  ///< D5 v2: the σ̂₀² accumulator (only when Config::innov_calibrate).
     Counters counters_;
+
+    /// D5 v2: the "dd" family/sat key (pooled — split_by_const=false, sat ignored).
+    static constexpr const char* kInflationFamily = "dd";
+    static constexpr const char* kInflationSat    = "x";   ///< non-empty (const-split off ⇒ ignored).
+    /// σ̂₀² is trusted only after this many accumulated (forgetting-weighted) rows; below it
+    /// the gate is the raw formal test (= v1), so v2 starts as v1 and eases into calibration.
+    static constexpr double kInflationWarmupRows  = 200.0;
+    /// σ̂₀² ∈ [1, cap]: calibration only RAISES the threshold (never over-sensitizes below
+    /// formal); the cap keeps a diverged σ̂₀ from silently disabling the gate forever.
+    static constexpr double kInflationFactorCap   = 1.0e6;
 };
 
 }  // namespace GnssProcessor

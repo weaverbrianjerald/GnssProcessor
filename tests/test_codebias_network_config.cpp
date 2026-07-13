@@ -1563,3 +1563,46 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateRequiresCarryInvariant) {
         << "carry_invariant_innov_gate without carry_invariant must be rejected at load.";
     std::error_code ec; fs::remove(p, ec);
 }
+
+// Card 4 (M1) D5 v2: the LS-VCE calibration parses OFF by default (byte-identical), ON atop
+// the innovation gate with a window, and is REJECTED without the gate (nothing to calibrate).
+TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
+    LogManager log;
+    // Default OFF, window 60.
+    {
+        const fs::path p = writeTempConfig("d5v2_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryInvariantInnovCalibrate());
+        EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovCalibrateWindow(), 60.0);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // ON atop carry_invariant + eq34 + gate, with a custom window.
+    {
+        const fs::path p = writeTempConfig("d5v2_on",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_innov_gate\": true,\n"
+                "    \"carry_invariant_innov_calibrate\": true,\n"
+                "    \"carry_invariant_innov_calibrate_window\": 30.0,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCarryInvariantInnovCalibrate());
+        EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovCalibrateWindow(), 30.0);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Calibrate without the gate → load FAILS.
+    {
+        const fs::path p = writeTempConfig("d5v2_no_gate",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_innov_calibrate\": true,\n"));   // no gate
+        GnssConfig cfg;
+        EXPECT_FALSE(cfg.loadFromJson(p, log))
+            << "carry_invariant_innov_calibrate without the innovation gate must be rejected.";
+        std::error_code ec; fs::remove(p, ec);
+    }
+}

@@ -815,9 +815,12 @@ TEST(NetworkInvariantCarryDriverTest, InnovationCovarianceDatumInvariantAndValid
     EXPECT_GT(es.eigenvalues().minCoeff(), -1e-9) << "Cov(v) must be PSD (M⁻¹ − GᵀΣG by construction)";
     // Non-vacuous: the two datums genuinely move the shared solution.
     EXPECT_GT((xsA - xsB).cwiseAbs().maxCoeff(), 1e-3);
-    // Cov(v) exceeds the carried prior on the diagonal (it is the prior variance PLUS the
-    // data-only DD variance minus the border coupling — Pᶻ + B − GᵀΣG ≥ ... contains Pᶻ).
-    EXPECT_GT(covA.diagonal().minCoeff(), 0.0);
+    // Cov(v) = Pᶻ + (B − GᵀΣG), and the bracket is a valid (data-implied DD) covariance ⪰ 0,
+    // so the innovation variance is bounded BELOW by the carried prior variance on the
+    // diagonal (the S = H P Hᵀ + R structure) — the meaningful shape check, not a re-check of
+    // positivity.
+    EXPECT_GT((covA.diagonal() - Pz.diagonal()).minCoeff(), -1e-9)
+        << "innovation variance must be >= the prior variance (Cov(v) = Pᶻ + data-only DD var)";
 }
 
 // ---------------------------------------------------------------------------
@@ -851,6 +854,91 @@ TEST(NetworkInvariantCarryDriverTest, InnovationMatchesDiffusePriorPosterior) {
     EXPECT_TRUE(mean.isApprox(v, 1e-3))
         << "diffuse-prior posterior update must equal the innovation\nmean " << mean.transpose()
         << "\n v   " << v.transpose();
+}
+
+// ===========================================================================
+// Card 4 D5 v2 — LS-VCE calibration of Cov(v) (σ̂₀²).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// GATE 14 — under a MISSPECIFIED R (obs noise ≫ the formal weight, so the formal Cov(v)
+// is optimistic — the field's 10-30× problem in miniature), the RAW gate (v1) over-fires,
+// but the CALIBRATED gate (v2) absorbs the inflation into σ̂₀ and stops false-alarming;
+// σ̂₀ recovers the mis-specification.  A/B on ONE shared noise stream (differ only in calib).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, CalibrationTamesFalseAlarmsAndRecoversSigma0) {
+    const int R = 4, S = 4;
+    const double SIG_INJ = 4.0;   // inject noise 4× the formal σ (weight=1) ⇒ formal Cov(v) optimistic
+    const Net n = makeNet(71, R, S);
+
+    NetworkInvariantCarryDriver::Config c1; c1.innov_gate = true; c1.innov_k = 4.0;      // v1: raw formal
+    NetworkInvariantCarryDriver::Config c2 = c1;
+    c2.innov_calibrate = true; c2.innov_calibrate_window = 40.0;                          // v2: calibrated
+    NetworkInvariantCarryDriver drvV1(c1), drvV2(c2);
+
+    std::mt19937 gen(303);
+    std::normal_distribution<double> nd(0.0, SIG_INJ);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    // Warm PAST the σ̂₀ warm-up (~200 rows / 9 chords ≈ 23 epochs) — during warm-up v2 is the
+    // raw test (σ̂₀=1), so measure only the calibrated-regime TAIL.
+    const int WARM = 28, TAIL = 20;
+    for (int e = 0; e < WARM; ++e) { auto ns = noiseEpoch(); driveEpoch(drvV1, n, 0, 0, &ns, 1.0); driveEpoch(drvV2, n, 0, 0, &ns, 1.0); }
+    const long long f1_warm = drvV1.counters().innov_flags, f2_warm = drvV2.counters().innov_flags;
+    for (int e = 0; e < TAIL; ++e) { auto ns = noiseEpoch(); driveEpoch(drvV1, n, 0, 0, &ns, 1.0); driveEpoch(drvV2, n, 0, 0, &ns, 1.0); }
+    const long long f1_tail = drvV1.counters().innov_flags - f1_warm;
+    const long long f2_tail = drvV2.counters().innov_flags - f2_warm;
+
+    // v1 (raw) over-fires: the injected noise sits several formal-σ out, so the k=4 gate trips
+    // constantly on ordinary scatter.
+    EXPECT_GT(f1_tail, TAIL) << "raw gate must over-fire under a misspecified R (>1 flag/epoch)";
+    // v2 (calibrated) absorbs the inflation into σ̂₀ ⇒ the recalibrated innovation is ~N(0,1)
+    // ⇒ the false-alarm storm collapses.
+    EXPECT_LT(f2_tail * 3, f1_tail) << "calibration must tame the false-alarm storm";
+    // σ̂₀ recovered a real (>1) inflation from the misspecification.
+    EXPECT_GT(drvV2.innovInflationSigma0(), 1.5) << "σ̂₀ must detect the optimistic formal Cov(v)";
+    EXPECT_LT(drvV2.innovInflationSigma0(), 6.0) << "σ̂₀ must not diverge";
+    // The raw gate is byte-for-byte the calibration-OFF v1 (sanity: calib is the only change).
+    EXPECT_EQ(drvV1.innovInflationSigma0(), 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// GATE 15 — calibration must NOT blind the gate: under the same misspecified R (σ̂₀≈3-4),
+// a real slip well above the RAISED threshold k·σ̂₀ is still caught + re-tapped.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, CalibrationRetainsDetection) {
+    const int R = 4, S = 4, WARM = 30;
+    Net n = makeNet(83, R, S);
+    const ArcKey slipArc(rxV(2), satV(3));
+    NetworkInvariantCarryDriver::Config cfg; cfg.innov_gate = true; cfg.innov_k = 4.0;
+    cfg.innov_calibrate = true; cfg.innov_calibrate_window = 40.0;
+    NetworkInvariantCarryDriver drv(cfg);
+
+    std::mt19937 gen(97);
+    std::normal_distribution<double> nd(0.0, 4.0);   // misspecified R ⇒ σ̂₀ > 1
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    for (int e = 0; e < WARM; ++e) { auto ns = noiseEpoch(); driveEpoch(drv, n, 0, 0, &ns, 1.0); }
+    ASSERT_GT(drv.innovInflationSigma0(), 1.5) << "σ̂₀ must be calibrated up before the slip";
+    const long long flags_before = drv.counters().innov_flags;
+
+    // A slip FAR above the raised threshold k·σ̂₀·σ_formal (σ̂₀~3-4, σ_formal~1.3 ⇒ ~16-20 cyc).
+    n.z[2][3] += 40;
+    auto jumpNoise = noiseEpoch();
+    driveEpoch(drv, n, 0, 0, &jumpNoise, 1.0, /*slipped=*/nullptr);
+
+    EXPECT_GT(drv.counters().innov_flags, flags_before)
+        << "a slip above k·σ̂₀ must still be caught after calibration raised the threshold";
+    // The slipped chord is among the flags (calibration didn't misattribute).
+    bool found = false;
+    for (const auto& [g, key] : drv.lastInnovFlags()) if (key == slipArc) found = true;
+    EXPECT_TRUE(found) << "the slipped chord must be the one flagged";
 }
 
 }  // namespace GnssProcessor

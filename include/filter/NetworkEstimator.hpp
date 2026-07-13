@@ -562,6 +562,28 @@ public:
     void ddPriorInnovation(std::size_t b, const Eigen::VectorXd& x_s, const Datum& datum,
                            Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const;
 
+    /**
+     * @brief Build the datum-as-known shared covariance @c cov_free once.
+     *
+     * The @f$\Sigma_{ss}@f$ frame every DD-carry covariance readout consumes: the last
+     * solve's @c shared_cov_ with the datum-pinned columns treated as EXACT (variance 0)
+     * plus the phase-gauge columns zeroed.  Hoisted so a per-epoch caller (the invariant
+     * carry driver's @ref NetworkInvariantCarryDriver::installPosterior) builds it ONCE
+     * and passes it to the matrix overloads below instead of rebuilding the n_shared²
+     * copy per block per readout.  Byte-identical to the per-call builds.
+     */
+    Eigen::MatrixXd datumFrameSharedCov(const Datum& datum) const;
+
+    /// Matrix overloads that take a pre-built @ref datumFrameSharedCov (skip the copy).
+    Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Eigen::MatrixXd& cov_free) const {
+        return neq_.ddPriorPosteriorCovariance(b, cov_free);
+    }
+    void ddPriorInnovation(std::size_t b, const Eigen::VectorXd& x_s,
+                           const Eigen::MatrixXd& cov_free,
+                           Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
+        neq_.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
+    }
+
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 

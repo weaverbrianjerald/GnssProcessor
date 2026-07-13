@@ -7,6 +7,7 @@
 #include "filter/NetworkInvariantCarryDriver.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -43,11 +44,23 @@ void NetworkInvariantCarryDriver::reset() {
     counters_ = Counters{};
 }
 
-void NetworkInvariantCarryDriver::beginEpoch(double dt_s) {
-    if (cfg_.qz <= 0.0 || dt_s <= 0.0) return;   // constant DDs (default) → no-op
+void NetworkInvariantCarryDriver::beginEpoch(double dt_s, double content_s, bool clean) {
+    // D5 v2: advance the σ̂₀² accumulator's exponential forgetting (once per epoch, BEFORE
+    // this epoch's rows are folded in installPosterior) — independent of q_z.
+    if (inflation_) inflation_->beginEpoch(content_s, clean);
+    if (cfg_.qz <= 0.0 || dt_s <= 0.0) return;   // constant DDs (default) → no q_z op
     const double add = cfg_.qz * dt_s;
     for (auto& cb : carried_)
         if (cb.Pz.rows() > 0) cb.Pz.diagonal().array() += add;
+}
+
+double NetworkInvariantCarryDriver::innovInflationSigma0() const {
+    if (!inflation_) return 1.0;
+    const NetworkCarryVce::Estimate est = inflation_->estimate(kInflationFamily, kInflationSat);
+    if (!(est.n_eff >= kInflationWarmupRows) || !(est.robust_floor > 0.0)) return 1.0;  // warm-up ⇒ raw formal (v1)
+    double f2 = est.robust_floor;                       // σ̂₀² = geo_mean(sᵢ²)/χ²₁-geomean
+    f2 = std::min(std::max(f2, 1.0), kInflationFactorCap);  // only RAISE the threshold; cap a diverged σ̂₀
+    return std::sqrt(f2);
 }
 
 Eigen::Index NetworkInvariantCarryDriver::totalZDim() const {
@@ -160,6 +173,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
 
             // --- Per new chord: fundamental cycle, foldability, carried vs fresh.
             std::vector<ArcKey>                              fold_chords;
+            std::vector<char>                                fold_carried;  // D5 v2: 1 = carried prior, 0 = born
             std::vector<std::vector<NetworkNormalEquations::DdPriorBlock::Term>> rows;
             std::vector<Eigen::VectorXd>                     Wrows;   // over old basis (empty ⇒ fresh)
             for (const ArcKey& c : chords) {
@@ -209,6 +223,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     if (would_carry && slip_in_cycle) ++counters_.slip_kills;  // a carried DD lost to a slip
                 }
                 fold_chords.push_back(c);
+                fold_carried.push_back(carried ? 1 : 0);
                 rows.push_back(std::move(terms));
                 Wrows.push_back(std::move(w));   // empty vector marks a fresh chord
             }
@@ -245,7 +260,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
             out.push_back(std::move(blk));
             block_meta_.push_back(BlockMeta{g.key, std::move(fold_chords), verts,
                                             std::set<ArcKey>(arcs.begin(), arcs.end()),
-                                            std::move(blk_zhat)});
+                                            std::move(blk_zhat), std::move(fold_carried)});
             ++counters_.components;
         }
     }
@@ -324,6 +339,16 @@ void NetworkInvariantCarryDriver::installPosterior(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
     const NetworkEstimator::Datum& datum) {
     last_innov_flags_.clear();
+    // Hoist the datum-frame shared covariance (the n_shared² Σ_ss copy) to ONCE per install —
+    // every block's posterior-cov AND innovation readout consumes the same matrix.
+    const Eigen::MatrixXd cov_free = est.datumFrameSharedCov(datum);
+    // D5 v2: the empirical inflation σ̂₀² accumulated THROUGH the previous epoch (predict-
+    // then-update — this epoch's standardized innovations are fed AFTER gating, below).  It
+    // is 1.0 (= the raw formal test, v1) when calibration is off or still in warm-up, so the
+    // gate becomes a TRUE Nσ test: |v_i| > k·σ̂₀·√Cov(v)_ii.
+    const double sigma0 = innovInflationSigma0();
+    const double k2f    = cfg_.innov_k * cfg_.innov_k * sigma0 * sigma0;   // (k·σ̂₀)²
+
     std::vector<CarriedBlock> next;
     next.reserve(block_meta_.size());
     for (std::size_t b = 0; b < block_meta_.size(); ++b) {
@@ -334,34 +359,42 @@ void NetworkInvariantCarryDriver::installPosterior(
         cb.vertices = bm.vertices;
         cb.arcs     = bm.arcs;
         cb.z  = est.ddPriorPosteriorMean(b, x_s);
-        cb.Pz = est.ddPriorPosteriorCovariance(b, datum);
+        cb.Pz = est.ddPriorPosteriorCovariance(b, cov_free);
 
         // --- Card 4 D5: estimation-side fine-slip innovation gate ------------------
         // The carried DD's coarse slip layer (MW/LLI/IF-TD) is deliberately relaxed; a
         // finer slip the coarse layer missed inflates the carried DD's post-solve
-        // innovation v = z_free − Gᵀx_s − ẑ.  A chord standardized above innov_k is
-        // treated as slipped: install it FRESH here (its data-only tap-off, mean d = v+ẑ
-        // and variance Cov(v)_ii, cross-terms zeroed — exactly the birth-path limit) so
-        // the stale value does not propagate, and record its (group, chord) so the caller
-        // marks its arc into NEXT epoch's slip funnel (the C3c membership-exclusion re-tap).
-        // OFF (the C3c path) = the posterior is installed unconditionally (byte-identical).
+        // innovation v = z_free − Gᵀx_s − ẑ.  A chord whose standardized innovation exceeds
+        // k·σ̂₀ is treated as slipped: install it FRESH here (its data-only tap-off, mean
+        // d = v+ẑ and variance σ̂₀²·Cov(v)_ii — the CALIBRATED innovation variance, i.e. the
+        // fresh chord's honest uncertainty, NOT the optimistic formal one; cross-terms
+        // zeroed), so the stale value does not propagate, and record its (group, chord) so
+        // the caller marks its arc into NEXT epoch's slip funnel (the C3c re-tap).  OFF =
+        // the posterior is installed unconditionally (byte-identical to the C3c path).
         const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
         if (cfg_.innov_gate && K > 0) {
             Eigen::VectorXd v;
             Eigen::MatrixXd cov_v;
-            est.ddPriorInnovation(b, x_s, datum, v, cov_v);
+            est.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
+            const bool have_carried = static_cast<Eigen::Index>(bm.chord_carried.size()) == K;
             if (v.size() == K && cov_v.rows() == K && cov_v.cols() == K
                 && bm.zhat.size() == K) {
-                const double k2 = cfg_.innov_k * cfg_.innov_k;
                 for (Eigen::Index i = 0; i < K; ++i) {
                     const double var = cov_v(i, i);
                     if (!(var > 0.0)) continue;                 // inert/degenerate ⇒ un-testable, skip
-                    if (v(i) * v(i) <= k2 * var) continue;      // |v_i| ≤ k·σ_v ⇒ no flag
-                    // Flagged: reset this chord to its data-only tap-off (independent, fresh).
+                    // Feed the standardized innovation of a CARRIED chord into σ̂₀² (a born
+                    // chord's diffuse Cov(v) would drag the empirical inflation to 0).  Fed
+                    // AFTER this epoch's factor was read ⇒ it calibrates the NEXT epoch.
+                    if (inflation_ && (!have_carried || bm.chord_carried[static_cast<std::size_t>(i)]))
+                        inflation_->addRow(kInflationFamily, kInflationSat,
+                                           v(i) / std::sqrt(var), /*gap_s=*/0.0,
+                                           /*post_var=*/0.0, /*fold_var=*/1.0);
+                    if (v(i) * v(i) <= k2f * var) continue;     // |v_i| ≤ k·σ̂₀·√Cov(v)_ii ⇒ no flag
+                    // Flagged → reset fresh (data-only mean, calibrated variance, independent).
                     cb.z(i) = bm.zhat(i) + v(i);                // d_i = z_free_i − (Gᵀx_s)_i
                     cb.Pz.row(i).setZero();
                     cb.Pz.col(i).setZero();
-                    cb.Pz(i, i) = var;                          // the data-only DD variance = Cov(v)_ii
+                    cb.Pz(i, i) = sigma0 * sigma0 * var;        // σ̂₀²·Cov(v)_ii (=Cov(v)_ii when calib off)
                     last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
                     ++counters_.innov_flags;
                     ++counters_.innov_retaps;
