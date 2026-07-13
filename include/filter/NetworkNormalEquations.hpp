@@ -469,6 +469,42 @@ public:
     Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t block_index,
                                                const Eigen::MatrixXd& cov_free_xs) const;
 
+    /**
+     * @brief Innovation (measurement-minus-prediction) of a folded block's K double
+     *        differences and its exact H0 covariance — the estimation-side fine-slip
+     *        test the Card-4 D5 gate standardizes (spec D5 Def-1).
+     *
+     * The DD carry's coarse slip layer (MW / LLI / IF-TD) is deliberately relaxed; the
+     * finer slips the estimator must catch show up as an inflated innovation on the
+     * carried DD.  Per block, using ONLY the cached fold factors (@ref FoldedDdPrior)
+     * plus the datum-as-known shared covariance @f$\Sigma_{ss}@f$ (@p cov_free_xs, the
+     * SAME frame @ref ddPriorPosteriorCovariance consumes):
+     * @f[
+     *   v = z_{\text{free}} - G^\top x_s - \hat z, \qquad
+     *   \mathrm{Cov}(v) = (P^z + B) - G^\top \Sigma_{ss} G = M^{-1} - G^\top\Sigma_{ss}G.
+     * @f]
+     * The @f$-G^\top\Sigma_{ss}G@f$ (NOT @f$+@f$) accounts for @f$x_s@f$ being
+     * prior-influenced — the same border coupling that made @ref ddPriorPosteriorCovariance
+     * datum-invariant.  Consistency (hand-verified): @f$P^zM\,\mathrm{Cov}(v)\,MP^z =
+     * P^z - P^{z+}@f$, i.e. @f$\mathrm{Cov}(\hat z^+-\hat z)@f$ matches
+     * @ref ddPriorPosteriorMean's @f$\hat z^+ - \hat z = P^zMv@f$.  @f$v@f$ is exactly the
+     * @c innov of @ref ddPriorPosteriorMean.
+     *
+     * @param block_index INPUT block index (input order preserved; see @ref ddPriorPosteriorMean).
+     * @param x_s         The solved shared estimate (length @c n_shared).
+     * @param cov_free_xs The datum-as-known shared covariance (n_shared × n_shared), the
+     *        same @c cov_free @ref ddPriorPosteriorCovariance builds.
+     * @param[out] v      The K innovations (empty for a chordless K=0 slot).
+     * @param[out] cov_v  The K×K innovation covariance under H0 (empty for a K=0 slot;
+     *        for an inert degenerate block M=0 this is the raw non-PD Pᶻ+B − GᵀΣG — the
+     *        caller must skip a chord whose @c cov_v diagonal is not strictly positive).
+     * @throws std::out_of_range on a bad index; std::invalid_argument on an x_s /
+     *         cov_free_xs size mismatch.
+     */
+    void ddPriorInnovation(std::size_t block_index, const Eigen::VectorXd& x_s,
+                           const Eigen::MatrixXd& cov_free_xs,
+                           Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const;
+
     /// @return Number of DD-prior blocks (== the input count of the last
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
@@ -853,6 +889,10 @@ private:
     struct FoldedDdPrior {
         Eigen::MatrixXd G;       ///< Σ_r N_sr N_rr⁻¹ C_{L,r}ᵀ  (n_shared × K)
         Eigen::MatrixXd M;       ///< (Pᶻ + B)⁻¹                 (K × K)
+        Eigen::MatrixXd Minv;    ///< Pᶻ + B = M⁻¹ (the pre-factor matrix, K × K) — the innovation
+                                 ///< covariance under H0 before the shared-coupling subtraction
+                                 ///< (@ref ddPriorInnovation).  Kept for a degenerate block too
+                                 ///< (M=0 there, but Minv is the raw non-PD Pᶻ+B).
         Eigen::VectorXd z_free;  ///< Σ_r C_{L,r} N_rr⁻¹ u_r     (K)
         Eigen::VectorXd zhat;    ///< prior means                (K)
         Eigen::MatrixXd Pz;      ///< prior covariance           (K × K, for the posterior shrink)

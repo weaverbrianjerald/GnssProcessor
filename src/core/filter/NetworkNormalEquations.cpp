@@ -677,6 +677,7 @@ void NetworkNormalEquations::foldReducedDdPriors(
         // index slot rather than corrupting the reduced system or shifting the keys.
         Eigen::MatrixXd PzB = blk.Pz + B;
         PzB = (0.5 * (PzB + PzB.transpose())).eval();
+        fd.Minv = PzB;   // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout
         Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);
         Eigen::MatrixXd M;
         if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
@@ -743,6 +744,38 @@ Eigen::MatrixXd NetworkNormalEquations::ddPriorPosteriorCovariance(
     }
     cov = (0.5 * (cov + cov.transpose())).eval();             // symmetrize round-off
     return cov;
+}
+
+void NetworkNormalEquations::ddPriorInnovation(
+    std::size_t block_index, const Eigen::VectorXd& x_s,
+    const Eigen::MatrixXd& cov_free_xs, Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
+    if (block_index >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorInnovation: "
+                                "block index out of range");
+    }
+    if (x_s.size() != n_shared_) {
+        fail("ddPriorInnovation: x_s size mismatch");
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("ddPriorInnovation: cov_free_xs size mismatch");
+    }
+    const FoldedDdPrior& fd = dd_priors_[block_index];
+    const Eigen::Index K = fd.Pz.rows();
+    if (K == 0) {                            // chordless slot → no innovation
+        v.resize(0);
+        cov_v.resize(0, 0);
+        return;
+    }
+    // v = z_free − Gᵀ x_s − ẑ (== the `innov` of ddPriorPosteriorMean): the data-implied
+    // DD given the solved shared estimate, minus the carried prior.
+    v = fd.z_free - fd.G.transpose() * x_s - fd.zhat;
+    // Cov(v) = (Pᶻ + B) − Gᵀ Σ_ss G = M⁻¹ − Gᵀ Σ_ss G.  The MINUS of the border term is
+    // exact (x_s is prior-influenced); it makes Pᶻ M Cov(v) M Pᶻ = Pᶻ − Pᶻ⁺.
+    cov_v = fd.Minv;
+    if (n_shared_ > 0) {
+        cov_v.noalias() -= fd.G.transpose() * cov_free_xs * fd.G;
+    }
+    cov_v = (0.5 * (cov_v + cov_v.transpose())).eval();       // symmetrize round-off
 }
 
 Eigen::VectorXd NetworkNormalEquations::solveShared() {

@@ -544,6 +544,24 @@ public:
      */
     Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Datum& datum) const;
 
+    /**
+     * @brief Innovation + its H0 covariance for DD-prior block @p b (Card-4 D5 gate).
+     *
+     * Builds the datum-as-known shared covariance @c cov_free from the last solve's
+     * @c shared_cov_ (identical to @ref ddPriorPosteriorCovariance) and forwards to
+     * @ref NetworkNormalEquations::ddPriorInnovation.  The caller (the invariant-carry
+     * driver) standardizes @f$|v_i|/\sqrt{\mathrm{Cov}(v)_{ii}}@f$ to flag a slipped
+     * carried DD and re-tap it fresh.
+     *
+     * @param b     DD-prior block index (input order; see @ref ddPriorPosteriorMean).
+     * @param x_s   The solved shared estimate.
+     * @param datum The same minimum-constraint datum passed to @ref solve.
+     * @param[out] v     The K innovations (empty for a K=0 slot).
+     * @param[out] cov_v The K×K H0 innovation covariance (empty for a K=0 slot).
+     */
+    void ddPriorInnovation(std::size_t b, const Eigen::VectorXd& x_s, const Datum& datum,
+                           Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const;
+
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 

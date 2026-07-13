@@ -2335,6 +2335,9 @@ int Application::runNetwork() {
                << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','
                << "\"carry_invariant_honesty\":"
                << (config_.networkCarryInvariantHonesty() ? "true" : "false") << ','
+               << "\"carry_invariant_innov_gate\":"
+               << (config_.networkCarryInvariantInnovGate() ? "true" : "false") << ','
+               << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
                << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
                << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
@@ -2469,6 +2472,12 @@ int Application::runNetwork() {
     // GLONASS (FDMA) excluded.  OFF = no z-store, all folds gated (byte-identical).
     NetworkInvariantCarryDriver::Config carry_cfg;
     carry_cfg.qz = config_.networkCarryInvariantQz();
+    // Card 4 (M1) D5: the estimation-side fine-slip innovation gate (spec D5 Def-1) — the
+    // Card-4-native replacement for the RAIM fine-slip layer the invariant bypass empties.
+    // Requires carry_invariant (config-rejected otherwise); OFF = byte-identical.
+    const bool carry_innov_gate = carry_invariant && config_.networkCarryInvariantInnovGate();
+    carry_cfg.innov_gate = carry_innov_gate;
+    carry_cfg.innov_k    = config_.networkCarryInvariantInnovK();
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
     // Card 4 (M1) phase D: the emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md).
     // Re-references the emitted per-(sat,σ) phase biases onto the previous EMISSION
@@ -2486,6 +2495,12 @@ int Application::runNetwork() {
     long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
               carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
               carry_zdim_last = 0, carry_slipkills_total = 0, carry_dropped_total = 0;
+    // Card 4 (M1) D5: arcs the innovation gate flagged in the PREVIOUS epoch, to be
+    // treated as slipped THIS epoch (the estimation-side fine-slip re-tap runs a post-solve
+    // detection ⇒ it feeds the NEXT epoch's slip funnel).  Persists across epochs (the
+    // per-epoch carry_slipped_ambs is rebuilt each epoch).  Empty unless carry_innov_gate.
+    std::set<std::pair<int, std::string>> carry_innov_pending;
+    long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
     const bool phase_datum_prioritized = config_.networkPhaseDatumPrioritized()
                                        || phase_datum_ensemble
                                        || phase_datum_eq34;
@@ -3464,6 +3479,13 @@ int Application::runNetwork() {
         // live from epoch 1) so the carry is slip-protected through the whole warmup —
         // not only after the SH field's convergence gate releases.  carry_invariant-only.
         std::set<std::pair<int, std::string>> carry_slipped_ambs;
+        // Card 4 (M1) D5: seed this epoch's slip set with the innovation gate's PREVIOUS-epoch
+        // flags (a fine slip caught post-solve last epoch re-taps its arc fresh here, via the
+        // same C3c membership-exclusion path the coarse detectors feed).  One-shot: consumed now.
+        if (carry_innov_gate && !carry_innov_pending.empty()) {
+            carry_slipped_ambs.insert(carry_innov_pending.begin(), carry_innov_pending.end());
+            carry_innov_pending.clear();
+        }
 
         // --- PASS A: per-station geometry + shared-state layout -------------
         std::vector<std::vector<PppObservation>> modeled(stations.size());
@@ -6067,6 +6089,12 @@ int Application::runNetwork() {
         const std::set<std::string>*                carry_we_drop_sats = nullptr;
         const std::map<int, std::set<std::string>>* carry_we_drop_arcs = nullptr;
 
+        // Card 4 (M1) D5: reverse map (group key → chord ArcKey → ambiguity state key) so a
+        // post-solve innovation flag (group, chord) maps back to its (station, ambiguity) for
+        // the next epoch's slip funnel.  Rebuilt with the blocks each buildCarryDdPriors call
+        // (the last call before the solve is authoritative).  Empty unless carry_innov_gate.
+        std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key;
+
         // Card 4 (M1) C3b: build this epoch's DD-prior blocks from the eq34 election
         // tree and fold the carried invariant DDs into the producer solve.  Each arc
         // (receiver, satellite) ambiguity on a (const,signal) is resolved to its
@@ -6080,6 +6108,7 @@ int Application::runNetwork() {
             if (!carry_invariant) return;
             constexpr int kSatBase = 1000000;   // satellite vertices sit above every receiver index
             std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
+            if (carry_innov_gate) carry_arc_amb_key.clear();   // D5: rebuilt with this call's arcs
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (est_index_of[i] < 0) continue;
                 const auto& h2l = asm_res[i].h2local;
@@ -6129,6 +6158,10 @@ int Application::runNetwork() {
                     a.slipped     = slipped;
                     groups[gk].key = gk;
                     groups[gk].arcs.push_back(a);
+                    // D5: record chord arcs for the innovation-flag reverse lookup (tree edges
+                    // never carry a DD, so they cannot be flagged — but record all; harmless).
+                    if (carry_innov_gate)
+                        carry_arc_amb_key[gk][ArcKey(static_cast<int>(i), sv)] = key;
                 }
             }
             std::vector<NetworkInvariantCarryDriver::GroupInput> glist;
@@ -7857,6 +7890,21 @@ int Application::runNetwork() {
             carry_zdim_last    = cc.z_dim;
             carry_slipkills_total = cc.slip_kills;
             carry_dropped_total   = cc.chords_dropped;
+            carry_innov_flags_total  = cc.innov_flags;
+            carry_innov_retaps_total = cc.innov_retaps;
+            // D5: fold the post-solve innovation flags into the NEXT epoch's slip funnel.
+            // Each (group, chord) maps back to its (station, ambiguity) via the reverse map
+            // built with this epoch's blocks; next epoch's buildCarryDdPriors excludes it from
+            // the A_old membership so the affected cycle re-taps fresh (the C3c path).
+            if (carry_innov_gate) {
+                for (const auto& [gk, chord] : carry_driver.lastInnovFlags()) {
+                    const auto git = carry_arc_amb_key.find(gk);
+                    if (git == carry_arc_amb_key.end()) continue;
+                    const auto ait = git->second.find(chord);
+                    if (ait == git->second.end()) continue;
+                    carry_innov_pending.insert({chord.u, ait->second});
+                }
+            }
         }
 
         // --- Producer-side network AR (Phase 2: DD fixability attempt, LOG ONLY) ---
@@ -11306,6 +11354,13 @@ int Application::runNetwork() {
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
+    if (carry_innov_gate)
+        log->info("Network (Card 4/M1 D5 fine-slip innovation gate): {} carried-DD innovation "
+                  "flag(s), {} fresh re-tap(s) over the run (k={}; the estimation-side reset for "
+                  "the fine slips the coarse MW/LLI/IF-TD layer is relaxed against — each flagged "
+                  "chord re-taps data-only + marks its arc slipped for the next epoch).",
+                  carry_innov_flags_total, carry_innov_retaps_total,
+                  config_.networkCarryInvariantInnovK());
     if (emit_rebase_on) {
         // Card 4 (M1) phase D: the emit-layer re-base telemetry (spec §3) — the
         // integer cycles + common-fractional shift removed onto the previous emission

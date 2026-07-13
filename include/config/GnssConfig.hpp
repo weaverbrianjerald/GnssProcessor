@@ -2503,6 +2503,12 @@ namespace GnssProcessor {
         bool networkCarryInvariantEmitRebase() const { return network_carry_invariant_emit_rebase_; }
         /// Card 4 (M1, D5): Lemma-1 honesty instrument (@c network.carry_invariant_honesty).
         bool networkCarryInvariantHonesty() const { return network_carry_invariant_honesty_; }
+        /// Card 4 (M1, D5): estimation-side fine-slip innovation gate (@c network.carry_invariant_innov_gate).
+        bool networkCarryInvariantInnovGate() const { return network_carry_invariant_innov_gate_; }
+        /// Card 4 (M1, D5): innovation-gate per-chord standardized threshold (@c network.carry_invariant_innov_k).
+        double networkCarryInvariantInnovK() const { return network_carry_invariant_innov_k_; }
+        /// Card 4 (M1, D5 v2, deferred): within-epoch refold on the flagged set (@c network.carry_invariant_innov_refold).
+        bool networkCarryInvariantInnovRefold() const { return network_carry_invariant_innov_refold_; }
 
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
@@ -4428,6 +4434,9 @@ namespace GnssProcessor {
         double network_carry_invariant_qz_{0.0};           ///< Card 4 (M1): z process noise (m²/s) on the carried DDs; 0 = constant ambiguities (correct absent slips). INERT unless network_carry_invariant_.
         bool   network_carry_invariant_emit_rebase_{true}; ///< Card 4 (M1, phase D): re-base the emitted per-key biases onto the previous EMISSION frame (integer + common-fractional continuity vs the last emission) — an S-selection on the outputs only; user DDs are invariant. INERT unless network_carry_invariant_ (phase-D emit layer; parsed now for the config contract).
         bool   network_carry_invariant_honesty_{false};    ///< Card 4 (M1, D5): Lemma-1 parallel actual-covariance instrument (honesty audit for q/R misspecification; also the M2 LS-VCE measurement). INERT unless network_carry_invariant_.
+        bool   network_carry_invariant_innov_gate_{false}; ///< Card 4 (M1, D5): estimation-side fine-slip innovation gate on the carried DDs — the Card-4-native replacement for the RAIM fine-slip layer the invariant bypass empties. Per chord, standardize the post-solve innovation v=z_free−Gᵀx_s−ẑ by its exact H0 covariance M⁻¹−GᵀΣG; a chord above the threshold is re-tapped fresh (reset, not repair) and its arc marked slipped for the next epoch (the C3c membership-exclusion path). REQUIRES network_carry_invariant_ (load-time reject otherwise). OFF = the posterior is installed unconditionally (byte-identical to the C3c path).
+        double network_carry_invariant_innov_k_{4.0};      ///< Card 4 (M1, D5): per-chord standardized flag threshold |v_i|/√Cov(v)_ii for the innovation gate (default 4.0 ≈ 8-10 cyc floor at the current σ_v; k<3 shreds the carry with false alarms — warned). INERT unless network_carry_invariant_innov_gate_.
+        bool   network_carry_invariant_innov_refold_{false}; ///< Card 4 (M1, D5 v2, DEFERRED): when ≥N chords flag in one epoch, route the flagged set into the existing within-epoch re-solve so the epoch itself is cleaned (v1 keeps the one already-solved epoch's bounded contamination, q_z the backstop). Parsed for the config contract; NOT yet implemented (warned). INERT unless network_carry_invariant_innov_gate_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.

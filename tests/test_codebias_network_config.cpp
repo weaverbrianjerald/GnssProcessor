@@ -1518,3 +1518,48 @@ TEST(CodeBiasNetworkConfig, Eq34EnsembleMutexFailsPrioritizedSupersedes) {
         std::error_code ec; fs::remove(p, ec);
     }
 }
+
+// Card 4 (M1) D5 (network.carry_invariant_innov_gate): parses OFF by default (byte-
+// identical), ON with carry_invariant (which itself needs eq34), and reads the k knob.
+TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
+    LogManager log;
+    // Default OFF, k defaults to 4.0.
+    {
+        const fs::path p = writeTempConfig("d5_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.networkCarryInvariantInnovGate());
+        EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovK(), 4.0);
+        EXPECT_FALSE(cfg.networkCarryInvariantInnovRefold());
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // ON atop carry_invariant + eq34, with a custom k.
+    {
+        const fs::path p = writeTempConfig("d5_on",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"carry_invariant_innov_gate\": true,\n"
+                "    \"carry_invariant_innov_k\": 5.0,\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.networkCarryInvariantInnovGate());
+        EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovK(), 5.0);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// Card 4 (M1) D5: the innovation gate is defined only on the carried DDs — arming it
+// without carry_invariant is an incoherent config and must FAIL loud at load.
+TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateRequiresCarryInvariant) {
+    LogManager log;
+    const fs::path p = writeTempConfig("d5_no_carry",
+        networkConfig(kGpsGal, kPriosGps,
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"carry_invariant_innov_gate\": true,\n"));   // no carry_invariant
+    GnssConfig cfg;
+    EXPECT_FALSE(cfg.loadFromJson(p, log))
+        << "carry_invariant_innov_gate without carry_invariant must be rejected at load.";
+    std::error_code ec; fs::remove(p, ec);
+}

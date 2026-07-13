@@ -39,6 +39,7 @@ private:
 void NetworkInvariantCarryDriver::reset() {
     carried_.clear();
     block_meta_.clear();
+    last_innov_flags_.clear();
     counters_ = Counters{};
 }
 
@@ -240,9 +241,11 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                     blk.Pz(i, i) += cfg_.fresh_prior_var;
             blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
 
+            Eigen::VectorXd blk_zhat = blk.zhat;   // D5: the prior means, for the install-time innovation gate
             out.push_back(std::move(blk));
             block_meta_.push_back(BlockMeta{g.key, std::move(fold_chords), verts,
-                                            std::set<ArcKey>(arcs.begin(), arcs.end())});
+                                            std::set<ArcKey>(arcs.begin(), arcs.end()),
+                                            std::move(blk_zhat)});
             ++counters_.components;
         }
     }
@@ -320,6 +323,7 @@ double NetworkInvariantCarryDriver::carriedEstimableForTest(
 void NetworkInvariantCarryDriver::installPosterior(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
     const NetworkEstimator::Datum& datum) {
+    last_innov_flags_.clear();
     std::vector<CarriedBlock> next;
     next.reserve(block_meta_.size());
     for (std::size_t b = 0; b < block_meta_.size(); ++b) {
@@ -331,6 +335,39 @@ void NetworkInvariantCarryDriver::installPosterior(
         cb.arcs     = bm.arcs;
         cb.z  = est.ddPriorPosteriorMean(b, x_s);
         cb.Pz = est.ddPriorPosteriorCovariance(b, datum);
+
+        // --- Card 4 D5: estimation-side fine-slip innovation gate ------------------
+        // The carried DD's coarse slip layer (MW/LLI/IF-TD) is deliberately relaxed; a
+        // finer slip the coarse layer missed inflates the carried DD's post-solve
+        // innovation v = z_free − Gᵀx_s − ẑ.  A chord standardized above innov_k is
+        // treated as slipped: install it FRESH here (its data-only tap-off, mean d = v+ẑ
+        // and variance Cov(v)_ii, cross-terms zeroed — exactly the birth-path limit) so
+        // the stale value does not propagate, and record its (group, chord) so the caller
+        // marks its arc into NEXT epoch's slip funnel (the C3c membership-exclusion re-tap).
+        // OFF (the C3c path) = the posterior is installed unconditionally (byte-identical).
+        const Eigen::Index K = static_cast<Eigen::Index>(bm.chords.size());
+        if (cfg_.innov_gate && K > 0) {
+            Eigen::VectorXd v;
+            Eigen::MatrixXd cov_v;
+            est.ddPriorInnovation(b, x_s, datum, v, cov_v);
+            if (v.size() == K && cov_v.rows() == K && cov_v.cols() == K
+                && bm.zhat.size() == K) {
+                const double k2 = cfg_.innov_k * cfg_.innov_k;
+                for (Eigen::Index i = 0; i < K; ++i) {
+                    const double var = cov_v(i, i);
+                    if (!(var > 0.0)) continue;                 // inert/degenerate ⇒ un-testable, skip
+                    if (v(i) * v(i) <= k2 * var) continue;      // |v_i| ≤ k·σ_v ⇒ no flag
+                    // Flagged: reset this chord to its data-only tap-off (independent, fresh).
+                    cb.z(i) = bm.zhat(i) + v(i);                // d_i = z_free_i − (Gᵀx_s)_i
+                    cb.Pz.row(i).setZero();
+                    cb.Pz.col(i).setZero();
+                    cb.Pz(i, i) = var;                          // the data-only DD variance = Cov(v)_ii
+                    last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
+                    ++counters_.innov_flags;
+                    ++counters_.innov_retaps;
+                }
+            }
+        }
         next.push_back(std::move(cb));
     }
     carried_.swap(next);

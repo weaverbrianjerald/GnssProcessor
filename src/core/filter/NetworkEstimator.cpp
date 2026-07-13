@@ -345,6 +345,24 @@ Eigen::MatrixXd NetworkEstimator::ddPriorPosteriorCovariance(
     return neq_.ddPriorPosteriorCovariance(b, cov_free);
 }
 
+void NetworkEstimator::ddPriorInnovation(
+    std::size_t b, const Eigen::VectorXd& x_s, const Datum& datum,
+    Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT (variance
+    // 0), the SAME datum-as-known frame ddPriorPosteriorCovariance uses (the DD is
+    // gauge-free, so the innovation covariance is datum-invariant).
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    zeroPhaseGaugeColumns(cov_free);
+    neq_.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
+}
+
 Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
     const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
     const Datum& datum) const {

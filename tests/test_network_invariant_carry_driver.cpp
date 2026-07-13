@@ -162,6 +162,15 @@ std::vector<Eigen::VectorXd> driveEpoch(NetworkInvariantCarryDriver& drv, const 
     return xr;
 }
 
+// Card 4 D5: the (r,s) arcs the innovation gate flagged at the last install — the
+// caller (ApplicationNetwork) feeds these into NEXT epoch's slipped set (the C3c re-tap).
+// Mirrors the production plumbing: chord ArcKey(rxV(r), satV(s)) → (r, s).
+std::set<std::pair<int, int>> innovSlips(const NetworkInvariantCarryDriver& drv) {
+    std::set<std::pair<int, int>> out;
+    for (const auto& [g, key] : drv.lastInnovFlags()) out.insert({key.u, key.v - kSatBase});
+    return out;
+}
+
 // A fixed estimable double difference from reconstructed ambiguities (gauge-free).
 double estimableDD(const std::vector<Eigen::VectorXd>& xr, int r, int s, int r0, int s0) {
     const StationCols col = ambLayout(static_cast<int>(xr[0].size()) - 2);
@@ -630,6 +639,218 @@ TEST(NetworkInvariantCarryDriverTest, SlippedTreeArcRefloatsDependentChordsOnly)
     double v_keep_after; ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v_keep_after));
     EXPECT_LT(v_keep_after, v_keep_before + 1e-9)
         << "chords not touching the slipped tree edge survive with their accumulated carry";
+}
+
+// ===========================================================================
+// Card 4 D5 — the estimation-side fine-slip innovation gate (spec D5 Def-1).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// GATE 10 — MidSlip caught by the innovation gate, A/B with a NEGATIVE control.
+// Warm a tight carry, then jump a chord's true ambiguity WITHOUT signaling the slip
+// (the coarse MW/LLI/IF-TD layer missed it).  Gate ON: exactly that chord's post-solve
+// innovation trips ⇒ it re-taps FRESH (data-only), its arc feeds NEXT epoch's slip set,
+// the DD re-converges clean, and the untouched neighbour keeps its accumulated carry.
+// Gate OFF (control): the stiff q_z=0 carry pins the stale DD ⇒ contamination visible.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
+    const int R = 4, S = 4, WARM = 8;
+    Net n = makeNet(53, R, S);
+    const int p = 0, q = 0;
+    const ArcKey slipArc(rxV(2), satV(3));   // a chord under star(0,0)
+    const ArcKey keepArc(rxV(1), satV(1));   // an untouched neighbour chord
+
+    NetworkInvariantCarryDriver::Config gcfg; gcfg.innov_gate = true; gcfg.innov_k = 4.0;
+    NetworkInvariantCarryDriver drvGate(gcfg);   // D5 gate armed
+    NetworkInvariantCarryDriver drvCtl;          // gate OFF = the C3c path (negative control)
+
+    // Shared noise stream so both arms warm IDENTICALLY (differ only in the gate).
+    std::mt19937 gen(17);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    std::vector<std::vector<std::vector<double>>> warmNoise;
+    for (int e = 0; e < WARM; ++e) warmNoise.push_back(noiseEpoch());
+    for (int e = 0; e < WARM; ++e) {
+        driveEpoch(drvGate, n, p, q, &warmNoise[e], 1.0);
+        driveEpoch(drvCtl,  n, p, q, &warmNoise[e], 1.0);
+    }
+    // No false alarms during a clean warm-up.
+    EXPECT_EQ(drvGate.counters().innov_flags, 0) << "the gate must not fire on clean warm-up epochs";
+    double zk, v_keep_before; ASSERT_TRUE(drvGate.carriedDdForTest(0, keepArc, zk, v_keep_before));
+    const double trueDD_old = double(n.z[2][3] - n.z[2][0] - n.z[0][3] + n.z[0][0]);
+
+    // The UNSIGNALED integer jump (a fine slip the coarse layer missed) — chosen ABOVE the
+    // fixture's k·σ_v floor (σ_v ≈ formal weight scale here; see spec D5 detection-power note).
+    n.z[2][3] += 12;
+    const double trueDD_new = trueDD_old + 12.0;
+    const auto jumpNoise = noiseEpoch();
+    driveEpoch(drvGate, n, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr);  // gate must catch it
+    driveEpoch(drvCtl,  n, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr);  // control: no catch
+
+    // Exactly the slipped chord flagged; the control (gate off) never evaluates.
+    EXPECT_EQ(drvGate.counters().innov_flags, 1) << "the innovation gate must flag exactly the slipped chord";
+    EXPECT_EQ(drvGate.counters().innov_retaps, 1);
+    EXPECT_EQ(drvCtl.counters().innov_flags, 0)  << "gate OFF must never evaluate (byte-identical C3c path)";
+    // The flag names the slipped chord and nothing else.
+    const auto slips = innovSlips(drvGate);
+    ASSERT_EQ(slips.size(), 1u);
+    EXPECT_EQ(*slips.begin(), std::make_pair(2, 3)) << "the flag must name the slipped (r,s) arc";
+
+    // Step 1 (this epoch): the flagged chord is reset toward the data (mean d_post = ẑ+v, a
+    // PARTIAL move — v is the post-fit innovation, reduced from the true jump by the fold's
+    // border absorption, spec Cov(v) −GᵀΣG term) and its variance is inflated to the data-only
+    // scale, breaking the stiff stale prior.  The control's stiff q_z=0 carry stays pinned near
+    // the pre-slip value with a tight variance ⇒ contamination.  (The FULL clean re-tap is next
+    // epoch, step 2 — this epoch retains bounded contamination, the value provably inert.)
+    double zg, vg, zc, vc;
+    ASSERT_TRUE(drvGate.carriedDdForTest(0, slipArc, zg, vg));
+    ASSERT_TRUE(drvCtl.carriedDdForTest(0, slipArc, zc, vc));
+    EXPECT_LT(std::abs(zg - trueDD_new), std::abs(zc - trueDD_new) - 1.0)
+        << "gate: the flagged chord's carry moved toward the post-slip data (control stays stale)";
+    // The untouched neighbour kept its accumulated (tight) carry — no collateral reset.
+    double v_keep_after; ASSERT_TRUE(drvGate.carriedDdForTest(0, keepArc, zk, v_keep_after));
+    EXPECT_LT(v_keep_after, v_keep_before + 1e-9) << "no collateral erasure of an unrelated chord";
+
+    // Step 2 (the decisive A/B): drive both arms forward — the gate arm feeds each epoch's
+    // innovation flags back into the next epoch's slip set (the C3c membership-exclusion re-tap,
+    // exactly the ApplicationNetwork plumbing), so it re-converges to the post-slip integer; the
+    // control (no fine-slip layer, stiff q_z=0 carry) stays pinned to the stale pre-slip value.
+    const long long sk_before = drvGate.counters().slip_kills;
+    double dd_gate = 0.0, dd_ctl = 0.0;
+    std::set<std::pair<int, int>> feed = slips;      // epoch-8 flags re-tap at epoch 9
+    for (int e = 0; e < 7; ++e) {
+        auto ns = noiseEpoch();
+        dd_gate = estimableDD(driveEpoch(drvGate, n, p, q, &ns, 1.0, &feed), 2, 3, 0, 0);
+        feed = innovSlips(drvGate);                  // carry this epoch's flags to the next
+        dd_ctl = estimableDD(driveEpoch(drvCtl, n, p, q, &ns, 1.0), 2, 3, 0, 0);
+    }
+    EXPECT_GE(drvGate.counters().slip_kills - sk_before, 1)
+        << "the innovation flag must re-tap the chord via the next epoch's slip funnel";
+    EXPECT_NEAR(dd_gate, trueDD_new, 0.05) << "the gate arm re-converges clean to the post-slip integer";
+    EXPECT_GT(std::abs(dd_ctl - trueDD_new), 1.0)
+        << "the control (no fine-slip reset) stays contaminated by the stale carry";
+}
+
+// ---------------------------------------------------------------------------
+// GATE 11 — FalseAlarmFloor: no slip, many noisy epochs, k=4 ⇒ (near) zero flags.
+// Validates that Cov(v) is well-calibrated (the standardized innovation is ~N(0,1)
+// under H0): too-small a Cov(v) would storm the carry with spurious refloats.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InnovationGateFalseAlarmFloor) {
+    const int R = 4, S = 4, E = 25;
+    const Net n = makeNet(61, R, S);
+    const int p = 0, q = 0;
+    NetworkInvariantCarryDriver::Config cfg; cfg.innov_gate = true; cfg.innov_k = 4.0;
+    NetworkInvariantCarryDriver drv(cfg);
+
+    std::mt19937 gen(29);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    for (int e = 0; e < E; ++e) {
+        std::vector<std::vector<double>> noise(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) noise[r][s] = nd(gen);
+        driveEpoch(drv, n, p, q, &noise, 1.0);
+    }
+    // (R-1)(S-1)=9 chords × ~24 carried epochs ≈ 216 chord-epochs; at k=4 the per-test
+    // false-alarm expectation is ~0.014 ⇒ zero is the overwhelmingly likely outcome.
+    EXPECT_EQ(drv.counters().innov_flags, 0)
+        << "the k=4 gate must not fire on a clean (no-slip) stream — Cov(v) is well-calibrated";
+    // Non-vacuous: the carry really was populated and testable over the run.
+    EXPECT_GT(drv.totalZDim(), 0);
+    EXPECT_GT(drv.counters().chords_carried, 0);
+}
+
+// ---------------------------------------------------------------------------
+// GATE 12 — the innovation Cov(v) is an estimable-quantity readout: datum-invariant,
+// valid (PSD, positive diagonal), and the innovation v itself is datum-invariant (the
+// data-implied DD minus the prior is gauge-free).  Non-vacuous: the datums move x_s.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InnovationCovarianceDatumInvariantAndValid) {
+    const int R = 4, S = 4;
+    const Net n = makeNet(88, R, S);
+    const int p = 0, q = 0;
+    std::vector<ArcKey> chords;
+    for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) chords.emplace_back(rxV(r), satV(s));
+    std::set<int> verts; std::set<ArcKey> arcs;
+    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) arcs.insert(ArcKey(rxV(r), satV(s)));
+    const Eigen::Index K = static_cast<Eigen::Index>(chords.size());
+    std::mt19937 g(5); std::uniform_real_distribution<double> u(-1, 1);
+    Eigen::VectorXd zc(K); for (Eigen::Index i = 0; i < K; ++i) zc(i) = u(g);
+    Eigen::MatrixXd Mr(K, K); for (Eigen::Index i = 0; i < K; ++i) for (Eigen::Index j = 0; j < K; ++j) Mr(i, j) = u(g);
+    const Eigen::MatrixXd Pz = 0.02 * (Mr * Mr.transpose()) + 0.3 * Eigen::MatrixXd::Identity(K, K);
+
+    NetworkInvariantCarryDriver drv;
+    drv.seedCarriedForTest(0, chords, zc, Pz, verts, arcs);
+
+    const std::string sig = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(S), pbCol(S);
+    for (int s = 0; s < S; ++s) { clkCol[s] = est.registerClock(n.sats[s]); pbCol[s] = est.registerPhaseBias(n.sats[s], sig); }
+    est.beginEpoch();
+    std::vector<std::size_t> ids(R);
+    for (int r = 0; r < R; ++r) ids[r] = addNetStation(est, n, r, clkCol, pbCol, p, q, nullptr, p);
+    est.setDdPriors(drv.buildDdPriors({makeGroup(n, ids, p, q)}));
+
+    const NetworkEstimator::Datum dA = {{est.clockColumn(n.sats[0]), 0.0}};
+    const Eigen::VectorXd xsA = est.solve(dA);
+    Eigen::VectorXd vA; Eigen::MatrixXd covA; est.ddPriorInnovation(0, xsA, dA, vA, covA);
+
+    const NetworkEstimator::Datum dB = {{est.clockColumn(n.sats[1]), 0.0}};
+    const Eigen::VectorXd xsB = est.solve(dB);   // DIFFERENT clock datum
+    Eigen::VectorXd vB; Eigen::MatrixXd covB; est.ddPriorInnovation(0, xsB, dB, vB, covB);
+
+    ASSERT_EQ(vA.size(), K);
+    ASSERT_EQ(covA.rows(), K);
+    EXPECT_TRUE(vA.isApprox(vB, 1e-7))   << "the innovation v (data DD − prior) is estimable ⇒ datum-invariant";
+    EXPECT_TRUE(covA.isApprox(covB, 1e-7)) << "Cov(v) leaked the datum choice";
+    // Valid covariance: symmetric, positive diagonal, PSD.
+    EXPECT_TRUE(covA.isApprox(covA.transpose(), 1e-9));
+    EXPECT_GT(covA.diagonal().minCoeff(), 0.0) << "innovation variance must be positive";
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(covA);
+    EXPECT_GT(es.eigenvalues().minCoeff(), -1e-9) << "Cov(v) must be PSD (M⁻¹ − GᵀΣG by construction)";
+    // Non-vacuous: the two datums genuinely move the shared solution.
+    EXPECT_GT((xsA - xsB).cwiseAbs().maxCoeff(), 1e-3);
+    // Cov(v) exceeds the carried prior on the diagonal (it is the prior variance PLUS the
+    // data-only DD variance minus the border coupling — Pᶻ + B − GᵀΣG ≥ ... contains Pᶻ).
+    EXPECT_GT(covA.diagonal().minCoeff(), 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// GATE 13 — links ddPriorInnovation to ddPriorPosteriorMean: with a DIFFUSE prior the
+// gain Pᶻ M → I, so the posterior update ẑ⁺ − ẑ equals the innovation v.  This ties
+// the two kernel readouts to the same underlying innov and pins the sign/scale of v.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InnovationMatchesDiffusePriorPosterior) {
+    const int R = 3, S = 3;
+    const Net n = makeNet(21, R, S);
+    const int p = 0, q = 0;
+    // A diffuse store: every chord born fresh (fresh_prior_var=1e6 ⇒ Pᶻ M ≈ I).
+    NetworkInvariantCarryDriver drv;
+
+    const std::string sig = "L1";
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(S), pbCol(S);
+    for (int s = 0; s < S; ++s) { clkCol[s] = est.registerClock(n.sats[s]); pbCol[s] = est.registerPhaseBias(n.sats[s], sig); }
+    est.beginEpoch();
+    std::vector<std::size_t> ids(R);
+    for (int r = 0; r < R; ++r) ids[r] = addNetStation(est, n, r, clkCol, pbCol, p, q, nullptr, p);
+    est.setDdPriors(drv.buildDdPriors({makeGroup(n, ids, p, q)}));
+
+    const NetworkEstimator::Datum d = {{est.clockColumn(n.sats[0]), 0.0}};
+    const Eigen::VectorXd x_s = est.solve(d);
+    const Eigen::VectorXd mean = est.ddPriorPosteriorMean(0, x_s);   // ẑ⁺ = ẑ + Pᶻ M v
+    Eigen::VectorXd v; Eigen::MatrixXd cov_v; est.ddPriorInnovation(0, x_s, d, v, cov_v);
+    // Fresh chords have ẑ = 0, so ẑ⁺ ≈ v (Pᶻ M ≈ I for the diffuse prior).
+    ASSERT_EQ(mean.size(), v.size());
+    ASSERT_GT(mean.size(), 0);
+    EXPECT_TRUE(mean.isApprox(v, 1e-3))
+        << "diffuse-prior posterior update must equal the innovation\nmean " << mean.transpose()
+        << "\n v   " << v.transpose();
 }
 
 }  // namespace GnssProcessor

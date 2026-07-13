@@ -96,6 +96,8 @@ public:
     struct Config {
         double qz{0.0};                 ///< z process noise (state²/s); 0 = constant DDs (correct absent slips).
         double fresh_prior_var{1.0e6};  ///< diffuse prior variance for a fresh chord (state units²) — large ⇒ ~zero prior information; its posterior is the data-only tap-off.
+        bool   innov_gate{false};       ///< Card 4 D5: enable the estimation-side fine-slip innovation test on the carried DDs (@ref installPosterior). OFF = the posterior is installed unconditionally (byte-identical to C3c).
+        double innov_k{4.0};            ///< D5 per-chord standardized flag threshold |v_i|/√Cov(v)_ii; a flagged chord is re-tapped fresh. INERT unless @c innov_gate.
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -126,6 +128,8 @@ public:
         long long chords_marginalized{0}; ///< old carried chords not carried forward (dead arc).
         long long chords_dropped{0};      ///< chords skipped this epoch (an unresolvable cycle arc — a data-gap refloat, distinct from a slip).
         long long slip_kills{0};          ///< Card 4 C3c: chords that would have been carried but were refloated FRESH because a cycle slip / RAIM culprit invalidated an arc of their fundamental cycle (≈ the slip rate the carry saw).
+        long long innov_flags{0};         ///< Card 4 D5: carried chords whose post-solve standardized innovation exceeded @c innov_k (a fine slip the coarse layer missed).
+        long long innov_retaps{0};        ///< Card 4 D5: flagged chords actually re-tapped fresh at install (== @c innov_flags in v1; a distinct counter for the v2 refold route).
         long long merges{0};              ///< components formed from ≥2 previous components.
         long long splits{0};              ///< previous components spread across ≥2 new components.
         long long tree_swaps{0};          ///< components whose carry was re-expressed in a genuinely different fundamental-cycle basis (a projection W that is not a signed permutation — the analogue of the phase-B unimodular pivot).
@@ -174,6 +178,13 @@ public:
                           const NetworkEstimator::Datum& datum);
 
     const Counters& counters() const { return counters_; }
+
+    /// Card 4 D5: the (group, chord arc) pairs the innovation gate flagged as slipped at
+    /// the last @ref installPosterior — the caller maps each back to its (station, ambiguity)
+    /// and feeds it into the NEXT epoch's slip funnel (the C3c membership-exclusion re-tap).
+    /// Empty unless @c Config::innov_gate; refreshed every @ref installPosterior.
+    const std::vector<std::pair<int, ArcKey>>& lastInnovFlags() const { return last_innov_flags_; }
+
     /// Total carried DD dimension right now (across all components).
     Eigen::Index totalZDim() const;
     /// Number of DD-prior blocks emitted by the last @ref buildDdPriors.
@@ -221,11 +232,14 @@ private:
         std::vector<ArcKey> chords;   ///< fold-row order = the new carried block's chord order.
         std::set<int> vertices;       ///< the component's vertices this epoch.
         std::set<ArcKey> arcs;        ///< A_new for this component (becomes next epoch's A_old).
+        Eigen::VectorXd  zhat;        ///< D5: the block's prior means (== fold zhat) so the innovation
+                                      ///< gate can install a flagged chord's data-only mean d = v + ẑ.
     };
 
     Config cfg_;
     std::vector<CarriedBlock> carried_;      ///< the carry as of the previous @ref installPosterior.
     std::vector<BlockMeta>    block_meta_;   ///< layout of the blocks returned by the last @ref buildDdPriors.
+    std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< D5: (group, chord) flagged at the last install.
     Counters counters_;
 };
 

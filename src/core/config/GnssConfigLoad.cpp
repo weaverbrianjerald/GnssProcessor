@@ -4173,6 +4173,15 @@ namespace GnssProcessor {
         network_carry_invariant_honesty_ =
             jval<bool>(json, "network.carry_invariant_honesty",
                        "network_carry_invariant_honesty", false);
+        network_carry_invariant_innov_gate_ =
+            jval<bool>(json, "network.carry_invariant_innov_gate",
+                       "network_carry_invariant_innov_gate", false);
+        network_carry_invariant_innov_k_ =
+            jval<double>(json, "network.carry_invariant_innov_k",
+                         "network_carry_invariant_innov_k", 4.0);
+        network_carry_invariant_innov_refold_ =
+            jval<bool>(json, "network.carry_invariant_innov_refold",
+                       "network_carry_invariant_innov_refold", false);
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -4449,6 +4458,14 @@ namespace GnssProcessor {
                        "carry_invariant.");
             return false;
         }
+        // Card 4 (M1) D5: the fine-slip innovation gate is defined only on the carried DDs.
+        if (network_carry_invariant_innov_gate_ && !network_carry_invariant_) {
+            log->error("Network: network.carry_invariant_innov_gate requires network.carry_invariant — "
+                       "the innovation test standardizes the CARRIED double-difference residual against "
+                       "the fold's H0 covariance; with no z-store there is nothing to gate.  Enable "
+                       "carry_invariant or disable the innovation gate.");
+            return false;
+        }
         if (network_phase_datum_eq34_) {
             // Card 3 mutual exclusion (mirror the clock-gauge fail-loud at
             // network_clock_datum_broadcast_anchored above): eq34 and the
@@ -4518,6 +4535,28 @@ namespace GnssProcessor {
                           network_carry_invariant_qz_,
                           network_carry_invariant_emit_rebase_ ? "true" : "false",
                           network_carry_invariant_honesty_ ? "true" : "false");
+            if (network_carry_invariant_innov_gate_) {
+                log->info("Network producer: Card 4 (M1) D5 FINE-SLIP INNOVATION GATE ON — after each "
+                          "accepted solve, every carried DD's standardized innovation "
+                          "|z_free−Gᵀx_s−ẑ|/√(M⁻¹−GᵀΣG) is tested at k={}; a chord above threshold is "
+                          "re-tapped FRESH (reset, not repair) and its arc marked slipped for the next "
+                          "epoch (the C3c membership-exclusion path).  The Card-4-native replacement "
+                          "for the RAIM fine-slip layer the invariant bypass empties; watch "
+                          "innov_flags/retaps in the run-end summary.", network_carry_invariant_innov_k_);
+                if (network_carry_invariant_innov_k_ < 3.0)
+                    log->warn("Network: network.carry_invariant_innov_k = {} is BELOW 3 — a low "
+                              "threshold storms the carry with false-alarm refloats (each shreds the "
+                              "accumulated DD information).  Recommend k >= 4.",
+                              network_carry_invariant_innov_k_);
+                if (network_carry_invariant_innov_refold_)
+                    log->warn("Network: network.carry_invariant_innov_refold (D5 v2 within-epoch refold) "
+                              "is parsed for the config contract but NOT YET IMPLEMENTED — the v1 "
+                              "reset-only path is active (the one already-solved epoch retains bounded "
+                              "contamination; q_z is the backstop).");
+            } else if (network_carry_invariant_innov_refold_) {
+                log->warn("Network: network.carry_invariant_innov_refold is INERT without "
+                          "network.carry_invariant_innov_gate (it routes the gate's flagged set).");
+            }
             // Warn-INERT (spec D7): the eq34 frame-continuity hygiene is subsumed by the
             // invariant carry — the datum targets are plain 0 and continuity lives in the
             // carried DDs, so pin_round / carry_shift / rpb_q are forced off when armed.
