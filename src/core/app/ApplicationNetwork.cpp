@@ -3086,6 +3086,16 @@ int Application::runNetwork() {
         // MEANS; conditional-append keeps existing fingerprints byte-identical.
         if (carry_cpl_shmarg)
             add(fmt::format("cplshmarg={}", carry_cpl_shmarg));
+        // Card 1b: JOINT-whitening reshapes the injected coupling rows (departed cols →
+        // shared M_w marginalization vs a per-row scalar σ²) — a solve-determining
+        // treatment on the SAME footing as carry_cpl_cond/_tu/_shmarg above, all of
+        // which gate a resume.  It was the lone Card-1 coupling knob missing here, so a
+        // warm resume flipping joint-whiten (with carry_cpl_cond still ON) matched
+        // fingerprints and was permitted to proceed and diverge.  Conditional-append
+        // (only when armed) keeps every non-joint fingerprint byte-identical; joint
+        // requires carry_cpl_cond so an armed-joint config already carries carrycplcond.
+        if (carry_cpl_joint)
+            add(fmt::format("carrycpljoint={}", carry_cpl_joint));
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
     if (!snap_path.empty() && std::filesystem::exists(snap_path)) {
