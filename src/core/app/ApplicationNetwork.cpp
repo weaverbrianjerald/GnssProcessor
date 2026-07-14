@@ -9833,12 +9833,25 @@ int Application::runNetwork() {
             }
         }
 
-        // (b) Full health metrics — same gate as the coefficient trace (shc.trace).
-        //     One row per emitted epoch: a₀₀ (+σ), coefficient RMS by degree, that RMS
-        //     relative to the per-degree Kaula prior σ (σ_n = kaula/n, σ₀ = a₀₀ prior σ),
-        //     and the network-wide SH→slant misfit reconstructed at POSTERIOR geometry
-        //     (mean/rms/max |residual| + 3σ-exceedance counts over LOS and stations).
-        if (vtec_sh_health_trace.is_open() && sh_model) {
+        // (b) Full health metrics + station-adaptive deweight gate — ONE post-solve
+        //     SH↔slant sweep feeding both consumers (H1 dedup).
+        //     The SH health trace (shc.trace) writes one row per emitted epoch: a₀₀
+        //     (+σ), coefficient RMS by degree, that RMS relative to the per-degree Kaula
+        //     prior σ (σ_n = kaula/n, σ₀ = a₀₀ prior σ), and the network-wide SH→slant
+        //     misfit reconstructed at POSTERIOR geometry (mean/rms/max |residual| +
+        //     3σ-exceedance counts over LOS and stations).
+        //     The station-adaptive deweight (v2) needs, per present station, the SAME
+        //     standardized slant residual r/σ — its per-station RMS √mean((r/σ)²) is the
+        //     gate's observe() input.  Both are derived from ONE reconstruct + degree-15
+        //     SH evaluation per LOS: the gate accumulator is within-station (order-free),
+        //     so folding it in is byte-identical to the old separate loop.  Gate-off (or
+        //     a datum-change epoch) ⇒ no observe()/advance() ⇒ byte-identical; and with
+        //     the trace on (the lineage recipe) the gate now rides the trace's existing
+        //     sweep at ~zero marginal cov-consumer cost (the +303 reconstructStation
+        //     calls/ep and duplicate SH sweep are gone).
+        const bool sh_want_trace = vtec_sh_health_trace.is_open();
+        const bool sh_want_gate  = iono_deweight.adaptive() && !datum_changed;
+        if (sh_model && (sh_want_trace || sh_want_gate)) {
             const Eigen::MatrixXd& shcov = est.sharedCovariance();
             const auto& coeffs = sh_model->coeffs();
             Eigen::VectorXd coeff(static_cast<Eigen::Index>(coeffs.size()));
@@ -9898,6 +9911,7 @@ int Application::runNetwork() {
                                          std::make_pair(o.elevation, o.sat_pos));
                     const auto& h2l = asm_res[i].h2local;
                     bool sta_present = false, sta_gt3 = false;
+                    double zz_gate = 0.0; int nn_gate = 0;   // per-station Σ(r/σ)², count (deweight gate)
                     for (const auto& kv : stations[i].sm->getIonosphereStates()) {
                         if (kv.first.empty() || kv.first.front() == 'R') continue;  // SH excludes GLONASS
                         const auto gt = geom.find(kv.first);
@@ -9916,6 +9930,13 @@ int Application::runNetwork() {
                         if (!std::isfinite(resid)) continue;
                         const double sig = std::max(
                             iw.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m);
+                        // Deweight gate: this LOS's standardized residual (same sig>0
+                        // guard the old separate loop used before dividing).
+                        if (sh_want_gate && sig > 0.0) {
+                            const double sr = resid / sig;
+                            zz_gate += sr * sr; ++nn_gate;
+                        }
+                        if (!sh_want_trace) continue;   // gate-only: skip trace aggregates
                         const double ar = std::fabs(resid);
                         res_sum += ar;
                         res_sumsq += resid * resid;
@@ -9926,6 +9947,10 @@ int Application::runNetwork() {
                     }
                     if (sta_present) ++n_sta;
                     if (sta_gt3) ++n_sta_gt3;
+                    // Feed the deweight gate this station's standardized-residual RMS
+                    // (serial station order — same as the old separate loop).
+                    if (sh_want_gate && nn_gate > 0)
+                        iono_deweight.observe(stations[i].name, std::sqrt(zz_gate / nn_gate));
                 }
                 const double res_mean = (n_los > 0) ? res_sum / n_los : 0.0;
                 const double res_rms  = (n_los > 0) ? std::sqrt(res_sumsq / n_los) : 0.0;
@@ -9960,80 +9985,20 @@ int Application::runNetwork() {
                         << ',' << fmt::format("{:.4f}", (ksig > 0.0) ? rms / ksig : 0.0);
                 }
                 vtec_sh_health_trace << '\n';
+                // Advance the deweight gate one clean epoch (EWMA + robust z +
+                // hysteresis + slew).  Gate-off ⇒ never runs ⇒ byte-identical.
+                if (sh_want_gate) iono_deweight.advance(true);
             }
         }
 
-        // --- Station-adaptive SH-VTEC-constraint deweight: v2 adaptive gate update ----
-        // Serial post-solve (the parallel assembly READS iono_deweight.weight() at the NEXT
-        // epoch).  For each present station recompute its per-station SH-misfit statistic —
-        // the standardized slant-residual RMS √mean((resid/σ)²), the SAME resid/σ as the
-        // health trace above — and feed it to the gate via observe(); NetworkIonoDeweightGate
-        // does the EWMA smoothing, the network-relative robust z-score, the hysteresis and
-        // the slew internally (see its header for why the gate is network-RELATIVE: the
-        // single-layer field leaves ~70–90 % of LOS > 3σ everywhere, so only the relative
-        // excess isolates a hostile site).  Datum-change epochs are skipped (their residual
-        // spikes are datum artifacts) ⇒ weights hold.  Adaptive OFF ⇒ never runs ⇒
-        // byte-identical.
-        if (iono_deweight.adaptive() && sh_model && !datum_changed) {
-            const auto& iwd = config_.getIonosphereWeightingConfig();
-            const auto& coeffs_d = sh_model->coeffs();
-            Eigen::VectorXd coeff_d(static_cast<Eigen::Index>(coeffs_d.size()));
-            bool coeff_ok_d = true;
-            for (std::size_t k = 0; k < coeffs_d.size() && coeff_ok_d; ++k) {
-                try {
-                    coeff_d(static_cast<Eigen::Index>(k)) =
-                        x_s(est.vtecCoeffColumn(coeffs_d[k].n, coeffs_d[k].m, coeffs_d[k].trig));
-                } catch (...) { coeff_ok_d = false; }
-            }
-            if (coeff_ok_d) {
-                const double Re_d = shc.earth_radius_km * 1000.0;
-                const double H_d  = shc.layer_height_km * 1000.0;
-                const double tecu_to_L1m_d =
-                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
-                const double lon_sun_d = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
-                // Per present station: standardized-residual RMS this epoch → gate.observe().
-                for (std::size_t i = 0; i < stations.size(); ++i) {
-                    if (est_index_of[i] < 0) continue;
-                    Eigen::VectorXd x_r;
-                    try {
-                        x_r = est.reconstructStation(
-                            static_cast<std::size_t>(est_index_of[i]), x_s);
-                    } catch (...) { continue; }
-                    std::map<std::string, std::pair<double, Eigen::Vector3d>> geom;
-                    for (const auto& o : modeled[i])
-                        if (!o.satellite.empty() && o.sat_pos.allFinite())
-                            geom.emplace(o.satellite,
-                                         std::make_pair(o.elevation, o.sat_pos));
-                    const auto& h2l = asm_res[i].h2local;
-                    double zz = 0.0; int nn = 0;
-                    for (const auto& kv : stations[i].sm->getIonosphereStates()) {
-                        if (kv.first.empty() || kv.first.front() == 'R') continue;
-                        const auto gt = geom.find(kv.first);
-                        if (gt == geom.end()) continue;
-                        if (gt->second.first < iwd.elevation_cutoff_deg) continue;
-                        const auto hit = h2l.find(static_cast<int>(kv.second));
-                        if (hit == h2l.end() || hit->second < 0
-                            || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
-                        const IppGeometry g =
-                            computeIppGeometry(stations[i].ecef, gt->second.second, Re_d, H_d);
-                        if (!g.valid) continue;
-                        const double lon_sf = g.ipp_lon_rad - lon_sun_d;
-                        const double sh_slant =
-                            sh_model->vtec(coeff_d, g.ipp_lat_rad, lon_sf) * g.mapping * tecu_to_L1m_d;
-                        const double resid = x_r(hit->second) - sh_slant;
-                        if (!std::isfinite(resid)) continue;
-                        const double sig = std::max(
-                            iwd.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m_d);
-                        if (sig <= 0.0) continue;
-                        const double sr = resid / sig;
-                        zz += sr * sr; ++nn;
-                    }
-                    if (nn > 0) iono_deweight.observe(stations[i].name, std::sqrt(zz / nn));
-                }
-                // Advance the gate one clean epoch (EWMA + robust z + hysteresis + slew).
-                iono_deweight.advance(true);
-            }
-        }
+        // NOTE (H1 dedup): the station-adaptive SH-VTEC-constraint deweight gate
+        // update USED to live here as a SECOND per-station reconstruct + degree-15
+        // SH sweep, identical to the health-trace sweep above (its own comment
+        // conceded "the SAME resid/σ").  It added +303 reconstructStation
+        // cov-consumer calls/ep plus a duplicate SH-eval sweep.  It is now FUSED
+        // into the single sweep above: observe() per station + advance() once, from
+        // the same per-LOS resid/σ.  See the merged block guarded on
+        // (sh_want_trace || sh_want_gate).
 
         // M2 (LS-VCE): advance the carry-variance monitor for this emitted epoch —
         // apply exponential forgetting and set the clean-epoch gate (a datum /
