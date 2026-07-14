@@ -131,6 +131,7 @@
   },
   "network": {
     "clock_datum_station": "JPLM00USA",
+    "exclude_unmodeled_antenna_stations": true,
     "epoch_sync_tolerance_s": 1.0,
     "trace_stations": true,
     "trace_ionosphere": false,

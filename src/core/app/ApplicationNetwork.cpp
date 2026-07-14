@@ -67,6 +67,7 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkEmitRebase.hpp"   // Card 4 (M1) phase D: emit-layer frame re-base
+#include "products/NetworkPbEmitFilter.hpp" // M5 prereq: PB emission-continuity filter
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // M4: combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // RTB-7: atomic state snapshot + warm resume
@@ -77,6 +78,7 @@
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
+#include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
@@ -994,11 +996,22 @@ int Application::runNetwork() {
     // PCO/PCV applied).  Collected during buildStation for a single startup summary WARN
     // (the per-observation site logs only at trace, invisible at 305-station scale).
     std::vector<std::string> unmatched_antenna_stations;
-    auto buildStation = [&](const StationConfig& cfg, bool is_pivot) -> bool {
+    // Tier 1 (always-on radome→NONE fallback): stations recovered by the
+    // type-preserving radome-agnostic NONE calibration (mm-level) — matched, but
+    // via the fallback rather than an exact (type, radome) hit.  Reported once.
+    std::vector<std::string> radome_fallback_stations;
+    // Tier 2 (network.exclude_unmodeled_antenna_stations): stations dropped from
+    // the network because their receiver antenna TYPE is unknown to the loaded
+    // ANTEX even after the radome→NONE fallback (unmodelled receiver PCO/PCV).
+    std::vector<std::string> excluded_unmodeled_antenna_stations;
+    // buildStation outcome: Built (pushed to `stations`), ExcludedUnmodeledAntenna
+    // (Tier 2 policy drop — counted, not built), or Failed (parser/load error).
+    enum class StationBuild { Built, ExcludedUnmodeledAntenna, Failed };
+    auto buildStation = [&](const StationConfig& cfg, bool is_pivot) -> StationBuild {
         const RinexParser* parser = sync.parserOf(cfg.name);
         if (!parser) {
             log->error("Network: station '{}' parser unavailable", cfg.name);
-            return false;
+            return StationBuild::Failed;
         }
         NetStation st;
         st.name     = cfg.name;
@@ -1042,15 +1055,35 @@ int Application::runNetwork() {
         // run).  Checked once per station here; the per-observation trace still fires.
         // Only meaningful when a receiver correction would actually be applied.
         const auto& mc = config_.getModelCorrections();
-        if ((mc.enable_receiver_pco || mc.enable_receiver_pcv)
-            && !st.model->hasReceiverAntennaMatch()) {
+        const bool rx_corr_on = (mc.enable_receiver_pco || mc.enable_receiver_pcv);
+        if (rx_corr_on && !st.model->hasReceiverAntennaMatch()) {
             std::string rx_ant = parser->getReceiverAntennaType();
             const auto last = rx_ant.find_last_not_of(" \t\r\n");
             rx_ant = (last == std::string::npos) ? std::string{} : rx_ant.substr(0, last + 1);
             log->warn("Network: station '{}' receiver antenna '{}' has NO ATX model match "
-                      "— receiver PCO/PCV NOT applied (zero antenna correction on the "
-                      "receiver side).",
+                      "(even after the radome→NONE fallback) — receiver PCO/PCV NOT applied "
+                      "(zero antenna correction on the receiver side).",
                       cfg.name, rx_ant.empty() ? "<none in RINEX header>" : rx_ant);
+
+            // Tier 2 (network.exclude_unmodeled_antenna_stations): the always-on
+            // radome→NONE fallback has already run, so a still-unmatched antenna is a
+            // genuinely unknown TYPE with entirely unmodelled receiver PCO/PCV — a
+            // systematic in every observation this station feeds into the shared
+            // clocks/biases.  DROP it from the network (policy backstop, default OFF).
+            if (config_.networkExcludeUnmodeledAntennaStations()) {
+                // The clock-datum pivot realizes the datum and cannot be silently
+                // dropped — surface it to the caller as a hard build error.
+                if (is_pivot) return StationBuild::ExcludedUnmodeledAntenna;
+                excluded_unmodeled_antenna_stations.push_back(cfg.name);
+                log->warn("Network: station '{}' EXCLUDED from the network — unknown "
+                          "receiver antenna TYPE (no ATX model; unmodelled receiver "
+                          "PCO/PCV would be a systematic in the shared clocks/biases) "
+                          "(network.exclude_unmodeled_antenna_stations).", cfg.name);
+                return StationBuild::ExcludedUnmodeledAntenna;
+            }
+
+            // Kept (not hard-excluded) but unmatched → record for the loaded-station
+            // summary WARN below.
             unmatched_antenna_stations.push_back(cfg.name);
             // Optional (network.phase_bias_exclude_unmatched_antenna): keep this station's
             // uncalibrated carrier phase out of the emitted satellite phase biases.  The
@@ -1069,6 +1102,16 @@ int Application::runNetwork() {
                     log->info("Network: station '{}' excluded from phase-bias emission "
                               "contributions (unmatched receiver antenna).", cfg.name);
                 }
+            }
+        } else if (rx_corr_on) {
+            // Matched — but note when the match came only through the always-on
+            // type-preserving radome→NONE fallback (mm-level radome-agnostic
+            // calibration), so the substitution is visible once per station rather
+            // than only at per-observation trace level.
+            std::string detail;
+            if (st.model->receiverAntennaViaRadomeFallback(&detail)) {
+                log->warn("Network: station '{}' receiver antenna {}", cfg.name, detail);
+                radome_fallback_stations.push_back(cfg.name);
             }
         }
 
@@ -1117,20 +1160,38 @@ int Application::runNetwork() {
         st.pstate.clock_bias      = 0.0;
         st.pstate.troposphere_zwd = 0.0;
         stations.push_back(std::move(st));
-        return true;
+        return StationBuild::Built;
     };
-    if (!buildStation(roster.reference, /*is_pivot=*/true)) {
-        log->error("Network: clock datum station '{}' failed to load; the network "
-                   "cannot be built without its datum. Aborting.",
-                   roster.reference.name);
-        return 1;
+    switch (buildStation(roster.reference, /*is_pivot=*/true)) {
+        case StationBuild::Built:
+            break;
+        case StationBuild::ExcludedUnmodeledAntenna:
+            log->error("Network: clock-datum station '{}' has an unknown receiver antenna "
+                       "TYPE with no ATX model (even after the radome→NONE fallback) and "
+                       "network.exclude_unmodeled_antenna_stations is set — the datum "
+                       "station cannot be dropped. Supply its ATX model or choose a "
+                       "different network.clock_datum_station. Aborting.",
+                       roster.reference.name);
+            return 1;
+        case StationBuild::Failed:
+            log->error("Network: clock datum station '{}' failed to load; the network "
+                       "cannot be built without its datum. Aborting.",
+                       roster.reference.name);
+            return 1;
     }
     for (const auto& rv : roster.rovers) {
         if (closed_loop_on && rv.name == cl.station.name) continue;  // held-out consumer
-        if (!buildStation(rv, /*is_pivot=*/false)) {
-            log->warn("Network: station '{}' failed to load; skipping it (the "
-                      "network proceeds with the remaining stations).", rv.name);
-            continue;
+        switch (buildStation(rv, /*is_pivot=*/false)) {
+            case StationBuild::Built:
+                break;
+            case StationBuild::ExcludedUnmodeledAntenna:
+                // Already warned + counted inside buildStation; the network proceeds
+                // with the remaining stations.
+                continue;
+            case StationBuild::Failed:
+                log->warn("Network: station '{}' failed to load; skipping it (the "
+                          "network proceeds with the remaining stations).", rv.name);
+                continue;
         }
     }
     log->info("Network: {} station estimators constructed (pivot '{}')",
@@ -1148,6 +1209,34 @@ int Application::runNetwork() {
                       ? " — non-pivot ones excluded from phase-bias emission"
                       : " — supply their ATX models, or set "
                         "network.phase_bias_exclude_unmatched_antenna to withhold them");
+    }
+    // Join a name vector into a comma-separated list for the summaries below.
+    auto joinNames = [](const std::vector<std::string>& v) {
+        std::string s;
+        for (size_t i = 0; i < v.size(); ++i) { if (i) s += ", "; s += v[i]; }
+        return s;
+    };
+    // Tier 1 (always-on radome→NONE): report the stations whose receiver PCO/PCV
+    // came from the radome-agnostic NONE calibration (mm-level) — matched, not
+    // dropped, but worth a single summary so the substitution is visible.
+    if (!radome_fallback_stations.empty()) {
+        log->info("Network: {} of {} loaded station(s) matched their receiver antenna via "
+                  "the type-preserving radome→NONE fallback (radome uncalibrated; NONE "
+                  "PCO/PCV applied, mm-level): {}",
+                  radome_fallback_stations.size(), stations.size(),
+                  joinNames(radome_fallback_stations));
+    }
+    // Tier 2 (network.exclude_unmodeled_antenna_stations): run-end counter for the
+    // stations dropped because their receiver antenna TYPE is unknown to the ANTEX
+    // even after the radome→NONE fallback (invariant #4 — ON-path telemetry).
+    if (!excluded_unmodeled_antenna_stations.empty()) {
+        log->warn("Network: {} station(s) excluded (unmodeled receiver antenna): {}",
+                  excluded_unmodeled_antenna_stations.size(),
+                  joinNames(excluded_unmodeled_antenna_stations));
+    } else if (config_.networkExcludeUnmodeledAntennaStations()) {
+        log->info("Network: 0 stations excluded (unmodeled receiver antenna) — every "
+                  "loaded station's receiver antenna resolved (radome→NONE fallback "
+                  "covered any uncalibrated radomes).");
     }
 
     // --- Station roster (viz) -----------------------------------------------
@@ -2302,6 +2391,19 @@ int Application::runNetwork() {
                << "\"serialize_sbasis_contract\":" << (nc.serialize_sbasis_contract ? "true" : "false") << ','
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
+               << fmt::format("\"iono_constraint_deweight_factor\":{},",
+                              config_.getIonoConstraintDeweightConfig().factor)
+               << "\"iono_constraint_deweight_adaptive\":"
+                   << (config_.getIonoConstraintDeweightConfig().adaptive ? "true" : "false") << ','
+               << "\"iono_constraint_deweight_stations\":["
+                   << [&] {
+                          std::string s; bool f = true;
+                          for (const auto& nm : config_.getIonoConstraintDeweightConfig().stations) {
+                              if (!f) s += ','; s += '"'; s += jesc(nm); s += '"'; f = false;
+                          }
+                          return s;
+                      }()
+                   << "],"
                << "\"phase_leveling\":" << (pl_on ? "true" : "false") << ','
                << fmt::format("\"phase_leveling_q_amb\":{},", pl_q_amb)
                << "\"phase_leveling_warmup_epochs\":" << pl_warmup << ','
@@ -2352,9 +2454,19 @@ int Application::runNetwork() {
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
                << "\"carry_invariant_innov_calibrate\":"
                << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
+               << "\"emit_pb_filter\":" << (config_.networkEmitPbFilter() ? "true" : "false") << ','
+               << fmt::format("\"emit_pb_filter_q\":{},", config_.networkEmitPbFilterQ())
+               << fmt::format("\"emit_pb_filter_jump_k\":{},", config_.networkEmitPbFilterJumpK())
+               << fmt::format("\"emit_pb_filter_meas_sigma_m\":{},", config_.networkEmitPbFilterMeasSigmaM())
+               << fmt::format("\"emit_pb_filter_max_gap_s\":{},", config_.networkEmitPbFilterMaxGapS())
+               << fmt::format("\"emit_pb_filter_window_epochs\":{},", config_.networkEmitPbFilterWindowEpochs())
+               << "\"emit_pb_filter_emit_sigma\":"
+               << (config_.networkEmitPbFilterEmitSigma() ? "true" : "false") << ','
                << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
                << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
+               << "\"exclude_unmodeled_antenna_stations\":"
+               << (config_.networkExcludeUnmodeledAntennaStations() ? "true" : "false") << ','
                << "\"emit_generation_id\":" << (emit_gen_id ? "true" : "false") << ','
                << "\"serialize_disc_counters\":" << (ser_disc_ctrs ? "true" : "false") << ','
                << "\"emit_epoch_status_record\":" << (emit_epoch_status ? "true" : "false") << ','
@@ -2505,6 +2617,21 @@ int Application::runNetwork() {
     // carry_invariant=false (byte-identical — the engine is never touched).
     const bool emit_rebase_on = carry_invariant && config_.networkCarryInvariantEmitRebase();
     NetworkEmitRebase emit_rebase_engine;
+    // M5 prerequisite: PB emission-continuity filter — a slip-gated per-key scalar
+    // KF on the RE-BASED emitted biases + a self-tuning k·σ̂_step jump gate that
+    // clears the threshold-in-noise discontinuity floor.  Runs INSIDE the re-base
+    // block (it filters the re-based emission frame), so it requires emit_rebase_on;
+    // OFF (default) ⇒ filterEpoch is never called (byte-identical — the engine is
+    // constructed like emit_rebase_engine but stays inert).
+    const bool emit_pb_filter_on = emit_rebase_on && config_.networkEmitPbFilter();
+    NetworkPbEmitFilter::Config pb_filter_cfg;
+    pb_filter_cfg.q_m2_s         = config_.networkEmitPbFilterQ();
+    pb_filter_cfg.jump_k         = config_.networkEmitPbFilterJumpK();
+    pb_filter_cfg.meas_sigma_m   = config_.networkEmitPbFilterMeasSigmaM();
+    pb_filter_cfg.max_gap_s      = config_.networkEmitPbFilterMaxGapS();
+    pb_filter_cfg.window_epochs  = config_.networkEmitPbFilterWindowEpochs();
+    NetworkPbEmitFilter pb_filter_engine(pb_filter_cfg);
+    const bool pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
     std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
     std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
     bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
@@ -2774,6 +2901,35 @@ int Application::runNetwork() {
     const double sh_dev_tau = sh_model ? shc.rep_error_tau_s : 0.0;
     const bool   sh_dev_on  = sh_dev_tau > 0.0;
 
+    // ---- Station-adaptive SH-VTEC-constraint deweight (iono deweight card) ----------
+    // Per-station factor w_s ∈ (0,1] scaling the INFORMATION of this station's SH↔slant
+    // iono pseudo-obs (σ² ×= 1/w_s ⇒ info ×= w_s).  w_s→0 decouples the station's per-LOS
+    // iono from the global SH field in BOTH directions (the single joint pseudo-obs means
+    // one w_s covers both) while the station still serves the shared
+    // clocks/biases/datum/position.  All the gate math (v1 static list + v2 network-relative
+    // IGG auto-trigger, EWMA + hysteresis + slew) lives in NetworkIonoDeweightGate; here we
+    // just feed it per-station statistics in the serial post-solve harvest and READ
+    // iono_deweight.weight() in the parallel assembly (const find, race-free — the
+    // sh_dev_carry contract).  Empty static list + adaptive OFF ⇒ weight() is 1.0 for every
+    // station ⇒ byte-identical to OFF (invariant #6).
+    const IonoConstraintDeweightConfig& idw = config_.getIonoConstraintDeweightConfig();
+    NetworkIonoDeweightGate iono_deweight(
+        std::set<std::string>(idw.stations.begin(), idw.stations.end()), idw.factor,
+        idw.adaptive, idw.window_epochs, idw.sigma_hi, idw.sigma_lo, idw.floor,
+        idw.rate_limit, idw.min_epochs);
+    const bool idw_on = iono_deweight.active();
+    if (idw_on && !sh_model)
+        log->warn("Network (iono deweight): configured but network.estimate_iono_sh is OFF — "
+                  "there is no SH field to deweight; the setting is inert this run.");
+    if (sh_model && iono_deweight.staticCount() > 0) {
+        std::set<std::string> idw_present;
+        for (const auto& st : stations) idw_present.insert(st.name);
+        for (const auto& nm : iono_deweight.staticStations())
+            if (!idw_present.count(nm))
+                log->warn("Network (iono deweight): statically-listed station '{}' is not in this "
+                          "network — ignored (check the name).", nm);
+    }
+
     auto appendShIonoRows = [&](NetStation& st, const NetworkEstimator& est,
                                 const std::vector<PppObservation>& sta_obs,
                                 const std::map<int, int>& h2local, const GnssTime& t,
@@ -2782,6 +2938,12 @@ int Application::runNetwork() {
         if (!sh_model) return;
         const auto& iw = config_.getIonosphereWeightingConfig();
         if (!iw.enabled) return;
+        // Iono-constraint deweight factor for THIS station (READ-only const lookup;
+        // race-free per the threading contract above).  w_s==1 ⇒ untouched (byte-identical
+        // OFF); w_s<=0 ⇒ append NO SH iono rows (the per-LOS iono floats freely on its own
+        // GF code/phase — full decouple).
+        const double w_s = iono_deweight.weight(st.name);
+        if (w_s <= 0.0) return;
         const Eigen::VectorXd x = st.sm->getStateVector();
         const double Re = shc.earth_radius_km * 1000.0;
         const double H  = shc.layer_height_km * 1000.0;
@@ -2879,6 +3041,13 @@ int Application::runNetwork() {
             // dec ≤ 1 ⇒ no scaling ⇒ byte-identical.
             if (shc.row_decimation_epochs >= 2)
                 R *= static_cast<double>(shc.row_decimation_epochs);
+            // Station-adaptive iono-constraint deweight: scale this station's whole SH-iono
+            // block information (σ² ×= 1/w_s ⇒ info ×= w_s), uniformly on the per-LOS
+            // diagonal var AND the common-mode off-diagonal — preserving the receiver-DCB-
+            // free structure.  w_s==1 ⇒ no scaling ⇒ byte-identical (mirrors the
+            // row_decimation σ-inflation precedent above).  w_s<=0 already returned early.
+            if (w_s < 1.0)
+                R *= 1.0 / w_s;
             Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(mc, ncol_r);    // local +1 (slant iono)
             Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(mc, nshared);   // −M·tecu·basis (SH cols)
             Eigen::VectorXd zc(mc);
@@ -8928,6 +9097,47 @@ int Application::runNetwork() {
                     const auto it = rb_out.find(s.sat + "|" + signal);
                     if (it != rb_out.end()) npb.bias_m = it->second;
                 }
+
+            // M5 prerequisite: PB emission-continuity filter on the RE-BASED values.
+            // A per-key scalar KF + self-tuning k·σ̂_step jump gate smooths the per-
+            // epoch estimation noise the re-base leaves, so the emitter's (unchanged)
+            // jump test fires only at genuine events — clearing the threshold-in-noise
+            // discontinuity floor.  Filters EXACTLY the keys the re-base put into the
+            // emission frame (rb_out); legacy/gated/GLONASS keys keep their raw value
+            // + the emitter's normal jump test.  A reference-path slip (rb_slipped_ref,
+            // the same set the re-base used) forces a reset that PASSES THE RAW VALUE
+            // THROUGH, so the genuine step survives to the emitter — never laundered
+            // (invariant #1).  Baked into sol BEFORE emitToStore + the on-disk write,
+            // so a NetworkProductIO replay reproduces the emitter's disc counters with
+            // no filter rerun (the transform is in the product, like the re-base).
+            if (emit_pb_filter_on) {
+                const double pbf_epoch_s =
+                    sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
+                std::vector<NetworkPbEmitFilter::Entry> pf_entries;
+                pf_entries.reserve(rb_out.size());
+                for (auto& s : sol.sats) {
+                    if (s.sat.empty() || s.sat.front() == 'R') continue;   // GLONASS excluded (FDMA)
+                    for (auto& [signal, npb] : s.phase_bias) {
+                        if (!rb_out.count(s.sat + "|" + signal)) continue;  // only re-based keys
+                        NetworkPbEmitFilter::Entry e;
+                        e.sat = s.sat; e.signal = signal;
+                        e.value_m = npb.bias_m;
+                        e.slipped = rb_slipped_ref.count({s.sat, signal}) != 0;
+                        pf_entries.push_back(std::move(e));
+                    }
+                }
+                pb_filter_engine.filterEpoch(pf_entries, pbf_epoch_s);
+                std::map<std::string, std::pair<double, double>> pf_out;  // key -> (filtered value, posterior σ)
+                for (const auto& e : pf_entries)
+                    pf_out[e.sat + "|" + e.signal] = {e.value_m, e.post_sigma_m};
+                for (auto& s : sol.sats)
+                    for (auto& [signal, npb] : s.phase_bias) {
+                        const auto it = pf_out.find(s.sat + "|" + signal);
+                        if (it == pf_out.end()) continue;
+                        npb.bias_m = it->second.first;
+                        if (pb_filter_emit_sigma) npb.sigma_m = it->second.second;
+                    }
+            }
         }
         emitter.emitToStore(sol, network_store);
         // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
@@ -9750,6 +9960,78 @@ int Application::runNetwork() {
                         << ',' << fmt::format("{:.4f}", (ksig > 0.0) ? rms / ksig : 0.0);
                 }
                 vtec_sh_health_trace << '\n';
+            }
+        }
+
+        // --- Station-adaptive SH-VTEC-constraint deweight: v2 adaptive gate update ----
+        // Serial post-solve (the parallel assembly READS iono_deweight.weight() at the NEXT
+        // epoch).  For each present station recompute its per-station SH-misfit statistic —
+        // the standardized slant-residual RMS √mean((resid/σ)²), the SAME resid/σ as the
+        // health trace above — and feed it to the gate via observe(); NetworkIonoDeweightGate
+        // does the EWMA smoothing, the network-relative robust z-score, the hysteresis and
+        // the slew internally (see its header for why the gate is network-RELATIVE: the
+        // single-layer field leaves ~70–90 % of LOS > 3σ everywhere, so only the relative
+        // excess isolates a hostile site).  Datum-change epochs are skipped (their residual
+        // spikes are datum artifacts) ⇒ weights hold.  Adaptive OFF ⇒ never runs ⇒
+        // byte-identical.
+        if (iono_deweight.adaptive() && sh_model && !datum_changed) {
+            const auto& iwd = config_.getIonosphereWeightingConfig();
+            const auto& coeffs_d = sh_model->coeffs();
+            Eigen::VectorXd coeff_d(static_cast<Eigen::Index>(coeffs_d.size()));
+            bool coeff_ok_d = true;
+            for (std::size_t k = 0; k < coeffs_d.size() && coeff_ok_d; ++k) {
+                try {
+                    coeff_d(static_cast<Eigen::Index>(k)) =
+                        x_s(est.vtecCoeffColumn(coeffs_d[k].n, coeffs_d[k].m, coeffs_d[k].trig));
+                } catch (...) { coeff_ok_d = false; }
+            }
+            if (coeff_ok_d) {
+                const double Re_d = shc.earth_radius_km * 1000.0;
+                const double H_d  = shc.layer_height_km * 1000.0;
+                const double tecu_to_L1m_d =
+                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
+                const double lon_sun_d = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
+                // Per present station: standardized-residual RMS this epoch → gate.observe().
+                for (std::size_t i = 0; i < stations.size(); ++i) {
+                    if (est_index_of[i] < 0) continue;
+                    Eigen::VectorXd x_r;
+                    try {
+                        x_r = est.reconstructStation(
+                            static_cast<std::size_t>(est_index_of[i]), x_s);
+                    } catch (...) { continue; }
+                    std::map<std::string, std::pair<double, Eigen::Vector3d>> geom;
+                    for (const auto& o : modeled[i])
+                        if (!o.satellite.empty() && o.sat_pos.allFinite())
+                            geom.emplace(o.satellite,
+                                         std::make_pair(o.elevation, o.sat_pos));
+                    const auto& h2l = asm_res[i].h2local;
+                    double zz = 0.0; int nn = 0;
+                    for (const auto& kv : stations[i].sm->getIonosphereStates()) {
+                        if (kv.first.empty() || kv.first.front() == 'R') continue;
+                        const auto gt = geom.find(kv.first);
+                        if (gt == geom.end()) continue;
+                        if (gt->second.first < iwd.elevation_cutoff_deg) continue;
+                        const auto hit = h2l.find(static_cast<int>(kv.second));
+                        if (hit == h2l.end() || hit->second < 0
+                            || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
+                        const IppGeometry g =
+                            computeIppGeometry(stations[i].ecef, gt->second.second, Re_d, H_d);
+                        if (!g.valid) continue;
+                        const double lon_sf = g.ipp_lon_rad - lon_sun_d;
+                        const double sh_slant =
+                            sh_model->vtec(coeff_d, g.ipp_lat_rad, lon_sf) * g.mapping * tecu_to_L1m_d;
+                        const double resid = x_r(hit->second) - sh_slant;
+                        if (!std::isfinite(resid)) continue;
+                        const double sig = std::max(
+                            iwd.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m_d);
+                        if (sig <= 0.0) continue;
+                        const double sr = resid / sig;
+                        zz += sr * sr; ++nn;
+                    }
+                    if (nn > 0) iono_deweight.observe(stations[i].name, std::sqrt(zz / nn));
+                }
+                // Advance the gate one clean epoch (EWMA + robust z + hysteresis + slew).
+                iono_deweight.advance(true);
             }
         }
 
@@ -11412,6 +11694,29 @@ int Application::runNetwork() {
                   "optimistic the formal Cov(v) is — the M2 monitor's finding, now closing the loop "
                   "on the gate itself).", carry_driver.innovInflationSigma0(),
                   config_.networkCarryInvariantInnovK() * carry_driver.innovInflationSigma0());
+    if (idw_on) {
+        std::string idw_list;
+        for (const auto& nm : iono_deweight.everDeweighted()) {
+            if (!idw_list.empty()) idw_list += ' ';
+            idw_list += nm;
+        }
+        if (idw.adaptive)
+            log->info("Network (iono deweight): {} station(s) ever deweighted (peak {} "
+                      "simultaneous), {} adaptive engage / {} release event(s) over the run "
+                      "(static w_s={:.3f}; adaptive gate {:.2f}σ↑ / {:.2f}σ↓ → floor {:.3f}; "
+                      "network-relative robust z-score, chronic >3σ background removed by the "
+                      "median-centering).{}{}",
+                      iono_deweight.everDeweighted().size(), iono_deweight.peakDeweighted(),
+                      iono_deweight.triggerEvents(), iono_deweight.releaseEvents(),
+                      iono_deweight.staticWeight(), idw.sigma_hi, idw.sigma_lo, idw.floor,
+                      idw_list.empty() ? "" : "  Stations: ", idw_list);
+        else
+            log->info("Network (iono deweight v1): {} station(s) statically deweighted at "
+                      "w_s={:.3f} for the whole run — the SH-iono coupling was relaxed while "
+                      "they kept serving the shared clocks/biases/datum/position.{}{}",
+                      iono_deweight.staticCount(), iono_deweight.staticWeight(),
+                      idw_list.empty() ? "" : "  Stations: ", idw_list);
+    }
     if (carry_innov_gate && carry_innov_map_miss > 0)
         log->warn("Network (Card 4/M1 D5): {} innovation flag(s) over the run did not resolve in the "
                   "flag→ambiguity reverse map (next-epoch re-tap skipped for them) — a reverse-map/"
@@ -11431,6 +11736,25 @@ int Application::runNetwork() {
                   rb.slips_preserved,
                   rb.frac_shift_n ? rb.frac_shift_abs_sum / static_cast<double>(rb.frac_shift_n)
                                   : 0.0);
+    }
+    if (emit_pb_filter_on) {
+        // PB emission-continuity filter telemetry (M5 prerequisite).  A high
+        // smoothed:reset ratio with a small mean posterior σ is the win — the
+        // per-epoch noise absorbed into the filter, so the emitter jump test fires
+        // (via the reset raw-value steps) only at genuine events.  ref-path + gap
+        // resets are the structural (never-laundered) events; innovation resets are
+        // the calibrated k·σ̂_step genuine steps.  ON-path counters (inv #4).
+        const auto& pf = pb_filter_engine.counters();
+        const long long resets = pf.resets_refpath + pf.resets_innovation + pf.resets_gap;
+        log->info("Network (M5 prereq / PB emission-continuity filter): {} emit epoch(s), "
+                  "{} smoothed / {} reset ({} ref-path slip, {} innovation, {} gap) key-epoch(s), "
+                  "{} first-sighting init(s); mean posterior σ = {:.4f} m (self-tuning k·σ̂_step "
+                  "gate, k={}; OUTPUTS-only — the solve, user DDs and dd-frac grading are "
+                  "byte-unchanged; the emitter jump test stays the sole disc authority).",
+                  pf.epochs, pf.smoothed, resets, pf.resets_refpath, pf.resets_innovation,
+                  pf.resets_gap, pf.inits,
+                  pf.smoothed ? pf.post_sigma_sum / static_cast<double>(pf.smoothed) : 0.0,
+                  config_.networkEmitPbFilterJumpK());
     }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "

@@ -36,6 +36,17 @@ def _rows(path):
         return list(csv.DictReader(fh))
 
 
+def _med_floor(groups, n_floor=30):
+    """Per-label median with an n>n_floor support floor, ranked worst (largest) first.
+
+    groups: label -> list of |ΔDD| samples.  Returns [{'id','med','n'}, ...].  The floor
+    keeps a station/sat with only a handful of steps from topping the ranking on noise.
+    """
+    return sorted(({'id': k, 'med': st.median(v), 'n': len(v)}
+                   for k, v in groups.items() if len(v) > n_floor),
+                  key=lambda e: e['med'], reverse=True)
+
+
 def reduce_run(logs):
     out = {}
     tows = []
@@ -74,14 +85,34 @@ def reduce_run(logs):
                   for a, b in zip(sorted(x for x, _ in p), sorted(x for x, _ in p)[1:]) if b > a})
     dt0 = dts[0] if dts else 30.0
     step_by_tow = defaultdict(list)
-    for pts in series.values():
+    step_by_sta, step_by_sat, step_by_ref, all_steps = (
+        defaultdict(list), defaultdict(list), defaultdict(list), [])
+    for key, pts in series.items():
+        _cons, _sig, sat_i, ref_sat, sta_a, sta_b = key
         pts.sort()
         for (t0, d0), (t1, d1) in zip(pts, pts[1:]):
             if 0 < t1 - t0 <= dt0 * 1.05:
-                step_by_tow[t1].append(abs(d1 - d0))
+                s = abs(d1 - d0)
+                step_by_tow[t1].append(s)
+                all_steps.append(s)
+                # Attribute each adjacent DD step to BOTH baseline endpoints and to its
+                # sat / reference-sat, so a churn source shows up ranked (the UFPR/POAL
+                # signature the iono-deweight card diagnoses).
+                if sta_a:
+                    step_by_sta[sta_a].append(s)
+                if sta_b:
+                    step_by_sta[sta_b].append(s)
+                if sat_i:
+                    step_by_sat[sat_i].append(s)
+                if ref_sat:
+                    step_by_ref[ref_sat].append(s)
     out['dd'] = [dict(tow=t, step_med=st.median(v),
                       step_p90=sorted(v)[int(0.9 * len(v))] if len(v) > 9 else max(v))
                  for t, v in sorted(step_by_tow.items())]
+    out['dd_net_med'] = st.median(all_steps) if all_steps else None
+    out['dd_by_sta'] = _med_floor(step_by_sta)
+    out['dd_by_sat'] = _med_floor(step_by_sat)
+    out['dd_by_ref'] = _med_floor(step_by_ref)
     out['frac'] = [dict(tow=t, med=st.median(v)) for t, v in sorted(frac_by_tow.items())]
     allf = [x for v in frac_by_tow.values() for x in v]
     hist = [0] * 10
@@ -90,6 +121,7 @@ def reduce_run(logs):
     out['frac_hist'] = dict(bins=[i * 0.05 for i in range(10)], counts=hist, n=len(allf))
 
     prev, disc_by_tow, keys_by_tow = {}, defaultdict(int), defaultdict(int)
+    disc_by_sat = defaultdict(int)
     for r in _rows(os.path.join(logs, 'network_solution.csv')):
         tw, dc = _f(r.get('tow')), _f(r.get('disc_counter')) or 0
         if tw is None:
@@ -97,10 +129,14 @@ def reduce_run(logs):
         k = (r.get('sat'), r.get('kind'), r.get('signal'))
         keys_by_tow[tw] += 1
         if k in prev and dc > prev[k]:
-            disc_by_tow[tw] += int(dc - prev[k])
+            d = int(dc - prev[k])
+            disc_by_tow[tw] += d
+            disc_by_sat[r.get('sat')] += d
         prev[k] = dc
         tows.append(tw)
     out['disc'] = [dict(tow=t, discs=disc_by_tow.get(t, 0)) for t in sorted(keys_by_tow)]
+    out['disc_by_sat'] = sorted(({'id': k, 'discs': v} for k, v in disc_by_sat.items()),
+                                key=lambda e: -e['discs'])
 
     out['tow0'] = min(tows) if tows else 0.0
     out['dt_s'] = dt0
@@ -157,6 +193,12 @@ TEMPLATE = r'''<meta charset="utf-8">
   #tip{position:fixed;pointer-events:none;z-index:9;background:var(--surface);color:var(--ink);
        border:1px solid var(--ring);border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.18);
        font:11px var(--mono);padding:6px 8px;display:none;white-space:nowrap;}
+  table.suspects{border-collapse:collapse;width:100%;font:11px var(--mono);}
+  table.suspects th{text-align:left;color:var(--muted);font-weight:400;padding:2px 10px 4px 0;
+        border-bottom:1px solid var(--ring);}
+  table.suspects td{padding:2px 10px 2px 0;color:var(--ink2);white-space:nowrap;}
+  table.suspects td.id{color:var(--ink);}
+  table.suspects tr.flag td{color:var(--crit);font-weight:600;}
   footer{margin-top:34px;font:11px var(--mono);color:var(--muted);}
 </style>
 
@@ -183,6 +225,30 @@ TEMPLATE = r'''<meta charset="utf-8">
   smoke run shows.</p>
   <div class="card"><div class="legend"><span><i style="background:var(--s1)"></i>median</span>
   <span><i style="background:var(--s2)"></i>p90</span></div><div id="c_dd"></div></div>
+</section>
+
+<section id="s_suspects">
+  <h2>1b · Churn suspects — per-station / per-satellite DD-step attribution</h2>
+  <p class="read">Each epoch-adjacent |ΔDD| is attributed to BOTH baseline endpoints and to its
+  satellite / reference satellite, then ranked by median |ΔDD| (n&gt;30). A station whose median
+  is <b>&gt;3× the network median</b> (flagged) is a churn source — the UFPR/POAL signature the
+  iono-deweight card targets. Whether that churn is emergent (coupling-driven) or intrinsic is
+  answered by <span style="font-family:var(--mono)">--compare</span> below.</p>
+  <div class="row3">
+    <div class="card"><h3>stations</h3><div class="sub">median |ΔDD| cyc · n</div><div id="sus_sta"></div></div>
+    <div class="card"><h3>satellites</h3><div class="sub">median |ΔDD| cyc · n · discs</div><div id="sus_sat"></div></div>
+    <div class="card"><h3>reference satellites</h3><div class="sub">median |ΔDD| cyc · n</div><div id="sus_ref"></div></div>
+  </div>
+</section>
+
+<section id="s_compare">
+  <h2>1c · Emergent vs intrinsic — per-station median across two runs</h2>
+  <p class="read">The same station's median |ΔDD| in this run vs the
+  <span style="font-family:var(--mono)">--compare</span> run. A suspect whose median COLLAPSES
+  in the second run was emergent (coupling-driven — e.g. deweighted or removed there); one that
+  PERSISTS is intrinsic. Sorted by the drop (run1 − run2); a flagged row is a suspect here that
+  is tamed there.</p>
+  <div class="card"><div id="cmp_tbl"></div></div>
 </section>
 
 <section id="s_disc">
@@ -357,6 +423,47 @@ if (hb.n > 0)
       xLabel: '|frac| cyc', unit: '' });
 else { const sec = document.getElementById('s_hist'); if (sec) sec.style.display = 'none'; }
 
+// Ranked-table builder for the attribution/suspects panels. cols: [key, header, fmtFn?].
+function renderTable(elId, rows, cols, flagFn) {
+  const node = document.getElementById(elId);
+  if (!node) return;
+  const tbl = document.createElement('table'); tbl.className = 'suspects';
+  const head = tbl.insertRow();
+  cols.forEach(c => { const th = document.createElement('th'); th.textContent = c[1]; head.appendChild(th); });
+  rows.forEach(r => {
+    const tr = tbl.insertRow();
+    if (flagFn && flagFn(r)) tr.className = 'flag';
+    cols.forEach((c, i) => {
+      const td = tr.insertCell();
+      td.textContent = c[2] ? c[2](r) : r[c[0]];
+      td.className = i === 0 ? 'id' : 'v';
+    });
+  });
+  node.appendChild(tbl);
+}
+
+const netMed = D.dd_net_med;
+if (D.dd_by_sta && D.dd_by_sta.length) {
+  const thr = (netMed || 0) * 3;
+  const discBySat = {}; (D.disc_by_sat || []).forEach(d => { discBySat[d.id] = d.discs; });
+  renderTable('sus_sta', D.dd_by_sta.slice(0, 15),
+    [['id', 'station'], ['med', 'med|ΔDD|', r => fmt(r.med)], ['n', 'n']], r => r.med > thr);
+  renderTable('sus_sat', D.dd_by_sat.slice(0, 10),
+    [['id', 'sat'], ['med', 'med|ΔDD|', r => fmt(r.med)], ['n', 'n'],
+     ['discs', 'discs', r => (discBySat[r.id] || 0).toLocaleString()]], r => r.med > thr);
+  renderTable('sus_ref', (D.dd_by_ref || []).slice(0, 10),
+    [['id', 'ref sat'], ['med', 'med|ΔDD|', r => fmt(r.med)], ['n', 'n']], r => r.med > thr);
+} else { const sec = document.getElementById('s_suspects'); if (sec) sec.style.display = 'none'; }
+
+if (D.compare && D.compare.rows && D.compare.rows.length) {
+  renderTable('cmp_tbl', D.compare.rows.slice(0, 25),
+    [['id', 'station'],
+     ['a', (D.compare.name1 || 'run1') + ' med', r => r.a == null ? '—' : fmt(r.a)],
+     ['b', (D.compare.name2 || 'run2') + ' med', r => r.b == null ? '—' : fmt(r.b)],
+     ['delta', 'Δ (run1−run2)', r => fmt(r.delta)]],
+    r => netMed && r.a != null && r.a > netMed * 3 && (r.b == null || r.b < netMed * 3));
+} else { const sec = document.getElementById('s_compare'); if (sec) sec.style.display = 'none'; }
+
 const nEp = Math.max(D.trace.length, D.sh.length, D.disc.length);
 set('t_ep', nEp || '—');
 set('t_disc', D.disc.length ? D.disc.reduce((a, d) => a + (d.discs || 0), 0).toLocaleString() : '—');
@@ -373,6 +480,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('run_dir')
     ap.add_argument('-o', '--out', default=None)
+    ap.add_argument('--compare', default=None, metavar='RUN2',
+                    help='second run dir; adds an emergent-vs-intrinsic per-station table '
+                         '(same station median |ΔDD| in both runs)')
     args = ap.parse_args()
 
     logs = os.path.join(args.run_dir, 'logs')
@@ -383,6 +493,22 @@ def main():
         sys.exit(f'no recognized trace CSVs under {logs}')
 
     name = os.path.basename(os.path.abspath(args.run_dir).rstrip('/\\'))
+
+    if args.compare:
+        logs2 = os.path.join(args.compare, 'logs')
+        if not os.path.isdir(logs2):
+            logs2 = args.compare
+        d2 = reduce_run(logs2)
+        m1 = {e['id']: e['med'] for e in data.get('dd_by_sta', [])}
+        m2 = {e['id']: e['med'] for e in d2.get('dd_by_sta', [])}
+        name2 = os.path.basename(os.path.abspath(args.compare).rstrip('/\\'))
+        data['compare'] = {
+            'name1': name, 'name2': name2,
+            'rows': sorted(({'id': s, 'a': m1.get(s), 'b': m2.get(s),
+                             'delta': (m1.get(s, 0.0) - m2.get(s, 0.0))}
+                            for s in set(m1) | set(m2)),
+                           key=lambda e: -(e['delta'] or 0.0))}
+
     span_min = 0.0
     for k in ('trace', 'sh', 'disc'):
         if data[k]:

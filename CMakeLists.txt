@@ -137,6 +137,7 @@ add_library(gnss_core STATIC
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkEmitRebase.cpp
+    src/core/products/NetworkPbEmitFilter.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -253,9 +254,11 @@ add_executable(gnss_tests
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
     tests/test_network_carry_vce.cpp
+    tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
     tests/test_network_invariant_carry_driver.cpp
     tests/test_card4_emit_rebase.cpp
+    tests/test_pb_emit_filter.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
@@ -280,6 +283,7 @@ add_executable(gnss_tests
     tests/test_orbit_enhancements.cpp
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
+    tests/test_antenna_radome_fallback.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

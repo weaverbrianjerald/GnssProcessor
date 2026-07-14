@@ -295,6 +295,23 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether the receiver antenna resolved only via the always-on
+         *        type-preserving radome→NONE fallback (Tier 1).
+         *
+         * Delegates to @c Antenna::receiverAntennaViaRadomeFallback().  True
+         * means the station's receiver PCO/PCV comes from the radome-agnostic
+         * "NONE" calibration of the same physical antenna because its specific
+         * radome code is uncalibrated (standard IGS/EPN practice, mm-level) —
+         * the network driver surfaces this as a single startup diagnostic.
+         *
+         * @param out_detail [out,optional] Human-readable substitution detail; may be nullptr.
+         * @return True iff the receiver antenna matched only through radome→NONE.
+         */
+        bool receiverAntennaViaRadomeFallback(std::string* out_detail = nullptr) const {
+            return antenna_.receiverAntennaViaRadomeFallback(out_detail);
+        }
+
+        /**
          * @brief Check whether both satellite and receiver ATX entries
          *        are fully populated for a (sat, signal) pair.
          *

@@ -1283,6 +1283,56 @@ namespace GnssProcessor {
         bool   trace           = false; ///< Write a per-satellite GF/TD2/variability CSV trace to the log directory.
     };
 
+    /**
+     * @brief Station-adaptive SH-VTEC-constraint deweight (PPP-RTK network producer).
+     *
+     * The per-LOS slant-iono states couple to the shared global SH-VTEC field in
+     * BOTH directions through a single joint pseudo-observation per (station, LOS):
+     * (a) the station's LOS feed the field fit; (b) the field constrains the
+     * station's per-LOS iono.  A station whose TRUE slant ionosphere is beyond the
+     * single-layer field's representability (e.g. an equatorial-anomaly /
+     * scintillation-belt site at solar max) injects that misfit through (a) into
+     * every other station (the global support functions export it) and through (b)
+     * into its own ambiguities → the shared clocks / code / phase biases.  This
+     * config relaxes that coupling per station by a scalar factor @c w_s ∈ (0,1]
+     * that multiplies the INFORMATION of the SH iono rows (σ² ×= 1/w_s ⇒ information
+     * ×= w_s).  @c w_s→0 makes the station's per-LOS iono float freely on its own
+     * GF code/phase (noisier, still observable — no rank hole; the dual-freq code
+     * bias stays lumped into iono per Odijk 2016) while the station KEEPS serving
+     * the shared clocks, biases, datum graph, and position.  It is the surgical
+     * alternative to dropping the station (the amputation falsifier) — geometry and
+     * the datum survive.
+     *
+     * The single joint pseudo-obs means ONE w_s uniformly deweights both directions
+     * and their cross-coupling.  Two paths:
+     *  - v1 (static): every station in @c stations is deweighted by @c factor.
+     *  - v2 (adaptive, @c adaptive): an IGG-style trailing gate engages a station
+     *    when its smoothed per-station SH-misfit statistic becomes a robust outlier
+     *    against the network's own distribution (median/MAD-standardized z-score),
+     *    with hysteresis (@c trigger_sigma / @c release_sigma) and a per-epoch rate
+     *    limit so the deweight⇄fit feedback loop cannot oscillate.  The statistic is
+     *    RELATIVE to the network robust center on purpose: the single-layer surface
+     *    leaves ~70–90 % of LOS residuals > 3σ at ANY degree (a chronic, common-mode
+     *    background), so an ABSOLUTE 3σ gate would trigger every station — only the
+     *    network-relative excess isolates the genuinely hostile sites.
+     *
+     * JSON (all under @c network.iono_constraint_deweight_*): @c stations, @c factor,
+     * @c adaptive, @c window_epochs, @c sigma_hi, @c sigma_lo, @c floor,
+     * @c rate_limit, @c min_epochs.  Empty @c stations + @c adaptive=false ⇒ every
+     * w_s is 1.0 ⇒ byte-identical to OFF (invariant #6).
+     */
+    struct IonoConstraintDeweightConfig {
+        std::vector<std::string> stations;              ///< v1: station long-names whose SH iono coupling is deweighted by @c factor (explicit list always wins over the adaptive gate).
+        double factor = 0.0;                            ///< v1 deweight strength w_s for listed stations.  0 = free iono (full decouple; the station's per-LOS iono floats on its own GF code/phase); clamped to (0,1] otherwise.  Default 0.
+        bool   adaptive = false;                        ///< v2: enable the IGG-style network-relative auto-trigger (in addition to the static list).  Default OFF.
+        double window_epochs = 60.0;                    ///< v2: half-life (epochs) of the per-station SH-misfit EWMA (forgetting-window robust-stat idiom, cf. NetworkCarryVce).
+        double sigma_hi = 3.0;                          ///< v2: engage the deweight when a station's smoothed misfit z-score (median/MAD-standardized across the network) rises above this.
+        double sigma_lo = 2.0;                          ///< v2: release when the z-score falls back below this (hysteresis band; must be < @c sigma_hi).
+        double floor = 0.0;                             ///< v2: minimum w_s the ramp drives toward at/above @c sigma_hi (0 = full decouple at strong outlier).  Clamped to [0,1).
+        double rate_limit = 0.25;                       ///< v2: maximum |Δw_s| per clean epoch (anti-oscillation slew limit).
+        int    min_epochs = 30;                         ///< v2: minimum clean EWMA samples on a station before its gate may fire.
+    };
+
     enum class StochasticModelType {
         Constant,   ///< Use the a-priori ?� directly, no geometry scaling.
         Elevation,      ///< Classic 1/sin�(el) weighting (default).

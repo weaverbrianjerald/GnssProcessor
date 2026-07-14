@@ -93,6 +93,43 @@ namespace GnssProcessor {
 		static double correctAzimuth(double azimuth_deg, double orientation_deg);
 
 		/**
+		 * @brief Result of receiver-antenna matching (@ref matchReceiverAntenna).
+		 */
+		struct ReceiverMatch {
+			const AntennaData* entry = nullptr;   ///< Matched entry (nullptr = no match); points into the supplied list.
+			bool via_radome_none = false;         ///< Matched only via the always-on type-preserving radome→NONE fallback (Tier 1).
+			std::string type_substitution;        ///< Deprecated-code TYPE-remap candidate that hit (empty unless matched via the opt-in table).
+			int ambiguous_candidates = 0;         ///< Substring candidates in the winning pass (>1 ⇒ ambiguous; 1 for an exact hit).
+			std::string sanitized;                ///< Whitespace-stripped receiver type (diagnostics).
+			std::string underscore;               ///< Underscore-normalized receiver type (diagnostics).
+		};
+
+		/**
+		 * @brief Pure, stateless receiver-antenna matcher (exposed for unit testing).
+		 *
+		 * The single source of truth for receiver-antenna resolution, mirroring
+		 * @ref interpolatePcv / @ref correctAzimuth as a side-effect-free static so
+		 * the (order-sensitive) matching logic can be exercised directly on a
+		 * hand-built @p antennas list without a ProductCache or RinexParser.  Given
+		 * the loaded ATX antenna list and a raw RINEX receiver antenna type it
+		 * applies, in order: (1) exact / first-substring match on the normalized
+		 * type; (2) the ALWAYS-ON, type-preserving radome→NONE fallback (Tier 1) —
+		 * retry the same antenna type with a "NONE" radome; (3) only when
+		 * @p enable_type_substitution, the opt-in deprecated-code TYPE-remap table.
+		 * Step (2) NEVER remaps the antenna TYPE, so a genuinely unknown model
+		 * still resolves to nothing.  Does NOT log — @ref findReceiverAntennaEntry
+		 * wraps this to emit the correction-path ambiguity / substitution warnings.
+		 *
+		 * @param antennas Loaded ATX antenna models to match against.
+		 * @param rx_antenna_type Raw receiver antenna type (RINEX header field, "<16 model><4 radome>").
+		 * @param enable_type_substitution Whether the opt-in deprecated-code TYPE-remap table is consulted.
+		 * @return A @ref ReceiverMatch; @c entry is nullptr on no match.
+		 */
+		static ReceiverMatch matchReceiverAntenna(const std::vector<AntennaData>& antennas,
+			const std::string& rx_antenna_type,
+			bool enable_type_substitution);
+
+		/**
 		 * @brief Compute antenna correction for a satellite/receiver observation.
 		 *
 		 * Computes the combined antenna correction (phase center offset (PCO),
@@ -185,9 +222,11 @@ namespace GnssProcessor {
 		 *
 		 * Runs the same receiver-antenna matching as getAntennaCorrection()
 		 * (@ref findReceiverAntennaEntry on the RINEX-header antenna string, honouring
-		 * the opt-in rule-driven substitution when
-		 * @c GnssConfig::enableRxAntennaSubstitution() is set) and reports whether ANY
-		 * entry matched.  When false, EVERY receiver PCO/PCV correction is silently
+		 * the always-on type-preserving radome→NONE fallback and the opt-in TYPE-remap
+		 * substitution when @c GnssConfig::enableRxAntennaSubstitution() is set) and
+		 * reports whether ANY entry matched.  A false result therefore means the antenna
+		 * TYPE itself is unknown to the loaded ANTEX (radome mismatches are absorbed by
+		 * the fallback).  When false, EVERY receiver PCO/PCV correction is silently
 		 * zero for this station — getAntennaCorrection() returns only the satellite-side
 		 * terms — so the caller can surface a startup diagnostic instead of relying on
 		 * the per-observation trace being the sole signal.  Does not warn or mutate
@@ -196,6 +235,28 @@ namespace GnssProcessor {
 		 * @return True iff an ATX entry matches the receiver antenna type.
 		 */
 		bool hasReceiverAntennaMatch() const;
+
+		/**
+		 * @brief Whether the receiver antenna resolved only via the always-on
+		 *        type-preserving radome→NONE fallback (Tier 1).
+		 *
+		 * Runs the same matching as @ref hasReceiverAntennaMatch on the
+		 * RINEX-header antenna string and reports whether the exact/substring
+		 * match MISSED but the radome→NONE fallback then supplied the entry —
+		 * i.e. the station's receiver PCO/PCV comes from the radome-agnostic
+		 * "NONE" calibration of the same physical antenna, not its uncalibrated
+		 * radome code.  This is standard IGS/EPN practice (mm-level) but worth a
+		 * single startup diagnostic so the distinction from an exact match is
+		 * visible.  Returns false when the exact (type, radome) matched, or when
+		 * nothing matched at all (that is @ref hasReceiverAntennaMatch == false).
+		 * Does not warn or mutate state.
+		 *
+		 * @param out_detail [out,optional] Human-readable description of the
+		 *        substitution ("'<type> <radome>' radome '<radome>' uncalibrated
+		 *        — using ... NONE ...") for a caller's WARN; may be nullptr.
+		 * @return True iff the receiver antenna matched only through radome→NONE.
+		 */
+		bool receiverAntennaViaRadomeFallback(std::string* out_detail = nullptr) const;
 
 		/**
 		 * @brief Strict ATX coverage check: both satellite and receiver
@@ -284,41 +345,33 @@ namespace GnssProcessor {
 		 * (hasReceiverAtxEntry / hasFullAtxCoverage / wasAtxSubstituted).
 		 * The raw type is whitespace-sanitized and underscore-normalized,
 		 * then matched against @c antennas_ by (1) exact match on either
-		 * normalized form, then (2) first substring containment.  When
-		 * @c GnssConfig::enableRxAntennaSubstitution() is set and neither
-		 * succeeds, a rule-driven substitution (deprecated-code table +
-		 * radome→NONE fallback) is attempted and a warning is logged on
-		 * success.  Behaviour is unchanged from the historical inline
-		 * matching when substitution is disabled.
+		 * normalized form, then (2) first substring containment.  On a miss,
+		 * (3) an ALWAYS-ON, type-preserving radome→NONE fallback (Tier 1)
+		 * retries the same antenna type with a "NONE" radome — the documented
+		 * IGS/EPN practice of borrowing a physical antenna's radome-agnostic
+		 * calibration when its specific radome code is uncalibrated (mm-level);
+		 * finally, only when @c GnssConfig::enableRxAntennaSubstitution() is
+		 * set, (4) a rule-driven TYPE-remap substitution (deprecated-code
+		 * table) is attempted with a warning on success.  The radome→NONE step
+		 * NEVER remaps the antenna TYPE, so a truly unknown model still
+		 * resolves to nothing (zero receiver correction); and because any
+		 * station that matched at (1)/(2) returns early, matched lookups are
+		 * byte-identical to the historical inline matching.
 		 *
 		 * @param rx_antenna_type Raw receiver antenna type (RINEX header field).
 		 * @param warn_on_ambiguity Emit a warning when >1 substring candidate matches (true only for the correction path).
 		 * @param out_sanitized [out,optional] Whitespace-stripped form (for caller diagnostics); may be nullptr.
 		 * @param out_underscore [out,optional] Underscore-normalized form (for caller diagnostics); may be nullptr.
+		 * @param out_via_radome_none [out,optional] Set true when the exact/substring
+		 *        match missed but the always-on type-preserving radome→NONE fallback
+		 *        (Tier 1) supplied the entry; false otherwise. May be nullptr.
 		 * @return Pointer to the matched AntennaData (owned by @c antennas_), or nullptr.
 		 */
 		const AntennaData* findReceiverAntennaEntry(const std::string& rx_antenna_type,
 			bool warn_on_ambiguity,
 			std::string* out_sanitized = nullptr,
-			std::string* out_underscore = nullptr) const;
-
-		/**
-		 * @brief Exact-then-substring receiver antenna match against @c antennas_.
-		 *
-		 * Inner matcher used by findReceiverAntennaEntry() for both the
-		 * primary type and each substitution candidate.  An exact match on
-		 * either normalized form wins; otherwise the first substring
-		 * containment match (in @c antennas_ order) is returned, with an
-		 * optional ambiguity warning when more than one candidate matches.
-		 *
-		 * @param sanitized Whitespace-stripped antenna type.
-		 * @param underscore Underscore-normalized antenna type.
-		 * @param warn_on_ambiguity Emit a warning when >1 candidate matches.
-		 * @return Pointer to the matched AntennaData, or nullptr.
-		 */
-		const AntennaData* matchReceiverEntry_(const std::string& sanitized,
-			const std::string& underscore,
-			bool warn_on_ambiguity) const;
+			std::string* out_underscore = nullptr,
+			bool* out_via_radome_none = nullptr) const;
 
 	};
 

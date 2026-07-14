@@ -2514,6 +2514,28 @@ namespace GnssProcessor {
         /// Card 4 (M1, D5 v2): σ̂₀² forgetting half-life in epochs (@c network.carry_invariant_innov_calibrate_window).
         double networkCarryInvariantInnovCalibrateWindow() const { return network_carry_invariant_innov_calibrate_window_; }
 
+        /// PB emission-continuity filter (M5 prerequisite): slip-gated per-key
+        /// scalar KF on the POST-REBASE emitted phase biases + a noise-calibrated
+        /// jump gate — an outputs-only S-transparent smoother that clears the
+        /// threshold-in-noise discontinuity floor.  INERT unless the re-base ran
+        /// (@c network.carry_invariant + @c network.carry_invariant_emit_rebase).
+        bool networkEmitPbFilter() const { return network_emit_pb_filter_; }
+        /// PB filter: random-walk process noise of the emitted bias (m²/s).
+        double networkEmitPbFilterQ() const { return network_emit_pb_filter_q_; }
+        /// PB filter: reset gate |innovation| > k·σ̂_step (Nσ).
+        double networkEmitPbFilterJumpK() const { return network_emit_pb_filter_jump_k_; }
+        /// PB filter: σ̂_step seed / regularisation scale (m) — a-priori per-epoch step noise.
+        double networkEmitPbFilterMeasSigmaM() const { return network_emit_pb_filter_meas_sigma_m_; }
+        /// PB filter: arc gap (s) beyond which a returning key re-inits (first sighting).
+        double networkEmitPbFilterMaxGapS() const { return network_emit_pb_filter_max_gap_s_; }
+        /// PB filter: σ̂_step exponential-forgetting half-life (emitted epochs).
+        double networkEmitPbFilterWindowEpochs() const { return network_emit_pb_filter_window_epochs_; }
+        /// PB filter: stamp the filter posterior σ (√P) onto the emitted phase-bias
+        /// σ (`sigma_m`) so a consumer weights by the shrunk uncertainty; false
+        /// leaves the solve's per-epoch σ untouched (the combined-σ token `sigc_m`
+        /// is a solve-covariance quantity and is NOT refined in v1).
+        bool networkEmitPbFilterEmitSigma() const { return network_emit_pb_filter_emit_sigma_; }
+
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
          *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
@@ -2848,6 +2870,35 @@ namespace GnssProcessor {
          * @see networkPhaseBiasMinStationFraction, Antenna::hasReceiverAntennaMatch
          */
         bool networkPhaseBiasExcludeUnmatchedAntenna() const { return network_phase_bias_exclude_unmatched_antenna_; }
+
+        /**
+         * @brief Whether a station whose receiver antenna still has NO ATX model
+         *        match after the always-on radome→NONE fallback is DROPPED from
+         *        the network at station-build time
+         *        (@c network.exclude_unmodeled_antenna_stations).
+         *
+         * The harder, policy-level backstop to @ref networkPhaseBiasExcludeUnmatchedAntenna.
+         * The always-on type-preserving radome→NONE fallback (@ref Antenna::findReceiverAntennaEntry)
+         * already recovers every station whose only problem is an uncalibrated radome
+         * code on an otherwise-known antenna; a station that STILL fails to match has a
+         * genuinely unknown antenna TYPE, so its receiver PCO/PCV is entirely unmodelled.
+         * Unlike measurement noise (which the stochastic model handles) or ionosphere
+         * (handled elsewhere), an unmodelled receiver phase-centre is a SYSTEMATIC in
+         * every code/phase observation the station contributes, and those observations
+         * feed the shared satellite clocks / code biases / phase biases the whole network
+         * emits.  When on, such a station is excluded from the network entirely (never
+         * built), counted at the build summary, and echoed in the run manifest.  The
+         * clock-datum (pivot) station cannot be silently dropped — it realizes the datum —
+         * so an unmodelled pivot is a hard build error directing the user to supply its
+         * ATX or choose a different reference.  Applies to @c PPP_RTK_Network mode only.
+         * Default false (every station that loads is built — byte-identical; with the
+         * always-on radome fallback the current 305-station networks exclude zero
+         * stations, so arming this is inert on known-antenna data and only bites a
+         * genuinely unknown-TYPE antenna).
+         *
+         * @see networkPhaseBiasExcludeUnmatchedAntenna, Antenna::hasReceiverAntennaMatch
+         */
+        bool networkExcludeUnmodeledAntennaStations() const { return network_exclude_unmodeled_antenna_stations_; }
 
         /**
          * @brief Whether RAIM refloats are driven by prominence attribution
@@ -3259,6 +3310,17 @@ namespace GnssProcessor {
          * @return Const reference to the global SH-VTEC config.
          */
         const GlobalVtecShConfig& getGlobalVtecShConfig() const { return global_vtec_sh_; }
+
+        /**
+         * @brief Access the station-adaptive SH-VTEC-constraint deweight configuration.
+         *
+         * Relaxes the per-LOS-iono ↔ global SH-VTEC coupling per station by a factor
+         * w_s ∈ (0,1] (v1 static list + v2 adaptive IGG gate) — the surgical
+         * alternative to dropping a hostile station.  Network producer only.
+         * @return Const reference to the iono-constraint deweight config.
+         * @see IonoConstraintDeweightConfig, estimateNetworkIonoSh
+         */
+        const IonoConstraintDeweightConfig& getIonoConstraintDeweightConfig() const { return iono_constraint_deweight_; }
 
         /**
          * @brief Use the CIO-based IAU 2000A/2006 ECI↔ECEF frame transform.
@@ -4394,6 +4456,7 @@ namespace GnssProcessor {
         double network_signal_min_station_fraction_{0.0}; ///< Network-wide signal coverage gate: a RINEX code is admitted to the producer only if ≥ this fraction of stations observing its constellation track it (drops sparse channels like L2S everywhere, unlike per-station channel_mode). 0 = off (admit all tracked channels, byte-identical). Network mode only.
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets NO satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible) — the "float not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has NO ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state — its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). OFF = every station contributes (byte-identical). Network mode only.
+        bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
         bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; OFF = emit the first solve as today.
         double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
@@ -4443,6 +4506,13 @@ namespace GnssProcessor {
         bool   network_carry_invariant_innov_refold_{false}; ///< Card 4 (M1, D5 v2, DEFERRED): when ≥N chords flag in one epoch, route the flagged set into the existing within-epoch re-solve so the epoch itself is cleaned (v1 keeps the one already-solved epoch's bounded contamination, q_z the backstop). Parsed for the config contract; NOT yet implemented (warned). INERT unless network_carry_invariant_innov_gate_.
         bool   network_carry_invariant_innov_calibrate_{false}; ///< Card 4 (M1, D5 v2): standardize the innovation gate by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations, the M2 NetworkCarryVce instrument) instead of the raw formal Cov(v), which the M2 monitor measured 10-30× optimistic. Makes network_carry_invariant_innov_k a TRUE Nσ threshold that auto-adapts per regime (so one k serves both low- and high-elevation masks). OFF = raw formal Cov(v) (v1; k is an uncalibrated knob). INERT unless network_carry_invariant_innov_gate_.
         double network_carry_invariant_innov_calibrate_window_{60.0}; ///< Card 4 (M1, D5 v2): exponential-forgetting half-life (emitted epochs) of the σ̂₀² accumulator; larger = smoother/slower-adapting. INERT unless network_carry_invariant_innov_calibrate_.
+        bool   network_emit_pb_filter_{false};             ///< PB emission-continuity filter (M5 prerequisite): slip-gated per-key scalar KF on the POST-REBASE emitted phase biases + a self-tuning k·σ̂_step jump gate — an outputs-only, S-transparent smoother that clears the ~200/epoch threshold-in-noise discontinuity floor without touching the solve (user DDs + dd-frac grading byte-unchanged). Baked into the emitted product (replay-safe, like the re-base); the emitter jump test stays the SOLE, unchanged disc authority. INERT unless network_carry_invariant_ + network_carry_invariant_emit_rebase_ (it filters the re-based emission frame). OFF = the leaf is never constructed/called (byte-identical).
+        double network_emit_pb_filter_q_{3E-07};           ///< PB filter: random-walk process noise of the emitted bias (m²/s); ≈(3 mm)² per 30 s epoch (the quasi-static drift class). INERT unless network_emit_pb_filter_.
+        double network_emit_pb_filter_jump_k_{4.0};        ///< PB filter: reset gate |innovation| > k·σ̂_step (Nσ; mirrors carry_invariant_innov_k). k<~2 leaves the noise floor uncleared; k too large smears events — but genuine events are ≫k·σ̂_step. INERT unless network_emit_pb_filter_.
+        double network_emit_pb_filter_meas_sigma_m_{0.05}; ///< PB filter: σ̂_step SEED / regularisation scale (m) — the a-priori per-epoch step noise before samples accrue, and the scale the robust estimate is floored below (0.25×). INERT unless network_emit_pb_filter_.
+        double network_emit_pb_filter_max_gap_s_{600.0};   ///< PB filter: arc gap (s) beyond which a returning key is a first sighting (re-init, no smoothing across the gap). INERT unless network_emit_pb_filter_.
+        double network_emit_pb_filter_window_epochs_{60.0};///< PB filter: exponential-forgetting half-life (emitted epochs) of the σ̂_step estimator. INERT unless network_emit_pb_filter_.
+        bool   network_emit_pb_filter_emit_sigma_{false};  ///< PB filter: stamp the filter posterior σ (√P) onto the emitted phase-bias σ (sigma_m) so a consumer weights by the shrunk uncertainty; false leaves the solve's per-epoch σ untouched. The M4 combined-σ token (sigc_m) is a solve-covariance quantity and is NOT refined in v1. INERT unless network_emit_pb_filter_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
@@ -4506,6 +4576,7 @@ namespace GnssProcessor {
         AdaptiveIonoQConfig adaptive_iono_q_;                       ///< Adaptive ionospheric process-noise (GF second-difference) config.
         IonosphereWeightingConfig iono_weighting_;                  ///< GIM ionosphere-weighting (PPP-RTK soft iono constraint) config.
         GlobalVtecShConfig global_vtec_sh_;                         ///< Co-estimated global SH-VTEC ionosphere (network producer) config.
+        IonoConstraintDeweightConfig iono_constraint_deweight_;     ///< Station-adaptive SH-VTEC-constraint deweight (v1 static list + v2 adaptive IGG gate); default empty ⇒ byte-identical OFF.
 
         bool has_reference_position_;                          ///< True if user supplied a reference ECEF position.
         std::array<double, 3> reference_position_ecef_; ///< User-supplied reference position ECEF (m).

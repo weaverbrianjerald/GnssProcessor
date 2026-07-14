@@ -109,6 +109,7 @@
   },
   "network": {
     "clock_datum_station": "MBAR00UGA",
+    "exclude_unmodeled_antenna_stations": true,
     "epoch_sync_tolerance_s": 1.0,
     "parallel_stations": true,
     "parallel_min_stations": 8,

@@ -3632,6 +3632,68 @@ namespace GnssProcessor {
                       "and logged as σ̂ (Floor m² + Rate m²/s) against the hand floors.  No feedback "
                       "into the solve (calibration/honesty instrument; solution byte-identical).",
                       network_carry_vce_components_, network_carry_vce_window_epochs_);
+
+        // Station-adaptive SH-VTEC-constraint deweight (invariant #6: default OFF /
+        // byte-identical).  Relaxes the per-LOS-iono ↔ global SH field coupling per
+        // station by a factor w_s ∈ (0,1] (σ² ×= 1/w_s) — the surgical alternative to
+        // dropping a hostile (scintillation-belt) station: it keeps serving the shared
+        // clocks / biases / datum / position while its per-LOS iono stops poisoning the
+        // field and its own ambiguities.  v1 static list + v2 adaptive IGG gate.
+        {
+            IonoConstraintDeweightConfig& idw = iono_constraint_deweight_;
+            idw.stations.clear();
+            const auto& dw_arr = jsection(json, "network.iono_constraint_deweight_stations",
+                                          "iono_constraint_deweight_stations");
+            if (dw_arr.is_array())
+                idw.stations = dw_arr.get<std::vector<std::string>>();
+            idw.factor = jval<double>(json, "network.iono_constraint_deweight_factor",
+                                      "iono_constraint_deweight_factor", 0.0);
+            idw.adaptive = jval<bool>(json, "network.iono_constraint_deweight_adaptive",
+                                      "iono_constraint_deweight_adaptive", false);
+            idw.window_epochs = jval<double>(json, "network.iono_constraint_deweight_window_epochs",
+                                             "iono_constraint_deweight_window_epochs", 60.0);
+            idw.sigma_hi = jval<double>(json, "network.iono_constraint_deweight_sigma_hi",
+                                        "iono_constraint_deweight_sigma_hi", 3.0);
+            idw.sigma_lo = jval<double>(json, "network.iono_constraint_deweight_sigma_lo",
+                                        "iono_constraint_deweight_sigma_lo", 2.0);
+            idw.floor = jval<double>(json, "network.iono_constraint_deweight_floor",
+                                     "iono_constraint_deweight_floor", 0.0);
+            idw.rate_limit = jval<double>(json, "network.iono_constraint_deweight_rate_limit",
+                                          "iono_constraint_deweight_rate_limit", 0.25);
+            idw.min_epochs = jval<int>(json, "network.iono_constraint_deweight_min_epochs",
+                                       "iono_constraint_deweight_min_epochs", 30);
+            // Clamps: keep the mechanism well-posed (never NaN / never information-inflating).
+            if (idw.factor < 0.0) idw.factor = 0.0;
+            if (idw.factor > 1.0) idw.factor = 1.0;
+            if (idw.floor < 0.0)  idw.floor = 0.0;
+            if (idw.floor >= 1.0) idw.floor = 0.999;
+            if (idw.window_epochs < 1.0) idw.window_epochs = 1.0;
+            if (idw.rate_limit <= 0.0) idw.rate_limit = 1.0;   // 0 ⇒ no slew limit (snap)
+            if (idw.min_epochs < 1) idw.min_epochs = 1;
+            const bool dw_static_on = !idw.stations.empty() && idw.factor < 1.0;
+            if (idw.adaptive && idw.sigma_lo >= idw.sigma_hi) {
+                log->warn("Network (iono deweight): sigma_lo ({:.2f}) >= sigma_hi ({:.2f}) — "
+                          "hysteresis band ill-formed; forcing sigma_lo = 0.5*sigma_hi.",
+                          idw.sigma_lo, idw.sigma_hi);
+                idw.sigma_lo = 0.5 * idw.sigma_hi;
+            }
+            if (dw_static_on)
+                log->info("Network (iono deweight v1): {} station(s) statically deweighted at "
+                          "w_s={:.3f} ({} — {} the SH field) — they still serve the shared "
+                          "clocks/biases/datum/position.",
+                          idw.stations.size(), idw.factor,
+                          (idw.factor <= 0.0) ? "w_s=0, free-floating iono" : "partial info",
+                          (idw.factor <= 0.0) ? "fully decoupled from"
+                                              : "loosely coupled to");
+            if (idw.adaptive)
+                log->info("Network (iono deweight v2): adaptive IGG gate ON — engage a station when "
+                          "its EWMA SH-misfit z-score (median/MAD across the network, half-life "
+                          "{:.0f} ep, ≥{} clean samples) exceeds {:.2f}σ, release below {:.2f}σ; "
+                          "ramp to w_s floor {:.3f}, slew ≤{:.3f}/epoch.",
+                          idw.window_epochs, idw.min_epochs, idw.sigma_hi, idw.sigma_lo,
+                          idw.floor, idw.rate_limit);
+        }
+
         // T0 cycle-slip repair (Increment 2): only meaningful with the carry on.
         network_cycle_slip_turbo_edit_ =
             jval<bool>(json, "network.cycle_slip.turbo_edit", "network_cycle_slip_turbo_edit", false);
@@ -3720,6 +3782,13 @@ namespace GnssProcessor {
         network_phase_bias_exclude_unmatched_antenna_ =
             jval<bool>(json, "network.phase_bias_exclude_unmatched_antenna",
                        "network_phase_bias_exclude_unmatched_antenna", false);
+        // Policy backstop (invariant #6: default OFF): hard-drop any station whose
+        // receiver antenna still has no ATX match AFTER the always-on radome→NONE
+        // fallback (a genuinely unknown antenna TYPE = unmodelled receiver PCO/PCV,
+        // a systematic in every obs feeding the shared clocks/biases).
+        network_exclude_unmodeled_antenna_stations_ =
+            jval<bool>(json, "network.exclude_unmodeled_antenna_stations",
+                       "network_exclude_unmodeled_antenna_stations", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         network_raim_within_epoch_ =
@@ -4190,6 +4259,26 @@ namespace GnssProcessor {
         network_carry_invariant_innov_calibrate_window_ =
             jval<double>(json, "network.carry_invariant_innov_calibrate_window",
                          "network_carry_invariant_innov_calibrate_window", 60.0);
+        // PB emission-continuity filter (M5 prerequisite) — outputs-only smoother
+        // on the re-based emitted phase biases + a self-tuning k·σ̂_step jump gate.
+        network_emit_pb_filter_ =
+            jval<bool>(json, "network.emit_pb_filter", "network_emit_pb_filter", false);
+        network_emit_pb_filter_q_ =
+            jval<double>(json, "network.emit_pb_filter_q", "network_emit_pb_filter_q", 3E-07);
+        network_emit_pb_filter_jump_k_ =
+            jval<double>(json, "network.emit_pb_filter_jump_k", "network_emit_pb_filter_jump_k", 4.0);
+        network_emit_pb_filter_meas_sigma_m_ =
+            jval<double>(json, "network.emit_pb_filter_meas_sigma_m",
+                         "network_emit_pb_filter_meas_sigma_m", 0.05);
+        network_emit_pb_filter_max_gap_s_ =
+            jval<double>(json, "network.emit_pb_filter_max_gap_s",
+                         "network_emit_pb_filter_max_gap_s", 600.0);
+        network_emit_pb_filter_window_epochs_ =
+            jval<double>(json, "network.emit_pb_filter_window_epochs",
+                         "network_emit_pb_filter_window_epochs", 60.0);
+        network_emit_pb_filter_emit_sigma_ =
+            jval<bool>(json, "network.emit_pb_filter_emit_sigma",
+                       "network_emit_pb_filter_emit_sigma", false);
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -4582,6 +4671,31 @@ namespace GnssProcessor {
                 log->warn("Network: network.carry_invariant_innov_refold is INERT without "
                           "network.carry_invariant_innov_gate (it routes the gate's flagged set).");
             }
+            if (network_emit_pb_filter_) {
+                if (network_carry_invariant_emit_rebase_)
+                    log->info("Network producer: PB EMISSION-CONTINUITY FILTER ON (M5 prerequisite) — "
+                              "a slip-gated per-key scalar KF on the POST-REBASE emitted phase biases "
+                              "(q={} m²/s) smooths the per-epoch estimation noise the re-base leaves, and "
+                              "a self-tuning k·σ̂_step jump gate (k={}, seed σ̂_step {:.3f} m, window {} ep) "
+                              "resets ONLY on a reference-path slip, a genuine event, or a >{:.0f} s gap — "
+                              "clearing the ~200/epoch threshold-in-noise discontinuity floor.  "
+                              "Outputs-only + S-transparent (the solve, user DDs and dd-frac grading are "
+                              "byte-unchanged); the emitter jump test stays the SOLE disc authority.  "
+                              "emit_posterior_sigma={}.",
+                              network_emit_pb_filter_q_, network_emit_pb_filter_jump_k_,
+                              network_emit_pb_filter_meas_sigma_m_,
+                              network_emit_pb_filter_window_epochs_,
+                              network_emit_pb_filter_max_gap_s_,
+                              network_emit_pb_filter_emit_sigma_ ? "true" : "false");
+                else
+                    log->warn("Network: network.emit_pb_filter is INERT without "
+                              "network.carry_invariant_emit_rebase — it filters the RE-BASED emission "
+                              "frame, so the re-base must run for the filter to fire.");
+                if (network_emit_pb_filter_jump_k_ < 2.0)
+                    log->warn("Network: network.emit_pb_filter_jump_k = {} is BELOW 2 — the gate sits "
+                              "inside the step noise and leaves the discontinuity floor uncleared.",
+                              network_emit_pb_filter_jump_k_);
+            }
             // Warn-INERT (spec D7): the eq34 frame-continuity hygiene is subsumed by the
             // invariant carry — the datum targets are plain 0 and continuity lives in the
             // carried DDs, so pin_round / carry_shift / rpb_q are forced off when armed.
@@ -4630,6 +4744,13 @@ namespace GnssProcessor {
                       "(the legacy pivot datum has no union to gate).",
                       network_phase_datum_min_stations_);
         }
+        // PB emission-continuity filter INERT unless the invariant carry is armed
+        // (its re-based emission frame is the filter's input); the carry-ON case is
+        // reported inside the carry_invariant block above.
+        if (network_emit_pb_filter_ && !network_carry_invariant_)
+            log->warn("Network: network.emit_pb_filter is INERT without network.carry_invariant "
+                      "(+ network.carry_invariant_emit_rebase) — it filters the re-based emission "
+                      "frame, which only exists under the invariant carry.");
 
         // RTA-3/RTA-4/RTA-5/RTA-11: product wire/contract hardening for late joiners
         // and producer restarts.  All default OFF ⇒ store and file byte-identical.
