@@ -22,6 +22,7 @@
 #include "measurement/BssdTransform.hpp"
 #include "common/PppObservation.hpp"
 #include "common/SignalBand.hpp"
+#include "common/Constants.hpp"
 
 #include <Eigen/Dense>
 #include <map>
@@ -370,6 +371,34 @@ TEST(BssdDifferenceBrsdTest, ExcludeKeysAliasedFormat) {
                                               { { "GPS", "G01" } },
                                               { { "G05_C1C/C1W" } });
     EXPECT_TRUE(rows.empty());
+}
+
+// H3: nominal band wavelength — the pure static identity the per-λ disc contract
+// is built on (deterministic on producer and replay consumer alike).
+TEST(SignalBandWavelengthTest, NominalWavelengthPerBand) {
+    // Active-network bands resolve to their Constants wavelengths.
+    EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GpsL1), Constants::GPS_L1_WAVELENGTH, 1e-12);
+    EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GpsL2), Constants::GPS_L2_WAVELENGTH, 1e-12);
+    EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GpsL5), Constants::GPS_L5_WAVELENGTH, 1e-12);
+    EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GalE1),  Constants::GAL_E1_WAVELENGTH,  1e-12);
+    EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GalE5a), Constants::GAL_E5A_WAVELENGTH, 1e-12);
+    // FDMA GLONASS: the base-frequency (channel k=0) wavelength — the "would-be-FDMA"
+    // case the emitter's (sat,signal) API is built to extend later.
+    EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GloG1),
+                Constants::SPEED_OF_LIGHT / Constants::GLONASS_G1_BASE_FREQ, 1e-12);
+    // Unknown / unmapped bands return the 0.0 sentinel (caller falls back to the flat gate).
+    EXPECT_EQ(bandNominalWavelengthMeters(FrequencyBand::Unknown), 0.0);
+    EXPECT_EQ(bandNominalWavelengthMeters(FrequencyBand::IrnS), 0.0);
+    // Composed with classifySignalForSat: (sat, RINEX code) -> λ, incl a GLONASS sat.
+    EXPECT_NEAR(bandNominalWavelengthMeters(classifySignalForSat("G01", "L2W").band),
+                Constants::GPS_L2_WAVELENGTH, 1e-12);
+    EXPECT_NEAR(bandNominalWavelengthMeters(classifySignalForSat("E11", "L5Q").band),
+                Constants::GAL_E5A_WAVELENGTH, 1e-12);
+    EXPECT_GT(bandNominalWavelengthMeters(classifySignalForSat("R03", "L1C").band), 0.0);
+    // The handoff's 0.25λ sanity numbers.
+    EXPECT_NEAR(0.25 * Constants::GPS_L1_WAVELENGTH, 0.0476, 5e-4);
+    EXPECT_NEAR(0.25 * Constants::GPS_L2_WAVELENGTH, 0.0610, 5e-4);
+    EXPECT_NEAR(0.25 * Constants::GPS_L5_WAVELENGTH, 0.0637, 5e-4);
 }
 
 }  // namespace

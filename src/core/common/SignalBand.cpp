@@ -12,6 +12,8 @@
 
 #include "common/SignalBand.hpp"
 
+#include "common/Constants.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -345,6 +347,51 @@ namespace GnssProcessor {
         case FrequencyBand::IrnS:     return "IRN_S";
         case FrequencyBand::Unknown:
         default:                      return "UNKNOWN";
+        }
+    }
+
+    double bandNominalWavelengthMeters(FrequencyBand band) {
+        namespace K = Constants;
+        switch (band) {
+        // GPS
+        case FrequencyBand::GpsL1:   return K::GPS_L1_WAVELENGTH;
+        case FrequencyBand::GpsL2:   return K::GPS_L2_WAVELENGTH;
+        case FrequencyBand::GpsL5:   return K::GPS_L5_WAVELENGTH;
+        // Galileo
+        case FrequencyBand::GalE1:   return K::GAL_E1_WAVELENGTH;
+        case FrequencyBand::GalE5a:  return K::GAL_E5A_WAVELENGTH;
+        case FrequencyBand::GalE5b:  return K::GAL_E5B_WAVELENGTH;
+        case FrequencyBand::GalE5:   return K::GAL_E5_WAVELENGTH;
+        case FrequencyBand::GalE6:   return K::GAL_E6_WAVELENGTH;
+        // GLONASS — FDMA bands use the base (k=0) wavelength (slot offset not
+        // applied here; see the header note), the CDMA bands are fixed.
+        case FrequencyBand::GloG1:   return K::SPEED_OF_LIGHT / K::GLONASS_G1_BASE_FREQ;
+        case FrequencyBand::GloG2:   return K::SPEED_OF_LIGHT / K::GLONASS_G2_BASE_FREQ;
+        case FrequencyBand::GloG3:   return K::GLONASS_G3_WAVELENGTH;
+        case FrequencyBand::GloG1a:  return K::GLONASS_G1A_WAVELENGTH;
+        case FrequencyBand::GloG2a:  return K::GLONASS_G2A_WAVELENGTH;
+        // BeiDou
+        case FrequencyBand::BdsB1I:  return K::BDS_B1_WAVELENGTH;
+        case FrequencyBand::BdsB1C:  return K::BDS_B1C_WAVELENGTH;
+        case FrequencyBand::BdsB2I:  return K::BDS_B2_WAVELENGTH;   // 1207.14 MHz (B2b freq)
+        case FrequencyBand::BdsB2a:  return K::BDS_B2A_WAVELENGTH;
+        case FrequencyBand::BdsB2b:  return K::BDS_B2_WAVELENGTH;
+        case FrequencyBand::BdsB2ab: return K::BDS_B2AB_WAVELENGTH;
+        case FrequencyBand::BdsB3:   return K::BDS_B3_WAVELENGTH;
+        // QZSS
+        case FrequencyBand::QzsL1:   return K::QZSS_L1_WAVELENGTH;
+        case FrequencyBand::QzsL2:   return K::QZSS_L2_WAVELENGTH;
+        case FrequencyBand::QzsL5:   return K::QZSS_L5_WAVELENGTH;
+        case FrequencyBand::QzsL6:   return K::QZSS_L6_WAVELENGTH;
+        // SBAS
+        case FrequencyBand::SbsL1:   return K::SBAS_L1_WAVELENGTH;
+        case FrequencyBand::SbsL5:   return K::SBAS_L5_WAVELENGTH;
+        // IRNSS / NavIC — L5 shares the 1176.45 MHz band; the S band (2492 MHz)
+        // has no Constants entry, so it falls through to the 0.0 sentinel.
+        case FrequencyBand::IrnL5:   return K::GPS_L5_WAVELENGTH;
+        case FrequencyBand::IrnS:
+        case FrequencyBand::Unknown:
+        default:                     return 0.0;
         }
     }
 

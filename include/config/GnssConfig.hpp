@@ -2028,6 +2028,22 @@ namespace GnssProcessor {
         bool networkCodeBiasDiscJumpTest() const { return network_code_bias_disc_jump_test_; }
 
         /**
+         * @brief Per-λ discontinuity threshold as a fraction of a carrier cycle
+         *        (@c network.disc_threshold_frac_cycles).
+         *
+         * When > 0 the emitter's phase (and, under @ref networkCodeBiasDiscJumpTest,
+         * code) jump test uses a PER-(sat,signal) threshold of @c frac·λ(sat,signal)
+         * instead of the flat 0.05 m @c disc_threshold_m.  This is still a FIXED
+         * producer↔consumer contract — λ is a public, static band identity, so both
+         * ends resolve the same threshold — but it makes the gate uniform in CYCLES
+         * (the harm model) rather than metres.  Recommended 0.25 (L1/E1 4.76 cm ≈ the
+         * legacy 0.05 m, L2 6.1 cm, L5/E5a 6.37 cm).  Travels in the S-contract
+         * (@c discfrac=) so file replay reproduces the counters.  Default 0.0 = the
+         * legacy flat-metre gate (byte-identical).
+         */
+        double networkDiscThresholdFracCycles() const { return network_disc_threshold_frac_cycles_; }
+
+        /**
          * @brief Whether the emitter bumps a constellation's CLOCK discontinuity
          *        counters when its clock-satellite SET changes between emits
          *        (@c network.clock_disc_on_set_change).
@@ -4479,6 +4495,7 @@ namespace GnssProcessor {
         bool   network_pivot_vanish_return_signal_{false}; ///< A1: also raise a datum-change (markDatumChange) when a constellation ABSENT last epoch RETURNS with a clock pivot != its last-ever pivot; OFF = only the adjacent-epoch pivot change signals (byte-identical).
         bool   network_emit_clock_disc_{false};            ///< A2: maintain a per-satellite CLOCK discontinuity counter (bumped on a per-constellation datum re-reference) and scope the forced phase/code bump to the affected constellation(s); OFF = no clock disc channel + a global bump (byte-identical).
         bool   network_code_bias_disc_jump_test_{false};   ///< Emitter CODE-bias magnitude jump test: also bump disc_per_signal on a fresh-baseline value jump > the phase disc threshold (0.05 m) — signals the weak-separation value wander the H1 structural triggers cannot see; travels in the S-contract (cbjump=). OFF = structural triggers only (byte-identical).
+        double network_disc_threshold_frac_cycles_{0.0};   ///< H3: per-λ discontinuity threshold as a fraction of a carrier cycle; when > 0 the emitter jump test uses frac·λ(sat,signal) instead of the flat 0.05 m disc_threshold_m (uniform in cycles, still a fixed contract); travels in the S-contract (discfrac=). 0 = legacy flat-metre gate (byte-identical).
         bool   network_clock_disc_on_set_change_{false};   ///< Sum-to-zero datum-move signalling: bump a constellation's clock disc counters when its clock-satellite SET changes between emits (under Σδtˢ=0 a membership change re-references the datum, previously unsignalled); requires clock_datum_sum_to_zero, arms emit_clock_disc; travels in the S-contract (clkset=). OFF = forced-bump-only clock channel (byte-identical).
         bool   network_sticky_pivot_{false};               ///< RTA-1: keep the incumbent clock-pivot satellite per constellation while it remains registered (re-select only when it sets; config-pinned satellite still wins); OFF = lexical first-registered auto-pick every epoch (byte-identical).
         bool   network_clock_datum_sum_to_zero_{false};    ///< Realize the per-constellation clock gauge by a SUM-TO-ZERO over that constellation's satellite clocks (folded like the code-bias gauge) instead of a hard pivot pin — anchor-free, no handover seam, no pivot-absent SPOF; ignores clock_datum_satellite. OFF = legacy per-constellation pivot pin (byte-identical).

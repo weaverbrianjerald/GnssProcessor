@@ -123,6 +123,83 @@ TEST(NetworkProductEmitterTest, DiscontinuityCounterBumpsOnBiasJumpOnly) {
     EXPECT_EQ(emitter.discontinuityCounter("G02", "L1C"), 0);
 }
 
+// Build a one-sat epoch carrying an arbitrary set of phase biases (signal -> value).
+static NetworkSolutionEpoch phaseEpoch(const GnssTime& t, const std::string& sat,
+                                       const std::map<std::string, double>& biases) {
+    NetworkSolutionEpoch sol;
+    sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
+    NetworkSatSolution s; s.sat = sat;
+    for (const auto& [sig, b] : biases) s.phase_bias[sig] = NetworkPhaseBias{b, true, 1};
+    sol.sats.push_back(s);
+    sol.sats.back().has_clock = false;
+    return sol;
+}
+
+// H3: with network.disc_threshold_frac_cycles armed, the jump gate is frac·λ
+// PER (sat,signal), so the SAME step magnitude crosses the shorter-λ band but not
+// the longer-λ one — the whole point of making the gate uniform in cycles.
+TEST(NetworkProductEmitterTest, PerLambdaThresholdSelectsByBand) {
+    // frac = 0.25 ⇒ L1 gate 0.25·0.1903 = 4.76 cm, L5 gate 0.25·0.2548 = 6.37 cm.
+    NetworkProductEmitter emitter(NetworkProductEmitter::kDefaultDiscThresholdM,
+                                  /*emit_clock_disc=*/false, /*stale=*/0.0,
+                                  /*code_bias_jump_test=*/false,
+                                  /*clock_disc_on_set_change=*/false,
+                                  /*disc_threshold_frac_cycles=*/0.25);
+    SsrCorrectionStore store;
+    GnssTime t = kT;
+    // Baseline for two GPS bands on the same satellite.
+    emitter.emitToStore(phaseEpoch(t, "G01", {{"L1C", 0.0}, {"L5Q", 0.0}}), store);
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L1C"), 0);
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L5Q"), 0);
+    // A 0.055 m step on BOTH bands: above the L1 gate (4.76 cm), below the L5 (6.37 cm).
+    t.tow += 30.0;
+    emitter.emitToStore(phaseEpoch(t, "G01", {{"L1C", 0.055}, {"L5Q", 0.055}}), store);
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L1C"), 1);   // L1 fired
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L5Q"), 0);   // L5 held (shorter cycles)
+    // The legacy flat 0.05 m gate would have fired BOTH — the per-λ contract is
+    // what separates them.
+}
+
+// H3: frac = 0 is the legacy flat-metre gate, byte-for-byte — same disc decisions
+// AND a byte-identical serialized snapshot (no v3 line) as the default emitter.
+TEST(NetworkProductEmitterTest, PerLambdaFracZeroIsLegacyByteIdentical) {
+    NetworkProductEmitter dflt;                              // flat 0.05 m default
+    NetworkProductEmitter frac0(NetworkProductEmitter::kDefaultDiscThresholdM,
+                                false, 0.0, false, false, /*frac=*/0.0);
+    SsrCorrectionStore s1, s2;
+    GnssTime t = kT;
+    for (double b : {0.0, 0.03, -0.02, 0.10, 0.101}) {       // a sequence straddling 0.05 m
+        dflt.emitToStore(makeEpoch(t, 0.0, 0.3, b), s1);
+        frac0.emitToStore(makeEpoch(t, 0.0, 0.3, b), s2);
+        t.tow += 30.0;
+    }
+    EXPECT_EQ(dflt.discontinuityCounter("G01", "L1C"),
+              frac0.discontinuityCounter("G01", "L1C"));
+    EXPECT_GT(dflt.discontinuityCounter("G01", "L1C"), 0);    // the sequence actually fired
+    std::ostringstream o1, o2;
+    dflt.serializeState(o1);
+    frac0.serializeState(o2);
+    EXPECT_EQ(o1.str(), o2.str());                            // v1/v2, no discfrac ⇒ byte-identical
+}
+
+// H3: a frac-armed emitter's snapshot round-trips (v3 carries the frac; a mismatched
+// restore is rejected).
+TEST(NetworkProductEmitterTest, PerLambdaSnapshotRoundTrip) {
+    NetworkProductEmitter e(NetworkProductEmitter::kDefaultDiscThresholdM,
+                            false, 0.0, false, false, /*frac=*/0.25);
+    SsrCorrectionStore store;
+    e.emitToStore(phaseEpoch(kT, "G01", {{"L1C", 0.0}}), store);
+    std::ostringstream os; e.serializeState(os);
+    EXPECT_NE(os.str().find("EMITTER,v3,"), std::string::npos);   // frac armed ⇒ v3 header
+    // A matching-config emitter restores; a flat (frac=0) one rejects the v3 snapshot.
+    NetworkProductEmitter match(NetworkProductEmitter::kDefaultDiscThresholdM,
+                                false, 0.0, false, false, 0.25);
+    NetworkProductEmitter flat;
+    std::istringstream im(os.str()), ifl(os.str());
+    EXPECT_TRUE(match.restoreState(im));
+    EXPECT_FALSE(flat.restoreState(ifl));
+}
+
 TEST(NetworkProductEmitterTest, MarkDatumChangeForcesBumpForExactlyOneEmit) {
     SsrCorrectionStore store;
     NetworkProductEmitter emitter;

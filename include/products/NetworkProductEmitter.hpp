@@ -193,11 +193,22 @@ public:
     ///        unsignalled.  Detected from the emitted epoch itself
     ///        (replay-reproducible).  Default false (byte-identical).  Travels in
     ///        the S contract (@c clkset=) for @c makeReplayEmitter.
+    /// @param disc_threshold_frac_cycles When > 0 (@c network.disc_threshold_frac_cycles),
+    ///        the phase (and, under @p code_bias_jump_test, code) jump test uses a
+    ///        PER-(sat,signal) threshold of @p disc_threshold_frac_cycles × λ(sat,signal)
+    ///        instead of the flat @p disc_threshold_m — a still-FIXED contract (λ is a
+    ///        public, static band identity, deterministic on producer and replay
+    ///        consumer alike) that makes the gate uniform in CYCLES rather than metres.
+    ///        The recommended 0.25 gives L1/E1 4.76 cm ≈ the legacy 0.05 m, L2 6.1 cm,
+    ///        L5/E5a 6.37 cm.  Default 0.0 = the legacy flat @p disc_threshold_m
+    ///        (byte-identical).  Travels in the S contract (@c discfrac=) for
+    ///        @c makeReplayEmitter.
     explicit NetworkProductEmitter(double disc_threshold_m = kDefaultDiscThresholdM,
                                    bool emit_clock_disc = false,
                                    double staleness_horizon_s = 0.0,
                                    bool code_bias_jump_test = false,
-                                   bool clock_disc_on_set_change = false);
+                                   bool clock_disc_on_set_change = false,
+                                   double disc_threshold_frac_cycles = 0.0);
 
     /// Serialize @p sol into @p store (Sink A — in-process, no wire bytes).
     void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store);
@@ -318,6 +329,12 @@ public:
 
 private:
     double disc_threshold_m_;
+    /// H3: when > 0, per-(sat,signal) jump threshold = disc_threshold_frac_cycles_ ×
+    /// λ(sat,signal) (fixed contract, uniform in cycles).  0 = legacy flat metres.
+    double disc_threshold_frac_cycles_{0.0};
+    /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
+    /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.
+    double discThresholdM(const std::string& sat, const std::string& signal) const;
     bool   emit_clock_disc_{false};       ///< A2: maintain + stamp the clock disc counter.
     /// RTA-11: staleness horizon (s, PRODUCT time; 0 = off).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time; a key

@@ -442,6 +442,69 @@ TEST(NetworkProductIoTest, QuarantinedDatumChangeDefersAndReplays) {
     std::filesystem::remove(path);
 }
 
+// H3: the per-λ fractional-cycle threshold travels in the S contract (discfrac=)
+// so a consumer's replay emitter recomputes the phase-bias discontinuity counters
+// byte-for-byte.  A 0.055 m step crosses the 0.25λ L1 gate (4.76 cm) but not the L5
+// gate (6.37 cm); if discfrac did NOT round-trip, the replay emitter would fall back
+// to the flat 0.05 m gate and (wrongly) fire L5 too — so this pins both the round-trip
+// and the makeReplayEmitter wiring.
+TEST(NetworkProductIoTest, PerLambdaThresholdReplayReproducesCounters) {
+    const std::string path = tempFile("gnss_netprod_perlambda.txt");
+    std::filesystem::remove(path);
+
+    auto phaseEp = [](const GnssTime& t, double b) {
+        NetworkSolutionEpoch sol;
+        sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
+        NetworkSatSolution s; s.sat = "G01"; s.has_clock = false;
+        s.phase_bias["L1C"] = NetworkPhaseBias{b, true, 1};
+        s.phase_bias["L5Q"] = NetworkPhaseBias{b, true, 1};
+        sol.sats.push_back(s);
+        return sol;
+    };
+
+    SbasisContract c;
+    c.decl.reference_receiver_id     = "CIT100USA";
+    c.disc_threshold_m               = 0.05;
+    c.disc_threshold_frac_cycles     = 0.25;   // per-λ mode
+    c.present                        = true;
+
+    SsrCorrectionStore    store_live;
+    NetworkProductEmitter emit_live(c.disc_threshold_m, /*clk=*/false, /*stale=*/0.0,
+                                    /*cbj=*/false, /*cks=*/false,
+                                    c.disc_threshold_frac_cycles);
+    GnssTime t = kT0;
+    {
+        NetworkProductWriter w(path, c);
+        ASSERT_TRUE(w.good());
+        for (double b : {0.0, 0.055}) {            // baseline, then the straddling step
+            const NetworkSolutionEpoch sol = phaseEp(t, b);
+            emit_live.emitToStore(sol, store_live);
+            w.write(sol, /*datum_changed=*/false, {});
+            t.tow += 30.0;
+        }
+    }
+    EXPECT_EQ(emit_live.discontinuityCounter("G01", "L1C"), 1);   // L1 fired (0.055 > 4.76 cm)
+    EXPECT_EQ(emit_live.discontinuityCounter("G01", "L5Q"), 0);   // L5 held (0.055 < 6.37 cm)
+
+    bool           ok = false;
+    SbasisContract parsed;
+    std::vector<NetworkProductRecord> recs = NetworkProductReader::read(path, &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_DOUBLE_EQ(parsed.disc_threshold_frac_cycles, 0.25);    // discfrac= round-trip
+
+    SsrCorrectionStore    store_disk;
+    NetworkProductEmitter emit_disk = NetworkProductReader::makeReplayEmitter(parsed);
+    for (const NetworkProductRecord& r : recs)
+        NetworkProductReader::replay(r, store_disk, emit_disk);
+
+    // Replay reproduces the per-λ decision exactly — NOT the flat-gate L5 false-fire.
+    EXPECT_EQ(emit_disk.discontinuityCounter("G01", "L1C"), 1);
+    EXPECT_EQ(emit_disk.discontinuityCounter("G01", "L5Q"), 0);
+
+    std::filesystem::remove(path);
+}
+
 // Code-bias discontinuity counters are NOT serialized; they are recomputed from
 // the per-epoch satellite-set + band composition (set-change, IF-pin band-tuple
 // change) plus the serialized datum_changed flag.  A sequence with a rise, a

@@ -27,6 +27,7 @@
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/BaselineFixtures.hpp"
+#include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
 #include "products/StationInfoFile.hpp"
@@ -4142,6 +4143,11 @@ namespace GnssProcessor {
         network_clock_disc_on_set_change_ =
             jval<bool>(json, "network.clock_disc_on_set_change",
                        "network_clock_disc_on_set_change", false);
+        // H3: per-λ discontinuity threshold as a fraction of a carrier cycle
+        // (frac·λ jump gate).  0 = legacy flat 0.05 m (byte-identical).
+        network_disc_threshold_frac_cycles_ =
+            jval<double>(json, "network.disc_threshold_frac_cycles",
+                         "network_disc_threshold_frac_cycles", 0.0);
         // RTA-1/RTA-2: sticky clock-pivot selection + per-constellation scoping of the
         // producer's INTERNAL handover response (carry skip / oscillator clear).
         network_sticky_pivot_ =
@@ -4539,6 +4545,18 @@ namespace GnssProcessor {
                       "set/band-change triggers), so weak-separation code-bias wander is "
                       "signalled to the consumer; replay-reproducible via the S-contract "
                       "cbjump= field.", NetworkProductEmitter::kDefaultDiscThresholdM);
+        }
+        if (network_disc_threshold_frac_cycles_ > 0.0) {
+            log->info("Network producer: per-λ discontinuity threshold ON — the phase (and, "
+                      "under code_bias_disc_jump_test, code) jump test uses {:.3f}·λ(sat,signal) "
+                      "instead of the flat {:.2f} m (uniform in CYCLES, still a fixed contract; "
+                      "e.g. L1/E1 {:.4f} m, L2 {:.4f} m, L5/E5a {:.4f} m); replay-reproducible "
+                      "via the S-contract discfrac= field.",
+                      network_disc_threshold_frac_cycles_,
+                      NetworkProductEmitter::kDefaultDiscThresholdM,
+                      network_disc_threshold_frac_cycles_ * Constants::GPS_L1_WAVELENGTH,
+                      network_disc_threshold_frac_cycles_ * Constants::GPS_L2_WAVELENGTH,
+                      network_disc_threshold_frac_cycles_ * Constants::GPS_L5_WAVELENGTH);
         }
         if (network_scoped_handover_response_)
             log->info("Network producer (RTA-2): scoped handover response ON — the internal D2 "

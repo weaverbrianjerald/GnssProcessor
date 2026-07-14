@@ -6,6 +6,7 @@
 #include "products/NetworkProductEmitter.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "common/GnssTypes.hpp"
+#include "common/SignalBand.hpp"
 
 #include <fmt/format.h>
 
@@ -74,11 +75,27 @@ bool parseStateI(const std::string& s, int& v) {
 NetworkProductEmitter::NetworkProductEmitter(double disc_threshold_m, bool emit_clock_disc,
                                              double staleness_horizon_s,
                                              bool code_bias_jump_test,
-                                             bool clock_disc_on_set_change)
-    : disc_threshold_m_(disc_threshold_m), emit_clock_disc_(emit_clock_disc),
+                                             bool clock_disc_on_set_change,
+                                             double disc_threshold_frac_cycles)
+    : disc_threshold_m_(disc_threshold_m),
+      disc_threshold_frac_cycles_(disc_threshold_frac_cycles),
+      emit_clock_disc_(emit_clock_disc),
       staleness_horizon_s_(staleness_horizon_s),
       code_bias_jump_test_(code_bias_jump_test),
       clock_disc_on_set_change_(clock_disc_on_set_change) {}
+
+double NetworkProductEmitter::discThresholdM(const std::string& sat,
+                                             const std::string& signal) const {
+    // Legacy flat metre gate unless the per-λ fractional-cycle mode is armed.
+    if (disc_threshold_frac_cycles_ <= 0.0) return disc_threshold_m_;
+    // frac·λ(sat,signal): a FIXED contract — λ is a public, static band identity
+    // (deterministic on producer and replay consumer).  λ resolves via SignalBand's
+    // stateless classifier; on an unrecognized signal (λ == 0) fall back to the flat
+    // gate so a stray code never disables the discontinuity test.
+    const auto cls = classifySignalForSat(sat, signal);
+    const double lambda = bandNominalWavelengthMeters(cls.band);
+    return (lambda > 0.0) ? disc_threshold_frac_cycles_ * lambda : disc_threshold_m_;
+}
 
 void NetworkProductEmitter::markDatumChange(const std::set<char>& constellations) {
     if (constellations.empty()) force_all_bump_ = true;   // global (pre-A2 semantics)
@@ -317,7 +334,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // gauge re-references only, not the estimate walking).  Same
                 // fresh-baseline suppression as phase.
                 const bool value_jump = code_bias_jump_test_ && have_baseline
-                    && std::abs(bias - cb_last_it->second) > disc_threshold_m_;
+                    && std::abs(bias - cb_last_it->second) > discThresholdM(s.sat, signal);
                 // RTA-11 fix: a genuine forced datum change steps the counter even
                 // on a beyond-horizon return (the consumer may still hold
                 // old-datum state), but the STRUCTURAL re-reference signals
@@ -364,7 +381,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // suppressed on a stale baseline: an hours-stale comparison would
                 // mint a spurious bump on the satellite's mere re-appearance.
                 if (have_baseline && (forced
-                        || (fresh && std::abs(npb.bias_m - last_it->second) > disc_threshold_m_))) {
+                        || (fresh && std::abs(npb.bias_m - last_it->second) > discThresholdM(s.sat, signal)))) {
                     ++ctr;
                 }
                 last_phase_bias_[key] = npb.bias_m;
@@ -449,7 +466,17 @@ void NetworkProductEmitter::serializeState(std::ostream& os) const {
     // channels are OFF, so a default-config snapshot is byte-identical to
     // pre-channel builds and old snapshots restore into off-emitters; v2 appends
     // the two channel flags only when one is armed.
-    if (!code_bias_jump_test_ && !clock_disc_on_set_change_) {
+    if (disc_threshold_frac_cycles_ > 0.0) {
+        // v3 = the v2 fields + the H3 per-λ fractional-cycle threshold.  Written
+        // ONLY when the frac mode is armed, so a legacy (frac==0) snapshot stays v1
+        // or v2 and is byte-identical to a pre-H3 build.
+        os << "EMITTER,v3," << fmt::format("{}", disc_threshold_m_) << ','
+           << (emit_clock_disc_ ? 1 : 0) << ','
+           << fmt::format("{}", staleness_horizon_s_) << ','
+           << (code_bias_jump_test_ ? 1 : 0) << ','
+           << (clock_disc_on_set_change_ ? 1 : 0) << ','
+           << fmt::format("{}", disc_threshold_frac_cycles_) << '\n';
+    } else if (!code_bias_jump_test_ && !clock_disc_on_set_change_) {
         os << "EMITTER,v1," << fmt::format("{}", disc_threshold_m_) << ','
            << (emit_clock_disc_ ? 1 : 0) << ','
            << fmt::format("{}", staleness_horizon_s_) << '\n';
@@ -524,21 +551,25 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
         // OFF); v2 appends the code-bias jump-test + clock set-change flags.
         const bool v1 = (h.size() == 5 && h[0] == "EMITTER" && h[1] == "v1");
         const bool v2 = (h.size() == 7 && h[0] == "EMITTER" && h[1] == "v2");
-        if (!v1 && !v2) return false;
-        double thr = 0.0, stale = 0.0;
+        const bool v3 = (h.size() == 8 && h[0] == "EMITTER" && h[1] == "v3");
+        if (!v1 && !v2 && !v3) return false;
+        double thr = 0.0, stale = 0.0, frac = 0.0;
         int clk = 0, cbj = 0, cks = 0;
         if (!parseStateD(h[2], thr) || !parseStateI(h[3], clk) || !parseStateD(h[4], stale))
             return false;
-        if (v2 && (!parseStateI(h[5], cbj) || !parseStateI(h[6], cks)))
+        if ((v2 || v3) && (!parseStateI(h[5], cbj) || !parseStateI(h[6], cks)))
+            return false;
+        if (v3 && !parseStateD(h[7], frac))
             return false;
         // Parameter mismatch = the snapshotting producer ran a different emitter
         // config than this one — the stream state would be interpreted under the
         // wrong rules (jump threshold, clock channel, staleness horizon, optional
-        // discontinuity channels).  Cold.
+        // discontinuity channels, per-λ fractional-cycle threshold).  Cold.
         if (thr != disc_threshold_m_ || (clk != 0) != emit_clock_disc_
             || stale != staleness_horizon_s_
             || (cbj != 0) != code_bias_jump_test_
-            || (cks != 0) != clock_disc_on_set_change_)
+            || (cks != 0) != clock_disc_on_set_change_
+            || frac != disc_threshold_frac_cycles_)
             return false;
     }
 

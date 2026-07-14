@@ -110,6 +110,13 @@ struct SbasisContract {
     /// emitter's own (R9: single constant) — it is what @c makeReplayEmitter applies
     /// to a v1 file with no S line, so it must track the live emitter default.
     double            disc_threshold_m{NetworkProductEmitter::kDefaultDiscThresholdM};
+    /// H3: per-λ fractional-cycle discontinuity threshold
+    /// (@c network.disc_threshold_frac_cycles).  When > 0 the emitter's phase (and
+    /// opt-in code) jump test uses @c frac·λ(sat,signal) instead of the flat
+    /// @c disc_threshold_m — the SIXTH replay-emitter construction parameter.
+    /// Serialized as an optional trailing @c discfrac= S-line field ONLY when > 0,
+    /// so a legacy (flat-metre) producer writes the S line byte-for-byte.
+    double            disc_threshold_frac_cycles{0.0};
     /// Whether the producer's emitter maintained the per-satellite CLOCK
     /// discontinuity counter (A2).  Together with @c disc_threshold_m this fully
     /// determines the @c NetworkProductEmitter construction, so a consumer can

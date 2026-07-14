@@ -272,6 +272,8 @@ struct LineAssembler {
                             c.decl.eq34_datum_receiver = f[k].substr(4);   // Card 3 diagnostic
                         } else if (f[k].rfind("agek=", 0) == 0) {
                             c.age_scale_k = std::stod(f[k].substr(5));      // M4: age-scaling coeff
+                        } else if (f[k].rfind("discfrac=", 0) == 0) {
+                            c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // H3: per-λ jump gate
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -400,6 +402,12 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // makeReplayEmitter / checkContract ignore it.
     if (contract.age_scale_k != 0.0)
         out_ << ",agek=" << fmt::format("{}", contract.age_scale_k);
+    // H3: per-λ fractional-cycle discontinuity threshold.  ONLY when > 0, so a
+    // legacy (flat-metre) producer writes the S line byte-for-byte.  Unlike agek=
+    // this IS a replay-emitter parameter — makeReplayEmitter applies it and
+    // checkContract compares it (a per-λ vs flat mismatch mis-counts discontinuities).
+    if (contract.disc_threshold_frac_cycles > 0.0)
+        out_ << ",discfrac=" << fmt::format("{}", contract.disc_threshold_frac_cycles);
     out_ << '\n';
 }
 
@@ -714,6 +722,11 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_threshold_m != expected.disc_threshold_m)
         note(fmt::format("disc_threshold_m: file {} vs expected {}",
                          file.disc_threshold_m, expected.disc_threshold_m));
+    // H3: the per-λ fractional-cycle threshold — a per-λ-vs-flat (or differing frac)
+    // mismatch makes the consumer's replay emitter mis-count discontinuities.
+    if (file.disc_threshold_frac_cycles != expected.disc_threshold_frac_cycles)
+        note(fmt::format("disc_threshold_frac_cycles: file {} vs expected {}",
+                         file.disc_threshold_frac_cycles, expected.disc_threshold_frac_cycles));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));
@@ -758,7 +771,8 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
     return NetworkProductEmitter(contract.disc_threshold_m, contract.emit_clock_disc,
                                  contract.staleness_horizon_s,
                                  contract.code_bias_jump_test,
-                                 contract.clock_disc_on_set_change);
+                                 contract.clock_disc_on_set_change,
+                                 contract.disc_threshold_frac_cycles);
 }
 
 // ===========================================================================

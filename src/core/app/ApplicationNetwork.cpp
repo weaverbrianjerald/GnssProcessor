@@ -1345,7 +1345,8 @@ int Application::runNetwork() {
                                   config_.networkEmitClockDisc(),
                                   config_.networkEmitterStalenessHorizonS(),
                                   config_.networkCodeBiasDiscJumpTest(),
-                                  config_.networkClockDiscOnSetChange());
+                                  config_.networkClockDiscOnSetChange(),
+                                  config_.networkDiscThresholdFracCycles());
 
     // --- Optional on-disk product serialization -----------------------------
     // A reusable per-epoch dump of the emitted solution (the same pre-emit
@@ -1451,6 +1452,7 @@ int Application::runNetwork() {
             pending_contract.staleness_horizon_s = config_.networkEmitterStalenessHorizonS();
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
+            pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // H3: per-λ jump gate (discfrac=)
             // M4 (contract v2): advertise the combined-σ age-scaling coefficient on the
             // S line ONLY when the combined-σ channel is on and a coefficient is set, so
             // an OFF (or agek=0) run's v2 header is byte-identical (agek= token absent).
