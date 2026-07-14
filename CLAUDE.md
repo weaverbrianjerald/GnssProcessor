@@ -62,9 +62,11 @@ include/              All public headers, organized into subdirs mirroring
   rinex/              RinexParser, MultiRinexSync
   rtcm/               RtcmParser
   slip/               CycleSlipManager + detectors: MwSlipDetector,
-                      GraphicSlipDetector (active); IfPhaseSlipDetector,
-                      GfSlipDetector (STAGED — uncompiled, not wired in; see
-                      their header banners); IonoVariabilityMonitor
+                      GraphicSlipDetector (active); IfPhaseSlipDetector (active
+                      on the NETWORK path — network.cycle_slip.if_phase_td;
+                      STAGED for user/kinematic); GfSlipDetector (STAGED —
+                      uncompiled, not wired in; see its header banner);
+                      IonoVariabilityMonitor
 
 src/core/             Implementation files mirror the include/ subdir layout
                       one-to-one (app/, common/, config/, logging/, math/,

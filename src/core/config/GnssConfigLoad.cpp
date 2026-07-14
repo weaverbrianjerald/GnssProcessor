@@ -5113,11 +5113,21 @@ namespace GnssProcessor {
                           "integer repair).",
                           network_cycle_slip_if_phase_td_shrink_kappa_,
                           network_cycle_slip_if_phase_td_ewma_alpha_);
+            else if (network_carry_invariant_)
+                log->info("Network producer (IF-phase slip): between-satellite, between-epoch "
+                          "ionosphere-free phase triple-difference slip DETECTION enabled — a "
+                          "flagged IF pair feeds the Card-4 DD invariant-carry C3c slip funnel "
+                          "(carry_slipped_ambs), so BOTH of its band ambiguities are "
+                          "membership-excluded and re-tapped fresh next epoch (the same path the "
+                          "MW/LLI coarse detectors take).  Threshold elevation-normalized "
+                          "(1/sin el), per (station, signal-pair); non-pivot only; detection-only "
+                          "(no MW/GF confirm, no integer repair).");
             else
                 log->info("Network producer (IF-phase slip): detection enabled in DIAGNOSTIC-ONLY "
-                          "mode — network.phase_leveling is off, so there is no carry to refloat; "
-                          "slips are logged but have no product effect (every non-pivot ambiguity "
-                          "is re-estimated free each epoch in the absolute solve).");
+                          "mode — neither network.phase_leveling nor network.carry_invariant is "
+                          "on, so there is no carry to refloat; slips are logged but have no "
+                          "product effect (every non-pivot ambiguity is re-estimated free each "
+                          "epoch in the absolute solve).");
         }
         if (network_raim_) {
             if (network_phase_leveling_)

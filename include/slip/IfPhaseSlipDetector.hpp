@@ -4,15 +4,19 @@
 * @file IfPhaseSlipDetector.hpp
 * @brief Between-satellite, between-epoch ionosphere-free phase slip detector.
 *
-* @note STATUS: STAGED / INCOMPLETE — not compiled or wired into the pipeline.
-*       This detector is intentionally excluded from the build (see
-*       CMakeLists.txt) and has no instantiation path in Application. It is
-*       kept (not abandoned) for possible future completion. Key limitation:
-*       the position-uncertainty gating below only works for a STATIC site
-*       with a precise a priori position; it is not yet usable in the general
-*       (kinematic / pre-convergence) case. The `enable_if_slip_detector`
-*       config toggle is currently inert. For active slip detection see
-*       slip/MwSlipDetector and slip/GraphicSlipDetector.
+* @note STATUS: BUILT + WIRED on the NETWORK path; STAGED on the user/kinematic
+*       path.  The network estimator PINS station positions, which satisfies the
+*       static-site precondition of the position-uncertainty gating below, so
+*       this detector IS compiled (see CMakeLists.txt) and instantiated per
+*       non-pivot station when `network.cycle_slip.if_phase_td` is set
+*       (Application::runNetwork): pooled per-(station, signal-pair) MAD
+*       flagging, its flags feeding the Card-4 C3c invariant-carry slip funnel
+*       (and the phase-leveling refloat when that carry is the active one).  In
+*       the general (kinematic / pre-convergence) USER pipeline it remains INERT
+*       — the position gating below is unsafe there and the
+*       `enable_if_slip_detector` user toggle has no instantiation path.  For
+*       user-side slip detection see slip/MwSlipDetector and
+*       slip/GraphicSlipDetector.
 *
 * Implements the double-differenced IF phase OMC (observed-minus-computed)
 * approach for sensitive cycle slip detection.  The model subtraction is

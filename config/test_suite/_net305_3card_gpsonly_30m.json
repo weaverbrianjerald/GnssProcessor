@@ -125,6 +125,7 @@
     "trace_dd_fractional": true,
     "trace_dd_fractional_max_pairs": 2000,
     "trace_dd_fractional_epoch_stride": 1,
+    "cycle_slip": { "if_phase_td": true },
     "estimate_glonass": false,
     "stations": [
       {
