@@ -388,6 +388,84 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
 }
 
 // ===========================================================================
+// Cold-start receiver-clock pre-seed (network path; opt-in)
+// ===========================================================================
+//
+// The receiver clock state is the GPS-referenced offset (ISB carries every
+// other system's delta), so the estimator that has NOT been fed a code clock
+// yet holds x(clock)=0.  On the network path nothing pre-solves it before
+// ambiguities are first seeded, so computeAmbiguitySeed subtracts clk_term=0
+// and the whole free-running clock offset leaks uniformly into every cold
+// ambiguity seed.  Seeding x(clock) = median GPS code residual removes it.
+//
+// This deliberately mirrors initializeInterSystemBiases's GPS-code collection:
+// that routine already computes exactly this median (its gps_median reference)
+// but only uses it as a per-system subtraction anchor and discards it — the
+// discarded value is the clock the network path never writes.
+
+bool StateInitializer::seedColdReceiverClock(const std::vector<PppObservation>& observations,
+    const std::string& epoch_prefix) {
+
+    if (!state_manager_.hasClock())
+        return true;   // no clock state in this configuration — nothing to seed or retry
+
+    // Sub-micron threshold below which the clock state is treated as cold
+    // (state-init 0.0).  A real seeded receiver clock (PPP path, or a later
+    // epoch after the filter update) is metres-to-kilometres, never this small,
+    // so the guard never overwrites an already-solved clock.
+    constexpr double kColdClockEpsilonM = 1e-6;
+
+    const Eigen::VectorXd x = state_manager_.getStateVector();
+    if (std::abs(x(static_cast<Eigen::Index>(state_manager_.getClockIndex())))
+            > kColdClockEpsilonM) {
+        log_manager_.getLogger("state_initializer")->debug(
+            "{}Cold receiver-clock seed skipped: clock already {:.3f} m (not cold)",
+            epoch_prefix,
+            x(static_cast<Eigen::Index>(state_manager_.getClockIndex())));
+        return true;   // already seeded (e.g. PPP path) — latch, do not overwrite
+    }
+
+    std::vector<double> gps_residuals;
+    for (const auto& obs : observations) {
+        if (obs.system != System::GPS) continue;   // GPS defines the clock datum
+        if (obs.elevation < config_.getElevationMaskDeg()) continue;
+
+        for (const auto& [ref_type, observed] : obs.observed) {
+            if (ref_type.empty() || ref_type[0] != 'C') continue;
+            const bool has_underscore = (ref_type.find('_') != std::string::npos);
+            if (config_.isUncombinedEnabled()) {
+                if (has_underscore) continue;   // uncombined uses raw single-band code
+            } else {
+                if (!has_underscore) continue;  // IF mode uses the iono-free code combo
+            }
+            if (!obs.modeled.count(ref_type)) continue;
+
+            gps_residuals.push_back(computeRawResidual(obs, ref_type, x));
+            break;   // one code obs per satellite (robust median over satellites)
+        }
+    }
+
+    if (gps_residuals.empty()) {
+        log_manager_.getLogger("state_initializer")->warn(
+            "{}Cannot pre-seed cold receiver clock: no GPS code observations this epoch",
+            epoch_prefix);
+        return false;   // retry next epoch — do NOT latch
+    }
+
+    const double clock_seed = computeMedian(gps_residuals);
+
+    Eigen::VectorXd x_updated = state_manager_.getStateVector();
+    x_updated(static_cast<Eigen::Index>(state_manager_.getClockIndex())) = clock_seed;
+    state_manager_.setStateVector(x_updated);
+
+    log_manager_.getLogger("state_initializer")->info(
+        "{}Pre-seeded cold receiver clock: {:.3f} m ({:.3e} s) from {} GPS code obs",
+        epoch_prefix, clock_seed, clock_seed / Constants::SPEED_OF_LIGHT,
+        gps_residuals.size());
+    return true;
+}
+
+// ===========================================================================
 // First-epoch phase clock offset initialization
 // ===========================================================================
 

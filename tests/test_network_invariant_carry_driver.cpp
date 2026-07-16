@@ -31,7 +31,9 @@
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <random>
 #include <set>
@@ -301,6 +303,114 @@ TEST(NetworkInvariantCarryDriverTest, CarryAccumulatesAndConverges) {
     }
     EXPECT_LT(var_final, var_first - 1e-4) << "the carry must accumulate information (variance strictly drops)";
     EXPECT_NEAR(z_final, trueDD, 0.05) << "carried DD mean must converge to the integer truth";
+}
+
+// ---------------------------------------------------------------------------
+// WL-2 (SPEC_ewl_wl_cascade_card.md §3.3) — the WL inject primitive + its
+// one-epoch D5 exemption.  The inject is a stiff integer assertion, so standing
+// invariant #1 demands a wired + force-fire-tested event response: the injected
+// value must NOT be re-tapped away the very next epoch (else the F6 storm returns).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InjectLaneTargetEditsCarriedValue) {
+    NetworkInvariantCarryDriver drv;
+    const ArcKey chord(rxV(1), satV(1));
+    drv.seedCarriedForTest(0, {chord}, (Eigen::VectorXd(1) << 3.0).finished(),
+                           (Eigen::MatrixXd(1, 1) << 0.04).finished(),
+                           {rxV(0), rxV(1), satV(0), satV(1)},
+                           {ArcKey(rxV(0), satV(0)), ArcKey(rxV(0), satV(1)),
+                            ArcKey(rxV(1), satV(0)), ArcKey(rxV(1), satV(1))});
+    double z = 0, var = 0;
+    ASSERT_TRUE(drv.carriedChordValue(0, chord, z, var));
+    EXPECT_NEAR(z, 3.0, 1e-12);
+    EXPECT_TRUE(drv.injectCarriedChord(0, chord, /*new_z=*/7.5, /*new_var=*/1e-4));
+    ASSERT_TRUE(drv.carriedChordValue(0, chord, z, var));
+    EXPECT_NEAR(z, 7.5, 1e-12)  << "inject must set the carried DD value";
+    EXPECT_NEAR(var, 1e-4, 1e-16) << "inject must reseed the variance";
+    // Not-1:1 skip paths: a chord not carried in the group, or a wrong group, return false.
+    EXPECT_FALSE(drv.injectCarriedChord(0, ArcKey(rxV(2), satV(2)), 0.0, 1.0));
+    EXPECT_FALSE(drv.injectCarriedChord(/*group=*/9, chord, 0.0, 1.0));
+}
+
+TEST(NetworkInvariantCarryDriverTest, InjectD5ExemptionSuppressesReTap) {
+    // Control-vs-exempt contrast: the SAME wildly-off carried DD flags the D5 gate
+    // (a re-tap) WITHOUT the exemption, and does NOT flag WITH it — so the exemption,
+    // not the value, is what suppresses the re-tap.  The one-epoch lifetime is guaranteed
+    // by construction (@c gate_exempt_ is cleared after every @ref installPosterior).
+    const int R = 4, S = 4;
+    const Net n = makeNet(11, R, S);
+    const ArcKey probe(rxV(2), satV(3));
+    // The fundamental cycle of the probe chord under star(0,0): its 4 DD arcs.
+    const std::vector<ArcKey> cyc = {ArcKey(rxV(2), satV(3)), ArcKey(rxV(2), satV(0)),
+                                     ArcKey(rxV(0), satV(3)), ArcKey(rxV(0), satV(0))};
+    const std::set<int>    verts = {rxV(0), rxV(2), satV(0), satV(3)};
+    const std::set<ArcKey> arcs(cyc.begin(), cyc.end());
+    const double off_val = 8.0;   // a carried DD ~40 L1 cycles off the data ⇒ a huge innovation
+    auto seedOff = [&](NetworkInvariantCarryDriver& d) {
+        d.seedCarriedForTest(0, {probe}, (Eigen::VectorXd(1) << off_val).finished(),
+                             (Eigen::MatrixXd(1, 1) << 1e-2).finished(), verts, arcs);
+    };
+    std::mt19937 gen(7);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseOf = [&] {
+        std::vector<std::vector<double>> ns(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) ns[r][s] = nd(gen);
+        return ns;
+    };
+    const NetworkInvariantCarryDriver::Config gated{
+        /*qz=*/0.0, /*fresh_prior_var=*/1e6, /*innov_gate=*/true, /*innov_k=*/4.0};
+
+    // Control: off carried value, NO inject → the D5 gate flags it.
+    NetworkInvariantCarryDriver ctrl(gated);
+    seedOff(ctrl);
+    { auto ns = noiseOf(); driveEpoch(ctrl, n, 0, 0, &ns, /*dt=*/1.0); }
+    EXPECT_GT(innovSlips(ctrl).count({2, 3}), 0u)
+        << "an off carried DD MUST flag the D5 gate without the exemption (baseline)";
+
+    // Exempt: SAME off value, but injected (⇒ D5-exempt this epoch) → NOT flagged.
+    NetworkInvariantCarryDriver ex(gated);
+    seedOff(ex);
+    ASSERT_TRUE(ex.injectCarriedChord(0, probe, off_val, /*new_var=*/1e-2));  // same value; sets exemption
+    { auto ns = noiseOf(); driveEpoch(ex, n, 0, 0, &ns, /*dt=*/1.0); }
+    EXPECT_EQ(innovSlips(ex).count({2, 3}), 0u)
+        << "the inject exemption must suppress the D5 re-tap for the epoch after inject";
+}
+
+// WL-2 (§3.3 / §7.2 "primitive exactness") — the lane-target arithmetic the
+// ApplicationNetwork inject applies over the two bands' carry groups: set the WL lane
+// difference (A1−A2) to the integer target while PRESERVING the phase-determined sum
+// (A1+A2) exactly.  Seed a garbage two-band lane, run the identical formula through the
+// primitive, and assert the lane hits the integer and the NL sum is preserved to 1e-12.
+TEST(NetworkInvariantCarryDriverTest, InjectLaneTargetHitsIntegerPreservesSum) {
+    NetworkInvariantCarryDriver drv;
+    const ArcKey chord(rxV(1), satV(1));                 // same ArcKey in BOTH band groups (1:1)
+    const std::set<int>    verts = {rxV(0), rxV(1), satV(0), satV(1)};
+    const std::set<ArcKey> arcs  = {ArcKey(rxV(0), satV(0)), ArcKey(rxV(0), satV(1)),
+                                    ArcKey(rxV(1), satV(0)), ArcKey(rxV(1), satV(1))};
+    const int    gL1 = 0, gL2 = 1;
+    const double lam1 = 0.1902937, lam2 = 0.2442102;      // GPS L1 / L2 wavelengths (m)
+    const double zlin1 = 3.7, zlin2 = -1.9;               // arbitrary linearization DD sums (m)
+    const double z1 = 0.53, z2 = -0.28;                   // garbage carried DDs (correction frame, m)
+    drv.seedCarriedForTest(gL1, {chord}, (Eigen::VectorXd(1) << z1).finished(),
+                           (Eigen::MatrixXd(1, 1) << 0.09).finished(), verts, arcs);
+    drv.seedCarriedForTest(gL2, {chord}, (Eigen::VectorXd(1) << z2).finished(),
+                           (Eigen::MatrixXd(1, 1) << 0.09).finished(), verts, arcs);
+
+    // Pre-inject absolute band DDs + preserved NL sum (the quantity the inject must keep).
+    const double A1 = (z1 + zlin1) / lam1, A2 = (z2 + zlin2) / lam2;
+    const double s  = A1 + A2;
+    const double w  = 7.0;                                // integer WL DD target (cyc)
+
+    // The ApplicationNetwork inject formula.
+    const double A1p = 0.5 * (w + s), A2p = 0.5 * (s - w);
+    ASSERT_TRUE(drv.injectCarriedChord(gL1, chord, A1p * lam1 - zlin1, 1e-4));
+    ASSERT_TRUE(drv.injectCarriedChord(gL2, chord, A2p * lam2 - zlin2, 1e-4));
+
+    double zn1 = 0, zn2 = 0, v = 0;
+    ASSERT_TRUE(drv.carriedChordValue(gL1, chord, zn1, v));
+    ASSERT_TRUE(drv.carriedChordValue(gL2, chord, zn2, v));
+    const double An1 = (zn1 + zlin1) / lam1, An2 = (zn2 + zlin2) / lam2;
+    EXPECT_NEAR(An1 - An2, w, 1e-12) << "the WL lane must hit the integer target";
+    EXPECT_NEAR(An1 + An2, s, 1e-12) << "the phase-determined NL sum must be preserved exactly";
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,6 +1119,515 @@ TEST(NetworkInvariantCarryDriverTest, CalibrationRetainsDetection) {
     bool found = false;
     for (const auto& [g, key] : drv.lastInnovFlags()) if (key == slipArc) found = true;
     EXPECT_TRUE(found) << "the slipped chord must be the one flagged";
+}
+
+// ===========================================================================
+// M5 card WL-3 — lane-coordinate carry (docs/SPEC_lane_carry_card.md).
+// Dual-band synthetic eq34 net: per band its own RPB δ, sat phase bias, and
+// integer ambiguities; ONE shared clock + one code row per (r,s).  The pair
+// battery drives the SAME epoch stream through (a) two per-band groups and
+// (b) one pair group, in both the §6.1 equivalence shape and the lane shape.
+// ===========================================================================
+namespace {
+
+constexpr double kLam1 = 0.19029367;   // GPS L1 (m)
+constexpr double kLam2 = 0.24421021;   // GPS L2 (m)
+
+struct Net2 {
+    int R, S;
+    std::vector<double> a, c, b1, b2, d1, d2;
+    std::vector<std::vector<int>> z1, z2;
+    std::vector<std::string> sats;
+};
+Net2 makeNet2(unsigned seed, int R, int S) {
+    std::mt19937 gen(seed);
+    std::uniform_real_distribution<double> clk(-10, 10), bias(-0.5, 0.5);
+    std::uniform_int_distribution<int> amb(-6, 6);
+    Net2 n; n.R = R; n.S = S;
+    for (int r = 0; r < R; ++r) {
+        n.a.push_back(clk(gen)); n.d1.push_back(bias(gen)); n.d2.push_back(bias(gen));
+    }
+    for (int s = 0; s < S; ++s) {
+        n.c.push_back(clk(gen)); n.b1.push_back(bias(gen)); n.b2.push_back(bias(gen));
+        char id[8]; std::snprintf(id, sizeof(id), "G%02d", s + 1); n.sats.push_back(id);
+    }
+    n.z1.assign(R, std::vector<int>(S));
+    n.z2.assign(R, std::vector<int>(S));
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) { n.z1[r][s] = amb(gen); n.z2[r][s] = amb(gen); }
+    return n;
+}
+
+// Local layout: a=0, d1=1, d2=2, z1[s]=3+s, z2[s]=3+S+s.
+struct Cols2 { Eigen::Index a{0}, d1{1}, d2{2}; std::vector<Eigen::Index> z1, z2; };
+Cols2 layout2(int S) {
+    Cols2 c; c.z1.resize(S); c.z2.resize(S);
+    for (int s = 0; s < S; ++s) { c.z1[s] = 3 + s; c.z2[s] = 3 + S + s; }
+    return c;
+}
+
+std::size_t addNetStation2(NetworkEstimator& est, const Net2& n, int r,
+                           const std::vector<Eigen::Index>& clkCol,
+                           const std::vector<Eigen::Index>& pb1Col,
+                           const std::vector<Eigen::Index>& pb2Col, int p, int q,
+                           const std::vector<double>* noise1,
+                           const std::vector<double>* noise2, int r1) {
+    const int S = n.S;
+    const Cols2 col = layout2(S);
+    std::vector<Eigen::Index> pins;   // per-band tree-edge ambiguity pins (same star tree)
+    for (int s = 0; s < S; ++s)
+        if (isStarTreeEdge(p, q, r, s)) { pins.push_back(col.z1[s]); pins.push_back(col.z2[s]); }
+    const bool rpbPin = (r == r1);
+    const int nrows = 3 * S + static_cast<int>(pins.size()) + (rpbPin ? 2 : 0);
+    const Eigen::Index n_local = 3 + 2 * S;
+    Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(nrows, est.numShared());
+    Eigen::MatrixXd A_r = Eigen::MatrixXd::Zero(nrows, n_local);
+    Eigen::VectorXd w = Eigen::VectorXd::Ones(nrows), y = Eigen::VectorXd::Zero(nrows);
+    int row = 0;
+    for (int s = 0; s < S; ++s) {
+        A_s(row, clkCol[s]) = -1.0; A_r(row, col.a) = 1.0;
+        y(row) = n.a[r] - n.c[s]; ++row;
+        A_s(row, clkCol[s]) = -1.0; A_s(row, pb1Col[s]) = 1.0;
+        A_r(row, col.a) = 1.0; A_r(row, col.d1) = 1.0; A_r(row, col.z1[s]) = 1.0;
+        y(row) = n.a[r] - n.c[s] + n.b1[s] + n.d1[r] + n.z1[r][s] + (noise1 ? (*noise1)[s] : 0.0);
+        ++row;
+        A_s(row, clkCol[s]) = -1.0; A_s(row, pb2Col[s]) = 1.0;
+        A_r(row, col.a) = 1.0; A_r(row, col.d2) = 1.0; A_r(row, col.z2[s]) = 1.0;
+        y(row) = n.a[r] - n.c[s] + n.b2[s] + n.d2[r] + n.z2[r][s] + (noise2 ? (*noise2)[s] : 0.0);
+        ++row;
+    }
+    for (Eigen::Index pc : pins) { A_r(row, pc) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row; }
+    if (rpbPin) {
+        A_r(row, col.d1) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row;
+        A_r(row, col.d2) = 1.0; y(row) = 0.0; w(row) = 1e10; ++row;
+    }
+    return est.addStation(A_s, A_r, w, y);
+}
+
+// The per-band shape's two groups (keys 1, 2) — the WL-3 equivalence CONTROL.
+// @p slip1 / @p slip2: PER-BAND slip sets (each band's group sees only its own).
+std::vector<NetworkInvariantCarryDriver::GroupInput>
+makeGroups2PerBand(const Net2& n, const std::vector<std::size_t>& ids, int p, int q,
+                   const std::set<std::pair<int, int>>* slip1 = nullptr,
+                   const std::set<std::pair<int, int>>* slip2 = nullptr) {
+    const Cols2 col = layout2(n.S);
+    NetworkInvariantCarryDriver::GroupInput g1, g2;
+    g1.key = 1; g2.key = 2;
+    for (int r = 0; r < n.R; ++r)
+        for (int s = 0; s < n.S; ++s) {
+            const bool s1 = slip1 && slip1->count({r, s}) != 0;
+            const bool s2 = slip2 && slip2->count({r, s}) != 0;
+            g1.arcs.push_back({rxV(r), satV(s), isStarTreeEdge(p, q, r, s),
+                               static_cast<int>(ids[r]), static_cast<int>(col.z1[s]), s1});
+            g2.arcs.push_back({rxV(r), satV(s), isStarTreeEdge(p, q, r, s),
+                               static_cast<int>(ids[r]), static_cast<int>(col.z2[s]), s2});
+        }
+    return {g1, g2};
+}
+
+// The WL-3 pair group (key 1): one arc per (r,s) with BOTH bands' columns and
+// per-band slip states (the driver unions them only under the lane shape).
+std::vector<NetworkInvariantCarryDriver::GroupInput>
+makeGroups2Pair(const Net2& n, const std::vector<std::size_t>& ids, int p, int q,
+                const std::set<std::pair<int, int>>* slip1 = nullptr,
+                const std::set<std::pair<int, int>>* slip2 = nullptr) {
+    const Cols2 col = layout2(n.S);
+    NetworkInvariantCarryDriver::GroupInput g;
+    g.key = 1; g.pair = true; g.lambda1 = kLam1; g.lambda2 = kLam2;
+    for (int r = 0; r < n.R; ++r)
+        for (int s = 0; s < n.S; ++s) {
+            const bool s1 = slip1 && slip1->count({r, s}) != 0;
+            const bool s2 = slip2 && slip2->count({r, s}) != 0;
+            g.arcs.push_back({rxV(r), satV(s), isStarTreeEdge(p, q, r, s),
+                              static_cast<int>(ids[r]), static_cast<int>(col.z1[s]), s1,
+                              static_cast<int>(col.z2[s]), s2});
+        }
+    return {g};
+}
+
+// One full dual-band epoch: build the estimator, reconcile the carry (per-band or
+// pair shape), optionally post-build lane edits via @p postBuild, solve, install
+// (@p install_threads > 1 exercises the deterministic-parallel install path).
+std::vector<Eigen::VectorXd> driveEpoch2(
+    NetworkInvariantCarryDriver& drv, const Net2& n, int p, int q,
+    const std::vector<std::vector<double>>* noise1,
+    const std::vector<std::vector<double>>* noise2, double dt, bool pair,
+    const std::set<std::pair<int, int>>* slip1 = nullptr,
+    const std::set<std::pair<int, int>>* slip2 = nullptr,
+    const std::function<void(std::vector<NetworkNormalEquations::DdPriorBlock>&)>& postBuild = {},
+    int install_threads = 1) {
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(n.S), pb1Col(n.S), pb2Col(n.S);
+    for (int s = 0; s < n.S; ++s) {
+        clkCol[s] = est.registerClock(n.sats[s]);
+        pb1Col[s] = est.registerPhaseBias(n.sats[s], "L1");
+        pb2Col[s] = est.registerPhaseBias(n.sats[s], "L2");
+    }
+    est.beginEpoch();
+    std::vector<std::size_t> ids(n.R);
+    for (int r = 0; r < n.R; ++r)
+        ids[r] = addNetStation2(est, n, r, clkCol, pb1Col, pb2Col, p, q,
+                                noise1 ? &(*noise1)[r] : nullptr,
+                                noise2 ? &(*noise2)[r] : nullptr, /*r1=*/p);
+    drv.beginEpoch(dt);
+    auto blocks = drv.buildDdPriors(pair ? makeGroups2Pair(n, ids, p, q, slip1, slip2)
+                                         : makeGroups2PerBand(n, ids, p, q, slip1, slip2));
+    if (postBuild) postBuild(blocks);
+    est.setDdPriors(std::move(blocks));
+    const NetworkEstimator::Datum datum = {{est.clockColumn(n.sats[0]), 0.0}};
+    const Eigen::VectorXd x_s = est.solve(datum);
+    drv.installPosterior(est, x_s, datum, install_threads);
+    std::vector<Eigen::VectorXd> xr(n.R);
+    for (int r = 0; r < n.R; ++r) xr[r] = est.reconstructStation(ids[r], x_s);
+    return xr;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 1 (SPEC §6.1) — THE structural safety net for the regroup: the pair
+// group with every lane feature at its off/isotropic sentinel must reproduce the
+// two per-band groups' carried values AND lifecycle counters to ≤1e-9, through
+// noise, a signaled slip, and a tree change; D5 flag totals identical.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, PairEquivalenceMatchesPerBandShape) {
+    const int R = 4, S = 4, E = 6;
+    Net2 n = makeNet2(4242, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.innov_gate = true; cfg.innov_k = 4.0;          // gate armed in BOTH arms
+    NetworkInvariantCarryDriver drvBand(cfg);          // control: today's per-band shape
+    NetworkInvariantCarryDriver::Config pcf = cfg;     // equivalence shape: pair regroup,
+    pcf.q_wl_scale = 1.0;                              // isotropic q,
+    pcf.sigma_wl_fresh_cyc = 0.0;                      // isotropic fresh prior,
+    pcf.lane_joint = false;                            // split per-band emission, no lane rows.
+    NetworkInvariantCarryDriver drvPair(pcf);
+
+    std::mt19937 gen(7);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    auto noiseEpoch = [&] {
+        std::vector<std::vector<double>> v(R, std::vector<double>(S));
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
+        return v;
+    };
+    for (int e = 0; e < E; ++e) {
+        const int p = (e >= 4) ? 1 : 0, q = (e >= 4) ? 1 : 0;   // epoch-4 tree change
+        std::set<std::pair<int, int>> slips;
+        if (e == 3) { slips.insert({2, 3}); n.z1[2][3] += 5; }  // signaled BAND-1-ONLY slip — the equivalence shape must refloat band-1 alone, exactly like the per-band control
+        auto n1 = noiseEpoch(), n2 = noiseEpoch();
+        driveEpoch2(drvBand, n, p, q, &n1, &n2, 1.0, /*pair=*/false, e == 3 ? &slips : nullptr);
+        driveEpoch2(drvPair, n, p, q, &n1, &n2, 1.0, /*pair=*/true,  e == 3 ? &slips : nullptr);
+    }
+    // Lifecycle counters: identical (the pair path tallies per band-DD by design).
+    const auto& A = drvBand.counters();
+    const auto& B = drvPair.counters();
+    EXPECT_EQ(A.chords_carried, B.chords_carried);
+    EXPECT_EQ(A.chords_born, B.chords_born);
+    EXPECT_EQ(A.chords_dropped, B.chords_dropped);
+    EXPECT_EQ(A.slip_kills, B.slip_kills);
+    EXPECT_EQ(A.chords_marginalized, B.chords_marginalized);
+    EXPECT_EQ(A.z_dim, B.z_dim);
+    EXPECT_EQ(A.components, B.components) << "split pair emission = 2 blocks/component = per-band";
+    EXPECT_EQ(A.innov_flags, B.innov_flags) << "D5 totals identical (SPEC §6.1)";
+    EXPECT_GT(B.pair_components, 0) << "non-vacuous: the pair path actually ran";
+    EXPECT_GT(A.chords_carried, 0) << "non-vacuous: the carry was populated";
+    // Per-chord carried values + variances: ≤1e-9 (not byte — summation order differs).
+    const int p = 1, q = 1;
+    int compared = 0;
+    for (int r = 0; r < R; ++r)
+        for (int s = 0; s < S; ++s) {
+            if (isStarTreeEdge(p, q, r, s)) continue;
+            const ArcKey chord(rxV(r), satV(s));
+            double zb1, vb1, zb2, vb2, zp1, vp1, zp2, vp2;
+            const bool hb1 = drvBand.carriedDdForTest(1, chord, zb1, vb1);
+            const bool hb2 = drvBand.carriedDdForTest(2, chord, zb2, vb2);
+            const bool hp  = drvPair.carriedPairValue(1, chord, zp1, vp1, zp2, vp2);
+            ASSERT_EQ(hb1 && hb2, hp) << "carried-chord sets must agree at (" << r << "," << s << ")";
+            if (!hp) continue;
+            EXPECT_NEAR(zp1, zb1, 1e-9); EXPECT_NEAR(vp1, vb1, 1e-9);
+            EXPECT_NEAR(zp2, zb2, 1e-9); EXPECT_NEAR(vp2, vb2, 1e-9);
+            // Equivalence shape carries NO cross-band coupling (per-band-identical fold).
+            std::vector<ArcKey> chs; Eigen::VectorXd zj; Eigen::MatrixXd Pj;
+            ASSERT_TRUE(drvPair.carriedPairBlockForTest(1, chs, zj, Pj));
+            const auto it = std::find(chs.begin(), chs.end(), chord);
+            ASSERT_NE(it, chs.end());
+            const Eigen::Index i = it - chs.begin(), K = static_cast<Eigen::Index>(chs.size());
+            EXPECT_EQ(Pj(i, K + i), 0.0) << "equivalence shape must zero the cross-band block";
+            ++compared;
+        }
+    EXPECT_GE(compared, 6) << "non-vacuous: several carried pair chords were compared";
+}
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 2 (SPEC §2/§3.1) — the LANE shape: the joint posterior retains the
+// cross-band coupling (the honest jointly-covarianced pair), and a fresh chord's
+// prior is anisotropic in the lane basis — diffuse along NL, the honest code-seed
+// scale along WL (hand values through the unit-normalized rotation).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, PairLaneShapeCouplingAndFreshPrior) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(99, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true;
+    cfg.sigma_wl_fresh_cyc = 3.0;
+    cfg.fresh_prior_var = 1.0e6;
+    NetworkInvariantCarryDriver drv(cfg);
+
+    // Epoch 1: all chords fresh — check the lane-basis prior on the RETURNED block.
+    Eigen::MatrixXd Pz0; Eigen::Index K0 = 0;
+    auto grab = [&](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
+        ASSERT_EQ(blocks.size(), 1u);
+        K0 = static_cast<Eigen::Index>(blocks[0].zhat.size()) / 2;
+        Pz0 = blocks[0].Pz;
+    };
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, /*pair=*/true, nullptr, nullptr, grab);
+    ASSERT_GT(K0, 0);
+    const double a1 = 1.0 / kLam1, a2 = 1.0 / kLam2;
+    const double unorm = std::sqrt(a1 * a1 + a2 * a2);
+    Eigen::Vector2d h_wl(a1 / unorm, -a2 / unorm), h_nl(a2 / unorm, a1 / unorm);
+    const double sig_wl_m = 3.0 / unorm;    // 3 cycles in lane-coordinate meters
+    for (Eigen::Index i = 0; i < K0; ++i) {
+        Eigen::Matrix2d P;
+        P << Pz0(i, i), Pz0(i, K0 + i), Pz0(K0 + i, i), Pz0(K0 + i, K0 + i);
+        EXPECT_NEAR(h_wl.dot(P * h_wl), sig_wl_m * sig_wl_m, 1e-6 * sig_wl_m * sig_wl_m)
+            << "fresh WL lane σ must be the honest code-seed scale";
+        EXPECT_NEAR(h_nl.dot(P * h_nl), 1.0e6, 1e-6 * 1.0e6)
+            << "fresh NL direction stays diffuse";
+    }
+    // Epoch 2: carried — the joint posterior must retain band-1↔band-2 coupling.
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true);
+    std::vector<ArcKey> chs; Eigen::VectorXd zj; Eigen::MatrixXd Pj;
+    ASSERT_TRUE(drv.carriedPairBlockForTest(1, chs, zj, Pj));
+    const Eigen::Index K = static_cast<Eigen::Index>(chs.size());
+    double max_cross = 0.0;
+    for (Eigen::Index i = 0; i < K; ++i)
+        max_cross = std::max(max_cross, std::abs(Pj(i, K + i)));
+    EXPECT_GT(max_cross, 1e-12)
+        << "lane shape must retain the cross-band posterior coupling (the joint pair)";
+    // Lane-aware q: Q = Rᵀ·diag(q, 1000q)·R per chord — the WL lane inflates 1000×
+    // the NL direction per unit time (hand value through the unit rotation).
+    NetworkInvariantCarryDriver::Config qcfg = cfg;
+    qcfg.qz = 0.01; qcfg.q_wl_scale = 1000.0;
+    NetworkInvariantCarryDriver drvQ(qcfg);
+    driveEpoch2(drvQ, n, 0, 0, nullptr, nullptr, 0.0, /*pair=*/true);
+    std::vector<ArcKey> qch; Eigen::VectorXd qz0; Eigen::MatrixXd Pq0, Pq1;
+    ASSERT_TRUE(drvQ.carriedPairBlockForTest(1, qch, qz0, Pq0));
+    drvQ.beginEpoch(1.0);
+    ASSERT_TRUE(drvQ.carriedPairBlockForTest(1, qch, qz0, Pq1));
+    const Eigen::Index Kq = static_cast<Eigen::Index>(qch.size());
+    for (Eigen::Index i = 0; i < Kq; ++i) {
+        Eigen::Matrix2d dP;
+        dP << Pq1(i, i) - Pq0(i, i),           Pq1(i, Kq + i) - Pq0(i, Kq + i),
+              Pq1(Kq + i, i) - Pq0(Kq + i, i), Pq1(Kq + i, Kq + i) - Pq0(Kq + i, Kq + i);
+        EXPECT_NEAR(h_wl.dot(dP * h_wl), 0.01 * 1000.0, 1e-6 * 10.0)
+            << "WL lane q = q_wl_scale × qz per second";
+        EXPECT_NEAR(h_nl.dot(dP * h_nl), 0.01, 1e-9)
+            << "NL direction keeps today's qz";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 3 (SPEC §3.2) — the per-epoch lane measurement is an exact scalar KF
+// update on the emitted pair block (hand value), and the D5 prior (BlockMeta)
+// tracks the folded prior.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, LaneMeasurementMatchesHandKf) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(11, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
+    NetworkInvariantCarryDriver drv(cfg);
+    // Warm one epoch so the next build carries (a projected, coupled prior).
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, /*pair=*/true);
+
+    const double y = 7.25, Rm = 0.04;   // cycles, cycles²
+    Eigen::VectorXd zhat_before, zhat_after;
+    Eigen::MatrixXd Pz_before, Pz_after;
+    std::size_t kk = 1;   // second chord of the block
+    auto postBuild = [&](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
+        ASSERT_EQ(blocks.size(), 1u);
+        ASSERT_GE(drv.blockChordsForTest(0).size(), 2u);
+        zhat_before = blocks[0].zhat;
+        Pz_before   = blocks[0].Pz;
+        ASSERT_TRUE(drv.applyLaneMeasurement(blocks, 0, kk, y, Rm));
+        zhat_after = blocks[0].zhat;
+        Pz_after   = blocks[0].Pz;
+    };
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true, nullptr, nullptr, postBuild);
+
+    const Eigen::Index K = zhat_before.size() / 2;
+    Eigen::VectorXd h = Eigen::VectorXd::Zero(2 * K);
+    h(static_cast<Eigen::Index>(kk))     =  1.0 / kLam1;
+    h(K + static_cast<Eigen::Index>(kk)) = -1.0 / kLam2;
+    const Eigen::VectorXd Ph = Pz_before * h;
+    const double Sd = h.dot(Ph) + Rm;
+    const Eigen::VectorXd zhat_hand = zhat_before + (y - h.dot(zhat_before)) / Sd * Ph;
+    const Eigen::MatrixXd Pz_hand   = Pz_before - (Ph * Ph.transpose()) / Sd;
+    EXPECT_LT((zhat_after - zhat_hand).cwiseAbs().maxCoeff(), 1e-10)
+        << "lane update mean must match the hand KF value";
+    EXPECT_LT((Pz_after - Pz_hand).cwiseAbs().maxCoeff(), 1e-9)
+        << "lane update covariance must match the hand KF value";
+    // The lane variance genuinely shrank; the measurement is load-bearing.
+    EXPECT_LT(h.dot(Pz_after * h), h.dot(Pz_before * h) - 1e-12);
+}
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 4 (SPEC §3.3) — fold-on-change: first decision folds, an unchanged
+// decision at the NEXT epoch is a no-op, a changed integer re-folds, and a
+// re-tapped (slipped) chord must re-earn its fix (memory erased).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, LaneFixFoldOnChangeSemantics) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(23, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
+    NetworkInvariantCarryDriver drv(cfg);
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, /*pair=*/true);
+
+    int rc1 = -9, rc2 = -9, rc3 = -9, rc4 = -9;
+    auto fix = [&](long long w, int* rc) {
+        return [&, w, rc](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
+            *rc = drv.applyLaneFix(blocks, 0, 0, w, static_cast<double>(w), 0.01);
+        };
+    };
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr, fix(5, &rc1));
+    EXPECT_EQ(rc1, 1) << "first decision folds";
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr, fix(5, &rc2));
+    EXPECT_EQ(rc2, 0) << "unchanged decision is a no-op (once-only discipline)";
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr, fix(6, &rc3));
+    EXPECT_EQ(rc3, 1) << "changed integer re-folds";
+    // Slip the chord's arc: rebirth erases the memory ⇒ the same integer folds again.
+    const ArcKey chord0 = drv.blockChordsForTest(0).front();
+    std::set<std::pair<int, int>> slips{{chord0.u, chord0.v - kSatBase}};
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, &slips, nullptr, fix(6, &rc4));
+    EXPECT_EQ(rc4, 1) << "a re-tapped chord must re-earn its fix (SPEC §3.4 self-heal)";
+}
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 5 (SPEC §3.4) — a slip on EITHER band's arc refloats BOTH bands of
+// the pair chord (union semantics): the reborn block prior is diffuse in both
+// band rows and slip_kills tallies 2 per killed pair chord.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, PairSlipRefloatsBothBands) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(31, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 0.0;   // isotropic fresh ⇒ diffuse probe is crisp
+    NetworkInvariantCarryDriver drv(cfg);
+    for (int e = 0; e < 3; ++e)
+        driveEpoch2(drv, n, 0, 0, nullptr, nullptr, e == 0 ? 0.0 : 1.0, /*pair=*/true);
+    const long long kills_before = drv.counters().slip_kills;
+
+    const std::set<std::pair<int, int>> slips{{2, 2}};   // one arc (a chord under star(0,0))
+    Eigen::MatrixXd Pz_reborn; Eigen::Index Kb = 0; std::size_t idx = 0;
+    auto grab = [&](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
+        ASSERT_EQ(blocks.size(), 1u);
+        const auto& chs = drv.blockChordsForTest(0);
+        const auto it = std::find(chs.begin(), chs.end(), ArcKey(rxV(2), satV(2)));
+        ASSERT_NE(it, chs.end());
+        idx = static_cast<std::size_t>(it - chs.begin());
+        Kb  = static_cast<Eigen::Index>(chs.size());
+        Pz_reborn = blocks[0].Pz;
+    };
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true, &slips, nullptr, grab);
+    EXPECT_EQ(drv.counters().slip_kills - kills_before, 2)
+        << "one killed pair chord tallies both band DDs";
+    const Eigen::Index i = static_cast<Eigen::Index>(idx);
+    EXPECT_GT(Pz_reborn(i, i), 0.5e6)          << "band-1 reborn diffuse";
+    EXPECT_GT(Pz_reborn(Kb + i, Kb + i), 0.5e6) << "band-2 reborn diffuse (union refloat)";
+}
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 6 — injectCarriedChordPair edits both bands and its ONE-epoch D5
+// exemption spans BOTH band rows (control: an equally-off seeded carry flags).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, InjectPairExemptionSpansBothRows) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(47, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
+    cfg.innov_gate = true; cfg.innov_k = 4.0;
+
+    // Both arms warm identically, then get the SAME way-off pair value — one via the
+    // exempting inject primitive, one via a raw seed-style corruption (no exemption).
+    auto warm = [&](NetworkInvariantCarryDriver& d) {
+        for (int e = 0; e < 3; ++e)
+            driveEpoch2(d, n, 0, 0, nullptr, nullptr, e == 0 ? 0.0 : 1.0, /*pair=*/true);
+    };
+    const ArcKey chord(rxV(1), satV(1));   // a chord under star(0,0)
+
+    NetworkInvariantCarryDriver drvInj(cfg);
+    warm(drvInj);
+    double z1, v1, z2, v2;
+    ASSERT_TRUE(drvInj.carriedPairValue(1, chord, z1, v1, z2, v2));
+    ASSERT_TRUE(drvInj.injectCarriedChordPair(1, chord, z1 + 20.0, 1e-4, z2 - 20.0, 1e-4));
+    driveEpoch2(drvInj, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true);
+    // The exemption is PER CHORD (both band rows); component siblings deliberately stay
+    // testable (WL-2 §3.3: an inject's residual tension may land on its neighbours).
+    long long flags_on_chord = 0;
+    for (const auto& [g, key] : drvInj.lastInnovFlags()) if (key == chord) ++flags_on_chord;
+    EXPECT_EQ(flags_on_chord, 0)
+        << "the pair inject's one-epoch exemption must cover BOTH of the chord's band rows";
+
+    NetworkInvariantCarryDriver drvCtl(cfg);
+    warm(drvCtl);
+    // Control: the same off-value asserted WITHOUT the exemption — rebuild the carried
+    // block through the seed seam (mirrors InjectD5ExemptionSuppressesReTap's control).
+    std::vector<ArcKey> chs; Eigen::VectorXd zj; Eigen::MatrixXd Pj;
+    ASSERT_TRUE(drvCtl.carriedPairBlockForTest(1, chs, zj, Pj));
+    {
+        const auto it = std::find(chs.begin(), chs.end(), chord);
+        ASSERT_NE(it, chs.end());
+        const Eigen::Index i = it - chs.begin(), K = static_cast<Eigen::Index>(chs.size());
+        zj(i) += 20.0; zj(K + i) -= 20.0;
+        Pj.row(i).setZero(); Pj.col(i).setZero(); Pj(i, i) = 1e-4;
+        Pj.row(K + i).setZero(); Pj.col(K + i).setZero(); Pj(K + i, K + i) = 1e-4;
+        NetworkInvariantCarryDriver drvFresh(cfg);
+        // Re-seed the corrupted block into a fresh driver (same graph/arcs as the run).
+        std::set<int> verts; std::set<ArcKey> arcs;
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) {
+            verts.insert(rxV(r)); verts.insert(satV(s));
+            arcs.insert(ArcKey(rxV(r), satV(s)));
+        }
+        drvFresh.seedCarriedPairForTest(1, chs, zj, Pj, kLam1, kLam2, verts, arcs);
+        driveEpoch2(drvFresh, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true);
+        long long ctl_on_chord = 0;
+        for (const auto& [g, key] : drvFresh.lastInnovFlags()) if (key == chord) ++ctl_on_chord;
+        EXPECT_EQ(ctl_on_chord, 2)
+            << "control: the same off-value WITHOUT the exemption must flag both band rows";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WL-3 GATE 7 — the deterministic-parallel install (network.parallel_seam, armed
+// in the lineage configs) is BIT-IDENTICAL to the serial install on JOINT pair
+// blocks (the per-band shape's byte-identity gate does not cover the pair stitch).
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, PairInstallParallelMatchesSerialByteForByte) {
+    const int R = 4, S = 4, E = 5;
+    Net2 n = makeNet2(77, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.innov_gate = true; cfg.innov_k = 4.0;
+    NetworkInvariantCarryDriver drvS(cfg), drvP(cfg);
+
+    std::mt19937 gen(3);
+    std::normal_distribution<double> nd(0.0, 0.02);
+    for (int e = 0; e < E; ++e) {
+        std::vector<std::vector<double>> n1(R, std::vector<double>(S)), n2 = n1;
+        for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) { n1[r][s] = nd(gen); n2[r][s] = nd(gen); }
+        std::set<std::pair<int, int>> slips;
+        if (e == 2) slips.insert({1, 2});   // exercise the union-refloat path too
+        driveEpoch2(drvS, n, 0, 0, &n1, &n2, e ? 1.0 : 0.0, /*pair=*/true,
+                    e == 2 ? &slips : nullptr, nullptr, {}, /*install_threads=*/1);
+        driveEpoch2(drvP, n, 0, 0, &n1, &n2, e ? 1.0 : 0.0, /*pair=*/true,
+                    e == 2 ? &slips : nullptr, nullptr, {}, /*install_threads=*/4);
+        std::vector<ArcKey> cs, cp; Eigen::VectorXd zs, zp; Eigen::MatrixXd Ps, Pp;
+        ASSERT_TRUE(drvS.carriedPairBlockForTest(1, cs, zs, Ps));
+        ASSERT_TRUE(drvP.carriedPairBlockForTest(1, cp, zp, Pp));
+        ASSERT_EQ(cs, cp);
+        EXPECT_TRUE(zs == zp) << "pair install means must be BIT-identical at any thread count (epoch " << e << ")";
+        EXPECT_TRUE(Ps == Pp) << "pair install covariances must be BIT-identical (epoch " << e << ")";
+    }
+    EXPECT_EQ(drvS.counters().innov_flags, drvP.counters().innov_flags);
+    EXPECT_GT(drvS.counters().chords_carried, 0);
 }
 
 }  // namespace GnssProcessor

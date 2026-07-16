@@ -133,6 +133,9 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, o] : snap.clock_osc)
         put(fmt::format("K,{},{},{},{},{},{},{},{}", sat, o.x0, o.x1, o.p00, o.p01, o.p11,
                         o.t_last, o.init ? 1 : 0));
+    for (const auto& [sat, o] : snap.clock_rate_est)   // network.emit_clock_rate decoupled C1 state
+        put(fmt::format("O,{},{},{},{},{},{},{},{}", sat, o.x0, o.x1, o.p00, o.p01, o.p11,
+                        o.t_last, o.init ? 1 : 0));
     for (const auto& [sat, vp] : snap.prev_clk)
         put(fmt::format("J,{},{},{}", sat, vp.first, vp.second));
     for (const auto& [key, l] : snap.local_carry)
@@ -279,6 +282,16 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("malformed K fields");
             o.init = b;
             s.clock_osc[f[1]] = o;
+        } else if (tag == "O") {   // network.emit_clock_rate decoupled C1 rate state
+            if (f.size() != 9) return fail("malformed O line");
+            NetworkStateSnapshot::Osc o;
+            bool b = false;
+            if (!parseD(f[2], o.x0) || !parseD(f[3], o.x1) || !parseD(f[4], o.p00)
+                || !parseD(f[5], o.p01) || !parseD(f[6], o.p11) || !parseD(f[7], o.t_last)
+                || !parseB(f[8], b))
+                return fail("malformed O fields");
+            o.init = b;
+            s.clock_rate_est[f[1]] = o;
         } else if (tag == "J") {
             if (f.size() != 4) return fail("malformed J line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed J fields");

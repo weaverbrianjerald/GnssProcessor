@@ -102,6 +102,11 @@ public:
         double innov_k{4.0};            ///< D5 per-chord standardized flag threshold |v_i|/√Cov(v)_ii; a flagged chord is re-tapped fresh. INERT unless @c innov_gate.
         bool   innov_calibrate{false};  ///< D5 v2: standardize by the LS-VCE-estimated EMPIRICAL innovation variance σ̂₀² (robust geo-mean of the standardized innovations), not the raw formal Cov(v) — makes @c innov_k a true Nσ gate (the formal Cov(v) is 10-30× optimistic). OFF = raw formal (v1). INERT unless @c innov_gate.
         double innov_calibrate_window{60.0};  ///< D5 v2: exponential-forgetting half-life (epochs) of the σ̂₀² accumulator. INERT unless @c innov_calibrate.
+        // --- M5 card WL-3: lane-coordinate carry (docs/SPEC_lane_carry_card.md §3.1). ---
+        // All three are INERT unless the caller feeds PAIR groups (@ref GroupInput::pair).
+        double q_wl_scale{1.0};         ///< WL-3 §3.1: q along the WL lane = this × @c qz (lane basis, per pair chord).  1 = isotropic (== today's per-band q; the §6.1 equivalence shape).  INERT unless @c lane_joint.
+        double sigma_wl_fresh_cyc{0.0}; ///< WL-3 §3.1: fresh pair-chord lane prior σ along the WL direction (WL cycles — converted to lane-coordinate state units via the group's (λ₁,λ₂)).  0 = isotropic diffuse @c fresh_prior_var (the §6.1 equivalence shape).  INERT unless @c lane_joint.
+        bool   lane_joint{false};       ///< WL-3 master shape switch for pair groups: true = the LANE shape (ONE joint 2K-row DdPriorBlock per component, cross-band posterior coupling retained, lane prior/q armed, a D5 exemption spans both band rows).  false = the §6.1 EQUIVALENCE shape (per pair component TWO K-row per-band blocks whose fold is information-identical to today's two per-band groups; cross-band coupling zeroed at install) — the structural safety net for the regroup.
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -112,14 +117,28 @@ public:
         bool tree_edge{false};   ///< election spanning-tree edge (gauge pin) vs chord (a carried DD).
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
-        bool slipped{false};     ///< Card 4 C3c: a cycle slip / refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD is a stiff WRONG prior). The caller sets it from the network's authoritative slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit). Excluded from the A_old membership so any new cycle whose support includes it is re-tapped FRESH (data-only), exactly the birth path; a carried chord it refloats is counted in @ref Counters::slip_kills.
+        bool slipped{false};     ///< Card 4 C3c: a cycle slip / refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD is a stiff WRONG prior). The caller sets it from the network's authoritative slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit). Excluded from the A_old membership so any new cycle whose support includes it is re-tapped FRESH (data-only), exactly the birth path; a carried chord it refloats is counted in @ref Counters::slip_kills.  WL-3 §3.4: for a PAIR arc the caller sets the UNION of both bands' slip states — a slip on either band refloats the chord's both bands (they share the graph edge).
+        int  local_col2{-1};     ///< WL-3 (pair groups only): the band-2 ambiguity's A_r local column at the SAME (rx, sat).  −1 in a pair group marks the arc unresolvable (defensive; the caller routes band-1-only arcs to the residual per-band group instead).  Ignored for per-band groups.
+        bool slipped2{false};    ///< WL-3 (pair groups only): the BAND-2 ambiguity's own slip state (@c slipped holds band-1's).  Under the LANE shape (@ref Config::lane_joint) the driver unions them — a slip on either band refloats the chord's both bands (§3.4); under the §6.1 EQUIVALENCE shape each band refloats on its OWN slips only, exactly like the two per-band groups it must reproduce.  Ignored for per-band groups.
     };
 
     /// One (const,signal) group's arcs this epoch.  Groups are independent z-store
     /// partitions; a DD never crosses a group.  @c key is a caller-stable id for the
     /// group (e.g. a hash of constellation+signal) used only to bucket the carry.
+    ///
+    /// WL-3 (SPEC_lane_carry_card.md §2): a PAIR group replaces the two per-band
+    /// groups of a constellation's primary signal pair.  Its arcs are the (rx, sat)
+    /// simple graph BOTH bands share (band-1 column in @ref ArcInput::local_col,
+    /// band-2 in @ref ArcInput::local_col2); each graph chord then carries the
+    /// 2-vector (z₁, z₂) of the two bands' cycle DDs with a joint per-component
+    /// covariance.  Storage stays per-band (the reconcile projection W applies per
+    /// band unchanged); only the process model / fresh prior / lane measurement
+    /// rows use the (NL, WL) lane basis, and only under @ref Config::lane_joint.
     struct GroupInput {
         int key{0};
+        bool pair{false};        ///< WL-3: this is a primary-pair group (arcs carry @c local_col2).
+        double lambda1{0.0};     ///< WL-3 pair groups: band-1 wavelength (m) — constant per group (CDMA; GLONASS never enters).
+        double lambda2{0.0};     ///< WL-3 pair groups: band-2 wavelength (m).
         std::vector<ArcInput> arcs;
     };
 
@@ -138,6 +157,37 @@ public:
         long long splits{0};              ///< previous components spread across ≥2 new components.
         long long tree_swaps{0};          ///< components whose carry was re-expressed in a genuinely different fundamental-cycle basis (a projection W that is not a signed permutation — the analogue of the phase-B unimodular pivot).
         long long z_dim{0};               ///< total carried DD dimension at the end of the last epoch.
+        // --- INC-C0 census (perf-restructure reconciliation, log-only) --------------
+        long long max_component_kc{0};    ///< INC-C0: the largest single-component carried DD dimension K_c ever emitted (the dense-Pᶻ cost driver — the K in the O(K³) fold/read-back).
+        long long max_z_dim{0};           ///< INC-C0: peak total carried DD dimension over the run (growth-bound: monotone-unbounded growth ⇒ the kill path is not firing — §0 case (b)).
+        long long chords_marg_perchord{0};///< INC-C0: old chords dropped from a SURVIVING component (its projection-W column is all-zero — no new fundamental cycle references it).  This is the PER-CHORD marginalization @ref chords_marginalized (whole-block only) misses; the two together are the true kill rate.  Near-zero while @ref max_z_dim grows ⇒ dead arcs are being retained (§0 case (b)); large ⇒ the kill path is exact and simply has churn to kill (§0 case (a)).
+        long long max_cycle_len{0};       ///< INC-C0 (D-c viability): the longest fundamental cycle (tree-path length + 1) folded this run.  The DD information matrix J = Pᶻ⁻¹ is sparse iff cycles are short (adjacent chords share few tree edges) ⇒ the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) is BOUNDED; long cycles ⇒ dense J ⇒ D-c gives no bound (the choice the perf card cannot make without this number).
+        long long sum_cycle_len{0};       ///< INC-C0: Σ fundamental-cycle lengths over all folded chords this run (mean = sum / (chords_carried + chords_born)).
+        // --- WL-3 lane-coordinate carry (per-band-DD counting keeps the §6.1 gate strict:
+        //     a pair chord tallies 2 in the chords_* / cycle-length counters, exactly what
+        //     the two per-band groups would have tallied; `components` counts EMITTED
+        //     blocks, so it halves under the joint lane shape — structural, documented). ---
+        long long pair_components{0};     ///< WL-3: pair components reconciled (summed over epochs; each is 1 joint or 2 split emitted blocks).
+        long long pair_tree_promotions{0};///< WL-3: chords promoted to tree edges to COMPLETE a pair component's spanning forest (the caller's band-1 election tags don't span the pair intersection subgraph there — fragmented-primary regions; 0 ⇒ the eq34 basis was kept exactly everywhere).
+    };
+
+    /// INC-C0 per-op wall-clock accumulators (ms), armed by @ref setPerfTiming
+    /// (@c network.trace_section_timers).  Splits the driver's own cost — which the D0b
+    /// SB_DDBUILD / SB_INSTALL wall brackets lump — into the primitive ops so the
+    /// perf-restructure card ranks them (dense Pᶻ basis projection vs posterior read-back
+    /// vs the D5 gate).  Whole-run (NOT zeroed by @ref reset, mirroring
+    /// @c NetworkNormalEquations::SectionTimers); byte-identical when off (no clock reads,
+    /// the accumulators touch nothing the solution depends on).  The serial install path
+    /// is the only one timed (the parallel install accumulates from many threads and would
+    /// race a single double — and @c parallel_carry already routes install serially).
+    struct PerfTimers {
+        double time_update_ms{0.0};   ///< @ref beginEpoch: the q_z·Δt diagonal inflate of the carried Pᶻ (factored path: +B·Δt on the A blocks).
+        double basis_project_ms{0.0}; ///< @ref buildDdPriors: the change-of-basis projection W construction + W·Pᶻ_old·Wᵀ + W·z_old per emitted component (the dense-K² materialization INC-C2 factors).
+        double post_mean_ms{0.0};     ///< @ref installPosterior: the @c ddPriorPosteriorMean read-back (K-vector shrink).
+        double post_cov_ms{0.0};      ///< @ref installPosterior: the @c ddPriorPosteriorCovariance read-back (the dense K×K posterior INstall — the other dense-K² materialization).
+        double d5_gate_ms{0.0};       ///< @ref installPosterior: the D5 @c ddPriorInnovation + the per-chord standardized gate (0 unless @c Config::innov_gate).
+        long long build_epochs{0};    ///< #@ref buildDdPriors calls (counted at entry — a chordless epoch that never reaches the timed projection still counts; for per-epoch averages).
+        long long install_epochs{0};  ///< #serial @ref installPosterior calls timed.
     };
 
     explicit NetworkInvariantCarryDriver(Config cfg = {}) : cfg_(cfg) {
@@ -202,11 +252,29 @@ public:
 
     const Counters& counters() const { return counters_; }
 
+    /// INC-C0: arm/disarm the per-op timers (@c network.trace_section_timers).  Set once
+    /// before the epoch loop (survives @ref reset, like the kernel's @c setPerfTiming).
+    /// Default off ⇒ no clock reads, byte-identical.
+    void setPerfTiming(bool on) { perf_timing_ = on; }
+    /// @return Whether the per-op timers are armed (@ref setPerfTiming).
+    bool perfTiming() const { return perf_timing_; }
+    /// @return The per-op wall-clock accumulators (cumulative since construction / the last
+    ///         @ref resetPerfTimers; NOT zeroed by @ref reset).  Meaningful only when armed.
+    const PerfTimers& perfTimers() const { return perf_timers_; }
+    /// Zero the per-op timer accumulators.
+    void resetPerfTimers() { perf_timers_ = PerfTimers{}; }
+
     /// Card 4 D5: the (group, chord arc) pairs the innovation gate flagged as slipped at
     /// the last @ref installPosterior — the caller maps each back to its (station, ambiguity)
     /// and feeds it into the NEXT epoch's slip funnel (the C3c membership-exclusion re-tap).
     /// Empty unless @c Config::innov_gate; refreshed every @ref installPosterior.
     const std::vector<std::pair<int, ArcKey>>& lastInnovFlags() const { return last_innov_flags_; }
+
+    /// D5 diagnostic (WL-2 F-A attribution): the FORMAL-standardized innovation
+    /// |v_i|/√Cov(v)_ii of each flag in @ref lastInnovFlags, index-aligned (compare
+    /// against k·σ̂₀ for the gate margin).  Refreshed with the flags every
+    /// @ref installPosterior.
+    const std::vector<double>& lastInnovFlagSigmas() const { return last_innov_sigmas_; }
 
     /// D5 v2: the current empirical innovation-inflation σ̂₀ (= √σ̂₀², the factor the
     /// standardized innovation is divided by), or 1.0 when calibration is off / still in
@@ -218,6 +286,106 @@ public:
     /// Number of DD-prior blocks emitted by the last @ref buildDdPriors.
     std::size_t numBlocks() const { return block_meta_.size(); }
 
+    /**
+     * @brief M5 card WL-2 (SPEC_ewl_wl_cascade_card.md §3.3): edit a carried DD VALUE —
+     *        the WL inject primitive's low-level half.
+     *
+     * Sets the carried mean of @p chord in @p group to @p new_z (the CORRECTION-frame DD,
+     * state units = λ·N; the caller computes it from the lane target minus @f$\sum c\,x_{lin}@f$)
+     * and reseeds its variance to @p new_var (row/col cross-terms zeroed to stay PSD — the
+     * injected value is a fresh, independent assertion), then marks the chord D5-EXEMPT for the
+     * NEXT @ref installPosterior (one epoch): the inject deliberately moves the value by up to
+     * half the garbage lane gap, so the per-epoch code-limited innovation would otherwise trip
+     * the D5 gate and re-tap it away (the F6 storm this card exists to avoid).  A subsequent
+     * epoch's data agrees (the hold row pins the lane) so no exemption is needed then.
+     *
+     * The caller pairs the two bands' chords (same @c ArcKey, different group) and injects
+     * both; a chord that is not currently carried in @p group (the cycle is not 1:1 across the
+     * two groups' bases) returns false and the caller skips + counts it.
+     *
+     * @return true if @p chord was found + edited; false if it is not a carried chord of @p group.
+     */
+    bool injectCarriedChord(int group, const ArcKey& chord, double new_z, double new_var);
+
+    /// The carried DD mean+variance of @p chord in @p group (false if not carried) — the read
+    /// half of the WL inject (compute the current lane value before deciding to inject).  Same
+    /// as @ref carriedDdForTest but named for production use.  On a WL-3 PAIR block this
+    /// returns the BAND-1 half (use @ref carriedPairValue for both bands).
+    bool carriedChordValue(int group, const ArcKey& chord, double& z, double& var) const {
+        return carriedDdForTest(group, chord, z, var);
+    }
+
+    // ---- M5 card WL-3: lane-coordinate carry (docs/SPEC_lane_carry_card.md) ---------
+
+    /**
+     * @brief WL-3 §3.2: fold ONE per-epoch WL-lane measurement into an emitted PAIR
+     *        block's prior — the closed-form KF update that makes the carry itself the
+     *        code-coherence accumulator (each epoch's MW / bridge increment enters ONCE).
+     *
+     * The measurement is the WL lane functional of chord @p k in CORRECTION-frame WL
+     * cycles: @f$y = z_1/\lambda_1 - z_2/\lambda_2 + e,\ e\sim N(0,R)@f$ — the caller
+     * forms @f$y@f$ from this epoch's (lagged) MW(1,2) or iono-de-biased bridge cycle DD
+     * minus the linearization lane @f$\sum(c/\lambda_1)x_{lin,1}-(c/\lambda_2)x_{lin,2}@f$.
+     * Updates BOTH the caller's block (what @c setDdPriors folds) and the stashed
+     * @c BlockMeta prior (what the D5 gate standardizes against), so the innovation frame
+     * stays consistent.  Only valid on a JOINT pair block (@ref Config::lane_joint); call
+     * serially in (block, chord) order — the deterministic seam (§8.2).
+     *
+     * @param blocks The vector returned by the LAST @ref buildDdPriors (pre-@c setDdPriors).
+     * @param b      Emitted block index (must be a joint pair block).
+     * @param k      Chord index within the block (row @c k = band-1, row @c K+k = band-2).
+     * @param y_cyc  Correction-frame lane measurement (WL cycles).
+     * @param r_cyc2 Measurement variance (WL cycles²), > 0 (caller floors it).
+     * @return true if folded; false if (b, k) is not a joint pair chord or inputs are degenerate.
+     */
+    bool applyLaneMeasurement(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
+                              std::size_t b, std::size_t k, double y_cyc, double r_cyc2);
+
+    /**
+     * @brief WL-3 §3.3: the FFR integer fix — an IDEMPOTENT lane-coordinate SET on the
+     *        emitted pair block, applied every DECIDED epoch.
+     *
+     * Re-centers chord @p k's WL lane COORDINATE on the correction-frame integer target
+     * @p y_cyc and re-collapses its variance to @p sigma_cyc², zeroing the coordinate's
+     * cross-covariances (a fresh independent assertion, PSD-safe — the WL-2 inject
+     * semantics realized on the lane coordinate, with the NL direction preserved by
+     * construction).  A measurement FOLD here would accumulate per-epoch decisions that
+     * are not independent information (the F-A once-only lesson); the set is
+     * information-idempotent, and re-applying it on an UNCHANGED decision is what keeps
+     * the lane pinned against q_wl re-loosening + the noisy MW increments (measured:
+     * fold-on-change alone let decided lanes drift back to MW quality).  The decision
+     * value is STAGED per build and committed at @ref installPosterior (a within-epoch
+     * RAIM re-solve re-derives identical sets); the memory is erased when the chord
+     * re-taps (slip / D5 flag / rebirth) — the re-entered loose lane re-earns its fix
+     * (§3.4 self-heal).
+     *
+     * @return +1 = the integer moved / first assertion, 0 = re-pinned (decision
+     *         unchanged), −1 = not applicable (not a joint pair chord / degenerate).
+     */
+    int applyLaneFix(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
+                     std::size_t b, std::size_t k, long long w, double y_cyc, double sigma_cyc);
+
+    /// WL-3: the carried PAIR chord's two band values+variances (false if @p group is not
+    /// a pair group carrying @p chord).  The read half of the pair inject fallback.
+    bool carriedPairValue(int group, const ArcKey& chord, double& z1, double& var1,
+                          double& z2, double& var2) const;
+
+    /**
+     * @brief WL-3: the pair-block analogue of @ref injectCarriedChord — edit BOTH band
+     *        values of a carried pair chord (fallback path; should fire ~never in steady
+     *        state, telemetry proves it).  Cross-terms of both rows are zeroed (PSD-safe,
+     *        fresh independent assertion) and the chord is D5-exempt for ONE install.
+     * @return true if @p chord is a carried pair chord of @p group and was edited.
+     */
+    bool injectCarriedChordPair(int group, const ArcKey& chord,
+                                double new_z1, double new_var1,
+                                double new_z2, double new_var2);
+
+    /// WL-3: the pair-emission shape of emitted block @p b — 0 = plain per-band group
+    /// block, 1/2 = band-1/band-2 half of a split (equivalence-shape) pair emission,
+    /// 3 = joint 2K lane-shape pair block.  Lane measurements apply only to shape 3.
+    int blockPairBand(std::size_t b) const { return block_meta_.at(b).pair_band; }
+
     // --- test seams (numeric leaf; the NetworkZStore::setEstimate precedent) -----
 
     /// Directly install one component's carry — the gate's seed for a known
@@ -225,6 +393,15 @@ public:
     void seedCarriedForTest(int group, const std::vector<ArcKey>& chords,
                             const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
                             const std::set<int>& vertices, const std::set<ArcKey>& arcs);
+    /// WL-3: seed one PAIR component's carry (@p z is 2K = [band-1; band-2], @p Pz 2K×2K).
+    void seedCarriedPairForTest(int group, const std::vector<ArcKey>& chords,
+                                const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
+                                double lambda1, double lambda2,
+                                const std::set<int>& vertices, const std::set<ArcKey>& arcs);
+    /// WL-3: dump the carried PAIR block of @p group (false if none) — chords + the full
+    /// joint [band-1; band-2] mean/covariance, for the lane-battery unit gates.
+    bool carriedPairBlockForTest(int group, std::vector<ArcKey>& chords,
+                                 Eigen::VectorXd& z, Eigen::MatrixXd& Pz) const;
     /// The chord order of DD-prior block @p b returned by the last @ref buildDdPriors
     /// (== the fold-row order, so a gate can map block rows to chord arcs).
     const std::vector<ArcKey>& blockChordsForTest(std::size_t b) const {
@@ -246,13 +423,18 @@ public:
 
 private:
     /// One connected component's carried DD estimate (keyed by chord arc identity).
+    /// WL-3: a PAIR component stores BOTH bands jointly — @c z is 2K ([band-1; band-2]),
+    /// @c Pz 2K×2K (cross-band blocks zero unless @c Config::lane_joint retained them).
     struct CarriedBlock {
         int group{0};
-        std::vector<ArcKey> chords;   ///< z index → chord arc (the DD basis).
-        Eigen::VectorXd z;            ///< carried DD means.
+        std::vector<ArcKey> chords;   ///< z index → chord arc (the DD basis; K graph chords).
+        Eigen::VectorXd z;            ///< carried DD means (K, or 2K for a pair block).
         Eigen::MatrixXd Pz;           ///< carried DD covariance (dense, per component).
         std::set<int> vertices;       ///< the component's vertices.
         std::set<ArcKey> arcs;        ///< every arc present (tree ∪ chords) — A_old for the carried test.
+        bool pair{false};             ///< WL-3: joint two-band pair component.
+        double lambda1{0.0};          ///< WL-3 pair: band-1 wavelength (m) — the lane basis.
+        double lambda2{0.0};          ///< WL-3 pair: band-2 wavelength (m).
     };
     /// Per-emitted-block metadata (parallel to the returned blocks) for the install.
     struct BlockMeta {
@@ -262,17 +444,30 @@ private:
         std::set<ArcKey> arcs;        ///< A_new for this component (becomes next epoch's A_old).
         Eigen::VectorXd  zhat;        ///< D5: the block's prior means (== fold zhat) so the innovation
                                       ///< gate can install a flagged chord's data-only mean d = v + ẑ.
+                                      ///< WL-3: 2K for a joint pair block; K otherwise.
         std::vector<char> chord_carried; ///< D5 v2: 1 = chord carried a tight prior this epoch, 0 = born
                                       ///< fresh (diffuse).  Only carried chords feed the σ̂₀² accumulator
                                       ///< (a born chord's diffuse Cov(v) would corrupt the inflation).
+                                      ///< WL-3: per GRAPH chord (K) in every shape — membership is band-uniform.
+        int pair_band{0};             ///< WL-3 emission shape: 0 = per-band group block; 1/2 = band-1/band-2
+                                      ///< half of a SPLIT pair emission (§6.1 equivalence shape; siblings are
+                                      ///< adjacent, band-2 at b+1); 3 = joint 2K lane-shape block.
+        double lambda1{0.0};          ///< WL-3 pair: band wavelengths (lane functional coefficients).
+        double lambda2{0.0};
     };
 
     Config cfg_;
     std::vector<CarriedBlock> carried_;      ///< the carry as of the previous @ref installPosterior.
     std::vector<BlockMeta>    block_meta_;   ///< layout of the blocks returned by the last @ref buildDdPriors.
     std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< D5: (group, chord) flagged at the last install.
+    std::vector<double> last_innov_sigmas_;  ///< D5 diagnostic: |v|/√Cov(v) per flag, aligned with last_innov_flags_.
+    std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< WL-2 §3.3: (group, chord) injected this epoch — D5-exempt at the NEXT @ref installPosterior (consumed + cleared there).  WL-3: a pair chord's exemption spans BOTH band rows.
+    std::map<std::pair<int, ArcKey>, long long> lane_fix_w_;      ///< WL-3 §3.3: the last COMMITTED FFR integer per (pair group, chord) — the fold-on-change memory.  Committed at @ref installPosterior; erased when the chord re-taps (slip / D5 flag / rebirth).
+    std::map<std::pair<int, ArcKey>, long long> lane_fix_staged_; ///< WL-3: this build's @ref applyLaneFix decisions, staged so a within-epoch RAIM re-solve re-derives identical folds; merged into @ref lane_fix_w_ at install, cleared at each @ref buildDdPriors.
     std::optional<NetworkCarryVce> inflation_;  ///< D5 v2: the σ̂₀² accumulator (only when Config::innov_calibrate).
     Counters counters_;
+    bool      perf_timing_{false};   ///< INC-C0: per-op timers armed (survives reset()).
+    PerfTimers perf_timers_;         ///< INC-C0: per-op wall-clock accumulators (whole-run).
 
     /// D5 v2: the "dd" family/sat key (pooled — split_by_const=false, sat ignored).
     static constexpr const char* kInflationFamily = "dd";

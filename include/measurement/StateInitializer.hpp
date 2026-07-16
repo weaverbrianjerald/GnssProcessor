@@ -3,14 +3,16 @@
 
 /**
  * @file StateInitializer.hpp
- * @brief First-epoch state seeding for inter-system biases, phase clock, and code biases.
+ * @brief First-epoch state seeding for inter-system biases, phase clock, code
+ *        biases, and the (network) cold receiver clock.
  *
  * StateInitializer encapsulates the one-shot initialization logic that runs
- * on the first epoch to seed ISB, phase clock offset, and receiver DCB/IFB
- * states from code and phase observation residuals.  Extracting this from
- * MeasurementModel keeps the per-epoch hot path readable and isolates the
- * initialization-specific helpers (computeRawResidual, resolveReceiverBias,
- * computeIonosphereSeed, computeMedian) in one place.
+ * on the first epoch to seed ISB, phase clock offset, receiver DCB/IFB, and
+ * — on the network path, opt-in — the cold receiver clock, from code and
+ * phase observation residuals.  Extracting this from MeasurementModel keeps
+ * the per-epoch hot path readable and isolates the initialization-specific
+ * helpers (computeRawResidual, resolveReceiverBias, computeIonosphereSeed,
+ * computeMedian) in one place.
  */
 
 #include "config/GnssConfig.hpp"
@@ -33,10 +35,11 @@ namespace GnssProcessor {
  * @class StateInitializer
  * @brief Seeds first-epoch filter states from observation residuals.
  *
- * Owns the initialization flags and provides three entry points:
+ * Owns the initialization flags and provides four entry points:
  *   - initializeInterSystemBiases()
  *   - initializePhaseClockOffset()
  *   - initializeCodeBiases()
+ *   - seedColdReceiverClock()   (network cold-start clock leak; opt-in)
  *
  * Also exposes helpers used by MeasurementModel during the state pre-pass
  * and Jacobian assembly (computeIonosphereSeed, resolveReceiverBias,
@@ -83,6 +86,32 @@ public:
     void initializeCodeBiases(const std::vector<PppObservation>& observations,
                                const std::string& epoch_prefix);
 
+    /**
+     * @brief Pre-seed a genuinely COLD receiver clock from GPS code residuals.
+     *
+     * Writes the median GPS code residual — the GPS-referenced receiver clock
+     * (ISB carries the inter-system offsets, so GPS-only is the correct datum)
+     * — into @c x(getClockIndex()).  On the PPP-RTK NETWORK path nothing else
+     * pre-solves the receiver clock before @c ensureRequiredStates first seeds
+     * ambiguities, so without this the whole free-running clock offset leaks
+     * uniformly into every cold ambiguity seed (see
+     * @c GnssConfig::networkColdClockSeed).  Call BEFORE the ambiguity-seed
+     * loop (and after the iono seed, so @c computeRawResidual can remove the
+     * seeded slant iono from the code residual) and ONCE per station.
+     *
+     * Self-limiting: only acts while the clock is genuinely cold (state == 0),
+     * so it never overwrites a clock already seeded by the PPP path's
+     * @c StateManager::syncPppStateToStateVector.
+     *
+     * @return @c true when the pre-seed is settled and the caller should latch
+     *         it (clock seeded from GPS code, OR already non-cold ⇒ nothing to
+     *         do); @c false when the clock is cold but NO GPS code observation
+     *         was available this epoch (retry next epoch — do NOT latch, mirror
+     *         of @ref initializeInterSystemBiases's GPS-reference contract).
+     */
+    bool seedColdReceiverClock(const std::vector<PppObservation>& observations,
+                                const std::string& epoch_prefix);
+
     // -------------------------------------------------------------------
     // Initialization flags (queried/set by MeasurementModel orchestrator)
     // -------------------------------------------------------------------
@@ -90,10 +119,12 @@ public:
     bool isIsbInitialized()        const { return isb_initialized_; }
     bool isPhaseClockInitialized() const { return phase_clock_initialized_; }
     bool isCodeBiasInitialized()   const { return code_bias_initialized_; }
+    bool isClockSeedInitialized()  const { return clock_seed_initialized_; }
 
     void markIsbInitialized()        { isb_initialized_ = true; }
     void markPhaseClockInitialized() { phase_clock_initialized_ = true; }
     void markCodeBiasInitialized()   { code_bias_initialized_ = true; }
+    void markClockSeedInitialized()  { clock_seed_initialized_ = true; }
 
     // -------------------------------------------------------------------
     // Shared helpers (used by MeasurementModel for state pre-pass / Jacobian)
@@ -156,6 +187,7 @@ private:
     bool isb_initialized_ = false;
     bool phase_clock_initialized_ = false;
     bool code_bias_initialized_ = false;
+    bool clock_seed_initialized_ = false;
 };
 
 } // namespace GnssProcessor

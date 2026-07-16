@@ -132,6 +132,23 @@ Eigen::Index NetworkEstimator::vtecCoeffColumn(int n, int m, char trig) const {
     return index_.at(StateKeys::makeVtecShKey(n, m, trig));
 }
 
+std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
+    if (col < 0 || col >= static_cast<Eigen::Index>(columns_.size())) {
+        throw std::out_of_range("NetworkEstimator::sharedColumnLabel: "
+                                "column index out of range");
+    }
+    const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
+    switch (d.kind) {
+        case SharedParamKind::Clock:     return "CLK:" + d.sat;
+        case SharedParamKind::CodeBias:  return "CB:" + d.sat + ":" + d.signal;
+        case SharedParamKind::PhaseBias: return "PB:" + d.sat + ":" + d.signal;
+        case SharedParamKind::VtecSh:
+            return std::string("SH:") + d.sh_trig + ":" + std::to_string(d.sh_n)
+                   + ":" + std::to_string(d.sh_m);
+    }
+    return "UNKNOWN:" + std::to_string(col);   // unreachable; keeps -Wreturn-type quiet
+}
+
 void NetworkEstimator::reset() {
     // Clear the shared-column layout for a new epoch.  index_ (a few-hundred-node
     // map) and columns_ are small; their per-epoch churn is negligible next to the
@@ -216,7 +233,15 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
                 "carry_invariant the ensemble datum is superseded — realize the phase datum "
                 "with the pre-reduce tree pins (addStationPrior) instead.");
         }
-        neq_.foldReducedDdPriors(dd_priors_, seam_threads_);
+        // network.parallel_carry: run the fold SERIAL-over-blocks (block_threads=1) with
+        // WITHIN-BLOCK per-station threading (station_threads) — the fold's dominant cost is
+        // the per-station reduction, which the seam's block-parallelism (only ~few blocks)
+        // and Eigen's GEMM threading both leave serial.  OFF ⇒ seam_threads_ block-parallel
+        // (byte-identical), no within-block fan-out.
+        if (carry_par_threads_ > 1)
+            neq_.foldReducedDdPriors(dd_priors_, /*block_threads=*/1, carry_par_threads_);
+        else
+            neq_.foldReducedDdPriors(dd_priors_, seam_threads_);
     }
 
     // Apply the explicit minimum-constraint datum to a COPY of the reduced

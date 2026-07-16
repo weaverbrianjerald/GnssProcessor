@@ -1398,6 +1398,35 @@ namespace GnssProcessor {
         bool estimateNetworkIonoSh() const { return estimate_network_iono_sh_; }
 
         /**
+         * @brief Pre-seed a cold receiver clock from GPS code before the first
+         *        network ambiguity seed (@c network.cold_clock_seed).
+         *
+         * On the PPP-RTK NETWORK path nothing pre-solves the per-station
+         * receiver clock before ambiguities are first seeded: @c syncPppState-
+         * ToStateVector (the PPP/user-path writer of @c x(clockIndex) from a
+         * code clock) is never called from @c ApplicationNetwork, so the clock
+         * state is 0 at the first epoch.  @c StateManager::computeAmbiguitySeed
+         * subtracts @c clk_term=x(clock)=0, so a free-running receiver's WHOLE
+         * clock offset (e.g. JPLM ≈ 0.856 ms → 2.6e5 m) leaks UNIFORMLY into
+         * every cold ambiguity seed — warping the correction-frame lane rows the
+         * downstream WL cascade differences.
+         *
+         * When on, @c MeasurementModel::ensureRequiredStates calls
+         * @c StateInitializer::seedColdReceiverClock ONCE per station (before the
+         * ambiguity-seed loop, after the iono seed) to write the median GPS code
+         * residual — the GPS-referenced receiver clock — into @c x(clockIndex);
+         * the existing @c clk_term subtraction then removes it from every seed.
+         * It fires only while the clock is genuinely cold (state == 0), so it
+         * never clobbers the PPP path's already-synced clock.
+         *
+         * Default false: an OFF run never calls the seeder and is byte-identical
+         * to the pre-card producer.  Engaging it changes bytes for every fixture
+         * whose receiver clock ≠ 0, so byte-identity is guaranteed by the gate,
+         * not a threshold.
+         */
+        bool networkColdClockSeed() const { return network_cold_clock_seed_; }
+
+        /**
          * @brief A-priori satellite orbit/clock source for the network producer
          *        (@c network.apriori_source).
          *
@@ -2530,6 +2559,12 @@ namespace GnssProcessor {
         /// Card 4 (M1, D5 v2): σ̂₀² forgetting half-life in epochs (@c network.carry_invariant_innov_calibrate_window).
         double networkCarryInvariantInnovCalibrateWindow() const { return network_carry_invariant_innov_calibrate_window_; }
 
+        /// M5 card WL-1: the MW-seeded wide-lane pseudo-observation layer master
+        /// (@c network.mw_wl.enable).  When on, the per-station MW detector is built
+        /// (even with @c network.phase_leveling off) so its per-arc Welford means feed
+        /// the WL fold; OFF => byte-identical.  Requires @c network.carry_invariant.
+        bool networkMwWlSeed() const { return network_config_.mw_wl.enable; }
+
         /// PB emission-continuity filter (M5 prerequisite): slip-gated per-key
         /// scalar KF on the POST-REBASE emitted phase biases + a noise-calibrated
         /// jump gate — an outputs-only S-transparent smoother that clears the
@@ -2551,6 +2586,10 @@ namespace GnssProcessor {
         /// leaves the solve's per-epoch σ untouched (the combined-σ token `sigc_m`
         /// is a solve-covariance quantity and is NOT refined in v1).
         bool networkEmitPbFilterEmitSigma() const { return network_emit_pb_filter_emit_sigma_; }
+        /// PB filter: v2 data/model-driven gate — censoring-free σ̂_step feed +
+        /// model-scaled k·√(Ppred+R) threshold + seed demoted to a numerical guard,
+        /// so ONE jump_k (=4) transfers across cadences (30 s ↔ 300 s).  OFF ⇒ v1.
+        bool networkEmitPbFilterGateV2() const { return network_emit_pb_filter_gate_v2_; }
 
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
@@ -3210,6 +3249,28 @@ namespace GnssProcessor {
          * (slower-varying) clock a longer carry horizon than the ambiguities.
          */
         double networkClockModelMaxGapS() const { return network_clock_model_max_gap_s_; }
+
+        /**
+         * @brief Emit a satellite clock RATE (C1) derived from the solved clock, WITHOUT the
+         *        two-state carry prior (@c network.emit_clock_rate).
+         *
+         * Populates the emitted @c clock_c1_m_s (the product's C1 term, consumed as
+         * @c c0 + c1·dt so a low-latency / real-time consumer extrapolates instead of holding
+         * C0 constant — the SSR clock saw-tooth fix) by finite-differencing THIS satellite's
+         * posterior solved clock over its true elapsed time, decoupled from the solve: it injects
+         * NO clock prior and drives NO refloat, so the network solution is byte-identical to the
+         * off state — only the (otherwise-zero) C1 field changes.  This is the recalibration-
+         * supported alternative to @ref networkClockModel, whose two-state CARRY prior tightens
+         * the solution ~1× (the estimable is white-FM, not random-walk-FM — see
+         * docs/CLOCK_HADAMARD_CALIB) yet risks a NIS storm; the exploitable clock stability lives
+         * in the deterministic RATE, which this emits without carrying.  The staleness / reseed
+         * bound is @ref networkClockModelMaxGapS (past a gap the drift is not trustworthy ⇒ C1 ZOH
+         * for one epoch), and a datum re-reference reseeds the rate (no spurious step-driven rate).
+         * When @ref networkClockModel is on it already supplies C1, so this toggle is inert.
+         * The RT0-5 rate ceiling (@ref networkClockRunawayRateMps) policies this C1 too.
+         * Default off ⇒ C1 stays 0 (ZOH) ⇒ the product is byte-identical.
+         */
+        bool networkEmitClockRate() const { return network_emit_clock_rate_; }
 
         /// @brief Emit a per-satellite URA quality channel from the network product
         ///        (@c network.emit_ura, B1).  URA = EWMA(σ̂0) × formal clock σ (from the
@@ -4429,6 +4490,7 @@ namespace GnssProcessor {
         bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
         bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
         bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
+        bool network_cold_clock_seed_{false};             ///< Pre-seed a cold per-station receiver clock from the median GPS code residual before the first ambiguity seed (kills the network cold-start clock leak into cold ambiguity seeds).  Default OFF => byte-identical.
         NetworkAprioriSource network_apriori_source_{NetworkAprioriSource::Sp3}; ///< RTF-1: producer a-priori orbit/clock source (network.apriori_source); Sp3 (default) = precise SP3/CLK identity (byte-identical), BrdcRts = broadcast eph + external RTS orbits. Parse+store in Card 1; consumed by the producer core (later RTF-1 card).
         double network_apriori_clock_anchor_sigma_m_{0.0};  ///< RTF-1/D6: a-priori satellite-clock anchor pseudo-obs σ (m); 0 (default) = auto (mode-resolved at the producer), explicit positive wins. Parse+store only in Card 1.
         bool   network_phase_leveling_{false};            ///< Carry per-station carrier-phase ambiguities across epochs (phase-leveling, Increment 1); OFF = byte-identical absolute solve.
@@ -4530,6 +4592,7 @@ namespace GnssProcessor {
         double network_emit_pb_filter_max_gap_s_{600.0};   ///< PB filter: arc gap (s) beyond which a returning key is a first sighting (re-init, no smoothing across the gap). INERT unless network_emit_pb_filter_.
         double network_emit_pb_filter_window_epochs_{60.0};///< PB filter: exponential-forgetting half-life (emitted epochs) of the σ̂_step estimator. INERT unless network_emit_pb_filter_.
         bool   network_emit_pb_filter_emit_sigma_{false};  ///< PB filter: stamp the filter posterior σ (√P) onto the emitted phase-bias σ (sigma_m) so a consumer weights by the shrunk uncertainty; false leaves the solve's per-epoch σ untouched. The M4 combined-σ token (sigc_m) is a solve-covariance quantity and is NOT refined in v1. INERT unless network_emit_pb_filter_.
+        bool   network_emit_pb_filter_gate_v2_{false};     ///< PB filter v2: data/model-driven reset gate replacing the v1 hand-tuned (per-cadence) k/seed. Three coupled changes: (a) CENSORING-FREE σ̂_step feed (kInnovation rows feed too — kills the death-spiral where withheld gate-scale steps biased σ̂ low and tightened the gate); (b) MODEL-SCALED gate |innov| > jump_k·√(Ppred+R) so dt enters via the prior's q·gap term and ONE jump_k transfers 30 s↔300 s; (c) meas_sigma_m demoted to a numerical seed (floor becomes ~1 mm absolute, jump_k back to a universal 4). INERT unless network_emit_pb_filter_. OFF ⇒ v1 bit-for-bit.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
@@ -4541,6 +4604,7 @@ namespace GnssProcessor {
         bool   network_service_mode_{false};               ///< RTB-8: curated RT-service profile switch (network.service_mode) — the loader arms the coherent producer toggle set (bundle-wins over explicit disables, each override warned; see loadNetworkSection_).  Member kept purely for PROVENANCE (getter + L15 run manifest); OFF = nothing armed (byte-identical).
         double network_clock_model_meas_std_m_{0.05};    ///< Std (m) of the network-solved offset as the two-state model's measurement (the update R).
         double network_clock_model_max_gap_s_{120.0};    ///< R11: max unseen gap (s) the carried two-state clock model survives before reseed / drift-reset / C1-ZOH; loader defaults it to network_phase_leveling_max_gap_s_ (clock-model carry only, distinct from the ambiguity/ZWD max-gap).
+        bool   network_emit_clock_rate_{false};          ///< Emit C1 (clock rate) by finite-differencing the solved clock, decoupled from the solve (no prior, no refloat) — the byte-identical-when-off alternative to network_clock_model's no-go carry; the recalibration-supported way to ship clock stability (docs/CLOCK_HADAMARD_CALIB). Inert when clock_model on (which already emits C1). OFF ⇒ C1 stays 0/ZOH (byte-identical).
         // --- RT0-4: product generation-time metadata ---
         bool   network_emit_generation_time_{false}; ///< RT0-4: stamp a wall-clock time-of-generation per emitted epoch (optional G record) so a consumer can measure product latency; OFF = no G record (byte-identical). Wall-clock ⇒ non-deterministic when on.
         // --- RT0-5: per-constellation clock-runaway quarantine ---

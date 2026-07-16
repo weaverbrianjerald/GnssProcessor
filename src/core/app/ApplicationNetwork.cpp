@@ -80,8 +80,10 @@
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
+#include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
 #include "filter/StateKeySchema.hpp"
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
+#include "slip/MwLaneTiers.hpp"         // UWL-1 per-constellation lane-tier band table
 #include "slip/MwSlipDetector.hpp"      // T0 phase-leveling slip repair (Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
@@ -110,6 +112,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <numeric>             // std::iota (netar ILS-cap subset ordering)
 #include <optional>
 #include <set>
 #include <sstream>
@@ -1126,11 +1129,44 @@ int Application::runNetwork() {
         // byte-identical.  setCorrections(&this station's GnssCorrections) engages
         // the BIA-corrected wide-lane path (integer dN) where biases are available;
         // arc state lives on the detector and is station-local (parallel-safe).
-        if ((config_.networkPhaseDatumPrioritized() || !is_pivot)
+        // M5 card WL-1: the MW-seeded wide-lane layer also needs the per-station MW
+        // detector running (its per-arc Welford means feed the WL fold), and it must
+        // work in the 3card lineage where phase_leveling is OFF.  Relax the gate to
+        // build the detector on EVERY station when network.mw_wl.enable, independent of
+        // phase_leveling / turbo_edit / mw_detect.  OFF (mw_wl disabled) is unchanged.
+        const bool build_slip_for_pl =
+            (config_.networkPhaseDatumPrioritized() || !is_pivot)
             && config_.networkPhaseLeveling()
-            && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect())) {
+            && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
+        // M5 card WL-2 (SPEC_ewl_wl_cascade_card.md §4): the EWL/WL lanes also need the
+        // per-station MW detector running (its per-arc Welford means feed the EWL/MW(1,2)
+        // statistics).  OFF (all lanes disabled) ⇒ unchanged.
+        const auto& mwc = config_.getNetworkConfig().mw_wl;
+        const auto& lcc = config_.getNetworkConfig().lane_carry;   // M5 WL-3
+        if (build_slip_for_pl || config_.networkMwWlSeed()
+            || mwc.ewl_enable || mwc.wl_inject_enable || lcc.enable) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
             st.mw_slip->setCorrections(&st.model->getCorrections());
+            // M5 card WL-2 (SPEC §3.4): arm the tri-frequency GF_b phase bridge accumulator
+            // only when a consumer of the bridge exists — the WL-2 inject path or the WL-3
+            // lane bridge increments — together with the EWL integers it bridges from.
+            // OFF ⇒ the detector never touches a bridge arc (byte-identical).
+            st.mw_slip->setBridgeEnabled(
+                (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable);
+            // M5 card UWL-1 (SPEC_uwl_card.md §3.1): push the per-constellation lane-tier
+            // band digits for the bridge band pick.  Not pushed (empty) unless the card is
+            // armed ⇒ the legacy {1,2,5} scan for every constellation, byte-identical —
+            // including under multi-GNSS active_systems (§6.1(b)).  With the table pushed,
+            // a constellation ABSENT from it (BDS-3, deferred on its clock divergence)
+            // forms NO bridge arc; the wiring warns loudly instead of skipping silently.
+            if (mwc.uwl_enable) {
+                std::map<char, MwLaneTier> tiers;
+                for (const char cons : { 'G', 'E' })
+                    if (const auto t = mwLaneTierOf(cons, mwc.uwl_gal_top_band,
+                                                    mwc.uwl_mid_enable, mwc.uwl_dual_top))
+                        tiers[cons] = *t;
+                st.mw_slip->setLaneTiers(std::move(tiers));
+            }
             // The TurboEdit MW+GF integer REPAIR resolver is built ONLY for turbo_edit
             // (higher-rate 1 s data, where the geometry-free ionospheric drift over the
             // epoch gap is small enough to trust an integer).  mw_detect uses the SAME MW
@@ -1305,6 +1341,18 @@ int Application::runNetwork() {
     if (seam_on)
         log->info("Network: post-solve carry-fold/D5 seam PARALLEL across {} threads "
                   "(deterministic — byte-identical to the serial fold)", n_threads);
+    // network.parallel_carry: thread the Card-4 carry's dense per-block algebra
+    // (buildDdPriors W·Pᶻ·Wᵀ, foldReducedDdPriors, installPosterior) via Eigen's own
+    // multi-threaded GEMM.  The seam only parallelizes the carry over the ~few blocks;
+    // this un-pins Eigen so each block's O(K²–K³) matmul fans across cores.  Runs those
+    // stages SERIAL-over-blocks (n_threads=1) so Eigen threading does not nest with the
+    // seam's OpenMP.  Reassociates the dense products ⇒ ~1e-X ULP drift vs serial (like
+    // parallel_reduce); default OFF keeps Eigen pinned and the seam/serial path (byte-id).
+    const bool carry_par = parallel_on && nc.parallel_carry;
+    if (carry_par)
+        log->info("Network: Card-4 carry dense algebra Eigen-THREADED across {} threads "
+                  "(buildDdPriors / foldReducedDdPriors / installPosterior; serial≡parallel "
+                  "byte-identity intentionally relaxed to ~1e-X — physically null)", n_threads);
 #ifndef _OPENMP
     if (nc.parallel_stations && n_sta_total > nc.parallel_min_stations)
         log->warn("Network: parallel_stations requested but this build has no OpenMP "
@@ -2098,6 +2146,11 @@ int Application::runNetwork() {
     // Two-state oscillator clock state per satellite (network.clock_model): the carried
     // [offset, drift] + 2×2 covariance, persisted across epochs.  Empty / inert unless clk_model_on.
     std::map<std::string, ClockOsc> clock_osc;   // per-sat carried [offset,drift]+cov+t_last (P0-3: t_last drives per-sat prediction/drift-FD across gaps)
+    // network.emit_clock_rate: decoupled per-sat rate state used ONLY to derive the emitted C1 by
+    // finite-differencing the posterior solved clock (x0=prev solved offset, x1=drift, t_last).  Never
+    // feeds a prior or a refloat ⇒ the solution is byte-identical; only clock_c1_m_s changes.  Empty /
+    // inert unless emit_clock_rate_on (which is off whenever clk_model_on supplies C1 from clock_osc).
+    std::map<std::string, ClockOsc> clock_rate_est;
     // Card 6 (RTF-2, network.apriori_source = brdc_rts): the broadcast-ephemeris IODE
     // that each satellite's CARRIED clock state (clock_osc.x0 / the D2 clock carry /
     // the clock-monitor jump baseline) is currently referenced to.  Advanced at the
@@ -2305,6 +2358,10 @@ int Application::runNetwork() {
     const double clk_model_r =   // B3: σ_floor² lower bound on the clock-model fault variance S
         config_.networkClockModelMeasStdM() * config_.networkClockModelMeasStdM();
     const double clk_model_max_gap = config_.networkClockModelMaxGapS();  // R11: clock-model carry reseed / drift-reset / C1-ZOH bound (defaults to pl_max_gap_s)
+    // Emit C1 (clock rate) from the finite-differenced solved clock WITHOUT the two-state carry
+    // (network.emit_clock_rate): decoupled rate estimator (clock_rate_est below) — no prior, no
+    // refloat ⇒ byte-identical solution.  Inert when clk_model_on (which already supplies C1).
+    const bool   emit_clock_rate_on = config_.networkEmitClockRate() && !clk_model_on;
     const double start_offset_s = config_.networkStartOffsetHours() * 3600.0;  // testing fast-forward (0 = off)
 
     // L15: run-provenance manifest (network.write_run_manifest).  JSONL — a startup record
@@ -2368,6 +2425,7 @@ int Application::runNetwork() {
                << "\"parallel_max_threads\":" << nc.parallel_max_threads << ','
                << "\"parallel_reduce\":" << (nc.parallel_reduce ? "true" : "false") << ','
                << "\"parallel_seam\":" << (nc.parallel_seam ? "true" : "false") << ','
+               << "\"parallel_carry\":" << (nc.parallel_carry ? "true" : "false") << ','
                << "\"n_threads\":" << n_threads << ','
                << "\"trace_stations\":" << (nc.trace_stations ? "true" : "false") << ','
                << "\"trace_ionosphere\":" << (nc.trace_ionosphere ? "true" : "false") << ','
@@ -2436,6 +2494,7 @@ int Application::runNetwork() {
                << fmt::format("\"clock_model_k_sigma\":{},", clk_model_k)
                << fmt::format("\"clock_model_meas_std_m\":{},", config_.networkClockModelMeasStdM())
                << fmt::format("\"clock_model_max_gap_s\":{},", clk_model_max_gap)
+               << "\"emit_clock_rate\":" << (config_.networkEmitClockRate() ? "true" : "false") << ','
                << "\"emit_ura\":" << (ura_on ? "true" : "false") << ','
                << fmt::format("\"ura_ewma_alpha\":{},", ura_alpha)
                << "\"consume_ura\":" << (config_.networkConsumeUra() ? "true" : "false") << ','
@@ -2456,6 +2515,10 @@ int Application::runNetwork() {
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
                << "\"carry_invariant_innov_calibrate\":"
                << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
+               << "\"mw_wl_enable\":" << (config_.networkMwWlSeed() ? "true" : "false") << ','   // M5 card WL-1
+               << fmt::format("\"mw_wl_min_arc_epochs\":{},", config_.getNetworkConfig().mw_wl.min_arc_epochs)
+               << fmt::format("\"mw_wl_sigma_floor_cyc\":{},", config_.getNetworkConfig().mw_wl.sigma_floor_cyc)
+               << fmt::format("\"mw_wl_max_rows_per_epoch\":{},", config_.getNetworkConfig().mw_wl.max_rows_per_epoch)
                << "\"emit_pb_filter\":" << (config_.networkEmitPbFilter() ? "true" : "false") << ','
                << fmt::format("\"emit_pb_filter_q\":{},", config_.networkEmitPbFilterQ())
                << fmt::format("\"emit_pb_filter_jump_k\":{},", config_.networkEmitPbFilterJumpK())
@@ -2464,6 +2527,8 @@ int Application::runNetwork() {
                << fmt::format("\"emit_pb_filter_window_epochs\":{},", config_.networkEmitPbFilterWindowEpochs())
                << "\"emit_pb_filter_emit_sigma\":"
                << (config_.networkEmitPbFilterEmitSigma() ? "true" : "false") << ','
+               << "\"emit_pb_filter_gate_v2\":"   // PB-gate-v2 merge point (config echo)
+               << (config_.networkEmitPbFilterGateV2() ? "true" : "false") << ','
                << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
                << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
@@ -2609,7 +2674,305 @@ int Application::runNetwork() {
     // D5 v2: LS-VCE calibration of the gate threshold (σ̂₀²); requires innov_gate (config-rejected).
     carry_cfg.innov_calibrate        = carry_innov_gate && config_.networkCarryInvariantInnovCalibrate();
     carry_cfg.innov_calibrate_window = config_.networkCarryInvariantInnovCalibrateWindow();
+    // M5 card WL-3 (docs/SPEC_lane_carry_card.md): the lane-coordinate carry.  The loader
+    // enforces carry_invariant + mw_wl.ewl_enable.  lane_joint discriminates the LANE
+    // shape (joint 2K pair blocks, lane prior/q, lane measurement rows, fold-on-change
+    // fixing) from the §6.1 EQUIVALENCE shape (all lane features at their isotropic/off
+    // sentinels ⇒ split per-band emission, information-identical to the per-band carry).
+    const auto& lane_cfg = config_.getNetworkConfig().lane_carry;
+    const bool lane_on = carry_invariant && lane_cfg.enable;
+    const bool lane_joint = lane_on
+        && (lane_cfg.q_wl_scale != 1.0 || lane_cfg.sigma_wl_fresh_cyc > 0.0
+            || lane_cfg.lane_meas || lane_cfg.bridge_meas);
+    if (lane_on) {
+        carry_cfg.q_wl_scale         = lane_cfg.q_wl_scale;
+        carry_cfg.sigma_wl_fresh_cyc = lane_cfg.sigma_wl_fresh_cyc;
+        carry_cfg.lane_joint         = lane_joint;
+    }
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
+    // M5 card WL-1: the MW-seeded wide-lane pseudo-observation layer (docs/SPEC_mw_wl_card.md).
+    // Rides the carry driver's chord basis, so it requires carry_invariant (config-rejected
+    // otherwise).  OFF (mw_wl.enable=false) ⇒ NetworkMwWlLayer::build returns no blocks and the
+    // per-station MW detectors are not built for it, so the producer is byte-identical.
+    const bool mw_wl_on = carry_invariant && config_.networkMwWlSeed();
+    // M5 card WL-2 (docs/SPEC_ewl_wl_cascade_card.md §3.1): when the EWL lane is armed the
+    // constellation's THIRD band (the EWL pair's uncarried leg — GPS L5, Galileo E5b) is
+    // deliberately EXCLUDED from the invariant-carry driver so that lane acquires no unearned
+    // stiff prior (the F6 wall) and its EWL rows win cleanly.  The band stays in the eq34
+    // election/datum (shared_phase_keys/pins are built upstream, untouched).  OFF ⇒ the third
+    // band is carried exactly as today (byte-identical).  v1 = GPS+Galileo (GLONASS never carried).
+    const auto& nmw = config_.getNetworkConfig().mw_wl;
+    const bool ewl_carry_exclude = carry_invariant && nmw.ewl_enable;
+    // M5 card UWL-1 (docs/SPEC_uwl_card.md §3.1): under the armed card the uncarried band
+    // comes from the per-constellation lane-tier table (Galileo's top band is selectable:
+    // '7' = E5b λ 9.768 m, '8' = E5 AltBOC λ 19.537 m).  uwl_enable=false keeps the legacy
+    // digits verbatim — the §6.1(b) gate: arming a constellation without the card changes
+    // NOTHING.  For GPS (and Galileo at the default '7') the table reproduces the legacy
+    // digits, so armed GPS-only runs stay bit-identical too.
+    const bool uwl_excl_on = ewl_carry_exclude && nmw.uwl_enable;
+    const char uwl_gal_top = nmw.uwl_gal_top_band;
+    const bool uwl_dual    = nmw.uwl_dual_top;   // increment 5: BOTH {b_top, b_top2} uncarried
+    auto isUncarriedThirdBand = [uwl_excl_on, uwl_gal_top, uwl_dual](
+                                    char cons, const std::string& signal) -> bool {
+        const char band = signal.size() >= 2 ? signal[1] : '\0';   // "L5Q" → '5'
+        if (uwl_excl_on) {
+            const auto tier = mwLaneTierOf(cons, uwl_gal_top, false, uwl_dual);
+            return tier && (band == tier->b_top
+                            || (tier->b_top2 != '\0' && band == tier->b_top2));
+        }
+        switch (cons) {
+            case 'G': return band == '5';   // GPS  EWL = (L2,L5) ⇒ L5 uncarried
+            case 'E': return band == '7';   // Galileo EWL = (E5b,E5a) ⇒ E5b(7) uncarried
+            default:  return false;         // BDS/QZSS deferred; GLONASS excluded from the carry anyway
+        }
+    };
+    NetworkMwWlLayer::Config mw_wl_cfg;
+    mw_wl_cfg.enable             = mw_wl_on;
+    mw_wl_cfg.min_arc_epochs     = config_.getNetworkConfig().mw_wl.min_arc_epochs;
+    mw_wl_cfg.sigma_floor_cyc    = config_.getNetworkConfig().mw_wl.sigma_floor_cyc;
+    mw_wl_cfg.max_rows_per_epoch = config_.getNetworkConfig().mw_wl.max_rows_per_epoch;
+    mw_wl_cfg.debug_r_scale      = config_.getNetworkConfig().mw_wl.debug_r_scale;   // F6 probe (diagnostic)
+    NetworkMwWlLayer mw_wl_layer(mw_wl_cfg);
+    if (mw_wl_on && mw_wl_cfg.debug_r_scale != 1.0)
+        log->warn("Network (M5/WL-1): network.mw_wl.debug_r_scale = {} — DIAGNOSTIC probe, the WL "
+                  "rows' Pz is scaled (not honest MW variance).  Do NOT grade this run.",
+                  mw_wl_cfg.debug_r_scale);
+    // M5 card WL-2 EWL lane (SPEC_ewl_wl_cascade_card.md §3.2): the SAME layer, run on the
+    // (band2, band5) pair with FFR statistic-gated fixing.  The third band is uncarried
+    // (excluded above) so these rows win with no F6 fight; a passed FFR folds an integer-hard
+    // row.  Rides the primary-sig1 cycle basis exactly as WL-1.
+    const bool ewl_on = carry_invariant && nmw.ewl_enable;
+    // M5 card UWL-1: the per-constellation top tier.  uwl_on generalizes the EWL lane's
+    // hardcoded GPS band digits to the lane-tier table (Galileo UWL (E5b|E5,E5a)); the
+    // cold fix additionally admits n=1 UNLAGGED statistics to the DECISION on tiers with
+    // λ ≥ uwl_cold_min_lambda_m (SPEC §3.3 — GPS's 5.861 m EWL deliberately excluded).
+    const bool uwl_on      = ewl_on && nmw.uwl_enable;
+    const bool uwl_cold_on = uwl_on && nmw.uwl_cold_fix;
+    // E6 mid-ladder bridge hop (census-motivated): chain the WL decision through the
+    // Galileo (E6,E5a) λ 2.931 m rung — re-rounding at λ_MID strips the top hop's
+    // λ-scale phase/iono amplification before it reaches the 0.751 m WL statistic.
+    const bool uwl_mid_on  = uwl_on && nmw.uwl_mid_enable;
+    // Increment 5: per-cycle preferred('8')/fallback('7') Galileo top rung + the
+    // untaken-sibling closure statistic (2·N(8,5) = N(7,5)); hard gate default OFF
+    // (measure the residual distribution first — SPEC reconciliation note 2).
+    const bool uwl_dual_on = uwl_on && nmw.uwl_dual_top;
+    const bool uwl_sib_gate_on = uwl_dual_on && nmw.uwl_sib_gate;
+    // v2 census recovery: minority receiver-family primary pairs get their OWN lane
+    // pair groups (admissible census-pair SET instead of the single majority pair).
+    const bool uwl_family_on = uwl_on && lane_on && nmw.uwl_family_pairs;
+    NetworkMwWlLayer::Config ewl_cfg;
+    ewl_cfg.enable              = ewl_on;
+    ewl_cfg.min_arc_epochs      = nmw.ewl_min_arc_epochs;
+    ewl_cfg.sigma_floor_cyc     = nmw.sigma_floor_cyc;
+    ewl_cfg.max_rows_per_epoch  = nmw.max_rows_per_epoch;
+    ewl_cfg.ffr_fix             = true;
+    ewl_cfg.fix_sigma_cyc       = nmw.ewl_fix_sigma_cyc;
+    ewl_cfg.fix_frac_cyc        = nmw.ewl_fix_frac_cyc;
+    ewl_cfg.fix_weight_sigma_cyc= nmw.fix_weight_sigma_cyc;
+    ewl_cfg.max_abs_xlin_m      = nmw.lane_max_abs_xlin_m;
+    // UWL-1: one statistic-layer instance per TABLED constellation when the card is armed
+    // (per-cons telemetry — the F-A dump taught us pooled lines hide which lane is
+    // storming); a single filterless instance otherwise (the legacy shape — for a
+    // GPS-only run the 'G'-filtered instance is bit-identical to it, the filter never
+    // fires).  An armed constellation that decides 0 cycles prints a loud 0-line
+    // (invariant #4), never silence.
+    struct EwlLane {
+        char cons;                        ///< cons filter (0 = all — the legacy single lane).
+        char top;                         ///< UWL-1: the instance's top-tier band digit ('\0' = legacy single lane).
+        NetworkMwWlLayer layer;
+        NetworkMwWlLayer::Counters run, epoch;
+    };
+    std::vector<EwlLane> ewl_lanes;
+    if (ewl_on) {
+        if (uwl_on) {
+            for (const char cons : { 'G', 'E' }) {
+                const auto tier = mwLaneTierOf(cons, nmw.uwl_gal_top_band,
+                                               nmw.uwl_mid_enable, nmw.uwl_dual_top);
+                if (!tier) continue;
+                NetworkMwWlLayer::Config cfg = ewl_cfg;
+                cfg.cons_filter = cons;
+                // Increment 5: the PREFERRED rung's instance runs FIRST (its ewl_fixed
+                // entries precede the fallback's, so the walk's dedupe keeps the wider-λ
+                // decision); the fallback instance decides only what the preferred one
+                // did not (a cycle with any preferred-band-less arc dies there as
+                // skip_missing_band — the per-cycle "where tracked" resolution).
+                ewl_lanes.push_back(EwlLane{ cons, tier->b_top, NetworkMwWlLayer(cfg), {}, {} });
+                if (tier->b_top2 != '\0')
+                    ewl_lanes.push_back(EwlLane{ cons, tier->b_top2,
+                                                 NetworkMwWlLayer(cfg), {}, {} });
+            }
+        } else {
+            ewl_lanes.push_back(EwlLane{ '\0', '\0', NetworkMwWlLayer(ewl_cfg), {}, {} });
+        }
+    }
+    // M5 card WL-2 WL lane (SPEC §3.3/§3.4): the phase-bridge WL decision + the NL-preserving
+    // inject.  The bridge path needs the EWL integers, so it runs only when BOTH masters are on;
+    // wl_inject alone runs the MW(1,2) fallback path (§3.5, deferred to a later increment — v1
+    // requires the bridge, else no WL decision is produced and the lane is inert but armed).
+    // WL-3 supersedes the WL-2 hold/inject walk at runtime (loader-warned): under
+    // lane_carry the decided integers become fold-on-change LANE fixes on the pair
+    // blocks and the inject primitive survives only as the pair-block fallback.
+    const bool wl_inject_on = ewl_on && nmw.wl_inject_enable && !lane_on;
+    // WL-3 per-epoch lane measurement sources (§3.2); the FFR fix walk runs whenever
+    // the joint lane shape is armed (fold-on-change is the §3.3 core, no separate knob).
+    const bool lane_meas_on   = lane_on && lane_joint && lane_cfg.lane_meas;
+    const bool lane_bridge_on = lane_on && lane_joint && lane_cfg.bridge_meas;
+    const bool lane_fix_on    = lane_on && lane_joint;
+    // One decided WL inject: the two bands' carry groups + the shared chord ArcKey + the integer
+    // target + the per-band linearization DD sums (F5 correction frame) + wavelengths.  Computed
+    // in buildCarryDdPriors from DETECTOR statistics (§3.0.1 decision source), APPLIED post-solve
+    // against the fresh posterior (so the preserved NL sum is this epoch's).  Refreshed each build
+    // (the last before the accepted solve wins, mirroring ewl_epoch).
+    struct WlInjectPlan {
+        int    group_l1{-1}, group_l2{-1};
+        ArcKey chord{0, 0};
+        double w{0.0};                 ///< integer WL DD target ∇ΔN_WL (cyc).
+        double z_lin1{0.0}, z_lin2{0.0};///< Σ coeff·x_lin per band over the cycle (m).
+        double lambda1{0.0}, lambda2{0.0};
+        bool   pair{false};            ///< WL-3: group_l1 (== group_l2) is a PAIR group — read/edit via the pair accessors (the fallback path; ~0 in steady state).
+        char   cons{'\0'};             ///< UWL-1: the chord's constellation (per-cons inject telemetry).
+    };
+    std::vector<WlInjectPlan> wl_inject_epoch;   // per-build; consumed post-installPosterior.
+    // F-A attribution dump (network.mw_wl.d5_dump, log-only): adjacency tags for each D5
+    // flag — the (station, sat) pairs an EWL-FIXED cycle touched this build, the chords of
+    // hold-folded cycles this build, and the chords injected LAST epoch (an inject's
+    // residual tension lands in the NEXT install; the injected chord itself is exempt, its
+    // component siblings are not).  All rebuilt per accepted build; empty unless d5_dump.
+    const bool mw_d5_dump = (ewl_on || wl_inject_on || lane_on) && nmw.d5_dump;
+    // F-B lane trace (network.mw_wl.lane_trace, log-only): per epoch, the carried WL lane
+    // value of EVERY primary cycle whose chord is carried in both bands — the constrained
+    // (held/injected) and unconstrained populations in one run, so the injected-cycle circR
+    // is finally gradable (scripts/grade_lane_trace.py).  Entries built per accepted build;
+    // written post-install against the FRESH posterior.
+    const bool mw_lane_trace = (wl_inject_on || lane_fix_on) && nmw.lane_trace;
+    const bool mw_tagsets    = mw_d5_dump || mw_lane_trace;   // hold/inject tag sets feed both
+    struct LaneTraceEntry {
+        ArcKey chord{0, 0};
+        int    g1{-1}, g2{-1};          ///< the two bands' carry group ids.
+        double z_lin1{0.0}, z_lin2{0.0};///< Σ coeff·x_lin per band over the cycle (m).
+        double lam1{0.0}, lam2{0.0};
+        std::string sat;                ///< chord satellite (chord.u = station index).
+    };
+    std::vector<LaneTraceEntry> lane_trace_epoch;   // per-build; consumed post-install.
+    bool lane_trace_header_written = false;
+    std::set<std::pair<int, std::string>> d5_ewl_stasat;
+    std::set<ArcKey> d5_hold_chords;
+    std::set<ArcKey> d5_inject_chords_prev, d5_inject_chords_now;
+    bool d5_dump_header_written = false;
+    struct WlCounters {
+        long long rows_seen{0};          ///< FFR-fixed EWL rows inspected by the bridge.
+        long long cycles_decided{0};     ///< bridge cycles that passed the WL FFR gate.
+        long long holds_folded{0};       ///< hold rows folded (carry already lane-consistent).
+        long long injects{0};            ///< injects applied post-solve (carry moved to the integer).
+        double    inject_abs_sum{0.0};   ///< Σ |w − carried lane| at inject (median-ish |Δ| via /injects).
+        long long skip_bridge_missing{0};///< an arc lacked a mature GF_b bridge arc.
+        long long skip_no_iono{0};       ///< §3.4 v2: an arc lacked a slant-iono estimate ⇒ can't de-bias.
+        long long skip_bridge_wide{0};   ///< bridge σ_row (incl. iono variance) > bridge_max_sigma_cyc.
+        long long skip_not_fixed{0};     ///< bridge FFR failed (σ or |frac|).
+        long long skip_closure{0};       ///< MW(1,2) cross-check disagreed with the bridge integer.
+        long long skip_quarantine{0};    ///< an arc's |x_lin| exceeded lane_max_abs_xlin_m.
+        long long skip_basis{0};         ///< inject: the chord is not 1:1 across BOTH bands' carry groups.
+        double    sum_bridge_R{0.0};     ///< Σ decided rows' bridge R (cyc²) for the mean-R report.
+        // --- WL-3 lane-carry telemetry (SPEC_lane_carry_card.md §3.2/§3.3). ---
+        long long lane_mw_rows{0};       ///< per-epoch MW(1,2) lane increments folded into pair blocks.
+        long long lane_bridge_rows{0};   ///< per-epoch bridge lane increments folded (EWL-fixed cycles).
+        long long lane_fix_folded{0};    ///< fold-on-change FFR fixes FOLDED (decision new/changed).
+        long long lane_fix_unchanged{0}; ///< FFR decisions seen with an unchanged integer (no fold — the F-A once-only discipline).
+        long long lane_skip_meas{0};     ///< lane-increment cycles skipped (immature/stale/mixed-frame/slipped arc/quarantine).
+        // --- UWL-1 cold-fix telemetry (SPEC_uwl_card.md §3.3). ---
+        long long cold_bridge_cycles{0}; ///< decided cycles whose bridge read was the UNLAGGED cold serve (post-slip early re-pin).
+        // --- E6 mid-ladder hop telemetry (uwl_mid_enable). ---
+        long long mid_decided{0};        ///< decided cycles whose WL statistic came through the two-hop mid chain.
+        long long mid_fallback{0};       ///< cycles with a live mid chain whose mid FFR failed ⇒ fell back to the direct hop.
+        long long mid_closure{0};        ///< mid integers blocked by the MW(6,5) closure ⇒ fell back to the direct hop.
+        long long mid_disagree{0};       ///< two-hop and direct integers BOTH FFR-credible yet different ⇒ cycle skipped (wrong-integer backstop).
+        // --- Increment 5: dual-top tier telemetry (uwl_dual_top). ---
+        long long top2_decided{0};       ///< decided cycles that came through the FALLBACK rung ('7' — the preferred '8' could not decide them).
+        long long dual_dedupe{0};        ///< fallback-rung entries skipped because the preferred rung already decided the (block,row) this build.
+        long long sib_checked{0};        ///< decided cycles whose untaken-sibling MW statistic was measurable across every arc.
+        long long sib_unavail{0};        ///< decided cycles whose sibling statistic was NOT measurable (an arc lacks the sibling band / MW arc).
+        long long sib_int_off{0};        ///< checked cycles whose sibling residual rounds to a NONZERO integer (wrong-integer signal — or a convention offset; measure first).
+        long long sib_blocked{0};        ///< decisions blocked by the armed sibling gate (uwl_sib_gate; the cycle falls to the fallback rung the same epoch).
+        double    sib_abs_frac_sum{0.0}; ///< Σ |frac(sibling residual)| over checked cycles (mean = the convention-offset dial: ~0 clean, ~0.5 half-cycle convention).
+    };
+    WlCounters wl_run, wl_epoch;
+    // UWL-1: per-constellation WL-walk tallies when the card is armed (pooled lines hide
+    // which lane is storming).  wl_run stays the aggregate — the per-epoch cons tallies
+    // fold into BOTH at the accepted-install accumulation.
+    std::map<char, WlCounters> wl_cons_epoch, wl_cons_run;
+    // Accepted-install accumulation helper (one place — the field list bit-rots in two).
+    auto wlAccumulate = [](WlCounters& a, const WlCounters& b) {
+        a.rows_seen           += b.rows_seen;
+        a.cycles_decided      += b.cycles_decided;
+        a.holds_folded        += b.holds_folded;
+        a.injects             += b.injects;
+        a.inject_abs_sum      += b.inject_abs_sum;
+        a.skip_bridge_missing += b.skip_bridge_missing;
+        a.skip_no_iono        += b.skip_no_iono;
+        a.skip_bridge_wide    += b.skip_bridge_wide;
+        a.skip_not_fixed      += b.skip_not_fixed;
+        a.skip_closure        += b.skip_closure;
+        a.skip_quarantine     += b.skip_quarantine;
+        a.skip_basis          += b.skip_basis;
+        a.sum_bridge_R        += b.sum_bridge_R;
+        a.lane_mw_rows        += b.lane_mw_rows;
+        a.lane_bridge_rows    += b.lane_bridge_rows;
+        a.lane_fix_folded     += b.lane_fix_folded;
+        a.lane_fix_unchanged  += b.lane_fix_unchanged;
+        a.lane_skip_meas      += b.lane_skip_meas;
+        a.cold_bridge_cycles  += b.cold_bridge_cycles;
+        a.mid_decided         += b.mid_decided;
+        a.mid_fallback        += b.mid_fallback;
+        a.mid_closure         += b.mid_closure;
+        a.mid_disagree        += b.mid_disagree;
+        a.top2_decided        += b.top2_decided;
+        a.dual_dedupe         += b.dual_dedupe;
+        a.sib_checked         += b.sib_checked;
+        a.sib_unavail         += b.sib_unavail;
+        a.sib_int_off         += b.sib_int_off;
+        a.sib_blocked         += b.sib_blocked;
+        a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
+    };
+    // WL-3 regroup census (run totals; the equivalence leg reads these).
+    long long lane_pair_arcs = 0;           ///< arcs routed into pair groups.
+    long long lane_resid_arcs = 0;          ///< primary-band arcs left in residual per-band groups (partner missing/unshared).
+    long long lane_pair_tree_mismatch = 0;  ///< pair arcs whose two bands' eq34 tree tags disagreed (band-1's tag governs).
+    // FDMA-correct per-signal wavelengths for the WL/EWL-row coefficients and z.  Built when
+    // EITHER lane is armed (mirrors ar_ppp_utils).
+    std::unique_ptr<PppUtils> mw_wl_ppp_utils;
+    if (mw_wl_on || ewl_on || lane_on) mw_wl_ppp_utils = std::make_unique<PppUtils>(log_manager_);
+    NetworkMwWlLayer::Counters mw_wl_run;    // run-total eligibility/skip tallies (invariant #4)
+    NetworkMwWlLayer::Counters mw_wl_epoch;  // per-build tallies (the last build before the accepted solve wins)
+    // M5 card WL-1 F6 diagnostic: one-shot per-arc/per-row attribution dump of the FIRST
+    // arming epoch's WL rows (docs/HANDOFF_mw_wl_card.md §6c).  Populated in
+    // buildCarryDdPriors (build-time: z_MW/z_lin/z_corr + per-arc MW̄/x_lin, where the
+    // resolver + revmap are in scope) and finalized post-solve (reconstructed_abs from
+    // reconstructStation + the kernel's WL-block innovation).  Log-only; default OFF.
+    const bool mw_wl_f6_dump = mw_wl_on && config_.getNetworkConfig().mw_wl.f6_dump;
+    struct F6Arc {
+        int         est_station{-1};
+        int         col1{-1}, col2{-1};
+        std::string sat, sig1, sig2;
+        double      coeff{0.0};       // signed cycle coefficient c (±1 for a plain DD)
+        double      mw_mean_m{0.0};   // ZD-consistent arc MW mean (m)
+        double      mw_var_m2{0.0};
+        long long   mw_count{0};
+        bool        bia_corrected{false};
+        double      x_lin1{0.0}, x_lin2{0.0};              // amb linearization values (m)
+        double      lambda1{0.0}, lambda2{0.0}, lambda_wl{0.0};
+    };
+    struct F6Row {
+        std::vector<F6Arc> arcs;
+        double z_mw{0.0}, z_lin{0.0}, z_corr{0.0}, zhat_block{0.0};
+    };
+    struct F6Capture {
+        bool                 pending{false};   // captured this epoch, awaiting the post-solve write
+        bool                 written{false};   // one-shot latch (whole run)
+        double               week{0.0}, tow{0.0};
+        int                  loop_epoch{-1};
+        std::size_t          wl_block_index{0};
+        std::vector<F6Row>   rows;
+    } mw_wl_f6;
     // Card 4 (M1) phase D: the emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md).
     // Re-references the emitted per-(sat,σ) phase biases onto the previous EMISSION
     // frame so the freely-re-realized eq34 datum's per-epoch gauge churn does not
@@ -2632,11 +2995,26 @@ int Application::runNetwork() {
     pb_filter_cfg.meas_sigma_m   = config_.networkEmitPbFilterMeasSigmaM();
     pb_filter_cfg.max_gap_s      = config_.networkEmitPbFilterMaxGapS();
     pb_filter_cfg.window_epochs  = config_.networkEmitPbFilterWindowEpochs();
+    pb_filter_cfg.gate_v2        = config_.networkEmitPbFilterGateV2();  // PB-gate-v2 merge point (leaf wiring)
     NetworkPbEmitFilter pb_filter_engine(pb_filter_cfg);
     const bool pb_filter_emit_sigma = config_.networkEmitPbFilterEmitSigma();
     std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
     std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
     bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
+    // UWL-1 §3.1: once-per-run loud-skip warns — a constellation whose cycles enter
+    // the EWL machinery without a lane tier (untabled under the armed card, or any
+    // non-GPS constellation under the legacy digits) must fail LOUDLY, not as a
+    // silent skip_missing_mw pile (the measured Galileo death, SPEC §1 fact 3).
+    std::set<char> uwl_warned_cons;
+    // WL-3 census visibility (once per run per cons; log-only).
+    std::set<char> lane_census_logged;
+    // v2 (uwl_family_pairs): the run-persistent admissible pair set per constellation.
+    // A pair joins when its joint-census count first reaches uwl_family_min_arcs and
+    // stays admitted for the run (LATCHED — membership flicker would refloat the
+    // family group's carried chords every flip, the WL-3 micro-pair-group hazard;
+    // a latched pair whose channels vanish simply routes no arcs, harmless).
+    std::map<char, std::set<std::pair<std::string, std::string>>> lane_admit_pairs;
+    std::set<std::pair<char, std::string>> lane_family_logged;   // once-per-pair INFO
     double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
     long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
               carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
@@ -3115,15 +3493,53 @@ int Application::runNetwork() {
     // stays serial (byte-identical serial≡parallel) while the build still threads and
     // the deterministic serial-tail wins (eigensolver gate, no double-reduce, factor
     // reuse) still apply.  Enable network.parallel_reduce for max-speed runs.
-    const int reduce_threads = (parallel_on && nc.parallel_reduce) ? n_threads : 1;
+    //
+    // Guardrail (Fable lean review, Jul-14 eve): parallel_reduce OpenMP-fans reduce()'s
+    // per-station Schur loop; parallel_carry OpenMP-fans the fold's per-station reduction
+    // and est.solve()'s dense algebra (fold GEMMs + the K×K middle inverse) is itself
+    // Eigen-threaded — so armed together they nest OpenMP × Eigen inside reduce() and
+    // oversubscribe.  They are therefore MUTUALLY EXCLUSIVE, resolved at LOAD time
+    // (loadNetworkSection_ forces parallel_carry OFF when both are set), so by here at most
+    // one of nc.parallel_reduce / nc.parallel_carry is true.  The `!carry_par` below is thus
+    // belt-and-suspenders: it can no longer be false while reduce is armed.
+    const bool reduce_par   = parallel_on && nc.parallel_reduce && !carry_par;
+    const int  reduce_threads = reduce_par ? n_threads : 1;
     est.setReduceThreads(reduce_threads);
     // Deterministic-parallel DD carry-fold fan-out (network.parallel_seam); 1 = serial.
     est.setSeamThreads(seam_threads);
+    // network.parallel_carry: when armed, solve()'s foldReducedDdPriors runs SERIAL-over-
+    // blocks with WITHIN-BLOCK per-station threading (Eigen stays PINNED, so the driver does
+    // NOT un-pin it around solve()).  OFF ⇒ the fold keeps seam_threads (block-parallel
+    // seam), byte-identical.
+    est.setCarryParallelThreads(carry_par ? n_threads : 1);
+    // network.parallel_carry: RAII un-pin of Eigen's internal threading around ONE
+    // compute-bound-GEMM carry stage.  Used at exactly TWO sites — buildDdPriors (W·Pᶻ·Wᵀ)
+    // and installPosterior (posterior-covariance read-back) — whose cost is big dense GEMMs
+    // Eigen threads well.  The THIRD stage, the fold (foldReducedDdPriors), is deliberately
+    // NOT wrapped: its cost is the per-station reduction (small inner-dim matmuls + a serial
+    // LDLT), which Eigen can't thread — it self-fans with its OWN OpenMP and Eigen PINNED,
+    // so wrapping solve() here would nest that OpenMP with Eigen's GEMM threads.  The epoch
+    // loop pins Eigen to one thread (line ~3086, to avoid nesting inside the per-station
+    // OpenMP assembly region); these two stages run OUTSIDE that region, so un-pinning fans
+    // their GEMMs across cores.  Restores the pin on EVERY exit path (an early `continue`, a
+    // withheld-epoch skip, or a thrown call) so the next epoch's assembly / the fold's own
+    // OpenMP is never left with Eigen un-pinned.  Inert unless @c on — so an OFF (default)
+    // run never touches Eigen's thread count here (byte-id).
+    struct CarryEigenScope {
+        bool active;
+        int  saved;
+        CarryEigenScope(bool on, int nthreads) : active(on), saved(Eigen::nbThreads()) {
+            if (active) Eigen::setNbThreads(nthreads);
+        }
+        ~CarryEigenScope() { if (active) Eigen::setNbThreads(saved); }
+        CarryEigenScope(const CarryEigenScope&) = delete;
+        CarryEigenScope& operator=(const CarryEigenScope&) = delete;
+    };
     // Pin-aware station PD guard (network.station_pd_pin_aware): median-|pivot|
     // reference scale for the local-block rank test — the prioritized datum's
     // in-block 1e10 anchor pins otherwise eject marginal stations every epoch.
     est.setStationPdMedianScale(config_.networkStationPdPinAware());
-    if (parallel_on && nc.parallel_reduce)
+    if (reduce_par)
         log->info("Network: Schur reduce PARALLEL across {} threads "
                   "(serial≡parallel byte-identity intentionally relaxed to ~1e-5)",
                   n_threads);
@@ -3138,11 +3554,85 @@ int Application::runNetwork() {
     const bool sec_timers_on = nc.trace_section_timers;
     est.setPerfTiming(sec_timers_on);
     est.resetSectionTimers();
+    // INC-C0: arm the carry driver's per-op timers on the SAME toggle — splits the
+    // SB_DDBUILD / SB_INSTALL wall brackets into basis-projection vs posterior read-back
+    // vs D5-gate (the dense-K² ops the perf-restructure card ranks).  Byte-identical off.
+    carry_driver.setPerfTiming(sec_timers_on);
+    carry_driver.resetPerfTimers();
     double sec_asm_wall_ms = 0.0;      // D0: run-total driver-side assembly wall (produce + serial scatter)
     std::size_t sec_profiled_epochs = 0;  // D0: #epochs that reached the post-solve per-epoch readout
     if (sec_timers_on)
         log->info("Network (D0): per-epoch section timers ARMED "
                   "(assembly / reduce / solve / cov-inverse / cov-consumers).");
+
+    // === Tier D0b: sub-instrument the "other" bucket (network.trace_section_timers) ==
+    // "other" = loop wall − assembly − reduce − solve − cov-inverse − cov-consumers was
+    // measured at ~81 % (42.9 s/ep) of the epoch on the 300 s GPS-only tier and scales
+    // with LOS count (docs/HANDOFF_perlos_parallel_sweeps.md §1) — yet none of it was
+    // timed individually.  These per-block driver-side wall timers attribute it.  For each
+    // block, net = wall − Δ(reduce + solve + cov-inverse + cov-consumers) incurred INSIDE
+    // it, so the recon/solve time already counted in the five D0 sections is NOT double-
+    // counted: net is the block's TRUE contribution to "other" (a block that reconstructs
+    // N stations shows its driver glue as net, its O(nₛ²) recon as cov-consumers).  The
+    // brackets are disjoint and tile the loop body between the assembly wall and the
+    // emitted-epoch readout; the residual (other − Σ net) is logged as "unattributed".
+    // Inert (no clock reads, no est.sectionTimers() calls) when the toggle is OFF — the
+    // subBegin/subEnd lambdas early-return, so byte-identity with an untimed run holds.
+    enum SubBlock {
+        SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly
+        SB_PREASM,       //          pre-assembly measurement build (post-slip → assembly wall)
+        SB_GAUGEBUILD,   //          buildEnsembleGauges (Σz=0 gauges) — OFF (ensemble) in the tier
+        SB_DDBUILD,      //          buildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
+                         //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) [Card-4]
+        SB_SOLVEGLUE,    //          pre-solve prep + clock predict + solve + within-epoch re-solve
+                         //          (net removes the internal solve/reduce)
+        SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback) [Card-4]
+        SB_NETAR,        //          producer-side network AR Phase-2 (log-only; OFF in the tier)
+        SB_SOLPREP,      //          toSolutionEpoch + per-sat discontinuity signalling
+        SB_EMITSTORE,    // block 7: emit re-base + PB-emit filter + store push + solution CSV
+        SB_IONODIAG,     // block 4: iono / ZWD / anchor-info viz traces (per-station recon sweeps)
+        SB_DDFRAC,       // block 6: cross-station DD fractional-residual (B5) trace
+        SB_SHDEV_VTEC,   // block 4: T5 SH-deviation carry KF + co-estimated VTEC coeff trace
+        SB_T1A,          // block 3: T1a SH-field health probe + fused H1 adaptive-deweight gate
+        SB_LEVELING,     // block 5: phase-leveling carry harvest + D2/C1 stash + T1d SH-conv
+        SB_RAIM,         // block 2: post-fit network RAIM pass-1/2 + median-polish attribution
+        SB_CLOCKUPD,     // block 8: two-state clock update + fault QC + retro-flag feed
+        SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
+        SB_COUNT
+    };
+    static constexpr const char* kSubNames[SB_COUNT] = {
+        "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",
+        "netar", "sol-prep", "emit-store", "iono-diag", "dd-frac", "shdev-vtec",
+        "t1a-health", "leveling", "raim", "clock-upd", "stash-status"
+    };
+    struct SubBlockTimer {
+        double      wall_ms{0.0};    // driver wall bracketing the block (run cumulative)
+        double      timed_ms{0.0};   // Δ(reduce+solve+cov-inv+cov-consumers) inside it (subtract for net)
+        double      covcon_ms{0.0};  // of which cov-consumers (reported alongside; the D1 lever)
+        std::size_t covcalls{0};     // cov-consumer calls inside it
+    };
+    std::vector<SubBlockTimer> sec_sub(SB_COUNT);        // run totals
+    std::vector<SubBlockTimer> sec_sub_ep0(SB_COUNT);    // per-epoch loop-top snapshot of sec_sub
+    std::vector<std::chrono::steady_clock::time_point> sub_wall0(SB_COUNT);
+    std::vector<NetworkNormalEquations::SectionTimers>  sub_tmr0(SB_COUNT);
+    auto subBegin = [&](SubBlock b) {
+        if (!sec_timers_on) return;
+        sub_wall0[b] = std::chrono::steady_clock::now();
+        sub_tmr0[b]  = est.sectionTimers();
+    };
+    auto subEnd = [&](SubBlock b) {
+        if (!sec_timers_on) return;
+        const auto& t = est.sectionTimers();
+        sec_sub[b].wall_ms += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - sub_wall0[b]).count();
+        sec_sub[b].timed_ms +=
+            (t.reduce_ms        - sub_tmr0[b].reduce_ms)
+          + (t.solve_ms         - sub_tmr0[b].solve_ms)
+          + (t.cov_inverse_ms   - sub_tmr0[b].cov_inverse_ms)
+          + (t.cov_consumers_ms - sub_tmr0[b].cov_consumers_ms);
+        sec_sub[b].covcon_ms += t.cov_consumers_ms   - sub_tmr0[b].cov_consumers_ms;
+        sec_sub[b].covcalls  += t.cov_consumer_calls - sub_tmr0[b].cov_consumer_calls;
+    };
 
     // === RTB-7(a): state snapshot + warm resume ==============================
     // Entirely OUTSIDE the product-file replay path: the snapshot restores the
@@ -3192,6 +3682,7 @@ int Application::runNetwork() {
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
         add(fmt::format("{}", clk_model_q1));    add(fmt::format("{}", clk_model_q2));
         add(fmt::format("{}", clk_model_k));     add(fmt::format("{}", clk_model_max_gap));
+        add(fmt::format("{}", config_.networkEmitClockRate()));
         add(fmt::format("{}", ura_on));          add(fmt::format("{}", ura_alpha));
         add(fmt::format("{}", ura_retro));       add(fmt::format("{}", ura_refloat_inflate));
         add(fmt::format("{}", emit_clock_disc));
@@ -3370,6 +3861,14 @@ int Application::runNetwork() {
                         c.t_last = o.t_last; c.init = o.init;
                         clock_osc[sat] = c;
                     }
+                    clock_rate_est.clear();
+                    for (const auto& [sat, o] : snap.clock_rate_est) {   // network.emit_clock_rate decoupled C1 state
+                        ClockOsc c;
+                        c.x0 = o.x0; c.x1 = o.x1;
+                        c.p00 = o.p00; c.p01 = o.p01; c.p11 = o.p11;
+                        c.t_last = o.t_last; c.init = o.init;
+                        clock_rate_est[sat] = c;
+                    }
                     local_carry.clear();
                     for (const auto& [key, l] : snap.local_carry)
                         local_carry[key] = LocalCarry{l.value_abs, l.var, l.last_seen_s};
@@ -3519,6 +4018,7 @@ int Application::runNetwork() {
         if (sec_timers_on) {
             sec_t0 = est.sectionTimers();
             sec_epoch_t0 = std::chrono::steady_clock::now();
+            sec_sub_ep0 = sec_sub;   // D0b: per-epoch deltas of the sub-block run totals
         }
 
         // P1: size-based rotation of the unbounded service CSVs
@@ -3741,6 +4241,7 @@ int Application::runNetwork() {
         // block (UB).  present[] is std::vector<bool> (packed bits → concurrent
         // writes to adjacent indices race), so threads record into a per-index
         // char buffer that is folded into present[] serially afterwards.
+        subBegin(SB_SLIP);   // D0b block 1: PASS-A slip scans (pre-assembly)
         {
             std::vector<char>        a_ok(stations.size(), 0);
             std::vector<std::string> a_err(stations.size());
@@ -3795,13 +4296,18 @@ int Application::runNetwork() {
                                     mwr, st.mw_slip->getEpochCleanPairs(), modeled[i], dt,
                                     st.mw_slip->getAcrossGapWlEvidence(pl_now_s));
                                 sta_repairs[i] = std::move(er.repairs);
-                            } else {
+                            } else if (config_.networkCycleSlipMwDetect()) {
                                 // mw_detect (any rate): detect-only → REFLOAT confident
                                 // wide-lane integer jumps (no GF, no integer applied).  frac
                                 // gates rounding cleanliness — a BIA-less float re-init rounds
                                 // to a large spurious integer but with a large frac (LEFT); a
                                 // KNOWN non-zero integer with small frac is a real WL slip.
                                 // LLI loss-of-lock is handled directly in the serial drain.
+                                // (Explicitly mw_detect-gated: under mw_wl-only the detector is
+                                // built for its Welford means but must NOT refloat the carry —
+                                // the WL layer is observation-side only.  Byte-identical for
+                                // existing configs: the detector was previously built only when
+                                // turbo_edit OR mw_detect, so this branch already implied mw_detect.)
                                 const double frac_max = config_.networkCycleSlipTurboEditFracMax();
                                 for (const auto& r : mwr) {
                                     if (r.slip_wl_known && r.slip_wl_cycles != 0
@@ -4163,6 +4669,8 @@ int Application::runNetwork() {
                               if_detail.empty() ? std::string{} : (" [" + if_detail + "]"));
             }
         }
+        subEnd(SB_SLIP);       // D0b: close block 1 (slip scans)
+        subBegin(SB_PREASM);   // D0b: pre-assembly measurement build (post-slip → assembly wall)
 
         // RAW cycle-slip observables (network.trace_slip_raw), computed straight from
         // raw_observed — INDEPENDENT of whether any slip detector is armed.  Written BEFORE
@@ -5267,6 +5775,8 @@ int Application::runNetwork() {
         std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
         Eigen::MatrixXd cap_dense_cov;
 
+        subEnd(SB_PREASM);   // D0b: close pre-assembly (the assembly wall below is timed separately)
+
         // --- PASS B: per-station assembly, then SERIAL scatter -------------
         // Split into a PARALLEL produce phase (pure per-station compute into
         // pre-sized slots — no shared write) and a SERIAL consume phase that
@@ -6216,6 +6726,7 @@ int Application::runNetwork() {
             prev_week = se.time.week; prev_tow = se.time.tow;
             continue;
         }
+        subBegin(SB_GAUGEBUILD); // D0b: buildEnsembleGauges + carry-driver lambda defs (pre-DD-build)
 
         // Fix A (network.phase_datum_ensemble): build the anchor-free sum-to-zero
         // phase-bias gauges from every tracking station's ambiguity column and hand
@@ -6295,6 +6806,10 @@ int Application::runNetwork() {
         // the next epoch's slip funnel.  Rebuilt with the blocks each buildCarryDdPriors call
         // (the last call before the solve is authoritative).  Empty unless carry_innov_gate.
         std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key;
+        // WL-3: the pair groups' BAND-2 ambiguity keys, parallel to carry_arc_amb_key
+        // (band-1).  A D5 flag on a pair chord feeds BOTH bands into the slip funnel
+        // (§3.4 union refloat).  Empty unless lane_carry + carry_innov_gate.
+        std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key2;
 
         // Card 4 (M1) C3b: build this epoch's DD-prior blocks from the eq34 election
         // tree and fold the carried invariant DDs into the producer solve.  Each arc
@@ -6309,7 +6824,332 @@ int Application::runNetwork() {
             if (!carry_invariant) return;
             constexpr int kSatBase = 1000000;   // satellite vertices sit above every receiver index
             std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
-            if (carry_innov_gate) carry_arc_amb_key.clear();   // D5: rebuilt with this call's arcs
+            if (carry_innov_gate) { carry_arc_amb_key.clear(); carry_arc_amb_key2.clear(); }  // D5: rebuilt with this call's arcs
+
+            // --- Shared WL-1/WL-2/WL-3 machinery (revmap / arc_signals / lin_of / iono_of /
+            // primary / band_top_of / λ cache).  HOISTED above the group build because the WL-3
+            // pair regroup routes each primary-band ambiguity by its (rx,sat) primary pair.
+            // Byte-identical when every lane is off: nothing here is populated, and building
+            // it earlier has no effect on the solve (pure reads of station state).
+            const bool mw_mach_on = mw_wl_on || ewl_on || lane_on;
+            auto sysFromSat = [](const std::string& sat) -> System {
+                if (sat.empty()) return System::Unknown;
+                switch (sat.front()) {
+                    case 'G': return System::GPS;     case 'E': return System::Galileo;
+                    case 'R': return System::GLONASS; case 'C': return System::BeiDou;
+                    case 'J': return System::QZSS;    case 'S': return System::SBAS;
+                    default:  return System::Unknown;
+                }
+            };
+            // Reverse map (est_station,col)->arc identity and per-(rx,sat) ambiguity
+            // signals over ALL resolvable ambiguities (both bands, incl. those NOT in
+            // shared_phase_keys — the WL row needs the L2 column even when L2 is not an
+            // eq34 arc).  GLONASS excluded (never enters the carry blocks anyway).
+            struct Rev { int rx; std::string sat; std::string signal; };
+            std::map<std::pair<int, int>, Rev> revmap;
+            std::map<std::pair<int, std::string>, std::vector<std::pair<std::string, int>>> arc_signals;
+            // (est_station, local col) → ambiguity LINEARIZATION value (m).  The kernel
+            // solves corrections about x_lin (no KF write-back), so the WL layer must
+            // re-express the absolute MW measurement in the correction frame (F5).
+            std::map<std::pair<int, int>, double> lin_of;
+            // WL-2 §3.4 v2: (rx app index, sat) → the estimated L1-referenced slant iono (m)
+            // for the bridge de-bias.  The v1 Welford-only guard is falsified by a STABLE
+            // differential iono (Fable): a constant iono bias has ~0 Welford variance yet
+            // biases the rounded WL integer (near-integer bias ⇒ slips the FFR frac gate).
+            // We subtract the network's own iono estimate; the residual DD-iono estimate
+            // error surfaces in |frac| and is caught by the FFR gate + MW(1,2) closure.
+            std::map<std::pair<int, std::string>, double> iono_of;
+            // Estimator primary pair per (rx,sat): the two lowest DISTINCT bands (ties
+            // lexicographic for determinism); v1 restricts WL rows to this pair (§11 Q3).
+            struct PP { std::string sig1, sig2; int col1{ -1 }, col2{ -1 }; bool ok{ false }; };
+            std::map<std::pair<int, std::string>, PP> primary;
+            // WL-2 EWL: the band-5 (GPS L5 / Galileo E5a) signal + column per (rx,sat),
+            // for the (band2, band5) extra-wide lane.  arc_signals is sorted by band digit
+            // then name, so the first '5' is deterministic.
+            std::map<std::pair<int, std::string>, std::pair<std::string, int>> band_top_of;
+            // Increment 5 (uwl_dual_top): the FALLBACK top rung's signal + column per
+            // (rx,sat) (Galileo '7' when the preferred b_top is '8').  Empty unless a
+            // tier arms a fallback rung; the fallback lane instance's resolver and the
+            // walk's fallback-tagged rows read THIS map instead of band_top_of.
+            std::map<std::pair<int, std::string>, std::pair<std::string, int>> band_top2_of;
+            // E6 mid hop (uwl_mid_enable): the mid-rung band signal per (rx,sat) — only
+            // the SIGNAL is needed (the hops are phase-only detector reads; no estimator
+            // column enters the chain).  Empty unless the tier arms a mid rung.
+            std::map<std::pair<int, std::string>, std::string> band_mid_of;
+            // WL-3: the constellation's ONE census-preferred primary pair — only arcs whose
+            // primary pair matches it join the pair group; minority-channel arcs stay fully
+            // per-band (as today), so they keep their own carried cycles instead of spawning
+            // flickering micro pair-groups.  The third (EWL) band never becomes a pair band.
+            std::map<char, std::pair<std::string, std::string>> lane_pref_pair;
+            // Per-(sat,signal) wavelength cache (FDMA-correct via the satellite id).
+            std::map<std::pair<std::string, std::string>, double> lam_cache;
+            auto lam = [&](const std::string& sat, const std::string& sig) -> double {
+                const auto k = std::make_pair(sat, sig);
+                const auto it = lam_cache.find(k);
+                if (it != lam_cache.end()) return it->second;
+                const double v = mw_wl_ppp_utils->getWavelength(sysFromSat(sat), sig, sat);
+                lam_cache.emplace(k, v);
+                return v;
+            };
+            if (mw_mach_on) {
+                for (size_t i = 0; i < stations.size(); ++i) {
+                    if (est_index_of[i] < 0) continue;
+                    const int es = est_index_of[i];
+                    const auto& h2l = asm_res[i].h2local;
+                    const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
+                    for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
+                        const auto parts = StateKeys::parseAmbiguityKey(key);
+                        if (!parts || parts->satellite.empty() || parts->signal.empty()) continue;
+                        if (parts->satellite.front() == 'R') continue;   // GLONASS excluded
+                        const auto hit = h2l.find(static_cast<int>(sidx));
+                        if (hit == h2l.end() || hit->second < 0) continue;
+                        const int col = static_cast<int>(hit->second);
+                        revmap[{es, col}] = { static_cast<int>(i), parts->satellite, parts->signal };
+                        arc_signals[{static_cast<int>(i), parts->satellite}]
+                            .push_back({ parts->signal, col });
+                        if (static_cast<Eigen::Index>(sidx) < x_lin.size())
+                            lin_of[{es, col}] = x_lin(static_cast<Eigen::Index>(sidx));
+                    }
+                    if (wl_inject_on || lane_bridge_on)
+                        for (const auto& [sat, iidx] : stations[i].sm->getIonosphereStates()) {
+                            const Eigen::Index ii = static_cast<Eigen::Index>(iidx);
+                            if (ii >= 0 && ii < x_lin.size())
+                                iono_of[{ static_cast<int>(i), sat }] = x_lin(ii);
+                        }
+                }
+                // WL-3: network-preferred channel per (constellation, band).  The
+                // lexicographic tie-break fragments the primary pairs across stations
+                // (L2L where tracked, L2W elsewhere), which splits the pair groups'
+                // graphs and forfeits every cross-boundary cycle (~1/3 of the primary
+                // cycle space at 50 stations, measured).  Under lane_carry the pair
+                // prefers the constellation's MAJORITY channel per band (deterministic
+                // census over this build's resolvable ambiguities; ties lexicographic),
+                // falling back to the arc's own lowest channel where the majority one
+                // is untracked.  WL-1/WL-2-only shapes keep the legacy tie-break.
+                std::map<std::pair<char, char>, std::string> chan_pref;
+                if (lane_on) {
+                    std::map<std::pair<char, std::string>, long long> chan_count;
+                    for (const auto& [rs, sigs] : arc_signals) {
+                        const char cons = rs.second.empty() ? '?' : rs.second.front();
+                        for (const auto& [sig, col] : sigs) ++chan_count[{cons, sig}];
+                    }
+                    for (const auto& [k, cnt] : chan_count) {
+                        const char band = k.second.size() >= 2 ? k.second[1] : '\0';
+                        if (band == '\0') continue;
+                        std::string& best = chan_pref[{k.first, band}];
+                        long long bc = -1;
+                        if (!best.empty()) {
+                            const auto bit = chan_count.find({k.first, best});
+                            bc = (bit != chan_count.end()) ? bit->second : -1;
+                        }
+                        if (best.empty() || cnt > bc || (cnt == bc && k.second < best))
+                            best = k.second;
+                    }
+                    // UWL-1 (measured falsification of the per-band census): channel
+                    // choices are CORRELATED per receiver family — Galileo splits into
+                    // (L1C,L5Q) and (L1X,L5X) families, and the per-band majorities
+                    // composed the PHANTOM pair (L1C,L5X) that NO station tracks: zero
+                    // pair arcs formed and the whole constellation silently stayed
+                    // per-band (group census, 10-ep GPS+GAL smoke).  Under the armed
+                    // card the census is therefore JOINT: count each (rx,sat)'s raw
+                    // two-lowest-band channel pair and elect the majority pair per
+                    // constellation (ties lexicographic — the §8.2 deterministic seam),
+                    // then steer the per-band preferences to the elected pair so
+                    // preferChan / the bridge keys align with it.  The minority FAMILY
+                    // stays fully per-band (v1 accepts ~half the Galileo pair space;
+                    // per-family pair groups are the v2 recovery — the group keying
+                    // already supports them).  uwl_enable=false keeps the per-band
+                    // census verbatim (the WL-3 validated shape, byte-identical).
+                    if (uwl_on) {
+                        std::map<std::pair<char, std::pair<std::string, std::string>>,
+                                 long long> pair_count;
+                        for (auto& [rs, sigs] : arc_signals) {
+                            std::sort(sigs.begin(), sigs.end(),
+                                      [](const std::pair<std::string, int>& a,
+                                         const std::pair<std::string, int>& b) {
+                                const char ba = a.first.size() >= 2 ? a.first[1] : '\0';
+                                const char bb = b.first.size() >= 2 ? b.first[1] : '\0';
+                                if (ba != bb) return ba < bb;
+                                return a.first < b.first;
+                            });
+                            if (sigs.empty()) continue;
+                            const char cons = rs.second.empty() ? '?' : rs.second.front();
+                            // Two lowest CARRIED bands (the uncarried top band never
+                            // pairs — mirror the routing's exclusion exactly).
+                            std::string s1;
+                            char b1 = '\0';
+                            for (const auto& [sig, col] : sigs)
+                                if (sig.size() >= 2 && !isUncarriedThirdBand(cons, sig)) {
+                                    s1 = sig; b1 = sig[1]; break;
+                                }
+                            if (b1 == '\0') continue;
+                            for (const auto& [sig, col] : sigs)
+                                if (sig.size() >= 2 && sig[1] != b1
+                                    && !isUncarriedThirdBand(cons, sig)) {
+                                    ++pair_count[{cons, { s1, sig }}];
+                                    break;
+                                }
+                        }
+                        std::map<char, std::pair<std::string, std::string>> joint_best;
+                        std::map<char, long long> joint_cnt;
+                        for (const auto& [k, cnt] : pair_count) {
+                            auto itb = joint_best.find(k.first);
+                            if (itb == joint_best.end() || cnt > joint_cnt[k.first]
+                                || (cnt == joint_cnt[k.first] && k.second < itb->second)) {
+                                joint_best[k.first] = k.second;
+                                joint_cnt[k.first]  = cnt;
+                            }
+                        }
+                        for (const auto& [cons, pr] : joint_best) {
+                            const char b1 = pr.first.size()  >= 2 ? pr.first[1]  : '\0';
+                            const char b2 = pr.second.size() >= 2 ? pr.second[1] : '\0';
+                            if (b1 == '\0' || b2 == '\0') continue;
+                            chan_pref[{cons, b1}] = pr.first;
+                            chan_pref[{cons, b2}] = pr.second;
+                        }
+                    }
+                }
+                for (auto& [rs, sigs] : arc_signals) {
+                    std::sort(sigs.begin(), sigs.end(),
+                              [](const std::pair<std::string, int>& a,
+                                 const std::pair<std::string, int>& b) {
+                        const char ba = a.first.size() >= 2 ? a.first[1] : '\0';
+                        const char bb = b.first.size() >= 2 ? b.first[1] : '\0';
+                        if (ba != bb) return ba < bb;
+                        return a.first < b.first;
+                    });
+                    PP pp;
+                    if (!sigs.empty()) { pp.sig1 = sigs.front().first; pp.col1 = sigs.front().second; }
+                    const char b1 = pp.sig1.size() >= 2 ? pp.sig1[1] : '\0';
+                    for (const auto& [sig, col] : sigs) {
+                        if (sig.size() >= 2 && b1 != '\0' && sig[1] != b1) {
+                            pp.sig2 = sig; pp.col2 = col; break;
+                        }
+                    }
+                    if (lane_on && !sigs.empty()) {
+                        const char cons = rs.second.empty() ? '?' : rs.second.front();
+                        const char b2 = pp.sig2.size() >= 2 ? pp.sig2[1] : '\0';
+                        auto preferChan = [&](char band, std::string& sig_io, int& col_io) {
+                            const auto pit2 = chan_pref.find({cons, band});
+                            if (pit2 == chan_pref.end() || pit2->second == sig_io) return;
+                            for (const auto& [sig, col] : sigs)
+                                if (sig == pit2->second) { sig_io = sig; col_io = col; return; }
+                        };
+                        if (b1 != '\0') preferChan(b1, pp.sig1, pp.col1);
+                        if (b2 != '\0') preferChan(b2, pp.sig2, pp.col2);
+                    }
+                    pp.ok = (!pp.sig1.empty() && !pp.sig2.empty());
+                    primary[rs] = pp;
+                }
+                // v2 (uwl_family_pairs): admit MINORITY family pairs into the run-latched
+                // admissible set.  Counted over the STEERED primary pairs — the exact
+                // quantity the routing below matches — NOT the raw two-lowest census
+                // (measured defect, smoke E: L2L < L2W lexicographically, so every GPS
+                // dual-tracker's RAW pair read (L1C,L2L) and inflated its count to 143
+                // while routing saw 1 steered arc — a stranded 1-arc micro pair-group
+                // that forfeits the arc's per-band cycles).  The majority pair routes
+                // through lane_pref_pair exactly as v1 (its admission here is a harmless
+                // duplicate); a minority pair is admitted the first epoch its steered
+                // count reaches the floor, then stays latched (see the declaration).
+                if (uwl_family_on) {
+                    std::map<std::pair<char, std::pair<std::string, std::string>>,
+                             long long> pp_count;
+                    for (const auto& [rs, pp] : primary) {
+                        if (!pp.ok) continue;
+                        const char cons = rs.second.empty() ? '?' : rs.second.front();
+                        ++pp_count[{ cons, { pp.sig1, pp.sig2 } }];
+                    }
+                    for (const auto& [k, cnt] : pp_count) {
+                        if (cnt < nmw.uwl_family_min_arcs) continue;
+                        if (lane_admit_pairs[k.first].insert(k.second).second
+                            && lane_family_logged
+                                   .insert({ k.first,
+                                             k.second.first + "+" + k.second.second })
+                                   .second)
+                            log->info("Network (M5/UWL-1 family census): constellation '{}' "
+                                      "admitted pair ({}, {}) — {} steered primary arc(s) "
+                                      "(floor {}); latched for the run.",
+                                      k.first, k.second.first, k.second.second, cnt,
+                                      nmw.uwl_family_min_arcs);
+                    }
+                }
+                if (lane_on) {
+                    // The constellation's ONE preferred pair: the two lowest census bands,
+                    // skipping the EWL third band (it must stay UNCARRIED — WL-2 §3.1).
+                    std::map<char, std::vector<char>> cons_bands;
+                    for (const auto& [k, sig] : chan_pref) {
+                        const std::string probe = std::string("L") + k.second;   // "L<band>"
+                        if (isUncarriedThirdBand(k.first, probe)) continue;
+                        cons_bands[k.first].push_back(k.second);
+                    }
+                    for (auto& [cons, bands] : cons_bands) {
+                        std::sort(bands.begin(), bands.end());
+                        if (bands.size() < 2) continue;
+                        lane_pref_pair[cons] = { chan_pref[{cons, bands[0]}],
+                                                 chan_pref[{cons, bands[1]}] };
+                        // Census visibility (once per run per cons): which pair the lane
+                        // carries — fragmentation across channels is the WL-3 lesson and
+                        // a Galileo pre-flight (SPEC_uwl_card.md §8.1); measure, don't assume.
+                        if (lane_census_logged.insert(cons).second)
+                            log->info("Network (M5/WL-3 census): constellation '{}' preferred "
+                                      "primary pair = ({}, {}) over census bands [{}].",
+                                      cons, lane_pref_pair[cons].first,
+                                      lane_pref_pair[cons].second,
+                                      std::string(bands.begin(), bands.end()));
+                    }
+                    // Align the detector-side bridge arcs with the census: without this,
+                    // every (rx,sat) whose min-name channel differs from the census pair
+                    // has NO bridge arc under the caller's key and the WL decision path
+                    // starves (measured 9-of-29 decided cycles).  Applies from the next
+                    // detector pass; the re-keyed arcs re-warm in ~2 epochs.
+                    if (lane_bridge_on && !chan_pref.empty())
+                        for (size_t i = 0; i < stations.size(); ++i)
+                            if (stations[i].mw_slip)
+                                stations[i].mw_slip->setBridgePreferredChannels(chan_pref);
+                }
+                for (auto& [rs, sigs] : arc_signals) {
+                    // UWL-1 §3.1: the top-tier partner band digit.  Legacy (card OFF) =
+                    // first '5' for EVERY constellation — which is what silently killed
+                    // Galileo (its '5' is E5a, the primary sig2 itself ⇒ the degenerate
+                    // (L5Q,L5Q) pair with no detector arc).  Armed = the lane-tier table
+                    // (GPS '5' reproduces the legacy pick bit-exactly; Galileo '7'/'8').
+                    char top_digit  = '5';
+                    char mid_digit  = '\0';
+                    char top2_digit = '\0';   // increment 5: the fallback rung's digit
+                    const char cons = rs.second.empty() ? '?' : rs.second.front();
+                    if (uwl_on) {
+                        const auto tier = mwLaneTierOf(cons, nmw.uwl_gal_top_band,
+                                                       nmw.uwl_mid_enable, nmw.uwl_dual_top);
+                        if (!tier) {
+                            if (ewl_on && cons != '?' && uwl_warned_cons.insert(cons).second)
+                                log->warn("Network (M5/UWL-1): constellation '{}' has NO lane "
+                                          "tier in the armed table — its cycles contribute no "
+                                          "EWL/UWL statistic and no bridge (BDS-3 deferred on "
+                                          "clock divergence; GLONASS FDMA-excluded).  Loud by "
+                                          "design (SPEC §3.1).", cons);
+                            continue;   // no top-band entry ⇒ counted skip_missing_band downstream
+                        }
+                        top_digit  = tier->b_top;
+                        mid_digit  = tier->b_mid;
+                        top2_digit = tier->b_top2;
+                    } else if (ewl_on && cons != 'G' && cons != '?'
+                               && uwl_warned_cons.insert(cons).second) {
+                        log->warn("Network (M5/UWL-1): constellation '{}' enters the EWL lane "
+                                  "under the LEGACY GPS band digits — its top-tier pair is "
+                                  "degenerate and every cycle dies silently as skip_missing_mw "
+                                  "(SPEC_uwl_card.md §1 fact 3).  Arm network.mw_wl.uwl_enable "
+                                  "for the per-constellation lane-tier table.", cons);
+                    }
+                    for (const auto& [sig, col] : sigs)
+                        if (sig.size() >= 2 && sig[1] == top_digit) { band_top_of[rs] = { sig, col }; break; }
+                    if (top2_digit != '\0')
+                        for (const auto& [sig, col] : sigs)
+                            if (sig.size() >= 2 && sig[1] == top2_digit) { band_top2_of[rs] = { sig, col }; break; }
+                    if (mid_digit != '\0')
+                        for (const auto& [sig, col] : sigs)
+                            if (sig.size() >= 2 && sig[1] == mid_digit) { band_mid_of[rs] = sig; break; }
+                }
+            }
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (est_index_of[i] < 0) continue;
                 const auto& h2l = asm_res[i].h2local;
@@ -6329,13 +7169,110 @@ int Application::runNetwork() {
                     // The satellite phase-bias key is per-SATELLITE ("<sat>|<sig>|PB") — NOT
                     // the per-system receiver-bias key.  Only ambiguities backing an ungated
                     // shared phase bias (a vertex of the eq34 graph) become DD arcs.
+                    // WL-2 §3.1: keep the constellation's EWL third band OUT of the carry
+                    // (uncarried lane ⇒ no stiff prior ⇒ EWL rows win).  OFF ⇒ not taken.
+                    if (ewl_carry_exclude && isUncarriedThirdBand(cons, parts->signal)) continue;
                     const std::string pbkey =
                         StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal);
                     if (!shared_phase_keys.count(pbkey)) continue;   // not an eq34 arc (gated/legacy lump)
                     const auto hit = h2l.find(static_cast<int>(sidx));
                     if (hit == h2l.end() || hit->second < 0) continue;   // unresolvable ⇒ chord refloats
+                    // C3c slip feed: a PASS-A slip detection (MW wide-lane / LLI / IF-phase,
+                    // recorded at the detector so the PASS-B pending-reseed clear can't hide
+                    // it) or a within-epoch RAIM culprit (§3) invalidates this arc's carried
+                    // DD — re-tap it fresh this epoch instead of folding a stiff pre-slip prior.
+                    auto ambSlipped = [&](const std::string& amb_key) -> bool {
+                        if (carry_slipped_ambs.count({static_cast<int>(i), amb_key})) return true;
+                        if (carry_we_drop_sats
+                            && carry_we_drop_sats->count(parts->satellite)) return true;
+                        if (carry_we_drop_arcs) {
+                            const auto dit = carry_we_drop_arcs->find(static_cast<int>(i));
+                            if (dit != carry_we_drop_arcs->end()
+                                && dit->second.count(parts->satellite)) return true;
+                        }
+                        return false;
+                    };
                     int& sv = carry_sat_vertex[parts->satellite];
                     if (sv == 0) sv = kSatBase + static_cast<int>(carry_sat_vertex.size());
+
+                    // --- WL-3 pair routing (SPEC_lane_carry_card.md §2): a primary-pair
+                    // ambiguity whose partner band ALSO passes every per-band test (eq34-
+                    // shared pbkey + resolvable column) joins the constellation's PAIR
+                    // group (emitted once, from the band-1 iteration, with both columns);
+                    // otherwise it falls through to the residual per-band group as today.
+                    if (lane_on) {
+                        const auto pit = primary.find({ static_cast<int>(i), parts->satellite });
+                        const PP* pp = (pit != primary.end() && pit->second.ok)
+                                           ? &pit->second : nullptr;
+                        // Only the constellation's census-preferred pair joins the pair
+                        // group — a minority-channel (rx,sat) keeps today's per-band carry
+                        // (its cycles survive per band instead of spawning a flickering
+                        // micro pair-group), and the EWL third band never pairs.
+                        // v2 (uwl_family_pairs): additionally, a LATCHED minority-family
+                        // pair routes into its OWN pair group (the group key is already
+                        // the pair string, so families stay disjoint graphs).
+                        const auto lpp = lane_pref_pair.find(cons);
+                        bool pair_admissible =
+                            pp && lpp != lane_pref_pair.end()
+                            && pp->sig1 == lpp->second.first && pp->sig2 == lpp->second.second;
+                        if (!pair_admissible && uwl_family_on && pp) {
+                            const auto fit = lane_admit_pairs.find(cons);
+                            pair_admissible = fit != lane_admit_pairs.end()
+                                && fit->second.count({ pp->sig1, pp->sig2 }) != 0;
+                        }
+                        if (pair_admissible
+                            && (parts->signal == pp->sig1 || parts->signal == pp->sig2)) {
+                            const bool is1 = parts->signal == pp->sig1;
+                            const std::string& other_sig = is1 ? pp->sig2 : pp->sig1;
+                            const int other_col          = is1 ? pp->col2 : pp->col1;
+                            const bool other_ok = other_col >= 0
+                                && shared_phase_keys.count(
+                                       StateKeys::makeSatPhaseBiasKey(parts->satellite, other_sig));
+                            if (other_ok) {
+                                if (!is1) continue;   // the pair arc was/will be emitted from band-1
+                                int& pgk = carry_group_id[{cons, pp->sig1 + "+" + pp->sig2}];
+                                if (pgk == 0) pgk = static_cast<int>(carry_group_id.size());
+                                auto& G = groups[pgk];
+                                G.key = pgk;
+                                if (!G.pair) {
+                                    G.pair    = true;
+                                    G.lambda1 = lam(parts->satellite, pp->sig1);
+                                    G.lambda2 = lam(parts->satellite, pp->sig2);
+                                }
+                                const std::string key2 =
+                                    StateKeys::makeAmbiguityKey(parts->satellite, pp->sig2);
+                                NetworkInvariantCarryDriver::ArcInput a;
+                                a.rx_vertex   = static_cast<int>(i);
+                                a.sat_vertex  = sv;
+                                a.tree_edge   = stations[i].pinned_amb_targets.count(key) != 0;
+                                a.est_station = est_index_of[i];
+                                a.local_col   = static_cast<int>(hit->second);
+                                a.local_col2  = pp->col2;
+                                // Per-band slip states; the driver unions them under the LANE
+                                // shape (§3.4 — either band refloats both) and keeps them
+                                // per-band under the §6.1 equivalence shape (exactly the two
+                                // per-band groups' behavior).
+                                a.slipped     = ambSlipped(key);
+                                a.slipped2    = ambSlipped(key2);
+                                // Diagnostic: band-1's eq34 tree tag governs the pair basis;
+                                // count disagreements with band-2's election (a mismatch means
+                                // the two per-band trees differ on the shared graph, so the
+                                // §6.1 equivalence leg is not exact for this component).
+                                if (a.tree_edge
+                                    != (stations[i].pinned_amb_targets.count(key2) != 0))
+                                    ++lane_pair_tree_mismatch;
+                                ++lane_pair_arcs;
+                                G.arcs.push_back(a);
+                                if (carry_innov_gate) {
+                                    carry_arc_amb_key[pgk][ArcKey(static_cast<int>(i), sv)]  = key;
+                                    carry_arc_amb_key2[pgk][ArcKey(static_cast<int>(i), sv)] = key2;
+                                }
+                                continue;
+                            }
+                            ++lane_resid_arcs;   // partner missing/unshared → residual per-band group
+                        }
+                    }
+
                     int& gk = carry_group_id[{cons, parts->signal}];
                     if (gk == 0) gk = static_cast<int>(carry_group_id.size());
                     NetworkInvariantCarryDriver::ArcInput a;
@@ -6344,19 +7281,7 @@ int Application::runNetwork() {
                     a.tree_edge   = stations[i].pinned_amb_targets.count(key) != 0;
                     a.est_station = est_index_of[i];
                     a.local_col   = static_cast<int>(hit->second);
-                    // C3c slip feed: a PASS-A slip detection (MW wide-lane / LLI / IF-phase,
-                    // recorded at the detector so the PASS-B pending-reseed clear can't hide
-                    // it) or a within-epoch RAIM culprit (§3) invalidates this arc's carried
-                    // DD — re-tap it fresh this epoch instead of folding a stiff pre-slip prior.
-                    bool slipped = carry_slipped_ambs.count({static_cast<int>(i), key}) != 0;
-                    if (!slipped && carry_we_drop_sats
-                        && carry_we_drop_sats->count(parts->satellite)) slipped = true;
-                    if (!slipped && carry_we_drop_arcs) {
-                        const auto dit = carry_we_drop_arcs->find(static_cast<int>(i));
-                        if (dit != carry_we_drop_arcs->end()
-                            && dit->second.count(parts->satellite)) slipped = true;
-                    }
-                    a.slipped     = slipped;
+                    a.slipped     = ambSlipped(key);
                     groups[gk].key = gk;
                     groups[gk].arcs.push_back(a);
                     // D5: record chord arcs for the innovation-flag reverse lookup (tree edges
@@ -6368,8 +7293,912 @@ int Application::runNetwork() {
             std::vector<NetworkInvariantCarryDriver::GroupInput> glist;
             glist.reserve(groups.size());
             for (auto& [k, g] : groups) glist.push_back(std::move(g));
-            est.setDdPriors(carry_driver.buildDdPriors(glist));
+            auto blocks = carry_driver.buildDdPriors(glist);
+            // UWL-1 group census (once per run, log-only): which carry groups exist and
+            // which are PAIR groups — the WL-3 fragmentation pre-flight (SPEC §8.1).
+            if (uwl_on && lane_census_logged.insert('#').second)
+                for (const auto& [gk, gid] : carry_group_id) {
+                    std::size_t n_arcs = 0; bool is_pair = false;
+                    for (const auto& gi : glist)
+                        if (gi.key == gid) { n_arcs = gi.arcs.size(); is_pair = gi.pair; break; }
+                    log->info("Network (M5/UWL-1 group census): group {} = cons '{}' '{}'"
+                              "{} ({} arc(s) this epoch).",
+                              gid, gk.first, gk.second, is_pair ? " [PAIR]" : "", n_arcs);
+                }
+
+            // --- M5 card WL-1: append the MW-seeded wide-lane pseudo-obs blocks. ---
+            // Ride the carry's chord basis: each carry block row is a fundamental cycle on
+            // ONE band's ambiguity columns; the WL layer pairs each cycle arc to its L2
+            // ambiguity column and folds Σ c·MW̄/λ_WL as a rank-K constraint on the
+            // cross-band columns.  Appended AFTER the carry blocks so their indices [0,Nc)
+            // stay valid for installPosterior (which reads only its own Nc blocks).
+            if (mw_mach_on) {
+                // Both lanes read the PURE carry blocks (not each other's appended rows), so
+                // collect their outputs here and append after both build.  The WL bridge lane
+                // adds a third block set (integer-hard hold rows on the (1,2) columns).
+                std::vector<NetworkNormalEquations::DdPriorBlock> wl_out, ewl_out, wl_hold_out;
+                std::vector<NetworkMwWlLayer::FixedEwlRow> ewl_fixed;   // WL-2 §3.4 bridge input
+                // Increment 5: per-entry top-rung tag, parallel to ewl_fixed ('\0' on the
+                // legacy single lane; the lane's b_top / b_top2 digit under the UWL card).
+                std::vector<char> ewl_fixed_top;
+              if (mw_wl_on) {   // --- WL-1 float lane (primary L1/L2 pair) ---
+                mw_wl_epoch = NetworkMwWlLayer::Counters{};   // per-build; the last build before the accepted solve wins
+                auto resolver = [&](std::size_t est_station, Eigen::Index local_col,
+                                    NetworkMwWlLayer::ArcData& out) -> bool {
+                    const auto rit = revmap.find(
+                        { static_cast<int>(est_station), static_cast<int>(local_col) });
+                    if (rit == revmap.end()) return false;
+                    const Rev& rv = rit->second;
+                    const auto pit = primary.find({ rv.rx, rv.sat });
+                    const PP* pp = (pit != primary.end()) ? &pit->second : nullptr;
+                    if (pp && pp->ok && rv.signal == pp->sig1
+                        && static_cast<int>(local_col) == pp->col1) {
+                        out.is_primary_sig1 = true;
+                        out.col1    = pp->col1;
+                        out.col2    = pp->col2;
+                        out.lambda1 = lam(rv.sat, pp->sig1);
+                        out.lambda2 = lam(rv.sat, pp->sig2);
+                        MwSlipDetector::MwArcZdMean zd;
+                        if (stations[rv.rx].mw_slip)
+                            zd = stations[rv.rx].mw_slip->arcZdMean(rv.sat, pp->sig1, pp->sig2);
+                        out.have_mw       = zd.valid;
+                        out.mw_zd_mean_m  = zd.mean_m;
+                        out.mw_var_m2     = zd.var_of_mean_m2;
+                        out.mw_count      = static_cast<long long>(zd.count);
+                        out.lambda_wl     = zd.lambda_wl;
+                        out.bia_corrected = zd.bia_corrected;   // frame flag (mixed-frame cycle guard)
+                        {   // correction-frame re-expression inputs (F5)
+                            const auto l1it = lin_of.find({ static_cast<int>(est_station),
+                                                            static_cast<int>(pp->col1) });
+                            const auto l2it = lin_of.find({ static_cast<int>(est_station),
+                                                            static_cast<int>(pp->col2) });
+                            if (l1it == lin_of.end() || l2it == lin_of.end()) {
+                                out.have_mw = false;   // no linearization value ⇒ cannot frame the row
+                            } else {
+                                out.x_lin1 = l1it->second;
+                                out.x_lin2 = l2it->second;
+                            }
+                        }
+                    } else {
+                        // Not the primary L1 signal: a secondary/other-band carry group
+                        // (→ skip_not_primary) or a single-band band-1 arc lacking L2
+                        // (is_primary_sig1 true + col2=-1 → skip_missing_band).
+                        out.is_primary_sig1 =
+                            (!pp || !pp->ok) && (rv.signal.size() >= 2 && rv.signal[1] == '1');
+                        out.col1    = local_col;
+                        out.col2    = -1;
+                        out.have_mw = false;
+                    }
+                    return true;
+                };
+                auto wl_blocks = mw_wl_layer.build(blocks, resolver, mw_wl_epoch);
+                // --- F6 attribution capture: the FIRST arming epoch's WL rows (log-only). ---
+                // Re-resolve each cycle arc (resolver + revmap in scope here) to record the
+                // per-arc MW̄/x_lin and the row aggregates z_MW/z_lin/z_corr; the post-solve
+                // site adds reconstructed_abs + the kernel innovation.  The last build before
+                // the accepted solve wins (tow-matched at the write site).
+                if (mw_wl_f6_dump && !mw_wl_f6.written && !wl_blocks.empty()) {
+                    const std::size_t Nc = blocks.size();      // WL blocks append AFTER the carry blocks
+                    const auto& wb = wl_blocks.front();        // first carry component's WL block
+                    mw_wl_f6.rows.clear();
+                    mw_wl_f6.week           = se.time.week;
+                    mw_wl_f6.tow            = se.time.tow;
+                    mw_wl_f6.loop_epoch     = static_cast<int>(n_loop_epochs);
+                    mw_wl_f6.wl_block_index = Nc;              // first WL block's index in `blocks`
+                    const std::size_t nrow = std::min<std::size_t>(wb.rows.size(), std::size_t{8});
+                    for (std::size_t r = 0; r < nrow; ++r) {
+                        const auto& terms = wb.rows[r];
+                        F6Row fr;
+                        fr.zhat_block = (static_cast<Eigen::Index>(r) < wb.zhat.size())
+                                            ? wb.zhat(static_cast<Eigen::Index>(r)) : 0.0;
+                        for (std::size_t t = 0; t + 1 < terms.size(); t += 2) {
+                            const auto& tL1 = terms[t];       // rows are [L1_0,L2_0, L1_1,L2_1, ...]
+                            NetworkMwWlLayer::ArcData ad;
+                            if (!resolver(tL1.station, tL1.local_col, ad)) continue;
+                            F6Arc a;
+                            a.est_station   = static_cast<int>(tL1.station);
+                            a.col1          = static_cast<int>(ad.col1);
+                            a.col2          = static_cast<int>(ad.col2);
+                            a.coeff         = (ad.lambda1 > 0.0) ? tL1.coeff * ad.lambda1 : tL1.coeff;
+                            a.mw_mean_m     = ad.mw_zd_mean_m;
+                            a.mw_var_m2     = ad.mw_var_m2;
+                            a.mw_count      = ad.mw_count;
+                            a.bia_corrected = ad.bia_corrected;
+                            a.x_lin1        = ad.x_lin1;
+                            a.x_lin2        = ad.x_lin2;
+                            a.lambda1       = ad.lambda1;
+                            a.lambda2       = ad.lambda2;
+                            a.lambda_wl     = ad.lambda_wl;
+                            const auto r1 = revmap.find({ a.est_station, a.col1 });
+                            if (r1 != revmap.end()) { a.sat = r1->second.sat; a.sig1 = r1->second.signal; }
+                            const auto r2 = revmap.find({ a.est_station, a.col2 });
+                            if (r2 != revmap.end()) a.sig2 = r2->second.signal;
+                            if (a.lambda_wl > 0.0) fr.z_mw += a.coeff * a.mw_mean_m / a.lambda_wl;
+                            if (a.lambda1 > 0.0 && a.lambda2 > 0.0)
+                                fr.z_lin += (a.coeff / a.lambda1) * a.x_lin1
+                                          - (a.coeff / a.lambda2) * a.x_lin2;
+                            fr.arcs.push_back(std::move(a));
+                        }
+                        fr.z_corr = fr.z_mw - fr.z_lin;
+                        mw_wl_f6.rows.push_back(std::move(fr));
+                    }
+                    mw_wl_f6.pending = !mw_wl_f6.rows.empty();
+                }
+                wl_out = std::move(wl_blocks);
+              }  // --- end WL-1 float lane ---
+
+              if (ewl_on) {   // --- WL-2 EWL lane: (band2, band-top) pair, FFR statistic-gated fix ---
+                for (auto& lane : ewl_lanes) lane.epoch = NetworkMwWlLayer::Counters{};
+                // Same eligibility as WL-1 (a primary-sig1 cycle), but the row is the top-tier
+                // DD on the SAME (rx,sat) arcs, pairing the estimator's primary sig2 (channel
+                // discipline) with the constellation's top band: GPS EWL (L2,L5); Galileo UWL
+                // (E5b|E5,E5a) under the armed card.  (hi,lo) is ordered by ACTUAL frequency —
+                // GPS's shared band is the pair's HIGH side, Galileo's its LOW side — so the
+                // MW statistic keys (sat, hi, lo) and λ_top stays positive (UWL-1 §2).  The
+                // top band is uncarried (excluded above) so the rows win with no fight.
+                // Increment 5: the lane instance under construction selects which top-rung
+                // map its resolver reads — band_top_of for the preferred (and every
+                // single-top) instance, band_top2_of for the fallback instance.  Set per
+                // lane in the build loop below; single-top shapes never repoint it.
+                const auto* ewl_top_map = &band_top_of;
+                auto ewl_resolver = [&](std::size_t est_station, Eigen::Index local_col,
+                                        NetworkMwWlLayer::ArcData& out) -> bool {
+                    const auto rit = revmap.find(
+                        { static_cast<int>(est_station), static_cast<int>(local_col) });
+                    if (rit == revmap.end()) return false;
+                    const Rev& rv = rit->second;
+                    out.cons = rv.sat.empty() ? '?' : rv.sat.front();
+                    const auto pit = primary.find({ rv.rx, rv.sat });
+                    const PP* pp = (pit != primary.end()) ? &pit->second : nullptr;
+                    if (pp && pp->ok && rv.signal == pp->sig1
+                        && static_cast<int>(local_col) == pp->col1) {
+                        out.is_primary_sig1 = true;
+                        const auto b5 = ewl_top_map->find({ rv.rx, rv.sat });
+                        if (b5 == ewl_top_map->end()) { out.col2 = -1; out.have_mw = false; return true; }
+                        const std::string& sig_m = pp->sig2;           // shared band = primary sig2
+                        const int          col_m = pp->col2;
+                        const std::string& sig_t = b5->second.first;   // top-tier partner band
+                        const int          col_t = b5->second.second;
+                        const double lam_m = lam(rv.sat, sig_m);
+                        const double lam_t = lam(rv.sat, sig_t);
+                        // (hi, lo) by actual frequency (smaller λ = higher f).  GPS: L2 > L5
+                        // reproduces the legacy assignment bit-exactly.
+                        const bool m_hi = lam_m > 0.0 && lam_t > 0.0 && lam_m < lam_t;
+                        const std::string& sig_hi = m_hi ? sig_m : sig_t;
+                        const std::string& sig_lo = m_hi ? sig_t : sig_m;
+                        const int col_hi = m_hi ? col_m : col_t;
+                        const int col_lo = m_hi ? col_t : col_m;
+                        out.col1    = col_hi;                          // high-frequency side
+                        out.col2    = col_lo;                          // low-frequency side
+                        out.lambda1 = m_hi ? lam_m : lam_t;
+                        out.lambda2 = m_hi ? lam_t : lam_m;
+                        MwSlipDetector::MwArcZdMean zd;
+                        if (stations[rv.rx].mw_slip)                    // (higher, lower)-freq order
+                            zd = stations[rv.rx].mw_slip->arcZdMean(rv.sat, sig_hi, sig_lo);
+                        out.have_mw       = zd.valid;
+                        out.mw_cold       = false;
+                        out.mw_zd_mean_m  = zd.mean_m;
+                        out.mw_var_m2     = zd.var_of_mean_m2;
+                        out.mw_count      = static_cast<long long>(zd.count);
+                        out.lambda_wl     = zd.lambda_wl;              // = λ_top = c/(f_hi − f_lo)
+                        out.bia_corrected = zd.bia_corrected;
+                        // UWL-1 §3.3 cold fix: when the LAGGED statistic is immature, serve the
+                        // UNLAGGED n≥1 cold read — DECISION-ONLY, and only on tiers whose λ
+                        // earns it (the floor excludes GPS's 5.861 m EWL).  At n=1 the Welford
+                        // variance does not exist; substitute the a-priori per-sample σ.
+                        if (uwl_cold_on && stations[rv.rx].mw_slip
+                            && (!zd.valid
+                                || zd.count < static_cast<std::size_t>(ewl_cfg.min_arc_epochs))) {
+                            const auto zc = stations[rv.rx].mw_slip->arcZdMeanCold(
+                                                rv.sat, sig_hi, sig_lo);
+                            if (zc.valid && zc.lambda_wl >= nmw.uwl_cold_min_lambda_m) {
+                                out.have_mw       = true;
+                                out.mw_cold       = true;
+                                out.mw_zd_mean_m  = zc.mean_m;
+                                out.mw_var_m2     = std::isfinite(zc.var_of_mean_m2)
+                                                        ? zc.var_of_mean_m2
+                                                        : nmw.uwl_cold_sigma_m * nmw.uwl_cold_sigma_m;
+                                out.mw_count      = static_cast<long long>(zc.count);
+                                out.lambda_wl     = zc.lambda_wl;
+                                out.bia_corrected = zc.bia_corrected;
+                            }
+                        }
+                        const auto lmit = lin_of.find({ static_cast<int>(est_station), col_hi });
+                        const auto ltit = lin_of.find({ static_cast<int>(est_station), col_lo });
+                        if (lmit == lin_of.end() || ltit == lin_of.end()) out.have_mw = false;
+                        else { out.x_lin1 = lmit->second; out.x_lin2 = ltit->second; }
+                    } else {
+                        out.is_primary_sig1 =
+                            (!pp || !pp->ok) && (rv.signal.size() >= 2 && rv.signal[1] == '1');
+                        out.col1    = local_col;
+                        out.col2    = -1;
+                        out.have_mw = false;
+                    }
+                    return true;
+                };
+                ewl_out.clear();
+                ewl_fixed.clear();
+                ewl_fixed_top.clear();
+                for (auto& lane : ewl_lanes) {
+                    // Increment 5: the fallback instance ('7' under a dual tier) resolves
+                    // against band_top2_of; everything else keeps band_top_of.  The tag
+                    // rides along per fixed row so the WL walk reads the SAME rung's
+                    // bridge/cold arcs the decision came from.
+                    const bool is_top2 = uwl_dual_on && lane.top != '\0'
+                        && [&] {
+                               const auto t = mwLaneTierOf(lane.cons, nmw.uwl_gal_top_band,
+                                                           nmw.uwl_mid_enable, nmw.uwl_dual_top);
+                               return t && t->b_top2 != '\0' && lane.top == t->b_top2;
+                           }();
+                    ewl_top_map = is_top2 ? &band_top2_of : &band_top_of;
+                    std::vector<NetworkMwWlLayer::FixedEwlRow> lane_fixed;
+                    auto lane_blocks = lane.layer.build(blocks, ewl_resolver, lane.epoch, &lane_fixed);
+                    for (auto& b : lane_blocks) ewl_out.push_back(std::move(b));
+                    ewl_fixed.insert(ewl_fixed.end(), lane_fixed.begin(), lane_fixed.end());
+                    ewl_fixed_top.insert(ewl_fixed_top.end(), lane_fixed.size(), lane.top);
+                }
+                ewl_top_map = &band_top_of;   // leave the pointer in its legacy state
+                if (mw_d5_dump) {   // F-A dump: the (station,sat) pairs EWL-FIXED cycles touch
+                    d5_ewl_stasat.clear();
+                    for (const auto& fx : ewl_fixed)
+                        for (const auto& t : blocks[fx.block].rows[fx.row]) {
+                            const auto rit = revmap.find({ static_cast<int>(t.station),
+                                                           static_cast<int>(t.local_col) });
+                            if (rit != revmap.end())
+                                d5_ewl_stasat.insert({ rit->second.rx, rit->second.sat });
+                        }
+                }
+              }  // --- end WL-2 EWL lane ---
+
+              // Per-build reset (the last build before the accepted solve wins; RAIM re-solve safe).
+              if (wl_inject_on || lane_on) {
+                  wl_inject_epoch.clear();
+                  wl_epoch = WlCounters{};
+                  wl_cons_epoch.clear();   // UWL-1 per-cons walk tallies
+              }
+              if (mw_tagsets) d5_hold_chords.clear();
+
+              if (lane_meas_on) {
+                // --- WL-3 §3.2: per-epoch MW(1,2) lane increments on EVERY eligible pair
+                // chord — the carried block becomes the code-coherence accumulator.  Each
+                // arc contributes its detector-LAGGED raw sample exactly once (the Welford
+                // mean stays decision-side); a cycle with an immature/stale/mixed-frame arc,
+                // a this-epoch slip (its lagged sample is pre-slip), or a quarantined
+                // linearization is skipped for the epoch.  Serial in (block, chord) order —
+                // the §8.2 deterministic seam (runs before the bridge/fix walk below).
+                constexpr double kLaneMwSigmaFloorCyc = 0.2;   // young-arc Welford collapse guard
+                for (std::size_t b = 0; b < carry_driver.numBlocks(); ++b) {
+                    if (carry_driver.blockPairBand(b) != 3) continue;
+                    const auto& chords_b = carry_driver.blockChordsForTest(b);
+                    for (std::size_t k = 0; k < chords_b.size(); ++k) {
+                        if (k >= blocks[b].rows.size()) break;
+                        const auto& terms = blocks[b].rows[k];   // band-1 cycle terms
+                        if (terms.empty()) continue;
+                        double z_mw_m = 0.0, R_m2 = 0.0, z_lin_wl = 0.0, lam_wl = 0.0;
+                        double stamp = 0.0;
+                        bool   have_stamp = false, ok = true;
+                        int    frame = -1;   // uniform bia_corrected frame guard
+                        for (const auto& t : terms) {
+                            const auto rit = revmap.find({ static_cast<int>(t.station),
+                                                           static_cast<int>(t.local_col) });
+                            if (rit == revmap.end()) { ok = false; break; }
+                            const Rev& rv = rit->second;
+                            const auto pit = primary.find({ rv.rx, rv.sat });
+                            if (pit == primary.end() || !pit->second.ok
+                                || rv.signal != pit->second.sig1
+                                || static_cast<int>(t.local_col) != pit->second.col1) {
+                                ok = false; break;
+                            }
+                            const PP& pp = pit->second;
+                            // A slip re-tapped this chord this epoch — the lagged (pre-slip)
+                            // sample would poison the fresh lane; skip for one epoch.
+                            bool slipped = carry_slipped_ambs.count(
+                                               { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig1) })
+                                        || carry_slipped_ambs.count(
+                                               { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig2) });
+                            if (!slipped && carry_we_drop_sats
+                                && carry_we_drop_sats->count(rv.sat)) slipped = true;
+                            if (!slipped && carry_we_drop_arcs) {
+                                const auto dit = carry_we_drop_arcs->find(rv.rx);
+                                if (dit != carry_we_drop_arcs->end()
+                                    && dit->second.count(rv.sat)) slipped = true;
+                            }
+                            if (slipped) { ok = false; break; }
+                            MwSlipDetector::MwArcZdLast zl;
+                            if (stations[rv.rx].mw_slip)
+                                zl = stations[rv.rx].mw_slip->arcZdLast(rv.sat, pp.sig1, pp.sig2);
+                            if (!zl.valid || !(zl.lambda_wl > 0.0)) { ok = false; break; }
+                            if (frame < 0) frame = zl.bia_corrected ? 1 : 0;
+                            else if (frame != (zl.bia_corrected ? 1 : 0)) { ok = false; break; }
+                            if (!have_stamp) { stamp = zl.epoch_s; have_stamp = true; }
+                            else if (std::abs(zl.epoch_s - stamp) > 0.1) { ok = false; break; }
+                            const auto l1it = lin_of.find({ static_cast<int>(t.station), pp.col1 });
+                            const auto l2it = lin_of.find({ static_cast<int>(t.station), pp.col2 });
+                            if (l1it == lin_of.end() || l2it == lin_of.end()) { ok = false; break; }
+                            if (nmw.lane_max_abs_xlin_m > 0.0 &&
+                                (std::abs(l1it->second) > nmw.lane_max_abs_xlin_m ||
+                                 std::abs(l2it->second) > nmw.lane_max_abs_xlin_m)) { ok = false; break; }
+                            const double la1 = lam(rv.sat, pp.sig1), la2 = lam(rv.sat, pp.sig2);
+                            if (!(la1 > 0.0 && la2 > 0.0)) { ok = false; break; }
+                            z_mw_m   += t.coeff * zl.value_m;
+                            R_m2     += t.coeff * t.coeff * zl.var_m2;
+                            z_lin_wl += (t.coeff / la1) * l1it->second
+                                      - (t.coeff / la2) * l2it->second;
+                            lam_wl = zl.lambda_wl;
+                        }
+                        if (!ok || !(lam_wl > 0.0)) { ++wl_epoch.lane_skip_meas; continue; }
+                        const double y = z_mw_m / lam_wl - z_lin_wl;
+                        const double R = std::max(R_m2 / (lam_wl * lam_wl),
+                                                  kLaneMwSigmaFloorCyc * kLaneMwSigmaFloorCyc);
+                        if (carry_driver.applyLaneMeasurement(blocks, b, k, y, R))
+                            ++wl_epoch.lane_mw_rows;
+                        else
+                            ++wl_epoch.lane_skip_meas;
+                    }
+                }
+              }
+
+              if ((wl_inject_on || lane_fix_on || lane_bridge_on) && !ewl_fixed.empty()) {
+                // --- WL-2 WL lane: phase bridge → WL integer → hold row + inject plan (§3.3/§3.4) ---
+                // For each FFR-fixed EWL cycle, bridge phase-only from the fixed N_EWL to a fast
+                // WL integer w = [Σc·GF_b + λ_EWL·N_EWL]/λ_WL, cross-check the plain MW(1,2), and
+                // either FOLD an integer-hard hold row (carry already lane-consistent ⇒ innovation
+                // ~0, no fight) or STASH an inject (carry moves to w post-solve, NL preserved).
+                // sat_vertex → satellite label (reverse of carry_sat_vertex) to map a chord's
+                // ArcKey.v back to its satellite (for the primary-pair + group-id lookups).
+                std::map<int, std::string> sat_of_vertex;
+                for (const auto& [s, v] : carry_sat_vertex) sat_of_vertex[v] = s;
+                // Group hold rows by their source carry block so shared (1,2) columns fold jointly.
+                std::map<std::size_t, std::size_t> hold_block_of;   // carry block b → wl_hold_out index
+                // Increment 5 (uwl_dual_top): a (block,row) decided by the PREFERRED rung
+                // is consumed — the fallback rung's entry for the same row dedupes (the
+                // preferred instance's entries precede it in ewl_fixed by construction).
+                // A preferred entry that FAILS a gate does NOT consume, so the fallback
+                // proceeds the same epoch (including a sibling-gate block — the demotion
+                // is free).  The lane bridge increment is separately once-per-row: both
+                // rungs' bridges measure the same lane and must not double-fold.
+                std::set<std::pair<std::size_t, std::size_t>> walk_decided, lane_incr_done;
+
+                for (std::size_t fxi = 0; fxi < ewl_fixed.size(); ++fxi) {
+                    const auto& fx = ewl_fixed[fxi];
+                    const char  fx_top = fxi < ewl_fixed_top.size() ? ewl_fixed_top[fxi] : '\0';
+                    if (fx.block >= blocks.size() || fx.block >= carry_driver.numBlocks()) {
+                        ++wl_epoch.rows_seen; continue;   // defensive; stays pooled
+                    }
+                    const auto& chords_b = carry_driver.blockChordsForTest(fx.block);
+                    if (fx.row >= chords_b.size() || fx.row >= blocks[fx.block].rows.size()) {
+                        ++wl_epoch.rows_seen; continue;   // defensive; stays pooled
+                    }
+                    const ArcKey chord = chords_b[fx.row];
+                    // UWL-1: resolve the chord's constellation up front — the walk tallies
+                    // per-cons under the armed card (wc == wl_epoch otherwise, bit-identical).
+                    const auto svit0 = sat_of_vertex.find(chord.v);
+                    const std::string sat_lbl =
+                        svit0 != sat_of_vertex.end() ? svit0->second : std::string{};
+                    const char ccons = sat_lbl.empty() ? '?' : sat_lbl.front();
+                    WlCounters& wc = uwl_on ? wl_cons_epoch[ccons] : wl_epoch;
+                    ++wc.rows_seen;
+                    // Increment 5: resolve the chord constellation's tier once — which rung
+                    // this entry came from, which top map its bridge reads, and whether an
+                    // untaken sibling exists for the closure statistic.
+                    const auto ctier = uwl_on
+                        ? mwLaneTierOf(ccons, nmw.uwl_gal_top_band, nmw.uwl_mid_enable,
+                                       nmw.uwl_dual_top)
+                        : std::optional<MwLaneTier>{};
+                    const bool fx_is_top2 = ctier && ctier->b_top2 != '\0'
+                                            && fx_top == ctier->b_top2;
+                    const bool dual_cons  = uwl_dual_on && ctier && ctier->b_top2 != '\0';
+                    const auto& walk_top_map = fx_is_top2 ? band_top2_of : band_top_of;
+                    const auto& sib_top_map  = fx_is_top2 ? band_top_of : band_top2_of;
+                    if (dual_cons && walk_decided.count({ fx.block, fx.row })) {
+                        ++wc.dual_dedupe;   // the preferred rung already decided this row
+                        continue;
+                    }
+                    const auto&  terms = blocks[fx.block].rows[fx.row];   // the fundamental cycle
+                    if (terms.empty()) continue;
+
+                    // Walk the cycle arcs: accumulate the bridge DD, the MW(1,2) closure DD, and
+                    // the per-band linearization DD (F5).  Bail on the first ineligible arc.
+                    double sum_gf = 0.0, R_bridge = 0.0;          // Σc·GF_b (m), Σc²·var/λ_wl² (cyc²)
+                    double z_mw12 = 0.0, R_mw12 = 0.0;            // plain MW(1,2) DD (cyc) + var
+                    double z_lin1 = 0.0, z_lin2 = 0.0;            // Σc·x_lin per band (m)
+                    double iono_dd = 0.0, iono_co = 0.0;         // §3.4 v2 de-bias: Σc·Î₁ (m), C_iono
+                    double lam_wl = 0.0, lam_ewl = 0.0, lam1 = 0.0, lam2 = 0.0;
+                    bool   ok = true, mw12_ok = true, quarantined = false, iono_ok = true;
+                    // E6 mid hop (uwl_mid_enable): hop-hi (mid lane vs top lane) + hop-lo
+                    // (WL lane vs mid lane) accumulators, plus the MW(6,5) closure for the
+                    // intermediate integer.  mid_ok stays true only if EVERY arc serves both
+                    // hop bridges mature (else the cycle falls back to the direct hop).
+                    bool   mid_ok = uwl_mid_on;
+                    double sum_gf_hi = 0.0, R_hi = 0.0;           // Σc·GF_hop-hi (m), Σc²·var/λ_mid² (cyc²)
+                    double sum_gf_lo = 0.0, R_lo = 0.0;           // Σc·GF_hop-lo (m), Σc²·var/λ_wl² (cyc²)
+                    double iono_co_hi = 0.0, iono_co_lo = 0.0, lam_mid = 0.0;
+                    double z_mw65 = 0.0, R_mw65 = 0.0;            // MW(mid,b2) closure DD (mid cyc) + var
+                    bool   mw65_ok = true;
+                    // Increment 5 sibling closure: the untaken {7,8} rung's MW statistic as
+                    // a DD over the same cycle.  Measured on every dual-tier decision; the
+                    // hard gate is separate (uwl_sib_gate).  Any arc without the sibling
+                    // band / a valid MW arc drops the check (counted sib_unavail).
+                    bool   sib_ok = dual_cons;
+                    double z_sib = 0.0, R_sib = 0.0, lam_sib = 0.0;
+                    // WL-3 §3.2 bridge lane increment: the LAGGED RAW GF_b DD (once-only,
+                    // phase-precision) accumulated alongside the Welford DECISION statistic.
+                    double sum_gf_raw = 0.0, R_gf_raw = 0.0;      // Σc·GF_b_raw (m), Σc²·var/λ_wl² (cyc²)
+                    double raw_stamp = 0.0;
+                    bool   raw_ok = lane_bridge_on, raw_have_stamp = false;
+                    bool   bridge_cold = false;   // UWL-1 §3.3: any arc served by the cold bridge
+                    for (const auto& t : terms) {
+                        const auto rit = revmap.find({ static_cast<int>(t.station),
+                                                       static_cast<int>(t.local_col) });
+                        if (rit == revmap.end()) { ok = false; break; }
+                        const Rev& rv = rit->second;
+                        const auto pit = primary.find({ rv.rx, rv.sat });
+                        if (pit == primary.end() || !pit->second.ok) { ok = false; break; }
+                        const PP& pp = pit->second;
+                        const auto b5 = walk_top_map.find({ rv.rx, rv.sat });
+                        if (b5 == walk_top_map.end()) { ok = false; break; }
+                        auto brg = stations[rv.rx].mw_slip
+                            ? stations[rv.rx].mw_slip->arcBridge(rv.sat, pp.sig1, pp.sig2, b5->second.first)
+                            : MwSlipDetector::MwBridgeMean{};
+                        const std::size_t brg_need =
+                            static_cast<std::size_t>(std::max(2, ewl_cfg.min_arc_epochs));
+                        if (uwl_cold_on && stations[rv.rx].mw_slip
+                            && (!brg.valid || brg.count < brg_need)) {
+                            // UWL-1 §3.3: post-slip the LAGGED bridge trails by one epoch; the
+                            // UNLAGGED cold serve (n≥2) re-pins one epoch earlier.  DECISION-
+                            // ONLY — the lane increment below stays on the lagged arcBridgeLast,
+                            // and the λ floor keeps this a top-tier (Galileo) privilege.
+                            const auto bc = stations[rv.rx].mw_slip->arcBridgeCold(
+                                                rv.sat, pp.sig1, pp.sig2, b5->second.first);
+                            if (bc.valid && bc.count >= brg_need
+                                && bc.lambda_ewl >= nmw.uwl_cold_min_lambda_m) {
+                                brg = bc;
+                                bridge_cold = true;
+                            }
+                        }
+                        if (!brg.valid || brg.count < brg_need) {
+                            ok = false; break;
+                        }
+                        const double l1 = lam(rv.sat, pp.sig1), l2 = lam(rv.sat, pp.sig2);
+                        if (!(l1 > 0.0 && l2 > 0.0 && brg.lambda_wl > 0.0 && brg.lambda_ewl > 0.0)) {
+                            ok = false; break;
+                        }
+                        const double coeff = t.coeff;
+                        sum_gf   += coeff * brg.gf_mean_m;
+                        R_bridge += coeff * coeff * brg.var_of_mean_m2 / (brg.lambda_wl * brg.lambda_wl);
+                        // E6 mid hop: read this arc's two hop bridges (lagged; the cold
+                        // serve stays a direct-hop privilege) + the MW(mid,b2) closure.
+                        // Any missing/immature piece drops the WHOLE cycle to the direct
+                        // hop (λ_mid must be uniform across the cycle's arcs).
+                        if (mid_ok) {
+                            const auto b6 = band_mid_of.find({ rv.rx, rv.sat });
+                            MwSlipDetector::MwBridgeMean bh, blo;
+                            if (b6 != band_mid_of.end() && stations[rv.rx].mw_slip) {
+                                bh  = stations[rv.rx].mw_slip->arcBridge(
+                                          rv.sat, b6->second, pp.sig2, b5->second.first);
+                                blo = stations[rv.rx].mw_slip->arcBridge(
+                                          rv.sat, pp.sig1, pp.sig2, b6->second);
+                            }
+                            if (!bh.valid || bh.count < brg_need
+                                || !blo.valid || blo.count < brg_need
+                                || !(bh.lambda_wl > 0.0) || !(blo.lambda_ewl > 0.0)) {
+                                mid_ok = false;
+                            } else {
+                                sum_gf_hi += coeff * bh.gf_mean_m;
+                                R_hi      += coeff * coeff * bh.var_of_mean_m2
+                                             / (bh.lambda_wl * bh.lambda_wl);
+                                sum_gf_lo += coeff * blo.gf_mean_m;
+                                R_lo      += coeff * coeff * blo.var_of_mean_m2
+                                             / (blo.lambda_wl * blo.lambda_wl);
+                                iono_co_hi = bh.iono_coeff;
+                                iono_co_lo = blo.iono_coeff;
+                                lam_mid    = bh.lambda_wl;   // == blo.lambda_ewl (CDMA-uniform)
+                                if (mw65_ok) {   // MW(mid,b2) closure for the mid integer
+                                    const auto mw65 = stations[rv.rx].mw_slip->arcZdMean(
+                                                          rv.sat, b6->second, pp.sig2);
+                                    if (mw65.valid && mw65.lambda_wl > 0.0) {
+                                        z_mw65 += coeff * mw65.mean_m / mw65.lambda_wl;
+                                        R_mw65 += coeff * coeff * mw65.var_of_mean_m2
+                                                  / (mw65.lambda_wl * mw65.lambda_wl);
+                                    } else {
+                                        mw65_ok = false;
+                                    }
+                                }
+                            }
+                        }
+                        // Increment 5: this arc's untaken-sibling MW read (7-fx → the '8'
+                        // rung's (8,5) statistic, 8-fx → the finer (7,5) one).  Ordered
+                        // (hi,lo) by actual frequency like every MW key.
+                        if (sib_ok) {
+                            const auto bs = sib_top_map.find({ rv.rx, rv.sat });
+                            MwSlipDetector::MwArcZdMean mws;
+                            if (bs != sib_top_map.end() && stations[rv.rx].mw_slip) {
+                                const double lam_s = lam(rv.sat, bs->second.first);
+                                const double lam_m = lam(rv.sat, pp.sig2);
+                                const bool s_hi = lam_s > 0.0 && lam_m > 0.0 && lam_s < lam_m;
+                                mws = stations[rv.rx].mw_slip->arcZdMean(
+                                          rv.sat,
+                                          s_hi ? bs->second.first : pp.sig2,
+                                          s_hi ? pp.sig2 : bs->second.first);
+                            }
+                            if (mws.valid && mws.lambda_wl > 0.0) {
+                                z_sib  += coeff * mws.mean_m / mws.lambda_wl;
+                                R_sib  += coeff * coeff * mws.var_of_mean_m2
+                                          / (mws.lambda_wl * mws.lambda_wl);
+                                lam_sib = mws.lambda_wl;
+                            } else {
+                                sib_ok = false;
+                            }
+                        }
+                        if (raw_ok) {   // WL-3: the raw lagged sample (skip on slip/stale/immature)
+                            bool slipped = carry_slipped_ambs.count(
+                                               { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig1) })
+                                        || carry_slipped_ambs.count(
+                                               { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig2) });
+                            if (!slipped && carry_we_drop_sats
+                                && carry_we_drop_sats->count(rv.sat)) slipped = true;
+                            if (!slipped && carry_we_drop_arcs) {
+                                const auto dit = carry_we_drop_arcs->find(rv.rx);
+                                if (dit != carry_we_drop_arcs->end()
+                                    && dit->second.count(rv.sat)) slipped = true;
+                            }
+                            MwSlipDetector::MwBridgeLast bl;
+                            if (!slipped && stations[rv.rx].mw_slip)
+                                bl = stations[rv.rx].mw_slip->arcBridgeLast(
+                                         rv.sat, pp.sig1, pp.sig2, b5->second.first);
+                            if (slipped || !bl.valid || !(bl.lambda_wl > 0.0)) {
+                                raw_ok = false;
+                            } else if (!raw_have_stamp) {
+                                raw_stamp = bl.epoch_s; raw_have_stamp = true;
+                            } else if (std::abs(bl.epoch_s - raw_stamp) > 0.1) {
+                                raw_ok = false;   // mixed epochs — the DD is not any epoch's
+                            }
+                            if (raw_ok) {
+                                sum_gf_raw += coeff * bl.gf_m;
+                                R_gf_raw   += coeff * coeff * bl.var_m2
+                                              / (bl.lambda_wl * bl.lambda_wl);
+                            }
+                        }
+                        // §3.4 v2 iono de-bias: subtract the network's own slant-iono estimate DD.
+                        // (We do NOT price the local MARGINAL iono variance into the σ-guard: it is
+                        // dominated by the ABSOLUTE / common-mode iono uncertainty that CANCELS in a
+                        // closed DD cycle, so Σc²·var grossly over-states the true DD-iono error and
+                        // would gate the bridge past its ep~4-6 advantage.  The DD-iono ESTIMATE
+                        // error — small, since common-mode cancels — surfaces directly in |frac| and
+                        // is caught by the FFR gate; the iono-free MW(1,2) closure is the backstop.
+                        // The exact joint-DD-iono covariance / iono-column fold is a v3 refinement.)
+                        const auto iit = iono_of.find({ rv.rx, rv.sat });
+                        if (iit == iono_of.end()) { iono_ok = false; break; }
+                        iono_dd += coeff * iit->second;
+                        const auto l1it = lin_of.find({ static_cast<int>(t.station), pp.col1 });
+                        const auto l2it = lin_of.find({ static_cast<int>(t.station), pp.col2 });
+                        if (l1it == lin_of.end() || l2it == lin_of.end()) { ok = false; break; }
+                        z_lin1 += coeff * l1it->second;
+                        z_lin2 += coeff * l2it->second;
+                        if (nmw.lane_max_abs_xlin_m > 0.0 &&
+                            (std::abs(l1it->second) > nmw.lane_max_abs_xlin_m ||
+                             std::abs(l2it->second) > nmw.lane_max_abs_xlin_m)) { quarantined = true; break; }
+                        // Plain MW(1,2) closure statistic (integrity cross-check, §3.4).
+                        MwSlipDetector::MwArcZdMean mw = stations[rv.rx].mw_slip
+                            ? stations[rv.rx].mw_slip->arcZdMean(rv.sat, pp.sig1, pp.sig2)
+                            : MwSlipDetector::MwArcZdMean{};
+                        if (mw.valid && mw.lambda_wl > 0.0) {
+                            z_mw12 += coeff * mw.mean_m / mw.lambda_wl;
+                            R_mw12 += coeff * coeff * mw.var_of_mean_m2 / (mw.lambda_wl * mw.lambda_wl);
+                        } else {
+                            mw12_ok = false;
+                        }
+                        lam_wl = brg.lambda_wl; lam_ewl = brg.lambda_ewl; lam1 = l1; lam2 = l2;
+                        iono_co = brg.iono_coeff;
+                    }
+                    if (quarantined) { ++wc.skip_quarantine; continue; }
+                    if (!ok || !(lam_wl > 0.0)) { ++wc.skip_bridge_missing; continue; }
+                    if (!iono_ok)  { ++wc.skip_no_iono; continue; }  // no iono estimate ⇒ can't de-bias
+
+                    // --- WL-3 §3.2: fold the per-epoch BRIDGE lane increment (raw lagged GF_b
+                    // DD, iono-de-biased, honest per-sample R) — BEFORE the FFR decision gates,
+                    // because the continuous lane tightening is wanted even on epochs where the
+                    // integer decision is withheld.  Once-only: the raw sample enters here and
+                    // nowhere else; the Welford mean below stays decision-side.
+                    // Increment 5: both rungs' bridges measure the SAME lane — at most one
+                    // bridge increment folds per (block,row) per build (a failed preferred
+                    // attempt does not consume, so the fallback may still tighten).
+                    if (lane_bridge_on
+                        && !(dual_cons && lane_incr_done.count({ fx.block, fx.row }))) {
+                        constexpr double kLaneBridgeSigmaFloorCyc = 0.02;   // phase-precision floor
+                        if (raw_ok) {
+                            const double z_raw = (sum_gf_raw - iono_co * iono_dd
+                                                  + lam_ewl * static_cast<double>(fx.integer)) / lam_wl;
+                            const double y_raw = z_raw - (z_lin1 / lam1 - z_lin2 / lam2);
+                            const double R_raw = std::max(R_gf_raw,
+                                kLaneBridgeSigmaFloorCyc * kLaneBridgeSigmaFloorCyc);
+                            if (carry_driver.applyLaneMeasurement(blocks, fx.block, fx.row, y_raw, R_raw)) {
+                                ++wc.lane_bridge_rows;
+                                if (dual_cons) lane_incr_done.insert({ fx.block, fx.row });
+                            } else {
+                                ++wc.lane_skip_meas;
+                            }
+                        } else {
+                            ++wc.lane_skip_meas;
+                        }
+                    }
+
+                    // z_WL^bridge = [Σc·GF_b − C_iono·Σc·Î₁ + λ_EWL·N_EWL]/λ_WL (cyc); FFR on the
+                    // iono-de-biased DETECTOR stat (decision source, never the posterior).  The
+                    // de-bias removes the integer-valued differential-iono bias (the v1
+                    // falsification); the residual DD-iono ESTIMATE error surfaces in |frac|.
+                    const double sigma_direct = std::sqrt(std::max(R_bridge, 0.0));   // Welford phase noise
+                    const double z_wl_direct  = (sum_gf - iono_co * iono_dd
+                                                 + lam_ewl * static_cast<double>(fx.integer)) / lam_wl;
+
+                    // --- E6 mid hop: chain top → mid → WL.  Hop-hi determines the mid-rung
+                    // integer m = round([Σc·GF_hi − C_hi·Σc·Î₁ + λ_TOP·N_TOP]/λ_MID) under its
+                    // own FFR gates + the MW(mid,b2) closure; hop-lo then re-expresses the WL
+                    // statistic against the ROUNDED m — stripping the top hop's λ_TOP-scale
+                    // phase/iono amplification (~3.3× smaller λ multiplier at λ_MID 2.931 m).
+                    // Any failure falls back to the direct hop (counted, never silent).
+                    double z_wl = z_wl_direct, sigma_bridge = sigma_direct;
+                    bool   used_mid = false;
+                    if (mid_ok && lam_mid > 0.0) {
+                        const double sigma_hi = std::sqrt(std::max(R_hi, 0.0));
+                        const double z_mid = (sum_gf_hi - iono_co_hi * iono_dd
+                                              + lam_ewl * static_cast<double>(fx.integer)) / lam_mid;
+                        const double m = std::round(z_mid);
+                        bool mid_fix = sigma_hi < nmw.wl_fix_sigma_cyc
+                                    && std::abs(z_mid - m) < nmw.wl_fix_frac_cyc;
+                        if (mid_fix && mw65_ok) {
+                            // The mid integer has its own free integrity check: the plain
+                            // MW(mid,b2) DD must agree within its σ (invariant #1).
+                            const double tol65 = 0.5 + 3.0 * std::sqrt(std::max(R_mw65, 0.0));
+                            if (std::abs(z_mw65 - m) > tol65) { mid_fix = false; ++wc.mid_closure; }
+                        } else if (!mid_fix) {
+                            ++wc.mid_fallback;
+                        }
+                        if (mid_fix) {
+                            z_wl = (sum_gf_lo - iono_co_lo * iono_dd + lam_mid * m) / lam_wl;
+                            sigma_bridge = std::sqrt(std::max(R_lo, 0.0));
+                            used_mid = true;
+                        }
+                    }
+
+                    if (sigma_bridge > nmw.bridge_max_sigma_cyc) { ++wc.skip_bridge_wide; continue; }
+                    const double w = std::round(z_wl);
+                    if (!(sigma_bridge < nmw.wl_fix_sigma_cyc &&
+                          std::abs(z_wl - w) < nmw.wl_fix_frac_cyc)) { ++wc.skip_not_fixed; continue; }
+                    // Wrong-integer backstop: if the DIRECT hop is ALSO FFR-credible on its own
+                    // and rounds to a different integer, decide neither (counted).
+                    if (used_mid) {
+                        const double wd = std::round(z_wl_direct);
+                        if (sigma_direct < nmw.wl_fix_sigma_cyc
+                            && std::abs(z_wl_direct - wd) < nmw.wl_fix_frac_cyc
+                            && wd != w) { ++wc.mid_disagree; continue; }
+                    }
+
+                    // Closure: the plain MW(1,2) DD must agree with w within its own σ (free
+                    // integrity check).  Blocked only when MW(1,2) is present AND clearly off.
+                    // NOTE (UWL-1 §3.3): in a post-slip cold window the primary-pair MW arc has
+                    // usually reset too (mw12_ok=false ⇒ not blocked) — a cold decision is
+                    // frac-gated + D5-backstopped + re-decided idempotently as stats mature.
+                    if (mw12_ok) {
+                        const double tol = 0.5 + 3.0 * std::sqrt(std::max(R_mw12, 0.0));
+                        if (std::abs(z_mw12 - w) > tol) { ++wc.skip_closure; continue; }
+                    }
+
+                    // --- Increment 5 sibling closure (§1b): the untaken rung's statistic
+                    // must sit on N_top·λ_top/λ_sib.  8-fx → z(7,5) vs 2·N₈ (the FINER
+                    // sibling: a ±1 error in N₈ moves the residual by 2 — strongly
+                    // detectable); 7-fx → z(8,5) vs N₇/2 (an odd N₇ makes the target
+                    // half-integer — the AltBOC-coherence parity, visible in |frac|).
+                    // MEASURED on every dual decision; the hard gate blocks only a
+                    // ≥1-sibling-cycle disagreement and DEMOTES the cycle to the fallback
+                    // rung (the fallback entry follows in ewl_fixed and is not deduped,
+                    // because a blocked decision never consumes the row).
+                    if (dual_cons) {
+                        if (sib_ok && lam_sib > 0.0 && lam_ewl > 0.0) {
+                            ++wc.sib_checked;
+                            const double expect =
+                                static_cast<double>(fx.integer) * (lam_ewl / lam_sib);
+                            const double r     = z_sib - expect;
+                            const double rfrac = r - std::round(r);
+                            wc.sib_abs_frac_sum += std::abs(rfrac);
+                            if (std::llround(r) != 0) ++wc.sib_int_off;
+                            if (uwl_sib_gate_on) {
+                                const double tol_s =
+                                    0.5 + 3.0 * std::sqrt(std::max(R_sib, 0.0));
+                                if (std::abs(r) > tol_s) { ++wc.sib_blocked; continue; }
+                            }
+                        } else {
+                            ++wc.sib_unavail;
+                        }
+                    }
+
+                    ++wc.cycles_decided;
+                    wc.sum_bridge_R += R_bridge;
+                    if (bridge_cold) ++wc.cold_bridge_cycles;
+                    if (used_mid)    ++wc.mid_decided;
+                    if (fx_is_top2)  ++wc.top2_decided;
+                    if (dual_cons)   walk_decided.insert({ fx.block, fx.row });
+
+                    // Group ids for the chord's two carried bands (chord.v → sat → primary pair,
+                    // resolved at the loop top).
+                    if (sat_lbl.empty()) { ++wc.skip_basis; continue; }
+                    const char cons = ccons;
+                    const auto pcit = primary.find({ chord.u, sat_lbl });
+                    if (pcit == primary.end() || !pcit->second.ok) { ++wc.skip_basis; continue; }
+
+                    if (lane_fix_on) {
+                        // --- WL-3 §3.3: the FFR fix on the PAIR block — an information-
+                        // idempotent lane-coordinate SET applied every DECIDED epoch (recenter
+                        // + recollapse; a one-shot fold-on-change measured out — the decided
+                        // lane drifts back to MW quality under q + noisy increments), plus the
+                        // pair inject-fallback plan (applied post-solve only if the carry still
+                        // disagrees by > inject_disagree_min_cyc; ≈0 in steady state — the
+                        // retirement telemetry proves it).
+                        const auto pgit = carry_group_id.find(
+                            { cons, pcit->second.sig1 + "+" + pcit->second.sig2 });
+                        if (pgit == carry_group_id.end()) { ++wc.skip_basis; continue; }
+                        const double z_lin_wl = z_lin1 / lam1 - z_lin2 / lam2;
+                        const int rc = carry_driver.applyLaneFix(
+                            blocks, fx.block, fx.row, static_cast<long long>(std::llround(w)),
+                            w - z_lin_wl, nmw.fix_weight_sigma_cyc);
+                        if (rc == 1) {
+                            ++wc.lane_fix_folded;
+                            if (mw_tagsets) d5_hold_chords.insert(chord);
+                        } else if (rc == 0) {
+                            ++wc.lane_fix_unchanged;
+                        } else {
+                            ++wc.skip_basis;   // not a pair chord (residual-group cycle)
+                            continue;
+                        }
+                        WlInjectPlan pl;
+                        pl.pair = true;
+                        pl.group_l1 = pl.group_l2 = pgit->second;
+                        pl.chord = chord;
+                        pl.w = w;
+                        pl.z_lin1 = z_lin1; pl.z_lin2 = z_lin2;
+                        pl.lambda1 = lam1;  pl.lambda2 = lam2;
+                        pl.cons = cons;
+                        wl_inject_epoch.push_back(pl);
+                        continue;
+                    }
+
+                    const auto g1it = carry_group_id.find({ cons, pcit->second.sig1 });
+                    const auto g2it = carry_group_id.find({ cons, pcit->second.sig2 });
+                    if (g1it == carry_group_id.end() || g2it == carry_group_id.end()) {
+                        ++wc.skip_basis; continue;
+                    }
+                    const int group_l1 = g1it->second, group_l2 = g2it->second;
+
+                    // Pre-solve carried lane value (for the hold-row gate): fold the integer-hard
+                    // hold row ONLY when the carry already agrees (innovation ~0 ⇒ no F6 fight);
+                    // otherwise skip it this epoch and let the post-solve inject move the value.
+                    double z1p = 0.0, v1p = 0.0, z2p = 0.0, v2p = 0.0;
+                    const bool have_l1 = carry_driver.carriedChordValue(group_l1, chord, z1p, v1p);
+                    const bool have_l2 = carry_driver.carriedChordValue(group_l2, chord, z2p, v2p);
+                    bool agree = false;
+                    if (have_l1 && have_l2) {
+                        const double A1 = (z1p + z_lin1) / lam1, A2 = (z2p + z_lin2) / lam2;
+                        agree = std::abs(w - (A1 - A2)) <= nmw.inject_disagree_min_cyc;
+                    }
+                    if (agree) {
+                        // Build/append the WL hold row (WL-cycle correction frame): +c/λ1 on col1,
+                        // −c/λ2 on col2; zhat = w − Σ[(c/λ1)x_lin1 − (c/λ2)x_lin2]; Pz = fix_weight².
+                        std::size_t ob;
+                        auto hit = hold_block_of.find(fx.block);
+                        if (hit == hold_block_of.end()) {
+                            ob = wl_hold_out.size();
+                            hold_block_of[fx.block] = ob;
+                            wl_hold_out.emplace_back();
+                        } else { ob = hit->second; }
+                        std::vector<NetworkNormalEquations::DdPriorBlock::Term> hrow;
+                        double z_lin_wl = 0.0;
+                        hrow.reserve(terms.size() * 2);
+                        bool hok = true;
+                        for (const auto& t : terms) {
+                            const auto rit = revmap.find({ static_cast<int>(t.station),
+                                                           static_cast<int>(t.local_col) });
+                            if (rit == revmap.end()) { hok = false; break; }
+                            const auto pit = primary.find({ rit->second.rx, rit->second.sat });
+                            if (pit == primary.end() || !pit->second.ok) { hok = false; break; }
+                            const PP& pp = pit->second;
+                            const double l1 = lam(rit->second.sat, pp.sig1);
+                            const double l2 = lam(rit->second.sat, pp.sig2);
+                            if (!(l1 > 0.0 && l2 > 0.0)) { hok = false; break; }
+                            hrow.push_back({ t.station, pp.col1, +t.coeff / l1 });
+                            hrow.push_back({ t.station, pp.col2, -t.coeff / l2 });
+                            const auto l1it = lin_of.find({ static_cast<int>(t.station), pp.col1 });
+                            const auto l2it = lin_of.find({ static_cast<int>(t.station), pp.col2 });
+                            if (l1it == lin_of.end() || l2it == lin_of.end()) { hok = false; break; }
+                            z_lin_wl += (t.coeff / l1) * l1it->second - (t.coeff / l2) * l2it->second;
+                        }
+                        if (hok) {
+                            auto& dst = wl_hold_out[ob];
+                            dst.rows.push_back(std::move(hrow));
+                            const Eigen::Index k = static_cast<Eigen::Index>(dst.rows.size());
+                            dst.zhat.conservativeResize(k);
+                            dst.zhat(k - 1) = w - z_lin_wl;
+                            dst.Pz.conservativeResize(k, k);
+                            dst.Pz.row(k - 1).setZero();
+                            dst.Pz.col(k - 1).setZero();
+                            dst.Pz(k - 1, k - 1) = nmw.fix_weight_sigma_cyc * nmw.fix_weight_sigma_cyc;
+                            ++wc.holds_folded;
+                            if (mw_tagsets) d5_hold_chords.insert(chord);
+                        }
+                    }
+                    // Stash the inject plan (applied post-solve against the FRESH posterior).  The
+                    // 1:1-basis requirement is re-checked there (both bands must carry the chord).
+                    WlInjectPlan pl;
+                    pl.group_l1 = group_l1; pl.group_l2 = group_l2; pl.chord = chord;
+                    pl.w = w; pl.z_lin1 = z_lin1; pl.z_lin2 = z_lin2;
+                    pl.lambda1 = lam1; pl.lambda2 = lam2;
+                    pl.cons = cons;
+                    wl_inject_epoch.push_back(pl);
+                }
+              }  // --- end WL-2 WL lane ---
+
+              if (mw_lane_trace) {   // F-B: lane-trace entries for EVERY resolvable primary cycle
+                lane_trace_epoch.clear();
+                std::map<int, std::string> sat_of_v;
+                for (const auto& [s, v] : carry_sat_vertex) sat_of_v[v] = s;
+                for (std::size_t b = 0; b < blocks.size(); ++b) {   // pure carry blocks (pre-append)
+                    const auto& chords_b = carry_driver.blockChordsForTest(b);
+                    for (std::size_t r = 0; r < blocks[b].rows.size(); ++r) {
+                        if (r >= chords_b.size()) break;
+                        const auto& terms = blocks[b].rows[r];
+                        if (terms.empty()) continue;
+                        LaneTraceEntry e;
+                        e.chord = chords_b[r];
+                        bool ok = true;
+                        for (const auto& t : terms) {
+                            const auto rit = revmap.find({ static_cast<int>(t.station),
+                                                           static_cast<int>(t.local_col) });
+                            if (rit == revmap.end()) { ok = false; break; }
+                            const auto pit = primary.find({ rit->second.rx, rit->second.sat });
+                            if (pit == primary.end() || !pit->second.ok
+                                || rit->second.signal != pit->second.sig1
+                                || static_cast<int>(t.local_col) != pit->second.col1) { ok = false; break; }
+                            const PP& pp = pit->second;
+                            const auto l1it = lin_of.find({ static_cast<int>(t.station), pp.col1 });
+                            const auto l2it = lin_of.find({ static_cast<int>(t.station), pp.col2 });
+                            if (l1it == lin_of.end() || l2it == lin_of.end()) { ok = false; break; }
+                            e.z_lin1 += t.coeff * l1it->second;
+                            e.z_lin2 += t.coeff * l2it->second;
+                            e.lam1 = lam(rit->second.sat, pp.sig1);
+                            e.lam2 = lam(rit->second.sat, pp.sig2);
+                        }
+                        if (!ok || !(e.lam1 > 0.0 && e.lam2 > 0.0)) continue;
+                        const auto svit = sat_of_v.find(e.chord.v);
+                        if (svit == sat_of_v.end()) continue;
+                        e.sat = svit->second;
+                        const char cons = e.sat.empty() ? '?' : e.sat.front();
+                        const auto pcit = primary.find({ e.chord.u, e.sat });
+                        if (pcit == primary.end() || !pcit->second.ok) continue;
+                        if (lane_on) {
+                            // WL-3: both bands live in ONE pair group; the write site reads
+                            // the joint block via carriedPairValue (g1 == g2 marks it).
+                            const auto pgit = carry_group_id.find(
+                                { cons, pcit->second.sig1 + "+" + pcit->second.sig2 });
+                            if (pgit == carry_group_id.end()) continue;
+                            e.g1 = e.g2 = pgit->second;
+                        } else {
+                            const auto g1it = carry_group_id.find({ cons, pcit->second.sig1 });
+                            const auto g2it = carry_group_id.find({ cons, pcit->second.sig2 });
+                            if (g1it == carry_group_id.end() || g2it == carry_group_id.end()) continue;
+                            e.g1 = g1it->second; e.g2 = g2it->second;
+                        }
+                        lane_trace_epoch.push_back(std::move(e));
+                    }
+                }
+              }
+                for (auto& wb : wl_out)      blocks.push_back(std::move(wb));   // WL-1 first ([Nc, Nc+n_wl))
+                if (nmw.ewl_fold_rows)                                          // F-A discriminant: false ⇒
+                    for (auto& wb : ewl_out) blocks.push_back(std::move(wb));   // decide/expose but fold nothing
+                for (auto& wb : wl_hold_out) blocks.push_back(std::move(wb));   // then WL hold rows
+            }
+            est.setDdPriors(std::move(blocks));
         };
+        subEnd(SB_GAUGEBUILD);   // D0b: close gauge build + carry-driver setup
+        subBegin(SB_DDBUILD);    // D0b: carry_driver.beginEpoch + buildCarryDdPriors (W·Pᶻ·Wᵀ)
         if (carry_invariant) {
             // The z-store predict (q_z·Δt on the carried DD covariance) runs ONCE per
             // epoch; the build/fold may re-run on the RAIM re-solve.  D5 v2: the epoch time
@@ -6379,7 +8208,9 @@ int Application::runNetwork() {
             const double dt = std::isfinite(carry_prev_tow) ? (se.time.tow - carry_prev_tow) : 0.0;
             carry_driver.beginEpoch(dt > 0.0 ? dt : 0.0, se.time.tow, /*clean=*/true);
         }
-        buildCarryDdPriors();
+        { CarryEigenScope es(carry_par, n_threads); buildCarryDdPriors(); }  // parallel_carry: thread W·Pᶻ·Wᵀ
+        subEnd(SB_DDBUILD);      // D0b: close buildCarryDdPriors (the Card-4 DD-cov projection)
+        subBegin(SB_SOLVEGLUE);  // D0b: pre-solve prep + clock predict + solve + within-epoch re-solve
 
         // --- Satellite code-bias datum constraints (W6, full multi-band) -----
         // Each shared per-(sat,signal) code bias opens gauge freedoms the data
@@ -7119,6 +8950,9 @@ int Application::runNetwork() {
         // cold-start convergence horizon.  Its per-epoch predictions (for the post-solve update
         // + normalized-innovation test) are stashed here.
         const bool clk_model_warm = clk_model_on && (static_cast<int>(n_emitted) >= pl_warmup);
+        // network.emit_clock_rate: same warmup gate as the clock model — skip the cold-start
+        // epochs where the floated clock would finite-difference into a huge spurious C1 rate.
+        const bool emit_rate_warm = emit_clock_rate_on && (static_cast<int>(n_emitted) >= pl_warmup);
         std::map<std::string, ClockOscPred> clk_pred;
         // B7 (P1-4): the carried clock-prior information folded onto each clock column this
         // epoch (0 = none) — either the scalar D2 carry (1/var_eff) or the two-state model
@@ -7516,6 +9350,13 @@ int Application::runNetwork() {
 
         Eigen::VectorXd x_s;
         try {
+            // parallel_carry: the WHOLE est.solve() is Eigen-threaded work — foldReducedDdPriors
+            // fans its per-station reduction across threads itself (Eigen PINNED), and its dense
+            // GEMMs + the K×K middle inverse run under Eigen's own threading.  So, unlike the two
+            // isolated build/install GEMM stages, solve() is NOT wrapped in a CarryEigenScope: an
+            // un-pin here would nest the fold's OpenMP with Eigen's GEMM threads.  It is also why
+            // parallel_carry cannot coexist with parallel_reduce (which would OpenMP-fan this same
+            // Eigen-threaded solve across stations) — the loader keeps them mutually exclusive.
             x_s = est.solve(plan.shared_datum);
             // Card 1d debug: full-precision solve checksum for A/B-arm differencing
             // (print-precision-proof).  One-shot budget; log-only.
@@ -8069,6 +9910,8 @@ int Application::runNetwork() {
             continue;
         }
 
+        subEnd(SB_SOLVEGLUE);   // D0b: close solve glue (net removed the internal solve/reduce)
+        subBegin(SB_INSTALL);   // D0b: carry_driver.installPosterior (DD posterior mean/cov readback)
         // Card 4 (M1) C3b: install the DD posterior (mean + covariance) back into the
         // carry from the FINAL accepted x_s + datum — the invariant DDs the next epoch
         // projects forward.  POST-ACCEPTANCE (after the observability + σ̂0 withhold
@@ -8077,13 +9920,261 @@ int Application::runNetwork() {
         // epoch (not only RAIM-armed ones).  A failure resets the carry (safe cold
         // start).  No-op when OFF.
         if (carry_invariant) {
-            try { carry_driver.installPosterior(est, x_s, plan.shared_datum, seam_threads); }
+            // parallel_carry: thread installPosterior's posterior-cov GEMMs.  Run it
+            // SERIAL-over-blocks (n_threads=1, its byte-identical-to-serial path) so Eigen's
+            // threading does not nest with the seam's per-block OpenMP.
+            try { CarryEigenScope es(carry_par, n_threads);
+                  carry_driver.installPosterior(est, x_s, plan.shared_datum,
+                                                carry_par ? 1 : seam_threads); }
             catch (const std::exception& ex) {
                 log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
                           "carry reset (refloats next epoch).", se.time.tow, ex.what());
                 carry_driver.reset();
             }
             carry_prev_tow = se.time.tow;
+            // M5 card WL-1: fold the accepted build's WL eligibility tallies into the run
+            // totals (this install runs only for an accepted epoch; the last buildCarryDdPriors
+            // before the accepted solve set mw_wl_epoch).  Invariant #4: counters or it didn't happen.
+            if (mw_wl_on) {
+                mw_wl_run.cycles_seen       += mw_wl_epoch.cycles_seen;
+                mw_wl_run.rows_built        += mw_wl_epoch.rows_built;
+                mw_wl_run.rows_capped       += mw_wl_epoch.rows_capped;
+                mw_wl_run.skip_not_primary  += mw_wl_epoch.skip_not_primary;
+                mw_wl_run.skip_missing_band += mw_wl_epoch.skip_missing_band;
+                mw_wl_run.skip_missing_mw   += mw_wl_epoch.skip_missing_mw;
+                mw_wl_run.skip_young_arc    += mw_wl_epoch.skip_young_arc;
+                mw_wl_run.skip_bad_lambda   += mw_wl_epoch.skip_bad_lambda;
+                mw_wl_run.skip_mixed_frame  += mw_wl_epoch.skip_mixed_frame;
+                mw_wl_run.sum_R             += mw_wl_epoch.sum_R;
+
+                // --- F6 one-shot attribution write (log-only; docs/HANDOFF_mw_wl_card.md §6c). ---
+                // The accepted epoch's x_s is final here; add reconstructed_abs (the estimator's
+                // current WL DD over the same cycle) + the kernel WL-block innovation, then dump.
+                if (mw_wl_f6_dump && !mw_wl_f6.written && mw_wl_f6.pending
+                    && mw_wl_f6.tow == se.time.tow) {
+                    std::map<int, Eigen::VectorXd> xr_of;   // est_station -> local corrections
+                    for (const auto& fr : mw_wl_f6.rows)
+                        for (const auto& a : fr.arcs)
+                            if (a.est_station >= 0 && !xr_of.count(a.est_station)) {
+                                try { xr_of[a.est_station] = est.reconstructStation(
+                                          static_cast<std::size_t>(a.est_station), x_s); }
+                                catch (...) { xr_of[a.est_station] = Eigen::VectorXd(); }
+                            }
+                    Eigen::VectorXd v_wl;                   // kernel innovation v = z_free − Gᵀx_s − ẑ
+                    {
+                        Eigen::MatrixXd cov_v_wl;           // (unused; v is cov-free)
+                        try {
+                            const Eigen::MatrixXd cov0 =
+                                Eigen::MatrixXd::Zero(x_s.size(), x_s.size());
+                            est.ddPriorInnovation(mw_wl_f6.wl_block_index, x_s, cov0, v_wl, cov_v_wl);
+                        } catch (...) { v_wl.resize(0); }
+                    }
+                    std::error_code ec_f6;
+                    std::filesystem::create_directories(log_dir_, ec_f6);
+                    std::ofstream f6(log_dir_ / "network_mw_wl_f6.csv");
+                    if (f6) {
+                        f6 << "# M5 WL-1 F6 attribution dump — first arming epoch (week "
+                           << mw_wl_f6.week << ", tow " << fmt::format("{:.1f}", mw_wl_f6.tow)
+                           << ", loop_epoch " << mw_wl_f6.loop_epoch << ", wl_block_index "
+                           << mw_wl_f6.wl_block_index << ")\n";
+                        f6 << "row,n_arcs,z_mw_cyc,z_mw_frac,z_lin_cyc,z_corr_cyc,zhat_block_cyc,"
+                              "reconstructed_abs_cyc,recon_minus_zmw_cyc,recon_abs_frac,innovation_v_cyc\n";
+                        for (std::size_t r = 0; r < mw_wl_f6.rows.size(); ++r) {
+                            const auto& fr = mw_wl_f6.rows[r];
+                            double recon = 0.0; bool recon_ok = true;
+                            for (const auto& a : fr.arcs) {
+                                const auto it = xr_of.find(a.est_station);
+                                double xr1 = 0.0, xr2 = 0.0;
+                                if (it != xr_of.end()
+                                    && a.col1 >= 0 && static_cast<Eigen::Index>(a.col1) < it->second.size()
+                                    && a.col2 >= 0 && static_cast<Eigen::Index>(a.col2) < it->second.size()) {
+                                    xr1 = it->second(a.col1); xr2 = it->second(a.col2);
+                                } else { recon_ok = false; }
+                                if (a.lambda1 > 0.0 && a.lambda2 > 0.0)
+                                    recon += (a.coeff / a.lambda1) * (a.x_lin1 + xr1)
+                                           - (a.coeff / a.lambda2) * (a.x_lin2 + xr2);
+                            }
+                            const double zmw_frac = fr.z_mw - std::round(fr.z_mw);
+                            const double vrow = (static_cast<Eigen::Index>(r) < v_wl.size())
+                                                    ? v_wl(static_cast<Eigen::Index>(r))
+                                                    : std::numeric_limits<double>::quiet_NaN();
+                            f6 << r << ',' << fr.arcs.size() << ','
+                               << fmt::format("{:.4f}", fr.z_mw) << ','
+                               << fmt::format("{:.4f}", zmw_frac) << ','
+                               << fmt::format("{:.4f}", fr.z_lin) << ','
+                               << fmt::format("{:.4f}", fr.z_corr) << ','
+                               << fmt::format("{:.4f}", fr.zhat_block) << ','
+                               << (recon_ok ? fmt::format("{:.4f}", recon) : std::string("nan")) << ','
+                               << (recon_ok ? fmt::format("{:.4f}", recon - fr.z_mw) : std::string("nan")) << ','
+                               << (recon_ok ? fmt::format("{:.4f}", recon - std::round(recon)) : std::string("nan")) << ','
+                               << fmt::format("{:.4f}", vrow) << '\n';
+                        }
+                        f6 << "row,arc,est_station,sat,sig1,sig2,coeff,mw_mean_m,mw_arc_cyc,mw_count,"
+                              "mw_sigma_m,bia_corrected,col1,col2,lambda1,lambda2,lambda_wl,"
+                              "x_lin1_m,x_lin2_m,xr1_m,xr2_m,n1_abs_cyc,n2_abs_cyc,wl_arc_kf_cyc\n";
+                        for (std::size_t r = 0; r < mw_wl_f6.rows.size(); ++r) {
+                            const auto& fr = mw_wl_f6.rows[r];
+                            for (std::size_t k = 0; k < fr.arcs.size(); ++k) {
+                                const auto& a = fr.arcs[k];
+                                const auto it = xr_of.find(a.est_station);
+                                double xr1 = 0.0, xr2 = 0.0; bool have_xr = false;
+                                if (it != xr_of.end()
+                                    && a.col1 >= 0 && static_cast<Eigen::Index>(a.col1) < it->second.size()
+                                    && a.col2 >= 0 && static_cast<Eigen::Index>(a.col2) < it->second.size()) {
+                                    xr1 = it->second(a.col1); xr2 = it->second(a.col2); have_xr = true;
+                                }
+                                const double n1abs = (a.lambda1 > 0.0) ? (a.x_lin1 + xr1) / a.lambda1 : 0.0;
+                                const double n2abs = (a.lambda2 > 0.0) ? (a.x_lin2 + xr2) / a.lambda2 : 0.0;
+                                const double mw_arc_cyc = (a.lambda_wl > 0.0) ? a.mw_mean_m / a.lambda_wl : 0.0;
+                                f6 << r << ',' << k << ',' << a.est_station << ','
+                                   << a.sat << ',' << a.sig1 << ',' << a.sig2 << ','
+                                   << fmt::format("{:.1f}", a.coeff) << ','
+                                   << fmt::format("{:.4f}", a.mw_mean_m) << ','
+                                   << fmt::format("{:.4f}", mw_arc_cyc) << ','
+                                   << a.mw_count << ','
+                                   << fmt::format("{:.4f}", std::sqrt(std::max(a.mw_var_m2, 0.0))) << ','
+                                   << (a.bia_corrected ? 1 : 0) << ','
+                                   << a.col1 << ',' << a.col2 << ','
+                                   << fmt::format("{:.6f}", a.lambda1) << ','
+                                   << fmt::format("{:.6f}", a.lambda2) << ','
+                                   << fmt::format("{:.6f}", a.lambda_wl) << ','
+                                   << fmt::format("{:.4f}", a.x_lin1) << ','
+                                   << fmt::format("{:.4f}", a.x_lin2) << ','
+                                   << (have_xr ? fmt::format("{:.4f}", xr1) : std::string("nan")) << ','
+                                   << (have_xr ? fmt::format("{:.4f}", xr2) : std::string("nan")) << ','
+                                   << fmt::format("{:.4f}", n1abs) << ','
+                                   << fmt::format("{:.4f}", n2abs) << ','
+                                   << fmt::format("{:.4f}", n1abs - n2abs) << '\n';
+                            }
+                        }
+                        mw_wl_f6.written = true;
+                        mw_wl_f6.pending = false;
+                        log->info("Network (M5/WL-1 F6): wrote {} — first arming epoch tow {:.1f}, "
+                                  "{} row(s); attribute z_mw_frac (MW integer-ness) + "
+                                  "recon_minus_zmw (state-frame gap).",
+                                  (log_dir_ / "network_mw_wl_f6.csv").string(), mw_wl_f6.tow,
+                                  mw_wl_f6.rows.size());
+                    }
+                }
+            }
+            // M5 card WL-2 EWL lane: same accepted-install accumulation (invariant #4),
+            // per lane instance (UWL-1: one per tabled constellation when armed).
+            if (ewl_on) {
+                for (auto& lane : ewl_lanes) {
+                    lane.run.cycles_seen       += lane.epoch.cycles_seen;
+                    lane.run.rows_built        += lane.epoch.rows_built;
+                    lane.run.rows_fixed        += lane.epoch.rows_fixed;
+                    lane.run.rows_fixed_cold   += lane.epoch.rows_fixed_cold;
+                    lane.run.rows_cold_unfixed += lane.epoch.rows_cold_unfixed;
+                    lane.run.rows_capped       += lane.epoch.rows_capped;
+                    lane.run.skip_not_primary  += lane.epoch.skip_not_primary;
+                    lane.run.skip_missing_band += lane.epoch.skip_missing_band;
+                    lane.run.skip_missing_mw   += lane.epoch.skip_missing_mw;
+                    lane.run.skip_young_arc    += lane.epoch.skip_young_arc;
+                    lane.run.skip_bad_lambda   += lane.epoch.skip_bad_lambda;
+                    lane.run.skip_mixed_frame  += lane.epoch.skip_mixed_frame;
+                    lane.run.skip_quarantine   += lane.epoch.skip_quarantine;
+                    lane.run.sum_R             += lane.epoch.sum_R;
+                }
+            }
+            // M5 card WL-2 WL lane (§3.3): apply the stashed inject plan against the FRESH
+            // posterior (this epoch's NL), THEN fold the run counters.  The plan was decided
+            // from DETECTOR statistics (§3.0.1) in the accepted build; here we read the carried
+            // lane value + NL sum and, only if the carry still disagrees with the WL integer by
+            // more than inject_disagree_min_cyc (self-limiting), set the lane difference to the
+            // integer while preserving the phase-determined sum.  injectCarriedChord marks each
+            // moved chord D5-exempt for the NEXT install (the §3.3 storm guard) internally.
+            if (wl_inject_on || lane_fix_on) {
+                for (const auto& pl : wl_inject_epoch) {
+                    double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
+                    if (pl.pair
+                            ? !carry_driver.carriedPairValue(pl.group_l1, pl.chord, z1, v1, z2, v2)
+                            : (!carry_driver.carriedChordValue(pl.group_l1, pl.chord, z1, v1) ||
+                               !carry_driver.carriedChordValue(pl.group_l2, pl.chord, z2, v2))) {
+                        ++wl_run.skip_basis;   // not 1:1 across BOTH bands' carry bases — skip (§3.3)
+                        if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis;
+                        continue;
+                    }
+                    const double A1 = (z1 + pl.z_lin1) / pl.lambda1;   // absolute band DDs (cyc)
+                    const double A2 = (z2 + pl.z_lin2) / pl.lambda2;
+                    const double lane = A1 - A2, s = A1 + A2;          // WL DD + preserved NL sum
+                    if (std::abs(pl.w - lane) <= nmw.inject_disagree_min_cyc)
+                        continue;   // already lane-consistent (hold/fix row / prior inject) ⇒ no fight
+                    const double A1p = 0.5 * (pl.w + s), A2p = 0.5 * (s - pl.w);
+                    const double sg1 = nmw.wl_fix_sigma_cyc * pl.lambda1;
+                    const double sg2 = nmw.wl_fix_sigma_cyc * pl.lambda2;
+                    bool moved = false;
+                    if (pl.pair) {
+                        // WL-3 fallback: one joint edit, both bands, one D5 exemption (§3.3
+                        // "should fire ~never in steady state — telemetry proves it").
+                        moved = carry_driver.injectCarriedChordPair(
+                            pl.group_l1, pl.chord,
+                            A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1,
+                            A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
+                    } else {
+                        const bool i1 = carry_driver.injectCarriedChord(
+                            pl.group_l1, pl.chord, A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1);
+                        const bool i2 = carry_driver.injectCarriedChord(
+                            pl.group_l2, pl.chord, A2p * pl.lambda2 - pl.z_lin2, sg2 * sg2);
+                        moved = i1 && i2;
+                    }
+                    if (moved) { ++wl_run.injects; wl_run.inject_abs_sum += std::abs(pl.w - lane);
+                                 if (uwl_on) {
+                                     auto& wcr = wl_cons_run[pl.cons ? pl.cons : '?'];
+                                     ++wcr.injects; wcr.inject_abs_sum += std::abs(pl.w - lane);
+                                 }
+                                 if (mw_tagsets) d5_inject_chords_now.insert(pl.chord); }
+                    else       { ++wl_run.skip_basis;
+                                 if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis; }
+                }
+                // Accepted-install accumulation: the pooled epoch tallies (also the whole walk
+                // when the UWL card is off) plus, under UWL-1, the per-cons walk tallies —
+                // folded into BOTH the aggregate and the per-cons run totals.
+                wlAccumulate(wl_run, wl_epoch);
+                for (const auto& [wcons, we] : wl_cons_epoch) {
+                    wlAccumulate(wl_run, we);
+                    wlAccumulate(wl_cons_run[wcons], we);
+                }
+
+                // F-B lane trace: write every entry's POST-install carried lane + tags.
+                if (mw_lane_trace && !lane_trace_epoch.empty()) {
+                    std::map<ArcKey, double> w_of;   // decided cycles' integer targets
+                    for (const auto& pl : wl_inject_epoch) w_of[pl.chord] = pl.w;
+                    std::error_code ec_lt;
+                    std::filesystem::create_directories(log_dir_, ec_lt);
+                    std::ofstream ltf(log_dir_ / "network_wl_lane_trace.csv", std::ios::app);
+                    if (ltf) {
+                        if (!lane_trace_header_written && ltf.tellp() == std::streampos(0))
+                            ltf << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
+                                   "w,decided,held,injected\n";
+                        lane_trace_header_written = true;
+                        for (const auto& e : lane_trace_epoch) {
+                            double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
+                            if (lane_on
+                                    ? !carry_driver.carriedPairValue(e.g1, e.chord, z1, v1, z2, v2)
+                                    : (!carry_driver.carriedChordValue(e.g1, e.chord, z1, v1) ||
+                                       !carry_driver.carriedChordValue(e.g2, e.chord, z2, v2)))
+                                continue;   // not 1:1 carried in both bands this epoch
+                            const double lane = (z1 + e.z_lin1) / e.lam1
+                                              - (z2 + e.z_lin2) / e.lam2;
+                            const double frac = lane - std::round(lane);
+                            const auto wit = w_of.find(e.chord);
+                            const std::string sta_name =
+                                (e.chord.u >= 0 && e.chord.u < static_cast<int>(stations.size()))
+                                    ? stations[static_cast<std::size_t>(e.chord.u)].name
+                                    : std::string{};
+                            ltf << se.time.week << ',' << fmt::format("{:.1f}", se.time.tow)
+                                << ',' << e.chord.u << ',' << e.chord.v << ',' << sta_name
+                                << ',' << e.sat << ',' << fmt::format("{:.4f}", lane) << ','
+                                << fmt::format("{:.4f}", frac) << ',';
+                            if (wit != w_of.end()) ltf << fmt::format("{:.0f}", wit->second);
+                            ltf << ',' << (wit != w_of.end() ? 1 : 0) << ','
+                                << (d5_hold_chords.count(e.chord) ? 1 : 0) << ','
+                                << (d5_inject_chords_now.count(e.chord) ? 1 : 0) << '\n';
+                        }
+                    }
+                }
+            }
             const auto& cc = carry_driver.counters();
             carry_epochs       = cc.epochs;
             carry_born_total   = cc.chords_born;
@@ -8119,9 +10210,66 @@ int Application::runNetwork() {
                         continue;
                     }
                     carry_innov_pending.insert({chord.u, ait->second});
+                    // WL-3 §3.4: a pair chord's flag refloats BOTH bands next epoch (they
+                    // share the graph edge) — feed the band-2 ambiguity into the funnel too.
+                    if (lane_on) {
+                        const auto g2it = carry_arc_amb_key2.find(gk);
+                        if (g2it != carry_arc_amb_key2.end()) {
+                            const auto a2it = g2it->second.find(chord);
+                            if (a2it != g2it->second.end())
+                                carry_innov_pending.insert({chord.u, a2it->second});
+                        }
+                    }
                 }
             }
+            // F-A attribution dump (log-only, network.mw_wl.d5_dump): one CSV row per D5
+            // flag with adjacency tags.  Uses the SAME reverse map as the funnel above.
+            if (mw_d5_dump && carry_innov_gate) {
+                const auto& flags  = carry_driver.lastInnovFlags();
+                const auto& sigmas = carry_driver.lastInnovFlagSigmas();
+                if (!flags.empty()) {
+                    std::error_code ec_d5;
+                    std::filesystem::create_directories(log_dir_, ec_d5);
+                    std::ofstream d5f(log_dir_ / "network_d5_flags.csv", std::ios::app);
+                    if (d5f) {
+                        if (!d5_dump_header_written && d5f.tellp() == std::streampos(0))
+                            d5f << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
+                                   "ewl_stasat,hold_chord,injected_prev\n";
+                        d5_dump_header_written = true;
+                        for (std::size_t fi = 0; fi < flags.size(); ++fi) {
+                            const auto& [gk, chord] = flags[fi];
+                            std::string amb, sat;
+                            const auto git = carry_arc_amb_key.find(gk);
+                            if (git != carry_arc_amb_key.end()) {
+                                const auto ait = git->second.find(chord);
+                                if (ait != git->second.end()) amb = ait->second;
+                            }
+                            if (!amb.empty())
+                                if (const auto parts = StateKeys::parseAmbiguityKey(amb))
+                                    sat = parts->satellite;
+                            const std::string sta_name =
+                                (chord.u >= 0 && chord.u < static_cast<int>(stations.size()))
+                                    ? stations[static_cast<std::size_t>(chord.u)].name
+                                    : std::string{};
+                            d5f << se.time.week << ',' << fmt::format("{:.1f}", se.time.tow)
+                                << ',' << gk << ',' << chord.u << ',' << chord.v << ','
+                                << sta_name << ',' << amb << ','
+                                << fmt::format("{:.2f}",
+                                       fi < sigmas.size() ? sigmas[fi] : 0.0) << ','
+                                << (d5_ewl_stasat.count({ chord.u, sat }) ? 1 : 0) << ','
+                                << (d5_hold_chords.count(chord) ? 1 : 0) << ','
+                                << (d5_inject_chords_prev.count(chord) ? 1 : 0) << '\n';
+                        }
+                    }
+                }
+            }
+            if (mw_tagsets) {   // rotate: this epoch's applied injects tag NEXT install's flags
+                d5_inject_chords_prev.swap(d5_inject_chords_now);
+                d5_inject_chords_now.clear();
+            }
         }
+        subEnd(SB_INSTALL);     // D0b: close installPosterior (the Card-4 posterior readback)
+        subBegin(SB_NETAR);     // D0b: producer-side network AR Phase-2 (log-only; OFF in tier)
 
         // --- Producer-side network AR (Phase 2: DD fixability attempt, LOG ONLY) ---
         // The between-station double-difference ambiguities are datum-INVARIANT
@@ -8235,6 +10383,32 @@ int Application::runNetwork() {
                         for (int b = 0; b < nd; ++b)
                             Q_cyc(a, b) = cov_dd_m(a, b) / (lam[a] * lam[b]);
                     Q_cyc = 0.5 * (Q_cyc + Q_cyc.transpose());
+                    // --- ILS dimension cap (network.ambiguity_resolution.ils_max_dim) ---
+                    // MLAMBDA's search does not return on the uncapped full-network basis
+                    // (~2500 DDs at 305 stations, Jul-15).  When armed (> 0), search only
+                    // the ils_max_dim lowest-formal-σ DDs — the standard partial-AR
+                    // subset (ascending Q_aa) — and leave the rest float.  The summary
+                    // statistics (med σ / med frac / near-int) stay FULL-basis so the
+                    // convergence gauge is unaffected by the cap.
+                    Eigen::VectorXd y_fix = y_cyc;
+                    Eigen::MatrixXd Q_fix = Q_cyc;
+                    int nd_fix = nd;
+                    if (netar.ils_max_dim > 0 && nd > netar.ils_max_dim) {
+                        nd_fix = netar.ils_max_dim;
+                        std::vector<int> order(static_cast<std::size_t>(nd));
+                        std::iota(order.begin(), order.end(), 0);
+                        std::sort(order.begin(), order.end(), [&](int a, int b) {
+                            return Q_cyc(a, a) < Q_cyc(b, b);
+                        });
+                        y_fix.resize(nd_fix);
+                        Q_fix.resize(nd_fix, nd_fix);
+                        for (int a = 0; a < nd_fix; ++a) {
+                            y_fix(a) = y_cyc(order[static_cast<std::size_t>(a)]);
+                            for (int b = 0; b < nd_fix; ++b)
+                                Q_fix(a, b) = Q_cyc(order[static_cast<std::size_t>(a)],
+                                                    order[static_cast<std::size_t>(b)]);
+                        }
+                    }
                     ils::IlsGateConfig gates;
                     gates.min_success_rate     = netar.min_success_rate;
                     gates.ratio_threshold      = netar.ratio_threshold;
@@ -8242,7 +10416,7 @@ int Application::runNetwork() {
                     gates.nl_max_per_pair_frac = netar.nl_max_per_pair_frac;
                     gates.enable_partial_ar    = netar.enable_partial_ar;
                     ils::IlsResult fix;
-                    try { fix = ils::ilsFix(y_cyc, Q_cyc, gates); }
+                    try { fix = ils::ilsFix(y_fix, Q_fix, gates); }
                     catch (...) { fix = ils::IlsResult(); }
                     // Median DD formal σ (cycles) — the convergence gauge: as the
                     // network float tightens toward cm this drops and the DDs become
@@ -8265,15 +10439,110 @@ int Application::runNetwork() {
                     const double med_sig  = med(dsig);
                     const double med_frac = med(dfrac);
                     log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
-                              "{} (const,signal); fixed {}{} (ratio {:.2f}, p_succ {:.4f}, "
-                              "med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, near_int {}/{})",
+                              "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
+                              "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
+                              "near_int {}/{})",
                               se.time.tow, nd, static_cast<int>(reqs.size()), n_const_signal,
                               fix.ok ? static_cast<int>(fix.kept.size()) : 0,
-                              fix.partial ? " partial" : "", fix.ratio, fix.p_succ,
+                              fix.partial ? " partial" : "", nd_fix,
+                              nd_fix < nd ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
                               med_sig, med_frac, n_near, nd);
                 }
             }
         }
+
+        // --- One-shot full-arrowhead NEQ export (network.neq_export_epoch) -----------
+        // Post-solve READ-ONLY dump of the assembled normal equations for offline
+        // spectral / weak-direction attribution: border N_ss (raw + reduced) + RHS,
+        // every station's N_sr / N_rr (rebuilt from its LDLᵀ) / u_r as row-major
+        // little-endian double .bin, plus shared-column and per-station local-column
+        // labels.  Solution is untouched; fires on exactly one epoch per run.
+        if (nc.neq_export_epoch > 0
+            && n_emitted + 1 == static_cast<size_t>(nc.neq_export_epoch)
+            && x_s.size() > 0) {
+            const std::filesystem::path dir = log_dir_ / "neq_export";
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            auto appendBin = [](std::ofstream& f, const Eigen::MatrixXd& M) {
+                // Explicit row-major copy so the offline reader needs no
+                // storage-order convention (Eigen's default is column-major).
+                const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                                    Eigen::RowMajor> R = M;
+                f.write(reinterpret_cast<const char*>(R.data()),
+                        static_cast<std::streamsize>(sizeof(double) * R.size()));
+            };
+            auto sanitize = [](std::string s) {
+                for (char& ch : s) if (ch == ',') ch = ';';
+                return s;
+            };
+            const auto& kernel = est.normals();
+            {
+                std::ofstream f(dir / "Nss_raw.bin", std::ios::binary | std::ios::trunc);
+                appendBin(f, kernel.sharedNormals());
+            }
+            {
+                std::ofstream f(dir / "us_raw.bin", std::ios::binary | std::ios::trunc);
+                appendBin(f, kernel.sharedRhs());
+            }
+            {
+                std::ofstream f(dir / "Nss_red.bin", std::ios::binary | std::ios::trunc);
+                appendBin(f, kernel.reducedSharedNormals());
+            }
+            {
+                std::ofstream f(dir / "us_red.bin", std::ios::binary | std::ios::trunc);
+                appendBin(f, kernel.reducedSharedRhs());
+            }
+            {
+                std::ofstream f(dir / "shared_labels.csv", std::ios::trunc);
+                f << "col,label\n";
+                for (Eigen::Index c = 0; c < est.numShared(); ++c)
+                    f << c << ',' << sanitize(est.sharedColumnLabel(c)) << '\n';
+            }
+            std::ofstream sidx(dir / "stations_index.csv", std::ios::trunc);
+            sidx << "est_slot,name,n_local\n";
+            std::ofstream slab(dir / "stations_labels.csv", std::ios::trunc);
+            slab << "est_slot,local_col,label\n";
+            std::ofstream nsr(dir / "stations_Nsr.bin", std::ios::binary | std::ios::trunc);
+            std::ofstream nrr(dir / "stations_Nrr.bin", std::ios::binary | std::ios::trunc);
+            std::ofstream urf(dir / "stations_ur.bin", std::ios::binary | std::ios::trunc);
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (est_index_of[i] < 0) continue;
+                const auto r = static_cast<std::size_t>(est_index_of[i]);
+                const Eigen::Index nl = kernel.numLocal(r);
+                sidx << r << ',' << stations[i].name << ',' << nl << '\n';
+                appendBin(nsr, kernel.stationCrossBlock(r));
+                appendBin(nrr, kernel.stationLocalNormals(r));
+                appendBin(urf, kernel.stationLocalRhs(r));
+                // Local col → StateManager label via the assembly's h2local inverse;
+                // columns with no SM mapping (none expected) stay "?".
+                std::vector<std::string> names(static_cast<std::size_t>(nl), "?");
+                const auto sm_labels = stations[i].sm->getStateLabels();
+                for (const auto& kv : asm_res[i].h2local) {
+                    const auto lc = static_cast<Eigen::Index>(kv.second);
+                    if (lc >= 0 && lc < nl
+                        && static_cast<std::size_t>(kv.first) < sm_labels.size())
+                        names[static_cast<std::size_t>(lc)] =
+                            sm_labels[static_cast<std::size_t>(kv.first)];
+                }
+                for (Eigen::Index c = 0; c < nl; ++c)
+                    slab << r << ',' << c << ','
+                         << sanitize(names[static_cast<std::size_t>(c)]) << '\n';
+            }
+            {
+                std::ofstream meta(dir / "meta.csv", std::ios::trunc);
+                meta << "week,tow,epoch,n_shared,n_stations\n"
+                     << se.time.week << ',' << se.time.tow << ','
+                     << nc.neq_export_epoch << ',' << est.numShared() << ','
+                     << kernel.numStations() << '\n';
+            }
+            log->info("Network: NEQ export written to {} (epoch {}, n_shared {}, "
+                      "{} station blocks)",
+                      dir.string(), nc.neq_export_epoch, est.numShared(),
+                      kernel.numStations());
+        }
+
+        subEnd(SB_NETAR);      // D0b: close producer-AR / pre-emit tail
+        subBegin(SB_SOLPREP);  // D0b: toSolutionEpoch + per-sat discontinuity signalling
 
         // --- Emit -----------------------------------------------------------
         NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, se.time, iod++,
@@ -8354,6 +10623,25 @@ int Application::runNetwork() {
                     // persistently-stale sat logs ONCE, not every emit.
                     if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
                         emitEvent("T5_clock_model", "c1_zoh_suppress", s.sat, "", sat_dt,
+                                  clk_model_max_gap, "c1_zero", "vanish_return");
+                }
+            }
+        // network.emit_clock_rate: same C1 publish, but from the DECOUPLED rate state (no carry
+        // prior, no refloat — the clock_model no-go's benefit was ~1× anyway; the asset is the
+        // rate, not the carry).  clock_rate_est[sat].x1 is the drift finite-differenced from the
+        // PREVIOUS epoch's posterior (its update runs after this emit).  Same R6 staleness ZOH gate.
+        else if (emit_clock_rate_on)
+            for (auto& s : sol.sats) {
+                const auto rit = clock_rate_est.find(s.sat);
+                if (rit == clock_rate_est.end() || !rit->second.init) continue;
+                const double sat_dt = (rit->second.t_last > 0.0) ? (pl_now_s - rit->second.t_last)
+                                                                 : 0.0;
+                if (sat_dt >= 0.0 && sat_dt <= clk_model_max_gap) {
+                    s.clock_c1_m_s = rit->second.x1;
+                    c1_zoh_active.erase(s.sat);
+                } else {
+                    if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
+                        emitEvent("T5_clock_rate", "c1_zoh_suppress", s.sat, "", sat_dt,
                                   clk_model_max_gap, "c1_zero", "vanish_return");
                 }
             }
@@ -8993,6 +11281,8 @@ int Application::runNetwork() {
                 }
             }
         }
+        subEnd(SB_SOLPREP);     // D0b: close sol-prep + discontinuity signalling
+        subBegin(SB_EMITSTORE); // D0b block 7: re-base + PB-emit filter + store push + solution CSV
         // Card 4 (M1) phase D: emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md
         // §1).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
         // emitted per-(sat,σ) phase bias churns every epoch by a gauge element (a common
@@ -9411,6 +11701,8 @@ int Application::runNetwork() {
                          << ',' << emitter.codeBiasDiscontinuityCounter(s.sat, signal) << '\n';
             }
         }
+        subEnd(SB_EMITSTORE);   // D0b: close block 7 (emit/store, order-sensitive serial)
+        subBegin(SB_IONODIAG);  // D0b block 4a: iono / ZWD / anchor-info viz traces
 
         // --- Network-estimated slant ionosphere (viz trace) -----------------
         // Back-substitute each present station's local nuisance block (the slant
@@ -9531,6 +11823,8 @@ int Application::runNetwork() {
                     << fmt::format("{:.6f}", frac) << ',' << (is_pivot ? 1 : 0) << '\n';
             }
         }
+        subEnd(SB_IONODIAG);   // D0b: close block 4a (iono/ZWD/anchor traces)
+        subBegin(SB_DDFRAC);   // D0b block 6: cross-station DD fractional-residual (B5) trace
 
         // --- Cross-station DD fractional-residual (B5) ----------------------
         // For each present station, back-substitute its local block and read each
@@ -9719,6 +12013,8 @@ int Application::runNetwork() {
                           ? fmt::format(" ->{} kept", dds.size()) : std::string(),
                       ms(t_dd_collect, t_dd_cov), reqs.size(), ms(t_dd_cov, t_dd_emit));
         }
+        subEnd(SB_DDFRAC);       // D0b: close block 6 (dd-frac B5)
+        subBegin(SB_SHDEV_VTEC); // D0b block 4b: T5 SH-deviation carry KF + VTEC coeff trace
 
         // --- T5: SH-deviation carry measurement update (SERIAL) --------------
         // The joint posterior's per-LOS pin residual r̂ = ι̂ − SH(ĉ) is the epoch's
@@ -9810,6 +12106,8 @@ int Application::runNetwork() {
                               << fmt::format("{:.4f}", (v > 0.0) ? std::sqrt(v) : 0.0) << '\n';
             }
         }
+        subEnd(SB_SHDEV_VTEC);  // D0b: close block 4b (T5 sh-dev + VTEC trace)
+        subBegin(SB_T1A);       // D0b block 3: T1a SH health probe + fused adaptive-deweight gate
 
         // --- T1a: SH-field health probe + a₀₀ physical-band divergence WARN ---
         // (a) Always-on a₀₀ band WARN — fires whenever the SH field is active, so a
@@ -10043,6 +12341,8 @@ int Application::runNetwork() {
             }
             carry_vce_est.beginEpoch(pl_now_s, !datum_changed);
         }
+        subEnd(SB_T1A);        // D0b: close block 3 (T1a health + deweight)
+        subBegin(SB_LEVELING); // D0b block 5: phase-leveling carry harvest + T1d SH-convergence
 
         // --- Phase-leveling carry: harvest posterior + stash (Increment 1) ----
         // For each present non-pivot station, recover its ambiguities' ABSOLUTE
@@ -10364,6 +12664,8 @@ int Application::runNetwork() {
         // from data — the IF-phase detector's one-shot lifecycle).  Placed after the
         // harvest so the just-completed stash's clearPendingReseed does not wipe the
         // mark.  OFF (default) = byte-identical (no marks, no state change).
+        subEnd(SB_LEVELING);   // D0b: close block 5 (leveling + T1d SH-convergence)
+        subBegin(SB_RAIM);     // D0b block 2: post-fit network RAIM + median-polish attribution
         if (raim_on && carry_warm) {
             // Pass 1: reconstruct each station once, form its post-fit phase residuals, and
             // record per (station, satellite) the largest v·√w (measurement-standardized),
@@ -10800,6 +13102,8 @@ int Application::runNetwork() {
             }
             (void)attrib_acted;
         }
+        subEnd(SB_RAIM);       // D0b: close block 2 (RAIM)
+        subBegin(SB_CLOCKUPD); // D0b block 8: two-state clock update + fault QC + retro-flag feed
 
         // --- Two-state oscillator clock: measurement update + normalized-innovation fault test
         //     (network.clock_model) ------------------------------------------------------------
@@ -10961,6 +13265,45 @@ int Application::runNetwork() {
             }
         }
 
+        // --- network.emit_clock_rate: decoupled C1 (clock-rate) estimator ---------------------
+        // Finite-difference each satellite's POSTERIOR solved clock to derive the emitted C1,
+        // WITHOUT injecting any prior or driving any refloat — so the network solution is
+        // byte-identical to the off state; only clock_c1_m_s (default 0) changes.  This is the
+        // recalibration-supported alternative to network.clock_model: the estimable is white-FM
+        // (docs/CLOCK_HADAMARD_CALIB), so the two-state CARRY prior buys ~1× yet risks a NIS
+        // storm, but the deterministic RATE emitted here is the exploitable stability (a
+        // low-latency consumer extrapolates c0 + c1·dt instead of ZOH — the SSR saw-tooth fix).
+        // Mirrors the clock-model drift computation's datum-wipe + gap/contiguity handling; runs
+        // only when clock_model is OFF (else clock_osc already supplies C1 above).
+        if (emit_rate_warm) {
+            // Datum re-reference: the carried offsets are in the retired frame — drop them so a
+            // datum STEP is not finite-differenced into a spurious rate (mirror clock_model).
+            if (datum_changed && !scoped_handover) {
+                clock_rate_est.clear();
+            } else if (datum_changed) {
+                for (auto rit = clock_rate_est.begin(); rit != clock_rate_est.end();) {
+                    if (datumChangeAffectsKey(rit->first, changed_consts, /*scoped=*/true))
+                        rit = clock_rate_est.erase(rit);
+                    else
+                        ++rit;
+                }
+            }
+            for (const std::string& sat : registered_clock_sats) {
+                Eigen::Index col;
+                try { col = est.clockColumn(sat); } catch (...) { continue; }
+                const double z = x_s(col);
+                if (!std::isfinite(z) || sat.empty()) continue;
+                ClockOsc& r = clock_rate_est[sat];   // default-constructs (init=false) on first sight
+                // Finite-difference over THIS sat's true elapsed time; past the R11 gap bound the
+                // pair is not usable → drift 0 (C1 ZOH).  First sighting / stale-return seeds x1=0.
+                const double sat_dt = (r.init && r.t_last > 0.0) ? (pl_now_s - r.t_last) : 0.0;
+                r.x1 = (sat_dt > 0.0 && sat_dt <= clk_model_max_gap) ? (z - r.x0) / sat_dt : 0.0;
+                r.x0 = z;
+                r.t_last = pl_now_s;
+                r.init = true;
+            }
+        }
+
         // --- Per-satellite carried-clock sanity monitor (network.clock_monitor) --------------
         // The σ̂0 RAIM above flags contamination that MOVES the shared residual level (many
         // innocent stations spike at once).  A lone satellite whose carried clock has locked
@@ -11118,6 +13461,8 @@ int Application::runNetwork() {
                     else ++it;
                 }
         }
+        subEnd(SB_CLOCKUPD);       // D0b: close block 8 (clock update + retro feed)
+        subBegin(SB_STASH_STATUS); // D0b: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
 
         // M2 (LS-VCE): snapshot the D2 shared-carry priors that were FOLDED this
         // epoch, keyed by identity, BEFORE the clear — their innovations against
@@ -11429,6 +13774,7 @@ int Application::runNetwork() {
         }
 
         prev_week = se.time.week; prev_tow = se.time.tow;
+        subEnd(SB_STASH_STATUS);   // D0b: close the stash + epoch-status tail (before the readout)
 
         // D0: per-epoch section-timer readout (emitted-epoch path).  Deltas of the
         // estimator's run-cumulative accumulators against the loop-top snapshot give
@@ -11460,6 +13806,21 @@ int Application::runNetwork() {
                       se.time.tow, d_total, sec_asm_ms_epoch, d_reduce, d_solve,
                       d_covinv, d_covcon, d_covcalls, d_other, d_estadd,
                       static_cast<long long>(est.numShared()), n_present);
+
+            // D0b: per-epoch sub-block attribution of `other`.  net = wall − Δ(timed
+            // sections) inside each block; Σ net should approach d_other, and the residual
+            // is logged as "unattributed" (loop regions this instrument does not bracket).
+            std::string d0b;
+            double d0b_net_sum = 0.0;
+            for (int b = 0; b < SB_COUNT; ++b) {
+                const double net = (sec_sub[b].wall_ms  - sec_sub_ep0[b].wall_ms)
+                                 - (sec_sub[b].timed_ms - sec_sub_ep0[b].timed_ms);
+                d0b_net_sum += net;
+                d0b += fmt::format("{}={:.1f} ", kSubNames[b], net);
+            }
+            log->info("Network (D0b) TOW {:.1f}: other-net ms [ {}] Σnet {:.1f} | other {:.1f} "
+                      "| unattributed {:.1f}",
+                      se.time.tow, d0b, d0b_net_sum, d_other, d_other - d0b_net_sum);
         }
 
         // --- RTB-7(a): periodic atomic state snapshot -------------------------
@@ -11530,6 +13891,13 @@ int Application::runNetwork() {
                 so.p00 = o.p00; so.p01 = o.p01; so.p11 = o.p11;
                 so.t_last = o.t_last; so.init = o.init;
                 snap.clock_osc[sat] = so;
+            }
+            for (const auto& [sat, o] : clock_rate_est) {   // network.emit_clock_rate decoupled C1 state
+                NetworkStateSnapshot::Osc so;
+                so.x0 = o.x0; so.x1 = o.x1;
+                so.p00 = o.p00; so.p01 = o.p01; so.p11 = o.p11;
+                so.t_last = o.t_last; so.init = o.init;
+                snap.clock_rate_est[sat] = so;
             }
             for (const auto& [key, lc] : local_carry)
                 snap.local_carry[key] =
@@ -11610,6 +13978,94 @@ int Application::runNetwork() {
         log->info("Network (D0)   est.addStation {:>8.0f} ms ({:4.1f}%)  [{} adds; cross-cutting — "
                   "overlaps assembly-wall + any re-solve in other]",
                   stmr.add_station_ms, pct(stmr.add_station_ms), stmr.add_station_calls);
+        // P0b: foldReducedDdPriors internal breakdown (serial-fold path only, i.e. under
+        // parallel_carry) — which sub-part of the 49%-of-epoch DD fold dominates.
+        if (stmr.fold_loop_ms + stmr.fold_minv_ms + stmr.fold_gmg_ms > 0.0)
+            log->info("Network (D0)   foldDdPriors: per-station-loop {:>8.0f} ms ({:4.1f}%) | "
+                      "M-inverse {:>8.0f} ms ({:4.1f}%) | GMGᵀ {:>7.0f} ms ({:4.1f}%)  [serial-fold path]",
+                      stmr.fold_loop_ms, pct(stmr.fold_loop_ms),
+                      stmr.fold_minv_ms, pct(stmr.fold_minv_ms),
+                      stmr.fold_gmg_ms, pct(stmr.fold_gmg_ms));
+
+        // === INC-C0: the invariant-carry driver's per-op split + census =========
+        // Splits the SB_DDBUILD / SB_INSTALL wall brackets (which lump the whole driver)
+        // into the primitive ops the perf-restructure card ranks — the dense-K² change-of-
+        // basis projection (buildDdPriors) and posterior read-back (installPosterior) that
+        // INC-C2's factored (A + U Σ_ss Uᵀ) store removes.  The census reconciles the
+        // "K≈7834 never marginalized" finding (§0): whether marginalization has nothing to
+        // kill (giant live components, case (a)) or the kill path is silent (case (b)).
+        if (carry_invariant) {
+            const auto& dp = carry_driver.perfTimers();
+            log->info("Network (D0/INC-C0) carry-driver per-op over {} build / {} serial-install "
+                      "epoch(s): basis-project {:>8.0f} ms ({:4.1f}%) | post-mean {:>7.0f} ms "
+                      "({:4.1f}%) | post-cov {:>8.0f} ms ({:4.1f}%) | D5-gate {:>6.0f} ms ({:4.1f}%) "
+                      "| time-update {:>5.0f} ms  [basis-project + post-cov = the dense-K² ops INC-C2 factors]",
+                      dp.build_epochs, dp.install_epochs,
+                      dp.basis_project_ms, pct(dp.basis_project_ms),
+                      dp.post_mean_ms, pct(dp.post_mean_ms),
+                      dp.post_cov_ms, pct(dp.post_cov_ms),
+                      dp.d5_gate_ms, pct(dp.d5_gate_ms), dp.time_update_ms);
+            const auto& cc = carry_driver.counters();
+            const long long marg_total = cc.chords_marginalized + cc.chords_marg_perchord;
+            const long long chords_folded = cc.chords_carried + cc.chords_born;
+            log->info("Network (D0/INC-C0) carry census: max K_c {} (single largest component) | "
+                      "peak z-dim {} | marginalizations {} ({} per-chord + {} whole-block) | "
+                      "births/tap-offs {} | slip refloats {}.",
+                      cc.max_component_kc, cc.max_z_dim, marg_total,
+                      cc.chords_marg_perchord, cc.chords_marginalized,
+                      cc.chords_born, cc.slip_kills);
+            // INC-C0 D-c viability: short fundamental cycles ⇒ sparse DD information matrix
+            // J = Pᶻ⁻¹ ⇒ the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) is bounded;
+            // long cycles ⇒ dense J ⇒ D-c gives no bound (choose D-b/component-cap instead).
+            log->info("Network (D0/INC-C0) D-c viability: max fundamental-cycle length {} | "
+                      "mean {:.1f} over {} folded chord(s) — {} (short ⇒ sparse J ⇒ D-c bounded; "
+                      "long ⇒ dense J ⇒ dense per-block cost is intrinsic).",
+                      cc.max_cycle_len,
+                      chords_folded ? static_cast<double>(cc.sum_cycle_len)
+                                      / static_cast<double>(chords_folded) : 0.0,
+                      chords_folded,
+                      cc.max_cycle_len <= 8 ? "SPARSE-J likely" : "DENSE-J risk");
+            // INC-C1 growth bound (also a 12 h robustness assert): a large, still-growing carry
+            // with ZERO marginalization over a long run means dead chords are being retained —
+            // the §0 case (b) kill-path bug.  A large per-chord count instead means case (a).
+            if (marg_total == 0 && cc.max_z_dim > 0 && cc.epochs > 100)
+                log->warn("Network (INC-C1 growth bound): {} carried DD(s) at peak with ZERO "
+                          "marginalization(s) over {} driven epoch(s) — dead chords are NOT being "
+                          "killed (INC-C0 §0 case (b)); K grows unbounded.  Audit the kill path "
+                          "(NetworkInvariantCarryDriver::buildDdPriors projection-W column drop).",
+                          cc.max_z_dim, cc.epochs);
+        }
+
+        // === Tier D0b: `other` sub-block RUN TOTALS, ranked =================
+        // net = wall − Δ(reduce+solve+cov-inverse+cov-consumers) inside each block, so the
+        // recon/solve already in the five D0 sections above is not double-counted.  Σ net vs
+        // the D0 `other` figure closes the accounting; "unattributed" = loop regions no
+        // bracket covers (pre-slip pivot pass, the trace/readout tail, small comment gaps).
+        // This is the ranked table the perlos card acts on (HANDOFF_perlos_parallel_sweeps
+        // §3 gate P0): P1/P2 target the measured top blocks, not §2's guesses.
+        std::vector<int> d0b_order(SB_COUNT);
+        for (int b = 0; b < SB_COUNT; ++b) d0b_order[b] = b;
+        std::sort(d0b_order.begin(), d0b_order.end(), [&](int a, int c) {
+            return (sec_sub[a].wall_ms - sec_sub[a].timed_ms)
+                 > (sec_sub[c].wall_ms - sec_sub[c].timed_ms);
+        });
+        double d0b_sum_net = 0.0;
+        for (const SubBlockTimer& s : sec_sub) d0b_sum_net += s.wall_ms - s.timed_ms;
+        log->info("Network (D0b) `other` sub-block RUN TOTALS over {} profiled epoch(s) "
+                  "(ranked by net; net excludes recon/solve already in the D0 sections):",
+                  sec_profiled_epochs);
+        for (int b : d0b_order) {
+            const SubBlockTimer& s = sec_sub[b];
+            const double net = s.wall_ms - s.timed_ms;
+            log->info("Network (D0b)   {:<13} net {:>9.0f} ms ({:4.1f}%)  | wall {:>9.0f} ms "
+                      "| cov-consumers {:>8.0f} ms ({} calls)",
+                      kSubNames[b], net, pct(net), s.wall_ms, s.covcon_ms, s.covcalls);
+        }
+        log->info("Network (D0b)   {:<13} net {:>9.0f} ms ({:4.1f}%)  [Σ over blocks]",
+                  "TOTAL", d0b_sum_net, pct(d0b_sum_net));
+        log->info("Network (D0b)   {:<13} net {:>9.0f} ms ({:4.1f}%)  [D0 `other` − Σ; loop "
+                  "regions no bracket covers]", "unattributed",
+                  other_ms - d0b_sum_net, pct(other_ms - d0b_sum_net));
     }
 
     if (trace) trace.close();
@@ -11648,6 +14104,142 @@ int Application::runNetwork() {
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
+    if (mw_wl_on) {
+        const double mean_R = mw_wl_run.rows_built > 0
+            ? mw_wl_run.sum_R / static_cast<double>(mw_wl_run.rows_built) : 0.0;
+        log->info("Network (M5/WL-1 MW-seeded wide-lane): {} WL row(s) folded over {} primary "
+                  "cycle(s) inspected (mean R = {:.4f} cyc², i.e. σ ≈ {:.3f} cyc); {} capped by "
+                  "max_rows_per_epoch.  Skips — {} non-primary group, {} missing L2 band, {} no "
+                  "MW arc (channel/pivot), {} young arc (< {} ep), {} bad λ, {} mixed bias "
+                  "frame.  Cross-check the KF-WL circR vs scripts/mw_census.py (Phase-A success "
+                  "= circR climbing toward ~0.6 as arcs mature; SPEC §7.5).",
+                  mw_wl_run.rows_built, mw_wl_run.cycles_seen, mean_R, std::sqrt(mean_R),
+                  mw_wl_run.rows_capped, mw_wl_run.skip_not_primary, mw_wl_run.skip_missing_band,
+                  mw_wl_run.skip_missing_mw, mw_wl_run.skip_young_arc,
+                  config_.getNetworkConfig().mw_wl.min_arc_epochs, mw_wl_run.skip_bad_lambda,
+                  mw_wl_run.skip_mixed_frame);
+    }
+    if (ewl_on) {
+        // UWL-1: one line per lane instance — per-constellation when the card is armed
+        // (a pooled line hides which lane is storming; an armed constellation that
+        // decided 0 cycles is a LOUD 0-line, invariant #4), the legacy pooled line
+        // otherwise (lane.cons == 0).
+        for (const auto& lane : ewl_lanes) {
+            const auto& er = lane.run;
+            const double mean_R = er.rows_built > 0
+                ? er.sum_R / static_cast<double>(er.rows_built) : 0.0;
+            const char* label = lane.cons == '\0' ? "all-cons"
+                              : lane.cons == 'G'  ? "GPS EWL (L2,L5) λ 5.861 m"
+                              : lane.cons == 'E'
+                                  ? (lane.top == '8'
+                                         ? (nmw.uwl_dual_top
+                                                ? "Galileo UWL (E5,E5a) λ 19.537 m [preferred]"
+                                                : "Galileo UWL (E5,E5a) λ 19.537 m")
+                                         : (nmw.uwl_dual_top
+                                                ? "Galileo UWL (E5b,E5a) λ 9.768 m [fallback]"
+                                                : "Galileo UWL (E5b,E5a) λ 9.768 m"))
+                                  : "?";
+            log->info("Network (M5/WL-2 {} lane): {} row(s) decided ({} INTEGER-FIXED via FFR, {} "
+                      "cold-fixed n<2, {} cold-unfixed; rows {} into the solve) over "
+                      "{} primary cycle(s) inspected (mean R = {:.4f} cyc²); {} capped.  Skips — {} "
+                      "non-primary, {} missing band, {} no MW arc, {} young arc (< {} ep), {} bad "
+                      "λ, {} mixed frame, {} x_lin quarantine.  Uncarried top band; the integers feed "
+                      "the WL bridge from the STATISTIC; success = fixes by ep ~{}.",
+                      label, er.rows_built + er.rows_fixed_cold, er.rows_fixed,
+                      er.rows_fixed_cold, er.rows_cold_unfixed,
+                      config_.getNetworkConfig().mw_wl.ewl_fold_rows ? "FOLDED" : "NOT folded",
+                      er.cycles_seen, mean_R,
+                      er.rows_capped, er.skip_not_primary, er.skip_missing_band,
+                      er.skip_missing_mw, er.skip_young_arc,
+                      config_.getNetworkConfig().mw_wl.ewl_min_arc_epochs, er.skip_bad_lambda,
+                      er.skip_mixed_frame, er.skip_quarantine,
+                      config_.getNetworkConfig().mw_wl.ewl_min_arc_epochs + 1);
+        }
+    }
+    if (wl_inject_on) {
+        const double mean_R = wl_run.cycles_decided > 0
+            ? wl_run.sum_bridge_R / static_cast<double>(wl_run.cycles_decided) : 0.0;
+        const double med_dl = wl_run.injects > 0
+            ? wl_run.inject_abs_sum / static_cast<double>(wl_run.injects) : 0.0;
+        log->info("Network (M5/WL-2 WL lane, phase bridge + inject): {} EWL-fixed row(s) bridged → "
+                  "{} WL cycle(s) decided (mean bridge R = {:.4f} cyc², σ ≈ {:.3f} cyc, iono-de-biased); "
+                  "{} hold row(s) folded, {} inject(s) (mean |Δlane| = {:.2f} cyc).  Skips — {} no/young "
+                  "bridge arc, {} no iono estimate, {} bridge σ>{} guard, {} FFR-unfixed, {} MW(1,2) "
+                  "closure, {} x_lin quarantine, {} not-1:1 basis.  Bridge = phase-only, DD-iono removed "
+                  "via the network estimate; residual estimate-error gated by FFR |frac| + MW(1,2) "
+                  "closure (§3.4 v2); inject moves the carried lane to the integer, NL preserved (§3.3).",
+                  wl_run.rows_seen, wl_run.cycles_decided, mean_R, std::sqrt(mean_R),
+                  wl_run.holds_folded, wl_run.injects, med_dl,
+                  wl_run.skip_bridge_missing, wl_run.skip_no_iono, wl_run.skip_bridge_wide,
+                  config_.getNetworkConfig().mw_wl.bridge_max_sigma_cyc,
+                  wl_run.skip_not_fixed, wl_run.skip_closure, wl_run.skip_quarantine,
+                  wl_run.skip_basis);
+    }
+    if (uwl_on && (wl_inject_on || lane_on)) {
+        // UWL-1: the per-constellation WL-walk breakdown (never pooled-only — SPEC §2).
+        for (const auto& [wcons, wr] : wl_cons_run) {
+            const double mean_R = wr.cycles_decided > 0
+                ? wr.sum_bridge_R / static_cast<double>(wr.cycles_decided) : 0.0;
+            const double med_dl = wr.injects > 0
+                ? wr.inject_abs_sum / static_cast<double>(wr.injects) : 0.0;
+            log->info("Network (M5/UWL-1 '{}' WL walk): {} row(s) bridged → {} decided (mean "
+                      "bridge R = {:.4f} cyc², {} via COLD bridge, {} via E6 MID hop), {} hold(s), "
+                      "{} lane fix(es) moved + {} re-pinned, {} inject(s) (mean |Δlane| = {:.2f} "
+                      "cyc).  Skips — {} no/young bridge, {} no-iono, {} bridge-wide, {} "
+                      "FFR-unfixed, {} closure, {} quarantine, {} basis; mid path — {} FFR "
+                      "fallback, {} MW(6,5) closure, {} direct-disagree (skipped).",
+                      wcons, wr.rows_seen, wr.cycles_decided, mean_R, wr.cold_bridge_cycles,
+                      wr.mid_decided,
+                      wr.holds_folded, wr.lane_fix_folded, wr.lane_fix_unchanged,
+                      wr.injects, med_dl,
+                      wr.skip_bridge_missing, wr.skip_no_iono, wr.skip_bridge_wide,
+                      wr.skip_not_fixed, wr.skip_closure, wr.skip_quarantine, wr.skip_basis,
+                      wr.mid_fallback, wr.mid_closure, wr.mid_disagree);
+            // Increment 5 (uwl_dual_top): the dual-rung + sibling-closure breakdown.
+            // mean|frac| ≈ 0 ⇒ the 2·N(8,5)=N(7,5) identity holds on this data;
+            // ≈ 0.5 ⇒ a receiver half-cycle convention offsets it (learn a constant
+            // BEFORE arming uwl_sib_gate — SPEC reconciliation note 2).
+            if (nmw.uwl_dual_top
+                && (wr.top2_decided || wr.dual_dedupe || wr.sib_checked
+                    || wr.sib_unavail || wr.sib_blocked))
+                log->info("Network (M5/UWL-1 '{}' dual-top): {} of {} decided via the "
+                          "FALLBACK (E5b,E5a) rung, {} fallback row(s) deduped (preferred "
+                          "already decided).  Sibling closure: {} checked (mean |frac| = "
+                          "{:.3f}), {} off-integer, {} unmeasurable, {} BLOCKED (gate {}).",
+                          wcons, wr.top2_decided, wr.cycles_decided, wr.dual_dedupe,
+                          wr.sib_checked,
+                          wr.sib_checked > 0
+                              ? wr.sib_abs_frac_sum / static_cast<double>(wr.sib_checked)
+                              : 0.0,
+                          wr.sib_int_off, wr.sib_unavail, wr.sib_blocked,
+                          nmw.uwl_sib_gate ? "ON" : "off/measure-only");
+        }
+    }
+    if (lane_on) {
+        // WL-3 run-end line (invariant #4: counters or it didn't happen).  In the LANE
+        // shape the interesting numbers are the continuous increments + fold-on-change
+        // ratio + the inject-RETIREMENT count (≈0 expected — the WL-2 fallback path).
+        const double mean_R = wl_run.cycles_decided > 0
+            ? wl_run.sum_bridge_R / static_cast<double>(wl_run.cycles_decided) : 0.0;
+        const double med_dl = wl_run.injects > 0
+            ? wl_run.inject_abs_sum / static_cast<double>(wl_run.injects) : 0.0;
+        log->info("Network (M5/WL-3 lane-coordinate carry): {} pair component(s) reconciled "
+                  "({} pair arc(s), {} residual primary-band arc(s), {} tree-tag mismatch(es), "
+                  "{} spanning-forest completion(s)); "
+                  "lane increments folded — {} MW(1,2) row(s), {} bridge row(s), {} skipped "
+                  "(immature/stale/mixed/slip/quarantine).  FFR lane fixing: {} decided "
+                  "cycle(s) (mean bridge R = {:.4f} cyc²) → {} integer(s) MOVED/new, {} "
+                  "re-pinned (idempotent lane SET — information-once-only).  Inject FALLBACK: "
+                  "{} fired (mean |Δlane| = {:.2f} cyc; ≈0 expected — continuous tightening "
+                  "supersedes the WL-2 injects), {} not-1:1 basis skips.",
+                  carry_driver.counters().pair_components,
+                  lane_pair_arcs, lane_resid_arcs, lane_pair_tree_mismatch,
+                  carry_driver.counters().pair_tree_promotions,
+                  wl_run.lane_mw_rows, wl_run.lane_bridge_rows, wl_run.lane_skip_meas,
+                  wl_run.cycles_decided, mean_R,
+                  wl_run.lane_fix_folded, wl_run.lane_fix_unchanged,
+                  wl_run.injects, med_dl, wl_run.skip_basis);
+    }
     if (carry_innov_gate)
         log->info("Network (Card 4/M1 D5 fine-slip innovation gate): {} carried-DD innovation "
                   "flag(s), {} fresh re-tap(s) over the run (k={}; the estimation-side reset for "
@@ -11722,6 +14314,17 @@ int Application::runNetwork() {
                   pf.resets_gap, pf.inits,
                   pf.smoothed ? pf.post_sigma_sum / static_cast<double>(pf.smoothed) : 0.0,
                   config_.networkEmitPbFilterJumpK());
+        if (config_.networkEmitPbFilterGateV2()) {   // PB-gate-v2 merge point (run-end telemetry)
+            std::string sig;
+            for (const auto& kv : pb_filter_engine.stepSigmas())
+                sig += fmt::format("{}{}={:.4f}", sig.empty() ? "" : " ",
+                                   kv.first.empty() ? "pool" : kv.first, kv.second);
+            log->info("Network (PB filter GATE v2): {} row(s) fed to σ̂_step (censoring-free: "
+                      "smoothed + innovation-gated), converged σ̂_step [m] {}; model-scaled gate "
+                      "k·√(Ppred+R), k={:.1f} — rate-transferable (one k for 30 s & 300 s).",
+                      pf.fed_rows, sig.empty() ? std::string("(none)") : sig,
+                      config_.networkEmitPbFilterJumpK());
+        }
     }
     if (clk_runaway_on && n_runaway_epochs > 0)
         log->warn("Network (RT0-5): {} epoch(s) dropped at least one constellation for clock "

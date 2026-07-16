@@ -151,6 +151,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkNormalEquations.cpp
     src/core/filter/NetworkEstimator.cpp
     src/core/filter/NetworkInvariantCarryDriver.cpp
+    src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
@@ -257,6 +258,8 @@ add_executable(gnss_tests
     tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
     tests/test_network_invariant_carry_driver.cpp
+    tests/test_network_mw_wl_layer.cpp
+    tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp
     tests/test_eq34_consumer_integer.cpp

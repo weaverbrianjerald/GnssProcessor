@@ -48,8 +48,9 @@
  * slips (the PB is untouched by construction) and RESETS — emitting the raw
  * value so its step survives to the emitter's jump test — only on
  *   (a) a reference-path slip flag for the key,
- *   (b) a genuine innovation event @f$|z-\hat\mu| > k\,\hat\sigma_{\text{step}}@f$
- *       (the calibrated gate below), or
+ *   (b) a genuine innovation event past the calibrated gate below
+ *       (@f$|z-\hat\mu| > k\,\hat\sigma_{\text{step}}@f$ in v1;
+ *       @f$|z-\hat\mu| > k\,\sqrt{P_{\text{pred}}+R}@f$ in v2), or
  *   (c) an arc gap longer than @c max_gap_s (a re-appearance is a first sighting,
  *       not a continued arc).
  * A blind "align each key to its last value" would drive every step to zero and
@@ -73,20 +74,82 @@
  *
  * ## The calibrated jump gate (self-tuning, per constellation)
  *
- * The reset threshold is @f$k\,\hat\sigma_{\text{step}}@f$, where
  * @f$\hat\sigma_{\text{step}}@f$ is a robust running estimate of the per-key step
- * noise — the tail-safe geometric-mean floor of the CLEAN (smoothed-epoch)
- * innovations, the same @f$\chi^2_1@f$-corrected estimator @ref NetworkCarryVce
- * uses (geo_mean(ê²)/e^{-γ}·½).  With the filter ON the residual step noise
- * shrinks, so the estimate is read only from smoothed rows (reset rows are
- * withheld, exactly like the M2 monitor's clean gate) and a small k regains a
- * meaningful test at cm scale — replacing the hand 0.05 m literal with a
- * measured Nσ gate that adapts per constellation and per regime.  The same
- * @f$\hat\sigma_{\text{step}}@f$ is also used as the measurement noise R of the
- * filter (a self-tuning adaptive KF), so the filter needs no hand R and is
- * robust to the datum-dependent level entanglement of the solve's formal
- * phase-bias σ (documented in the M4 contract work — the absolute emitted σ
- * overstates the consumer-relevant per-epoch magnitude, so it is a poor R).
+ * noise — the tail-safe geometric-mean floor of the innovations, the same
+ * @f$\chi^2_1@f$-corrected estimator @ref NetworkCarryVce uses
+ * (geo_mean(ê²)/e^{-γ}·½).  The same @f$\hat\sigma_{\text{step}}@f$ is also the
+ * measurement noise R of the filter (a self-tuning adaptive KF), so the filter
+ * needs no hand R and is robust to the datum-dependent level entanglement of the
+ * solve's formal phase-bias σ (documented in the M4 contract work — the absolute
+ * emitted σ overstates the consumer-relevant per-epoch magnitude, so it is a
+ * poor R).  Two gate generations select on @c Config::gate_v2:
+ *
+ * **v1 (default, @c gate_v2 == false).**  The reset threshold is
+ * @f$k\,\hat\sigma_{\text{step}}@f$ and @f$\hat\sigma_{\text{step}}@f$ is read
+ * only from smoothed (accepted) rows — reset rows are withheld, exactly like the
+ * M2 monitor's clean gate.  That censoring is safe ONLY when the true per-epoch
+ * step is well below the gate; when it sits AT gate scale (measured at 300 s: a
+ * ~5–10 cm step against a k=4·(0.25·seed) floor) the withheld rows bias
+ * @f$\hat\sigma_{\text{step}}@f$ low, the gate tightens, more rows reject — a
+ * documented death spiral (Jul-2026 dev300s: 92 % of resets were false-alarm
+ * innovations).  The interim cure was a per-rate HAND retune (k 4→8, seed
+ * 0.05→0.10 m) — which does not transfer across cadences (at 30 s the implied
+ * 20 cm floor straddles a single-cycle L1 step).
+ *
+ * **v2 (@c gate_v2 == true) — data/model-driven, rate-transferable.**  Three
+ * coupled changes remove the hand retune:
+ *   1. **Censoring-free feed.**  Every row with a valid prior whose reset is NOT
+ *      structural feeds @f$\hat\sigma_{\text{step}}@f$ — smoothed rows AND
+ *      innovation-gated rows (kInit / kGap have no per-epoch prior; kRefPathSlip
+ *      is an exogenously flagged genuine event, both stay out).  The
+ *      @f$\chi^2_1@f$ geometric mean is tail-safe at the measured contamination
+ *      (<1 % genuine events at 30 s, ~0 % at 300 s), so feeding the gate-scale
+ *      steps recovers the true noise floor instead of censoring it away — the
+ *      spiral cannot start.
+ *   2. **Model-scaled gate.**  The threshold is @f$k\,\sqrt{P_{\text{pred}}+R}@f$,
+ *      the predicted innovation σ (the same @f$S@f$ the Kalman gain uses one line
+ *      below).  The epoch spacing enters through @f$P_{\text{pred}} = P +
+ *      q\cdot\text{gap}@f$ — dt is IN THE MODEL, mirroring @f$q_z\,dt@f$ inside
+ *      D5's formal Cov(v) (@ref NetworkCarryVce lineage) — so ONE @c jump_k
+ *      transfers 30 s ↔ 300 s untouched (the card's reason to exist).
+ *   3. **Seed as a numerical guard.**  With all rows feeding, structural
+ *      collapse is impossible, so @c meas_sigma_m keeps only its weak
+ *      first-epochs prior (@ref kPriorRows) and the 0.25×seed floor is replaced
+ *      by a small absolute guard (@ref kSigmaFloorAbsM); @c jump_k returns to a
+ *      universal 4.0 — an honest false-alarm rate (α = erfc(k/√2) ≈ 6·10⁻⁵/key,
+ *      ~0.03 alarms/epoch over ~420 keys, either cadence).
+ *
+ * The physics that lets ONE σ̂ serve both rates: the step σ is dominated by solve
+ * noise, not a drift accumulated over the gap, so v2a's lumped σ̂ already
+ * transfers — but its LEVEL is regime-dependent, not a constant (design estimate
+ * ~6–8 cm; the Jul-15 nightrun measured σ̂ = 8.1 cm at 300 s and 20 cm at 30 s,
+ * the latter = single-L1-cycle scale because the unconverged DD churn is
+ * genuinely in the 30 s wire and therefore, correctly, in the censoring-free
+ * feed).  The transfer does not require a dt-independent σ̂: k is a true Nσ
+ * against whatever σ̂ the run measures.  A two-component
+ * R(dt)=σ̂²_solve + q̂_drift·dt (the M2 Floor/Rate robust fit, with its condition
+ * guard for the fixed-cadence unidentifiable case) is a DEFERRED v2b refinement,
+ * not required for the transfer.
+ *
+ * ## Residual-risk envelope (honest, v2 AND v1-as-designed)
+ *
+ * The miss band SCALES WITH THE MEASURED σ̂: with k=4 the gate sits at
+ * @f$4\hat\sigma_{\text{step}}@f$ ≈ 25–30 cm when σ̂ is at the 6–8 cm design
+ * level, but ≈ 80 cm in a churn-dominated regime like the Jul-15 30 s arms
+ * (σ̂ ≈ 20 cm) — the envelope below widens proportionally there.  An UNFLAGGED
+ * reference-path slip whose emitted step lands between ~2σ and
+ * @f$k\,\hat\sigma_{\text{step}}@f$ — e.g. a missed single-cycle L1 step, ~19 cm,
+ * which is INSIDE the miss band at the churn-regime σ̂, not just near its edge —
+ * does NOT reset: it smooths through and the filter converges to the new level
+ * over ~1/K epochs (K the steady-state Kalman gain).  That is a bounded,
+ * sub-gate transient the consumer never sees as a discontinuity, NOT a laundered
+ * slip (the value is not snapped back — it tracks to the true new level).  This
+ * risk class is intrinsic to ANY @f$k\,\hat\sigma@f$ gate and exists in
+ * v1-as-designed identically; upstream slip coverage (the ref-path flag, which
+ * does NOT depend on this gate) makes the miss class rare, and v2 neither adds
+ * to nor removes it — it is documented, not pretended away.  The envelope
+ * shrinks back to the design level as DD convergence improves (the R6/M5
+ * prerequisite), since the churn feeding σ̂ is the same churn under attack there.
  *
  * ## Scope / conventions
  *
@@ -131,11 +194,12 @@ public:
     /// Filter tunables (all from `network.emit_pb_filter_*`; see GnssConfigLoad).
     struct Config {
         double q_m2_s        = 3.0e-7; ///< process noise (random walk) of the emitted bias (m²/s); ≈(3 mm)² per 30 s epoch — the quasi-static drift class.
-        double jump_k        = 4.0;    ///< reset gate: |innovation| > @c jump_k · σ̂_step (Nσ; mirrors the D5 innov_k default).
-        double meas_sigma_m  = 0.05;   ///< σ̂_step SEED (m) — the a-priori per-epoch step noise before samples accrue; also the scale the robust estimate is regularised toward and floored below.
+        double jump_k        = 4.0;    ///< reset gate multiplier (Nσ; mirrors the D5 innov_k default).  v1: |innovation| > @c jump_k · σ̂_step.  v2 (@ref gate_v2): |innovation| > @c jump_k · √(Ppred+R) — a TRUE rate-transferable Nσ, so k is universal (4.0) at every cadence.
+        double meas_sigma_m  = 0.05;   ///< σ̂_step SEED (m) — the a-priori per-epoch step noise before samples accrue.  v1: also the scale the robust estimate is regularised toward AND floored below (0.25×).  v2: demoted to a seed only (the floor becomes a small absolute numerical guard, @ref kSigmaFloorAbsM) since the censoring-free feed makes structural collapse impossible.
         double max_gap_s     = 600.0;  ///< arc gap (s) beyond which a returning key is a first sighting (re-init, no smoothing across the gap).
         double window_epochs = 60.0;   ///< exponential-forgetting half-life (emitted epochs) of the σ̂_step estimator; ≤0 ⇒ accumulate the whole run.
         bool   split_by_const= true;   ///< σ̂_step per constellation letter (true) or one pooled estimate (false).
+        bool   gate_v2       = false;  ///< v2 data-driven gate (`network.emit_pb_filter_gate_v2`).  Three coupled changes vs v1: (a) CENSORING-FREE σ̂_step feed — kInnovation rows (a valid prior, a legitimate step sample) feed the estimator too, killing the v1 death-spiral where withheld gate-scale steps biased σ̂ low and tightened the gate; (b) MODEL-SCALED gate `jump_k · √(Ppred+R)` so the epoch spacing enters through the prior's `q·gap` term (rate-transferable, no per-cadence k retune); (c) the seed is a numerical guard only.  OFF ⇒ v1 bit-for-bit.
     };
 
     /// One emitted (sat,signal) phase bias to filter this epoch.
@@ -156,6 +220,7 @@ public:
         long long resets_refpath{0};    ///< reference-path slip resets.
         long long resets_innovation{0}; ///< calibrated k·σ̂_step innovation resets.
         long long resets_gap{0};        ///< gap re-inits.
+        long long fed_rows{0};          ///< rows fed to the σ̂_step estimator (v1: = @ref smoothed; v2: @ref smoothed + @ref resets_innovation — the censoring-free feed, n_fed_all_rows telemetry).
         double    post_sigma_sum{0.0};  ///< Σ posterior σ over smoothed rows (mean = /@ref smoothed).
     };
 
@@ -201,6 +266,15 @@ public:
         return stepSigma(constellation);
     }
 
+    /// Telemetry seam: current robust σ̂_step (m) for every constellation bucket
+    /// that has accumulated ≥1 fed row ("" = pooled) — the v2 run-end line reads
+    /// this (n_fed_all_rows companion).  Empty before any row feeds.
+    std::map<std::string, double> stepSigmas() const {
+        std::map<std::string, double> out;
+        for (const auto& kv : step_) out[kv.first] = stepSigma(kv.first);
+        return out;
+    }
+
 private:
     /// One key's scalar-KF posterior + last-seen clock.
     struct KeyState { double mean{0.0}; double var{0.0}; double last_seen_s{0.0}; };
@@ -208,9 +282,12 @@ private:
     struct StepAccum { double sum_log_e2{0.0}; double n_eff{0.0}; };
 
     /// σ̂_step (m) for a constellation bucket: the χ²₁-corrected geometric-mean
-    /// floor of the clean innovations, regularised toward the seed by a weak
-    /// prior (so it is always defined and cannot collapse) and floored at a
-    /// fraction of the seed.  See @ref NetworkCarryVce for the χ²₁ derivation.
+    /// floor of the fed innovations, regularised toward the seed by a weak prior
+    /// (so it is always defined and cannot collapse).  v1 floors it at a fraction
+    /// of the seed (@ref kSigmaFloorFrac) — the structural-collapse guard the
+    /// censored feed needs; v2 floors it only at a small absolute numerical guard
+    /// (@ref kSigmaFloorAbsM), the seed demoted to the weak prior.  See
+    /// @ref NetworkCarryVce for the χ²₁ derivation.
     double stepSigma(const std::string& constellation) const;
 
     /// Bucket key for the step-noise estimate: the constellation letter, or ""
@@ -224,7 +301,8 @@ private:
     static constexpr double kChi2GeoMean   = 0.2807297418;
     static constexpr double kTinyE2        = 1e-20;  ///< floor on ê² inside the log (m²).
     static constexpr double kPriorRows     = 3.0;    ///< weak seed prior (equivalent clean rows) on σ̂_step.
-    static constexpr double kSigmaFloorFrac= 0.25;   ///< σ̂_step never drops below this fraction of the seed.
+    static constexpr double kSigmaFloorFrac= 0.25;   ///< v1: σ̂_step never drops below this fraction of the seed (structural-collapse guard for the censored feed).
+    static constexpr double kSigmaFloorAbsM= 1e-3;   ///< v2: σ̂_step absolute numerical guard (m, ≈1 mm) — only stops a degenerate all-zeros window; the censoring-free feed makes a fractional-of-seed floor unnecessary.
 
     Config    cfg_;
     double    phi_{1.0};   ///< per-epoch forgetting factor for the σ̂_step accumulators.

@@ -62,6 +62,7 @@
  *   A,<sat>                                             # retro_active (edge-trigger)
  *   Y,<sat>,<epochs>                                    # URA refloat-inflation horizon
  *   C,<sat>                                             # c1_zoh_active (event edge-trigger)
+ *   O,<sat>,x0,x1,p00,p01,p11,t_last,init               # emit_clock_rate decoupled C1 rate state
  *   I,<sat>,<iode>                                      # Card6 eph re-level baseline (brdc_rts)
  *   X,<sat>                                             # Card6 pending eph-cutover disc bump
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
@@ -161,6 +162,7 @@ struct NetworkStateSnapshot {
         bool   init{false};///< Seeded at least once.
     };
     std::map<std::string, Osc> clock_osc;  ///< sat -> carried oscillator state.
+    std::map<std::string, Osc> clock_rate_est;  ///< network.emit_clock_rate: decoupled C1 rate state (only x0/x1/t_last/init used).
 
     /// Clock-monitor adjacent-epoch baseline: sat -> {Δδtˢ (m), seen_s}.
     std::map<std::string, std::pair<double, double>> prev_clk;

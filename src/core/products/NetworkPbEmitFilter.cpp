@@ -20,7 +20,12 @@ double NetworkPbEmitFilter::stepSigma(const std::string& constellation) const {
     if (it != step_.end()) { sum_log += it->second.sum_log_e2; n += it->second.n_eff; }
     const double geo = std::exp(sum_log / n);          // geometric mean of ê²
     double s = std::sqrt(geo / kChi2GeoMean);          // recover the innovation σ
-    const double floor = kSigmaFloorFrac * cfg_.meas_sigma_m;
+    // v1 floors at a fraction of the seed (the censored feed can only shrink σ̂, so
+    // it needs a structural-collapse guard).  v2 feeds every valid-prior row, so the
+    // estimate cannot collapse — the floor is only a numerical guard on a degenerate
+    // all-zeros window, and the seed keeps its role as the weak prior above.
+    const double floor = cfg_.gate_v2 ? kSigmaFloorAbsM
+                                      : kSigmaFloorFrac * cfg_.meas_sigma_m;
     return std::max(s, floor);
 }
 
@@ -39,9 +44,21 @@ void NetworkPbEmitFilter::filterEpoch(std::vector<Entry>& entries, double epoch_
 
     // Advance the trailing window on the σ̂_step accumulators BEFORE reading them,
     // so this epoch's gate uses the estimate from prior epochs only (a row never
-    // gates itself).  Decayed here, fed at the bottom (smoothed rows only).
+    // gates itself).  Decayed here; rows are fed AFTER their own gate decision
+    // (v1: smoothed rows only; v2: smoothed + innovation-gated, see feedStep).
     if (phi_ < 1.0)
         for (auto& kv : step_) { kv.second.sum_log_e2 *= phi_; kv.second.n_eff *= phi_; }
+
+    // Fold one innovation into a constellation's σ̂_step accumulator (χ²₁ geo-mean
+    // of ê²) and count it (fed_rows = n_fed_all_rows telemetry).  v1 feeds smoothed
+    // rows only; v2 also feeds kInnovation rows (the censoring-free feed below).
+    auto feedStep = [this](const std::string& cst, double innov) {
+        StepAccum& a = step_[cst];
+        const double e2 = innov * innov;
+        a.sum_log_e2 += std::log(e2 > kTinyE2 ? e2 : kTinyE2);
+        a.n_eff      += 1.0;
+        ++counters_.fed_rows;
+    };
 
     for (Entry& e : entries) {
         const std::string key  = e.sat + "|" + e.signal;
@@ -65,15 +82,22 @@ void NetworkPbEmitFilter::filterEpoch(std::vector<Entry>& entries, double epoch_
         const double gap   = epoch_time_s - st.last_seen_s;
         const double Ppred = st.var + cfg_.q_m2_s * std::max(0.0, gap);   // random-walk predict
         const double innov = e.value_m - st.mean;
+        const double S     = Ppred + R;                  // predicted innovation var (KF gain below; v2 gate scale)
 
         // Reset precedence: a reference-path slip and a stale gap are structural
         // (checked first); the calibrated innovation gate is the noise test.  A
         // reset EMITS THE RAW VALUE (e.value_m unchanged) so the genuine step
         // survives to the emitter's jump test — never laundered (invariant #1).
+        // Gate scale: v1's k·σ̂_step, or v2's model-predicted k·√(Ppred+R) — dt
+        // enters via Ppred's q·gap term, so ONE k transfers across cadences.
         Cause cause = Cause::kSmooth;
-        if (e.slipped)                                    cause = Cause::kRefPathSlip;
-        else if (gap > cfg_.max_gap_s)                    cause = Cause::kGap;
-        else if (std::abs(innov) > cfg_.jump_k * sstep)   cause = Cause::kInnovation;
+        if (e.slipped)                 cause = Cause::kRefPathSlip;
+        else if (gap > cfg_.max_gap_s) cause = Cause::kGap;
+        else {
+            const double gate = cfg_.gate_v2 ? cfg_.jump_k * std::sqrt(S)
+                                             : cfg_.jump_k * sstep;
+            if (std::abs(innov) > gate) cause = Cause::kInnovation;
+        }
 
         if (cause != Cause::kSmooth) {
             st.mean        = e.value_m;                   // re-seed on the fresh value
@@ -87,13 +111,21 @@ void NetworkPbEmitFilter::filterEpoch(std::vector<Entry>& entries, double epoch_
                 case Cause::kInnovation:  ++counters_.resets_innovation; break;
                 default:                                                  break;
             }
-            // The contaminated innovation is NOT fed to σ̂_step (clean-gate, like
-            // the M2 monitor) so a genuine event never inflates the noise floor.
+            // Feed policy at a reset.  v1 (clean-gate, like the M2 monitor):
+            // withhold EVERY reset row.  That censoring is the death-spiral: when
+            // the true step sits at gate scale the withheld rows bias σ̂_step low,
+            // tightening the gate until more rows reject.  v2 (censoring-free): a
+            // kInnovation row still carries a valid prior and a legitimate per-epoch
+            // step sample, so feed it — the χ²₁ geo-mean is tail-safe to the rare
+            // genuine event, and the estimator finally sees the gate-scale steps
+            // v1 hid.  kRefPathSlip (exogenous, flagged) and kGap (no per-epoch
+            // prior) stay out of the noise estimate.
+            if (cfg_.gate_v2 && cause == Cause::kInnovation)
+                feedStep(cst, innov);
             continue;
         }
 
         // --- Smooth: emit the posterior mean, shrink P, feed the clean innovation.
-        const double S = Ppred + R;
         const double K = Ppred / S;
         st.mean        = st.mean + K * innov;
         st.var         = Ppred * (1.0 - K);              // = Ppred·R/S
@@ -104,10 +136,7 @@ void NetworkPbEmitFilter::filterEpoch(std::vector<Entry>& entries, double epoch_
         ++counters_.smoothed;
         counters_.post_sigma_sum += e.post_sigma_m;
 
-        StepAccum& a = step_[cst];
-        const double e2 = innov * innov;
-        a.sum_log_e2 += std::log(e2 > kTinyE2 ? e2 : kTinyE2);
-        a.n_eff      += 1.0;
+        feedStep(cst, innov);
     }
 }
 

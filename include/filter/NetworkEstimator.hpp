@@ -105,6 +105,23 @@ public:
     /// @return Number of registered shared columns.
     Eigen::Index numShared() const { return static_cast<Eigen::Index>(columns_.size()); }
 
+    /**
+     * @brief Stable human-readable label for shared column @p col.
+     *
+     * Format by kind: @c "CLK:<sat>" (satellite clock), @c "CB:<sat>:<signal>"
+     * (satellite code bias), @c "PB:<sat>:<signal>" (satellite phase bias),
+     * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient).  Intended for the NEQ export
+     * and other offline attribution tooling — labels are stable across epochs
+     * for an unchanged registration order.
+     *
+     * @throws std::out_of_range if @p col is not a registered column.
+     */
+    std::string sharedColumnLabel(Eigen::Index col) const;
+
+    /// @return Read-only access to the current epoch's arrowhead kernel (for the
+    ///         NEQ export; see @ref NetworkNormalEquations accessors).
+    const NetworkNormalEquations& normals() const { return neq_; }
+
     // --- One solution epoch -------------------------------------------------
 
     /**
@@ -176,6 +193,21 @@ public:
     void setSeamThreads(int n_threads) {
         seam_threads_ = n_threads > 1 ? n_threads : 1;
     }
+
+    /**
+     * @brief Arm @c network.parallel_carry: run @ref solve's DD-prior fold
+     *        (@ref NetworkNormalEquations::foldReducedDdPriors) SERIAL-over-blocks with
+     *        WITHIN-BLOCK per-station threading (@p nthreads).  The fold's dominant cost is
+     *        the per-station reduction (measured ~44% of the epoch), which Eigen's GEMM
+     *        threading cannot help; @ref foldReducedDdPriors fans it across threads instead
+     *        (per-thread partials + ascending combine — ULP-relaxed vs serial) and
+     *        column-parallelizes the K×K middle inverse (byte-identical).  Eigen stays
+     *        PINNED to one thread here (the driver does NOT un-pin it around @ref solve when
+     *        armed) so the per-station OpenMP does not nest with Eigen.  When armed,
+     *        @ref solve passes block_threads=1 + station_threads=@p nthreads to the fold.
+     * @param nthreads Within-block thread budget (≤ 1 ⇒ OFF, the serial/seam fold path).
+     */
+    void setCarryParallelThreads(int nthreads) { carry_par_threads_ = nthreads > 1 ? nthreads : 1; }
 
     /// Pin-aware station PD guard passthrough
     /// (@ref NetworkNormalEquations::setStationPdMedianScale;
@@ -690,6 +722,7 @@ private:
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< Card 4 (M1): per-component invariant-carry DD priors (empty = OFF, byte-identical)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
+    int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = OFF; >1 relaxes ~1e-X on the reduction, byte-id on the middle inverse; set by the driver)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };

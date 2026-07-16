@@ -428,6 +428,22 @@ namespace GnssProcessor {
             }
         }
 
+        // --- Cold-start receiver-clock pre-seed (network.cold_clock_seed) ---
+        // Runs AFTER the iono seed (so computeRawResidual removes the seeded
+        // slant iono from the code residual) and BEFORE the ambiguity seed
+        // (below), once per station.  On the network path nothing else solves
+        // the receiver clock before the ambiguities are first seeded, so a
+        // free-running receiver's whole clock offset (e.g. JPLM ≈ 0.856 ms →
+        // 2.6e5 m) would otherwise leak UNIFORMLY into every cold ambiguity
+        // seed via computeAmbiguitySeed's clk_term=x(clock)=0.  Gated + latched
+        // (mark only on success, mirroring the ISB init contract): an OFF run
+        // never calls the seeder and is byte-identical.
+        if (config_.networkColdClockSeed()
+            && !state_initializer_.isClockSeedInitialized()) {
+            if (state_initializer_.seedColdReceiverClock(observations, epoch_prefix))
+                state_initializer_.markClockSeedInitialized();
+        }
+
         // --- Ambiguity states ---
         const bool bssd_active = config_.enableBetweenSatelliteSd();
 

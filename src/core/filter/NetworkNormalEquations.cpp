@@ -11,6 +11,8 @@
 
 #include "filter/NetworkNormalEquations.hpp"
 
+#include <Eigen/Core>          // Eigen::setNbThreads / nbThreads (parallel_carry: local GMGᵀ un-pin)
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -103,6 +105,22 @@ struct ScopedAccum {
     ~ScopedAccum() {
         if (on) *acc += perfMsSince(t0);
     }
+};
+
+// parallel_carry: RAII un-pin of Eigen's internal threading around one dense GEMM
+// (the fold's GMGᵀ).  Restores the saved thread count on EVERY scope exit — including
+// a throw mid-GEMM — so no exit path leaves Eigen un-pinned for the next block's
+// OpenMP region (mirrors the driver-side CarryEigenScope).  Inert when @p on is
+// false: no Eigen thread-count call at all, so the default path is untouched.
+struct ScopedEigenThreads {
+    bool on;
+    int  saved;
+    ScopedEigenThreads(bool on_, int nthreads) : on(on_), saved(on_ ? Eigen::nbThreads() : 0) {
+        if (on) Eigen::setNbThreads(nthreads);
+    }
+    ~ScopedEigenThreads() { if (on) Eigen::setNbThreads(saved); }
+    ScopedEigenThreads(const ScopedEigenThreads&) = delete;
+    ScopedEigenThreads& operator=(const ScopedEigenThreads&) = delete;
 };
 
 } // namespace
@@ -600,7 +618,7 @@ void NetworkNormalEquations::foldReducedSumZeroGauges(
 }
 
 void NetworkNormalEquations::foldReducedDdPriors(
-    const std::vector<DdPriorBlock>& blocks, int n_threads) {
+    const std::vector<DdPriorBlock>& blocks, int n_threads, int station_threads) {
     if (!reduced_) {
         reduce();  // need the reduced system + the cached per-station factors
     }
@@ -791,40 +809,124 @@ void NetworkNormalEquations::foldReducedDdPriors(
         Eigen::MatrixXd B = Eigen::MatrixXd::Zero(K, K);
         Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n_shared_, K);
         Eigen::VectorXd z_free = Eigen::VectorXd::Zero(K);
-        for (const auto& [si, terms] : by_station) {
-            const Station& st = stations_[si];
-            Eigen::MatrixXd CrT = Eigen::MatrixXd::Zero(st.n_local, K);  // C_{L,r}ᵀ
-            for (const auto& t : terms) {
-                CrT(t.col, t.row) += t.coeff;
+        {   // P0b: time the per-station reduction loop (the 44%-of-epoch dominant fold cost)
+            ScopedAccum _fl(perf_timing_, &timers_.fold_loop_ms);
+            // Flatten by_station (ascending station index — std::map order) and precompute
+            // N_rr⁻¹ u_r for every touched station SERIALLY (a deterministic per-station
+            // solve; hoisting it out of any parallel region kills the lazy-fill race and is
+            // byte-identical to the serial lazy fill).
+            std::vector<std::pair<std::size_t, const std::vector<DdStationTerm>*>> st_list;
+            st_list.reserve(by_station.size());
+            for (const auto& kv : by_station) {
+                if (!have_ur[kv.first]) {
+                    nrr_inv_ur[kv.first] =
+                        stations_[kv.first].Nrr_ldlt.solve(stations_[kv.first].u_r);
+                    have_ur[kv.first] = true;
+                }
+                st_list.emplace_back(kv.first, &kv.second);
             }
-            const Eigen::MatrixXd Y = st.Nrr_ldlt.solve(CrT);   // N_rr⁻¹ C_{L,r}ᵀ
-            B.noalias() += CrT.transpose() * Y;                 // C_{L,r} N_rr⁻¹ C_{L,r}ᵀ
-            G.noalias() += st.N_sr * Y;                         // N_sr N_rr⁻¹ C_{L,r}ᵀ
-            if (!have_ur[si]) {
-                nrr_inv_ur[si] = st.Nrr_ldlt.solve(st.u_r);
-                have_ur[si] = true;
+            auto stationTerm = [&](std::size_t idx, Eigen::MatrixXd& Bacc,
+                                   Eigen::MatrixXd& Gacc, Eigen::VectorXd& zacc) {
+                const std::size_t si = st_list[idx].first;
+                const Station& st = stations_[si];
+                Eigen::MatrixXd CrT = Eigen::MatrixXd::Zero(st.n_local, K);  // C_{L,r}ᵀ
+                for (const auto& t : *st_list[idx].second) CrT(t.col, t.row) += t.coeff;
+                const Eigen::MatrixXd Y = st.Nrr_ldlt.solve(CrT);            // N_rr⁻¹ C_{L,r}ᵀ
+                Bacc.noalias() += CrT.transpose() * Y;                       // C_{L,r} N_rr⁻¹ C_{L,r}ᵀ
+                Gacc.noalias() += st.N_sr * Y;                              // N_sr N_rr⁻¹ C_{L,r}ᵀ
+                zacc.noalias() += CrT.transpose() * nrr_inv_ur[si];         // C_{L,r} N_rr⁻¹ u_r
+            };
+#ifdef _OPENMP
+            if (station_threads > 1 && st_list.size() > 1) {
+                // parallel_carry: per-thread partials over CONTIGUOUS station ranges, combined
+                // in ascending thread order (reproducible per thread-count, ULP-different from
+                // serial — the reduce()-style relaxation the toggle opts into).
+                const int nt = static_cast<int>(std::min<std::size_t>(
+                    static_cast<std::size_t>(station_threads), st_list.size()));
+                std::vector<Eigen::MatrixXd> Bp(nt, Eigen::MatrixXd::Zero(K, K));
+                std::vector<Eigen::MatrixXd> Gp(nt, Eigen::MatrixXd::Zero(n_shared_, K));
+                std::vector<Eigen::VectorXd> zp(nt, Eigen::VectorXd::Zero(K));
+                #pragma omp parallel num_threads(nt)
+                {
+                    const int tid = omp_get_thread_num();
+                    const int rnt = omp_get_num_threads();
+                    const std::size_t n = st_list.size();
+                    const std::size_t lo = (n * static_cast<std::size_t>(tid))
+                                           / static_cast<std::size_t>(rnt);
+                    const std::size_t hi = (n * static_cast<std::size_t>(tid + 1))
+                                           / static_cast<std::size_t>(rnt);
+                    for (std::size_t idx = lo; idx < hi; ++idx)
+                        stationTerm(idx, Bp[tid], Gp[tid], zp[tid]);
+                }
+                for (int t = 0; t < nt; ++t) {   // deterministic ascending combine
+                    B.noalias()      += Bp[t];
+                    G.noalias()      += Gp[t];
+                    z_free.noalias() += zp[t];
+                }
+            } else
+#endif
+            {
+                for (std::size_t idx = 0; idx < st_list.size(); ++idx)
+                    stationTerm(idx, B, G, z_free);
             }
-            z_free.noalias() += CrT.transpose() * nrr_inv_ur[si];  // C_{L,r} N_rr⁻¹ u_r
         }
 
         // Middle inverse M = (Pᶻ + B)⁻¹ (PD: SPD prior + PSD B).  A degenerate block
         // (non-PD, e.g. a malformed prior) folds INERTLY (M=0) — a no-op that keeps its
         // index slot rather than corrupting the reduced system or shifting the keys.
-        Eigen::MatrixXd PzB = blk.Pz + B;
-        PzB = (0.5 * (PzB + PzB.transpose())).eval();
-        fd.Minv = PzB;   // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout
-        Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);
         Eigen::MatrixXd M;
-        if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
-            M = Eigen::MatrixXd::Zero(K, K);
-        } else {
-            M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
-            M = (0.5 * (M + M.transpose())).eval();
+        {   // P0b: time the K×K middle inverse (LDLT factor + explicit inverse)
+            ScopedAccum _fm(perf_timing_, &timers_.fold_minv_ms);
+            Eigen::MatrixXd PzB = blk.Pz + B;
+            PzB = (0.5 * (PzB + PzB.transpose())).eval();
+            fd.Minv = PzB;   // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout
+            Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);   // O(K³/3) factor — serial (byte-id floor)
+            if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
+                M = Eigen::MatrixXd::Zero(K, K);
+            } else {
+#ifdef _OPENMP
+                if (station_threads > 1 && K > 1) {
+                    // parallel_carry: the explicit inverse M = (Pᶻ+B)⁻¹ = ldlt.solve(I) is a
+                    // per-column back-substitution (LᵀDL x_j = e_j; no cross-column arithmetic),
+                    // so splitting the Identity columns across threads is BYTE-IDENTICAL to the
+                    // single solve given this PzB (ldlt.solve is const ⇒ safe to share).  Only
+                    // the factor above is unparallelized.
+                    M.resize(K, K);
+                    const int nt = static_cast<int>(
+                        std::min<Eigen::Index>(static_cast<Eigen::Index>(station_threads), K));
+                    #pragma omp parallel num_threads(nt)
+                    {
+                        const int tid = omp_get_thread_num();
+                        const int rnt = omp_get_num_threads();
+                        const Eigen::Index lo = (K * tid) / rnt;
+                        const Eigen::Index hi = (K * (tid + 1)) / rnt;
+                        if (hi > lo) {
+                            Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(K, hi - lo);
+                            for (Eigen::Index j = lo; j < hi; ++j) rhs(j, j - lo) = 1.0;
+                            M.middleCols(lo, hi - lo) = ldlt.solve(rhs);
+                        }
+                    }
+                } else
+#endif
+                    M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
+                M = (0.5 * (M + M.transpose())).eval();
+            }
         }
 
         // Joint rank-K Woodbury fold onto the reduced shared system (a no-op when M=0).
-        reduced_N_ss_.noalias() += G * M * G.transpose();
-        reduced_u_s_.noalias()  += G * (M * (z_free - blk.zhat));
+        {   // P0b: time the Woodbury GMGᵀ fold.  parallel_carry: G·M·Gᵀ is a big dense GEMM
+            // (n_shared×K · K×K · K×n_shared) that DOES thread well under Eigen — un-pin Eigen
+            // locally so it fans across cores.  This step is NOT inside an OpenMP region (the
+            // per-station loop + column-solve regions closed above), so there is no nesting.
+            // The per-station reduction already relaxed this fold, so the GEMM reassociation
+            // introduces no NEW serial≡parallel break.  RAII-restored (ScopedEigenThreads)
+            // on every exit — including a throw — so the next block's OpenMP loop always
+            // runs Eigen-pinned again.
+            ScopedAccum _fg(perf_timing_, &timers_.fold_gmg_ms);
+            ScopedEigenThreads _et(station_threads > 1, station_threads);
+            reduced_N_ss_.noalias() += G * M * G.transpose();
+            reduced_u_s_.noalias()  += G * (M * (z_free - blk.zhat));
+        }
 
         fd.G = std::move(G);
         fd.M = std::move(M);
@@ -1225,6 +1327,32 @@ Eigen::Index NetworkNormalEquations::numLocal(std::size_t station) const {
                                 "station index out of range");
     }
     return stations_[station].n_local;
+}
+
+const Eigen::MatrixXd& NetworkNormalEquations::stationCrossBlock(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationCrossBlock: "
+                                "station index out of range");
+    }
+    return stations_[station].N_sr;
+}
+
+const Eigen::VectorXd& NetworkNormalEquations::stationLocalRhs(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationLocalRhs: "
+                                "station index out of range");
+    }
+    return stations_[station].u_r;
+}
+
+Eigen::MatrixXd NetworkNormalEquations::stationLocalNormals(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationLocalNormals: "
+                                "station index out of range");
+    }
+    const Station& st = stations_[station];
+    if (st.n_local == 0) return Eigen::MatrixXd(0, 0);
+    return st.Nrr_ldlt.reconstructedMatrix();
 }
 
 } // namespace GnssProcessor

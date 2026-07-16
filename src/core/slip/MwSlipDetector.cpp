@@ -175,6 +175,425 @@ namespace GnssProcessor {
         return worst;
     }
 
+    MwSlipDetector::MwArcZdMean
+    MwSlipDetector::arcZdMean(const std::string& sat,
+                              const std::string& sig1,
+                              const std::string& sig2) const {
+        MwArcZdMean out;
+        // LAGGED Welford variance of the mean = M2_lag / (n_lag(n_lag-1)); NaN below
+        // two samples.  All reads below use the lagged snapshot (stats as of the end
+        // of the PREVIOUS epoch) — SPEC_mw_wl_card §3.3: the layer's same-epoch read
+        // must be independent of the current epoch's observations.
+        auto varOfMean = [](const MwArcStats& a) -> double {
+            if (a.count_lag < 2) return std::numeric_limits<double>::quiet_NaN();
+            const double n = static_cast<double>(a.count_lag);
+            return a.M2_lag / (n * (n - 1.0));
+        };
+
+        const std::string key = sat + "_" + sig1 + "_" + sig2;
+        const auto it = mw_stats_.find(key);
+        if (it == mw_stats_.end()) return out;   // no arc on this (sat, signal-pair)
+        const MwArcStats& s = it->second;
+        out.bia_corrected = s.bia_corrected;
+        if (s.count_lag < 2 || !(s.lambda_wl > 0.0)) { out.count = s.count_lag; return out; }
+
+        if (!s.bia_corrected) {
+            // Undifferenced already: a no-BIA-fallback arc (raw MW, receiver+satellite
+            // bias present — both cancel in a closed cycle) OR the group's MW pivot arc
+            // (BIA-subtracted, receiver bias present).  Either is a ZD-consistent
+            // per-(station,sat) value; return it directly.
+            out.mean_m         = s.mean_lag;
+            out.var_of_mean_m2 = varOfMean(s);
+            out.count          = s.count_lag;
+            out.lambda_wl      = s.lambda_wl;
+            out.valid          = std::isfinite(out.mean_m) && std::isfinite(out.var_of_mean_m2);
+            return out;
+        }
+
+        // Non-pivot BIA arc: stored mean = MW_bia(sat) - MW_bia(pivot).  Re-add the
+        // group pivot's undifferenced mean to recover MW_bia(sat).  The pivot key format
+        // matches the pass-2 assignment (sd_pivot_sat_["<cons>_<sig1>_<sig2>"]).
+        const std::string group_key =
+            std::string(1, sat.empty() ? '?' : sat.front()) + "_" + sig1 + "_" + sig2;
+        const auto pit = sd_pivot_sat_.find(group_key);
+        if (pit == sd_pivot_sat_.end()) { out.count = s.count; return out; }  // no pivot ⇒ can't reconstruct
+        const std::string pivot_key = pit->second + "_" + sig1 + "_" + sig2;
+        const auto pvt = mw_stats_.find(pivot_key);
+        if (pvt == mw_stats_.end() || pvt->second.count_lag < 2) { out.count = s.count_lag; return out; }
+        const MwArcStats& p = pvt->second;
+
+        out.mean_m = s.mean_lag + p.mean_lag;
+        // Conservative: SD arc variance + pivot variance.  In a closed fundamental
+        // cycle the common per-station pivot term cancels EXACTLY across that station's
+        // two arcs, so this over-counts the pivot's contribution — a safe (loose) row R.
+        out.var_of_mean_m2 = varOfMean(s) + varOfMean(p);
+        out.count          = std::min(s.count_lag, p.count_lag);
+        out.lambda_wl      = s.lambda_wl;
+        out.valid          = std::isfinite(out.mean_m) && std::isfinite(out.var_of_mean_m2);
+        return out;
+    }
+
+    MwSlipDetector::MwArcZdLast
+    MwSlipDetector::arcZdLast(const std::string& sat,
+                              const std::string& sig1,
+                              const std::string& sig2) const {
+        MwArcZdLast out;
+        // WL-3 §3.2: serve the LAGGED raw sample (the previous processed epoch's MW)
+        // with the PER-SAMPLE Welford variance — the lane-carry per-epoch increment.
+        // Every read below is from the lag snapshot, mirroring arcZdMean's F1 discipline.
+        auto varOfSample = [](std::size_t n_lag, double M2_lag) -> double {
+            if (n_lag < 2) return std::numeric_limits<double>::quiet_NaN();
+            return M2_lag / (static_cast<double>(n_lag) - 1.0);
+        };
+
+        const std::string key = sat + "_" + sig1 + "_" + sig2;
+        const auto it = mw_stats_.find(key);
+        if (it == mw_stats_.end()) return out;
+        const MwArcStats& s = it->second;
+        out.bia_corrected = s.bia_corrected;
+        out.count         = s.count_lag;
+        if (s.count_lag < 2 || !(s.lambda_wl > 0.0) || !std::isfinite(s.prev_mw_lag))
+            return out;
+
+        if (!s.bia_corrected) {
+            // Undifferenced already (no-BIA fallback or the group's MW pivot arc) —
+            // ZD-consistent per-(station,sat) value, return directly.
+            out.value_m   = s.prev_mw_lag;
+            out.var_m2    = varOfSample(s.count_lag, s.M2_lag);
+            out.epoch_s   = s.prev_epoch_lag_s;
+            out.lambda_wl = s.lambda_wl;
+            out.valid     = std::isfinite(out.value_m) && std::isfinite(out.var_m2);
+            return out;
+        }
+
+        // Non-pivot BIA arc: stored sample = MW_bia(sat) − MW_bia(pivot), formed against
+        // the pivot's SAME-epoch raw sample (pass-2 sd_mw) — re-add the pivot's own
+        // lagged raw sample to recover MW_bia(sat).  The reconstruction is exact only
+        // when both lag stamps name the same epoch; otherwise the arc missed an epoch
+        // relative to its pivot and the value would mix epochs — return invalid.
+        const std::string group_key =
+            std::string(1, sat.empty() ? '?' : sat.front()) + "_" + sig1 + "_" + sig2;
+        const auto pit = sd_pivot_sat_.find(group_key);
+        if (pit == sd_pivot_sat_.end()) return out;
+        const auto pvt = mw_stats_.find(pit->second + "_" + sig1 + "_" + sig2);
+        if (pvt == mw_stats_.end() || pvt->second.count_lag < 2) return out;
+        const MwArcStats& p = pvt->second;
+        if (!std::isfinite(p.prev_mw_lag)) return out;
+        if (std::abs(s.prev_epoch_lag_s - p.prev_epoch_lag_s) > 0.1) return out;  // epoch mismatch
+
+        out.value_m   = s.prev_mw_lag + p.prev_mw_lag;
+        // Conservative: SD per-sample variance + pivot per-sample variance (the common
+        // pivot term cancels in a closed DD cycle, so this over-counts — a loose R).
+        out.var_m2    = varOfSample(s.count_lag, s.M2_lag) + varOfSample(p.count_lag, p.M2_lag);
+        out.epoch_s   = s.prev_epoch_lag_s;
+        out.count     = std::min(s.count_lag, p.count_lag);
+        out.lambda_wl = s.lambda_wl;
+        out.valid     = std::isfinite(out.value_m) && std::isfinite(out.var_m2);
+        return out;
+    }
+
+    // =================================================================
+    // M5 card WL-2: tri-frequency phase bridge (SPEC §3.4)
+    // =================================================================
+
+    MwSlipDetector::MwBridgeMean
+    MwSlipDetector::arcBridge(const std::string& sat,
+                              const std::string& sig1,
+                              const std::string& sig2,
+                              const std::string& sig5) const {
+        MwBridgeMean out;
+        const std::string key = sat + "_" + sig1 + "_" + sig2 + "_" + sig5;
+        const auto it = bridge_stats_.find(key);
+        if (it == bridge_stats_.end()) return out;
+        const BridgeArcStats& s = it->second;
+        // Serve the LAGGED snapshot (state as of the previous epoch's end) so a same-epoch
+        // consumer never re-ingests the current observations — the §3.3/§3.4 double-count
+        // guard, identical to arcZdMean.
+        if (s.count_lag < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)) {
+            out.count = s.count_lag;
+            return out;
+        }
+        const double n = static_cast<double>(s.count_lag);
+        out.gf_mean_m       = s.mean_lag;
+        out.var_of_mean_m2  = s.M2_lag / (n * (n - 1.0));
+        out.count           = s.count_lag;
+        out.lambda_wl       = s.lambda_wl;
+        out.lambda_ewl      = s.lambda_ewl;
+        out.iono_coeff      = s.iono_coeff;
+        out.valid           = std::isfinite(out.gf_mean_m) && std::isfinite(out.var_of_mean_m2);
+        return out;
+    }
+
+    MwSlipDetector::MwBridgeLast
+    MwSlipDetector::arcBridgeLast(const std::string& sat,
+                                  const std::string& sig1,
+                                  const std::string& sig2,
+                                  const std::string& sig5) const {
+        MwBridgeLast out;
+        const std::string key = sat + "_" + sig1 + "_" + sig2 + "_" + sig5;
+        const auto it = bridge_stats_.find(key);
+        if (it == bridge_stats_.end()) return out;
+        const BridgeArcStats& s = it->second;
+        out.count = s.count_lag;
+        // WL-3 §3.2: the LAGGED raw GF_b sample + per-sample Welford variance — the
+        // bridge lane's per-epoch increment (once-only; the mean stays decision-side).
+        if (s.count_lag < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)
+            || !std::isfinite(s.prev_gf_lag))
+            return out;
+        out.gf_m       = s.prev_gf_lag;
+        out.var_m2     = s.M2_lag / (static_cast<double>(s.count_lag) - 1.0);
+        out.epoch_s    = s.prev_epoch_lag_s;
+        out.lambda_wl  = s.lambda_wl;
+        out.lambda_ewl = s.lambda_ewl;
+        out.iono_coeff = s.iono_coeff;
+        out.valid      = std::isfinite(out.gf_m) && std::isfinite(out.var_m2);
+        return out;
+    }
+
+    // =================================================================
+    // M5 card UWL-1: cold-fix (n=1) DECISION-ONLY accessors (SPEC §3.3)
+    // =================================================================
+
+    MwSlipDetector::MwArcZdMean
+    MwSlipDetector::arcZdMeanCold(const std::string& sat,
+                                  const std::string& sig1,
+                                  const std::string& sig2) const {
+        MwArcZdMean out;
+        // UNLAGGED n ≥ 1 serve for integer DECISIONS only (header contract): the
+        // variance of the mean = M2/(n(n−1)) is NaN at n==1 — the CALLER substitutes
+        // the a-priori per-sample σ (uwl_cold_sigma_m); the Welford variance takes
+        // over from n ≥ 2.  Never feeds a folded row or a lane increment.
+        auto varOfMean = [](std::size_t n, double M2) -> double {
+            if (n < 2) return std::numeric_limits<double>::quiet_NaN();
+            const double dn = static_cast<double>(n);
+            return M2 / (dn * (dn - 1.0));
+        };
+
+        const std::string key = sat + "_" + sig1 + "_" + sig2;
+        const auto it = mw_stats_.find(key);
+        if (it == mw_stats_.end()) return out;
+        const MwArcStats& s = it->second;
+        out.bia_corrected = s.bia_corrected;
+        out.count         = s.count;
+        if (s.count < 1 || !(s.lambda_wl > 0.0)) return out;
+
+        if (!s.bia_corrected) {
+            // Undifferenced (no-BIA fallback or the group's MW pivot arc) — ZD already.
+            out.mean_m         = s.mean;
+            out.var_of_mean_m2 = varOfMean(s.count, s.M2);
+            out.lambda_wl      = s.lambda_wl;
+            out.valid          = std::isfinite(out.mean_m);
+            return out;
+        }
+        // Non-pivot BIA arc: re-add the group pivot's UNLAGGED mean (same ZD
+        // reconstruction as arcZdMean; conservative variance sum — NaN when either
+        // side is single-sample, covered by the caller's a-priori σ).
+        const std::string group_key =
+            std::string(1, sat.empty() ? '?' : sat.front()) + "_" + sig1 + "_" + sig2;
+        const auto pit = sd_pivot_sat_.find(group_key);
+        if (pit == sd_pivot_sat_.end()) return out;
+        const auto pvt = mw_stats_.find(pit->second + "_" + sig1 + "_" + sig2);
+        if (pvt == mw_stats_.end() || pvt->second.count < 1) return out;
+        const MwArcStats& p = pvt->second;
+        out.mean_m         = s.mean + p.mean;
+        out.var_of_mean_m2 = varOfMean(s.count, s.M2) + varOfMean(p.count, p.M2);
+        out.count          = std::min(s.count, p.count);
+        out.lambda_wl      = s.lambda_wl;
+        out.valid          = std::isfinite(out.mean_m);
+        return out;
+    }
+
+    MwSlipDetector::MwBridgeMean
+    MwSlipDetector::arcBridgeCold(const std::string& sat,
+                                  const std::string& sig1,
+                                  const std::string& sig2,
+                                  const std::string& sig5) const {
+        MwBridgeMean out;
+        const std::string key = sat + "_" + sig1 + "_" + sig2 + "_" + sig5;
+        const auto it = bridge_stats_.find(key);
+        if (it == bridge_stats_.end()) return out;
+        const BridgeArcStats& s = it->second;
+        out.count = s.count;
+        // UNLAGGED n ≥ 2 serve (variance-of-mean needs two samples) — one epoch
+        // earlier than the lagged arcBridge (count_lag ≥ 2 ⇔ three samples).
+        // DECISION-ONLY (header contract); the lane increment stays on arcBridgeLast.
+        if (s.count < 2 || !(s.lambda_wl > 0.0) || !(s.lambda_ewl > 0.0)) return out;
+        const double n = static_cast<double>(s.count);
+        out.gf_mean_m      = s.mean;
+        out.var_of_mean_m2 = s.M2 / (n * (n - 1.0));
+        out.lambda_wl      = s.lambda_wl;
+        out.lambda_ewl     = s.lambda_ewl;
+        out.iono_coeff     = s.iono_coeff;
+        out.valid          = std::isfinite(out.gf_mean_m) && std::isfinite(out.var_of_mean_m2);
+        return out;
+    }
+
+    void MwSlipDetector::updateBridgeArc(const PppObservation& obs, bool has_lli) {
+        if (!bridge_enabled_ || obs.satellite.empty()) return;
+
+        const char cons = obs.satellite.front();
+        // UWL-1 (SPEC_uwl_card.md §3.1): the per-constellation lane-tier band digits.
+        // Empty table = the legacy hardcoded {1,2,5} scan for EVERY constellation
+        // (byte-identical — and the silent GPS-only failure mode: Galileo has no band
+        // '2').  A pushed table with no entry for this constellation forms NO bridge
+        // arc (BDS-3 deferred on its clock divergence; the wiring warns loudly).
+        char b1 = '1', b2 = '2', bt = '5', bm = '\0', bt2 = '\0';
+        if (!lane_tiers_.empty()) {
+            const auto tit = lane_tiers_.find(cons);
+            if (tit == lane_tiers_.end()) return;
+            b1 = tit->second.b1; b2 = tit->second.b2; bt = tit->second.b_top;
+            bm = tit->second.b_mid; bt2 = tit->second.b_top2;
+        }
+
+        // KF-aligned single phase signal per lane-tier band: min-name over obs.observed,
+        // matching the ApplicationNetwork primary(sig1<sig2 by band then name) + band-top
+        // (first b_top) selection so this arc's key aligns with the caller's arcBridge query.
+        // WL-3: when the network pushed its channel census (@ref setBridgePreferredChannels),
+        // the preferred channel WINS where tracked — the caller's census-selected primary
+        // pair would otherwise miss the min-name-keyed arc at every (rx,sat) whose channels
+        // differ (measured: the WL decision path starved to 9-of-29 cycles).
+        std::string s1, s2, s5, sm, st2;  // WL-pair bands (b1, b2) + top band (b_top) + optional mid (b_mid) / fallback top (b_top2)
+        for (const auto& [k, v] : obs.observed) {
+            if (k.size() < 2 || k[0] != 'L') continue;
+            (void)v;
+            std::string* dst = (k[1] == b1) ? &s1 : (k[1] == b2) ? &s2
+                             : (k[1] == bt) ? &s5
+                             : (bm  != '\0' && k[1] == bm)  ? &sm
+                             : (bt2 != '\0' && k[1] == bt2) ? &st2 : nullptr;
+            if (!dst) continue;
+            if (!bridge_pref_.empty()) {
+                const auto pit = bridge_pref_.find({cons, k[1]});
+                if (pit != bridge_pref_.end()) {
+                    if (k == pit->second) *dst = k;              // preferred channel wins
+                    else if (dst->empty()) *dst = k;             // fallback until seen
+                    else if (*dst != pit->second && k < *dst) *dst = k;  // min-name among fallbacks
+                    continue;
+                }
+            }
+            if (dst->empty() || k < *dst) *dst = k;
+        }
+        // Increment 5 (uwl_dual_top): under a dual-top tier the FALLBACK triple must
+        // form even when the preferred band is untracked at this (rx,sat) — that is
+        // the whole point of the fallback rung.  Single-top tiers keep the legacy
+        // early-out verbatim (bt2 == '\0' ⇒ have_top2 is false ⇒ identical flow).
+        const bool have_top  = !s5.empty();
+        const bool have_top2 = (bt2 != '\0') && !st2.empty();
+        if (s1.empty() || s2.empty() || (!have_top && !have_top2)) return;
+
+        const double epoch_s = TimeUtils::continuousGpsSeconds(obs.time);
+
+        // One bridge triple (sa, sb, sc): lane A = (sa, sb), lane B = (hi, lo of (sb, sc)).
+        // GF = λ_A(φ_sa−φ_sb) − λ_B(φ_hi−φ_lo) = λ_A·N_A − λ_B·N_B + iono + noise.
+        // Extracted so the E6 MID HOP (UWL-1, census-motivated) can feed additional
+        // triples per observation: the base (b1,b2,b_top) always (byte-identical to the
+        // single-triple code for the legacy and mid-off shapes), plus (b_mid,b2,b_top)
+        // [hop-hi: mid lane vs top lane] and (b1,b2,b_mid) [hop-lo: WL lane vs mid lane]
+        // when the constellation's tier arms a mid rung and the band is tracked.
+        auto feedTriple = [&](const std::string& sa, const std::string& sb,
+                              const std::string& sc) {
+            const std::string key = obs.satellite + "_" + sa + "_" + sb + "_" + sc;
+
+            // Loss-of-lock on any phase re-warms the bridge (it has no detection statistic
+            // to catch a real slip, unlike MW's threshold gate — resetting is the safe choice).
+            if (has_lli) { bridge_stats_.erase(key); return; }
+
+            // Raw cycle values (matching computeMwMeters' raw-observation convention).
+            const auto i1 = obs.raw_observed.find(sa);
+            const auto i2 = obs.raw_observed.find(sb);
+            const auto i5 = obs.raw_observed.find(sc);
+            if (i1 == obs.raw_observed.end() || i2 == obs.raw_observed.end() ||
+                i5 == obs.raw_observed.end())
+                return;
+            const double L1c = i1->second, L2c = i2->second, L5c = i5->second;
+            if (!(std::isfinite(L1c) && std::isfinite(L2c) && std::isfinite(L5c))) return;
+
+            const double f1 = ppp_utils_.getFrequency(sa, obs.system, obs.satellite);
+            const double f2 = ppp_utils_.getFrequency(sb, obs.system, obs.satellite);
+            const double f5 = ppp_utils_.getFrequency(sc, obs.system, obs.satellite);
+            if (!(std::isfinite(f1) && std::isfinite(f2) && std::isfinite(f5) &&
+                  f1 > 0.0 && f2 > 0.0 && f5 > 0.0))
+                return;
+            const double df_wl  = f1 - f2;   // lane A: sa − sb (f_sa > f_sb by table order)
+            // Lane-B pair (hi − lo) by ACTUAL frequency: GPS's shared band b2 is the top
+            // pair's HIGH side (L2 > L5), Galileo's is its LOW side (E5a < E5b/E5/E6) —
+            // UWL-1 §2 keeps λ_B positive either way.  For GPS this reproduces the
+            // legacy f2 − f5 expression bit-exactly.
+            const bool   b2_hi  = f2 > f5;
+            const double df_top = b2_hi ? (f2 - f5) : (f5 - f2);
+            if (std::abs(df_wl) < 1.0 || std::abs(df_top) < 1.0) return;
+
+            const double c        = Constants::SPEED_OF_LIGHT;
+            const double lam_wl   = c / df_wl;
+            const double lam_ewl  = c / df_top;
+            // GF iono sensitivity to the L1-referenced slant iono I₁ (the estimator's
+            // iono-state frame, f_ref = GPS L1): C_iono = f_ref²·(1/(f1·f2) − 1/(f_hi·f_lo))
+            // — the product is order-free, so the f2·f5 expression is generic (SPEC §3.4 v2 —
+            // the consumer subtracts C_iono·Σc·Î₁ to de-bias the bridge).
+            const double f_ref    = Constants::GPS_L1_FREQ;
+            const double iono_co  = f_ref * f_ref * (1.0 / (f1 * f2) - 1.0 / (f2 * f5));
+            // Lane-A phase (m) = λ_A·(φ_sa−φ_sb); lane-B phase (m) = λ_B·(φ_hi−φ_lo).
+            // GF = φ_A − φ_B is geometry-free → λ_A·N_A − λ_B·N_B + differential-iono
+            // residue + phase noise; N_B = N_hi − N_lo matches the MW(hi,lo) integer.
+            const double gf = lam_wl * (L1c - L2c)
+                            - lam_ewl * (b2_hi ? (L2c - L5c) : (L5c - L2c));
+            if (!std::isfinite(gf)) return;
+
+            BridgeArcStats& st = bridge_stats_[key];
+
+            // Data-gap reset (same tolerance as the MW arcs).
+            if (st.count > 0 && st.last_epoch_s > 0.0 &&
+                (epoch_s - st.last_epoch_s) > max_gap_seconds_) {
+                st = BridgeArcStats{};
+            }
+            // Gross-jump refloat: a lane slip the ambiguity funnel missed (≥ kBridgeJumpResetM
+            // above the sub-decimetre iono residue).  Refloat rather than poison the slow mean.
+            if (st.count > 0 && std::abs(gf - st.mean) > kBridgeJumpResetM) {
+                st = BridgeArcStats{};
+            }
+
+            if (st.count == 0) {
+                st.mean       = gf;
+                st.M2         = 0.0;
+                st.count      = 1;
+                st.prev_gf    = gf;        // WL-3: raw-sample staging for arcBridgeLast
+                st.prev_epoch_s = epoch_s;
+                st.last_epoch_s = epoch_s;
+                st.lambda_wl  = lam_wl;
+                st.lambda_ewl = lam_ewl;
+                st.iono_coeff = iono_co;
+                return;
+            }
+
+            // Lagged snapshot BEFORE this epoch's value folds in (arcBridge serves these).
+            st.mean_lag  = st.mean;
+            st.M2_lag    = st.M2;
+            st.count_lag = st.count;
+            // WL-3 (arcBridgeLast): the raw-sample lag under the same once-only discipline.
+            st.prev_gf_lag      = st.prev_gf;
+            st.prev_epoch_lag_s = st.prev_epoch_s;
+            st.count++;
+            const double eff_n = static_cast<double>(std::min<std::size_t>(st.count, kMaxHatchCount));
+            const double delta = gf - st.mean;
+            st.mean += delta / eff_n;
+            const double delta2 = gf - st.mean;
+            st.M2 += delta * delta2;
+            st.prev_gf      = gf;        // WL-3
+            st.prev_epoch_s = epoch_s;
+            st.last_epoch_s = epoch_s;
+            st.lambda_wl  = lam_wl;
+            st.lambda_ewl = lam_ewl;
+            st.iono_coeff = iono_co;
+        };
+
+        if (have_top)  feedTriple(s1, s2, s5);   // base: WL lane vs preferred top lane (as before)
+        if (have_top2) feedTriple(s1, s2, st2);  // increment 5: WL lane vs FALLBACK top lane
+        if (bm != '\0' && !sm.empty()) {         // E6 mid hop: extra triples, decision-side
+            if (have_top)  feedTriple(sm, s2, s5);   // hop-hi: mid lane (b_mid,b2) vs preferred top
+            if (have_top2) feedTriple(sm, s2, st2);  // hop-hi vs the fallback top (dual only)
+            feedTriple(s1, s2, sm);                  // hop-lo: WL lane vs mid lane (b_mid,b2)
+        }
+    }
+
     // =================================================================
     // Tracing (CSV output)
     // =================================================================
@@ -1009,6 +1428,7 @@ namespace GnssProcessor {
             stats.M2           = 0.0;
             stats.count        = 1;
             stats.prev_mw      = mw_m;
+            stats.prev_epoch_s = epoch_s;   // WL-3: prev_mw's sample stamp (arcZdLast alignment)
             stats.last_epoch_s = epoch_s;
             stats.diff_window.clear();
             stats.bia_corrected = bia_corrected;
@@ -1722,6 +2142,16 @@ namespace GnssProcessor {
         // slip migrates the running mean past kWlLockDriftMaxCyc and
         // trips drift demotion below; for a noise-outlier the 1/n
         // weighting keeps the mean shift negligible.
+        // Lagged snapshot BEFORE this epoch's value folds in: arcZdMean serves
+        // these so the MW-WL layer's same-epoch read never re-ingests the
+        // current observations (SPEC_mw_wl_card §3.3 double-count guard).
+        stats.mean_lag  = stats.mean;
+        stats.M2_lag    = stats.M2;
+        stats.count_lag = stats.count;
+        // WL-3 (arcZdLast): snapshot the raw-sample lag under the same discipline —
+        // prev_mw still holds the PREVIOUS processed epoch's raw value here.
+        stats.prev_mw_lag     = stats.prev_mw;
+        stats.prev_epoch_lag_s = stats.prev_epoch_s;
         stats.count++;
         {
             const double eff_n  = static_cast<double>(std::min(stats.count, kMaxHatchCount));
@@ -1771,6 +2201,7 @@ namespace GnssProcessor {
         // erase at the slip epoch, so neither case arises.
         stats.prev_diff    = mw_diff;
         stats.prev_mw      = mw_m;
+        stats.prev_epoch_s = epoch_s;   // WL-3: prev_mw's sample stamp (arcZdLast alignment)
         stats.last_epoch_s = epoch_s;
 
         // Drift-based lock demotion.  When the running mean has
@@ -1958,6 +2389,10 @@ namespace GnssProcessor {
             if (!std::isfinite(obs.elevation) || obs.elevation < config_.getElevationMaskDeg()) continue;
 
             const bool has_lli = hasAnyPhaseLockLoss(obs);
+
+            // M5 card WL-2 (SPEC §3.4): fold this satellite's tri-frequency phase into its
+            // GF_b bridge arc (no-op unless armed via setBridgeEnabled ⇒ byte-identical OFF).
+            updateBridgeArc(obs, has_lli);
 
             // Try combined (PPP) path first
             const auto if_pairs = collectIonoFreePairs(obs);
@@ -2356,6 +2791,8 @@ namespace GnssProcessor {
                 bool   can_s_transform = false;
                 double piv_old_mean    = 0.0;
                 double piv_old_prev_mw = 0.0;
+                double piv_old_prev_mw_lag =
+                    std::numeric_limits<double>::quiet_NaN();   // WL-3: shifts prev_mw_lag alongside
                 double piv_old_prev_diff =
                     std::numeric_limits<double>::quiet_NaN();
                 int    piv_old_int     = 0;
@@ -2365,6 +2802,7 @@ namespace GnssProcessor {
                     can_s_transform = true;
                     piv_old_mean    = new_piv_arc_it->second.mean;
                     piv_old_prev_mw = new_piv_arc_it->second.prev_mw;
+                    piv_old_prev_mw_lag = new_piv_arc_it->second.prev_mw_lag;
                     piv_old_prev_diff = new_piv_arc_it->second.prev_diff;
                     piv_old_int     = new_piv_arc_it->second.rounded_wl;
                 }
@@ -2423,8 +2861,17 @@ namespace GnssProcessor {
                         if (!arc.bia_corrected) {
                             // building; SD ref doesn't matter yet
                         } else if (can_s_transform) {
-                            arc.mean    -= piv_old_mean;
-                            arc.prev_mw -= piv_old_prev_mw;
+                            arc.mean     -= piv_old_mean;
+                            arc.mean_lag -= piv_old_mean;   // lagged snapshot rides the same frame (MwArcStats doc)
+                            arc.prev_mw  -= piv_old_prev_mw;
+                            // WL-3: the lagged raw sample re-references by the new pivot's
+                            // OWN old-frame lagged sample (exact through the shared terms);
+                            // when that is not yet formed, degrade to invalid for one epoch.
+                            arc.prev_mw_lag =
+                                (std::isfinite(arc.prev_mw_lag)
+                                 && std::isfinite(piv_old_prev_mw_lag))
+                                    ? arc.prev_mw_lag - piv_old_prev_mw_lag
+                                    : std::numeric_limits<double>::quiet_NaN();
                             // A demoted-level stash for this arc lives in
                             // the same SD frame — shift it by the same
                             // constant so the across-gap difference
@@ -2831,6 +3278,14 @@ namespace GnssProcessor {
             }
         }
 
+        // M5 card WL-2: refloat every bridge arc of this satellite (a slip on any of the
+        // three bands invalidates GF_b's constant-ambiguity assumption).  No rollback — the
+        // bridge re-warms fresh, and its σ guard keeps a mid-warm arc from arming a fix.
+        if (!bridge_stats_.empty())
+            for (auto bit = bridge_stats_.begin(); bit != bridge_stats_.end(); )
+                if (bit->first.rfind(prefix, 0) == 0) bit = bridge_stats_.erase(bit);
+                else ++bit;
+
         // An external reset invalidates any demoted-level stash for the
         // sat: a rolled-back arc's mean reverts to the PRE-event level, so
         // (mean − stash) would read ~0 with full rollback confidence — a
@@ -2910,6 +3365,27 @@ namespace GnssProcessor {
                          satellite, signal, n_rolled, n_erased);
         }
 
+        // M5 card WL-2: refloat any bridge arc whose triple ("sat_s1_s2_s5") involves the
+        // slipped signal (a slip on band 1, 2, OR 5 jumps GF_b) — mirrors the per-pair
+        // erase above, extended to the third band.
+        if (!bridge_stats_.empty())
+            for (auto bit = bridge_stats_.begin(); bit != bridge_stats_.end(); ) {
+                bool involves = false;
+                if (bit->first.rfind(prefix, 0) == 0) {
+                    const std::string rest = bit->first.substr(prefix.size());  // "s1_s2_s5"
+                    std::size_t p = 0;
+                    while (p < rest.size()) {
+                        const std::size_t q = rest.find('_', p);
+                        const std::string tok = rest.substr(p, q == std::string::npos ? q : q - p);
+                        if (tok == signal) { involves = true; break; }
+                        if (q == std::string::npos) break;
+                        p = q + 1;
+                    }
+                }
+                if (involves) bit = bridge_stats_.erase(bit);
+                else ++bit;
+            }
+
         // Invalidate demoted-level stashes touching this signal (same
         // rationale as resetSatellite: a rollback poisons the settle
         // estimate's post-restart mean).
@@ -2943,6 +3419,7 @@ namespace GnssProcessor {
         cross_sat_devs_.clear();
         arc_snapshots_.clear();
         demoted_levels_.clear();
+        bridge_stats_.clear();   // M5 card WL-2: hard restart drops the bridge accumulators too
         if (n_arcs > 0 || n_pivots > 0 || n_biases > 0 || n_xsat > 0 || n_snaps > 0) {
             logger->info("MW detector resetAll: cleared {} arc(s), {} SD pivot(s), {} stored bias(es), {} cross-sat σ entries, {} arc snapshot(s)",
                          n_arcs, n_pivots, n_biases, n_xsat, n_snaps);
@@ -3095,7 +3572,10 @@ namespace GnssProcessor {
         // protects BIA-corrected locks applies here too.
         const auto& stored = sat_pair_bias_.at(stats_key);
         stats.mean         -= stored.bias_m;
+        stats.mean_lag     -= stored.bias_m;   // lagged snapshot rides the same frame (MwArcStats doc)
         stats.prev_mw      -= stored.bias_m;
+        if (std::isfinite(stats.prev_mw_lag))
+            stats.prev_mw_lag -= stored.bias_m;   // WL-3: the lagged raw sample rides too
         // The local raw-MW ring holds pre-commit (uncorrected) samples;
         // re-anchor it with the mean or the commit epoch's local deviation
         // jumps by the full bias (decimeters) — the same false-fire the

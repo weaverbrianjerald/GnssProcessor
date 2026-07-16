@@ -419,10 +419,23 @@ public:
      *        ANY thread count (unlike @ref reduce's opt-in ULP-reassociating fan-out).
      *        The dense kernels must run single-threaded (the driver pins Eigen to one
      *        thread for the epoch) to avoid nested oversubscription.
+     * @param station_threads Optional WITHIN-BLOCK fan-out (@c network.parallel_carry;
+     *        default 1 = serial).  Takes effect only on the SERIAL fold path
+     *        (@p n_threads == 1) — the driver runs the carry serial-over-blocks and asks
+     *        for within-block parallelism instead.  With @p station_threads > 1 the
+     *        per-station reduction (@f$\Sigma_r C_{L,r}^\top N_{rr}^{-1} C_{L,r}@f$ etc.)
+     *        is fanned across threads via per-thread partials combined in ascending thread
+     *        order — reproducible per thread-count but ULP-different from the serial fold
+     *        (the parallel_carry relaxation, mirroring @ref reduce), and the K×K middle
+     *        inverse's @c solve is column-parallelized (each RHS column independent ⇒
+     *        byte-identical given @f$P^z+B@f$; the LDLT factor stays serial).  Eigen must
+     *        stay pinned to one thread (the driver does NOT un-pin it around the fold when
+     *        this is armed) so the per-station OpenMP does not nest with Eigen's GEMM.
      * @throws std::out_of_range / std::invalid_argument on a bad station, column,
      *         or a @c Pz / @c zhat dimension mismatch.
      */
-    void foldReducedDdPriors(const std::vector<DdPriorBlock>& blocks, int n_threads = 1);
+    void foldReducedDdPriors(const std::vector<DdPriorBlock>& blocks, int n_threads = 1,
+                             int station_threads = 1);
 
     /**
      * @brief Posterior mean of a folded block's K double differences given the
@@ -777,6 +790,29 @@ public:
     ///         @ref addStationPrior / @ref reset).
     bool isReduced() const { return reduced_; }
 
+    /**
+     * @brief Read-only access to station @p station's shared↔local cross block
+     *        @f$N_{sr}@f$ (@ref numShared × @ref numLocal), for the NEQ export.
+     * @throws std::out_of_range if @p station ≥ @ref numStations.
+     */
+    const Eigen::MatrixXd& stationCrossBlock(std::size_t station) const;
+
+    /**
+     * @brief Read-only access to station @p station's local RHS @f$u_r@f$
+     *        (@ref numLocal), for the NEQ export.
+     * @throws std::out_of_range if @p station ≥ @ref numStations.
+     */
+    const Eigen::VectorXd& stationLocalRhs(std::size_t station) const;
+
+    /**
+     * @brief Station @p station's local normal block @f$N_{rr}@f$
+     *        (@ref numLocal × @ref numLocal), REBUILT from the cached LDLᵀ factor
+     *        (the raw matrix is not retained).  Exact up to factorization
+     *        round-off; intended for the offline NEQ export, not per-epoch use.
+     * @throws std::out_of_range if @p station ≥ @ref numStations.
+     */
+    Eigen::MatrixXd stationLocalNormals(std::size_t station) const;
+
     /// @return How many times @ref reduce has actually RECOMPUTED the per-station
     ///         Schur loop since the last @ref reset (idempotent no-op returns do
     ///         not count).  Reset to 0 by @ref reset; used to assert the
@@ -811,6 +847,13 @@ public:
         std::size_t reduce_recomputes{0};   ///< #real @ref reduce recomputes timed (mirrors @ref reduceRecomputeCount but gated on timing).
         std::size_t solve_calls{0};         ///< #@ref solveSharedConstrained calls timed.
         std::size_t cov_consumer_calls{0};  ///< #covariance-consumer calls timed (all methods above pooled).
+        // parallel_carry diagnostic (P0b): the three sub-parts of @ref foldReducedDdPriors's
+        // per-block algebra, so the dominant cost (per-station reduction vs the K×K middle
+        // inverse vs the Woodbury GMGᵀ) is measured before choosing the parallelization axis.
+        // Accumulated only on the SERIAL fold path (parallel_carry / n_threads==1).
+        double fold_loop_ms{0.0};      ///< the per-station B/G/z_free reduction loop (Σ_r CrTᵀ N_rr⁻¹ CrT etc.).
+        double fold_minv_ms{0.0};      ///< the middle inverse M = (Pᶻ+B)⁻¹ (LDLT factor + solve for the explicit K×K inverse).
+        double fold_gmg_ms{0.0};       ///< the Woodbury fold onto the reduced shared system (G M Gᵀ, G M (z_free−ẑ)).
     };
 
     /// Arm/disarm the section timers (@c network.trace_section_timers).  Configuration

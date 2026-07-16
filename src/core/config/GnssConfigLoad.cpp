@@ -3060,6 +3060,10 @@ namespace GnssProcessor {
                                        "network_ar_wl_cascade", false);
             ar.min_epochs = jval<int>(json, "network.ambiguity_resolution.min_epochs",
                                       "network_ar_min_epochs", 10);
+            // Cap on the MLAMBDA search dimension (0 = uncapped legacy).  Required at
+            // scale: an uncapped ~2500-dim basis at 305 stations does not return.
+            ar.ils_max_dim = jval<int>(json, "network.ambiguity_resolution.ils_max_dim",
+                                       "network_ar_ils_max_dim", 0);
             if (ar.enable) {
                 log->info("Network producer AR ON — integer-leveled satellite phase biases "
                           "(FFR min_success_rate={}, ratio>={}, nl_frac<={} cyc, partial_ar={}, "
@@ -3067,6 +3071,185 @@ namespace GnssProcessor {
                           ar.min_success_rate, ar.ratio_threshold, ar.nl_max_per_pair_frac,
                           ar.enable_partial_ar ? "on" : "off", ar.wl_cascade ? "on" : "off",
                           ar.min_epochs);
+            }
+        }
+
+        // --- MW-seeded wide-lane pseudo-obs layer (M5 card WL-1; network.mw_wl.*) ---
+        // Feeds the per-arc Melbourne-Wubbena Welford means, DD'd over the Card-4 chord
+        // basis, into the solve as rank-K WL pseudo-obs blocks — the code-coherence
+        // accumulator the per-epoch network lacks (docs/SPEC_mw_wl_card.md).  Default
+        // enable=false => byte-identical.  The carry_invariant requirement + Phase-B
+        // warnings are enforced in the carry_invariant validation block below (after
+        // network.carry_invariant is parsed).
+        {
+            auto& mw = network_config_.mw_wl;
+            mw.enable = jval<bool>(json, "network.mw_wl.enable", "network_mw_wl_enable", false);
+            mw.min_arc_epochs = jval<int>(json, "network.mw_wl.min_arc_epochs",
+                                          "network_mw_wl_min_arc_epochs", 10);
+            mw.sigma_floor_cyc = jval<double>(json, "network.mw_wl.sigma_floor_cyc",
+                                              "network_mw_wl_sigma_floor_cyc", 0.05);
+            mw.max_rows_per_epoch = jval<int>(json, "network.mw_wl.max_rows_per_epoch",
+                                              "network_mw_wl_max_rows_per_epoch", 0);
+            mw.fix_enable = jval<bool>(json, "network.mw_wl.fix_enable",
+                                       "network_mw_wl_fix_enable", false);
+            mw.fix_sigma_cyc = jval<double>(json, "network.mw_wl.fix_sigma_cyc",
+                                            "network_mw_wl_fix_sigma_cyc", 0.10);
+            mw.fix_frac_cyc = jval<double>(json, "network.mw_wl.fix_frac_cyc",
+                                           "network_mw_wl_fix_frac_cyc", 0.15);
+            mw.fix_weight_sigma_cyc = jval<double>(json, "network.mw_wl.fix_weight_sigma_cyc",
+                                                   "network_mw_wl_fix_weight_sigma_cyc", 0.01);
+            mw.f6_dump = jval<bool>(json, "network.mw_wl.f6_dump",
+                                    "network_mw_wl_f6_dump", false);
+            mw.debug_r_scale = jval<double>(json, "network.mw_wl.debug_r_scale",
+                                            "network_mw_wl_debug_r_scale", 1.0);
+            mw.ewl_fold_rows = jval<bool>(json, "network.mw_wl.ewl_fold_rows",
+                                          "network_mw_wl_ewl_fold_rows", false);
+            if (mw.ewl_fold_rows)
+                log->warn("network.mw_wl.ewl_fold_rows=true — F-A STUDY SHAPE: folding the EWL "
+                          "integer rows into the solve re-creates the ~2x D5 elevation the "
+                          "Jul-16 A/B attributed (border-mediated tension against the stiff "
+                          "carries).  The WL cascade does not need the fold (it reads the "
+                          "detector statistic).  Diagnostic only, NOT a production shape.");
+            mw.d5_dump = jval<bool>(json, "network.mw_wl.d5_dump",
+                                    "network_mw_wl_d5_dump", false);
+            mw.lane_trace = jval<bool>(json, "network.mw_wl.lane_trace",
+                                       "network_mw_wl_lane_trace", false);
+            // --- M5 card WL-3: lane-coordinate carry (docs/SPEC_lane_carry_card.md).
+            // Parsed + clamped here; the carry_invariant / ewl_enable mutex + the ON
+            // summary live in the validation block below (after network.carry_invariant
+            // is parsed), mirroring the mw_wl mutexes.
+            {
+                auto& lc = network_config_.lane_carry;
+                lc.enable = jval<bool>(json, "network.lane_carry.enable",
+                                       "network_lane_carry_enable", false);
+                // DEFAULT 0.01 (measured Jul-16, 15-ep A/B).  The SPEC §3.1 "10³ × q_nl"
+                // numerology assumed q_nl ≈ 0; at the lineage qz = 1e-4 m²/s it adds
+                // (√3 m ≈ 11.8 WL cyc)² of lane variance PER 30 s EPOCH — swamping every
+                // accumulated lane measurement and destroying each FFR fix within one
+                // epoch.  0.01×qz ≈ (0.04 cyc)²/epoch keeps the √N accumulation alive
+                // (constrained circR 0.471 / med|f| 0.061 vs 0.251/0.247 at scale 1) while
+                // still relaxing a stale lane in tens of epochs.  The lane starts DIFFUSE
+                // and earns tightness only from measurements, so a large q_wl is not
+                // needed to prevent unearned stiffness.
+                lc.q_wl_scale = std::max(0.0,
+                    jval<double>(json, "network.lane_carry.q_wl_scale",
+                                 "network_lane_carry_q_wl_scale", 0.01));
+                // DEFAULT 0.0 = keep the ISOTROPIC diffuse prior at birth.  The SPEC §3.1
+                // mean-zero "code-seed scale" fresh lane prior is FALSIFIED on real data
+                // (measured Jul-16: D5 691 vs 125 without it): the correction-frame origin
+                // is NOT the code-seed lane — a cycle's ambiguities seed at different
+                // epochs, so per-station clock error at seed time does NOT cancel in the
+                // lane (× (f1−f2) ⇒ hundreds of cycles of mis-centering at σ=3 cyc).  The
+                // honest code-seed-scale information enters instead through the FIRST
+                // per-epoch MW lane increment (correctly centered on the detector value).
+                // Positive values (study shape) clamp to ≥0.1 cyc.
+                lc.sigma_wl_fresh_cyc =
+                    jval<double>(json, "network.lane_carry.sigma_wl_fresh_cyc",
+                                 "network_lane_carry_sigma_wl_fresh_cyc", 0.0);
+                lc.sigma_wl_fresh_cyc = (lc.sigma_wl_fresh_cyc <= 0.0)
+                    ? 0.0 : std::max(0.1, lc.sigma_wl_fresh_cyc);
+                if (lc.sigma_wl_fresh_cyc > 0.0)
+                    log->warn("Network: network.lane_carry.sigma_wl_fresh_cyc={} — the mean-zero "
+                              "fresh lane prior is a FALSIFIED mechanism on real data (seed-time "
+                              "clock diversity mis-centers it by O(10²) cycles; measured D5 "
+                              "691-vs-125, Jul-16).  Study shape only; the default (0 = diffuse "
+                              "birth + first MW increment) is the honest form.",
+                              lc.sigma_wl_fresh_cyc);
+                lc.lane_meas = jval<bool>(json, "network.lane_carry.lane_meas",
+                                          "network_lane_carry_lane_meas", true);
+                lc.bridge_meas = jval<bool>(json, "network.lane_carry.bridge_meas",
+                                            "network_lane_carry_bridge_meas", true);
+            }
+            // --- M5 card WL-2: EWL-first tri-frequency cascade (SPEC_ewl_wl_cascade_card.md §4). ---
+            mw.ewl_enable = jval<bool>(json, "network.mw_wl.ewl_enable",
+                                       "network_mw_wl_ewl_enable", false);
+            mw.ewl_min_arc_epochs = jval<int>(json, "network.mw_wl.ewl_min_arc_epochs",
+                                              "network_mw_wl_ewl_min_arc_epochs", 2);
+            mw.ewl_fix_sigma_cyc = jval<double>(json, "network.mw_wl.ewl_fix_sigma_cyc",
+                                                "network_mw_wl_ewl_fix_sigma_cyc", 0.10);
+            mw.ewl_fix_frac_cyc = jval<double>(json, "network.mw_wl.ewl_fix_frac_cyc",
+                                               "network_mw_wl_ewl_fix_frac_cyc", 0.20);
+            mw.wl_inject_enable = jval<bool>(json, "network.mw_wl.wl_inject_enable",
+                                             "network_mw_wl_wl_inject_enable", false);
+            mw.wl_fix_sigma_cyc = jval<double>(json, "network.mw_wl.wl_fix_sigma_cyc",
+                                               "network_mw_wl_wl_fix_sigma_cyc", 0.10);
+            mw.wl_fix_frac_cyc = jval<double>(json, "network.mw_wl.wl_fix_frac_cyc",
+                                              "network_mw_wl_wl_fix_frac_cyc", 0.15);
+            mw.bridge_max_sigma_cyc = jval<double>(json, "network.mw_wl.bridge_max_sigma_cyc",
+                                                   "network_mw_wl_bridge_max_sigma_cyc", 0.15);
+            mw.inject_disagree_min_cyc = jval<double>(json, "network.mw_wl.inject_disagree_min_cyc",
+                                                      "network_mw_wl_inject_disagree_min_cyc", 0.75);
+            mw.lane_max_abs_xlin_m = jval<double>(json, "network.mw_wl.lane_max_abs_xlin_m",
+                                                  "network_mw_wl_lane_max_abs_xlin_m", 1000.0);
+            // --- M5 card UWL-1: per-constellation ultra-wide-lane top tier (SPEC_uwl_card.md §5). ---
+            mw.uwl_enable = jval<bool>(json, "network.mw_wl.uwl_enable",
+                                       "network_mw_wl_uwl_enable", false);
+            {
+                const int gtb = jval<int>(json, "network.mw_wl.uwl_gal_top_band",
+                                          "network_mw_wl_uwl_gal_top_band", 7);
+                if (gtb == 7 || gtb == 8) {
+                    mw.uwl_gal_top_band = static_cast<char>('0' + gtb);
+                } else {
+                    log->warn("Network: network.mw_wl.uwl_gal_top_band = {} is not 7 (E5b, "
+                              "λ 9.768 m) or 8 (E5 AltBOC, λ 19.537 m) — keeping the default 7.",
+                              gtb);
+                    mw.uwl_gal_top_band = '7';
+                }
+            }
+            mw.uwl_mid_enable = jval<bool>(json, "network.mw_wl.uwl_mid_enable",
+                                           "network_mw_wl_uwl_mid_enable", false);
+            // Increment 5: dual-top tier (band-8 preferred / (5,7) fallback + sibling closure).
+            mw.uwl_dual_top = jval<bool>(json, "network.mw_wl.uwl_dual_top",
+                                         "network_mw_wl_uwl_dual_top", false);
+            mw.uwl_sib_gate = jval<bool>(json, "network.mw_wl.uwl_sib_gate",
+                                         "network_mw_wl_uwl_sib_gate", false);
+            // v2 census recovery: per-family lane pair groups.
+            mw.uwl_family_pairs = jval<bool>(json, "network.mw_wl.uwl_family_pairs",
+                                             "network_mw_wl_uwl_family_pairs", false);
+            mw.uwl_family_min_arcs = jval<int>(json, "network.mw_wl.uwl_family_min_arcs",
+                                               "network_mw_wl_uwl_family_min_arcs", 8);
+            if (mw.uwl_family_min_arcs < 1) {
+                log->warn("Network: network.mw_wl.uwl_family_min_arcs = {} is below 1 — "
+                          "clamping to 1 (a pair group needs at least one arc).",
+                          mw.uwl_family_min_arcs);
+                mw.uwl_family_min_arcs = 1;
+            }
+            mw.uwl_cold_fix = jval<bool>(json, "network.mw_wl.uwl_cold_fix",
+                                         "network_mw_wl_uwl_cold_fix", false);
+            mw.uwl_cold_sigma_m = jval<double>(json, "network.mw_wl.uwl_cold_sigma_m",
+                                               "network_mw_wl_uwl_cold_sigma_m", 0.7);
+            mw.uwl_cold_min_lambda_m = jval<double>(json, "network.mw_wl.uwl_cold_min_lambda_m",
+                                                    "network_mw_wl_uwl_cold_min_lambda_m", 8.0);
+            if (!(mw.uwl_cold_sigma_m > 0.0)) {
+                log->warn("Network: network.mw_wl.uwl_cold_sigma_m = {} is non-positive — "
+                          "clamping to 0.7 m (the cold decision needs an honest a-priori R).",
+                          mw.uwl_cold_sigma_m);
+                mw.uwl_cold_sigma_m = 0.7;
+            }
+            if (mw.uwl_cold_min_lambda_m < 6.0) {
+                log->warn("Network: network.mw_wl.uwl_cold_min_lambda_m = {} m would admit the "
+                          "GPS 5.861 m EWL to the n=1 cold fix — the cold fix is a UWL privilege "
+                          "earned by wavelength (SPEC_uwl_card.md §3.3); clamping to 6.0 m.",
+                          mw.uwl_cold_min_lambda_m);
+                mw.uwl_cold_min_lambda_m = 6.0;
+            }
+            if (mw.ewl_min_arc_epochs < 2) {
+                log->warn("Network: network.mw_wl.ewl_min_arc_epochs = {} is below 2 (a "
+                          "variance-of-mean needs >=2 samples) — clamping to 2.",
+                          mw.ewl_min_arc_epochs);
+                mw.ewl_min_arc_epochs = 2;
+            }
+            if (mw.min_arc_epochs < 2) {
+                log->warn("Network: network.mw_wl.min_arc_epochs = {} is below 2 (a "
+                          "variance-of-mean needs >=2 samples) — clamping to 2.",
+                          mw.min_arc_epochs);
+                mw.min_arc_epochs = 2;
+            }
+            if (!(mw.sigma_floor_cyc > 0.0)) {
+                log->warn("Network: network.mw_wl.sigma_floor_cyc = {} is non-positive — "
+                          "clamping to 0.05 cyc (an un-floored R lets a lucky-tight arc fold "
+                          "a near-exact WL constraint).", mw.sigma_floor_cyc);
+                mw.sigma_floor_cyc = 0.05;
             }
         }
 
@@ -3099,6 +3282,22 @@ namespace GnssProcessor {
             jval<bool>(json, "network.parallel_reduce", "parallel_reduce", false);
         network_config_.parallel_seam =
             jval<bool>(json, "network.parallel_seam", "parallel_seam", false);
+        network_config_.parallel_carry =
+            jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
+        // Guard (Fable lean review, Jul-14 eve): parallel_reduce and parallel_carry are
+        // MUTUALLY EXCLUSIVE.  Both OpenMP-fan the per-station passes, and est.solve()'s
+        // dense algebra (the fold's GEMMs + the K×K middle inverse) is itself Eigen-
+        // threaded — so armed together they nest OpenMP × Eigen inside reduce() and
+        // oversubscribe.  Resolve it HERE, at load time (one early, config-visible point,
+        // not buried in the epoch driver): force parallel_carry OFF when both are set.  No
+        // shipped config arms parallel_reduce, so this only closes the trap.
+        if (network_config_.parallel_reduce && network_config_.parallel_carry) {
+            log->warn("Network: parallel_reduce AND parallel_carry both set — forcing "
+                      "parallel_carry OFF (both OpenMP-fan the per-station passes and "
+                      "est.solve() is Eigen-threaded, so together they nest OpenMP × Eigen "
+                      "inside reduce()).  Set one false in config to silence this.");
+            network_config_.parallel_carry = false;
+        }
 
         // --- Visualization traces (pyviz network viewers) ---
         network_config_.trace_stations =
@@ -3139,6 +3338,9 @@ namespace GnssProcessor {
                        "iono_supply_formal_sigma", false);
         network_config_.trace_flag_rates =
             jval<bool>(json, "network.trace_flag_rates", "trace_flag_rates", false);
+        // One-shot full-arrowhead NEQ export at the Nth processed epoch (<=0 = off).
+        network_config_.neq_export_epoch =
+            jval<int>(json, "network.neq_export_epoch", "neq_export_epoch", -1);
         network_config_.trace_epoch_status =
             jval<bool>(json, "network.trace_epoch_status", "trace_epoch_status", false);
         // D0: per-epoch section-timer breakdown of the network solve (diagnostic; byte-identical OFF).
@@ -3284,6 +3486,22 @@ namespace GnssProcessor {
         if (estimate_network_iono_sh_) {
             estimate_network_sat_code_bias_ = true;   // SH co-estimation is the W6 iono constraint
             global_vtec_sh_.enabled         = true;
+        }
+
+        // Cold-start receiver-clock pre-seed.  On the network path nothing
+        // pre-solves the receiver clock before the first ambiguity seed
+        // (syncPppStateToStateVector, the PPP-path writer of x(clock), never
+        // runs from ApplicationNetwork), so a free-running receiver's whole
+        // clock offset leaks UNIFORMLY into every cold ambiguity seed via
+        // computeAmbiguitySeed's clk_term=x(clock)=0.  When on, the state
+        // pre-pass writes the median GPS code residual into x(clock) once per
+        // station.  Default OFF => the seeder is never called (byte-identical).
+        network_cold_clock_seed_ = jval<bool>(
+            json, "network.cold_clock_seed", "cold_clock_seed", false);
+        if (network_cold_clock_seed_) {
+            log->info("Network: cold_clock_seed ON — pre-seeding each station's cold "
+                      "receiver clock from the median GPS code residual before the first "
+                      "ambiguity seed (removes the cold-start clock leak into ambiguity seeds).");
         }
 
         if (estimate_network_sat_code_bias_) {
@@ -3937,6 +4155,39 @@ namespace GnssProcessor {
                       "reseed / drift-reset / C1-ZOH bound; independent of the {:.0f} s "
                       "ambiguity/ZWD phase-leveling max-gap).",
                       network_clock_model_max_gap_s_, network_phase_leveling_max_gap_s_);
+        // Emit C1 (clock rate) from the solved clock WITHOUT the two-state carry prior — the
+        // recalibration-supported alternative to network.clock_model (which is a no-go: the
+        // estimable is white-FM, not RWFM, so the carry buys ~1× yet risks a NIS storm; the
+        // exploitable stability is the deterministic RATE, emitted here without carrying).
+        network_emit_clock_rate_ =
+            jval<bool>(json, "network.emit_clock_rate", "network_emit_clock_rate", false);
+        if (network_emit_clock_rate_ && network_clock_model_)
+            log->info("Network: network.emit_clock_rate is on but network.clock_model already "
+                      "supplies C1 from its two-state drift — emit_clock_rate is inert this run "
+                      "(clock_model wins).");
+        else if (network_emit_clock_rate_) {
+            log->info("Network: network.emit_clock_rate on — C1 = finite-differenced solved clock "
+                      "(reseed / drift-reset / C1-ZOH bound {:.0f} s); solution byte-identical, only "
+                      "the emitted C1 changes. Consumer extrapolates c0 + c1·dt (SSR saw-tooth fix).",
+                      network_clock_model_max_gap_s_);
+            // Inert-arming guard: every FD pair spans one emitted-epoch gap, so if the
+            // configured epoch spacing already exceeds the C1-ZOH bound, EVERY pair is
+            // stale — the toggle silently ships C1=0 all run.  Only the config-determinable
+            // spacing (gnss_rate_s × epoch_decimation_n) is checked here; with
+            // gnss_rate_s = 0 the native RINEX rate is unknown until data is read, so a
+            // decimated native-rate run (the 300 s dev tier) is not catchable at load.
+            const double known_spacing_s =
+                gnss_rate_s_ * static_cast<double>(network_config_.epoch_decimation_n);
+            if (known_spacing_s > network_clock_model_max_gap_s_)
+                log->info("Network: emit_clock_rate is INERT at this cadence — the epoch spacing "
+                          "({:.0f} s = gnss_rate_s {:.0f} × epoch_decimation_n {}) exceeds the "
+                          "{:.0f} s C1-ZOH bound (clock_model_max_gap_s), so every finite-difference "
+                          "pair is stale and C1 stays 0 (ZOH). Raise clock_model_max_gap_s or run at "
+                          "a higher rate (the rate asset is high-rate anyway — see "
+                          "docs/CLOCK_HADAMARD_CALIB).",
+                          known_spacing_s, gnss_rate_s_, network_config_.epoch_decimation_n,
+                          network_clock_model_max_gap_s_);
+        }
         // --- RT0-4: product generation-time metadata ---
         network_emit_generation_time_ =
             jval<bool>(json, "network.emit_generation_time", "network_emit_generation_time", false);
@@ -4285,6 +4536,9 @@ namespace GnssProcessor {
         network_emit_pb_filter_emit_sigma_ =
             jval<bool>(json, "network.emit_pb_filter_emit_sigma",
                        "network_emit_pb_filter_emit_sigma", false);
+        network_emit_pb_filter_gate_v2_ =
+            jval<bool>(json, "network.emit_pb_filter_gate_v2",
+                       "network_emit_pb_filter_gate_v2", false);
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -4589,6 +4843,203 @@ namespace GnssProcessor {
                        "the innovation gate or disable the calibration.");
             return false;
         }
+        // M5 card WL-1: the WL layer rides the Card-4 chord basis, so v1 REQUIRES the
+        // carry (mutex-check, SPEC §11 Q1).  Fail-loud rather than silently no-op.
+        if (network_config_.mw_wl.enable && !network_carry_invariant_) {
+            log->error("Network: network.mw_wl.enable requires network.carry_invariant — the "
+                       "wide-lane pseudo-observations are double-differenced over the Card-4 "
+                       "invariant carry's fundamental-cycle chord basis; with no carry there is "
+                       "no cycle basis to seed.  Enable carry_invariant or disable mw_wl.");
+            return false;
+        }
+        if (network_config_.mw_wl.enable) {
+            log->info("Network MW-WL seed ON (M5 card WL-1) — MW Welford means DD'd over the "
+                      "Card-4 chord basis fold as WL pseudo-obs (min_arc_epochs={}, "
+                      "sigma_floor={} cyc, max_rows_per_epoch={}).  GLONASS excluded (with the "
+                      "carry).  Per-station MW detector is built even with phase_leveling off.",
+                      network_config_.mw_wl.min_arc_epochs, network_config_.mw_wl.sigma_floor_cyc,
+                      network_config_.mw_wl.max_rows_per_epoch);
+            // Phase B (WL integer fixing) — config contract only in v1.  The un-fix
+            // wiring (standing invariant #1: no stiff integer assertion without a
+            // wired+force-fire-tested slip response) is a follow-up increment; warn
+            // rather than silently fold nothing.
+            if (network_config_.mw_wl.fix_enable)
+                log->warn("Network: network.mw_wl.fix_enable is set but Phase-B WL integer "
+                          "fixing is NOT yet implemented (v1 is Phase-A float only) — the fix "
+                          "gate is INERT.  Grade Phase A first (SPEC §7.7), then arm Phase B "
+                          "once its un-fix wiring is force-fire tested (SPEC §7.4).");
+            if (network_config_.mw_wl.f6_dump)
+                log->info("Network: network.mw_wl.f6_dump ON — one-shot F6 attribution dump "
+                          "to logs/network_mw_wl_f6.csv on the first arming epoch (per-arc "
+                          "MW̄/x_lin + per-row z_MW/z_lin/z_corr/reconstructed_abs/innovation). "
+                          "Log-only; does not change the solve.");
+        } else if (network_config_.mw_wl.fix_enable) {
+            log->warn("Network: network.mw_wl.fix_enable is INERT without network.mw_wl.enable "
+                      "(Phase B requires Phase A).");
+        }
+        // ---- M5 card WL-2: EWL-first tri-frequency cascade (SPEC_ewl_wl_cascade_card.md). ----
+        {
+            auto& mw = network_config_.mw_wl;
+            // Both lanes ride the Card-4 chord basis (EWL rows on it; inject edits the
+            // carried z's), so both REQUIRE the carry — fail-loud like WL-1.
+            if ((mw.ewl_enable || mw.wl_inject_enable) && !network_carry_invariant_) {
+                log->error("Network: network.mw_wl.{{ewl_enable,wl_inject_enable}} require "
+                           "network.carry_invariant — the EWL/WL lanes ride the invariant carry's "
+                           "fundamental-cycle chord basis (and the WL inject edits its carried DDs). "
+                           "Enable carry_invariant or disable the WL-2 lanes.");
+                return false;
+            }
+            // The WL bridge path (§3.4) needs the EWL integers; without ewl_enable the WL
+            // lane runs MW(1,2)-fallback only (§3.5) — allowed, but warn so it's intentional.
+            if (mw.wl_inject_enable && !mw.ewl_enable)
+                log->warn("Network: network.mw_wl.wl_inject_enable is ON without ewl_enable — the "
+                          "phase-bridge WL path (SPEC §3.4) is disabled; the WL lane runs the plain "
+                          "MW(1,2) fallback only (SPEC §3.5, FFR at n≈25–50 ep).  Set ewl_enable for "
+                          "the fast tri-frequency bridge.");
+            // WL-1's float layer (mw.enable) is superseded by WL-2 (SPEC §3.0.2): it stays as a
+            // default-OFF diagnostic; running it WITH the inject double-drives the WL columns.
+            if (mw.enable && mw.wl_inject_enable)
+                log->warn("Network: network.mw_wl.enable (WL-1 float rows) is a DIAGNOSTIC under "
+                          "WL-2 and is armed together with wl_inject_enable — the float pseudo-obs "
+                          "and the inject both drive the WL columns (F6: the float layer loses and "
+                          "adds churn).  Disable mw_wl.enable for a clean WL-2 A/B.");
+            // Deprecate the WL-1 Phase-B posterior-gated surface — WL-2 fixes on DETECTOR
+            // statistics (SPEC §3.0.1), never the carry-contaminated posterior.
+            if ((mw.ewl_enable || mw.wl_inject_enable) && mw.fix_enable)
+                log->warn("Network: network.mw_wl.fix_enable (WL-1 Phase-B, never implemented) is "
+                          "REPLACED under WL-2 by statistic-gated fixing "
+                          "(ewl_fix_*/wl_fix_*/inject_disagree_min_cyc).  The fix_enable flag is "
+                          "ignored.");
+            if (mw.ewl_enable)
+                log->info("Network WL-2 EWL lane ON (M5 card WL-2) — extra-wide-lane statistic rows "
+                          "on the Card-4 chord basis, third band UNCARRIED so they win cleanly; FFR "
+                          "fix at σ<{} / |frac|<{} cyc, eligible at n>={} (ep ~{}).  Requires "
+                          "frequency_mode with the 3rd band (GPS L5 / Galileo E5b).",
+                          mw.ewl_fix_sigma_cyc, mw.ewl_fix_frac_cyc, mw.ewl_min_arc_epochs,
+                          mw.ewl_min_arc_epochs + 1);
+            if (mw.wl_inject_enable)
+                log->info("Network WL-2 WL inject ON (M5 card WL-2) — WL integers (EWL-bridge {} / "
+                          "MW(1,2) fallback) injected into the Card-4 carry via injectLaneTarget "
+                          "(set ∇ΔN₁−∇ΔN₂, preserve NL) + hold row + 1-epoch D5 exemption; trigger "
+                          "|stat−carried|>{} cyc, FFR σ<{}/|frac|<{}, bridge σ guard {} cyc.",
+                          mw.ewl_enable ? "armed" : "OFF", mw.inject_disagree_min_cyc,
+                          mw.wl_fix_sigma_cyc, mw.wl_fix_frac_cyc, mw.bridge_max_sigma_cyc);
+            // ---- M5 card UWL-1: per-constellation ultra-wide-lane top tier (SPEC_uwl_card.md). ----
+            if (mw.uwl_enable && !mw.ewl_enable) {
+                log->error("Network: network.mw_wl.uwl_enable requires network.mw_wl.ewl_enable — "
+                           "the UWL top tier IS the EWL machinery run on the per-constellation "
+                           "lane-tier pair (statistic layer, FFR gates, bridge, telemetry).  "
+                           "Enable ewl_enable or disable uwl_enable.");
+                return false;
+            }
+            if (mw.uwl_cold_fix && !mw.uwl_enable)
+                log->warn("Network: network.mw_wl.uwl_cold_fix is INERT without uwl_enable — the "
+                          "n=1 cold fix applies only to lane tiers with λ ≥ {} m, which only the "
+                          "UWL table provides (GPS's 5.861 m EWL is excluded by design).",
+                          mw.uwl_cold_min_lambda_m);
+            if (mw.uwl_mid_enable && !mw.uwl_enable)
+                log->warn("Network: network.mw_wl.uwl_mid_enable is INERT without uwl_enable — "
+                          "the E6 mid-ladder hop rides the armed lane-tier table (Galileo "
+                          "(E6,E5a) λ 2.931 m rung).");
+            // ---- Increment 5: dual-top tier contract. ----
+            if (mw.uwl_dual_top && !mw.uwl_enable)
+                log->warn("Network: network.mw_wl.uwl_dual_top is INERT without uwl_enable — "
+                          "the preferred/fallback top rung is a property of the armed "
+                          "lane-tier table.");
+            if (mw.uwl_dual_top && mw.uwl_enable && mw.ewl_fold_rows) {
+                log->warn("Network: network.mw_wl.ewl_fold_rows is FORCED OFF under "
+                          "uwl_dual_top — a cycle decided by both the preferred and the "
+                          "fallback rung must never fold two integer rows (the F-A refold "
+                          "class), and fold-off is the validated production shape anyway.");
+                mw.ewl_fold_rows = false;
+            }
+            if (mw.uwl_dual_top && mw.uwl_enable
+                && jval<int>(json, "network.mw_wl.uwl_gal_top_band",
+                             "network_mw_wl_uwl_gal_top_band", 7) != 7)
+                log->info("Network: network.mw_wl.uwl_gal_top_band is IGNORED under "
+                          "uwl_dual_top — the dual tier always prefers '8' (E5 AltBOC, "
+                          "λ 19.537 m) per cycle and falls back to '7' (E5b, λ 9.768 m).");
+            if (mw.uwl_sib_gate && !(mw.uwl_dual_top && mw.uwl_enable))
+                log->warn("Network: network.mw_wl.uwl_sib_gate is INERT without uwl_dual_top — "
+                          "the sibling closure gate compares the untaken {7,8} rung against "
+                          "the decided one, which only exists under the dual tier.");
+            // ---- v2: per-family lane pair groups contract. ----
+            if (mw.uwl_family_pairs
+                && !(mw.uwl_enable && network_config_.lane_carry.enable))
+                log->warn("Network: network.mw_wl.uwl_family_pairs is INERT without uwl_enable "
+                          "AND network.lane_carry.enable — the admissible-pair census extends "
+                          "the JOINT pair census (uwl) and the family groups are lane-carry "
+                          "pair groups.");
+            if (mw.uwl_enable && mw.uwl_mid_enable)
+                log->info("Network UWL-1 E6 MID HOP ON — the Galileo WL determination chains "
+                          "top({}) → (E6,E5a) λ 2.931 m (rounded mid integer) → WL λ 0.751 m, "
+                          "cutting each bridge hop's λ amplification ~3.3×; the direct hop "
+                          "remains the per-cycle fallback + cross-check, MW(6,5) is the mid "
+                          "closure.  Requires frequency_mode covering Galileo E6.",
+                          mw.uwl_gal_top_band == '8' ? "E5-AltBOC, 19.537 m" : "E5b, 9.768 m");
+            if (mw.uwl_enable)
+                log->info("Network UWL-1 top tier ON (M5 card UWL-1) — per-constellation lane-tier "
+                          "table armed: GPS EWL (L2,L5) λ 5.861 m; Galileo UWL ({},E5a) λ {:.3f} m; "
+                          "BDS-3 deferred (clock divergence), GLONASS excluded (FDMA).  Cold fix "
+                          "{} (σ_apriori={} m, λ floor={} m).  Requires frequency_mode covering "
+                          "the tier bands (Galileo E5a+{}).",
+                          mw.uwl_dual_top ? "E5-AltBOC pref | E5b fallback"
+                              : mw.uwl_gal_top_band == '8' ? "E5-AltBOC" : "E5b",
+                          mw.uwl_dual_top ? 19.537
+                              : mw.uwl_gal_top_band == '8' ? 19.537 : 9.768,
+                          mw.uwl_cold_fix ? "ON" : "off",
+                          mw.uwl_cold_sigma_m, mw.uwl_cold_min_lambda_m,
+                          mw.uwl_dual_top ? "E5b+E5(AltBOC)"
+                              : mw.uwl_gal_top_band == '8' ? "E5(AltBOC)" : "E5b");
+            if (mw.uwl_enable && mw.uwl_dual_top)
+                log->info("Network UWL-1 DUAL-TOP tier ON (increment 5) — Galileo prefers the "
+                          "(E5-AltBOC,E5a) λ 19.537 m rung per CYCLE where band 8 is tracked "
+                          "across every arc, falls back to (E5b,E5a) λ 9.768 m otherwise; both "
+                          "{{7,8}} uncarried; the untaken sibling is a closure statistic "
+                          "(2·N(8,5) = N(7,5)) — hard gate {}.",
+                          mw.uwl_sib_gate ? "ON (0.5+3σ_sib)" : "OFF (measure-only)");
+            if (mw.uwl_family_pairs && mw.uwl_enable && network_config_.lane_carry.enable)
+                log->info("Network UWL-1 FAMILY PAIR GROUPS ON (v2 census recovery) — minority "
+                          "receiver-family primary pairs with joint-census count ≥ {} join "
+                          "their OWN lane pair groups (latched for the run); majority-pair "
+                          "steering unchanged.  Recovers the skip_basis population the single-"
+                          "pair census left per-band.",
+                          mw.uwl_family_min_arcs);
+            // ---- M5 card WL-3: lane-coordinate carry (SPEC_lane_carry_card.md). ----
+            auto& lc = network_config_.lane_carry;
+            if (lc.enable && (!network_carry_invariant_ || !mw.ewl_enable)) {
+                log->error("Network: network.lane_carry.enable requires network.carry_invariant "
+                           "AND network.mw_wl.ewl_enable — the lane-coordinate carry restructures "
+                           "the invariant carry's pair groups and consumes the WL-2 MW/bridge "
+                           "statistics as its lane measurements.  Enable both or disable "
+                           "lane_carry.");
+                return false;
+            }
+            if (lc.enable && mw.wl_inject_enable)
+                log->warn("Network: network.lane_carry SUPERSEDES network.mw_wl.wl_inject_enable "
+                          "at runtime (SPEC_lane_carry_card.md §3.3) — the WL-2 hold/inject walk "
+                          "is replaced by continuous lane increments + fold-on-change fixing; "
+                          "injectCarriedChord remains only as the pair-block fallback.  Disable "
+                          "wl_inject_enable for a clean lane-carry shape.");
+            if (lc.enable) {
+                const bool equivalence_shape = lc.q_wl_scale == 1.0
+                                            && lc.sigma_wl_fresh_cyc <= 0.0
+                                            && !lc.lane_meas && !lc.bridge_meas;
+                log->info("Network WL-3 lane-coordinate carry ON (M5 card WL-3) — primary-pair "
+                          "chords carried as jointly-covarianced (band-1, band-2) blocks; shape = "
+                          "{}.  q_wl_scale={}, sigma_wl_fresh={} cyc, lane_meas={}, bridge_meas={}.",
+                          equivalence_shape
+                              ? "EQUIVALENCE (SPEC §6.1: split per-band emission, no lane "
+                                "features — the structural-parity gate; ≤1e-9 equivalence holds "
+                                "in the unit harness, field runs diverge benignly via cycle-path-"
+                                "dependent membership, see HANDOFF_lane_carry_card.md)"
+                              : "LANE (joint 2K blocks, diffuse lane birth, per-epoch MW/bridge "
+                                "increments, per-decided-epoch idempotent FFR lane re-pin)",
+                          lc.q_wl_scale, lc.sigma_wl_fresh_cyc,
+                          lc.lane_meas ? "true" : "false",
+                          lc.bridge_meas ? "true" : "false");
+            }
+        }
         if (network_phase_datum_eq34_) {
             // Card 3 mutual exclusion (mirror the clock-gauge fail-loud at
             // network_clock_datum_broadcast_anchored above): eq34 and the
@@ -4712,6 +5163,16 @@ namespace GnssProcessor {
                 if (network_emit_pb_filter_jump_k_ < 2.0)
                     log->warn("Network: network.emit_pb_filter_jump_k = {} is BELOW 2 — the gate sits "
                               "inside the step noise and leaves the discontinuity floor uncleared.",
+                              network_emit_pb_filter_jump_k_);
+                if (network_emit_pb_filter_gate_v2_ && network_carry_invariant_emit_rebase_)
+                    log->info("Network producer: PB filter GATE v2 ON — data/model-driven reset "
+                              "replacing the v1 per-cadence hand k/seed: (a) CENSORING-FREE σ̂_step feed "
+                              "(innovation-gated rows feed too, killing the v1 low-σ̂ death-spiral), "
+                              "(b) MODEL-SCALED gate |innov| > k·√(Ppred+R) so dt enters via the prior's "
+                              "q·gap term and ONE k={:.1f} transfers 30 s ↔ 300 s, (c) seed σ̂_step "
+                              "demoted to a numerical guard (floor ~1 mm).  OFF = v1 (k·σ̂_step, "
+                              "smoothed-rows-only feed).  Retire any per-rate emit_pb_filter_jump_k / "
+                              "_meas_sigma_m override once the 30 s+300 s A/B transfer (G5) passes.",
                               network_emit_pb_filter_jump_k_);
             }
             // Warn-INERT (spec D7): the eq34 frame-continuity hygiene is subsumed by the
@@ -5238,6 +5699,7 @@ namespace GnssProcessor {
             nar.enable_partial_ar    = jval<bool>  (json, "network.ambiguity_resolution.enable_partial_ar",    "network_ar_enable_partial_ar",    true);
             nar.wl_cascade           = jval<bool>  (json, "network.ambiguity_resolution.wl_cascade",           "network_ar_wl_cascade",           false);
             nar.min_epochs           = jval<int>   (json, "network.ambiguity_resolution.min_epochs",           "network_ar_min_epochs",           10);
+            nar.ils_max_dim          = jval<int>   (json, "network.ambiguity_resolution.ils_max_dim",          "network_ar_ils_max_dim",          0);
             if (nar.enable) {
                 // RT0-2: the network.ambiguity_resolution section is fully parsed but has
                 // ZERO consumers — producer AR is designed (docs/network_ambiguity_resolution_design.md)

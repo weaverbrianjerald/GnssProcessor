@@ -20,6 +20,15 @@
  *      UNFILTERED (negative control); a genuine >0.5 m event fires EXACTLY ONCE
  *      on both arms (preserved 1:1 — the anti-launder falsifier).
  *   6. The k·σ̂_step gate self-tunes: σ̂_step tracks the injected noise scale.
+ *
+ * v2 gate (@c Config::gate_v2 — censoring-free feed + model-scaled k·√(Ppred+R) +
+ * seed-as-guard; the default-OFF v1 path drives gates 1–6 unchanged):
+ *   7. Censoring-free feed breaks the v1 gate-scale death spiral (v1 σ̂ latches
+ *      low + resets forever; v2 σ̂ recovers the scale + resets collapse), and the
+ *      n_fed_all_rows accounting proves the innovation-gated rows now feed.
+ *   8. ONE k=4 transfers 30 s ↔ 300 s: a genuine event fires at BOTH cadences.
+ *   9. A sub-gate slip smooths through as a bounded, non-laundered transient (the
+ *      §3 residual-risk envelope), producing no discontinuity.
  */
 
 #include <gtest/gtest.h>
@@ -55,6 +64,19 @@ NetworkPbEmitFilter::Entry step(NetworkPbEmitFilter& f, const std::string& sat,
     f.filterEpoch(e, t);
     return e[0];
 }
+
+// Deterministic N(0,1): Box–Muller on raw mt19937 (bit-identical across platforms,
+// the same generator the self-tune gate test uses).  The estimator's χ²₁ de-bias is
+// exact for Gaussian ê, so the probe noise must be Gaussian.
+struct Gauss {
+    std::mt19937 rng;
+    explicit Gauss(unsigned seed) : rng(seed) {}
+    double operator()() {
+        const double u1 = (static_cast<double>(rng()) + 0.5) / 4294967296.0;
+        const double u2 = (static_cast<double>(rng()) + 0.5) / 4294967296.0;
+        return std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * u2);
+    }
+};
 
 // --- 1. A quasi-static value + noise is smoothed; σ shrinks; no resets -----------
 
@@ -227,6 +249,122 @@ TEST(PbEmitFilter, StepSigmaSelfTunesToNoiseScale) {
     EXPECT_LT(sig_low, sig_high);            // tracks the injected scale
     EXPECT_NEAR(sig_low, 0.03, 0.015);       // converges near the low scale
     EXPECT_GT(sig_high, 0.08);               // climbed well above the low run
+}
+
+// --- v2 (a): censoring-free feed breaks the gate-scale death spiral --------------
+
+TEST(PbEmitFilter, V2CensoringFreeFeedBreaksTheGateScaleSpiral) {
+    // A quasi-static value + a heavy-tailed per-epoch step: a small Gaussian core
+    // (0.015 m) plus a 0.12 m step every 4th epoch — the "moderate step at gate
+    // scale" class.  With a tight seed (0.02 ⇒ initial gate 0.08 m) the 0.12 m
+    // steps start ABOVE the gate.  v1 withholds every rejected row (clean-gate), so
+    // the robust σ̂_step latches to the 0.015 m core, the gate stays ~0.06 m, and
+    // the moderate steps reject FOREVER — the documented death spiral (this induces
+    // the same censored-estimator fixed point the field hit at 300 s via forgetting
+    // + pooling).  v2 feeds the innovation-gated rows, so σ̂_step recovers the true
+    // mixture scale, the gate opens past 0.12 m, and the resets collapse.
+    const double base = 0.30, core = 0.015, spike = 0.12;
+    auto drive = [&](NetworkPbEmitFilter& f) {
+        Gauss g(20260714u);
+        double t = kT0.week * 604800.0 + kT0.tow;
+        for (int i = 0; i < 400; ++i, t += DT) {
+            double v = base + core * g();
+            if (i % 4 == 2) v += ((i / 4) % 2 == 0 ? +spike : -spike);  // 0.12 m every 4th ep
+            step(f, "G01", v, t);
+        }
+    };
+    NetworkPbEmitFilter::Config c1 = defaultCfg();
+    c1.window_epochs = 0.0;   // accumulate the whole run (deterministic)
+    c1.meas_sigma_m  = 0.02;  // tight seed ⇒ the 0.12 m steps start above the gate
+    NetworkPbEmitFilter::Config c2 = c1; c2.gate_v2 = true;
+
+    NetworkPbEmitFilter fv1(c1), fv2(c2);
+    drive(fv1); drive(fv2);
+    const auto& n1 = fv1.counters();
+    const auto& n2 = fv2.counters();
+    const double s1 = fv1.stepSigmaForTest("G");
+    const double s2 = fv2.stepSigmaForTest("G");
+
+    // v1: σ̂_step censored low (latched to the 0.015 m core); v2: recovers the scale.
+    EXPECT_LT(s1, 0.030);
+    EXPECT_GT(s2, 0.035);
+    EXPECT_GT(s2, s1);
+
+    // v1 keeps rejecting the moderate steps (~99 of them); v2 collapses to warmup only.
+    EXPECT_GE(n1.resets_innovation, 80);
+    EXPECT_LE(n2.resets_innovation, 25);
+    EXPECT_LT(n2.resets_innovation, n1.resets_innovation);
+
+    // The censoring-free feed accounting: v1 feeds smoothed rows only; v2 also feeds
+    // the innovation-gated rows (n_fed_all_rows telemetry).
+    EXPECT_EQ(n1.fed_rows, n1.smoothed);
+    EXPECT_EQ(n2.fed_rows, n2.smoothed + n2.resets_innovation);
+    EXPECT_GT(n2.fed_rows, n1.fed_rows);
+}
+
+// --- v2 (b): ONE k transfers 30 s ↔ 300 s (the card's reason to exist) ------------
+
+TEST(PbEmitFilter, V2GenuineEventFiresAtBothCadencesWithOneK) {
+    // Same config (k=4 default, default seed), v2 ON: a genuine 0.6 m event fires at
+    // BOTH 30 s and 300 s cadence — the model-scaled gate k·√(Ppred+R) carries dt
+    // through the prior's q·gap term, so no per-cadence retune.
+    auto eventCause = [](double dt) {
+        NetworkPbEmitFilter::Config c = defaultCfg();
+        c.gate_v2 = true; c.window_epochs = 0.0;
+        NetworkPbEmitFilter f(c);
+        Gauss g(4242u);
+        const double base = 0.0, sigma_step = 0.06;
+        double t = kT0.week * 604800.0 + kT0.tow;
+        for (int i = 0; i < 150; ++i, t += dt)          // warm σ̂_step to ~0.06 m
+            step(f, "G05", base + sigma_step * g(), t);
+        return step(f, "G05", base + 0.6, t).reset_cause;  // genuine 0.6 m event
+    };
+    EXPECT_EQ(eventCause(30.0),  NetworkPbEmitFilter::Cause::kInnovation);
+    EXPECT_EQ(eventCause(300.0), NetworkPbEmitFilter::Cause::kInnovation);
+}
+
+// --- v2 (§3): a sub-gate slip smooths through as a bounded transient, not laundered
+
+TEST(PbEmitFilter, V2SubGateSlipSmoothsThroughBoundedNotLaundered) {
+    // Residual-risk envelope (§3): an UNFLAGGED step BELOW k·σ̂_step (the ~2σ–kσ
+    // miss band, e.g. a single-cycle L1 step the upstream funnel missed) does NOT
+    // reset — no discontinuity reaches the consumer — and is NOT snapped back: the
+    // filter tracks toward the true new level over ~1/K epochs (a bounded, sub-gate
+    // transient), exactly as the header documents for v2 AND v1-as-designed.
+    NetworkPbEmitFilter::Config c = defaultCfg();
+    c.gate_v2 = true; c.window_epochs = 0.0;
+    NetworkPbEmitFilter f(c);
+    Gauss g(7u);
+    const double base = 0.0, sigma_step = 0.06;
+    double t = kT0.week * 604800.0 + kT0.tow;
+    for (int i = 0; i < 150; ++i, t += DT)              // warm σ̂_step to ~0.06 m
+        step(f, "G09", base + sigma_step * g(), t);
+
+    const double sig  = f.stepSigmaForTest("G");
+    const double sub  = 0.15;                            // in the (2σ, kσ) miss band
+    ASSERT_GT(sub, 2.0 * sig);
+    ASSERT_LT(sub, 4.0 * sig);                           // sub-gate (gate ≈ 4σ̂ ≈ 0.24 m)
+    const double newlvl = base + sub;
+    const long long resets0 = f.counters().resets_innovation;
+    double pre_mean = 0.0, pre_var = 0.0;
+    ASSERT_TRUE(f.stateForTest("G09", "L1C", pre_mean, pre_var));  // ≈base ± warmup residual
+
+    const auto e0 = step(f, "G09", newlvl, t); t += DT;  // the missed step: no disc
+    EXPECT_NE(e0.reset_cause, NetworkPbEmitFilter::Cause::kInnovation);
+    EXPECT_LT(e0.value_m, newlvl);                       // smoothed toward, not snapped to raw
+    EXPECT_GT(e0.value_m, pre_mean);                     // ... and moving toward the new level
+
+    for (int i = 0; i < 500; ++i, t += DT)               // hold the new level, clean
+        step(f, "G09", newlvl, t);
+
+    // Never a discontinuity through the whole transient (the consumer sees none),
+    // and the filter converged UP to the true new level (not laundered back to base,
+    // not overshooting past it).
+    EXPECT_EQ(f.counters().resets_innovation, resets0);
+    double mean = 0.0, var = 0.0;
+    ASSERT_TRUE(f.stateForTest("G09", "L1C", mean, var));
+    EXPECT_GT(mean, base + 0.5 * sub);                   // tracked most of the way up
+    EXPECT_LE(mean, newlvl + 1e-6);                      // bounded — no overshoot
 }
 
 }  // namespace
