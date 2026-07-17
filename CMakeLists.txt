@@ -258,6 +258,7 @@ add_executable(gnss_tests
     tests/test_network_carry_vce.cpp
     tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
+    tests/test_network_robust_stats.cpp
     tests/test_network_invariant_carry_driver.cpp
     tests/test_network_mw_wl_layer.cpp
     tests/test_mw_bridge.cpp
