@@ -54,6 +54,7 @@ add_library(gnss_core STATIC
     src/core/atmosphere/HigherOrderIonosphere.cpp
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
+    src/core/config/GnssConfigLoadNetwork.cpp
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
