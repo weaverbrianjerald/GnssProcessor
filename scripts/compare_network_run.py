@@ -94,8 +94,14 @@ DEFAULT_MASKSPEC: dict = {
     # State snapshot file (path is config-driven: network.state_snapshot_path).
     # Matched by basename substring; M-line wall_utc masked field-level
     # (NetworkStateSnapshot.cpp:118-120; ApplicationNetwork.cpp:6939).
+    # The v1 snapshot is a line-record format (M/N/U/D/... records), NOT JSONL:
+    # the only wall-clock field is the ISO-UTC stamp on the M record, masked by
+    # snapshot_utc_regex below (applied to M-lines only). The JSON key mask is
+    # kept for forward compatibility should the format ever become JSONL.
     "snapshot_name_hint": "snapshot",
     "snapshot_json_key_masks": ["wall_utc"],
+    "snapshot_utc_regex": r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z",
+    "snapshot_utc_token": "<UTC>",
     # Product file (network.product_output_path): G-line generation_time is a
     # wall-clock stamp ONLY under network.emit_generation_time
     # (NetworkProductIO.cpp:437-439; ApplicationNetwork.cpp:5151). Matched by
@@ -177,6 +183,20 @@ def _normalize_jsonl(lines: List[str], key_masks: List[str]) -> List[str]:
     return out
 
 
+def _mask_snapshot_records(lines: List[str], spec: dict) -> List[str]:
+    """Mask the wall-UTC stamp on v1 line-record snapshot M-lines.
+
+    The v1 snapshot ("# gnss_network_state_snapshot v1") is a line-record
+    format whose ONLY wall-clock field is the ISO-UTC token on the M (meta)
+    record; every other record is full-precision deterministic state. Non-M
+    lines pass through verbatim.
+    """
+    pat = re.compile(spec.get("snapshot_utc_regex",
+                              r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z"))
+    tok = spec.get("snapshot_utc_token", "<UTC>")
+    return [pat.sub(tok, ln) if ln.startswith("M,") else ln for ln in lines]
+
+
 def _normalize_csv(lines: List[str], col_masks: List[str]) -> List[str]:
     if not lines:
         return lines
@@ -245,6 +265,7 @@ def normalize_file(path: str, relpath: str, spec: dict) -> List[str]:
     if kind == "jsonl-manifest":
         return _normalize_jsonl(lines, spec["json_key_masks"].get(base, []))
     if kind == "snapshot":
+        lines = _mask_snapshot_records(lines, spec)
         return _normalize_jsonl(lines, spec["snapshot_json_key_masks"])
     if kind == "csv":
         return _normalize_csv(lines, spec["csv_col_masks"].get(base, []))

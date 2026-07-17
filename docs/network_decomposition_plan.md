@@ -25,7 +25,7 @@ post-INC-12 validation phase, superseding this doc's §3/§5 heavy-run cadence).
 | Gate 5 — TU freeze | **In force.** Urgent fixes land at increment boundaries only. |
 | Current file sizes | `ApplicationNetwork.cpp` **14,657**; `GnssConfigLoad.cpp` **6,000**; `GnssConfig.hpp` **4,705**; `GnssConfigTypes.hpp` **2,340**. |
 | INC 0 tooling | `scripts/compare_network_run.py` **built + validated** (capture/compare/selfcheck/dump-maskspec). Cut-map anchors regenerated **per-increment** (addendum §4 covers INC 1-4). |
-| Increments landed | (update as they land) INC-0 goldens: pending · INC-1: pending |
+| Increments landed | **INC-0 ✅** (8-arm fast matrix captured: twice-run selfcheck CLEAN ×8, ON-path counters verified per arm, manifests at `goldens/decomp/*.manifest.json`, maskspec FROZEN — additions: D0/T2b/timing runlog drops + snapshot M-record UTC mask) · INC-1: pending |
 
 ---
 
