@@ -11,22 +11,21 @@ amended with every blocker/major from verification. All three verifier lenses re
 
 ## Implementation status (living section — update as increments land)
 
-| Item | State (as of re-materialization) |
-|------|----------------------------------|
-| Plan doc | Re-materialized into `docs/` (was ephemeral scratchpad). |
-| Baseline SHA | **NOT frozen.** `62a1418` + **2,320 uncommitted insertions across 57 files** (C1 + S1 + pdp card + config edits, one mixed blob). |
-| Gate 1 — C1 full-cov carry lands+validates | Code **present** in tree (`network.shared_carry_full_cov`, `ApplicationNetwork.cpp:192,4423`) but **uncommitted**. |
-| Gate 2 — S1 phase-datum committed | Code **present** (`network.phase_datum_prioritized`) but **uncommitted** — gate literally requires a commit. |
-| Gate 3 — pdp coverage card lands FIRST | Code **present** (`network.phase_datum_min_stations`, `network.station_pd_pin_aware`) but **uncommitted**; validation residue (split-spread / closed-loop A/B) per memory not fully closed. |
-| Gate 4 — Card 7/8 consumer triage | Unresolved in plan (before-series OR after-INC-12). |
-| Gate 5 — freeze TU to the series | Not started. |
-| Current file sizes | `ApplicationNetwork.cpp` **7,329**; `GnssConfigLoad.cpp` **4,648**; `GnssConfig.hpp` **3,719**; `GnssConfigTypes.hpp` **2,087**. |
-| INC 0 tooling | `scripts/compare_network_run.py` — **being built**; symbol-anchored cut map — **being regenerated** against current tree. |
+**➡ ACTIVE AMENDMENT: `docs/network_decomposition_addendum_2026-07-16.md`** — freeze SHA
+**`56da23a`**, refreshed anchors (this doc's and the Jul-13 resurvey's line numbers are STALE),
+WL/UWL delta map + new run-state entities, verified INC-1 boundaries, and the **fast golden matrix**
+(user directive Jul-16: every in-series gate is 50 sta / ≤10 ep / GPS-preferred /
+`parallel_carry=true`; the heavy battery — 1h QC, 3h crash signature, 305-sta — moves to a single
+post-INC-12 validation phase, superseding this doc's §3/§5 heavy-run cadence).
 
-**Blocking precondition for any production code motion (INC 1+):** the working tree must be
-**committed** so a frozen baseline SHA exists to capture goldens against and compare every increment
-byte-for-byte. This is a user-owned decision (how to shape the C1/S1/pdp/config commits) and must be
-made before INC 1. INC 0 tooling (harness, cut map, this doc) requires no freeze and is safe to build now.
+| Item | State (Jul-16 2026) |
+|------|----------------------------------|
+| Baseline SHA | **FROZEN at `56da23a`** (WL/UWL workstream + H1-H3 hardening + lineage configs all committed). Tree clean; Release build clean; `gnss_tests` 780/779/1. |
+| Gates 1-4 | CLOSED (C1/S1/pdp committed+validated; Card 7/8 triage = after INC-12; v3 robust-M + per-LOS iono stay holstered). |
+| Gate 5 — TU freeze | **In force.** Urgent fixes land at increment boundaries only. |
+| Current file sizes | `ApplicationNetwork.cpp` **14,657**; `GnssConfigLoad.cpp` **6,000**; `GnssConfig.hpp` **4,705**; `GnssConfigTypes.hpp` **2,340**. |
+| INC 0 tooling | `scripts/compare_network_run.py` **built + validated** (capture/compare/selfcheck/dump-maskspec). Cut-map anchors regenerated **per-increment** (addendum §4 covers INC 1-4). |
+| Increments landed | (update as they land) INC-0 goldens: pending · INC-1: pending |
 
 ---
 
