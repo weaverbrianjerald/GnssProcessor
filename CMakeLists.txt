@@ -107,6 +107,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
+    src/core/app/NetworkRunContext.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.

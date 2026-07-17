@@ -26,6 +26,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -391,5 +392,83 @@ inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, dou
     s.init = true;
     return S;
 }
+
+// T5 (FABLE-GATE, 2026-07-10): per-(station,sat) SH representativeness-error
+// Gauss–Markov deviation carry.  The single-layer SH surface cannot represent
+// per-LOS slant-iono structure (~80 % of LOS residuals > 3σ at ANY degree, T4);
+// re-applying the pin as white forces that misfit dispersively into the float
+// ambiguities (the uniform-DD-fraction root cause).  With rep_error_tau_s > 0 the
+// pin constrains (ι − SH·c) to a TRACKED deviation d (GM: τ = rep_error_tau_s,
+// steady-state σ = representation_sigma_tecu mapped to slant) instead of to 0.
+// Threading contract: the map is AGED once per epoch in a serial pre-pass and
+// measurement-UPDATED in the serial post-solve harvest; the parallel assembly
+// only READS (find, never insert) — race-free by construction.  dev/var in slant
+// L1 metres.  var_ss = per-LOS steady-state σ² (mapping-dependent, refreshed at
+// harvest).  t_s = 0 marks a never-harvested (cold) entry.  OFF ⇒ byte-identical.
+// (Hoisted VERBATIM from ApplicationNetwork.cpp, decomposition INC-4; the map
+// instance @c sh_dev_carry lives in NetworkCarryState.)
+struct ShDevCarry { double dev_m{0.0}; double var_m2{0.0}; double var_ss{0.0}; double t_s{0.0}; };
+
+// L1: one network_epoch_status.csv row per processed epoch.  Fields not yet in
+// scope at a given disposition site are left BLANK (std::nullopt), NOT zero — the
+// pyviz timeline viewers (L5) distinguish "unavailable" from a real 0.
+// (Hoisted VERBATIM from ApplicationNetwork.cpp, decomposition INC-4; the writer
+// body is NetworkRunTraces::emitEpochStatus.)
+struct EpochStatusRow {
+    std::optional<double> sigma0;
+    std::optional<int>    n_adapt;
+    std::optional<int>    n_present;
+    std::optional<int>    n_clock_sats;
+    std::optional<double> clock_median_m;
+    std::optional<double> clock_std_m;
+    std::string           worst_sat;        // empty string => blank
+    std::optional<double> worst_dev_m;
+    std::optional<int>    n_refloat_sats;
+    std::optional<int>    n_retro_applied;
+    std::optional<int>    datum_changed;
+    std::optional<int>    n_arc_refloat;   ///< T2d: isolated-arc RAIM refloats THIS epoch (the churn metric; distinct from n_refloat_sats which is the CLOCK-refloat set).
+};
+
+/// @internal Per-epoch workspace of Application::runNetwork (decomposition
+/// INC-4).  Constructed FRESH at the top of every epoch iteration — NEVER
+/// hoisted for reuse: fresh construction IS the per-epoch reset semantics.
+/// v1 scope is deliberately the RAIM-replay capture channel plus the two
+/// clock-model prediction maps; per-epoch state joins as its consuming blocks
+/// move out of the run-loop TU (INC-7/9).
+///
+/// RAIM-replay capture channel (network.raim_within_epoch): the within-epoch
+/// re-solve (resolve_dropping) replays the epoch over a fresh beginEpoch(), so
+/// every shared-border input folded OUTSIDE the per-station assembly must be
+/// captured when armed and re-applied verbatim.  WRITER SITES (the complete
+/// list — a new prior fold elsewhere MUST mirror into this channel):
+///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint: the W6
+///     satellite code-bias datum constraint rows (SB_SOLVEGLUE, W6 block).
+///   - cap_priors: SH-VTEC pre-gate prior (networkInjectShVtecPrior_), Fix-A
+///     held phase-bias datum prior (networkInjectPhaseHoldPrior_), the
+///     drop-and-heal soft anchors (healNearNullPhaseBias, gate-failure path),
+///     the D2 diagonal carry prior + dense-fallback leftovers
+///     (networkInjectD2CarryPrior_), the two-state clock-model prior
+///     (networkInjectClockOscPrior_), and the a-priori satellite-clock
+///     Tikhonov anchor.
+///   - cap_dense_keys / cap_dense_cov: the C1 dense shared-carry fold
+///     (networkInjectD2CarryPrior_, dense-success branch only; its non-PD
+///     fallback routes through cap_priors like every diagonal prior).
+struct EpochWorkspace {
+    Eigen::MatrixXd cap_H;
+    Eigen::VectorXd cap_z;
+    double cap_constraint_weight = 0.0;
+    bool   cap_has_constraint = false;
+    std::vector<NetworkEstimator::SharedPrior> cap_priors;
+    std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
+    Eigen::MatrixXd cap_dense_cov;
+    /// Two-state clock-model predictions stashed by the prior fold
+    /// (networkInjectClockOscPrior_), consumed by the post-solve normalized-
+    /// innovation test (T5) later in the same epoch.
+    std::map<std::string, ClockOscPred> clk_pred;
+    /// B7 (P1-4): per-satellite folded a-priori-clock-anchor information
+    /// (Λ diagonal) — populated only when the anchor-info trace is open;
+    /// consumed by the B7 anchor-fraction diagnostic after the solve.
+    std::map<std::string, double> clk_prior_info;
+};
 
 } // namespace GnssProcessor

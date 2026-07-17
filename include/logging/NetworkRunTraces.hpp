@@ -27,9 +27,13 @@
  * generation — see docs/rt_service_operations.md.
  */
 
+#include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +47,10 @@ namespace GnssProcessor {
     struct StationConfig;
     class SphericalHarmonicIonosphere;
     struct NetStation;
+    struct GnssTime;
+    struct EpochStatusRow;          // filter/NetworkRunTypes.hpp (INC-4 hoist)
+    struct NetworkKnobs;            // app/NetworkRunContext.hpp (INC-4)
+    struct NetworkServiceCounters;  // app/NetworkRunContext.hpp (INC-4)
 
     /// B8: pure observation counter — {opportunities, flags} for one QC tier,
     /// summarized at end of run as realized rate vs the implied one-sided
@@ -187,6 +195,15 @@ namespace GnssProcessor {
         /// default (byte-identical: no file, no rows).
         std::ofstream carry_vce_trace;
         const std::filesystem::path carry_vce_trace_path;
+        /// L15: run-provenance manifest path (startup record written by
+        /// writeRunManifestStartup, end-of-run record APPENDED by
+        /// writeRunManifestComplete — one member so both target the same file).
+        const std::filesystem::path manifest_path;
+
+        /// L1 config echoes written into every epoch-status row (and echoed by
+        /// the L15 manifest) — captured once in openAll().
+        double es_sigma0_trigger_   = 0.0;
+        double es_withhold_ceiling_ = 0.0;
 
         /**
          * @brief Open every armed trace stream and write its header row (verbatim
@@ -234,6 +251,69 @@ namespace GnssProcessor {
                                        const std::vector<NetStation>& stations,
                                        const StationConfig* held_out,
                                        const std::shared_ptr<spdlog::logger>& log);
+
+        // ------------------------------------------------------------------
+        // Decomposition INC-4: the state-reading writers, relocated now that
+        // their state lives in NetworkRunContext (knobs/counters) or arrives
+        // as explicit values.  Bodies are verbatim relocations; each opens
+        // with an alias block binding the former runNetwork() local names.
+        // ------------------------------------------------------------------
+
+        /// L15 startup run-provenance manifest record (JSONL, truncating open).
+        /// No-op unless nc.write_run_manifest.
+        void writeRunManifestStartup(const GnssConfig& config_, const NetworkConfig& nc,
+                                     const NetworkKnobs& knobs,
+                                     const std::filesystem::path& config_path_,
+                                     std::size_t n_stations, int n_threads,
+                                     const std::shared_ptr<spdlog::logger>& log);
+
+        /// L15 end-of-run manifest record (JSONL, APPEND — a crashed run keeps
+        /// the startup record).  No-op unless nc.write_run_manifest.
+        void writeRunManifestComplete(const NetworkConfig& nc,
+                                      const NetworkServiceCounters& counters,
+                                      std::size_t n_synced, double loop_ms);
+
+        /// P1 size-based rotation of the three unbounded service CSVs — called
+        /// once per processed epoch BEFORE the epoch's rows land.  OFF
+        /// (trace_rotate_mb == 0) touches nothing.
+        void rotateServiceCsvs(const NetworkConfig& nc,
+                               const std::shared_ptr<spdlog::logger>& log);
+
+        /// RTB-6 operator health heartbeat row (every nc.health_interval_s of
+        /// content time; guarded on the stream being open).  Mutates the
+        /// heartbeat anchors (last_health_write_s + the P4(b) window anchors)
+        /// inside @p counters.
+        void writeHealthRow(const GnssTime& t, const NetworkConfig& nc,
+                            NetworkServiceCounters& counters,
+                            const std::chrono::steady_clock::time_point& t_loop_begin,
+                            bool ura_on, bool raim_on, bool pl_on,
+                            double ura_sigma0_ewma,
+                            const std::map<std::string, std::string>& last_pivot,
+                            double grade_metric_s);
+
+        /// L1: one network_epoch_status.csv row (no-op when the trace is OFF).
+        void emitEpochStatus(const GnssTime& t, const char* disposition,
+                             const EpochStatusRow& r);
+
+        /// L2: one network_events.csv row for a discrete QC action (no-op OFF).
+        /// Commas in @p detail are sanitized to semicolons (single CSV field).
+        void emitEvent(const GnssTime& t, const char* tier, const char* event,
+                       const std::string& sat, const std::string& station,
+                       std::optional<double> statistic, std::optional<double> threshold,
+                       const char* action, const std::string& detail);
+
+        /// B8 flag-rate empirical-alpha summary (log + network_flag_rates.csv)
+        /// + the L3 run-summary CSV — ONE knobs.trace_flag_rates gate covers
+        /// both (an OFF run writes neither).
+        void writeFlagRateAndRunSummary(const GnssConfig& config_, const NetworkKnobs& knobs,
+                                        const NetworkServiceCounters& counters,
+                                        std::size_t n_synced, std::size_t n_stations,
+                                        int n_threads, bool parallel_on, double loop_ms,
+                                        const std::shared_ptr<spdlog::logger>& log);
+
+        /// Teardown close of exactly the streams the former inline list closed
+        /// (the rest rely on the destructor, unchanged).
+        void closeAll();
     };
 
 } // namespace GnssProcessor

@@ -26,6 +26,11 @@ def main() -> int:
     p.add_argument("run_dir", help="fresh run directory (created; must not exist unless --force)")
     p.add_argument("--force", action="store_true",
                    help="delete and recreate run_dir if it already exists")
+    p.add_argument("--seed", nargs=2, action="append", metavar=("SRC", "DEST_REL"),
+                   default=[],
+                   help="copy SRC into the fresh run_dir at relative path DEST_REL before "
+                        "launching (repeatable) — e.g. the ARM-8 resume leg seeds the golden "
+                        "leg-A state snapshot at logs/network_state_snapshot.json")
     args = p.parse_args()
 
     exe = pathlib.Path(args.exe).resolve()
@@ -43,6 +48,14 @@ def main() -> int:
             return 2
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True)
+    for src, dest_rel in args.seed:
+        src_p = pathlib.Path(src).resolve()
+        if not src_p.is_file():
+            print(f"ERROR: seed file not found: {src_p}", file=sys.stderr)
+            return 2
+        dest_p = run_dir / dest_rel
+        dest_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src_p, dest_p)
 
     log_path = run_dir / "run.log"
     with open(log_path, "wb") as log:

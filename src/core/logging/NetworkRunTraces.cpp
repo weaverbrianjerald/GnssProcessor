@@ -9,11 +9,16 @@
 
 #include "config/GnssConfig.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
-#include "filter/NetworkRunTypes.hpp"   // NetStation (roster writer)
+#include "filter/NetworkRunTypes.hpp"   // NetStation (roster writer), EpochStatusRow
+#include "app/NetworkRunContext.hpp"    // NetworkKnobs / NetworkServiceCounters (INC-4)
+#include "logging/CsvRotator.hpp"       // maybeRotateCsv (P1 rotation, INC-4)
+#include "filter/NetworkPivotHandover.hpp" // formatPivotMap (health heartbeat, INC-4)
+#include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <string>
 #include <system_error>
 
@@ -38,7 +43,8 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
-      carry_vce_trace_path(log_dir_ / "network_carry_vce.csv") {}
+      carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
+      manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
                                const GlobalVtecShConfig& shc,
@@ -295,6 +301,10 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open station-residual trace {}",
                       station_res_trace_path.string());
     }
+
+    // INC-4: capture the L1/L15 config echoes once (pure getter reads).
+    es_sigma0_trigger_   = config_.networkRaimSigma0Trigger();
+    es_withhold_ceiling_ = config_.networkRaimWithholdSigma0();
 }
 
 void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
@@ -323,6 +333,534 @@ void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
     } else {
         log->warn("Network: failed to open station roster {}", roster_path.string());
     }
+}
+
+// L1: write one network_epoch_status.csv row for this epoch (guarded; no-op when
+// OFF).  Relocated VERBATIM from the runNetwork() lambda (decomposition INC-4).
+void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* disposition,
+                                       const EpochStatusRow& r) {
+    // Config echoes captured at openAll (single-sourced with the L15 manifest).
+    const double es_sigma0_trigger   = es_sigma0_trigger_;
+    const double es_withhold_ceiling = es_withhold_ceiling_;
+        if (!epoch_status_trace.is_open()) return;
+        auto& o = epoch_status_trace;
+        o << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
+          << disposition << ',';
+        if (r.sigma0)          o << fmt::format("{:.4f}", *r.sigma0);
+        o << ',';
+        if (r.n_adapt)         o << *r.n_adapt;
+        o << ',';
+        if (r.n_present)       o << *r.n_present;
+        o << ',';
+        if (r.n_clock_sats)    o << *r.n_clock_sats;
+        o << ',';
+        if (r.clock_median_m)  o << fmt::format("{:.4f}", *r.clock_median_m);
+        o << ',';
+        if (r.clock_std_m)     o << fmt::format("{:.4f}", *r.clock_std_m);
+        o << ',';
+        o << r.worst_sat << ',';
+        if (r.worst_dev_m)     o << fmt::format("{:.4f}", *r.worst_dev_m);
+        o << ',';
+        if (r.n_refloat_sats)  o << *r.n_refloat_sats;
+        o << ',';
+        if (r.n_retro_applied) o << *r.n_retro_applied;
+        o << ',';
+        if (r.datum_changed)   o << *r.datum_changed;
+        o << ',';
+        o << fmt::format("{:.4f}", es_sigma0_trigger) << ','
+          << fmt::format("{:.4f}", es_withhold_ceiling) << ',';
+        if (r.n_arc_refloat)   o << *r.n_arc_refloat;   // T2d
+        o << '\n';
+}
+
+// L2: write one network_events.csv row for a discrete QC action (guarded; no-op
+// OFF).  Relocated VERBATIM (decomposition INC-4).
+void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char* event,
+                                 const std::string& sat, const std::string& station,
+                                 std::optional<double> statistic, std::optional<double> threshold,
+                                 const char* action, const std::string& detail) {
+        if (!events_trace.is_open()) return;
+        std::string d = detail;
+        for (char& c : d) if (c == ',') c = ';';   // sanitize: keep the CSV single-field
+        auto& o = events_trace;
+        o << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
+          << tier << ',' << event << ',' << sat << ',' << station << ',';
+        if (statistic) o << fmt::format("{:.6f}", *statistic);
+        o << ',';
+        if (threshold) o << fmt::format("{:.6f}", *threshold);
+        o << ',' << action << ',' << d << '\n';
+}
+
+void NetworkRunTraces::rotateServiceCsvs(const NetworkConfig& nc,
+                                         const std::shared_ptr<spdlog::logger>& log) {
+    // P1: size-based rotation of the unbounded service CSVs
+    // (network.trace_rotate_mb > 0).  Checked once per processed epoch,
+    // BEFORE this epoch's rows land, so a file overshoots by at most one
+    // epoch of rows.  Each roll shifts file.csv.k → file.csv.(k+1) (oldest
+    // deleted), retires the live file to file.csv.1, and reopens fresh with
+    // the header re-written — every rolled generation parses standalone.
+    // OFF (default 0) ⇒ maybeRotateCsv touches nothing (byte-identical).
+    if (nc.trace_rotate_mb > 0.0) {
+        const struct {
+            std::ofstream*               os;
+            const std::filesystem::path* path;
+            const char*                  header;
+        } rotating[] = {
+            {&trace,        &trace_path,        kTraceHeader},
+            {&soln,         &soln_path,         kSolnHeader},
+            {&health_trace, &health_trace_path, kHealthHeader},
+        };
+        for (const auto& r : rotating)
+            if (maybeRotateCsv(*r.os, *r.path, r.header,
+                               nc.trace_rotate_mb, nc.trace_rotate_keep))
+                log->info("Network (P1): rotated {} (live file exceeded {:.1f} MiB; "
+                          "keeping {} rolled generation(s)).",
+                          r.path->filename().string(), nc.trace_rotate_mb,
+                          nc.trace_rotate_keep);
+    }
+}
+
+void NetworkRunTraces::writeHealthRow(const GnssTime& t, const NetworkConfig& nc,
+                                      NetworkServiceCounters& counters,
+                                      const std::chrono::steady_clock::time_point& t_loop_begin,
+                                      bool ura_on, bool raim_on, bool pl_on,
+                                      double ura_sigma0_ewma,
+                                      const std::map<std::string, std::string>& last_pivot,
+                                      double grade_metric_s) {
+    // Alias block (INC-4 migration mechanic): the relocated body reads the
+    // former runNetwork() locals under their original names.
+    auto& last_health_write_s      = counters.last_health_write_s;
+    auto& health_win_ms_anchor     = counters.health_win_ms_anchor;
+    auto& health_win_epochs_anchor = counters.health_win_epochs_anchor;
+    const auto& n_emitted          = counters.n_emitted;
+    const auto& n_skipped          = counters.n_skipped;
+    const auto& n_gate_withheld    = counters.n_gate_withheld;
+    const auto& n_sigma0_withheld  = counters.n_sigma0_withheld;
+    const auto& n_runaway_epochs   = counters.n_runaway_epochs;
+    const auto& last_n_present     = counters.last_n_present;
+    const auto& last_n_clock_sats  = counters.last_n_clock_sats;
+    const auto& last_emit_content_s = counters.last_emit_content_s;
+    const auto& n_loop_epochs      = counters.n_loop_epochs;
+    // RTB-6: operator health heartbeat every network.health_interval_s of content
+    // time.  Reports cumulative state THROUGH the previous epoch (this epoch's
+    // per-present/emit outcomes are computed below), which is exactly the "is the
+    // service alive, emitting, and how contaminated/fast" signal a supervisor
+    // polls.  Flushed per write so a live tail sees it immediately.  Guarded ⇒
+    // OFF (default) writes nothing (byte-identical).
+    if (health_trace.is_open()) {
+        const double now_s = TimeUtils::continuousGpsSeconds(t);
+        if (last_health_write_s < 0.0
+            || (now_s - last_health_write_s) >= nc.health_interval_s) {
+            const double loop_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t_loop_begin).count();
+            // P4(b): mean wall ms per loop epoch over the window since the
+            // PREVIOUS health row (first row: since loop start) — a windowed
+            // "is it slowing down NOW" signal, not a cumulative run mean.
+            const size_t win_epochs = n_loop_epochs - health_win_epochs_anchor;
+            const double ms_per_epoch_window =
+                win_epochs > 0
+                    ? (loop_ms - health_win_ms_anchor) / static_cast<double>(win_epochs)
+                    : 0.0;
+            const double emit_age =
+                last_emit_content_s >= 0.0 ? (now_s - last_emit_content_s) : -1.0;
+            // P4(a): σ̂0-EWMA availability — the EWMA updates only inside the
+            // warm post-fit RAIM block (emit_ura && raim && phase_leveling);
+            // with any of them unarmed the column emits the −1 "unavailable"
+            // sentinel, never the frozen 1.0 init.  (During the phase-leveling
+            // warmup it still reads 1.0 — updates begin once carry_warm.)
+            const bool ewma_avail = ura_on && raim_on && pl_on;
+            health_trace << t.week << ',' << fmt::format("{:.3f}", t.tow)
+                         << ',' << n_emitted << ',' << n_skipped << ',' << n_gate_withheld
+                         << ',' << n_sigma0_withheld << ',' << n_runaway_epochs << ','
+                         << (ewma_avail ? fmt::format("{:.4f}", ura_sigma0_ewma)
+                                        : std::string("-1"))
+                         << ',' << last_n_present << ',' << last_n_clock_sats
+                         << ',' << fmt::format("{:.3f}", ms_per_epoch_window)
+                         << ',' << fmt::format("{:.3f}", emit_age)
+                         // P2: realized per-constellation pivots of the last EMITTED
+                         // product (the emit-baseline last_pivot map, merge-updated
+                         // only at the emit site) — empty before the first emit.
+                         << ',' << formatPivotMap(last_pivot)
+                         // RTB-7(c): cold-start-to-product-grade (s of product time
+                         // from first emit to the quality-ramp lift).  −1 before the
+                         // lift or when the ramp is off; 0 = warm resume.
+                         << ',' << (grade_metric_s >= 0.0
+                                        ? fmt::format("{:.1f}", grade_metric_s)
+                                        : std::string("-1"))
+                         << '\n';
+            health_trace.flush();   // a supervisor tails this live
+            last_health_write_s      = now_s;
+            health_win_ms_anchor     = loop_ms;
+            health_win_epochs_anchor = n_loop_epochs;
+        }
+    }
+}
+
+void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
+                                               const NetworkConfig& nc,
+                                               const NetworkKnobs& knobs,
+                                               const std::filesystem::path& config_path_,
+                                               std::size_t n_stations, int n_threads,
+                                               const std::shared_ptr<spdlog::logger>& log) {
+    // Alias block (INC-4): the relocated body reads the former knob locals
+    // (value copies preserve the exact original types for fmt).
+    const bool   pl_on = knobs.pl_on;
+    const bool   zwd_on = knobs.zwd_on;
+    const bool   ura_on = knobs.ura_on;
+    const bool   ura_retro = knobs.ura_retro;
+    const bool   raim_on = knobs.raim_on;
+    const bool   raim_redun = knobs.raim_redun;
+    const bool   perconst_on = knobs.perconst_on;
+    const bool   clk_mon_on = knobs.clk_mon_on;
+    const bool   clk_model_on = knobs.clk_model_on;
+    const bool   pivot_vr_signal = knobs.pivot_vr_signal;
+    const bool   emit_clock_disc = knobs.emit_clock_disc;
+    const bool   sticky_pivot = knobs.sticky_pivot;
+    const bool   clock_signal_basis_hold = knobs.clock_signal_basis_hold;
+    const bool   scoped_handover = knobs.scoped_handover;
+    const bool   pb_excl_unmatched = knobs.pb_excl_unmatched;
+    const bool   emit_gen_id = knobs.emit_gen_id;
+    const bool   ser_disc_ctrs = knobs.ser_disc_ctrs;
+    const bool   emit_epoch_status = knobs.emit_epoch_status;
+    const bool   emit_clock_rate_on = knobs.emit_clock_rate_on;
+    const double pl_q_amb = knobs.pl_q_amb;
+    const double pl_max_gap_s = knobs.pl_max_gap_s;
+    const double pl_var_floor = knobs.pl_var_floor;
+    const double pb_var_floor = knobs.pb_var_floor;
+    const double cb_var_floor = knobs.cb_var_floor;
+    const double zwd_q = knobs.zwd_q;
+    const double ura_alpha = knobs.ura_alpha;
+    const double ura_refloat_inflate = knobs.ura_refloat_inflate;
+    const double raim_k = knobs.raim_k;
+    const double raim_withhold = knobs.raim_withhold;
+    const double clk_mon_abs = knobs.clk_mon_abs;
+    const double clk_mon_jump = knobs.clk_mon_jump;
+    const double clk_mon_reinit_sig = knobs.clk_mon_reinit_sig;
+    const double clk_model_q1 = knobs.clk_model_q1;
+    const double clk_model_q2 = knobs.clk_model_q2;
+    const double clk_model_k = knobs.clk_model_k;
+    const double clk_model_max_gap = knobs.clk_model_max_gap;
+    const double contract_rebroadcast_s = knobs.contract_rebroadcast_s;
+    const double q_clock = knobs.q_clock;
+    const double q_pb = knobs.q_pb;
+    const double q_cb = knobs.q_cb;
+    const int    pl_warmup = knobs.pl_warmup;
+    const int    raim_min_sta = knobs.raim_min_sta;
+    const int    perconst_min_rows = knobs.perconst_min_rows;
+    const double es_sigma0_trigger = es_sigma0_trigger_;
+    // L15: run-provenance manifest (network.write_run_manifest).  JSONL — a startup record
+    // here (config hash + build + full toggle/knob dump) plus an end-of-run record appended
+    // after the completion line.  Hand-emitted (no JSON lib); does NOT read git state (the
+    // tree is shared across concurrent sessions — config hash + toggle dump is the honest
+    // provenance).  create_directories(log_dir_) already ran in the trace-open scope above.
+    if (nc.write_run_manifest) {
+        auto jesc = [](const std::string& s) {
+            std::string o; o.reserve(s.size() + 8);
+            for (char c : s) {
+                if (c == '\\' || c == '"') { o.push_back('\\'); o.push_back(c); }
+                else if (c == '\n') o += "\\n";
+                else if (c == '\r') o += "\\r";
+                else o.push_back(c);
+            }
+            return o;
+        };
+        uint64_t cfg_hash = 1469598103934665603ULL;   // FNV-1a-64 over the raw config bytes
+        {
+            std::ifstream cf(config_path_, std::ios::binary);
+            char buf[4096];
+            while (cf && (cf.read(buf, sizeof buf) || cf.gcount())) {
+                const std::streamsize n = cf.gcount();
+                for (std::streamsize k = 0; k < n; ++k)
+                    cfg_hash = (cfg_hash ^ static_cast<unsigned char>(buf[k])) * 1099511628211ULL;
+                if (n < static_cast<std::streamsize>(sizeof buf)) break;
+            }
+        }
+        char utc[32] = "unknown";
+        {
+            std::time_t t = std::time(nullptr);
+            std::tm tmv{};
+#ifdef _WIN32
+            gmtime_s(&tmv, &t);
+#else
+            gmtime_r(&t, &tmv);
+#endif
+            std::strftime(utc, sizeof utc, "%Y-%m-%dT%H:%M:%SZ", &tmv);
+        }
+        std::ofstream mf(manifest_path, std::ios::trunc);
+        if (mf) {
+            mf << "{\"record\":\"startup\","
+               << "\"written_utc\":\"" << utc << "\","
+               << "\"config_path\":\"" << jesc(config_path_.string()) << "\","
+               << fmt::format("\"config_hash_fnv1a64\":\"{:016x}\",", cfg_hash)
+               << "\"build\":{\"compiled\":\"" << __DATE__ " " __TIME__ << "\"},"
+               << "\"network\":{"
+               // RTB-8/P5: bundle provenance — records that the run's toggle set
+               // came from the service profile rather than hand-assembly.
+               << "\"service_mode\":" << (config_.networkServiceMode() ? "true" : "false") << ','
+               << "\"stations\":" << n_stations << ','
+               << "\"clock_datum_station\":\"" << jesc(nc.clock_datum_station) << "\","
+               << "\"clock_datum_satellite\":\"" << jesc(nc.clock_datum_satellite) << "\","
+               << fmt::format("\"epoch_sync_tolerance_s\":{},", nc.epoch_sync_tolerance_s)
+               << "\"product_output_path\":\"" << jesc(nc.product_output_path) << "\","
+               << "\"product_flush_per_epoch\":" << (nc.product_flush_per_epoch ? "true" : "false") << ','
+               << "\"parallel_stations\":" << (nc.parallel_stations ? "true" : "false") << ','
+               << "\"parallel_min_stations\":" << nc.parallel_min_stations << ','
+               << "\"parallel_max_threads\":" << nc.parallel_max_threads << ','
+               << "\"parallel_reduce\":" << (nc.parallel_reduce ? "true" : "false") << ','
+               << "\"parallel_seam\":" << (nc.parallel_seam ? "true" : "false") << ','
+               << "\"parallel_carry\":" << (nc.parallel_carry ? "true" : "false") << ','
+               << "\"n_threads\":" << n_threads << ','
+               << "\"trace_stations\":" << (nc.trace_stations ? "true" : "false") << ','
+               << "\"trace_ionosphere\":" << (nc.trace_ionosphere ? "true" : "false") << ','
+               << "\"trace_estimability\":" << (nc.trace_estimability ? "true" : "false") << ','
+               << "\"trace_slip_events\":" << (nc.trace_slip_events ? "true" : "false") << ','
+               << "\"trace_anchor_info\":" << (nc.trace_anchor_info ? "true" : "false") << ','
+               << "\"trace_dd_fractional\":" << (nc.trace_dd_fractional ? "true" : "false") << ','
+               << "\"trace_flag_rates\":" << (nc.trace_flag_rates ? "true" : "false") << ','
+               << "\"trace_epoch_status\":" << (nc.trace_epoch_status ? "true" : "false") << ','
+               << "\"trace_events\":" << (nc.trace_events ? "true" : "false") << ','
+               << "\"trace_zwd\":" << (nc.trace_zwd ? "true" : "false") << ','
+               << "\"trace_clock_full\":" << (nc.trace_clock_full ? "true" : "false") << ','
+               << "\"trace_station_residuals\":" << (nc.trace_station_residuals ? "true" : "false") << ','
+               // RTB-6/P1: service-observability knobs (health heartbeat + trace rotation).
+               << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
+               << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
+               << "\"trace_rotate_keep\":" << nc.trace_rotate_keep << ','
+               // RTB-7: startup quality ramp + state snapshot / warm resume.
+               << fmt::format("\"warmup_ura_floor_m\":{},", nc.warmup_ura_floor_m)
+               << "\"warmup_epochs\":" << nc.warmup_epochs << ','
+               << "\"state_snapshot_path\":\"" << jesc(nc.state_snapshot_path) << "\","
+               << fmt::format("\"state_snapshot_interval_s\":{},", nc.state_snapshot_interval_s)
+               << "\"serialize_sbasis_contract\":" << (nc.serialize_sbasis_contract ? "true" : "false") << ','
+               << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
+               << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
+               << fmt::format("\"iono_constraint_deweight_factor\":{},",
+                              config_.getIonoConstraintDeweightConfig().factor)
+               << "\"iono_constraint_deweight_adaptive\":"
+                   << (config_.getIonoConstraintDeweightConfig().adaptive ? "true" : "false") << ','
+               << "\"iono_constraint_deweight_stations\":["
+                   << [&] {
+                          std::string s; bool f = true;
+                          for (const auto& nm : config_.getIonoConstraintDeweightConfig().stations) {
+                              if (!f) s += ','; s += '"'; s += jesc(nm); s += '"'; f = false;
+                          }
+                          return s;
+                      }()
+                   << "],"
+               << "\"phase_leveling\":" << (pl_on ? "true" : "false") << ','
+               << fmt::format("\"phase_leveling_q_amb\":{},", pl_q_amb)
+               << "\"phase_leveling_warmup_epochs\":" << pl_warmup << ','
+               << fmt::format("\"phase_leveling_max_gap_s\":{},", pl_max_gap_s)
+               << fmt::format("\"phase_leveling_var_floor_m2\":{},", pl_var_floor)
+               << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
+               << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
+               << "\"carry_zwd\":" << (zwd_on ? "true" : "false") << ','
+               << fmt::format("\"zwd_carry_q\":{},", zwd_q)
+               << "\"raim\":" << (raim_on ? "true" : "false") << ','
+               << fmt::format("\"raim_k_sigma\":{},", raim_k)
+               << "\"raim_min_stations\":" << raim_min_sta << ','
+               << fmt::format("\"raim_sigma0_trigger\":{},", es_sigma0_trigger)
+               << fmt::format("\"raim_withhold_sigma0\":{},", raim_withhold)
+               << "\"per_const_withhold\":" << (perconst_on ? "true" : "false") << ','
+               << "\"per_const_withhold_min_rows\":" << perconst_min_rows << ','
+               << "\"raim_redundancy_normalize\":" << (raim_redun ? "true" : "false") << ','
+               << "\"raim_attribution\":" << (config_.networkRaimAttribution() ? "true" : "false") << ','
+               << "\"raim_within_epoch\":" << (config_.networkRaimWithinEpoch() ? "true" : "false") << ','
+               << "\"clock_monitor\":" << (clk_mon_on ? "true" : "false") << ','
+               << fmt::format("\"clock_monitor_abs_max_m\":{},", clk_mon_abs)
+               << fmt::format("\"clock_monitor_jump_max_m\":{},", clk_mon_jump)
+               << "\"clock_monitor_couple_raim\":" << (config_.networkClockMonitorCoupleRaim() ? "true" : "false") << ','
+               << fmt::format("\"clock_monitor_reinit_sigma_m\":{},", clk_mon_reinit_sig)
+               << "\"clock_model\":" << (clk_model_on ? "true" : "false") << ','
+               << fmt::format("\"clock_model_q1\":{},", clk_model_q1)
+               << fmt::format("\"clock_model_q2\":{},", clk_model_q2)
+               << fmt::format("\"clock_model_k_sigma\":{},", clk_model_k)
+               << fmt::format("\"clock_model_meas_std_m\":{},", config_.networkClockModelMeasStdM())
+               << fmt::format("\"clock_model_max_gap_s\":{},", clk_model_max_gap)
+               << "\"emit_clock_rate\":" << (config_.networkEmitClockRate() ? "true" : "false") << ','
+               << "\"emit_ura\":" << (ura_on ? "true" : "false") << ','
+               << fmt::format("\"ura_ewma_alpha\":{},", ura_alpha)
+               << "\"consume_ura\":" << (config_.networkConsumeUra() ? "true" : "false") << ','
+               << "\"ura_retro_bump\":" << (ura_retro ? "true" : "false") << ','
+               << fmt::format("\"ura_refloat_inflate\":{},", ura_refloat_inflate)
+               << fmt::format("\"ura_staleness_q2\":{},", config_.networkUraStalenessQ2())
+               << "\"pivot_vanish_return_signal\":" << (pivot_vr_signal ? "true" : "false") << ','
+               << "\"emit_clock_disc\":" << (emit_clock_disc ? "true" : "false") << ','
+               << "\"sticky_pivot\":" << (sticky_pivot ? "true" : "false") << ','
+               << "\"carry_invariant\":" << (config_.networkCarryInvariant() ? "true" : "false") << ','
+               << fmt::format("\"carry_invariant_qz\":{},", config_.networkCarryInvariantQz())
+               << "\"carry_invariant_emit_rebase\":"
+               << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','
+               << "\"carry_invariant_honesty\":"
+               << (config_.networkCarryInvariantHonesty() ? "true" : "false") << ','
+               << "\"carry_invariant_innov_gate\":"
+               << (config_.networkCarryInvariantInnovGate() ? "true" : "false") << ','
+               << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
+               << "\"carry_invariant_innov_calibrate\":"
+               << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
+               << "\"mw_wl_enable\":" << (config_.networkMwWlSeed() ? "true" : "false") << ','   // M5 card WL-1
+               << fmt::format("\"mw_wl_min_arc_epochs\":{},", config_.getNetworkConfig().mw_wl.min_arc_epochs)
+               << fmt::format("\"mw_wl_sigma_floor_cyc\":{},", config_.getNetworkConfig().mw_wl.sigma_floor_cyc)
+               << fmt::format("\"mw_wl_max_rows_per_epoch\":{},", config_.getNetworkConfig().mw_wl.max_rows_per_epoch)
+               << "\"emit_pb_filter\":" << (config_.networkEmitPbFilter() ? "true" : "false") << ','
+               << fmt::format("\"emit_pb_filter_q\":{},", config_.networkEmitPbFilterQ())
+               << fmt::format("\"emit_pb_filter_jump_k\":{},", config_.networkEmitPbFilterJumpK())
+               << fmt::format("\"emit_pb_filter_meas_sigma_m\":{},", config_.networkEmitPbFilterMeasSigmaM())
+               << fmt::format("\"emit_pb_filter_max_gap_s\":{},", config_.networkEmitPbFilterMaxGapS())
+               << fmt::format("\"emit_pb_filter_window_epochs\":{},", config_.networkEmitPbFilterWindowEpochs())
+               << "\"emit_pb_filter_emit_sigma\":"
+               << (config_.networkEmitPbFilterEmitSigma() ? "true" : "false") << ','
+               << "\"emit_pb_filter_gate_v2\":"   // PB-gate-v2 merge point (config echo)
+               << (config_.networkEmitPbFilterGateV2() ? "true" : "false") << ','
+               << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
+               << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
+               << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
+               << "\"exclude_unmodeled_antenna_stations\":"
+               << (config_.networkExcludeUnmodeledAntennaStations() ? "true" : "false") << ','
+               << "\"emit_generation_id\":" << (emit_gen_id ? "true" : "false") << ','
+               << "\"serialize_disc_counters\":" << (ser_disc_ctrs ? "true" : "false") << ','
+               << "\"emit_epoch_status_record\":" << (emit_epoch_status ? "true" : "false") << ','
+               << fmt::format("\"contract_rebroadcast_s\":{},", contract_rebroadcast_s)
+               << fmt::format("\"emitter_staleness_horizon_s\":{},",
+                              config_.networkEmitterStalenessHorizonS())
+               << fmt::format("\"start_offset_hours\":{},", config_.networkStartOffsetHours())
+               << fmt::format("\"process_noise_sat_clock\":{},", q_clock)
+               << fmt::format("\"process_noise_sat_phase_bias\":{},", q_pb)
+               << fmt::format("\"process_noise_sat_code_bias\":{}", q_cb)
+               << "}}\n";
+            mf.close();
+        } else {
+            log->warn("Network: failed to open run-manifest {}", manifest_path.string());
+        }
+    }
+}
+
+void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
+                                                const NetworkServiceCounters& counters,
+                                                std::size_t n_synced, double loop_ms) {
+    const auto& n_emitted                    = counters.n_emitted;
+    const auto& n_skipped                    = counters.n_skipped;
+    const auto& n_gate_withheld              = counters.n_gate_withheld;
+    const auto& n_sigma0_withheld            = counters.n_sigma0_withheld;
+    const auto& n_perconst_partial_epochs    = counters.n_perconst_partial_epochs;
+    const auto& n_perconst_diffuse_published = counters.n_perconst_diffuse_published;
+    // L15: append the end-of-run manifest record (JSONL — a second object on its own line).
+    // Reopen-append (never rewrite) so a crashed run keeps the startup record (itself diagnostic).
+    if (nc.write_run_manifest) {
+        std::ofstream mf(manifest_path, std::ios::app);
+        if (mf)
+            mf << "{\"record\":\"complete\","
+               << "\"n_synced\":" << n_synced << ','
+               << "\"n_emitted\":" << n_emitted << ','
+               << "\"n_skipped\":" << n_skipped << ','
+               << "\"n_gate_withheld\":" << n_gate_withheld << ','
+               << "\"n_sigma0_withheld\":" << n_sigma0_withheld << ','
+               << "\"n_perconst_partial_epochs\":" << n_perconst_partial_epochs << ','
+               << "\"n_perconst_diffuse_published\":" << n_perconst_diffuse_published << ','
+               << fmt::format("\"loop_ms\":{:.1f}", loop_ms)
+               << "}\n";
+    }
+}
+
+void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
+                                                  const NetworkKnobs& knobs,
+                                                  const NetworkServiceCounters& counters,
+                                                  std::size_t n_synced, std::size_t n_stations,
+                                                  int n_threads, bool parallel_on, double loop_ms,
+                                                  const std::shared_ptr<spdlog::logger>& log) {
+    const bool  trace_flag_rates  = knobs.trace_flag_rates;
+    const auto& fr_if_slip        = counters.fr_if_slip;
+    const auto& fr_we_trigger     = counters.fr_we_trigger;
+    const auto& fr_raim_cell      = counters.fr_raim_cell;
+    const auto& fr_raim_sat       = counters.fr_raim_sat;
+    const auto& fr_attrib         = counters.fr_attrib;
+    const auto& fr_clk_model      = counters.fr_clk_model;
+    const auto& fr_clk_mon        = counters.fr_clk_mon;
+    const auto& n_emitted         = counters.n_emitted;
+    const auto& n_skipped         = counters.n_skipped;
+    const auto& n_gate_withheld   = counters.n_gate_withheld;
+    const auto& n_sigma0_withheld = counters.n_sigma0_withheld;
+    const auto& n_loop_epochs     = counters.n_loop_epochs;
+    // --- B8: empirical false-alarm-rate summary per QC tier ------------------
+    // Realized flag rate vs the implied one-sided Gaussian α for the configured k
+    // (magnitude gates are two-sided, so α = P(|Z|>k) = erfc(k/√2)).  Run this on a
+    // CLEAN baseline to read each tier's realized false-alarm rate.  Measurement only.
+    if (trace_flag_rates) {
+        auto gaussAlpha = [](double k) { return std::erfc(k / std::sqrt(2.0)); };  // P(|Z|>k)
+        // L3: also stream a machine-readable network_flag_rates.csv alongside the log lines
+        // (both sinks gated on the ONE existing trace_flag_rates toggle).  The two log format
+        // strings below are byte-identical to before — the CSV row is appended after log->info.
+        const std::filesystem::path fr_csv_path = log_dir_ / "network_flag_rates.csv";
+        std::ofstream fr_csv(fr_csv_path);
+        if (fr_csv)
+            fr_csv << "tier,label,opportunities,flags,rate,k,implied_alpha,has_alpha\n";
+        else
+            log->warn("Network: failed to open flag-rate CSV {}", fr_csv_path.string());
+        auto emit = [&](const char* tier, const char* label, const FlagRate& fr, double k,
+                        bool has_alpha) {
+            const double rate = fr.opp ? static_cast<double>(fr.flag) /
+                                         static_cast<double>(fr.opp) : 0.0;
+            if (has_alpha)
+                log->info("  {:<24}: {:>10} opp, {:>8} flag, rate {:.3e}  (k={:.1f} => implied "
+                          "Gaussian a {:.3e})", label, fr.opp, fr.flag, rate, k, gaussAlpha(k));
+            else
+                log->info("  {:<24}: {:>10} opp, {:>8} flag, rate {:.3e}  (absolute bound; no "
+                          "Gaussian a)", label, fr.opp, fr.flag, rate);
+            if (fr_csv) {
+                fr_csv << tier << ',' << label << ',' << fr.opp << ',' << fr.flag << ','
+                       << fmt::format("{:.6e}", rate) << ',' << fmt::format("{:.1f}", k) << ',';
+                if (has_alpha) fr_csv << fmt::format("{:.6e}", gaussAlpha(k));
+                fr_csv << ',' << (has_alpha ? 1 : 0) << '\n';
+            }
+        };
+        log->info("==== Network flag-rate empirical-alpha summary (network.trace_flag_rates) ====");
+        emit("T1",  "IF-phase slip (T1)",      fr_if_slip,    config_.networkCycleSlipIfPhaseTdKMad(), true);
+        emit("T2",  "within-ep trigger (T2)",  fr_we_trigger, config_.networkRaimSigma0Trigger(),      true);
+        emit("T3",  "post-fit RAIM cell (T3)", fr_raim_cell,  config_.networkRaimKSigma(),             true);
+        emit("T3c", "RAIM consensus (T3)",     fr_raim_sat,   config_.networkRaimKSigma(),             true);
+        emit("T4",  "attribution SAT (T4)",    fr_attrib,     config_.networkRaimKSigma(),             true);
+        emit("T5",  "clock-model NIS (T5)",    fr_clk_model,  config_.networkClockModelKSigma(),       true);
+        emit("T6",  "clock-monitor (T6)",      fr_clk_mon,    0.0,                                     false);
+        log->info("=============================================================================");
+        if (fr_csv) fr_csv.close();
+
+        // L3: run-summary CSV (same toggle).  ms_per_epoch uses n_loop_epochs (loop epochs,
+        // NOT n_synced — the fast-forward / max-duration epochs are excluded from the loop).
+        const std::filesystem::path rs_csv_path = log_dir_ / "network_run_summary.csv";
+        std::ofstream rs_csv(rs_csv_path);
+        if (rs_csv) {
+            rs_csv << "n_synced,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,loop_ms,"
+                      "ms_per_epoch,n_stations,n_threads,parallel\n";
+            const double ms_per_epoch = n_loop_epochs
+                ? loop_ms / static_cast<double>(n_loop_epochs) : 0.0;
+            rs_csv << n_synced << ',' << n_emitted << ',' << n_skipped << ','
+                   << n_gate_withheld << ',' << n_sigma0_withheld << ','
+                   << fmt::format("{:.1f}", loop_ms) << ',' << fmt::format("{:.3f}", ms_per_epoch) << ','
+                   << n_stations << ',' << n_threads << ',' << (parallel_on ? 1 : 0) << '\n';
+            rs_csv.close();
+        } else {
+            log->warn("Network: failed to open run-summary CSV {}", rs_csv_path.string());
+        }
+    }
+}
+
+// INC-4: the exact former teardown close list (the remaining streams rely on
+// the destructor, as before - do not widen this list).
+void NetworkRunTraces::closeAll() {
+    if (trace) trace.close();
+    if (soln) soln.close();
+    if (iono_trace.is_open()) iono_trace.close();
+    if (vtec_sh_trace.is_open()) vtec_sh_trace.close();
+    if (cl_trace) cl_trace.close();
+    if (if_slip_trace.is_open()) if_slip_trace.close();
+    if (raim_trace.is_open()) raim_trace.close();
+    if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
+    if (epoch_status_trace.is_open()) epoch_status_trace.close();
+    if (health_trace.is_open()) health_trace.close();
+    if (events_trace.is_open()) events_trace.close();
+    if (zwd_trace.is_open()) zwd_trace.close();
+    if (station_res_trace.is_open()) station_res_trace.close();
+    if (carry_vce_trace.is_open()) carry_vce_trace.close();
 }
 
 } // namespace GnssProcessor
