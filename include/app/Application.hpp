@@ -37,6 +37,8 @@
 
 namespace GnssProcessor {
 
+struct NetworkSetupResult;   // app/NetworkSetupResult.hpp (decomposition INC-5)
+
 /**
  * @class Application
  * @brief High-level program driver for GNSSProcessor.
@@ -456,6 +458,32 @@ private:
      * @return 0 on clean shutdown, non-zero on error.
      */
     int runNetwork();
+
+    /**
+     * @brief Network setup Phase 0 — validate every @c network.stations[] entry
+     *        has an explicit @c rinex_path (decomposition INC-5; verbatim
+     *        relocation from runNetwork, identical error text + exit status).
+     *
+     * Implemented in @c ApplicationNetworkSetup.cpp.
+     *
+     * @return 0 ok, 1 on the first station missing a path (after logging).
+     */
+    int networkValidateInputs_();
+
+    /**
+     * @brief Network setup Phases 2-4 + sinks + contract + consumer
+     *        (decomposition INC-5; verbatim relocation from runNetwork).
+     *
+     * Fills @p setup in place; @p setup must already sit at its final storage —
+     * the struct is non-movable because run-long references pin its members
+     * (see NetworkSetupResult.hpp).  Every former early @c return @c 1 exit is
+     * preserved verbatim (identical log lines; the caller forwards the status).
+     * Implemented in @c ApplicationNetworkSetup.cpp.
+     *
+     * @param setup Out-parameter, default-constructed by the caller.
+     * @return 0 ok, 1 on any fatal setup failure (after logging).
+     */
+    int networkSetup_(NetworkSetupResult& setup);
 
     /**
      * @brief Generate the end-of-run HTML report via the bundled pyviz tool.
