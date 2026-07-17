@@ -159,6 +159,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkInvariantCarryDriver.cpp
     src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
+    src/core/filter/NetworkPhaseDatum.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
@@ -267,6 +268,7 @@ add_executable(gnss_tests
     tests/test_network_robust_stats.cpp
     tests/test_network_invariant_carry_driver.cpp
     tests/test_network_mw_wl_layer.cpp
+    tests/test_network_phase_datum.cpp
     tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp

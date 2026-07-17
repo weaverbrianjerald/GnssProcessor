@@ -17,6 +17,9 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+
 namespace GnssProcessor {
 
 namespace {
@@ -704,6 +707,56 @@ NetworkEstimator::PerConstWithholdDecision NetworkEstimator::decidePerConstWithh
         else                                               dec.withhold.insert(cst);
     }
     return dec;
+}
+
+
+void NetworkEstimator::dumpEstimabilitySpectrum(double tow, int declared_dim,
+                                                const std::vector<std::string>& col_desc,
+                                                const std::shared_ptr<spdlog::logger>& log) {
+    const Eigen::MatrixXd& Nss = reducedSharedNormals();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(
+        Nss, Eigen::ComputeEigenvectors);
+    if (es.info() == Eigen::Success) {
+        const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
+        const Eigen::Index k = ev.size();
+        const double smax = (k > 0) ? ev(k - 1) : 0.0;  // largest = last
+        const double cutoff = kNullSpaceTol * std::max(smax, 1.0);
+        int below = 0;
+        for (Eigen::Index i = 0; i < k; ++i) if (ev(i) < cutoff) ++below;
+        // Smallest ntail eigenvalues, printed largest-first so the very
+        // smallest (the gauge freedoms) sit at the end of the list.
+        const Eigen::Index ntail = std::min<Eigen::Index>(14, k);
+        std::string tail;
+        for (Eigen::Index i = ntail - 1; i >= 0; --i)
+            tail += fmt::format("{}{:.3e}", (i == ntail - 1 ? "" : ", "), ev(i));
+        log->warn("Network[estimability]: TOW {:.1f} reduced_N_ss {}x{}, "
+                  "declared_dim={}, ev_max={:.3e}, cutoff={:.3e}, {} ev<cutoff; "
+                  "smallest {} ev = [{}]",
+                  tow, Nss.rows(), Nss.cols(), declared_dim,
+                  smax, cutoff, below, ntail, tail);
+        // Name the parameters spanning each near-zero (unpinned-gauge)
+        // direction, printed largest-first to mirror the tail line above.
+        const Eigen::MatrixXd& V = es.eigenvectors();
+        const Eigen::Index ndump = std::min<Eigen::Index>(below + 2, k);
+        for (Eigen::Index j = ndump - 1; j >= 0; --j) {
+            const Eigen::VectorXd v = V.col(j).cwiseAbs();
+            std::vector<Eigen::Index> idx(v.size());
+            for (Eigen::Index t = 0; t < v.size(); ++t) idx[t] = t;
+            std::partial_sort(idx.begin(),
+                              idx.begin() + std::min<Eigen::Index>(5, v.size()), idx.end(),
+                              [&](Eigen::Index a, Eigen::Index b){ return v(a) > v(b); });
+            std::string top;
+            for (int t = 0; t < 5 && t < v.size(); ++t) {
+                const Eigen::Index c = idx[t];
+                top += fmt::format("{}{}={:.2f}", (t ? ", " : ""),
+                                   (c < static_cast<Eigen::Index>(col_desc.size())
+                                    && !col_desc[c].empty()) ? col_desc[c]
+                                                             : fmt::format("col{}", c),
+                                   v(c));
+            }
+            log->warn("Network[estimability]:   ev={:.3e} dir spanned by [{}]", ev(j), top);
+        }
+    }
 }
 
 } // namespace GnssProcessor

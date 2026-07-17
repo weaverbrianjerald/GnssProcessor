@@ -57,6 +57,8 @@
 
 #include <functional>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -210,8 +212,107 @@ public:
     /// weight fixes it exactly without biasing the estimable (between-satellite)
     /// clock structure; chosen » the rank-gate cutoff (1e-9·σmax) and « σmax so it
     /// neither trips nor inflates the spectrum the gate inspects.  Deliberately the
-    /// SAME value the code-bias gauge uses (ApplicationNetwork kCodeBiasGaugeWeight).
+    /// SAME value the code-bias gauge uses (@ref kCodeBiasGaugeWeight).
     static constexpr double kClockGaugeWeight = 1.0e3;
+
+    /// Tight gauge-row information weight (= 1/σ²) for the W6 satellite code-bias
+    /// datum rows (IF pin + per-(constellation,signal) sum-to-zero).  A pure GAUGE
+    /// direction (zero data information), so any positive weight fixes it exactly
+    /// without biasing the estimable between-satellite DCB structure; chosen
+    /// » the rank-gate cutoff (1e-9·σmax) and « σmax so it neither trips nor
+    /// inflates the spectrum the gate inspects.  Deliberately the SAME value as
+    /// @ref kClockGaugeWeight (sibling constants — equal by design, documented
+    /// separately because they gauge different parameter families).
+    static constexpr double kCodeBiasGaugeWeight = 1.0e3;
+
+    /// Result of @ref buildCodeBiasDatumRows: stacked W6 gauge rows for the driver
+    /// to fold via NetworkEstimator::addSharedConstraintRows at
+    /// @ref kCodeBiasGaugeWeight (and mirror into the RAIM-replay cap channel).
+    struct CodeBiasDatumRows {
+        Eigen::MatrixXd H;      ///< k × numShared gauge Jacobian (0 rows ⇒ fold nothing).
+        Eigen::VectorXd z;      ///< Length-k RHS (all 0 legacy; prev-epoch targets under Card-2).
+        int n_if_pin_sats{0};   ///< Satellites attempted for the IF pin (census order size).
+        int n_s2z_channels{0};  ///< (constellation,signal) sum-to-zero channels.
+    };
+
+    /**
+     * @brief Build the W6 satellite code-bias (OSB) datum gauge rows — relocated
+     *        VERBATIM from Application::runNetwork at decomposition INC-8.
+     *
+     * Two row families, in a CONTRACTUAL order (byte-identity-bearing: IF pins in
+     * first-seen census order over @p registered_code_keys, then sum-to-zero rows
+     * in sorted "<constellation>|<signal>" channel-key order):
+     *
+     *  1. Per-satellite ionosphere-free pin (clock-common gauge): the two lowest
+     *     DISTINCT-frequency code signals (deterministic in the signal SET via
+     *     @ref selectIfPinPair) weighted a1 = f1²/(f1²−f2²), a2 = −f2²/(f1²−f2²)
+     *     so the pinned combination is the one the satellite CLOCK absorbs.  A
+     *     single-frequency satellite degenerates to an all-ones gauge over its
+     *     registered signals.
+     *  2. Per-(constellation,signal) sum-to-zero: one row per registered channel,
+     *     summed over the satellites that carry it — pins every channel's absolute
+     *     level per-SIGNAL (robust to non-co-tracked same-band channels at network
+     *     scale), not per-band.
+     *
+     * Card-2 time-linking (@p cb_time_linked): both families pin the CHANGE of
+     * the datum instead of its level — the IF row's RHS becomes the satellite's
+     * previous solved IF combination (only when the pair is unchanged AND both
+     * signals have prior values; otherwise re-seed to 0 and record the sat in
+     * @p this_epoch_cb_reseed unless it is a genuine first appearance), and the
+     * s2z row spans the channel's VETERANS with RHS Σ b̂_prev via
+     * @ref codeS2zTimeLink.
+     *
+     * Clock signal-basis hold (@p clock_signal_basis_hold): HOLD the satellite's
+     * first-latched reference pair while both signals stay registered; RE-LATCH
+     * on loss (a genuine datum move — one "CLK_BASIS"/"relatch" event through
+     * @p emitEvent, plus a pending per-sat disc when @p emit_clock_disc).  Hold
+     * OFF + @p emit_clock_disc: record this epoch's selection in
+     * @p this_epoch_if_pin_sel for the emit-site compare (emit-only discipline).
+     *
+     * The caller owns the FOLD (addSharedConstraintRows at
+     * @ref kCodeBiasGaugeWeight), the RAIM-replay cap_* capture, and the first-N
+     * summary log — this method is a pure row builder over const estimator
+     * queries plus the five documented side channels (@p held_clock_ref
+     * read/write latch; @p this_epoch_* per-epoch scratch outs;
+     * @p basis_relatch_disc_pending inserts; @p emitEvent callback).
+     *
+     * @param est  Joint estimator — const: only numShared()/codeBiasColumn().
+     * @param registered_code_keys  ≥2-station (sat,signal) OSB keys, first-seen order.
+     * @param freqOf  Carrier-frequency oracle (sat,signal)→Hz, BY REFERENCE —
+     *                the caller owns the station roster it closes over.
+     * @param cb_time_linked            network.code_datum_time_linked.
+     * @param clock_signal_basis_hold   network.clock_signal_basis_hold.
+     * @param emit_clock_disc           network.emit_clock_disc.
+     * @param code_bias_prev_           Card-2 carry: "<const>|<sig>" → sat → b̂_prev.
+     * @param code_bias_ifpin_pair_     Card-2 carry: sat → last kept-epoch IF pair.
+     * @param code_bias_sat_seen_       Card-2 carry: sats with any prior kept epoch.
+     * @param code_bias_datum_resumed_  Warm-resume flag (treat re-seeds as bumps).
+     * @param held_clock_ref            Basis-hold latch (read/write).
+     * @param this_epoch_if_pin_sel     [out] hold-OFF disc scratch (cleared by caller).
+     * @param this_epoch_cb_ifpin       [out] Card-2 pair scratch (cleared by caller).
+     * @param this_epoch_cb_reseed      [out] Card-2 re-seed scratch (cleared by caller).
+     * @param basis_relatch_disc_pending  [in/out] pending per-sat disc bumps.
+     * @param emitEvent                 L2 event-row callback (tier, event, sat,
+     *                                  station, statistic, threshold, action, detail).
+     */
+    static CodeBiasDatumRows buildCodeBiasDatumRows(
+        const NetworkEstimator& est,
+        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+        const std::function<double(const std::string&, const std::string&)>& freqOf,
+        bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
+        const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
+        const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
+        const std::set<std::string>& code_bias_sat_seen_,
+        bool code_bias_datum_resumed_,
+        std::map<std::string, std::pair<std::string, std::string>>& held_clock_ref,
+        std::map<std::string, std::pair<std::string, std::string>>& this_epoch_if_pin_sel,
+        std::map<std::string, std::pair<std::string, std::string>>& this_epoch_cb_ifpin,
+        std::set<std::string>& this_epoch_cb_reseed,
+        std::set<std::string>& basis_relatch_disc_pending,
+        const std::function<void(const char*, const char*, const std::string&,
+                                 const std::string&, std::optional<double>,
+                                 std::optional<double>, const char*,
+                                 const std::string&)>& emitEvent);
 
     /**
      * @brief Map a RINEX satellite id to its constellation key (first char).

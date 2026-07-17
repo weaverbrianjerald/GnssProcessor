@@ -46,12 +46,15 @@
 
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "filter/NetworkNormalEquations.hpp"
 #include "products/NetworkProductEmitter.hpp"
+
+namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
@@ -425,6 +428,53 @@ public:
      *        the kernel's internal reduction cache (idempotent; @ref solve reuses it).
      */
     const Eigen::MatrixXd& reducedSharedNormals();
+
+    /// Relative eigenvalue tolerance for the shared-border null-space rank gate
+    /// (vs the largest λ of the reduced shared normals).  The reduced system is
+    /// deliberately ill-conditioned: phase pins the clock/phase-bias SUM at ~1e5
+    /// weight while CODE alone separates the split, so the weakest REAL direction
+    /// sits ~7 decades above the true gauges (σ ~1e-10 vs ~1e-2 of σmax).  The
+    /// 1e-6 library default of NetworkSbasis::assertNullSpaceRank sits above the
+    /// weak-but-real directions and miscounts them; 1e-9 lands in the gap.
+    /// Single source of truth shared by the run-TU gate, the estimability
+    /// spectrum dump (@ref dumpEstimabilitySpectrum), and the prioritized
+    /// drop-and-heal (NetworkPhaseDatum healNearNullPhaseBias) — the heal MUST
+    /// use the SAME cutoff as the gate it is protecting.  Relocated from the
+    /// run TU at decomposition INC-8.
+    static constexpr double kNullSpaceTol = 1e-9;
+
+    /**
+     * @brief One-shot estimability diagnostic (network.trace_estimability):
+     *        dump the tail of the reduced shared-normal eigen-spectrum and name
+     *        the parameters spanning each near-zero (unpinned-gauge) direction —
+     *        relocated VERBATIM from Application::runNetwork at decomposition
+     *        INC-8.
+     *
+     * Shows WHERE the null space sits relative to the declared datum dimension:
+     * a clean ~7-decade gap at exactly @p declared_dim ⇒ the 1e-9 tolerance is
+     * mis-set; one or more EXTRA tiny eigenvalues above the gap ⇒ a genuinely
+     * unpinned direction (a missing datum constraint).  The reduced shared
+     * normals are symmetric positive-SEMIdefinite (a Schur complement of
+     * weighted Gram normals), so eigenvalues EQUAL singular values: a
+     * self-adjoint eigensolve yields the exact spectrum the rank gate tests at
+     * a small fraction of a full JacobiSVD's cost.  Naming the gauge parameters
+     * still needs the eigenVECTORs, so this is a full decomposition — the
+     * CALLER keeps it behind the trace_estimability knob and its first-N latch.
+     * Non-const: @ref reducedSharedNormals lazily reduces (idempotent).
+     *
+     * @param tow          Epoch GPS time-of-week (log stamp).
+     * @param declared_dim Declared datum dimension (NetworkSbasis::Plan).
+     * @param col_desc     Driver-format column labels ("CLK|sat", "PB|sat|sig",
+     *                     "CB|sat|sig", "SH|n|m|trig") built by the Assembly
+     *                     column registration when armed; missing/empty entries
+     *                     fall back to "colN".  Deliberately NOT
+     *                     @ref sharedColumnLabel — the formats differ and the
+     *                     trace text is golden-gated.
+     * @param log          Main logger (two warn lines per dumped direction).
+     */
+    void dumpEstimabilitySpectrum(double tow, int declared_dim,
+                                  const std::vector<std::string>& col_desc,
+                                  const std::shared_ptr<spdlog::logger>& log);
 
     /// A carried-forward / regularizing prior on one shared parameter (W4-S2b D2
     /// time update; also the SH-VTEC Kaula/temporal prior).

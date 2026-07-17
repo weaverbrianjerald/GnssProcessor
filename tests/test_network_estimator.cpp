@@ -26,11 +26,18 @@
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
+
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
+#include <memory>
+#include <optional>
 #include <random>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -3730,6 +3737,342 @@ TEST(NetworkEstimatorTest, PerConstWithholdMinRowsAndCeilingBoundaries) {
     EXPECT_EQ(dec.withhold, (std::set<char>{'E', 'R', 'J'}));
     // Every input key lands in exactly one output set.
     EXPECT_EQ(dec.publish.size() + dec.withhold.size(), stats.size());
+}
+
+// ===========================================================================
+// INC-8: buildCodeBiasDatumRows — the W6 satellite code-bias (OSB) datum row
+// builder relocated VERBATIM out of the network run loop.  Pure over const
+// estimator queries; every carry / scratch / latch is an explicit reference,
+// so the tests own them all directly.
+// ===========================================================================
+
+namespace {
+
+// GPS carrier frequency by RINEX band digit (L1 / L2 / L5), in the
+// buildCodeBiasDatumRows (sat, signal) oracle shape; unknown band -> 0
+// ("frequency unavailable").
+double gpsCodeFreq(const std::string& /*sat*/, const std::string& sig) {
+    if (sig.size() < 2) return 0.0;
+    switch (sig[1]) {
+        case '1': return 1575.42e6;
+        case '2': return 1227.60e6;
+        case '5': return 1176.45e6;
+        default:  return 0.0;
+    }
+}
+
+// Owns the builder's five side channels + knob set and clears the per-epoch
+// scratch outs before each call, exactly as the driver contract requires
+// ("cleared by caller").  The emitEvent stub counts firings and records the
+// last (tier, event, sat, detail) for the re-latch assertions.
+struct CbDatumRowsHarness {
+    using Pair = std::pair<std::string, std::string>;
+
+    // knobs
+    bool cb_time_linked{false};
+    bool clock_signal_basis_hold{false};
+    bool emit_clock_disc{false};
+    // Card-2 carry (const in)
+    std::map<std::string, std::map<std::string, double>> code_bias_prev;
+    std::map<std::string, Pair>                          code_bias_ifpin_pair;
+    std::set<std::string>                                code_bias_sat_seen;
+    bool                                                 code_bias_datum_resumed{false};
+    // side channels (read/write latch + per-epoch scratch + pending discs)
+    std::map<std::string, Pair> held_clock_ref;
+    std::map<std::string, Pair> this_epoch_if_pin_sel;
+    std::map<std::string, Pair> this_epoch_cb_ifpin;
+    std::set<std::string>       this_epoch_cb_reseed;
+    std::set<std::string>       basis_relatch_disc_pending;
+    // emitEvent stub
+    int         events{0};
+    std::string last_tier, last_event, last_sat, last_detail;
+
+    NetworkSbasis::CodeBiasDatumRows build(
+        const NetworkEstimator& est,
+        const std::vector<Pair>& registered_code_keys) {
+        this_epoch_if_pin_sel.clear();
+        this_epoch_cb_ifpin.clear();
+        this_epoch_cb_reseed.clear();
+        return NetworkSbasis::buildCodeBiasDatumRows(
+            est, registered_code_keys, gpsCodeFreq, cb_time_linked,
+            clock_signal_basis_hold, emit_clock_disc, code_bias_prev,
+            code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
+            held_clock_ref, this_epoch_if_pin_sel, this_epoch_cb_ifpin,
+            this_epoch_cb_reseed, basis_relatch_disc_pending,
+            [this](const char* tier, const char* event, const std::string& sat,
+                   const std::string& /*station*/, std::optional<double> /*stat*/,
+                   std::optional<double> /*thr*/, const char* /*action*/,
+                   const std::string& detail) {
+                ++events;
+                last_tier   = tier;
+                last_event  = event;
+                last_sat    = sat;
+                last_detail = detail;
+            });
+    }
+};
+
+} // namespace
+
+// Legacy two-band shape (all knobs off, empty carries): 2 sats x {C1C, C2W}
+// yields 2 IF pins + 2 sum-to-zero rows in the CONTRACTUAL order — IF pins in
+// census FIRST-SEEN order (not lexical, not column order), then s2z rows in
+// sorted "<constellation>|<signal>" channel-key order — with the
+// ionosphere-free (clock-preserving) weights and all-zero targets.
+TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsLegacyTwoBand) {
+    NetworkEstimator est;
+    est.registerCodeBias("G01", "C1C");
+    est.registerCodeBias("G01", "C2W");
+    est.registerCodeBias("G02", "C1C");
+    est.registerCodeBias("G02", "C2W");
+
+    // Census order deliberately G02-first (differs from both registration and
+    // lexical order) so a row/ordering mixup cannot pass.
+    const std::vector<CbDatumRowsHarness::Pair> keys{
+        {"G02", "C1C"}, {"G02", "C2W"}, {"G01", "C1C"}, {"G01", "C2W"}};
+
+    CbDatumRowsHarness h;
+    const auto out = h.build(est, keys);
+
+    ASSERT_EQ(out.H.rows(), 4);              // 2 IF pins + 2 s2z channels
+    EXPECT_EQ(out.H.cols(), est.numShared());
+    ASSERT_EQ(out.z.size(), 4);
+    EXPECT_TRUE(out.z.isZero());             // legacy: all-zero targets
+    EXPECT_EQ(out.n_if_pin_sats, 2);
+    EXPECT_EQ(out.n_s2z_channels, 2);
+
+    const double f1 = gpsCodeFreq("G", "C1C"), f2 = gpsCodeFreq("G", "C2W");
+    const double den = f1 * f1 - f2 * f2;
+    const double a1 = f1 * f1 / den;         // ionosphere-free (clock-preserving)
+    const double a2 = -f2 * f2 / den;        //   weights: a1 + a2 = 1
+
+    // Rows 0/1: IF pins, census first-seen order (G02 then G01), exactly two
+    // entries each (the |.|-sum pins "zero everywhere else").
+    const std::vector<std::string> census{"G02", "G01"};
+    for (int r = 0; r < 2; ++r) {
+        const std::string& sat = census[static_cast<std::size_t>(r)];
+        EXPECT_DOUBLE_EQ(out.H(r, est.codeBiasColumn(sat, "C1C")), a1) << "IF row " << r;
+        EXPECT_DOUBLE_EQ(out.H(r, est.codeBiasColumn(sat, "C2W")), a2) << "IF row " << r;
+        EXPECT_NEAR(out.H.row(r).cwiseAbs().sum(), std::abs(a1) + std::abs(a2), 1e-12);
+    }
+    // Rows 2/3: per-(constellation,signal) sum-to-zero in sorted channel-key
+    // order ("G|C1C" then "G|C2W"), all-ones over the carrying satellites.
+    EXPECT_DOUBLE_EQ(out.H(2, est.codeBiasColumn("G01", "C1C")), 1.0);
+    EXPECT_DOUBLE_EQ(out.H(2, est.codeBiasColumn("G02", "C1C")), 1.0);
+    EXPECT_DOUBLE_EQ(out.H.row(2).cwiseAbs().sum(), 2.0);
+    EXPECT_DOUBLE_EQ(out.H(3, est.codeBiasColumn("G01", "C2W")), 1.0);
+    EXPECT_DOUBLE_EQ(out.H(3, est.codeBiasColumn("G02", "C2W")), 1.0);
+    EXPECT_DOUBLE_EQ(out.H.row(3).cwiseAbs().sum(), 2.0);
+}
+
+// A satellite with a single DISTINCT frequency (two same-band channels) has no
+// IF split to pin — its row degenerates to the all-ones gauge over its
+// registered signals (the code-bias common mode is still fixed), zero RHS.
+TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDegenerateSingleFreq) {
+    NetworkEstimator est;
+    est.registerCodeBias("G03", "C1C");
+    est.registerCodeBias("G03", "C1W");   // same carrier (L1) as C1C
+
+    CbDatumRowsHarness h;
+    const auto out = h.build(est, {{"G03", "C1C"}, {"G03", "C1W"}});
+
+    ASSERT_EQ(out.H.rows(), 3);              // 1 degenerate IF pin + 2 s2z channels
+    ASSERT_EQ(out.z.size(), 3);
+    EXPECT_TRUE(out.z.isZero());
+    EXPECT_EQ(out.n_if_pin_sats, 1);
+    EXPECT_EQ(out.n_s2z_channels, 2);
+
+    // Row 0: all-ones over the satellite's signals (no IF weights).
+    EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G03", "C1C")), 1.0);
+    EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G03", "C1W")), 1.0);
+    EXPECT_DOUBLE_EQ(out.H.row(0).cwiseAbs().sum(), 2.0);
+}
+
+// Card 2 (network.code_datum_time_linked): both row families pin the CHANGE of
+// the datum.  With the stored pair intact and both signals veteran, the IF row's
+// RHS is the previous solved IF combination and each s2z row's RHS the veteran
+// sum; a stored-pair flip re-seeds the IF target to 0 and records the satellite
+// in this_epoch_cb_reseed iff it has a prior kept epoch (code_bias_sat_seen_) —
+// a genuine first appearance is exempt.
+TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsTimeLinked) {
+    NetworkEstimator est;
+    est.registerCodeBias("G01", "C1C");
+    est.registerCodeBias("G01", "C2W");
+    const std::vector<CbDatumRowsHarness::Pair> keys{{"G01", "C1C"}, {"G01", "C2W"}};
+
+    const double f1 = gpsCodeFreq("G", "C1C"), f2 = gpsCodeFreq("G", "C2W");
+    const double den = f1 * f1 - f2 * f2;
+    const double a1 = f1 * f1 / den, a2 = -f2 * f2 / den;
+    const double v1 = 0.4, v2 = -0.2;        // previous kept-epoch solved biases
+
+    CbDatumRowsHarness h;
+    h.cb_time_linked = true;
+    h.code_bias_prev["G|C1C"]["G01"] = v1;   // carry keyed "<constellation>|<signal>" -> sat
+    h.code_bias_prev["G|C2W"]["G01"] = v2;
+    h.code_bias_ifpin_pair["G01"]    = {"C1C", "C2W"};
+    h.code_bias_sat_seen.insert("G01");
+
+    // (a) Pair unchanged + both prevs: IF RHS = a1 v1 + a2 v2; veteran s2z RHS;
+    //     this epoch's pair recorded, no re-seed.
+    auto out = h.build(est, keys);
+    ASSERT_EQ(out.z.size(), 3);              // [IF G01, s2z G|C1C, s2z G|C2W]
+    EXPECT_NEAR(out.z(0), a1 * v1 + a2 * v2, 1e-12);
+    EXPECT_NEAR(out.z(1), v1, 1e-12);
+    EXPECT_NEAR(out.z(2), v2, 1e-12);
+    EXPECT_TRUE(h.this_epoch_cb_reseed.empty());
+    ASSERT_EQ(h.this_epoch_cb_ifpin.count("G01"), 1u);
+    EXPECT_EQ(h.this_epoch_cb_ifpin.at("G01"),
+              (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
+
+    // (b) Stored pair flipped: the IF target re-seeds to 0 (a pair change
+    //     re-references the clock<->code split even with prior values) and the
+    //     SEEN satellite is recorded for the disc bump.  The s2z targets are
+    //     untouched — their veterans did not change.
+    h.code_bias_ifpin_pair["G01"] = {"C1C", "C5Q"};
+    out = h.build(est, keys);
+    EXPECT_EQ(out.z(0), 0.0);
+    EXPECT_NEAR(out.z(1), v1, 1e-12);
+    EXPECT_NEAR(out.z(2), v2, 1e-12);
+    EXPECT_EQ(h.this_epoch_cb_reseed.count("G01"), 1u);
+    EXPECT_EQ(h.this_epoch_cb_ifpin.at("G01"),
+              (CbDatumRowsHarness::Pair{"C1C", "C2W"}));  // this epoch's selection, re-recorded
+
+    // (c) Same flip but the satellite has NO prior kept epoch (not seen, not
+    //     resumed): the re-seed is a first appearance — no disc-bump candidate.
+    h.code_bias_sat_seen.clear();
+    out = h.build(est, keys);
+    EXPECT_EQ(out.z(0), 0.0);
+    EXPECT_TRUE(h.this_epoch_cb_reseed.empty());
+}
+
+// network.clock_signal_basis_hold: the satellite's first-latched reference pair
+// is HELD while both signals stay registered — even when a fresh selection
+// would prefer a newly-risen lower band — and RE-LATCHED (one
+// "CLK_BASIS"/"relatch" event; per-sat disc pending iff emit_clock_disc) only
+// when a held signal leaves the >=2-station set.
+TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldLatchRelatch) {
+    using Pair = CbDatumRowsHarness::Pair;
+    for (const bool emit_disc : {false, true}) {
+        NetworkEstimator est;
+        est.registerCodeBias("G01", "C1C");
+        est.registerCodeBias("G01", "C2W");
+        est.registerCodeBias("G01", "C5Q");
+
+        CbDatumRowsHarness h;
+        h.clock_signal_basis_hold = true;
+        h.emit_clock_disc         = emit_disc;
+
+        // Epoch 1 (LATCH): only L2+L5 registered -> (C2W, C5Q) latched silently.
+        h.build(est, {{"G01", "C2W"}, {"G01", "C5Q"}});
+        EXPECT_EQ(h.events, 0) << "emit_disc=" << emit_disc;
+        ASSERT_EQ(h.held_clock_ref.count("G01"), 1u);
+        EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C2W", "C5Q"}));
+
+        // Epoch 2 (HOLD): C1C rises — the fresh selection would be (C1C, C2W),
+        // but both held signals are still registered, so the IF row stays on
+        // the held L2/L5 pair and the counting stub does NOT fire.
+        auto out = h.build(est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}});
+        EXPECT_EQ(h.events, 0) << "emit_disc=" << emit_disc;
+        EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C2W", "C5Q"}));
+        const double fa = gpsCodeFreq("G", "C2W"), fb = gpsCodeFreq("G", "C5Q");
+        const double den = fa * fa - fb * fb;
+        EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C2W")),  fa * fa / den);
+        EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C5Q")), -fb * fb / den);
+        EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C1C")), 0.0);
+
+        // Epoch 3 (RE-LATCH): held C2W leaves the registered set -> adopt the
+        // fresh (C1C, C5Q) pair; exactly one CLK_BASIS/relatch event; the
+        // per-sat disc goes pending iff the clock-disc channel is armed.
+        h.build(est, {{"G01", "C1C"}, {"G01", "C5Q"}});
+        EXPECT_EQ(h.events, 1) << "emit_disc=" << emit_disc;
+        EXPECT_EQ(h.last_tier, "CLK_BASIS");
+        EXPECT_EQ(h.last_event, "relatch");
+        EXPECT_EQ(h.last_sat, "G01");
+        EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C1C", "C5Q"}));
+        EXPECT_EQ(h.basis_relatch_disc_pending.count("G01"), emit_disc ? 1u : 0u);
+    }
+}
+
+// Hold OFF + emit_clock_disc: this epoch's pin selection is recorded in the
+// this_epoch_if_pin_sel scratch for the emit-site compare — but ONLY for a real
+// two-frequency IF pair (a single-frequency satellite has no clock<->code split
+// to re-reference, so it must stay out of the disc channel).
+TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
+    NetworkEstimator est;
+    est.registerCodeBias("G01", "C1C");
+    est.registerCodeBias("G01", "C2W");
+    est.registerCodeBias("G02", "C1C");   // single-frequency satellite
+
+    CbDatumRowsHarness h;
+    h.emit_clock_disc = true;             // hold stays OFF
+    const auto out = h.build(
+        est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G02", "C1C"}});
+
+    ASSERT_EQ(h.this_epoch_if_pin_sel.size(), 1u);
+    EXPECT_EQ(h.this_epoch_if_pin_sel.at("G01"),
+              (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
+    EXPECT_EQ(h.this_epoch_if_pin_sel.count("G02"), 0u);
+    // The hold latch is neither read nor written on the OFF path.
+    EXPECT_TRUE(h.held_clock_ref.empty());
+    EXPECT_EQ(out.n_if_pin_sats, 2);      // both sats still get a pin row
+    EXPECT_EQ(out.n_s2z_channels, 2);     // G|C1C (2 sats) + G|C2W (1 sat)
+}
+
+// ---------------------------------------------------------------------------
+// INC-8: dumpEstimabilitySpectrum — one-shot estimability diagnostic relocated
+// out of the run loop.  Smoke over a real registered/added system: no throw,
+// and the "Network[estimability]" warn lines land in the sink with the
+// driver-format labels when col_desc is supplied and the "colN" fallback when
+// it is empty.
+// ---------------------------------------------------------------------------
+TEST(NetworkEstimatorTest, DumpEstimabilitySpectrumSmoke) {
+    const Truth t = makeTruth(/*seed=*/2024, /*R=*/3, /*S=*/3);
+    const std::string signal = "L1";
+
+    NetworkEstimator est;
+    std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
+    for (int s = 0; s < t.S; ++s) {
+        clkCol[s] = est.registerClock(t.sats[s]);
+        pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
+    }
+    // Driver-format labels ("CLK|sat" / "PB|sat|sig" — deliberately NOT
+    // sharedColumnLabel), indexed by shared column.
+    std::vector<std::string> col_desc(static_cast<std::size_t>(est.numShared()));
+    for (int s = 0; s < t.S; ++s) {
+        col_desc[static_cast<std::size_t>(clkCol[s])] = "CLK|" + t.sats[s];
+        col_desc[static_cast<std::size_t>(pbCol[s])]  = "PB|" + t.sats[s] + "|" + signal;
+    }
+
+    est.beginEpoch();
+    for (int r = 0; r < t.R; ++r) {
+        Eigen::MatrixXd A_s, A_r;
+        Eigen::VectorXd w, y;
+        buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);  // pivot r=0 folds amb pins
+        est.addStation(A_s, A_r, w, y);
+    }
+    // One constellation, no clock pin folded -> exactly one near-zero (clock
+    // gauge) direction for the dump to name; declared_dim = 1 matches it.
+
+    // (i) full col_desc: the gauge direction is named with the driver labels.
+    std::ostringstream oss_full;
+    auto log_full = std::make_shared<spdlog::logger>(
+        "estim_dump_full", std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_full));
+    EXPECT_NO_THROW(est.dumpEstimabilitySpectrum(3600.0, 1, col_desc, log_full));
+    const std::string text_full = oss_full.str();
+    EXPECT_NE(text_full.find("estimability"), std::string::npos);
+    EXPECT_NE(text_full.find("CLK|G01"), std::string::npos)
+        << "gauge direction should be named via col_desc";
+
+    // (ii) empty col_desc: every spanning parameter falls back to "colN".
+    std::ostringstream oss_bare;
+    auto log_bare = std::make_shared<spdlog::logger>(
+        "estim_dump_bare", std::make_shared<spdlog::sinks::ostream_sink_mt>(oss_bare));
+    EXPECT_NO_THROW(est.dumpEstimabilitySpectrum(3600.0, 1,
+                                                 std::vector<std::string>{}, log_bare));
+    const std::string text_bare = oss_bare.str();
+    EXPECT_NE(text_bare.find("estimability"), std::string::npos);
+    EXPECT_NE(text_bare.find("col0"), std::string::npos)
+        << "missing labels should fall back to colN";
 }
 
 } // namespace

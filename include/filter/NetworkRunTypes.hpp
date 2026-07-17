@@ -453,7 +453,7 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///     satellite code-bias datum constraint rows (SB_SOLVEGLUE, W6 block).
 ///   - cap_priors: SH-VTEC pre-gate prior (networkInjectShVtecPrior_), Fix-A
 ///     held phase-bias datum prior (networkInjectPhaseHoldPrior_), the
-///     drop-and-heal soft anchors (healNearNullPhaseBias, gate-failure path),
+///     drop-and-heal soft anchors (NetworkPhaseDatum healNearNullPhaseBias, gate-failure path),
 ///     the D2 diagonal carry prior + dense-fallback leftovers
 ///     (networkInjectD2CarryPrior_), the two-state clock-model prior
 ///     (networkInjectClockOscPrior_), and the a-priori satellite-clock
