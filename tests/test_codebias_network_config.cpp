@@ -1876,3 +1876,40 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
         std::error_code ec; fs::remove(p, ec);
     }
 }
+
+// Per-sample bridge iono de-bias (the 60-ep age-bias fix): defaults OFF
+// (byte-identical raw accumulation); parses when armed with the bridge;
+// inert-warns (loads) without ewl_enable.
+TEST(CodeBiasNetworkConfig, BridgeSampleDebiasContract) {
+    LogManager log;
+    {
+        const fs::path p = writeTempConfig("psd_default",
+            networkConfig(kGpsGal, kPriosGps, ""));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_FALSE(cfg.getNetworkConfig().mw_wl.bridge_sample_debias);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("psd_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"mw_wl\": { \"ewl_enable\": true, "
+                "\"bridge_sample_debias\": true },\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        EXPECT_TRUE(cfg.getNetworkConfig().mw_wl.bridge_sample_debias);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    {
+        const fs::path p = writeTempConfig("psd_inert",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"mw_wl\": { \"bridge_sample_debias\": true },\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log))
+            << "bridge_sample_debias without ewl_enable must warn, not reject.";
+        EXPECT_TRUE(cfg.getNetworkConfig().mw_wl.bridge_sample_debias);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}

@@ -534,9 +534,22 @@ namespace GnssProcessor {
             // Lane-A phase (m) = λ_A·(φ_sa−φ_sb); lane-B phase (m) = λ_B·(φ_hi−φ_lo).
             // GF = φ_A − φ_B is geometry-free → λ_A·N_A − λ_B·N_B + differential-iono
             // residue + phase noise; N_B = N_hi − N_lo matches the MW(hi,lo) integer.
-            const double gf = lam_wl * (L1c - L2c)
-                            - lam_ewl * (b2_hi ? (L2c - L5c) : (L5c - L2c));
+            double gf = lam_wl * (L1c - L2c)
+                      - lam_ewl * (b2_hi ? (L2c - L5c) : (L5c - L2c));
             if (!std::isfinite(gf)) return;
+            // Per-sample iono de-bias (setBridgePerSampleDebias — the 60-ep age-bias
+            // fix): fold GF_k − C_iono·ı̃(t_k) so the accumulated statistic is a
+            // STATIONARY estimable-function realization; every downstream consumer
+            // (Welford mean, prev_gf staging, gross-jump guard) then compares like
+            // frames.  A sample without an estimate is skipped, never mixed-frame.
+            if (bridge_debias_) {
+                const auto iit = bridge_iono_.find(obs.satellite);
+                if (iit == bridge_iono_.end() || !std::isfinite(iit->second)) {
+                    ++bridge_debias_skipped_;
+                    return;
+                }
+                gf -= iono_co * iit->second;
+            }
 
             BridgeArcStats& st = bridge_stats_[key];
 

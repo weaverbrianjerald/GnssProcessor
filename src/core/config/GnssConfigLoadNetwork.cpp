@@ -429,6 +429,9 @@ namespace GnssProcessor {
                           mw.uwl_family_min_arcs);
                 mw.uwl_family_min_arcs = 1;
             }
+            // 60-ep age-bias fix: per-sample estimable-iono de-bias of the bridge.
+            mw.bridge_sample_debias = jval<bool>(json, "network.mw_wl.bridge_sample_debias",
+                                                 "network_mw_wl_bridge_sample_debias", false);
             mw.uwl_cold_fix = jval<bool>(json, "network.mw_wl.uwl_cold_fix",
                                          "network_mw_wl_uwl_cold_fix", false);
             mw.uwl_cold_sigma_m = jval<double>(json, "network.mw_wl.uwl_cold_sigma_m",
@@ -2185,6 +2188,16 @@ namespace GnssProcessor {
                           "AND network.lane_carry.enable — the admissible-pair census extends "
                           "the JOINT pair census (uwl) and the family groups are lane-carry "
                           "pair groups.");
+            // ---- Per-sample bridge de-bias (60-ep age-bias fix) contract. ----
+            if (mw.bridge_sample_debias && !mw.ewl_enable)
+                log->warn("Network: network.mw_wl.bridge_sample_debias is INERT without "
+                          "ewl_enable — it changes how the WL-2 GF bridge accumulates.");
+            if (mw.bridge_sample_debias && mw.ewl_enable)
+                log->info("Network bridge PER-SAMPLE iono de-bias ON (60-ep age-bias fix) — "
+                          "bridge samples fold as GF_k − C_iono·ı̃(t_k) (estimable-iono, "
+                          "one-epoch-lagged push; Σc·ı̃ over a closed cycle = ∇ΔI exactly, "
+                          "Odijk 2016 Table 8); the read-time de-bias is disabled.  The "
+                          "decision statistic is stationary at arbitrary arc age.");
             if (mw.uwl_enable && mw.uwl_mid_enable)
                 log->info("Network UWL-1 E6 MID HOP ON — the Galileo WL determination chains "
                           "top({}) → (E6,E5a) λ 2.931 m (rounded mid integer) → WL λ 0.751 m, "

@@ -1505,6 +1505,10 @@ int Application::runNetwork() {
     // λ ≥ uwl_cold_min_lambda_m (SPEC §3.3 — GPS's 5.861 m EWL deliberately excluded).
     const bool uwl_on      = ewl_on && nmw.uwl_enable;
     const bool uwl_cold_on = uwl_on && nmw.uwl_cold_fix;
+    // 60-ep age-bias fix: the bridge accumulates PER-SAMPLE iono-de-biased GF, so
+    // every read-time C_iono·Σc·ı̃ subtraction is DISABLED (the frames must never
+    // mix — subtracting twice re-creates the bias with the opposite sign).
+    const bool bridge_debias_on = ewl_on && nmw.bridge_sample_debias;
     // E6 mid-ladder bridge hop (census-motivated): chain the WL decision through the
     // Galileo (E6,E5a) λ 2.931 m rung — re-rounding at λ_MID strips the top hop's
     // λ-scale phase/iono amplification before it reaches the 0.751 m WL statistic.
@@ -5237,12 +5241,22 @@ int Application::runNetwork() {
                         if (static_cast<Eigen::Index>(sidx) < x_lin.size())
                             lin_of[{es, col}] = x_lin(static_cast<Eigen::Index>(sidx));
                     }
-                    if (wl_inject_on || lane_bridge_on)
+                    if (wl_inject_on || lane_bridge_on) {
+                        std::map<std::string, double> sat_iono;   // per-sample de-bias push
                         for (const auto& [sat, iidx] : stations[i].sm->getIonosphereStates()) {
                             const Eigen::Index ii = static_cast<Eigen::Index>(iidx);
-                            if (ii >= 0 && ii < x_lin.size())
+                            if (ii >= 0 && ii < x_lin.size()) {
                                 iono_of[{ static_cast<int>(i), sat }] = x_lin(ii);
+                                if (bridge_debias_on) sat_iono[sat] = x_lin(ii);
+                            }
                         }
+                        // 60-ep age-bias fix: push this station's estimable slant-iono
+                        // values for the detector's per-sample bridge de-bias.  Applies
+                        // from the NEXT detector pass (one-epoch lag, F1-consistent);
+                        // idempotent within an epoch (RAIM re-solve safe).
+                        if (bridge_debias_on && stations[i].mw_slip)
+                            stations[i].mw_slip->setBridgeIonoEstimates(std::move(sat_iono));
+                    }
                 }
                 // WL-3: network-preferred channel per (constellation, band).  The
                 // lexicographic tie-break fragments the primary pairs across stations
@@ -6234,7 +6248,8 @@ int Application::runNetwork() {
                         && !(dual_cons && lane_incr_done.count({ fx.block, fx.row }))) {
                         constexpr double kLaneBridgeSigmaFloorCyc = 0.02;   // phase-precision floor
                         if (raw_ok) {
-                            const double z_raw = (sum_gf_raw - iono_co * iono_dd
+                            const double z_raw = (sum_gf_raw
+                                                  - (bridge_debias_on ? 0.0 : iono_co * iono_dd)
                                                   + lam_ewl * static_cast<double>(fx.integer)) / lam_wl;
                             const double y_raw = z_raw - (z_lin1 / lam1 - z_lin2 / lam2);
                             const double R_raw = std::max(R_gf_raw,
@@ -6255,7 +6270,10 @@ int Application::runNetwork() {
                     // de-bias removes the integer-valued differential-iono bias (the v1
                     // falsification); the residual DD-iono ESTIMATE error surfaces in |frac|.
                     const double sigma_direct = std::sqrt(std::max(R_bridge, 0.0));   // Welford phase noise
-                    const double z_wl_direct  = (sum_gf - iono_co * iono_dd
+                    // Per-sample de-bias armed ⇒ sum_gf is already iono-free frame-by-
+                    // frame; the read-time subtraction is DISABLED (never subtract twice).
+                    const double z_wl_direct  = (sum_gf
+                                                 - (bridge_debias_on ? 0.0 : iono_co * iono_dd)
                                                  + lam_ewl * static_cast<double>(fx.integer)) / lam_wl;
 
                     // --- E6 mid hop: chain top → mid → WL.  Hop-hi determines the mid-rung
@@ -6268,7 +6286,8 @@ int Application::runNetwork() {
                     bool   used_mid = false;
                     if (mid_ok && lam_mid > 0.0) {
                         const double sigma_hi = std::sqrt(std::max(R_hi, 0.0));
-                        const double z_mid = (sum_gf_hi - iono_co_hi * iono_dd
+                        const double z_mid = (sum_gf_hi
+                                              - (bridge_debias_on ? 0.0 : iono_co_hi * iono_dd)
                                               + lam_ewl * static_cast<double>(fx.integer)) / lam_mid;
                         const double m = std::round(z_mid);
                         bool mid_fix = sigma_hi < nmw.wl_fix_sigma_cyc
@@ -6282,7 +6301,9 @@ int Application::runNetwork() {
                             ++wc.mid_fallback;
                         }
                         if (mid_fix) {
-                            z_wl = (sum_gf_lo - iono_co_lo * iono_dd + lam_mid * m) / lam_wl;
+                            z_wl = (sum_gf_lo
+                                    - (bridge_debias_on ? 0.0 : iono_co_lo * iono_dd)
+                                    + lam_mid * m) / lam_wl;
                             sigma_bridge = std::sqrt(std::max(R_lo, 0.0));
                             used_mid = true;
                         }

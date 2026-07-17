@@ -547,6 +547,50 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Arm the PER-SAMPLE iono de-bias of the bridge accumulator
+         *        (@c network.mw_wl.bridge_sample_debias — the 60-epoch age-bias fix).
+         *
+         * The raw @f$GF_b@f$ observable contains @f$C_{iono}\,I_1@f$ (the bridge is
+         * geometry-free, NOT iono-free).  The WL-2 §3.4 v2 READ-time de-bias subtracts
+         * @f$C_{iono}\,\tilde\imath(t_{now})@f$ from a Welford mean that accumulated
+         * @f$C_{iono}\,\mathrm{mean}(I)@f$ over the ARC'S LIFETIME — a frame mismatch
+         * whose residual @f$C_{iono}(\mathrm{mean}(I)-I_{now})@f$ grows with iono drift
+         * (measured: constrained-lane circR 0.89 → 0.24 over 60 epochs as re-decisions
+         * starve).  Armed, each sample folds as @f$GF_k - C_{iono}\,\tilde\imath(t_k)@f$
+         * instead — a STATIONARY estimable-function realization (Odijk 2016 Table 8:
+         * the S-basis code-bias lumps in @f$\tilde\imath@f$ are per-receiver /
+         * per-satellite constants that cancel in the closed DD cycle, so the cycle sum
+         * of the subtraction equals the true @f$\nabla\Delta I@f$ exactly).
+         *
+         * FRAME CONTRACT: with the flag armed, @ref arcBridge / @ref arcBridgeLast /
+         * @ref arcBridgeCold serve IONO-DE-BIASED means/samples — the consumer must NOT
+         * subtract @f$C_{iono}\,\Sigma c\,\tilde\imath@f$ again at read time.  The
+         * estimates arrive via @ref setBridgeIonoEstimates one epoch lagged (the F1
+         * discipline); a sample whose satellite has no pushed estimate is SKIPPED
+         * (counted via @ref bridgeDebiasSkipped) — cold-start epoch 1 only, since the
+         * iono state persists across slips (the post-slip re-warm path is unaffected).
+         * Default OFF ⇒ byte-identical raw accumulation.
+         */
+        void setBridgePerSampleDebias(bool on) { bridge_debias_ = on; }
+
+        /**
+         * @brief Push this station's per-satellite estimable slant-iono values
+         *        @f$\tilde\imath@f$ (m, L1-referenced — the estimator's iono states)
+         *        for the per-sample bridge de-bias.  Pushed once per epoch by
+         *        ApplicationNetwork (values are the PRIOR epoch's linearization at
+         *        push time, applying to the NEXT detector pass — one-epoch lag by
+         *        construction).  Idempotent within an epoch (RAIM re-solve safe).
+         */
+        void setBridgeIonoEstimates(std::map<std::string, double> iono_m) {
+            bridge_iono_ = std::move(iono_m);
+        }
+
+        /// @return Samples skipped by the armed per-sample de-bias for want of an iono
+        ///         estimate (expected: first cold-start epoch only; a growing count on
+        ///         a warm run means the push wiring is broken — invariant #4).
+        std::size_t bridgeDebiasSkipped() const { return bridge_debias_skipped_; }
+
+        /**
          * @brief A per-arc geometry-free WL↔EWL phase bridge Welford summary (M5 card WL-2).
          *
          * The bridge observable @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, PHASE ONLY: no
@@ -883,6 +927,15 @@ namespace GnssProcessor {
          *  bridge band pick.  Empty = the legacy hardcoded {1,2,5} scan for every
          *  constellation (byte-identical). */
         std::map<char, MwLaneTier> lane_tiers_;
+
+        /** Per-sample bridge iono de-bias (@ref setBridgePerSampleDebias).  Default
+         *  OFF ⇒ raw accumulation, byte-identical. */
+        bool bridge_debias_{ false };
+        /** Per-satellite estimable slant iono @f$\tilde\imath@f$ (m, L1-referenced)
+         *  for the armed de-bias (@ref setBridgeIonoEstimates; one-epoch-lagged). */
+        std::map<std::string, double> bridge_iono_;
+        /** Armed-de-bias samples skipped for want of an estimate (invariant #4). */
+        std::size_t bridge_debias_skipped_{ 0 };
 
         /** Gross-jump refloat guard for a bridge arc (m): a WL/EWL cycle slip the ambiguity
          *  funnel somehow missed jumps @f$GF_b@f$ by ≥ @f$\lambda_{WL}\approx 0.86@f$ m (a

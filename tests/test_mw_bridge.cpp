@@ -544,6 +544,87 @@ TEST(MwBridge, DualTopFallbackFormsWithoutPreferredBand) {
     EXPECT_FALSE(single.arcBridge("E11", "L1C", "L5Q", "L7Q").valid);
 }
 
+// =====================================================================
+// Per-sample bridge iono de-bias (network.mw_wl.bridge_sample_debias) —
+// the 60-epoch age-bias fix.  The raw GF Welford accumulates C_iono·I over
+// the arc's LIFETIME while the read-time de-bias subtracts C_iono·ı̃(now);
+// per-sample folding (GF_k − C_iono·ı̃(t_k)) makes the statistic stationary.
+// =====================================================================
+
+// THE fix gate: under a linear iono drift injected into the phases, the raw
+// arc's mean is biased by C_iono·mean(I) and its variance is drift-inflated;
+// the armed arc folds stationary samples — mean = the true constant, variance
+// collapses.  (Drift injected via the L5 phase so gf_k = gf0 + C_iono·I_k;
+// the matching ı̃_k push uses the SAME C_iono frame the detector computes.)
+TEST(MwBridge, PerSampleDebiasStationaryUnderIonoDrift) {
+    LogManager log; GnssConfig cfg;
+    MwSlipDetector raw(cfg, log), deb(cfg, log);
+    raw.setBridgeEnabled(true);
+    deb.setBridgeEnabled(true);
+    deb.setBridgePerSampleDebias(true);
+
+    const double gf0 = handGf(100.0, 80.0, 70.0);
+    std::vector<double> iono;   // I_k ramp (m): 0.0, 0.1, ... — a strong 30-min-class drift
+    for (int k = 0; k < 6; ++k) iono.push_back(0.1 * k);
+    for (int k = 0; k < 6; ++k) {
+        // gf_k = gf0 + C_iono·I_k  ⇔  L5c_k = L5c0 + C_iono·I_k/λ_EWL (∂gf/∂L5c = +λ_EWL).
+        const double l5 = 70.0 + (kIonoCoeff * iono[k]) / kLamEwl;
+        deb.setBridgeIonoEstimates({ { "G01", iono[k] } });
+        raw.detectLargeMwResets({ triObs("G01", 100000.0 + k, 100.0, 80.0, l5) });
+        deb.detectLargeMwResets({ triObs("G01", 100000.0 + k, 100.0, 80.0, l5) });
+    }
+    const auto br = raw.arcBridge("G01", "L1C", "L2W", "L5Q");
+    const auto bd = deb.arcBridge("G01", "L1C", "L2W", "L5Q");
+    ASSERT_TRUE(br.valid);
+    ASSERT_TRUE(bd.valid);
+    // Armed: every folded sample equals gf0 exactly ⇒ stationary.
+    EXPECT_NEAR(bd.gf_mean_m, gf0, 1e-9);
+    EXPECT_LT(bd.var_of_mean_m2, 1e-18);
+    EXPECT_EQ(deb.bridgeDebiasSkipped(), 0u);
+    // Raw: mean biased by C_iono·mean(I over the lagged window), variance inflated.
+    EXPECT_GT(std::abs(br.gf_mean_m - gf0), 0.05);
+    EXPECT_GT(br.var_of_mean_m2, 1e3 * std::max(bd.var_of_mean_m2, 1e-30));
+}
+
+// A sample without a pushed estimate is SKIPPED (counted), never folded raw
+// into a de-biased arc (mixed frames are the disease); the arc simply warms
+// once estimates arrive.
+TEST(MwBridge, PerSampleDebiasSkipsWithoutEstimate) {
+    LogManager log; GnssConfig cfg;
+    MwSlipDetector det(cfg, log);
+    det.setBridgeEnabled(true);
+    det.setBridgePerSampleDebias(true);
+    driveConst(det, "G05", 3, 100.0, 80.0, 70.0);            // no estimates pushed
+    EXPECT_EQ(det.bridgeDebiasSkipped(), 3u);
+    EXPECT_FALSE(det.arcBridge("G05", "L1C", "L2W", "L5Q").valid);
+    EXPECT_FALSE(det.arcBridgeCold("G05", "L1C", "L2W", "L5Q").valid);
+    det.setBridgeIonoEstimates({ { "G05", 0.25 } });          // estimates arrive
+    driveConst(det, "G05", 3, 100.0, 80.0, 70.0, /*tow0=*/100003.0);
+    EXPECT_EQ(det.bridgeDebiasSkipped(), 3u);                 // no further skips
+    const auto b = det.arcBridge("G05", "L1C", "L2W", "L5Q");
+    ASSERT_TRUE(b.valid);
+    EXPECT_NEAR(b.gf_mean_m, handGf(100.0, 80.0, 70.0) - kIonoCoeff * 0.25, 1e-9);
+}
+
+// Default OFF is byte-neutral: pushed estimates are ignored, accumulation is
+// bit-identical to a never-pushed detector, and nothing is counted skipped.
+TEST(MwBridge, PerSampleDebiasOffIsRawByteIdentical) {
+    LogManager log; GnssConfig cfg;
+    MwSlipDetector plain(cfg, log), pushed(cfg, log);
+    plain.setBridgeEnabled(true);
+    pushed.setBridgeEnabled(true);                            // debias NOT armed
+    pushed.setBridgeIonoEstimates({ { "G09", 1.234 } });
+    driveConst(plain,  "G09", 5, 100.0, 80.0, 70.0);
+    driveConst(pushed, "G09", 5, 100.0, 80.0, 70.0);
+    const auto a = plain.arcBridge("G09", "L1C", "L2W", "L5Q");
+    const auto b = pushed.arcBridge("G09", "L1C", "L2W", "L5Q");
+    ASSERT_TRUE(a.valid);
+    ASSERT_TRUE(b.valid);
+    EXPECT_EQ(a.gf_mean_m, b.gf_mean_m);                      // bit-exact
+    EXPECT_EQ(a.var_of_mean_m2, b.var_of_mean_m2);
+    EXPECT_EQ(pushed.bridgeDebiasSkipped(), 0u);
+}
+
 // Dual + mid: BOTH hop-hi triples form ((6,5,8) and (6,5,7)) plus the shared
 // hop-lo (1,5,6); the chain identity holds against EACH top rung.
 TEST(MwBridge, DualTopMidFeedsBothHopHiTriples) {
