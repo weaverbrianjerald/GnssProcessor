@@ -108,6 +108,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
     src/core/app/ApplicationNetworkSetup.cpp
+    src/core/app/ApplicationNetworkAssembly.cpp
     src/core/app/NetworkRunContext.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
@@ -169,6 +170,7 @@ target_include_directories(gnss_core PUBLIC include)
 if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
         src/core/app/ApplicationNetwork.cpp
+        src/core/app/ApplicationNetworkAssembly.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)

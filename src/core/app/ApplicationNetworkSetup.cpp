@@ -885,6 +885,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // threaded) guarantees no insert ever races a concurrent fetch inside the
     // parallel region — the only shared-mutable hazard the thread-safety audit
     // found in the per-station call tree.
+    //
+    // INC-7 re-audit: the slip detectors' loggers ("mw_slip_detector",
+    // "if_slip_detector") are deliberately NOT on this list — they are
+    // first-touch-created by the detector CONSTRUCTORS in this (serial) setup
+    // phase above, before any parallel region runs, so the create-race cannot
+    // occur.  If detector construction ever moves out of the serial setup,
+    // add them here.
     if (parallel_on) {
         for (const char* lname : {
                 "ppp_model", "geometry", "antenna", "antenna_model", "corrections",

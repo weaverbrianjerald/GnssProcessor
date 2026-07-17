@@ -429,6 +429,14 @@ struct EpochStatusRow {
     std::optional<int>    n_arc_refloat;   ///< T2d: isolated-arc RAIM refloats THIS epoch (the churn metric; distinct from n_refloat_sats which is the CLOCK-refloat set).
 };
 
+/// Decomposition INC-7 (plan §Control flow): disposition of a relocated
+/// epoch-loop phase, consumed at the runNetwork call site.  SkipEpoch replaces
+/// a former epoch-loop `continue` (the site-specific bookkeeping — n_skipped,
+/// trace row, epoch-status row, prev_week/prev_tow advance — stays verbatim
+/// INSIDE the relocated body); StopRun is reserved for phases that formerly
+/// `break` (none at INC-7 — the max-duration break stays in the prologue).
+enum class EpochAction { Proceed, SkipEpoch, StopRun };
+
 /// @internal Per-epoch workspace of Application::runNetwork (decomposition
 /// INC-4).  Constructed FRESH at the top of every epoch iteration — NEVER
 /// hoisted for reuse: fresh construction IS the per-epoch reset semantics.
