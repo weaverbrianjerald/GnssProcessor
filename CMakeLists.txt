@@ -58,6 +58,7 @@ add_library(gnss_core STATIC
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
+    src/core/logging/NetworkRunTraces.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/RinexNavParser.cpp

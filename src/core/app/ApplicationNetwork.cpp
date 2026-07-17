@@ -85,6 +85,7 @@
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
+#include "logging/NetworkRunTraces.hpp" // INC-3: trace-stream ownership + open logic + roster + FlagRate
 #include "slip/MwLaneTiers.hpp"         // UWL-1 per-constellation lane-tier band table
 #include "slip/MwSlipDetector.hpp"      // T0 phase-leveling slip repair (Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
@@ -798,30 +799,9 @@ int Application::runNetwork() {
     // A tiny static CSV of the stations that actually loaded (id, role, ECEF) so
     // the pyviz worldmap reflects the real run, not just the config.  The
     // held-out closed-loop consumer (if any) is listed with role "held_out".
-    if (nc.trace_stations) {
-        std::error_code ec;
-        std::filesystem::create_directories(log_dir_, ec);
-        const std::filesystem::path roster_path = log_dir_ / "network_stations.csv";
-        std::ofstream roster(roster_path);
-        if (roster) {
-            roster << "station,role,ecef_x,ecef_y,ecef_z\n";
-            for (const auto& st : stations)
-                roster << st.name << ',' << (st.is_pivot ? "datum" : "network") << ','
-                       << fmt::format("{:.4f}", st.ecef.x()) << ','
-                       << fmt::format("{:.4f}", st.ecef.y()) << ','
-                       << fmt::format("{:.4f}", st.ecef.z()) << '\n';
-            if (closed_loop_on) {
-                const auto& p = cl.station.position_ecef;
-                roster << cl.station.name << ",held_out,"
-                       << fmt::format("{:.4f}", p[0]) << ','
-                       << fmt::format("{:.4f}", p[1]) << ','
-                       << fmt::format("{:.4f}", p[2]) << '\n';
-            }
-            log->info("Network: wrote station roster {}", roster_path.string());
-        } else {
-            log->warn("Network: failed to open station roster {}", roster_path.string());
-        }
-    }
+    if (nc.trace_stations)
+        NetworkRunTraces::writeStationRoster(log_dir_, stations,
+                                             closed_loop_on ? &cl.station : nullptr, log);
 
     // === Per-station compute parallelism ====================================
     // PASS A (geometry) and the produce half of PASS B (measurement assembly) are
@@ -1129,78 +1109,44 @@ int Application::runNetwork() {
     double cl_first_fix_tow = -1.0; int cl_first_fix_week = -1;
     std::deque<double> cl_recent_err3d;   // last-N 3D errors → converged-segment RMS
     constexpr std::size_t kClRecentWindow = 30;
-    std::ofstream cl_trace;
 
     // D2 process noise (variance growth per second) for the carry-forward prior.
     const double q_clock = config_.getProcessNoise().sat_clock;        // m²/s
     const double q_pb    = config_.getProcessNoise().sat_phase_bias;   // m²/s
     const double q_cb    = config_.getProcessNoise().sat_code_bias;    // m²/s (W6 OSB carry-forward)
 
-    // --- Trace --------------------------------------------------------------
-    // P1: the three UNBOUNDED service CSVs (always-on network_trace.csv +
-    // network_solution.csv, and the RTB-6 health heartbeat) rotate size-based
-    // behind network.trace_rotate_mb.  Their header lines are hoisted into named
-    // constants so the rotation reopen re-writes the IDENTICAL header the
-    // startup open wrote — every rolled generation parses standalone.  Rotated
-    // .1….keep suffixes are NOT auto-discovered by the pyviz viewers (they read
-    // only the live file name); the operator concatenates the chain or points a
-    // viewer at one generation — see docs/rt_service_operations.md.
-    std::ofstream trace;
-    const std::filesystem::path trace_path = log_dir_ / "network_trace.csv";
-    static constexpr const char* kTraceHeader =
-        "week,tow,n_present,n_clock_sats,n_phase_bias,declared_dim,"
-        "gate_ok,solved,rms_clock_m,max_clock_m,n_pivot_pins\n";
-    // Per-satellite product trace: the actual emitted solution (long format, one
-    // row per shared parameter per epoch) so the producer's output is inspectable
-    // — per-sat clock-Δ continuity, phase-bias stability, and discontinuity bumps.
-    std::ofstream soln;
-    const std::filesystem::path soln_path = log_dir_ / "network_solution.csv";
-    static constexpr const char* kSolnHeader = "week,tow,sat,kind,signal,value_m,disc_counter\n";
-    // Per-station, per-satellite back-substituted slant ionosphere (viz): one row
-    // per (station, sat) each emitted epoch, with the measured elevation/azimuth
-    // so the pyviz viewer can map each estimate to its ionospheric pierce point.
-    std::ofstream iono_trace;
-    const std::filesystem::path iono_path = log_dir_ / "network_ionosphere.csv";
-    // Per-epoch co-estimated SH-VTEC coefficient trace (estimate_iono_sh +
-    // global_vtec_sh.trace): one row per (n,m,trig) coefficient with its value and
-    // formal std (TECU), so the estimated field is inspectable / comparable to a GIM.
-    std::ofstream vtec_sh_trace;
-    const std::filesystem::path vtec_sh_path = log_dir_ / "network_vtec_sh.csv";
-    // T1a: per-epoch SH-field HEALTH trace (same gate as the coefficient trace) —
-    // one row per emitted epoch summarising the estimated mean VTEC (a₀₀ + formal σ),
-    // the coefficient RMS by degree, the ratio of that RMS to the per-degree Kaula
-    // prior σ, and the network-wide SH→slant misfit (mean/rms/max |residual| plus the
-    // 3σ-exceedance counts).  Makes the a₀₀ divergence (+296 → −91 TECU) and the
-    // per-(station,sat) misfit squeezed into the ambiguities visible + attributable.
-    std::ofstream vtec_sh_health_trace;
-    const std::filesystem::path vtec_sh_health_path = log_dir_ / "network_vtec_sh_health.csv";
-    // Deep-investigation slip/RAIM diagnostics (network.trace_slip_events): the IF-phase
-    // pre-detector's per-(station,sat,pair) ΔΔφ_IF and full threshold decision each epoch,
-    // and RAIM's per-(sat,station) post-fit standardized residual + cross-station consensus.
-    // The pair of files that make an IF-slip "need to reset" and a RAIM trigger inspectable.
-    std::ofstream if_slip_trace;
-    const std::filesystem::path if_slip_trace_path = log_dir_ / "network_if_slip.csv";
-    std::ofstream raim_trace;
-    const std::filesystem::path raim_trace_path = log_dir_ / "network_raim.csv";
-    std::ofstream raim_attrib_trace;
-    const std::filesystem::path raim_attrib_trace_path = log_dir_ / "network_raim_attrib.csv";
-    // Per-satellite clock-monitor diagnostics (network.clock_monitor + trace_slip_events):
-    // one row per satellite near or over the refloat bound each epoch, so the abs/jump
-    // decision and the resulting reinit are inspectable against the emitted clock series.
-    std::ofstream clk_mon_trace;
-    const std::filesystem::path clk_mon_trace_path = log_dir_ / "network_clock_monitor.csv";
-    // B7: per-satellite a-priori-clock-anchor information fraction (anchor_info /
-    // reduced-normals total_info) each emitted epoch, so validation can certify the
-    // estimable clock is DATA-dominated, not defined by the a-priori CODE product it
-    // is softly anchored to.  Pure diagnostic (network.trace_anchor_info).
-    std::ofstream anchor_info_trace;
-    const std::filesystem::path anchor_info_trace_path = log_dir_ / "network_anchor_info.csv";
-    // B5: cross-station between-satellite DD float ambiguities (from reconstructStation),
-    // per (const,signal), with their fractional-cycle residual — a sign-convention
-    // self-check + empirical <0.1-cycle-support evidence for user AR (gate for producer
-    // AR).  Pure diagnostic (network.trace_dd_fractional).
-    std::ofstream dd_frac_trace;
-    const std::filesystem::path dd_frac_trace_path = log_dir_ / "network_dd_fractional.csv";
+    // --- Trace ----------------------------------------------------------------
+    // Stream + path ownership and the startup open logic live in
+    // logging/NetworkRunTraces (decomposition INC-3); each stream's full
+    // documentation — column semantics, arming toggle, P1 rotation policy — is
+    // on the member in that header.  The references below keep every writer
+    // use-site in this TU textually unchanged; the per-epoch writers themselves
+    // still live here and move with the increments that introduce the state
+    // they read (INC-4+).
+    NetworkRunTraces traces(log_dir_);
+    auto& cl_trace             = traces.cl_trace;
+    auto& trace                = traces.trace;
+    auto& soln                 = traces.soln;
+    auto& iono_trace           = traces.iono_trace;
+    auto& vtec_sh_trace        = traces.vtec_sh_trace;
+    auto& vtec_sh_health_trace = traces.vtec_sh_health_trace;
+    auto& if_slip_trace        = traces.if_slip_trace;
+    auto& raim_trace           = traces.raim_trace;
+    auto& raim_attrib_trace    = traces.raim_attrib_trace;
+    auto& clk_mon_trace        = traces.clk_mon_trace;
+    auto& anchor_info_trace    = traces.anchor_info_trace;
+    auto& dd_frac_trace        = traces.dd_frac_trace;
+    auto& slip_raw_trace       = traces.slip_raw_trace;
+    auto& epoch_status_trace   = traces.epoch_status_trace;
+    auto& health_trace         = traces.health_trace;
+    auto& events_trace         = traces.events_trace;
+    auto& zwd_trace            = traces.zwd_trace;
+    auto& station_res_trace    = traces.station_res_trace;
+    auto& carry_vce_trace      = traces.carry_vce_trace;
+    // Paths referenced outside the open logic (P1 rotation + the exit summary).
+    const auto& trace_path        = traces.trace_path;
+    const auto& soln_path         = traces.soln_path;
+    const auto& health_trace_path = traces.health_trace_path;
     std::unique_ptr<PppUtils> dd_ppp_utils;   // B5: wavelength provider (built only when the DD trace is on)
     // Producer-side network AR (network.ambiguity_resolution, Phase 2+): a
     // wavelength provider for the between-station DD meters→cycles conversion,
@@ -1209,312 +1155,13 @@ int Application::runNetwork() {
     const auto& netar = nc.ambiguity_resolution;
     std::unique_ptr<PppUtils> ar_ppp_utils;
     if (netar.enable) ar_ppp_utils = std::make_unique<PppUtils>(log_manager_);
-    // RAW cycle-slip observables per (station,sat) every epoch (network.trace_slip_raw):
-    // Melbourne-Wübbena, geometry-free L1−L2, first-signal phase-minus-code (all m) and the
-    // per-band RINEX LLI — computed from raw_observed, INDEPENDENT of any detector being on.
-    // The always-available "was there a slip on ANY sat here?" table; in particular the only
-    // network CSV that surfaces the receiver LLI ground truth.  Epoch diffs are formed offline.
-    std::ofstream slip_raw_trace;
-    const std::filesystem::path slip_raw_trace_path = log_dir_ / "network_slip_raw.csv";
     std::unique_ptr<PppUtils> slip_raw_ppp_utils;  // wavelength provider (built only when the raw-slip trace is on)
-    // L1: per-epoch disposition + σ̂0 + clock-stats trace (network.trace_epoch_status).
-    // ONE row per processed epoch (emitted OR skipped) — the disposition timeline the
-    // V1/V3/V6 validation cards are judged on.  Off by default (byte-identical when OFF).
-    std::ofstream epoch_status_trace;
-    const std::filesystem::path epoch_status_trace_path = log_dir_ / "network_epoch_status.csv";
-    // RTB-6: operator health heartbeat (network.health_interval_s > 0) — a periodic
-    // machine-readable @c network_service_health.csv appended every N s of CONTENT
-    // time so a long-running service is observable without waiting for the exit
-    // summary.  Named "service_health" because the pyviz viewer called
-    // network_health reads network_trace.csv — a DIFFERENT surface (per-epoch
-    // estimability, not service liveness).  sigma0_ewma reports −1 ("unavailable")
-    // unless its feeding tiers (emit_ura + raim + phase_leveling) are all armed —
-    // the EWMA only updates inside the warm post-fit RAIM block, so without them it
-    // would silently freeze at its 1.0 init.  Off by default (byte-identical when
-    // OFF: no file opened, no rows written).  Column semantics:
-    // docs/rt_service_operations.md.
-    std::ofstream health_trace;
-    const std::filesystem::path health_trace_path = log_dir_ / "network_service_health.csv";
-    static constexpr const char* kHealthHeader =
-        "week,tow,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,"
-        "n_runaway_epochs,sigma0_ewma,n_present,n_clock_sats,"
-        "ms_per_epoch_window,last_emit_age_s,pivot,cold_start_grade_s\n";
-    // L2: structured per-event QC log (network.trace_events).  One LONG-format row per
-    // discrete QC action across every tier — the machine-readable replacement for
-    // spdlog regex-scraping.  Off by default (byte-identical when OFF).
-    std::ofstream events_trace;
-    const std::filesystem::path events_trace_path = log_dir_ / "network_events.csv";
-    // L7: per-station ZWD trace (network.trace_zwd) — estimated ZWD + datum-conditioned
-    // formal σ + carried flag, per present station each emitted epoch (V7 instrument).
-    std::ofstream zwd_trace;
-    const std::filesystem::path zwd_trace_path = log_dir_ / "network_zwd.csv";
-    // L13: per-station residual field (network.trace_station_residuals) — EVERY post-fit RAIM
-    // cell (non-pivot station x sat) with s_raw / s_norm / σ̂0.  Heavy opt-in deep trace.
-    std::ofstream station_res_trace;
-    const std::filesystem::path station_res_trace_path = log_dir_ / "network_station_residuals.csv";
-    // M2 (LS-VCE): per-hour measured carry-variance components — one row per
-    // (family, constellation) whenever the content hour rolls over.  floor_m2 is
-    // the honest constant-cofactor σ̂ to compare against the hand var_floor;
-    // rate_m2ps the honest Δt-cofactor σ̂ to compare against q_amb; ratio =
-    // floor_m2 / config floor (>1 ⇒ the hand floor is optimistic).  Off by
-    // default (byte-identical: no file, no rows).
-    std::ofstream carry_vce_trace;
-    const std::filesystem::path carry_vce_trace_path = log_dir_ / "network_carry_vce.csv";
-    static constexpr const char* kCarryVceHeader =
-        "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
-        "mean_floor_std,rate_m2ps,rate_std,cond,rate_frozen,cfg_floor_m2,"
-        "robust_ratio,mean_ratio,floor_clamp,rate_clamp\n";
-    {
-        std::error_code ec;
-        std::filesystem::create_directories(log_dir_, ec);
-        trace.open(trace_path);
-        if (trace) {
-            trace << kTraceHeader;
-        } else {
-            log->warn("Network: failed to open trace file {}", trace_path.string());
-        }
-        soln.open(soln_path);
-        if (soln) soln << kSolnHeader;
-        else log->warn("Network: failed to open solution trace {}", soln_path.string());
-
-        if (nc.trace_ionosphere) {
-            iono_trace.open(iono_path);
-            if (iono_trace)
-                iono_trace << "week,tow,station,sat,iono_m,elevation_deg,azimuth_deg\n";
-            else
-                log->warn("Network: failed to open ionosphere trace {}", iono_path.string());
-        }
-
-        if (config_.estimateNetworkIonoSh() && shc.trace) {
-            vtec_sh_trace.open(vtec_sh_path);
-            if (vtec_sh_trace)
-                vtec_sh_trace << "week,tow,n,m,trig,value_tecu,std_tecu\n";
-            else
-                log->warn("Network: failed to open SH-VTEC trace {}", vtec_sh_path.string());
-            // T1a health trace — one row per emitted epoch.  The per-degree columns are
-            // sized from the truncation degree N (deterministic header).
-            vtec_sh_health_trace.open(vtec_sh_health_path);
-            if (vtec_sh_health_trace && sh_model) {
-                std::string hdr = "week,tow,a00_tecu,a00_std_tecu,rms_all_tecu,"
-                                  "slant_resid_mean_m,slant_resid_rms_m,slant_resid_max_m,"
-                                  "n_los,n_los_gt3sigma,n_stations,n_stations_gt3sigma,a00_in_band";
-                for (int n = 0; n <= sh_model->maxDegree(); ++n)
-                    hdr += ",rms_deg" + std::to_string(n) + "_tecu";
-                for (int n = 0; n <= sh_model->maxDegree(); ++n)
-                    hdr += ",kaula_ratio_deg" + std::to_string(n);
-                hdr += "\n";
-                vtec_sh_health_trace << hdr;
-            } else if (!vtec_sh_health_trace) {
-                log->warn("Network: failed to open SH-VTEC health trace {}",
-                          vtec_sh_health_path.string());
-            }
-        }
-
-        if (closed_loop_on && consumer) {
-            const std::filesystem::path cl_path = log_dir_ / "closed_loop_trace.csv";
-            cl_trace.open(cl_path);
-            if (cl_trace)
-                cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
-                            "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate\n";  // T2c: +ar_gate
-            else
-                log->warn("Network: failed to open closed-loop trace {}", cl_path.string());
-        }
-
-        if (nc.trace_slip_events) {
-            if_slip_trace.open(if_slip_trace_path);
-            if (if_slip_trace)
-                // dd = between-sat/between-epoch IF ΔΔφ (m); med = network pool median; s_pool
-                // = elevation-normalized pooled scale; ewma_scale/count = this station-pair's
-                // own EWMA scale + clean-sample count (decision-time, pre-update); w/s_eff =
-                // shrinkage weight + effective scale; elev_map = 1/sin el; thr/floor = gate;
-                // abs_dev = |dd−med|; flagged/carry_warm = decision + whether it refloated.
-                if_slip_trace << "week,tow,station,sat,sig1,sig2,elev_deg,dd_m,med_m,"
-                                 "s_pool_m,ewma_scale_m,count,w_shrink,s_eff_m,elev_map,"
-                                 "thr_m,floor_m,abs_dev_m,flagged,carry_warm\n";
-            else
-                log->warn("Network: failed to open IF-slip trace {}", if_slip_trace_path.string());
-            raim_trace.open(raim_trace_path);
-            if (raim_trace)
-                // One row per (sat, station) whose normalized post-fit residual spiked, or any
-                // station of a refloated sat: s_max_raw = v·√w (measurement-standardized), s_max_norm
-                // = that ÷ the robust a-posteriori variance factor sigma0, vs raim_k; the per-sat
-                // spiked-station count vs the min_sta consensus; and whether the sat was refloated.
-                raim_trace << "week,tow,sat,station,s_max_raw,s_max_norm,sigma0,raim_k,spiked,"
-                              "n_sta_spiked,min_sta,refloated\n";
-            else
-                log->warn("Network: failed to open RAIM trace {}", raim_trace_path.string());
-            raim_attrib_trace.open(raim_attrib_trace_path);
-            if (raim_attrib_trace)
-                // Prominence attribution (LOG-ONLY, does not change the refloat action):
-                // robust 2-way median polish of the (station × sat) post-fit residual table
-                // each RAIM epoch → per-dimension effect + robust-z prominence.  dim ∈
-                // {SAT, STA, SIG, ARC}; acted = whether today's per-sat consensus already
-                // refloats that entity (SAT/ARC only).  Only entities above the report
-                // prominence are emitted, so quiet epochs cost nothing.
-                raim_attrib_trace << "week,tow,dim,entity,effect,prominence,n_cells,overall,"
-                                     "sigma0,acted\n";
-            else
-                log->warn("Network: failed to open RAIM attribution trace {}",
-                          raim_attrib_trace_path.string());
-        }
-        if (nc.trace_slip_events && (config_.networkClockMonitor() || config_.networkClockModel())) {
-            clk_mon_trace.open(clk_mon_trace_path);
-            if (clk_mon_trace)
-                // clk = solved Δδtˢ (m); median = network median (gauge); dev = clk−median;
-                // prev_clk/jump = previous adjacent-epoch value + step (blank if unavailable);
-                // flag_abs/flag_jump = this monitor's own bounds; flag_ext = already flagged by
-                // the within-epoch / post-fit RAIM; refloated = carried clock reinitialized.
-                clk_mon_trace << "week,tow,sat,clk_m,median_m,dev_m,prev_clk_m,jump_m,"
-                                 "abs_max_m,jump_max_m,flag_abs,flag_jump,flag_ext,refloated,"
-                                 "nis,mode\n";   // L4: nis,mode appended (trailing-column format break)
-            else
-                log->warn("Network: failed to open clock-monitor trace {}",
-                          clk_mon_trace_path.string());
-        }
-        if (nc.trace_anchor_info) {
-            anchor_info_trace.open(anchor_info_trace_path);
-            if (anchor_info_trace)
-                // anchor_info = constant 1/initial_std.sat_clock² (m⁻²), the a-priori
-                // CODE-product Tikhonov pull; total_info = reduced shared-normals diagonal
-                // on this sat's clock column (data + carry prior + datum pin for the pivot);
-                // carry_info = the carried clock-prior info folded this epoch (scalar D2 or
-                // the two-state model); data_info = total − carry − anchor (pivot pin still
-                // in it, hence is_pivot); anchor_frac_data = anchor/(anchor+data) — the
-                // HONEST data-vs-anchor fraction, INDEPENDENT of carry stiffness (P1-4);
-                // carry_frac = carry/total exposes a carry-dominated lock-in (high ⇒ the
-                // clock is defined by its own past, not by data); frac = the legacy
-                // anchor/total (kept for continuity; misleads for a locked-in clock).
-                anchor_info_trace << "week,tow,sat,anchor_info,carry_info,data_info,total_info,"
-                                     "anchor_frac_data,carry_frac,frac,is_pivot\n";
-            else
-                log->warn("Network: failed to open anchor-info trace {}",
-                          anchor_info_trace_path.string());
-        }
-        if (nc.trace_dd_fractional) {
-            dd_frac_trace.open(dd_frac_trace_path);
-            if (dd_frac_trace) {
-                // Between-station DD of undifferenced float ambiguities (m): sat_i minus the
-                // per-(const,signal) reference sat, differenced across station pair (sta_a,
-                // sta_b).  P1-2: lambda_m / dd_cyc / frac_cyc are now computed here (frac_cyc =
-                // dd_cyc − round(dd_cyc)) so the CSV is directly a fractional-cycle histogram —
-                // the go/no-go instrument for float-bias user AR.  GLONASS (FDMA) and the pivot
-                // station (pinned ambiguities) are excluded from the pool below.
-                dd_frac_trace << "week,tow,cons,signal,sat_i,ref_sat,sta_a,sta_b,"
-                                 "dd_m,lambda_m,dd_cyc,frac_cyc,dd_sigma_cyc\n";  // T2a: +dd_sigma_cyc
-                dd_ppp_utils = std::make_unique<PppUtils>(log_manager_);
-            } else {
-                log->warn("Network: failed to open DD-fractional trace {}",
-                          dd_frac_trace_path.string());
-            }
-        }
-        if (nc.trace_slip_raw) {
-            slip_raw_trace.open(slip_raw_trace_path);
-            if (slip_raw_trace) {
-                // Per-(station,sat) RAW slip observables for the primary dual-freq pair, every
-                // epoch, computed straight from raw_observed (phase in cycles, code in metres) —
-                // NO dependence on any detector being armed.  mw_m/gf_m/l1_c1_m are absolute (the
-                // WL slip step is λ_WL≈0.86 m/cyc in mw_m, an L1/L2 slip jumps gf_m); lli1/lli2
-                // are the RINEX loss-of-lock flags for sig1/sig2 (bit 0 = slip).  Diff adjacent
-                // epochs offline for the slip signature.  Pivot station included (diagnostic).
-                slip_raw_trace << "week,tow,station,sat,sig1,sig2,elev_deg,"
-                                  "mw_m,gf_m,l1_c1_m,lli1,lli2\n";
-                slip_raw_ppp_utils = std::make_unique<PppUtils>(log_manager_);
-            } else {
-                log->warn("Network: failed to open raw-slip trace {}",
-                          slip_raw_trace_path.string());
-            }
-        }
-        if (nc.trace_epoch_status) {
-            epoch_status_trace.open(epoch_status_trace_path);
-            if (epoch_status_trace)
-                // ONE row per PROCESSED epoch, written before each `continue` (skip) and at
-                // the emit site.  disposition classifies WHY the epoch was skipped; sigma0 /
-                // n_adapt / n_refloat_sats / n_retro_applied / datum_changed capture the QC
-                // actions; clock_median_m/std_m/worst_sat/worst_dev_m are the clock-Δ spread
-                // (median+std+worst-sat convention).  BLANK (not 0) fields = not-in-scope at
-                // that disposition site.  sigma0_trigger/withhold_ceiling are config echoes so
-                // viewers draw honest threshold lines.  Note: fast-forward (start_offset_hours)
-                // and max-duration epochs are uncounted by design and write NO row.
-                epoch_status_trace << "week,tow,disposition,sigma0,n_adapt,n_present,"
-                                      "n_clock_sats,clock_median_m,clock_std_m,worst_sat,"
-                                      "worst_dev_m,n_refloat_sats,n_retro_applied,datum_changed,"
-                                      "sigma0_trigger,withhold_ceiling,n_arc_refloat\n";  // T2d: +n_arc_refloat (appended, positions preserved)
-            else
-                log->warn("Network: failed to open epoch-status trace {}",
-                          epoch_status_trace_path.string());
-        }
-        if (nc.health_interval_s > 0.0) {
-            // RTB-6: periodic operator health heartbeat.  Cumulative epoch tallies +
-            // σ̂0 EWMA + windowed ms/epoch + last-emit age + stations/clock-sats +
-            // realized pivots, appended every network.health_interval_s of content
-            // time.  A service supervisor (or a human) polls this instead of the
-            // exit-only summary.
-            health_trace.open(health_trace_path);
-            if (health_trace)
-                health_trace << kHealthHeader;
-            else
-                log->warn("Network: failed to open service-health trace {}",
-                          health_trace_path.string());
-            // P4(a): the σ̂0 EWMA updates ONLY inside the warm post-fit RAIM block
-            // (emit_ura && raim && phase_leveling); with any of them unarmed the
-            // column would silently report its frozen 1.0 init.  It emits the −1
-            // "unavailable" sentinel instead — warn once so the operator knows the
-            // quality channel of this heartbeat is dark, not clean.
-            if (!(config_.networkEmitUra() && config_.networkRaim()
-                  && config_.networkPhaseLeveling()))
-                log->warn("Network (RTB-6): health heartbeat is armed but the σ̂0 EWMA's "
-                          "feeding tiers are not (needs network.emit_ura + network.raim + "
-                          "network.phase_leveling; ura={}, raim={}, phase_leveling={}) — "
-                          "the sigma0_ewma column will report the -1 'unavailable' "
-                          "sentinel for this run.",
-                          config_.networkEmitUra(), config_.networkRaim(),
-                          config_.networkPhaseLeveling());
-        }
-        if (config_.networkCarryVce()) {
-            carry_vce_trace.open(carry_vce_trace_path);
-            if (carry_vce_trace)
-                carry_vce_trace << kCarryVceHeader;
-            else
-                log->warn("Network (M2/LS-VCE): failed to open carry-VCE trace {}",
-                          carry_vce_trace_path.string());
-        }
-        if (nc.trace_events) {
-            events_trace.open(events_trace_path);
-            if (events_trace)
-                // Long format: one row per discrete QC action.  tier in {T1_if_slip,
-                // T2_within_epoch, T3_raim, T4_attrib, T5_clock_model, T6_clock_monitor,
-                // GATE, SIGMA0, PIVOT, RETRO}.  statistic/threshold blank where not in
-                // scope; detail is comma-sanitized (',' -> ';').  Rows are written even on
-                // epochs that are subsequently WITHHELD — that is the disposition story.
-                events_trace << "week,tow,tier,event,sat,station,statistic,threshold,"
-                                "action,detail\n";
-            else
-                log->warn("Network: failed to open events trace {}", events_trace_path.string());
-        }
-        if (nc.trace_zwd) {
-            zwd_trace.open(zwd_trace_path);
-            if (zwd_trace)
-                // zwd_m = a-priori state + reconstructed correction (the estimated correction
-                // about the modeled a-priori); std_m = datum-conditioned formal σ; carried = a
-                // ZWD carry prior was actually injected this epoch.
-                zwd_trace << "week,tow,station,zwd_m,std_m,carried\n";
-            else
-                log->warn("Network: failed to open ZWD trace {}", zwd_trace_path.string());
-        }
-        if (nc.trace_station_residuals) {
-            station_res_trace.open(station_res_trace_path);
-            if (station_res_trace)
-                // One row per post-fit RAIM cell: non-pivot station (pivot never appears — it is
-                // skipped in the cell loop) x carried-ambiguity sat.  s_raw = measurement-
-                // standardized residual (B2-normalized when raim_redundancy_normalize on),
-                // s_norm = s_raw / σ̂0, sigma0 = the epoch robust variance factor.  s values are
-                // ABSOLUTE (non-negative).  Rows exist only for RAIM epochs (raim && carry_warm).
-                station_res_trace << "week,tow,station,sat,s_raw,s_norm,sigma0\n";
-            else
-                log->warn("Network: failed to open station-residual trace {}",
-                          station_res_trace_path.string());
-        }
-    }
+    traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
+    // B5/raw-slip wavelength providers — gated on the streams openAll just
+    // opened (same conditions as the former inline opens); constructed HERE
+    // because they need log_manager_, which the traces unit does not hold.
+    if (dd_frac_trace) dd_ppp_utils = std::make_unique<PppUtils>(log_manager_);
+    if (slip_raw_trace) slip_raw_ppp_utils = std::make_unique<PppUtils>(log_manager_);
 
     // L1: one network_epoch_status.csv row per processed epoch.  Fields not yet in
     // scope at a given disposition site are left BLANK (std::nullopt), NOT zero — the
@@ -2121,7 +1768,6 @@ int Application::runNetwork() {
     // as realized rate vs the implied one-sided Gaussian α for the configured k.  Never
     // fed back into any decision; every increment is guarded so OFF is byte-identical.
     const bool trace_flag_rates = nc.trace_flag_rates;
-    struct FlagRate { long opp = 0, flag = 0; };
     FlagRate fr_if_slip;    // T1 per (station,sat,pair) IF-phase sample   k=if_phase_td_k_mad
     FlagRate fr_we_trigger; // T2 per warm within-epoch epoch: σ̂0_first>trig k=sigma0_trigger
     FlagRate fr_raim_cell;  // T3 per (sat,station) standardized residual   k=raim_k
