@@ -560,11 +560,12 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     const std::filesystem::path sp3 = base / "products" / "COD0MGXFIN_20241290000_01D_05M_ORB.SP3";
     const std::filesystem::path clk = base / "products" / "COD0MGXFIN_20241290000_01D_30S_CLK.CLK";
     const std::filesystem::path nav = base / "products" / "BRDC00IGS_R_20241290000_01D_MN.rnx";
-    // IGS20 ANTEX for the satellite antenna PCO/PCV term — loaded into the provider
-    // ONLY when the sim config requests it (corrections.sat_antenna).  It is the same
-    // file the processor auto-loads in internal mode (files.internal_data_root/
-    // static/atx/igs20.atx), so the injected satellite antenna term cancels against
-    // the processor's own model when enable_satellite_pco/pcv are on.
+    // IGS20 ANTEX for the antenna PCO/PCV terms — loaded into the provider ONLY when
+    // the sim config requests one (corrections.sat_antenna for the satellite half,
+    // corrections.rx_antenna_type for the receiver half).  It is the same file the
+    // processor auto-loads in internal mode (files.internal_data_root/static/atx/
+    // igs20.atx), so the injected antenna terms cancel against the processor's own
+    // model when the matching enable_satellite_pco/pcv + enable_receiver_pco/pcv are on.
     const std::filesystem::path atx = root / "data" / "static" / "atx" / "igs20.atx";
     // The day's Earth Rotation Parameters (polar motion xp/yp + UT1-UTC).  Loaded
     // into the provider whenever a correction that consumes ERP geometry is
@@ -585,10 +586,17 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         }
     }
 
+    // EITHER antenna term needs the ATX.  The RECEIVER term is requested simply by
+    // naming a receiver antenna type — the same string that will be declared in the
+    // RINEX "ANT # / TYPE" header, so the file can never advertise one antenna while
+    // carrying another's pattern.
+    const bool want_rx_antenna = !scfg.corrections.rx_antenna_type.empty();
+    const bool want_antenna = scfg.corrections.sat_antenna || want_rx_antenna;
     std::vector<std::filesystem::path> products = { sp3, clk };
-    if (scfg.corrections.sat_antenna) {
+    if (want_antenna) {
         if (!std::filesystem::exists(atx)) {
-            std::cerr << "[" << tag << "] FAIL: corrections.sat_antenna set but ATX missing: "
+            std::cerr << "[" << tag << "] FAIL: an antenna correction (corrections.sat_antenna "
+                         "or corrections.rx_antenna_type) is set but the ATX is missing: "
                       << atx.string() << "\n";
             return 1;
         }
@@ -610,15 +618,16 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         products.push_back(erp);
     }
 
-    sim::EphemerisProvider eph(setup_obs, products, outdir / "logs", nav);
+    sim::EphemerisProvider eph(setup_obs, products, outdir / "logs", nav,
+                               scfg.corrections.rx_antenna_type);
     if (!eph.ok()) {
         std::cerr << "[" << tag << "] FAIL: EphemerisProvider setup\n";
         return 1;
     }
     // Fail loud rather than silently inject nothing if the ATX yielded no antennas.
-    if (scfg.corrections.sat_antenna && !eph.hasAntenna()) {
-        std::cerr << "[" << tag << "] FAIL: corrections.sat_antenna set but no satellite antenna "
-                     "model loaded from " << atx.string() << "\n";
+    if (want_antenna && !eph.hasAntenna()) {
+        std::cerr << "[" << tag << "] FAIL: an antenna correction is set but no antenna model "
+                     "loaded from " << atx.string() << "\n";
         return 1;
     }
     // Likewise fail loud if an ERP-consuming correction is on but no ERP entry
@@ -633,7 +642,12 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     std::cout << "[" << tag << "] provider ready: " << eph.orbitNodeCount() << " orbit nodes, "
               << eph.clockSampleCount() << " clock samples";
     if (need_erp) std::cout << " (+" << eph.erpNodeCount() << " ERP entries)";
-    if (eph.hasAntenna()) std::cout << " (+satellite antenna PCO/PCV)";
+    if (eph.hasAntenna()) {
+        std::cout << " (+satellite antenna PCO/PCV";
+        if (eph.hasReceiverAntenna())
+            std::cout << ", +receiver PCO/PCV '" << scfg.corrections.rx_antenna_type << "'";
+        std::cout << ")";
+    }
     std::cout << "\n";
 
     // ---- Truth trajectory (knobs from SimConfig; kinematic from the subcommand) ----
@@ -829,6 +843,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     hdr.approx_xyz = { truth.front().ecef.x(), truth.front().ecef.y(), truth.front().ecef.z() };
     hdr.interval_s = tcfg.interval_s;
     hdr.time_of_first_obs = tcfg.t0;
+    // Declare the antenna whose pattern was actually injected.  SINGLE SOURCE OF TRUTH:
+    // this is the same string handed to Antenna's receiver lookup, so the header and the
+    // injection cannot drift apart.  Padded to the RINEX field width (16-char model +
+    // 4-char radome) so the radome lands in cols 37-40 as the IGS convention requires.
+    // Left at the writer's uncalibrated placeholder when no receiver antenna is
+    // modelled — that is deliberate: an external service finding no calibration applies
+    // NOTHING (CSRS-PPP "Case 4", NULL reference PCO), which is exactly right for a
+    // dataset carrying no receiver antenna term.
+    if (want_rx_antenna) {
+        hdr.ant_type = scfg.corrections.rx_antenna_type;
+        hdr.ant_type.resize(20, ' ');
+    }
     hdr.obs_types = {
         { 'G', { "C1C", "L1C", "C2W", "L2W" } },
         { 'E', { "C1C", "L1C", "C5Q", "L5Q" } },
@@ -1070,8 +1096,8 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     // enabling model_corrections.enable_satellite_pco/pcv cancels it back
                     // to truth.  PCO/PCV are identical for code and phase (wind-up off),
                     // so one call per band serves both.  0 unless enabled in the sim config.
-                    const double ant = scfg.corrections.sat_antenna
-                        ? eph.satelliteAntennaMetres(sat, band.code, r_rx, sat_pos, sat_vel, elev, az, t)
+                    const double ant = want_antenna
+                        ? eph.antennaMetres(sat, band.code, r_rx, sat_pos, sat_vel, elev, az, t)
                         : 0.0;
                     // +I on code (group delay), -I on phase (advance); same slant STEC
                     // scaled by 1/f^2 so the dual-frequency IF combination cancels it.

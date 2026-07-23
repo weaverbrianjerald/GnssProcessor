@@ -107,6 +107,19 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.corrections.solid_earth_tide = jval(s, "corrections.solid_earth_tide", "", cfg.corrections.solid_earth_tide);
     cfg.corrections.pole_tide        = jval(s, "corrections.pole_tide",        "", cfg.corrections.pole_tide);
     cfg.corrections.sat_antenna      = jval(s, "corrections.sat_antenna",      "", cfg.corrections.sat_antenna);
+    // Receiver antenna type: the RINEX "ANT # / TYPE" field (16-char model + 4-char
+    // radome).  Empty = OFF.  Doubles as the RINEX header string, so a single source
+    // of truth guarantees the declared antenna IS the injected one.
+    if (const nlohmann::json* rx = resolvePath(s, "corrections.rx_antenna_type")) {
+        if (!rx->is_string())
+            return fail("sim config 'corrections.rx_antenna_type' must be a string "
+                        "(RINEX ANT # / TYPE field, e.g. \"TRM59800.00     NONE\")");
+        cfg.corrections.rx_antenna_type = rx->get<std::string>();
+        if (cfg.corrections.rx_antenna_type.size() > 20)
+            return fail("sim config 'corrections.rx_antenna_type' is " +
+                        std::to_string(cfg.corrections.rx_antenna_type.size()) +
+                        " chars (> 20; the RINEX field is a 16-char model + 4-char radome)");
+    }
 
     cfg.iono.storm_scale            = jval(s, "iono.storm_scale",            "", cfg.iono.storm_scale);
     cfg.iono.quiet_vtec_tecu        = jval(s, "iono.quiet_vtec_tecu",        "", cfg.iono.quiet_vtec_tecu);

@@ -63,7 +63,9 @@ namespace sim {
 EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
                                      const std::vector<std::filesystem::path>& product_paths,
                                      const std::filesystem::path& log_dir,
-                                     const std::filesystem::path& nav_path) {
+                                     const std::filesystem::path& nav_path,
+                                     const std::string& rx_antenna_type)
+    : rx_antenna_type_(rx_antenna_type) {
     config_.setObservationPath(setup_obs);
     config_.setProductPaths(product_paths);
     if (!nav_path.empty()) config_.setNavigationPath(nav_path); // getProductPath("RNX") -> Klobuchar source
@@ -94,18 +96,21 @@ EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
         has_klobuchar_ = true;
     }
 
-    // Satellite antenna PCO/PCV via reuse (M7 antenna).  Only stood up when an ATX
-    // was loaded into the shared cache (the caller adds igs20.atx to product_paths
-    // for the sat_antenna case).  Isolate the SATELLITE term: force receiver PCO/PCV
-    // and phase wind-up off on THIS provider's config (all three default true) so
-    // Antenna::getAntennaCorrection returns exactly (-sat_pco + sat_pcv), matching a
-    // run config with enable_satellite_pco/pcv on and the receiver/wind-up flags off.
+    // Antenna PCO/PCV via reuse (M7 antenna).  Only stood up when an ATX was loaded
+    // into the shared cache (the caller adds igs20.atx to product_paths when either
+    // antenna term is requested).  The SATELLITE half is always active.  The RECEIVER
+    // half is gated on a non-empty rx_antenna_type: with none, force receiver PCO/PCV
+    // off (they default true) so getAntennaCorrection returns exactly
+    // (-sat_pco + sat_pcv); with one, enable them so the receiver half is injected too
+    // and the run config's enable_receiver_pco/pcv cancels it.  Phase wind-up stays OFF
+    // either way — it is ill-defined on a rotating hull, so both sides omit it.
     if (!ProductCache::getInstance().getAntennas().empty()) {
+        const bool rx_on = !rx_antenna_type_.empty();
         auto& mc = config_.getModelCorrections(); // non-const overload
         mc.enable_satellite_pco = true;
         mc.enable_satellite_pcv = true;
-        mc.enable_receiver_pco = false;
-        mc.enable_receiver_pcv = false;
+        mc.enable_receiver_pco = rx_on;
+        mc.enable_receiver_pcv = rx_on;
         mc.enable_phase_windup = false;
         // Pin the current antenna vector so Antenna's raw reference into the singleton
         // cache can't dangle if the cache is later cleared/reloaded during our lifetime.
@@ -205,10 +210,10 @@ double EphemerisProvider::poleTideMetres(const Eigen::Vector3d& rx, const Eigen:
     return pole_ecef.dot(-los);
 }
 
-double EphemerisProvider::satelliteAntennaMetres(const std::string& sat, const std::string& code,
-                                                 const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
-                                                 const Eigen::Vector3d& sat_vel,
-                                                 double elev_deg, double az_deg, const GnssTime& t) const {
+double EphemerisProvider::antennaMetres(const std::string& sat, const std::string& code,
+                                        const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                                        const Eigen::Vector3d& sat_vel,
+                                        double elev_deg, double az_deg, const GnssTime& t) const {
     if (!has_antenna_ || !antenna_ || !geometry_) return 0.0;
     // Map the constellation from the sat id exactly as RinexParser::systemFromSatPrefix
     // does, so this stays correct if the signal plan is ever extended past GPS+Galileo
@@ -230,9 +235,12 @@ double EphemerisProvider::satelliteAntennaMetres(const std::string& sat, const s
     // hence the PCO rotation into ECEF — matches the processor and cancels.
     Eigen::Vector3d sun, moon;
     geometry_->sunMoonPositions(t, sun, moon);
-    // rx_antenna_type empty + receiver terms disabled => exactly (-sat_pco + sat_pcv).
+    // rx_antenna_type_ empty + receiver terms disabled => exactly (-sat_pco + sat_pcv);
+    // non-empty + receiver terms enabled => that PLUS (+rx_pco + rx_pcv).  The SAME
+    // string is written to the RINEX "ANT # / TYPE" header, so the antenna the file
+    // declares is by construction the antenna whose pattern was injected.
     return antenna_->getAntennaCorrection(sat, code, system, rx, sat_pos, sat_vel,
-                                          elev_deg, az_deg, /*rx_antenna_type=*/std::string{}, t,
+                                          elev_deg, az_deg, rx_antenna_type_, t,
                                           sun, /*skip_satellite_pco=*/false);
 }
 

@@ -120,6 +120,24 @@ struct SimConfig {
         bool solid_earth_tide{ false };  ///< IERS 2010 solid-earth tide (LOS +m).
         bool pole_tide{ false };         ///< Pole tide (needs an ERP product loaded).
         bool sat_antenna{ false };       ///< Satellite antenna PCO/PCV + phase wind-up (needs ATX).
+        /// RECEIVER antenna PCO/PCV, injected by reusing the SAME @c Antenna model the
+        /// processor runs, and written verbatim into the RINEX "ANT # / TYPE" header so
+        /// the injected term and the declared antenna can never disagree.  Format is the
+        /// RINEX field itself: 16-char model + 4-char radome, e.g.
+        /// @c "TRM59800.00     NONE" (must exist in the ATX).  Needs the ATX.
+        ///
+        /// EMPTY (the default) = OFF: no receiver term is injected and the header keeps
+        /// its uncalibrated placeholder — which is what an external service needs in
+        /// order to apply NOTHING (CSRS-PPP "Case 4": NULL reference PCO).  When set,
+        /// enable the MATCHING @c model_corrections.enable_receiver_pco / @c _pcv in the
+        /// run config, or the term will not cancel.
+        ///
+        /// CAVEAT: the receiver PCV look-up is azimuth-dependent in the ANTENNA frame.
+        /// Both sides assume a LEVEL, NORTH-REFERENCED antenna (the processor's
+        /// rx-antenna-orientation option defaults off, so the raw topocentric azimuth is
+        /// used), i.e. a yawing hull is deliberately NOT modelled.  The azimuthal term is
+        /// mm-level; the dominant elevation-dependent part cancels exactly.
+        std::string rx_antenna_type{};
     } corrections;
 
     /// Visibility screen.

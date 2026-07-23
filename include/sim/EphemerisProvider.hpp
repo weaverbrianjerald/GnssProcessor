@@ -62,10 +62,16 @@ public:
      * @param product_paths SP3 + CLK (and optionally ATX/BIA/ERP) file paths.
      * @param log_dir      Directory for the (warning-level) log.
      */
+    /// @param rx_antenna_type RINEX "ANT # / TYPE" receiver antenna (16-char model +
+    ///        4-char radome, e.g. "TRM59800.00     NONE").  EMPTY (default) leaves the
+    ///        receiver PCO/PCV terms DISABLED, so @ref antennaMetres returns the
+    ///        satellite half only.  When non-empty the receiver terms are enabled and
+    ///        the antenna must exist in the loaded ATX.
     EphemerisProvider(const std::filesystem::path& setup_obs,
                       const std::vector<std::filesystem::path>& product_paths,
                       const std::filesystem::path& log_dir,
-                      const std::filesystem::path& nav_path = {});
+                      const std::filesystem::path& nav_path = {},
+                      const std::string& rx_antenna_type = {});
     ~EphemerisProvider();
 
     EphemerisProvider(const EphemerisProvider&) = delete;
@@ -152,19 +158,33 @@ public:
     bool hasAntenna() const { return has_antenna_; }
 
     /**
-     * @brief IGS ANTEX satellite antenna PCO/PCV correction (m) for one signal.
+     * @brief IGS ANTEX antenna PCO/PCV correction (m) for one signal — satellite
+     *        always, PLUS the receiver half when a receiver antenna type was given.
      *
-     * Reuses the processor's own @c Antenna::getAntennaCorrection with ONLY the
-     * satellite terms active (this provider's config disables receiver PCO/PCV and
-     * phase wind-up — all three default @c true), so the return is exactly
-     * @c (-sat_pco + sat_pcv) projected on the sat->rx LOS.  The processor ADDS the
-     * identical scalar to its modeled value (@c PppModel::computeBaseModeledValue,
-     * "+ antenna_corr", alongside Shapiro/solid-tide), so ADDING this to the
-     * synthesized code+phase and enabling @c model_corrections.enable_satellite_pco
-     * + @c enable_satellite_pcv cancels it back to truth — the same "reuse so it
-     * cancels" pattern as the other M7 terms.  Satellite PCO/PCV are identical for
-     * code and phase (wind-up is off), so one call per band serves both.  Returns 0
-     * when no ATX was loaded.
+     * Reuses the processor's own @c Antenna::getAntennaCorrection, which composes ONE
+     * scalar from the individually-gated terms:
+     * @c (-sat_pco + sat_pcv) + (+rx_pco + rx_pcv), each projected on the sat->rx LOS
+     * (the satellite APC is closer than the CoM so its PCO SHORTENS the range, hence
+     * the minus; the receiver PCO ADDS to the modeled range).  Phase wind-up stays off.
+     *
+     * With an EMPTY @c rx_antenna_type this provider disables receiver PCO/PCV, so the
+     * return is exactly @c (-sat_pco + sat_pcv) — the historical satellite-only
+     * behaviour.  With a type set, the receiver terms are enabled and included.
+     *
+     * The processor ADDS the identical scalar to its modeled value
+     * (@c PppModel::computeBaseModeledValue, "+ antenna_corr", alongside
+     * Shapiro/solid-tide), so ADDING this to the synthesized code+phase and enabling
+     * the MATCHING @c model_corrections.enable_satellite_pco/_pcv (and
+     * @c enable_receiver_pco/_pcv when a receiver antenna is used) cancels it back to
+     * truth — the same "reuse so it cancels" pattern as the other M7 terms.  All four
+     * terms are identical for code and phase (wind-up is off), so one call per band
+     * serves both.  Returns 0 when no ATX was loaded.
+     *
+     * @note The receiver PCV is azimuth-dependent in the ANTENNA frame.  Both sides
+     *       assume a level, north-referenced antenna (the processor's rx-orientation
+     *       option defaults off ⇒ raw topocentric azimuth), so a yawing hull is NOT
+     *       modelled; the azimuthal term is mm-level while the dominant
+     *       elevation-dependent part cancels exactly.
      *
      * @param sat      Satellite id ("G05"/"E11"); its first char selects the system.
      * @param code     RINEX signal code being emitted (e.g. "C1C", "L1C", "C5Q").
@@ -176,10 +196,13 @@ public:
      *                 yaw-steering attitude frame only).
      * @param elev_deg,az_deg Receiver topocentric elevation/azimuth (degrees).
      */
-    double satelliteAntennaMetres(const std::string& sat, const std::string& code,
-                                  const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
-                                  const Eigen::Vector3d& sat_vel,
-                                  double elev_deg, double az_deg, const GnssTime& t) const;
+    double antennaMetres(const std::string& sat, const std::string& code,
+                         const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                         const Eigen::Vector3d& sat_vel,
+                         double elev_deg, double az_deg, const GnssTime& t) const;
+
+    /** @brief True if a receiver antenna type was supplied (receiver PCO/PCV injected). */
+    bool hasReceiverAntenna() const { return !rx_antenna_type_.empty(); }
 
 private:
     GnssConfig config_;
@@ -195,6 +218,7 @@ private:
     // per process today, but this shared handle pins the data for antenna_'s lifetime
     // so the "single live provider" invariant is not silently load-bearing.
     std::shared_ptr<const std::vector<AntennaData>> antennas_hold_;
+    std::string rx_antenna_type_;   ///< RINEX ANT # / TYPE; empty => receiver terms off.
     bool ok_ = false;
     bool has_klobuchar_ = false;
     bool has_antenna_ = false;
