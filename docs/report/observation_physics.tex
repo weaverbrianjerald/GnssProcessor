@@ -43,8 +43,9 @@ related but distinct, and the differences (frames, sign conventions,
 gating) are flagged where they matter.
 
 Every term below is assembled into a single modelled observable in
-\texttt{model/PppModel.cpp} (\texttt{computeModelledObservable} and the
-iono-free variant), summed onto the geometric range that
+\texttt{model/PppModel.cpp} (\texttt{PppModel::computeBaseModeledValue},
+the single shared helper called by both the iono-free-pair and the
+uncombined observation paths), summed onto the geometric range that
 \texttt{model/ModelGeometry.cpp} produces.  The dominant structure of
 that sum, for the code observable, is
 \begin{equation}
@@ -72,7 +73,7 @@ document}.  The Sagnac correction (\Cref{sec:obsphys-sagnac}) is folded
 into $\geomrange^\sat_\rx$ itself, not added separately, for reasons made
 precise below.  The signs in \eqref{eq:obsphys-assembly} are taken
 verbatim from the return statement of
-\texttt{PppModel::computeModelledObservable}
+\texttt{PppModel::computeBaseModeledValue}
 (\texttt{model/PppModel.cpp}): the satellite clock and relativistic terms
 \emph{subtract}, the antenna, Shapiro, loading and tide terms \emph{add}.
 
@@ -103,8 +104,11 @@ direction to the Sun, the nadir axis and the cross-track axis are
 \label{eq:obsphys-yaw-frame}
 \end{equation}
 the exact operand ordering of \texttt{SatAttitude::compute}
-(\texttt{model/SatAttitude.cpp}) and the engine's inline copy
-(\texttt{Antenna.cpp}).  Forming $\jcross$ first and then
+(\texttt{model/SatAttitude.cpp}), to which the antenna path delegates
+(\texttt{Antenna::getAntennaCorrection}) rather than rebuilding the frame
+inline; the one genuine inline duplicate of this construction lives in the
+wind-up path and is flagged in \Cref{sec:obsphys-windup} below.  Forming
+$\jcross$ first and then
 $\isun=\jcross\times\knad$ is algebraically the Gram--Schmidt
 orthogonalisation of the Sun direction against nadir: by the
 $\bm{a}\times(\bm{b}\times\bm{c})$ identity,
@@ -227,7 +231,14 @@ Because the antenna phase centre sits \emph{nearer the receiver} than the
 centre of mass, the true range is shorter than the CoM range; the
 correction is therefore \emph{subtracted} in
 \eqref{eq:obsphys-antenna-total} (\texttt{correction -= sat\_pco\_corr},
-\texttt{model/Antenna.cpp}).
+\texttt{model/Antenna.cpp}).  One real-time exception omits this term
+entirely: when an applied SSR orbit correction is itself APC-referenced
+(the corrected orbit already points at the phase centre), the
+\texttt{skip\_satellite\_pco} path of \texttt{getAntennaCorrection} drops
+the satellite-PCO range term to avoid double-counting it, gated by
+\texttt{realtime.honor\_ssr\_reference\_point} and default-off; the SSR
+reference-point dialect that drives it is documented with
+\dcref{sec:ssr}{the SSR corrections document}.
 
 \paragraph{Satellite PCV (added).}
 The satellite phase-centre variation is a function of the \emph{nadir
@@ -580,8 +591,9 @@ orient the antenna.  They coincide neither in construction nor in purpose.
 % ============================================================
 
 All deterministic corrections converge in
-\texttt{model/PppModel.cpp}: \texttt{computeModelledObservable} (and its
-iono-free sibling) returns the sum \eqref{eq:obsphys-assembly}, calling
+\texttt{model/PppModel.cpp}: \texttt{computeBaseModeledValue}, the single
+shared helper for both the iono-free-pair and uncombined paths, returns the
+sum \eqref{eq:obsphys-assembly}, calling
 \texttt{model/ModelGeometry.cpp} for the Sagnac-rotated geometric range
 \eqref{eq:obsphys-sagnac}, \texttt{model/Antenna.cpp} for the total
 antenna correction \eqref{eq:obsphys-antenna-total} (which in turn calls

@@ -261,10 +261,13 @@ out, leaving a reduced shared system that is rank-deficient by the gauge
 freedoms.  \texttt{solve} pins those with an explicit minimum-constraint
 S-basis datum on a copy of the reduced system, and \texttt{toSolutionEpoch}
 maps the shared estimate to an emittable record that
-\texttt{NetworkProductEmitter} serializes in IGS-SSR convention.  The
-single-epoch estimator core is validated on a synthetic noise-free network;
-the live \texttt{runNetwork()} epoch loop is staged.  See
-\dcref{sec:net}{the network mode}.}
+\texttt{NetworkProductEmitter} serializes in IGS-SSR convention.  The full
+\texttt{Application::runNetwork()} driver runs this core in a live per-epoch
+loop over the synced \texttt{MultiRinexSync} stations, with a two-pass station
+assembly (\texttt{networkPassAHead\_}/\texttt{networkPassB\_}) feeding
+\texttt{addStation}; when \texttt{network.closed\_loop} is armed it additionally
+drives an undifferenced PPP-RTK consumer against the freshly emitted products.
+See \dcref{sec:net}{the network mode}.}
 \label{fig:net-flow}
 \end{figure}
 

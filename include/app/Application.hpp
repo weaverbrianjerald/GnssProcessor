@@ -48,6 +48,7 @@ class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7
 class  NetworkIonoDeweightGate;      // filter/NetworkIonoDeweightGate.hpp (decomposition INC-7)
 class  SphericalHarmonicIonosphere;  // atmosphere/SphericalHarmonicIonosphere.hpp (decomposition INC-7)
 class  PppUtils;             // common/PppUtils.hpp (decomposition INC-7)
+struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardening, 2026-07-21)
 enum class EpochAction;      // filter/NetworkRunTypes.hpp (decomposition INC-7) — opaque enum decl
 
 /**
@@ -546,16 +547,18 @@ private:
      *        carry treatment and the station-adaptive deweight scaling
      *        (decomposition INC-7; verbatim relocation).
      *
-     * Former ambient captures are explicit: @p sh_model, @p iono_deweight
-     * (const — read-only weight lookup), @p shc, @p sh_dev_on, @p sh_dev_carry
-     * (const — the serial pre-pass ages it; here find-only).  Implemented in
-     * @c ApplicationNetworkAssembly.cpp.
+     * Former ambient captures are explicit: @p sh_model / @p sh_model2 (the
+     * Iono-2 dual-layer second shell, null on the single-layer path),
+     * @p iono_deweight (const — read-only weight lookup), @p shc, @p sh_dev_on,
+     * @p sh_dev_carry (const — the serial pre-pass ages it; here find-only).
+     * Implemented in @c ApplicationNetworkAssembly.cpp.
      */
     void networkAppendShIonoRows_(NetStation& st, const NetworkEstimator& est,
                                   const std::vector<PppObservation>& sta_obs,
                                   const std::map<int, int>& h2local,
                                   const GnssTime& t,
                                   const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
+                                  const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
                                   const NetworkIonoDeweightGate& iono_deweight,
                                   const GlobalVtecShConfig& shc, bool sh_dev_on,
                                   const std::map<std::string, ShDevCarry>& sh_dev_carry,
@@ -603,7 +606,8 @@ private:
                                std::vector<std::vector<PppObservation>>& modeled,
                                std::vector<bool>& present,
                                const std::set<std::string>& shared_phase_keys,
-                               std::set<std::pair<int, std::string>>& carry_slipped_ambs);
+                               std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                               SlipQcChannel& qc);
 
     /**
      * @brief RAW slip-observable trace rows + the cross-station observability
@@ -617,7 +621,7 @@ private:
     void networkAssemblyPrefilter_(const SyncedEpoch& se,
                                    NetworkSetupResult& setup,
                                    NetworkRunTraces& traces,
-                                   const std::unique_ptr<PppUtils>& slip_raw_ppp_utils,
+                                   const SlipQcChannel& qc,
                                    std::vector<std::vector<PppObservation>>& modeled,
                                    const std::vector<bool>& present,
                                    int& n_dropped_sats);
@@ -671,6 +675,7 @@ private:
                               NetworkEstimator& est,
                               const NetworkIonoDeweightGate& iono_deweight,
                               double sh_dev_tau, bool sh_dev_on,
+                              const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                               bool carry_warm, double pl_now_s,
                               std::vector<std::vector<PppObservation>>& modeled,
                               std::vector<bool>& present,

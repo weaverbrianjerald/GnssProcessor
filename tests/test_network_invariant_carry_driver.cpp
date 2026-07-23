@@ -1630,4 +1630,150 @@ TEST(NetworkInvariantCarryDriverTest, PairInstallParallelMatchesSerialByteForByt
     EXPECT_GT(drvS.counters().chords_carried, 0);
 }
 
+// ---------------------------------------------------------------------------
+// LF-1 INC-1 (SPEC_lane_fold_perf_card.md §3.2, §5.2) — the blocked/sparse lane
+// fold (fold_blocked=true: O(K) sparse applyLaneFix + per-row symmetrize hoisted
+// to finalizeLaneBatch) must reproduce the sequential per-row fold to ≤1e-9 over
+// an IDENTICAL row sequence (measurements on every chord, two fixes, then a
+// measurement AFTER a fix — the non-commuting order both arms share).  This is
+// the equivalence-class gate; the OFF-path byte-identity is the separate wlver
+// hash gate.  Also asserts finalizeLaneBatch restored EXACT symmetry.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, FoldBlockedMatchesSequentialLaneFold) {
+    const int R = 4, S = 4;
+    Net2 n = makeNet2(1717, R, S);
+    NetworkInvariantCarryDriver::Config cfgS;
+    cfgS.lane_joint = true; cfgS.sigma_wl_fresh_cyc = 3.0;
+    NetworkInvariantCarryDriver::Config cfgB = cfgS; cfgB.fold_blocked = true;
+    NetworkInvariantCarryDriver drvS(cfgS), drvB(cfgB);
+
+    // Warm both identically (fold_blocked is inert with no lane rows) so the carry
+    // has several coupled chords + a diffuse NL direction.
+    for (int e = 0; e < 3; ++e) {
+        const double dt = e == 0 ? 0.0 : 1.0;
+        driveEpoch2(drvS, n, 0, 0, nullptr, nullptr, dt, /*pair=*/true);
+        driveEpoch2(drvB, n, 0, 0, nullptr, nullptr, dt, /*pair=*/true);
+    }
+
+    // Apply the SAME row sequence to both; only HOW each row folds differs.
+    Eigen::VectorXd zS, zB; Eigen::MatrixXd PS, PB;
+    auto rows = [&](NetworkInvariantCarryDriver& d, Eigen::VectorXd& z, Eigen::MatrixXd& P) {
+        return [&](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
+            ASSERT_EQ(blocks.size(), 1u);
+            const std::size_t K = d.blockChordsForTest(0).size();
+            ASSERT_GE(K, 4u);
+            for (std::size_t k = 0; k < K; ++k)
+                d.applyLaneMeasurement(blocks, 0, k, 0.3 * static_cast<double>(k) - 1.0,
+                                       0.02 + 0.01 * static_cast<double>(k));
+            d.applyLaneFix(blocks, 0, 0,  5,  5.0, 0.01);
+            d.applyLaneFix(blocks, 0, 2, -3, -3.0, 0.01);
+            d.applyLaneMeasurement(blocks, 0, 1, 0.7, 0.05);   // a measurement AFTER a fix
+            d.finalizeLaneBatch(blocks);                        // no-op unless fold_blocked
+            z = blocks[0].zhat; P = blocks[0].Pz;
+        };
+    };
+    driveEpoch2(drvS, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr, rows(drvS, zS, PS));
+    driveEpoch2(drvB, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr, rows(drvB, zB, PB));
+
+    ASSERT_EQ(zS.size(), zB.size());
+    ASSERT_EQ(PS.rows(), PB.rows());
+    // Equivalence class: fp reassociation + the hoisted symmetrize, NOT bit-identical.  A real
+    // algebra bug in the sparse SET diverges O(0.1+) (cf. the field 1e-4-and-growing signature).
+    EXPECT_LT((zS - zB).cwiseAbs().maxCoeff(), 1e-9)
+        << "blocked lane-fold mean must match the sequential fold";
+    EXPECT_LT((PS - PB).cwiseAbs().maxCoeff(), 1e-6)
+        << "blocked lane-fold covariance must match the sequential fold (abs err is ULP × the "
+           "1e6-scale diffuse NL entries)";
+    // finalizeLaneBatch restored EXACT symmetry despite the per-row skips.
+    EXPECT_LT((PB - PB.transpose()).cwiseAbs().maxCoeff(), 1e-18)
+        << "finalizeLaneBatch must leave Pz exactly symmetric";
+    // Non-vacuity: the rows actually moved the block.
+    EXPECT_GT(PS.cwiseAbs().maxCoeff(), 1e-6);
+    EXPECT_GT(zS.cwiseAbs().maxCoeff(), 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// LF-1 INC-2 (SPEC_lane_fold_perf_card.md §3.3) — pinned-cycle increment skip
+// LIFECYCLE: an undecided chord is never skippable; a committed-decided chord
+// becomes skippable the next epoch; a slip on its arc erases the memory ⇒ it
+// resumes increments the SAME epoch (invariant #1: the slip response is
+// provably unaffected).
+// ---------------------------------------------------------------------------
+using DdBlocks = std::vector<NetworkNormalEquations::DdPriorBlock>;
+TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipLifecycle) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(88, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
+    cfg.skip_pinned_increments = true; cfg.skip_pinned_within_n = 3;
+    NetworkInvariantCarryDriver drv(cfg);
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, /*pair=*/true);   // warm ep0
+
+    bool skip_undecided = true, skip_decided = false, skip_after_slip = true;
+    // ep1: no fix yet ⇒ chord 0 is undecided ⇒ not skippable.
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { (void)b; skip_undecided = drv.laneIncrementSkippable(0, 0); });
+    // ep2: fix chord 0 (commits at this epoch's install).
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { drv.applyLaneFix(b, 0, 0, 5, 5.0, 0.01); });
+    // ep3: chord 0 is committed-decided ⇒ skippable (age 1 ≤ within_n).
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { (void)b; skip_decided = drv.laneIncrementSkippable(0, 0); });
+    // ep4: slip chord 0's arc ⇒ rebirth erases the memory ⇒ NOT skippable (increments resume).
+    const ArcKey chord0 = drv.blockChordsForTest(0).front();
+    std::set<std::pair<int, int>> slips{{chord0.u, chord0.v - kSatBase}};
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, &slips, nullptr,
+        [&](DdBlocks& b) { (void)b; skip_after_slip = drv.laneIncrementSkippable(0, 0); });
+
+    EXPECT_FALSE(skip_undecided) << "an undecided chord is never skippable";
+    EXPECT_TRUE(skip_decided)    << "a committed-decided chord skips increments the next epoch";
+    EXPECT_FALSE(skip_after_slip)
+        << "a slipped/reborn chord resumes increments the same epoch (invariant #1)";
+}
+
+// LF-1 INC-2 — the grace window: a decided chord that goes undecided keeps
+// skipping for within_n epochs, then resumes increments (re-converges a lane the
+// FFR gate stopped trusting).
+TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipGraceExpires) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(89, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
+    cfg.skip_pinned_increments = true; cfg.skip_pinned_within_n = 2;
+    NetworkInvariantCarryDriver drv(cfg);
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, true);            // warm ep0
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true);            // ep1
+    // ep2: fix chord 0 once, then never again.
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { drv.applyLaneFix(b, 0, 0, 5, 5.0, 0.01); });
+    bool s_age1 = false, s_age2 = false, s_age3 = true;
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { (void)b; s_age1 = drv.laneIncrementSkippable(0, 0); });   // age 1
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { (void)b; s_age2 = drv.laneIncrementSkippable(0, 0); });   // age 2
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { (void)b; s_age3 = drv.laneIncrementSkippable(0, 0); });   // age 3 > within_n
+    EXPECT_TRUE(s_age1)  << "age 1 ≤ within_n=2 ⇒ still skippable";
+    EXPECT_TRUE(s_age2)  << "age 2 ≤ within_n=2 ⇒ still skippable";
+    EXPECT_FALSE(s_age3) << "age 3 > within_n=2 ⇒ increments resume";
+}
+
+// LF-1 INC-2 — OFF is inert: with skip_pinned_increments=false a decided chord
+// is NEVER skippable (byte-identical path; lane_fix_epoch_ stays empty).
+TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipOffIsInert) {
+    const int R = 3, S = 3;
+    Net2 n = makeNet2(90, R, S);
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
+    cfg.skip_pinned_increments = false;   // OFF
+    NetworkInvariantCarryDriver drv(cfg);
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, true);
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { drv.applyLaneFix(b, 0, 0, 5, 5.0, 0.01); });
+    bool skippable = true;
+    driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
+        [&](DdBlocks& b) { (void)b; skippable = drv.laneIncrementSkippable(0, 0); });
+    EXPECT_FALSE(skippable) << "skip is inert (never fires) when the toggle is off";
+}
+
 }  // namespace GnssProcessor

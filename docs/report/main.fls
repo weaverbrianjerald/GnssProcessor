@@ -415,14 +415,14 @@ INPUT .\bssd_dd.tex
 INPUT bssd_dd.tex
 INPUT .\bssd_dd.tex
 INPUT bssd_dd.tex
+INPUT C:\Users\weaverb\AppData\Local\Programs\MiKTeX\fonts\tfm\public\cm\cmtt8.tfm
+INPUT C:\Users\weaverb\AppData\Local\Programs\MiKTeX\fonts\tfm\public\cm\cmtt8.tfm
 INPUT .\frames_time.tex
 INPUT .\frames_time.tex
 INPUT frames_time.tex
 INPUT .\frames_time.tex
 INPUT .\frames_time.tex
 INPUT frames_time.tex
-INPUT C:\Users\weaverb\AppData\Local\Programs\MiKTeX\fonts\tfm\public\cm\cmtt8.tfm
-INPUT C:\Users\weaverb\AppData\Local\Programs\MiKTeX\fonts\tfm\public\cm\cmtt8.tfm
 INPUT .\product_evaluation.tex
 INPUT .\product_evaluation.tex
 INPUT product_evaluation.tex

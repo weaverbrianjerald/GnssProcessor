@@ -60,6 +60,13 @@ Configs are harness-owned copies `config/test_suite/_dcmp_*.json` (the `_wlver_*
 | 9 `snap_resume` | NEW at INC-4 — copy of arm 8 + `network.start_offset_hours = 0.08333333333333333` (exactly 300 s in IEEE754) | the resume-pair leg B: seeds the GOLDEN arm-8 snapshot (`--seed` in run_decomp_arm.py) at `logs/network_state_snapshot.json`, fast-forwards past leg A's span, WARM-resumes (age 30 s vs 900 s horizon, 31 D2 carries + emitter state restored) and processes epochs 11-20.  Baseline captured from the pre-INC-4 binary (byte-identity chain to INC-0); the warm gate's `first_live_s` honours start_offset, and neither start_offset_hours nor max_duration is fingerprinted, so the changed config still matches. |
 | 10 `obs` | NEW at INC-4 — copy of arm 2 + `write_run_manifest` + `health_interval_s=60` + `trace_flag_rates` + `trace_epoch_status` + `trace_events` + `trace_rotate_mb=0.005` | the INC-4-moved observability writers ON-path (the original 8 arms leave ALL of them OFF): L15 manifest startup+complete records, RTB-6 heartbeat, L1 status rows, L2 event rows, B8 flag-rate + L3 run-summary CSVs.  P1 rotation reaches only the guard path (10-epoch files never hit the roll threshold).  Baseline captured from a pre-INC-4 build via git-stash round-trip. |
 
+**Enumerated artifact deltas** (a golden arm may gain a file only when it is listed here, with the
+card that added it and the reason the delta is confined to that file):
+
+| Arm | Added artifact | Card | Why the rest stays byte-identical |
+|---|---|---|---|
+| 11 `estim` | `logs/network_estimability.csv` | BD-DATUM **DG5** (2026-07-22) | The spectrum dump's WARN text is unchanged — the CSV is FILLED FROM the same locals, in the same loops, in the same order (`NetworkEstimator::dumpEstimabilitySpectrum` returns an `EstimabilityDump` the driver writes).  The file appears only under `network.trace_estimability`; every OFF arm is untouched.  The DG6 run-wide gate telemetry rides in this file's trailing `RUN` record rather than in a new run-end log line, precisely so the arm's `run.log` stays comparable. |
+
 Golden run dirs: `runs/decomp_goldens/<arm>[_b]/` (gitignored, machine-pinned); capture manifests
 COMMITTED at `goldens/decomp/<arm>.manifest.json` so every increment can gate via
 `compare --manifest` even if run dirs are lost. Runs use a renamed exe copy

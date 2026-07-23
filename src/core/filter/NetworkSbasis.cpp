@@ -189,8 +189,40 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     return plan;
 }
 
+std::vector<NetworkEstimator::SharedPrior> NetworkSbasis::buildCodeBiasKaulaPriors(
+    const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+    double sigma_m) {
+    std::vector<NetworkEstimator::SharedPrior> out;
+    // A non-positive sigma would mean info = 1/0 = inf, i.e. a HARD pin on every
+    // admitted OSB — the opposite of a loose physical bound, and a silent datum
+    // takeover.  Refuse it here rather than trusting the loader alone.
+    if (!(sigma_m > 0.0)) return out;
+    const double info = 1.0 / (sigma_m * sigma_m);
+    out.reserve(registered_code_keys.size());
+    // First-seen registration order, mirroring buildCodeBiasDatumRows' own
+    // contractual ordering over the same vector.  The prior is diagonal, so the
+    // order cannot change the folded information — but keeping it identical means
+    // the two W6 datum products read the same way in a trace.
+    for (const auto& kv : registered_code_keys) {
+        NetworkEstimator::SharedPrior p;
+        p.kind   = SharedParamKind::CodeBias;
+        p.sat    = kv.first;
+        p.signal = kv.second;
+        p.value  = 0.0;   // the physical bound is CENTRED on zero, not on an estimate
+        p.info   = info;
+        out.push_back(p);
+    }
+    return out;
+}
+
 void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
-                                        int declared_dim, double tol) const {
+                                        int declared_dim, double tol,
+                                        int* observed_out) const {
+    // DG6: report the observed count on EVERY exit that computed one, including
+    // the throwing one — the caller cannot recompute it from the exception and
+    // "over-specified" (observed < declared) has to be countable separately from
+    // a generic withhold.  Structurally observational: nothing below reads it.
+    if (observed_out) *observed_out = 0;
     const Eigen::Index n = reduced_N_ss.rows();
     if (n == 0) {
         if (declared_dim != 0) {
@@ -229,6 +261,7 @@ void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
     int near_zero = 0;
     for (Eigen::Index i = 0; i < ev.size(); ++i)
         if (ev(i) < cutoff) ++near_zero;
+    if (observed_out) *observed_out = near_zero;
 
     if (near_zero != declared_dim) {
         throw std::runtime_error(fmt::format(

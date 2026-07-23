@@ -84,7 +84,18 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
-#include "filter/NetworkPhaseDatum.hpp"    // INC-8: prioritized-datum drop-and-heal (anchor election joins at INC-8b)
+#include "filter/NetworkPhaseDatum.hpp"    // INC-8b: census + ensemble datum + anchor election + drop-and-heal
+#include "filter/NetworkChainDatum.hpp"    // INC-8b: Card-3 eq34 single-receiver-chain datum
+#include "filter/NetworkRaim.hpp"        // INC-9: post-fit network RAIM
+#include "filter/NetworkClockQc.hpp"    // INC-10: post-solve satellite-clock QC
+#include "filter/NetworkSolPrep.hpp"    // INC-11pre: emit-side solution prep + disc signalling
+#include "filter/NetworkEmitStore.hpp"    // INC-11: emit / store / product-write + closed-loop
+#include "filter/NetworkIonoDiag.hpp"    // INC-11b
+#include "filter/NetworkDdFrac.hpp"    // INC-11b
+#include "filter/NetworkShDevVtec.hpp"    // INC-11b
+#include "filter/NetworkShHealth.hpp"    // INC-11b
+#include "filter/NetworkLeveling.hpp"    // INC-11b
+#include "filter/NetworkStashStatus.hpp"    // INC-11b
 #include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
 #include "logging/NetworkRunTraces.hpp" // INC-3: trace-stream ownership + open logic + roster + FlagRate
 #include "app/NetworkRunContext.hpp"    // INC-4: knobs + Tier-1 carry state + service counters (ctx)
@@ -172,6 +183,7 @@ int Application::runNetwork() {
     auto& brdc_nav_staged = setup.brdc_nav_staged;
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
     auto& sh_model = setup.sh_model;
+    auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& stations = setup.stations;
     const int n_sta_total = setup.n_sta_total;
@@ -251,13 +263,39 @@ int Application::runNetwork() {
     const auto& netar = nc.ambiguity_resolution;
     std::unique_ptr<PppUtils> ar_ppp_utils;
     if (netar.enable) ar_ppp_utils = std::make_unique<PppUtils>(log_manager_);
-    std::unique_ptr<PppUtils> slip_raw_ppp_utils;  // wavelength provider (built only when the raw-slip trace is on)
+    // Slip-QC hardening channel (docs/SPEC_slip_qc_hardening.md): knobs +
+    // per-station cross-epoch state + this epoch's raw evidence + run-end
+    // counters, threaded by reference into the PASS-A slip seam and the
+    // assembly pre-filter.  Sized once here so the per-station EWMAs survive
+    // the whole run.
+    SlipQcChannel slip_qc;
+    {
+        const auto& sq = nc.slip_qc;
+        auto& sp = slip_qc.params;
+        sp.lli_corroborate     = sq.lli_corroborate;
+        sp.chatter_frac_hi     = sq.lli_chatter_frac_hi;
+        sp.chatter_frac_lo     = sq.lli_chatter_frac_lo;
+        sp.chatter_min_epochs  = sq.lli_min_epochs;
+        sp.chatter_alpha       = sq.lli_ewma_alpha;
+        sp.k_mw                = sq.lli_k_mw;
+        sp.k_gf                = sq.lli_k_gf;
+        sp.mw_floor_cyc        = sq.lli_mw_floor_cyc;
+        sp.gf_floor_m          = sq.lli_gf_floor_m;
+        sp.step_alpha          = sq.lli_step_alpha;
+        sp.gap_instrument      = sq.gap_instrument;
+        slip_qc.hist.resize(stations.size());
+    }
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
     // B5/raw-slip wavelength providers — gated on the streams openAll just
     // opened (same conditions as the former inline opens); constructed HERE
     // because they need log_manager_, which the traces unit does not hold.
+    // The raw-slip provider now serves THREE consumers (the trace plus Cards L
+    // and G), so it is built whenever ANY of them asked — spec §1's
+    // "compute once per epoch when any consumer needs it".  With none armed it
+    // stays null and the whole raw-observable path is skipped.
     if (dd_frac_trace) dd_ppp_utils = std::make_unique<PppUtils>(log_manager_);
-    if (slip_raw_trace) slip_raw_ppp_utils = std::make_unique<PppUtils>(log_manager_);
+    if (slip_qc.params.anyConsumer(static_cast<bool>(slip_raw_trace)))
+        slip_qc.utils = std::make_unique<PppUtils>(log_manager_);
 
 
 
@@ -531,6 +569,12 @@ int Application::runNetwork() {
         carry_cfg.q_wl_scale         = lane_cfg.q_wl_scale;
         carry_cfg.sigma_wl_fresh_cyc = lane_cfg.sigma_wl_fresh_cyc;
         carry_cfg.lane_joint         = lane_joint;
+        // LF-1 INC-1: the optimized fold shape.  Inert unless lane_joint (the only shape with
+        // lane rows); the driver primitives + finalizeLaneBatch key off carry_cfg.fold_blocked.
+        carry_cfg.fold_blocked       = lane_joint && lane_cfg.fold_blocked;
+        // LF-1 INC-2: pinned-cycle increment skip (also inert unless lane_joint).
+        carry_cfg.skip_pinned_increments = lane_joint && lane_cfg.skip_pinned_increments;
+        carry_cfg.skip_pinned_within_n   = lane_cfg.skip_pinned_within_n;
     }
     NetworkInvariantCarryDriver carry_driver(carry_cfg);
     // M5 card WL-1: the MW-seeded wide-lane pseudo-observation layer (docs/SPEC_mw_wl_card.md).
@@ -665,6 +709,8 @@ int Application::runNetwork() {
     const bool lane_meas_on   = lane_on && lane_joint && lane_cfg.lane_meas;
     const bool lane_bridge_on = lane_on && lane_joint && lane_cfg.bridge_meas;
     const bool lane_fix_on    = lane_on && lane_joint;
+    // LF-1 INC-4: fan the MW lane-increment folds across components (byte-identical to serial).
+    const bool lane_parallel_components = lane_on && lane_joint && lane_cfg.parallel_components;
     // One decided WL inject: the two bands' carry groups + the shared chord ArcKey + the integer
     // target + the per-band linearization DD sums (F5 correction frame) + wavelengths.  Computed
     // in buildCarryDdPriors from DETECTOR statistics (§3.0.1 decision source), APPLIED post-solve
@@ -727,6 +773,7 @@ int Application::runNetwork() {
         long long lane_fix_folded{0};    ///< fold-on-change FFR fixes FOLDED (decision new/changed).
         long long lane_fix_unchanged{0}; ///< FFR decisions seen with an unchanged integer (no fold — the F-A once-only discipline).
         long long lane_skip_meas{0};     ///< lane-increment cycles skipped (immature/stale/mixed-frame/slipped arc/quarantine).
+        long long lane_pinned_skips{0};  ///< LF-1 INC-2: MW/bridge increments skipped because the chord's lane is committed-pinned (laneIncrementSkippable).  0 ⇒ the lever is inert (invariant #4).
         // --- UWL-1 cold-fix telemetry (SPEC_uwl_card.md §3.3). ---
         long long cold_bridge_cycles{0}; ///< decided cycles whose bridge read was the UNLAGGED cold serve (post-slip early re-pin).
         // --- E6 mid-ladder hop telemetry (uwl_mid_enable). ---
@@ -768,6 +815,7 @@ int Application::runNetwork() {
         a.lane_fix_folded     += b.lane_fix_folded;
         a.lane_fix_unchanged  += b.lane_fix_unchanged;
         a.lane_skip_meas      += b.lane_skip_meas;
+        a.lane_pinned_skips   += b.lane_pinned_skips;
         a.cold_bridge_cycles  += b.cold_bridge_cycles;
         a.mid_decided         += b.mid_decided;
         a.mid_fallback        += b.mid_fallback;
@@ -978,6 +1026,13 @@ int Application::runNetwork() {
     // NOT un-pin it around solve()).  OFF ⇒ the fold keeps seam_threads (block-parallel
     // seam), byte-identical.
     est.setCarryParallelThreads(carry_par ? n_threads : 1);
+    // Card DG2 (network.rank_gate_tol): resolve the null-space rank-gate tolerance
+    // ONCE, here with the estimator's other knobs, so the gate call sites, the
+    // estimability dump and the prioritized drop-and-heal all read the SAME value
+    // off the estimator instead of each reaching for the compile constant.  The
+    // default is NetworkEstimator::kNullSpaceTol, so an unset key sends the
+    // identical double through the identical arithmetic (byte-identical).
+    est.setRankGateTol(config_.networkRankGateTol());
     // network.parallel_carry: RAII un-pin of Eigen's internal threading around ONE
     // compute-bound-GEMM carry stage.  Used at exactly TWO sites — buildDdPriors (W·Pᶻ·Wᵀ)
     // and installPosterior (posterior-covariance read-back) — whose cost is big dense GEMMs
@@ -1122,6 +1177,85 @@ int Application::runNetwork() {
     // GnssConfig so it is a single source of truth and unit-testable in isolation.
     // The < 100 m binding gate at the fold site is unchanged and stays in the driver.
     const double clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();
+
+    // CB-ADM: run the W6 code-bias admission census ONCE, pre-loop, so the
+    // registration site can gate on a run-latched (sat,signal) verdict instead
+    // of a per-epoch >= 2-station count (see filter/NetworkBiasAdmission.hpp).
+    // Armed only when both the master flag and the W6 slice are on; otherwise
+    // ctx.admission.active stays false and the legacy per-epoch path is used.
+    //
+    // The census window is [i0, i0+K) of the synced vector, where i0 is the
+    // FIRST epoch the loop will process.  The loop start is a LAZY time-anchored
+    // fast-forward (network.start_offset_hours, below), not a precomputed index —
+    // so replicate that condition here against the first synced epoch's time to
+    // find i0 (start_offset <= 0 => i0 = 0).  A warm-resume that starts a
+    // different span reclassifies over that span (per-process, not carried in the
+    // snapshot — a known, field-inert property for post-processing).
+    if (config_.networkCbAdmission() && config_.estimateNetworkSatCodeBias()
+        && !synced.empty()) {
+        std::size_t i0 = 0;
+        if (start_offset_s > 0.0) {
+            const double anchor_s =
+                TimeUtils::continuousGpsSeconds(synced.front().time);
+            while (i0 < synced.size()
+                   && TimeUtils::continuousGpsSeconds(synced[i0].time) - anchor_s
+                          < start_offset_s)
+                ++i0;
+        }
+        ctx.admission = NetworkBiasAdmission::runCensus(
+            synced, i0, config_.networkCbAdmissionCensusEpochs(),
+            config_.networkCbAdmissionMinStations());
+        const auto& adm = ctx.admission;
+        ctx.counters.n_cb_admitted =
+            static_cast<std::size_t>(adm.n_admitted);
+        ctx.counters.n_cb_quarantined_census =
+            static_cast<std::size_t>(adm.n_quarantined_census);
+        if (adm.active) {
+            struct ConsTally { int seen = 0, admitted = 0, lowcount = 0, noifpin = 0; };
+            std::map<char, ConsTally> per_cons;
+            for (const auto& p : adm.census) {
+                ConsTally& t = per_cons[p.satellite.empty() ? '?' : p.satellite[0]];
+                ++t.seen;
+                if (p.verdict == NetworkBiasAdmission::Verdict::Admitted)      ++t.admitted;
+                else if (p.verdict == NetworkBiasAdmission::Verdict::LowCount) ++t.lowcount;
+                else                                                           ++t.noifpin;
+            }
+            log->info("Network (CB-ADM): census over {} epochs (K_eff) x {} stations "
+                      "[from i0={} of {} synced] — effective_min={}, sustained_floor={}; "
+                      "{} (sat,signal) pairs seen, {} admitted, {} quarantined.",
+                      adm.census_epochs_used, adm.census_stations, i0, synced.size(),
+                      adm.effective_min, adm.sustained_floor,
+                      static_cast<int>(adm.census.size()), adm.n_admitted,
+                      adm.n_quarantined_census);
+            for (const auto& [c, t] : per_cons)
+                log->info("Network (CB-ADM):   [{}] {} pairs: {} admitted, {} low-count, "
+                          "{} no-IF-pin.", c, t.seen, t.admitted, t.lowcount, t.noifpin);
+            constexpr int kMaxRows = 40;
+            int shown = 0;
+            for (const auto& p : adm.census) {
+                if (shown++ >= kMaxRows) {
+                    log->info("Network (CB-ADM):   ... ({} more pairs omitted from the table)",
+                              static_cast<int>(adm.census.size()) - kMaxRows);
+                    break;
+                }
+                const char* verdict = "ADMIT";
+                const char* reason  = "both tiers pass";
+                if (p.verdict == NetworkBiasAdmission::Verdict::LowCount) {
+                    verdict = "QUAR";
+                    reason  = "support < effective_min (tier-1)";
+                } else if (p.verdict == NetworkBiasAdmission::Verdict::NoIfPin) {
+                    verdict = "QUAR";
+                    reason  = "no IF-pinnable pair, < 2 distinct bands (tier-2)";
+                }
+                log->info("Network (CB-ADM):   {:<11} support={:<3} {:<5} ({})",
+                          p.key, p.support, verdict, reason);
+            }
+        } else {
+            log->warn("Network (CB-ADM): census produced NO classification (empty window "
+                      "at i0={} of {} synced) — falling back to the legacy per-epoch "
+                      ">= 2-station gate.", i0, synced.size());
+        }
+    }
 
     for (const auto& se : synced) {
         // Decomposition INC-4: per-epoch workspace (the RAIM-replay capture
@@ -1274,9 +1408,10 @@ int Application::runNetwork() {
             continue;
 
         subBegin(SB_SLIP);   // D0b block 1: PASS-A slip scans (pre-assembly)
+        ++slip_qc.epoch_idx;   // monotonic PROCESSED-epoch index (Card G gap arithmetic)
         networkPassASlipScan_(se, ctx, setup, traces, dt, pl_now_s, carry_warm,
                               modeled, present, shared_phase_keys,
-                              carry_slipped_ambs);
+                              carry_slipped_ambs, slip_qc);
         subEnd(SB_SLIP);       // D0b: close block 1 (slip scans)
         subBegin(SB_PREASM);   // D0b: pre-assembly measurement build (post-slip → assembly wall)
 
@@ -1284,7 +1419,7 @@ int Application::runNetwork() {
         // to ApplicationNetworkAssembly.cpp (INC-7): the writer-before-prune
         // ordering contract is structural inside networkAssemblyPrefilter_.
         int n_dropped_sats = 0;
-        networkAssemblyPrefilter_(se, setup, traces, slip_raw_ppp_utils,
+        networkAssemblyPrefilter_(se, setup, traces, slip_qc,
                                   modeled, present, n_dropped_sats);
         // The final shared phase-bias set + which station anchors (gauge-pins) each
         // (sat,signal).  Two realizations of the SAME minimum constraint (exactly
@@ -1301,811 +1436,36 @@ int Application::runNetwork() {
             for (const auto& kv : stations.front().sm->getSatPhaseBiasStates())
                 shared_phase_keys.insert(kv.first);
         } else {
-            const double pref_el = config_.networkPhaseDatumPrefElevDeg();
             const bool   sticky  = config_.networkPhaseDatumSticky();
-            const int    pdp_min_sta = config_.networkPhaseDatumMinStations();
 
-            // (a) Per present station: satellite elevation (from the pruned obs) and
-            //     the ANCHORABLE keys — the per-(sat,signal) phase-bias STATES this
-            //     station allocated in PASS A.  NOTE the timing: the ambiguity states
-            //     are allocated later, in PASS B's computeMeasurementUpdate, so we
-            //     canNOT test getAmbiguityIndex here (it is -1 for everything at this
-            //     point).  ensureNetworkSharedStates allocates a phase-bias state via
-            //     the SAME usability gate as the row build, so a live phase-bias state
-            //     ⟹ a phase row ⟹ a pinnable ambiguity in PASS B; the pin fold's own
-            //     getAmbiguityIndex + h2local check is the final guard (a miss orphans
-            //     the key, caught by the null-space gate → withhold + heal, rare).
-            //     usable_keys[i]: "sat_signal" -> "sat|signal|PB".
-            std::vector<std::map<std::string, double>>      sat_el(stations.size());
-            std::vector<std::map<std::string, std::string>> usable_keys(stations.size());
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (!present[i]) continue;
-                for (const auto& o : modeled[i]) sat_el[i][o.satellite] = o.elevation;
-                StateManager& sm = *stations[i].sm;
-                for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                    const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                    if (!p) continue;
-                    usable_keys[i].emplace(p->satellite + "_" + p->signal, kv.first);
-                }
-            }
-
-            // (b) Per-constellation candidate receivers, ranked by DESCENDING
-            //     coverage (# satellites tracked at >= pref_el) then lexical station
-            //     name (determinism).  A station is a candidate for a constellation
-            //     iff it can anchor >=1 of its keys; a low-elevation-only tracker
-            //     stays a (last-ranked) candidate so it can still anchor a setting
-            //     satellite nobody else sees.
-            std::map<char, std::map<size_t, int>> cover;
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (!present[i]) continue;
-                for (const auto& [sat, el] : sat_el[i])
-                    if (!sat.empty() && el >= pref_el) ++cover[sat.front()][i];
-            }
-            auto cov = [&](char c, size_t i) -> int {
-                auto it = cover.find(c); if (it == cover.end()) return 0;
-                auto jt = it->second.find(i); return jt == it->second.end() ? 0 : jt->second;
-            };
-            std::map<char, std::set<size_t>> cand_set;
-            std::map<std::string, std::string> union_keys;   // "sat_signal" -> "sat|signal|PB"
-            for (size_t i = 0; i < stations.size(); ++i)
-                for (const auto& [amb, pb] : usable_keys[i]) {
-                    if (!amb.empty()) cand_set[amb.front()].insert(i);
-                    union_keys.emplace(amb, pb);
-                }
-
-            // Coverage-threshold gating of the anchored union
-            // (network.phase_datum_min_stations; 1 = off, byte-identical): drop
-            // every (sat,signal) tracked by fewer than k present stations BEFORE
-            // the election.  A one/two-tracker column is exactly the pathology
-            // class the pdp validation surfaced: it (a) ejects a marginal
-            // tracking station as non-PD (its local block barely separates the
-            // column from that station's own ambiguity — the TWTF/VOIM symptom),
-            // (b) re-levels by a full ambiguity lump when its one-station anchor
-            // pool thins, and (c) leaks its anchor lump into the clock↔phase-bias
-            // split.  A gated key's PHASE rows still serve the satellite clock:
-            // each station's float ambiguity absorbs the bias, exactly as legacy
-            // non-shared signals (and GLONASS network phase) always have.  The
-            // tracking stations' allocated phase-bias states are pruned so the
-            // per-station column sets stay consistent with the gated union (the
-            // kMinStationsPerSat prune pattern above); the emitter sees a clean
-            // per-key absence (staleness / first-sighting semantics on return).
-            if (pdp_min_sta > 1) {
-                std::map<std::string, int> n_trk;
-                for (size_t i = 0; i < stations.size(); ++i)
-                    for (const auto& kv : usable_keys[i]) ++n_trk[kv.first];
-                std::set<std::string> gated_amb;   // "sat_signal" excluded this epoch
-                for (auto it = union_keys.begin(); it != union_keys.end();) {
-                    if (n_trk[it->first] < pdp_min_sta) {
-                        gated_amb.insert(it->first);
-                        it = union_keys.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-                if (!gated_amb.empty()) {
-                    ++n_gated_epochs;
-                    n_gated_key_epochs += gated_amb.size();
-                    for (size_t i = 0; i < stations.size(); ++i) {
-                        if (!present[i]) continue;
-                        StateManager& sm = *stations[i].sm;
-                        std::set<std::string> keep_pb;
-                        bool drop_any = false;
-                        for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                            const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                            if (p && gated_amb.count(p->satellite + "_" + p->signal)) {
-                                drop_any = true;
-                                continue;
-                            }
-                            keep_pb.insert(kv.first);
-                        }
-                        if (drop_any) sm.pruneSatPhaseBiasStatesExcept(keep_pb);
-                    }
-                }
-            }
+            // This epoch's candidate census + the network.phase_datum_min_stations
+            // coverage gate.  Relocated to filter/NetworkPhaseDatum at INC-8b:
+            // built ONCE here and shared by whichever realization the dispatch
+            // below picks.  The builder also PRUNES the phase-bias states of
+            // gated keys, which all three elections depend on having already
+            // happened, and it is the sole writer of the two run-end gate
+            // counters (computing the census twice would double-count them).
+            PhaseDatumCandidates cnd;
+            networkBuildPhaseDatumCandidates(config_, stations, present, modeled,
+                                             cnd, n_gated_epochs, n_gated_key_epochs);
 
             if (phase_datum_ensemble) {
-                // Fix A: anchor-free ENSEMBLE datum — the shared phase-bias set is the
-                // (coverage-gated) UNION, with NO anchor election and NO pins.  The
-                // gauge is realized by the kernel sum-to-zero fold (built from every
-                // tracking station's ambiguity column AFTER the reduce), so no station
-                // gets a pinned_amb_key (⇒ do_fold stays false, isGaugePinned false,
-                // every station carries all its arcs) and there is no anchor to hand
-                // over.  The candidate ranking + election below are skipped.
-                for (auto& st : stations) {
-                    st.pinned_amb_targets.clear();
-                    st.pinned_rpb_keys.clear();
-                }
-                this_epoch_anchor.clear();
-                shared_phase_keys.clear();
-                for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
+                networkElectEnsembleDatum(stations, cnd, this_epoch_anchor,
+                                          shared_phase_keys);
             } else if (phase_datum_eq34) {
-                // Card 3: Eq-34 / de Jonge SINGLE-RECEIVER-CHAIN datum.  Per
-                // (constellation,signal) connected component of the bipartite
-                // (receiver × satellite) observation graph, elect a datum receiver
-                // r1 (its RPB is pinned to 0) and pin the ambiguities on the edges
-                // of a spanning tree rooted at r1.  Then every between-satellite
-                // reference is an integer combination across the whole component —
-                // including satellites r1 never sees — because each chain hop
-                // contributes only an integer (the hop receiver's fractional bias
-                // is its OWN estimable RPB state δ_{r,σ}, no longer part of the
-                // pin).  Full-visibility regional case degenerates to the Odijk
-                // Eq-34 star (CC-R).  The shared set is the ungated union (as
-                // ensemble); the chain pins fix the enlarged (receiver+satellite)
-                // gauge.  Per (const,σ) component with n_c stations, m_c sats:
-                // (n_c+m_c−1) tree-edge ambiguity pins + 1 RPB pin = n_c+m_c =
-                // the exact gauge dimension.  Every RPB-carrying station is a tree
-                // vertex, so it gets ≥1 pin ⇒ its N_rr stays PD (the load-bearing
-                // rank invariant, D3c).
-                for (auto& st : stations) {
-                    st.pinned_amb_targets.clear();
-                    st.pinned_rpb_keys.clear();
-                }
-                this_epoch_anchor.clear();
-                shared_phase_keys.clear();
-                for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
-                if (!eq34_ppp_utils) eq34_ppp_utils = std::make_unique<PppUtils>(log_manager_);
-                // This epoch's receiver-side parent edges + per-sat component roots;
-                // become eq34_rx_parent / eq34_sat_root after the election (wholesale
-                // replacement — the maps always describe exactly one epoch's tree).
-                std::map<std::string, std::string> new_rx_parent, new_sat_root;
-                // This epoch's pin targets (→ eq34_prev_target) and the carry
-                // S-transformation shift maps collected by the per-component shift
-                // walk: Δb per (sat,σ), Δδ per (station,cons,σ) / (station,rpb_key).
-                std::map<std::pair<int, std::string>, double> new_prev_target;
-                std::map<std::pair<std::string, std::string>, double> shift_sat;
-                std::map<std::tuple<int, char, std::string>, double>  shift_rxg;
-                std::map<std::pair<int, std::string>, double>         shift_rpb;
-
-                const std::string eq34_pref_rx = config_.networkPhaseDatumEq34Receiver();
-                // Card 4: the per-epoch datum targets are plain 0 (the frame is re-realized
-                // freely; continuity moves to the invariant DD carry), so pin-to-round is off.
-                const bool        eq34_round   = config_.networkPhaseDatumEq34PinRound()
-                                              && !carry_invariant;
-                auto eqSysOfChar = [](char c) -> System {
-                    switch (c) {
-                        case 'G': return System::GPS;    case 'E': return System::Galileo;
-                        case 'C': return System::BeiDou; case 'J': return System::QZSS;
-                        default:  return System::Unknown;
-                    }
-                };
-
-                // Group the ungated (sat,σ) keys into (constellation,signal)
-                // sub-problems.  Recover (sat,σ) from the pbkey value so the
-                // "sat_signal" '_' split is unambiguous.
-                struct GKey {
-                    char cons; std::string signal;
-                    bool operator<(const GKey& o) const {
-                        return cons != o.cons ? cons < o.cons : signal < o.signal;
-                    }
-                };
-                std::map<GKey, std::set<std::string>>                      grp_sats;
-                std::map<GKey, std::map<size_t, std::vector<std::string>>> grp_arcs;  // group -> station -> sats
-                std::map<GKey, std::map<std::string, std::vector<size_t>>> grp_satrx; // group -> sat -> stations
-                for (size_t i = 0; i < stations.size(); ++i) {
-                    if (!present[i]) continue;
-                    for (const auto& [amb, pbkey] : usable_keys[i]) {
-                        if (!union_keys.count(amb)) continue;          // gated out
-                        const auto p = StateKeys::parseSatPhaseBiasKey(pbkey);
-                        if (!p || p->satellite.empty()) continue;
-                        const GKey g{ p->satellite.front(), p->signal };
-                        grp_sats[g].insert(p->satellite);
-                        grp_arcs[g][i].push_back(p->satellite);
-                        grp_satrx[g][p->satellite].push_back(i);
-                    }
-                }
-
-                // Rank bookkeeping (D3, theory ref §7.1): the recorded pins must
-                // equal the exact gauge dimension Σ_components (n_c + m_c).  A cheap
-                // always-on cross-check of the W5 null-space gate; logged below.
-                int eq34_n_pins = 0, eq34_gauge_dim = 0;
-                // Carry hygiene (D4): (sat,σ) whose chain path changed vs last
-                // epoch — the emitted b_s re-references, so the phase-leveling local
-                // carries for it are stale by an integer AND its D2/C1 shared PB
-                // prior belongs to the retired frame.  Collected into the member
-                // set (cleared here), erased below BEFORE PASS B consumes the local
-                // carry, and marginalized at the shared-carry consume.
-                eq34_reref.clear();
-                for (auto& [g, sats] : grp_sats) {
-                    // Normal locals (NOT the structured bindings g/sats) so the
-                    // recordEdge lambda below can capture them — C++17 forbids
-                    // capturing structured bindings.
-                    const char        grp_cons = g.cons;
-                    const std::string grp_sig  = g.signal;
-                    const System      system  = eqSysOfChar(grp_cons);
-                    const std::string sys_str = PppUtils::getSystemString(*sats.begin());
-                    const std::string rpb_key = StateKeys::makeReceiverPhaseBiasKey(sys_str, grp_sig);
-                    const std::string dr_key  = std::string(1, grp_cons) + "|" + grp_sig;
-                    auto& arcs  = grp_arcs[g];
-                    auto& satrx = grp_satrx[g];
-                    auto rV = [](size_t i){ return "R" + std::to_string(i); };
-                    auto sV = [](const std::string& s){ return "S" + s; };
-
-                    // I4 longevity score of arc (station ri, sat): higher = longer
-                    // expected life ⇒ a better NEW tree edge (fewer future deaths ⇒
-                    // fewer b_s re-references).  A RISING arc (elevation grew vs last
-                    // epoch, tracked in eq34_prev_el) will not set for a long time, so
-                    // it is lifted above EVERY setting arc (+90°, one full quadrant);
-                    // within a class higher elevation wins.  The churn source is the
-                    // low-elevation SETTING arc — this ranks it dead last.  Unread
-                    // unless eq34_longevity (sat_el/eq34_prev_el stay valid here).
-                    auto arcLife = [&](size_t ri, const std::string& sat) -> double {
-                        auto ei = sat_el[ri].find(sat);
-                        if (ei == sat_el[ri].end()) return -1e9;   // no elevation (unreachable for a live arc)
-                        const double el = ei->second;
-                        auto pe = eq34_prev_el.find({ri, sat});
-                        const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
-                        return el + (rising ? 90.0 : 0.0);
-                    };
-
-                    // STICKY-tree seed (spec D2 step 3): the incumbent tree edges —
-                    // sat-side parents in anchor_incumbent ("sat_signal" → station),
-                    // receiver-side parents in eq34_rx_parent ("station|c|σ" → sat) —
-                    // that are still LIVE this epoch (station present in this group's
-                    // arcs and still tracking the satellite).  Both maps are replaced
-                    // wholesale each election, so together they are exactly last
-                    // epoch's tree: each edge in exactly one map, and any live subset
-                    // is a forest — seeding it can never close a cycle.
-                    std::set<std::pair<size_t, std::string>> arc_set;
-                    std::map<std::string, size_t> name2idx;
-                    for (const auto& [i, slist] : arcs) {
-                        name2idx[stations[i].name] = i;
-                        for (const auto& s : slist) arc_set.insert({i, s});
-                    }
-                    std::map<std::string, std::vector<std::string>> inc_adj;
-                    auto seedEdge = [&](const std::string& sta, const std::string& sat) {
-                        auto ni = name2idx.find(sta);
-                        if (ni == name2idx.end() || !arc_set.count({ni->second, sat})) return;
-                        inc_adj[rV(ni->second)].push_back(sV(sat));
-                        inc_adj[sV(sat)].push_back(rV(ni->second));
-                    };
-                    const std::string sig_suffix = "_" + grp_sig;
-                    for (const auto& [amb, sta] : anchor_incumbent) {
-                        if (amb.empty() || amb.front() != grp_cons) continue;
-                        if (amb.size() <= sig_suffix.size()
-                            || amb.compare(amb.size() - sig_suffix.size(),
-                                           sig_suffix.size(), sig_suffix) != 0) continue;
-                        seedEdge(sta, amb.substr(0, amb.size() - sig_suffix.size()));
-                    }
-                    const std::string rx_suffix =
-                        "|" + std::string(1, grp_cons) + "|" + grp_sig;
-                    for (const auto& [rxkey, sat] : eq34_rx_parent) {
-                        if (rxkey.size() <= rx_suffix.size()
-                            || rxkey.compare(rxkey.size() - rx_suffix.size(),
-                                             rx_suffix.size(), rx_suffix) != 0) continue;
-                        seedEdge(rxkey.substr(0, rxkey.size() - rx_suffix.size()), sat);
-                    }
-
-                    // --- Union-find over vertices "R<idx>" / "S<sat>". ---
-                    std::map<std::string, std::string> uf;
-                    auto find = [&](std::string v) -> std::string {
-                        auto it = uf.find(v);
-                        while (it != uf.end() && it->second != v) { v = it->second; it = uf.find(v); }
-                        return v;
-                    };
-                    auto unite = [&](const std::string& a, const std::string& b) {
-                        if (!uf.count(a)) uf[a] = a;
-                        if (!uf.count(b)) uf[b] = b;
-                        const std::string ra = find(a), rb = find(b);
-                        if (ra != rb) uf[ra] = rb;
-                    };
-                    for (const auto& [i, slist] : arcs)
-                        for (const auto& s : slist) unite(rV(i), sV(s));
-
-                    std::map<std::string, std::vector<size_t>>      comp_rx;
-                    std::map<std::string, std::vector<std::string>> comp_sat;
-                    for (const auto& [i, slist] : arcs)  comp_rx[find(rV(i))].push_back(i);
-                    for (const auto& s : sats)           comp_sat[find(sV(s))].push_back(s);
-
-                    std::string best_datum_rx; size_t best_comp = 0;
-                    for (auto& [root, rx_list] : comp_rx) {
-                        std::sort(rx_list.begin(), rx_list.end());   // determinism
-
-                        // Elect r1: config pref → per-COMPONENT sticky (sat-root
-                        // vote) → group incumbent → highest coverage.
-                        size_t r1 = static_cast<size_t>(-1);
-                        if (!eq34_pref_rx.empty())
-                            for (size_t i : rx_list)
-                                if (stations[i].name == eq34_pref_rx) { r1 = i; break; }
-                        // Per-COMPONENT stickiness: the component's sats remember
-                        // last epoch's root (eq34_sat_root) — re-elect the majority-
-                        // remembered station still present in this component.  The
-                        // group-level eq34_datum_rx slot below only remembers the
-                        // LARGEST component's r1, which left small fragments
-                        // re-electing by coverage every epoch (Jul-10 field: ~8
-                        // chronic (sat,σ) re-references per epoch, each a full
-                        // fragment re-level).  Vote ties break by station name.
-                        if (r1 == static_cast<size_t>(-1)) {
-                            std::map<std::string, int> root_votes;
-                            for (const auto& s : comp_sat[root]) {
-                                auto rt = eq34_sat_root.find(s + "_" + grp_sig);
-                                if (rt != eq34_sat_root.end()) ++root_votes[rt->second];
-                            }
-                            int best_v = 0; std::string best_name;
-                            for (const auto& [nm, v] : root_votes)
-                                if (v > best_v || (v == best_v && nm < best_name)) {
-                                    best_v = v; best_name = nm;
-                                }
-                            if (best_v > 0)
-                                for (size_t i : rx_list)
-                                    if (stations[i].name == best_name) { r1 = i; break; }
-                        }
-                        if (r1 == static_cast<size_t>(-1)) {
-                            auto it = eq34_datum_rx.find(dr_key);
-                            if (it != eq34_datum_rx.end())
-                                for (size_t i : rx_list)
-                                    if (stations[i].name == it->second) { r1 = i; break; }
-                        }
-                        if (r1 == static_cast<size_t>(-1)) {
-                            int best = -1;
-                            for (size_t i : rx_list) {
-                                const int cv = cov(g.cons, i);
-                                if (cv > best
-                                    || (cv == best && stations[i].name < stations[r1].name)) {
-                                    best = cv; r1 = i;
-                                }
-                            }
-                        }
-                        if (r1 == static_cast<size_t>(-1)) continue;   // empty (unreachable)
-
-                        if (rx_list.size() > best_comp) {
-                            best_comp = rx_list.size();
-                            best_datum_rx = stations[r1].name;
-                        }
-
-                        // r1's RPB pin — the receiver half of the gauge (δ_{r1,σ}=0).
-                        stations[r1].pinned_rpb_keys.insert(rpb_key);
-                        ++eq34_n_pins;
-                        eq34_gauge_dim += static_cast<int>(rx_list.size()
-                                        + comp_sat[root].size());   // n_c + m_c
-
-                        // STICKY spanning tree (two-queue BFS from r1).  The
-                        // incumbent queue drains to exhaustion before any NEW graph
-                        // edge is explored, so a surviving old subtree — even one
-                        // detached upstream — is re-attached through its OWN old
-                        // edges (one new edge per detached fragment), never re-wired
-                        // vertex-by-vertex: a tree-edge pin moves only when its arc
-                        // actually died.  One ambiguity pin per tree edge; each
-                        // attachment records (child, parent, edge-changed) for the
-                        // dirty walk below.
-                        //
-                        // Records one tree edge (r,s): pin ambiguity z^s_r at station
-                        // r.  Target = 0 on a first-sighting edge; on a re-pin of an
-                        // already-lit (sat,σ) (pin-to-round), the |·|-minimizing
-                        // integer λ·round(carried float/λ) so the emitted-bias frame
-                        // step ≈ 0 cyc.  sat_is_child: which endpoint this edge
-                        // ATTACHES — the sat (parent-edge → this_epoch_anchor) or the
-                        // receiver (parent-edge → new_rx_parent).
-                        std::set<std::string> visited;
-                        std::deque<std::string> inc_q, new_q;
-                        // (child, parent, pinmove, known): pinmove = this pin's
-                        // exact displacement of its pinned float vs last epoch's
-                        // frame; known = false where the step is NOT computable
-                        // (re-pin without a carry; root handover — a common
-                        // FRACTIONAL step no integer transform can express).
-                        std::vector<std::tuple<std::string, std::string, double, bool>> order;
-                        auto recordEdge = [&](size_t ri, const std::string& sat,
-                                              bool sat_is_child) {
-                            const std::string amb = sat + "_" + grp_sig;
-                            // I2 metric: this edge was retained across a gap (its
-                            // carry outlived the row absence) and is resuming now —
-                            // the incumbent seed made it a recognized edge, so the
-                            // pin-to-round below re-pins it to its pre-gap integer
-                            // (step ~0) instead of the first-sighting 0 a wholesale
-                            // replace would have forced.  Count the save.
-                            if (eq34_extend_only
-                                && eq34_retained_edges.count({static_cast<int>(ri), amb}))
-                                ++eq34_gap_repin_total;
-                            // Pin target: 0 on first sighting; else λ·round(carry/λ)
-                            // at the (possibly new) edge station.  carry_val also
-                            // feeds the pinmove computation below.
-                            double target = 0.0;
-                            double carry_val = std::numeric_limits<double>::quiet_NaN();
-                            if (eq34_round && anchor_incumbent.count(amb)) {
-                                auto lc = local_carry.find(std::make_tuple(
-                                    static_cast<int>(ri), sat, grp_sig));
-                                if (lc != local_carry.end() && system != System::Unknown) {
-                                    const double lam =
-                                        eq34_ppp_utils->getWavelength(system, grp_sig, sat);
-                                    if (std::isfinite(lam) && lam > 0.0) {
-                                        carry_val = lc->second.value_abs;
-                                        target = lam * std::round(carry_val / lam);
-                                    }
-                                }
-                            }
-                            double pinmove = 0.0;
-                            bool known = true;
-                            bool edge_changed = false;
-                            if (sat_is_child) {
-                                auto ai = anchor_incumbent.find(amb);
-                                edge_changed = (ai != anchor_incumbent.end()
-                                                && ai->second != stations[ri].name);
-                                this_epoch_anchor[amb] = stations[ri].name;
-                                // Root handover: the component frame steps by the
-                                // datum receivers' fractional δ difference — not an
-                                // integer, not computable here ⇒ unknown.
-                                auto rt = eq34_sat_root.find(amb);
-                                if (rt != eq34_sat_root.end()
-                                    && rt->second != stations[r1].name) known = false;
-                                new_sat_root[amb] = stations[r1].name;
-                            } else {
-                                const std::string rxkey = stations[ri].name + rx_suffix;
-                                auto rp = eq34_rx_parent.find(rxkey);
-                                edge_changed = (rp != eq34_rx_parent.end()
-                                                && rp->second != sat);
-                                new_rx_parent[rxkey] = sat;
-                            }
-                            if (edge_changed) {
-                                // Re-pin at a NEW station: the float there sat at
-                                // carry_val; the pin drives it to target — an exact,
-                                // known displacement iff the carry exists.
-                                if (std::isfinite(carry_val)) pinmove = target - carry_val;
-                                else known = false;
-                            } else {
-                                // Same station: its float was hard-pinned at last
-                                // epoch's target, so the displacement is exactly the
-                                // target difference (no carry noise involved).
-                                auto pt = eq34_prev_target.find(
-                                    {static_cast<int>(ri), amb});
-                                pinmove = target
-                                    - (pt != eq34_prev_target.end() ? pt->second : 0.0);
-                            }
-                            new_prev_target[{static_cast<int>(ri), amb}] = target;
-                            stations[ri].pinned_amb_targets[amb] = target;
-                            ++eq34_n_pins;
-                            order.emplace_back(sat_is_child ? sV(sat) : rV(ri),
-                                               sat_is_child ? rV(ri) : sV(sat),
-                                               pinmove, known);
-                        };
-                        auto attach = [&](const std::string& v) {
-                            visited.insert(v);
-                            inc_q.push_back(v);
-                            new_q.push_back(v);
-                        };
-                        attach(rV(r1));
-                        while (!inc_q.empty() || !new_q.empty()) {
-                            if (!inc_q.empty()) {
-                                const std::string v = inc_q.front(); inc_q.pop_front();
-                                auto ia = inc_adj.find(v);
-                                if (ia == inc_adj.end()) continue;
-                                for (const auto& u : ia->second) {
-                                    if (visited.count(u)) continue;
-                                    if (u[0] == 'S')
-                                        recordEdge(static_cast<size_t>(
-                                                       std::stoul(v.substr(1))),
-                                                   u.substr(1), /*sat_is_child=*/true);
-                                    else
-                                        recordEdge(static_cast<size_t>(
-                                                       std::stoul(u.substr(1))),
-                                                   v.substr(1), /*sat_is_child=*/false);
-                                    attach(u);
-                                }
-                            } else {
-                                const std::string v = new_q.front(); new_q.pop_front();
-                                if (v[0] == 'R') {
-                                    const size_t ri =
-                                        static_cast<size_t>(std::stoul(v.substr(1)));
-                                    std::vector<std::string> ss = arcs[ri];
-                                    // I4: attach this receiver's longest-lived
-                                    // unvisited sats first (rising/high-elevation),
-                                    // so the NEW edge is picked to outlive the epoch.
-                                    // OFF = legacy sat-name order (byte-identical).
-                                    if (eq34_longevity)
-                                        std::sort(ss.begin(), ss.end(),
-                                                  [&](const std::string& a, const std::string& b) {
-                                                      const double la = arcLife(ri, a),
-                                                                   lb = arcLife(ri, b);
-                                                      if (la != lb) return la > lb;
-                                                      return a < b;   // deterministic tie-break
-                                                  });
-                                    else
-                                        std::sort(ss.begin(), ss.end());
-                                    for (const auto& s : ss) {
-                                        if (visited.count(sV(s))) continue;
-                                        recordEdge(ri, s, /*sat_is_child=*/true);
-                                        attach(sV(s));
-                                    }
-                                } else {
-                                    const std::string s = v.substr(1);
-                                    std::vector<size_t> rr = satrx[s];
-                                    // I4: attach this sat through its most durable
-                                    // unvisited tracker first — high per-constellation
-                                    // coverage (the robust receiver, spec D2 step 3),
-                                    // then the arc's own longevity at that station.
-                                    // OFF = legacy station-index order (byte-identical).
-                                    if (eq34_longevity)
-                                        std::sort(rr.begin(), rr.end(),
-                                                  [&](size_t a, size_t b) {
-                                                      const int ca = cov(grp_cons, a),
-                                                                cb = cov(grp_cons, b);
-                                                      if (ca != cb) return ca > cb;
-                                                      const double la = arcLife(a, s),
-                                                                   lb = arcLife(b, s);
-                                                      if (la != lb) return la > lb;
-                                                      return a < b;   // deterministic tie-break
-                                                  });
-                                    else
-                                        std::sort(rr.begin(), rr.end());
-                                    for (size_t ri : rr) {
-                                        if (visited.count(rV(ri))) continue;
-                                        recordEdge(ri, s, /*sat_is_child=*/false);
-                                        attach(rV(ri));
-                                    }
-                                }
-                            }
-                        }
-                        // Shift walk — the carry S-TRANSFORMATION (spec D4 "v2 =
-                        // SHIFT", realized at election: no emit-site plumbing
-                        // needed, the step is known here).  A pin displacement
-                        // propagates down the chain with alternating sign:
-                        //   Δb_s = −Δδ_parent − pinmove(edge)
-                        //   Δδ_r = −Δb_parent − pinmove(edge)
-                        // so the whole subtree's frame move is EXACT and every
-                        // carried quantity can be transformed into the new basis
-                        // (variances untouched — zero information loss) instead of
-                        // erased.  Erase/skip (eq34_reref) remains ONLY where the
-                        // step is unknown: a re-pin with no carry, or a root
-                        // handover (common fractional).  order is attachment-
-                        // ordered, parents strictly first — one forward pass.
-                        std::map<std::string, double> vshift;
-                        std::map<std::string, bool>   vknown;
-                        vshift[rV(r1)] = 0.0;
-                        vknown[rV(r1)] = true;
-                        for (const auto& [v, p, pinmove, known] : order) {
-                            // Shift OFF (default): any nonzero pin displacement is
-                            // treated as unknown ⇒ the erase/skip hygiene handles it
-                            // (the validated B4/B7-class behavior).  Shift ON: exact
-                            // transforms flow to the apply block below.
-                            const bool   k = known && vknown[p]
-                                          && (eq34_shift_on || pinmove == 0.0);
-                            const double s = k ? (-vshift[p] - pinmove) : 0.0;
-                            vshift[v] = s;
-                            vknown[v] = k;
-                            if (v[0] == 'S') {
-                                const std::string sat = v.substr(1);
-                                if (!k)          eq34_reref.insert({sat, grp_sig});
-                                else if (s != 0.0) shift_sat[{sat, grp_sig}] = s;
-                            } else {
-                                const int idx =
-                                    static_cast<int>(std::stoul(v.substr(1)));
-                                if (!k)
-                                    // Unknown frame step: the carried δ̂_{r,σ}
-                                    // belongs to an unrecoverable retired frame.
-                                    rpb_carry.erase({idx, rpb_key});
-                                else if (s != 0.0) {
-                                    shift_rxg[std::make_tuple(idx, grp_cons,
-                                                              grp_sig)] = s;
-                                    shift_rpb[{idx, rpb_key}] = s;
-                                }
-                            }
-                        }
-                    }
-                    if (!best_datum_rx.empty()) eq34_datum_rx[dr_key] = best_datum_rx;
-                }
-                // Rank cross-check (D3): recorded pins == Σ (n_c + m_c).  A mismatch
-                // means a component was mis-pinned before the W5 gate ever runs.
-                if (eq34_n_pins != eq34_gauge_dim) {
-                    ++eq34_mismatch_epochs;
-                    log->warn("Network[eq34]: pin/gauge mismatch — recorded {} pins vs "
-                              "gauge dimension {} (Σ n_c+m_c over components); the W5 "
-                              "null-space gate will catch an under/over-constrained datum.",
-                              eq34_n_pins, eq34_gauge_dim);
-                } else
-                    log->debug("Network[eq34]: chain datum — {} pins == gauge dim {} "
-                               "(1 RPB + tree edges per component).",
-                               eq34_n_pins, eq34_gauge_dim);
-                // Carry hygiene (D4): erase the phase-leveling local carries for any
-                // re-referenced (sat,σ) at EVERY station, before PASS B consumes the
-                // carry — the b_s frame stepped by an integer, so the carried floats
-                // are stale.  Refloat next epoch (safe; the realized wire step is
-                // usually 0 under pin-to-round, but erasing an already-integer carry
-                // costs only one epoch's continuity).
-                if (!eq34_reref.empty()) {
-                    eq34_reref_total += static_cast<long long>(eq34_reref.size());
-                    int n_erased = 0;
-                    for (auto it = local_carry.begin(); it != local_carry.end();) {
-                        const auto& key = it->first;   // (station idx, sat, signal)
-                        if (eq34_reref.count({std::get<1>(key), std::get<2>(key)})) {
-                            it = local_carry.erase(it);
-                            ++n_erased;
-                        } else {
-                            ++it;
-                        }
-                    }
-                    eq34_erase_total += n_erased;
-                    if (n_erased > 0)
-                        log->debug("Network[eq34]: {} local ambiguity carry(ies) erased for "
-                                   "{} re-referenced (sat,σ) — refloat next epoch.",
-                                   n_erased, eq34_reref.size());
-                }
-                // Carry S-transformation apply: shift every carried quantity into
-                // this epoch's frame (Δz = −Δb_s − Δδ_r on the local ambiguity
-                // carries; Δδ_r on the RPB carries; Δb_s on the shared PB carried
-                // priors).  Variances untouched — this is an exact basis change,
-                // not a refloat.  Runs BEFORE PASS B consumes any carry.
-                if (!shift_sat.empty() || !shift_rxg.empty()) {
-                    long long n_shifted = 0;
-                    for (auto& [key, lc] : local_carry) {
-                        const int idx          = std::get<0>(key);
-                        const std::string& sat = std::get<1>(key);
-                        const std::string& sig = std::get<2>(key);
-                        double d = 0.0;
-                        auto bs = shift_sat.find({sat, sig});
-                        if (bs != shift_sat.end()) d -= bs->second;
-                        if (!sat.empty()) {
-                            auto dr = shift_rxg.find(
-                                std::make_tuple(idx, sat.front(), sig));
-                            if (dr != shift_rxg.end()) d -= dr->second;
-                        }
-                        if (d != 0.0 && std::isfinite(d)) {
-                            lc.value_abs += d;
-                            ++n_shifted;
-                        }
-                    }
-                    for (auto& [key, lc] : rpb_carry) {
-                        auto it = shift_rpb.find(key);
-                        if (it != shift_rpb.end() && std::isfinite(it->second)
-                            && it->second != 0.0) {
-                            lc.value_abs += it->second;
-                            ++n_shifted;
-                        }
-                    }
-                    for (auto& cp : prev_carry) {
-                        if (cp.kind != SharedParamKind::PhaseBias) continue;
-                        auto bs = shift_sat.find({cp.sat, cp.signal});
-                        if (bs != shift_sat.end() && std::isfinite(bs->second)
-                            && bs->second != 0.0) {
-                            cp.value += bs->second;
-                            ++n_shifted;
-                        }
-                    }
-                    eq34_shift_total += n_shifted;
-                }
-                // Sticky baselines for next epoch: this epoch's tree becomes the
-                // incumbent forest (sat parents + receiver parents, replaced
-                // wholesale so the pair of maps always describes exactly one tree),
-                // each sat remembers its component root for the r1-handover check,
-                // and each pin remembers its target for the same-station pinmove.
-                // anchor_incumbent doubles as the was-lit gate for pin-to-round
-                // (every tree sat has exactly one parent edge).
-                //
-                // I2 (de Jonge §3.5 extend-only) — before the wholesale swap, MERGE
-                // back the identity of any tree edge that was NOT seen this epoch but
-                // whose phase-leveling memory (local_carry) is still alive: its
-                // sat-side parent (this_epoch_anchor), receiver-side parent
-                // (new_rx_parent), component root (new_sat_root) and pinned integer
-                // (new_prev_target).  A momentary row gap is then NOT a dead arc — the
-                // edge sits inertly in the incumbent maps (never seeded, because the
-                // seed admits LIVE arcs only ⇒ the spanning-forest invariant holds),
-                // and the epoch its arc RESUMES it is a recognized incumbent whose
-                // pin-to-round re-pins to the SAME integer (emitted-bias step ≈ 0)
-                // rather than re-leveling from a first-sighting 0.  local_carry
-                // liveness is the age stamp: it is gap-pruned at phase_leveling_max
-                // _gap_s, and a genuine reroute/handover erases it — so an edge past
-                // that horizon (or truly re-referenced) is dropped and re-floats as a
-                // first sighting, by which point the peer carries are gone too.  Keys
-                // are all receiver-indexed pins {receiver idx, "sat_signal"}; the two
-                // parent maps hold each edge in exactly one direction (unchanged).
-                if (eq34_extend_only) {
-                    std::map<std::string, size_t> gname2idx;
-                    for (size_t i = 0; i < stations.size(); ++i)
-                        gname2idx[stations[i].name] = i;
-                    auto splitAmb = [](const std::string& a, std::string& sat,
-                                       std::string& sig) -> bool {
-                        const auto us = a.find('_');
-                        if (us == std::string::npos) return false;
-                        sat = a.substr(0, us); sig = a.substr(us + 1); return true;
-                    };
-                    auto carryAlive = [&](size_t idx, const std::string& sat,
-                                          const std::string& sig) -> bool {
-                        return local_carry.count(std::make_tuple(
-                            static_cast<int>(idx), sat, sig)) != 0;
-                    };
-                    eq34_retained_edges.clear();
-                    // Sat-side parents (amb → parent station) + their component roots.
-                    for (const auto& [amb, sta] : anchor_incumbent) {
-                        if (this_epoch_anchor.count(amb)) continue;    // re-seen live
-                        std::string sat, sig;
-                        if (!splitAmb(amb, sat, sig)) continue;
-                        auto gi = gname2idx.find(sta);
-                        if (gi == gname2idx.end()
-                            || !carryAlive(gi->second, sat, sig)) continue;  // dead ⇒ drop
-                        this_epoch_anchor.emplace(amb, sta);
-                        eq34_retained_edges.emplace(static_cast<int>(gi->second), amb);
-                        auto sr = eq34_sat_root.find(amb);
-                        if (sr != eq34_sat_root.end())
-                            new_sat_root.emplace(amb, sr->second);
-                    }
-                    // Receiver-side parents ("<name>|<c>|<σ>" → sat).
-                    for (const auto& [rxkey, sat] : eq34_rx_parent) {
-                        if (new_rx_parent.count(rxkey)) continue;
-                        const auto p2 = rxkey.rfind('|');
-                        if (p2 == std::string::npos || p2 == 0) continue;
-                        const auto p1 = rxkey.rfind('|', p2 - 1);
-                        if (p1 == std::string::npos) continue;
-                        const std::string name = rxkey.substr(0, p1);
-                        const std::string sig  = rxkey.substr(p2 + 1);
-                        auto gi = gname2idx.find(name);
-                        if (gi == gname2idx.end()
-                            || !carryAlive(gi->second, sat, sig)) continue;
-                        new_rx_parent.emplace(rxkey, sat);
-                        eq34_retained_edges.emplace(static_cast<int>(gi->second),
-                                                    sat + "_" + sig);
-                    }
-                    // Pinned integers ({receiver idx, "sat_signal"} → target).
-                    for (const auto& [k, tgt] : eq34_prev_target) {
-                        if (new_prev_target.count(k)) continue;
-                        std::string sat, sig;
-                        if (!splitAmb(k.second, sat, sig)) continue;
-                        if (!carryAlive(static_cast<size_t>(k.first), sat, sig)) continue;
-                        new_prev_target.emplace(k, tgt);
-                    }
-                }
-                anchor_incumbent = this_epoch_anchor;
-                eq34_rx_parent   = std::move(new_rx_parent);
-                eq34_sat_root    = std::move(new_sat_root);
-                eq34_prev_target = std::move(new_prev_target);
-                // I4: snapshot this epoch's arc elevations so next epoch's arcLife
-                // can tell a rising arc from a setting one.  Rebuilt wholesale (a
-                // pruned arc simply drops out); skipped entirely when longevity
-                // election is off, so it stays empty on the B9 baseline.
-                if (eq34_longevity) {
-                    eq34_prev_el.clear();
-                    for (size_t i = 0; i < stations.size(); ++i) {
-                        if (!present[i]) continue;
-                        for (const auto& [sat, el] : sat_el[i])
-                            eq34_prev_el[{i, sat}] = el;
-                    }
-                }
+                // Card 3 chain datum.  MUTATES the carries pre-solve and fills
+                // ctx.carry.eq34_reref, so it must stay ahead of the D3c RPB
+                // allocation below (it is the sole writer of shared_phase_keys on
+                // this path, and D3c derives its need_rpb set from that) and hence
+                // ahead of est.beginEpoch / PASS B.  Full ordering contract in
+                // filter/NetworkChainDatum.hpp.
+                networkElectChainDatum(ctx, config_, log_manager_, log, stations,
+                                       present, cnd, shared_phase_keys);
             } else {
-            std::map<char, std::vector<size_t>> cand;
-            for (auto& [c, s] : cand_set) {
-                std::vector<size_t> v(s.begin(), s.end());
-                std::stable_sort(v.begin(), v.end(), [&](size_t a, size_t b) {
-                    const int ca = cov(c, a), cb = cov(c, b);
-                    if (ca != cb) return ca > cb;
-                    return stations[a].name < stations[b].name;
-                });
-                cand[c] = std::move(v);
-            }
-
-            // (c) Elect one anchor per (sat,signal): keep the STICKY incumbent while
-            //     it still tracks the key (fewest handovers), else the highest-ranked
-            //     candidate that tracks it — concentrating most of a constellation on
-            //     one receiver (frame-consistent) with graceful per-satellite
-            //     fallback.  Record the pin in the anchor's OWN pinned_amb_keys (its
-            //     local block — the load-bearing invariant), the shared column, and
-            //     this_epoch_anchor (read at the emit site for handover signalling).
-            for (auto& st : stations) {
-                st.pinned_amb_targets.clear();
-                st.pinned_rpb_keys.clear();   // eq34-only; always empty here (no-op)
-            }
-            this_epoch_anchor.clear();
-            shared_phase_keys.clear();
-            std::map<std::string, std::string> new_incumbent;
-            for (const auto& [amb, pbkey] : union_keys) {
-                const char c = amb.empty() ? char(0) : amb.front();
-                size_t anchor = static_cast<size_t>(-1);
-                if (sticky) {
-                    auto it = anchor_incumbent.find(amb);
-                    if (it != anchor_incumbent.end())
-                        for (size_t i = 0; i < stations.size(); ++i)
-                            if (present[i] && stations[i].name == it->second
-                                && usable_keys[i].count(amb)) { anchor = i; break; }
-                }
-                if (anchor == static_cast<size_t>(-1)) {
-                    auto cit = cand.find(c);
-                    if (cit != cand.end())
-                        for (size_t i : cit->second)
-                            if (usable_keys[i].count(amb)) { anchor = i; break; }
-                }
-                if (anchor == static_cast<size_t>(-1)) continue;   // no tracker (unreachable)
-                stations[anchor].pinned_amb_targets[amb] = 0.0;   // prioritized: pin to 0
-                this_epoch_anchor[amb] = stations[anchor].name;
-                new_incumbent[amb]     = stations[anchor].name;
-                shared_phase_keys.insert(pbkey);
-            }
-            anchor_incumbent.swap(new_incumbent);
-            }  // end !phase_datum_ensemble (anchor election)
+                networkElectPhaseAnchors(sticky, stations, present, cnd,
+                                         anchor_incumbent, this_epoch_anchor,
+                                         shared_phase_keys);
+            }  // end anchor election (!ensemble && !eq34)
         }
 
         // Card 3 (eq34) RPB allocation (rule D3c): a present station gets the
@@ -2184,7 +1544,8 @@ int Application::runNetwork() {
         // slant-iono block; -1 for stations not added this epoch.
         std::vector<int> est_index_of(stations.size(), -1);
         if (networkPassB_(se, ctx, setup, traces, est, iono_deweight,
-                          sh_dev_tau, sh_dev_on, carry_warm, pl_now_s,
+                          sh_dev_tau, sh_dev_on, carry_slipped_ambs,
+                          carry_warm, pl_now_s,
                           modeled, present, shared_phase_keys,
                           registered_clock_sats, registered_code_keys,
                           n_clock, n_pb, n_present,
@@ -2275,6 +1636,123 @@ int Application::runNetwork() {
         // (band-1).  A D5 flag on a pair chord feeds BOTH bands into the slip funnel
         // (§3.4 union refloat).  Empty unless lane_carry + carry_innov_gate.
         std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key2;
+
+        // --- Card G (docs/SPEC_slip_qc_hardening.md §5): arc-resumption bridge
+        //     classification.  INSTRUMENTATION ONLY — nothing below changes a
+        //     decision; it answers G1(b): of the arcs that came back after a
+        //     tracking break whose RAW level shifted, how many re-entered
+        //     carrying state that bridged the break (the poison case) versus as
+        //     a fresh float (benign)?
+        //
+        //     Placement is load-bearing: AFTER the slip drains (so
+        //     carry_slipped_ambs — the only thing that forces a Card-4 chord to
+        //     re-tap — is complete for this epoch) and BEFORE buildCarryDdPriors
+        //     re-keys the carry (so carriedChordValue / carry_sat_vertex /
+        //     carry_group_id still describe the state the arc is RETURNING TO).
+        //     carry_group_id is read with find(), never operator[] — minting a
+        //     group id here would corrupt the driver's stable keying.
+        //
+        //     The unit is the (station, satellite, signal) ARC, not the
+        //     resumption: chords are per-arc, so a dual-band satellite returning
+        //     once contributes two chords that can be bridged independently.
+        if (nc.slip_qc.gap_instrument && !slip_qc.epoch.resumptions.empty()) {
+            // Does this carry_group_id key's signal component cover `sig`?  Under
+            // the WL-3 lane shape a paired arc lives in a group keyed
+            // "<sigA>+<sigB>", not in its per-band group — a per-band-only lookup
+            // would report every paired arc as un-bridged (a silent false NEGATIVE
+            // on the exact question this card exists to answer).
+            auto groupCoversSignal = [](const std::string& gsig, const std::string& sig) {
+                if (gsig == sig) return true;
+                std::size_t p = 0;
+                while (p <= gsig.size()) {
+                    const std::size_t q = gsig.find('+', p);
+                    const std::size_t e = (q == std::string::npos) ? gsig.size() : q;
+                    if (gsig.compare(p, e - p, sig) == 0) return true;
+                    if (q == std::string::npos) break;
+                    p = q + 1;
+                }
+                return false;
+            };
+            for (const auto& g : slip_qc.epoch.resumptions) {
+                const int i = g.station;
+                if (i < 0 || i >= static_cast<int>(stations.size())) continue;
+                const char cons = g.satellite.empty() ? '\0' : g.satellite.front();
+                const auto svit = carry_sat_vertex.find(g.satellite);
+                for (const std::string& sig : {g.sig1, g.sig2}) {
+                    if (sig.empty()) continue;
+                    const std::string amb_key = StateKeys::makeAmbiguityKey(g.satellite, sig);
+                    const bool slip_marked = carry_slipped_ambs.count({i, amb_key}) != 0;
+                    // (a) Legacy phase-leveling carry: a value inside the
+                    //     max-gap window is exactly what the PASS-B injector
+                    //     would fold across the break.
+                    bool pl_bridged = false;
+                    {
+                        const auto cit = local_carry.find(std::make_tuple(i, g.satellite, sig));
+                        if (cit != local_carry.end()) {
+                            const double gap = pl_now_s - cit->second.last_seen_s;
+                            pl_bridged = (gap >= 0.0 && gap <= pl_max_gap_s);
+                        }
+                    }
+                    // (b) Card-4 invariant DD carry: does the driver still hold a
+                    //     carried chord for this arc from BEFORE the break?
+                    //     carry_sat_vertex ALREADY stores the kSatBase-offset
+                    //     vertex id, so it is used verbatim — re-adding the base
+                    //     would look up a chord that cannot exist and report
+                    //     "never bridged" for everything.
+                    bool dd_bridged = false;
+                    if (carry_invariant && svit != carry_sat_vertex.end() && cons != '\0') {
+                        for (const auto& [gkey, gid] : carry_group_id) {
+                            if (gkey.first != cons || gid == 0) continue;
+                            if (!groupCoversSignal(gkey.second, sig)) continue;
+                            double zg = 0.0, vg = 0.0;
+                            if (carry_driver.carriedChordValue(gid, ArcKey(i, svit->second),
+                                                               zg, vg)) {
+                                dd_bridged = true;
+                                break;
+                            }
+                        }
+                    }
+                    const bool bridged = (pl_bridged || dd_bridged) && !slip_marked;
+                    // H2: the arc ledger mirrors the RESUMPTION three-way split
+                    // (shifted / measured-and-unshifted / unmeasurable) and every
+                    // cell is counted, so it closes as bridged+fresh on each row
+                    // instead of leaving a reader to infer the missing one.
+                    // Unmeasurable is kept SEPARATE from clean deliberately: an
+                    // arc that bridged a break whose level nobody could check is
+                    // not benign, it is UNKNOWN, and G3's "shifted-and-bridged ≈ 0
+                    // ⇒ defer" ruling is only as strong as that number is small.
+                    if (g.shifted) {
+                        if (bridged) ++slip_qc.counters.gap_shifted_bridged;
+                        else         ++slip_qc.counters.gap_shifted_fresh;
+                    } else if (g.measurable) {
+                        if (bridged) ++slip_qc.counters.gap_clean_bridged;
+                        else         ++slip_qc.counters.gap_clean_fresh;
+                    } else {
+                        if (bridged) ++slip_qc.counters.gap_unmeas_bridged;
+                        else         ++slip_qc.counters.gap_unmeas_fresh;
+                    }
+                    // The per-arc event carries the SAME three-way verdict as the
+                    // counters above — an unmeasurable resumption is tagged
+                    // `unmeas_*`, never `clean_*`, and its ΔGF is written BLANK
+                    // exactly as its ΔMW already was.  A fabricated "dGF=0.0000"
+                    // on an arc with no pre-gap level reads as "the level did not
+                    // move", which is the absence-of-evidence claim this whole
+                    // instrument exists to avoid making.
+                    emitEvent("T0_gap", "arc_resume", g.satellite, stations[i].name,
+                              g.measurable ? std::optional<double>(g.d_mw) : std::nullopt,
+                              std::nullopt,
+                              g.shifted     ? (bridged ? "shifted_bridged" : "shifted_fresh")
+                              : g.measurable ? (bridged ? "clean_bridged"   : "clean_fresh")
+                                             : (bridged ? "unmeas_bridged"  : "unmeas_fresh"),
+                              fmt::format("{};gap_ep={};dGF={};pl={};dd={};slip={}",
+                                          sig, g.gap_epochs,
+                                          g.measurable ? fmt::format("{:.4f}", g.d_gf)
+                                                       : std::string{},
+                                          pl_bridged ? 1 : 0, dd_bridged ? 1 : 0,
+                                          slip_marked ? 1 : 0));
+                }
+            }
+        }
 
         // Card 4 (M1) C3b: build this epoch's DD-prior blocks from the eq34 election
         // tree and fold the carried invariant DDs into the producer solve.  Each arc
@@ -3042,13 +2520,33 @@ int Application::runNetwork() {
                 // linearization is skipped for the epoch.  Serial in (block, chord) order —
                 // the §8.2 deterministic seam (runs before the bridge/fix walk below).
                 constexpr double kLaneMwSigmaFloorCyc = 0.2;   // young-arc Welford collapse guard
-                for (std::size_t b = 0; b < carry_driver.numBlocks(); ++b) {
+                // LF-1 INC-4 (§3.5): each joint block's MW folds are independent (no shared Pᶻ)
+                // and stay in-order within the block, so fanning OVER blocks is BYTE-IDENTICAL to
+                // serial — per-block counter deltas sum order-independently, and Eigen is re-pinned
+                // to 1 inside the region (the pcarry un-pin stays OUTSIDE — the dev300s nesting
+                // trap).  The per-op driver timer is silenced for the parallel pass (it would race
+                // a single double); the app-side row counts stay exact via the per-block deltas.
+                const long long mw_nb = static_cast<long long>(carry_driver.numBlocks());
+                std::vector<WlCounters> mw_pb(static_cast<std::size_t>(std::max<long long>(0, mw_nb)));
+                const bool mw_par        = lane_parallel_components && n_threads > 1;
+                const int  mw_eigen_save = Eigen::nbThreads();
+                const bool mw_perf_save  = carry_driver.perfTiming();
+                if (mw_par) { Eigen::setNbThreads(1); carry_driver.setPerfTiming(false); }
+                #pragma omp parallel for schedule(dynamic) num_threads(n_threads) if(mw_par)
+                for (long long bi = 0; bi < mw_nb; ++bi) {
+                    const std::size_t b = static_cast<std::size_t>(bi);
                     if (carry_driver.blockPairBand(b) != 3) continue;
+                    WlCounters& mwc = mw_pb[b];   // this block's counter delta (merged serially below)
                     const auto& chords_b = carry_driver.blockChordsForTest(b);
                     for (std::size_t k = 0; k < chords_b.size(); ++k) {
                         if (k >= blocks[b].rows.size()) break;
                         const auto& terms = blocks[b].rows[k];   // band-1 cycle terms
                         if (terms.empty()) continue;
+                        // LF-1 INC-2: a committed-pinned lane (σ=0.01) does not move under an MW
+                        // increment (σ≈0.06-0.2) — skip the O(K²) downdate.  No-op when OFF.
+                        if (carry_driver.laneIncrementSkippable(b, k)) {
+                            ++mwc.lane_pinned_skips; continue;
+                        }
                         double z_mw_m = 0.0, R_m2 = 0.0, z_lin_wl = 0.0, lam_wl = 0.0;
                         double stamp = 0.0;
                         bool   have_stamp = false, ok = true;
@@ -3101,15 +2599,21 @@ int Application::runNetwork() {
                                       - (t.coeff / la2) * l2it->second;
                             lam_wl = zl.lambda_wl;
                         }
-                        if (!ok || !(lam_wl > 0.0)) { ++wl_epoch.lane_skip_meas; continue; }
+                        if (!ok || !(lam_wl > 0.0)) { ++mwc.lane_skip_meas; continue; }
                         const double y = z_mw_m / lam_wl - z_lin_wl;
                         const double R = std::max(R_m2 / (lam_wl * lam_wl),
                                                   kLaneMwSigmaFloorCyc * kLaneMwSigmaFloorCyc);
                         if (carry_driver.applyLaneMeasurement(blocks, b, k, y, R))
-                            ++wl_epoch.lane_mw_rows;
+                            ++mwc.lane_mw_rows;
                         else
-                            ++wl_epoch.lane_skip_meas;
+                            ++mwc.lane_skip_meas;
                     }
+                }
+                if (mw_par) { Eigen::setNbThreads(mw_eigen_save); carry_driver.setPerfTiming(mw_perf_save); }
+                for (const auto& d : mw_pb) {   // deterministic serial merge (order-independent sums)
+                    wl_epoch.lane_pinned_skips += d.lane_pinned_skips;
+                    wl_epoch.lane_skip_meas    += d.lane_skip_meas;
+                    wl_epoch.lane_mw_rows      += d.lane_mw_rows;
                 }
               }
 
@@ -3379,6 +2883,11 @@ int Application::runNetwork() {
                     // bridge increment folds per (block,row) per build (a failed preferred
                     // attempt does not consume, so the fallback may still tighten).
                     if (lane_bridge_on
+                        && !(dual_cons && lane_incr_done.count({ fx.block, fx.row }))
+                        // LF-1 INC-2: a committed-pinned lane skips its bridge increment (no-op OFF).
+                        && carry_driver.laneIncrementSkippable(fx.block, fx.row)) {
+                        ++wc.lane_pinned_skips;
+                    } else if (lane_bridge_on
                         && !(dual_cons && lane_incr_done.count({ fx.block, fx.row }))) {
                         constexpr double kLaneBridgeSigmaFloorCyc = 0.02;   // phase-precision floor
                         if (raw_ok) {
@@ -3677,6 +3186,11 @@ int Application::runNetwork() {
                     for (auto& wb : ewl_out) blocks.push_back(std::move(wb));   // decide/expose but fold nothing
                 for (auto& wb : wl_hold_out) blocks.push_back(std::move(wb));   // then WL hold rows
             }
+            // LF-1 INC-1: under fold_blocked the lane primitives skipped their per-row
+            // re-symmetrize; restore exact symmetry once per joint block now that this epoch's
+            // MW / bridge / fix rows are all applied (no-op unless fold_blocked).  Runs on every
+            // build incl. the RAIM re-solve — the blocks are rebuilt each pass.
+            carry_driver.finalizeLaneBatch(blocks);
             est.setDdPriors(std::move(blocks));
         };
         subEnd(SB_GAUGEBUILD);   // D0b: close gauge build + carry-driver setup
@@ -3733,6 +3247,37 @@ int Application::runNetwork() {
                     cap_H = cbd.H; cap_z = cbd.z;
                     cap_constraint_weight = NetworkSbasis::kCodeBiasGaugeWeight;
                     cap_has_constraint = true;
+                }
+            }
+            // --- Card KP: loose physical-bound prior on the ADMITTED OSB columns ---
+            // Folded AFTER the tight gauge rows and BEFORE the rank gate, through
+            // the DIAGONAL prior channel rather than the gauge stack, so
+            // plan.declared_dimension is untouched by construction (K3).  Targets
+            // the CODE-dominated residual direction the phase drop-and-heal cannot
+            // reach: the heal anchors PB columns only, so a near-null direction
+            // with zero phase weight is structurally beyond it.  OFF ⇒ empty list
+            // ⇒ addSharedPrior returns immediately (byte-identical).
+            if (config_.networkCbKaulaPrior()) {
+                const auto kp = NetworkSbasis::buildCodeBiasKaulaPriors(
+                    registered_code_keys, config_.networkCbKaulaSigmaM());
+                if (!kp.empty()) {
+                    est.addSharedPrior(kp);
+                    // The RAIM within-epoch replay re-solves from a fresh
+                    // beginEpoch(); a prior missing there would silently give the
+                    // replayed solve a DIFFERENT datum from the first one.
+                    if (within_epoch_armed)
+                        cap_priors.insert(cap_priors.end(), kp.begin(), kp.end());
+                    ++ctx.counters.n_kp_epochs;
+                    ctx.counters.n_kp_cols += kp.size();
+                    // The K2 anti-fragility margin is measured AFTER the gate (see
+                    // the one-shot block there), not here: it needs lambda_max of
+                    // the SAME reduced system the gate judges, and calling
+                    // reducedSharedNormals() at this point would force the Schur
+                    // reduction BEFORE the clock datum rows are folded.  That is
+                    // survivable — addSharedInfo carries a shared-border delta
+                    // through a cached reduction in place — but the clock rows'
+                    // w·HᵀH increment is not bit-symmetric, so reducing early would
+                    // make the first epoch's last bits depend on whether KP is armed.
                 }
             }
             if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
@@ -3832,7 +3377,8 @@ int Application::runNetwork() {
                 && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
         };
 
-        networkInjectShVtecPrior(ctx, ws, config_, est, sh_model.get(), datum_changed,
+        networkInjectShVtecPrior(ctx, ws, config_, est, sh_model.get(),
+                                 sh_model2.get(), datum_changed,
                                  dt, within_epoch_armed);
 
         networkInjectPhaseHoldPrior(ctx, ws, est, within_epoch_armed);
@@ -3852,28 +3398,97 @@ int Application::runNetwork() {
         // constellation clock datum, σ ~ 1e-10 of σ_max) and the weakest REAL
         // direction (σ ~ 1e-2).  The default 1e-6 relative tolerance sits above
         // the weak-but-real directions and miscounts them as deficiencies; a
-        // 1e-9 relative tolerance lands squarely in the gap, counting only the
-        // genuine gauges while still catching a truly unpinned datum.
-        // (NetworkEstimator::kNullSpaceTol — the same cutoff the estimability
-        // dump and the drop-and-heal share.)
+        // 1e-9 relative tolerance lands squarely in that GPS+Galileo-era gap,
+        // counting only the genuine gauges while still catching a truly unpinned
+        // datum.
+        //
+        // Card DG (2026-07-22): the gap MOVES with the constellation mix, so the
+        // tolerance is a per-config CALIBRATION parameter (network.rank_gate_tol),
+        // resolved once into est.setRankGateTol() and read here — the same value
+        // the estimability dump and the drop-and-heal read (DG2: no consumer keeps
+        // a private tolerance, or the dump would describe a decision the gate did
+        // not make and the heal would soft-anchor weak-but-REAL directions).  It
+        // defaults to NetworkEstimator::kNullSpaceTol, so an unset key is
+        // byte-identical.  Adding BeiDou is the second instance of the same
+        // miscount 1e-6 → 1e-9 already fixed once: the BDS weak-but-real family
+        // layer sits ≈1.7e-10 of λmax, ~3 decades deeper relatively, with a
+        // six-decade measured gap down to the declared gauges.
 
         // ---- One-shot estimability diagnostic (default-OFF) ---------------
         // Spectrum dump relocated to NetworkEstimator::dumpEstimabilitySpectrum
         // (INC-8) — the derivation and the eigen-vs-SVD cost rationale live in
         // the method Doxygen.  The one-shot LATCH is always taken so the
         // co-located W6-cb one-shot log above still fires exactly once.
+        // DG5: the returned struct is the SAME numbers the WARN lines print,
+        // mirrored into network_estimability.csv so the storm analyzer reads a
+        // CSV instead of re-parsing log text.  The log text itself is unchanged.
         if (spectrum_diag_budget > 0) {
             --spectrum_diag_budget;
-            if (nc.trace_estimability)
-                est.dumpEstimabilitySpectrum(se.time.tow, plan.declared_dimension,
-                                             col_desc, log);
+            if (nc.trace_estimability) {
+                const auto dump = est.dumpEstimabilitySpectrum(
+                    se.time.tow, plan.declared_dimension, col_desc, log);
+                if (dump.valid) {
+                    traces.writeEstimabilityEpochRow(se.time, dump.tow, dump.n_shared,
+                                                     dump.declared_dim, dump.ev_max,
+                                                     dump.cutoff, dump.n_below);
+                    for (const auto& d : dump.dirs)
+                        traces.writeEstimabilityDirRow(se.time, d.ev, d.top);
+                }
+            }
         }
 
         bool gate_ok = true;
+        // DG6: the observed near-null count, captured on BOTH the passing and the
+        // throwing path (the exception text cannot be parsed back into a number).
+        // "Under-specified" (observed > declared — a missing datum constraint) and
+        // "over-specified" (observed < declared — a tolerance below THIS config's
+        // gauge depth, i.e. a mis-calibration withholding a healthy config) demand
+        // opposite fixes, so they are counted separately.
+        // Card KP — the K2 anti-fragility margin, logged ONCE, on the SAME reduced
+        // system the gate is about to judge (lambda_max here == the gate's, and
+        // the reduction now includes the clock datum rows).  The CB-ADM card
+        // rejected a loose prior whose information sat AT the rank cutoff, so this
+        // one must sit >= 2 decades ABOVE it; a sub-2-decade margin WARNS.
+        if (config_.networkCbKaulaPrior() && !ctx.counters.kp_margin_logged
+            && ctx.counters.n_kp_cols > 0) {
+            ctx.counters.kp_margin_logged = true;
+            const Eigen::MatrixXd& Nss_kp = est.reducedSharedNormals();
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_kp(Nss_kp, Eigen::EigenvaluesOnly);
+            if (es_kp.info() == Eigen::Success && es_kp.eigenvalues().size() > 0) {
+                const double lmax = es_kp.eigenvalues()(es_kp.eigenvalues().size() - 1);
+                const double cutoff = est.rankGateTol() * std::max(lmax, 1.0);
+                const double info = 1.0 / (config_.networkCbKaulaSigmaM()
+                                           * config_.networkCbKaulaSigmaM());
+                const double decades = (cutoff > 0.0 && info > 0.0)
+                    ? std::log10(info / cutoff) : 0.0;
+                if (decades >= 2.0)
+                    log->info("Network (Card KP): prior info {:.3e} vs rank-gate cutoff {:.3e} "
+                              "— margin {:.1f} decades ABOVE the cutoff (K2 requires >= 2.0).  "
+                              "sigma {:g} m on the admitted OSB columns.",
+                              info, cutoff, decades, config_.networkCbKaulaSigmaM());
+                else
+                    log->warn("Network (Card KP): prior info {:.3e} sits only {:.1f} decades "
+                              "above the rank-gate cutoff {:.3e} — BELOW the K2 minimum of 2.0.  "
+                              "This is the exact configuration the CB-ADM card rejected (prior "
+                              "information AT the cutoff either trips the gate or survives by "
+                              "coincidence).  TIGHTEN network.cb_kaula_sigma_m or re-place "
+                              "network.rank_gate_tol from this config's estimability dump before "
+                              "trusting the result.", info, decades, cutoff);
+            }
+        }
+
+        int gate_observed       = -1;   // the LAST evaluation this epoch (post-heal if a re-gate ran)
+        int gate_first_observed = -1;   // this epoch's FIRST evaluation — the DG6 min/max sample
+        ++ctx.counters.n_gate_evaluated;
         try {
             sb.assertNullSpaceRank(est.reducedSharedNormals(), plan.declared_dimension,
-                                   NetworkEstimator::kNullSpaceTol);
+                                   est.rankGateTol(), &gate_observed);
+            gate_first_observed = gate_observed;
         } catch (const std::exception& ex) {
+            // assertNullSpaceRank writes observed_out BEFORE the equality test, so
+            // the count that caused this throw is already in gate_observed; latch it
+            // now, before a possible re-gate overwrites it.
+            gate_first_observed = gate_observed;
             // The reduced shared system carries MORE gauge freedoms than the
             // declared datum can pin — typically a satellite that is momentarily
             // unobservable (seen by a single station at marginal geometry), or —
@@ -3885,14 +3500,29 @@ int Application::runNetwork() {
             // legacy path), the product would be a meaningless least-norm split, so
             // WITHHOLD (the plan's "gate emission until convergence" safeguard).
             bool recovered = false;
+            // PA2: per-healed-column attribution for the trace_events rows below.
+            // Declared OUTSIDE the inner try so the rows are still emitted when the
+            // RE-GATE (not the heal) is what threw — a heal that fired and did not
+            // rescue the epoch is exactly the case worth seeing.
+            std::vector<PhaseHealEvent> heal_events;
+            int healed_n = 0;   // >0 only once the heal RETURNED (its priors are folded)
             try {
                 const int healed = healNearNullPhaseBias(
                     est, shared_phase_keys, phase_datum_prioritized,
-                    within_epoch_armed, cap_priors);   // 0 unless prioritized + near-null PB
+                    within_epoch_armed, cap_priors,    // 0 unless prioritized + near-null PB
+                    &heal_events);
+                healed_n = healed;
+                // PA2: count the ATTEMPT before the re-gate can throw — the
+                // success-only pair below cannot distinguish "the heal never ran"
+                // from "the heal ran every epoch and never rescued the gate".
+                if (healed > 0) {
+                    ++ctx.counters.n_heal_attempt_epochs;
+                    ctx.counters.n_heal_attempt_cols += static_cast<size_t>(healed);
+                }
                 if (healed > 0) {
                     sb.assertNullSpaceRank(est.reducedSharedNormals(),
                                            plan.declared_dimension,
-                                           NetworkEstimator::kNullSpaceTol);
+                                           est.rankGateTol(), &gate_observed);
                     recovered = true;
                     ++n_healed_epochs;
                     n_healed_cols += static_cast<size_t>(healed);
@@ -3906,14 +3536,51 @@ int Application::runNetwork() {
                 log->warn("Network: TOW {:.1f} drop-and-heal failed ({}); withholding.",
                           se.time.tow, ex2.what());
             }
+            // PA2: one row per soft-anchored column (station-less by nature — the
+            // heal acts on a SHARED column).  statistic = the eigenvalue of the
+            // near-null direction the column spans most heavily, threshold = that
+            // |component|; action records whether the heal actually rescued the
+            // epoch, so an attributable-but-futile heal is distinguishable from a
+            // working one.  Gated on healed_n > 0 so a heal that THREW mid-fold
+            // cannot emit rows claiming columns were anchored when no prior was
+            // installed — the re-gate throw (healed_n > 0, recovered false) is the
+            // case worth seeing, and it is preserved.  No-op unless
+            // network.trace_events.
+            if (healed_n > 0) {
+                for (const auto& h : heal_events)
+                    emitEvent("GATE", "phase_heal", h.sat, "", h.ev, h.span,
+                              recovered ? "soft_anchor" : "soft_anchor_insufficient",
+                              h.signal);
+            }
             if (!recovered) {
                 gate_ok = false;
                 ++n_gate_withheld;
+                // DG6: split the withhold by DIRECTION.  observed > declared is a
+                // missing datum constraint (the BeiDou storm); observed < declared
+                // means the tolerance sits BELOW this config's own gauge depth, so
+                // the gauges stopped being counted — a mis-calibration withholding a
+                // HEALTHY config, which no amount of datum work will fix.  gate_observed
+                // is whatever the LAST gate evaluation of this epoch measured.
+                if (gate_observed >= 0 && gate_observed < plan.declared_dimension)
+                    ++ctx.counters.n_gate_withheld_over;
+                else
+                    ++ctx.counters.n_gate_withheld_under;
                 log->debug("Network: observability gate at TOW {:.1f} withheld product ({})",
                            se.time.tow, ex.what());
                 emitEvent("GATE", "gate_withheld", "", "", std::nullopt, std::nullopt,
                           "skip_epoch", ex.what());
             }
+        }
+        // DG6: run-wide observed-near-null envelope, ONE sample per epoch (the
+        // FIRST gate evaluation — a post-heal re-gate answers a different
+        // question and is already counted by n_healed_epochs).  This is the
+        // evidence DG3's placement rule is audited against: a run whose observed
+        // count never leaves {declared} needs no calibration at all.
+        if (gate_first_observed >= 0) {
+            auto& lo = ctx.counters.nullspace_obs_min;
+            auto& hi = ctx.counters.nullspace_obs_max;
+            if (lo < 0 || gate_first_observed < lo) lo = gate_first_observed;
+            if (hi < 0 || gate_first_observed > hi) hi = gate_first_observed;
         }
         if (!gate_ok) {
             ++n_skipped;
@@ -4978,7 +4645,30 @@ int Application::runNetwork() {
                                       gk, chord.u, chord.v, se.time.tow);
                         continue;
                     }
-                    carry_innov_pending.insert({chord.u, ait->second});
+                    // The insert RESULT is the de-duplication signal the attribution
+                    // needs: carry_innov_pending was cleared at this epoch's head
+                    // (the C3c drain), so `.second` is true exactly once per
+                    // (station, ambiguity) per epoch.  Under the WL-3 joint pair
+                    // block the gate flags per band ROW, so the same (group, chord)
+                    // arrives twice and only the first insert is a real re-tap.
+                    const bool first_this_epoch =
+                        carry_innov_pending.insert({chord.u, ait->second}).second;
+                    // Card G(c): make the D5 re-tap counter ATTRIBUTABLE.  The audit's
+                    // 1 560 re-taps were un-decomposable — a raw-step coincidence test
+                    // at the same (station, satellite, epoch) separates "the gate caught
+                    // a real observable event" from "the gate is firing on model
+                    // tension".  Instrumentation only; the flag is unchanged either way.
+                    // Both units are counted: FLAG ROWS (continuity with the 2026-07-21
+                    // headline) and distinct funnel ARCS (what actually re-taps).
+                    if (nc.slip_qc.gap_instrument) {
+                        ++slip_qc.counters.d5_retaps;
+                        if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs;
+                        if (const auto pk = StateKeys::parseAmbiguityKey(ait->second))
+                            if (slip_qc.epoch.stepped.count({chord.u, pk->satellite})) {
+                                ++slip_qc.counters.d5_retaps_stepped;
+                                if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs_stepped;
+                            }
+                    }
                     // WL-3 §3.4: a pair chord's flag refloats BOTH bands next epoch (they
                     // share the graph edge) — feed the band-2 ambiguity into the funnel too.
                     if (lane_on) {
@@ -4993,6 +4683,24 @@ int Application::runNetwork() {
             }
             // F-A attribution dump (log-only, network.mw_wl.d5_dump): one CSV row per D5
             // flag with adjacency tags.  Uses the SAME reverse map as the funnel above.
+            //
+            // Card D5-A/D2 (docs/SPEC_slip_qc_followups.md §1): the trailing
+            // `raw_stepped` column is the CHEAP EXACT-EPOCH raw-step tag — did the
+            // receiver's own MW/GF level step at this (station, satellite) on this
+            // epoch?  It is deliberately TRI-STATE, not 0/1:
+            //   1     — this (station, sat) is in slip_qc.epoch.stepped (Card G's
+            //           empirical per-station gate fired);
+            //   0     — a step COULD be formed (adjacent-epoch dual-band predecessor)
+            //           and it was flat;
+            //   blank — no evidence at all (raw observables not computed this run, arc
+            //           start / gap / single-band, or the flag's ambiguity key did not
+            //           resolve).  Writing 0 there would be a false "no raw step"
+            //           claim on exactly the population D5-A exists to decompose;
+            //           absence of evidence is not evidence of absence.
+            // The ±1-epoch offline join in scripts/grade_slip_agreement.py --d5 stays
+            // the source of truth; this column is the zero-cost exact-epoch tag that
+            // makes network_d5_flags.csv self-contained.  Log-only either way: the
+            // solve never reads it.
             if (mw_d5_dump && carry_innov_gate) {
                 const auto& flags  = carry_driver.lastInnovFlags();
                 const auto& sigmas = carry_driver.lastInnovFlagSigmas();
@@ -5003,7 +4711,7 @@ int Application::runNetwork() {
                     if (d5f) {
                         if (!d5_dump_header_written && d5f.tellp() == std::streampos(0))
                             d5f << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
-                                   "ewl_stasat,hold_chord,injected_prev\n";
+                                   "ewl_stasat,hold_chord,injected_prev,raw_stepped\n";
                         d5_dump_header_written = true;
                         for (std::size_t fi = 0; fi < flags.size(); ++fi) {
                             const auto& [gk, chord] = flags[fi];
@@ -5020,6 +4728,23 @@ int Application::runNetwork() {
                                 (chord.u >= 0 && chord.u < static_cast<int>(stations.size()))
                                     ? stations[static_cast<std::size_t>(chord.u)].name
                                     : std::string{};
+                            // D2 tri-state raw-step tag (see the banner above).  Reads
+                            // the SAME per-epoch evidence the run-end d5_retaps_stepped
+                            // counter uses, so the CSV and the counter cannot disagree.
+                            std::string raw_stepped;
+                            if (slip_qc.epoch.computed && !sat.empty() && chord.u >= 0
+                                && static_cast<std::size_t>(chord.u)
+                                       < slip_qc.epoch.verdict.size()) {
+                                if (slip_qc.epoch.stepped.count({ chord.u, sat })) {
+                                    raw_stepped = "1";
+                                } else {
+                                    const auto& vmap =
+                                        slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
+                                    const auto vit = vmap.find(sat);
+                                    if (vit != vmap.end() && vit->second.measured)
+                                        raw_stepped = "0";
+                                }
+                            }
                             d5f << se.time.week << ',' << fmt::format("{:.1f}", se.time.tow)
                                 << ',' << gk << ',' << chord.u << ',' << chord.v << ','
                                 << sta_name << ',' << amb << ','
@@ -5027,7 +4752,8 @@ int Application::runNetwork() {
                                        fi < sigmas.size() ? sigmas[fi] : 0.0) << ','
                                 << (d5_ewl_stasat.count({ chord.u, sat }) ? 1 : 0) << ','
                                 << (d5_hold_chords.count(chord) ? 1 : 0) << ','
-                                << (d5_inject_chords_prev.count(chord) ? 1 : 0) << '\n';
+                                << (d5_inject_chords_prev.count(chord) ? 1 : 0) << ','
+                                << raw_stepped << '\n';
                         }
                     }
                 }
@@ -5312,2770 +5038,68 @@ int Application::runNetwork() {
 
         subEnd(SB_NETAR);      // D0b: close producer-AR / pre-emit tail
         subBegin(SB_SOLPREP);  // D0b: toSolutionEpoch + per-sat discontinuity signalling
-
-        // --- Emit -----------------------------------------------------------
-        NetworkSolutionEpoch sol = est.toSolutionEpoch(x_s, se.time, iod++,
-                                                       /*provider_id=*/0, /*solution_id=*/0,
-                                                       /*ambiguity_datum_ensemble=*/phase_datum_ensemble);
-        // Card 5 (RTF-2): stamp the broadcast-ephemeris VERSION the producer's clock-C0
-        // baseline used, per emitted satellite, so the consumer applies C0 against the
-        // SAME broadcast clock (getSatelliteClockCorrection pinned to clock_iode, Card 7)
-        // and the eph-cutover re-level (Card 6) can detect a version roll.  The broadcast
-        // clock is station-independent (one shared LiveEphemerisStore), so the version the
-        // per-station emission path (computeEmissionState) selected this epoch is exactly
-        // what computeSatelliteClock reports here — toe granularity (hours) dwarfs the
-        // intra-epoch light-travel spread, so pick() lands on the same record.  Querying
-        // the store directly at the emit site is a deliberate, equivalent simplification of
-        // the plan's "thread the IODE out of the emission path" (no per-station out-param
-        // plumbing needed).  GLONASS ('R') stays -1 (plan D8).  sp3 mode: the store is empty
-        // ⇒ nullopt ⇒ clock_iode stays -1 everywhere ⇒ Card-4 writes no iode= token ⇒
-        // byte-identical.
-        if (brdc_rts) {
-            auto& eph_store = LiveEphemerisStore::getInstance();
-            for (auto& s : sol.sats) {
-                if (!s.has_clock || s.sat.empty() || s.sat[0] == 'R') continue;
-                if (auto bc = eph_store.computeSatelliteClock(s.sat, se.time))
-                    s.clock_iode = bc->iode;
-            }
-        }
-        // RT0-4: stamp the wall-clock TIME-OF-GENERATION (distinct from the content
-        // epoch se.time) so a consumer can measure product latency.  Only when armed
-        // — otherwise generation_time stays {0,0} and no G record is serialized
-        // (byte-identical).  Non-deterministic (wall clock), hence gated.
-        if (emit_gen_time) sol.generation_time = TimeUtils::nowGpsTime();
-        // RTA-3: stamp the per-run solution-generation id, minted once from the
-        // FIRST EMITTED epoch's GPS time (week·604800 + ⌊tow⌋).  Deterministic under
-        // file replay (the id is serialized per epoch as an I record and comes back
-        // out of the file); a restarted live producer first-emits at a later epoch
-        // and therefore mints a DIFFERENT id — the consumer treats the change as a
-        // global datum break.  0 is reserved for "unset", so an armed run clamps to
-        // 1 in the (never-in-practice) week-0 corner.  OFF ⇒ sol.generation_id stays
-        // 0 ⇒ no I record, store generation unset (byte-identical).
-        // RTB-7 seam: an RTB-7(a) WARM RESUME restores the previous run's non-zero
-        // id BEFORE the epoch loop, so the generation_id == 0 guard below suppresses
-        // this mint — re-minting on a warm resume would signal a global datum break
-        // and force a spurious consumer-wide hard reset.  Only a genuine cold start
-        // (no/stale/mismatched snapshot) reaches the mint.
-        if (emit_gen_id) {
-            if (generation_id == 0) {
-                generation_id = static_cast<uint32_t>(se.time.week) * 604800u
-                              + static_cast<uint32_t>(se.time.tow);
-                if (generation_id == 0) generation_id = 1;
-                log->info("Network (RTA-3): solution-generation id {} minted from the first "
-                          "emitted epoch (week {}, tow {:.1f}).",
-                          generation_id, se.time.week, se.time.tow);
-            }
-            sol.generation_id = generation_id;
-        }
-        // B3b: publish the two-state clock-model drift as C1 (consumer extrapolates
-        // c0 + c1·dt).  clock_osc[sat].x1 is the drift carried INTO this epoch (from the
-        // previous epoch's posterior sequence — the correct extrapolation basis; the
-        // clock-model update for THIS epoch runs after the emit).  0 when clock_model off.
-        if (clk_model_on)
-            for (auto& s : sol.sats) {
-                const auto oit = clock_osc.find(s.sat);
-                if (oit == clock_osc.end() || !oit->second.init) continue;
-                // R6: a satellite that vanished (eclipse) and returns still carries its PRE-GAP
-                // drift here — the clock-model update that reseeds x1 to 0 runs after this emit
-                // — so shipping oit->second.x1 unconditionally would emit an hours-old rate as C1
-                // for one epoch.  Gate on the carried state's freshness against the SAME staleness
-                // bound the prediction / drift finite-difference use (R11): past the gap the drift
-                // is not trustworthy → leave c1 at 0 (ZOH), matching the reseed the update will do.
-                const double sat_dt = (oit->second.t_last > 0.0) ? (pl_now_s - oit->second.t_last)
-                                                                 : 0.0;
-                if (sat_dt >= 0.0 && sat_dt <= clk_model_max_gap) {
-                    s.clock_c1_m_s = oit->second.x1;
-                    c1_zoh_active.erase(s.sat);
-                } else {
-                    // T5/R6 (V2 blind spot): a vanish-return past the gap ships c1=0 (ZOH) for one
-                    // epoch instead of an hours-old rate.  Edge-triggered (c1_zoh_active) so a
-                    // persistently-stale sat logs ONCE, not every emit.
-                    if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
-                        emitEvent("T5_clock_model", "c1_zoh_suppress", s.sat, "", sat_dt,
-                                  clk_model_max_gap, "c1_zero", "vanish_return");
-                }
-            }
-        // network.emit_clock_rate: same C1 publish, but from the DECOUPLED rate state (no carry
-        // prior, no refloat — the clock_model no-go's benefit was ~1× anyway; the asset is the
-        // rate, not the carry).  clock_rate_est[sat].x1 is the drift finite-differenced from the
-        // PREVIOUS epoch's posterior (its update runs after this emit).  Same R6 staleness ZOH gate.
-        else if (emit_clock_rate_on)
-            for (auto& s : sol.sats) {
-                const auto rit = clock_rate_est.find(s.sat);
-                if (rit == clock_rate_est.end() || !rit->second.init) continue;
-                const double sat_dt = (rit->second.t_last > 0.0) ? (pl_now_s - rit->second.t_last)
-                                                                 : 0.0;
-                if (sat_dt >= 0.0 && sat_dt <= clk_model_max_gap) {
-                    s.clock_c1_m_s = rit->second.x1;
-                    c1_zoh_active.erase(s.sat);
-                } else {
-                    if (events_trace.is_open() && c1_zoh_active.insert(s.sat).second)
-                        emitEvent("T5_clock_rate", "c1_zoh_suppress", s.sat, "", sat_dt,
-                                  clk_model_max_gap, "c1_zero", "vanish_return");
-                }
-            }
-        // RTA-10: constellations withheld from THIS epoch's emission — filled by the
-        // RT0-5 runaway quarantine and/or the per-constellation σ̂0 carve-out below;
-        // feeds the H heartbeat's status (ok vs partial) and its withheld field.
-        std::set<char> epoch_withheld_consts;
-        // RT0-5: per-constellation clock-runaway quarantine.  Group this epoch's clock
-        // solutions by constellation; if a constellation's median |clock − global median|
-        // exceeds the magnitude ceiling (or median |drift| exceeds the rate ceiling), DROP
-        // that constellation's satellites from the emission and flag it — a runaway (e.g.
-        // the open BeiDou clock divergence) then degrades SCOPE, not the whole product.
-        // OFF ⇒ sol untouched (byte-identical).  Placed AFTER the C1 drift-stamp pass so
-        // the rate ceiling sees this epoch's clock_c1_m_s (0 when clock_model off ⇒ only
-        // the magnitude ceiling applies), and BEFORE the URA pass so a withheld
-        // constellation costs no URA work.
-        //
-        // HAZARD (documented, not defended): the magnitude test is referenced to the
-        // GLOBAL median across ALL clock sats.  If the runaway constellation supplies
-        // half or more of the epoch's clock satellites, the global median lands inside
-        // the runaway cluster and the comparison INVERTS — the healthy minority trips
-        // the ceiling and is quarantined while the runaway constellation passes.  The
-        // check is sized for its intended regime (a minority constellation, e.g. the
-        // open BeiDou divergence, walking off by ~km against a multi-constellation
-        // majority); do not arm it in a run dominated by the suspect constellation.
-        // The single-constellation degenerate case is warned at config load.
-        if (clk_runaway_on && !sol.sats.empty()) {
-            std::vector<double> all_c;
-            for (const auto& s : sol.sats) if (s.has_clock) all_c.push_back(s.clock_c0_m);
-            std::set<char> runaway;
-            if (!all_c.empty()) {
-                std::nth_element(all_c.begin(), all_c.begin() + all_c.size() / 2, all_c.end());
-                const double gmed = all_c[all_c.size() / 2];   // common-mode datum
-                std::map<char, std::vector<double>> dev, rate;
-                for (const auto& s : sol.sats) {
-                    if (s.sat.empty() || !s.has_clock) continue;
-                    dev[s.sat[0]].push_back(std::abs(s.clock_c0_m - gmed));
-                    if (s.clock_c1_m_s != 0.0) rate[s.sat[0]].push_back(std::abs(s.clock_c1_m_s));
-                }
-                auto medianOf = [](std::vector<double>& v) {
-                    std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-                    return v[v.size() / 2];
-                };
-                for (auto& [c, d] : dev) {
-                    const double dm = medianOf(d);
-                    double       rm = 0.0;
-                    bool         bad = dm > clk_runaway_mag;
-                    if (!bad) {
-                        const auto rit = rate.find(c);
-                        if (rit != rate.end() && !rit->second.empty()) {
-                            rm  = medianOf(rit->second);
-                            bad = rm > clk_runaway_rate;
-                        }
-                    }
-                    if (bad) {
-                        runaway.insert(c);
-                        const auto n_drop = std::count_if(sol.sats.begin(), sol.sats.end(),
-                            [c](const NetworkSatSolution& s){ return !s.sat.empty() && s.sat[0] == c; });
-                        log->warn("Network (RT0-5): constellation '{}' clock runaway — median |Δclk|="
-                                  "{:.1f} m (ceil {:.0f}), median |drift|={:.3f} m/s (ceil {:.2f}); "
-                                  "WITHHOLDING its {} sats this epoch.",
-                                  c, dm, clk_runaway_mag, rm, clk_runaway_rate, n_drop);
-                        emitEvent("RT0-5_runaway", "constellation_withhold", std::string(1, c), "",
-                                  dm, clk_runaway_mag, "drop_const", fmt::format("drift={:.3f}", rm));
-                    }
-                }
-            }
-            if (!runaway.empty()) {
-                std::vector<NetworkSatSolution> kept;
-                kept.reserve(sol.sats.size());
-                for (auto& s : sol.sats)
-                    if (s.sat.empty() || runaway.count(s.sat[0]) == 0) kept.push_back(std::move(s));
-                sol.sats.swap(kept);
-                ++n_runaway_epochs;
-                epoch_withheld_consts.insert(runaway.begin(), runaway.end());  // RTA-10: H heartbeat
-            }
-        }
-        // RTA-10 (network.per_const_withhold): apply the per-constellation σ̂0 carve-out
-        // decided at the withhold site above — prune the non-publishable constellations'
-        // satellites from the emission EXACTLY the way the RT0-5 runaway quarantine does
-        // (adjacent code, same swap-prune pattern).  Placed AFTER the C1 drift-stamp pass
-        // (unlike RT0-5 nothing here reads clock_c1_m_s — a pruned sat merely had its C1
-        // stamped needlessly, which is harmless) and BEFORE the URA pass, so a withheld
-        // constellation costs no URA work — the same seam RT0-5 occupies.  A satellite
-        // whose constellation is NOT in the publish set is pruned; that includes any
-        // constellation ABSENT from the σ̂0 pools entirely (zero rows ⇒ unjudgeable ⇒
-        // not publishable under a contaminated epoch).  The downstream emitter seams —
-        // presence-aware pending datum bumps, the post-prune retro split, the rise/set
-        // code-datum detection — all key on the post-prune sol.sats, so they behave for
-        // this prune exactly as they do for the (tested) RT0-5 quarantine.
-        if (perconst_active) {
-            std::set<char> pruned;
-            std::vector<NetworkSatSolution> kept;
-            kept.reserve(sol.sats.size());
-            for (auto& s : sol.sats) {
-                if (!s.sat.empty() && perconst_publish.count(s.sat[0]) == 0)
-                    pruned.insert(s.sat[0]);
-                else
-                    kept.push_back(std::move(s));
-            }
-            if (!pruned.empty()) {
-                sol.sats.swap(kept);
-                ++n_perconst_partial_epochs;
-                epoch_withheld_consts.insert(pruned.begin(), pruned.end());
-                for (char cst : pruned) {
-                    const auto sit    = perconst_stats.find(cst);
-                    const bool judged = sit != perconst_stats.end();
-                    log->warn("Network (RTA-10): TOW {:.1f} constellation '{}' WITHHELD by the "
-                              "per-constellation σ̂0 carve-out — σ̂0_c={} over {} row(s) "
-                              "(ceiling {:.2f}, min rows {}); its sats are pruned from this "
-                              "epoch's emission.",
-                              se.time.tow, cst,
-                              judged ? fmt::format("{:.2f}", sit->second.sigma0_c)
-                                     : std::string("n/a"),
-                              judged ? sit->second.rows : 0, raim_withhold, perconst_min_rows);
-                    emitEvent("RTA-10_perconst", "constellation_withhold", std::string(1, cst),
-                              "",
-                              judged ? std::optional<double>(sit->second.sigma0_c) : std::nullopt,
-                              raim_withhold, "drop_const",
-                              fmt::format("rows={};global_sigma0={:.2f}",
-                                          judged ? sit->second.rows : 0, sigma0_adapt));
-                }
-            } else if (perconst_dec_withhold.empty()) {
-                // The honest edge of the per-constellation approximation: the GLOBAL σ̂0
-                // exceeded the ceiling, yet EVERY judged constellation individually passed
-                // (cross-constellation coupling — shared per-station nuisances — that no
-                // per-constellation partial captures).  Publish everything, but say so
-                // loudly and count it; a rising count says the carve-out's separability
-                // assumption is failing on this network.
-                ++n_perconst_diffuse_published;
-                log->warn("Network (RTA-10): TOW {:.1f} DIFFUSE contamination published — global "
-                          "σ̂0={:.2f} > ceiling {:.2f} while every judged constellation passed "
-                          "individually (the per-constellation statistic disagreed with the "
-                          "global one).",
-                          se.time.tow, sigma0_adapt, raim_withhold);
-                emitEvent("RTA-10_perconst", "diffuse_published", "", "", sigma0_adapt,
-                          raim_withhold, "publish_all",
-                          fmt::format("{} const(s) individually clean", perconst_stats.size()));
-            }
-            // else: the decision withheld constellation(s) that are not in this epoch's
-            // emission anyway (RT0-5 already quarantined them, or they carry no solution
-            // sats) — nothing pruned here, and not the diffuse edge either.
-        }
-        // B1: per-sat URA = EWMA(σ̂0) × formal clock σ (shared-covariance diagonal),
-        // skipping datum-pinned clock columns (their variance is the artificial pin,
-        // not a physical σ) and inflating a recently-refloated sat for its warmup horizon.
-        // Uses the PREVIOUS epoch's σ̂0 EWMA (post-emit QC ordering — a one-epoch lag).
-        if (ura_on) {
-            // RTB-7(b): evaluate the quality-ramp LIFT rule (counts through the
-            // previous epoch, matching the floor's indexing below): n_emitted ≥
-            // max(warmup_epochs, phase_leveling_warmup_epochs) AND the σ̂0 EWMA
-            // has received ≥ warmup_epochs updates — OR the EWMA is structurally
-            // unavailable (the RTB-6 sentinel condition: emit_ura+raim+
-            // phase_leveling not all armed; here ura_on holds, so raim_on&&pl_on
-            // decides), in which case the epoch horizon alone lifts.  Logs the
-            // RTB-7(c) cold-start-to-product-grade metric at the lift.  Guarded
-            // by the floor ⇒ OFF (0) is byte-identical.
-            if (nc.warmup_ura_floor_m > 0.0 && !ramp_lifted) {
-                const bool ewma_structural = raim_on && pl_on;   // && ura_on (this block)
-                if (networkWarmupRampLifted(static_cast<long long>(n_emitted),
-                                            nc.warmup_epochs, pl_warmup,
-                                            static_cast<long long>(ura_ewma_updates),
-                                            ewma_structural)) {
-                    ramp_lifted    = true;
-                    grade_metric_s = (first_emit_content_s >= 0.0)
-                                         ? (pl_now_s - first_emit_content_s)
-                                         : 0.0;
-                    log->info("Network (RTB-7): cold-start-to-product-grade: {:.1f} s / {} "
-                              "epochs — warmup URA floor {:.1f} m LIFTED (n_emitted {} >= "
-                              "max(warmup_epochs {}, pl_warmup {}); sigma0-EWMA updates {}{}).",
-                              grade_metric_s, n_emitted, nc.warmup_ura_floor_m, n_emitted,
-                              nc.warmup_epochs, pl_warmup, ura_ewma_updates,
-                              ewma_structural ? "" : " — EWMA structurally unavailable, "
-                                                     "update count waived");
-                }
-            }
-            const Eigen::MatrixXd& scov = est.sharedCovariance();
-            std::set<Eigen::Index> pinned;
-            for (const auto& pin : plan.shared_datum) pinned.insert(pin.column);
-            const double s0 = std::max(1.0, ura_sigma0_ewma);
-            for (auto& s : sol.sats) {
-                if (!s.has_clock) continue;
-                Eigen::Index col;
-                try { col = est.clockColumn(s.sat); } catch (...) { continue; }
-                if (pinned.count(col)) continue;   // datum pivot — bogus pin variance, no honest URA
-                if (col < 0 || col >= scov.rows() || col >= scov.cols()) continue;
-                const double var = scov(col, col);
-                if (!(var > 0.0) || !std::isfinite(var)) continue;
-                double ura = s0 * std::sqrt(var);
-                const auto hit = ura_refloat_horizon.find(s.sat);
-                if (ura_refloat_inflate > 1.0 && hit != ura_refloat_horizon.end() && hit->second > 0)
-                    ura *= ura_refloat_inflate;   // honest surrogate for the post-refloat DIA penalty
-                // RTB-7(b): cold-start quality ramp — a freshly (re)started producer
-                // advertises DEGRADED URA until the ramp LIFTS (the
-                // networkWarmupRampLifted rule evaluated above: emitted-epoch
-                // horizon AND σ̂0-EWMA stabilization, not a bare epoch count), so a
-                // consumer never trusts a not-yet-converged network solution.  A
-                // warm-resumed producer restores ramp_lifted from the snapshot and
-                // is not degraded.  Off (floor 0) ⇒ byte-identical.
-                if (nc.warmup_ura_floor_m > 0.0 && !ramp_lifted)
-                    ura = std::max(ura, nc.warmup_ura_floor_m);
-                s.clock_ura_m = ura;
-                s.has_ura     = true;
-            }
-        }
-        // B1b (defect-2 lever B, Tienstra §6.6): per-(sat,signal) PHASE-BIAS correction
-        // σ — the phase-bias block of Qŷ_B1 the clock-only URA channel omits.  The
-        // consumer currently applies phase-bias corrections as if EXACT; this transmits
-        // their formal 1σ so a wandering bias (the 6–69 cm differential defect-2 driver)
-        // is down-weighted instead.  Gauge-exact: a COPY of the shared covariance with
-        // the folded ensemble phase-bias gauges nulled (zeroPhaseGaugeColumns) and the
-        // datum-pinned columns skipped (their 1/pin_scale is a gauge, not a physical σ) —
-        // exactly the URA loop's pin treatment.  Scaled by the SAME σ̂0 EWMA as the URA.
-        // Off ⇒ σ stays 0 ⇒ product/store byte-identical.
-        if (config_.networkEmitPhaseBiasSigma()) {
-            Eigen::MatrixXd        pcov = est.sharedCovariance();   // copy; treat gauges as exact
-            est.zeroPhaseGaugeColumns(pcov);
-            std::set<Eigen::Index> pb_pinned;
-            for (const auto& pin : plan.shared_datum) pb_pinned.insert(pin.column);
-            const double        s0 = std::max(1.0, ura_sigma0_ewma);
-            std::vector<double> pb_sigmas;   // premise-check diagnostic: distribution of ABSOLUTE emitted σ
-            // For the B2-vs-LeverA decision: collect per-signal columns so we can also
-            // measure the BETWEEN-SATELLITE-DIFFERENCED σ.  The consumer's rx clock +
-            // per-arc float ambiguity absorb the common/level directions of the
-            // phase-bias error (TK-2015 Eq 88), so the ABSOLUTE σ (float-ambiguity-
-            // entangled level, ~1 m at 0 fixes) overstates what actually reaches the
-            // consumer estimate.  The between-satellite SD σ is the honest per-epoch
-            // consumer-relevant magnitude.
-            std::map<std::string, std::vector<Eigen::Index>> by_signal;
-            for (auto& s : sol.sats) {
-                for (auto& [signal, npb] : s.phase_bias) {
-                    Eigen::Index col;
-                    try { col = est.phaseBiasColumn(s.sat, signal); } catch (...) { continue; }
-                    if (pb_pinned.count(col)) continue;                 // anchor-pinned → exact, no honest σ
-                    if (col < 0 || col >= pcov.rows() || col >= pcov.cols()) continue;
-                    const double var = pcov(col, col);
-                    if (!(var > 0.0) || !std::isfinite(var)) continue;  // folded gauge (zeroed) or degenerate
-                    npb.sigma_m = s0 * std::sqrt(var);
-                    pb_sigmas.push_back(npb.sigma_m);
-                    by_signal[signal].push_back(col);
-                }
-            }
-            // T3d: under the anchor-free ENSEMBLE datum the absolute σ above references the
-            // zeroed receiver-ensemble gauge column (degenerate — the level is not observable).
-            // Overwrite each emitted phase-bias σ with the honest BETWEEN-SATELLITE-SD σ per
-            // signal (the quantity the consumer's rx-clock + float ambiguity leave observable),
-            // referenced to the group's first eligible column; the reference sat itself takes the
-            // group-median SD σ (its SD-vs-self is 0, not an honest uncertainty).  Only under
-            // phase_datum_ensemble ⇒ byte-identical for the pivot/prioritized datum.
-            if (phase_datum_ensemble) {
-                // Under the ensemble gauge EVERY satellite phase-bias column is a FOLDED gauge
-                // direction, so the zeroed pcov above gives σ=0 for all of them (by_signal is
-                // empty).  Compute the honest between-sat SD σ from the RAW covariance instead:
-                // the fold's common gauge-direction variance cancels in the between-sat
-                // difference, leaving the relative uncertainty.  Reference each signal group to
-                // its first sat; the reference sat takes the group-median SD σ (SD-vs-self is 0).
-                const Eigen::MatrixXd rawcov = est.sharedCovariance();
-                std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>> grp;
-                for (auto& s : sol.sats)
-                    for (auto& [signal, npb] : s.phase_bias) {
-                        (void)npb;
-                        Eigen::Index col;
-                        try { col = est.phaseBiasColumn(s.sat, signal); } catch (...) { continue; }
-                        if (col >= 0 && col < rawcov.rows() && col < rawcov.cols())
-                            grp[signal].push_back({ s.sat, col });
-                    }
-                for (auto& [signal, sc] : grp) {
-                    if (sc.size() < 2) continue;                 // no between-sat difference
-                    const Eigen::Index ref = sc.front().second;
-                    std::map<std::string, double> sd_of;         // sat -> SD σ
-                    std::vector<double> sds;
-                    for (std::size_t i = 1; i < sc.size(); ++i) {
-                        const Eigen::Index c = sc[i].second;
-                        const double v = rawcov(c, c) + rawcov(ref, ref) - 2.0 * rawcov(c, ref);
-                        if (v > 0.0 && std::isfinite(v)) {
-                            const double sd = s0 * std::sqrt(v);
-                            sd_of[sc[i].first] = sd;
-                            sds.push_back(sd);
-                        }
-                    }
-                    if (sds.empty()) continue;
-                    std::sort(sds.begin(), sds.end());
-                    sd_of[sc.front().first] = sds[sds.size() / 2];   // ref sat: group median
-                    for (auto& s : sol.sats) {
-                        auto it = s.phase_bias.find(signal);
-                        if (it == s.phase_bias.end()) continue;
-                        auto sit = sd_of.find(s.sat);
-                        if (sit != sd_of.end() && sit->second > 0.0)
-                            it->second.sigma_m = sit->second;
-                    }
-                }
-            }
-            // Lever-B premise check + the decisive ratio: ABSOLUTE σ vs between-sat-SD σ.
-            if (!pb_sigmas.empty() && static_cast<long long>(n_emitted) % 120 == 0) {
-                std::sort(pb_sigmas.begin(), pb_sigmas.end());
-                // Between-satellite SD σ per signal, referenced to the first sat in the
-                // signal group: sqrt(var_s + var_ref − 2·cov(s,ref)) × σ̂0.  If SD σ ≪
-                // ABS σ, the level dominates (consumer-absorbed) ⇒ covariance carry is
-                // structurally limited ⇒ the wander is temporal ⇒ pivot to Lever A.
-                std::vector<double> sd_sigmas;
-                for (auto& [signal, cols] : by_signal) {
-                    if (cols.size() < 2) continue;
-                    const Eigen::Index ref = cols.front();
-                    for (std::size_t i = 1; i < cols.size(); ++i) {
-                        const Eigen::Index c = cols[i];
-                        const double v = pcov(c, c) + pcov(ref, ref) - 2.0 * pcov(c, ref);
-                        if (v > 0.0 && std::isfinite(v)) sd_sigmas.push_back(s0 * std::sqrt(v));
-                    }
-                }
-                double sd_lo = -1.0, sd_med = -1.0, sd_hi = -1.0;
-                if (!sd_sigmas.empty()) {
-                    std::sort(sd_sigmas.begin(), sd_sigmas.end());
-                    sd_lo = sd_sigmas.front();
-                    sd_med = sd_sigmas[sd_sigmas.size() / 2];
-                    sd_hi = sd_sigmas.back();
-                }
-                log->info("Network (B1b): phase-bias σ for {} (sat,signal) — ABS min/med/max = "
-                          "{:.3f}/{:.3f}/{:.3f} m | between-sat-SD min/med/max = {:.3f}/{:.3f}/{:.3f} m "
-                          "(−1 = <2 sats/signal) (σ̂0 {:.3f}).",
-                          pb_sigmas.size(), pb_sigmas.front(), pb_sigmas[pb_sigmas.size() / 2],
-                          pb_sigmas.back(), sd_lo, sd_med, sd_hi, s0);
-            }
-        }
-        // Datum bump + serialization, applied HERE (after a successful solve so a
-        // withheld/failed epoch never leaks a pending bump).  The A1/A2 clock-pivot
-        // handover (this epoch) is a per-CONSTELLATION datum re-reference (E-line
-        // field-8); the B1 retro-bump (a post-emit QC tier flagged these SATELLITES
-        // last epoch) is a per-SATELLITE discontinuity (R record).  Both must
-        // reproduce on replay from the serialized flags.  A GLOBAL datum bump
-        // (emit_clock_disc off) serializes an EMPTY constellation set so replay
-        // re-applies the global bump.
-        bool           global_bump = false;
-        std::set<char> serialized_consts;
-        if (datum_changed) {
-            if (emit_clock_disc) {
-                emitter.markDatumChange(changed_consts);
-                serialized_consts.insert(changed_consts.begin(), changed_consts.end());
-            } else {
-                emitter.markDatumChange();   // global (pre-A2 byte-identical)
-                global_bump = true;
-            }
-            // PIVOT (V1/V2): the datum re-reference is otherwise UNLOGGED.  One row per
-            // changed constellation, sat=new pivot, detail=<const>:old->new + arm.  Arm is
-            // derived here (pivotHandoverSignalled does not return it): prev_pivot still holds
-            // the key ⇒ adjacent handover; else ⇒ vanish_return (old pivot from last_pivot).
-            // Emitted BEFORE prev_pivot advances below.
-            if (events_trace.is_open()) {
-                for (char c : changed_consts) {
-                    const std::string key(1, c);
-                    auto np = plan.clock_pivot.find(key);
-                    const std::string new_p = (np != plan.clock_pivot.end()) ? np->second
-                                                                             : std::string();
-                    std::string old_p;
-                    const char* arm;
-                    auto pp = prev_pivot.find(key);
-                    if (pp != prev_pivot.end()) { old_p = pp->second; arm = "adjacent"; }
-                    else {
-                        auto lp = last_pivot.find(key);
-                        old_p = (lp != last_pivot.end()) ? lp->second : std::string("?");
-                        arm = "vanish_return";
-                    }
-                    emitEvent("PIVOT", "handover", new_p, "", std::nullopt, std::nullopt,
-                              "datum_bump", fmt::format("{}:{}->{};{}", key, old_p, new_p, arm));
-                }
-            }
-        }
-        std::set<std::string> retro_emit_sats;   // B1 retro-bump applied this emit (serialized as an R record)
-        if (ura_retro && !ura_retro_sats.empty()) {
-            // RT0-5 seam (P0-1: the R record must describe bumps that LANDED in the
-            // emitted product): a flagged sat ABSENT from this epoch's emission —
-            // its constellation quarantined above, or the sat itself vanished —
-            // must not be consumed here.  The emitter would clear its mark without
-            // any of its keys stepping, and the R record would overstate a bump
-            // that never reached the product (replay would then diverge from
-            // intent, not from the file).  Keep it PENDING so it is marked AND
-            // serialized at its next actual emit; only sats present in the
-            // (post-quarantine) sol.sats are consumed now, so mark == land and
-            // replay re-marks exactly the landed sats on exactly those epochs.
-            // Edge-triggered semantics preserved: a pending sat is already in
-            // retro_active, so it is not re-queued while it waits.
-            std::set<std::string> present_sats;
-            for (const auto& s : sol.sats) present_sats.insert(s.sat);
-            std::set<std::string> retro_pending;
-            for (const auto& sat : ura_retro_sats)
-                (present_sats.count(sat) ? retro_emit_sats : retro_pending).insert(sat);
-            ura_retro_sats = std::move(retro_pending);   // absent sats wait for their next emit
-            if (!retro_emit_sats.empty())
-                emitter.markSatDiscontinuity(retro_emit_sats);   // per-sat, not constellation-wide
-            // RETRO (V4): one row per per-sat discontinuity bump APPLIED this emit.  The QC
-            // tier that flagged the sat last epoch is lost at the union, so detail=union
-            // (honest — do not fabricate provenance).
-            if (events_trace.is_open())
-                for (const auto& s : retro_emit_sats)
-                    emitEvent("RETRO", "retro_bump", s, "", std::nullopt, std::nullopt,
-                              "disc_bump", "union");
-        }
-        // Card 6: land the forced per-sat discontinuities for eph cutovers whose prior
-        // version was evicted before Δ_eph could be computed (an unknown clock step → the
-        // consumer must reset that sat's network-corrected ambiguity).  Independent of
-        // ura_retro_bump — this is a genuine datum step, not a QC retro-bump — but reuses
-        // the same present/pending split: a flagged sat ABSENT from this emission waits for
-        // its next actual emit, so the bump lands with the sat present (replay-faithful).
-        if (!eph_cutover_disc_pending.empty()) {
-            std::set<std::string> present, mark, still_pending;
-            for (const auto& s : sol.sats) present.insert(s.sat);
-            for (const auto& sat : eph_cutover_disc_pending)
-                (present.count(sat) ? mark : still_pending).insert(sat);
-            eph_cutover_disc_pending = std::move(still_pending);
-            if (!mark.empty()) {
-                emitter.markSatDiscontinuity(mark);
-                if (events_trace.is_open())
-                    for (const auto& s : mark)
-                        emitEvent("RELEVEL", "eph_cutover_disc_landed", s, "", std::nullopt,
-                                  std::nullopt, "disc_bump", "prior_eph_version_evicted");
-            }
-        }
-        // T3c: land clock_signal_basis_hold RE-LATCH disc bumps this emit (same present/pending
-        // split — a re-latched sat absent from this emission waits for its next actual emit).
-        // markSatDiscontinuity bumps the per-sat phase/code/clock counters; the re-latch re-splits
-        // δtˢ↔dˢ so all three step.  Populated only under clock_signal_basis_hold && emit_clock_disc
-        // ⇒ the set is empty (this block a no-op) otherwise = byte-identical.  (Hold-OFF re-selection
-        // is landed just below, at the emit-only this_epoch_if_pin_sel comparison.)
-        if (!basis_relatch_disc_pending.empty()) {
-            std::set<std::string> present, mark, still_pending;
-            for (const auto& s : sol.sats) present.insert(s.sat);
-            for (const auto& sat : basis_relatch_disc_pending)
-                (present.count(sat) ? mark : still_pending).insert(sat);
-            basis_relatch_disc_pending = std::move(still_pending);
-            if (!mark.empty()) {
-                emitter.markSatDiscontinuity(mark);
-                if (events_trace.is_open())
-                    for (const auto& s : mark)
-                        emitEvent("CLK_BASIS", "relatch_disc_landed", s, "", std::nullopt,
-                                  std::nullopt, "disc_bump", "if_pin_reference_moved");
-            }
-        }
-        // T3c (hold OFF): the deterministic IF-pin re-selection discontinuity, resolved
-        // ONLY here at the emit site so it describes the LAST EMITTED product's pair —
-        // exactly the prev_pivot / emitted_anchor discipline.  Compare THIS emitted
-        // product's selected pair (this_epoch_if_pin_sel, from the main pass) against the
-        // last EMITTED pair (last_if_pin_sel) for every EMITTED satellite; a genuine
-        // change re-references the emitted δtˢ↔dˢ split by the sat's inter-channel bias,
-        // so force its per-sat disc bump (phase/code/clock counters).  Advancing the
-        // baseline only here means a transient pin move on a WITHHELD epoch (which never
-        // reaches this point) is dropped, and a pair that leaves and returns to the SAME
-        // emitted reference across withheld epochs raises NO bump.  Only emitted sats are
-        // compared/advanced (a sat withheld this epoch keeps its last-emitted baseline and
-        // is compared when it next emits).  Empty scratch ⇒ no-op (byte-identical) when
-        // emit_clock_disc is off or the run is under clock_signal_basis_hold.
-        if (!this_epoch_if_pin_sel.empty()) {
-            std::set<std::string> present;
-            for (const auto& s : sol.sats) present.insert(s.sat);
-            std::set<std::string> mark;
-            for (const auto& [sat, sel] : this_epoch_if_pin_sel) {
-                if (!present.count(sat)) continue;   // not emitted this epoch: baseline untouched
-                const auto prev = last_if_pin_sel.find(sat);
-                if (prev != last_if_pin_sel.end() && prev->second != sel) {
-                    mark.insert(sat);
-                    if (events_trace.is_open())
-                        emitEvent("CLK_BASIS", "reselect", sat, "", std::nullopt, std::nullopt,
-                                  "if_pin_reference_moved",
-                                  prev->second.first + "+" + prev->second.second +
-                                      "->" + sel.first + "+" + sel.second);
-                }
-                last_if_pin_sel[sat] = sel;   // advance the emit baseline (emitted sats only)
-            }
-            if (!mark.empty()) emitter.markSatDiscontinuity(mark);
-        }
-        // Card 2 (network.code_datum_time_linked): land the time-linked datum RE-SEED
-        // disc bumps — a no-veteran sum-to-zero channel or an IF-pin split forced to the
-        // 0 seed stepped the emitted value, so the consumer must reset instead of
-        // integrating across the unsignalled step.  This_epoch_cb_reseed (built in the
-        // main pass) is merged into the persistent pending set HERE, at the emit site —
-        // which every whole-epoch withhold path `continue`s before reaching — so a
-        // transient re-seed on a since-withheld epoch never enters the pending set (no
-        // bump without an emitted step), while a re-seed the driver DID realize is
-        // retained and deferred exactly like the eph-cutover / basis-relatch bumps: a
-        // re-seeded sat ABSENT from THIS emission (pruned by quarantine / per-const
-        // withhold) waits for its next actual emit so the bump lands with the sat present
-        // (emit-only, replay-faithful).  Both sets are only ever populated under
-        // code_datum_time_linked ⇒ no-op (byte-identical) otherwise.
-        for (const auto& sat : this_epoch_cb_reseed) cb_reseed_disc_pending.insert(sat);
-        if (!cb_reseed_disc_pending.empty()) {
-            std::set<std::string> present, mark, still_pending;
-            for (const auto& s : sol.sats) present.insert(s.sat);
-            for (const auto& sat : cb_reseed_disc_pending)
-                (present.count(sat) ? mark : still_pending).insert(sat);
-            cb_reseed_disc_pending = std::move(still_pending);
-            if (!mark.empty()) {
-                emitter.markSatDiscontinuity(mark);
-                if (events_trace.is_open())
-                    for (const auto& s : mark)
-                        emitEvent("CB_DATUM", "reseed_disc_landed", s, "", std::nullopt,
-                                  std::nullopt, "disc_bump", "code_datum_time_linked_reseed");
-            }
-        }
-        // The handover-detection baseline advances ONLY here, with the bump it
-        // pairs with: prev_pivot/last_pivot describe the datum of the last
-        // EMITTED product.  A handover epoch that never reaches this point
-        // (gate withhold, solve failure, σ̂0 withhold) leaves the baseline
-        // untouched, so the change re-detects — and re-skips the old-datum
-        // carries — every epoch until one emits in the new datum.
-        prev_pivot = plan.clock_pivot;
-        // A1: merge-update the persistent last-ever pivot map (never erase a
-        // constellation) so a later vanish-return with a different pivot is caught.
-        for (const auto& kv : plan.clock_pivot) last_pivot[kv.first] = kv.second;
-        // Prioritized phase-bias anchor: record per-(sat,signal) anchor HANDOVERS
-        // for observability, and advance the emit-baseline (emitted_anchor).  The
-        // consumer-facing DISCONTINUITY is already handled — replay-safely — by the
-        // emitter's per-(sat,signal) bias-jump test: a handover steps the emitted
-        // bias by a different receiver's integer ambiguity lump (≥ ~1 cycle, well
-        // above disc_threshold_m), so emitToStore below bumps that key's counter and
-        // the consumer resets the ambiguity.  We deliberately do NOT issue a separate
-        // markSatDiscontinuity here: it is not reconstructable from the serialized
-        // NetworkSolutionEpoch (replay does not re-run the election), so it would
-        // make the product's disc counters diverge on NetworkProductIO replay.  The
-        // baseline advances ONLY at emit (a withheld epoch re-detects next emit),
-        // never erasing an absent key (matches the last_pivot policy).
-        if (phase_datum_prioritized) {
-            int n_handover = 0;
-            for (const auto& [amb, sta] : this_epoch_anchor) {
-                auto it = emitted_anchor.find(amb);
-                if (it != emitted_anchor.end() && it->second != sta) {
-                    // eq34 (Card 3): a tree-edge REATTACH — the emitted δ̃_s steps by
-                    // an EXACT integer number of cycles (chain path difference; the
-                    // receiver fractional no longer leaks), usually 0 under pin-to-
-                    // round.  Disc still rides the emitter's replay-safe bias-jump
-                    // test (NEVER markSatDiscontinuity — not reconstructable on
-                    // NetworkProductIO replay).  Trace event only.
-                    emitEvent(phase_datum_eq34 ? "PHASE_DATUM" : "PHASE_ANCHOR",
-                              phase_datum_eq34 ? "eq34_reattach" : "anchor_handover",
-                              amb.substr(0, amb.find('_')), sta,
-                              std::nullopt, std::nullopt, "reanchor",
-                              it->second + "->" + sta);
-                    ++n_handover;
-                }
-                emitted_anchor[amb] = sta;
-            }
-            if (n_handover > 0)
-                log->debug("Network: {} per-(sat,signal) phase-bias anchor handover(s) at "
-                           "TOW {:.1f} (disc handled by the emitter bias-jump test).",
-                           n_handover, se.time.tow);
-        }
-        // B6 (P1-1): open the deferred contract writer at the FIRST emit, stamping the
-        // realized per-constellation clock pivots (this epoch's plan) into the v2 header.
-        if (contract_pending) {
-            contract_pending = false;
-            for (const auto& [cst, sat] : plan.clock_pivot)
-                pending_contract.decl.clock_pivot_sat[cst] = sat;   // realized auto-picked pivots
-            // Card 3 (SingleReceiverChain): stamp the realized datum receiver r1 as
-            // the diagnostic pdr= token (component-0 representative).
-            if (phase_datum_eq34 && !eq34_datum_rx.empty()) {
-                pending_contract.decl.eq34_datum_receiver = eq34_datum_rx.begin()->second;
-                eq34_emitted_pdr = pending_contract.decl.eq34_datum_receiver;
-            }
-            // RTA-3: the generation id (minted above at this same first emit) travels
-            // in the contract as an optional gid= field — 0 (unset) writes nothing.
-            pending_contract.generation_id = sol.generation_id;
-            product_writer = std::make_unique<NetworkProductWriter>(prod_path.string(), pending_contract);
-            if (product_writer->good()) {
-                log->info("Network: product serialization open — v2 S-basis contract, "
-                          "{} realized clock pivot(s).", pending_contract.decl.clock_pivot_sat.size());
-                last_contract_emit_s = pl_now_s;   // RTA-5: the header S line is the first broadcast
-            } else {
-                log->error("Network: failed to open product_output_path '{}' for writing; "
-                           "disabling on-disk serialization for this run.", prod_path.string());
-                product_writer.reset();
-            }
-        }
-        // M4 (contract v2): per-key COMBINED-correction σ (sigc phase, sigcc code) +
-        // code/phase correlation (rho) from the shared posterior covariance's
-        // cross-terms.  The individual clock / phase-bias / code-bias formal σ (the
-        // URA and B1b channels) are cm-level during a satellite's rise-reconvergence,
-        // yet the COMBINED correction the user applies (clock + bias) is mm-level
-        // because the errors are strongly correlated (Zhang 2021 Figs. 2–5; Psychas
-        // 2024b Eq. 12).  A consumer weighting by sigc/sigcc keeps USING a fresh
-        // satellite's products through reinitialization instead of deweighting them
-        // 10–100×.  Iono is EXCLUDED (network iono is a global SH-VTEC field, not a
-        // co-resident column, and is supplied separately via SsrSlantIono with its own
-        // σ — bundling it here would double-count).  Gauge-nulled covariance copy +
-        // datum-pin skip + positive-variance guard, exactly like B1b; a folded/zeroed
-        // phase gauge (ensemble datum) yields no honest phase column ⇒ no token.
-        // Scaled by the SAME σ̂0 EWMA (cancels in rho).  Off ⇒ every value 0 ⇒ no wire
-        // token ⇒ product/store byte-identical.
-        if (config_.networkEmitCombinedSigma()) {
-            Eigen::MatrixXd cbcov = est.sharedCovariance();   // copy; treat gauges as exact
-            est.zeroPhaseGaugeColumns(cbcov);
-            std::set<Eigen::Index> cb_pinned;
-            for (const auto& pin : plan.shared_datum) cb_pinned.insert(pin.column);
-            const double s0 = std::max(1.0, ura_sigma0_ewma);
-            // A column is usable only when present, in range, NOT a datum pin (its
-            // 1/pin_scale variance is a gauge artefact), and carrying real positive
-            // variance (rejects a zeroed phase gauge under the ensemble datum).
-            auto colOrNeg = [&](auto fn) -> Eigen::Index {
-                try {
-                    const Eigen::Index c = fn();
-                    if (c < 0 || c >= cbcov.rows() || c >= cbcov.cols() || cb_pinned.count(c))
-                        return -1;
-                    if (!(cbcov(c, c) > 0.0) || !std::isfinite(cbcov(c, c))) return -1;
-                    return c;
-                } catch (...) { return -1; }
-            };
-            for (auto& s : sol.sats) {
-                if (!s.has_clock) continue;
-                const Eigen::Index c = colOrNeg([&]{ return est.clockColumn(s.sat); });
-                if (c < 0) continue;   // no honest clock column ⇒ nothing to combine
-                // Per-signal combined PHASE σ (sigc) for every emitted phase bias.
-                for (auto& [signal, npb] : s.phase_bias) {
-                    const Eigen::Index p =
-                        colOrNeg([&]{ return est.phaseBiasColumn(s.sat, signal); });
-                    const auto cc = computeCombinedCorrectionSigma(cbcov, c, p, -1, s0);
-                    if (cc.sigc > 0.0) npb.sigc_m = cc.sigc;
-                }
-                // Per-sat combined CODE σ (sigcc) + code/phase corr (rho) at a REFERENCE
-                // signal: prefer the first code signal whose PHASE sibling is present (so
-                // rho pairs a real code/phase observable), else the first code signal (rho
-                // then absent).  Code and phase biases live in DISJOINT key namespaces
-                // (code "C1W" vs phase "L1W"), so the pairing needs the RINEX obs-type
-                // swap selectCombinedCodeRef performs — a raw key equality never matches.
-                // The C record is per-sat and the combined code σ is clock-dominated, so
-                // this per-sat summary is a faithful proxy across the satellite's code
-                // signals (documented approximation).
-                std::vector<std::string> code_sigs;
-                code_sigs.reserve(s.code_bias_m.size());
-                for (const auto& [signal, bias] : s.code_bias_m) { (void)bias; code_sigs.push_back(signal); }
-                std::set<std::string> phase_sigs;
-                for (const auto& [signal, npb] : s.phase_bias) { (void)npb; phase_sigs.insert(signal); }
-                const auto ref = selectCombinedCodeRef(code_sigs, phase_sigs);
-                if (!ref.code.empty()) {
-                    const Eigen::Index b =
-                        colOrNeg([&]{ return est.codeBiasColumn(s.sat, ref.code); });
-                    const Eigen::Index p = ref.phase.empty()
-                        ? Eigen::Index(-1)
-                        : colOrNeg([&]{ return est.phaseBiasColumn(s.sat, ref.phase); });
-                    const auto cc = computeCombinedCorrectionSigma(cbcov, c, p, b, s0);
-                    if (cc.sigcc > 0.0) { s.sigcc_m = cc.sigcc; s.rho = cc.rho; }
-                }
-            }
-        }
+        NetworkSolPrepResult sp_ = networkSolPrep(ctx, config_, log, traces, setup, se, est, x_s,
+                                                  plan, pl_now_s, datum_changed, changed_consts,
+                                                  sigma0_adapt, perconst_active, perconst_publish,
+                                                  perconst_dec_withhold, perconst_stats);
+        auto& sol = sp_.sol;
+        auto& epoch_withheld_consts = sp_.epoch_withheld_consts;
+        auto& global_bump = sp_.global_bump;
+        auto& serialized_consts = sp_.serialized_consts;
+        auto& retro_emit_sats = sp_.retro_emit_sats;
         subEnd(SB_SOLPREP);     // D0b: close sol-prep + discontinuity signalling
         subBegin(SB_EMITSTORE); // D0b block 7: re-base + PB-emit filter + store push + solution CSV
-        // Card 4 (M1) phase D: emit-layer frame re-base (docs/HANDOFF_card4_phaseD.md
-        // §1).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
-        // emitted per-(sat,σ) phase bias churns every epoch by a gauge element (a common
-        // per-component fractional + a per-sat integer×λ) that leaves user DDs invariant
-        // but would trip the emitter's 0.05 m jump test and storm the consumer with
-        // spurious resets.  Re-reference the emitted biases onto the PREVIOUS EMISSION
-        // frame BEFORE the store push + on-disk write, so both the in-process consumer
-        // and a NetworkProductIO replay carry the re-based values (the transform is baked
-        // into the product — replay reproduces the disc counters with no re-base rerun).
-        // A genuine reference-path (tree-edge) slip's integer step is left INTACT so the
-        // jump test still fires (never laundered — standing invariant #1).  Gated on
-        // carry_invariant && emit_rebase ⇒ OFF path (carry_invariant=false) byte-identical.
-        if (emit_rebase_on && !sol.sats.empty()) {
-            // (a) Reference-path slip set: (sat,σ) whose emission reference — a spanning-
-            //     tree/chain (pinned_amb_targets) edge — slipped this epoch.  Only a
-            //     tree-edge slip moves the emitted b_s; a chord slip refloats its DD
-            //     without touching the reference, so it is NOT a re-base survivor.
-            std::set<std::pair<std::string, std::string>> rb_slipped_ref;   // (sat, signal)
-            for (const auto& [sta_i, amb_key] : carry_slipped_ambs) {
-                if (sta_i < 0 || sta_i >= static_cast<int>(stations.size())) continue;
-                if (!stations[sta_i].pinned_amb_targets.count(amb_key)) continue;   // tree edge only
-                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-                if (parts && !parts->satellite.empty())
-                    rb_slipped_ref.insert({parts->satellite, parts->signal});
-            }
-
-            // (b) Connected-component partition of the (receiver,satellite) bipartite
-            //     graph per (const,signal): the common fractional δ is shared only within
-            //     a component (each elects its OWN datum receiver r1).  Union-find over
-            //     this epoch's shared arcs — the same walk buildCarryDdPriors does.
-            std::map<std::pair<char, std::string>, std::map<std::string, std::string>> dsu;
-            auto findRoot = [](const std::map<std::string, std::string>& p,
-                               std::string v) -> std::string {
-                auto it = p.find(v);
-                while (it != p.end() && it->second != v) { v = it->second; it = p.find(v); }
-                return v;
-            };
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (!present[i] || est_index_of[i] < 0) continue;
-                for (const auto& [amb, sidx] : stations[i].sm->getAmbiguities()) {
-                    (void)sidx;
-                    const auto parts = StateKeys::parseAmbiguityKey(amb);
-                    if (!parts || parts->satellite.empty() || parts->satellite.front() == 'R')
-                        continue;   // GLONASS FDMA excluded (no common-λ integer DD)
-                    if (!shared_phase_keys.count(
-                            StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal)))
-                        continue;   // not an eq34 graph arc (gated/legacy lump)
-                    auto& p = dsu[{parts->satellite.front(), parts->signal}];
-                    const std::string rv = "R" + std::to_string(i);
-                    const std::string sv = "S" + parts->satellite;
-                    if (!p.count(rv)) p[rv] = rv;
-                    if (!p.count(sv)) p[sv] = sv;
-                    p[findRoot(p, rv)] = findRoot(p, sv);   // union
-                }
-            }
-            // (sat,signal) -> global component id (1-based; 0 = unassigned sentinel).
-            std::map<std::string, int> comp_of;
-            int next_comp = 0;
-            for (auto& [g, p] : dsu) {
-                std::map<std::string, int> root2id;
-                for (const auto& [v, par] : p) {
-                    (void)par;
-                    if (v.empty() || v[0] != 'S') continue;   // satellite vertices only
-                    const std::string root = findRoot(p, v);
-                    int& id = root2id[root];
-                    if (id == 0) id = ++next_comp;
-                    comp_of[v.substr(1) + "|" + g.second] = id;
-                }
-            }
-
-            // (c) Build re-base entries from the emitted phase biases (GLONASS + non-eq34
-            //     keys excluded ⇒ their raw emitted frame is untouched).  λ per (const,σ).
-            std::vector<NetworkEmitRebase::Entry> rb_entries;
-            std::map<std::pair<char, std::string>, double> lambda_of;
-            auto sysOfChar = [](char c) -> System {
-                switch (c) { case 'G': return System::GPS;    case 'E': return System::Galileo;
-                             case 'C': return System::BeiDou; case 'J': return System::QZSS;
-                             default:  return System::Unknown; }
-            };
-            for (auto& s : sol.sats) {
-                if (s.sat.empty() || s.sat.front() == 'R') continue;
-                const char cons = s.sat.front();
-                for (auto& [signal, npb] : s.phase_bias) {
-                    const auto cit = comp_of.find(s.sat + "|" + signal);
-                    if (cit == comp_of.end()) continue;   // legacy/gated key: keep raw frame
-                    const std::pair<char, std::string> g{cons, signal};
-                    double& lam = lambda_of[g];
-                    if (lam == 0.0 && eq34_ppp_utils)
-                        lam = eq34_ppp_utils->getWavelength(sysOfChar(cons), signal, s.sat);
-                    NetworkEmitRebase::Entry e;
-                    e.sat = s.sat; e.signal = signal; e.component = cit->second;
-                    e.lambda_m = lam; e.bias_m = npb.bias_m;
-                    e.slipped = rb_slipped_ref.count({s.sat, signal}) != 0;
-                    rb_entries.push_back(std::move(e));
-                }
-            }
-            emit_rebase_engine.rebaseEpoch(rb_entries);
-            // Write the re-based biases back into the emitted epoch (match by key; the
-            // engine mutates in place but a key match is robust to any future reorder).
-            std::map<std::string, double> rb_out;
-            for (const auto& e : rb_entries) rb_out[e.sat + "|" + e.signal] = e.bias_m;
-            for (auto& s : sol.sats)
-                for (auto& [signal, npb] : s.phase_bias) {
-                    const auto it = rb_out.find(s.sat + "|" + signal);
-                    if (it != rb_out.end()) npb.bias_m = it->second;
-                }
-
-            // M5 prerequisite: PB emission-continuity filter on the RE-BASED values.
-            // A per-key scalar KF + self-tuning k·σ̂_step jump gate smooths the per-
-            // epoch estimation noise the re-base leaves, so the emitter's (unchanged)
-            // jump test fires only at genuine events — clearing the threshold-in-noise
-            // discontinuity floor.  Filters EXACTLY the keys the re-base put into the
-            // emission frame (rb_out); legacy/gated/GLONASS keys keep their raw value
-            // + the emitter's normal jump test.  A reference-path slip (rb_slipped_ref,
-            // the same set the re-base used) forces a reset that PASSES THE RAW VALUE
-            // THROUGH, so the genuine step survives to the emitter — never laundered
-            // (invariant #1).  Baked into sol BEFORE emitToStore + the on-disk write,
-            // so a NetworkProductIO replay reproduces the emitter's disc counters with
-            // no filter rerun (the transform is in the product, like the re-base).
-            if (emit_pb_filter_on) {
-                const double pbf_epoch_s =
-                    sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
-                std::vector<NetworkPbEmitFilter::Entry> pf_entries;
-                pf_entries.reserve(rb_out.size());
-                for (auto& s : sol.sats) {
-                    if (s.sat.empty() || s.sat.front() == 'R') continue;   // GLONASS excluded (FDMA)
-                    for (auto& [signal, npb] : s.phase_bias) {
-                        if (!rb_out.count(s.sat + "|" + signal)) continue;  // only re-based keys
-                        NetworkPbEmitFilter::Entry e;
-                        e.sat = s.sat; e.signal = signal;
-                        e.value_m = npb.bias_m;
-                        e.slipped = rb_slipped_ref.count({s.sat, signal}) != 0;
-                        pf_entries.push_back(std::move(e));
-                    }
-                }
-                pb_filter_engine.filterEpoch(pf_entries, pbf_epoch_s);
-                std::map<std::string, std::pair<double, double>> pf_out;  // key -> (filtered value, posterior σ)
-                for (const auto& e : pf_entries)
-                    pf_out[e.sat + "|" + e.signal] = {e.value_m, e.post_sigma_m};
-                for (auto& s : sol.sats)
-                    for (auto& [signal, npb] : s.phase_bias) {
-                        const auto it = pf_out.find(s.sat + "|" + signal);
-                        if (it == pf_out.end()) continue;
-                        npb.bias_m = it->second.first;
-                        if (pb_filter_emit_sigma) npb.sigma_m = it->second.second;
-                    }
-            }
-        }
-        emitter.emitToStore(sol, network_store);
-        // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
-        // realized pivots) every N seconds of PRODUCT time, and additionally on any
-        // epoch whose emit carried a datum change (markDatumChange fired above), so a
-        // late joiner sees the contract and a post-handover reader sees the pivots the
-        // product is NOW realized in.  Pivots refresh from last_pivot — the merged
-        // emit-baseline map that advanced just above, paired with this epoch's bump:
-        // it holds this epoch's realized pivot for every present constellation and the
-        // last-EMITTED pivot for an absent one, i.e. exactly the datum of the product
-        // as of this emit.  pending_contract is refreshed in place so the end-of-run
-        // round-trip self-check compares against the LAST written contract.  Written
-        // BEFORE the epoch block so the S line positionally precedes the epochs it
-        // describes; the elapsed>0 guard keeps the first-emit epoch single-S (the
-        // header line just written).  OFF (0) ⇒ no extra S lines (byte-identical).
-        if (contract_rebroadcast_s > 0.0 && product_writer && nc.serialize_sbasis_contract
-            && last_contract_emit_s >= 0.0 && pl_now_s > last_contract_emit_s) {
-            const bool due = (pl_now_s - last_contract_emit_s) >= contract_rebroadcast_s;
-            // Card 3 (D4): a datum-receiver (root) handover re-references the whole
-            // component's biases by a common fractional + per-sat integers — a
-            // materially softer event than a clock-pivot handover, but still a
-            // datum break the consumer should re-sync the contract on.
-            const std::string cur_pdr = (phase_datum_eq34 && !eq34_datum_rx.empty())
-                                          ? eq34_datum_rx.begin()->second : std::string{};
-            const bool eq34_root_changed = phase_datum_eq34 && cur_pdr != eq34_emitted_pdr;
-            if (due || datum_changed || eq34_root_changed) {
-                for (const auto& [cst, sat] : last_pivot)
-                    pending_contract.decl.clock_pivot_sat[cst] = sat;   // refresh realized pivots
-                if (phase_datum_eq34) {
-                    pending_contract.decl.eq34_datum_receiver = cur_pdr;   // refresh pdr=
-                    eq34_emitted_pdr = cur_pdr;
-                }
-                product_writer->writeContract(pending_contract);
-                last_contract_emit_s = pl_now_s;
-            }
-        }
-        if (product_writer) {
-            // RTA-10: the emitted epoch's heartbeat, written immediately BEFORE its epoch
-            // block (the S-line positional precedent — an H describes what follows).
-            // status=partial iff any constellation was withheld from this emission (the
-            // RT0-5 runaway quarantine and/or the per-constellation σ̂0 carve-out);
-            // sigma0 = the global within-epoch σ̂0 (0 when the within-epoch RAIM did not
-            // run this epoch — "unavailable" per the H grammar); n_sats counts the
-            // POST-prune emission.  Never feeds replay; flushed with the epoch below.
-            if (emit_epoch_status) {
-                NetworkProducerStatus hst;
-                hst.time.week        = se.time.week;
-                hst.time.tow         = se.time.tow;
-                hst.state            = epoch_withheld_consts.empty()
-                                           ? NetworkProducerStatus::State::Ok
-                                           : NetworkProducerStatus::State::Partial;
-                hst.sigma0           = sigma0_adapt;
-                hst.n_sats_published = static_cast<int>(sol.sats.size());
-                if (epoch_withheld_consts.empty()) {
-                    hst.withheld = "-";
-                } else {
-                    hst.withheld.clear();
-                    for (char cst : epoch_withheld_consts) {
-                        if (!hst.withheld.empty()) hst.withheld += ';';
-                        hst.withheld += cst;
-                    }
-                }
-                product_writer->writeEpochStatus(hst);
-            }
-            const bool any_bump = global_bump || !serialized_consts.empty();
-            product_writer->write(sol, any_bump, global_bump ? std::set<char>{} : serialized_consts,
-                                  retro_emit_sats,
-                                  // RTA-4: post-emit counter source — emitToStore ran
-                                  // above, so the emitter's counters ARE this epoch's
-                                  // store-record values.
-                                  ser_disc_ctrs ? &emitter : nullptr);
-            // RTA-6: per-epoch flush so a live tail consumer (NetworkProductTail)
-            // sees this epoch block now, not at an ofstream-buffer boundary.
-            // Covers the RTA-5 S re-broadcast written above too (same stream).
-            // Changes no bytes; default-off toggle discipline.
-            if (nc.product_flush_per_epoch) product_writer->flush();
-        }
-        if (n_emitted == 0) first_emit_content_s = pl_now_s;   // RTB-7(c): grade-metric anchor
-        ++n_emitted;
-        last_emit_content_s = pl_now_s;   // RTB-6: content time of this emit (health last-emit age)
-        // R12: commit the B8/T2 within-epoch-trigger flag-rate now that the epoch has EMITTED
-        // (withheld/skipped epochs never reach here, so T2's denominator = emitted epochs, the
-        // same population T3–T6 count over).  Guarded by trace_flag_rates ⇒ OFF byte-identical.
-        if (trace_flag_rates && we_t2_opp) {
-            ++fr_we_trigger.opp;
-            if (we_t2_flag) ++fr_we_trigger.flag;
-        }
-
-        // --- Closed-loop consume: held-out station vs the fresh network store -
-        // Run the consumer ONLY now that this epoch's products are in the store,
-        // so its SSR clock + phase bias reflect the just-solved network solution.
-        if (closed_loop_on && consumer) {
-            auto cit = se.by_station.find(cl.station.name);
-            if (cit != se.by_station.end() && !cit->second.empty()) {
-                // --- Supply this epoch's SH-VTEC slant ionosphere to the consumer -
-                // Evaluate the just-solved global VTEC field at the consumer's own
-                // pierce points and push an UNDIFFERENCED per-satellite slant-iono
-                // value (metres on L1, Odijk-2016 Table 11) into the store BEFORE
-                // the consumer reads it, so it applies the tight ionosphere-weighted
-                // prior in place of floating its slant iono.  Reuses the producer's
-                // own SH→slant machinery (appendShIonoRows) at the consumer geometry.
-                // OFF (default) ⇒ nothing pushed, consumer applies nothing (byte-
-                // identical).  In-process only — not part of the on-disk product.
-                if (cl.consume_network_products && cl.consume_network_iono && sh_model) {
-                    const auto& iw = config_.getIonosphereWeightingConfig();
-                    const double Re = shc.earth_radius_km * 1000.0;
-                    const double H  = shc.layer_height_km * 1000.0;
-                    const double tecu_to_L1m =
-                        40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
-                    const double lon_sun = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
-                    // SH coefficient vector from the shared solution (guard the
-                    // column lookups, as elsewhere in this file).
-                    const auto& coeffs = sh_model->coeffs();
-                    Eigen::VectorXd coeff(static_cast<Eigen::Index>(coeffs.size()));
-                    bool coeff_ok = true;
-                    for (std::size_t k = 0; k < coeffs.size() && coeff_ok; ++k) {
-                        try {
-                            coeff(static_cast<Eigen::Index>(k)) = x_s(
-                                est.vtecCoeffColumn(coeffs[k].n, coeffs[k].m, coeffs[k].trig));
-                        } catch (...) { coeff_ok = false; }
-                    }
-                    if (coeff_ok) {
-                        // The consumer's raw RINEX carries no geometry; harvest each
-                        // satellite's ECEF (receiver-independent at IPP accuracy) from
-                        // the network's already-modeled obs this epoch.
-                        std::map<std::string, Eigen::Vector3d> sat_pos;
-                        for (const auto& mv : modeled)
-                            for (const auto& o : mv)
-                                if (!o.satellite.empty() && o.sat_pos.allFinite())
-                                    sat_pos.emplace(o.satellite, o.sat_pos);
-                        // T3f: SH-coefficient covariance + column map + fresh-OSB set (built ONLY
-                        // when the formal-σ supply is armed; unused/empty otherwise).
-                        std::vector<Eigen::Index> sh_cols;
-                        std::set<std::string>     fresh_osb;
-                        const Eigen::MatrixXd*    shcov_p = nullptr;
-                        if (nc.iono_supply_formal_sigma) {
-                            sh_cols.assign(coeffs.size(), -1);
-                            for (std::size_t k = 0; k < coeffs.size(); ++k)
-                                try { sh_cols[k] = est.vtecCoeffColumn(
-                                          coeffs[k].n, coeffs[k].m, coeffs[k].trig); }
-                                catch (...) {}
-                            shcov_p = &est.sharedCovariance();
-                            if (config_.estimateNetworkSatCodeBias())
-                                for (const auto& s : sol.sats)
-                                    if (!s.code_bias_m.empty()) fresh_osb.insert(s.sat);
-                        }
-                        int n_iono = 0;
-                        for (const auto& o : cit->second) {
-                            if (o.satellite.empty() || o.satellite.front() == 'R')
-                                continue;   // GPS/Galileo only — the SH field excludes GLONASS
-                            const auto pit = sat_pos.find(o.satellite);
-                            if (pit == sat_pos.end()) continue;
-                            // T3f: skip the supply for a sat without FRESH OSB coverage this epoch
-                            // — the SH-implied slant leans on the code-bias observability, so an
-                            // OSB-less sat's field value is not trustworthy enough to inject.
-                            if (nc.iono_supply_formal_sigma
-                                && config_.estimateNetworkSatCodeBias()
-                                && !fresh_osb.count(o.satellite)) continue;
-                            const IppGeometry g = computeIppGeometry(cl_truth, pit->second, Re, H);
-                            if (!g.valid) continue;
-                            if (g.elevation_rad * 180.0 / Constants::PI < iw.elevation_cutoff_deg)
-                                continue;
-                            const double lon_sf = g.ipp_lon_rad - lon_sun;
-                            const double vtec   = sh_model->vtec(coeff, g.ipp_lat_rad, lon_sf);
-                            SsrSlantIono si;
-                            si.sat           = o.satellite;
-                            si.iono_m        = vtec * g.mapping * tecu_to_L1m;   // slant on L1 (m)
-                            const double map = g.mapping * tecu_to_L1m;          // VTEC(TECU)→slant(m)
-                            double sigma = std::max(iw.floor_m,
-                                                    shc.representation_sigma_tecu * map);
-                            if (nc.iono_supply_formal_sigma && shcov_p) {
-                                // T3f: RSS the SH-coefficient FORMAL σ onto the representativeness
-                                // floor.  aᵀ Q_sh a (a = ∂VTEC/∂coeff basis row, Q_sh = SH coeff
-                                // covariance, TECU²) → VTEC variance; ×map → slant metres.
-                                std::vector<double> a;
-                                sh_model->basis(g.ipp_lat_rad, lon_sf, a);
-                                double aQa = 0.0;
-                                for (std::size_t j = 0; j < sh_cols.size(); ++j)
-                                    for (std::size_t k = 0; k < sh_cols.size(); ++k)
-                                        if (sh_cols[j] >= 0 && sh_cols[k] >= 0
-                                            && sh_cols[j] < shcov_p->rows()
-                                            && sh_cols[k] < shcov_p->cols())
-                                            aQa += a[j] * (*shcov_p)(sh_cols[j], sh_cols[k]) * a[k];
-                                aQa = std::max(0.0, aQa);   // guard tiny negatives
-                                const double repr   = shc.representation_sigma_tecu * map;
-                                const double formal = map * std::sqrt(aQa);
-                                sigma = std::max(iw.floor_m, std::sqrt(repr * repr + formal * formal));
-                            }
-                            si.sigma_m       = sigma;
-                            si.received_time = se.time;
-                            network_store.pushSlantIono(si);
-                            ++n_iono;
-                        }
-                        if (n_emitted == 1 || n_emitted % 60 == 0)
-                            log->info("Network closed-loop: supplied SH-VTEC slant iono for {} "
-                                      "consumer satellite(s) (TOW {:.1f}).", n_iono, se.time.tow);
-                    }
-                }
-                consumer->processEpoch(cit->second);
-                ++cl_epochs;
-
-                const Eigen::Vector3d pos = consumer->getPosition();
-                const Eigen::Vector3d d   = pos - cl_truth;
-                const Eigen::Vector3d enu = Coordinates::ecefToEnu(d, cl_truth_llh);
-                const double err3d = d.norm();
-
-                const bool ar_ran = consumer->lastArRan();
-                const AmbiguityResolution& ar = consumer->lastArResult();
-                const bool fixed = ar_ran && ar.success;
-                if (ar_ran) ++cl_ar_ran;
-                if (fixed) {
-                    ++cl_ar_fixed;
-                    cl_sum_fixed += ar.num_fixed;
-                    if (cl_first_fix_tow < 0.0) {
-                        cl_first_fix_tow = se.time.tow; cl_first_fix_week = se.time.week;
-                    }
-                }
-                // Converged-segment position RMS: rolling window over the most
-                // recent epochs (the float transient + any early wrong-fix
-                // excursions are not a fair measure of steady-state quality).
-                cl_recent_err3d.push_back(err3d);
-                if (cl_recent_err3d.size() > kClRecentWindow) cl_recent_err3d.pop_front();
-
-                if (cl_trace) {
-                    // T2c: attribute WHICH gate zeroed AR this epoch.  gate_reason is set at
-                    // the pre-MLAMBDA early gates; reason 0 means MLAMBDA was reached, so the
-                    // outcome is read from success/ratio (fixed / ratio-battery reject / a
-                    // degenerate MLAMBDA that produced no ratio).
-                    std::string ar_gate;
-                    if (!ar_ran) {
-                        ar_gate = "not_run";
-                    } else switch (ar.gate_reason) {
-                        case 1:  ar_gate = "disabled";      break;
-                        case 2:  ar_gate = "min_epochs";    break;
-                        case 3:  ar_gate = fmt::format("sigma_gate({:.3f}m)", ar.gate_sigma_3d); break;
-                        case 4:  ar_gate = "no_candidates"; break;
-                        default: ar_gate = ar.success ? "fixed"
-                                         : (ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail");
-                                 break;
-                    }
-                    cl_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                             << cit->second.size() << ',' << (ar_ran ? 1 : 0) << ','
-                             << (fixed ? 1 : 0) << ',' << (ar_ran ? ar.num_fixed : 0) << ','
-                             << (ar_ran ? ar.num_candidates : 0) << ','
-                             << fmt::format("{:.2f}", ar_ran ? ar.ratio : 0.0) << ','
-                             << fmt::format("{:.4f}", err3d) << ','
-                             << fmt::format("{:.4f}", enu.x()) << ','
-                             << fmt::format("{:.4f}", enu.y()) << ','
-                             << fmt::format("{:.4f}", enu.z()) << ','
-                             << ar_gate << '\n';
-                }
-            }
-        }
-
-        // Per-satellite product trace (after emit, so discontinuity counters are current).
-        if (soln) {
-            for (const auto& s : sol.sats) {
-                if (s.has_clock)
-                    soln << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                         << s.sat << ",CLK,," << fmt::format("{:.4f}", s.clock_c0_m)
-                         << ',' << emitter.clockDiscontinuityCounter(s.sat) << '\n';  // A2: 0 when off (byte-identical)
-                for (const auto& [signal, pb] : s.phase_bias)
-                    soln << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                         << s.sat << ",PB," << signal << ',' << fmt::format("{:.4f}", pb.bias_m)
-                         << ',' << emitter.discontinuityCounter(s.sat, signal) << '\n';
-                for (const auto& [signal, cb] : s.code_bias_m)   // W6 satellite code bias (OSB)
-                    soln << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                         << s.sat << ",CB," << signal << ',' << fmt::format("{:.4f}", cb)
-                         << ',' << emitter.codeBiasDiscontinuityCounter(s.sat, signal) << '\n';
-            }
-        }
+        networkEmitStore(ctx, config_, log, traces, setup, se, est, x_s, pl_now_s,
+                         datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
+                         serialized_consts, retro_emit_sats, emit_rebase_on, emit_pb_filter_on,
+                         pb_filter_emit_sigma, emit_rebase_engine, pb_filter_engine, present,
+                         est_index_of, modeled, shared_phase_keys, carry_slipped_ambs,
+                         we_t2_opp, we_t2_flag, cl_epochs, cl_ar_ran, cl_ar_fixed, cl_sum_fixed,
+                         cl_first_fix_tow, cl_first_fix_week, cl_recent_err3d);
         subEnd(SB_EMITSTORE);   // D0b: close block 7 (emit/store, order-sensitive serial)
         subBegin(SB_IONODIAG);  // D0b block 4a: iono / ZWD / anchor-info viz traces
-
-        // --- Network-estimated slant ionosphere (viz trace) -----------------
-        // Back-substitute each present station's local nuisance block (the slant
-        // iono lives there, an absolute per-epoch estimate with linearization
-        // point 0) and emit one row per (station, satellite) at the measured
-        // elevation/azimuth, so the pyviz viewer can map each value to its
-        // ionospheric pierce point.  Gated by network.trace_ionosphere.
-        if (iono_trace.is_open()) {
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (est_index_of[i] < 0) continue;   // not added to this epoch's solve
-                Eigen::VectorXd x_r;
-                try {
-                    x_r = est.reconstructStation(
-                        static_cast<std::size_t>(est_index_of[i]), x_s);
-                } catch (...) { continue; }
-                // Elevation/azimuth per satellite from the modeled observations
-                // (first observation of each satellite carries the geometry).
-                std::map<std::string, std::pair<double, double>> elaz;
-                for (const auto& o : modeled[i])
-                    elaz.emplace(o.satellite, std::make_pair(o.elevation, o.azimuth));
-                const auto& h2l = asm_res[i].h2local;
-                for (const auto& kv : stations[i].sm->getIonosphereStates()) {
-                    const auto hit = h2l.find(static_cast<int>(kv.second));
-                    if (hit == h2l.end()) continue;
-                    if (hit->second < 0
-                        || static_cast<Eigen::Index>(hit->second) >= x_r.size())
-                        continue;
-                    const auto e = elaz.find(kv.first);
-                    if (e == elaz.end()) continue;
-                    iono_trace << se.time.week << ','
-                               << fmt::format("{:.3f}", se.time.tow) << ','
-                               << stations[i].name << ',' << kv.first << ','
-                               << fmt::format("{:.4f}", x_r(hit->second)) << ','
-                               << fmt::format("{:.2f}", e->second.first) << ','
-                               << fmt::format("{:.2f}", e->second.second) << '\n';
-                }
-            }
-        }
-
-        // --- Per-station ZWD trace (L7) -------------------------------------
-        // One row per present station each emitted epoch: the estimated ZWD (a-priori state +
-        // reconstructed correction) and its datum-conditioned formal σ (the V7 border-sharpening
-        // instrument).  Independent of the carry — locate the ZWD column via getTropoIndex /
-        // h2local, NOT R.pl_zwd_present (that is only set under carry_warm && zwd_on, so run A of
-        // the V7 A/B and warmup would otherwise emit no rows).
-        if (zwd_trace.is_open()) {
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (est_index_of[i] < 0) continue;               // not in this epoch's solve
-                const size_t tropo_idx_sz = stations[i].sm->getTropoIndex();
-                if (tropo_idx_sz == std::numeric_limits<size_t>::max()) continue;  // no ZWD state
-                const int tropo_idx = static_cast<int>(tropo_idx_sz);
-                const auto& h2l = asm_res[i].h2local;
-                const auto zhit = h2l.find(tropo_idx);
-                if (zhit == h2l.end() || zhit->second < 0) continue;   // ZWD not in A_r this epoch
-                const Eigen::Index zcol = static_cast<Eigen::Index>(zhit->second);
-                Eigen::VectorXd x_r, vard;
-                try {
-                    x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
-                    vard = est.conditionalLocalVarianceDiag(
-                        static_cast<std::size_t>(est_index_of[i]), {zcol}, plan.shared_datum);
-                } catch (...) { continue; }
-                if (zcol >= x_r.size()) continue;
-                const double x_lin = stations[i].sm->getStateVector()(tropo_idx);  // ≡0.0 today; kept for robustness
-                const double zwd_m = x_lin + x_r(zcol);
-                const double var   = (vard.size() > 0) ? vard(0) : -1.0;
-                if (!(var > 0.0) || !std::isfinite(var) || !std::isfinite(zwd_m)) continue;
-                zwd_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                          << stations[i].name << ',' << fmt::format("{:.6f}", zwd_m) << ','
-                          << fmt::format("{:.6e}", std::sqrt(var)) << ','
-                          << (asm_res[i].pl_zwd_injected ? 1 : 0) << '\n';
-            }
-        }
-
-        // --- A-priori-clock-anchor information-fraction diagnostic (B7) ------
-        // Certify the estimable network clock is DATA-dominated, not defined by the
-        // a-priori CODE product it is softly anchored to.  anchor_info is the constant
-        // Tikhonov pull (1/σ²); total_info is the reduced-normals diagonal on the clock
-        // column (data + carry prior + datum pin).  P1-4: the legacy anchor/total fraction
-        // is MISLEADING for a locked-in (carry-dominated) clock — its huge carry info
-        // shrinks the fraction and certifies "data-dominated" for a column that is really
-        // defined by its own past.  Decompose the denominator: subtract the carried
-        // clock-prior info (clk_prior_info, folded this epoch) and the anchor, leaving
-        // data_info; report anchor_frac_data = anchor/(anchor+data_info) — independent of
-        // carry stiffness — plus carry_frac = carry/total, which lights up on a lock-in.
-        // Read-only; the anchor fold itself is unchanged.
-        if (anchor_info_trace.is_open()) {
-            const double clk_sigma_a = clk_anchor_sigma;  // D6-resolved (matches the fold site above)
-            const bool anchor_active =
-                std::isfinite(clk_sigma_a) && clk_sigma_a > 0.0 && clk_sigma_a < 100.0;
-            const double anchor_info =
-                anchor_active ? 1.0 / (clk_sigma_a * clk_sigma_a) : 0.0;
-            const Eigen::MatrixXd& Nss = est.reducedSharedNormals();
-            for (const std::string& sat : registered_clock_sats) {
-                Eigen::Index col;
-                try { col = est.clockColumn(sat); } catch (...) { continue; }
-                if (col < 0 || col >= Nss.rows()) continue;
-                const double total_info = Nss(col, col);
-                const auto cpi = clk_prior_info.find(sat);
-                const double carry_info = (cpi != clk_prior_info.end()) ? cpi->second : 0.0;
-                // Data information = everything not the carry prior or the anchor.  For a
-                // pivot the datum pin is ALSO in total_info (is_pivot flags it — its
-                // decomposition is pin-dominated and not a data-dominance statement).
-                const double data_info = std::max(0.0, total_info - carry_info - anchor_info);
-                const double denom_ad  = anchor_info + data_info;
-                const double anchor_frac_data = (denom_ad > 0.0) ? (anchor_info / denom_ad) : 0.0;
-                const double carry_frac = (total_info > 0.0) ? (carry_info / total_info) : 0.0;
-                const double frac = (total_info > 0.0) ? (anchor_info / total_info) : 0.0;
-                const auto pit = plan.clock_pivot.find(NetworkSbasis::constellationOf(sat));
-                const bool is_pivot = (pit != plan.clock_pivot.end() && pit->second == sat);
-                anchor_info_trace
-                    << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                    << sat << ',' << fmt::format("{:.6e}", anchor_info) << ','
-                    << fmt::format("{:.6e}", carry_info) << ','
-                    << fmt::format("{:.6e}", data_info) << ','
-                    << fmt::format("{:.6e}", total_info) << ','
-                    << fmt::format("{:.6f}", anchor_frac_data) << ','
-                    << fmt::format("{:.6f}", carry_frac) << ','
-                    << fmt::format("{:.6f}", frac) << ',' << (is_pivot ? 1 : 0) << '\n';
-            }
-        }
+        networkIonoDiag(ctx, config_, log, traces, setup, ws, se, est, x_s, plan, asm_res,
+                        est_index_of, modeled, registered_clock_sats, clk_anchor_sigma);
         subEnd(SB_IONODIAG);   // D0b: close block 4a (iono/ZWD/anchor traces)
         subBegin(SB_DDFRAC);   // D0b block 6: cross-station DD fractional-residual (B5) trace
-
-        // --- Cross-station DD fractional-residual (B5) ----------------------
-        // For each present station, back-substitute its local block and read each
-        // ABSOLUTE float ambiguity (x_lin + x_r(col), m) per (sat,signal).  Within a
-        // (const,signal), difference each sat against a reference sat (between-sat SD),
-        // then difference that across station pairs → the between-station DD.  A DD near
-        // an integer #cycles is evidence the float biases support user AR.  P1-2: the
-        // fractional cycle (dd_cyc = dd_m/λ, frac_cyc = dd_cyc − round) is computed HERE
-        // so the CSV is a ready fractional histogram.  EXCLUDED from the pool: the pivot
-        // station (its ambiguities are pinned to zero — a degenerate DD) and GLONASS
-        // (FDMA: no common λ per signal, between-sat SD not integer).  Read-only; gated.
-        if (dd_frac_trace.is_open()
-            && ((n_loop_epochs - 1)
-                % static_cast<size_t>(std::max(1, nc.trace_dd_fractional_epoch_stride)) == 0)) {  // T2e stride
-            auto sysOfChar = [](char c) -> System {
-                switch (c) {
-                    case 'G': return System::GPS;      case 'E': return System::Galileo;
-                    case 'C': return System::BeiDou;   case 'J': return System::QZSS;
-                    case 'S': return System::SBAS;     default:  return System::Unknown;
-                }
-            };
-            struct AmbAbs { double value_m; std::size_t est_id; Eigen::Index col; };  // T2a: +est_id,col
-            // (const,signal) -> sat -> station index -> absolute float ambiguity (m) plus its
-            // (estimator station id, local A_r column) for the T2a joint-covariance request.
-            std::map<std::pair<std::string, std::string>,
-                     std::map<std::string, std::map<size_t, AmbAbs>>> pool;
-            const auto t_dd_pool0 = std::chrono::steady_clock::now();   // T2b timers
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (est_index_of[i] < 0) continue;
-                // Legacy: skip the whole pivot (all its ambiguities are pinned to
-                // zero → degenerate DD).  Prioritized: keep the station and skip only
-                // its per-(sat,signal) anchored (pinned) ambiguities below.
-                if (!phase_datum_prioritized && stations[i].is_pivot) continue;
-                Eigen::VectorXd x_r;
-                try {
-                    x_r = est.reconstructStation(
-                        static_cast<std::size_t>(est_index_of[i]), x_s);
-                } catch (...) { continue; }
-                const auto& h2l = asm_res[i].h2local;
-                const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
-                for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
-                    const auto parts = StateKeys::parseAmbiguityKey(key);
-                    if (!parts) continue;
-                    if (networkIsGaugePinned_(stations, phase_datum_prioritized,
-                                              i, parts->satellite, parts->signal))
-                        continue;   // anchored (pinned to 0) → degenerate DD
-                    const std::string cst = NetworkSbasis::constellationOf(parts->satellite);
-                    if (cst == "R") continue;   // GLONASS FDMA: excluded (no common λ / integer DD)
-                    const int amb_idx = static_cast<int>(sidx);
-                    if (amb_idx < 0 || amb_idx >= x_lin.size()) continue;
-                    const auto hit = h2l.find(amb_idx);
-                    if (hit == h2l.end()) continue;   // ambiguity column not in A_r this epoch
-                    if (hit->second < 0
-                        || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
-                    const double value_m = x_lin(amb_idx) + x_r(hit->second);
-                    if (!std::isfinite(value_m)) continue;
-                    pool[{cst, parts->signal}][parts->satellite][i] =
-                        AmbAbs{value_m, static_cast<std::size_t>(est_index_of[i]),
-                               static_cast<Eigen::Index>(hit->second)};
-                }
-            }
-            const auto t_dd_pool1 = std::chrono::steady_clock::now();
-            // --- T2a/T2b: collect the between-station DDs, (optionally) subsample, then
-            //     propagate the joint conditional covariance ONCE to attach a per-DD formal σ
-            //     (cycles).  The DD variance is gᵀ Q g with g=[+1,−1,−1,+1] over the four undiff
-            //     ambiguities (sta_a/sat, sta_a/ref, sta_b/sat, sta_b/ref); only the diagonal is
-            //     needed, so no dense nd×nd differencing matrix is materialised.  dd_m / dd_cyc /
-            //     frac_cyc are computed EXACTLY as before (benchmark-identical); dd_sigma_cyc is
-            //     appended (−1 = covariance unavailable this epoch).
-            struct DdOut {
-                std::string cons, signal, sat, ref;
-                std::size_t sta_a_i, sta_b_i;
-                double dd_m, lambda, dd_cyc, frac_cyc;
-                std::pair<std::size_t, Eigen::Index> amb[4];  // ia(sat), ra(ref)@a, ib(sat), rb(ref)@b
-                int rq[4]{ -1, -1, -1, -1 };                  // request indices, filled post-subsample
-            };
-            std::vector<DdOut> dds;
-            for (auto& [cs, satmap] : pool) {
-                std::string ref;   // reference sat = lexically-lowest sat present at ≥2 stations
-                for (const auto& [sat, stamap] : satmap)
-                    if (stamap.size() >= 2) { ref = sat; break; }
-                if (ref.empty()) continue;
-                // λ for this (const,signal).  GLONASS is already excluded, so the nominal
-                // per-band wavelength is satellite-independent; 0 (unknown signal) leaves the
-                // cycle columns 0 so the reader falls back to the metre column.
-                double lambda = 0.0;
-                if (dd_ppp_utils) {
-                    const System sys = sysOfChar(cs.first.empty() ? '?' : cs.first[0]);
-                    if (sys != System::Unknown)
-                        lambda = dd_ppp_utils->getWavelength(sys, cs.second, ref);
-                }
-                const auto& rmap = satmap[ref];
-                for (const auto& [sat, stamap] : satmap) {
-                    if (sat == ref) continue;
-                    for (auto ia = stamap.begin(); ia != stamap.end(); ++ia) {
-                        const auto ra = rmap.find(ia->first);
-                        if (ra == rmap.end()) continue;
-                        const double sd_a = ia->second.value_m - ra->second.value_m;
-                        auto ib = ia; ++ib;
-                        for (; ib != stamap.end(); ++ib) {
-                            const auto rb = rmap.find(ib->first);
-                            if (rb == rmap.end()) continue;
-                            const double sd_b = ib->second.value_m - rb->second.value_m;
-                            const double dd_m = sd_a - sd_b;   // between-station DD (m)
-                            const double dd_cyc = (lambda > 0.0) ? (dd_m / lambda) : 0.0;
-                            const double frac_cyc =
-                                (lambda > 0.0) ? (dd_cyc - std::round(dd_cyc)) : 0.0;
-                            DdOut d;
-                            d.cons = cs.first; d.signal = cs.second; d.sat = sat; d.ref = ref;
-                            d.sta_a_i = ia->first; d.sta_b_i = ib->first;
-                            d.dd_m = dd_m; d.lambda = lambda; d.dd_cyc = dd_cyc; d.frac_cyc = frac_cyc;
-                            d.amb[0] = { ia->second.est_id, ia->second.col };
-                            d.amb[1] = { ra->second.est_id, ra->second.col };
-                            d.amb[2] = { ib->second.est_id, ib->second.col };
-                            d.amb[3] = { rb->second.est_id, rb->second.col };
-                            dds.push_back(std::move(d));
-                        }
-                    }
-                }
-            }
-            const auto t_dd_collect = std::chrono::steady_clock::now();
-            const std::size_t n_all_dd = dds.size();
-            // T2b: deterministic seeded subsample keyed on (week,tow) — reproducible per epoch;
-            // 0 = unlimited (full-pair benchmark).  Bounds BOTH the emit and the covariance-
-            // request count (the dominant 305-station tracer cost).
-            const int dd_max_pairs = nc.trace_dd_fractional_max_pairs;
-            if (dd_max_pairs > 0 && dds.size() > static_cast<std::size_t>(dd_max_pairs)) {
-                std::mt19937 rng(static_cast<unsigned>(se.time.week) * 604800u
-                                 + static_cast<unsigned>(se.time.tow));
-                std::vector<std::size_t> idx(dds.size());
-                for (std::size_t j = 0; j < idx.size(); ++j) idx[j] = j;
-                std::shuffle(idx.begin(), idx.end(), rng);
-                idx.resize(static_cast<std::size_t>(dd_max_pairs));
-                std::sort(idx.begin(), idx.end());   // stable emit order
-                std::vector<DdOut> kept; kept.reserve(idx.size());
-                for (std::size_t j : idx) kept.push_back(std::move(dds[j]));
-                dds.swap(kept);
-            }
-            // Deduplicated (station,col) request set over the (subsampled) DDs.
-            std::vector<std::pair<std::size_t, Eigen::Index>> reqs;
-            std::map<std::pair<std::size_t, Eigen::Index>, int> req_idx;
-            auto reqOf = [&](const std::pair<std::size_t, Eigen::Index>& k) -> int {
-                auto it = req_idx.find(k);
-                if (it != req_idx.end()) return it->second;
-                const int r = static_cast<int>(reqs.size());
-                reqs.push_back(k); req_idx[k] = r; return r;
-            };
-            for (auto& d : dds)
-                for (int p = 0; p < 4; ++p) d.rq[p] = reqOf(d.amb[p]);
-            Eigen::MatrixXd cov;
-            if (!reqs.empty()) {
-                try { cov = est.jointConditionalCovariance(reqs, plan.shared_datum); }
-                catch (...) { cov = Eigen::MatrixXd(); }
-            }
-            const bool cov_ok =
-                (cov.rows() == static_cast<Eigen::Index>(reqs.size()) && cov.rows() > 0);
-            const auto t_dd_cov = std::chrono::steady_clock::now();
-            for (const DdOut& d : dds) {
-                double dd_sigma_cyc = -1.0;   // −1 = covariance unavailable this epoch
-                if (cov_ok && d.lambda > 0.0) {
-                    static const double g[4] = { +1.0, -1.0, -1.0, +1.0 };
-                    double var = 0.0;
-                    for (int p = 0; p < 4; ++p)
-                        for (int q = 0; q < 4; ++q)
-                            var += g[p] * g[q] * cov(d.rq[p], d.rq[q]);
-                    dd_sigma_cyc = (var > 0.0) ? std::sqrt(var) / d.lambda : 0.0;
-                }
-                dd_frac_trace
-                    << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                    << d.cons << ',' << d.signal << ',' << d.sat << ',' << d.ref << ','
-                    << stations[d.sta_a_i].name << ',' << stations[d.sta_b_i].name << ','
-                    << fmt::format("{:.4f}", d.dd_m) << ','
-                    << fmt::format("{:.6f}", d.lambda) << ','
-                    << fmt::format("{:.4f}", d.dd_cyc) << ','
-                    << fmt::format("{:.4f}", d.frac_cyc) << ','
-                    << fmt::format("{:.4f}", dd_sigma_cyc) << '\n';
-            }
-            const auto t_dd_emit = std::chrono::steady_clock::now();
-            auto ms = [](const auto& a, const auto& b) {
-                return std::chrono::duration<double, std::milli>(b - a).count();
-            };
-            log->info("Network (T2b) DD-frac tracer TOW {:.1f}: pool {:.0f} ms ({} sta), "
-                      "collect {:.0f} ms ({} DD{}), cov {:.0f} ms ({} reqs), emit {:.0f} ms",
-                      se.time.tow, ms(t_dd_pool0, t_dd_pool1), stations.size(),
-                      ms(t_dd_pool1, t_dd_collect), n_all_dd,
-                      (dd_max_pairs > 0 && n_all_dd > dds.size())
-                          ? fmt::format(" ->{} kept", dds.size()) : std::string(),
-                      ms(t_dd_collect, t_dd_cov), reqs.size(), ms(t_dd_cov, t_dd_emit));
-        }
+        networkDdFrac(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
+                      est_index_of, dd_ppp_utils);
         subEnd(SB_DDFRAC);       // D0b: close block 6 (dd-frac B5)
         subBegin(SB_SHDEV_VTEC); // D0b block 4b: T5 SH-deviation carry KF + VTEC coeff trace
-
-        // --- T5: SH-deviation carry measurement update (SERIAL) --------------
-        // The joint posterior's per-LOS pin residual r̂ = ι̂ − SH(ĉ) is the epoch's
-        // observation of the GM deviation: blend it in at the pin-floor noise.
-        // Approximation (v1, documented): r̂ is treated as dev + ε(floor²) — its own
-        // posterior covariance (correlated through the border) is neglected, which
-        // slightly UNDERSTATES P; acceptable while the deviation σ is representativeness-
-        // dominated.  Insertions happen only here (serial), never in the assembly.
-        if (sh_dev_on) {
-            const auto& iwh = config_.getIonosphereWeightingConfig();
-            const double Re_h = shc.earth_radius_km * 1000.0;
-            const double H_h  = shc.layer_height_km * 1000.0;
-            const double tecu_to_L1m_h =
-                40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
-            const double lon_sun_h = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
-            const int Kh = sh_model->numCoeffs();
-            std::vector<Eigen::Index> shcols_h(static_cast<std::size_t>(Kh));
-            bool cols_ok = true;
-            for (int k = 0; k < Kh && cols_ok; ++k) {
-                const auto& c = sh_model->coeffs()[static_cast<std::size_t>(k)];
-                try {
-                    shcols_h[static_cast<std::size_t>(k)] =
-                        est.vtecCoeffColumn(c.n, c.m, c.trig);
-                } catch (...) { cols_ok = false; }
-            }
-            if (cols_ok) {
-                const double now_s = se.time.week * 604800.0 + se.time.tow;
-                const double floor_var = iwh.floor_m * iwh.floor_m;
-                std::vector<double> bv;
-                for (std::size_t i = 0; i < stations.size(); ++i) {
-                    if (est_index_of[i] < 0) continue;
-                    Eigen::VectorXd x_r;
-                    try {
-                        x_r = est.reconstructStation(
-                            static_cast<std::size_t>(est_index_of[i]), x_s);
-                    } catch (...) { continue; }
-                    const auto& h2l = asm_res[i].h2local;
-                    const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
-                    for (const auto& o : modeled[i]) {
-                        if (o.satellite.empty() || o.satellite.front() == 'R') continue;
-                        if (o.elevation < iwh.elevation_cutoff_deg) continue;
-                        const int iono_idx = stations[i].sm->getIonosphereIndex(o.satellite);
-                        if (iono_idx < 0 || iono_idx >= static_cast<int>(x_lin.size())) continue;
-                        const auto hit = h2l.find(iono_idx);
-                        if (hit == h2l.end()) continue;
-                        if (hit->second < 0
-                            || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
-                        const IppGeometry g =
-                            computeIppGeometry(stations[i].ecef, o.sat_pos, Re_h, H_h);
-                        if (!g.valid) continue;
-                        sh_model->basis(g.ipp_lat_rad, g.ipp_lon_rad - lon_sun_h, bv);
-                        double sh_hat = 0.0;
-                        for (int j = 0; j < Kh; ++j)
-                            sh_hat += g.mapping * tecu_to_L1m_h
-                                      * bv[static_cast<std::size_t>(j)]
-                                      * x_s(shcols_h[static_cast<std::size_t>(j)]);
-                        const double iono_hat = x_lin(iono_idx) + x_r(hit->second);
-                        const double resid = iono_hat - sh_hat;
-                        const double sig_ss = shc.representation_sigma_tecu
-                                              * g.mapping * tecu_to_L1m_h;
-                        ShDevCarry& dc = sh_dev_carry[stations[i].name + "|" + o.satellite];
-                        if (dc.t_s <= 0.0) {              // cold entry: seed at steady state
-                            dc.dev_m  = 0.0;
-                            dc.var_m2 = sig_ss * sig_ss;
-                        }
-                        dc.var_ss = sig_ss * sig_ss;
-                        const double Kf = dc.var_m2 / (dc.var_m2 + floor_var);
-                        dc.dev_m  += Kf * (resid - dc.dev_m);
-                        dc.var_m2 *= (1.0 - Kf);
-                        dc.t_s     = now_s;
-                    }
-                }
-            }
-        }
-
-        // --- Co-estimated SH-VTEC coefficient trace -------------------------
-        if (vtec_sh_trace.is_open() && sh_model) {
-            const Eigen::MatrixXd& shcov = est.sharedCovariance();
-            for (const auto& c : sh_model->coeffs()) {
-                Eigen::Index col;
-                try { col = est.vtecCoeffColumn(c.n, c.m, c.trig); } catch (...) { continue; }
-                const double val = x_s(col);
-                const double v   = (col < shcov.rows() && col < shcov.cols())
-                                       ? shcov(col, col) : 0.0;
-                vtec_sh_trace << se.time.week << ','
-                              << fmt::format("{:.3f}", se.time.tow) << ','
-                              << c.n << ',' << c.m << ',' << c.trig << ','
-                              << fmt::format("{:.4f}", val) << ','
-                              << fmt::format("{:.4f}", (v > 0.0) ? std::sqrt(v) : 0.0) << '\n';
-            }
-        }
+        networkShDevVtec(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
+                         est_index_of, modeled, iono_deweight, sh_dev_on);
         subEnd(SB_SHDEV_VTEC);  // D0b: close block 4b (T5 sh-dev + VTEC trace)
         subBegin(SB_T1A);       // D0b block 3: T1a SH health probe + fused adaptive-deweight gate
-
-        // --- T1a: SH-field health probe + a₀₀ physical-band divergence WARN ---
-        // (a) Always-on a₀₀ band WARN — fires whenever the SH field is active, so a
-        //     diverging mean VTEC is visible even without the trace armed.  a₀₀ IS the
-        //     mean VTEC (TECU) because P̄₀₀ ≡ 1; the SH↔slant misfit that drives the
-        //     divergence is otherwise absorbed silently into the ambiguities.  Read-only.
-        if (sh_model && shc.a00_warn_low_tecu < shc.a00_warn_high_tecu) {
-            double a00 = std::numeric_limits<double>::quiet_NaN();
-            try { a00 = x_s(est.vtecCoeffColumn(0, 0, 'C')); } catch (...) {}
-            if (std::isfinite(a00)) {
-                const bool in_band =
-                    (a00 >= shc.a00_warn_low_tecu && a00 <= shc.a00_warn_high_tecu);
-                if (!in_band && (sh_a00_was_in_band || n_emitted % 60 == 0)) {
-                    log->warn("Network (SH-iono): a₀₀ = {:.1f} TECU OUTSIDE physical band "
-                              "[{:.1f}, {:.1f}] — global VTEC field diverging (TOW {:.1f}); the "
-                              "SH↔slant misfit is being squeezed into the ambiguities.",
-                              a00, shc.a00_warn_low_tecu, shc.a00_warn_high_tecu, se.time.tow);
-                } else if (in_band && !sh_a00_was_in_band) {
-                    log->info("Network (SH-iono): a₀₀ = {:.1f} TECU returned to physical band "
-                              "(TOW {:.1f}).", a00, se.time.tow);
-                }
-                sh_a00_was_in_band = in_band;
-            }
-        }
-
-        // (b) Full health metrics + station-adaptive deweight gate — ONE post-solve
-        //     SH↔slant sweep feeding both consumers (H1 dedup).
-        //     The SH health trace (shc.trace) writes one row per emitted epoch: a₀₀
-        //     (+σ), coefficient RMS by degree, that RMS relative to the per-degree Kaula
-        //     prior σ (σ_n = kaula/n, σ₀ = a₀₀ prior σ), and the network-wide SH→slant
-        //     misfit reconstructed at POSTERIOR geometry (mean/rms/max |residual| +
-        //     3σ-exceedance counts over LOS and stations).
-        //     The station-adaptive deweight (v2) needs, per present station, the SAME
-        //     standardized slant residual r/σ — its per-station RMS √mean((r/σ)²) is the
-        //     gate's observe() input.  Both are derived from ONE reconstruct + degree-15
-        //     SH evaluation per LOS: the gate accumulator is within-station (order-free),
-        //     so folding it in is byte-identical to the old separate loop.  Gate-off (or
-        //     a datum-change epoch) ⇒ no observe()/advance() ⇒ byte-identical; and with
-        //     the trace on (the lineage recipe) the gate now rides the trace's existing
-        //     sweep at ~zero marginal cov-consumer cost (the +303 reconstructStation
-        //     calls/ep and duplicate SH sweep are gone).
-        const bool sh_want_trace = vtec_sh_health_trace.is_open();
-        const bool sh_want_gate  = iono_deweight.adaptive() && !datum_changed;
-        if (sh_model && (sh_want_trace || sh_want_gate)) {
-            const Eigen::MatrixXd& shcov = est.sharedCovariance();
-            const auto& coeffs = sh_model->coeffs();
-            Eigen::VectorXd coeff(static_cast<Eigen::Index>(coeffs.size()));
-            std::vector<Eigen::Index> ccol(coeffs.size(), -1);
-            bool coeff_ok = true;
-            for (std::size_t k = 0; k < coeffs.size() && coeff_ok; ++k) {
-                try {
-                    ccol[k] = est.vtecCoeffColumn(coeffs[k].n, coeffs[k].m, coeffs[k].trig);
-                    coeff(static_cast<Eigen::Index>(k)) = x_s(ccol[k]);
-                } catch (...) { coeff_ok = false; }
-            }
-            if (coeff_ok) {
-                const int N = sh_model->maxDegree();
-                double a00 = 0.0, a00_std = 0.0, all_sumsq = 0.0;
-                int all_cnt = 0;
-                std::vector<double> deg_sumsq(static_cast<std::size_t>(N + 1), 0.0);
-                std::vector<int>    deg_cnt(static_cast<std::size_t>(N + 1), 0);
-                for (std::size_t k = 0; k < coeffs.size(); ++k) {
-                    const std::size_t n = static_cast<std::size_t>(coeffs[k].n);
-                    const double val = coeff(static_cast<Eigen::Index>(k));
-                    deg_sumsq[n] += val * val;
-                    ++deg_cnt[n];
-                    all_sumsq += val * val;
-                    ++all_cnt;
-                    if (coeffs[k].n == 0 && coeffs[k].m == 0 && coeffs[k].trig == 'C') {
-                        a00 = val;
-                        const Eigen::Index col = ccol[k];
-                        const double vv = (col >= 0 && col < shcov.rows() && col < shcov.cols())
-                                              ? shcov(col, col) : 0.0;
-                        a00_std = (vv > 0.0) ? std::sqrt(vv) : 0.0;
-                    }
-                }
-                const double rms_all = (all_cnt > 0) ? std::sqrt(all_sumsq / all_cnt) : 0.0;
-
-                // Network-wide SH→slant misfit at posterior geometry (mirrors the
-                // producer's own SH row math in appendShIonoRows, but evaluated on the
-                // solved coefficients + reconstructed per-station slant states).
-                const auto& iw = config_.getIonosphereWeightingConfig();
-                const double Re = shc.earth_radius_km * 1000.0;
-                const double H  = shc.layer_height_km * 1000.0;
-                const double tecu_to_L1m =
-                    40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
-                const double lon_sun = shc.sun_fixed ? meanSunLongitude(se.time) : 0.0;
-                double res_sum = 0.0, res_sumsq = 0.0, res_max = 0.0;
-                int n_los = 0, n_los_gt3 = 0, n_sta = 0, n_sta_gt3 = 0;
-                for (std::size_t i = 0; i < stations.size(); ++i) {
-                    if (est_index_of[i] < 0) continue;
-                    Eigen::VectorXd x_r;
-                    try {
-                        x_r = est.reconstructStation(
-                            static_cast<std::size_t>(est_index_of[i]), x_s);
-                    } catch (...) { continue; }
-                    std::map<std::string, std::pair<double, Eigen::Vector3d>> geom;
-                    for (const auto& o : modeled[i])
-                        if (!o.satellite.empty() && o.sat_pos.allFinite())
-                            geom.emplace(o.satellite,
-                                         std::make_pair(o.elevation, o.sat_pos));
-                    const auto& h2l = asm_res[i].h2local;
-                    bool sta_present = false, sta_gt3 = false;
-                    double zz_gate = 0.0; int nn_gate = 0;   // per-station Σ(r/σ)², count (deweight gate)
-                    for (const auto& kv : stations[i].sm->getIonosphereStates()) {
-                        if (kv.first.empty() || kv.first.front() == 'R') continue;  // SH excludes GLONASS
-                        const auto gt = geom.find(kv.first);
-                        if (gt == geom.end()) continue;
-                        if (gt->second.first < iw.elevation_cutoff_deg) continue;
-                        const auto hit = h2l.find(static_cast<int>(kv.second));
-                        if (hit == h2l.end() || hit->second < 0
-                            || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
-                        const IppGeometry g =
-                            computeIppGeometry(stations[i].ecef, gt->second.second, Re, H);
-                        if (!g.valid) continue;
-                        const double lon_sf = g.ipp_lon_rad - lon_sun;
-                        const double sh_slant =
-                            sh_model->vtec(coeff, g.ipp_lat_rad, lon_sf) * g.mapping * tecu_to_L1m;
-                        const double resid = x_r(hit->second) - sh_slant;
-                        if (!std::isfinite(resid)) continue;
-                        const double sig = std::max(
-                            iw.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m);
-                        // Deweight gate: this LOS's standardized residual (same sig>0
-                        // guard the old separate loop used before dividing).
-                        if (sh_want_gate && sig > 0.0) {
-                            const double sr = resid / sig;
-                            zz_gate += sr * sr; ++nn_gate;
-                        }
-                        if (!sh_want_trace) continue;   // gate-only: skip trace aggregates
-                        const double ar = std::fabs(resid);
-                        res_sum += ar;
-                        res_sumsq += resid * resid;
-                        if (ar > res_max) res_max = ar;
-                        ++n_los;
-                        sta_present = true;
-                        if (sig > 0.0 && ar > 3.0 * sig) { ++n_los_gt3; sta_gt3 = true; }
-                    }
-                    if (sta_present) ++n_sta;
-                    if (sta_gt3) ++n_sta_gt3;
-                    // Feed the deweight gate this station's standardized-residual RMS
-                    // (serial station order — same as the old separate loop).
-                    if (sh_want_gate && nn_gate > 0)
-                        iono_deweight.observe(stations[i].name, std::sqrt(zz_gate / nn_gate));
-                }
-                const double res_mean = (n_los > 0) ? res_sum / n_los : 0.0;
-                const double res_rms  = (n_los > 0) ? std::sqrt(res_sumsq / n_los) : 0.0;
-                const bool a00_in_band =
-                    (a00 >= shc.a00_warn_low_tecu && a00 <= shc.a00_warn_high_tecu);
-
-                vtec_sh_health_trace
-                    << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                    << fmt::format("{:.3f}", a00) << ','
-                    << fmt::format("{:.3f}", a00_std) << ','
-                    << fmt::format("{:.4f}", rms_all) << ','
-                    << fmt::format("{:.4f}", res_mean) << ','
-                    << fmt::format("{:.4f}", res_rms) << ','
-                    << fmt::format("{:.4f}", res_max) << ','
-                    << n_los << ',' << n_los_gt3 << ','
-                    << n_sta << ',' << n_sta_gt3 << ','
-                    << (a00_in_band ? 1 : 0);
-                for (int n = 0; n <= N; ++n) {
-                    const std::size_t ni = static_cast<std::size_t>(n);
-                    const double rms = (deg_cnt[ni] > 0)
-                        ? std::sqrt(deg_sumsq[ni] / deg_cnt[ni]) : 0.0;
-                    vtec_sh_health_trace << ',' << fmt::format("{:.4f}", rms);
-                }
-                for (int n = 0; n <= N; ++n) {
-                    const std::size_t ni = static_cast<std::size_t>(n);
-                    const double rms = (deg_cnt[ni] > 0)
-                        ? std::sqrt(deg_sumsq[ni] / deg_cnt[ni]) : 0.0;
-                    const double ksig = (n == 0)
-                        ? shc.mean_vtec_prior_sigma_tecu
-                        : shc.kaula_scale_tecu / static_cast<double>(n);
-                    vtec_sh_health_trace
-                        << ',' << fmt::format("{:.4f}", (ksig > 0.0) ? rms / ksig : 0.0);
-                }
-                vtec_sh_health_trace << '\n';
-                // Advance the deweight gate one clean epoch (EWMA + robust z +
-                // hysteresis + slew).  Gate-off ⇒ never runs ⇒ byte-identical.
-                if (sh_want_gate) iono_deweight.advance(true);
-            }
-        }
-
-        // NOTE (H1 dedup): the station-adaptive SH-VTEC-constraint deweight gate
-        // update USED to live here as a SECOND per-station reconstruct + degree-15
-        // SH sweep, identical to the health-trace sweep above (its own comment
-        // conceded "the SAME resid/σ").  It added +303 reconstructStation
-        // cov-consumer calls/ep plus a duplicate SH-eval sweep.  It is now FUSED
-        // into the single sweep above: observe() per station + advance() once, from
-        // the same per-LOS resid/σ.  See the merged block guarded on
-        // (sh_want_trace || sh_want_gate).
-
-        // M2 (LS-VCE): advance the carry-variance monitor for this emitted epoch —
-        // apply exponential forgetting and set the clean-epoch gate (a datum /
-        // pivot handover contaminates every carried prior, so the whole epoch's
-        // rows are dropped).  On the content-hour roll, flush the just-completed
-        // hour's σ̂ for every (family, constellation) to network_carry_vce.csv.
-        // All gated on carry_vce ⇒ OFF is byte-identical.
-        if (carry_vce) {
-            if (first_vce_s < 0.0) first_vce_s = pl_now_s;
-            const int cur_hour = static_cast<int>((pl_now_s - first_vce_s) / 3600.0);
-            if (cur_hour != last_vce_hour) {
-                if (last_vce_hour >= 0 && carry_vce_trace.is_open()) {
-                    for (const auto& fc : carry_vce_est.keys()) {
-                        const auto e = carry_vce_est.estimate(fc.first, fc.second);
-                        const double cfg_floor = (fc.first == "pb") ? pb_var_floor
-                                               : (fc.first == "cb") ? cb_var_floor
-                                                                    : pl_var_floor;
-                        const double rrat = (cfg_floor > 0.0) ? e.robust_floor / cfg_floor : 0.0;
-                        const double mrat = (cfg_floor > 0.0)
-                            ? e.sigma[NetworkCarryVce::kFloor] / cfg_floor : 0.0;
-                        carry_vce_trace
-                            << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
-                            << ',' << last_vce_hour << ',' << fc.first << ',' << fc.second
-                            << ',' << e.n_rows << ',' << fmt::format("{:.1f}", e.n_eff)
-                            << ',' << fmt::format("{:.6e}", e.robust_floor)
-                            << ',' << fmt::format("{:.6e}", e.sigma[NetworkCarryVce::kFloor])
-                            << ',' << fmt::format("{:.6e}", e.std[NetworkCarryVce::kFloor])
-                            << ',' << fmt::format("{:.6e}", e.sigma[NetworkCarryVce::kRate])
-                            << ',' << fmt::format("{:.6e}", e.std[NetworkCarryVce::kRate])
-                            << ',' << fmt::format("{:.3e}", e.cond)
-                            << ',' << (e.rate_frozen ? 1 : 0)
-                            << ',' << fmt::format("{:.6e}", cfg_floor)
-                            << ',' << fmt::format("{:.4f}", rrat)
-                            << ',' << fmt::format("{:.4f}", mrat)
-                            << ',' << e.floor_clamped << ',' << e.rate_clamped << '\n';
-                    }
-                    carry_vce_trace.flush();
-                }
-                last_vce_hour = cur_hour;
-            }
-            carry_vce_est.beginEpoch(pl_now_s, !datum_changed);
-        }
+        networkShHealth(ctx, config_, log, traces, setup, se, est, x_s, asm_res, est_index_of,
+                        modeled, iono_deweight, carry_vce_est, datum_changed, pl_now_s,
+                        first_vce_s, last_vce_hour);
         subEnd(SB_T1A);        // D0b: close block 3 (T1a health + deweight)
         subBegin(SB_LEVELING); // D0b block 5: phase-leveling carry harvest + T1d SH-convergence
-
-        networkHarvestLocalCarries(ctx, config_, est, x_s, stations, est_index_of,
-                                   asm_res, plan, sh_model.get(), carry_vce_est,
-                                   carry_warm, pl_now_s, registered_clock_sats,
-                                   shared_phase_keys, registered_code_keys);
-
-        // --- T1d: SH-field convergence detector (latch + one-shot refloat) ----
-        // Judge the co-estimated SH field "stationary" once the epoch-over-epoch coefficient
-        // RMS change drops below the threshold AND a₀₀ is inside the physical band, then LATCH
-        // (once converged, stay converged — the split it defines is the good one).  Runs POST-
-        // harvest so a refloat drops the just-stashed (possibly contaminated early) carry → a
-        // true one-epoch refloat.  The latch is read pre-solve NEXT epoch by carry_warm, so the
-        // convergence-gated carry warms one epoch after the field first settles.  Gated on one
-        // of the two toggles ⇒ byte-identical when both are OFF (the reference vector + latch
-        // are never touched, carry_warm keeps the fixed epoch-count gate).
-        if ((pl_warmup_on_conv || pl_refloat_on_conv) && sh_model && !sh_converged_latch) {
-            const auto& sh_coeffs = sh_model->coeffs();
-            Eigen::VectorXd cur(static_cast<Eigen::Index>(sh_coeffs.size()));
-            double a00 = std::numeric_limits<double>::quiet_NaN();
-            bool ok = true;
-            for (std::size_t k = 0; k < sh_coeffs.size() && ok; ++k) {
-                try {
-                    const double v = x_s(est.vtecCoeffColumn(
-                        sh_coeffs[k].n, sh_coeffs[k].m, sh_coeffs[k].trig));
-                    cur(static_cast<Eigen::Index>(k)) = v;
-                    if (sh_coeffs[k].n == 0 && sh_coeffs[k].m == 0 && sh_coeffs[k].trig == 'C')
-                        a00 = v;
-                } catch (...) { ok = false; }
-            }
-            if (ok && cur.size() > 0 && sh_coeff_prev.size() == cur.size()) {
-                const double rms_delta = std::sqrt(
-                    (cur - sh_coeff_prev).squaredNorm() / static_cast<double>(cur.size()));
-                const bool a00_in_band = std::isfinite(a00)
-                    && a00 >= shc.a00_warn_low_tecu && a00 <= shc.a00_warn_high_tecu;
-                if (rms_delta < pl_conv_rms_thresh && a00_in_band) {
-                    sh_converged_latch = true;
-                    log->info("Network (SH-iono): field CONVERGED at emitted epoch {} (coeff "
-                              "RMS Δ {:.4f} < {:.4f} TECU, a₀₀ {:.1f} in band) — phase-leveling "
-                              "carry {}.", n_emitted, rms_delta, pl_conv_rms_thresh, a00,
-                              pl_warmup_on_conv ? "warm-gate released"
-                                                : (pl_refloat_on_conv ? "refloated" : "unchanged"));
-                    if (pl_refloat_on_conv)
-                        local_carry.clear();   // one-shot flush ⇒ ambiguities refloat next epoch
-                }
-            }
-            if (ok) sh_coeff_prev = cur;   // roll the reference forward until latched
-        }
-
-        // --- Post-fit network RAIM (Increment 3, tier T2) -------------------
-        // The safety net for the zero-process-noise carry.  The per-station slip
-        // pre-processors (MW/GF TurboEdit, IF-phase triple-difference) are
-        // threshold/pool-limited, so a real slip on a satellite that is SETTING (few
-        // tracking stations, under the pooled-MAD count) passes undetected — and with
-        // zero process noise the stale carry then freezes into the products forever.
-        //
-        // This runs AFTER the joint solve and spends the network redundancy the
-        // per-station detectors cannot see.  A bad carried ambiguity leaks its error
-        // into the SHARED satellite clock/phase-bias; the guilty station HIDES it
-        // there (its own residual stays small), but every OTHER station tracking that
-        // satellite is pinned to its own (correct) carry and CANNOT absorb the shared
-        // shift, so its post-fit phase residual spikes.  Each carried ambiguity's phase
-        // residual is a Baarda-style normalized residual: v·√w divided by a ROBUST
-        // a-posteriori variance factor σ̂0 = max(1, 1.4826·median|v·√w|) pooled network-wide
-        // this epoch, so a satellite is judged an outlier relative to the network's CURRENT
-        // residual level, not to the mm measurement noise (which would trip on ordinary cm
-        // model misfit).  A cross-station consensus on the normalized residual (aggregated
-        // per satellite) therefore fires exactly when the contamination reached the PRODUCTS
-        // (the shared clock actually moved ⇒ many innocent stations spike) and stays quiet
-        // when a slip stayed local and harmless — robust WHILE THE SLIPPED FRACTION IS SMALL
-        // (an all-move-together epoch inflates σ̂0 itself and is a separate diagnosis).  It
-        // refloats the flagged satellite's
-        // carry at EVERY station (marks pending-reseed, so the next epoch re-estimates
-        // from data — the IF-phase detector's one-shot lifecycle).  Placed after the
-        // harvest so the just-completed stash's clearPendingReseed does not wipe the
-        // mark.  OFF (default) = byte-identical (no marks, no state change).
+        networkLeveling(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
+                        est_index_of, carry_vce_est, carry_warm, pl_now_s,
+                        registered_clock_sats, registered_code_keys, shared_phase_keys);
         subEnd(SB_LEVELING);   // D0b: close block 5 (leveling + T1d SH-convergence)
         subBegin(SB_RAIM);     // D0b block 2: post-fit network RAIM + median-polish attribution
         if (raim_on && carry_warm) {
-            // Pass 1: reconstruct each station once, form its post-fit phase residuals, and
-            // record per (station, satellite) the largest v·√w (measurement-standardized),
-            // pooling every phase-row value for the robust a-posteriori variance factor.
-            struct AmbStat { std::string sat; int sta; double r_max; };
-            std::vector<AmbStat> amb_stats;
-            std::vector<double>  r_pool;
-            // Prominence-attribution input (collected iff attribution is LOGGED or DRIVES the
-            // action): one cell per (station, satellite, signal) carried-ambiguity residual.
-            const bool attrib_on   = raim_attrib_trace.is_open();       // log the decomposition
-            const bool attrib_act  = config_.networkRaimAttribution();  // let it drive the refloat
-            // B8/T4 (P1-4): also build the attribution table under trace_flag_rates so the T4
-            // flag-rate is MEASURABLE on a clean baseline with ONLY network.trace_flag_rates on —
-            // the documented empirical-α workflow — without needing raim_attribution or the
-            // attribution trace.  The median polish then runs read-only (no refloat unless
-            // attrib_act, no trace unless attrib_on), feeding only the fr_attrib counter; byte-
-            // identical when trace_flag_rates is off (this disjunct is then absent).
-            const bool need_attrib = attrib_on || attrib_act || trace_flag_rates;
-            struct Cell { int sta; std::string sat, sig; double r; };
-            std::vector<Cell> cells;
-            for (size_t i = 0; i < stations.size(); ++i) {
-                // Prioritized: keep the former pivot — its non-anchored arcs are in
-                // R.pl_amb (anchored/pinned keys already excluded at carry build).
-                if (est_index_of[i] < 0
-                    || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
-                const StationAssembly& R = asm_res[i];
-                if (R.pl_amb.empty() || R.A_s.cols() != x_s.size()) continue;
-                Eigen::VectorXd x_r;
-                try {
-                    x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
-                } catch (...) { continue; }
-                if (x_r.size() != R.A_r.cols()) continue;
-                const Eigen::VectorXd resid = R.y - R.A_s * x_s - R.A_r * x_r;  // post-fit O − C
-                Eigen::VectorXd row_r;   // B2: per-row Baarda redundancy (empty when off)
-                if (raim_redun) {
-                    try {
-                        row_r = est.rowRedundancy(static_cast<std::size_t>(est_index_of[i]),
-                                                  R.A_s, R.A_r, R.w, plan.shared_datum);
-                    } catch (...) { row_r.resize(0); }
-                }
-                // Largest measurement-standardized post-fit phase residual PER SATELLITE at this
-                // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
-                std::map<std::string, double> sat_rmax;
-                for (const auto& pa : R.pl_amb) {
-                    if (pa.col < 0 || pa.col >= R.A_r.cols()) continue;
-                    double r_max = 0.0;
-                    for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
-                        if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // not a phase row of this ambiguity
-                        const double w = (row < R.w.size()) ? R.w(row) : 1.0;
-                        double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
-                        if (raim_redun && row < row_r.size()) {   // B2: standardize v/(σ·√r_i)
-                            constexpr double kRedFloor = 1e-6;
-                            const double ri = row_r(row);
-                            if (ri <= kRedFloor) continue;   // uncheckable row: exclude from σ̂0 pool + r_max
-                            r /= std::sqrt(ri);
-                        }
-                        r_pool.push_back(r);
-                        if (r > r_max) r_max = r;
-                    }
-                    double& cur = sat_rmax[pa.sat];
-                    if (r_max > cur) cur = r_max;
-                    if (need_attrib) cells.push_back({static_cast<int>(i), pa.sat, pa.signal, r_max});
-                }
-                for (const auto& [sat, rmax] : sat_rmax)
-                    amb_stats.push_back({sat, static_cast<int>(i), rmax});
-            }
-
-            // Robust a-posteriori variance factor for this epoch, network-wide.  Floored at 1
-            // so a clean network is no more sensitive than the nominal stochastic model
-            // (σ̂0→1 ⇒ identical to the plain standardized residual); when the whole network
-            // misfits at cm, σ̂0 rises and the normalized residuals stay O(1) — so RAIM stops
-            // firing on ambient misfit and flags only what stands out ABOVE it.
-            double sigma0 = 1.0;
-            if (!r_pool.empty()) {
-                std::nth_element(r_pool.begin(), r_pool.begin() + r_pool.size() / 2, r_pool.end());
-                sigma0 = std::max(raim_s0_floor, 1.4826 * r_pool[r_pool.size() / 2]);
-            }
-            // B1: fold the network-wide σ̂0 into the URA EWMA (scales next epoch's emitted
-            // URA — the post-emit ordering means the scale lands one epoch later).
-            // RTB-7(b): the update COUNT feeds the quality-ramp lift rule (the
-            // "EWMA has stabilized" half); read only while the warmup floor is armed.
-            if (ura_on) {
-                ura_sigma0_ewma = ura_alpha * sigma0 + (1.0 - ura_alpha) * ura_sigma0_ewma;
-                ++ura_ewma_updates;
-            }
-
-            // Pass 2: normalize by σ̂0 and take the cross-station consensus per satellite.
-            std::map<std::string, int> sat_flag_stations;  // satellite -> #stations whose normalized residual spiked
-            struct RaimDetail { std::string sat; int sta; double s_raw, s_norm; bool spiked; };
-            std::vector<RaimDetail> raim_details;           // per (station, sat); built only when tracing
-            for (const auto& a : amb_stats) {
-                const double s_norm = a.r_max / sigma0;
-                const bool   spiked = (s_norm > raim_k);
-                if (trace_flag_rates) { ++fr_raim_cell.opp; if (spiked) ++fr_raim_cell.flag; }  // B8/T3 cell
-                if (station_res_trace.is_open())   // L13: every cell (not just spikes)
-                    station_res_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
-                                      << ',' << stations[a.sta].name << ',' << a.sat << ','
-                                      << fmt::format("{:.3f}", a.r_max) << ','
-                                      << fmt::format("{:.3f}", s_norm) << ','
-                                      << fmt::format("{:.3f}", sigma0) << '\n';
-                if (spiked) ++sat_flag_stations[a.sat];
-                if (raim_trace.is_open())
-                    raim_details.push_back({a.sat, a.sta, a.r_max, s_norm, spiked});
-            }
-            std::vector<std::string> flagged;
-            for (const auto& kv : sat_flag_stations)
-                if (kv.second >= raim_min_sta) flagged.push_back(kv.first);
-            const std::set<std::string> fset(flagged.begin(), flagged.end());
-            if (trace_flag_rates) {   // B8/T3 consensus: rate of consensus among sats that spiked ≥1 station
-                fr_raim_sat.opp  += static_cast<long>(sat_flag_stations.size());
-                fr_raim_sat.flag += static_cast<long>(flagged.size());
-            }
-
-            // A consensus-flagged satellite's slip leaked into its SHARED clock (that is why the
-            // innocent stations spiked) — refloat the carried clock alongside the ambiguity.
-            if (clk_mon_couple)
-                for (const auto& s : fset) clock_refloat_sats.insert(s);
-            // P0-2: consensus-flagged sats contaminated the emitted correction — feed the
-            // retro-bump independent of the couple opt-in.
-            if (retro_feed)
-                for (const auto& s : fset) retro_flag_sats.insert(s);
-
-            // Trace the consensus context: every station of a refloated sat (to see the
-            // guilty-hidden / innocent-spike pattern) plus any spiked near-miss.  Quiet
-            // epochs emit nothing.  σ̂0 is logged so the all-move-together epochs (where σ̂0
-            // itself spikes) are diagnosable.
-            if (raim_trace.is_open()) {
-                for (const auto& d : raim_details) {
-                    if (!(fset.count(d.sat) || d.spiked)) continue;
-                    raim_trace
-                        << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                        << d.sat << ',' << stations[d.sta].name << ','
-                        << fmt::format("{:.3f}", d.s_raw) << ',' << fmt::format("{:.3f}", d.s_norm) << ','
-                        << fmt::format("{:.3f}", sigma0) << ',' << fmt::format("{:.1f}", raim_k) << ','
-                        << (d.spiked ? 1 : 0) << ',' << sat_flag_stations[d.sat] << ','
-                        << raim_min_sta << ',' << (fset.count(d.sat) ? 1 : 0) << '\n';
-                }
-            }
-
-            // --- Prominence attribution + optional attribution-driven refloat -------------
-            // Robust 2-way median polish of the (station × satellite) standardized-residual
-            // table separates a bad SATELLITE (whole column lights up), a bad STATION (whole
-            // row), and an isolated ARC (interaction); a per-signal marginal on the polished
-            // leftover flags a bad SIGNAL.  One pass over the residual cells already in hand —
-            // no re-solve, unlike the user-side iterative snoop.  Always LOGGED when the
-            // attribution trace is open; when network.raim_attribution is on it also DRIVES
-            // the refloat (bad sat → network-wide, bad station → that station's arcs, isolated
-            // arc → just that (station,sat)) instead of the per-satellite consensus.
-            bool attrib_acted = false;
-            if (need_attrib && !cells.empty()) {
-                constexpr double kAttribReportProm = 4.0;  // robust-z above which an entity is logged
-
-                // (station × sat) table: cell = max standardized residual over that
-                // station-sat's signals.
-                std::map<std::pair<int, std::string>, double> cell_max;
-                for (const auto& c : cells) {
-                    const auto key = std::make_pair(c.sta, c.sat);
-                    auto it = cell_max.find(key);
-                    if (it == cell_max.end() || c.r > it->second) cell_max[key] = c.r;
-                }
-                std::vector<std::tuple<int, std::string, double>> tbl;
-                tbl.reserve(cell_max.size());
-                for (const auto& [k, v] : cell_max) tbl.emplace_back(k.first, k.second, v);
-                const MedianPolish mp = medianPolish2Way(tbl);
-
-                // B8/T4 (P1-4): attribution flag-rate on the per-satellite median-polish
-                // column effect, using the SAME criterion the acting path (bad_sats) uses —
-                // σ̂0 above the within-epoch trigger AND effect/σ̂0 above raim_k — so the rate
-                // is measurable on a clean baseline whether or not raim_attribution is acting.
-                if (trace_flag_rates) {
-                    const double trig_a = config_.networkRaimSigma0Trigger();
-                    for (const auto& [sat, eff] : mp.col_eff) {
-                        (void)sat;
-                        ++fr_attrib.opp;
-                        if (sigma0 > trig_a && sigma0 > 0.0 && eff / sigma0 > raim_k) ++fr_attrib.flag;
-                    }
-                }
-
-                const auto sat_prom = robustProminence(mp.col_eff);
-                const auto sta_prom = robustProminence(mp.row_eff);
-
-                // Signal marginal on the polished leftover (net of overall + station + sat).
-                std::map<std::string, std::vector<double>> sig_left;
-                for (const auto& c : cells)
-                    sig_left[c.sig].push_back(
-                        c.r - mp.overall - mp.row_eff.at(c.sta) - mp.col_eff.at(c.sat));
-                std::map<std::string, double> sig_eff;
-                for (auto& [sig, v] : sig_left) sig_eff[sig] = medianCopy(v);
-                const auto sig_prom = robustProminence(sig_eff);
-
-                // Isolated-arc interaction scale.
-                std::vector<double> inter_abs;
-                inter_abs.reserve(mp.interaction.size());
-                for (double v : mp.interaction) inter_abs.push_back(std::abs(v));
-                const double inter_mad = std::max(1e-9, 1.4826 * medianCopy(inter_abs));
-
-                // Attribution-driven refloat set (scale-consistent: an effect is "bad" when it
-                // stands raim_k robust baselines (σ̂0) above the additive model).  A bad
-                // satellite/station is caught wholesale; an isolated arc counts only if its
-                // sat/station were NOT already caught (no double attribution).
-                std::set<std::string> bad_sats;
-                std::set<int>         bad_stations;   // deliberately never populated — see below
-                std::vector<std::pair<int, std::string>> bad_arcs;
-                if (attrib_act) {
-                    // Wholesale SATELLITE refloat only when the network is GENUINELY contaminated
-                    // (σ̂0 above the within-epoch trigger).  At a robust-clean epoch (σ̂0 ≈ 1) a high
-                    // column effect is a median-polish artifact of a satellite visible across a
-                    // regional station cluster, NOT a network-wide slip — refloating its carriers
-                    // everywhere would wipe good accumulated precision and destabilize (the root of
-                    // the 305 24h ~4 h lock-in).  The isolated-arc path below still refloats real
-                    // single slips at ANY σ̂0.
-                    if (sigma0 > config_.networkRaimSigma0Trigger())
-                        for (const auto& [sat, eff] : mp.col_eff)
-                            if (eff / sigma0 > raim_k) bad_sats.insert(sat);
-                    // Refloat the carried clock of an attribution-flagged (network-wide) satellite
-                    // too — an isolated ARC is a local slip and does NOT implicate the shared clock,
-                    // so only whole-satellite culprits feed the clock refloat.
-                    if (clk_mon_couple)
-                        for (const auto& s : bad_sats) clock_refloat_sats.insert(s);
-                    // P0-2: attribution whole-satellite culprits contaminated the emitted
-                    // correction — feed the retro-bump independent of the couple opt-in.
-                    // (Isolated arcs are LOCAL slips that do not implicate the shared per-sat
-                    //  correction, so they are excluded — mirroring the clock-refloat scoping.)
-                    if (retro_feed)
-                        for (const auto& s : bad_sats) retro_flag_sats.insert(s);
-                    // Bad-STATION wholesale refloat is DELIBERATELY DISABLED: a regional cluster of
-                    // stations lighting up on ONE shared satellite event inflates their median-polish
-                    // ROW effects, so this path mass-refloated dozens of innocent stations at once
-                    // (78 stations / 3977 carriers at TOW 273150 in the 24 h run) → cascade →
-                    // divergence.  A genuinely bad station is handled by the within-epoch station-
-                    // exclude (σ̂0 > trigger) or surfaces as isolated arcs; a whole-station carrier
-                    // wipe is never worth the mis-attribution risk.  bad_stations stays empty.
-                    // Persistence gate (network.raim_arc_persist_epochs, K): an isolated arc is
-                    // refloated only after it trips the interaction gate K CONSECUTIVE epochs.  A real
-                    // slip persists as an integer step until refloated → trips every epoch → clears K
-                    // and refloats; a heavy-tail / model-error spike does not repeat on the same arc →
-                    // never reaches K → is starved.  K=1 (default) takes the immediate path below and is
-                    // byte-identical.  For K>1 we rebuild the streak map from THIS epoch's flagged set so
-                    // any arc not flagged now resets to 0 (absence ⇒ non-consecutive), and an arc that
-                    // reaches K refloats and is dropped from the carry (must re-persist K epochs for the
-                    // next refloat — a persistent arc refloats at most once per K epochs).
-                    // T2d: filter-maturity latch for the isolated-arc refloat gate — mirrors the
-                    // warmup URA ramp (emitted-epoch horizon AND σ̂0-EWMA update count, the count
-                    // waived when the EWMA is structurally unavailable).  Isolated arcs are the
-                    // self-sustaining warmup churn driver (2→1063/epoch); suppress them until the
-                    // filter has settled.  Forced true when the gate is OFF ⇒ byte-identical.
-                    // Whole-sat bad_sats (network-wide contamination) are NEVER gated.
-                    // ewma_structurally_available == (emit_ura && raim && phase_leveling): only
-                    // then is the σ̂0-EWMA a fed signal, so only then does the update-count term
-                    // apply; without emit_ura the EWMA is never updated and the horizon alone
-                    // decides (matching the RTB-6 sentinel + the URA-ramp lift rule).
-                    const bool raim_mature = !raim_maturity_gate || networkWarmupRampLifted(
-                        static_cast<long long>(n_emitted), raim_maturity_epochs, pl_warmup,
-                        static_cast<long long>(ura_ewma_updates), ura_on && raim_on && pl_on);
-                    std::map<std::pair<int, std::string>, int> next_arc_streak;  // K>1 only
-                    for (std::size_t k = 0; k < tbl.size(); ++k) {
-                        if (mp.interaction[k] / sigma0 <= raim_k) continue;
-                        const int sta = std::get<0>(tbl[k]);
-                        const std::string& sat = std::get<1>(tbl[k]);
-                        if (bad_sats.count(sat)) continue;   // caught wholesale; no double attribution
-                        if (!raim_mature) continue;   // T2d: suppress isolated-arc refloat pre-maturity
-                        if (raim_arc_persist <= 1) {
-                            bad_arcs.emplace_back(sta, sat);   // byte-identical immediate refloat
-                            continue;
-                        }
-                        const auto akey = std::make_pair(sta, sat);
-                        const auto it = arc_spike_streak.find(akey);
-                        const int streak = (it != arc_spike_streak.end() ? it->second : 0) + 1;
-                        if (streak >= raim_arc_persist)
-                            bad_arcs.emplace_back(sta, sat);   // persisted K epochs → refloat, drop streak
-                        else
-                            next_arc_streak[akey] = streak;    // still building → carry forward
-                    }
-                    if (raim_arc_persist > 1) arc_spike_streak.swap(next_arc_streak);
-                    n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // T2d: heartbeat churn metric
-                }
-
-                if (attrib_on) {
-                    std::map<std::string, int> sat_n, sig_n;
-                    std::map<int, int> sta_n;
-                    for (const auto& c : cells) { ++sat_n[c.sat]; ++sig_n[c.sig]; ++sta_n[c.sta]; }
-                    auto emit = [&](const char* dim, const std::string& entity, double effect,
-                                    double prom, int n, int acted) {
-                        raim_attrib_trace
-                            << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                            << dim << ',' << entity << ','
-                            << fmt::format("{:.4f}", effect) << ',' << fmt::format("{:.2f}", prom) << ','
-                            << n << ',' << fmt::format("{:.4f}", mp.overall) << ','
-                            << fmt::format("{:.3f}", sigma0) << ',' << acted << '\n';
-                    };
-                    for (const auto& [sat, pr] : sat_prom)
-                        if (pr > kAttribReportProm)
-                            emit("SAT", sat, mp.col_eff.at(sat), pr, sat_n[sat],
-                                 (attrib_act ? bad_sats.count(sat) : fset.count(sat)) ? 1 : 0);
-                    for (const auto& [sta, pr] : sta_prom)
-                        if (pr > kAttribReportProm)
-                            emit("STA", stations[sta].name, mp.row_eff.at(sta), pr, sta_n[sta],
-                                 (attrib_act && bad_stations.count(sta)) ? 1 : 0);
-                    for (const auto& [sig, pr] : sig_prom)
-                        if (pr > kAttribReportProm)
-                            emit("SIG", sig, sig_eff.at(sig), pr, sig_n[sig], 0);
-                    std::vector<std::size_t> order(mp.interaction.size());
-                    for (std::size_t k = 0; k < order.size(); ++k) order[k] = k;
-                    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-                        return std::abs(mp.interaction[a]) > std::abs(mp.interaction[b]);
-                    });
-                    int arc_logged = 0;
-                    for (std::size_t k : order) {
-                        const double pr = std::abs(mp.interaction[k]) / inter_mad;
-                        if (pr <= kAttribReportProm || arc_logged >= 20) break;
-                        const int sta = std::get<0>(tbl[k]);
-                        const std::string& sat = std::get<1>(tbl[k]);
-                        const int acted = attrib_act
-                            ? ((mp.interaction[k] / sigma0 > raim_k || bad_sats.count(sat)
-                                || bad_stations.count(sta)) ? 1 : 0)
-                            : (fset.count(sat) ? 1 : 0);
-                        emit("ARC", stations[sta].name + "/" + sat, mp.interaction[k], pr, 1, acted);
-                        ++arc_logged;
-                    }
-                }
-
-                // Execute the attribution-driven refloat (surgical: whole sat / whole station /
-                // single arc, per the decomposition).  Erasing local_carry + pending-reseed is
-                // the same one-shot refloat the consensus path uses.
-                if (attrib_act && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
-                    auto refloat_sat_at = [&](int i, const std::string& sat) -> int {
-                        int n = 0;
-                        for (const auto& pa : asm_res[i].pl_amb)
-                            if (pa.sat == sat) {
-                                local_carry.erase(std::make_tuple(i, pa.sat, pa.signal));
-                                stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
-                                ++n;
-                            }
-                        return n;
-                    };
-                    int n_ref = 0;
-                    for (const auto& sat : bad_sats)
-                        for (size_t i = 0; i < stations.size(); ++i)
-                            if (present[i] && est_index_of[i] >= 0
-                                && (phase_datum_prioritized || !stations[i].is_pivot))
-                                n_ref += refloat_sat_at(static_cast<int>(i), sat);
-                    // (bad_stations is intentionally empty — the whole-station refloat path is
-                    //  disabled to avoid the regional mis-attribution mass-refloat.)
-                    for (const auto& [sta, sat] : bad_arcs) n_ref += refloat_sat_at(sta, sat);
-                    attrib_acted = true;
-
-                    std::string detail;
-                    for (const auto& s : bad_sats)
-                        detail += (detail.empty() ? "" : ",") + std::string("sat:") + s;
-                    for (int s : bad_stations)
-                        detail += (detail.empty() ? "" : ",") + std::string("sta:") + stations[s].name;
-                    if (!bad_arcs.empty())
-                        detail += fmt::format("{}{} arc", detail.empty() ? "" : ",", bad_arcs.size());
-                    log->info("Network[RAIM-attrib]: TOW {:.1f} refloated {} carried ambiguity(ies) — "
-                              "{} bad sat(s), {} bad station(s), {} isolated arc(s) "
-                              "(σ̂0={:.2f}, gate {:.1f}) [{}]",
-                              se.time.tow, n_ref, bad_sats.size(), bad_stations.size(),
-                              bad_arcs.size(), sigma0, raim_k, detail);
-                    // T4: one event per ACTED entity (SAT with its column prominence; ARC keyed
-                    // by station).  Full per-entity attribution (incl. arc prominence) is in
-                    // network_raim_attrib.csv; here we log only the entities that were refloated.
-                    if (events_trace.is_open()) {
-                        const std::string sd = fmt::format("sigma0={:.2f}", sigma0);
-                        for (const auto& s : bad_sats)
-                            emitEvent("T4_attrib", "attrib_sat", s, "",
-                                      sat_prom.count(s) ? std::optional<double>(sat_prom.at(s))
-                                                        : std::nullopt,
-                                      raim_k, "refloat", sd);
-                        for (const auto& [sta, sat] : bad_arcs)
-                            emitEvent("T4_attrib", "attrib_arc", sat, stations[sta].name,
-                                      std::nullopt, raim_k, "refloat", sd);
-                    }
-                }
-            }
-
-            // --- "So bad" within-epoch adaptation trigger (detection + log) ---------------
-            // When σ̂0 exceeds the trigger the joint solve is contaminated enough that emitting
-            // it would be wrong.  The full adaptation drops the dominant culprit(s) and RE-SOLVES
-            // this epoch (a beginEpoch replay of the scatter minus the culprit) to re-condition;
-            // that core-solve change is staged.  For now we DETECT + arm it so the trigger rate
-            // and the drop targets can be validated against the attribution first.
-            if (config_.networkRaimWithinEpoch() && sigma0 > config_.networkRaimSigma0Trigger()) {
-                log->warn("Network[RAIM within-epoch]: TOW {:.1f} σ̂0={:.2f} STILL > trigger {:.2f} after "
-                          "adaptation — residual contamination the culprit-drop could not isolate "
-                          "(emitted anyway; inspect network_raim_attrib.csv).",
-                          se.time.tow, sigma0, config_.networkRaimSigma0Trigger());
-                emitEvent("T2_within_epoch", "emitted_contaminated", "", "", sigma0,
-                          config_.networkRaimSigma0Trigger(), "emit_anyway", "");
-            }
-
-            // Per-satellite consensus refloat — only when attribution is NOT driving the action.
-            if (!attrib_act && !flagged.empty()) {
-                int n_refloat = 0;
-                for (size_t i = 0; i < stations.size(); ++i) {
-                    if (est_index_of[i] < 0
-                        || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
-                    for (const auto& pa : asm_res[i].pl_amb)
-                        if (fset.count(pa.sat)) {
-                            // Drop the contaminated carry OUTRIGHT.  The harvest above
-                            // just re-stashed this ambiguity's (contaminated) value into
-                            // local_carry; erasing it means the next epoch finds no prior
-                            // to inject (cit == end → no addStationPrior), so the ambiguity
-                            // re-floats from data — a direct, unambiguous refloat that does
-                            // not depend on the deferred pending-reseed skip path.  The mark
-                            // is also set (belt-and-suspenders / cleared by the next stash).
-                            local_carry.erase(std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
-                            stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
-                            ++n_refloat;
-                        }
-                }
-                std::string flist;
-                for (size_t e = 0; e < flagged.size(); ++e) { if (e) flist += ","; flist += flagged[e]; }
-                log->info("Network[RAIM]: TOW {:.1f} refloated {} carried ambiguity(ies) on {} "
-                          "satellite(s) [{}] — normalized post-fit residual > {:.1f} at >= {} "
-                          "stations (σ̂0={:.2f}; a pre-processor-missed slip leaked into the shared "
-                          "clock, caught by network redundancy).",
-                          se.time.tow, n_refloat, flagged.size(), flist, raim_k, raim_min_sta, sigma0);
-                // T3: one event per consensus-refloated sat.  statistic = the per-sat max
-                // normalized post-fit residual (max r_max / σ̂0 over its stations), from amb_stats.
-                if (events_trace.is_open()) {
-                    std::map<std::string, double> t3_norm;
-                    for (const auto& a : amb_stats) {
-                        const double sn = (sigma0 > 0.0) ? a.r_max / sigma0 : a.r_max;
-                        double& m = t3_norm[a.sat];
-                        m = std::max(m, sn);
-                    }
-                    for (const auto& s : flagged)
-                        emitEvent("T3_raim", "consensus_refloat", s, "",
-                                  t3_norm.count(s) ? std::optional<double>(t3_norm.at(s))
-                                                   : std::nullopt,
-                                  raim_k, "refloat",
-                                  fmt::format("sigma0={:.2f};min_sta={}", sigma0, raim_min_sta));
-                }
-            }
-            (void)attrib_acted;
+            networkPostFitRaim(ctx, config_, log, traces, se,
+                               stations, asm_res, est_index_of, present, x_s, est,
+                               plan.shared_datum, clock_refloat_sats, retro_flag_sats,
+                               retro_feed, n_arc_refloat_epoch);
         }
         subEnd(SB_RAIM);       // D0b: close block 2 (RAIM)
         subBegin(SB_CLOCKUPD); // D0b block 8: two-state clock update + fault QC + retro-flag feed
-
-        // --- Two-state oscillator clock: measurement update + normalized-innovation fault test
-        //     (network.clock_model) ------------------------------------------------------------
-        // Update each satellite's clock model with this epoch's solved offset and test the
-        // normalized innovation against the model's own tight prediction band.  A healthy clock
-        // tracks its prediction (|innov|/√S ~ 1); a self-consistent lock-in jumps hundreds of σ —
-        // the detectable dynamics fault the scalar random-walk carry hides.  The per-constellation
-        // MEDIAN innovation (the datum common-mode) is removed first, so a whole-constellation
-        // datum re-reference is gauged out and only per-satellite faults flag.  A flagged sat is
-        // added to clock_refloat_sats (its phase/code bias reinitialize in the stash) and its
-        // clock model is loosened (large-q reinit) so it re-acquires toward the a-priori anchor
-        // instead of freezing.  On a pivot handover the models are re-seeded (the datum moved).
-        if (clk_model_warm) {
-            if (datum_changed && !scoped_handover) {
-                clock_osc.clear();   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
-                // T5 (V2 blind spot): the datum-change oscillator wipe is otherwise SILENT.
-                emitEvent("T5_clock_model", "datum_osc_wipe", "", "", std::nullopt, std::nullopt,
-                          "clear_osc", "datum re-reference");
-            } else {
-                // RTA-2 (network.scoped_handover_response): wipe ONLY the changed
-                // constellation(s)' oscillators — their carried offsets are in the
-                // retired frame; unaffected constellations' models survive and update
-                // normally below.  A wiped satellite carries no prediction this epoch
-                // (the scoped prior skip above), so it falls into the seed branch and
-                // re-seeds from THIS epoch's already-new-datum solve — one epoch
-                // earlier than the global wipe, which skips the whole update block.
-                if (datum_changed) {
-                    for (auto oit = clock_osc.begin(); oit != clock_osc.end();) {
-                        if (datumChangeAffectsKey(oit->first, changed_consts, /*scoped=*/true))
-                            oit = clock_osc.erase(oit);
-                        else
-                            ++oit;
-                    }
-                    std::string consts;
-                    for (char c : changed_consts) {
-                        if (!consts.empty()) consts += ',';
-                        consts += c;
-                    }
-                    emitEvent("T5_clock_model", "datum_osc_wipe", "", "", std::nullopt,
-                              std::nullopt, "clear_osc",
-                              fmt::format("datum re-reference (scoped: {})", consts));
-                }
-                std::map<std::string, double> z_of, innov_of, S_of, p_post_of;
-                std::map<char, std::vector<double>> innov_by_const;
-                const Eigen::MatrixXd& shcov = est.sharedCovariance();   // posterior formal cov
-                for (const std::string& sat : registered_clock_sats) {
-                    Eigen::Index col;
-                    try { col = est.clockColumn(sat); } catch (...) { continue; }
-                    const double z = x_s(col);
-                    if (!std::isfinite(z) || sat.empty()) continue;
-                    z_of[sat] = z;
-                    p_post_of[sat] = (col < shcov.rows() && col < shcov.cols())
-                                         ? shcov(col, col) : 0.0;   // posterior formal variance
-                    auto pit = clk_pred.find(sat);
-                    if (pit == clk_pred.end()) continue;      // freshly seeded / gap — no prediction
-                    innov_of[sat] = z - pit->second.x0;
-                    // B3 (data-incest fix): the fault statistic uses the info-consistent
-                    // prior-minus-posterior variance (p00_pred − p00_post), NOT the old incest
-                    // R-add (pit->p00 + clk_model_r).  The posterior x_s already FOLDS the model
-                    // prior, so its innovation vs the prediction is the shrunken residual; its
-                    // correct variance is the information the data removed, p00_pred − p00_post.
-                    // Using +R deflated S in exactly the weak-data regime the NIS is meant to police.
-                    // Floor S with the measurement-noise scale (σ_floor² = clk_model_r), NOT 1e-12, so
-                    // a weak-data epoch (p00_post → p00_pred ⇒ p00_pred − p00_post → 0, and dm → 0)
-                    // yields NIS ≈ 0 rather than a 0/0 blow-up that would false-flag the lowest-
-                    // confidence satellites.  This is a LOWER BOUND, not the incest of adding R to a
-                    // posterior-consistent innovation.
-                    S_of[sat]     = std::max(std::max(1e-12, clk_model_r),
-                                             pit->second.p00 - p_post_of[sat]);
-                    innov_by_const[sat[0]].push_back(innov_of[sat]);
-                }
-                std::map<char, double> med_innov;
-                for (auto& [c, vv] : innov_by_const) {
-                    std::nth_element(vv.begin(), vv.begin() + vv.size() / 2, vv.end());
-                    med_innov[c] = vv[vv.size() / 2];
-                }
-                int n_flag = 0;
-                std::string detail;
-                for (const std::string& sat : registered_clock_sats) {
-                    auto zit = z_of.find(sat);
-                    if (zit == z_of.end()) continue;
-                    const double z   = zit->second;
-                    ClockOsc&    osc = clock_osc[sat];
-                    auto pit = clk_pred.find(sat);
-                    if (pit == clk_pred.end() || !osc.init) {
-                        // Seed (first warm epoch of this satellite, OR its carried state was
-                        // dropped as stale in the prediction above — a vanish-return): start
-                        // from the solved value, zero drift, loose covariance; no fault test
-                        // until it has a prediction.  Stamp t_last so the NEXT epoch's drift
-                        // finite-difference and prediction use the true per-sat interval.
-                        osc.x0 = z; osc.x1 = 0.0;
-                        osc.p00 = 1.0; osc.p01 = 0.0; osc.p11 = 1e-6;
-                        osc.t_last = pl_now_s; osc.init = true;
-                        continue;
-                    }
-                    const double S   = std::max(1e-12, S_of[sat]);
-                    const double dm  = innov_of[sat] - med_innov[sat[0]];  // datum common-mode removed
-                    const double nis = dm / std::sqrt(S);
-                    const bool   ext = clock_refloat_sats.count(sat) > 0;  // within-epoch/RAIM (couple)
-                    const bool   flagged = (std::abs(nis) > clk_model_k) || ext;
-                    if (trace_flag_rates) { ++fr_clk_model.opp; if (std::abs(nis) > clk_model_k) ++fr_clk_model.flag; }  // B8/T5 own detection (excl. ext)
-                    if (flagged && !ext) { ++n_flag; detail += (detail.empty() ? "" : ",") + sat;
-                        emitEvent("T5_clock_model", "nis_fault", sat, "", nis, clk_model_k,
-                                  "refloat", fmt::format("innov={:.4f}", dm)); }
-                    if (flagged) clock_refloat_sats.insert(sat);
-                    // B3 (data-incest fix): set the carried state DIRECTLY from the joint-solve
-                    // posterior — NO scalar KF measurement update (that folded the model prior a
-                    // second time, making the osc covariance self-confirmingly optimistic).  The
-                    // offset + its variance ARE the solve posterior; the drift is finite-differenced
-                    // from the offset sequence.  On a fault, reinit the variance (loosen) so a frozen
-                    // clock can re-acquire rather than lock onto the bad value; the a-priori anchor
-                    // pulls it back to truth.
-                    const double p_post   = std::max(1e-12, p_post_of[sat]);
-                    const double x0_prev  = osc.x0;
-                    // B3b/P0-3: finite-difference the drift over THIS satellite's true elapsed
-                    // time (pl_now_s − osc.t_last), NOT the global epoch dt.  A satellite whose
-                    // last clock-model value came several epochs ago — because intervening epochs
-                    // were SKIPPED (gate/σ̂0 withhold, solve failure) or the sat was absent —
-                    // would otherwise divide a multi-interval Δoffset by one dt and emit a drift
-                    // ~N× too large as C1 next epoch.  Past a gap bound the pair is not usable
-                    // (reset drift to 0); within it the true interval gives the correct rate.
-                    const double sat_dt   = (osc.t_last > 0.0) ? (pl_now_s - osc.t_last) : dt;
-                    const bool contiguous = (osc.t_last > 0.0) && sat_dt > 0.0
-                                            && sat_dt <= clk_model_max_gap;   // R11
-                    osc.x1  = contiguous ? (z - x0_prev) / sat_dt : 0.0;
-                    osc.x0  = z;
-                    osc.p00 = flagged ? ((clk_mon_reinit_var > 0.0) ? clk_mon_reinit_var : (30.0 * 30.0))
-                                      : p_post;                            // epoch formal variance
-                    osc.p11 = flagged ? (osc.p11 + 1e-2) : osc.p11;        // reopen drift on fault
-                    osc.p01 = 0.0;   // offset/drift cross term not tracked in the direct set
-                    osc.t_last = pl_now_s;   // P0-3: stamp this sat's update time
-                    osc.init = true;
-                    // Trace (network.trace_slip_events): the clk_mon columns are remapped for the
-                    // model — clk_m=solved, median_m=predicted, dev_m=de-meaned innov, prev_clk_m=
-                    // drift, jump_m=raw innov, abs_max_m=band(√S), jump_max_m=k, flag_abs=(nis>k).
-                    if (clk_mon_trace.is_open()
-                        && (nc.trace_clock_full || flagged || std::abs(nis) > 0.3 * clk_model_k))
-                        clk_mon_trace
-                            << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                            << sat << ',' << fmt::format("{:.4f}", z) << ','
-                            << fmt::format("{:.4f}", pit->second.x0) << ','
-                            << fmt::format("{:.4f}", dm) << ','
-                            << fmt::format("{:.6f}", osc.x1) << ','
-                            << fmt::format("{:.4f}", innov_of[sat]) << ','
-                            << fmt::format("{:.4f}", std::sqrt(S)) << ','
-                            << fmt::format("{:.1f}", clk_model_k) << ','
-                            << (std::abs(nis) > clk_model_k ? 1 : 0) << ",0,"
-                            << (ext ? 1 : 0) << ',' << (flagged ? 1 : 0) << ','
-                            << fmt::format("{:.4f}", nis) << ",model\n";   // L4: nis + mode
-                }
-                if (n_flag > 0)
-                    log->warn("Network[clock-model]: TOW {:.1f} flagged {} satellite clock(s) [{}] — "
-                              "normalized innovation > {:.1f}σ against the two-state prediction band "
-                              "(dynamics fault); model loosened + carried state reinitialized.",
-                              se.time.tow, n_flag, detail, clk_model_k);
-                // P0-3: per-satellite osc.t_last (stamped above) now records each sat's last
-                // update time directly, so the contiguity / gap decision is exact even across
-                // skipped epochs — the old whole-set prev_osc_sats marker is retired.
-            }
-        }
-
-        // --- network.emit_clock_rate: decoupled C1 (clock-rate) estimator ---------------------
-        // Finite-difference each satellite's POSTERIOR solved clock to derive the emitted C1,
-        // WITHOUT injecting any prior or driving any refloat — so the network solution is
-        // byte-identical to the off state; only clock_c1_m_s (default 0) changes.  This is the
-        // recalibration-supported alternative to network.clock_model: the estimable is white-FM
-        // (docs/CLOCK_HADAMARD_CALIB), so the two-state CARRY prior buys ~1× yet risks a NIS
-        // storm, but the deterministic RATE emitted here is the exploitable stability (a
-        // low-latency consumer extrapolates c0 + c1·dt instead of ZOH — the SSR saw-tooth fix).
-        // Mirrors the clock-model drift computation's datum-wipe + gap/contiguity handling; runs
-        // only when clock_model is OFF (else clock_osc already supplies C1 above).
-        if (emit_rate_warm) {
-            // Datum re-reference: the carried offsets are in the retired frame — drop them so a
-            // datum STEP is not finite-differenced into a spurious rate (mirror clock_model).
-            if (datum_changed && !scoped_handover) {
-                clock_rate_est.clear();
-            } else if (datum_changed) {
-                for (auto rit = clock_rate_est.begin(); rit != clock_rate_est.end();) {
-                    if (datumChangeAffectsKey(rit->first, changed_consts, /*scoped=*/true))
-                        rit = clock_rate_est.erase(rit);
-                    else
-                        ++rit;
-                }
-            }
-            for (const std::string& sat : registered_clock_sats) {
-                Eigen::Index col;
-                try { col = est.clockColumn(sat); } catch (...) { continue; }
-                const double z = x_s(col);
-                if (!std::isfinite(z) || sat.empty()) continue;
-                ClockOsc& r = clock_rate_est[sat];   // default-constructs (init=false) on first sight
-                // Finite-difference over THIS sat's true elapsed time; past the R11 gap bound the
-                // pair is not usable → drift 0 (C1 ZOH).  First sighting / stale-return seeds x1=0.
-                const double sat_dt = (r.init && r.t_last > 0.0) ? (pl_now_s - r.t_last) : 0.0;
-                r.x1 = (sat_dt > 0.0 && sat_dt <= clk_model_max_gap) ? (z - r.x0) / sat_dt : 0.0;
-                r.x0 = z;
-                r.t_last = pl_now_s;
-                r.init = true;
-            }
-        }
-
-        // --- Per-satellite carried-clock sanity monitor (network.clock_monitor) --------------
-        // The σ̂0 RAIM above flags contamination that MOVES the shared residual level (many
-        // innocent stations spike at once).  A lone satellite whose carried clock has locked
-        // into a physically impossible value is INVISIBLE to it — the clock absorbs the error
-        // self-consistently, σ̂0 stays ≈1, and the stiff sat_clock_q carry then FREEZES the
-        // wrong value for the rest of the run (the multi-hour single-satellite lock-in).  This
-        // is the missing detector for that mode: on the FINAL (post-adaptation) solution, flag
-        // any satellite whose DE-MEANED clock exceeds clk_mon_abs or whose one-epoch jump
-        // exceeds clk_mon_jump, and refloat its carried shared state (the stash below skips it)
-        // so the next epoch injects no stale prior and the clock re-estimates freely toward its
-        // data / a-priori-anchor value.  De-meaning by the network median removes the per-epoch
-        // datum gauge (a few metres, not error); the jump test runs only across adjacent
-        // stable-datum epochs.  clock_refloat_sats may already hold within-epoch / post-fit RAIM
-        // sats (only under clock_monitor_couple_raim); those are refloated here too (ext).
-        //
-        // Gated on the emitted-epoch warmup (NOT carry_warm): the D2 shared clock carry runs
-        // independently of phase leveling, so the monitor must too; it only needs to be past the
-        // cold-start systematic (the same pl_warmup horizon the ambiguity carry uses).  Superseded
-        // by the two-state normalized-innovation test above when network.clock_model is on.
-        if (clk_mon_on && !clk_model_on && static_cast<int>(n_emitted) >= pl_warmup) {
-            std::map<std::string, double> clk_of;
-            std::map<char, std::vector<double>> clk_by_const;  // per-constellation, for the datum median
-            for (const std::string& sat : registered_clock_sats) {
-                Eigen::Index col;
-                try { col = est.clockColumn(sat); } catch (...) { continue; }
-                const double v = x_s(col);
-                if (!std::isfinite(v) || sat.empty()) continue;
-                clk_of[sat] = v;
-                clk_by_const[sat[0]].push_back(v);
-            }
-            // De-mean PER CONSTELLATION.  Each constellation has its OWN clock datum (a distinct
-            // pivot satellite), so a whole-constellation offset — e.g. a Galileo-wide re-reference
-            // when its pivot hands over — is a GAUGE artifact, not per-satellite error.  A single
-            // global median would subtract the GPS datum from the Galileo clocks and flag the
-            // entire constellation; the per-constellation median cancels that and leaves only the
-            // genuine per-satellite outliers within each system.
-            std::map<char, double> med_by_const;
-            for (auto& [c, vv] : clk_by_const) {
-                std::nth_element(vv.begin(), vv.begin() + vv.size() / 2, vv.end());
-                med_by_const[c] = vv[vv.size() / 2];
-            }
-            int n_new = 0;
-            std::string detail;
-            for (const auto& [sat, v] : clk_of) {
-                const double med      = med_by_const[sat[0]];
-                const double dev      = v - med;
-                const bool   flag_abs = std::abs(dev) > clk_mon_abs;
-                // Jump-test reference frame.  PIN mode: the raw clock v (the pivot pin
-                // anchors the raw per-constellation frame across epochs, so v−prev_v is a
-                // genuine per-sat step — byte-identical to the legacy path).  SUM-TO-ZERO
-                // mode: the per-constellation DE-MEANED clock dev, because the raw
-                // common-mode floats each epoch (Σδtˢ=0 is re-imposed on the current
-                // satellite set, so a membership change redistributes ~Δ/N onto EVERY
-                // survivor's raw clock — a datum artifact, not a per-sat jump).  De-meaning
-                // by the constellation median removes that float, mirroring the two-state
-                // clock-model NIS path's `innov − median`.  BROADCAST-ANCHORED mode keeps
-                // the raw v like PIN: every satellite is anchored independently to its own
-                // broadcast a-priori, so membership changes cause no redistribution and
-                // v−prev_v is a genuine per-sat step.
-                const double jref     = clock_sum_to_zero ? dev : v;
-                bool   have_jump  = false;
-                double jump       = 0.0;
-                bool   flag_jump  = false;
-                const auto pit = prev_clk.find(sat);
-                // Jump only across ADJACENT epochs of a stable datum: a handover shifts every
-                // clock of the re-referenced constellation (common-mode, not a per-sat fault)
-                // and a long gap makes the step meaningless — both fall back to the absolute
-                // bound.  RTA-2: under network.scoped_handover_response the datum is stable
-                // for constellations whose pivot did NOT change, so their jump test keeps
-                // running through a sibling's handover; OFF, handover_affects == datum_changed
-                // and the legacy all-constellation suppression is byte-identical.
-                if (pit != prev_clk.end() && !handover_affects(sat) && dt > 0.0
-                    && (pl_now_s - pit->second.second) <= 1.5 * dt) {
-                    have_jump = true;
-                    jump      = jref - pit->second.first;   // datum-invariant under sum-to-zero (jref=dev), raw under pin (jref=v)
-                    flag_jump = std::abs(jump) > clk_mon_jump;
-                }
-                const bool ext       = clock_refloat_sats.count(sat) > 0;  // within-epoch / post-fit RAIM
-                const bool refloated = flag_abs || flag_jump || ext;
-                if (trace_flag_rates) { ++fr_clk_mon.opp; if (flag_abs || flag_jump) ++fr_clk_mon.flag; }  // B8/T6 own bounds (excl. ext)
-                if (refloated && !ext) { ++n_new; detail += (detail.empty() ? "" : ",") + sat;
-                    emitEvent("T6_clock_monitor", "clk_monitor_refloat", sat, "", dev, clk_mon_abs,
-                              "refloat",
-                              have_jump ? fmt::format("jump={:.4f};jmax={:.2f}", jump, clk_mon_jump)
-                                        : std::string("abs")); }
-                if (refloated) clock_refloat_sats.insert(sat);
-
-                if (clk_mon_trace.is_open()
-                    && (nc.trace_clock_full || refloated || std::abs(dev) > 0.5 * clk_mon_abs
-                        || (have_jump && std::abs(jump) > 0.5 * clk_mon_jump))) {
-                    clk_mon_trace
-                        << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                        << sat << ',' << fmt::format("{:.4f}", v) << ','
-                        << fmt::format("{:.4f}", med) << ',' << fmt::format("{:.4f}", dev) << ',';
-                    if (have_jump)
-                        clk_mon_trace << fmt::format("{:.4f}", pit->second.first) << ','
-                                      << fmt::format("{:.4f}", jump) << ',';
-                    else
-                        clk_mon_trace << ",,";
-                    clk_mon_trace
-                        << fmt::format("{:.2f}", clk_mon_abs) << ','
-                        << fmt::format("{:.2f}", clk_mon_jump) << ','
-                        << (flag_abs ? 1 : 0) << ',' << (flag_jump ? 1 : 0) << ','
-                        << (ext ? 1 : 0) << ',' << (refloated ? 1 : 0) << ",,monitor\n";  // L4: empty nis + mode
-                }
-
-                // Re-baseline the jump test: a refloated sat's clock is about to be
-                // reinitialized, so drop its history (next epoch's recovery must not read as a
-                // fresh jump); otherwise record this epoch's jump reference (jref) + time as the
-                // next adjacent baseline (raw v in pin mode; de-meaned dev in sum-to-zero mode).
-                if (refloated) prev_clk.erase(sat);
-                else           prev_clk[sat] = {jref, pl_now_s};
-            }
-            if (n_new > 0)
-                log->warn("Network[clock-monitor]: TOW {:.1f} reinitialized {} satellite clock(s) [{}] "
-                          "exceeding |Δδtˢ−median| > {:.1f} m or |jump| > {:.1f} m/epoch — carried "
-                          "shared state {} to break the single-satellite lock-in.",
-                          se.time.tow, n_new, detail, clk_mon_abs, clk_mon_jump,
-                          (clk_mon_reinit_sig > 0.0)
-                              ? fmt::format("loosened to σ={:.0f} m (soft large-q reinit)", clk_mon_reinit_sig)
-                              : std::string("withheld from the stash (hard refloat)"));
-        }
-
-        networkRetroUraBookkeeping(ctx, clock_refloat_sats, retro_flag_sats, retro_feed);
+        networkClockQc(ctx, config_, log, traces, ws, se, est, x_s,
+                       registered_clock_sats, datum_changed, changed_consts,
+                       clk_model_warm, emit_rate_warm, pl_now_s, dt,
+                       clock_refloat_sats, retro_flag_sats, retro_feed);
         subEnd(SB_CLOCKUPD);       // D0b: close block 8 (clock update + retro feed)
         subBegin(SB_STASH_STATUS); // D0b: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
-
-        // M2 (LS-VCE): snapshot the D2 shared-carry priors that were FOLDED this
-        // epoch, keyed by identity, BEFORE the clear — their innovations against
-        // the fresh solve are formed after the re-stash below.  Mirror the fold's
-        // skip predicate so only ordinary (non-reinit, non-held, non-retired,
-        // non-re-referenced) carries qualify.
-        std::map<std::string, std::pair<double, double>> vce_shared_prior;  // key -> (prior value, var)
-        if (carry_vce && (vce_wants_pb || vce_wants_cb)) {
-            for (const CarryPrior& cp : prev_carry) {
-                if (cp.inflate_q) continue;                       // clock-monitor reinit, not an ordinary carry
-                if (cp.kind == SharedParamKind::PhaseBias) {
-                    if (!vce_wants_pb || phase_hold_on) continue;                 // hold path ≠ a q-carry
-                    if (eq34_reref.count({cp.sat, cp.signal})) continue;         // Card 3 D4: marginalized
-                } else if (cp.kind == SharedParamKind::CodeBias) {
-                    if (!vce_wants_cb) continue;
-                } else {
-                    continue;                                     // Clock / VtecSh out of scope (own models)
-                }
-                if (handover_affects(cp.sat)) continue;           // RTA-2 retired-datum (scoped mode)
-                vce_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
-                                         std::make_pair(cp.value, cp.var));
-            }
-        }
-
-        networkStashCarry(ctx, config_, est, x_s, plan, sh_model.get(),
-                          clock_refloat_sats, registered_clock_sats,
-                          shared_phase_keys, registered_code_keys, log);
-
-        // M2 (LS-VCE): form the PB/CB shared-carry innovations against this epoch's
-        // fresh solve and fold them into the monitor (the D2 analogue of the
-        // ambiguity-carry feed above).  In the re-stashed prev_carry, cp.value /
-        // cp.var are the SOLVED value / posterior variance; the fold prior is the
-        // snapshot taken before the clear.  Gated + best-effort skip-mirroring, so
-        // OFF is byte-identical and a mis-mirrored contaminated key at most nudges
-        // a monitor number (never the solve).
-        if (carry_vce && !vce_shared_prior.empty()) {
-            for (const CarryPrior& cp : prev_carry) {
-                if (cp.inflate_q) continue;
-                const bool is_pb = (cp.kind == SharedParamKind::PhaseBias) && vce_wants_pb;
-                const bool is_cb = (cp.kind == SharedParamKind::CodeBias)  && vce_wants_cb;
-                if (!is_pb && !is_cb) continue;
-                const auto it = vce_shared_prior.find(
-                    sharedCarryKey(cp.kind, cp.sat, cp.signal));
-                if (it == vce_shared_prior.end()) continue;      // no folded prior last epoch
-                const double var_prev = it->second.second;
-                const double q     = is_cb ? q_cb : q_pb;
-                const double floor = is_cb ? cb_var_floor : pb_var_floor;
-                double fold_var = var_prev + q * std::max(0.0, dt);
-                if (floor > 0.0) fold_var = std::max(fold_var, floor);
-                carry_vce_est.addRow(is_cb ? "cb" : "pb", cp.sat,
-                                     it->second.first - cp.value,   // carried − solved
-                                     dt, cp.var, fold_var);
-            }
-        }
-
-        // --- Trace ----------------------------------------------------------
-        double sumsq = 0.0, maxabs = 0.0;
-        for (const std::string& sat : registered_clock_sats) {
-            const double v = x_s(est.clockColumn(sat));
-            sumsq += v * v;
-            maxabs = std::max(maxabs, std::abs(v));
-        }
-        const double rms = (n_clock > 0) ? std::sqrt(sumsq / n_clock) : 0.0;
-        if (trace) {
-            trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                  << n_present << ',' << n_clock << ',' << n_pb << ','
-                  << plan.declared_dimension << ",1,1,"
-                  << fmt::format("{:.4f}", rms) << ',' << fmt::format("{:.4f}", maxabs)
-                  << ',' << total_pins << '\n';
-        }
-        // L1: the emitted-epoch disposition row — the median+std+worst-sat clock spread
-        // (over the SAME registered_clock_sats / x_s(clockColumn) series as the rms above)
-        // plus the QC action counts.  Computed only when the trace is open.
-        if (epoch_status_trace.is_open()) {
-            EpochStatusRow es;
-            es.sigma0          = sigma0_adapt;   // 0.0 unless within-epoch RAIM ran this epoch
-            es.n_adapt         = n_adapt;
-            es.n_present       = n_present;
-            es.n_clock_sats    = n_clock;
-            es.n_refloat_sats  = static_cast<int>(clock_refloat_sats.size());
-            es.n_retro_applied = static_cast<int>(retro_emit_sats.size());   // bumps APPLIED this emit
-            es.n_arc_refloat   = n_arc_refloat_epoch;   // T2d: isolated-arc RAIM refloats this epoch
-            es.datum_changed   = datum_changed ? 1 : 0;
-            std::vector<double> cvals; cvals.reserve(registered_clock_sats.size());
-            for (const std::string& sat : registered_clock_sats)
-                cvals.push_back(x_s(est.clockColumn(sat)));
-            if (!cvals.empty()) {
-                std::vector<double> sorted = cvals;
-                std::sort(sorted.begin(), sorted.end());
-                const size_t m = sorted.size();
-                const double median = (m % 2) ? sorted[m / 2]
-                                              : 0.5 * (sorted[m / 2 - 1] + sorted[m / 2]);
-                double ss = 0.0, worst = 0.0;
-                std::string worst_sat_name;
-                for (size_t k = 0; k < cvals.size(); ++k) {
-                    const double d = cvals[k] - median;
-                    ss += d * d;
-                    if (std::abs(d) > worst) { worst = std::abs(d); worst_sat_name = registered_clock_sats[k]; }
-                }
-                es.clock_median_m = median;
-                es.clock_std_m    = std::sqrt(ss / static_cast<double>(m));
-                es.worst_sat      = worst_sat_name;
-                es.worst_dev_m    = worst;
-            }
-            emitEpochStatus("emitted", es);
-        }
-
-        if (n_emitted == 1 || n_emitted % 60 == 0) {
-            log->info("Network: TOW {:.1f} emitted epoch {} — {} stations, {} sat clocks, "
-                      "{} phase biases, {} code biases ({} single-station sat(s) dropped), "
-                      "datum dim {}, clock-Δ rms {:.3f} m",
-                      se.time.tow, n_emitted, n_present, n_clock, n_pb, n_cb, n_dropped_sats,
-                      plan.declared_dimension, rms);
-            if (config_.estimateNetworkIonoSh() && sh_model) {
-                double a00 = 0.0;
-                try { a00 = x_s(est.vtecCoeffColumn(0, 0, 'C')); } catch (...) {}
-                log->info("Network[SH-iono]:   mean VTEC (a00) = {:.2f} TECU over {} coeffs",
-                          a00, sh_model->numCoeffs());
-            }
-        }
-
-        prev_week = se.time.week; prev_tow = se.time.tow;
+        networkStashStatus(ctx, config_, log, traces, setup, se, est, x_s, plan, carry_vce_est,
+                           clock_refloat_sats, n_arc_refloat_epoch, registered_clock_sats,
+                           registered_code_keys, retro_emit_sats, shared_phase_keys,
+                           sigma0_adapt, total_pins, vce_wants_cb, vce_wants_pb, dt,
+                           datum_changed, changed_consts, n_clock, n_present, n_pb, n_cb,
+                           n_dropped_sats, n_adapt);
         subEnd(SB_STASH_STATUS);   // D0b: close the stash + epoch-status tail (before the readout)
 
         // D0: per-epoch section-timer readout (emitted-epoch path).  Deltas of the
@@ -8211,6 +5235,14 @@ int Application::runNetwork() {
                       dp.post_mean_ms, pct(dp.post_mean_ms),
                       dp.post_cov_ms, pct(dp.post_cov_ms),
                       dp.d5_gate_ms, pct(dp.d5_gate_ms), dp.time_update_ms);
+            // LF-1 INC-0: the WL-3 lane-fold split — the ~10³ per-epoch rank-1/rank-2 covariance
+            // touches the perf card exists to shrink, which SB_DDBUILD lumps into basis-project.
+            log->info("Network (D0/LF-1) lane-fold per-op: applyLaneMeasurement {:>8.0f} ms ({:4.1f}%) "
+                      "over {} row(s) | applyLaneFix {:>8.0f} ms ({:4.1f}%) over {} row(s)  "
+                      "[measurement = irreducible O(K²)/row dense downdate; fix = the ~65%-decided "
+                      "SET INC-1 makes O(K)].",
+                      dp.lane_meas_ms, pct(dp.lane_meas_ms), dp.lane_meas_calls,
+                      dp.lane_fix_ms, pct(dp.lane_fix_ms), dp.lane_fix_calls);
             const auto& cc = carry_driver.counters();
             const long long marg_total = cc.chords_marginalized + cc.chords_marg_perchord;
             const long long chords_folded = cc.chords_carried + cc.chords_born;
@@ -8220,6 +5252,14 @@ int Application::runNetwork() {
                       cc.max_component_kc, cc.max_z_dim, marg_total,
                       cc.chords_marg_perchord, cc.chords_marginalized,
                       cc.chords_born, cc.slip_kills);
+            // LF-1 INC-0: emitted-component fold-dim distribution (SPEC §7.4 — INC-4's Amdahl
+            // ceiling ≈ heaviest component's work / total.  A single tall high bucket ⇒ one
+            // giant G component dominates; a spread ⇒ the component-parallel fold balances).
+            log->info("Network (D0/LF-1) K_c histogram (emitted components by fold-dim, log2 "
+                      "buckets 0|1|2|4|8|16|32|64|128|256+): {} {} {} {} {} {} {} {} {} {}",
+                      cc.comp_kc_hist[0], cc.comp_kc_hist[1], cc.comp_kc_hist[2], cc.comp_kc_hist[3],
+                      cc.comp_kc_hist[4], cc.comp_kc_hist[5], cc.comp_kc_hist[6], cc.comp_kc_hist[7],
+                      cc.comp_kc_hist[8], cc.comp_kc_hist[9]);
             // INC-C0 D-c viability: short fundamental cycles ⇒ sparse DD information matrix
             // J = Pᶻ⁻¹ ⇒ the exact info-form carry (SPEC_carry_factored_pz_C2 D-c) is bounded;
             // long cycles ⇒ dense J ⇒ D-c gives no bound (choose D-b/component-cap instead).
@@ -8274,12 +5314,177 @@ int Application::runNetwork() {
                   other_ms - d0b_sum_net, pct(other_ms - d0b_sum_net));
     }
 
+    // Card DG5/DG6: the run-wide rank-gate telemetry rides INSIDE the one artifact
+    // a trace-armed run is allowed to add (network_estimability.csv), not as a new
+    // run-end log line — the estim golden arm byte-gates the log TEXT, and an
+    // unarmed control run must stay text-identical while still yielding the
+    // arm-vs-arm numbers the storm analyzer compares.  No-op with the trace off.
+    traces.writeEstimabilityRunRow(ctx.counters, est.rankGateTol());
     traces.closeAll();   // INC-4: the exact former 14-stream close list
 
     log->info("Network producer complete: {} epochs emitted, {} skipped "
               "({} of those withheld by the observability gate, {} by the A4 σ̂0 ceiling) — "
               "of {} synced.",
               n_emitted, n_skipped, n_gate_withheld, n_sigma0_withheld, synced.size());
+    // Card DG6 — rank-gate calibration telemetry.  Gated on the tolerance being
+    // ARMED (non-default) so a default run's log text is byte-identical, per DG5's
+    // "with the trace on, the new FILE is the only artifact delta".  The same
+    // numbers reach every trace-armed run through network_estimability.csv's RUN
+    // record, so the control arm is not left dark.  Standing invariant #4: an
+    // armed calibration whose counters never move is a MISWIRE, not a quiet run.
+    if (config_.networkRankGateTol() != NetworkEstimator::kNullSpaceTol)
+        log->info("Network (Card DG): rank gate evaluated on {} epoch(s) at tol={:g} — {} "
+                  "emitted, {} withheld UNDER-specified (observed > declared: a missing "
+                  "datum constraint), {} withheld OVER-specified (observed < declared: the "
+                  "tolerance sits below THIS config's gauge depth, so the declared gauges "
+                  "stopped being counted — RE-CALIBRATE, do not chase the datum).  Observed "
+                  "near-null count over the run: min {}, max {} (declared dim is the "
+                  "target).  [Placement rule: cutoff >= 2 decades above the gauge depth and "
+                  ">= 2 decades below the weakest-real layer, read off this config's own "
+                  "network_estimability.csv.]",
+                  ctx.counters.n_gate_evaluated, config_.networkRankGateTol(),
+                  n_emitted, ctx.counters.n_gate_withheld_under,
+                  ctx.counters.n_gate_withheld_over,
+                  ctx.counters.nullspace_obs_min, ctx.counters.nullspace_obs_max);
+    if (config_.networkCbKaulaPrior())
+        log->info("Network (Card KP): admitted-OSB physical-bound prior folded on {} epoch(s), "
+                  "{} column-epoch(s) total at sigma {:g} m.  [Invariant #4: an ARMED run "
+                  "reporting 0 epochs never reached a solve with the prior — check that "
+                  "network.estimate_sat_code_bias is on and that code columns registered.]",
+                  ctx.counters.n_kp_epochs, ctx.counters.n_kp_cols,
+                  config_.networkCbKaulaSigmaM());
+    if (config_.networkCbAdmission())
+        log->info("Network (CB-ADM): {} code pairs admitted (shared columns), {} "
+                  "quarantined at census, {} late-quarantined (first seen post-census) "
+                  "— census {} (active={}).  [Invariant #4: a BDS-armed ON run with 0 "
+                  "quarantined-at-census is a MISWIRE.]  Card H2 orphan window: {} "
+                  "(key, epoch) pair(s) where an ADMITTED code key was per-epoch-withheld "
+                  "(< 2 present stations) while its same-signal PHASE column stayed shared "
+                  "— the deliberate cost of keeping the phase co-gate at CENSUS "
+                  "granularity; expected 0 at 305-station density, and only actionable if "
+                  "it is nonzero AND coincident with gate withholds.",
+                  ctx.counters.n_cb_admitted, ctx.counters.n_cb_quarantined_census,
+                  ctx.counters.n_cb_late_quarantined,
+                  ctx.admission.active ? "ran" : "did-not-run", ctx.admission.active,
+                  ctx.counters.n_cbadm_phase_orphan_key_epochs);
+    // --- Slip-QC hardening run-end telemetry (docs/SPEC_slip_qc_hardening.md) ---
+    // Standing invariant #4: a card whose counters are all zero on an armed run
+    // is a MISWIRE, not a quiet run.  Card E's line is unconditional under
+    // mw_detect because reporting only refloats is the L3 defect it fixes.
+    if (config_.networkCycleSlipMwDetect()) {
+        const auto& qcc = slip_qc.counters;
+        log->info("Network (slip-QC card E / MW-detect): {} wide-lane slip detection(s) "
+                  "({} refloated) + {} LLI detection(s) ({} refloated) over the run.  "
+                  "Detections are counted whether the carry was warm or COLD — a cold run "
+                  "still feeds the Card-4 C3c funnel, and reporting only refloats is what "
+                  "made that wiring look dead.  [MW ↔ IF agreement is now readable from "
+                  "network_events.csv alone: scripts/grade_slip_agreement.py]",
+                  qcc.mw_detections, qcc.mw_refloats,
+                  qcc.lli_detections, qcc.lli_refloats);
+    }
+    if (nc.slip_qc.lli_corroborate) {
+        const auto& qcc = slip_qc.counters;
+        log->info("Network (slip-QC card L / LLI corroboration): {} LLI assertion(s) seen — "
+                  "{} corroborated by an MW step, {} by a GF step, {} with no measurable step, "
+                  "{} asserted OFF the primary dual-frequency pair (MW/GF structurally cannot "
+                  "witness those — widen the primitive if this is large); {} SUPPRESSED as "
+                  "uncorroborated at a non-credible station.  Station-epoch credibility: "
+                  "{} credible / {} corroboration-required.  No station, satellite or "
+                  "observation was excluded from estimation — only the SLIP ACTION was "
+                  "qualified.", qcc.lli_asserted, qcc.lli_corr_mw, qcc.lli_corr_gf,
+                  qcc.lli_unmeasurable, qcc.lli_offpair, qcc.lli_suppressed,
+                  qcc.lli_credible_epochs, qcc.lli_demoted_epochs);
+        // M4: the per-run top-offenders line — the audit's STK2/ISHI/MCIL/CCJ2 list
+        // must be reproducible from the log alone, without the CSV traces.
+        std::vector<std::pair<long long, std::size_t>> offenders;
+        for (std::size_t si = 0; si < slip_qc.hist.size(); ++si)
+            if (slip_qc.hist[si].lli_suppressed > 0)
+                offenders.emplace_back(slip_qc.hist[si].lli_suppressed, si);
+        std::sort(offenders.begin(), offenders.end(),
+                  [&](const auto& a, const auto& b) {
+                      if (a.first != b.first) return a.first > b.first;
+                      return stations[a.second].name < stations[b.second].name;
+                  });
+        if (offenders.empty()) {
+            log->info("Network (slip-QC card L): no station's LLI was demoted this run "
+                      "(every assertion was corroborated or came from a credible station).");
+        } else {
+            std::string top;
+            for (std::size_t k = 0; k < offenders.size() && k < 8; ++k) {
+                const auto& h = slip_qc.hist[offenders[k].second];
+                top += fmt::format("{}{} {}/{} suppressed (LLI-frac EWMA {:.2f}, {} demotion(s), "
+                                   "{} promotion(s), now {})",
+                                   top.empty() ? "" : "; ",
+                                   stations[offenders[k].second].name,
+                                   h.lli_suppressed, h.lli_asserted, h.lli_frac_ewma,
+                                   h.lli_demotions, h.lli_promotions,
+                                   h.lli_credible ? "credible" : "corroboration-required");
+            }
+            log->info("Network (slip-QC card L) TOP LLI OFFENDERS ({} station(s) demoted): {}",
+                      offenders.size(), top);
+        }
+    }
+    if (nc.slip_qc.gap_instrument) {
+        const auto& qcc = slip_qc.counters;
+        // H2 (spec-followups N3): the two counting levels are LABELLED at every
+        // number.  RESUMPTIONS are per (station, satellite) re-entry; ARCS are per
+        // (station, satellite, signal) — a dual-band satellite returning once is
+        // 1 resumption and 2 independently bridgeable arcs, which is why the arc
+        // totals exceed the resumption totals.  Both arc ledgers are closed
+        // (bridged + fresh) so no reader has to infer a missing cell.
+        log->info("Network (slip-QC card G / gap instrumentation): {} RESUMPTION(s) "
+                  "[unit: (station,satellite) re-entry after ≥1 missed epoch] = {} SHIFTED "
+                  "(raw MW/GF level moved across the break) + {} measured-and-unshifted + {} "
+                  "UNMEASURABLE (no pre-gap dual-band level to compare).  Bridge "
+                  "classification [unit: ARCS = (station,satellite,signal); a dual-band "
+                  "resumption contributes 2]: SHIFTED → {} arc(s) re-entered with BRIDGED "
+                  "carry state (THE POISON CASE) + {} fresh = {}; unshifted → {} bridged (the "
+                  "intended behaviour) + {} fresh = {}; UNMEASURABLE → {} bridged (state rode "
+                  "a break nobody could check — unknown, not clean) + {} fresh = {}.  D5 "
+                  "attribution: {} FLAG ROW(s) of which {} coincident with a raw step, = {} "
+                  "distinct funnel arc(s) re-tapped ({} raw-step-coincident) — the row count "
+                  "double-counts a pair chord flagged on BOTH bands (WL-3 joint block), the "
+                  "arc count is what actually re-taps; both use the exact-epoch evidence the "
+                  "network_d5_flags.csv raw_stepped column reports.  [G3 decision "
+                  "rule: shifted-AND-bridged ≈ 0 on a warm graded run ⇒ the mechanism is "
+                  "DEFERRED WITH DATA — record this number, and read it together with the "
+                  "unmeasurable-bridged count; nonzero ⇒ spec the follow-up card that marks "
+                  "such arcs slipped at re-entry.]",
+                  qcc.gap_resumptions, qcc.gap_shifted,
+                  qcc.gap_resumptions - qcc.gap_shifted - qcc.gap_unmeasurable,
+                  qcc.gap_unmeasurable,
+                  qcc.gap_shifted_bridged, qcc.gap_shifted_fresh,
+                  qcc.gap_shifted_bridged + qcc.gap_shifted_fresh,
+                  qcc.gap_clean_bridged, qcc.gap_clean_fresh,
+                  qcc.gap_clean_bridged + qcc.gap_clean_fresh,
+                  qcc.gap_unmeas_bridged, qcc.gap_unmeas_fresh,
+                  qcc.gap_unmeas_bridged + qcc.gap_unmeas_fresh,
+                  qcc.d5_retaps, qcc.d5_retaps_stepped,
+                  qcc.d5_retap_ambs, qcc.d5_retap_ambs_stepped);
+    }
+    if (nc.slip_qc.ref_gate) {
+        IfPhaseSlipDetector::RefGateCounters rg;
+        for (const auto& st : stations) {
+            if (!st.if_slip) continue;
+            const auto& c = st.if_slip->refGateCounters();
+            rg.legacy_candidates      += c.legacy_candidates;
+            rg.fires                  += c.fires;
+            rg.suppressed_scale       += c.suppressed_scale;
+            rg.suppressed_thin        += c.suppressed_thin;
+            rg.suppressed_persistence += c.suppressed_persistence;
+            rg.fires_station_event    += c.fires_station_event;
+            rg.reselects              += c.reselects;
+        }
+        log->info("Network (slip-QC card R / IF-TD reference gate): {} legacy candidate(s) "
+                  "(|median| > {:.2f}·λ_IF with n≥2) → {} fired ({} of them as an incoherent "
+                  "multi-satellite STATION EVENT — reference arc reset, median NOT rebased).  "
+                  "Suppressed: {} by the empirical scale / coherence test, {} thin-family "
+                  "deferral(s) (< {} DDs), {} by the consecutive-fire cap; {} forced reference "
+                  "re-selection(s).  [candidates − fires is exactly what the hardening removed.]",
+                  rg.legacy_candidates, nc.slip_qc.ref_floor_frac, rg.fires,
+                  rg.fires_station_event, rg.suppressed_scale, rg.suppressed_thin,
+                  nc.slip_qc.ref_min_n, rg.suppressed_persistence, rg.reselects);
+    }
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "
                   "value(s) erased, {} carry value(s) S-transformed (v2-shift), "
@@ -8297,6 +5502,15 @@ int Application::runNetwork() {
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
+    if (sh_dev_on)
+        log->info("Network (Iono-2/T5v2 per-LOS deviation carry): {} warm harvest(s), "
+                  "{} cold seed(s), {} slip reset(s) (C3c funnel), {} no-information "
+                  "harvest skip(s), {} deviation(s) carried at run end (τ={} s, "
+                  "σ_ss={} TECU vertical, exact posterior harvest).",
+                  ctx.carry.shdev_warm_total, ctx.carry.shdev_cold_total,
+                  ctx.carry.shdev_slip_resets_total, ctx.carry.shdev_nodata_total,
+                  sh_dev_carry.size(), shc.rep_error_tau_s,
+                  shc.representation_sigma_tecu);
     if (mw_wl_on) {
         const double mean_R = mw_wl_run.rows_built > 0
             ? mw_wl_run.sum_R / static_cast<double>(mw_wl_run.rows_built) : 0.0;
@@ -8420,7 +5634,8 @@ int Application::runNetwork() {
                   "({} pair arc(s), {} residual primary-band arc(s), {} tree-tag mismatch(es), "
                   "{} spanning-forest completion(s)); "
                   "lane increments folded — {} MW(1,2) row(s), {} bridge row(s), {} skipped "
-                  "(immature/stale/mixed/slip/quarantine).  FFR lane fixing: {} decided "
+                  "(immature/stale/mixed/slip/quarantine), {} pinned-skipped (LF-1 INC-2).  "
+                  "FFR lane fixing: {} decided "
                   "cycle(s) (mean bridge R = {:.4f} cyc²) → {} integer(s) MOVED/new, {} "
                   "re-pinned (idempotent lane SET — information-once-only).  Inject FALLBACK: "
                   "{} fired (mean |Δlane| = {:.2f} cyc; ≈0 expected — continuous tightening "
@@ -8429,6 +5644,7 @@ int Application::runNetwork() {
                   lane_pair_arcs, lane_resid_arcs, lane_pair_tree_mismatch,
                   carry_driver.counters().pair_tree_promotions,
                   wl_run.lane_mw_rows, wl_run.lane_bridge_rows, wl_run.lane_skip_meas,
+                  wl_run.lane_pinned_skips,
                   wl_run.cycles_decided, mean_R,
                   wl_run.lane_fix_folded, wl_run.lane_fix_unchanged,
                   wl_run.injects, med_dl, wl_run.skip_basis);
@@ -8527,6 +5743,28 @@ int Application::runNetwork() {
         log->info("Network: prioritized-datum drop-and-heal recovered the gate on {} epoch(s) "
                   "({} near-null phase-bias column(s) soft-anchored).",
                   n_healed_epochs, n_healed_cols);
+    // Card PA2 — the heal's ATTEMPTS, which the success-only line above hides.
+    // Gated on attempts so a run that never reaches the gate-failure path (every
+    // healthy config, incl. the whole golden matrix) prints nothing new.
+    if (ctx.counters.n_heal_attempt_epochs > 0) {
+        // The insufficiency caveat is the whole reason the ATTEMPT counters exist,
+        // but it is only TRUE when the heal fired more than it rescued.  Printing
+        // it when attempts == recoveries (a fully successful heal — the PA4 emit
+        // case) would read as a warning on a clean run.
+        const bool insufficient = ctx.counters.n_heal_attempt_epochs > n_healed_epochs;
+        log->info("Network (Card PA): drop-and-heal FIRED on {} epoch(s), soft-anchoring {} "
+                  "near-null phase-bias column(s); {} epoch(s) were RECOVERED by it ({} "
+                  "column(s)).{}  Per-column attribution (sat/signal/eigenvalue/span) is in "
+                  "network_events.csv under tier GATE, event phase_heal, when "
+                  "network.trace_events is armed.",
+                  ctx.counters.n_heal_attempt_epochs, ctx.counters.n_heal_attempt_cols,
+                  n_healed_epochs, n_healed_cols,
+                  insufficient
+                      ? "  Attempts > recoveries means the heal is reaching the right columns "
+                        "but cannot resolve the residual alone on some epochs — that is PA5's "
+                        "insufficiency criterion, not a dead heal."
+                      : "  Every fired heal recovered the gate.");
+    }
     if (carry_cpl_joint && n_cpl_joint_fallback > 0)
         log->warn("Network (Card 1b): {} station-epoch(s) had a non-SPD joint coupling-row "
                   "covariance after the ridge retry and fell back to the Card-1 per-row scalar "
@@ -8769,8 +6007,12 @@ int Application::runNetwork() {
         log->error("Network: produced ZERO solution epochs. Common causes: stations "
                    "do not overlap in time; the local nuisance block is rank-"
                    "deficient (disable receiver code-bias / phase-clock estimation "
-                   "for the network config); or the datum is under-specified "
-                   "(check active_systems = GPS+Galileo and ≥2 overlapping stations).");
+                   "for the network config); or the shared datum is under-specified — "
+                   "a near-null W6 code-bias direction withholds every epoch when sparse "
+                   "(often BeiDou) satellites register OSB columns with < 2 IF-pinnable "
+                   "signals.  Arm the run-latched admission census (network.cb_admission; "
+                   "tune network.cb_admission_min_stations / _census_epochs) so those "
+                   "pairs stay station-local sponges, and confirm >= 2 overlapping stations.");
         return 1;
     }
     return 0;

@@ -1370,17 +1370,63 @@ namespace GnssProcessor {
          *
          * When on (@c network.estimate_sat_code_bias), the network promotes the
          * per-(satellite, signal) code bias to a first-class shared border column
-         * (GPS + Galileo, raw code signals) so the engine emits its OWN satellite
-         * code-bias product instead of relying on an external @c .BIA.  It is the
-         * single switch that lands the coupled W6 slice: @c loadNetworkSection_
-         * also forces @c estimate_sat_biases / @c promote_sat_code_bias / @c
-         * estimate_ifb (receiver DCB) on and the GIM ionosphere weighting on (the
-         * load-bearing iono constraint that makes the satellite DCB observable),
-         * and forces @c enable_code_phase_bias OFF so the network estimates the
-         * full bias from scratch rather than a residual to @c .BIA.  Default false
-         * keeps the clock+phase-bias-only V1 network byte-identical.
+         * (all non-GLONASS constellations — GPS, Galileo, and BeiDou @c C## raw
+         * code signals; GLONASS FDMA is excluded) so the engine emits its OWN
+         * satellite code-bias product instead of relying on an external @c .BIA.
+         * It is the single switch that lands the coupled W6 slice: @c
+         * loadNetworkSection_ also forces @c estimate_sat_biases / @c
+         * promote_sat_code_bias / @c estimate_ifb (receiver DCB) on and the GIM
+         * ionosphere weighting on (the load-bearing iono constraint that makes the
+         * satellite DCB observable), and forces @c enable_code_phase_bias OFF so
+         * the network estimates the full bias from scratch rather than a residual
+         * to @c .BIA.  Default false keeps the clock+phase-bias-only V1 network
+         * byte-identical.  See @ref networkCbAdmission for the run-latched
+         * admission census that gates which OSB columns become shared (vs kept as
+         * station-local sponges) — the BeiDou-sparsity remedy.
          */
         bool estimateNetworkSatCodeBias() const { return estimate_network_sat_code_bias_; }
+
+        /**
+         * @brief Master enable for the W6 code-bias admission census + station-
+         *        local quarantine ("CB-ADM").
+         *
+         * When on (@c network.cb_admission) AND @ref estimateNetworkSatCodeBias
+         * is armed, a one-shot startup census over the first
+         * @ref networkCbAdmissionCensusEpochs epochs latches each (sat,signal)
+         * code pair into ADMITTED (a shared border column, exactly as a
+         * registered pair is today) or QUARANTINED (measurements kept, the
+         * per-station sat-bias state kept and never pruned, never registered ⇒ a
+         * station-local sponge).  This replaces the per-epoch >= 2-station gate,
+         * whose count FLAPPING at BeiDou scale (many pairs at 1-2 stations)
+         * drives prune / re-register / re-seed churn and datum-orphan near-null
+         * directions that withhold whole epochs.  Latched once, immutable for the
+         * run.  Default false ⇒ the legacy per-epoch path is byte-identical.
+         * @see filter/NetworkBiasAdmission.hpp, docs/SPEC_cb_admission_card.md
+         */
+        bool networkCbAdmission() const { return network_cb_admission_; }
+
+        /**
+         * @brief Minimum supporting-station count for a code pair to be an
+         *        admitted-candidate in the CB-ADM census (@c
+         *        network.cb_admission_min_stations, default 4).
+         *
+         * Folded into @c effective_min = max(2, min(this, n_census_stations)) —
+         * 2 is the hard estimability floor; the census-roster clamp keeps small
+         * dev rosters runnable.  A station "supports" a pair when it supplies a
+         * usable raw code observation in >= ceil(K_eff/2) of the census epochs.
+         */
+        int networkCbAdmissionMinStations() const { return network_cb_admission_min_stations_; }
+
+        /**
+         * @brief Length K of the CB-ADM census window (@c
+         *        network.cb_admission_census_epochs, default 15).
+         *
+         * The census scans @c [i0, i0+K) of the synced-epoch vector where @c i0
+         * is the first epoch the run loop processes (post @c start_offset_hours
+         * fast-forward).  Clamped to the available span, so a short smoke run
+         * still classifies (over K_eff <= K epochs).
+         */
+        int networkCbAdmissionCensusEpochs() const { return network_cb_admission_census_epochs_; }
 
         /**
          * @brief Co-estimate the global SH-VTEC ionosphere in the network producer.
@@ -2650,6 +2696,97 @@ namespace GnssProcessor {
          * @see networkPhaseDatumPrioritized, networkPhaseDatumSticky
          */
         int networkPhaseDatumMinStations() const { return network_phase_datum_min_stations_; }
+
+        /**
+         * @brief Card DG — RELATIVE eigenvalue tolerance of the shared-border
+         *        null-space rank gate (@c network.rank_gate_tol).
+         *
+         * The gate eigen-decomposes the reduced shared normals and asserts that
+         * the number of eigenvalues below @c tol·max(λmax,1) EQUALS the declared
+         * S-basis dimension.  The default (1e-9,
+         * @ref NetworkEstimator::kNullSpaceTol) is unchanged, so an unset key is
+         * byte-identical — the same double travels through the same arithmetic
+         * the former compile constant did.  The resolved value reaches all THREE
+         * consumers (the gate, the estimability dump, the prioritized
+         * drop-and-heal) through @ref NetworkEstimator::setRankGateTol; no
+         * consumer keeps a private tolerance.
+         *
+         * @par Why this is a calibration parameter, not a constant
+         * The reduced system is deliberately ill-conditioned, so "null" is a
+         * placement decision in a spectral GAP, and the gap moves with the
+         * constellation mix.  It has moved once before: the GPS+Galileo era
+         * needed 1e-6 → 1e-9 because 1e-6 sat ABOVE the weak-but-real directions
+         * and miscounted them as deficiencies.  Adding BeiDou repeats it — the
+         * measured 305-station spectrum puts a weak-but-REAL BDS family layer at
+         * ≈1.7e-10 of λmax, three decades deeper relatively than the GPS+Gal-era
+         * weakest-real, with a SIX-decade gap down to the declared clock gauges.
+         *
+         * @par Binding placement rule (@c docs/SPEC_beidou_w6_datum.md §2, DG3)
+         * Any non-default value must be justified from THAT config's own
+         * estimability dump (@c network.trace_estimability →
+         * @c logs/network_estimability.csv): the resulting cutoff must sit ≥ 2
+         * decades above the config's gauge depth and ≥ 2 decades below its
+         * weakest-real layer, with the three numbers recorded.  This is not
+         * pedantry — the gate is an EXACT-equality test that throws in BOTH
+         * directions, so a tolerance pushed below a config's own gauge depth
+         * stops counting the declared gauges and withholds a HEALTHY config
+         * ("over-specified").  The value is therefore PER-CONFIG; never edit it
+         * globally.  Measured example: the 305-station GPS+Gal+BDS storm config
+         * arms 1e-12 (cutoff ≈ 6e-6, mid-gap, ≥ 2 decades of margin each side).
+         *
+         * Validated > 0 at load and clamped up to 1e-16, so an accidental 0
+         * cannot silently turn the gate off.
+         *
+         * @see networkTraceEstimability, NetworkEstimator::setRankGateTol
+         */
+        double networkRankGateTol() const { return network_rank_gate_tol_; }
+
+        /**
+         * @brief Card KP — arm the loose physical-bound (Kaula) prior on every
+         *        ADMITTED satellite code-bias (OSB) column
+         *        (@c network.cb_kaula_prior).  Default OFF ⇒ byte-identical.
+         *
+         * The CONDITIONAL second lever of the BeiDou W6 datum work, behind the
+         * rank-gate calibration (@ref networkRankGateTol) and the phase
+         * drop-and-heal.  Its trigger is a residual below-cutoff direction that is
+         * CODE-dominated: the heal only anchors phase-bias columns, so a near-null
+         * direction carrying zero phase weight is structurally beyond it, and no
+         * gate value clears a genuinely null direction.  A satellite's OSBs are
+         * physically bounded (tens of ns), so a loose prior toward 0 is real prior
+         * information — it lifts that direction while leaving every well-observed
+         * OSB untouched, their data information being orders of magnitude above
+         * 1/σ².
+         *
+         * INERT unless @ref estimateNetworkSatCodeBias (there are no OSB columns
+         * otherwise).  @see networkCbKaulaSigmaM for the σ and its placement rule.
+         */
+        bool networkCbKaulaPrior() const { return network_cb_kaula_prior_; }
+
+        /**
+         * @brief Card KP — σ (metres) of the admitted-OSB physical-bound prior
+         *        (@c network.cb_kaula_sigma_m).  Default 10 m ≈ 33 ns.
+         *
+         * @par Placement rule (K2 — anti-fragility), binding
+         * The CB-ADM card REJECTED a loose-prior quarantine because its
+         * information sat numerically AT the rank-gate cutoff, so it either
+         * tripped the gate or survived by coincidence.  This prior inverts that
+         * failure mode by construction: its information @f$1/σ^2@f$ must land at
+         * least TWO DECADES ABOVE the armed cutoff (@c rank_gate_tol · max(λmax,1))
+         * of every config it ships in.  The producer computes that margin from the
+         * epoch's own λmax and logs it once; a margin under two decades WARNS,
+         * because that is precisely the rejected configuration.
+         *
+         * Measured on the 305-station storm arm: cutoff 6.022e-06, so σ = 10 m
+         * (info = 1e-2) clears it by ≈ 3.2 decades, and the residual direction's
+         * own CB weights (≈ 0.145 each over four signals) lift it by ≈ 8e-4 —
+         * ~2.1 decades above the cutoff.  Both margins hold.
+         *
+         * Too LOOSE is safe but inert (the direction stays below the cutoff and
+         * the epoch still withholds); too TIGHT starts biasing well-observed OSBs
+         * toward zero, which is a product error rather than a datum one.  10 m
+         * sits deliberately at the loose end of the physical bound.
+         */
+        double networkCbKaulaSigmaM() const { return network_cb_kaula_sigma_m_; }
 
         /**
          * @brief Whether the network kernel's per-station local-block positive-
@@ -4490,6 +4627,9 @@ namespace GnssProcessor {
         bool enable_glonass_network_{false};              ///< Admit GLONASS to the PPP-RTK network producer (code-only: sat clock + per-slot rx IFB; no FDMA phase bias).
         bool estimate_network_sat_code_bias_{false};      ///< Estimate satellite CODE bias (OSB) in the PPP-RTK network producer (W6; forces sat-bias/ifb/iono-weighting on, .BIA off).
         bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
+        bool network_cb_admission_{false};                ///< CB-ADM: run-latched W6 code-bias admission census + station-local quarantine (replaces the per-epoch >=2-station gate; BeiDou-sparsity remedy).  Default OFF => legacy path byte-identical.
+        int  network_cb_admission_min_stations_{4};       ///< CB-ADM min supporting-station count for an admitted code pair; effective_min = max(2, min(this, n_census_stations)).
+        int  network_cb_admission_census_epochs_{15};     ///< CB-ADM census window length K (epochs from the loop start); clamped to the available span.
         bool network_cold_clock_seed_{false};             ///< Pre-seed a cold per-station receiver clock from the median GPS code residual before the first ambiguity seed (kills the network cold-start clock leak into cold ambiguity seeds).  Default OFF => byte-identical.
         NetworkAprioriSource network_apriori_source_{NetworkAprioriSource::Sp3}; ///< RTF-1: producer a-priori orbit/clock source (network.apriori_source); Sp3 (default) = precise SP3/CLK identity (byte-identical), BrdcRts = broadcast eph + external RTS orbits. Parse+store in Card 1; consumed by the producer core (later RTF-1 card).
         double network_apriori_clock_anchor_sigma_m_{0.0};  ///< RTF-1/D6: a-priori satellite-clock anchor pseudo-obs σ (m); 0 (default) = auto (mode-resolved at the producer), explicit positive wins. Parse+store only in Card 1.
@@ -4596,6 +4736,9 @@ namespace GnssProcessor {
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. INERT unless network_phase_datum_prioritized_.
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
+        bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.
+        double network_cb_kaula_sigma_m_{10.0};            ///< Card KP: sigma (m) of the admitted-OSB prior; 10 m ~ 33 ns, the loose end of the physical bound. K2 anti-fragility rule: 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a loose prior that sat AT the cutoff); the producer computes and logs that margin once and warns below 2 decades. INERT unless network_cb_kaula_prior_.
+        double network_rank_gate_tol_{1e-9};               ///< Card DG (network.rank_gate_tol): RELATIVE eigenvalue tolerance of the shared-border null-space rank gate, resolved once into NetworkEstimator::setRankGateTol and read by ALL THREE consumers (gate / estimability dump / prioritized drop-and-heal). Default 1e-9 == NetworkEstimator::kNullSpaceTol ⇒ byte-identical. A calibration parameter, not a constant: "null" is a placement decision in a spectral gap that moves with the constellation mix (1e-6→1e-9 happened once already for GPS+Gal; BeiDou's weak-but-real layer sits ~3 decades deeper relatively). PER-CONFIG and dump-justified — the gate is exact-equality/both-direction, so a value below a config's own gauge depth withholds a HEALTHY config ("over-specified"). See the getter for the binding placement rule.
         bool   network_station_pd_pin_aware_{false};       ///< Pin-aware station PD guard: the addStation local-block rank test references the MEDIAN |LDLᵀ pivot| instead of the max, so the prioritized datum's in-block 1e10 anchor pins no longer inflate the rejection bar ~10 orders and eject healthy marginal stations every epoch (TWTF/VOIM class). OFF = legacy max-pivot test (byte-identical).
         bool   network_emit_generation_id_{false};         ///< RTA-3: stamp a solution-GENERATION id (uint32 = first-emitted epoch's week·604800+⌊tow⌋) on every epoch (optional I record + store field + S-line gid=); a consumer treats a CHANGE as a global datum break; OFF = no I record, store generation unset (byte-identical).
         bool   network_serialize_disc_counters_{false};    ///< RTA-4: append the POST-EMIT discontinuity-counter VALUES as optional trailing fields (C field 5 clock / B field 5 code / P field 7 phase) so a tail reader reconstructs counters without replaying from epoch 1; OFF = old field counts (byte-identical).

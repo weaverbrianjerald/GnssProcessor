@@ -102,6 +102,7 @@ struct CarryPrior {
     int             sh_n{-1};    ///< VtecSh degree (VtecSh only)
     int             sh_m{-1};    ///< VtecSh order  (VtecSh only)
     char            sh_trig{0};  ///< VtecSh 'C'/'S' (VtecSh only)
+    int             sh_layer{0}; ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
     double          value;
     double          var;
     bool            inflate_q{false};  ///< Clock-monitor flagged this satellite: fold NEXT epoch with the large reinit variance (a soft large-q reinitialization that lets a frozen clock walk toward truth while retaining a weak anchor) instead of the stiff process noise.
@@ -160,6 +161,7 @@ struct CoupledShared {
     int  n{0};            ///< SH degree (VtecSh)
     int  m{0};            ///< SH order  (VtecSh)
     char trig{'C'};       ///< SH cos/sin (VtecSh)
+    int  sh_layer{0};     ///< SH shell index (VtecSh; 0 = legacy layer)
     double coeff{0.0};    ///< @f$M_{rj}@f$ (regression coeff of the local on this shared col)
     double s_prev{0.0};   ///< @f$\hat s_{\text{prev},j}=x_s(j)@f$ last epoch (correction frame)
     double p_prev{0.0};   ///< @f$P_{\text{prev},jj}@f$ last-epoch datum-frame variance (departed-col marginalization)
@@ -393,21 +395,62 @@ inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, dou
     return S;
 }
 
-// T5 (FABLE-GATE, 2026-07-10): per-(station,sat) SH representativeness-error
-// Gauss–Markov deviation carry.  The single-layer SH surface cannot represent
-// per-LOS slant-iono structure (~80 % of LOS residuals > 3σ at ANY degree, T4);
-// re-applying the pin as white forces that misfit dispersively into the float
-// ambiguities (the uniform-DD-fraction root cause).  With rep_error_tau_s > 0 the
-// pin constrains (ι − SH·c) to a TRACKED deviation d (GM: τ = rep_error_tau_s,
-// steady-state σ = representation_sigma_tecu mapped to slant) instead of to 0.
-// Threading contract: the map is AGED once per epoch in a serial pre-pass and
-// measurement-UPDATED in the serial post-solve harvest; the parallel assembly
-// only READS (find, never insert) — race-free by construction.  dev/var in slant
-// L1 metres.  var_ss = per-LOS steady-state σ² (mapping-dependent, refreshed at
-// harvest).  t_s = 0 marks a never-harvested (cold) entry.  OFF ⇒ byte-identical.
-// (Hoisted VERBATIM from ApplicationNetwork.cpp, decomposition INC-4; the map
-// instance @c sh_dev_carry lives in NetworkCarryState.)
-struct ShDevCarry { double dev_m{0.0}; double var_m2{0.0}; double var_ss{0.0}; double t_s{0.0}; };
+// Iono-2 / T5 v2 (2026-07-17): per-(station,sat) SH representativeness-error
+// Gauss–Markov deviation carry — the per-LOS iono TEMPORAL-ACCUMULATION channel
+// of the per-epoch network producer.  The SH surface cannot represent per-LOS
+// slant-iono structure (~70 % of LOS residuals > 3σ at ANY degree/station count,
+// T4 + the Jul-17 150-sta/deg-15 A/B); re-applying the pin as white forces that
+// misfit dispersively into the float ambiguities (the NL-AR blocker).  With
+// rep_error_tau_s > 0 the pin constrains (ι − Σ_l SH_l·c_l) to a TRACKED
+// deviation d (GM: τ = rep_error_tau_s, steady-state σ = representation_sigma_tecu)
+// instead of to 0.  v2 units: dev/var are carried in VERTICAL TECU (converted by
+// the epoch's layer-0 mapping M₁(el)·tecu_to_L1m at consumption/harvest), so the
+// carried level AND its steady state are elevation-stationary — the v1
+// slant-metre carry never re-scaled the level as elevation changed.  var_ss is
+// the constant representation_sigma_tecu² (kept per-entry so the aging pre-pass
+// needs no config re-read).  Threading contract: the map is AGED (and
+// slip-erased via the C3c funnel) once per epoch in a serial pre-pass and
+// measurement-UPDATED in the serial post-solve harvest via shDevExactUpdate();
+// the parallel assembly only READS (find, never insert) — race-free by
+// construction.  t_s = 0 marks a never-harvested (cold) entry.  OFF ⇒
+// byte-identical.  (Map instance @c sh_dev_carry lives in NetworkCarryState.)
+struct ShDevCarry { double dev{0.0}; double var{0.0}; double var_ss{0.0}; double t_s{0.0}; };
+
+/// Iono-2: EXACT scalar posterior update of one GM deviation d from the solved
+/// pin functional — replaces the falsified-circular T5 v1 scalar filter (which
+/// re-consumed the pin-regularized residual as an independent floor-noise
+/// observation, collapsing P to floor² after one update).
+///
+/// Model: prior d ~ N(d_pred, P_pred); pin row u − d = ε, ε ~ N(0, f²), with u
+/// the functional (ι − Σ SH·c) whose data-only likelihood is N(u₀, U).  The
+/// assembly folds the Schur-eliminated row u = d_pred + ε(f² + P_pred); the
+/// solve returns the posterior û (= the pin residual) and V̂ = Var_post(u) =
+/// U·a/(U+a) with a = P_pred + f².  Exact posterior of d:
+///     d̂  = d_pred + (P_pred/a)·(û − d_pred)          (gain from the PREDICTED P)
+///     P⁺ = P_pred·(U + f²)/(U + a),  U = V̂·a/(a − V̂)
+/// Limits: U→∞ (uninformative epoch) ⇒ P⁺ = P_pred, d̂ → d_pred; U→0 (data pins
+/// u) ⇒ P⁺ = P_pred·f²/a — the classic scalar KF update against a floor-noise
+/// observation.  V̂ ≥ a (numerically no information) ⇒ P⁺ = P_pred.  All inputs
+/// in ONE consistent unit frame (the caller converts slant ↔ vertical).
+///
+/// @param d_pred   GM-aged prior deviation.
+/// @param p_pred   GM-aged prior variance (> 0).
+/// @param u_hat    Solved posterior mean of the pin functional.
+/// @param v_hat    Solved posterior variance of the pin functional (≥ 0).
+/// @param floor2   Pin-row floor variance f² (> 0; station-deweight-effective).
+/// @return {d̂, P⁺}.
+inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
+                                                  double u_hat, double v_hat,
+                                                  double floor2) {
+    const double a = p_pred + floor2;
+    if (!(a > 0.0)) return {d_pred, p_pred};
+    const double d_post = d_pred + (p_pred / a) * (u_hat - d_pred);
+    if (!(v_hat > 0.0))                       // data pins u exactly (or degenerate)
+        return {d_post, p_pred * floor2 / a};
+    if (v_hat >= a) return {d_post, p_pred};  // no information beyond the row itself
+    const double U = v_hat * a / (a - v_hat); // recovered data-only variance
+    return {d_post, p_pred * (U + floor2) / (U + a)};
+}
 
 // L1: one network_epoch_status.csv row per processed epoch.  Fields not yet in
 // scope at a given disposition site are left BLANK (std::nullopt), NOT zero — the
@@ -477,6 +520,35 @@ struct EpochWorkspace {
     /// (Λ diagonal) — populated only when the anchor-info trace is open;
     /// consumed by the B7 anchor-fraction diagnostic after the solve.
     std::map<std::string, double> clk_prior_info;
+};
+
+/// Epoch-scratch candidate census consumed by EVERY prioritized phase-bias
+/// datum realization (ensemble / eq34 chain / anchor election).  Built once per
+/// epoch by @ref networkBuildPhaseDatumCandidates (filter/NetworkPhaseDatum.hpp)
+/// and passed by const reference to whichever election the mode dispatch picks;
+/// nothing downstream of the election reads it.
+///
+/// Member names are deliberately the FORMER run-TU local names, so the bodies
+/// relocated at decomposition INC-8b alias them without renaming.
+///
+/// ⚠ `union_keys` is POST-gate: the network.phase_datum_min_stations coverage
+/// gate erases from it IN PLACE inside the builder.  There is no pre-gate copy
+/// and none may be added — a pre-gate census would re-admit every one-tracker
+/// (sat,signal) into shared_phase_keys, which the Card-3 D3c RPB allocation
+/// reads directly (the non-PD-ejection / one-station-re-level / split-leak
+/// class the gate exists to prevent).
+struct PhaseDatumCandidates {
+    /// Per station: satellite -> elevation (deg), from the PRUNED observations.
+    std::vector<std::map<std::string, double>>      sat_el;
+    /// Per station: "sat_signal" -> "sat|signal|PB" (the per-(sat,signal)
+    /// phase-bias STATES this station allocated in PASS A — the ANCHORABLE keys).
+    std::vector<std::map<std::string, std::string>> usable_keys;
+    /// constellation -> station index -> # satellites tracked at >= pref_elev.
+    std::map<char, std::map<std::size_t, int>>      cover;
+    /// constellation -> candidate station indices (can anchor >= 1 of its keys).
+    std::map<char, std::set<std::size_t>>           cand_set;
+    /// "sat_signal" -> "sat|signal|PB", coverage-gated union over present stations.
+    std::map<std::string, std::string>              union_keys;
 };
 
 } // namespace GnssProcessor

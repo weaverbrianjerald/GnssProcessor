@@ -131,6 +131,7 @@ add_library(gnss_core STATIC
 	src/core/slip/SoftLliBridge.cpp
 	src/core/slip/JumpGapFitter.cpp
 	src/core/slip/SlipBridgeKernel.cpp
+	src/core/slip/NetworkRawObservables.cpp
 	src/core/slip/NetworkSlipQc.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
@@ -160,7 +161,19 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
     src/core/filter/NetworkPhaseDatum.cpp
+    src/core/filter/NetworkChainDatum.cpp
+    src/core/filter/NetworkRaim.cpp
+    src/core/filter/NetworkClockQc.cpp
+    src/core/filter/NetworkSolPrep.cpp
+    src/core/filter/NetworkEmitStore.cpp
+    src/core/filter/NetworkIonoDiag.cpp
+    src/core/filter/NetworkDdFrac.cpp
+    src/core/filter/NetworkShDevVtec.cpp
+    src/core/filter/NetworkShHealth.cpp
+    src/core/filter/NetworkLeveling.cpp
+    src/core/filter/NetworkStashStatus.cpp
     src/core/filter/NetworkCoupling.cpp
+    src/core/filter/NetworkBiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
@@ -267,10 +280,15 @@ add_executable(gnss_tests
     tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
     tests/test_network_robust_stats.cpp
+    tests/test_network_slip_qc.cpp
+    tests/test_if_phase_slip_detector.cpp
     tests/test_network_coupling.cpp
     tests/test_network_invariant_carry_driver.cpp
+    tests/test_shdev_carry.cpp
     tests/test_network_mw_wl_layer.cpp
     tests/test_network_phase_datum.cpp
+    tests/test_network_bias_admission.cpp
+    tests/test_network_rank_gate.cpp
     tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp

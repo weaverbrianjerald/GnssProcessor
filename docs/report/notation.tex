@@ -8,7 +8,10 @@ for sets:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item $\rx \in \rxset$ --- receiver.  Single-receiver modes (PPP,
       PPP-RTK) have $|\rxset| = 1$; baseline modes have a fixed
-      reference and one or more rovers.
+      reference and one or more rovers; the network producer
+      (\texttt{PPP\_RTK\_Network}) carries a peer set of
+      $|\rxset| \ge 2$ stations (150--305 in practice) with no
+      reference/rover asymmetry.
 \item $g \in \sysset = \{\text{GPS}, \text{GAL}, \text{BDS},
       \text{GLO}, \text{QZS}, \dots\}$ --- constellation.
 \item $\sat \in \satset{g}$ --- satellite of constellation $g$.
@@ -32,11 +35,19 @@ real-valued observables (in metres) per epoch:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item $\code^\sat_{\rx,\sigl}$ --- pseudorange (code), in metres.
 \item $\phaseo^\sat_{\rx,\sigl}$ --- carrier phase, scaled to metres
-      via $\lambda_\sigl$.  The accumulated cycle count $\Phi^\sat_{\rx,\sigl} \cdot \lambda_\sigl^{-1}$
-      is the integer ambiguity plus a fractional bias.
+      via $\lambda_\sigl$.  Beyond the range, clock, and atmosphere
+      terms it shares with the code, its ambiguous (non-range) part is
+      $\lambda_\sigl N^\sat_{\rx,\sigl}$ plus the fractional phase
+      biases $b_{\rx,\sigl} - b^\sat_\sigl$ (\Cref{eq:obs-phase}).
 \end{itemize}
 Where the distinction matters, $\sigl$ may further denote the band
 ($L_1, L_2, L_5, \ldots$) and the tracking attribute (e.g.\ \texttt{C}, \texttt{W}, \texttt{X}).
+The leading observable-type letter (\texttt{C}/\texttt{L}) selects code
+vs.\ phase; the frequency-only quantities $f_\sigl$, $\lambda_\sigl$, and
+$N^\sat_{\rx,\sigl}$ depend only on the (band, attribute) part, so a code
+and its sibling phase share them.  This matches the state keys, which
+carry the full phase code for ambiguities (\texttt{"G01\_L1C"}) but only
+the band digit for receiver code biases (\texttt{"GPS\_IFB2"}).
 
 \paragraph{Frequencies and wavelengths.}
 $f_\sigl$ is the carrier frequency (Hz) and $\lambda_\sigl = \sLight / f_\sigl$
@@ -47,6 +58,12 @@ is
 \mu_\sigl \;:=\; \frac{f_1^2}{f_\sigl^2}.
 \label{eq:iono-scaling}
 \end{equation}
+Here $f_1$ is the GPS~L1 frequency ($1575.42$~MHz), used as the common
+reference for \emph{every} constellation --- not the band-1 frequency of
+the satellite's own system.  The estimated state $I^\sat_{\rx,1}$ is
+therefore GPS-L1-equivalent even for BDS/GLO/GAL satellites
+(\texttt{MeasurementModel::buildJacobianRow}: \texttt{f\_ref =
+Constants::GPS\_L1\_FREQ}).
 
 \paragraph{Differencing operators.}
 Three differencing operations recur throughout the document:
@@ -82,7 +99,7 @@ $\rxpos_\rx, \satpos$         & m   & ECEF position of receiver/satellite \\
 $\geomrange^\sat_\rx$         & m   & geometric range $\|\satpos - \rxpos_\rx\|$ \\
 $\los^\sat_\rx$               & --- & unit LOS from $\rx$ to $\sat$ in ECEF \\
 $\sLight\,\mathrm{d}t_\rx$    & m   & receiver clock offset (scaled by $c$) \\
-$\sLight\,\mathrm{d}t^\sat$   & m   & satellite clock offset (from CLK product) \\
+$\sLight\,\mathrm{d}t^\sat$   & m   & satellite clock offset (CLK product in user modes; estimated state \texttt{"<sat>|SC"} in \texttt{PPP\_RTK\_Network}) \\
 $\sLight\,\delta t^{(g)}_\rx$ & m   & receiver inter-system time offset for constellation $g\neq g_{\mathrm{ref}}$ \\
 $T^\sat_\rx$                  & m   & total tropospheric path delay \\
 $\zhd^\sat_\rx, \zwd^\sat_\rx$ & m  & zenith hydrostatic / wet components \\
@@ -91,7 +108,7 @@ $N^\sat_{\rx,\sigl}$          & cyc & integer carrier-phase ambiguity \\
 $b_{\rx,\sigl}, b^\sat_\sigl$ & m   & receiver / satellite phase biases \\
 $\bar b^\sat_\sigl$           & m   & estimable satellite phase bias (network mode; \Cref{sec:state}) \\
 $B_{\rx,\sigl}, B^\sat_\sigl$ & m   & receiver / satellite code biases (OSB) \\
-$B^{(g,b)}_{\rx,k}$           & m   & per-FCN-slot GLONASS receiver IFB, slot $k$, band $b$ \\
+$B^{(g,b)}_{\rx,k}$           & m   & per-FCN-slot GLONASS receiver IFB, band $b$; here $k \in [-7,+6]$ is the signed FDMA channel number (a context-local reuse, not the epoch index) \\
 $\varepsilon^\code, \varepsilon^\phaseo$ & m & residual (multipath + thermal) \\
 $\bm{v}_\rx$                  & m/s & receiver velocity (optional / IMU state) \\
 $\lamwl,\ \lamnl$             & m   & wide- / narrow-lane wavelength $\sLight/(f_1 \mp f_2)$ \\

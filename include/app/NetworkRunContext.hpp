@@ -27,6 +27,7 @@
 #include "filter/NetworkRunTypes.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkZStore.hpp"     // ArcKey (D5 inject/hold tag sets)
 #include "filter/NetworkSbasis.hpp"     // NetworkSbasis::Plan (lifecycle-fn params)
+#include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
 #include "common/PppUtils.hpp"          // eq34_ppp_utils
 
@@ -447,9 +448,14 @@ namespace GnssProcessor {
         long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
         long long carry_innov_map_miss = 0;   // D5 flag→ambiguity reverse-map misses (should stay 0)
 
-        // --- T5 SH representativeness-error deviation carry (struct ShDevCarry:
-        // filter/NetworkRunTypes.hpp) ---
+        // --- T5/Iono-2 SH representativeness-error deviation carry (struct
+        // ShDevCarry: filter/NetworkRunTypes.hpp; v2 units = vertical TECU) ---
         std::map<std::string, ShDevCarry> sh_dev_carry;   // key "STATION|SAT"
+        // Iono-2 run-end counters (invariant #4 — inert wiring is only visible
+        // through them): warm-prior harvests, cold seeds, C3c-funnel slip
+        // resets, and no-information harvest skips (V̂ ≥ P_pred + f²).
+        long long shdev_warm_total = 0, shdev_cold_total = 0,
+                  shdev_slip_resets_total = 0, shdev_nodata_total = 0;
 
         // --- T1a/T1d SH-field WARN edge state + convergence latch ---
         // T1a: persistent state for the a₀₀ physical-band divergence WARN — start "in band"
@@ -498,6 +504,23 @@ namespace GnssProcessor {
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).
         size_t n_healed_epochs = 0, n_healed_cols = 0;
+        // Card PA2 — the SAME quantities counted on EVERY fired heal, recovered or not.
+        // The pair above is success-only, which makes a heal that fires every epoch and
+        // never rescues the gate read as "0 healed" — measured on the 305 co-gated arm,
+        // which logged "drop-and-heal failed" on all 6 epochs while reporting
+        // n_healed_epochs = 0.  That is precisely the inert-looking-but-live wiring
+        // standing invariant #4 exists to catch, so the attempt is counted separately:
+        // attempts > 0 with recoveries == 0 is the signature of a heal that is aiming at
+        // the right columns but cannot resolve the residual alone (Card PA's own
+        // insufficiency criterion, PA5).
+        size_t n_heal_attempt_epochs = 0, n_heal_attempt_cols = 0;
+        // Card KP (network.cb_kaula_prior): epochs on which the admitted-OSB
+        // physical-bound prior was folded, and the cumulative column count.
+        // Standing invariant #4 — an armed KP run with n_kp_epochs == 0 means the
+        // prior never reached a solve (no registered code columns, or the W6 block
+        // never ran), which no amount of clean-looking log output would reveal.
+        size_t n_kp_epochs = 0, n_kp_cols = 0;
+        bool   kp_margin_logged = false;   ///< one-shot latch for the K2 margin check
         // Card 1b (network.carry_coupling_joint_whiten): #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.
@@ -532,6 +555,43 @@ namespace GnssProcessor {
         // from the loop-timing cluster; t_loop_begin stays a run-TU local).
         std::size_t n_loop_epochs = 0;
         std::size_t decim_counter = 0;   // T2e: counts post-offset raw epochs for epoch_decimation_n
+
+        // CB-ADM: W6 code-bias admission census tallies (run-end observability;
+        // standing invariant #4 — inert wiring is only visible through them, so
+        // a BDS-armed ON run with n_cb_quarantined_census == 0 is a MISWIRE).
+        // n_cb_late_quarantined counts distinct (sat,signal) keys first seen at
+        // the registration site AFTER the census window (implicitly quarantined).
+        std::size_t n_cb_admitted = 0, n_cb_quarantined_census = 0, n_cb_late_quarantined = 0;
+
+        // Card H2 (docs/SPEC_beidou_w6_datum.md §5) — the measurable cost of the
+        // deliberate CB-ADM granularity seam.  The phase co-gate lives at STATE
+        // ALLOCATION and keys off the run-latched CENSUS-admitted set, while the
+        // CODE column follows PER-EPOCH >=2-station coverage; per-epoch phase-state
+        // allocation churn was rejected (it would thrash eq34/carry/snapshot and
+        // violate the anti-flap design).  The residue is a transient ORPHAN WINDOW:
+        // an ADMITTED code key that drops below 2 present stations for an epoch
+        // keeps its shared phase column while its code column is withheld.  This
+        // counts those (key, epoch) pairs.  Measured a no-op at 305-station density
+        // (every admitted sat has >=2 present stations); a future SPARSE-tier run
+        // showing it nonzero AND coincident with withholds is the trigger to
+        // revisit the seam — with data, not by re-litigating the ruling.
+        std::size_t n_cbadm_phase_orphan_key_epochs = 0;
+
+        // Card DG6 (docs/SPEC_beidou_w6_datum.md §2) — rank-gate calibration
+        // telemetry.  The gate is an EXACT-equality test that throws in BOTH
+        // directions, so "withheld" alone hides which failure happened:
+        // UNDER-specified (observed > declared — a missing datum constraint, the
+        // BeiDou storm) and OVER-specified (observed < declared — the tolerance
+        // pushed BELOW this config's own gauge depth, i.e. a mis-calibration that
+        // withholds a HEALTHY config) need opposite fixes and must be separate
+        // numbers.  min/max are over the FIRST gate evaluation of each epoch (one
+        // sample per epoch — the honest "what the datum looked like"; a post-heal
+        // re-gate is a different question and is counted in n_healed_epochs).
+        std::size_t n_gate_evaluated = 0;        ///< epochs on which the gate ran (denominator for the rest)
+        std::size_t n_gate_withheld_under = 0;   ///< withheld with observed > declared (missing datum constraint)
+        std::size_t n_gate_withheld_over  = 0;   ///< withheld with observed < declared (tolerance below the gauge depth)
+        int nullspace_obs_min = -1;              ///< min observed near-null count over the run (-1 = never evaluated)
+        int nullspace_obs_max = -1;              ///< max observed near-null count over the run (-1 = never evaluated)
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,
@@ -546,6 +606,7 @@ namespace GnssProcessor {
         const NetworkKnobs     knobs;
         NetworkCarryState      carry;
         NetworkServiceCounters counters;
+        NetworkBiasAdmission   admission;   // CB-ADM: latched census result (active=false ⇒ legacy path)
     };
 
     // ------------------------------------------------------------------
@@ -576,6 +637,7 @@ namespace GnssProcessor {
     void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                   const GnssConfig& config_, NetworkEstimator& est,
                                   const SphericalHarmonicIonosphere* sh_model,
+                                  const SphericalHarmonicIonosphere* sh_model2,
                                   bool datum_changed, double dt, bool within_epoch_armed);
 
     void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
@@ -603,6 +665,7 @@ namespace GnssProcessor {
                                     const std::vector<StationAssembly>& asm_res,
                                     const NetworkSbasis::Plan& plan,
                                     const SphericalHarmonicIonosphere* sh_model,
+                                    const SphericalHarmonicIonosphere* sh_model2,
                                     NetworkCarryVce& carry_vce_est, bool carry_warm,
                                     double pl_now_s,
                                     const std::vector<std::string>& registered_clock_sats,
@@ -618,6 +681,7 @@ namespace GnssProcessor {
                            NetworkEstimator& est, const Eigen::VectorXd& x_s,
                            const NetworkSbasis::Plan& plan,
                            const SphericalHarmonicIonosphere* sh_model,
+                           const SphericalHarmonicIonosphere* sh_model2,
                            const std::set<std::string>& clock_refloat_sats,
                            const std::vector<std::string>& registered_clock_sats,
                            const std::set<std::string>& shared_phase_keys,

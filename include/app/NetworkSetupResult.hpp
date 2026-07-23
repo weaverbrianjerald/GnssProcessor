@@ -75,6 +75,10 @@ namespace GnssProcessor {
         /// Phase 3b: the co-estimated SH-VTEC field model (estimate_iono_sh), or
         /// null (external-GIM / no-iono paths).
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model;
+        /// Iono-2 mechanism A: the dual-layer field's second-shell basis
+        /// (layer2_max_degree > 0), or null (single-layer legacy path).  Only
+        /// ever non-null when sh_model is non-null.
+        std::unique_ptr<SphericalHarmonicIonosphere> sh_model2;
         /// Phase 4: per-station Kalman resources, pivot at index 0.  Elements
         /// hold references into sync's parsers — declared after sync.
         std::vector<NetStation> stations;

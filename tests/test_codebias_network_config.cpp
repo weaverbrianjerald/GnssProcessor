@@ -1877,6 +1877,54 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
     }
 }
 
+// LF-1 INC-1: network.lane_carry.fold_blocked — a PERF knob, default OFF
+// (byte-identical sequential fold), parses when armed, and must NOT be a
+// lane-SHAPE knob (it leaves lane_meas/bridge_meas untouched, so it cannot flip
+// a run out of the §6.1 equivalence shape).
+TEST(CodeBiasNetworkConfig, LaneFoldBlockedContract) {
+    LogManager log;
+    // Default absent → OFF; the other lane_carry knobs keep their defaults.
+    {
+        const fs::path p = writeTempConfig("foldblk_default",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"lane_carry\": { \"enable\": true },\n"
+                "    \"mw_wl\": { \"ewl_enable\": true },\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        const auto& lc = cfg.getNetworkConfig().lane_carry;
+        EXPECT_FALSE(lc.fold_blocked);
+        EXPECT_FALSE(lc.skip_pinned_increments);   // INC-2 default OFF
+        EXPECT_EQ(lc.skip_pinned_within_n, 3);      // INC-2 default window
+        EXPECT_FALSE(lc.parallel_components);       // INC-4 default OFF
+        EXPECT_TRUE(lc.lane_meas);       // unaffected — perf knob, not a shape knob
+        EXPECT_TRUE(lc.bridge_meas);
+        std::error_code ec; fs::remove(p, ec);
+    }
+    // Armed → both perf knobs parse; within_n clamps ≥1; shape knobs untouched.
+    {
+        const fs::path p = writeTempConfig("foldblk_armed",
+            networkConfig(kGpsGal, kPriosGps,
+                "    \"phase_datum_eq34\": true,\n"
+                "    \"carry_invariant\": true,\n"
+                "    \"lane_carry\": { \"enable\": true, \"fold_blocked\": true, "
+                "\"skip_pinned_increments\": true, \"skip_pinned_within_n\": 0, "
+                "\"parallel_components\": true },\n"
+                "    \"mw_wl\": { \"ewl_enable\": true },\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log));
+        const auto& lc = cfg.getNetworkConfig().lane_carry;
+        EXPECT_TRUE(lc.fold_blocked);
+        EXPECT_TRUE(lc.skip_pinned_increments);
+        EXPECT_EQ(lc.skip_pinned_within_n, 1) << "within_n clamps to ≥1 (0 would never skip)";
+        EXPECT_TRUE(lc.parallel_components);
+        EXPECT_TRUE(lc.lane_meas);
+        EXPECT_TRUE(lc.bridge_meas);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
 // Per-sample bridge iono de-bias (the 60-ep age-bias fix): defaults OFF
 // (byte-identical raw accumulation); parses when armed with the bridge;
 // inert-warns (loads) without ewl_enable.

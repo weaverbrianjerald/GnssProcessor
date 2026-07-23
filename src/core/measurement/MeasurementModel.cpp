@@ -1114,7 +1114,8 @@ namespace GnssProcessor {
 
     void MeasurementModel::ensureNetworkSharedStates(
         const std::vector<PppObservation>& observations,
-        const std::set<std::string>& allowed_phase_keys) {
+        const std::set<std::string>& allowed_phase_keys,
+        const std::set<std::string>* cbadm_admitted_code_keys) {
         if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) return;
         if (!config_.isUncombinedEnabled()) return;  // network V1 is uncombined-only
 
@@ -1182,6 +1183,24 @@ namespace GnssProcessor {
                         StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
                     if (!allowed_phase_keys.empty() && !allowed_phase_keys.count(pk))
                         continue;
+                    // CB-ADM phase co-gate (symmetric with the code sponge): when
+                    // the run-latched census QUARANTINED this signal's code pair,
+                    // withhold its shared PHASE bias too — the phase folds into each
+                    // station's float ambiguity exactly as the code folds into the
+                    // local sponge, so a 2-station signal leaves the shared system on
+                    // BOTH families and cannot orphan a pure-PB near-null gauge (the
+                    // measured code-only-quarantine failure).  Gated at STATE
+                    // ALLOCATION so getSatPhaseBiasStates()/shared_phase_keys stay
+                    // consistent everywhere (a registration-site gate breaks the
+                    // "every shared_phase_key is a column" invariant).  Companion
+                    // code key = same sat + L<band><attr> -> C<band><attr>.  Null
+                    // pointer (flag off / census inactive) ⇒ byte-identical.
+                    if (cbadm_admitted_code_keys) {
+                        std::string csig = ref_type;
+                        if (!csig.empty()) csig[0] = 'C';
+                        if (!cbadm_admitted_code_keys->count(obs.satellite + "|" + csig))
+                            continue;
+                    }
                     required_phase_keys.insert(pk);
                     if (state_manager_.getSatPhaseBiasIndex(pk) < 0)
                         state_manager_.addSatPhaseBiasState(pk, 0.0);

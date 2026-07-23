@@ -89,7 +89,17 @@ broadcast clock's \emph{radial} component cancels consistently against
 \Cref{eq:ssr-clock}.  The decoded RAC scale factors are fixed by
 RTCM~10403.3 (radial $\delta_r$ a $22$-bit two's-complement field at
 $0.1$\,mm, along/cross at $0.4$\,mm, rates at $1$ and $4\,\mu$m/s
-respectively; \texttt{rtcm/RtcmSsrDecoder.cpp}).
+respectively; \texttt{rtcm/RtcmSsrDecoder.cpp}).  The orbit record also
+carries a \emph{reference point} for the corrected $\satpos$: legacy RTCM
+SSR corrects to the satellite antenna phase centre (APC), while
+IGS-SSR~\texttt{4076} and the network product correct to the centre of
+mass (CoM) (\texttt{rtcm/RtcmSsrDecoder.cpp}).  Under
+\texttt{realtime.honor\_ssr\_reference\_point} (RTB-5; default OFF,
+byte-identical) the consumer records whether the applied overlay was
+APC-referenced (\texttt{ssr\_orbit\_apc\_applied\_} in
+\texttt{model/ModelGeometry.cpp}) so that \texttt{PppModel} suppresses its
+own satellite-PCO term on that geometry rather than double-counting the
+phase-centre offset the orbit correction has already resolved.
 
 \subsection{Clock correction --- refines $-\sLight\,\mathrm{d}t^\sat$}
 
@@ -143,13 +153,32 @@ the gate being permissive when either side is unknown
 \texttt{products/SsrCorrectionStore.hpp}).  A combined orbit+clock
 record (RTCM 1060/1066, IGS-SSR sub-type~3) is preferred over separate
 messages because it guarantees a single shared $\mathrm{IODE}$
-(\texttt{products/SsrCorrectionStore.cpp}).  At a correction-set
+(\texttt{products/SsrCorrectionStore.cpp}).  Since RTF-2 the two overlays
+gate on \emph{separate} anchors: the orbit delta on the record's orbit
+\texttt{iode} (\texttt{model/ModelGeometry.cpp}), the clock polynomial on
+a distinct \texttt{clock\_iode} field
+(\texttt{corrections/GnssCorrections.cpp}).  For a standard stream
+\texttt{clock\_iode} inherits the orbit anchor in \texttt{getOrbitClock},
+so the two coincide and \eqref{eq:ssr-iode-gate} reads as the single gate
+written; only a \texttt{brdc\_rts} producer, which stamps its own clock
+IODE, makes them differ.  At a correction-set
 boundary --- the provider issuing a new ephemeris reference, hence a new
 $\mathrm{IODE}$ --- the gate \eqref{eq:ssr-iode-gate} simply declines the
 mismatched record until the matching broadcast ephemeris is in hand,
 avoiding a discontinuous jump in $\satpos$ or $\sLight\,\mathrm{d}t^\sat$.
-Records older than \texttt{max\_age\_s} (default $60$\,s, the IGS-RTS
-update interval) are treated as absent.
+Records older than \texttt{max\_age\_s}
+(\texttt{processing.ssr\_max\_age\_s}, default $30$\,s) are treated as
+absent by default.  The RTA-9(b) stale-hold ladder relaxes this binary
+clock gate into three rungs
+(\texttt{SsrCorrectionStore::classifyClockAge}): with
+\texttt{processing.ssr\_clock\_stale\_hold\_factor}~$f>1$ a clock aged in
+$(\texttt{max\_age\_s},\,f\cdot\texttt{max\_age\_s}]$ is \emph{StaleHeld}
+--- still applied as the extrapolated $C_0 + C_1\,\delta t$ of
+\eqref{eq:ssr-clock-poly}, with a matching URA-staleness $R$ inflation on
+the consuming rows (\texttt{corrections/GnssCorrections.cpp},
+\texttt{measurement/MeasurementModel.cpp}) --- while a record beyond the
+hold window is \emph{Rejected}.  The default $f=0$ collapses the ladder
+back to the plain fresh-or-absent gate (byte-identical).
 
 \subsection{Satellite biases --- refine $-B^\sat_\sigl$ and $-b^\sat_\sigl$}
 
@@ -194,10 +223,16 @@ composite key such as \texttt{C1W\_C5X} returns zero (code) or
 parameterisation.  The code OSB is a $14$-bit field at $0.01$\,m, the
 phase OSB a $20$-bit field at $0.1$\,mm
 (\texttt{rtcm/RtcmSsrDecoder.cpp}).  The application path is
-\emph{ungated} by any feature flag: \texttt{ssr\_bias\_term} loads
-whenever the store carries the exact RINEX signal key, the corollary of
-which --- avoiding a redundant estimated bias on the same row --- is the
-subject of the next subsection.
+\emph{ungated} by default: \texttt{ssr\_bias\_term} loads whenever the
+store carries the exact RINEX signal key.  An optional A5 staleness gate
+(\texttt{processing.enable\_ssr\_bias\_max\_age}, default OFF) rejects a
+bias whose obs-vs-record age exceeds
+\texttt{processing.ssr\_bias\_max\_age\_s} (default $30$\,s), holding the
+last value over sub-limit gaps out to
+\texttt{ssr\_bias\_stale\_hold\_factor}~$\times$ that age rather than
+manufacturing a model step (\texttt{measurement/MeasurementModel.cpp}).
+The corollary of the application path --- avoiding a redundant estimated
+bias on the same row --- is the subject of the next subsection.
 
 \subsection{Satellite-bias STATE gate vs.\ SSR code biases}\label{sec:ssr-satbias-gate}
 
@@ -321,28 +356,41 @@ between-satellite-differenced solution is a separate, estimator-side
 opt-in (its FDMA per-channel receiver delay does not cancel in SD); see
 \dcref{sec:diff}{the differencing section}.
 
-\subsection{Ionosphere --- $\mu_\sigl I^\sat_{\rx,1}$ is not SSR-fed}
+\subsection{Ionosphere --- $\mu_\sigl I^\sat_{\rx,1}$ off-wire, via the slant channel}
 
 For completeness, and to forestall a natural misreading of the term:
 although the SSR standard defines a global VTEC spherical-harmonic
 message (IGS-SSR IM\,$=201$) and regional STEC products, \emph{neither is
 decoded by this engine}.  The IGS-SSR classifier rejects IM\,$=201$ as
-unsupported (\texttt{rtcm/RtcmSsrDecoder.cpp}), and there is no SSR
-path that writes the slant-iono state $I^\sat_{\rx,1}$.  Consequently the
-ionospheric term $\mu_\sigl I^\sat_{\rx,1}$ is informed only by (i) the
-per-satellite iono \emph{state} estimated by the filter itself and
+unsupported (\texttt{rtcm/RtcmSsrDecoder.cpp}), so nothing on the RTCM
+wire writes the slant-iono state $I^\sat_{\rx,1}$.  On that wire the
+ionospheric term $\mu_\sigl I^\sat_{\rx,1}$ is therefore informed only by
+(i) the per-satellite iono \emph{state} estimated by the filter itself and
 (ii) the optional GIM/IONEX deterministic prior
-(\texttt{atmosphere/GlobalIonosphereMap}, an independent
-VTEC$\to$STEC mapping unrelated to the SSR stream).  This is a
-\emph{consumer-side} gap, not an absence of the network workstream: the
-network estimator (\dcref{sec:net}{the Network mode document}) and its
-product emitter (\texttt{products/NetworkProductEmitter.cpp}) now exist
-and round-trip satellite clock and code/phase biases through the same
-store, but they emit no ionosphere product.  Closing the loop on the
-atmosphere --- a regional STEC overlay feeding $I^\sat_{\rx,1}$ as a
-pseudo-observation, restoring the iono-weighted constraint that makes
-single-epoch AR feasible --- is the remaining unimplemented piece on
-both sides.
+(\texttt{atmosphere/GlobalIonosphereMap}, an independent VTEC$\to$STEC
+mapping unrelated to the SSR stream).
+
+The atmosphere loop is, however, closed \emph{off} the RTCM wire, through
+the same \texttt{SsrCorrectionStore} the clock and bias overlays use.  The
+store carries a dedicated undifferenced slant-iono channel
+(\texttt{SsrSlantIono}, via \texttt{SsrCorrectionStore::pushSlantIono} /
+\texttt{getSlantIono}): the network producer
+(\texttt{app/ApplicationNetwork.cpp}) evaluates its co-estimated SH-VTEC
+field at the consumer's pierce points and pushes a per-LOS slant delay and
+$1\sigma$, and the consumer
+(\texttt{realtime/RealTimeEngine.cpp}, in \texttt{processEpoch}) folds
+each fresh, same-epoch record into an ionosphere-weighted (BLUP)
+pseudo-observation on the matching slant-iono state
+(\texttt{KalmanFilter::applyPseudoObservation}) --- exactly the
+iono-weighted constraint that makes single-epoch AR feasible.  The fold is
+gated by \texttt{closed\_loop.consume\_network\_iono} (default OFF, so no
+rows are built and the update is byte-identical) and admits a value only
+when the producer refreshed it this epoch
+(\texttt{max\_age}~$=\tfrac12$ the epoch spacing), so a satellite the
+producer did not re-supply floats rather than inheriting a stale delay.
+What remains open is a \emph{standardised} on-wire STEC product: the
+in-process channel is a closed-loop store hand-off, not an
+IGS-SSR/RTCM message either side can yet decode from a third-party stream.
 
 \subsection{Provenance and code pointers}\label{sec:ssr-plumbing}
 
@@ -363,7 +411,9 @@ not reused (\texttt{RtcmSsrDecoder.cpp}).  VTEC (IM\,$201$) and
 NavIC (IM\,$141$--$147$) are rejected by the message-indicator
 classifier \emph{before} the header is parsed, so they return
 \texttt{ok = false} with an empty header --- this is the decode-side
-reason the ionospheric term carries no SSR contribution.
+reason the ionospheric term carries no \emph{on-wire} SSR contribution
+(the off-wire \texttt{SsrSlantIono} store channel of the ionosphere
+subsection is unaffected).
 
 The invariant correction definitions of
 \Cref{eq:ssr-orbit,eq:ssr-clock,eq:ssr-iode-gate} live in the static,

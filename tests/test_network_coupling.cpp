@@ -185,7 +185,7 @@ TEST(NetworkCouplingTest, BuildScalarPresentColumnMakesPendRow) {
     LocalCarry lc;
     lc.value_abs = 2.0;
     lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C',
+    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/0.8, /*s_prev=*/1.5, /*p_prev=*/0.2} };
     auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, /*var_eff=*/0.04, /*gap=*/30.0);
@@ -212,7 +212,7 @@ TEST(NetworkCouplingTest, BuildScalarDepartedColumnMarginalizesIntoVariance) {
     LocalCarry lc;
     lc.value_abs = 0.0;
     lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C',
+    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/0.5, /*s_prev=*/3.0, /*p_prev=*/9.0} };  // G99 not registered
     auto cb = f.make(false, false, false);
     cb.buildCplRow(/*col=*/1, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
@@ -232,7 +232,7 @@ TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     LocalCarry lc;
     lc.value_abs = 0.0;
     lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C',
+    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/1.0, /*s_prev=*/0.0, /*p_prev=*/1.0} };
     const double q_clock = 1e-4, gap = 30.0;
     auto cb = f.make(/*joint=*/false, /*tu=*/true, /*shmarg=*/false);
@@ -256,7 +256,7 @@ TEST(NetworkCouplingTest, BuildJointPresentColumnMakesRawRow) {
     LocalCarry lc;
     lc.value_abs = 1.0;
     lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C',
+    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', /*sh_layer=*/0,
                                   /*coeff=*/-0.6, /*s_prev=*/0.4, /*p_prev=*/0.1} };
     auto cb = f.make(/*joint=*/true, /*tu=*/false, /*shmarg=*/false);
     cb.buildCplRow(/*col=*/2, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);
@@ -278,6 +278,7 @@ TEST(NetworkCouplingTest, BuildJointShMarginalizeRoutesVtecToDeparted) {
     lc.value_abs = 0.0;
     lc.last_seen_s = 0.0;
     lc.coupling = { CoupledShared{SharedParamKind::VtecSh, "", "", 1, 0, 'C',
+                                  /*sh_layer=*/0,
                                   /*coeff=*/0.3, /*s_prev=*/0.0, /*p_prev=*/0.5} };
     auto cb = f.make(/*joint=*/true, /*tu=*/false, /*shmarg=*/true);
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);
@@ -295,7 +296,7 @@ TEST(NetworkCouplingTest, AppendScalarScattersRowsIntoStationBlock) {
     LocalCarry lc;
     lc.value_abs = 2.0;
     lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C',
+    lc.coupling = { CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', /*sh_layer=*/0,
                                   0.8, 1.5, 0.2} };
     auto cb = f.make(/*joint=*/false, false, false);
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5, lc, /*var_eff=*/0.04, /*gap=*/30.0);
@@ -319,7 +320,7 @@ TEST(NetworkCouplingTest, AppendJointWhitensAndRetainsIngredients) {
     LocalCarry lc;
     lc.value_abs = 1.0;
     lc.last_seen_s = 0.0;
-    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C',
+    lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', /*sh_layer=*/0,
                                   -0.6, 0.4, 0.1} };
     auto cb = f.make(/*joint=*/true, false, false);
     cb.buildCplRow(/*col=*/2, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);

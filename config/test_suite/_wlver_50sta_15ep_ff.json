@@ -177,7 +177,7 @@
       },
       {
         "name": "KRGG00ATF",
-        "rinex_path": "C:/Users/weaverb/AppData/Local/Temp/claude/C--GnssProcessor/9e331783-fd85-4ac6-86cb-eb6252ae957b/scratchpad/ab/KRGG_slip.rnx",
+        "rinex_path": "C:/GnssProcessor/data/_lf1_fixtures/KRGG_slip.rnx",
         "position_ecef": [
           1406336.1576,
           3918154.5954,

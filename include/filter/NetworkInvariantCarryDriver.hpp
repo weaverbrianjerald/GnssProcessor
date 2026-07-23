@@ -107,6 +107,11 @@ public:
         double q_wl_scale{1.0};         ///< WL-3 §3.1: q along the WL lane = this × @c qz (lane basis, per pair chord).  1 = isotropic (== today's per-band q; the §6.1 equivalence shape).  INERT unless @c lane_joint.
         double sigma_wl_fresh_cyc{0.0}; ///< WL-3 §3.1: fresh pair-chord lane prior σ along the WL direction (WL cycles — converted to lane-coordinate state units via the group's (λ₁,λ₂)).  0 = isotropic diffuse @c fresh_prior_var (the §6.1 equivalence shape).  INERT unless @c lane_joint.
         bool   lane_joint{false};       ///< WL-3 master shape switch for pair groups: true = the LANE shape (ONE joint 2K-row DdPriorBlock per component, cross-band posterior coupling retained, lane prior/q armed, a D5 exemption spans both band rows).  false = the §6.1 EQUIVALENCE shape (per pair component TWO K-row per-band blocks whose fold is information-identical to today's two per-band groups; cross-band coupling zeroed at install) — the structural safety net for the regroup.
+        // --- LF-1 INC-1: blocked/sparse lane fold (docs/SPEC_lane_fold_perf_card.md §3.2). ---
+        bool   fold_blocked{false};     ///< LF-1 INC-1: when true, the per-epoch lane fold is applied in the OPTIMIZED shape — @ref applyLaneFix uses the O(K) sparse lane-coordinate SET (the dense rank-2 touches only rows/cols {k,K+k}) instead of the dense O(K²) form, and the per-row @f$0.5(P+P^\top)@f$ re-symmetrization is HOISTED out of every primitive to ONE @ref finalizeLaneBatch pass per block per epoch.  This changes the OPERATION ORDER (Woodbury/reassociation), so it is the @c parallel_carry EQUIVALENCE class, NOT bit-identical to the sequential fold (@c fold_blocked=false) — its ON runs carry the pcarry usage rule until the §5.3 physically-null gate passes.  INERT unless @c lane_joint (lane rows only exist on the joint shape).
+        // --- LF-1 INC-2: pinned-cycle increment skip (docs/SPEC_lane_fold_perf_card.md §3.3). ---
+        bool   skip_pinned_increments{false}; ///< LF-1 INC-2: skip the per-epoch MW/bridge lane increments for a chord whose FFR fix is COMMITTED (in @c lane_fix_w_) and was re-decided within @c skip_pinned_within_n epochs — a σ≈0.06-0.2 cyc increment folded into a lane already pinned at σ=0.01 moves nothing.  Any funnel event (slip / D5 flag / re-tap / rebirth) erases the fix memory ⇒ increments resume the SAME epoch (invariant #1).  Reads COMMITTED state only (never the per-build staged decision), so the RAIM re-solve is deterministic.  Equivalence class (the increment is near-inert but not exactly null); INERT unless @c lane_joint.  Query: @ref laneIncrementSkippable.
+        long long skip_pinned_within_n{3};    ///< LF-1 INC-2: the grace window (epochs).  A committed-decided chord keeps skipping increments for this many epochs after its LAST re-decision; if it goes undecided longer (a genuinely drifting lane the FFR gate stopped trusting), increments resume to re-converge it.  INERT unless @c skip_pinned_increments.
     };
 
     /// One present, resolvable ambiguity arc this epoch (the caller has already
@@ -169,6 +174,13 @@ public:
         //     blocks, so it halves under the joint lane shape — structural, documented). ---
         long long pair_components{0};     ///< WL-3: pair components reconciled (summed over epochs; each is 1 joint or 2 split emitted blocks).
         long long pair_tree_promotions{0};///< WL-3: chords promoted to tree edges to COMPLETE a pair component's spanning forest (the caller's band-1 election tags don't span the pair intersection subgraph there — fragmented-primary regions; 0 ⇒ the eq34 basis was kept exactly everywhere).
+        // --- LF-1 INC-0: the emitted-component fold-dimension distribution (SPEC §7.4 — the
+        //     INC-4 Amdahl question: one giant G component that dominates the parallel ceiling,
+        //     vs a spread the component-parallel fold can balance).  Bucketed once per emitted
+        //     component by fold-dim d = tally·K (2K for a joint pair block, matching
+        //     @ref max_component_kc).  Always-on like the census counters (never read by the
+        //     solve ⇒ byte-identical); the run-end line reads it only when the timers are armed. ---
+        long long comp_kc_hist[10]{};     ///< #emitted components with fold-dim d in log2 buckets: [0]=0, [1]=1, [2]=2..3, [3]=4..7, [4]=8..15, [5]=16..31, [6]=32..63, [7]=64..127, [8]=128..255, [9]=≥256.
     };
 
     /// INC-C0 per-op wall-clock accumulators (ms), armed by @ref setPerfTiming
@@ -186,6 +198,13 @@ public:
         double post_mean_ms{0.0};     ///< @ref installPosterior: the @c ddPriorPosteriorMean read-back (K-vector shrink).
         double post_cov_ms{0.0};      ///< @ref installPosterior: the @c ddPriorPosteriorCovariance read-back (the dense K×K posterior INstall — the other dense-K² materialization).
         double d5_gate_ms{0.0};       ///< @ref installPosterior: the D5 @c ddPriorInnovation + the per-chord standardized gate (0 unless @c Config::innov_gate).
+        // --- LF-1 INC-0: the WL-3 lane-fold split the SB_DDBUILD wall lumps.  These are the
+        //     ~10³ per-epoch rank-1/rank-2 covariance touches the perf card exists to shrink —
+        //     splitting them from basis_project_ms tells the later increments which lever pays. ---
+        double lane_meas_ms{0.0};     ///< @ref applyLaneMeasurement: cumulative wall of the per-epoch MW/bridge lane increment folds (dense rank-1 downdate, O(K²)/row — the irreducible measurement work).
+        double lane_fix_ms{0.0};      ///< @ref applyLaneFix: cumulative wall of the idempotent lane-coordinate SET on decided cycles (the ~65%-decided re-pins; INC-1 makes this O(K²)→O(K)).
+        long long lane_meas_calls{0}; ///< #@ref applyLaneMeasurement rows that reached the fold (matches wl_run.lane_mw_rows + lane_bridge_rows on the accepted build).
+        long long lane_fix_calls{0};  ///< #@ref applyLaneFix rows that reached the SET (rc∈{0,1}; matches lane_fix_folded + lane_fix_unchanged).
         long long build_epochs{0};    ///< #@ref buildDdPriors calls (counted at entry — a chordless epoch that never reaches the timed projection still counts; for per-epoch averages).
         long long install_epochs{0};  ///< #serial @ref installPosterior calls timed.
     };
@@ -365,6 +384,44 @@ public:
     int applyLaneFix(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks,
                      std::size_t b, std::size_t k, long long w, double y_cyc, double sigma_cyc);
 
+    /**
+     * @brief LF-1 INC-1 (SPEC_lane_fold_perf_card.md §3.2): re-symmetrize every joint pair
+     *        block ONCE, after all of this epoch's lane rows have been applied.
+     *
+     * A no-op unless @ref Config::fold_blocked.  Under @c fold_blocked the per-row
+     * @f$0.5(P+P^\top)@f$ re-symmetrization is skipped inside @ref applyLaneMeasurement /
+     * @ref applyLaneFix (it was a full O(K²) pass + a 2K×2K temp on each of the ~10³ rows/epoch,
+     * and the per-row sparse/dense updates hold symmetry only to ULP); this single pass restores
+     * the exact symmetry the sequential path maintained per-row — hoisting ~10³ symmetrizations
+     * down to one per component.  Because the intra-epoch folds then run on a Pᶻ carrying up to
+     * ~row-count ULPs of asymmetry (vs the per-row-symmetrized sequential Pᶻ), the result is the
+     * pcarry EQUIVALENCE class (≤1e-12 vs sequential, NOT bit-identical).  Call after the MW /
+     * bridge / fix walks and before @c NetworkEstimator::setDdPriors.  Idempotent across a RAIM
+     * re-solve (the blocks are rebuilt each build).
+     *
+     * @param blocks The vector returned by the LAST @ref buildDdPriors (pre-@c setDdPriors).
+     */
+    void finalizeLaneBatch(std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) const;
+
+    /**
+     * @brief LF-1 INC-2 (SPEC_lane_fold_perf_card.md §3.3): may the caller SKIP this epoch's
+     *        MW/bridge lane increment for chord @p k of emitted block @p b?
+     *
+     * True iff @ref Config::skip_pinned_increments AND @p b is a joint pair block AND the chord's
+     * FFR fix is COMMITTED (present in @c lane_fix_w_ as of the last @ref installPosterior) AND was
+     * re-decided within @c Config::skip_pinned_within_n epochs.  A pinned lane sits at σ = 0.01 cyc;
+     * an increment at σ ≈ 0.06-0.2 folded into it is information-free, so skipping it saves the
+     * O(K²) downdate without moving the decision.  Reads ONLY committed state (never the per-build
+     * @c lane_fix_staged_), so every RAIM re-solve of the epoch skips the SAME rows — deterministic.
+     * Any funnel event (slip / D5 flag / re-tap / rebirth) erases the fix memory, so a disturbed
+     * chord returns false and resumes increments the same epoch (invariant #1).  Always false when
+     * @c skip_pinned_increments is off (⇒ byte-identical).
+     *
+     * @param b Emitted block index (from the last @ref buildDdPriors).
+     * @param k Chord (graph-chord) index within the block.
+     */
+    bool laneIncrementSkippable(std::size_t b, std::size_t k) const;
+
     /// WL-3: the carried PAIR chord's two band values+variances (false if @p group is not
     /// a pair group carrying @p chord).  The read half of the pair inject fallback.
     bool carriedPairValue(int group, const ArcKey& chord, double& z1, double& var1,
@@ -464,6 +521,8 @@ private:
     std::set<std::pair<int, ArcKey>> gate_exempt_;  ///< WL-2 §3.3: (group, chord) injected this epoch — D5-exempt at the NEXT @ref installPosterior (consumed + cleared there).  WL-3: a pair chord's exemption spans BOTH band rows.
     std::map<std::pair<int, ArcKey>, long long> lane_fix_w_;      ///< WL-3 §3.3: the last COMMITTED FFR integer per (pair group, chord) — the fold-on-change memory.  Committed at @ref installPosterior; erased when the chord re-taps (slip / D5 flag / rebirth).
     std::map<std::pair<int, ArcKey>, long long> lane_fix_staged_; ///< WL-3: this build's @ref applyLaneFix decisions, staged so a within-epoch RAIM re-solve re-derives identical folds; merged into @ref lane_fix_w_ at install, cleared at each @ref buildDdPriors.
+    std::map<std::pair<int, ArcKey>, long long> lane_fix_epoch_;  ///< LF-1 INC-2: the @c install_epoch_index_ at which each @c lane_fix_w_ key was LAST re-decided.  Committed/pruned/erased in lockstep with @c lane_fix_w_; drives the @ref laneIncrementSkippable grace window.  Empty unless @c Config::skip_pinned_increments.
+    long long install_epoch_index_{0};  ///< LF-1 INC-2: monotone count of accepted @ref installPosterior calls (the epoch clock for the skip grace window; survives RAIM re-solves — only the accepted install advances it).
     std::optional<NetworkCarryVce> inflation_;  ///< D5 v2: the σ̂₀² accumulator (only when Config::innov_calibrate).
     Counters counters_;
     bool      perf_timing_{false};   ///< INC-C0: per-op timers armed (survives reset()).

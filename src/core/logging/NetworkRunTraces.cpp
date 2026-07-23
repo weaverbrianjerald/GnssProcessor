@@ -44,6 +44,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       carry_vce_trace_path(log_dir_ / "network_carry_vce.csv"),
+      estimability_trace_path(log_dir_ / "network_estimability.csv"),
       manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
@@ -73,12 +74,18 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
 
     if (config_.estimateNetworkIonoSh() && shc.trace) {
         vtec_sh_trace.open(vtec_sh_path);
+        // Iono-2 dual-layer: the coefficient trace gains a `layer` column ONLY
+        // when the second shell is armed — the single-layer header (and the
+        // whole OFF artifact set) stays byte-identical.
         if (vtec_sh_trace)
-            vtec_sh_trace << "week,tow,n,m,trig,value_tecu,std_tecu\n";
+            vtec_sh_trace << (shc.layer2_max_degree > 0
+                                  ? "week,tow,layer,n,m,trig,value_tecu,std_tecu\n"
+                                  : "week,tow,n,m,trig,value_tecu,std_tecu\n");
         else
             log->warn("Network: failed to open SH-VTEC trace {}", vtec_sh_path.string());
         // T1a health trace — one row per emitted epoch.  The per-degree columns are
-        // sized from the truncation degree N (deterministic header).
+        // sized from the truncation degree N (deterministic header); the second
+        // shell appends its own degree columns (armed-only, same rule as above).
         vtec_sh_health_trace.open(vtec_sh_health_path);
         if (vtec_sh_health_trace && sh_model) {
             std::string hdr = "week,tow,a00_tecu,a00_std_tecu,rms_all_tecu,"
@@ -88,6 +95,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                 hdr += ",rms_deg" + std::to_string(n) + "_tecu";
             for (int n = 0; n <= sh_model->maxDegree(); ++n)
                 hdr += ",kaula_ratio_deg" + std::to_string(n);
+            if (shc.layer2_max_degree > 0) {
+                hdr += ",a00_l2_tecu";
+                for (int n = 0; n <= shc.layer2_max_degree; ++n)
+                    hdr += ",rms2_deg" + std::to_string(n) + "_tecu";
+            }
             hdr += "\n";
             vtec_sh_health_trace << hdr;
         } else if (!vtec_sh_health_trace) {
@@ -265,6 +277,24 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network (M2/LS-VCE): failed to open carry-VCE trace {}",
                       carry_vce_trace_path.string());
     }
+    if (nc.trace_estimability) {
+        // Card DG5: the machine-readable twin of the Network[estimability] WARN
+        // dump.  ONE long-format file, three record kinds (EPOCH / DIR / RUN) —
+        // see the member Doxygen.  The col1..col5 fields are "label=weight"
+        // strings in the log line's order; a trailing empty field just means the
+        // direction had fewer than 5 shared columns.
+        estimability_trace.open(estimability_trace_path);
+        if (estimability_trace)
+            // col1..col5 carry a DIR row's ≤5 spanning columns (the dump emits at
+            // most five); col6..col8 exist so the RUN record's key=value payload
+            // has headroom without hijacking a numeric column.  A reader must key
+            // off `kind`, never off column position alone.
+            estimability_trace << "kind,week,tow,n_shared,declared_dim,ev_max,cutoff,"
+                                  "n_below,ev,col1,col2,col3,col4,col5,col6,col7,col8\n";
+        else
+            log->warn("Network (Card DG): failed to open estimability trace {}",
+                      estimability_trace_path.string());
+    }
     if (nc.trace_events) {
         events_trace.open(events_trace_path);
         if (events_trace)
@@ -389,6 +419,77 @@ void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char
         o << ',';
         if (threshold) o << fmt::format("{:.6f}", *threshold);
         o << ',' << action << ',' << d << '\n';
+}
+
+void NetworkRunTraces::writeEstimabilityEpochRow(const GnssTime& t, double tow, int n_shared,
+                                                 int declared_dim, double ev_max, double cutoff,
+                                                 int n_below) {
+    if (!estimability_trace.is_open()) return;
+    // {:.9e} on ev_max/cutoff (not the log's {:.3e}): the CSV is the analyzer's
+    // input, and DG3's placement rule is a DECADE argument — throwing away
+    // mantissa digits that cost nothing here would be a false economy.
+    estimability_trace << "EPOCH," << t.week << ',' << fmt::format("{:.3f}", tow) << ','
+                       << n_shared << ',' << declared_dim << ','
+                       << fmt::format("{:.9e}", ev_max) << ','
+                       << fmt::format("{:.9e}", cutoff) << ','
+                       << n_below << ",,,,,,,,,\n";   // ev + col1..col8 empty
+}
+
+void NetworkRunTraces::writeEstimabilityDirRow(
+        const GnssTime& t, double ev,
+        const std::vector<std::pair<std::string, double>>& top) {
+    if (!estimability_trace.is_open()) return;
+    estimability_trace << "DIR," << t.week << ',' << fmt::format("{:.3f}", t.tow)
+                       << ",,,,,," << fmt::format("{:.9e}", ev);
+    for (int i = 0; i < 8; ++i) {
+        estimability_trace << ',';
+        if (i < static_cast<int>(top.size())) {
+            // Labels are driver-built ("CLK|G01", "PB|C26|L7D", "SH|2|1|C") and
+            // contain no comma by construction; sanitize anyway so a future label
+            // format cannot silently shift every downstream column.
+            std::string lab = top[static_cast<size_t>(i)].first;
+            for (char& c : lab) if (c == ',') c = ';';
+            estimability_trace << lab << '='
+                               << fmt::format("{:.4f}", top[static_cast<size_t>(i)].second);
+        }
+    }
+    estimability_trace << '\n';
+}
+
+void NetworkRunTraces::writeEstimabilityRunRow(const NetworkServiceCounters& counters,
+                                               double rank_gate_tol) {
+    if (!estimability_trace.is_open()) return;
+    // DG6 run totals, carried inside the ONE artifact a trace-armed run is
+    // allowed to add (DG5) rather than as a new run-end log line — the estim
+    // golden arm byte-gates the log text.  n_shared/declared_dim/ev_max are
+    // reused as the evaluated/under/over counts and n_below/ev as the observed
+    // min/max: a RUN record is a different record shape, and the `kind` column
+    // is what tells the reader so.  Column meanings for kind=RUN:
+    //   n_shared     -> n_gate_evaluated       declared_dim -> n_gate_withheld_under
+    //   ev_max       -> n_gate_withheld_over   cutoff       -> the RESOLVED tolerance
+    //   n_below      -> n_emitted              ev           -> n_gate_withheld (total)
+    // col1..col8 are self-describing key=value tokens, so a reader never has to
+    // rely on their position:
+    //   obs_min, obs_max, heal_attempt_epochs, heal_attempt_cols, healed_epochs,
+    //   healed_cols, cbadm_phase_orphan_key_epochs.
+    // heal ATTEMPTS are carried alongside the recoveries deliberately: attempts
+    // with zero recoveries is a live heal that cannot resolve the residual, and
+    // the success-only pair alone reports that as a dead one (PA2).
+    estimability_trace << "RUN,0,0.000,"
+                       << counters.n_gate_evaluated << ','
+                       << counters.n_gate_withheld_under << ','
+                       << counters.n_gate_withheld_over << ','
+                       << fmt::format("{:.9e}", rank_gate_tol) << ','
+                       << counters.n_emitted << ','
+                       << counters.n_gate_withheld << ','
+                       << "obs_min=" << counters.nullspace_obs_min << ','
+                       << "obs_max=" << counters.nullspace_obs_max << ','
+                       << "heal_attempt_epochs=" << counters.n_heal_attempt_epochs << ','
+                       << "heal_attempt_cols=" << counters.n_heal_attempt_cols << ','
+                       << "healed_epochs=" << counters.n_healed_epochs << ','
+                       << "healed_cols=" << counters.n_healed_cols << ','
+                       << "cbadm_phase_orphan_key_epochs="
+                       << counters.n_cbadm_phase_orphan_key_epochs << ",\n";
 }
 
 void NetworkRunTraces::rotateServiceCsvs(const NetworkConfig& nc,
@@ -861,6 +962,7 @@ void NetworkRunTraces::closeAll() {
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
     if (carry_vce_trace.is_open()) carry_vce_trace.close();
+    if (estimability_trace.is_open()) estimability_trace.close();   // Card DG5
 }
 
 } // namespace GnssProcessor

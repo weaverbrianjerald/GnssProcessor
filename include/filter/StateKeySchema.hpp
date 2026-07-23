@@ -798,13 +798,19 @@ inline std::string makePivotSeedKey(std::string_view cons,
 }
 
 // ===========================================================================
-// 8. Global SH-VTEC coefficient keys — "SH|<n>|<m>|<C|S>"
+// 8. Global SH-VTEC coefficient keys — "SH|<n>|<m>|<C|S>" / "SH2|<n>|<m>|<C|S>"
 // ---------------------------------------------------------------------------
-// Examples: "SH|0|0|C", "SH|4|2|C", "SH|4|2|S"
+// Examples: "SH|0|0|C", "SH|4|2|C", "SH|4|2|S", "SH2|1|0|C"
 //
 //   n    : spherical-harmonic degree (0..N).
 //   m    : order (0..n).
 //   trig : 'C' (cosine term, includes m=0) or 'S' (sine term, m>=1).
+//   layer: shell index — layer 0 keeps the original "SH" prefix unchanged
+//          (all pre-Iono-2 keys, snapshots, and traces stay valid); the
+//          dual-layer field's second shell uses the DISTINCT prefix "SH2"
+//          (parseVtecShKey hard-rejects extra pipe fields, so a 5-field
+//          layer-extended key would be silently unparseable by old readers —
+//          a distinct prefix is the backward-compatible extension).
 //
 // These name the SHARED spherical-harmonic VTEC coefficient columns of the
 // PPP-RTK network producer's co-estimated global ionosphere
@@ -817,20 +823,25 @@ inline std::string makePivotSeedKey(std::string_view cons,
 // Constructed in:  the network estimator (registerVtecCoeff), the driver.
 // ===========================================================================
 
-/// Tag that opens every SH-VTEC coefficient key.
+/// Tag that opens every layer-0 SH-VTEC coefficient key.
 inline constexpr std::string_view kVtecShPrefix = "SH";
+/// Tag that opens every layer-1 (second-shell) SH-VTEC coefficient key.
+inline constexpr std::string_view kVtecSh2Prefix = "SH2";
 
 /// Decomposed SH-VTEC coefficient key.
 struct VtecShKeyParts {
     int  n;     ///< Degree.
     int  m;     ///< Order.
     char trig;  ///< 'C' or 'S'.
+    int  layer = 0;  ///< Shell index: 0 = legacy "SH" layer, 1 = "SH2" second shell.
 };
 
-/// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>".
-inline std::string makeVtecShKey(int n, int m, char trig) {
+/// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>" (layer 0) or
+/// "SH2|<n>|<m>|<C|S>" (layer 1).  Layer 0 output is byte-identical to the
+/// pre-Iono-2 three-argument form.
+inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     std::string out;
-    out.append(kVtecShPrefix);
+    out.append(layer > 0 ? kVtecSh2Prefix : kVtecShPrefix);
     out.push_back(kPipeDelimiter);
     out.append(std::to_string(n));
     out.push_back(kPipeDelimiter);
@@ -840,20 +851,29 @@ inline std::string makeVtecShKey(int n, int m, char trig) {
     return out;
 }
 
-/// Cheap predicate: does @p key open with the SH prefix + a pipe?
+/// Cheap predicate: does @p key open with an SH-VTEC prefix ("SH" or "SH2") + a
+/// pipe?  True for BOTH layers — layer-agnostic call sites (kind tests, trace
+/// filters) keep working unchanged on dual-layer keys.
 inline bool isVtecShKey(std::string_view key) {
+    if (key.size() > kVtecSh2Prefix.size() + 1
+        && key.substr(0, kVtecSh2Prefix.size()) == kVtecSh2Prefix
+        && key[kVtecSh2Prefix.size()] == kPipeDelimiter)
+        return true;
     return key.size() > kVtecShPrefix.size() + 1
         && key.substr(0, kVtecShPrefix.size()) == kVtecShPrefix
         && key[kVtecShPrefix.size()] == kPipeDelimiter;
 }
 
 /// Parse a global SH-VTEC coefficient key.  Returns @c std::nullopt unless the
-/// key has the exact form "SH|<n>|<m>|<C|S>" with non-negative integer n, m and
-/// a 'C' or 'S' trig tag.
+/// key has the exact form "SH|<n>|<m>|<C|S>" (layer 0) or "SH2|<n>|<m>|<C|S>"
+/// (layer 1) with non-negative integer n, m and a 'C' or 'S' trig tag.
 inline std::optional<VtecShKeyParts>
 parseVtecShKey(std::string_view key) {
     if (!isVtecShKey(key)) return std::nullopt;
-    const auto p0 = kVtecShPrefix.size();                         // pipe after "SH"
+    const bool layer2 = key.substr(0, kVtecSh2Prefix.size()) == kVtecSh2Prefix
+                        && key[kVtecSh2Prefix.size()] == kPipeDelimiter;
+    const auto p0 = layer2 ? kVtecSh2Prefix.size()
+                           : kVtecShPrefix.size();                // pipe after the prefix
     const auto p1 = key.find(kPipeDelimiter, p0 + 1);
     if (p1 == std::string_view::npos) return std::nullopt;
     const auto p2 = key.find(kPipeDelimiter, p1 + 1);
@@ -873,7 +893,7 @@ parseVtecShKey(std::string_view key) {
     };
     int n = 0, m = 0;
     if (!toInt(n_sv, n) || !toInt(m_sv, m)) return std::nullopt;
-    return VtecShKeyParts{n, m, t_sv.front()};
+    return VtecShKeyParts{n, m, t_sv.front(), layer2 ? 1 : 0};
 }
 
 }  // namespace StateKeys

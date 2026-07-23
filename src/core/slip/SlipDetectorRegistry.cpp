@@ -64,9 +64,12 @@ SlipDetectorRegistry::creators() {
           [](const GnssConfig& c, LogManager& l) -> std::unique_ptr<ISlipDetector> {
               return std::make_unique<EwlSlipDetector>(c, l);
           } },
-        // GeometryFree / IonoFreePhase are STAGED — their .cpp is excluded
-        // from the build, so no creator is registered here.  createEnabled
-        // warns and skips them if a config requests them.
+        // GeometryFree is STAGED — its .cpp is excluded from the build, so no
+        // creator is registered here.  IonoFreePhase IS compiled, but it is
+        // instantiated directly on the network path (ApplicationNetworkSetup,
+        // gated on network.cycle_slip.if_phase_td), not through this registry,
+        // so no creator is registered for it here either.  createEnabled warns
+        // and skips both if a config requests them.
     };
     return table;
 }

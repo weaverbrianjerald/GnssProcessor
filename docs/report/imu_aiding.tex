@@ -31,7 +31,13 @@ routes through \texttt{Application::run} $\to$
 \texttt{src/core/aiding/ImuAidingSource.cpp}, whose
 \texttt{PredictContribution} is spliced into the filter covariance by
 \texttt{KalmanFilter::predictAided}
-(\texttt{src/core/filter/KalmanFilter.cpp}).
+(\texttt{src/core/filter/KalmanFilter.cpp}).  The real-time engine
+(\texttt{RealTimeEngine::run}) drives the identical \texttt{predictAided}
+$/$ \texttt{collectPredict} path; the only difference from the batch run is
+ingest --- a live sensor feeds \texttt{ImuIntegrator::addSample}, the
+streaming counterpart to the CSV \texttt{loadData}, which appends to the
+same sorted sample buffer so streaming and batch yield identical
+\texttt{integrate} results.
 
 This \texttt{IAidingSource} / \texttt{AidingSourceManager} abstraction
 (\texttt{include/aiding/}) is the composable seam through which every
@@ -157,8 +163,11 @@ terms of the textbook ECEF error model are deliberately dropped: the
 position-error feedback row
 ($[\insF]_{\delta\rxpos,\delta\rxpos} = -\skewm{\earthrate}$) and the
 gravity-gradient coupling
-$[\insF]_{\delta\imuvel,\delta\rxpos} = -\,\partial\gravec/\partial\rxpos
-- \skewm{\earthrate}^{2}$.  This is a first-order approximation that is
+$[\insF]_{\delta\imuvel,\delta\rxpos} = +\,\partial\gravec/\partial\rxpos$
+(the gradient of the \emph{plumb} gravity of \cref{eq:imu-gravity}, which
+already subsumes the centrifugal $-\skewm{\earthrate}^{2}$; the leading
+sign follows from differentiating the velocity update
+\cref{eq:imu-velocity}).  This is a first-order approximation that is
 accurate over the short epoch interval of a GNSS-aided run.  The
 discrete transition is taken to first order,
 \begin{equation}
@@ -244,7 +253,14 @@ the attitude/bias block.  The attitude correction is then realised by
 the feedback of \cref{eq:imu-att-feedback}.
 
 \paragraph{Tightly coupled.}
-In the tightly-coupled mode the \emph{Doppler} observation alone gains
+Tightly-coupled mode requires the velocity block, so the loader
+force-enables it independently of the user's
+\texttt{estimation.estimate\_velocity} --- a
+\texttt{TightCoupled} \texttt{coupling\_mode} with the flag left false
+flips it true and logs \texttt{"forcing estimate\_velocity=true"}
+(\texttt{GnssConfigLoad.cpp}), guaranteeing the three velocity states and
+hence the Doppler rows the TC Jacobian below attaches to.
+In this mode the \emph{Doppler} observation alone gains
 direct attitude and accelerometer-bias columns.  This is the one
 aiding contribution that re-parameterizes existing GNSS rows rather
 than appending its own: each relinearisation pass calls

@@ -49,6 +49,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "filter/NetworkNormalEquations.hpp"
@@ -63,7 +64,7 @@ enum class SharedParamKind {
     Clock,      ///< Estimable satellite clock (signal-independent).
     CodeBias,   ///< Per-signal satellite code bias (OSB).
     PhaseBias,  ///< Per-signal satellite phase bias (OSB; carries the pivot lump).
-    VtecSh,     ///< Global single-layer SH-VTEC coefficient (a_nm/b_nm; network-wide, not per-satellite).
+    VtecSh,     ///< Global SH-VTEC coefficient (a_nm/b_nm; network-wide, not per-satellite; layer 0 = legacy shell, layer 1 = the dual-layer second shell).
 };
 
 /**
@@ -93,8 +94,10 @@ public:
     /// Register a per-signal satellite phase-bias column (idempotent).
     Eigen::Index registerPhaseBias(const std::string& sat, const std::string& signal);
     /// Register a global SH-VTEC coefficient column (n,m,trig) (idempotent).
-    /// @p trig is 'C' (cosine, m>=0) or 'S' (sine, m>=1).
-    Eigen::Index registerVtecCoeff(int n, int m, char trig);
+    /// @p trig is 'C' (cosine, m>=0) or 'S' (sine, m>=1); @p layer selects the
+    /// shell (0 = legacy single layer, 1 = the dual-layer second shell — keyed
+    /// "SH2|n|m|t" so both shells coexist on the border).
+    Eigen::Index registerVtecCoeff(int n, int m, char trig, int layer = 0);
 
     /// @return The clock column for @p sat. @throws std::out_of_range if absent.
     Eigen::Index clockColumn(const std::string& sat) const;
@@ -102,8 +105,9 @@ public:
     Eigen::Index codeBiasColumn(const std::string& sat, const std::string& signal) const;
     /// @return The phase-bias column for (@p sat, @p signal). @throws if absent.
     Eigen::Index phaseBiasColumn(const std::string& sat, const std::string& signal) const;
-    /// @return The SH-VTEC coefficient column for (n,m,trig). @throws if absent.
-    Eigen::Index vtecCoeffColumn(int n, int m, char trig) const;
+    /// @return The SH-VTEC coefficient column for (n,m,trig) of @p layer.
+    /// @throws if absent.
+    Eigen::Index vtecCoeffColumn(int n, int m, char trig, int layer = 0) const;
 
     /// @return Number of registered shared columns.
     Eigen::Index numShared() const { return static_cast<Eigen::Index>(columns_.size()); }
@@ -211,6 +215,47 @@ public:
      * @param nthreads Within-block thread budget (≤ 1 ⇒ OFF, the serial/seam fold path).
      */
     void setCarryParallelThreads(int nthreads) { carry_par_threads_ = nthreads > 1 ? nthreads : 1; }
+
+    /**
+     * @brief Card DG (@c network.rank_gate_tol): set the RESOLVED relative
+     *        eigenvalue tolerance of the shared-border null-space rank gate —
+     *        the ONE value every consumer reads.
+     *
+     * Default @ref kNullSpaceTol (1e-9), so an unset config is byte-identical:
+     * the same double travels through the same arithmetic as the former compile
+     * constant.  The driver calls this ONCE, next to the other estimator knobs,
+     * before the epoch loop.
+     *
+     * @par Why one value, three consumers
+     * The gate (@c NetworkSbasis::assertNullSpaceRank), the estimability dump
+     * (@ref dumpEstimabilitySpectrum) and the prioritized drop-and-heal
+     * (@c healNearNullPhaseBias) must agree: the dump has to DESCRIBE the gate's
+     * decision, and the heal must soft-anchor only directions the gate itself
+     * counts as null.  A heal running at a LOOSER cutoff than the gate would put
+     * prior information on weak-but-REAL parameters — the near-cutoff fragility
+     * the CB-ADM card's rejected-alternatives list already killed.  Passing the
+     * tolerance around as a compile constant made that agreement implicit; the
+     * resolved member makes it structural.
+     *
+     * @par Placement rule (binding for any non-default value)
+     * The armed tolerance must be justified from THAT config's own estimability
+     * dump: the resulting cutoff (@p tol · max(λmax, 1)) has to sit ≥ 2 decades
+     * above the config's gauge depth and ≥ 2 decades below its weakest REAL
+     * direction.  The gate is an EXACT-equality test that throws in BOTH
+     * directions, so a tolerance pushed below a config's own gauge depth stops
+     * counting the declared gauges and withholds a HEALTHY config
+     * ("over-specified").  Guessing a value without a measured spectrum is a
+     * spec violation — see docs/SPEC_beidou_w6_datum.md §2 (DG3).
+     *
+     * @param tol Relative eigenvalue tolerance (> 0; the loader validates and
+     *            clamps at 1e-16 so an accidental 0 cannot turn the gate off).
+     */
+    void setRankGateTol(double tol) { rank_gate_tol_ = tol; }
+
+    /// The resolved rank-gate tolerance (@ref setRankGateTol); @ref kNullSpaceTol
+    /// until the driver sets it.  Read by the gate call sites, the estimability
+    /// dump and the drop-and-heal — no consumer keeps a private tolerance.
+    double rankGateTol() const { return rank_gate_tol_; }
 
     /// Pin-aware station PD guard passthrough
     /// (@ref NetworkNormalEquations::setStationPdMedianScale;
@@ -429,19 +474,56 @@ public:
      */
     const Eigen::MatrixXd& reducedSharedNormals();
 
-    /// Relative eigenvalue tolerance for the shared-border null-space rank gate
-    /// (vs the largest λ of the reduced shared normals).  The reduced system is
-    /// deliberately ill-conditioned: phase pins the clock/phase-bias SUM at ~1e5
-    /// weight while CODE alone separates the split, so the weakest REAL direction
-    /// sits ~7 decades above the true gauges (σ ~1e-10 vs ~1e-2 of σmax).  The
-    /// 1e-6 library default of NetworkSbasis::assertNullSpaceRank sits above the
-    /// weak-but-real directions and miscounts them; 1e-9 lands in the gap.
-    /// Single source of truth shared by the run-TU gate, the estimability
-    /// spectrum dump (@ref dumpEstimabilitySpectrum), and the prioritized
-    /// drop-and-heal (NetworkPhaseDatum healNearNullPhaseBias) — the heal MUST
-    /// use the SAME cutoff as the gate it is protecting.  Relocated from the
-    /// run TU at decomposition INC-8.
+    /// DEFAULT relative eigenvalue tolerance for the shared-border null-space
+    /// rank gate (vs the largest λ of the reduced shared normals).  The reduced
+    /// system is deliberately ill-conditioned: phase pins the clock/phase-bias
+    /// SUM at ~1e5 weight while CODE alone separates the split, so the weakest
+    /// REAL direction sits ~7 decades above the true gauges (σ ~1e-10 vs ~1e-2
+    /// of σmax).  The 1e-6 library default of NetworkSbasis::assertNullSpaceRank
+    /// sits above the weak-but-real directions and miscounts them; 1e-9 lands in
+    /// the GPS+Galileo-era gap.
+    ///
+    /// Card DG (2026-07-22) made the tolerance a CALIBRATION PARAMETER rather
+    /// than a constant: this stays the single source of the DEFAULT (so an unset
+    /// @c network.rank_gate_tol is byte-identical), while the value the three
+    /// consumers actually read is @ref rankGateTol.  The reason is BeiDou —
+    /// adding BDS puts a weak-but-real family layer ≈1.7e-10 of λmax, roughly
+    /// three decades DEEPER (relatively) than the GPS+Gal-era weakest-real, so
+    /// 1e-9 miscounts again exactly as 1e-6 once did.  The measured 305-station
+    /// spectrum leaves a SIX-decade gap between that layer (~1e-3 absolute) and
+    /// the declared clock gauges (~1e-9 absolute); a per-config armed value
+    /// placed in that gap counts only the gauges again.  See @ref setRankGateTol
+    /// for the binding placement rule and docs/SPEC_beidou_w6_datum.md §0.2.
+    ///
+    /// Relocated from the run TU at decomposition INC-8.
     static constexpr double kNullSpaceTol = 1e-9;
+
+    /// One reported near-null direction of an @ref EstimabilityDump: its
+    /// eigenvalue plus the (column label, |component|) pairs of the ≤ 5
+    /// heaviest-spanning shared columns — the machine-readable twin of the
+    /// "dir spanned by [...]" warn line (Card DG5).
+    struct EstimabilityDirection {
+        double ev{0.0};                                    ///< eigenvalue of the direction
+        std::vector<std::pair<std::string, double>> top;   ///< ≤ 5 (col_desc label, |component|), heaviest first
+    };
+
+    /// Machine-readable mirror of ONE @ref dumpEstimabilitySpectrum call, so the
+    /// storm analyzer (scripts/characterize_storm.py) can read a CSV instead of
+    /// re-parsing WARN text.  Purely observational: the struct is BUILT from the
+    /// same numbers the log lines print, in the same order, and building it
+    /// changes neither the log text nor the solution (Card DG5).
+    struct EstimabilityDump {
+        bool   valid{false};        ///< false ⇒ the eigensolve did not converge (nothing was logged either)
+        double tow{0.0};            ///< epoch GPS time-of-week
+        int    n_shared{0};         ///< reduced shared-normal dimension
+        int    declared_dim{0};     ///< declared S-basis dimension for this epoch
+        double ev_max{0.0};         ///< largest eigenvalue λmax
+        double cutoff{0.0};         ///< the ABSOLUTE cutoff actually applied = rankGateTol() · max(λmax, 1)
+        int    n_below{0};          ///< directions with ev < cutoff (what the gate counts)
+        /// The dumped tail (n_below + 2 directions), LARGEST-ev first — the same
+        /// order the warn lines use, so a CSV row and a log line line up 1:1.
+        std::vector<EstimabilityDirection> dirs;
+    };
 
     /**
      * @brief One-shot estimability diagnostic (network.trace_estimability):
@@ -471,10 +553,15 @@ public:
      *                     @ref sharedColumnLabel — the formats differ and the
      *                     trace text is golden-gated.
      * @param log          Main logger (two warn lines per dumped direction).
+     * @return The same spectrum in machine-readable form (@ref EstimabilityDump;
+     *         @c valid=false iff the eigensolve failed, in which case nothing was
+     *         logged either).  The caller writes it to @c network_estimability.csv
+     *         under @c network.trace_estimability — DG5.  The log text is
+     *         UNCHANGED by this addition (it is golden-gated by the estim arm).
      */
-    void dumpEstimabilitySpectrum(double tow, int declared_dim,
-                                  const std::vector<std::string>& col_desc,
-                                  const std::shared_ptr<spdlog::logger>& log);
+    EstimabilityDump dumpEstimabilitySpectrum(double tow, int declared_dim,
+                                              const std::vector<std::string>& col_desc,
+                                              const std::shared_ptr<spdlog::logger>& log);
 
     /// A carried-forward / regularizing prior on one shared parameter (W4-S2b D2
     /// time update; also the SH-VTEC Kaula/temporal prior).
@@ -485,6 +572,7 @@ public:
         int             sh_n{-1};    ///< VtecSh degree (VtecSh only)
         int             sh_m{-1};    ///< VtecSh order  (VtecSh only)
         char            sh_trig{0};  ///< VtecSh 'C'/'S' (VtecSh only)
+        int             sh_layer{0}; ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
         double          value{0.0};  ///< prior mean
         double          info{0.0};   ///< information weight = 1 / prior-variance (>0)
     };
@@ -755,6 +843,7 @@ private:
         int  sh_n{-1};         ///< VtecSh degree (VtecSh only)
         int  sh_m{-1};         ///< VtecSh order  (VtecSh only)
         char sh_trig{0};       ///< VtecSh 'C'/'S' (VtecSh only)
+        int  sh_layer{0};      ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
     };
 
     Eigen::Index registerColumn_(const std::string& sat, SharedParamKind kind,
@@ -773,6 +862,7 @@ private:
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = OFF; >1 relaxes ~1e-X on the reduction, byte-id on the middle inverse; set by the driver)
+    double rank_gate_tol_{kNullSpaceTol};         ///< Card DG (network.rank_gate_tol): the RESOLVED null-space cutoff every consumer reads (gate / dump / heal); defaults to kNullSpaceTol so an unset config is byte-identical (@ref setRankGateTol)
     bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };

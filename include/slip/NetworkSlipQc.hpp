@@ -23,6 +23,7 @@
 #include "common/Constants.hpp"
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
 #include "logging/NetworkRunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
+#include "slip/NetworkRawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
 
 #include <algorithm>
 #include <cmath>
@@ -147,10 +148,33 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  *        integer can never bias the gauge.
  *
  * Gated INSIDE on network.cycle_slip.mw_detect (call unconditionally).  The
- * refloat_signal lambda lives here verbatim (deliberately NOT merged with the
- * IF driver's refloat_pair).  Also the Card-4 C3c feed: every flagged
+ * refloat_signal lambda lives here (deliberately NOT merged with the IF
+ * driver's refloat_pair).  Also the Card-4 C3c feed: every flagged
  * (station, ambiguity) is inserted into @p carry_slipped_ambs from epoch 1,
  * independent of the legacy carry's warm gate.
+ *
+ * ### Card E (2026-07-21) — detections are emitted when the carry is COLD
+ *
+ * `refloat_signal` now reports MATCHED and REFLOATED as separate facts.
+ * Emission and the n_mw / n_lli log counters key on the DETECTION; refloat
+ * accounting is a separate counter and stays warm-only.  A cold run therefore
+ * writes `mw_wl_slip` / `lli_slip` rows with `action=diagnostic` — mirroring
+ * what the IF-TD driver has always done — instead of writing nothing at all
+ * while still feeding the C3c funnel.  Strictly numerically inert: neither
+ * markAmbiguityPendingReseed nor the @p carry_slipped_ambs insert moved.
+ *
+ * ### Card L (2026-07-21) — the LLI arm is QUALIFIED, never excluded
+ *
+ * An LLI assertion acts when it is CORROBORATED by an empirical MW or GF step
+ * (decisive at any station — a real multi-satellite re-lock always survives),
+ * or when the station's own LLI behaviour is still credible (a two-state,
+ * hysteretic EWMA of its LLI-set fraction).  Only the third case — an
+ * uncorroborated assertion at a station whose LLI is demonstrably
+ * non-credible — is downgraded, and then it is emitted with
+ * `action=suppressed` and counted, never silently dropped.  Because the whole
+ * `refloat_signal` call is skipped for a suppressed assertion, the C3c funnel
+ * insert obeys the same qualification as the pending-reseed path (spec M5).
+ * The qualification is inert unless @c SlipQcParams::lli_corroborate is armed.
  *
  * @param pa                 PASS-A buffers (reads sta_mw_refloat).
  * @param config_            Config (mw_detect gate read inside).
@@ -167,6 +191,15 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  *                           run-TU instance by NON-CONST reference.  A value
  *                           copy anywhere on this path silently disables the
  *                           Card-4 slip funnel (standing invariant #1).
+ * @param raw                This epoch's shared raw observables + step verdicts
+ *                           (Card L evidence).  @c computed==false ⇒ no
+ *                           evidence available ⇒ the qualification is skipped
+ *                           and LLI stays decisive.
+ * @param qc                 Card L / G knob snapshot (all-OFF ⇒ legacy behaviour).
+ * @param raw_hist           Per-station cross-epoch slip-QC state — the
+ *                           per-station LLI accounting for the M4
+ *                           top-offenders line is tallied here.
+ * @param qc_cnt             Run-end slip-QC counters — accumulated into.
  * @param se                 Current synced epoch (event rows / log lines).
  * @param traces             Trace unit (T0_mw_detect event rows).
  * @param log                Run logger.
@@ -178,6 +211,9 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                int i_lo, int n_sta_total,
                                bool carry_invariant, bool carry_warm,
                                std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                               const RawSlipEpoch& raw, const SlipQcParams& qc,
+                               std::vector<RawSlipHistory>& raw_hist,
+                               SlipQcCounters& qc_cnt,
                                const SyncedEpoch& se, NetworkRunTraces& traces,
                                const std::shared_ptr<spdlog::logger>& log);
 

@@ -23,7 +23,10 @@ satellite (\dcref{sec:state-indexing}{dynamic indexing}); the models in
 this chapter supply its a-priori seed, an optional pseudo-observation that
 ties the relative slants to a Global Ionosphere Map, and the small
 second- and third-order corrections that the linear $1/f^2$ scaling cannot
-represent.  This document is the derivation of those interiors: the
+represent.  The network producer additionally co-estimates its own
+single-layer spherical-harmonic VTEC field, which lets it dispense with an
+external GIM entirely; that model is derived with the network estimation in
+\dcref{sec:net}{the network mode chapter}.  This document is the derivation of those interiors: the
 mapping functions, the pressure reductions, the thin-shell geometry, the
 geomagnetic field, and the sign conventions that decide whether each term
 is added to or subtracted from the modelled range.
@@ -81,8 +84,8 @@ total surface pressure alone, through the Saastamoinen reduction
 \end{empheq}
 with $P$ the total pressure in millibar at the antenna, $\phi$ the
 geodetic latitude, and $h_{\mathrm{km}}=h/1000$ the ellipsoidal height in
-kilometres (\texttt{Troposphere.cpp} line~336, denominator \texttt{f\_lat}
-line~328).  The numerical coefficient $0.0022768~\mathrm{m\,mbar^{-1}}$
+kilometres (\texttt{Troposphere::computeSaastamoinenZHD}, denominator
+\texttt{f\_lat}).  The numerical coefficient $0.0022768~\mathrm{m\,mbar^{-1}}$
 folds the refractivity constant $k_1 = 77.604~\mathrm{K\,mbar^{-1}}$ with
 the dry-gas constant and standard gravity; the denominator is the
 gravity-variation factor $f(\phi,h)$ that converts the
@@ -91,7 +94,7 @@ column-integrated delay to its value at the local effective gravity.
 When neither a surface met sensor nor the GPT3 grid (below) is available,
 $P$ is taken from a standard-atmosphere barometric reduction of a
 configured sea-level pressure $P_0$ and temperature $T_0$
-(\texttt{Troposphere.cpp} lines~41--57):
+(\texttt{Troposphere.cpp}, \texttt{pressureFromHeightStdAtm}):
 \begin{equation}
 P(h) = P_0\left(1 - \frac{L\,h}{T_0}\right)^{g/(R L)},
 \qquad
@@ -108,7 +111,7 @@ guard.
 
 Both the hydrostatic and wet mappings use the normalised three-parameter
 continued fraction of Marini, normalised to unity at zenith
-(\texttt{Troposphere.cpp} lines~94--99):
+(\texttt{Troposphere::mariniMapping}):
 \begin{empheq}[box=\fbox]{equation}
 m(\elev;\,a,b,c) =
 \frac{\displaystyle 1 + \cfrac{a}{1 + \cfrac{b}{1+c}}}
@@ -124,7 +127,7 @@ another, is the triple $(a,b,c)$.  Two families are implemented.
 The default mapping interpolates the Niell tables \cite{niell1996global}
 of $(a,b,c)$ given at five reference latitudes $15^\circ, 30^\circ,
 45^\circ, 60^\circ, 75^\circ$, each as a mean plus an annually varying
-amplitude (\texttt{Troposphere.cpp} lines~224--245).  The seasonal value
+amplitude (\texttt{Troposphere.cpp} lines~233--254).  The seasonal value
 is
 \begin{equation}
 v(\phi,t) = \bar v(\phi)
@@ -134,7 +137,7 @@ v(\phi,t) = \bar v(\phi)
 \begin{cases} 28 & \phi \ge 0 \\ 28 + 182.625 & \phi < 0 \end{cases}
 \label{eq:atmos-niell-season}
 \end{equation}
-(\texttt{Troposphere.cpp} lines~207, 269--271).  The \emph{minus} sign and
+(\texttt{Troposphere.cpp} lines~216, 278--280).  The \emph{minus} sign and
 the southern-hemisphere half-year phase shift are both load-bearing: the
 amplitude term is subtracted, and the Southern Hemisphere is put in
 anti-phase by adding half a year to the phase reference rather than by
@@ -144,7 +147,7 @@ carry mean values only (no annual term in this model).
 
 A height correction lifts the hydrostatic mapping from sea level to the
 station, identical in the Niell and VMF3 paths
-(\texttt{Troposphere.cpp} lines~185--189, 285--289):
+(\texttt{Troposphere.cpp} lines~194--198, 294--298):
 \begin{equation}
 \mfh(\elev,h) = \mfh(\elev,0)
   + \left[\frac{1}{\sinel} - m(\elev;\,a_{\mathrm{ht}},b_{\mathrm{ht}},c_{\mathrm{ht}})\right] h_{\mathrm{km}},
@@ -227,7 +230,7 @@ $a_{\mathrm h},a_{\mathrm w}$ drive the VMF3 mapping.
 The azimuthal gradient in \eqref{eq:atmos-tropo-total} uses the
 Chen--Herring mapping \cite{chen1997effects}, coded identically in the
 Jacobian and the prefit residual
-(\texttt{src/core/measurement/MeasurementModel.cpp} lines~1116--1124,
+(\texttt{MeasurementModel::buildJacobianRow},
 \texttt{src/core/measurement/StateInitializer.cpp} lines~207--211):
 \begin{empheq}[box=\fbox]{equation}
 \mfg(\elev) = \frac{1}{\sinel\tan\elev + 0.0032},
@@ -244,7 +247,7 @@ receiver position is not yet usable (norm below $10^3$~m, or non-finite)
 the geodetic latitude/height needed by the Niell/VMF3 coefficients is
 unavailable, so the hydrostatic and wet mappings degrade to the
 geometry-only Black--Eisner form $1/(\sinel + a/(\tan\elev + b))$
-(\texttt{Troposphere.cpp} lines~152--153) purely so the engine never
+(\texttt{Troposphere.cpp} lines~161--162) purely so the engine never
 divides by an undefined elevation during cold start.
 
 % ============================================================
@@ -271,8 +274,7 @@ f_{\mathrm{L1}}^{\mathrm{GPS}}$, the dispersion coefficient is
 \label{eq:atmos-iono-scaling}
 \end{empheq}
 i.e.\ the slant-iono Jacobian column is $+\mu_\sigl$ on code and
-$-\mu_\sigl$ on phase (\texttt{src/core/measurement/MeasurementModel.cpp}
-lines~1145--1149).  This is the model interior of $\mu_\sigl$ in
+$-\mu_\sigl$ on phase (\texttt{MeasurementModel::buildJacobianRow}).  This is the model interior of $\mu_\sigl$ in
 \dcref{eq:iono-scaling}{the notation document}; referencing every
 constellation's slant state to GPS~L1 is what lets the
 between-satellite/between-receiver differencing operators
@@ -285,7 +287,10 @@ has $\mu = 1$ and the state \emph{is} the L1 slant delay in metres.
 A Global Ionosphere Map gives vertical TEC on a latitude/longitude grid at
 a single thin shell of height $H$ above a base radius $R_E$.  The slant
 delay along a ray at elevation $\elev$ follows from single-layer geometry
-(\texttt{src/core/atmosphere/GlobalIonosphereMap.cpp} lines~114--161).
+(\texttt{computeIppGeometry} in
+\texttt{src/core/atmosphere/SphericalHarmonicIonosphere.cpp}, the shared helper
+that \texttt{GlobalIonosphereMap::slantIonoDelay} and the co-estimated
+spherical-harmonic VTEC model both call so the two never drift).
 The zenith angle $z'$ at the ionospheric pierce point (IPP) obeys
 \begin{equation}
 \sin z' = \frac{R_E}{R_E + H}\cos\elev,
@@ -293,11 +298,15 @@ The zenith angle $z'$ at the ionospheric pierce point (IPP) obeys
 \text{mapping } M(\elev) = \frac{1}{\cos z'},
 \label{eq:atmos-gim-obliquity}
 \end{equation}
-so that $\stec = M(\elev)\,\vtec$ (\texttt{GlobalIonosphereMap.cpp}
-lines~129--132).  The earth-centred angle to the IPP is $\psi = \tfrac\pi2
-- \elev - z'$, and the IPP geodetic coordinates come from the
-spherical-triangle solution along the satellite azimuth $\azim$
-(\texttt{GlobalIonosphereMap.cpp} lines~136--140):
+so that $\stec = M(\elev)\,\vtec$
+(\texttt{GlobalIonosphereMap::slantIonoDelay}).  The earth-centred angle to the
+IPP is $\psi = \tfrac\pi2 - \elev - z'$, and the IPP latitude and longitude come
+from the spherical-triangle solution along the satellite azimuth $\azim$
+(\texttt{computeIppGeometry}).  It propagates the receiver's geodetic latitude
+$\phi_\rx$ across the thin shell as though it were geocentric --- an
+approximation worth well under a millimetre of L1 delay, and the frame in which
+the reconstructed IPP is later consumed by the higher-order model
+\eqref{eq:atmos-dipole}:
 \begin{align}
 \phi_{\mathrm{IPP}} &= \arcsin\!\bigl(\sin\phi_\rx\cos\psi
                       + \cos\phi_\rx\sin\psi\cos\azim\bigr),
@@ -321,8 +330,8 @@ I^{\mathrm{GIM}} = \stec \cdot \frac{40.3 \times 10^{16}}{f^2}
 \end{empheq}
 the factor $10^{16}$ converting $\vtec$ from TECU to $\mathrm{el\,m^{-2}}$
 and $40.3 = 40.3~\mathrm{m\,Hz^2\,(el\,m^{-2})^{-1}}$ the first-order
-refractivity constant (\texttt{GlobalIonosphereMap.cpp} lines~13--15,
-149--153).
+refractivity constant (\texttt{GlobalIonosphereMap.cpp} lines~13--15; the metre
+conversion is in \texttt{GlobalIonosphereMap::slantIonoDelay}).
 
 \subsubsection{The GIM iono-weighting pseudo-observation}
 

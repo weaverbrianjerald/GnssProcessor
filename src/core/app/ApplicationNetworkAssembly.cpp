@@ -314,6 +314,7 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
                                            const std::map<int, int>& h2local,
                                            const GnssTime& t,
                                            const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
+                                           const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
                                            const NetworkIonoDeweightGate& iono_deweight,
                                            const GlobalVtecShConfig& shc, bool sh_dev_on,
                                            const std::map<std::string, ShDevCarry>& sh_dev_carry,
@@ -330,18 +331,25 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
     if (w_s <= 0.0) return;
     const Eigen::VectorXd x = st.sm->getStateVector();
     const double Re = shc.earth_radius_km * 1000.0;
-    const double H  = shc.layer_height_km * 1000.0;
     const double tecu_to_L1m =
         40.3 * 1.0e16 / (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ);
     const double lon_sun = shc.sun_fixed ? meanSunLongitude(t) : 0.0;
-    const int K = sh_model->numCoeffs();
+    // Iono-2 dual-layer: one row still asserts ONE slant constraint, but the
+    // field side sums the shells — ι = Σ_l M_l(el)·tecu·SH_l(IPP_l)·c_l (+ d).
+    // Each shell gets its OWN pierce geometry (different H ⇒ different mapping
+    // AND different IPP lat/lon); the single-layer path is the one-entry list
+    // (byte-identical).  The representativeness σ and the deviation's vertical↔
+    // slant conversion use the LAYER-0 mapping (the dominant shell).
+    const std::vector<ShLayer> layers = shLayers(shc, sh_model.get(),
+                                                 sh_model2 ? sh_model2.get() : nullptr);
+    const std::size_t n_lay = layers.size();
 
     struct SRow {
         int    local_col;        ///< A_r column of this satellite's slant-iono state.
-        double innov;            ///< −x(iono_idx).
+        double innov;            ///< −x(iono_idx) (+ predicted deviation under T5v2).
         double var;              ///< per-LOS representativeness variance (m²).
-        double map_tecu;         ///< M(el)·tecu_to_L1m (the STEC scale).
-        std::vector<double> basis;  ///< Ȳ_nm(IPP) in coeff order.
+        std::vector<double> map_tecu;             ///< Per layer: M_l(el)·tecu_to_L1m.
+        std::vector<std::vector<double>> basis;   ///< Per layer: Ȳ_nm(IPP_l) in coeff order.
     };
     std::map<char, std::vector<SRow>> by_const;
     std::vector<double> bvals;
@@ -352,36 +360,50 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
-        const IppGeometry g = computeIppGeometry(st.ecef, o.sat_pos, Re, H);
-        if (!g.valid) continue;
-        const double lon_sf = g.ipp_lon_rad - lon_sun;
-        sh_model->basis(g.ipp_lat_rad, lon_sf, bvals);
-        const double sigma =
-            std::max(iw.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m);
+        const IppGeometry g0 =
+            computeIppGeometry(st.ecef, o.sat_pos, Re, layers[0].shell_height_m);
+        if (!g0.valid) continue;
+        const double m0_tecu = g0.mapping * tecu_to_L1m;   // layer-0 STEC scale
+        // Literal legacy product chain (rep·map)·tecu — NOT rep·m0_tecu: FP
+        // multiplication is non-associative and the OFF-path byte-identity gate
+        // caught the regrouped form drifting the solve checksum at 1e-14.
+        const double sigma = std::max(
+            iw.floor_m, shc.representation_sigma_tecu * g0.mapping * tecu_to_L1m);
         SRow r;
         r.local_col = hit->second;
         r.innov     = -x(iono_idx);
         r.var       = sigma * sigma;
-        // T5: the pin constrains (ι − SH·c) to the PREDICTED deviation at the
-        // prediction's variance + the floor, instead of to 0 at the full
-        // representativeness σ.  READ-ONLY on the carry (serial pre-pass ages it;
+        r.map_tecu.resize(n_lay, 0.0);
+        r.basis.resize(n_lay);
+        for (std::size_t l = 0; l < n_lay; ++l) {
+            const IppGeometry gl = (l == 0)
+                ? g0
+                : computeIppGeometry(st.ecef, o.sat_pos, Re, layers[l].shell_height_m);
+            if (!gl.valid) continue;   // shell contributes nothing on a degenerate LOS
+            layers[l].model->basis(gl.ipp_lat_rad, gl.ipp_lon_rad - lon_sun, bvals);
+            r.map_tecu[l] = gl.mapping * tecu_to_L1m;
+            r.basis[l]    = bvals;
+        }
+        // T5v2: the pin constrains (ι − Σ_l SH_l·c_l) to the PREDICTED deviation
+        // at the prediction's variance + the floor, instead of to 0 at the full
+        // representativeness σ.  The carry is in VERTICAL TECU (elevation-
+        // stationary); the epoch's layer-0 mapping converts to this row's slant
+        // frame.  READ-ONLY on the carry (serial pre-pass ages + slip-erases it;
         // a missing key means cold seed: dev 0, P = steady-state σ² — identical
         // information to the untreated row, so cold LOS behave as before).
         if (sh_dev_on) {
-            const double sig_ss =
-                shc.representation_sigma_tecu * g.mapping * tecu_to_L1m;
-            double dev_pred = 0.0;
-            double var_pred = sig_ss * sig_ss;
+            const double sig_ss_slant =
+                shc.representation_sigma_tecu * g0.mapping * tecu_to_L1m;
+            double dev_pred_slant = 0.0;
+            double var_pred_slant = sig_ss_slant * sig_ss_slant;
             const auto dit = sh_dev_carry.find(st.name + "|" + o.satellite);
             if (dit != sh_dev_carry.end() && dit->second.t_s > 0.0) {
-                dev_pred = dit->second.dev_m;
-                var_pred = dit->second.var_m2;
+                dev_pred_slant = dit->second.dev * m0_tecu;
+                var_pred_slant = dit->second.var * m0_tecu * m0_tecu;
             }
-            r.innov = -x(iono_idx) + dev_pred;
-            r.var   = iw.floor_m * iw.floor_m + var_pred;
+            r.innov = -x(iono_idx) + dev_pred_slant;
+            r.var   = iw.floor_m * iw.floor_m + var_pred_slant;
         }
-        r.map_tecu  = g.mapping * tecu_to_L1m;
-        r.basis     = bvals;
         by_const[o.satellite.front()].push_back(std::move(r));
     }
 
@@ -389,11 +411,16 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
     for (const auto& kv : by_const) total += static_cast<int>(kv.second.size());
     if (total == 0) return;
 
-    // SH column indices (shared border), looked up once per call.
-    std::vector<Eigen::Index> sh_cols(static_cast<std::size_t>(K));
-    for (int k = 0; k < K; ++k) {
-        const auto& c = sh_model->coeffs()[static_cast<std::size_t>(k)];
-        sh_cols[static_cast<std::size_t>(k)] = est.vtecCoeffColumn(c.n, c.m, c.trig);
+    // Per-layer SH column indices (shared border), looked up once per call.
+    std::vector<std::vector<Eigen::Index>> sh_cols(n_lay);
+    for (std::size_t l = 0; l < n_lay; ++l) {
+        const int Kl = layers[l].model->numCoeffs();
+        sh_cols[l].resize(static_cast<std::size_t>(Kl));
+        for (int k = 0; k < Kl; ++k) {
+            const auto& c = layers[l].model->coeffs()[static_cast<std::size_t>(k)];
+            sh_cols[l][static_cast<std::size_t>(k)] =
+                est.vtecCoeffColumn(c.n, c.m, c.trig, layers[l].layer);
+        }
     }
 
     const double common_var = iw.common_mode_sigma_m * iw.common_mode_sigma_m;
@@ -433,13 +460,15 @@ void Application::networkAppendShIonoRows_(NetStation& st, const NetworkEstimato
         if (w_s < 1.0)
             R *= 1.0 / w_s;
         Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(mc, ncol_r);    // local +1 (slant iono)
-        Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(mc, nshared);   // −M·tecu·basis (SH cols)
+        Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(mc, nshared);   // −M_l·tecu·basis_l (SH cols, all shells)
         Eigen::VectorXd zc(mc);
         for (int k = 0; k < mc; ++k) {
             Hr(k, rws[k].local_col) = 1.0;
-            for (int j = 0; j < K; ++j)
-                Hs(k, sh_cols[static_cast<std::size_t>(j)]) =
-                    -rws[k].map_tecu * rws[k].basis[static_cast<std::size_t>(j)];
+            for (std::size_t l = 0; l < n_lay; ++l) {
+                const auto& bl = rws[k].basis[l];
+                for (std::size_t j = 0; j < bl.size(); ++j)
+                    Hs(k, sh_cols[l][j]) = -rws[k].map_tecu[l] * bl[j];
+            }
             zc(k) = rws[k].innov;
         }
         // Whiten by L⁻¹ (LLᵀ = R) → unit-information rows; whiten the local +1,
@@ -472,6 +501,14 @@ EpochAction Application::networkPassAHead_(const SyncedEpoch& se,
     auto emitEpochStatus = [&](const char* disposition, const EpochStatusRow& r) {
         traces.emitEpochStatus(se.time, disposition, r);
     };
+    // CB-ADM phase co-gate feed: the run-latched admitted code-key set (null
+    // unless the flag is armed AND the census ran).  Passed into every
+    // ensureNetworkSharedStates call so a signal whose code was quarantined also
+    // allocates NO phase-bias state ⇒ shared_phase_keys (built from the states)
+    // excludes it consistently.  Null ⇒ byte-identical.
+    const std::set<std::string>* cbadm_admit =
+        (config_.estimateNetworkSatCodeBias() && ctx.admission.active)
+            ? &ctx.admission.admitted : nullptr;
 
     // Legacy single-pivot datum: model the pivot FIRST so its usable phase
     // signals restrict the shared phase-bias columns to ones with a pivot-
@@ -500,7 +537,7 @@ EpochAction Application::networkPassAHead_(const SyncedEpoch& se,
             emitEpochStatus("sync_skip", {});   // only week/tow available
             return EpochAction::SkipEpoch;
         }
-        piv.mm->ensureNetworkSharedStates(modeled.front());  // allow all pivot phase signals
+        piv.mm->ensureNetworkSharedStates(modeled.front(), {}, cbadm_admit);  // allow all pivot phase signals (minus CB-ADM quarantined)
         present.front() = true;
     }
 
@@ -518,7 +555,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                         std::vector<std::vector<PppObservation>>& modeled,
                                         std::vector<bool>& present,
                                         const std::set<std::string>& shared_phase_keys,
-                                        std::set<std::pair<int, std::string>>& carry_slipped_ambs) {
+                                        std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                                        SlipQcChannel& qc) {
     // Alias block (INC-7 migration mechanic).
     auto log = log_manager_.getLogger("main_log");
     auto& stations = setup.stations;
@@ -530,6 +568,11 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     const bool trace_flag_rates = ctx.knobs.trace_flag_rates;
     auto& local_carry = ctx.carry.local_carry;
     auto& fr_if_slip = ctx.counters.fr_if_slip;
+    // CB-ADM phase co-gate feed (see networkPassAHead_): null unless flag armed
+    // AND census ran.  Withholds a quarantined signal's phase-bias state.
+    const std::set<std::string>* cbadm_admit =
+        (config_.estimateNetworkSatCodeBias() && ctx.admission.active)
+            ? &ctx.admission.admitted : nullptr;
 
     const int i_lo = phase_datum_prioritized ? 0 : 1;
 
@@ -565,9 +608,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             // allocates ALL its own trackable phase signals — the anchored
             // shared set is the post-election union, not a pivot restriction.
             if (phase_datum_prioritized)
-                st.mm->ensureNetworkSharedStates(modeled[i]);
+                st.mm->ensureNetworkSharedStates(modeled[i], {}, cbadm_admit);
             else
-                st.mm->ensureNetworkSharedStates(modeled[i], shared_phase_keys);
+                st.mm->ensureNetworkSharedStates(modeled[i], shared_phase_keys, cbadm_admit);
             a_ok[i] = 1;
 
             // T0 slip detection: roll this station's MW + GF arcs forward and
@@ -639,6 +682,24 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                       "skipping it this epoch", stations[i].name, a_err[i]);
     }
 
+    // Shared RAW slip observables (docs/SPEC_slip_qc_hardening.md §1): computed
+    // ONCE per epoch, here — after present[] is final and BEFORE both the drains
+    // (Card L needs the evidence) and the observability pre-filter (a satellite
+    // about to be pruned must still be measured, the contract the trace writer
+    // has always kept).  Nothing between this point and the trace writer mutates
+    // `modeled`, so the relocated rows are byte-identical.  Skipped entirely
+    // when no consumer asked for them (qc.utils null ⇒ every card inert).
+    qc.epoch.reset(stations.size());
+    if (qc.armed()) {
+        networkComputeRawObservables(modeled, present, n_sta_total, *qc.utils, qc.epoch);
+        // The qualification pass (empirical step gates, LLI credibility, arc
+        // resumptions) runs only for a DECISION card — with just the trace armed
+        // the observables are pure output and nothing is adjudicated.
+        if (qc.cardsArmed())
+            networkQualifyRawObservables(modeled, present, n_sta_total, qc.epoch_idx,
+                                         qc.params, qc.hist, qc.epoch, qc.counters);
+    }
+
     // Serial slip-QC drains (INC-6): bodies relocated VERBATIM to
     // slip/NetworkSlipQc.cpp — phase-leveling T0 repair drain, MW-detect /
     // LLI refloat, IF-phase TD driver, in the original order.
@@ -647,7 +708,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
 
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, carry_warm,
-                              carry_slipped_ambs, se, traces, log);
+                              carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
+                              qc.counters, se, traces, log);
 
     networkSlipIfTdDriver(pa, config_, stations, present, i_lo, n_sta_total,
                           carry_invariant, carry_warm, carry_slipped_ambs,
@@ -657,7 +719,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
                                             NetworkSetupResult& setup,
                                             NetworkRunTraces& traces,
-                                            const std::unique_ptr<PppUtils>& slip_raw_ppp_utils,
+                                            const SlipQcChannel& qc,
                                             std::vector<std::vector<PppObservation>>& modeled,
                                             const std::vector<bool>& present,
                                             int& n_dropped_sats) {
@@ -666,64 +728,31 @@ void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
     const int n_sta_total = setup.n_sta_total;
     auto& slip_raw_trace       = traces.slip_raw_trace;
 
-    // RAW cycle-slip observables (network.trace_slip_raw), computed straight from
-    // raw_observed — INDEPENDENT of whether any slip detector is armed.  Written BEFORE
-    // the observability pre-filter so a satellite about to be dropped is still captured.
-    // For each present station+satellite pick the primary dual-frequency pair (two lowest
-    // DISTINCT bands whose phase AND matching code "C"+sig[1:] are present) and emit MW,
-    // GF (=L1−L2), first-signal phase-minus-code (all m) plus the per-band RINEX LLI.  The
-    // factor c cancels out of MW/GF, so wavelengths alone (FDMA-correct via the satellite)
-    // suffice.  Absolute values — diff adjacent epochs offline for the slip signature.
-    if (slip_raw_trace.is_open() && slip_raw_ppp_utils) {
+    // RAW cycle-slip observables (network.trace_slip_raw) — INDEPENDENT of whether any
+    // slip detector is armed.  Written BEFORE the observability pre-filter so a satellite
+    // about to be dropped is still captured.  For each present station+satellite the
+    // primary dual-frequency pair (two lowest DISTINCT bands whose phase AND matching code
+    // "C"+sig[1:] are present) yields MW, GF (=L1−L2), first-signal phase-minus-code (all m)
+    // plus the per-band RINEX LLI.  Absolute values — diff adjacent epochs offline for the
+    // slip signature.
+    //
+    // The ARITHMETIC moved to slip/NetworkRawObservables.cpp at the 2026-07-21 slip-QC
+    // hardening (spec §1): Cards L and G need the same numbers as evidence, and three
+    // independent definitions of "the raw step" would have been a bug factory.  This site
+    // is now a pure consumer walking qc.epoch.rows in the identical order, so its rows are
+    // byte-unchanged when the trace is the only consumer.
+    if (slip_raw_trace.is_open() && qc.epoch.computed) {
         for (int i = 0; i < n_sta_total; ++i) {
             if (!present[i]) continue;
-            for (const auto& obs : modeled[i]) {
-                std::vector<std::string> ph;  // phase signals with a matching code
-                for (const auto& kv : obs.raw_observed) {
-                    const std::string& k = kv.first;
-                    if (k.size() < 2 || k[0] != 'L') continue;
-                    if (obs.raw_observed.count("C" + k.substr(1))) ph.push_back(k);
-                }
-                if (ph.empty()) continue;
-                std::sort(ph.begin(), ph.end(),
-                          [](const std::string& a, const std::string& b) { return a[1] < b[1]; });
-                const std::string s1 = ph.front();
-                std::string s2;
-                for (const auto& k : ph) if (k[1] != s1[1]) { s2 = k; break; }  // distinct band
-
-                const double lam1 = slip_raw_ppp_utils->getWavelength(obs.system, s1, obs.satellite);
-                if (!(std::isfinite(lam1) && lam1 > 0.0)) continue;
-                const double L1_cyc = obs.raw_observed.at(s1);
-                const double P1_m   = obs.raw_observed.at("C" + s1.substr(1));
-                const double L1_m   = L1_cyc * lam1;
-                const double l1c1   = L1_m - P1_m;
-                const int    lli1   = obs.lli_flags.count(s1) ? obs.lli_flags.at(s1) : 0;
-
-                bool dual = !s2.empty();
-                double mw = 0.0, gf = 0.0;
-                int    lli2 = 0;
-                if (dual) {
-                    const double lam2 = slip_raw_ppp_utils->getWavelength(obs.system, s2, obs.satellite);
-                    if (std::isfinite(lam2) && lam2 > 0.0) {
-                        const double inv1 = 1.0 / lam1, inv2 = 1.0 / lam2;
-                        const double L2_cyc = obs.raw_observed.at(s2);
-                        const double P2_m   = obs.raw_observed.at("C" + s2.substr(1));
-                        gf = L1_m - L2_cyc * lam2;
-                        mw = (L1_cyc - L2_cyc) / (inv1 - inv2)
-                           - (P1_m * inv1 + P2_m * inv2) / (inv1 + inv2);
-                        lli2 = obs.lli_flags.count(s2) ? obs.lli_flags.at(s2) : 0;
-                    } else {
-                        dual = false;
-                    }
-                }
+            for (const auto& r : qc.epoch.rows[static_cast<std::size_t>(i)]) {
                 slip_raw_trace
                     << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                    << stations[i].name << ',' << obs.satellite << ','
-                    << s1 << ',' << (dual ? s2 : std::string{}) << ','
-                    << fmt::format("{:.2f}", obs.elevation) << ','
-                    << (dual ? fmt::format("{:.4f}", mw) : std::string{}) << ','
-                    << (dual ? fmt::format("{:.4f}", gf) : std::string{}) << ','
-                    << fmt::format("{:.4f}", l1c1) << ',' << lli1 << ',' << lli2 << '\n';
+                    << stations[i].name << ',' << r.satellite << ','
+                    << r.sig1 << ',' << r.sig2 << ','
+                    << fmt::format("{:.2f}", r.elev_deg) << ','
+                    << (r.dual ? fmt::format("{:.4f}", r.mw_m) : std::string{}) << ','
+                    << (r.dual ? fmt::format("{:.4f}", r.gf_m) : std::string{}) << ','
+                    << fmt::format("{:.4f}", r.l1_c1_m) << ',' << r.lli1 << ',' << r.lli2 << '\n';
             }
         }
     }
@@ -818,9 +847,93 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
             if (clk_seen.insert(sat).second) registered_clock_sats.push_back(sat);
         }
     }
+    // CB-ADM per-epoch registration decision (ON only): an admitted code pair is
+    // registered ONLY when >= 2 present stations hold its state THIS epoch (the
+    // per-epoch guard).  A single-station code column is confounded with that
+    // receiver's clock and goes near-null; window-latched admission alone
+    // (register at >= 1 station) re-introduced exactly those columns and doubled
+    // the storm (measured: 22 -> 43 near-null dirs on the 305 arm).  The anti-flap
+    // win is preserved because the ADMITTED SET stays latched (census) — only
+    // per-epoch REGISTRATION follows coverage, and the SM state is never pruned,
+    // so a withheld column re-registers the moment >= 2 stations return.
+    // cbadm_reg_code_keys = the (sat,signal) code columns registered this epoch.
+    //
+    // The phase co-gate is NOT applied here (Card H1 — this comment used to claim
+    // it was "co-gated to them below", which is wrong and would send a reader
+    // hunting for a gate that does not exist at this site).  It lives UPSTREAM, at
+    // phase-bias STATE ALLOCATION in MeasurementModel::ensureNetworkSharedStates,
+    // and it keys off the run-latched CENSUS-ADMITTED set — NOT off
+    // cbadm_reg_code_keys, which is the narrower per-epoch REGISTERED subset.  Two
+    // separate reasons, both load-bearing:
+    //  - LEVEL: withholding a registerPhaseBias for a key still present in
+    //    shared_phase_keys breaks the "every shared_phase_key is a registered
+    //    column" invariant eq34 / carry / snapshot rely on (a registration-site
+    //    co-gate was tried and CRASHED the ON path).  Allocating no phase-bias
+    //    state at all keeps shared_phase_keys consistent everywhere by construction.
+    //  - GRANULARITY (Card H2, ruled deliberately): the co-gate stays at CENSUS
+    //    granularity.  Following per-epoch code coverage would churn phase-state
+    //    allocation every epoch — the anti-flap design's whole point — and thrash
+    //    eq34/carry/snapshot.  The accepted residue is a transient ORPHAN WINDOW,
+    //    counted by ctx.counters.n_cbadm_phase_orphan_key_epochs below.
+    //
+    // Why a sparse signal must leave the shared system on BOTH bias families at
+    // all: that phase column has no same-signal code co-anchor and, being
+    // 2-station, no reachable ambiguity pin, so it collapses to a pure-PB near-null
+    // gauge (measured: 89 such directions on the 305 arm — the exact phase
+    // counterparts L2X/L7X/L1I of the quarantined code pairs C2X/C7X/C1I).
+    // Withholding it folds the bias into each station's float ambiguity, symmetric
+    // with the code sponge.  (A per-SAT co-gate was too coarse — a sat admitted on
+    // its dense signals kept its sparse signals' phase columns; the granularity
+    // must match the CODE ADMISSION unit, which is per-(sat,signal).)
+    std::set<std::string> cbadm_reg_code_keys;   // raw "sat|sig" code keys registered this epoch (admitted AND >=2 present stations)
+    const bool cbadm_on =
+        config_.estimateNetworkSatCodeBias() && ctx.admission.active;
+    if (cbadm_on) {
+        std::map<std::string, int> code_epoch_count;   // admitted "sat|sig" -> #present stations this epoch
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!present[i]) continue;
+            for (const auto& kv : stations[i].sm->getSatBiasStates())
+                if (ctx.admission.isAdmitted(kv.first)) ++code_epoch_count[kv.first];
+        }
+        for (const auto& [key, cnt] : code_epoch_count)
+            if (cnt >= 2) cbadm_reg_code_keys.insert(key);
+    }
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
-        if (parts) est.registerPhaseBias(parts->satellite, parts->signal);
+        if (!parts) continue;
+        // Register every shared_phase_key unconditionally — the CB-ADM phase
+        // co-gate lives UPSTREAM at phase-bias STATE ALLOCATION
+        // (MeasurementModel::ensureNetworkSharedStates, cbadm_admitted_code_keys),
+        // so shared_phase_keys already excludes a quarantined signal's phase.
+        // Gating here instead would break the "every shared_phase_key is a
+        // registered column" invariant that eq34/carry/snapshot rely on (crash).
+        est.registerPhaseBias(parts->satellite, parts->signal);
+        // Card H2: MEASURE the granularity seam's orphan window.  This loop is the
+        // only place that sees all three sets at once — the census-admitted set
+        // (ctx.admission), this epoch's registered code keys (cbadm_reg_code_keys),
+        // and the shared phase set (shared_phase_keys).  An ADMITTED code key that
+        // fell below 2 present stations THIS epoch has its code column withheld
+        // while its same-signal phase column stays shared: one (key, epoch) pair of
+        // orphan window.  Expected 0 at 305-station density (every admitted sat has
+        // >= 2 present stations there); a SPARSE-tier run showing it nonzero AND
+        // coincident with withholds is the data that reopens the ruling.
+        if (cbadm_on) {
+            // KEY-FORMAT ASYMMETRY — the trap this counter exists to avoid falling
+            // into.  Phase-bias keys carry the PHASE observable ("C26|L2X|PB");
+            // the admission census and cbadm_reg_code_keys carry the CODE one
+            // ("C26|C2X").  The companion mapping is L<band><attr> -> C<band><attr>,
+            // the SAME transform the state-alloc co-gate applies
+            // (MeasurementModel::ensureNetworkSharedStates) — reusing the phase
+            // signal verbatim would match nothing and leave this counter
+            // permanently 0, i.e. inert wiring that reads as "no orphans"
+            // (standing invariant #4).
+            std::string csig = parts->signal;
+            if (!csig.empty()) csig[0] = 'C';
+            const std::string code_key =
+                StateKeys::makeSatBiasKey(parts->satellite, csig);
+            if (ctx.admission.isAdmitted(code_key) && !cbadm_reg_code_keys.count(code_key))
+                ++ctx.counters.n_cbadm_phase_orphan_key_epochs;
+        }
     }
     // Register the satellite CODE-bias (OSB) columns (W6, full multi-band):
     // EVERY (sat,signal) — every frequency band AND every tracking channel
@@ -829,55 +942,105 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
     // constraints, the D2 carry-forward, and the solution trace.  Empty unless
     // estimate_sat_code_bias.
     //
-    // The ONLY admission gate is >=2-station coverage: a single-station code
-    // bias is perfectly confounded with that one station's receiver code bias
-    // and cannot be separated, so it stays a local nuisance (its sat-bias state
-    // is pruned below, leaving its raw code row to fold into the receiver
-    // clock / slant iono — the pre-W6 path).  Everything with >=2 stations is a
-    // first-class shared OSB column and is datumed below: the GIM between-
-    // satellite iono structure makes the inter-band DCBs observable, while
-    // same-band channels (C1C vs C1W, C2W vs C2L, ...) need no iono at all
+    // The default admission gate (CB-ADM OFF) is per-epoch >=2-station coverage:
+    // a single-station code bias is perfectly confounded with that one station's
+    // receiver code bias and cannot be separated, so it stays a local nuisance
+    // (its sat-bias state is pruned below, leaving its raw code row to fold into
+    // the receiver clock / slant iono — the pre-W6 path).  Everything with >=2
+    // stations is a first-class shared OSB column and is datumed below: the GIM
+    // between-satellite iono structure makes the inter-band DCBs observable,
+    // while same-band channels (C1C vs C1W, C2W vs C2L, ...) need no iono at all
     // (equal frequency → the receiver and ionosphere terms cancel in the raw
     // between-channel difference, leaving the satellite inter-channel bias).
     // The earlier slice confined the OSB to the two lowest bands and so emitted
     // nothing on a 3rd band; the datum below now pins every registered column.
+    //
+    // Under CB-ADM (ctx.admission.active — network.cb_admission ON), the
+    // per-epoch count is replaced by the run-latched census verdict: an ADMITTED
+    // pair registers whenever any present station holds its state (riding through
+    // 1-station dips — the anti-flap win); a QUARANTINED pair is NEVER pruned
+    // (station_keep always holds it) so it survives as a station-local sponge
+    // (Schur-eliminated station-side, never registered, never datumed).  See
+    // filter/NetworkBiasAdmission.hpp.
     if (config_.estimateNetworkSatCodeBias()) {
-        std::map<std::string, int> cb_station_count;   // "sat|signal" -> #stations
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i]) continue;
-            for (const auto& kv : stations[i].sm->getSatBiasStates())
-                ++cb_station_count[kv.first];
-        }
-        std::set<std::string> keep_keys;
-        for (const auto& [key, cnt] : cb_station_count)
-            if (cnt >= 2) keep_keys.insert(key);
-
         std::set<std::string> cb_seen;
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i]) continue;
-            StateManager& sm = *stations[i].sm;
-            std::set<std::string> station_keep;
-            for (const auto& kv : sm.getSatBiasStates()) {
-                if (!keep_keys.count(kv.first)) continue;
-                station_keep.insert(kv.first);
-                const auto parts = StateKeys::parseSatBiasKey(kv.first);
-                if (!parts) continue;
-                est.registerCodeBias(parts->satellite, parts->signal);
-                if (cb_seen.insert(kv.first).second)
-                    registered_code_keys.emplace_back(parts->satellite, parts->signal);
+        NetworkBiasAdmission& adm = ctx.admission;
+        if (!adm.active) {
+            // --- CB-ADM OFF: legacy per-epoch >=2-station gate (byte-identical). ---
+            std::map<std::string, int> cb_station_count;   // "sat|signal" -> #stations
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i]) continue;
+                for (const auto& kv : stations[i].sm->getSatBiasStates())
+                    ++cb_station_count[kv.first];
             }
-            sm.pruneSatBiasStatesExcept(station_keep);
+            std::set<std::string> keep_keys;
+            for (const auto& [key, cnt] : cb_station_count)
+                if (cnt >= 2) keep_keys.insert(key);
+
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i]) continue;
+                StateManager& sm = *stations[i].sm;
+                std::set<std::string> station_keep;
+                for (const auto& kv : sm.getSatBiasStates()) {
+                    if (!keep_keys.count(kv.first)) continue;
+                    station_keep.insert(kv.first);
+                    const auto parts = StateKeys::parseSatBiasKey(kv.first);
+                    if (!parts) continue;
+                    est.registerCodeBias(parts->satellite, parts->signal);
+                    if (cb_seen.insert(kv.first).second)
+                        registered_code_keys.emplace_back(parts->satellite, parts->signal);
+                }
+                sm.pruneSatBiasStatesExcept(station_keep);
+            }
+        } else {
+            // --- CB-ADM ON: run-latched admission + PER-EPOCH >=2 registration +
+            // station-local quarantine.  cbadm_reg_code_keys (computed above the
+            // phase loop) is the admitted set restricted to keys with >= 2 present
+            // stations THIS epoch — only those register a shared column.  Every SM
+            // state is kept (station_keep holds it unconditionally: quarantined AND
+            // per-epoch-withheld admitted states are never pruned), so a withheld
+            // column rides the scatter's codeBiasColumn-throw local fallback this
+            // epoch and re-registers when coverage returns.
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i]) continue;
+                StateManager& sm = *stations[i].sm;
+                std::set<std::string> station_keep;
+                for (const auto& kv : sm.getSatBiasStates()) {
+                    station_keep.insert(kv.first);   // never pruned while the flag is on
+                    const auto parts = StateKeys::parseSatBiasKey(kv.first);
+                    if (!parts) continue;            // malformed key: kept (harmless), never registered
+                    if (cbadm_reg_code_keys.count(kv.first)) {
+                        est.registerCodeBias(parts->satellite, parts->signal);
+                        if (cb_seen.insert(kv.first).second)
+                            registered_code_keys.emplace_back(parts->satellite, parts->signal);
+                    } else if (!adm.isAdmitted(kv.first)
+                               && !adm.seen.count(kv.first)
+                               && adm.late_tracked.insert(kv.first).second) {
+                        // A key the census never classified ⇒ first seen after the
+                        // window ⇒ implicitly quarantined (invariant #4 telemetry).
+                        // (An ADMITTED key merely below the per-epoch coverage this
+                        // epoch is NOT late — it is kept and re-registers later.)
+                        ++ctx.counters.n_cb_late_quarantined;
+                    }
+                }
+                sm.pruneSatBiasStatesExcept(station_keep);
+            }
         }
     }
 
     // Register the global SH-VTEC coefficient columns (estimate_iono_sh).  The
-    // layout is FIXED — all (N+1)² coefficients every epoch, independent of the
-    // satellite set — so the field is continuous across epochs and the Kaula
-    // prior can keep every coefficient soft-pinned (the rank gate then stays at
-    // #constellations regardless of coverage; design §6.1).
+    // layout is FIXED — all (N+1)² coefficients of every shell every epoch,
+    // independent of the satellite set — so the field is continuous across
+    // epochs and the Kaula prior can keep every coefficient soft-pinned (the
+    // rank gate then stays at #constellations regardless of coverage; design
+    // §6.1).  Dual-layer (Iono-2): the second shell registers under its own
+    // "SH2" keys after the legacy layer, preserving layer-0 column order.
     if (config_.estimateNetworkIonoSh() && sh_model) {
-        for (const auto& c : sh_model->coeffs())
-            est.registerVtecCoeff(c.n, c.m, c.trig);
+        for (const ShLayer& lay :
+             shLayers(config_.getGlobalVtecShConfig(), sh_model.get(),
+                      setup.sh_model2.get()))
+            for (const auto& c : lay.model->coeffs())
+                est.registerVtecCoeff(c.n, c.m, c.trig, lay.layer);
     }
 
     n_clock = static_cast<int>(registered_clock_sats.size());
@@ -908,9 +1071,14 @@ EpochAction Application::networkAssemblyRegisterColumns_(const SyncedEpoch& se,
         // a missing SH datum prints as an anonymous colNNN in the spectrum dump,
         // indistinguishable from a clock-datum fault.
         if (config_.estimateNetworkIonoSh() && sh_model) {
-            for (const auto& c : sh_model->coeffs())
-                col_desc[static_cast<size_t>(est.vtecCoeffColumn(c.n, c.m, c.trig))] =
-                    fmt::format("SH|{}|{}|{}", c.n, c.m, c.trig);
+            for (const ShLayer& lay :
+                 shLayers(config_.getGlobalVtecShConfig(), sh_model.get(),
+                          setup.sh_model2.get()))
+                for (const auto& c : lay.model->coeffs())
+                    col_desc[static_cast<size_t>(
+                        est.vtecCoeffColumn(c.n, c.m, c.trig, lay.layer))] =
+                        fmt::format("{}|{}|{}|{}", lay.layer > 0 ? "SH2" : "SH",
+                                    c.n, c.m, c.trig);
         }
     }
 
@@ -935,6 +1103,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                        NetworkEstimator& est,
                                        const NetworkIonoDeweightGate& iono_deweight,
                                        double sh_dev_tau, bool sh_dev_on,
+                                       const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                                        bool carry_warm, double pl_now_s,
                                        std::vector<std::vector<PppObservation>>& modeled,
                                        std::vector<bool>& present,
@@ -1015,23 +1184,44 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     std::chrono::steady_clock::time_point sec_asm_t0;
     if (sec_timers_on) sec_asm_t0 = std::chrono::steady_clock::now();
 
-    // T5: age the SH-deviation carries ONCE per epoch (SERIAL — the parallel
-    // assembly below only reads).  GM prediction: dev *= λ, P → λ²P + σ_ss²(1−λ²);
-    // entries unseen for > 5τ are dropped (fully decorrelated — the cold seed the
-    // pin then uses is statistically equivalent).
+    // T5v2: age the SH-deviation carries ONCE per epoch (SERIAL — the parallel
+    // assembly below only reads).  GM prediction in vertical TECU: dev *= λ,
+    // P → λ²P + σ_ss²(1−λ²); entries unseen for > 5τ are dropped (fully
+    // decorrelated — the cold seed the pin then uses is statistically
+    // equivalent).  Iono-2 slip integration (standing invariant #1, user spec
+    // Jul-12): a cycle slip aliases n·λ into the GF slant iono, so any
+    // (station,sat) with an entry in this epoch's C3c funnel is ERASED —
+    // reset-not-repair, cold re-tap at σ_ss.  The funnel's per-signal keys
+    // project to the satellite (union semantics; an LLI single-band event still
+    // resets the per-sat state).  Recorded at the PASS-A DETECTION site, so the
+    // erase lands the same epoch the slip was seen — the poisoned pre-slip
+    // deviation never constrains a post-slip row.
     if (sh_dev_on) {
+        std::set<std::string> slipped_los;   // "STATION|SAT" projection of the funnel
+        for (const auto& sk : carry_slipped_ambs) {
+            if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
+            const auto parts = StateKeys::parseAmbiguityKey(sk.second);
+            if (!parts) continue;
+            slipped_los.insert(stations[static_cast<std::size_t>(sk.first)].name
+                               + "|" + parts->satellite);
+        }
         const double now_s = se.time.week * 604800.0 + se.time.tow;
         for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
             ShDevCarry& dc = it->second;
             const double dt = now_s - dc.t_s;
+            if (!slipped_los.empty() && slipped_los.count(it->first)) {
+                ++ctx.carry.shdev_slip_resets_total;
+                it = sh_dev_carry.erase(it);
+                continue;
+            }
             if (dc.t_s <= 0.0 || dt > 5.0 * sh_dev_tau) {
                 it = sh_dev_carry.erase(it);
                 continue;
             }
             if (dt > 0.0) {
                 const double lam = std::exp(-dt / sh_dev_tau);
-                dc.dev_m  *= lam;
-                dc.var_m2  = lam * lam * dc.var_m2 + dc.var_ss * (1.0 - lam * lam);
+                dc.dev *= lam;
+                dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
             }
             ++it;
         }
@@ -1299,7 +1489,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // SH border); inert when neither is on.
             if (config_.estimateNetworkIonoSh())
                 networkAppendShIonoRows_(st, est, modeled[i], h2local, se.time,
-                                         sh_model, iono_deweight, shc, sh_dev_on,
+                                         sh_model, setup.sh_model2, iono_deweight,
+                                         shc, sh_dev_on,
                                          sh_dev_carry, R.A_s, R.A_r, R.w, R.y);
             else if (config_.estimateNetworkSatCodeBias())
                 networkAppendGimIonoRows_(st, modeled[i], h2local, se.time,

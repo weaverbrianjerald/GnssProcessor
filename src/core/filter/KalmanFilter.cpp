@@ -1109,7 +1109,7 @@ namespace GnssProcessor {
             const size_t att_idx = state_manager_.getAttitudeIndex();
             const Eigen::Vector3d dpsi = x_new.segment<3>(att_idx);
             if (dpsi.norm() > 1e-15) {
-                // Small-angle rotation correction: C_corrected = (I - [dpsi]x) * C
+                // Small-angle rotation correction: C_corrected = (I + [dpsi]x) * C
                 Eigen::Matrix3d dR;
                 dR <<       1.0, -dpsi(2),  dpsi(1),
                        dpsi(2),       1.0, -dpsi(0),

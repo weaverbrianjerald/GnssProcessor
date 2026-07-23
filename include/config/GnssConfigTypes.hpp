@@ -238,6 +238,68 @@ namespace GnssProcessor {
         double sigma_wl_fresh_cyc{ 0.0 };     ///< Fresh-chord lane prior σ (cycles).  DEFAULT 0 = diffuse birth: the SPEC §3.1 mean-zero code-seed prior is FALSIFIED (seed-time clock diversity mis-centers the correction-frame lane origin by O(10²) cycles — D5 691-vs-125 measured Jul-16); the honest code-seed info enters via the FIRST MW lane increment instead.  >0 = study shape (loud warn).
         bool   lane_meas{ true };             ///< Per-epoch MW(1,2) lane increments folded into the carried block (SPEC §3.2).
         bool   bridge_meas{ true };           ///< Per-epoch iono-de-biased bridge increments on EWL-fixed cycles (phase-precision lane source).
+        // --- LF-1 perf card (docs/SPEC_lane_fold_perf_card.md) — PERF knobs, NOT lane-shape knobs.
+        //     Must stay OUT of the equivalence_shape discriminator (they don't change what folds). ---
+        bool   fold_blocked{ false };         ///< LF-1 INC-1: optimized blocked/sparse lane fold — O(K) sparse applyLaneFix + the per-row re-symmetrize hoisted to one pass/block/epoch.  Changes the OPERATION ORDER ⇒ the parallel_carry EQUIVALENCE class, NOT bit-identical (§3.2).  OFF ⇒ the sequential per-row fold (byte-identical).
+        bool   skip_pinned_increments{ false };///< LF-1 INC-2 (§3.3): skip the per-epoch MW/bridge lane increments for a committed-decided chord (σ=0.01 pinned lane; a σ≈0.06-0.2 increment is information-free).  Any slip/D5/re-tap resumes increments the same epoch.  Equivalence class (near-inert, not exactly null).  OFF ⇒ byte-identical.
+        long long skip_pinned_within_n{ 3 };  ///< LF-1 INC-2: the skip grace window (epochs) after a chord's last re-decision; past it, increments resume to re-converge a drifting lane.  INERT unless skip_pinned_increments.
+        bool   parallel_components{ false };   ///< LF-1 INC-4 (§3.5): fan the per-epoch MW lane-increment folds across cores, one component (joint block) per thread.  Components are independent (no shared Pᶻ) and each block's folds stay in-order, so the result is BYTE-IDENTICAL to serial (unlike fold_blocked).  Needs parallel_stations (n_threads>1) to fire; INERT unless lane_joint.  Eigen is re-pinned to 1 inside the region (the pcarry un-pin stays outside — the dev300s nesting trap).
+    };
+
+    /**
+     * @brief Slip-QC hardening knobs (docs/SPEC_slip_qc_hardening.md, 2026-07-21).
+     *
+     * Three independent, default-OFF cards that qualify existing slip decisions
+     * — they never drop a station, satellite or observation (project rule 5),
+     * and every gate is derived from the observable stream itself, never from
+     * the stochastic model (rule 4).  All live under @c network.cycle_slip.*
+     * beside the detector arms they harden.
+     *
+     *  - **Card R** (@c if_phase_td_ref_*) — the IF-TD reference-satellite slip
+     *    gate becomes scale-aware, coherence-discriminated, thin-family-honest
+     *    and persistence-capped.  See IfPhaseSlipDetector::RefGateParams.
+     *  - **Card L** (@c mw_lli_*) — an LLI assertion must be corroborated by an
+     *    empirical MW/GF step at a station whose LLI behaviour is demonstrably
+     *    non-credible; elsewhere LLI stays decisive.
+     *  - **Card G** (@c gap_instrument) — instrumentation only: counts arcs
+     *    that resume across a tracking break whose raw level shifted, and
+     *    whether they re-entered with bridged carry state.
+     *
+     * With all three masters OFF the producer is byte-identical.
+     */
+    struct SlipQcConfig {
+        // --- Card R: hardened IF-TD reference-satellite gate ---------------
+        bool   ref_gate{ false };            ///< Master arm (network.cycle_slip.if_phase_td_ref_gate).
+        double ref_k{ 6.0 };                 ///< Empirical multiplier on the effective DD-dispersion scale.
+        int    ref_min_n{ 4 };               ///< Minimum non-reference DDs before the median is trusted.
+        double ref_thin_widen{ 3.0 };        ///< Physical-floor multiplier below @ref ref_min_n.
+        double ref_coherence{ 0.5 };         ///< Max MAD(non-ref DDs)/|median| for a COMMON step (step-vs-drift).
+        /// Consecutive fires on one reference before escalating to re-selection.
+        /// DEFAULT 1, the literal reading of spec R2 ("a genuine ref slip fires
+        /// ONCE"): a real one-epoch common step is never consecutive, so the cap
+        /// costs it nothing, while a persistent drift is escalated on its second
+        /// epoch instead of its third.  Measured on the 2026-07-21 audit config,
+        /// 2 left the JPLM/MKEA G10 drift family re-qualifying in fire-fire-escalate
+        /// cycles; 1 halves that.
+        int    ref_max_consecutive{ 1 };
+        double ref_ewma_alpha{ 0.15 };       ///< EWMA weight for the dispersion scale.
+        double ref_shrink_kappa{ 20.0 };     ///< Empirical-Bayes shrinkage constant (samples).
+        double ref_floor_frac{ 0.5 };        ///< Physical floor in units of λ_IF (0.5 = the legacy fixed gate).
+
+        // --- Card L: LLI corroboration in the MW drain ---------------------
+        bool   lli_corroborate{ false };     ///< Master arm (network.cycle_slip.mw_lli_corroborate).
+        double lli_chatter_frac_hi{ 0.6 };   ///< LLI-set-fraction EWMA above which a station is demoted to corroboration-required.
+        double lli_chatter_frac_lo{ 0.3 };   ///< …and below which it is promoted back (hysteresis band).
+        int    lli_min_epochs{ 1 };          ///< EWMA history before the two-state verdict may move.
+        double lli_ewma_alpha{ 0.4 };        ///< EWMA weight of the current epoch's LLI-set fraction.
+        double lli_k_mw{ 5.0 };              ///< MW corroboration gate = max(k·scale, floor_cyc·λ_WL).
+        double lli_k_gf{ 5.0 };              ///< GF corroboration gate = max(k·scale, floor_m).
+        double lli_mw_floor_cyc{ 0.5 };      ///< Physical MW floor in WIDE-LANE cycles (the audit's support test).
+        double lli_gf_floor_m{ 0.04 };       ///< Physical GF floor in metres (the audit's support test).
+        double lli_step_alpha{ 0.15 };       ///< EWMA weight for the per-station raw-step scales.
+
+        // --- Card G: gap-coincident slip instrumentation -------------------
+        bool   gap_instrument{ false };      ///< Master arm (network.cycle_slip.gap_instrument).  Counters + trace rows only.
     };
 
     struct NetworkArConfig {
@@ -281,6 +343,7 @@ namespace GnssProcessor {
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default OFF => float product).
         MwWlConfig       mw_wl;               ///< M5 card WL-1: MW-seeded wide-lane pseudo-obs layer (default OFF => byte-identical).
         LaneCarryConfig  lane_carry;          ///< M5 card WL-3: lane-coordinate carry (default OFF => byte-identical; config CONTRACT only — mechanism is a follow-up increment, docs/SPEC_lane_carry_card.md).
+        SlipQcConfig     slip_qc;             ///< Slip-QC hardening Cards R/L/G (network.cycle_slip.*; all default OFF => byte-identical; docs/SPEC_slip_qc_hardening.md).
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
         /// RTA-6: flush the product file once per emitted epoch (after the epoch
         /// block, incl. any RTA-5 S re-broadcast preceding it) so a LIVE tail
@@ -1398,8 +1461,25 @@ namespace GnssProcessor {
         bool   trace = false;                  ///< Write the per-epoch SH coefficient trace (network_vtec_sh.csv) + the per-epoch health trace (network_vtec_sh_health.csv, T1a).
         double a00_warn_low_tecu  = 2.0;       ///< Physical-band lower bound on the estimated mean VTEC a₀₀ (TECU).  a₀₀ below this fires a per-epoch divergence WARN (T1a health probe); the field co-estimation can drive a₀₀ to unphysical values (e.g. −91 TECU) when the SH surface cannot represent the GF code-bias lump structure.
         double a00_warn_high_tecu = 150.0;     ///< Physical-band upper bound on a₀₀ (TECU); above this fires the divergence WARN.  Set low ≥ high to silence the WARN.
+        // ---- Iono-2 mechanism A: optional second thin shell (dual-layer field) ----
+        // 0 = OFF (single legacy layer, byte-identical).  When > 0, a second
+        // SH coefficient set at layer2_height_km joins the shared border and the
+        // pin row sums both layers: ι = Σ_l M_l(el)·tecu·SH_l(IPP_l)·c_l — the two
+        // mapping profiles (450 vs 1300 km: 2.55 vs 1.74 at el=10°) plus the IPP
+        // displacement give the field elevation-dependent per-LOS structure a
+        // single shell cannot represent.  The a00 inter-layer split is quasi-null
+        // from ground-only geometry, so layer 2 carries a TIGHT climatology anchor
+        // (mean ± sigma below) while the TOTAL mean VTEC stays data-determined
+        // through layer 1's loose 15±30; the a00 physical-band WARN monitors the
+        // layer SUM.  Keys: layer-1 keeps "SH|n|m|C"; layer-2 uses "SH2|n|m|C".
+        int    layer2_max_degree = 0;          ///< Second-shell truncation degree N₂ (0 = single-layer OFF).
+        double layer2_height_km = 1300.0;      ///< Second-shell height H₂ (km), plasmasphere-side.
+        double layer2_kaula_scale_tecu = 3.0;  ///< Layer-2 Kaula scale (smoother, smaller upper field).
+        double layer2_q_per_degree = 1.0e-2;   ///< Layer-2 per-degree RW q (TECU²/s), 1/n² scaled for n≥1.
+        double layer2_mean_vtec_prior_tecu = 3.0;       ///< Layer-2 a₀₀ climatology mean (TECU).
+        double layer2_mean_vtec_prior_sigma_tecu = 5.0; ///< Layer-2 a₀₀ prior σ (TECU) — TIGHT on purpose (split constraint).
         int    row_decimation_epochs = 0;      ///< T1b temporal treatment of the (quasi-static) SH pseudo-obs constraint (0/1 = off = current behavior).  The sun-fixed field is quasi-static, so re-applying the SH↔slant rows as an INDEPENDENT white obs every epoch is a σ-incest channel (collapses the formal σ without new information).  Mechanism: the rows are still applied EVERY epoch (so the satellite-code-bias observability they provide is preserved and no epoch is withheld — pure row-skipping instead makes the observability gate withhold every skipped epoch) but their noise is inflated by N (σ ×√N), so each epoch's white row carries only 1/N of the information, matching the information rate of "one full look per N epochs".
-        double rep_error_tau_s = 0.0;          ///< T5 (FABLE-GATE, 2026-07-10): correlated per-(station,sat) SH representativeness-error deviation.  0 = OFF = byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)` where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu mapped to slant) carried by a serial scalar filter outside the solve.  The single-layer surface structurally cannot represent per-LOS slant structure (measured: ~80 % of LOS residuals > 3σ at ANY degree, T4 2026-07-10); modelling the misfit as a tracked correlated deviation stops it leaking dispersively into the float ambiguities (the uniform-DD-fraction root cause) while preserving the SH rows' DCB observability.  Supersedes row_decimation_epochs when set (the GM model IS the correlated-error treatment; the σ-inflation was its white-noise stopgap).
+        double rep_error_tau_s = 0.0;          ///< T5/Iono-2 (v2 EXACT harvest, 2026-07-17): correlated per-(station,sat) SH representativeness-error deviation.  0 = OFF = byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)` where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu, carried in VERTICAL TECU so the level and variance are elevation-stationary).  v2 replaces the falsified-circular v1 scalar filter with the EXACT joint-posterior harvest: d̂ = d_pred + [P/(P+f²)]·(û − d_pred) with û/V̂ the solved posterior mean/variance of the pin functional (one NetworkEstimator::stationRegression per LOS + the datum-frame shared covariance), and P⁺ = P·(U+f²)/(U+P+f²) with the data-only information U recovered from V̂ — see docs/HANDOFF_iono2_card.md.  This is the per-LOS iono TEMPORAL ACCUMULATION channel the per-epoch producer lacks (the NL-AR representation lever; the single-layer surface leaves ~70 % of LOS residuals > 3σ at ANY degree, T4/Jul-17 A/B).  Slip-integrated from day one: the C3c PASS-A funnel (carry_slipped_ambs, per-signal → per-sat projection) ERASES the entry (reset-not-repair, cold re-tap at σ_ss).  Supersedes row_decimation_epochs when set.
     };
 
     struct AdaptiveIonoQConfig {

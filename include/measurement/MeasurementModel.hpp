@@ -97,7 +97,8 @@ namespace GnssProcessor {
          *        usable raw phase signal (used to seed the pivot set first).
          */
         void ensureNetworkSharedStates(const std::vector<PppObservation>& observations,
-                                       const std::set<std::string>& allowed_phase_keys = {});
+                                       const std::set<std::string>& allowed_phase_keys = {},
+                                       const std::set<std::string>* cbadm_admitted_code_keys = nullptr);
 
         /**
          * @brief Install a network coverage allowlist for satellite PHASE-BIAS states.

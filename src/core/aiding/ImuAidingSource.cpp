@@ -3,9 +3,9 @@
  * @brief IMU first-client adapter — wraps ImuIntegrator behind IAidingSource.
  *
  * Implements the state descriptor and the predict-time contribution (the
- * composable generalization of KalmanFilter::predictImu).  These are not yet
- * wired into the live epoch loop — predictImu / the existing TC branch remain
- * the live paths until Step 3 — so the IMU stays numerically inert.
+ * composable generalization of KalmanFilter::predictImu).  predictAided /
+ * collectPredict are now the live paths (Application::run, RealTimeEngine::run);
+ * the legacy predictImu is retired (no call sites outside its own definition).
  *
  * @see docs/aiding_source_abstraction_design.md
  */

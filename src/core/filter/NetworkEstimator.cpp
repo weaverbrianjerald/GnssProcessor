@@ -99,20 +99,20 @@ Eigen::Index NetworkEstimator::registerPhaseBias(const std::string& sat,
     return registerColumn_(sat, SharedParamKind::PhaseBias, signal);
 }
 
-Eigen::Index NetworkEstimator::registerVtecCoeff(int n, int m, char trig) {
+Eigen::Index NetworkEstimator::registerVtecCoeff(int n, int m, char trig, int layer) {
     if (epoch_open_) {
         throw std::logic_error(
             "NetworkEstimator: cannot register shared parameters after "
             "beginEpoch(); finalize the layout first");
     }
-    const std::string k = StateKeys::makeVtecShKey(n, m, trig);
+    const std::string k = StateKeys::makeVtecShKey(n, m, trig, layer);
     auto it = index_.find(k);
     if (it != index_.end()) return it->second;
     const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
     index_.emplace(k, col);
     ColumnDesc d;
     d.kind = SharedParamKind::VtecSh;
-    d.sh_n = n; d.sh_m = m; d.sh_trig = trig;
+    d.sh_n = n; d.sh_m = m; d.sh_trig = trig; d.sh_layer = layer;
     columns_.push_back(std::move(d));
     return col;
 }
@@ -131,8 +131,8 @@ Eigen::Index NetworkEstimator::phaseBiasColumn(const std::string& sat,
     return index_.at(key_(sat, SharedParamKind::PhaseBias, signal));
 }
 
-Eigen::Index NetworkEstimator::vtecCoeffColumn(int n, int m, char trig) const {
-    return index_.at(StateKeys::makeVtecShKey(n, m, trig));
+Eigen::Index NetworkEstimator::vtecCoeffColumn(int n, int m, char trig, int layer) const {
+    return index_.at(StateKeys::makeVtecShKey(n, m, trig, layer));
 }
 
 std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
@@ -146,8 +146,8 @@ std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
         case SharedParamKind::CodeBias:  return "CB:" + d.sat + ":" + d.signal;
         case SharedParamKind::PhaseBias: return "PB:" + d.sat + ":" + d.signal;
         case SharedParamKind::VtecSh:
-            return std::string("SH:") + d.sh_trig + ":" + std::to_string(d.sh_n)
-                   + ":" + std::to_string(d.sh_m);
+            return std::string(d.sh_layer > 0 ? "SH2:" : "SH:") + d.sh_trig + ":"
+                   + std::to_string(d.sh_n) + ":" + std::to_string(d.sh_m);
     }
     return "UNKNOWN:" + std::to_string(col);   // unreachable; keeps -Wreturn-type quiet
 }
@@ -466,7 +466,7 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
         const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
             : key_(p.sat, p.kind, p.signal);
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
@@ -504,7 +504,7 @@ std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>
     for (Eigen::Index i = 0; i < nk; ++i) {
         const SharedPrior& p = keys[static_cast<std::size_t>(i)];
         const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
             : key_(p.sat, p.kind, p.signal);
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // not in this epoch's layout → marginalized
@@ -710,9 +710,15 @@ NetworkEstimator::PerConstWithholdDecision NetworkEstimator::decidePerConstWithh
 }
 
 
-void NetworkEstimator::dumpEstimabilitySpectrum(double tow, int declared_dim,
-                                                const std::vector<std::string>& col_desc,
-                                                const std::shared_ptr<spdlog::logger>& log) {
+NetworkEstimator::EstimabilityDump NetworkEstimator::dumpEstimabilitySpectrum(
+        double tow, int declared_dim,
+        const std::vector<std::string>& col_desc,
+        const std::shared_ptr<spdlog::logger>& log) {
+    // DG5: the machine-readable mirror is FILLED FROM the same locals the warn
+    // lines format, inside the same loops and in the same (largest-ev-first)
+    // order — so a network_estimability.csv row and its log line can never
+    // disagree, and the log text stays byte-identical (the estim golden arm).
+    EstimabilityDump out;
     const Eigen::MatrixXd& Nss = reducedSharedNormals();
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(
         Nss, Eigen::ComputeEigenvectors);
@@ -720,7 +726,10 @@ void NetworkEstimator::dumpEstimabilitySpectrum(double tow, int declared_dim,
         const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
         const Eigen::Index k = ev.size();
         const double smax = (k > 0) ? ev(k - 1) : 0.0;  // largest = last
-        const double cutoff = kNullSpaceTol * std::max(smax, 1.0);
+        // DG2: the RESOLVED tolerance — the dump must describe the decision the
+        // gate is about to make, so it reads the same member the gate call site
+        // and the drop-and-heal read (never the kNullSpaceTol default directly).
+        const double cutoff = rank_gate_tol_ * std::max(smax, 1.0);
         int below = 0;
         for (Eigen::Index i = 0; i < k; ++i) if (ev(i) < cutoff) ++below;
         // Smallest ntail eigenvalues, printed largest-first so the very
@@ -734,10 +743,18 @@ void NetworkEstimator::dumpEstimabilitySpectrum(double tow, int declared_dim,
                   "smallest {} ev = [{}]",
                   tow, Nss.rows(), Nss.cols(), declared_dim,
                   smax, cutoff, below, ntail, tail);
+        out.valid        = true;
+        out.tow          = tow;
+        out.n_shared     = static_cast<int>(Nss.rows());
+        out.declared_dim = declared_dim;
+        out.ev_max       = smax;
+        out.cutoff       = cutoff;
+        out.n_below      = below;
         // Name the parameters spanning each near-zero (unpinned-gauge)
         // direction, printed largest-first to mirror the tail line above.
         const Eigen::MatrixXd& V = es.eigenvectors();
         const Eigen::Index ndump = std::min<Eigen::Index>(below + 2, k);
+        out.dirs.reserve(static_cast<size_t>(std::max<Eigen::Index>(ndump, 0)));
         for (Eigen::Index j = ndump - 1; j >= 0; --j) {
             const Eigen::VectorXd v = V.col(j).cwiseAbs();
             std::vector<Eigen::Index> idx(v.size());
@@ -746,17 +763,21 @@ void NetworkEstimator::dumpEstimabilitySpectrum(double tow, int declared_dim,
                               idx.begin() + std::min<Eigen::Index>(5, v.size()), idx.end(),
                               [&](Eigen::Index a, Eigen::Index b){ return v(a) > v(b); });
             std::string top;
+            EstimabilityDirection row;
+            row.ev = ev(j);
             for (int t = 0; t < 5 && t < v.size(); ++t) {
                 const Eigen::Index c = idx[t];
-                top += fmt::format("{}{}={:.2f}", (t ? ", " : ""),
-                                   (c < static_cast<Eigen::Index>(col_desc.size())
-                                    && !col_desc[c].empty()) ? col_desc[c]
-                                                             : fmt::format("col{}", c),
-                                   v(c));
+                const std::string label = (c < static_cast<Eigen::Index>(col_desc.size())
+                                           && !col_desc[c].empty())
+                                              ? col_desc[c] : fmt::format("col{}", c);
+                top += fmt::format("{}{}={:.2f}", (t ? ", " : ""), label, v(c));
+                row.top.emplace_back(label, v(c));
             }
             log->warn("Network[estimability]:   ev={:.3e} dir spanned by [{}]", ev(j), top);
+            out.dirs.push_back(std::move(row));
         }
     }
+    return out;
 }
 
 } // namespace GnssProcessor

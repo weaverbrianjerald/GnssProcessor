@@ -256,6 +256,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // is NOT persisted in the snapshot — a resume across a tau change must cold-start.
         if (shc.rep_error_tau_s > 0.0)
             add(fmt::format("shdevtau={}", shc.rep_error_tau_s));
+        // Iono-2 dual-layer: the second shell adds carried SH coefficients whose
+        // meaning depends on its degree AND height (a resume across a re-layering
+        // would fold layer-fitted coefficients into a different shell geometry).
+        // Conditional-append (only when armed) keeps every existing fingerprint
+        // byte-identical.
+        if (shc.layer2_max_degree > 0)
+            add(fmt::format("shl2={}@{}", shc.layer2_max_degree, shc.layer2_height_km));
         // Card 1: the conditional local carry changes what the per-station carry MEANS
         // (a shared-coupled conditional row vs an independent diagonal marginal) and the
         // per-column coupling data (M_r rows, ŝ_prev, P_prev) is NOT persisted in the v1
@@ -409,6 +416,13 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         cp.value     = sc.value;
                         cp.var       = sc.var;
                         cp.inflate_q = sc.inflate_q;
+                        // Iono-2 dual-layer: the second shell's coefficients ride the
+                        // (empty-for-VtecSh) sat field as "L1" — a layer tag old
+                        // readers key-mismatch into a safe climatology reseed.
+                        if (cp.kind == SharedParamKind::VtecSh && cp.sat == "L1") {
+                            cp.sh_layer = 1;
+                            cp.sat.clear();
+                        }
                         prev_carry.push_back(std::move(cp));
                     }
                     // C1: the v1 snapshot serializes per-key (value, var) only — the
@@ -615,6 +629,10 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             sc.value     = cp.value;
             sc.var       = cp.var;
             sc.inflate_q = cp.inflate_q;
+            // Iono-2 dual-layer: tag the second shell in the (empty-for-VtecSh)
+            // sat field — record arity unchanged, old readers reseed safely.
+            if (cp.kind == SharedParamKind::VtecSh && cp.sh_layer > 0)
+                sc.sat = "L1";
             snap.shared_carry.push_back(std::move(sc));
         }
         snap.prev_pivot    = prev_pivot;
@@ -663,6 +681,7 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
 void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                               const GnssConfig& config_, NetworkEstimator& est,
                               const SphericalHarmonicIonosphere* sh_model,
+                              const SphericalHarmonicIonosphere* sh_model2,
                               bool datum_changed, double dt, bool within_epoch_armed) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
@@ -685,7 +704,7 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // forward, which must stay AFTER the gate (it would otherwise fill the clock
     // gauge the datum pins).
     if (config_.estimateNetworkIonoSh() && sh_model && est.numShared() > 0) {
-        std::map<std::tuple<int, int, char>, const CarryPrior*> sh_carry;
+        std::map<std::tuple<int, int, int, char>, const CarryPrior*> sh_carry;
         // RTA-2 scope decision: the SH-VTEC carry skip deliberately stays
         // GLOBAL even under network.scoped_handover_response.  The SH
         // coefficients are constellation-LESS shared columns, so no scoped
@@ -701,49 +720,60 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (!datum_changed)
             for (const CarryPrior& cp : prev_carry)
                 if (cp.kind == SharedParamKind::VtecSh)
-                    sh_carry.emplace(std::make_tuple(cp.sh_n, cp.sh_m, cp.sh_trig), &cp);
+                    sh_carry.emplace(
+                        std::make_tuple(cp.sh_layer, cp.sh_n, cp.sh_m, cp.sh_trig), &cp);
 
+        // Dual-layer (Iono-2): the SAME mean-reverting prior recipe per shell,
+        // with per-layer Kaula scale / q / a₀₀ anchor.  The layer-2 a₀₀ anchor
+        // is deliberately TIGHT (the inter-layer split of the mean VTEC is
+        // quasi-null from ground-only geometry — only the mapping-function
+        // difference of the two shell heights observes it); the TOTAL mean
+        // stays data-determined through layer 1's loose anchor.
         std::vector<NetworkEstimator::SharedPrior> sh_priors;
-        sh_priors.reserve(sh_model->coeffs().size());
-        for (const auto& c : sh_model->coeffs()) {
-            const double kaula_sigma = (c.n == 0)
-                ? shc.mean_vtec_prior_sigma_tecu
-                : shc.kaula_scale_tecu / static_cast<double>(c.n);
-            const double kaula_var = kaula_sigma * kaula_sigma;
-            const double clim = (c.n == 0 && c.m == 0 && c.trig == 'C')
-                ? shc.mean_vtec_prior_tecu : 0.0;   // a₀₀ → mean VTEC; others → 0
+        for (const ShLayer& lay :
+             shLayers(shc, sh_model, sh_model2)) {
+            sh_priors.reserve(sh_priors.size() + lay.model->coeffs().size());
+            for (const auto& c : lay.model->coeffs()) {
+                const double kaula_sigma = (c.n == 0)
+                    ? lay.mean_prior_sigma_tecu
+                    : lay.kaula_scale_tecu / static_cast<double>(c.n);
+                const double kaula_var = kaula_sigma * kaula_sigma;
+                const double clim = (c.n == 0 && c.m == 0 && c.trig == 'C')
+                    ? lay.mean_prior_tecu : 0.0;   // a₀₀ → mean VTEC; others → 0
 
-            // Mean-reverting (first-order Gauss-Markov) prior: ALWAYS apply the
-            // Kaula climatology anchor (toward clim, σ = kaula_sigma) AND, when a
-            // posterior was carried forward, a random-walk anchor (toward the
-            // previous estimate, inflated by the per-degree q).  Combining them in
-            // information space pulls every coefficient back toward climatology
-            // each epoch (so the field cannot random-walk away — the design's
-            // "unobserved coefficients are pulled to their prior", §6.1) while the
-            // RW term preserves temporal continuity for well-observed ones.  A
-            // pure RW-toward-previous (no climatology re-assertion) let the global
-            // field drift to unphysical magnitudes; this is the bound.
-            double info  = 1.0 / kaula_var;       // climatology Tikhonov (always on)
-            double sumiv = info * clim;
-            const auto it = sh_carry.find(std::make_tuple(c.n, c.m, c.trig));
-            if (it != sh_carry.end() && std::isfinite(it->second->value)
-                && it->second->var > 0.0) {
-                const double q_deg = (c.n == 0)
-                    ? shc.q_per_degree
-                    : shc.q_per_degree / static_cast<double>(c.n * c.n);
-                const double var_rw = it->second->var + q_deg * std::max(0.0, dt);
-                if (var_rw > 0.0) {
-                    const double info_rw = 1.0 / var_rw;
-                    info  += info_rw;
-                    sumiv += info_rw * it->second->value;
+                // Mean-reverting (first-order Gauss-Markov) prior: ALWAYS apply the
+                // Kaula climatology anchor (toward clim, σ = kaula_sigma) AND, when a
+                // posterior was carried forward, a random-walk anchor (toward the
+                // previous estimate, inflated by the per-degree q).  Combining them in
+                // information space pulls every coefficient back toward climatology
+                // each epoch (so the field cannot random-walk away — the design's
+                // "unobserved coefficients are pulled to their prior", §6.1) while the
+                // RW term preserves temporal continuity for well-observed ones.  A
+                // pure RW-toward-previous (no climatology re-assertion) let the global
+                // field drift to unphysical magnitudes; this is the bound.
+                double info  = 1.0 / kaula_var;       // climatology Tikhonov (always on)
+                double sumiv = info * clim;
+                const auto it =
+                    sh_carry.find(std::make_tuple(lay.layer, c.n, c.m, c.trig));
+                if (it != sh_carry.end() && std::isfinite(it->second->value)
+                    && it->second->var > 0.0) {
+                    const double q_deg = (c.n == 0)
+                        ? lay.q_per_degree
+                        : lay.q_per_degree / static_cast<double>(c.n * c.n);
+                    const double var_rw = it->second->var + q_deg * std::max(0.0, dt);
+                    if (var_rw > 0.0) {
+                        const double info_rw = 1.0 / var_rw;
+                        info  += info_rw;
+                        sumiv += info_rw * it->second->value;
+                    }
                 }
+                if (!(info > 0.0)) continue;
+                NetworkEstimator::SharedPrior p;
+                p.kind = SharedParamKind::VtecSh;
+                p.sh_n = c.n; p.sh_m = c.m; p.sh_trig = c.trig; p.sh_layer = lay.layer;
+                p.value = sumiv / info; p.info = info;
+                sh_priors.push_back(p);
             }
-            if (!(info > 0.0)) continue;
-            NetworkEstimator::SharedPrior p;
-            p.kind = SharedParamKind::VtecSh;
-            p.sh_n = c.n; p.sh_m = c.m; p.sh_trig = c.trig;
-            p.value = sumiv / info; p.info = info;
-            sh_priors.push_back(p);
         }
         est.addSharedPrior(sh_priors);
         if (within_epoch_armed)
@@ -1087,6 +1117,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 const std::vector<StationAssembly>& asm_res,
                                 const NetworkSbasis::Plan& plan,
                                 const SphericalHarmonicIonosphere* sh_model,
+                                const SphericalHarmonicIonosphere* sh_model2,
                                 NetworkCarryVce& carry_vce_est, bool carry_warm,
                                 double pl_now_s,
                                 const std::vector<std::string>& registered_clock_sats,
@@ -1147,11 +1178,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                       regcol(std::move(d), est.codeBiasColumn(kv.first, kv.second)); } catch (...) {}
             }
             if (config_.estimateNetworkIonoSh() && sh_model)
-                for (const auto& c : sh_model->coeffs()) {
-                    try { CoupledShared d; d.kind = SharedParamKind::VtecSh;
-                          d.n = c.n; d.m = c.m; d.trig = c.trig;
-                          regcol(std::move(d), est.vtecCoeffColumn(c.n, c.m, c.trig)); } catch (...) {}
-                }
+                for (const ShLayer& lay :
+                     shLayers(config_.getGlobalVtecShConfig(), sh_model, sh_model2))
+                    for (const auto& c : lay.model->coeffs()) {
+                        try { CoupledShared d; d.kind = SharedParamKind::VtecSh;
+                              d.n = c.n; d.m = c.m; d.trig = c.trig;
+                              d.sh_layer = lay.layer;
+                              regcol(std::move(d),
+                                     est.vtecCoeffColumn(c.n, c.m, c.trig, lay.layer)); } catch (...) {}
+                    }
             // P_prev,jj a departed shared column is marginalized with next epoch: the
             // datum-frame marginal variance (datum-pinned + ensemble-gauge cols EXACT = 0,
             // mirroring conditionalLocalVarianceDiag's frame).
@@ -1415,6 +1450,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        NetworkEstimator& est, const Eigen::VectorXd& x_s,
                        const NetworkSbasis::Plan& plan,
                        const SphericalHarmonicIonosphere* sh_model,
+                       const SphericalHarmonicIonosphere* sh_model2,
                        const std::set<std::string>& clock_refloat_sats,
                        const std::vector<std::string>& registered_clock_sats,
                        const std::set<std::string>& shared_phase_keys,
@@ -1614,20 +1650,25 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
     }
     if (config_.estimateNetworkIonoSh() && sh_model) {   // SH-VTEC coefficients
-        for (const auto& c : sh_model->coeffs()) {
-            const Eigen::Index col = est.vtecCoeffColumn(c.n, c.m, c.trig);
-            if (pinned_cols.count(col)) continue;   // SH cols are never datum-pinned (safety)
-            const double var = cov(col, col);
-            const double val = x_s(col);
-            // Never carry a non-finite value/variance forward — it would poison
-            // the next epoch's normals and hard-crash the solve.  The mean-
-            // reverting climatology prior re-seeds the coefficient cleanly.
-            if (!(var > 0.0) || !std::isfinite(val) || !std::isfinite(var)) continue;
-            CarryPrior cp;
-            cp.kind = SharedParamKind::VtecSh;
-            cp.sh_n = c.n; cp.sh_m = c.m; cp.sh_trig = c.trig;
-            cp.value = val; cp.var = var;
-            prev_carry.push_back(cp);
+        for (const ShLayer& lay :
+             shLayers(config_.getGlobalVtecShConfig(), sh_model, sh_model2)) {
+            for (const auto& c : lay.model->coeffs()) {
+                const Eigen::Index col =
+                    est.vtecCoeffColumn(c.n, c.m, c.trig, lay.layer);
+                if (pinned_cols.count(col)) continue;   // SH cols are never datum-pinned (safety)
+                const double var = cov(col, col);
+                const double val = x_s(col);
+                // Never carry a non-finite value/variance forward — it would poison
+                // the next epoch's normals and hard-crash the solve.  The mean-
+                // reverting climatology prior re-seeds the coefficient cleanly.
+                if (!(var > 0.0) || !std::isfinite(val) || !std::isfinite(var)) continue;
+                CarryPrior cp;
+                cp.kind = SharedParamKind::VtecSh;
+                cp.sh_n = c.n; cp.sh_m = c.m; cp.sh_trig = c.trig;
+                cp.sh_layer = lay.layer;
+                cp.value = val; cp.var = var;
+                prev_carry.push_back(cp);
+            }
         }
     }
 }

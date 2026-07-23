@@ -3065,6 +3065,53 @@ TEST(NetworkEstimatorTest, VtecShColumnsRegisterPriorAndSkipEmit) {
         EXPECT_TRUE(s.sat == "G01" || s.sat == "G02") << "unexpected sat " << s.sat;
 }
 
+// Iono-2 dual-layer: the second shell registers under its own "SH2" keys — the
+// same (n,m,trig) coexists on both layers as DISTINCT columns, the per-layer
+// prior routing lands on the right one, the layer-0 API keeps its legacy
+// defaulted-argument behavior, and labels disambiguate the shells.
+TEST(NetworkEstimatorTest, VtecShLayer2ColumnsRegisterDistinctWithPerLayerPriors) {
+    NetworkEstimator est;
+    const Eigen::Index cG1 = est.registerClock("G01");
+    const Eigen::Index a00_l1 = est.registerVtecCoeff(0, 0, 'C');       // layer 0 (legacy)
+    const Eigen::Index a00_l2 = est.registerVtecCoeff(0, 0, 'C', 1);    // layer 1
+    const Eigen::Index a10_l2 = est.registerVtecCoeff(1, 0, 'C', 1);
+    EXPECT_NE(a00_l1, a00_l2);                                   // distinct columns
+    EXPECT_EQ(est.registerVtecCoeff(0, 0, 'C', 1), a00_l2);      // idempotent per layer
+    EXPECT_EQ(est.vtecCoeffColumn(0, 0, 'C'), a00_l1);           // default = layer 0
+    EXPECT_EQ(est.vtecCoeffColumn(0, 0, 'C', 1), a00_l2);
+    EXPECT_EQ(est.numShared(), 4);
+    EXPECT_EQ(est.sharedColumnLabel(a00_l1), "SH:C:0:0");
+    EXPECT_EQ(est.sharedColumnLabel(a00_l2), "SH2:C:0:0");
+
+    est.beginEpoch();
+    Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(1, 4);
+    A_s(0, cG1) = -1.0;
+    Eigen::MatrixXd A_r(1, 1); A_r << 1.0;
+    Eigen::VectorXd w(1); w << 1.0;
+    Eigen::VectorXd y(1); y << 2.0;
+    est.addStation(A_s, A_r, w, y);
+
+    // Per-layer a00 anchors: layer 0 → 12 TECU, layer 1 → 3 TECU.  sh_layer in
+    // the SharedPrior identity must route each to ITS shell's column.
+    std::vector<NetworkEstimator::SharedPrior> pr;
+    auto mk = [](int n, int m, char t, int layer, double v) {
+        NetworkEstimator::SharedPrior p;
+        p.kind = SharedParamKind::VtecSh; p.sh_n = n; p.sh_m = m; p.sh_trig = t;
+        p.sh_layer = layer; p.value = v; p.info = 1.0e4;
+        return p;
+    };
+    pr.push_back(mk(0, 0, 'C', 0, 12.0));
+    pr.push_back(mk(0, 0, 'C', 1, 3.0));
+    pr.push_back(mk(1, 0, 'C', 1, 0.0));
+    est.addSharedPrior(pr);
+
+    NetworkEstimator::Datum datum{ NetworkEstimator::Pin{cG1, 0.0} };
+    const Eigen::VectorXd x = est.solve(datum);
+    EXPECT_NEAR(x(a00_l1), 12.0, 1e-3);
+    EXPECT_NEAR(x(a00_l2), 3.0, 1e-3);
+    EXPECT_NEAR(x(a10_l2), 0.0, 1e-3);
+}
+
 // ===========================================================================
 // NetworkSbasis (W5) — minimum-constraint datum builder + null-space rank gate
 // ===========================================================================

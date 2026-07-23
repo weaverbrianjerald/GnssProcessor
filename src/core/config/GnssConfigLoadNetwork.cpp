@@ -374,6 +374,26 @@ namespace GnssProcessor {
                                           "network_lane_carry_lane_meas", true);
                 lc.bridge_meas = jval<bool>(json, "network.lane_carry.bridge_meas",
                                             "network_lane_carry_bridge_meas", true);
+                // LF-1 INC-1 (docs/SPEC_lane_fold_perf_card.md §3.2): the optimized blocked/sparse
+                // lane fold.  A PERF knob — it changes only HOW the linear algebra is applied
+                // (O(K) sparse SET + hoisted symmetrize), never what folds — so it stays OUT of
+                // the equivalence_shape discriminator below.  Equivalence class (NOT bit-identical).
+                lc.fold_blocked = jval<bool>(json, "network.lane_carry.fold_blocked",
+                                             "network_lane_carry_fold_blocked", false);
+                // LF-1 INC-2 (§3.3): pinned-cycle increment skip.  Also a PERF knob (stays out
+                // of the equivalence_shape discriminator).  within_n clamps to ≥1 (a 0 window
+                // would resume increments the epoch after every decision — the skip never fires).
+                lc.skip_pinned_increments =
+                    jval<bool>(json, "network.lane_carry.skip_pinned_increments",
+                               "network_lane_carry_skip_pinned_increments", false);
+                lc.skip_pinned_within_n = std::max<long long>(1,
+                    jval<long long>(json, "network.lane_carry.skip_pinned_within_n",
+                                    "network_lane_carry_skip_pinned_within_n", 3));
+                // LF-1 INC-4 (§3.5): component-parallel MW fold.  PERF knob (out of the
+                // equivalence_shape discriminator); byte-identical to serial.
+                lc.parallel_components =
+                    jval<bool>(json, "network.lane_carry.parallel_components",
+                               "network_lane_carry_parallel_components", false);
             }
             // --- M5 card WL-2: EWL-first tri-frequency cascade (SPEC_ewl_wl_cascade_card.md §4). ---
             mw.ewl_enable = jval<bool>(json, "network.mw_wl.ewl_enable",
@@ -683,7 +703,8 @@ namespace GnssProcessor {
 
         // --- W6: satellite CODE-bias (OSB) estimation -----------------------------
         // When network.estimate_sat_code_bias is on, the network estimates its OWN
-        // per-(satellite,signal) code biases (GPS + Galileo) and emits them, so the
+        // per-(satellite,signal) code biases (all non-GLONASS constellations — GPS,
+        // Galileo, BeiDou) and emits them, so the
         // user can SKIP the external .BIA.  This is a single coupled slice — the
         // satellite code-bias column, the receiver DCB (estimate_ifb), and the GIM
         // ionosphere weighting (the load-bearing constraint that makes the satellite
@@ -744,11 +765,54 @@ namespace GnssProcessor {
             log->info("Network producer (W6): satellite code-bias estimation ENABLED — forcing "
                       "estimate_sat_biases + promote_sat_code_bias + estimate_ifb (rx DCB) + "
                       "ionosphere_weighting = on, enable_code_phase_bias (.BIA) = OFF; the network "
-                      "emits its own satellite code biases (GPS+Galileo) under a sum-to-zero "
-                      "per-constellation DCB datum.");
+                      "emits its own satellite code biases (GPS + Galileo + BeiDou) under a "
+                      "sum-to-zero per-constellation DCB datum.");
         } else {
             log->info("Network producer (V1): satellite code bias deferred "
                       "(estimate_sat_biases / promote_sat_code_bias = false)");
+        }
+
+        // CB-ADM: run-latched W6 code-bias admission census + station-local
+        // quarantine.  Replaces the per-epoch >= 2-station gate (whose count
+        // FLAPPING at BeiDou scale churns prune / re-register / re-seed and
+        // spawns datum-orphan near-null directions that withhold whole epochs)
+        // with a one-shot startup census.  Only effective when the W6 slice is
+        // armed; armed-without-W6 is INERT (the code-bias registration block
+        // never runs) — warn, per the established armed-but-ineffective pattern.
+        network_cb_admission_ =
+            jval<bool>(json, "network.cb_admission", "cb_admission", false);
+        network_cb_admission_min_stations_ = jval<int>(
+            json, "network.cb_admission_min_stations", "cb_admission_min_stations", 4);
+        network_cb_admission_census_epochs_ = jval<int>(
+            json, "network.cb_admission_census_epochs", "cb_admission_census_epochs", 15);
+        if (network_cb_admission_min_stations_ < 1) {
+            log->error("Network: network.cb_admission_min_stations must be >= 1 "
+                       "(got {}); effective_min = max(2, min(this, n_census_stations)).",
+                       network_cb_admission_min_stations_);
+            return false;
+        }
+        if (network_cb_admission_census_epochs_ < 1) {
+            log->error("Network: network.cb_admission_census_epochs must be >= 1 (got {}).",
+                       network_cb_admission_census_epochs_);
+            return false;
+        }
+        if (network_cb_admission_) {
+            if (estimate_network_sat_code_bias_) {
+                log->info("Network producer (CB-ADM): W6 code-bias admission census ON — "
+                          "latching each (sat,signal) code pair over the first {} loop "
+                          "epochs (>= {} supporting stations, each sustained over "
+                          ">= ceil(K_eff/2) epochs, and >= 2 distinct bands per satellite "
+                          "for the IF pin).  Admitted pairs become shared border columns; "
+                          "sub-threshold pairs keep their measurements and their per-station "
+                          "sat-bias state as station-local sponges (kept, never pruned, "
+                          "never datumed, never emitted).",
+                          network_cb_admission_census_epochs_,
+                          network_cb_admission_min_stations_);
+            } else {
+                log->warn("Network: network.cb_admission = true is INERT — the W6 code-bias "
+                          "slice is off (network.estimate_sat_code_bias / estimate_iono_sh), "
+                          "so no code-bias columns are registered for the census to gate.");
+            }
         }
 
         if (estimate_network_iono_sh_) {
@@ -1166,6 +1230,115 @@ namespace GnssProcessor {
         network_cycle_slip_if_phase_td_shrink_kappa_ =
             jval<double>(json, "network.cycle_slip.if_phase_td_shrink_kappa",
                          "network_cycle_slip_if_phase_td_shrink_kappa", 20.0);
+
+        // --- Slip-QC hardening Cards R / L / G (docs/SPEC_slip_qc_hardening.md) ---
+        // Three independent, default-OFF qualifications of decisions the detector
+        // arms above already make.  None of them drops a station, satellite or
+        // observation (project rule 5) and none derives a threshold from the
+        // stochastic model (rule 4).  All-OFF ⇒ byte-identical.
+        {
+            auto& sq = network_config_.slip_qc;
+            // Card R — hardened IF-TD reference-satellite gate (fixes the fixed
+            // 0.5·λ_IF, n≥2 gate that re-fired every epoch on a sub-slip drift).
+            sq.ref_gate = jval<bool>(json, "network.cycle_slip.if_phase_td_ref_gate",
+                                     "network_cycle_slip_if_phase_td_ref_gate", false);
+            sq.ref_k = jval<double>(json, "network.cycle_slip.if_phase_td_ref_k",
+                                    "network_cycle_slip_if_phase_td_ref_k", 6.0);
+            sq.ref_min_n = jval<int>(json, "network.cycle_slip.if_phase_td_ref_min_n",
+                                     "network_cycle_slip_if_phase_td_ref_min_n", 4);
+            sq.ref_thin_widen =
+                jval<double>(json, "network.cycle_slip.if_phase_td_ref_thin_widen",
+                             "network_cycle_slip_if_phase_td_ref_thin_widen", 3.0);
+            sq.ref_coherence =
+                jval<double>(json, "network.cycle_slip.if_phase_td_ref_coherence",
+                             "network_cycle_slip_if_phase_td_ref_coherence", 0.5);
+            sq.ref_max_consecutive =
+                jval<int>(json, "network.cycle_slip.if_phase_td_ref_max_consecutive",
+                          "network_cycle_slip_if_phase_td_ref_max_consecutive", 1);
+            sq.ref_ewma_alpha =
+                jval<double>(json, "network.cycle_slip.if_phase_td_ref_ewma_alpha",
+                             "network_cycle_slip_if_phase_td_ref_ewma_alpha", 0.15);
+            sq.ref_shrink_kappa =
+                jval<double>(json, "network.cycle_slip.if_phase_td_ref_shrink_kappa",
+                             "network_cycle_slip_if_phase_td_ref_shrink_kappa", 20.0);
+            sq.ref_floor_frac =
+                jval<double>(json, "network.cycle_slip.if_phase_td_ref_floor_frac",
+                             "network_cycle_slip_if_phase_td_ref_floor_frac", 0.5);
+            // Card L — LLI corroboration in the MW drain.
+            sq.lli_corroborate = jval<bool>(json, "network.cycle_slip.mw_lli_corroborate",
+                                            "network_cycle_slip_mw_lli_corroborate", false);
+            sq.lli_chatter_frac_hi =
+                jval<double>(json, "network.cycle_slip.mw_lli_chatter_frac_hi",
+                             "network_cycle_slip_mw_lli_chatter_frac_hi", 0.6);
+            sq.lli_chatter_frac_lo =
+                jval<double>(json, "network.cycle_slip.mw_lli_chatter_frac_lo",
+                             "network_cycle_slip_mw_lli_chatter_frac_lo", 0.3);
+            sq.lli_min_epochs = jval<int>(json, "network.cycle_slip.mw_lli_min_epochs",
+                                          "network_cycle_slip_mw_lli_min_epochs", 1);
+            sq.lli_ewma_alpha = jval<double>(json, "network.cycle_slip.mw_lli_ewma_alpha",
+                                             "network_cycle_slip_mw_lli_ewma_alpha", 0.4);
+            sq.lli_k_mw = jval<double>(json, "network.cycle_slip.mw_lli_k_mw",
+                                       "network_cycle_slip_mw_lli_k_mw", 5.0);
+            sq.lli_k_gf = jval<double>(json, "network.cycle_slip.mw_lli_k_gf",
+                                       "network_cycle_slip_mw_lli_k_gf", 5.0);
+            sq.lli_mw_floor_cyc =
+                jval<double>(json, "network.cycle_slip.mw_lli_mw_floor_cyc",
+                             "network_cycle_slip_mw_lli_mw_floor_cyc", 0.5);
+            sq.lli_gf_floor_m = jval<double>(json, "network.cycle_slip.mw_lli_gf_floor_m",
+                                             "network_cycle_slip_mw_lli_gf_floor_m", 0.04);
+            sq.lli_step_alpha = jval<double>(json, "network.cycle_slip.mw_lli_step_alpha",
+                                             "network_cycle_slip_mw_lli_step_alpha", 0.15);
+            // Card G — gap-coincident instrumentation (counters + trace rows only).
+            sq.gap_instrument = jval<bool>(json, "network.cycle_slip.gap_instrument",
+                                           "network_cycle_slip_gap_instrument", false);
+
+            // Arming diagnostics: a card whose host arm is off is INERT, and a
+            // silent inert card is exactly the "clean log, dead wiring" failure
+            // standing invariant #4 exists to prevent.
+            if (sq.ref_gate && !network_cycle_slip_if_phase_td_) {
+                log->warn("Network (slip-QC card R): network.cycle_slip.if_phase_td_ref_gate "
+                          "is set but .if_phase_td is OFF — no IF-phase detector is built, so "
+                          "the hardened reference gate is INERT this run.");
+                sq.ref_gate = false;
+            }
+            if (sq.lli_corroborate && !network_cycle_slip_mw_detect_) {
+                log->warn("Network (slip-QC card L): network.cycle_slip.mw_lli_corroborate is "
+                          "set but .mw_detect is OFF — the LLI arm it qualifies never runs, so "
+                          "the corroboration gate is INERT this run.");
+                sq.lli_corroborate = false;
+            }
+            if (sq.lli_chatter_frac_lo > sq.lli_chatter_frac_hi) {
+                log->warn("Network (slip-QC card L): mw_lli_chatter_frac_lo ({:.2f}) exceeds "
+                          "_hi ({:.2f}) — the hysteresis band is inverted and the credibility "
+                          "state would chatter.  Clamping _lo to _hi.",
+                          sq.lli_chatter_frac_lo, sq.lli_chatter_frac_hi);
+                sq.lli_chatter_frac_lo = sq.lli_chatter_frac_hi;
+            }
+            if (sq.ref_gate)
+                log->info("Network (slip-QC card R): hardened IF-TD reference gate ON — fire "
+                          "only when |median(non-ref ΔΔ)| > max({:.1f}·s_eff, {:.2f}·λ_IF) AND "
+                          "the family agrees (MAD ≤ {:.2f}·|median|); thin families (< {} DDs) "
+                          "widen the physical floor {:.1f}× and are counted; at most {} "
+                          "consecutive fires per reference before a forced re-selection.",
+                          sq.ref_k, sq.ref_floor_frac,
+                          sq.ref_coherence, sq.ref_min_n, sq.ref_thin_widen,
+                          sq.ref_max_consecutive);
+            if (sq.lli_corroborate)
+                log->info("Network (slip-QC card L): LLI corroboration ON — an assertion acts "
+                          "when an empirical MW step (> max({:.1f}·σ̂, {:.2f} WL cyc)) or GF step "
+                          "(> max({:.1f}·σ̂, {:.3f} m)) confirms it, or while the station's "
+                          "LLI-set-fraction EWMA (α={:.2f}) stays credible (demote > {:.2f}, "
+                          "promote < {:.2f}, arm after {} epoch(s)).  Suppressed assertions are "
+                          "emitted with action=suppressed and counted — never dropped silently.",
+                          sq.lli_k_mw, sq.lli_mw_floor_cyc, sq.lli_k_gf, sq.lli_gf_floor_m,
+                          sq.lli_ewma_alpha, sq.lli_chatter_frac_hi, sq.lli_chatter_frac_lo,
+                          sq.lli_min_epochs);
+            if (sq.gap_instrument)
+                log->info("Network (slip-QC card G): gap-coincident instrumentation ON — "
+                          "counting arc resumptions across a tracking break, whether the raw "
+                          "MW/GF level shifted, and whether the arc re-entered with BRIDGED "
+                          "carry state.  Instrumentation only: zero mechanism change.");
+        }
         // Carrying carrier-phase ambiguities as zero-process-noise random constants is only
         // sound if an un-screened cycle slip cannot freeze a wrong value into the shared clock:
         // a slip makes the post-slip phase self-consistent with the SLIPPED integer, so the
@@ -1782,6 +1955,86 @@ namespace GnssProcessor {
                        network_phase_datum_min_stations_);
             return false;
         }
+        // Card KP (docs/SPEC_beidou_w6_datum.md §4) — the CONDITIONAL second lever,
+        // behind the DG rank-gate calibration and the PA drop-and-heal.  Default
+        // OFF; INERT without estimate_sat_code_bias (no OSB columns exist).
+        network_cb_kaula_prior_ =
+            jval<bool>(json, "network.cb_kaula_prior", "network_cb_kaula_prior", false);
+        network_cb_kaula_sigma_m_ =
+            jval<double>(json, "network.cb_kaula_sigma_m",
+                         "network_cb_kaula_sigma_m", 10.0);
+        if (network_cb_kaula_prior_ && !(network_cb_kaula_sigma_m_ > 0.0)) {
+            // info = 1/sigma^2 with sigma <= 0 is a HARD pin on every admitted OSB,
+            // i.e. a silent datum takeover wearing a "loose prior" label.  Refuse.
+            log->error("Network: network.cb_kaula_sigma_m must be > 0 (got {:g}); it is the "
+                       "standard deviation of the admitted-OSB physical-bound prior "
+                       "(info = 1/sigma^2).  Default 10.0 m (~33 ns).",
+                       network_cb_kaula_sigma_m_);
+            return false;
+        }
+        if (network_cb_kaula_prior_) {
+            if (!estimate_network_sat_code_bias_)
+                log->warn("Network (Card KP): network.cb_kaula_prior is ON but "
+                          "network.estimate_sat_code_bias is OFF — there are no satellite "
+                          "code-bias columns to put a prior on, so the toggle is INERT.  "
+                          "[Standing invariant #4: an armed card with nothing to act on is "
+                          "a miswire, not a quiet run.]");
+            else
+                log->info("Network producer (Card KP): admitted-OSB physical-bound prior ON — "
+                          "value 0, sigma {:g} m (info {:g}) on every REGISTERED satellite "
+                          "code-bias column, folded through the diagonal prior channel (NOT "
+                          "the tight code-bias gauge rows), so the declared S-basis dimension "
+                          "is unchanged.  Targets a CODE-dominated near-null direction the "
+                          "phase drop-and-heal cannot reach (it anchors PB columns only).  "
+                          "The K2 anti-fragility margin vs the armed rank-gate cutoff is "
+                          "computed and logged at the first fold.",
+                          network_cb_kaula_sigma_m_,
+                          1.0 / (network_cb_kaula_sigma_m_ * network_cb_kaula_sigma_m_));
+        }
+        // Card DG (docs/SPEC_beidou_w6_datum.md §2) — the shared-border null-space
+        // rank gate's RELATIVE eigenvalue tolerance becomes a per-config
+        // calibration parameter.  Default 1e-9 == NetworkEstimator::kNullSpaceTol
+        // (which stays the single source of that default), so an unset key sends
+        // the identical double through the identical arithmetic: byte-identical.
+        // The resolved value is handed to NetworkEstimator::setRankGateTol once,
+        // pre-loop, and read from there by ALL THREE consumers (gate, estimability
+        // dump, prioritized drop-and-heal) — DG2's "no private tolerances" rule.
+        network_rank_gate_tol_ =
+            jval<double>(json, "network.rank_gate_tol",
+                         "network_rank_gate_tol", 1e-9);
+        if (!(network_rank_gate_tol_ > 0.0)) {
+            // NaN also lands here (every comparison false) — deliberately, since a
+            // NaN cutoff makes every `ev < cutoff` test false and would report a
+            // rank-0 null space on a perfectly healthy system.
+            log->error("Network: network.rank_gate_tol must be > 0 (got {:g}); it is the "
+                       "RELATIVE eigenvalue tolerance of the shared null-space rank gate "
+                       "(cutoff = tol x max(lambda_max, 1)).  Default 1e-9.",
+                       network_rank_gate_tol_);
+            return false;
+        }
+        if (network_rank_gate_tol_ < 1e-16) {
+            // Clamp rather than fail: a tolerance below double's relative
+            // resolution against lambda_max cannot count ANY direction as null,
+            // which silently converts the gate into "declared_dim must be 0" — an
+            // OFF switch disguised as a tuning value.  Standing invariant #4: an
+            // inert safety gate must never look clean.
+            log->warn("Network: network.rank_gate_tol {:g} is below the 1e-16 floor and was "
+                      "clamped to 1e-16 — a cutoff that deep counts NO direction as null, "
+                      "which turns the rank gate off rather than tuning it.  Place the "
+                      "value from the config's own estimability dump (>= 2 decades above "
+                      "the gauge depth, >= 2 decades below the weakest-real layer).",
+                      network_rank_gate_tol_);
+            network_rank_gate_tol_ = 1e-16;
+        }
+        if (network_rank_gate_tol_ != 1e-9)
+            log->info("Network producer: rank-gate tolerance CALIBRATED to {:g} (default 1e-9) "
+                      "— cutoff = {:g} x max(lambda_max, 1), shared by the gate, the "
+                      "estimability dump and the prioritized drop-and-heal.  This is an "
+                      "exact-equality gate that throws in BOTH directions: a value below "
+                      "this config's own gauge depth stops counting the declared gauges and "
+                      "withholds a HEALTHY config.  Justify it from this config's "
+                      "network_estimability.csv (network.trace_estimability).",
+                      network_rank_gate_tol_, network_rank_gate_tol_);
         // Pin-aware station PD guard: reference the addStation local-block rank test
         // to the MEDIAN |pivot| instead of the max, so a deliberate in-block 1e10
         // anchor pin (prioritized phase datum) no longer inflates the rejection bar
@@ -2255,7 +2508,8 @@ namespace GnssProcessor {
                                             && !lc.lane_meas && !lc.bridge_meas;
                 log->info("Network WL-3 lane-coordinate carry ON (M5 card WL-3) — primary-pair "
                           "chords carried as jointly-covarianced (band-1, band-2) blocks; shape = "
-                          "{}.  q_wl_scale={}, sigma_wl_fresh={} cyc, lane_meas={}, bridge_meas={}.",
+                          "{}.  q_wl_scale={}, sigma_wl_fresh={} cyc, lane_meas={}, bridge_meas={}, "
+                          "fold_blocked={}.",
                           equivalence_shape
                               ? "EQUIVALENCE (SPEC §6.1: split per-band emission, no lane "
                                 "features — the structural-parity gate; ≤1e-9 equivalence holds "
@@ -2265,7 +2519,18 @@ namespace GnssProcessor {
                                 "increments, per-decided-epoch idempotent FFR lane re-pin)",
                           lc.q_wl_scale, lc.sigma_wl_fresh_cyc,
                           lc.lane_meas ? "true" : "false",
-                          lc.bridge_meas ? "true" : "false");
+                          lc.bridge_meas ? "true" : "false",
+                          lc.fold_blocked ? "true (LF-1 INC-1: O(K) sparse SET + hoisted symmetrize; "
+                                            "EQUIVALENCE class, not bit-identical)" : "false");
+                if (lc.skip_pinned_increments)
+                    log->info("Network WL-3 lane-fold LF-1 INC-2: pinned-cycle increment skip ON "
+                              "(within_n={} epochs) — committed-decided chords skip MW/bridge "
+                              "increments; any slip/D5/re-tap resumes them.  EQUIVALENCE class.",
+                              lc.skip_pinned_within_n);
+                if (lc.parallel_components)
+                    log->info("Network WL-3 lane-fold LF-1 INC-4: component-parallel MW fold ON "
+                              "(one joint block per thread; needs parallel_stations).  "
+                              "BYTE-IDENTICAL to serial.");
             }
         }
         if (network_phase_datum_eq34_) {

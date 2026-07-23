@@ -395,6 +395,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "({} coeffs), shell {:.0f} km, {} longitude; external GIM NOT loaded.",
                   sh_model->maxDegree(), sh_model->numCoeffs(), shc.layer_height_km,
                   shc.sun_fixed ? "sun-fixed" : "geographic");
+        // Iono-2 mechanism A: second thin shell of the dual-layer field.
+        if (shc.layer2_max_degree > 0) {
+            setup.sh_model2 =
+                std::make_unique<SphericalHarmonicIonosphere>(shc.layer2_max_degree);
+            log->info("Network (Iono-2): dual-layer field — second shell degree {} "
+                      "({} coeffs) at {:.0f} km; pin rows sum both shells.",
+                      setup.sh_model2->maxDegree(), setup.sh_model2->numCoeffs(),
+                      shc.layer2_height_km);
+        }
         // T1a: echo the a₀₀ physical band the per-epoch divergence WARN uses.
         if (shc.a00_warn_low_tecu < shc.a00_warn_high_tecu)
             log->info("Network (SH-iono): a₀₀ physical band [{:.1f}, {:.1f}] TECU — a per-epoch "
@@ -720,6 +729,25 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             && config_.networkCycleSlipIfPhaseTd()) {
             st.if_slip = std::make_unique<IfPhaseSlipDetector>(config_, log_manager_);
             st.if_slip->setDeferFlagging(true);  // network pools per-pair MAD; the driver flags
+            // Card R (docs/SPEC_slip_qc_hardening.md §2): push the hardened
+            // reference-satellite gate.  Pushed ONLY here, so the STAGED
+            // user/kinematic path keeps the legacy gate untouched (spec R5); with
+            // network.cycle_slip.if_phase_td_ref_gate off the params are the
+            // default-constructed (disabled) ones ⇒ byte-identical.
+            {
+                const auto& sq = config_.getNetworkConfig().slip_qc;
+                IfPhaseSlipDetector::RefGateParams rg;
+                rg.enable          = sq.ref_gate;
+                rg.k               = sq.ref_k;
+                rg.min_n           = sq.ref_min_n;
+                rg.thin_widen      = sq.ref_thin_widen;
+                rg.coherence       = sq.ref_coherence;
+                rg.max_consecutive = sq.ref_max_consecutive;
+                rg.ewma_alpha      = sq.ref_ewma_alpha;
+                rg.shrink_kappa    = sq.ref_shrink_kappa;
+                rg.floor_frac      = sq.ref_floor_frac;
+                st.if_slip->setRefGate(rg);
+            }
         }
 
         st.pstate.position        = st.ecef;

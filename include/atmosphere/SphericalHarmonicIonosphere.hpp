@@ -152,4 +152,40 @@ private:
     std::vector<std::vector<double>> norm_;
 };
 
+struct GlobalVtecShConfig;  // config/GnssConfigTypes.hpp
+
+/**
+ * @brief One shell of the (possibly dual-layer) co-estimated SH-VTEC field — a
+ *        non-owning view bundling the basis model with the per-shell geometry
+ *        and prior scalars every consumer site needs (Iono-2 mechanism A).
+ *
+ * Every site that evaluates the field (pin-row builder, prior injector, carry
+ * stash, deviation harvest, health sweep, consumer supply) loops the SAME
+ * @ref shLayers list, so a shell can never be evaluated at another shell's
+ * geometry — the single-layer path builds a one-entry list from the legacy
+ * config fields and stays byte-identical.
+ */
+struct ShLayer {
+    const SphericalHarmonicIonosphere* model = nullptr;  ///< Basis (non-owning, non-null).
+    int    layer = 0;                 ///< Shell index (0 = legacy "SH", 1 = "SH2").
+    double shell_height_m = 0.0;      ///< Shell height H_l (m).
+    double kaula_scale_tecu = 0.0;    ///< Kaula σ scale (TECU) for n ≥ 1.
+    double q_per_degree = 0.0;        ///< Per-degree RW q (TECU²/s), 1/n² scaled for n ≥ 1.
+    double mean_prior_tecu = 0.0;     ///< a₀₀ climatology mean (TECU).
+    double mean_prior_sigma_tecu = 0.0;  ///< a₀₀ anchor σ (TECU).
+};
+
+/**
+ * @brief Assemble the active shell list (one or two entries) from the SH config
+ *        and the constructed basis models.
+ *
+ * @param shc     The global_vtec_sh config block (heights, Kaula/q/a₀₀ scalars).
+ * @param layer0  The legacy single-layer basis (may be null → empty list).
+ * @param layer1  The second-shell basis (null unless layer2_max_degree > 0).
+ * @return Shell views in layer order; empty when @p layer0 is null.
+ */
+std::vector<ShLayer> shLayers(const GlobalVtecShConfig& shc,
+                              const SphericalHarmonicIonosphere* layer0,
+                              const SphericalHarmonicIonosphere* layer1);
+
 } // namespace GnssProcessor

@@ -1338,17 +1338,51 @@ namespace GnssProcessor {
             global_vtec_sh_.mean_vtec_prior_sigma_tecu = 30.0;
         if (global_vtec_sh_.representation_sigma_tecu <= 0.0)
             global_vtec_sh_.representation_sigma_tecu = 5.0;
+        // Iono-2 mechanism A: optional second thin shell (dual-layer SH field).
+        global_vtec_sh_.layer2_max_degree = jval<int>(json,
+            "estimation.global_vtec_sh.layer2_max_degree", "global_vtec_sh_layer2_max_degree", 0);
+        global_vtec_sh_.layer2_height_km = jval<double>(json,
+            "estimation.global_vtec_sh.layer2_height_km", "global_vtec_sh_layer2_height_km", 1300.0);
+        global_vtec_sh_.layer2_kaula_scale_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.layer2_kaula_scale_tecu",
+            "global_vtec_sh_layer2_kaula_scale_tecu", 3.0);
+        global_vtec_sh_.layer2_q_per_degree = jval<double>(json,
+            "estimation.global_vtec_sh.layer2_q_per_degree",
+            "global_vtec_sh_layer2_q_per_degree", 1.0e-2);
+        global_vtec_sh_.layer2_mean_vtec_prior_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.layer2_mean_vtec_prior_tecu",
+            "global_vtec_sh_layer2_mean_vtec_prior_tecu", 3.0);
+        global_vtec_sh_.layer2_mean_vtec_prior_sigma_tecu = jval<double>(json,
+            "estimation.global_vtec_sh.layer2_mean_vtec_prior_sigma_tecu",
+            "global_vtec_sh_layer2_mean_vtec_prior_sigma_tecu", 5.0);
+        if (global_vtec_sh_.layer2_max_degree < 0) global_vtec_sh_.layer2_max_degree = 0;
+        if (global_vtec_sh_.layer2_height_km <= 0.0) global_vtec_sh_.layer2_height_km = 1300.0;
+        if (global_vtec_sh_.layer2_kaula_scale_tecu <= 0.0)
+            global_vtec_sh_.layer2_kaula_scale_tecu = 3.0;
+        if (global_vtec_sh_.layer2_q_per_degree <= 0.0)
+            global_vtec_sh_.layer2_q_per_degree = 1.0e-2;
+        if (global_vtec_sh_.layer2_mean_vtec_prior_sigma_tecu <= 0.0)
+            global_vtec_sh_.layer2_mean_vtec_prior_sigma_tecu = 5.0;
+        if (global_vtec_sh_.layer2_max_degree > 0 && log)
+            log->info("Network (Iono-2): dual-layer SH-VTEC ON — layer 2 degree {} at "
+                      "{} km (Kaula {} TECU, a00 anchor {}±{} TECU); pin rows sum both "
+                      "shells (keys SH2|n|m|t on the shared border).",
+                      global_vtec_sh_.layer2_max_degree, global_vtec_sh_.layer2_height_km,
+                      global_vtec_sh_.layer2_kaula_scale_tecu,
+                      global_vtec_sh_.layer2_mean_vtec_prior_tecu,
+                      global_vtec_sh_.layer2_mean_vtec_prior_sigma_tecu);
         // T5: correlated per-LOS SH representativeness-error deviation (GM carry).
         global_vtec_sh_.rep_error_tau_s = jval<double>(json,
             "estimation.global_vtec_sh.rep_error_tau_s", "global_vtec_sh_rep_error_tau_s", 0.0);
         if (global_vtec_sh_.rep_error_tau_s < 0.0) global_vtec_sh_.rep_error_tau_s = 0.0;
         if (global_vtec_sh_.rep_error_tau_s > 0.0) {
             if (log) {
-                log->info("Network (T5): SH representativeness-error GM deviation ON — the "
+                log->info("Network (Iono-2/T5v2): SH representativeness-error GM deviation ON — the "
                           "SH↔slant pin's per-LOS misfit is tracked as a Gauss–Markov deviation "
-                          "(τ {} s, steady-state σ = representation_sigma_tecu {} TECU mapped to "
-                          "slant) instead of re-applied white; targets the dispersive misfit→"
-                          "ambiguity leakage behind the uniform DD fractions (T4 2026-07-10).",
+                          "(τ {} s, steady-state σ = representation_sigma_tecu {} TECU, carried in "
+                          "vertical TECU) with the EXACT joint-posterior harvest (v2; the v1 scalar "
+                          "filter was circular).  This is the per-LOS iono temporal-accumulation "
+                          "channel targeting the NL-AR representation blocker (T4/Jul-17 A/B).",
                           global_vtec_sh_.rep_error_tau_s,
                           global_vtec_sh_.representation_sigma_tecu);
                 if (global_vtec_sh_.row_decimation_epochs >= 2)
@@ -2294,9 +2328,9 @@ namespace GnssProcessor {
         // at the tail of the IMU section, rather than in loadEstimationSection_,
         // because `imu` back-compat-defaults to the already-parsed imu.enabled
         // (enableImu()) and the estimation section runs first.  An explicit
-        // estimation.aiding.imu always wins.  Behaviorally inert until
-        // AidingSourceManager is wired into the epoch loop (see
-        // docs/aiding_source_abstraction_design.md).
+        // estimation.aiding.imu always wins.  The AidingSourceManager is live
+        // (predictAided / collectPredict in Application::run and
+        // RealTimeEngine::run); see docs/aiding_source_abstraction_design.md.
         {
             aiding_.imu    = jval<bool>(json, "estimation.aiding.imu",    "aiding_imu",    imu_config_.enabled);
             aiding_.zupt   = jval<bool>(json, "estimation.aiding.zupt",   "aiding_zupt",   false);

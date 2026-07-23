@@ -104,6 +104,9 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                int i_lo, int n_sta_total,
                                bool carry_invariant, bool carry_warm,
                                std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                               const RawSlipEpoch& raw, const SlipQcParams& qc,
+                               std::vector<RawSlipHistory>& raw_hist,
+                               SlipQcCounters& qc_cnt,
                                const SyncedEpoch& se, NetworkRunTraces& traces,
                                const std::shared_ptr<spdlog::logger>& log) {
     // Alias block (INC-6 migration mechanic).
@@ -131,26 +134,37 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
     // detection is diagnostic (the free per-epoch estimate needs no reseed).  Pivot
     // (stations[0]) is never touched (its ambiguities are gauge-pinned).
     if (config_.networkCycleSlipMwDetect()) {
+        // Card E: MATCHED (a detection landed on a live ambiguity) and REFLOATED
+        // (the warm carry was actually reset) are separate facts.  Conflating
+        // them is exactly what made every cold run report zero MW/LLI events
+        // while still feeding the C3c funnel (limitation L3).
+        struct SignalAction { bool matched{false}; bool refloated{false}; };
         auto refloat_signal = [&](int i, const std::string& sat,
-                                  const std::string& signal) -> bool {
-            bool any = false;
+                                  const std::string& signal) -> SignalAction {
+            SignalAction act;
             StateManager& sm = *stations[i].sm;
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
                 if (parts->signal == signal) {
+                    act.matched = true;
                     // Card 4 C3c: feed the DD invariant carry from epoch 1,
                     // independent of the legacy carry's warm gate (the DD carry is
                     // live throughout; pending-reseed cannot serve it — PASS-B
                     // MeasurementModel consumes+clears it before the fold).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     // Legacy phase-leveling refloat: only meaningful once warm.
-                    if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); any = true; }
+                    if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); act.refloated = true; }
                 }
             }
-            return any;
+            return act;
         };
-        int n_mw = 0, n_lli = 0;
+        // Card L: the LLI qualification is armed only when the toggle is on AND
+        // this epoch actually has raw evidence.  Without evidence LLI stays
+        // decisive — a gate that fires on missing data would be worse than the
+        // chatter it is meant to fix.
+        const bool lli_qual = qc.lli_corroborate && raw.computed;
+        int n_mw = 0, n_lli = 0, n_lli_supp = 0;
         std::string mw_detail;
         for (int i = i_lo; i < n_sta_total; ++i) {
             if (!present[i]) continue;
@@ -159,11 +173,16 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             // band but count / log / emit ONCE per (station, satellite).
             std::set<std::string> mw_done;
             for (const auto& [sat, sig1, sig2] : sta_mw_refloat[i]) {
-                const bool a = refloat_signal(i, sat, sig1);
-                const bool b = refloat_signal(i, sat, sig2);
-                if ((a || b) && mw_done.insert(sat).second) {
+                const auto a = refloat_signal(i, sat, sig1);
+                const auto b = refloat_signal(i, sat, sig2);
+                const bool matched   = a.matched   || b.matched;
+                const bool refloated = a.refloated || b.refloated;
+                if (matched && mw_done.insert(sat).second) {
                     emitEvent("T0_mw_detect", "mw_wl_slip", sat, stations[i].name,
-                              std::nullopt, std::nullopt, "refloat", sig1 + ";" + sig2);
+                              std::nullopt, std::nullopt,
+                              refloated ? "refloat" : "diagnostic", sig1 + ";" + sig2);
+                    ++qc_cnt.mw_detections;
+                    if (refloated) ++qc_cnt.mw_refloats;
                     if (++n_mw <= 12)
                         mw_detail += fmt::format("{}{}/{}", mw_detail.empty() ? "" : ", ",
                                                  stations[i].name, sat);
@@ -172,24 +191,112 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             // (b) receiver LLI loss-of-lock (bit 0) on any carried phase signal.
             // modeled[i] holds one entry per satellite; refloat every LLI'd band but
             // count / emit ONCE per satellite (an LLI on both L1 and L2 is one slip).
+            const bool credible =
+                !lli_qual || (i < static_cast<int>(raw.lli_credible.size())
+                              && raw.lli_credible[static_cast<std::size_t>(i)] != 0);
             for (const auto& obs : modeled[i]) {
-                bool refloated = false;
+                // Card L qualification is a per-(station, satellite) decision, so
+                // establish "does this satellite assert LLI at all" before acting.
+                bool asserts = false;
+                for (const auto& [code, lli] : obs.lli_flags)
+                    if (!code.empty() && code[0] == 'L' && (lli & 1)) { asserts = true; break; }
+                if (!asserts) continue;
+
+                bool corr_mw = false, corr_gf = false, measurable = false, offpair = false;
+                if (lli_qual && i < static_cast<int>(raw.verdict.size())) {
+                    const auto& vm  = raw.verdict[static_cast<std::size_t>(i)];
+                    const auto  vit = vm.find(obs.satellite);
+                    if (vit != vm.end() && vit->second.measured) {
+                        measurable = true;
+                        corr_mw    = vit->second.mw_step;
+                        corr_gf    = vit->second.gf_step && !corr_mw;
+                    }
+                    // Scope honesty: the shared observables are formed on the
+                    // PRIMARY dual-frequency pair, so an LLI asserted only on a
+                    // band OUTSIDE that pair (e.g. L5 on an L1/L2-primary arc)
+                    // is not something MW/GF can witness.  Counted separately so
+                    // "uncorroborated" never silently absorbs "unwitnessable" —
+                    // a nonzero off-pair count is the trigger to widen the
+                    // corroboration primitive to every tracked pair.
+                    if (measurable) {
+                        bool on_pair = false;
+                        for (const auto& r : raw.rows[static_cast<std::size_t>(i)]) {
+                            if (r.satellite != obs.satellite) continue;
+                            for (const auto& [code, lli] : obs.lli_flags)
+                                if (!code.empty() && code[0] == 'L' && (lli & 1)
+                                    && (code == r.sig1 || code == r.sig2)) { on_pair = true; break; }
+                            break;
+                        }
+                        offpair = !on_pair;
+                    }
+                }
+                const bool corroborated = corr_mw || corr_gf;
+                // ACT when the assertion is corroborated by the receiver's own
+                // observables (decisive at ANY station — this is what keeps a real
+                // multi-satellite re-lock intact, spec M3), or when the station's
+                // LLI is still credible (spec M1 — do NOT require corroboration
+                // everywhere; that would forfeit the G23@GAMB class of catches
+                // where MW and IF genuinely cannot see the slip).
+                const bool act = !lli_qual || corroborated || credible;
+
+                if (lli_qual) {
+                    RawSlipHistory* h = (static_cast<std::size_t>(i) < raw_hist.size())
+                                            ? &raw_hist[static_cast<std::size_t>(i)] : nullptr;
+                    ++qc_cnt.lli_asserted;
+                    if (h) ++h->lli_asserted;
+                    if (corr_mw)      { ++qc_cnt.lli_corr_mw; if (h) ++h->lli_corr_mw; }
+                    else if (corr_gf) { ++qc_cnt.lli_corr_gf; if (h) ++h->lli_corr_gf; }
+                    if (!measurable)  { ++qc_cnt.lli_unmeasurable; if (h) ++h->lli_unmeasurable; }
+                    if (offpair)      { ++qc_cnt.lli_offpair;      if (h) ++h->lli_offpair; }
+                    if (!act) {
+                        ++qc_cnt.lli_suppressed;
+                        if (h) ++h->lli_suppressed;
+                        ++n_lli_supp;
+                        // M4: never silent.  The suppressed assertion is a row of
+                        // its own, carrying the station's credibility score so the
+                        // top-offenders list is reconstructible from the trace.
+                        emitEvent("T0_mw_detect", "lli_slip", obs.satellite,
+                                  stations[i].name,
+                                  h ? std::optional<double>(h->lli_frac_ewma) : std::nullopt,
+                                  std::optional<double>(qc.chatter_frac_hi),
+                                  "suppressed",
+                                  !measurable ? "LLI;uncorroborated;unmeasurable"
+                                              : (offpair ? "LLI;uncorroborated;off_primary_pair"
+                                                         : "LLI;uncorroborated"));
+                        continue;
+                    }
+                    if (h) ++h->lli_acted;
+                }
+
+                bool matched = false, refloated = false;
                 for (const auto& [code, lli] : obs.lli_flags) {
                     if (code.empty() || code[0] != 'L' || !(lli & 1)) continue;
-                    if (refloat_signal(i, obs.satellite, code)) refloated = true;
+                    const auto sa = refloat_signal(i, obs.satellite, code);
+                    if (sa.matched)   matched   = true;
+                    if (sa.refloated) refloated = true;
                 }
-                if (refloated) {
+                if (matched) {
                     emitEvent("T0_mw_detect", "lli_slip", obs.satellite,
                               stations[i].name, std::nullopt, std::nullopt,
-                              "refloat", "LLI");
+                              refloated ? "refloat" : "diagnostic",
+                              corr_mw ? "LLI;mw_step"
+                                      : (corr_gf ? "LLI;gf_step" : "LLI"));
                     ++n_lli;
+                    ++qc_cnt.lli_detections;
+                    if (refloated) ++qc_cnt.lli_refloats;
                 }
             }
         }
-        if (n_mw > 0 || n_lli > 0)
-            log->info("Network[MW detect]: TOW {:.1f} refloated {} wide-lane slip(s){} + "
-                      "{} LLI loss-of-lock(s)", se.time.tow, n_mw,
-                      mw_detail.empty() ? std::string{} : (" [" + mw_detail + "]"), n_lli);
+        if (n_mw > 0 || n_lli > 0 || n_lli_supp > 0)
+            log->info("Network[MW detect]: TOW {:.1f} {} {} wide-lane slip(s){} + "
+                      "{} LLI loss-of-lock(s){}", se.time.tow,
+                      carry_warm ? "refloated" : "detected (carry cold; diagnostic)",
+                      n_mw,
+                      mw_detail.empty() ? std::string{} : (" [" + mw_detail + "]"), n_lli,
+                      n_lli_supp > 0
+                          ? fmt::format("; {} uncorroborated LLI assertion(s) SUPPRESSED "
+                                        "at non-credible station(s)", n_lli_supp)
+                          : std::string{});
     }
 }
 

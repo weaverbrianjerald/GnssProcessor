@@ -466,6 +466,54 @@ public:
                               = nullptr) const;
 
     /**
+     * @brief Card KP — build the loose Kaula/physical-bound priors on the
+     *        ADMITTED satellite code-bias (OSB) columns.
+     *
+     * The CONDITIONAL second lever of docs/SPEC_beidou_w6_datum.md, built after
+     * its trigger fired with data: on the 305-station arm with the rank gate
+     * calibrated (Card DG) and the phase drop-and-heal armed (Card PA), the
+     * residual below-cutoff population is 3 declared clock gauges + ONE
+     * `CB`+`CLK` direction carrying ZERO phase-bias weight — structurally out of
+     * the heal's reach (it only anchors PB columns), and therefore a genuine
+     * admitted-CODE deficiency.  A satellite's OSBs are physically BOUNDED (tens
+     * of ns), so a loose prior toward 0 is real prior information, not a fudge:
+     * it lifts that direction without meaningfully moving any well-observed OSB,
+     * whose data information exceeds 1/σ² by orders of magnitude.
+     *
+     * @par Why PRIORS, not gauge rows (deviation from the card's stated site)
+     * The card names @ref buildCodeBiasDatumRows.  That function's output is
+     * folded at @ref kCodeBiasGaugeWeight — a TIGHT datum weight, which is the
+     * entire point of a gauge row.  A Kaula prior is deliberately LOOSE, so
+     * stacking it into the same rows would either mis-weight it or force a second
+     * weight channel through a row order that is byte-identity-bearing
+     * (@ref CodeBiasDatumRows documents that contract).  The diagonal
+     * information-prior channel (@c NetworkEstimator::addSharedPrior) already
+     * exists for exactly this and is what the phase drop-and-heal uses.  It also
+     * makes the card's declared-dimension audit (K3) hold BY CONSTRUCTION: a
+     * prior is not a datum row, so @c Plan::declared_dimension cannot move.
+     *
+     * @par Anti-fragility (K2)
+     * The rejected loose-prior alternative of the CB-ADM card failed because its
+     * information sat AT the rank cutoff.  The caller must therefore check that
+     * @c info = 1/σ² lands at least two decades ABOVE the armed cutoff
+     * (@c rank_gate_tol · max(λmax,1)) and log the margin; a prior near the
+     * cutoff is exactly the configuration that card already rejected.
+     *
+     * @param registered_code_keys The (satellite, signal) code columns registered
+     *                             this epoch — under CB-ADM these are precisely
+     *                             the ADMITTED pairs with live coverage.
+     * @param sigma_m              Prior standard deviation in metres (the physical
+     *                             OSB bound; 1 ns ≈ 0.2998 m).  Must be > 0 —
+     *                             a non-positive value yields an EMPTY list, so a
+     *                             mis-set knob cannot silently fold info = ∞.
+     * @return One zero-valued prior per registered code column, @c info = 1/σ².
+     *         Empty ⇒ the caller folds nothing (byte-identical).
+     */
+    static std::vector<NetworkEstimator::SharedPrior> buildCodeBiasKaulaPriors(
+        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+        double sigma_m);
+
+    /**
      * @brief Null-space rank gate: eigen-decompose the PRE-constraint reduced
      *        shared normals and assert the count of (relatively) zero eigenvalues
      *        equals the declared S-basis dimension.
@@ -482,11 +530,23 @@ public:
      *
      * @param reduced_N_ss The reduced shared normal matrix @f$\tilde N_{ss}@f$.
      * @param declared_dim Expected null-space dimension (Plan::declared_dimension).
-     * @param tol          Relative eigenvalue threshold (vs the largest λ).
+     * @param tol          Relative eigenvalue threshold (vs the largest λ).  The
+     *                     driver passes @ref NetworkEstimator::rankGateTol — the
+     *                     ONE resolved value the dump and the drop-and-heal also
+     *                     read (Card DG2, @c network.rank_gate_tol).
+     * @param observed_out [out, optional] The OBSERVED near-zero count, written
+     *                     before the equality test — so a caller gets the number
+     *                     on the THROWING path too (Card DG6: "over-specified"
+     *                     must be countable as its own case, and the run-wide
+     *                     min/max observed count is the calibration evidence).
+     *                     @c nullptr (the default) is the pre-DG behaviour; the
+     *                     gate's semantics are otherwise untouched — exact
+     *                     equality, both-direction throw, relative cutoff.
      * @throws std::runtime_error with observed-vs-declared counts on mismatch.
      */
     void assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
-                             int declared_dim, double tol = 1e-6) const;
+                             int declared_dim, double tol = 1e-6,
+                             int* observed_out = nullptr) const;
 };
 
 } // namespace GnssProcessor

@@ -13,8 +13,9 @@ that map undifferenced parameters to differenced ones.
 \subsection{Between-satellite single difference (BSSD)}\label{sec:bssd}
 
 For each constellation $g$, choose a pivot satellite $\piv{g}$
-(typically the highest-elevation tracked sat with a stable phase
-lock; see \texttt{filter/PivotManager}, ``sticky pivot'' policy).  For
+(elected by \texttt{PivotManager::selectPivotCandidates} under the
+``sticky pivot'' retention policy; the selection ordering is detailed
+in the \emph{Pivot selection} note below).  For
 any non-pivot satellite $\sat \in \satset{g} \setminus \{\piv{g}\}$
 and signal $\sigl$, define
 \begin{align}
@@ -48,18 +49,99 @@ filter with the same modelling: same tropospheric mapping (which is
 why $\bsd{T}$ is small but not zero), same antenna PCV correction,
 and so on.
 
+The receiver-bias cancellation of $B_{\rx,\sigl}$ in
+\Cref{eq:bssd-code} holds for CDMA constellations, whose group delay is
+a single per-signal receiver term.  GLONASS is the exception: its FDMA
+inter-frequency biases are per-FCN-slot states, so two satellites on
+different slots carry different receiver delays and the term does
+\emph{not} cancel between them --- a residual
+$B^{(k(\sat))}_{\rx,\sigl} - B^{(k(\piv{g}))}_{\rx,\sigl}$ survives the
+single difference.  Accordingly \texttt{BssdTransform} zeroes the
+receiver-DCB columns after differencing \emph{except} the per-slot
+GLONASS IFB states (guarded by \texttt{StateKeys::isGlonassPerSlotIfbKey}),
+and \texttt{PivotManager} bars GLONASS from pivot election, for the same
+reason.  GLONASS BSSD is default-OFF
+(\texttt{estimation.between\_satellite\_sd.enable\_glonass}); when
+enabled, \Cref{eq:bssd-code} acquires the surviving inter-slot IFB
+difference as an additional estimated column.
+
+\paragraph{Pivot selection.}
+Election is not by elevation alone.  The primary key is a
+\emph{hard} lexicographic tier on phase-signal coverage: a
+full-coverage candidate outranks any partial-coverage candidate
+regardless of its score.  Only within a coverage tier does the
+additive score
+$-\min\!\big(1,\sqrt{\sigma^2_{\hat N,\max}}\big) + \mathrm{el}/90 -
+\tfrac12\,\mathbb{1}[\mathrm{el} < 20^\circ]$
+apply, in which float-ambiguity convergence
+$\sqrt{\sigma^2_{\hat N,\max}}$ and elevation enter as co-equal terms
+(with a hard low-elevation guardrail below $20^\circ$).  Layered on top
+is an ephemeris-freshness bar: a candidate whose broadcast
+$|\text{obs} - \text{toe}|$ exceeds its constellation's freshest
+qualified peer by more than \texttt{kPivotToeSpreadMaxS} ($\SI{1200}{s}$)
+is barred from \emph{pivot} election (though still usable as a non-pivot),
+which prevents a stale-eph pivot from stepping every SD row it anchors.
+Candidates below \texttt{estimation.between\_satellite\_sd.pivot\_min\_elevation}
+are excluded outright.  The baseline DD path scores differently:
+\texttt{DdPivotManager} ranks on $\text{avg\_snr} + 0.01\cdot\text{num\_sigs}$
+and does not use elevation.
+
 \paragraph{Pivot transitions.}
-When the incumbent pivot leaves the visible set, $\piv{g}$ is
-re-elected from the remaining satellites.  The float ambiguities
+A handover fires on two kinds of trigger.  The visibility-driven one
+is simple --- when the incumbent pivot leaves the visible set,
+$\piv{g}$ is re-elected from the remaining satellites --- but the
+dominant one in practice is \emph{event-driven}: the post-fit residual
+analyser calls \texttt{PivotManager::requestForcedHandover} when the
+pivot's \emph{observation} slipped while its filter \emph{state} is
+still intact (so the resting \texttt{isPivotDisturbed} check, which
+tests only that the pivot ambiguity sits at exactly $(0,0)$, would not
+catch it).  The forced request carries an exclusion set so the
+handover cannot bounce onto another offset satellite, a
+\texttt{retired\_pivots\_this\_epoch\_} backstop that terminates cascades,
+a same-epoch re-entry gate (\texttt{hasPendingForcedHandover}), and a
+re-inflation set for states that absorbed a coherent pivot-side code
+bias (the information-conserving transform below cannot evict that
+offset on its own).  The baseline DD path exposes the symmetric
+\texttt{DdPivotManager::requestForcedRerank}.  This event response is
+load-bearing precisely because the pivot's states are frozen at zero
+variance (below): a stiff, time-linked zero-$q$ quantity requires a
+wired jump response.
+
+On election the float ambiguities
 $\{\bsd{N^{\sat,\piv{g}^{\mathrm{old}}}_{\rx,\sigl}}\}_{\sat,\sigl}$
-must be re-expressed relative to $\piv{g}^{\mathrm{new}}$.  Rather than
-discarding and re-seeding (which destroys the integer information
-accumulated since the last fix), the engine applies the linear
-S-transformation $\stateV^{\mathrm{new}} = \bm{S}\,\stateV^{\mathrm{old}}$
+must be re-expressed relative to $\piv{g}^{\mathrm{new}}$.  Where the
+new pivot already carries an established ambiguity in the group, the
+engine applies the linear S-transformation
+$\stateV^{\mathrm{new}} = \bm{S}\,\stateV^{\mathrm{old}}$
 with $\bm{S}$ chosen so that
 $\bsd{N^{\piv{g}^{\mathrm{new}},\piv{g}^{\mathrm{old}}}_{\rx,\sigl}}$
-becomes the new reference (zero).  The covariance transforms as
+becomes the new reference (zero), preserving the integer information
+accumulated since the last fix; the covariance transforms as
 $\covM^{\mathrm{new}} = \bm{S}\,\covM^{\mathrm{old}}\,\bm{S}^{\Tr}$.
+When it cannot --- the new pivot has no existing ambiguity in the
+$(\text{cons},\text{code})$ group (\texttt{DdPivotManager}, logged as
+``reset-and-reseed''), or a disturbed pivot has no healthy replacement
+in a single-satellite constellation (\texttt{PivotManager::handleDisturbedPivot}
+re-zeroes $\stateV$ and the corresponding rows/columns of $\covM$ in
+place) --- the transform is skipped and the stale rows are discarded and
+re-seeded.  In the uncombined PPP-RTK parameterisation the same
+$\bm{S}\,\covM\,\bm{S}^{\Tr}$ re-reference is applied not only to the
+ambiguity block but to \emph{three} state groups ---
+\texttt{reReferenceAmbiguities}, \texttt{reReferenceIonosphere}, and
+\texttt{reReferenceSatBiases} --- which is why \texttt{BssdTransform}
+zeroes the pivot's ionosphere and sat-bias $\bm{H}$-columns after
+differencing, and why $\bsd{I^{\sat,\piv{g}}_{\rx,1}}$ in
+\Cref{eq:bssd-code,eq:bssd-phase} is itself a pivot-referenced SD
+quantity, not an absolute slant delay.  The S-basis constraint is
+realised operationally by freezing the pivot's ambiguity, ionosphere,
+and sat-bias covariances to exactly zero (and suppressing their process
+noise) --- the very condition \texttt{isPivotDisturbed} tests against.
+
+\texttt{PivotManager::getCleanHandovers} classifies each transition as
+lossless-invertible (\emph{clean}) or discontinuous
+(disturbed/forced/re-seeded), so the RTS smoother can inverse-reference
+across a clean handover rather than force a segment boundary; the
+losslessness claim above holds only for the clean subset.
 These are two distinct code paths sharing the algebra above: in PPP-RTK
 the pivot re-election and the ``sticky-pivot'' retention policy live in
 \texttt{filter/PivotManager}, whereas the baseline DD path performs the
@@ -180,7 +262,14 @@ realisation of the uncombined parameterisation of
 and DD --- are dispatched polymorphically by a \texttt{DifferencingMode}
 strategy in \texttt{measurement/MeasurementBuilder}, not by inline
 config branches.  Second, integer recovery on a DD row requires that all
-four contributing observations share the same RINEX signal code;
-\emph{cross-attribute aliased} rows (rover code $\neq$ reference code,
-flagged \texttt{brsd\_aliased} and not \texttt{integer\_capable}) are
-carried as float and excluded from ambiguity resolution.
+four contributing observations share the same RINEX signal code.  The
+row is marked \texttt{integer\_capable} only when all three conjuncts
+hold: \texttt{!brsd\_aliased} on \emph{both} the $\sat_i$ and pivot BRSD
+entries (rover and reference agree on each, i.e.\ no cross-attribute
+alias) \emph{and} the rover uses the same code on $\sat_i$ as on the
+pivot ($\texttt{rov\_code}_i = \texttt{rov\_code}_{\text{piv}}$).  The
+third conjunct is independent of the \texttt{brsd\_aliased} flags: a row
+can be un-aliased on both entries yet still carry a non-integer DCB/IFB
+residual if the rover mixes codes across $\sat_i$ and the pivot.  Rows
+failing any conjunct are carried as float and excluded from ambiguity
+resolution.

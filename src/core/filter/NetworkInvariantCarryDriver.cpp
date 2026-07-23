@@ -83,6 +83,8 @@ void NetworkInvariantCarryDriver::reset() {
     gate_exempt_.clear();
     lane_fix_w_.clear();       // WL-3: the fold-on-change memory dies with the carry
     lane_fix_staged_.clear();
+    lane_fix_epoch_.clear();   // LF-1 INC-2: the skip grace clock dies with the carry
+    install_epoch_index_ = 0;
     counters_ = Counters{};
 }
 
@@ -386,7 +388,9 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 // WL-3 §3.4: a reborn pair chord must RE-EARN its FFR fix — erase the
                 // fold-on-change memory here (idempotent, so the RAIM re-solve rebuild
                 // stays deterministic: carried_ is unchanged between within-epoch builds).
-                if (!(c1 && c2)) lane_fix_w_.erase({g.key, c});
+                // LF-1 INC-2: dropping lane_fix_epoch_ too resumes increments for the reborn
+                // chord this same epoch (invariant #1: the slip response is unaffected).
+                if (!(c1 && c2)) { lane_fix_w_.erase({g.key, c}); lane_fix_epoch_.erase({g.key, c}); }
                 fold_chords.push_back(c);
                 fold_carried.push_back(c1 ? 1 : 0);
                 fold_carried2.push_back(c2 ? 1 : 0);
@@ -398,8 +402,14 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
 
             // --- Assemble the DD-prior block(s) (carried joint + fresh diffuse). --
             const Eigen::Index K = static_cast<Eigen::Index>(fold_chords.size());
-            if (static_cast<long long>(tally * K) > counters_.max_component_kc)
-                counters_.max_component_kc = static_cast<long long>(tally * K);   // INC-C0 census (pair joint fold cost is 2K)
+            const long long fold_dim = static_cast<long long>(tally) * static_cast<long long>(K);
+            if (fold_dim > counters_.max_component_kc)
+                counters_.max_component_kc = fold_dim;   // INC-C0 census (pair joint fold cost is 2K)
+            {   // LF-1 INC-0: bucket this emitted component's fold-dim (SPEC §7.4 Amdahl census).
+                int bkt = 0;
+                while (bkt < 9 && (1LL << bkt) <= fold_dim) ++bkt;  // floor(log2(fold_dim))+1, capped at 9 (≥256)
+                ++counters_.comp_kc_hist[bkt];
+            }
             Eigen::MatrixXd W;
             {   // INC-C0: time the dense-K² change-of-basis projection (W · Pᶻ_old · Wᵀ, W·z_old)
                 // — the materialization the factored (A+U S Uᵀ) store of INC-C2 removes.
@@ -715,6 +725,9 @@ bool NetworkInvariantCarryDriver::applyLaneMeasurement(
     NetworkNormalEquations::DdPriorBlock& blk = blocks[b];
     if (blk.zhat.size() != 2 * K || blk.Pz.rows() != 2 * K || blk.Pz.cols() != 2 * K)
         return false;
+    // LF-1 INC-0: time the dense rank-1 downdate (the irreducible O(K²)/row measurement work)
+    // separately from the basis projection the SB_DDBUILD wall lumps it with.
+    ScopedAccum _lm(perf_timing_, &perf_timers_.lane_meas_ms);
     // Scalar KF update on the block prior with the sparse WL functional
     // h = +1/λ₁ at row k, −1/λ₂ at row K+k (correction frame, cycles).
     const double a1 = 1.0 / bm.lambda1, a2 = 1.0 / bm.lambda2;
@@ -726,8 +739,16 @@ bool NetworkInvariantCarryDriver::applyLaneMeasurement(
     if (!std::isfinite(innov)) return false;
     blk.zhat += (innov / S) * Ph;
     blk.Pz   -= (Ph * Ph.transpose()) / S;
-    blk.Pz    = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
+    // LF-1 INC-1: the per-row re-symmetrize is LOAD-BEARING at the ULP level — the rank-1
+    // downdate holds symmetry only to ULP, and that asymmetry, fed through the stiff q_z=0 DD
+    // carry, amplifies across epochs (measured: dropping it drifts the lane-on solution ~1e-4
+    // by epoch 4).  Keep it exactly per-row when fold_blocked is OFF (byte-identical to the
+    // pre-card exe); under fold_blocked it is hoisted to ONE @ref finalizeLaneBatch pass per
+    // block (equivalence class, ≤1e-12 vs sequential).
+    if (!cfg_.fold_blocked)
+        blk.Pz = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
     bm.zhat   = blk.zhat;   // the D5 innovation gate must standardize against the FOLDED prior
+    if (perf_timing_) ++perf_timers_.lane_meas_calls;
     return true;
 }
 
@@ -743,6 +764,11 @@ int NetworkInvariantCarryDriver::applyLaneFix(
     NetworkNormalEquations::DdPriorBlock& blk = blocks[b];
     if (blk.zhat.size() != 2 * K || blk.Pz.rows() != 2 * K) return -1;
 
+    // LF-1 INC-0: time the idempotent lane SET (the ~65%-decided re-pins — the row population
+    // INC-1's O(K²)→O(K) sparsity rewrite targets) apart from the measurement folds.
+    ScopedAccum _lf(perf_timing_, &perf_timers_.lane_fix_ms);
+    if (perf_timing_) ++perf_timers_.lane_fix_calls;
+
     // The fix is an IDEMPOTENT lane-coordinate SET, not a measurement fold: every
     // decided epoch it re-centers the chord's WL lane COORDINATE on the integer and
     // re-collapses its variance to σ², zeroing the coordinate's cross-covariances
@@ -755,19 +781,47 @@ int NetworkInvariantCarryDriver::applyLaneFix(
     // alone leaves decided lanes drifting to MW quality, med|f| 0.25-vs-0.14).
     const double a1 = 1.0 / bm.lambda1, a2 = 1.0 / bm.lambda2;
     const double hn = std::sqrt(a1 * a1 + a2 * a2);   // ‖h‖: cycles per lane-coordinate meter
-    Eigen::VectorXd u = Eigen::VectorXd::Zero(2 * K); // unit lane-coordinate direction
-    u(static_cast<Eigen::Index>(k))     =  a1 / hn;
-    u(K + static_cast<Eigen::Index>(k)) = -a2 / hn;
-    const double target_coord = y_cyc / hn;           // correction-frame lane target (m)
+    const Eigen::Index p = static_cast<Eigen::Index>(k), qq = K + static_cast<Eigen::Index>(k);
+    const double up = a1 / hn, uq = -a2 / hn;          // the unit lane direction's two nonzeros
+    const double target_coord = y_cyc / hn;            // correction-frame lane target (m)
     const double sig_coord    = sigma_cyc / hn;
-    const Eigen::VectorXd Pu = blk.Pz * u;
-    const double uPu = u.dot(Pu);
-    if (!std::isfinite(uPu) || uPu < 0.0) return -1;
-    // z' = z + (t − uᵀz)·u;  P' = (I−uuᵀ)P(I−uuᵀ) + σ²·uuᵀ
-    blk.zhat += (target_coord - u.dot(blk.zhat)) * u;
-    blk.Pz   += -Pu * u.transpose() - u * Pu.transpose()
-              + (uPu + sig_coord * sig_coord) * (u * u.transpose());
-    blk.Pz    = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
+    // z' = z + (t − uᵀz)·u;  P' = (I−uuᵀ)P(I−uuᵀ) + σ²·uuᵀ = P − Pu·uᵀ − u·Puᵀ + (uᵀPu+σ²)·uuᵀ.
+    if (!cfg_.fold_blocked) {
+        // Dense O(K²) form — byte-identical to the pre-card exe.
+        Eigen::VectorXd u = Eigen::VectorXd::Zero(2 * K);
+        u(p)  =  up;
+        u(qq) =  uq;
+        const Eigen::VectorXd Pu = blk.Pz * u;
+        const double uPu = u.dot(Pu);
+        if (!std::isfinite(uPu) || uPu < 0.0) return -1;
+        blk.zhat += (target_coord - u.dot(blk.zhat)) * u;
+        blk.Pz   += -Pu * u.transpose() - u * Pu.transpose()
+                  + (uPu + sig_coord * sig_coord) * (u * u.transpose());
+        blk.Pz    = (0.5 * (blk.Pz + blk.Pz.transpose())).eval();
+    } else {
+        // LF-1 INC-1: O(K) sparse SET.  u has exactly two nonzeros (rows p, qq), so Pu = P·u
+        // is the 2-column combo (not a dense GEMV), and ΔP = −Pu·uᵀ − u·Puᵀ + c·uuᵀ is nonzero
+        // only in columns/rows {p, qq}.  Build the two changed columns Mp = ΔP(:,p),
+        // Mq = ΔP(:,qq) and write them symmetrically (col + mirrored row) — Pz stays exactly
+        // symmetric (ΔP is symmetric, so newp(qq)==newq(p)), and the per-row re-symmetrize is
+        // hoisted to finalizeLaneBatch.  Same math as the dense branch up to fp reassociation.
+        const Eigen::VectorXd Pu = up * blk.Pz.col(p) + uq * blk.Pz.col(qq);
+        const double uPu = up * Pu(p) + uq * Pu(qq);
+        if (!std::isfinite(uPu) || uPu < 0.0) return -1;
+        const double c = uPu + sig_coord * sig_coord;
+        const double coef = target_coord - (up * blk.zhat(p) + uq * blk.zhat(qq));
+        blk.zhat(p)  += coef * up;
+        blk.zhat(qq) += coef * uq;
+        Eigen::VectorXd Mp = (-up) * Pu;   // ΔP(i,p)  = −Pu(i)·up  (+ the i∈{p,qq} terms below)
+        Eigen::VectorXd Mq = (-uq) * Pu;   // ΔP(i,qq) = −Pu(i)·uq  (+ the i∈{p,qq} terms below)
+        Mp(p)  += -up * Pu(p)  + c * up * up;   Mp(qq) += -uq * Pu(p)  + c * uq * up;
+        Mq(p)  += -up * Pu(qq) + c * up * uq;   Mq(qq) += -uq * Pu(qq) + c * uq * uq;
+        const Eigen::VectorXd newp = blk.Pz.col(p)  + Mp;
+        const Eigen::VectorXd newq = blk.Pz.col(qq) + Mq;
+        blk.Pz.col(p)  = newp;   blk.Pz.col(qq) = newq;
+        blk.Pz.row(p)  = newp.transpose();
+        blk.Pz.row(qq) = newq.transpose();
+    }
     bm.zhat   = blk.zhat;   // the D5 gate standardizes against the SET prior
 
     const std::pair<int, ArcKey> key{ bm.group, bm.chords[k] };
@@ -775,6 +829,31 @@ int NetworkInvariantCarryDriver::applyLaneFix(
     const bool changed = (it == lane_fix_w_.end() || it->second != w);
     lane_fix_staged_[key] = w;   // committed at installPosterior (RAIM re-solve safe)
     return changed ? 1 : 0;      // 1 = integer moved/new, 0 = re-pinned (unchanged)
+}
+
+bool NetworkInvariantCarryDriver::laneIncrementSkippable(std::size_t b, std::size_t k) const {
+    if (!cfg_.skip_pinned_increments) return false;   // OFF ⇒ byte-identical (never skip)
+    if (b >= block_meta_.size()) return false;
+    const BlockMeta& bm = block_meta_[b];
+    if (bm.pair_band != 3 || k >= bm.chords.size()) return false;   // lane rows only on joint blocks
+    const auto it = lane_fix_epoch_.find({ bm.group, bm.chords[k] });
+    if (it == lane_fix_epoch_.end()) return false;    // not committed-decided (or disturbed since)
+    return (install_epoch_index_ - it->second) <= cfg_.skip_pinned_within_n;   // within the grace window
+}
+
+void NetworkInvariantCarryDriver::finalizeLaneBatch(
+    std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) const {
+    if (!cfg_.fold_blocked) return;   // OFF: primitives symmetrized per-row (byte-identical)
+    // Restore exact symmetry once per joint block, after the epoch's MW / bridge / fix rows —
+    // the per-row 0.5·(P+Pᵀ) the primitives skipped under fold_blocked (they hold symmetry only
+    // to ULP).  Only joint pair blocks (pair_band == 3) ever received lane rows.
+    const std::size_t n = std::min(blocks.size(), block_meta_.size());
+    for (std::size_t b = 0; b < n; ++b) {
+        if (block_meta_[b].pair_band != 3) continue;
+        Eigen::MatrixXd& P = blocks[b].Pz;
+        if (P.rows() != P.cols() || P.rows() == 0) continue;
+        P = (0.5 * (P + P.transpose())).eval();
+    }
 }
 
 bool NetworkInvariantCarryDriver::carriedCrossForTest(
@@ -838,6 +917,7 @@ void NetworkInvariantCarryDriver::installPosterior(
     auto laneFixErase = [this](int group, const ArcKey& chord) {
         if (!lane_fix_w_.empty())      lane_fix_w_.erase({group, chord});
         if (!lane_fix_staged_.empty()) lane_fix_staged_.erase({group, chord});
+        if (!lane_fix_epoch_.empty())  lane_fix_epoch_.erase({group, chord});  // LF-1 INC-2: D5 flag resumes increments
     };
     // WL-3 D5 gate over ONE emitted per-band half of a pair component (split shape) or,
     // via offset arithmetic, kept in lockstep with the per-band body below.  Edits the
@@ -906,6 +986,13 @@ void NetworkInvariantCarryDriver::installPosterior(
     // no longer carried as pair chords.  No-op (no allocation, no fp) on the per-band path.
     auto laneFixCommit = [this]() {
         if (lane_fix_staged_.empty() && lane_fix_w_.empty()) return;
+        // LF-1 INC-2: stamp each RE-DECIDED chord with this epoch's index (the skip grace clock).
+        // Only staged (re-decided) chords advance; a held-but-not-re-decided chord keeps its old
+        // stamp so the grace window can eventually expire and resume increments.  Gated on the
+        // toggle so lane_fix_epoch_ stays empty (and the map cost is zero) when INC-2 is off.
+        if (cfg_.skip_pinned_increments)
+            for (const auto& [key, w] : lane_fix_staged_)
+                lane_fix_epoch_[key] = install_epoch_index_;
         for (const auto& [key, w] : lane_fix_staged_) lane_fix_w_[key] = w;
         lane_fix_staged_.clear();
         std::set<std::pair<int, ArcKey>> live;
@@ -916,6 +1003,9 @@ void NetworkInvariantCarryDriver::installPosterior(
             if (live.count(it->first)) ++it;
             else it = lane_fix_w_.erase(it);
         }
+        // Prune the epoch clock in lockstep (a chord no longer carried resumes increments if reborn).
+        for (auto it = lane_fix_epoch_.begin(); it != lane_fix_epoch_.end(); )
+            it = live.count(it->first) ? std::next(it) : lane_fix_epoch_.erase(it);
     };
 
     if (n_threads > 1) {
@@ -995,6 +1085,7 @@ void NetworkInvariantCarryDriver::installPosterior(
         carried_.swap(next);
         gate_exempt_.clear();   // WL-2 §3.3: the one-epoch inject exemption is consumed here
         laneFixCommit();        // WL-3 §3.3: fold-on-change memory commits on the accepted epoch
+        ++install_epoch_index_; // LF-1 INC-2: advance the skip grace clock (accepted install only)
         counters_.z_dim = static_cast<long long>(totalZDim());
         if (counters_.z_dim > counters_.max_z_dim) counters_.max_z_dim = counters_.z_dim;  // INC-C0
         return;
@@ -1099,6 +1190,7 @@ void NetworkInvariantCarryDriver::installPosterior(
     carried_.swap(next);
     gate_exempt_.clear();   // WL-2 §3.3: the one-epoch inject exemption is consumed here
     laneFixCommit();        // WL-3 §3.3: fold-on-change memory commits on the accepted epoch
+    ++install_epoch_index_; // LF-1 INC-2: advance the skip grace clock (accepted install only)
     counters_.z_dim = static_cast<long long>(totalZDim());
     if (counters_.z_dim > counters_.max_z_dim) counters_.max_z_dim = counters_.z_dim;  // INC-C0
 }

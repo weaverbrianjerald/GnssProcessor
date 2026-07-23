@@ -25,14 +25,19 @@ any integer carrier discontinuity.  The active detectors are
 Melbourne--W\"ubbena (\texttt{src/core/slip/MwSlipDetector.cpp}, the
 primary) and GRAPHIC (\texttt{src/core/slip/GraphicSlipDetector.cpp});
 the extra-wide-lane detector (\texttt{src/core/slip/EwlSlipDetector.cpp})
-runs when a third frequency is present.  The geometry-free and
-ionosphere-free phase detectors
-(\texttt{src/core/slip/GfSlipDetector.cpp},
-\texttt{src/core/slip/IfPhaseSlipDetector.cpp}) are staged --- present
-in the tree but not compiled into the current build --- and their
-algebra is recorded here for completeness.  The bank is composed at
-run time from the config block \texttt{estimation.cycle\_slip}
-(\Cref{sec:slip-registry}).
+runs when a third frequency is present.  The ionosphere-free phase
+detector (\texttt{src/core/slip/IfPhaseSlipDetector.cpp}) is
+\emph{compiled and armed on the network path} --- instantiated per
+station whenever \texttt{network.cycle\_slip.if\_phase\_td} is set
+(\Cref{sec:slip-if}) --- but stays staged on the single-receiver
+user/kinematic path, where the position-uncertainty gate it needs is
+unsafe.  The geometry-free phase detector
+(\texttt{src/core/slip/GfSlipDetector.cpp}) is by contrast still
+\emph{staged} --- present in the tree but excluded from the build (it is
+commented out of the explicit CMake source list, unlike the IF detector
+beside it) --- and its algebra is recorded here for completeness.  The
+bank is composed at run time from the config block
+\texttt{estimation.cycle\_slip} (\Cref{sec:slip-registry}).
 
 Throughout this section we suppress the receiver index $\rx$
 (single-receiver PPP / PPP-RTK) and write $f_1 > f_2$ for the two
@@ -67,8 +72,9 @@ $\slipd \Nwl = \slipd N_1 - \slipd N_2$ that, on its own, cannot
 attribute the jump to one signal --- the two-unknown problem
 \Cref{eq:te-mw} resolves downstream).  Inputs are bundled in
 \texttt{SlipEpochContext} so the signature is uniform even though only
-the staged IF detector consumes the extra 3D position sigma and
-receiver ECEF it carries.
+the IF detector consumes the extra 3D position sigma and receiver ECEF
+it carries --- and on the network path, where it is armed, that gate is
+satisfied by construction because the estimator pins station positions.
 
 \texttt{SlipDetectorRegistry::createEnabled}
 (\texttt{src/core/slip/SlipDetectorRegistry.cpp}) builds the
@@ -80,10 +86,14 @@ of the wide-lane integers consumed by ambiguity resolution
 machinery (\texttt{src/core/filter/PivotManager.cpp})), then
 the auxiliaries.  MW defaults on; the auxiliary detectors default off,
 preserving the historical MW-only behaviour.  A kind that is enabled in
-config but \emph{unavailable} in this build --- the staged \texttt{gf}
-and \texttt{if} detectors, whose \texttt{.cpp} is not compiled --- is
-skipped with a warning rather than aborting, so a forward-looking config
-degrades gracefully.  \texttt{CycleSlipManager} drives the whole set
+config but for which the registry holds no creator is skipped with a
+warning rather than aborting, so a forward-looking config degrades
+gracefully.  Two kinds skip for distinct reasons: \texttt{gf}, whose
+\texttt{.cpp} is excluded from the build (\Cref{sec:slip-gf}); and
+\texttt{if}, whose \texttt{.cpp} \emph{is} compiled but which is
+instantiated directly on the network path (\Cref{sec:slip-if}) rather
+than through this registry, so \texttt{SlipDetectorRegistry} registers
+no \texttt{IonoFreePhase} creator either.  \texttt{CycleSlipManager} drives the whole set
 through one loop and recovers the MW detector's richer API (WL-lock
 queries, pivot-handover hints, per-satellite quality scoring) through a
 typed down-cast (\texttt{asMelbourneWubbena}) rather than widening the
@@ -258,7 +268,7 @@ curvature defeats \eqref{eq:gf-td2}.  It is present in the tree but
 excluded from the build; the same algebra backs the active
 \texttt{src/core/slip/IonoVariabilityMonitor.cpp}.
 
-\subsubsection{Ionosphere-free phase (staged)}\label{sec:slip-if}
+\subsubsection{Ionosphere-free phase (staged on the user path; armed on the network path)}\label{sec:slip-if}
 
 The dual-frequency ionosphere-free (IF) phase combination uses the
 coefficients
@@ -275,7 +285,7 @@ giving $\phaseo^\sat_{\mathrm{IF}} = c_1 \phaseo^\sat_1 - c_2
 \lambda_1 - c_2 \lambda_2\bigr|$
 (\texttt{IfPhaseSlipDetector::computeIfWavelengthMeters}); for GPS L1/L2
 $\lamif \approx \SI{0.107}{m}$.  Rather than screen the raw combination,
-the staged detector forms the IF observed-minus-computed (OMC),
+the detector forms the IF observed-minus-computed (OMC),
 differences it between satellites against a high-elevation pivot
 $\piv{g}$ to remove the receiver clock, the inter-system offset
 $\sLight\,\delta t^{(g)}_\rx$ and the satellite phase clock, then
@@ -292,10 +302,38 @@ constant ambiguity:
 which is near zero for a clean arc and jumps by $\sim \slipd N\,\lamif$
 on a slip.  The between-satellite step does not cancel the differential
 geometric error $(\los^\sat - \los^{\piv{g}})^{\Tr} \delta\rxpos$, so
-flagging must be gated by the filter's 3D position sigma; this restricts
-the staged detector to a static site with a precise a priori position,
-which is why \texttt{estimation.enable\_if\_slip\_detector}
-is currently inert.
+flagging must be gated by the filter's 3D position sigma.  That
+precondition --- a static site with a precise a priori position --- has
+no guarantee on the single-receiver kinematic path, where the detector
+has no instantiation route and the
+\texttt{estimation.enable\_if\_slip\_detector} user toggle stays inert;
+the network estimator, by contrast, \emph{pins} every station position
+and so satisfies the gate by construction.  It is there that the
+detector is armed.
+
+On the network path (the \texttt{buildStation} lambda of
+\texttt{Application::networkSetup\_}, gated on
+\texttt{network.cycle\_slip.if\_phase\_td}) an
+\texttt{IfPhaseSlipDetector} is instantiated per station with
+\texttt{setDeferFlagging(true)}: it caches each per-epoch
+$\dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}}$ of \Cref{eq:if-dd} but does
+\emph{not} threshold locally.  The driver
+(\texttt{networkSlipIfTdDriver}) instead \emph{pools} the deferred
+jumps across stations by signal pair, removes the network common-mode
+median, and thresholds each residual elevation-aware against an
+empirical-Bayes blend of the pooled robust scale and the station-pair's
+own EWMA scale --- shrinkage weight $w = n/(n + \kappa)$ in the clean
+sample count $n$, with $\kappa = 20$
+(\texttt{if\_phase\_td\_shrink\_kappa}) --- under a deliberately loose
+$k = 8$ MAD multiplier (\texttt{if\_phase\_td\_k\_mad}) and a floor at
+the $(1,1)$ IF jump $\sLight/(f_1+f_2) \approx \SI{10.7}{cm}$
+(\texttt{if\_phase\_td\_floor\_frac}).  A flag does not repair or reset
+in place: it \emph{refloats} both bands of the pair (marks
+pending-reseed) into the Card-4 C3c invariant-carry funnel via
+\texttt{refloat\_pair}, leaving the sharp integer decision to
+post-estimation phase validation.  The loose gate is intentional --- it
+is a coarse first pass, not the discriminating solver of
+\Cref{sec:slip-turboedit}.
 
 \subsection{TurboEdit dual-frequency resolution}\label{sec:slip-turboedit}
 

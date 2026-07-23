@@ -35,6 +35,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace spdlog { class logger; }
@@ -195,6 +196,24 @@ namespace GnssProcessor {
         /// default (byte-identical: no file, no rows).
         std::ofstream carry_vce_trace;
         const std::filesystem::path carry_vce_trace_path;
+        /// Card DG5 (network.trace_estimability): the machine-readable twin of the
+        /// @c Network[estimability] WARN dump.  LONG format with a leading @c kind
+        /// column so three record shapes share one file:
+        ///   * @c EPOCH — one per dumped epoch: tow, n_shared, declared_dim, ev_max,
+        ///     cutoff, n_below;
+        ///   * @c DIR   — one per reported direction of that epoch: its ev plus the
+        ///     ≤5 heaviest spanning columns as @c "label=weight" pairs (the same
+        ///     pairs, in the same order, as the log line);
+        ///   * @c RUN   — ONE trailing record with the DG6 run totals (gate
+        ///     evaluations, under/over withholds, emitted, min/max observed
+        ///     near-null count, and the resolved tolerance), so a control arm gets
+        ///     run-wide gate telemetry without a new run-end log line (the log text
+        ///     is golden-gated by the estim arm — the CSV is the ONLY artifact
+        ///     delta a trace-armed run may show).
+        /// This is the file scripts/characterize_storm.py prefers over parsing the
+        /// WARN text; the text parser stays as the fallback for ARCHIVED runs.
+        std::ofstream estimability_trace;
+        const std::filesystem::path estimability_trace_path;
         /// L15: run-provenance manifest path (startup record written by
         /// writeRunManifestStartup, end-of-run record APPENDED by
         /// writeRunManifestComplete — one member so both target the same file).
@@ -301,6 +320,31 @@ namespace GnssProcessor {
                        const std::string& sat, const std::string& station,
                        std::optional<double> statistic, std::optional<double> threshold,
                        const char* action, const std::string& detail);
+
+        /// Card DG5: the @c EPOCH record of ONE estimability dump (no-op when the
+        /// trace is OFF).  Fed straight from
+        /// @c NetworkEstimator::dumpEstimabilitySpectrum's return value, so the
+        /// row and the WARN line carry the same numbers by construction.  Taken as
+        /// primitives rather than the nested @c EstimabilityDump so this header
+        /// stays free of the (Eigen-pulling) estimator include.
+        void writeEstimabilityEpochRow(const GnssTime& t, double tow, int n_shared,
+                                       int declared_dim, double ev_max, double cutoff,
+                                       int n_below);
+
+        /// Card DG5: one @c DIR record — a reported near-null direction's eigenvalue
+        /// plus its ≤5 heaviest spanning columns as (label, |component|) pairs, in
+        /// the log line's order (no-op when the trace is OFF).
+        void writeEstimabilityDirRow(const GnssTime& t, double ev,
+                                     const std::vector<std::pair<std::string, double>>& top);
+
+        /// Card DG6: the single trailing RUN record with the run-wide rank-gate
+        /// telemetry (no-op when the trace is OFF).  Written once at teardown,
+        /// before @ref closeAll.
+        /// @param rank_gate_tol The RESOLVED tolerance the run actually used
+        ///                      (NetworkEstimator::rankGateTol) — the calibration
+        ///                      evidence is worthless without the value it came from.
+        void writeEstimabilityRunRow(const NetworkServiceCounters& counters,
+                                     double rank_gate_tol);
 
         /// B8 flag-rate empirical-alpha summary (log + network_flag_rates.csv)
         /// + the L3 run-summary CSV — ONE knobs.trace_flag_rates gate covers

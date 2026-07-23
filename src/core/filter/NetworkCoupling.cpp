@@ -35,7 +35,8 @@ Eigen::Index CouplingRowBuilder::resolveSharedCol(const CoupledShared& cs) const
             case SharedParamKind::Clock:     return est.clockColumn(cs.sat);
             case SharedParamKind::PhaseBias: return est.phaseBiasColumn(cs.sat, cs.signal);
             case SharedParamKind::CodeBias:  return est.codeBiasColumn(cs.sat, cs.signal);
-            case SharedParamKind::VtecSh:    return est.vtecCoeffColumn(cs.n, cs.m, cs.trig);
+            case SharedParamKind::VtecSh:
+                return est.vtecCoeffColumn(cs.n, cs.m, cs.trig, cs.sh_layer);
         }
     } catch (...) {}
     return -1;  // departed (unregistered this epoch)
@@ -46,7 +47,8 @@ std::string CouplingRowBuilder::couplingId(const CoupledShared& cs) {
         case SharedParamKind::Clock:     return "C|" + cs.sat;
         case SharedParamKind::PhaseBias: return "P|" + cs.sat + "|" + cs.signal;
         case SharedParamKind::CodeBias:  return "B|" + cs.sat + "|" + cs.signal;
-        case SharedParamKind::VtecSh:    return "V|" + std::to_string(cs.n) + "|"
+        case SharedParamKind::VtecSh:    return (cs.sh_layer > 0 ? "V2|" : "V|")
+                                                + std::to_string(cs.n) + "|"
                                                 + std::to_string(cs.m) + "|" + cs.trig;
     }
     return {};
@@ -57,9 +59,14 @@ double CouplingRowBuilder::couplingQ(const CoupledShared& cs) const {
         case SharedParamKind::Clock:     return q_clock;
         case SharedParamKind::CodeBias:  return q_cb;
         case SharedParamKind::PhaseBias: return q_pb;
-        case SharedParamKind::VtecSh:    return (cs.n == 0)
-            ? shc.q_per_degree
-            : shc.q_per_degree / static_cast<double>(cs.n * cs.n);
+        case SharedParamKind::VtecSh: {
+            // Per-layer q ladder — must stay consistent with the injector's
+            // RW-toward-previous q (networkInjectShVtecPrior), which is the
+            // SAME model expressed driver-side.
+            const double q0 = (cs.sh_layer > 0) ? shc.layer2_q_per_degree
+                                                : shc.q_per_degree;
+            return (cs.n == 0) ? q0 : q0 / static_cast<double>(cs.n * cs.n);
+        }
     }
     return 0.0;
 }

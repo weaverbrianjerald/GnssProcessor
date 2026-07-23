@@ -7,6 +7,7 @@
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 
 #include "common/Constants.hpp"
+#include "config/GnssConfigTypes.hpp"
 #include "math/Coordinates.hpp"
 
 #include <algorithm>
@@ -165,6 +166,34 @@ double SphericalHarmonicIonosphere::vtec(const Eigen::VectorXd& coeff_tecu,
         std::min<Eigen::Index>(coeff_tecu.size(), static_cast<Eigen::Index>(b.size()));
     for (Eigen::Index k = 0; k < n; ++k) v += coeff_tecu(k) * b[static_cast<std::size_t>(k)];
     return v;
+}
+
+std::vector<ShLayer> shLayers(const GlobalVtecShConfig& shc,
+                              const SphericalHarmonicIonosphere* layer0,
+                              const SphericalHarmonicIonosphere* layer1) {
+    std::vector<ShLayer> out;
+    if (!layer0) return out;
+    ShLayer l0;
+    l0.model = layer0;
+    l0.layer = 0;
+    l0.shell_height_m = shc.layer_height_km * 1000.0;
+    l0.kaula_scale_tecu = shc.kaula_scale_tecu;
+    l0.q_per_degree = shc.q_per_degree;
+    l0.mean_prior_tecu = shc.mean_vtec_prior_tecu;
+    l0.mean_prior_sigma_tecu = shc.mean_vtec_prior_sigma_tecu;
+    out.push_back(l0);
+    if (layer1) {
+        ShLayer l1;
+        l1.model = layer1;
+        l1.layer = 1;
+        l1.shell_height_m = shc.layer2_height_km * 1000.0;
+        l1.kaula_scale_tecu = shc.layer2_kaula_scale_tecu;
+        l1.q_per_degree = shc.layer2_q_per_degree;
+        l1.mean_prior_tecu = shc.layer2_mean_vtec_prior_tecu;
+        l1.mean_prior_sigma_tecu = shc.layer2_mean_vtec_prior_sigma_tecu;
+        out.push_back(l1);
+    }
+    return out;
 }
 
 } // namespace GnssProcessor
