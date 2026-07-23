@@ -743,6 +743,20 @@ namespace GnssProcessor {
         const ModelCorrections& getModelCorrections() const { return model_corrections_; }
 
         /**
+         * @brief Mutable access to the model-correction enable/disable flags.
+         *
+         * Non-const overload used by the simulator's @c sim::EphemerisProvider to
+         * isolate the SATELLITE-only antenna term when reusing
+         * @c Antenna::getAntennaCorrection: it forces receiver PCO/PCV and phase
+         * wind-up off (both default true) so the returned scalar is exactly
+         * @c (-sat_pco + sat_pcv), matching a run config with
+         * @c enable_satellite_pco/pcv on and the receiver/wind-up flags off.  Reading
+         * callers on a non-const config are unaffected (they still see the flags).
+         * @return Mutable reference to the ModelCorrections struct.
+         */
+        ModelCorrections& getModelCorrections() { return model_corrections_; }
+
+        /**
          * @brief Gets the stochastic (weighting) model selection.
          *
          * The selected model controls the **code** weighting in full;

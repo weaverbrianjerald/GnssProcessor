@@ -23,8 +23,8 @@ from typing import List, Optional
 import numpy as np
 
 from ..figures import (Axes, Band, Figure, HLine, Line, Markers, PolarScatter,
-                       Raster, RgbRaster, Scatter, StackedArea, Stem, TextBox,
-                       VLine)
+                       Polygon, Raster, RgbImage, RgbRaster, Scatter, StackedArea,
+                       Stem, TextBox, VLine)
 from .base import Backend
 
 
@@ -68,6 +68,11 @@ class PlotlyBackend(Backend):
         gofig.update_layout(template="plotly_white", height=int(fig.height * 96),
                             title=title, margin=dict(l=70, r=40, t=60, b=50),
                             showlegend=show_any, legend=dict(orientation="v"))
+        # Axes facecolor (e.g. ocean behind land polygons) -> figure plot bg.
+        fc = next((s.facecolor for s in specs
+                   if getattr(s, "facecolor", None) is not None), None)
+        if fc is not None:
+            gofig.update_layout(plot_bgcolor=_rgb(fc))
         return gofig
 
     # ------------------------------------------------------------------ #
@@ -107,12 +112,17 @@ class PlotlyBackend(Backend):
                         stackgroup="one", line=dict(width=0.5, color=_rgb(col)),
                         fillcolor=_rgba(col, tr.alpha)), row=row, col=1)
             elif isinstance(tr, HLine):
-                gofig.add_hline(y=tr.y, line=dict(color=_rgb(tr.color), dash=_dash(tr.style)),
-                                annotation_text=tr.label, row=row, col=1)
+                hkw = dict(y=tr.y, line=dict(color=_rgb(tr.color), dash=_dash(tr.style)),
+                           row=row, col=1)
+                if tr.label:                 # only annotate real labels: a None/"" text
+                    hkw["annotation_text"] = tr.label   # renders as plotly's "new text"
+                gofig.add_hline(**hkw)
             elif isinstance(tr, VLine):
-                gofig.add_vline(x=_xscalar(tr.x), line=dict(color=_rgb(tr.color),
-                                dash=_dash(tr.style), width=tr.width),
-                                annotation_text=tr.label, row=row, col=1)
+                vkw = dict(x=_xscalar(tr.x), line=dict(color=_rgb(tr.color),
+                           dash=_dash(tr.style), width=tr.width), row=row, col=1)
+                if tr.label:                 # (repeated slip/storm VLines otherwise
+                    vkw["annotation_text"] = tr.label   # spam "new text" across the top)
+                gofig.add_vline(**vkw)
             elif isinstance(tr, TextBox):
                 yref, xref = _domain_refs(gofig, row)
                 gofig.add_annotation(x=tr.x, y=tr.y, xref=xref, yref=yref, text=tr.text,
@@ -124,6 +134,8 @@ class PlotlyBackend(Backend):
                 self._heatmap(gofig, tr, fig, row)
             elif isinstance(tr, RgbRaster):
                 self._image(gofig, tr, row)
+            elif isinstance(tr, RgbImage):
+                self._layout_image(gofig, tr, row)
             elif isinstance(tr, Markers):
                 gofig.add_trace(go.Scatter(
                     x=_np(tr.x), y=np.asarray(tr.rows, float) + 1.0, mode="markers",
@@ -141,8 +153,31 @@ class PlotlyBackend(Backend):
                                            name=tr.label,
                                            showlegend=leg and tr.label is not None),
                                 row=row, col=1)
+            elif isinstance(tr, Polygon):
+                self._polygon(gofig, tr, row)
 
         self._decorate_rect(gofig, spec, row, secy)
+
+    # ------------------------------------------------------------------ #
+    def _polygon(self, gofig, tr: Polygon, row: int):
+        """Fill each NaN-separated ring (land) with a self-closing scatter."""
+        import plotly.graph_objects as go
+        x = np.asarray(tr.x, dtype=float)
+        y = np.asarray(tr.y, dtype=float)
+        line = (dict(color=_rgb(tr.edge), width=tr.width) if tr.edge is not None
+                else dict(width=0))
+        fillcolor = _rgba(tr.fill, tr.alpha)
+        breaks = np.flatnonzero(~(np.isfinite(x) & np.isfinite(y)))
+        start = 0
+        for stop in list(breaks) + [x.size]:
+            rx, ry = x[start:stop], y[start:stop]
+            m = np.isfinite(rx) & np.isfinite(ry)
+            if int(m.sum()) >= 3:
+                gofig.add_trace(go.Scatter(x=rx[m], y=ry[m], mode="lines",
+                                           fill="toself", fillcolor=fillcolor,
+                                           line=line, showlegend=False,
+                                           hoverinfo="skip"), row=row, col=1)
+            start = stop + 1
 
     # ------------------------------------------------------------------ #
     def _heatmap(self, gofig, tr: Raster, fig: Figure, row: int):
@@ -178,20 +213,59 @@ class PlotlyBackend(Backend):
         gofig.update_yaxes(autorange="reversed", tickmode="array", tickvals=list(ys),
                            ticktext=list(tr.row_labels), row=row, col=1)
 
-    def _image(self, gofig, tr: RgbRaster, row: int):
-        import plotly.graph_objects as go
-        rgb = np.clip(np.array(tr.rgb, float), 0, 1)
-        z = (rgb * 255).astype(np.uint8)
-        n_rows = z.shape[0]
-        if tr.alpha is not None:
-            a = (np.clip(np.asarray(tr.alpha, float), 0, 1) * 255).astype(np.uint8)
-            z = np.concatenate([z, a[..., None]], axis=2)
-            colormodel = "rgba"
+    def _layout_image(self, gofig, tr: RgbImage, row: int):
+        """A georeferenced basemap as a data-anchored, below-traces layout image.
+
+        Embedded as a base64 ``data:`` URI (the vendored bytes verbatim when
+        present, else a stdlib PNG re-encode) so the interactive report stays
+        fully offline.  ``layer='below'`` keeps it under the track/markers.
+        """
+        import base64
+        if tr.encoded is not None:
+            raw, mime = bytes(tr.encoded), tr.mime
         else:
-            colormodel = "rgb"
-        gofig.add_trace(go.Image(z=z, colormodel=colormodel), row=row, col=1)
-        gofig.update_yaxes(autorange="reversed", tickmode="array",
-                           tickvals=list(np.arange(n_rows)),
+            from ..pngio import encode_png
+            raw, mime = encode_png(tr.rgb), "image/png"
+        uri = "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii"))
+        x0, x1, y0, y1 = (float(v) for v in tr.extent)
+        suffix = "" if row == 1 else str(row)
+        gofig.add_layout_image(dict(
+            source=uri, xref="x" + suffix, yref="y" + suffix,
+            x=min(x0, x1), y=max(y0, y1),           # anchor at the top-left corner
+            sizex=abs(x1 - x0), sizey=abs(y1 - y0),
+            xanchor="left", yanchor="top", sizing="stretch",
+            layer="below", opacity=tr.alpha))
+
+    def _image(self, gofig, tr: RgbRaster, row: int):
+        """Truecolor raster as a STRETCH-to-fill layout image (not go.Image).
+
+        ``go.Image`` locks square pixels, so a wide-but-short strip (many epochs,
+        few rows) collapses into an unreadable sliver.  A layout image with
+        ``sizing='stretch'`` fills the subplot at any aspect, and being anchored in
+        data coords it also carries real GPS-time x-ticks (``go.Image`` could only
+        show epoch indices).  Row 0 sits at the top via a reversed y-axis.
+        """
+        import base64
+
+        from ..pngio import encode_png
+        rgb = np.clip(np.array(tr.rgb, float), 0.0, 1.0)
+        z = (rgb * 255).astype(np.uint8)
+        n_rows, n_cols = z.shape[0], z.shape[1]
+        if tr.alpha is not None:
+            a = (np.clip(np.asarray(tr.alpha, float), 0.0, 1.0) * 255).astype(np.uint8)
+            z = np.concatenate([z, a[..., None]], axis=2)   # RGBA -> empty cells clear
+        uri = "data:image/png;base64," + base64.b64encode(encode_png(z)).decode("ascii")
+        suffix = "" if row == 1 else str(row)
+        # Image spans x in [0, n_cols], y in [0, n_rows]; row 0 at the top edge.
+        gofig.add_layout_image(dict(
+            source=uri, xref="x" + suffix, yref="y" + suffix,
+            x=0.0, y=0.0, sizex=n_cols, sizey=n_rows,
+            xanchor="left", yanchor="top", sizing="stretch", layer="below"))
+        tv, tt = _time_ticks(tr.x, n_cols)
+        gofig.update_xaxes(range=[0, n_cols], tickmode="array", tickvals=tv,
+                           ticktext=tt, row=row, col=1)
+        gofig.update_yaxes(range=[n_rows, 0], tickmode="array",   # reversed: row 0 on top
+                           tickvals=[i + 0.5 for i in range(n_rows)],
                            ticktext=list(tr.row_labels), row=row, col=1)
 
     # ------------------------------------------------------------------ #
@@ -242,6 +316,12 @@ class PlotlyBackend(Backend):
                 gofig.update_yaxes(autorangeoptions=dict(minallowed=lo), row=row, col=1)
             elif hi is not None:
                 gofig.update_yaxes(autorangeoptions=dict(maxallowed=hi), row=row, col=1)
+        if spec.aspect_equal:
+            # Lock the primary y-axis to the same data scale as x (1:1), so a
+            # plan-view track is not distorted by the panel's aspect ratio.
+            xref = "x" if row == 1 else f"x{row}"
+            gofig.update_yaxes(scaleanchor=xref, scaleratio=1.0, row=row, col=1,
+                               secondary_y=False)
         if spec.axis_off:
             gofig.update_xaxes(visible=False, row=row, col=1)
             gofig.update_yaxes(visible=False, row=row, col=1)
@@ -281,7 +361,15 @@ class PlotlyBackend(Backend):
 
 # --------------------------------------------------------------------------- #
 def _np(x):
-    return np.asarray(x)
+    """x for a plotly trace.  datetime64 arrays get their ``NaT`` gap-markers
+    turned into ``None`` -- otherwise plotly's JSON encoder collapses ``NaT`` to
+    ``Timestamp.min`` (1677-09-21), which blows the auto x-range out to three
+    centuries and crushes all the real data into the right edge.  ``None`` both
+    breaks the line at the gap (like matplotlib) and is ignored for ranging."""
+    a = np.asarray(x)
+    if a.dtype.kind == "M":  # datetime64
+        return [None if np.isnat(v) else v for v in a]
+    return a
 
 
 def _f(y):

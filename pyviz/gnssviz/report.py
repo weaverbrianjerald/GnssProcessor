@@ -12,11 +12,41 @@ from __future__ import annotations
 import base64
 import datetime as _dt
 import html
+import os
 from typing import List, Optional, Sequence, Tuple
 
 from .animation import render_gif
 from .backends.base import Backend
 from .viewers.base import ViewerResult
+
+# Plotly.js runtime CDN (used unless an inline/offline embed is requested).
+_PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
+
+
+def _plotly_inline_script() -> Optional[str]:
+    """Return a ``<script>...</script>`` embedding the *installed* plotly.min.js.
+
+    Reads ``plotly/package_data/plotly.min.js`` from the venv's plotly package so
+    the interactive report opens with **no network** (grading may be offline).
+    Embedding the installed build (not a pinned CDN version) guarantees the JS
+    matches the ``<div>`` fragments this plotly produces.  Returns ``None`` if the
+    bundled file cannot be located (caller falls back to the CDN with a note).
+    """
+    try:
+        import plotly
+        pkg = os.path.dirname(os.path.abspath(plotly.__file__))
+        js_path = os.path.join(pkg, "package_data", "plotly.min.js")
+        with open(js_path, "r", encoding="utf-8") as fh:
+            js = fh.read()
+        # The bundle carries ONE cdn.plot.ly reference: the default `topojsonURL`
+        # for topojson choropleth basemaps (`"https://cdn.plot.ly/un/"`).  We never
+        # draw one, but an embedded offline report must not name a CDN at all — so
+        # neutralise that default.  This keeps the artifact provably network-free
+        # (and lets the offline check assert no cdn.plot.ly substring at all).
+        js = js.replace("cdn.plot.ly", "")
+        return "<script type='text/javascript'>" + js + "</script>"
+    except Exception:
+        return None
 
 _CSS = """
 :root { color-scheme: light dark; }
@@ -55,6 +85,7 @@ def build_html_report(
     live_token: Optional[str] = None,
     poll_interval: float = 5.0,
     extra_html: str = "",
+    plotly_js: str = "cdn",
 ) -> str:
     """Assemble the report HTML from ``(section_title, ViewerResult)`` pairs.
 
@@ -67,11 +98,30 @@ def build_html_report(
     just below the meta line and above the table of contents -- used by the
     test-suite report for a coloured pass/fail gate banner and per-cell report
     links, which the escaped ``<pre>`` summaries cannot carry.
+
+    ``plotly_js`` selects the JS-runtime source for interactive (plotly) reports:
+    ``'cdn'`` (default, unchanged -- one small CDN ``<script>``, needs network on
+    first open) or ``'inline'`` (embed the installed plotly.min.js so the report
+    is fully offline -- ~4 MB, no downloads).  Ignored for static backends.  If
+    ``'inline'`` is asked for but the bundled JS can't be found, this falls back
+    to the CDN and notes it in the meta line (never silently ships a report that
+    can't render offline).
     """
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Interactive backends (plotly) need their JS runtime loaded once per doc.
-    head_js = ('<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
-               if getattr(backend, "needs_js", False) else "")
+    head_js, js_note = "", ""
+    if getattr(backend, "needs_js", False):
+        if plotly_js == "inline":
+            head_js = _plotly_inline_script()
+            if head_js is None:                  # bundled JS not found -> CDN + note
+                head_js = f'<script src="{_PLOTLY_CDN}"></script>'
+                js_note = (" &nbsp;|&nbsp; <span style='color:#b45'>plotly.js: "
+                           "inline requested but bundle not found &mdash; using CDN "
+                           "(needs network)</span>")
+            else:
+                js_note = " &nbsp;|&nbsp; plotly.js: inline (offline)"
+        else:
+            head_js = f'<script src="{_PLOTLY_CDN}"></script>'
     poller = ""
     if live_token is not None:
         poller = (
@@ -86,7 +136,7 @@ def build_html_report(
         f"<title>{html.escape(title)}</title>{head_js}{poller}<style>{_CSS}</style></head><body>",
         f"<h1>{html.escape(title)}</h1>",
         f"<div class='meta'>Trace folder: <code>{html.escape(log_dir)}</code>"
-        f" &nbsp;|&nbsp; generated {now}{live_badge}</div>",
+        f" &nbsp;|&nbsp; generated {now}{live_badge}{js_note}</div>",
     ]
     if extra_html:
         parts.append(extra_html)

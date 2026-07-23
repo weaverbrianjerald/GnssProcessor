@@ -13,8 +13,10 @@
  * model to a fixed point (the M2 static case).
  */
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -50,6 +52,25 @@ struct TrajectoryConfig {
     double heave_period_s{ 8.0 };
     double clock_bias0_s{ 1.0e-4 };
     double clock_drift_sps{ 0.0 };
+
+    // --- Optional "landfall" mode ------------------------------------------
+    // When BOTH dest_* are finite, the vessel drifts from (lat0,lon0) to the
+    // destination over the arc and *decelerates to a stop at grounding* (a SAR
+    // vessel running aground), landing exactly on the destination.  The default
+    // (NaN) disables it, so the analytic heading-weave model above runs and prior
+    // datasets stay byte-identical.  In landfall mode heading0/heading_amp/
+    // cruise_speed are unused: the along-track speed is derived so the integrated
+    // path length equals the true start->destination distance.
+    double dest_lat_deg{ std::numeric_limits<double>::quiet_NaN() };
+    double dest_lon_deg{ std::numeric_limits<double>::quiet_NaN() };
+    double landfall_decel_frac{ 0.30 };      ///< fraction of the arc spent easing to grounding.
+    double landfall_terminal_frac{ 0.0 };    ///< terminal speed as a fraction of Vmax at grounding (0 = dead stop; a small value lets the vessel creep aground still moving).
+    double approach_weave_amp_m{ 2000.0 };   ///< lateral meander amplitude (vanishes at both ends).
+    double approach_weave_period_s{ 2400.0 };///< lateral meander period (s).
+    /// Optional intermediate waypoints (lat_deg, lon_deg) for a meandering landfall:
+    /// the path becomes a smooth Catmull-Rom spline start -> waypoints... -> dest.
+    /// Empty => the straight start->dest drift above.
+    std::vector<std::array<double, 2>> waypoints;
 };
 
 /** @brief Builds and stores the per-epoch truth trajectory. */

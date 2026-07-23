@@ -32,6 +32,7 @@
 #include "sim/RinexObsWriter.hpp"
 #include "sim/ScriptedSlips.hpp"
 #include "sim/SimConfig.hpp"
+#include "sim/TrajectoryGenerator.hpp"
 #include "sim/Verifier.hpp"
 
 using namespace GnssProcessor;
@@ -152,6 +153,121 @@ TEST(SimSelfConsistency, IonoDatelineContinuous) {
     // The IPP longitude must be reported in (-180,180].
     EXPECT_LE(std::abs(a.ipp_lon_deg), 180.0);
     EXPECT_LE(std::abs(b.ipp_lon_deg), 180.0);
+}
+
+// --- Landfall mode: drift start -> destination, grounding on the sea surface. -
+// The vessel must land EXACTLY on the destination, at rest, and stay on the
+// ellipsoid (h ~ 0) the whole way — a flat ENU tangent plane would bow ~L^2/(2R)
+// (hundreds of m) off the surface over a ~90 km arc.
+TEST(SimSelfConsistency, LandfallGroundsAtDestinationOnSeaSurface) {
+    sim::TrajectoryConfig c;
+    c.kinematic = true;
+    c.lat0_deg = -16.60; c.lon0_deg = -179.55;    // start: open ocean, E of the dateline
+    c.dest_lat_deg = -16.169; c.dest_lon_deg = 179.723;  // grounding: W of the dateline
+    c.h0_m = 0.0; c.heave_amp_m = 1.0;
+    c.interval_s = 30.0; c.n_epochs = 241;
+    sim::TrajectoryGenerator g(c);
+    const auto& s = g.states();
+    ASSERT_EQ(s.size(), 241u);
+
+    EXPECT_NEAR(s.front().lat_deg, -16.60, 1e-4);          // starts exactly at the origin
+    EXPECT_NEAR(s.front().lon_deg, -179.55, 1e-4);
+    EXPECT_NEAR(s.back().lat_deg, -16.169, 1e-4);          // grounds exactly on the destination
+    EXPECT_NEAR(s.back().lon_deg, 179.723, 1e-4);
+    EXPECT_NEAR(s.back().h_m, 0.0, 1e-2);                  // at the waterline (heave tapered out)
+    EXPECT_LT(s.back().speed_mps, 0.5);                    // decelerated to a stop
+    // Stays on the sea surface throughout (curvature-bug regression guard).
+    for (const auto& st : s) EXPECT_LT(std::abs(st.h_m), c.heave_amp_m + 0.1);
+    // The track crosses the +/-180 dateline (0-360 longitude spans both sides).
+    double lomin = 1e9, lomax = -1e9;
+    for (const auto& st : s) {
+        const double L = std::fmod(st.lon_deg + 360.0, 360.0);
+        lomin = std::min(lomin, L); lomax = std::max(lomax, L);
+    }
+    EXPECT_LT(lomin, 180.0);
+    EXPECT_GT(lomax, 180.0);
+}
+
+// Waypoints => a smooth Catmull-Rom spline start -> waypoints... -> dest.  The
+// spline must pass THROUGH start and dest exactly (grounding on the reef), stay on
+// the sea surface, and — with a waypoint on the far side of the antimeridian —
+// carry the track across the +/-180 dateline (a reference-frame teaching point).
+TEST(SimSelfConsistency, LandfallSplineMeanderCrossesDatelineAndGrounds) {
+    sim::TrajectoryConfig c;
+    c.kinematic = true;
+    c.lat0_deg = -15.20; c.lon0_deg = -179.00;              // start E of 180 (181.0E)
+    c.dest_lat_deg = -16.0872; c.dest_lon_deg = -179.158279; // dest  E of 180 (180.84E)
+    c.waypoints = { { { -15.50, 179.70 } } };               // waypoint W of 180 (179.7E)
+    c.h0_m = 0.0; c.heave_amp_m = 1.0;
+    c.interval_s = 30.0; c.n_epochs = 481;
+    sim::TrajectoryGenerator g(c);
+    const auto& s = g.states();
+    ASSERT_EQ(s.size(), 481u);
+    EXPECT_NEAR(s.front().lat_deg, -15.20, 1e-4);           // spline passes through the start
+    EXPECT_NEAR(s.front().lon_deg, -179.00, 1e-4);
+    EXPECT_NEAR(s.back().lat_deg, -16.0872, 1e-4);          // ...and grounds exactly on dest
+    EXPECT_NEAR(s.back().lon_deg, -179.158279, 1e-4);
+    EXPECT_NEAR(s.back().h_m, 0.0, 1e-2);                   // at the waterline
+    EXPECT_LT(s.back().speed_mps, 0.6);                     // grounded (at rest)
+    for (const auto& st : s) EXPECT_LT(std::abs(st.h_m), c.heave_amp_m + 0.1);  // on the surface
+    // The bow reaches WEST of the antimeridian while the ends sit east of it.
+    double lo360min = 1e9, lo360max = -1e9;
+    for (const auto& st : s) {
+        const double L = std::fmod(st.lon_deg + 360.0, 360.0);
+        lo360min = std::min(lo360min, L); lo360max = std::max(lo360max, L);
+    }
+    EXPECT_LT(lo360min, 180.0);   // west of the dateline (the waypoint)
+    EXPECT_GT(lo360max, 180.0);   // east of the dateline (start + dest)
+}
+
+// A non-zero landfall_terminal_frac lets the vessel CREEP aground still moving
+// (terminal speed ~ tf*Vmax) instead of dead-stopping — this removes a float-PPP
+// position spike that keys off the truth speed being exactly 0 at the grounding.
+// The speed integral renormalises (Vmax = L/S), so the creep run still grounds on
+// the EXACT same destination as the tf=0 dead-stop run.
+TEST(SimSelfConsistency, LandfallTerminalFracCreepsAgroundStillMoving) {
+    auto make = [](double tf) {
+        sim::TrajectoryConfig c;
+        c.kinematic = true;
+        c.lat0_deg = -16.60; c.lon0_deg = -179.55;             // start: open ocean, E of the dateline
+        c.dest_lat_deg = -16.169; c.dest_lon_deg = 179.723;    // grounding: W of the dateline
+        c.h0_m = 0.0; c.heave_amp_m = 1.0;
+        c.interval_s = 30.0; c.n_epochs = 241;
+        c.landfall_terminal_frac = tf;
+        return c;
+    };
+    sim::TrajectoryGenerator gStop(make(0.0));                 // dead stop (the tf=0 default behaviour)
+    sim::TrajectoryGenerator gCreep(make(0.15));              // still creeping at grounding
+    const auto& stop  = gStop.states();
+    const auto& creep = gCreep.states();
+    ASSERT_EQ(stop.size(), 241u);
+    ASSERT_EQ(creep.size(), 241u);
+
+    // Both ground on the EXACT same destination (the along-track speed renormalises).
+    EXPECT_NEAR(creep.back().lat_deg, -16.169, 1e-4);
+    EXPECT_NEAR(creep.back().lon_deg, 179.723, 1e-4);
+    EXPECT_NEAR(creep.back().lat_deg, stop.back().lat_deg, 1e-5);
+    EXPECT_NEAR(creep.back().lon_deg, stop.back().lon_deg, 1e-5);
+    // tf=0 still dead-stops; tf>0 is clearly still moving and strictly faster.
+    EXPECT_LT(stop.back().speed_mps, 0.6);                     // default: grounded at rest
+    EXPECT_GT(creep.back().speed_mps, 1.0);                    // creep: still under way (>= tf*mean speed)
+    EXPECT_GT(creep.back().speed_mps, stop.back().speed_mps + 0.5);
+    // Both start essentially at rest (identical ramp-up shape; only the terminal differs).
+    EXPECT_LT(creep.front().speed_mps, 0.3);
+    // Stays on the sea surface throughout (heave floor is a fraction of a metre).
+    for (const auto& st : creep) EXPECT_LT(std::abs(st.h_m), 1.0 + 0.1);
+}
+
+// Absent dest_* (NaN default) => the analytic heading-weave model runs, NOT
+// landfall — the byte-identity guard for every existing scenario.
+TEST(SimSelfConsistency, LandfallDisabledByDefault) {
+    sim::TrajectoryConfig c;                 // dest_* default to NaN
+    c.kinematic = true; c.n_epochs = 10;
+    sim::TrajectoryGenerator g(c);
+    const auto& s = g.states();
+    ASSERT_EQ(s.size(), 10u);
+    EXPECT_FALSE(std::isfinite(c.dest_lat_deg));
+    EXPECT_GT(std::hypot(s.back().east_m, s.back().north_m), 1.0);  // analytic model moved
 }
 
 namespace {
@@ -303,6 +419,41 @@ TEST(SimSelfConsistency, VerifyReportJsonBiasedAgreesWithReport) {
     for (const auto& line : j.at("report_lines"))
         if (line.get<std::string>().find("[FAIL]") != std::string::npos) ++fail_lines;
     EXPECT_EQ(fail_lines, j.at("failures").get<int>());
+}
+
+// --- Verifier degrades gracefully on malformed external state_trace.csv. ------
+// (It grades student submissions, so a truncated / missing-column file must fail
+//  cleanly, never index out of bounds — the review found two OOB paths here.)
+TEST(SimSelfConsistency, VerifierMissingPositionColumnIsGraceful) {
+    const auto base = tmpDir("verify_missing_ym");
+    writeFixture(base / "truth", base / "logs", 0.03, 0.03, 8.0, 0.15, 5);
+    // state_trace whose header lacks y_m/z_m: must fail (not crash on row[-1]).
+    { std::ofstream st(base / "logs" / "state_trace.csv");
+      st << "week,tow_s,x_m,x_std_m\n2313,302400.000,-6047592.0,0.03\n"; }
+    sim::VerifierConfig cfg;
+    cfg.truth_dir = base / "truth";
+    cfg.run_logs_dir = base / "logs";
+    cfg.converge_skip = 0;
+    const auto r = sim::Verifier::run(cfg);   // must return, not abort
+    EXPECT_FALSE(r.pass);
+}
+
+TEST(SimSelfConsistency, VerifierTruncatedSigmaRowIsGraceful) {
+    const auto base = tmpDir("verify_trunc_row");
+    writeFixture(base / "truth", base / "logs", 0.03, 0.03, 8.0, 0.15, 3);
+    // Full position header (y_std_m=idx6, z_std_m=idx7), but the middle row is cut
+    // off right after x_std_m (6 fields) at a valid tow -> must fall back, not OOB.
+    { std::ofstream st(base / "logs" / "state_trace.csv");
+      st << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m\n"
+         << "2313,302400.000,-6047592.0,-190053.2,-2010942.2,0.03,0.02,0.025\n"
+         << "2313,302430.000,-6047592.0,-190053.2,-2010942.2,0.03\n"          // truncated
+         << "2313,302460.000,-6047592.0,-190053.2,-2010942.2,0.03,0.02,0.025\n"; }
+    sim::VerifierConfig cfg;
+    cfg.truth_dir = base / "truth";
+    cfg.run_logs_dir = base / "logs";
+    cfg.converge_skip = 0;
+    const auto r = sim::Verifier::run(cfg);   // must return, not abort on row[6]
+    EXPECT_FALSE(r.report.empty());
 }
 
 // ============================================================================
@@ -512,6 +663,28 @@ TEST(ScriptedSlipsLoader, RejectsInvalidEvents) {
     // Out-of-int-range magnitudes must saturate (not wrap mod 2^32 into a valid range).
     EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":10,\"delta_cycles\":4294967346,\"flag_lli\":true}")); // 2^32+50 must NOT become +50
     EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":4294967306,\"delta_cycles\":3}"));                    // 2^32+10 must NOT become epoch 10
+}
+
+// M7 — the full-correction stack flags parse; absent block -> all false (so the
+// bare dataset stays byte-identical).  Product-free (loader only).
+TEST(SimConfigLoader, ParsesM7CorrectionsFlags) {
+    std::string err;
+    sim::SimConfig cfg;
+    ASSERT_TRUE(tryLoadScript(
+        "{\"corrections\":{\"relativity\":true,\"shapiro\":true,"
+        "\"solid_earth_tide\":true,\"pole_tide\":true}}", &err, &cfg)) << err;
+    EXPECT_TRUE(cfg.corrections.relativity);
+    EXPECT_TRUE(cfg.corrections.shapiro);
+    EXPECT_TRUE(cfg.corrections.solid_earth_tide);
+    EXPECT_TRUE(cfg.corrections.pole_tide);
+    EXPECT_FALSE(cfg.corrections.sat_antenna);   // unset -> default false
+
+    sim::SimConfig cfg2;
+    ASSERT_TRUE(tryLoadScript("{}", &err, &cfg2)) << err;
+    EXPECT_FALSE(cfg2.corrections.relativity);
+    EXPECT_FALSE(cfg2.corrections.shapiro);
+    EXPECT_FALSE(cfg2.corrections.solid_earth_tide);
+    EXPECT_FALSE(cfg2.corrections.pole_tide);
 }
 
 // §3 — the >64-event paste-accident guard.

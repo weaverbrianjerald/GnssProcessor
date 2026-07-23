@@ -403,8 +403,9 @@ Eigen::Vector3d sagnacRotate(const Eigen::Vector3d& s_em, const Eigen::Vector3d&
 // orbit/clock covers the emission epoch.
 bool forwardPseudorange(const sim::EphemerisProvider& eph, const std::string& sat,
                         const GnssTime& obs_time, const Eigen::Vector3d& rx, double cdt_r_m,
-                        double& P_out, Eigen::Vector3d& sat_pos_out, double& sat_clk_out,
-                        double& elev_deg_out, double& az_deg_out) {
+                        double& P_out, Eigen::Vector3d& sat_pos_out, Eigen::Vector3d& sat_vel_out,
+                        double& sat_clk_out, double& elev_deg_out, double& az_deg_out,
+                        const sim::SimConfig::Corrections& corr, double& m7_corr_out) {
     const double c = Constants::SPEED_OF_LIGHT;
 
     // Seed P from a rough range at obs.time; also serves as a coverage pre-check.
@@ -413,12 +414,12 @@ bool forwardPseudorange(const sim::EphemerisProvider& eph, const std::string& sa
     double P = (sagnacRotate(s0, rx) - rx).norm();
 
     Eigen::Vector3d sat_pos = Eigen::Vector3d::Zero();
+    Eigen::Vector3d s_em = Eigen::Vector3d::Zero(), v_em = Eigen::Vector3d::Zero(); // emission state
     double sat_clk = 0.0;
     for (int it = 0; it < 8; ++it) {
         const GnssTime approx_em = addSeconds(obs_time, -P / c);
         const double sc_approx = eph.clock(sat, approx_em);
         const GnssTime em = addSeconds(obs_time, -(P / c + sc_approx));
-        Eigen::Vector3d s_em, v_em;
         if (!eph.positionVelocity(sat, em, s_em, v_em)) return false;
         bool bcast = false;
         sat_clk = eph.clock(sat, em, &bcast);
@@ -432,10 +433,22 @@ bool forwardPseudorange(const sim::EphemerisProvider& eph, const std::string& sa
     }
     const auto topo = Model::Geometry::computeTopocentric(rx, sat_pos);
     P_out = P;
-    sat_pos_out = sat_pos;
+    sat_pos_out = sat_pos;      // reception-frame (Sagnac-rotated)
+    sat_vel_out = v_em;         // emission-frame velocity (unrotated) — matches the
+                                // processor's geom.sat_vel for the antenna attitude frame
     sat_clk_out = sat_clk;
     elev_deg_out = topo.elevation_deg;
     az_deg_out = topo.azimuth_deg;
+
+    // M7 full-correction stack (non-dispersive; added to code+phase like tropo, but
+    // NOT to the bare internal SPP).  Relativity uses the emission-time (pre-Sagnac)
+    // state; the range/site terms use the reception-frame (rotated) sat_pos + rx.
+    double m7 = 0.0;
+    if (corr.relativity)       m7 += eph.relativityMetres(sat, s_em, v_em);
+    if (corr.shapiro)          m7 += eph.shapiroMetres(sat, rx, sat_pos);
+    if (corr.solid_earth_tide) m7 += eph.solidEarthTideMetres(rx, sat_pos, obs_time);
+    if (corr.pole_tide)        m7 += eph.poleTideMetres(rx, sat_pos, obs_time);
+    m7_corr_out = m7;
     return true;
 }
 
@@ -547,6 +560,24 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     const std::filesystem::path sp3 = base / "products" / "COD0MGXFIN_20241290000_01D_05M_ORB.SP3";
     const std::filesystem::path clk = base / "products" / "COD0MGXFIN_20241290000_01D_30S_CLK.CLK";
     const std::filesystem::path nav = base / "products" / "BRDC00IGS_R_20241290000_01D_MN.rnx";
+    // IGS20 ANTEX for the satellite antenna PCO/PCV term — loaded into the provider
+    // ONLY when the sim config requests it (corrections.sat_antenna).  It is the same
+    // file the processor auto-loads in internal mode (files.internal_data_root/
+    // static/atx/igs20.atx), so the injected satellite antenna term cancels against
+    // the processor's own model when enable_satellite_pco/pcv are on.
+    const std::filesystem::path atx = root / "data" / "static" / "atx" / "igs20.atx";
+    // The day's Earth Rotation Parameters (polar motion xp/yp + UT1-UTC).  Loaded
+    // into the provider whenever a correction that consumes ERP geometry is
+    // requested.  Two consumers: (1) pole tide reads xp/yp directly — with no ERP,
+    // GnssCorrections::computePoleTideCorrection returns 0, so the injected pole
+    // tide would be 0 while the processor (which auto-globs the obs-day .erp in
+    // internal mode) still subtracts a real ~mm-cm term, i.e. the reuse would NOT
+    // cancel; and (2) the Sun/Moon frame that drives the solid-earth tide and the
+    // satellite-antenna yaw attitude is evaluated from the same ERP.  This is the
+    // identical file the processor loads (PathResolver globs the obs-day .erp), so
+    // loading it here makes pole tide actually cancel and makes the solid-tide /
+    // antenna Sun frame bit-for-bit what the processor computes.
+    const std::filesystem::path erp = base / "products" / "COD0MGXFIN_20241290000_01D_12H_ERP.ERP";
     for (const std::filesystem::path* p : { &setup_obs, &sp3, &clk }) {
         if (!std::filesystem::exists(*p)) {
             std::cerr << "[" << tag << "] FAIL: missing fixture " << p->string() << "\n";
@@ -554,19 +585,63 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         }
     }
 
-    sim::EphemerisProvider eph(setup_obs, { sp3, clk }, outdir / "logs", nav);
+    std::vector<std::filesystem::path> products = { sp3, clk };
+    if (scfg.corrections.sat_antenna) {
+        if (!std::filesystem::exists(atx)) {
+            std::cerr << "[" << tag << "] FAIL: corrections.sat_antenna set but ATX missing: "
+                      << atx.string() << "\n";
+            return 1;
+        }
+        products.push_back(atx);
+    }
+    // Pole tide, solid-earth tide, and the satellite-antenna attitude frame all
+    // consume ERP-derived geometry (see the erp declaration above), so load the ERP
+    // whenever any of them is requested — matching the processor, which globs the
+    // obs-day .erp and applies it under the corresponding enable_* flags.
+    const bool need_erp = scfg.corrections.pole_tide || scfg.corrections.solid_earth_tide ||
+                          scfg.corrections.sat_antenna;
+    if (need_erp) {
+        if (!std::filesystem::exists(erp)) {
+            std::cerr << "[" << tag << "] FAIL: an ERP-consuming correction (pole_tide/"
+                         "solid_earth_tide/sat_antenna) is set but ERP missing: "
+                      << erp.string() << "\n";
+            return 1;
+        }
+        products.push_back(erp);
+    }
+
+    sim::EphemerisProvider eph(setup_obs, products, outdir / "logs", nav);
     if (!eph.ok()) {
         std::cerr << "[" << tag << "] FAIL: EphemerisProvider setup\n";
         return 1;
     }
+    // Fail loud rather than silently inject nothing if the ATX yielded no antennas.
+    if (scfg.corrections.sat_antenna && !eph.hasAntenna()) {
+        std::cerr << "[" << tag << "] FAIL: corrections.sat_antenna set but no satellite antenna "
+                     "model loaded from " << atx.string() << "\n";
+        return 1;
+    }
+    // Likewise fail loud if an ERP-consuming correction is on but no ERP entry
+    // parsed — otherwise pole tide would silently inject 0 (asymmetric with the
+    // processor) and the solid-tide / antenna Sun frame would drift by the polar
+    // motion the processor still applies.
+    if (need_erp && eph.erpNodeCount() == 0) {
+        std::cerr << "[" << tag << "] FAIL: ERP-consuming correction set but no ERP entries loaded from "
+                  << erp.string() << "\n";
+        return 1;
+    }
     std::cout << "[" << tag << "] provider ready: " << eph.orbitNodeCount() << " orbit nodes, "
-              << eph.clockSampleCount() << " clock samples\n";
+              << eph.clockSampleCount() << " clock samples";
+    if (need_erp) std::cout << " (+" << eph.erpNodeCount() << " ERP entries)";
+    if (eph.hasAntenna()) std::cout << " (+satellite antenna PCO/PCV)";
+    std::cout << "\n";
 
     // ---- Truth trajectory (knobs from SimConfig; kinematic from the subcommand) ----
     sim::TrajectoryConfig tcfg;
     tcfg.kinematic = kinematic;
     tcfg.interval_s = scfg.trajectory.interval_s;
     tcfg.n_epochs = scfg.trajectory.n_epochs;
+    tcfg.t0.tow = scfg.trajectory.start_tow_s;   // time-of-day only; the week/date stays fixture-bound
     tcfg.cruise_speed_mps = scfg.trajectory.cruise_speed_mps;
     tcfg.lat0_deg = scfg.trajectory.lat0_deg;
     tcfg.lon0_deg = scfg.trajectory.lon0_deg;
@@ -578,11 +653,40 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     tcfg.heave_period_s = scfg.trajectory.heave_period_s;
     tcfg.clock_bias0_s = scfg.trajectory.clock_bias0_s;
     tcfg.clock_drift_sps = scfg.trajectory.clock_drift_sps;
+    tcfg.dest_lat_deg = scfg.trajectory.dest_lat_deg;
+    tcfg.dest_lon_deg = scfg.trajectory.dest_lon_deg;
+    tcfg.landfall_decel_frac = scfg.trajectory.landfall_decel_frac;
+    tcfg.landfall_terminal_frac = scfg.trajectory.landfall_terminal_frac;
+    tcfg.approach_weave_amp_m = scfg.trajectory.approach_weave_amp_m;
+    tcfg.approach_weave_period_s = scfg.trajectory.approach_weave_period_s;
+    tcfg.waypoints = scfg.trajectory.waypoints;
     sim::TrajectoryGenerator traj(tcfg);
     const auto& truth = traj.states();
     if (truth.empty()) {
         std::cerr << "[" << tag << "] FAIL: empty trajectory\n";
         return 1;
+    }
+
+    // ---- Product-day edge guard -------------------------------------------
+    // The bundled precise products are SINGLE-DAY files (DOY 129 = 2024-05-08 =
+    // GPS week 2313, tow [259200, 345600]): a 05M SP3 whose last node is exactly
+    // 345600 and a 30S CLK whose last record is 345570.  An arc that reaches an
+    // edge cannot be centred in the Lagrange orbit window and (at the end) has no
+    // trailing clock node, so orbits/clocks degrade into extrapolation there.
+    // Warn rather than fail: it is an accuracy trap, not an invalid run.
+    {
+        constexpr double kDayStart = 259200.0, kDayEnd = 345600.0, kMargin = 1800.0;
+        const double t_first = truth.front().time.tow, t_last = truth.back().time.tow;
+        if (t_first < kDayStart || t_last > kDayEnd) {
+            std::cerr << "[" << tag << "] WARN: arc tow [" << t_first << ", " << t_last
+                      << "] runs OUTSIDE the bundled DOY-129 product day [" << kDayStart << ", "
+                      << kDayEnd << "] — satellite orbits/clocks would be EXTRAPOLATED.\n";
+        } else if (t_first < kDayStart + kMargin || t_last > kDayEnd - kMargin) {
+            std::cerr << "[" << tag << "] WARN: arc tow [" << t_first << ", " << t_last
+                      << "] sits within " << kMargin << " s of a product-day edge [" << kDayStart
+                      << ", " << kDayEnd << "] — the Lagrange orbit window cannot be centred and"
+                         " trailing clock nodes are missing (accuracy trap).\n";
+        }
     }
 
     const double deg = Constants::PI / 180.0;
@@ -641,6 +745,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     icfg.drift_lon_deg_per_min = scfg.iono.drift_lon_deg_per_min;
     icfg.tid_wavelength_km = scfg.iono.tid_wavelength_km;
     icfg.tid_period_s = scfg.iono.tid_period_s;
+    icfg.tid_period_start_s = scfg.iono.tid_period_start_s;
+    icfg.tid_period_end_s = scfg.iono.tid_period_end_s;
+    icfg.sed_elev_exp = scfg.iono.sed_elev_exp;
+    icfg.tid_positive = scfg.iono.tid_positive;
     icfg.tid_azimuth_deg = scfg.iono.tid_azimuth_deg;
     icfg.shell_height_km = scfg.iono.shell_height_km;
     icfg.scint_elev_clamp_deg = scfg.iono.scint_elev_clamp_deg;
@@ -658,6 +766,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     icfg.tid_amp_tecu *= storm_scale;
     icfg.scint_sigma_phi_max_rad *= storm_scale;
     const sim::IonoDisturbance iono(icfg);
+    // Per-satellite storm participation: a deterministic (RNG-free) per-sat hash
+    // selects storm_active_fraction of satellites to be DISTURBED; the rest stay on
+    // the quiet background through the storm (a real storm is spatially structured,
+    // not uniform across the sky).  1.0 (default) => every satellite is disturbed.
+    auto stormGain = [&](const std::string& sat) -> double {
+        const double frac = scfg.iono.storm_active_fraction;
+        if (frac >= 1.0) return 1.0;
+        if (frac <= 0.0) return 0.0;
+        unsigned long long h = 1469598103934665603ull;        // FNV-1a over the sat id
+        for (char c : sat) { h ^= static_cast<unsigned char>(c); h *= 1099511628211ull; }
+        return (static_cast<double>(h % 1000000ull) / 1000000.0 < frac) ? 1.0 : 0.0;
+    };
     std::cout << "[" << tag << "] Klobuchar quiet background: "
               << (eph.hasKlobuchar() ? "broadcast GPSA/GPSB (reused)" : "analytic fallback") << "\n";
 
@@ -676,6 +796,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         if (el_deg >= scfg.slips.max_elev_deg) return 0.0; // slips concentrate at low elevation
         const double s = std::sin(el_deg * deg);
         return slip_base / (s * s);
+    };
+    // Optional slip-rate taper toward the arc end: full rate up to taper_start_frac
+    // of the arc, then a cosine ramp to 0 by the last epoch (so the vessel's final
+    // approach carries only a few slips).  1.0 (default) => no taper.
+    const double slip_taper_start = scfg.slips.taper_start_frac;
+    const long n_ep_total = static_cast<long>(truth.size());
+    auto slipTaper = [&](int ep) -> double {
+        if (slip_taper_start >= 1.0 || n_ep_total < 2) return 1.0;
+        const double frac = static_cast<double>(ep) / static_cast<double>(n_ep_total - 1);
+        if (frac <= slip_taper_start) return 1.0;
+        const double u = (frac - slip_taper_start) / (1.0 - slip_taper_start); // 0 -> 1
+        return 0.5 * (1.0 + std::cos(Constants::PI * u));                       // 1 -> 0
     };
     auto drawSlip = [&](double el_deg) -> int {
         // Slip magnitude scales with the local noise floor (~1/sin el): the code/
@@ -803,9 +935,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 char id[4];
                 std::snprintf(id, sizeof(id), "%c%02d", plan.sys, prn);
                 const std::string sat(id);
-                double P, sat_clk, elev, az;
-                Eigen::Vector3d sat_pos;
-                if (!forwardPseudorange(eph, sat, t, r_rx, cdt_r_m, P, sat_pos, sat_clk, elev, az)) continue;
+                double P, sat_clk, elev, az, m7 = 0.0;
+                Eigen::Vector3d sat_pos, sat_vel;
+                if (!forwardPseudorange(eph, sat, t, r_rx, cdt_r_m, P, sat_pos, sat_vel, sat_clk, elev, az,
+                                        scfg.corrections, m7)) continue;
                 if (elev < mask_deg) continue;
 
                 const bool is_gal = (plan.sys == 'E');
@@ -840,8 +973,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     quiet_slant_stec = icfg.quiet_vtec_tecu / std::sin(std::max(elev, scfg.noise.elev_factor_floor_deg) * deg);
                 }
                 // Ionosphere at the moving IPP for this ray (Klobuchar quiet + storm).
-                const sim::IonoSample samp = iono.evaluate(ts.lat_deg, ts.lon_deg, az, elev, t, quiet_slant_stec);
-                const double sigphi = iono.scintSigmaPhiRad(samp, elev); // scintillation 1-sigma (rad)
+                // A "stable" satellite (gain 0) sees only the quiet background + no scintillation.
+                const double sgain = stormGain(sat);
+                const sim::IonoSample samp = iono.evaluate(ts.lat_deg, ts.lon_deg, az, elev, t, quiet_slant_stec, sgain);
+                const double sigphi = iono.scintSigmaPhiRad(samp, elev) * sgain; // no scintillation on stable sats
                 const double dI_L1 = sim::IonoDisturbance::slantDelayMetres(
                     samp.dstec_sed_tecu + samp.dstec_tid_tecu, f_L1); // disturbance-only L1 delay
                 if (std::abs(dI_L1) > peak_dI_L1) {
@@ -896,7 +1031,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     const std::string skey = sat + "/" + band.phase;
                     int slip_lli = 0;
                     if (epoch_counter - slip_last_epoch[skey] >= slip_min_gap &&
-                        uni(aux_rng) < slipProb(elev)) {
+                        uni(aux_rng) < slipProb(elev) * slipTaper(epoch_counter)) {
                         const int d = drawSlip(elev);
                         slip_accum[skey] += d;
                         slip_last_epoch[skey] = epoch_counter;
@@ -927,11 +1062,25 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     const int base_N = ambN(sat, prn, static_cast<int>(bi));
                     const int N = base_N + slip_accum[skey]; // piecewise-constant across slips
                     if (bi == 0) first_code_noise = nc;
+                    // Satellite antenna PCO/PCV (M7 antenna): band-dependent (Galileo
+                    // E01 != E05 PCO; PCV varies with nadir), so injected PER SIGNAL
+                    // here rather than folded into the non-dispersive m7.  Add the same
+                    // signed getAntennaCorrection() the processor ADDS to its modeled
+                    // value (PppModel::computeBaseModeledValue, "+ antenna_corr");
+                    // enabling model_corrections.enable_satellite_pco/pcv cancels it back
+                    // to truth.  PCO/PCV are identical for code and phase (wind-up off),
+                    // so one call per band serves both.  0 unless enabled in the sim config.
+                    const double ant = scfg.corrections.sat_antenna
+                        ? eph.satelliteAntennaMetres(sat, band.code, r_rx, sat_pos, sat_vel, elev, az, t)
+                        : 0.0;
                     // +I on code (group delay), -I on phase (advance); same slant STEC
                     // scaled by 1/f^2 so the dual-frequency IF combination cancels it.
-                    row.values[band.code] = P + tropo + plan.isb_m + I_b + nc + mp_code;
+                    // m7 = the M7 full-correction stack (relativity/Shapiro/solid-earth/
+                    // pole tide), non-dispersive like tropo; 0 unless enabled in the sim
+                    // config.  The processor with the matching corrections ON cancels it.
+                    row.values[band.code] = P + tropo + m7 + ant + plan.isb_m + I_b + nc + mp_code;
                     row.values[band.phase] =
-                        (P + tropo + plan.isb_m - I_b + band.wavelength * N + np + np_scint + mp_phase) /
+                        (P + tropo + m7 + ant + plan.isb_m - I_b + band.wavelength * N + np + np_scint + mp_phase) /
                         band.wavelength;
                     if (slip_lli) row.lli[band.phase] = 1; // loss-of-lock flag for flagged slips
                     const std::string akey = sat + "/" + band.phase;

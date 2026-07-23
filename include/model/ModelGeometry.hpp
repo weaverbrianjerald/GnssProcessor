@@ -195,6 +195,32 @@ namespace GnssProcessor {
         const Eigen::Vector3d& getCachedSunPosition() const { return cached_sun_pos_; }
 
         /**
+         * @brief Cached Moon ECEF position for the last ensureSunMoonCached epoch.
+         * @return Cached Moon ECEF position (meters). May be zero if no epoch has been processed yet.
+         *
+         * Mirrors getCachedSunPosition so an external component (e.g. the
+         * simulator's solid-earth-tide reuse) can obtain the SAME Sun+Moon the
+         * geometry pipeline used, guaranteeing bit-for-bit tide cancellation.
+         */
+        const Eigen::Vector3d& getCachedMoonPosition() const { return cached_moon_pos_; }
+
+        /**
+         * @brief Sun & Moon ECEF (m) at @p time via the geometry pipeline's OWN
+         *        Planetary model + ERP, populating the cache if needed.
+         *
+         * Lets an external component (the simulator's solid-earth-tide reuse)
+         * obtain bit-for-bit the same bodies the processor uses, guaranteeing the
+         * injected tide cancels.  Thin public wrapper over the private
+         * ensureSunMoonCached (a member, so it may call it).
+         */
+        void sunMoonPositions(const GnssTime& time, Eigen::Vector3d& sun,
+                              Eigen::Vector3d& moon) const {
+            ensureSunMoonCached(time);
+            sun = cached_sun_pos_;
+            moon = cached_moon_pos_;
+        }
+
+        /**
          * @brief Wire in an externally-owned Antenna model for emission-time
          *        ATX-based pseudorange refinement.
          *

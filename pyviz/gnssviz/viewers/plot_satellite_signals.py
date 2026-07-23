@@ -336,9 +336,14 @@ def _build_signal_figure(d, sys_name, sys_char, epochs_all, enc,
 
 
 def _legend_swatch(color, label):
-    """An off-screen scatter point that contributes only a coloured legend key."""
-    return Scatter(x=[], y=[], color=tuple(color), label=label,
-                   marker="s", size=80.0, show_in_legend=True)
+    """A single off-plot (NaN) marker that contributes only a coloured legend key.
+
+    One NaN point (rather than an empty series) is required so plotly emits a
+    legend entry -- an empty go.Scatter is dropped from the legend; matplotlib
+    legends either way and never plots the NaN.
+    """
+    return Scatter(x=[float("nan")], y=[float("nan")], color=tuple(color),
+                   label=label, marker="s", size=80.0, show_in_legend=True)
 
 
 def _tally(df, fname, epochs_all, n_epoch_all, n_bad):

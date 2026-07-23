@@ -1,0 +1,21 @@
+{
+  "source": "Esri World Imagery (ArcGIS REST export)",
+  "attribution": "Esri, Maxar, Earthstar Geographics",
+  "lon_convention": "0-360",
+  "extent_lon360": [
+    176.0,
+    185.0
+  ],
+  "extent_lat": [
+    -23.0,
+    -12.0
+  ],
+  "size_px": [
+    1350,
+    1650
+  ],
+  "px_per_deg": 150.0,
+  "dateline_seam_lon360": 180.0,
+  "fetched_utc": "2026-07-23T05:50:58Z",
+  "note": "Two EPSG:4326 halves fetched either side of the 180 dateline and stitched; extent is continuous 0-360 longitude to match exam_map."
+}

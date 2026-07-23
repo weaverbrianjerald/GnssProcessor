@@ -95,10 +95,18 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.slips.min_cycles_zenith= jval(s, "cycle_slips.min_cycles_zenith","", cfg.slips.min_cycles_zenith);
     cfg.slips.max_cycles_zenith= jval(s, "cycle_slips.max_cycles_zenith","", cfg.slips.max_cycles_zenith);
     cfg.slips.min_magnitude    = jint("cycle_slips.min_magnitude",    cfg.slips.min_magnitude);
+    cfg.slips.taper_start_frac = jval(s, "cycle_slips.taper_start_frac","", cfg.slips.taper_start_frac);
 
     cfg.atmosphere.zwd_m       = jval(s, "atmosphere.zwd_m",       "", cfg.atmosphere.zwd_m);
     cfg.biases.isb_gps_gal_m   = jval(s, "biases.isb_gps_gal_m",   "", cfg.biases.isb_gps_gal_m);
     cfg.geometry.elevation_mask_deg = jval(s, "geometry.elevation_mask_deg", "", cfg.geometry.elevation_mask_deg);
+
+    // M7 full-correction stack (all default false -> byte-identical bare dataset).
+    cfg.corrections.relativity       = jval(s, "corrections.relativity",       "", cfg.corrections.relativity);
+    cfg.corrections.shapiro          = jval(s, "corrections.shapiro",          "", cfg.corrections.shapiro);
+    cfg.corrections.solid_earth_tide = jval(s, "corrections.solid_earth_tide", "", cfg.corrections.solid_earth_tide);
+    cfg.corrections.pole_tide        = jval(s, "corrections.pole_tide",        "", cfg.corrections.pole_tide);
+    cfg.corrections.sat_antenna      = jval(s, "corrections.sat_antenna",      "", cfg.corrections.sat_antenna);
 
     cfg.iono.storm_scale            = jval(s, "iono.storm_scale",            "", cfg.iono.storm_scale);
     cfg.iono.quiet_vtec_tecu        = jval(s, "iono.quiet_vtec_tecu",        "", cfg.iono.quiet_vtec_tecu);
@@ -115,6 +123,11 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.iono.center_lon_offset_deg  = jval(s, "iono.center_lon_offset_deg",  "", cfg.iono.center_lon_offset_deg);
     cfg.iono.tid_wavelength_km      = jval(s, "iono.tid_wavelength_km",      "", cfg.iono.tid_wavelength_km);
     cfg.iono.tid_period_s           = jval(s, "iono.tid_period_s",           "", cfg.iono.tid_period_s);
+    cfg.iono.tid_period_start_s     = jval(s, "iono.tid_period_start_s",     "", cfg.iono.tid_period_start_s);
+    cfg.iono.tid_period_end_s       = jval(s, "iono.tid_period_end_s",       "", cfg.iono.tid_period_end_s);
+    cfg.iono.sed_elev_exp           = jval(s, "iono.sed_elev_exp",           "", cfg.iono.sed_elev_exp);
+    cfg.iono.tid_positive           = jval(s, "iono.tid_positive",           "", cfg.iono.tid_positive);
+    cfg.iono.storm_active_fraction  = jval(s, "iono.storm_active_fraction",  "", cfg.iono.storm_active_fraction);
     cfg.iono.tid_azimuth_deg        = jval(s, "iono.tid_azimuth_deg",        "", cfg.iono.tid_azimuth_deg);
     cfg.iono.shell_height_km        = jval(s, "iono.shell_height_km",        "", cfg.iono.shell_height_km);
     cfg.iono.scint_elev_clamp_deg   = jval(s, "iono.scint_elev_clamp_deg",   "", cfg.iono.scint_elev_clamp_deg);
@@ -132,6 +145,31 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.trajectory.heave_period_s  = jval(s, "trajectory.heave_period_s",  "", cfg.trajectory.heave_period_s);
     cfg.trajectory.clock_bias0_s   = jval(s, "trajectory.clock_bias0_s",   "", cfg.trajectory.clock_bias0_s);
     cfg.trajectory.clock_drift_sps = jval(s, "trajectory.clock_drift_sps", "", cfg.trajectory.clock_drift_sps);
+    // Optional landfall mode (both dest_* finite => enabled; NaN default keeps the
+    // analytic model byte-identical).  See TrajectoryGenerator.hpp.
+    cfg.trajectory.dest_lat_deg    = jval(s, "trajectory.dest_lat_deg",    "", cfg.trajectory.dest_lat_deg);
+    cfg.trajectory.dest_lon_deg    = jval(s, "trajectory.dest_lon_deg",    "", cfg.trajectory.dest_lon_deg);
+    cfg.trajectory.start_tow_s = jval(s, "trajectory.start_tow_s", "", cfg.trajectory.start_tow_s);
+    // NaN-safe range check (the !(x >= 0) form rejects NaN as well as negatives).
+    if (!(cfg.trajectory.start_tow_s >= 0.0) || cfg.trajectory.start_tow_s >= 604800.0)
+        return fail("sim config 'trajectory.start_tow_s' must be within [0, 604800) seconds of the GPS week");
+    cfg.trajectory.landfall_decel_frac    = jval(s, "trajectory.landfall_decel_frac",    "", cfg.trajectory.landfall_decel_frac);
+    cfg.trajectory.landfall_terminal_frac = jval(s, "trajectory.landfall_terminal_frac", "", cfg.trajectory.landfall_terminal_frac);
+    cfg.trajectory.approach_weave_amp_m   = jval(s, "trajectory.approach_weave_amp_m",   "", cfg.trajectory.approach_weave_amp_m);
+    cfg.trajectory.approach_weave_period_s= jval(s, "trajectory.approach_weave_period_s","", cfg.trajectory.approach_weave_period_s);
+    // Optional meander waypoints: an array of [lat_deg, lon_deg] pairs.
+    if (const nlohmann::json* wps = resolvePath(s, "trajectory.waypoints")) {
+        if (!wps->is_array())
+            return fail("sim config 'trajectory.waypoints' must be an array of [lat,lon] pairs");
+        if (wps->size() > 64)
+            return fail("sim config 'trajectory.waypoints' has " + std::to_string(wps->size()) +
+                        " entries (> 64; paste-accident guard)");
+        for (const auto& w : *wps) {
+            if (!w.is_array() || w.size() != 2 || !w[0].is_number() || !w[1].is_number())
+                return fail("each 'trajectory.waypoints' entry must be [lat_deg, lon_deg] numbers");
+            cfg.trajectory.waypoints.push_back({ w[0].get<double>(), w[1].get<double>() });
+        }
+    }
 
     if (!seed_ok) return fail(seed_err);
 

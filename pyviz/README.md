@@ -26,7 +26,9 @@ the same figures, with an offline **HTML summary report**, an **interactive
 The load-bearing boundary is [figures.py](gnssviz/figures.py): a declarative
 scene graph (`Figure → Axes → traces`). Trace kinds: `Line, Scatter, Band,
 StackedArea, HLine, VLine, TextBox, Stem, Raster, RgbRaster, Markers,
-PolarScatter, Mesh`; `Axes` supports `projection='polar'` and `'geo'`
+PolarScatter, Mesh, Polygon, RgbImage` (a georeferenced truecolor image pinned to
+a data-coordinate `extent` — e.g. the satellite basemap behind the exam map);
+`Axes` supports `projection='polar'` and `'geo'`
 (equirectangular world map with a vendored Natural-Earth coastline), dual y-axis,
 log scale, per-axes colormaps, coloured `Scatter` (per-point `c` through the axes
 cmap), frameless text. An [`Animation`](gnssviz/animation.py) is just a list of
@@ -44,9 +46,17 @@ that is what the abstraction buys.
 | State (per-sat) | `ambiguities`, `ambiguity_locktime` (ambiguity_trace) · `ionosphere`, `iono_strip` (ionosphere_trace) · `sat_biases` (sat_bias_trace) |
 | Cycle-slip | `mwwl_trace` (mwwl_trace) · `turbo_edit_trace` (turbo_edit_trace) · `slip_gate_strip`, `slip_conditions` (mwwl/turbo) · `graphic_trace`, `gf_trace`, `if_slip_trace` (staged detectors) |
 | **Network** (PPP-RTK NETWORK producer) | `network_map` (network_stations.csv / config) · `network_health` (network_trace) · `network_products` (network_solution) · `network_iono_map` (network_ionosphere) · `network_closed_loop` (closed_loop_trace) |
+| **Exam / simulator truth** (`--truth-dir`) | `exam_scorecard` (verify_report + scenario_summary + truth_scalars) · `exam_position_truth` (truth_position + state_trace) · `exam_truth_lines` (truth_scalars + state_trace) · `exam_track` (truth_position + state_trace) · `exam_map` (truth_position; **satellite-imagery** basemap, coastline fallback) · `exam_visibility` (truth_visibility) · `exam_iono_truth` (truth_atmo) · `exam_skyplot_slips` (truth_atmo + truth_slips) · `exam_slip_timeline` (truth_slips) |
 
 Each viewer auto-skips when its trace CSV is missing/empty (header-only too), so
 one invocation works unchanged across PPP / PPP-RTK / baseline / replay runs.
+
+The **exam / simulator-truth** viewers compare the real solution against the
+[GnssSimulator](../../GnssSimulator) answer key (`truth_*.csv` +
+`scenario_summary.json`).  They light up only when `--truth-dir <dir>` is given
+(a plain processor run auto-skips every one of them, so its report is unchanged),
+and each guards its optional columns/files, so a legacy partial-truth dir renders
+what it can and skips the rest.
 
 ### Network-level visualization
 
@@ -110,6 +120,26 @@ cd C:\GnssProcessor\pyviz
 # Network run: feed the config (station positions/roles) + data root (IONEX backdrop)
 ..\venv\Scripts\python.exe run_report.py <netlogs> --network-config config\ppp_rtk_network_internal.json --data-root .\data
 ```
+
+### Exam dashboard (GnssSimulator answer key)
+
+```powershell
+# Truth-referenced dashboard: overlay the simulator's answer key on the solution.
+..\venv\Scripts\python.exe run_report.py <run_logs> --truth-dir <truth_dir> `
+    -o dashboard.html --backend plotly --plotly-js inline
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--truth-dir <dir>` | Bind the GnssSimulator answer key (`truth_*.csv` + `scenario_summary.json`). Lights up the `exam_*` viewers, flips the report title to *GnssSimulator exam run report*, and turns the standardized-residual panels on. Without it every exam viewer auto-skips (a plain report is unchanged). |
+| `--verify-report <json>` | `verify_report.json` for the coloured PASS/FAIL gate banner + scorecard table. Default: auto-detect `<run_logs>/verify_report.json` (written by `gnss_simulator verify`). |
+| `--plotly-js {cdn,inline}` | Only for `--backend plotly`. `cdn` (default) loads plotly.js from the CDN (needs network on first open); `inline` embeds it (~4 MB, fully **offline** — the grader-archive mode). |
+| `--std-residuals` / `--no-std-residuals` | Force the standardized-residual panels on/off (default: on whenever `--truth-dir` is given). |
+
+The simulator's `all` one-shot and `harness/gnss_verify_loop.ps1` invoke this
+automatically after `verify` (`--backend plotly --plotly-js inline`), writing
+`<run_logs>/dashboard.html`.  The default **matplotlib** backend is offline by
+construction (base64-PNG); use it for a static grader archive.
 
 ### Automatic report at end of a run
 
@@ -176,6 +206,24 @@ write_html_report("report.html",
    a plotting library is touched.
 
 See [PORTING_PLAN.md](PORTING_PLAN.md) for the per-file MATLAB catalog.
+
+## Vendored map assets (offline)
+
+The geo viewers keep the reports **fully offline** by *vendoring* their
+backdrops under `gnssviz/assets/` (no cartopy/contextily/tile-server dependency —
+the numpy/pandas/matplotlib-only philosophy):
+
+- **Coastline** — `coastline_110m.json` (Natural Earth 110 m, public domain),
+  loaded by [`coastline.py`](gnssviz/coastline.py); the `geo` projection and the
+  `exam_map` world panel draw it as an outline / filled land.
+- **Satellite basemap** — `basemap_esri_fiji.jpg` + `.json` sidecar, loaded by
+  [`basemap.py`](gnssviz/basemap.py) and drawn as an `RgbImage` behind the
+  `exam_map` regional track (Esri "World Imagery", EPSG:4326, attribution
+  *Esri, Maxar, Earthstar Geographics* rendered on the map). Regenerate with
+  `python scripts/fetch_satellite.py` (fetches + stitches the two dateline
+  halves once; the committed asset is what the report embeds). Both loaders
+  degrade gracefully — a missing asset falls back (coastline → graticule;
+  imagery → filled coastline basemap).
 
 ## Tests
 

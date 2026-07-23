@@ -52,6 +52,23 @@ struct IonoConfig {
     double tid_wavelength_km{ 300.0 };
     double tid_period_s{ 1200.0 };
     double tid_azimuth_deg{ 135.0 }; ///< Propagation heading from north (SE-ward).
+    // Optional TID temporal-frequency CHIRP across the storm window: the instantaneous
+    // period sweeps linearly from _start (high-rate) to _end (low-rate).  <=0 => use
+    // tid_period_s (no chirp), so the field is unchanged for scenarios that omit them.
+    double tid_period_start_s{ 0.0 };
+    double tid_period_end_s{ 0.0 };
+
+    // Extra LOW-ELEVATION emphasis on the storm disturbance (SED + TID): the slant
+    // term is multiplied by obliquity^sed_elev_exp ON TOP of the standard
+    // vertical->slant obliquity, so low-elevation rays are disturbed far more than
+    // high-elevation ones (0 = no extra emphasis, i.e. plain obliquity mapping).
+    double sed_elev_exp{ 0.0 };
+
+    // When true the TID contributes a POSITIVE-DEFINITE oscillation 0.5*(1-cos)
+    // (an amplification that pulses between 0 and the amplitude) instead of the
+    // bipolar sin -- so the ionosphere is only ever ENHANCED, never depleted, and
+    // the total slant delay can never go negative.  Default false = bipolar sin.
+    bool tid_positive{ false };
 
     // Quiet background (vertical TECU).  Analytic placeholder until the real
     // Klobuchar field is wired in for the single-frequency student path.
@@ -93,10 +110,13 @@ public:
      *        a single-frequency student removes it exactly.  The SED/TID storm is added
      *        on top.  Pass the analytic @c config().quiet_vtec_tecu * obliquity as a
      *        fallback when no Klobuchar field is available.
+     * @param storm_gain Per-ray multiplier on the SED+TID storm terms (the quiet
+     *        background is untouched): 1 = fully disturbed, 0 = "stable" (quiet
+     *        only).  Used to leave a fraction of satellites undisturbed in a storm.
      */
     IonoSample evaluate(double rx_lat_deg, double rx_lon_deg,
                         double az_deg, double el_deg, const GnssTime& t,
-                        double quiet_slant_stec_tecu) const;
+                        double quiet_slant_stec_tecu, double storm_gain = 1.0) const;
 
     /**
      * @brief First-order slant ionospheric delay (metres) at carrier @p f_hz.

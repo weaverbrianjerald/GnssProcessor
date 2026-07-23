@@ -335,6 +335,7 @@ add_executable(gnss_simulator_selftest
     src/sim/IonoDisturbance.cpp
     src/sim/SimConfig.cpp
     src/sim/ScriptedSlips.cpp
+    src/sim/TrajectoryGenerator.cpp
     src/sim/Verifier.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")

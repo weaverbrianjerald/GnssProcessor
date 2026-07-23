@@ -36,7 +36,7 @@ double IonoDisturbance::slantDelayMetres(double stec_tecu, double f_hz) {
 
 IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
                                      double az_deg, double el_deg, const GnssTime& t,
-                                     double quiet_slant_stec_tecu) const {
+                                     double quiet_slant_stec_tecu, double storm_gain) const {
     const double deg = Constants::PI / 180.0;
     IonoSample s;
 
@@ -84,14 +84,38 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
     const double az_tid = cfg_.tid_azimuth_deg * deg;
     const double d_along = dlat_km * std::cos(az_tid) + dlon_km * std::sin(az_tid);
     const double k = 2.0 * Constants::PI / cfg_.tid_wavelength_km;
-    const double omega = 2.0 * Constants::PI / cfg_.tid_period_s;
-    const double tid_phase = k * d_along - omega * (tow - t0);
-    const double dvtec_tid = cfg_.tid_amp_tecu * W * std::sin(tid_phase);
+    // Temporal phase with an optional linear-period CHIRP across the window: the
+    // instantaneous period sweeps P0 (high-rate) -> P1 (low-rate).  The phase is the
+    // time-integral of the instantaneous angular frequency (a log for a linear ramp),
+    // so the sinusoid stays continuous as its frequency slides.
+    const double P0 = (cfg_.tid_period_start_s > 0.0) ? cfg_.tid_period_start_s : cfg_.tid_period_s;
+    const double P1 = (cfg_.tid_period_end_s > 0.0) ? cfg_.tid_period_end_s : cfg_.tid_period_s;
+    const double D = cfg_.window_duration_s;
+    double temporal_phase;
+    if (D <= 0.0 || std::abs(P1 - P0) < 1.0e-9 || P0 <= 0.0) {
+        const double p = (P0 > 0.0) ? P0 : cfg_.tid_period_s;
+        temporal_phase = (2.0 * Constants::PI / p) * (tow - t0);
+    } else {
+        const double s_in = std::min(std::max(tow - t0, 0.0), D);   // clamp to the window
+        const double a = (P1 - P0) / D;                              // dP/dt
+        temporal_phase = (2.0 * Constants::PI / a) * std::log((P0 + a * s_in) / P0);
+    }
+    const double tid_phase = k * d_along - temporal_phase;
+    // Positive-definite pulse 0.5*(1-cos) (only ever enhances) or the bipolar sin.
+    const double tid_wave = cfg_.tid_positive ? 0.5 * (1.0 - std::cos(tid_phase))
+                                              : std::sin(tid_phase);
+    const double dvtec_tid = cfg_.tid_amp_tecu * W * tid_wave;
 
     // --- Quiet from the caller (already slant); storm vertical -> slant. ------
+    // Extra low-elevation emphasis: obliquity^sed_elev_exp ON TOP of the standard
+    // obliquity, so low-elevation rays see a much larger storm (0 => plain mapping).
+    // storm_gain leaves "stable" satellites (gain 0) on the quiet background only.
+    const double elev_emphasis = (cfg_.sed_elev_exp != 0.0)
+                                     ? std::pow(s.obliquity, cfg_.sed_elev_exp) : 1.0;
+    const double slant_gain = s.obliquity * elev_emphasis * storm_gain;
     s.stec_quiet_tecu = quiet_slant_stec_tecu;
-    s.dstec_sed_tecu = dvtec_sed * s.obliquity;
-    s.dstec_tid_tecu = dvtec_tid * s.obliquity;
+    s.dstec_sed_tecu = dvtec_sed * slant_gain;
+    s.dstec_tid_tecu = dvtec_tid * slant_gain;
     s.stec_total_tecu = s.stec_quiet_tecu + s.dstec_sed_tecu + s.dstec_tid_tecu;
     return s;
 }

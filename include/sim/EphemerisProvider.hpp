@@ -37,6 +37,8 @@ class ProductParser;
 class RinexParser;
 class Troposphere;
 class Ionosphere;
+class Antenna;
+struct AntennaData;
 namespace Model {
 class Geometry;
 }
@@ -76,6 +78,8 @@ public:
     std::size_t orbitNodeCount() const;
     /** @brief Number of CLK clock samples loaded into the shared cache. */
     std::size_t clockSampleCount() const;
+    /** @brief Number of ERP (polar-motion / UT1) entries loaded into the shared cache. */
+    std::size_t erpNodeCount() const;
 
     /**
      * @brief Interpolated satellite ECEF position/velocity at @p t.
@@ -121,6 +125,62 @@ public:
     double klobucharDelayMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                                 const GnssTime& t, double freq_hz) const;
 
+    // --- M7 full-correction stack (reuse-so-it-cancels; see SimConfig::Corrections).
+    // Each returns the SAME metres the processor's PppModel::computeBaseModeledValue
+    // uses (verified sign), so ADDING it to the synthesized code+phase and enabling
+    // the matching model_corrections.enable_* flag cancels it back to the truth.
+
+    /** @brief Relativistic periodic clock term as a range delay (m): -c*dtr, where
+     *  dtr = computeRelativisticCorrection at the EMISSION-time (pre-Sagnac) state. */
+    double relativityMetres(const std::string& sat, const Eigen::Vector3d& sat_pos_em,
+                            const Eigen::Vector3d& sat_vel_em) const;
+
+    /** @brief Shapiro gravitational path delay (m, >=0), reception-frame sat pos. */
+    double shapiroMetres(const std::string& sat, const Eigen::Vector3d& rx,
+                         const Eigen::Vector3d& sat_pos) const;
+
+    /** @brief IERS 2010 solid-earth tide LOS displacement (m), using the geometry
+     *  pipeline's OWN cached Sun/Moon so it cancels bit-for-bit. */
+    double solidEarthTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                                const GnssTime& t) const;
+
+    /** @brief Pole-tide site displacement projected onto the LOS (m); 0 if no ERP. */
+    double poleTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                          const GnssTime& t) const;
+
+    /** @brief True if an ATX was loaded and the satellite-antenna model stood up. */
+    bool hasAntenna() const { return has_antenna_; }
+
+    /**
+     * @brief IGS ANTEX satellite antenna PCO/PCV correction (m) for one signal.
+     *
+     * Reuses the processor's own @c Antenna::getAntennaCorrection with ONLY the
+     * satellite terms active (this provider's config disables receiver PCO/PCV and
+     * phase wind-up — all three default @c true), so the return is exactly
+     * @c (-sat_pco + sat_pcv) projected on the sat->rx LOS.  The processor ADDS the
+     * identical scalar to its modeled value (@c PppModel::computeBaseModeledValue,
+     * "+ antenna_corr", alongside Shapiro/solid-tide), so ADDING this to the
+     * synthesized code+phase and enabling @c model_corrections.enable_satellite_pco
+     * + @c enable_satellite_pcv cancels it back to truth — the same "reuse so it
+     * cancels" pattern as the other M7 terms.  Satellite PCO/PCV are identical for
+     * code and phase (wind-up is off), so one call per band serves both.  Returns 0
+     * when no ATX was loaded.
+     *
+     * @param sat      Satellite id ("G05"/"E11"); its first char selects the system.
+     * @param code     RINEX signal code being emitted (e.g. "C1C", "L1C", "C5Q").
+     * @param rx       Receiver ECEF position (m).
+     * @param sat_pos  RECEPTION-frame (Sagnac-rotated) satellite ECEF (m) — matches
+     *                 the processor's @c geom.sat_pos.
+     * @param sat_vel  EMISSION-frame satellite ECEF velocity (m/s), unrotated —
+     *                 matches the processor's @c geom.sat_vel (used for the
+     *                 yaw-steering attitude frame only).
+     * @param elev_deg,az_deg Receiver topocentric elevation/azimuth (degrees).
+     */
+    double satelliteAntennaMetres(const std::string& sat, const std::string& code,
+                                  const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                                  const Eigen::Vector3d& sat_vel,
+                                  double elev_deg, double az_deg, const GnssTime& t) const;
+
 private:
     GnssConfig config_;
     LogManager log_;
@@ -129,8 +189,15 @@ private:
     std::unique_ptr<Model::Geometry> geometry_;
     std::unique_ptr<Troposphere> troposphere_;
     std::unique_ptr<Ionosphere> ionosphere_;
+    std::unique_ptr<Antenna> antenna_;
+    // Antenna binds a RAW reference into the ProductCache singleton's current antenna
+    // vector, which a later clearCache()/reload would free.  Only one provider lives
+    // per process today, but this shared handle pins the data for antenna_'s lifetime
+    // so the "single live provider" invariant is not silently load-bearing.
+    std::shared_ptr<const std::vector<AntennaData>> antennas_hold_;
     bool ok_ = false;
     bool has_klobuchar_ = false;
+    bool has_antenna_ = false;
 };
 
 } // namespace sim

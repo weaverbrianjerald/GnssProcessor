@@ -17,6 +17,7 @@
 // is a bare `#pragma` (not `#pragma once`), so a second include in the same TU
 // triggers a class redefinition.  Single-path inclusion via ModelGeometry avoids it.
 #include "atmosphere/Ionosphere.hpp" // includes ModelGeometry.hpp (Troposphere via that path only)
+#include "model/Antenna.hpp"         // satellite antenna PCO/PCV (reuse; brings System enum)
 #include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
 #include "products/ProductParser.hpp"
@@ -92,6 +93,26 @@ EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
         ionosphere_ = std::make_unique<Ionosphere>(config_, log_, *product_parser_, *rinex_);
         has_klobuchar_ = true;
     }
+
+    // Satellite antenna PCO/PCV via reuse (M7 antenna).  Only stood up when an ATX
+    // was loaded into the shared cache (the caller adds igs20.atx to product_paths
+    // for the sat_antenna case).  Isolate the SATELLITE term: force receiver PCO/PCV
+    // and phase wind-up off on THIS provider's config (all three default true) so
+    // Antenna::getAntennaCorrection returns exactly (-sat_pco + sat_pcv), matching a
+    // run config with enable_satellite_pco/pcv on and the receiver/wind-up flags off.
+    if (!ProductCache::getInstance().getAntennas().empty()) {
+        auto& mc = config_.getModelCorrections(); // non-const overload
+        mc.enable_satellite_pco = true;
+        mc.enable_satellite_pcv = true;
+        mc.enable_receiver_pco = false;
+        mc.enable_receiver_pcv = false;
+        mc.enable_phase_windup = false;
+        // Pin the current antenna vector so Antenna's raw reference into the singleton
+        // cache can't dangle if the cache is later cleared/reloaded during our lifetime.
+        antennas_hold_ = ProductCache::getInstance().getAntennasShared();
+        antenna_ = std::make_unique<Antenna>(config_, *product_parser_, log_, *rinex_);
+        has_antenna_ = true;
+    }
     ok_ = true;
 }
 
@@ -124,6 +145,10 @@ std::size_t EphemerisProvider::clockSampleCount() const {
     return ProductCache::getInstance().getClockCount();
 }
 
+std::size_t EphemerisProvider::erpNodeCount() const {
+    return ProductCache::getInstance().getErpCount();
+}
+
 bool EphemerisProvider::positionVelocity(const std::string& sat, const GnssTime& t,
                                          Eigen::Vector3d& pos, Eigen::Vector3d& vel) const {
     if (!geometry_) return false;
@@ -139,6 +164,76 @@ double EphemerisProvider::clock(const std::string& sat, const GnssTime& t, bool*
         return 0.0;
     }
     return geometry_->getCorrections().getSatelliteClockCorrection(sat, t, broadcast);
+}
+
+// --- M7 full-correction stack ------------------------------------------------
+// Signs verified against PppModel::computeBaseModeledValue: the modeled value is
+//   range - c*sat_clock - c*relativistic_corr + ... + shapiro + solid_tide + pole
+// and observed = modeled(truth) + noise, so the synth ADDS each term below.
+
+double EphemerisProvider::relativityMetres(const std::string& sat, const Eigen::Vector3d& sat_pos_em,
+                                           const Eigen::Vector3d& sat_vel_em) const {
+    if (!geometry_) return 0.0;
+    // modeled subtracts c*dtr, so the observation carries -c*dtr.
+    return -Constants::SPEED_OF_LIGHT *
+           geometry_->getCorrections().computeRelativisticCorrection(sat, sat_pos_em, sat_vel_em);
+}
+
+double EphemerisProvider::shapiroMetres(const std::string& sat, const Eigen::Vector3d& rx,
+                                        const Eigen::Vector3d& sat_pos) const {
+    if (!geometry_) return 0.0;
+    return geometry_->getCorrections().computeShapiroDelay(sat, rx, sat_pos);
+}
+
+double EphemerisProvider::solidEarthTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                                               const GnssTime& t) const {
+    if (!geometry_) return 0.0;
+    // Reuse the geometry pipeline's OWN Sun/Moon (same Planetary + ERP) so the
+    // displacement is bit-for-bit what the processor computes -> cancels exactly.
+    Eigen::Vector3d sun, moon;
+    geometry_->sunMoonPositions(t, sun, moon);
+    return geometry_->getCorrections().computeSolidEarthTide(rx, sat_pos, sun, moon, t);
+}
+
+double EphemerisProvider::poleTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                                         const GnssTime& t) const {
+    if (!geometry_) return 0.0;
+    // Project the ECEF site displacement onto the sat->rx direction, exactly as
+    // PppModel::computePoleTideProjection does (pole_ecef.dot(-los), los=rx->sat).
+    const Eigen::Vector3d pole_ecef = geometry_->getCorrections().computePoleTideCorrection(rx, t);
+    const Eigen::Vector3d los = (sat_pos - rx).normalized();
+    return pole_ecef.dot(-los);
+}
+
+double EphemerisProvider::satelliteAntennaMetres(const std::string& sat, const std::string& code,
+                                                 const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
+                                                 const Eigen::Vector3d& sat_vel,
+                                                 double elev_deg, double az_deg, const GnssTime& t) const {
+    if (!has_antenna_ || !antenna_ || !geometry_) return 0.0;
+    // Map the constellation from the sat id exactly as RinexParser::systemFromSatPrefix
+    // does, so this stays correct if the signal plan is ever extended past GPS+Galileo
+    // (a first-char heuristic that defaulted unknown systems to GPS would inject a
+    // GPS-keyed term on e.g. a BeiDou row and silently break its cancellation).  An
+    // unhandled prefix returns 0 (no injection) rather than a misclassified term.
+    System system;
+    switch (sat.empty() ? '?' : sat[0]) {
+        case 'G': system = System::GPS;     break;
+        case 'E': system = System::Galileo; break;
+        case 'R': system = System::GLONASS; break;
+        case 'C': system = System::BeiDou;  break;
+        case 'J': system = System::QZSS;    break;
+        case 'S': system = System::SBAS;    break;
+        default:  return 0.0;
+    }
+    // Reuse the geometry pipeline's cached Sun (the SAME source the processor passes
+    // as getCachedSunPosition()) so the satellite body-frame yaw-steering attitude —
+    // hence the PCO rotation into ECEF — matches the processor and cancels.
+    Eigen::Vector3d sun, moon;
+    geometry_->sunMoonPositions(t, sun, moon);
+    // rx_antenna_type empty + receiver terms disabled => exactly (-sat_pco + sat_pcv).
+    return antenna_->getAntennaCorrection(sat, code, system, rx, sat_pos, sat_vel,
+                                          elev_deg, az_deg, /*rx_antenna_type=*/std::string{}, t,
+                                          sun, /*skip_satellite_pco=*/false);
 }
 
 } // namespace sim

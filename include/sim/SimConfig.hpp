@@ -22,8 +22,10 @@
  * (e.g. main.cpp) do not pull in nlohmann/json.
  */
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -84,6 +86,7 @@ struct SimConfig {
         double min_cycles_zenith{ 8.0 };  ///< Min slip magnitude at zenith (cycles, before 1/sin el).
         double max_cycles_zenith{ 22.0 }; ///< Max slip magnitude at zenith (cycles, before 1/sin el).
         int    min_magnitude{ 2 };        ///< Floor on |slip| in cycles after scaling.
+        double taper_start_frac{ 1.0 };   ///< Arc fraction after which the slip rate cos-ramps to 0 by the end (1.0 = no taper).
         /// Deterministic hand-authored slip events layered ON TOP of the random
         /// model above (zero interaction with its RNG stream).  Empty by default,
         /// so an absent/empty "scripted" key reproduces the random-only dataset
@@ -100,6 +103,24 @@ struct SimConfig {
     struct Biases {
         double isb_gps_gal_m{ 8.0 }; ///< GPS->Galileo inter-system bias on Galileo rows (m).
     } biases;
+
+    /// Full IERS/IGS correction stack (M7).  Each term, when enabled, is injected
+    /// into the synthesized observation by REUSING the processor's own model, so a
+    /// full-correction PPP (or an external service like CSRS-PPP) that applies the
+    /// same model recovers the truth (the DESIGN §2.3 "reuse so it cancels"
+    /// pattern already proven for troposphere).  ALL default false, so the bare
+    /// dataset is byte-identical and the existing corrections-OFF exam loops keep
+    /// closing.  Enable the MATCHING @c model_corrections.enable_* flags in the run
+    /// config.  ocean tide / atmospheric loading are intentionally omitted: they
+    /// need site-specific BLQ/grid coefficients that are undefined for a moving
+    /// open-ocean vessel (they stay 0 on both sides and cancel trivially).
+    struct Corrections {
+        bool relativity{ false };        ///< Relativistic periodic clock term (-c*dtr).
+        bool shapiro{ false };           ///< Shapiro gravitational path delay (+m).
+        bool solid_earth_tide{ false };  ///< IERS 2010 solid-earth tide (LOS +m).
+        bool pole_tide{ false };         ///< Pole tide (needs an ERP product loaded).
+        bool sat_antenna{ false };       ///< Satellite antenna PCO/PCV + phase wind-up (needs ATX).
+    } corrections;
 
     /// Visibility screen.
     struct Geometry {
@@ -127,6 +148,11 @@ struct SimConfig {
         double tid_wavelength_km{ 300.0 };       ///< TID horizontal wavelength (km).
         double tid_period_s{ 1200.0 };           ///< TID period (s).
         double tid_azimuth_deg{ 135.0 };         ///< TID propagation heading from north (deg).
+        double tid_period_start_s{ 0.0 };        ///< TID chirp start period (high-rate); <=0 => tid_period_s.
+        double tid_period_end_s{ 0.0 };          ///< TID chirp end period (low-rate); <=0 => tid_period_s.
+        double sed_elev_exp{ 0.0 };              ///< Extra low-elev emphasis: slant *= obliquity^this (0 = none).
+        bool   tid_positive{ false };            ///< TID as a positive-definite pulse (no negative I_L1); false = bipolar sin.
+        double storm_active_fraction{ 1.0 };     ///< Fraction of sats that get the storm; the rest stay on quiet background (1 = all).
         // Thin-shell mapping + scintillation low-elevation floor.
         double shell_height_km{ 350.0 };         ///< Ionospheric thin-shell height (km); sets IPP + obliquity.
         double scint_elev_clamp_deg{ 10.0 };     ///< Low-elevation floor for the scintillation envelope (deg).
@@ -139,6 +165,14 @@ struct SimConfig {
     struct Trajectory {
         double interval_s{ 30.0 };          ///< Epoch spacing (s).
         int    n_epochs{ 120 };             ///< Number of epochs (arc length).
+        /// Start time-of-week (s) of the first epoch, within the bundled product DAY.
+        /// The DATE/week is still NOT configurable (it is tied to the bundled DOY-129
+        /// SP3/CLK/nav fixtures), but the time-of-day within that day is: the precise
+        /// products cover exactly tow [259200, 345600], and an arc that reaches either
+        /// edge cannot be centred in the Lagrange orbit window and loses its trailing
+        /// clock nodes.  Keep the whole arc (start + n_epochs*interval) comfortably
+        /// inside that span; runSynth warns if it does not.
+        double start_tow_s{ 302400.0 };
         double cruise_speed_mps{ 4.5 };     ///< Cruise speed (kinematic only).
         double lat0_deg{ -18.5 };           ///< Origin latitude (deg).
         double lon0_deg{ -178.2 };          ///< Origin longitude (deg).
@@ -150,6 +184,17 @@ struct SimConfig {
         double heave_period_s{ 8.0 };       ///< Sea-state heave period (s, kinematic).
         double clock_bias0_s{ 1.0e-4 };     ///< Initial receiver clock bias (s).
         double clock_drift_sps{ 0.0 };      ///< Receiver clock drift (s/s); 0 = constant bias.
+        // Optional "landfall" mode (both dest_* finite => drift start->dest with a
+        // terminal grounding; NaN default keeps the analytic model byte-identical).
+        double dest_lat_deg{ std::numeric_limits<double>::quiet_NaN() };  ///< Grounding latitude (deg).
+        double dest_lon_deg{ std::numeric_limits<double>::quiet_NaN() };  ///< Grounding longitude (deg).
+        double landfall_decel_frac{ 0.30 };     ///< Arc fraction spent easing to grounding.
+        double landfall_terminal_frac{ 0.0 };   ///< Terminal speed as a fraction of Vmax at grounding (0 = dead stop).
+        double approach_weave_amp_m{ 2000.0 };  ///< Lateral meander amplitude (m; vanishes at both ends).
+        double approach_weave_period_s{ 2400.0 };///< Lateral meander period (s).
+        /// Optional intermediate waypoints (lat_deg, lon_deg): landfall path becomes
+        /// a smooth spline start -> waypoints... -> dest.  Empty => straight drift.
+        std::vector<std::array<double, 2>> waypoints;
     } trajectory;
 };
 
