@@ -25,9 +25,33 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace GnssProcessor {
 namespace sim {
+
+/**
+ * @brief One scripted ("gotcha") cycle-slip event, layered on top of the random
+ *        slip model without touching its RNG stream (see SPEC_scripted_slips.md).
+ *
+ * Each event injects a signed integer phase-ambiguity jump into one
+ * (satellite, phase-signal) at a deterministic trigger.  The trigger is EXACTLY
+ * one of two forms: form A (@c epoch, a 1-based epoch index) or form B
+ * (@c elev_lo_deg / @c elev_hi_deg, an elevation window, fired at the first
+ * visible epoch >= @c not_before_epoch inside the window).  All fields are
+ * validated by @c loadSimConfig; this struct is a plain resolved record.
+ */
+struct ScriptedSlip {
+    std::string sat;            ///< "G05"; ^[GE]\d\d$, must be in the signal plan.
+    std::string signal;         ///< Phase code, e.g. "L2W" (GPS: L1C|L2W, Galileo: L1C|L5Q).
+    int    epoch{ 0 };          ///< Form A: 1-based epoch; 0 = unset (use the elevation window).
+    double elev_lo_deg{ -1.0 }; ///< Form B: window low bound (deg); <0 = unset.
+    double elev_hi_deg{ -1.0 }; ///< Form B: window high bound (deg, exclusive); <0 = unset.
+    int    not_before_epoch{ 1 };///< Form B: earliest epoch the window may fire (1-based).
+    int    delta_cycles{ 0 };   ///< Signed integer jump; |delta| <= 100000; 0 only with flag_lli.
+    int    repeat{ 1 };         ///< Apply the same delta on this many consecutive VISIBLE epochs.
+    bool   flag_lli{ false };   ///< Set LLI=1 on each applied repetition.
+};
 
 /** @brief All run-time knobs for one synthesized dataset. */
 struct SimConfig {
@@ -60,6 +84,11 @@ struct SimConfig {
         double min_cycles_zenith{ 8.0 };  ///< Min slip magnitude at zenith (cycles, before 1/sin el).
         double max_cycles_zenith{ 22.0 }; ///< Max slip magnitude at zenith (cycles, before 1/sin el).
         int    min_magnitude{ 2 };        ///< Floor on |slip| in cycles after scaling.
+        /// Deterministic hand-authored slip events layered ON TOP of the random
+        /// model above (zero interaction with its RNG stream).  Empty by default,
+        /// so an absent/empty "scripted" key reproduces the random-only dataset
+        /// byte-for-byte.  See @c ScriptedSlip and SPEC_scripted_slips.md.
+        std::vector<ScriptedSlip> scripted;
     } slips;
 
     /// Truth atmosphere injected on every ray (ZHD cancels via reuse; ZWD is estimated).

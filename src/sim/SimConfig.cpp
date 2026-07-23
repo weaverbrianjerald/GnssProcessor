@@ -10,8 +10,12 @@
 
 #include "sim/SimConfig.hpp"
 
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
+#include <limits>
+#include <string>
 
 #include <nlohmann/json.hpp>
 
@@ -130,6 +134,138 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.trajectory.clock_drift_sps = jval(s, "trajectory.clock_drift_sps", "", cfg.trajectory.clock_drift_sps);
 
     if (!seed_ok) return fail(seed_err);
+
+    // --- Scripted "gotcha" cycle slips (optional; SPEC_scripted_slips.md §3). ---
+    // Absent OR an empty array leaves cfg.slips.scripted empty, so the synthesis is
+    // byte-identical to the random-only dataset.  Every event is fully validated
+    // here (SimConfig.hpp stays a plain resolved record); a rejected event is a
+    // loud error, never a silently-dropped exam fixture.
+    if (const nlohmann::json* arr = resolvePath(s, "cycle_slips.scripted")) {
+        if (!arr->is_array())
+            return fail("sim config 'cycle_slips.scripted' must be an array");
+        if (arr->size() > 64)
+            return fail("sim config 'cycle_slips.scripted' has " + std::to_string(arr->size()) +
+                        " events (> 64; paste-accident guard)");
+
+        // ^[GE]\d\d$ (system letter G or E + two digits).
+        auto validSat = [](const std::string& id) -> bool {
+            return id.size() == 3 && (id[0] == 'G' || id[0] == 'E') &&
+                   std::isdigit(static_cast<unsigned char>(id[1])) &&
+                   std::isdigit(static_cast<unsigned char>(id[2]));
+        };
+        // PHASE codes only (scripting a code observable is meaningless here).
+        auto validPhase = [](char sys, const std::string& code) -> bool {
+            if (sys == 'G') return code == "L1C" || code == "L2W";
+            if (sys == 'E') return code == "L1C" || code == "L5Q";
+            return false;
+        };
+        // Tolerant int read: accept 20 OR 20.0 (nlohmann get<int> throws on a float
+        // literal — the crash class already fixed once for the other int knobs).
+        // Saturate out-of-int-range magnitudes to INT_MAX/MIN so a pathological
+        // literal (e.g. 2^32+50) can NOT wrap (mod 2^32) into an in-range value and
+        // silently bypass the |delta|/epoch/repeat guards below — instead the
+        // saturated value trips those range checks and is rejected loudly.
+        auto toInt = [](const nlohmann::json& v) -> int {
+            const long long r = std::llround(v.get<double>());
+            if (r > std::numeric_limits<int>::max()) return std::numeric_limits<int>::max();
+            if (r < std::numeric_limits<int>::min()) return std::numeric_limits<int>::min();
+            return static_cast<int>(r);
+        };
+
+        const int n_ep = cfg.trajectory.n_epochs;
+        int idx = 0;
+        for (const auto& el : *arr) {
+            const std::string where = "cycle_slips.scripted[" + std::to_string(idx++) + "]";
+            if (!el.is_object())
+                return fail(where + " must be a JSON object");
+
+            ScriptedSlip ev;
+
+            // sat (required).
+            if (!el.contains("sat") || !el["sat"].is_string())
+                return fail(where + ".sat is required (string, e.g. \"G05\")");
+            ev.sat = el["sat"].get<std::string>();
+            if (!validSat(ev.sat))
+                return fail(where + ".sat '" + ev.sat + "' must match ^[GE][0-9][0-9]$");
+
+            // signal (required; a phase code of that system).
+            if (!el.contains("signal") || !el["signal"].is_string())
+                return fail(where + ".signal is required (a phase code)");
+            ev.signal = el["signal"].get<std::string>();
+            if (!validPhase(ev.sat[0], ev.signal))
+                return fail(where + ".signal '" + ev.signal + "' is not a phase code for system " +
+                            std::string(1, ev.sat[0]) + " (GPS: L1C|L2W, Galileo: L1C|L5Q)");
+
+            // Trigger: exactly one of epoch (form A) / elev_deg (form B).
+            const bool has_epoch = el.contains("epoch");
+            const bool has_elev  = el.contains("elev_deg");
+            const bool has_nbe   = el.contains("not_before_epoch");
+            if (has_epoch == has_elev)
+                return fail(where + ": exactly one of 'epoch' or 'elev_deg' must be given");
+            if (has_epoch && has_nbe)
+                return fail(where + ": 'not_before_epoch' only modifies the 'elev_deg' trigger and "
+                                    "must not appear with 'epoch'");
+
+            if (has_epoch) {
+                if (!el["epoch"].is_number())
+                    return fail(where + ".epoch must be a number");
+                ev.epoch = toInt(el["epoch"]);
+                if (ev.epoch < 1 || ev.epoch > n_ep)
+                    return fail(where + ".epoch " + std::to_string(ev.epoch) +
+                                " out of range [1, " + std::to_string(n_ep) + "]");
+            } else {
+                const auto& e = el["elev_deg"];
+                if (!e.is_array() || e.size() != 2 || !e[0].is_number() || !e[1].is_number())
+                    return fail(where + ".elev_deg must be a 2-element numeric array [lo, hi)");
+                ev.elev_lo_deg = e[0].get<double>();
+                ev.elev_hi_deg = e[1].get<double>();
+                if (!(ev.elev_lo_deg >= 0.0 && ev.elev_lo_deg < ev.elev_hi_deg && ev.elev_hi_deg <= 90.0))
+                    return fail(where + ".elev_deg must satisfy 0 <= lo < hi <= 90");
+                if (has_nbe) {
+                    if (!el["not_before_epoch"].is_number())
+                        return fail(where + ".not_before_epoch must be a number");
+                    ev.not_before_epoch = toInt(el["not_before_epoch"]);
+                }
+                if (ev.not_before_epoch < 1 || ev.not_before_epoch > n_ep)
+                    return fail(where + ".not_before_epoch " + std::to_string(ev.not_before_epoch) +
+                                " out of range [1, " + std::to_string(n_ep) + "]");
+            }
+
+            // delta_cycles (required signed int, |delta| <= 100000).
+            if (!el.contains("delta_cycles"))
+                return fail(where + ".delta_cycles is required");
+            if (!el["delta_cycles"].is_number())
+                return fail(where + ".delta_cycles must be a number");
+            ev.delta_cycles = toInt(el["delta_cycles"]);
+            if (std::abs(ev.delta_cycles) > 100000)
+                return fail(where + ".delta_cycles " + std::to_string(ev.delta_cycles) +
+                            " exceeds |delta| <= 100000");
+
+            // flag_lli (optional, default false).
+            if (el.contains("flag_lli")) {
+                if (!el["flag_lli"].is_boolean())
+                    return fail(where + ".flag_lli must be a boolean");
+                ev.flag_lli = el["flag_lli"].get<bool>();
+            }
+            // delta == 0 is an LLI-only false alarm — only meaningful WITH the flag.
+            if (ev.delta_cycles == 0 && !ev.flag_lli)
+                return fail(where + ": delta_cycles == 0 is only allowed with flag_lli=true "
+                                    "(LLI-only false alarm)");
+
+            // repeat (optional, default 1, [1, n_epochs]).
+            if (el.contains("repeat")) {
+                if (!el["repeat"].is_number())
+                    return fail(where + ".repeat must be a number");
+                ev.repeat = toInt(el["repeat"]);
+            }
+            if (ev.repeat < 1 || ev.repeat > n_ep)
+                return fail(where + ".repeat " + std::to_string(ev.repeat) +
+                            " out of range [1, " + std::to_string(n_ep) + "]");
+
+            cfg.slips.scripted.push_back(std::move(ev));
+        }
+    }
+
     return true;
 }
 

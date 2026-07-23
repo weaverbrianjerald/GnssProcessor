@@ -256,6 +256,7 @@ target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 add_executable(gnss_simulator
     src/sim/main.cpp
     src/sim/SimConfig.cpp
+    src/sim/ScriptedSlips.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/EphemerisProvider.cpp
     src/sim/TrajectoryGenerator.cpp
@@ -332,6 +333,8 @@ add_executable(gnss_simulator_selftest
     tests/sim/test_sim_selfconsistency.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/IonoDisturbance.cpp
+    src/sim/SimConfig.cpp
+    src/sim/ScriptedSlips.cpp
     src/sim/Verifier.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")

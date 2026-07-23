@@ -42,6 +42,7 @@
 #include "sim/EphemerisProvider.hpp"
 #include "sim/IonoDisturbance.hpp"
 #include "sim/RinexObsWriter.hpp"
+#include "sim/ScriptedSlips.hpp"
 #include "sim/SimConfig.hpp"
 #include "sim/TrajectoryGenerator.hpp"
 #include "sim/Verifier.hpp"
@@ -748,8 +749,34 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     std::map<std::string, double> mp_gm;        // unit-variance Gauss-Markov state per "sat/code"
     std::map<std::string, int> slip_accum;      // cumulative integer cycle slip per "sat/code"
     std::map<std::string, int> slip_last_epoch; // last epoch a slip hit a "sat/code"
+
+    // Scripted "gotcha" slips (SPEC_scripted_slips.md).  When the list is empty
+    // (absent/`[]`), the schedule never fires and every scripted-conditional
+    // output below collapses to today's format -> byte-identical (R2).
+    const bool has_scripted = !scfg.slips.scripted.empty();
+    sim::ScriptedSlipSchedule sched(scfg.slips.scripted);
+    int n_slips_scripted = 0, n_slips_scripted_flagged = 0;
+    struct ScriptedApplied {
+        std::string sat, signal;
+        int epoch; double tow; int delta_cycles; bool lli; double elev_deg;
+    };
+    std::vector<ScriptedApplied> scripted_applied; // one entry per applied repetition
+
     std::ofstream slip_csv(outdir / "truth_slips.csv");
-    slip_csv << "week,tow_s,satellite,signal,delta_cycles,flagged,elev_deg\n" << std::fixed;
+    // The trailing ",source" column (random|scripted) is added ONLY when scripted
+    // events exist; otherwise the file is written exactly as before (7 columns).
+    slip_csv << "week,tow_s,satellite,signal,delta_cycles,flagged,elev_deg"
+             << (has_scripted ? ",source" : "") << "\n" << std::fixed;
+    // ONE row writer for both the random and scripted paths so their formatting can
+    // never diverge (the shared stream interleaves setprecision(3)/(2)).
+    auto writeSlipRow = [&](const GnssTime& tt, const std::string& s, const std::string& sig,
+                            int delta, bool flagged, double el, bool scripted) {
+        slip_csv << tt.week << "," << std::setprecision(3) << tt.tow << "," << s << ","
+                 << sig << "," << delta << "," << (flagged ? 1 : 0) << ","
+                 << std::setprecision(2) << el;
+        if (has_scripted) slip_csv << "," << (scripted ? "scripted" : "random");
+        slip_csv << "\n";
+    };
     int n_slips = 0, n_slips_flagged = 0, epoch_counter = 0;
     double max_mp_code = 0.0;
     // Storm headline: peak disturbance-only L1 slant delay + where it occurs.
@@ -881,9 +908,21 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                         const bool flagged = (n_slips % 2 == 0);
                         if (flagged) { slip_lli = 1; ++n_slips_flagged; }
                         ++n_slips;
-                        slip_csv << t.week << "," << std::setprecision(3) << t.tow << "," << sat << ","
-                                 << band.phase << "," << d << "," << (flagged ? 1 : 0) << ","
-                                 << std::setprecision(2) << elev << "\n";
+                        writeSlipRow(t, sat, band.phase, d, flagged, elev, /*scripted=*/false);
+                    }
+                    // Scripted "gotcha" slips: deterministic, hand-authored events
+                    // applied AFTER the random block.  MUST NOT touch aux_rng,
+                    // slip_last_epoch, or n_slips (that would shift every downstream
+                    // random draw and break byte-identity/additivity) — only
+                    // slip_accum, the LLI OR (slip_lli), its own counters, the CSV.
+                    for (const auto& f : sched.onEpoch(sat, band.phase, epoch_counter, elev)) {
+                        slip_accum[skey] += f.delta_cycles; // physical: shifts N from here on
+                        if (f.lli) slip_lli = 1;            // ORs with a same-epoch random flag
+                        ++n_slips_scripted;
+                        if (f.lli) ++n_slips_scripted_flagged;
+                        writeSlipRow(t, sat, band.phase, f.delta_cycles, f.lli, elev, /*scripted=*/true);
+                        scripted_applied.push_back(ScriptedApplied{
+                            sat, band.phase, epoch_counter, t.tow, f.delta_cycles, f.lli, elev });
                     }
                     const int base_N = ambN(sat, prn, static_cast<int>(bi));
                     const int N = base_N + slip_accum[skey]; // piecewise-constant across slips
@@ -1032,7 +1071,24 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
            << ", \"elev_factor_cap_deg\": " << std::setprecision(1) << scfg.multipath.elev_factor_cap_deg
            << ", \"peak_code_m\": " << std::setprecision(3) << max_mp_code << "},\n";
         js << "  \"cycle_slips\": {\"count\": " << n_slips << ", \"flagged_lli\": " << n_slips_flagged
-           << ", \"unflagged\": " << (n_slips - n_slips_flagged) << ", \"detail\": \"truth_slips.csv\"},\n";
+           << ", \"unflagged\": " << (n_slips - n_slips_flagged) << ", \"detail\": \"truth_slips.csv\"";
+        // The answer-key record of where the scripted gotchas actually landed: one
+        // entry per applied repetition, resolved epochs.  Only emitted when scripted
+        // events exist, so the no-scripted summary is byte-identical to today (R2).
+        if (has_scripted) {
+            js << ",\n    \"scripted\": {\"count\": " << n_slips_scripted
+               << ", \"flagged_lli\": " << n_slips_scripted_flagged << ", \"events\": [";
+            for (std::size_t i = 0; i < scripted_applied.size(); ++i) {
+                const auto& ev = scripted_applied[i];
+                js << (i ? ", " : "") << "{\"sat\": \"" << ev.sat << "\", \"signal\": \"" << ev.signal
+                   << "\", \"epoch\": " << ev.epoch << ", \"tow\": " << std::setprecision(3) << ev.tow
+                   << ", \"delta_cycles\": " << ev.delta_cycles
+                   << ", \"lli\": " << (ev.lli ? "true" : "false")
+                   << ", \"elev_deg\": " << std::setprecision(2) << ev.elev_deg << "}";
+            }
+            js << "]}";
+        }
+        js << "},\n";
         js << "  \"verifier_gates\": {\"k_sigma\": 3, \"ppp_3d_max_m\": 0.10, \"isb_tol_m\": 0.10, \"zwd_tol_m\": 0.02}\n";
         js << "}\n";
     }
@@ -1064,7 +1120,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
               << " mm (should be ~0; storm cancels in IF)\n";
     std::cout << std::setprecision(3) << "[" << tag << "] marine multipath (Gauss-Markov tau=" << mp_tau_s
               << "s): peak code MP = " << max_mp_code << " m; cycle slips: " << n_slips << " ("
-              << n_slips_flagged << " flagged LLI=1, " << (n_slips - n_slips_flagged) << " must-detect)\n";
+              << n_slips_flagged << " flagged LLI=1, " << (n_slips - n_slips_flagged) << " must-detect)";
+    if (n_slips_scripted > 0)
+        std::cout << "; scripted: " << n_slips_scripted << " (" << n_slips_scripted_flagged << " flagged)";
+    std::cout << "\n";
     if (sf_quiet_n > 0 && sf_storm_n > 0) {
         std::cout << std::setprecision(3) << "[" << tag
                   << "] single-freq SPP (GPS L1 + Klobuchar): quiet 3D mean " << sf_quiet_sum / sf_quiet_n
@@ -1073,6 +1132,13 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     }
 
     int failures = 0;
+    // R5: a scripted event that never fired (sat never satisfied its trigger, or the
+    // arc ended mid-repeat) is a HARD error — the outputs above are already written,
+    // but an exam fixture must never silently not exist.  Name each on stderr.
+    for (const std::string& problem : sched.unfinished()) {
+        std::cerr << "[" << tag << "] FAIL: " << problem << "\n";
+        ++failures;
+    }
     if (worst_if_resid > 1.0e-6) {
         std::cerr << "[" << tag << "] FAIL: IF iono cancellation residual " << worst_if_resid
                   << " m exceeds 1 um — per-band iono law/frequencies inconsistent with the IF combination\n";
@@ -1132,6 +1198,45 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     return 1;
 }
 
+// Generate the truth-referenced exam dashboard (pyviz/run_report.py --truth-dir)
+// for a completed `all` loop.  Mirrors Application::generateReportFor_ exactly:
+// python = report override -> baked venv -> PATH; the whole quoted command wrapped
+// in an extra pair because Windows std::system pipes through cmd /c (which strips
+// the outer quotes).  Non-fatal: a missing pyviz/python only warns.  The last line
+// printed is the dashboard path (SPEC §4.7).
+void generateExamDashboard(const std::filesystem::path& truth_dir,
+                           const std::filesystem::path& logs_dir) {
+    namespace fs = std::filesystem;
+    const fs::path root   = fs::path(GNSS_PROJECT_ROOT);
+    const fs::path script = root / "pyviz" / "run_report.py";
+    const fs::path out     = fs::absolute(logs_dir) / "dashboard.html";
+    if (!fs::exists(script)) {
+        std::cerr << "[all] dashboard: " << script.string()
+                  << " not found - skipping (see pyviz/README.md)\n";
+        return;
+    }
+    const fs::path venv_py = root / "venv" / "Scripts" / "python.exe";
+    const std::string python = fs::exists(venv_py) ? venv_py.string() : std::string("python");
+
+    // Quote every path (spaces); embed --truth-dir so the exam_* viewers light up;
+    // offline interactive report (plotly + inline JS) for the grader archive.
+    std::string inner = "\"" + python + "\" \"" + script.string() + "\" \""
+                      + fs::absolute(logs_dir).string() + "\" --truth-dir \""
+                      + fs::absolute(truth_dir).string() + "\" -o \"" + out.string()
+                      + "\" --backend plotly --plotly-js inline";
+#ifdef _WIN32
+    const std::string cmd = "\"" + inner + "\"";
+#else
+    const std::string cmd = inner;
+#endif
+    std::cout << "[all] dashboard: generating " << out.string() << " (plotly, inline JS)\n";
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0)
+        std::cerr << "[all] dashboard generation exited " << rc
+                  << " (is pyviz set up? see pyviz/README.md) - non-fatal\n";
+    std::cout << out.string() << "\n";   // dashboard path = last line
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1172,6 +1277,11 @@ int main(int argc, char** argv) {
         vcfg.run_logs_dir = a[3];
         const sim::VerifierResult res = sim::Verifier::run(vcfg);
         for (const auto& line : res.report) std::cout << line << "\n";
+        // Machine-readable verdict for the dashboard (SPEC §4.6) — additive; the
+        // printed report above is unchanged.
+        const std::filesystem::path repjson = vcfg.run_logs_dir / "verify_report.json";
+        if (sim::Verifier::writeJsonReport(res, repjson))
+            std::cout << "  wrote " << repjson.string() << "\n";
         return res.pass ? 0 : 1;
     }
 
@@ -1253,6 +1363,11 @@ int main(int argc, char** argv) {
         vcfg.run_logs_dir = rundir / "logs";
         const sim::VerifierResult res = sim::Verifier::run(vcfg);
         for (const auto& line : res.report) std::cout << line << "\n";
+        sim::Verifier::writeJsonReport(res, vcfg.run_logs_dir / "verify_report.json");
+
+        // Exam dashboard ALWAYS (even on verify FAIL — a failing run needs the
+        // dashboard most); the exit code still reflects synth/processor/verify.
+        generateExamDashboard(outdir, vcfg.run_logs_dir);
         return res.pass ? 0 : 1;
     }
     std::cerr << "usage: " << (argc > 0 ? argv[0] : "gnss_simulator")
