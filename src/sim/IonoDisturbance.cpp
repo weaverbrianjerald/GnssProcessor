@@ -36,7 +36,9 @@ double IonoDisturbance::slantDelayMetres(double stec_tecu, double f_hz) {
 
 IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
                                      double az_deg, double el_deg, const GnssTime& t,
-                                     double quiet_slant_stec_tecu, double storm_gain) const {
+                                     double quiet_slant_stec_tecu, double storm_gain,
+                                     double tid_period_override_s, int tid_slot,
+                                     double tid_vtec_explicit) const {
     const double deg = Constants::PI / 180.0;
     IonoSample s;
 
@@ -104,7 +106,37 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
     // Positive-definite pulse 0.5*(1-cos) (only ever enhances) or the bipolar sin.
     const double tid_wave = cfg_.tid_positive ? 0.5 * (1.0 - std::cos(tid_phase))
                                               : std::sin(tid_phase);
-    const double dvtec_tid = cfg_.tid_amp_tecu * W * tid_wave;
+
+    double dvtec_tid;
+    if (cfg_.tid_pulse_count > 0) {
+        // --- PULSE-TRAIN TID: a few sporadic ~10-min bumps, not a continuous wave. --
+        // Up to tid_pulse_count raised-cosine bumps of width tid_pulse_duration_s,
+        // spaced evenly across the storm window; the storm-wide raised cosine W is NOT
+        // applied (the bumps ARE the envelope).  Most TID satellites carry the smooth
+        // bump; the one satellite given tid_period_override_s>0 has that bump filled
+        // with a rapid temporal carrier (its flicker), so it fluctuates epoch-to-epoch
+        // while the others rise and fall once over ~10 min.
+        const double Tp = cfg_.tid_pulse_duration_s;
+        double env = 0.0;
+        if (Tp > 0.0 && D > 0.0) {
+            for (int i = 0; i < cfg_.tid_pulse_count; ++i) {
+                // Staggering: with tid_n_sats>0, pulse i belongs to exactly one satellite
+                // (slot i % tid_n_sats), so the satellites are disturbed at different times.
+                if (cfg_.tid_n_sats > 0 && tid_slot >= 0 && (i % cfg_.tid_n_sats) != tid_slot)
+                    continue;
+                const double center = t0 + D * (static_cast<double>(i) + 0.5) / cfg_.tid_pulse_count;
+                const double u = (tow - center) / Tp;           // (-0.5, 0.5) inside the bump
+                if (u > -0.5 && u < 0.5)
+                    env = std::max(env, 0.5 * (1.0 - std::cos(2.0 * Constants::PI * (u + 0.5))));
+            }
+        }
+        double carrier = 1.0;
+        if (tid_period_override_s > 0.0)
+            carrier = 0.5 * (1.0 - std::cos(2.0 * Constants::PI * (tow - t0) / tid_period_override_s));
+        dvtec_tid = cfg_.tid_amp_tecu * env * carrier;
+    } else {
+        dvtec_tid = cfg_.tid_amp_tecu * W * tid_wave;   // legacy continuous chirp (byte-identical)
+    }
 
     // --- Quiet from the caller (already slant); storm vertical -> slant. ------
     // Extra low-elevation emphasis: obliquity^sed_elev_exp ON TOP of the standard
@@ -115,7 +147,12 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
     const double slant_gain = s.obliquity * elev_emphasis * storm_gain;
     s.stec_quiet_tecu = quiet_slant_stec_tecu;
     s.dstec_sed_tecu = dvtec_sed * slant_gain;
-    s.dstec_tid_tecu = dvtec_tid * slant_gain;
+    // Explicit per-satellite pulses (tid_vtec_explicit >= 0) are pre-summed by the
+    // caller and mapped with the STANDARD obliquity only, so the configured amplitude
+    // (vertical TECU) maps predictably to slant.  Otherwise use the internal TID model.
+    s.dstec_tid_tecu = (tid_vtec_explicit >= 0.0)
+                           ? tid_vtec_explicit * s.obliquity * storm_gain
+                           : dvtec_tid * slant_gain;
     s.stec_total_tecu = s.stec_quiet_tecu + s.dstec_sed_tecu + s.dstec_tid_tecu;
     return s;
 }

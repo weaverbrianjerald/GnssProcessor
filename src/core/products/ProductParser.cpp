@@ -1269,7 +1269,14 @@ namespace GnssProcessor {
                 ++line_count;
                 if (in_header && line.find("END OF HEADER") != std::string::npos) { in_header = false; continue; }
                 if (in_header && line.find("IONOSPHERIC CORR") != std::string::npos) {
-                    std::istringstream iss(line);
+                    // Normalise Fortran 'D' exponents to 'E' — see the matching note in
+                    // Ionosphere.cpp.  IGS BRDC uses 'E' on 2024 DOY 129 and 'D' on DOY
+                    // 131; operator>>(double) accepts only 'E', so the 'D' form parsed
+                    // to zero coefficients and Klobuchar vanished with only a warning.
+                    std::string norm = line;
+                    for (char& c : norm)
+                        if (c == 'D' || c == 'd') c = 'E';
+                    std::istringstream iss(norm);
                     std::string type;
                     iss >> type;
                     // GPS Klobuchar α/β only.  A RINEX 3 "GAL" IONOSPHERIC CORR

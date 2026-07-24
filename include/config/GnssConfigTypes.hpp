@@ -472,6 +472,62 @@ namespace GnssProcessor {
         /// back to the default with a warning.  Inert while
         /// @ref state_snapshot_path is empty.  Default 10.
         double state_snapshot_interval_s{ 10.0 };
+        /// RTB-7(c): also serialize the Card-4 invariant DD carry (the z-store branch
+        /// + the carry_sat_vertex / carry_group_id numbering) into the snapshot, so a
+        /// warm resume is BRANCH-FAITHFUL — the phase-ambiguity integer/lane realization
+        /// resumes identically instead of the phase side re-converging onto a different
+        /// branch (the un-serialized-carry cold-start).  Requires @ref carry_invariant
+        /// and @ref state_snapshot_path.  Off by default — byte-identical snapshots when
+        /// off (no SV/GG/CARRY records emitted).  Adds ~Σ K_c² doubles/snapshot (the
+        /// dense per-component @f$P^z@f$), so the snapshot grows with the carried DD count.
+        bool state_snapshot_carry{ false };
+        /// RTB-7(e): write the carry blob's per-component @f$P^z@f$ as its DIAGONAL only
+        /// (blob v3, one @c PD row per block instead of @c K_c dense @c P rows).  The dense
+        /// @f$P^z@f$ is @f$\sum K_c^2@f$ numbers against @f$\sum K_c@f$ means and utterly
+        /// dominates the file — measured at 305 stations, 13,086,007 covariance numbers vs
+        /// 7,869 means, i.e. 99% of a 258 MB snapshot, while EVERY other layer (D2 border,
+        /// emitter, pivots, counters) totals 48 KB.  Diagonal-only is ~1663x smaller
+        /// (258 MB → ~160 KB), on the hypothesis that the resumed BRANCH (which integer /
+        /// lane realization the phase side lands on) lives in the MEANS and the
+        /// cross-covariance is re-earned from data in an epoch or two — the way the C1
+        /// dense shared border already resumes.  It is a real trade, not a free win: a
+        /// diagonal prior is NOT a uniform inflation, it TIGHTENS the common-mode direction
+        /// of correlated chords while loosening the coordinate directions, so it must be
+        /// A/B'd on datum-invariant quantities before it is trusted.
+        ///
+        /// WRITE-SIDE ONLY: @c restoreCarry dispatches on the blob's row tag, so either
+        /// shape restores under either setting, and this knob is deliberately NOT in the
+        /// warm-resume config fingerprint (it is a serialization representation, not a
+        /// datum-relevant rule) — which is exactly what lets a full-blob and a
+        /// diagonal-blob resume arm be compared against one shared converge run.
+        /// OFF (default) ⇒ the v2 blob, byte-identical.  INERT unless @ref state_snapshot_carry.
+        bool state_snapshot_carry_diagonal{ false };
+        /// RTB-7(d) RE-2: one-shot resume-event response for the restored stiff carry —
+        /// σ (m) of the variance added to every carried DD's Pᶻ DIAGONAL right after a
+        /// successful carry restore.  0.0 (default) = OFF = byte-identical.  Rationale:
+        /// the restored means are the branch and are kept; the per-station filter layer
+        /// (a deliberate snapshot exclusion) re-converges over the following epochs and
+        /// pushes real transient tension through the phase rows the restored DD priors
+        /// make redundant.  Widening the carried variance lets the fold absorb that
+        /// instead of the D5 gate discarding the branch — with the gate still armed
+        /// (Cov(v) inflates too), i.e. invariant #1 satisfied, not bypassed.  Scale: the
+        /// restored prior already carries q_z·Δt (1e-4·30 s = 3e-3 m², σ≈55 mm ≈ 0.29 L1
+        /// cyc), so a shock below that is a no-op.  INERT unless @ref state_snapshot_carry.
+        double state_snapshot_resume_shock_m{ 0.0 };
+        /// RTB-7(d) HB-1: make ANY failure to complete a warm resume (missing file,
+        /// parse fail, fingerprint mismatch, age gate, emitter-section fail) a HARD run
+        /// error instead of a warn + silent cold start.  Off by default (byte-identical).
+        /// Structural fix for the same-snapshot A/B hazard: a resume overwrites the
+        /// snapshot it read, so an un-re-seeded relaunch sees a snapshot from its own
+        /// future, the age gate rejects it, and the run cold-starts with only a warning —
+        /// which a dev harness would then grade as if it were warm.  Arm this in any A/B.
+        bool state_snapshot_require{ false };
+        /// RTB-7(d) BR-1: also write every snapshot to `<state_snapshot_path>.ep<NNNN>`
+        /// (zero-padded epoch index, same atomic temp+rename), giving a per-epoch blob
+        /// history for branch grading (`scripts/diff_carry_blobs.py`).  Write-side only —
+        /// the read path is untouched and the estimation is structurally byte-identical
+        /// (the writer runs after emit over const refs).  Off by default; heavy on disk.
+        bool state_snapshot_keep_history{ false };
         bool trace_station_residuals{ false }; ///< L13: emit @c network_station_residuals.csv — EVERY post-fit RAIM cell (per non-pivot station with carried ambiguities, per sat) with its measurement-standardized residual @c s_raw (already B2-normalized), the σ̂0-normalized @c s_norm, and the epoch σ̂0.  Answers "which station is poisoning the network".  VERY heavy (≈ stations x sats x RAIM-epochs — e.g. 50x40x3600 ≈ 7M rows); requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
         bool trace_ssr_consumer{ false }; ///< L10: CONSUMER-side trace — the RealTimeEngine SSR consumer writes @c ssr_consumer_trace.csv (correction age, clk-applied, c0, URA, the recomputed R-inflation add-variance, phase-bias age/freshness, and disc counters) per modeled sat per processed epoch.  The V4 consumer-side evidence that the producer's URA/disc actually reach the user solution.  Off by default — byte-identical when OFF.
         bool trace_zwd{ false };          ///< L7: emit @c network_zwd.csv — per present station each emitted epoch, the estimated ZWD (a-priori state + reconstructed correction) and its datum-conditioned formal σ, plus a carried flag (a ZWD carry prior was actually injected).  The V7 instrument for border-station formal-σ sharpening under @ref carry_zwd — no data source for it exists otherwise.  O(stations x epochs); off by default — byte-identical when OFF.

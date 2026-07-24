@@ -24,11 +24,13 @@
 
 #include "common/Constants.hpp"
 #include "config/GnssConfig.hpp"
+#include "math/Coordinates.hpp"
 #include "logging/LogManager.hpp"
 #include "products/ProductParser.hpp"
 #include "rinex/RinexParser.hpp"
 
 #include "sim/IonoDisturbance.hpp"
+#include "sim/OtlField.hpp"
 #include "sim/RinexObsWriter.hpp"
 #include "sim/ScriptedSlips.hpp"
 #include "sim/SimConfig.hpp"
@@ -672,11 +674,12 @@ TEST(SimConfigLoader, ParsesM7CorrectionsFlags) {
     sim::SimConfig cfg;
     ASSERT_TRUE(tryLoadScript(
         "{\"corrections\":{\"relativity\":true,\"shapiro\":true,"
-        "\"solid_earth_tide\":true,\"pole_tide\":true}}", &err, &cfg)) << err;
+        "\"solid_earth_tide\":true,\"pole_tide\":true,\"signal_bias\":true}}", &err, &cfg)) << err;
     EXPECT_TRUE(cfg.corrections.relativity);
     EXPECT_TRUE(cfg.corrections.shapiro);
     EXPECT_TRUE(cfg.corrections.solid_earth_tide);
     EXPECT_TRUE(cfg.corrections.pole_tide);
+    EXPECT_TRUE(cfg.corrections.signal_bias);
     EXPECT_FALSE(cfg.corrections.sat_antenna);   // unset -> default false
 
     sim::SimConfig cfg2;
@@ -685,6 +688,113 @@ TEST(SimConfigLoader, ParsesM7CorrectionsFlags) {
     EXPECT_FALSE(cfg2.corrections.shapiro);
     EXPECT_FALSE(cfg2.corrections.solid_earth_tide);
     EXPECT_FALSE(cfg2.corrections.pole_tide);
+    EXPECT_FALSE(cfg2.corrections.signal_bias);   // unset -> default false (byte-identity)
+}
+
+// ---------------------------------------------------------------------------
+// Along-track ocean tidal loading.  The EOT20 sampling half needs the 286 MB
+// grid and so cannot live here; these cover the blending math, which is where
+// the silent-corruption risk actually is.
+// ---------------------------------------------------------------------------
+
+namespace {
+/// One-constituent coefficient set (M2 slot) for the blend tests.
+OtlStationCoefficients otlWithM2(double amp_up, double phase_up_deg) {
+    OtlStationCoefficients c;
+    c.station_name = "TEST";
+    c.valid = true;
+    c.constituents[0].amp_up   = amp_up;
+    c.constituents[0].phase_up = phase_up_deg;
+    return c;
+}
+} // namespace
+
+// Anchors must be reproduced EXACTLY: an epoch that lands on an anchor may not
+// drift by a round trip through the complex plane.
+TEST(OtlField, LerpEndpointsAreExact) {
+    const auto a = otlWithM2(0.0123, 47.5);
+    const auto b = otlWithM2(0.0201, -132.25);
+
+    const auto at0 = sim::lerpOtlCoefficients(a, b, 0.0);
+    EXPECT_DOUBLE_EQ(at0.constituents[0].amp_up,   a.constituents[0].amp_up);
+    EXPECT_DOUBLE_EQ(at0.constituents[0].phase_up, a.constituents[0].phase_up);
+
+    const auto at1 = sim::lerpOtlCoefficients(a, b, 1.0);
+    EXPECT_DOUBLE_EQ(at1.constituents[0].amp_up,   b.constituents[0].amp_up);
+    EXPECT_DOUBLE_EQ(at1.constituents[0].phase_up, b.constituents[0].phase_up);
+}
+
+// THE trap: Greenwich phase lag is circular.  Blending +179 deg with -179 deg
+// arithmetically gives 0 deg — a half-cycle error that flips the sign of the
+// constituent — and it only bites on the few segments that straddle the wrap.
+// Blending through the complex plane must stay near +/-180 and keep the amplitude.
+TEST(OtlField, LerpCrossesPhaseWrapWithoutCollapsing) {
+    const auto a = otlWithM2(0.02, 179.0);
+    const auto b = otlWithM2(0.02, -179.0);
+
+    const auto mid = sim::lerpOtlCoefficients(a, b, 0.5);
+    // Amplitude survives (two nearly-equal phasors): |cos(1 deg)| of the input.
+    EXPECT_NEAR(mid.constituents[0].amp_up, 0.02 * std::cos(1.0 * Constants::PI / 180.0), 1e-9);
+    // Phase stays at the wrap, NOT at 0.
+    EXPECT_GT(std::abs(mid.constituents[0].phase_up), 179.0);
+    // The naive arithmetic mean would have been 0 deg; prove we are nowhere near it.
+    EXPECT_GT(std::abs(mid.constituents[0].phase_up), 90.0);
+}
+
+// A blend of two phasors is the phasor of the blended signal: evaluating the
+// interpolated coefficients at any argument must equal the interpolated
+// evaluation.  This is the property that makes anchor spacing a pure accuracy
+// knob rather than a change of model.
+TEST(OtlField, LerpIsLinearInTheSignal) {
+    const auto a = otlWithM2(0.031, 20.0);
+    const auto b = otlWithM2(0.008, 250.0);
+    const double f = 0.37;
+    const auto m = sim::lerpOtlCoefficients(a, b, f);
+
+    for (double chi = 0.0; chi < 2.0 * Constants::PI; chi += 0.31) {
+        auto sig = [chi](const OtlStationCoefficients& c) {
+            return c.constituents[0].amp_up *
+                   std::cos(chi - c.constituents[0].phase_up * Constants::PI / 180.0);
+        };
+        EXPECT_NEAR(sig(m), sig(a) + f * (sig(b) - sig(a)), 1e-12) << "chi=" << chi;
+    }
+}
+
+// Zero-amplitude components (EOT20 carries no horizontals) must stay zero rather
+// than picking up a phase from atan2(0, 0).
+TEST(OtlField, LerpLeavesAbsentComponentsZero) {
+    const auto m = sim::lerpOtlCoefficients(otlWithM2(0.02, 30.0), otlWithM2(0.03, 60.0), 0.5);
+    for (std::size_t j = 0; j < m.constituents.size(); ++j) {
+        EXPECT_DOUBLE_EQ(m.constituents[j].amp_west,  0.0);
+        EXPECT_DOUBLE_EQ(m.constituents[j].amp_south, 0.0);
+    }
+    EXPECT_TRUE(m.valid);
+}
+
+// The along-track field is opt-in and cannot be switched on by itself: silently
+// falling back to the frozen (cancelling) path would be invisible in the output.
+TEST(SimConfigLoader, OceanTideAlongTrackIsOptInAndRequiresOceanTide) {
+    std::string err;
+    sim::SimConfig def;
+    ASSERT_TRUE(tryLoadScript("{}", &err, &def)) << err;
+    EXPECT_FALSE(def.corrections.ocean_tide_along_track);
+    EXPECT_DOUBLE_EQ(def.corrections.otl_anchor_spacing_km, 5.0);
+
+    // along_track without ocean_tide is rejected, not silently ignored.
+    EXPECT_FALSE(tryLoadScript(
+        "{\"corrections\":{\"ocean_tide_along_track\":true}}", &err, nullptr));
+
+    // A non-positive spacing would make anchor placement degenerate.
+    EXPECT_FALSE(tryLoadScript(
+        "{\"corrections\":{\"ocean_tide\":true,\"eot20_nc_path\":\"x.nc\","
+        "\"ocean_tide_along_track\":true,\"otl_anchor_spacing_km\":0}}", &err, nullptr));
+
+    sim::SimConfig on;
+    ASSERT_TRUE(tryLoadScript(
+        "{\"corrections\":{\"ocean_tide\":true,\"eot20_nc_path\":\"x.nc\","
+        "\"ocean_tide_along_track\":true,\"otl_anchor_spacing_km\":2.5}}", &err, &on)) << err;
+    EXPECT_TRUE(on.corrections.ocean_tide_along_track);
+    EXPECT_DOUBLE_EQ(on.corrections.otl_anchor_spacing_km, 2.5);
 }
 
 // §3 — the >64-event paste-accident guard.
@@ -696,4 +806,115 @@ TEST(ScriptedSlipsLoader, RejectsMoreThan64Events) {
     }
     std::string err;
     EXPECT_FALSE(tryLoadScript("{\"cycle_slips\":{\"scripted\":[" + arr + "]}}", &err, nullptr));
+}
+
+// ============================================================================
+//  RINEX header realism / leak knobs (SPEC R2 / R2.4).  Loader defaults +
+//  validation, plus the APPROX-POSITION quantization contract.  The quantization
+//  math in quantizeApprox() below MIRRORS runSynth (src/sim/main.cpp): truth start
+//  ECEF -> geodetic, round lat/lon to the grid, force h = 0, convert back.  The full
+//  end-to-end path (header bytes + OTL x0 following the quantized point) is exercised
+//  by the A2 loop in harness/gnss_verify_loop.ps1; here we lock the loader contract
+//  and the geodesy so a refactor cannot silently move the disclosed LKP.
+// ============================================================================
+namespace {
+Eigen::Vector3d quantizeApprox(const Eigen::Vector3d& truth, double q_deg) {
+    const double d2r = Constants::PI / 180.0;
+    const Coordinates::Llh llh = Coordinates::ecefToLlh(truth);
+    const double lat_q = std::round((llh.lat_rad / d2r) / q_deg) * q_deg;
+    const double lon_q = std::round((llh.lon_rad / d2r) / q_deg) * q_deg;
+    // Height rounds to the nearest METRE (not forced to 0): the vessel floats at the sea
+    // SURFACE, which sits at +geoid-undulation ellipsoidal height (~+48 m at the hero LKP),
+    // and a zeroed header height would put the disclosed fix ~50 m under water.
+    return Coordinates::llhToEcef(lat_q * d2r, lon_q * d2r, std::round(llh.h_m));
+}
+} // namespace
+
+// R2.1 / R2.4 — an absent rinex block and an all-default rinex block both leave the
+// defaults, and those defaults ARE today's behaviour (truth APPROX, build date stamp),
+// which is the loader half of the byte-identity gate.
+TEST(RinexKnobsLoader, DefaultsAreByteIdenticalContract) {
+    std::string err;
+    sim::SimConfig a, b;
+    ASSERT_TRUE(tryLoadScript("{}", &err, &a)) << err;
+    ASSERT_TRUE(tryLoadScript(
+        "{\"rinex\":{\"approx_position_mode\":\"truth\",\"approx_quantize_deg\":0.001,"
+        "\"pgm\":\"\",\"run_by\":\"\",\"observer\":\"\",\"agency\":\"\","
+        "\"file_date_mode\":\"build\",\"gps_utc_leap_s\":18}}", &err, &b)) << err;
+    for (const sim::SimConfig* c : { &a, &b }) {
+        EXPECT_EQ(c->rinex.approx_position_mode, "truth");
+        EXPECT_DOUBLE_EQ(c->rinex.approx_quantize_deg, 0.001);
+        EXPECT_TRUE(c->rinex.pgm.empty());
+        EXPECT_TRUE(c->rinex.run_by.empty());
+        EXPECT_TRUE(c->rinex.observer.empty());
+        EXPECT_TRUE(c->rinex.agency.empty());
+        EXPECT_EQ(c->rinex.file_date_mode, "build");
+        EXPECT_EQ(c->rinex.gps_utc_leap_s, 18);
+    }
+}
+
+// R2 — overrides parse; a typo'd enum / overlong field / non-positive grid is REJECTED,
+// never silently accepted (a silent fallback would ship a leaky or malformed header).
+TEST(RinexKnobsLoader, ParsesOverridesAndRejectsBadValues) {
+    std::string err;
+    sim::SimConfig cfg;
+    ASSERT_TRUE(tryLoadScript(
+        "{\"rinex\":{\"approx_position_mode\":\"quantized\",\"approx_quantize_deg\":0.01,"
+        "\"pgm\":\"SARV-LOGGER 1.0\",\"run_by\":\"MV SARV\",\"observer\":\"SARV\","
+        "\"agency\":\"South Pacific SAR\",\"file_date_mode\":\"collection_end\","
+        "\"gps_utc_leap_s\":18.0}}", &err, &cfg)) << err;
+    EXPECT_EQ(cfg.rinex.approx_position_mode, "quantized");
+    EXPECT_DOUBLE_EQ(cfg.rinex.approx_quantize_deg, 0.01);
+    EXPECT_EQ(cfg.rinex.pgm, "SARV-LOGGER 1.0");
+    EXPECT_EQ(cfg.rinex.file_date_mode, "collection_end");
+    EXPECT_EQ(cfg.rinex.gps_utc_leap_s, 18);   // 18.0 tolerant-rounded
+
+    EXPECT_FALSE(tryLoadScript("{\"rinex\":{\"approx_position_mode\":\"fuzzy\"}}", &err, nullptr));
+    EXPECT_FALSE(tryLoadScript("{\"rinex\":{\"file_date_mode\":\"yesterday\"}}", &err, nullptr));
+    EXPECT_FALSE(tryLoadScript("{\"rinex\":{\"approx_quantize_deg\":0}}", &err, nullptr));
+    EXPECT_FALSE(tryLoadScript("{\"rinex\":{\"approx_quantize_deg\":-1}}", &err, nullptr));
+    EXPECT_FALSE(tryLoadScript(   // pgm overruns the 20-char RINEX field
+        "{\"rinex\":{\"pgm\":\"THIS-STRING-IS-WAY-TOO-LONG-FOR-THE-FIELD\"}}", &err, nullptr));
+    EXPECT_FALSE(tryLoadScript("{\"rinex\":{\"pgm\":123}}", &err, nullptr));   // not a string
+}
+
+// R2.2 / R2.4 — quantized APPROX differs from the exact truth start for an OFF-GRID
+// last-known position, stays within the quantization bound, and rounds h to the metre.
+TEST(RinexKnobsQuantize, DiffersFromTruthWithinBoundAndHeightRounded) {
+    const double q = 0.001, d2r = Constants::PI / 180.0;
+    // An off-grid LKP with a non-round height (the exact, sub-mm truth start).
+    const Eigen::Vector3d truth = Coordinates::llhToEcef(-15.20074 * d2r, -179.00037 * d2r, 3.2);
+    const Eigen::Vector3d qz = quantizeApprox(truth, q);
+
+    // Different from the truth row-1 ECEF (the leak the mode fixes) — metres, not sub-mm.
+    EXPECT_GT((qz - truth).norm(), 1.0);
+
+    const Coordinates::Llh tl = Coordinates::ecefToLlh(truth);
+    const Coordinates::Llh ql = Coordinates::ecefToLlh(qz);
+    const double dlat_deg = (ql.lat_rad - tl.lat_rad) / d2r;
+    const double dlon_deg = (ql.lon_rad - tl.lon_rad) / d2r;
+    // Each axis rounds by <= q/2 deg...
+    EXPECT_LE(std::abs(dlat_deg), q / 2.0 + 1e-9);
+    EXPECT_LE(std::abs(dlon_deg), q / 2.0 + 1e-9);
+    // ...so the horizontal offset stays under q * 111 km * sqrt(2) (R2.4 bound)...
+    const double horiz = std::hypot(dlat_deg * 111000.0,
+                                    dlon_deg * 111000.0 * std::cos(tl.lat_rad));
+    EXPECT_LT(horiz, q * 111000.0 * std::sqrt(2.0));
+    // ...and the disclosed height is the truth height rounded to the metre (3.2 -> 3),
+    // NOT forced to 0 — a floating vessel's ellipsoidal height is +N (geoid), not 0.
+    EXPECT_NEAR(ql.h_m, 3.0, 1e-6);
+    // The geodetically-consistent hero case: a vessel at the sea surface near the LKP
+    // (EGM2008 undulation +48.07 m) discloses h = 48 m, sub-metre from the truth height.
+    const Eigen::Vector3d afloat = Coordinates::llhToEcef(-15.20074 * d2r, -179.00037 * d2r, 48.07);
+    const Coordinates::Llh al = Coordinates::ecefToLlh(quantizeApprox(afloat, q));
+    EXPECT_NEAR(al.h_m, 48.0, 1e-6);
+}
+
+// R2.2 — a point already ON the grid at h = 0 (round-number coordinates, as the hero
+// LKP -15.200/-179.000 happens to be) barely moves: documents why 0.001 deg quantization
+// is a near no-op there and a coarser grid or an off-grid start is needed to anonymize.
+TEST(RinexKnobsQuantize, OnGridRoundNumbersAreUnchanged) {
+    const double d2r = Constants::PI / 180.0;
+    const Eigen::Vector3d truth = Coordinates::llhToEcef(-15.200 * d2r, -179.000 * d2r, 0.0);
+    EXPECT_LT((quantizeApprox(truth, 0.001) - truth).norm(), 1e-3);   // sub-mm: nothing to hide here
 }

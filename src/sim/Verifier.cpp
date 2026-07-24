@@ -87,6 +87,7 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     const Csv scalars = readCsv(cfg.truth_dir / "truth_scalars.csv");
     const Csv state = readCsv(cfg.run_logs_dir / "state_trace.csv");
     const Csv resid = readCsv(cfg.run_logs_dir / "measurement_residuals.csv"); // optional
+    const Csv ttropo = readCsv(cfg.truth_dir / "truth_tropo.csv");             // optional: per-epoch truth ZWD
 
     if (!truth.ok) { fail("missing/empty truth_position.csv in " + cfg.truth_dir.string()); return r; }
     if (!scalars.ok) { fail("missing/empty truth_scalars.csv in " + cfg.truth_dir.string()); return r; }
@@ -137,6 +138,20 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         }
     }
 
+    // Per-epoch truth ZWD (optional).  When present, the ZWD gate becomes an RMS over
+    // every graded epoch instead of a single final-epoch comparison — required once the
+    // injected wet delay varies with time, where "the last epoch's value" is meaningless.
+    // Absent (older datasets, external submissions) => legacy final-epoch behaviour.
+    std::map<long long, double> tzwd;
+    if (ttropo.ok) {
+        const int tti = colIndex(ttropo, "tow_s"), tzi = colIndex(ttropo, "zwd_m");
+        if (tti >= 0 && tzi >= 0)
+            for (const auto& row : ttropo.rows)
+                if (std::max(tti, tzi) < (int)row.size())
+                    tzwd[towKey(std::atof(row[tti].c_str()))] = std::atof(row[tzi].c_str());
+    }
+    const bool have_zwd_series = !tzwd.empty();
+
     // state_trace columns (parsed by name; ISB/tropo columns are optional).
     const int s_tow = colIndex(state, "tow_s"), s_x = colIndex(state, "x_m"), s_y = colIndex(state, "y_m"),
               s_z = colIndex(state, "z_m"), s_xs = colIndex(state, "x_std_m"), s_ys = colIndex(state, "y_std_m"),
@@ -160,6 +175,8 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     double last_gal = 0, last_gals = 0, last_tro = 0, last_tros = 0;
     bool have_gal = (s_gal >= 0), have_tro = (s_tro >= 0);
     int epoch_idx = 0;
+    double zwd_sse = 0.0, zwd_max_abs = 0.0;   // per-epoch ZWD error accumulators
+    int zwd_n = 0;
 
     for (const auto& row : state.rows) {
         if (s_tow >= (int)row.size()) continue;
@@ -182,6 +199,17 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         }
 
         if (epoch_idx <= cfg.converge_skip) continue; // steady-state stats only
+
+        // Per-epoch ZWD error against the truth series (steady-state epochs only).
+        if (have_tro && have_zwd_series && s_tro < (int)row.size()) {
+            auto zt = tzwd.find(towKey(tow));
+            if (zt != tzwd.end()) {
+                const double dz = std::atof(row[s_tro].c_str()) - zt->second;
+                zwd_sse += dz * dz;
+                zwd_max_abs = std::max(zwd_max_abs, std::abs(dz));
+                ++zwd_n;
+            }
+        }
 
         const TruthPos& p = it->second;
         const Eigen::Vector3d err(std::atof(row[s_x].c_str()) - p.x,
@@ -276,7 +304,21 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     }
 
     // --- Gate 4: ZWD recovery. -----------------------------------------------
-    if (have_tro) {
+    // With a per-epoch truth series (truth_tropo.csv) grade the RMS of
+    // (estimated - truth) across every steady-state epoch: once the injected wet delay
+    // varies with time, comparing only the FINAL epoch to a single constant measures
+    // nothing.  Without the series, fall back to the historical final-epoch comparison
+    // so older datasets and external submissions still grade.
+    if (have_tro && have_zwd_series && zwd_n > 0) {
+        const double rms = std::sqrt(zwd_sse / zwd_n);
+        const double tol = std::max(zwd_floor, k * last_tros);
+        std::string msg = "ZWD (tropo_m): RMS " + fmt("%.3f", rms) + " m over " +
+                          std::to_string(zwd_n) + " epochs vs the per-epoch truth series (max |err| " +
+                          fmt("%.3f", zwd_max_abs) + ", tol " + fmt("%.3f", tol) + ")";
+        if (rms <= tol) pass(msg); else fail(msg);
+        chk("zwd", rms <= tol, rms, tol, "m",
+            "RMS " + fmt("%.3f", rms) + " m over " + std::to_string(zwd_n) + " epochs");
+    } else if (have_tro) {
         const double err = std::abs(last_tro - zwd_truth);
         const double tol = std::max(zwd_floor, k * last_tros);
         std::string msg = "ZWD (tropo_m): recovered " + fmt("%.3f", last_tro) + " m vs truth " +

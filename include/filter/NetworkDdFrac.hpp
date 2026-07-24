@@ -36,6 +36,13 @@ class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
+/**
+ * @brief Emit this epoch's cross-station DD fractional-residual (B5) diagnostic trace.
+ *        Forms double-differenced carried-ambiguity residuals across station pairs and
+ *        reduces each to its fractional cycle for the B5 trace row.  Log-only — mutates
+ *        no estimation state and is byte-identical / no-op unless the B5 trace is armed.
+ *        The caller keeps the subBegin/subEnd(SB_DDFRAC) brackets.
+ */
 void networkDdFrac(
     NetworkRunContext& ctx,
     const GnssConfig& config_,

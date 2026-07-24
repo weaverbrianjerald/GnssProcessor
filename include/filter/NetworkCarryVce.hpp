@@ -177,6 +177,42 @@ public:
     bool enabled() const { return !families_.empty(); }
 
     /**
+     * @brief RTB-7(d) RE-1: seed one (family, sat) accumulator from a snapshot so a
+     *        WARM RESUME trusts the restored inflation immediately.
+     *
+     * Without this a resumed run restarts the accumulator empty, so every consumer
+     * gated on a warm-up row count (e.g. the Card-4 D5 gate's
+     * @c kInflationWarmupRows) silently falls back to its raw-formal test for a
+     * whole window — exactly the regime D5 v2 exists to correct — while the
+     * restored carry presents a full set of chords to gate.  Constructing with
+     * @c seed_floor_m2 is NOT sufficient for that: the seed floor is only the weak
+     * prior MEAN, and @ref estimate reports @c n_eff = 0, so the warm-up gate still
+     * rejects the estimate.
+     *
+     * Seeds the tail-robust geometric-mean channel exactly — @ref estimate inverts
+     * @c geo/kChi2GeoMean, so writing @c sum_log_e2 = n_eff·log(floor·kChi2GeoMean)
+     * reproduces @p robust_floor_m2 and @p n_eff verbatim.  The arithmetic-mean
+     * LS-VCE channel (N, l → @c Estimate::sigma / @c cond) is deliberately left
+     * prior-only: it is a reporting instrument, and the gate reads
+     * @c robust_floor + @c n_eff exclusively.  Forgetting then decays the seeded
+     * mass exactly as if it had been accumulated.
+     *
+     * @param family          accumulator family (must be one of the constructed families).
+     * @param sat             satellite id (bucketed per @c split_by_const).
+     * @param robust_floor_m2 restored @c Estimate::robust_floor (>0).
+     * @param n_eff           restored forgetting-weighted row count (>0).
+     * @param n_rows          restored undecayed row total (report only).
+     */
+    void seedRobustFloor(const std::string& family, const std::string& sat,
+                         double robust_floor_m2, double n_eff, long long n_rows) {
+        if (!wants(family) || !(robust_floor_m2 > 0.0) || !(n_eff > 0.0)) return;
+        Accum& a = accum_[key(family, sat)];
+        a.n_eff      = n_eff;
+        a.n_rows     = n_rows;
+        a.sum_log_e2 = n_eff * std::log(robust_floor_m2 * kChi2GeoMean);
+    }
+
+    /**
      * @brief Advance to a new emitted epoch: apply forgetting and set the
      *        epoch-level clean gate.
      * @param content_time_s epoch content time (continuous GPS s) — used for the

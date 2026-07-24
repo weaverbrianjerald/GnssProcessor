@@ -36,6 +36,13 @@ class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
+/**
+ * @brief Advance the T5 SH-deviation carry Kalman filter and emit the co-estimated
+ *        VTEC-coefficient trace for this epoch.  Folds the shared solution's SH-field
+ *        deviation into the persistent per-coefficient carry KF in @p ctx and writes the
+ *        VTEC-coefficient trace row.  Byte-identical / no-op unless @p sh_dev_on.  The
+ *        caller keeps the subBegin/subEnd(SB_SHDEV_VTEC) brackets.
+ */
 void networkShDevVtec(
     NetworkRunContext& ctx,
     const GnssConfig& config_,

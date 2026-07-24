@@ -192,6 +192,27 @@ def verify_report(ctx) -> Optional[dict]:
         return None
 
 
+def converge_skip(ctx, default: int = 30) -> int:
+    """Leading epochs the Verifier excludes from its steady-state statistics.
+
+    Read from ``verify_report.json`` (the C++ ``Verifier`` echoes its own
+    ``converge_skip`` there) so a dashboard number and the graded number are the
+    same number.  Including the filter's convergence transient is what makes a
+    panel disagree with the scorecard sitting next to it — on the SAR-Fiji run it
+    inflates the ZWD RMS from 12 mm to 20 mm and the vertical RMS from 40 mm to
+    124 mm, purely from the first 30 epochs.
+    """
+    rep = verify_report(ctx)
+    if isinstance(rep, dict):
+        try:
+            n = int(rep.get("converge_skip", default))
+            if n >= 0:
+                return n
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
 def is_kinematic(ctx) -> bool:
     """Static vs kinematic (SPEC R7): truth_scalars.kinematic, else
     scenario_summary.kinematic, else assume kinematic (legacy partial dirs)."""
@@ -205,6 +226,27 @@ def is_kinematic(ctx) -> bool:
     if ss is not None and "kinematic" in ss:
         return bool(ss["kinematic"])
     return True
+
+
+# --------------------------------------------------------------------------- #
+#  Layout
+# --------------------------------------------------------------------------- #
+#: Per-satellite-row height (inches) for every sat x epoch strip/raster.  Kept in
+#: ONE place so a heatmap cell (a "tile") is the same size in every such figure on
+#: the dashboard — the iono raster, the slip timeline and the signal-usage strip
+#: previously used 0.34, 0.34 and 0.18 per row with different caps, so their tiles
+#: rendered at visibly different heights for the same satellites.
+SAT_ROW_IN = 0.34
+
+
+def sat_strip_height(n_rows, *, base: float = 1.8, lo: float = 4.0, hi: float = 12.0) -> float:
+    """Figure height (inches) for a satellite-row strip of ``n_rows`` rows.
+
+    Uses the shared :data:`SAT_ROW_IN` per-row height so tiles are consistent across
+    figures, clamped to ``[lo, hi]`` so a 3-satellite strip is still legible and a
+    32-satellite one does not run off the page.
+    """
+    return float(min(hi, max(lo, SAT_ROW_IN * float(n_rows) + base)))
 
 
 # --------------------------------------------------------------------------- #

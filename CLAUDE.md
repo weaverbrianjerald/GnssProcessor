@@ -278,3 +278,17 @@ JSON to retain the compressed copy (for byte-exact archival).
 - `include/filter/KalmanFilter.hpp` — predict / update / IMU-aided predict. Variable-dimension state is handled via `StateManager` key maps, not via fixed indices.
 - `include/filter/StateKeySchema.hpp` — single source of truth for every dynamic state-vector key format (PPP ambiguity, DD ambiguity, per-sat iono, receiver code bias, sat bias, system time offset, BSSD pivot seed). All key construction and parsing should go through its `make*` / `parse*` helpers.
 - `include/filter/Smoother.hpp` — RTS smoother operates on float ambiguities; segment boundaries at ambiguity resets. Smoothed position is degenerate (constant across epochs) in static PPP by construction — that's expected.
+
+### Network producer — where new code goes (anti-regrowth decision-tree)
+
+`src/core/app/ApplicationNetwork.cpp` (`runNetwork`) was decomposed (INC-0..12) from ~14.7k lines to ~1.6k lines of thin epoch-loop orchestration; the per-epoch body is a sequence of `subBegin; networkX_(...); subEnd;` calls into single-concern seams. **Keep it thin** — new network-producer code goes in the seam matching its concern, NOT inline in the driver:
+
+- **New per-epoch estimation/QC step** → the matching `filter/Network*` seam (or a new one) called from the loop. Datum/solve → `NetworkSbasis` / `NetworkChainDatum` / `NetworkPhaseDatum` / `NetworkSolveGlue` / `NetworkDdPriorBuild` / `NetworkInstallCarry` / `NetworkProducerAr`; post-fit QC → `NetworkRaim` / `NetworkClockQc` / `NetworkRelevel`; slip → `slip/NetworkSlipQc`; coupling → `NetworkCoupling`.
+- **New emit/store behavior** → `NetworkSolPrep` (pre-emit prep) or `NetworkEmitStore` (emit / product-write / closed-loop consume).
+- **New diagnostic/trace sweep** → `NetworkIonoDiag` / `NetworkDdFrac` / `NetworkShDevVtec` / `NetworkShHealth` / `NetworkLeveling` / `NetworkStashStatus`, or a new diag seam. Trace-stream ownership + run-summary/manifest writers live in `logging/NetworkRunTraces` (NOT the driver).
+- **New run-end telemetry / readout** → `filter/NetworkTeardown` (the post-loop run-end tail).
+- **New carried/persistent state, counters, or config snapshots** → `app/NetworkRunContext` (`NetworkCarryState` / `NetworkServiceCounters` / `NetworkKnobs`), aliased in the driver and passed to the seams — do NOT add a bare function-local (that is precisely what INC-12 spent a pass deleting: 191 dead aliases left behind by relocated blocks).
+- **New run-loop-local helper type a seam must name** → `filter/NetworkRunTypes` (general) or `filter/NetworkWlRunTypes` (WL / section-timing).
+- **Setup** (validation / sinks / consumer) → `app/ApplicationNetworkSetup`; **assembly** (PASS A/B) → `app/ApplicationNetworkAssembly`.
+
+Seam contract: a free function over `(NetworkRunContext& ctx, const GnssConfig& config_, log, NetworkRunTraces&, …)` opening with an alias preamble that reconstructs the driver's `ctx.*` / `setup.*` aliases so the body reads the original names; it owns NO state (every carry object is a reference into `ctx`). The driver keeps only the `subBegin/subEnd` brackets and the call. New `.cpp` seams need a manual `CMakeLists.txt` entry (no globbing).

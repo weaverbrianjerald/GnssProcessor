@@ -65,9 +65,18 @@ class PlotlyBackend(Backend):
 
         title = fig.title or None
         show_any = any(getattr(s, "legend", None) is not None for s in specs)
+        # Overlay the legend INSIDE the plot area (top subplot) so it does not reserve a
+        # right-hand gutter of blank whitespace on every figure.  Position follows the
+        # first axis's matplotlib-style loc; the semi-transparent box lets data show
+        # through.  x/y are paper coords (whole plotting area); yanchor near the top
+        # keeps it in the first row of a stacked figure.
+        leg_spec = next((s.legend for s in specs if getattr(s, "legend", None) is not None), None)
+        legend = dict(orientation="v", bgcolor="rgba(255,255,255,0.62)",
+                      bordercolor="rgba(0,0,0,0.22)", borderwidth=1,
+                      **_legend_pos(getattr(leg_spec, "loc", "best")))
         gofig.update_layout(template="plotly_white", height=int(fig.height * 96),
                             title=title, margin=dict(l=70, r=40, t=60, b=50),
-                            showlegend=show_any, legend=dict(orientation="v"))
+                            showlegend=show_any, legend=legend)
         # Axes facecolor (e.g. ocean behind land polygons) -> figure plot bg.
         fc = next((s.facecolor for s in specs
                    if getattr(s, "facecolor", None) is not None), None)
@@ -374,6 +383,29 @@ def _np(x):
 
 def _f(y):
     return np.asarray(y, dtype=float)
+
+
+def _legend_pos(loc: str) -> dict:
+    """Map a matplotlib-style legend ``loc`` to an INSIDE-the-axes plotly position.
+
+    Everything is placed inside the plotting area (including ``best`` / ``bestoutside``)
+    so no figure reserves an outer legend gutter.  Corners are inset slightly so the box
+    does not touch the axis lines.
+    """
+    loc = (loc or "best").replace("best outside", "best").replace("bestoutside", "best")
+    table = {
+        "upper right": (0.99, 0.99, "right", "top"),
+        "best":        (0.99, 0.99, "right", "top"),
+        "upper left":  (0.01, 0.99, "left", "top"),
+        "lower right": (0.99, 0.02, "right", "bottom"),
+        "lower left":  (0.01, 0.02, "left", "bottom"),
+        "center right": (0.99, 0.5, "right", "middle"),
+        "center left": (0.01, 0.5, "left", "middle"),
+        "upper center": (0.5, 0.99, "center", "top"),
+        "lower center": (0.5, 0.02, "center", "bottom"),
+    }
+    x, y, xa, ya = table.get(loc, table["best"])
+    return dict(x=x, y=y, xanchor=xa, yanchor=ya)
 
 
 def _rgb(c) -> str:

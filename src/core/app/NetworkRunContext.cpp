@@ -15,6 +15,7 @@
 #include "config/GnssConfig.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
 #include "filter/StateKeySchema.hpp"         // StateKeys::parseSatPhaseBiasKey (harvest/stash)
@@ -29,7 +30,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 
 namespace GnssProcessor {
 
@@ -305,6 +308,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
 
 void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                           const MultiRinexSync& sync, NetworkProductEmitter& emitter,
+                          NetworkInvariantCarryDriver& carry_driver,
                           const std::shared_ptr<spdlog::logger>& log) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
@@ -351,6 +355,19 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool   fullcov_on = ctx.knobs.fullcov_on;
     const bool   ura_on = ctx.knobs.ura_on;
 
+    // RTB-7(d) HB-1: when state_snapshot_require is armed, ANY failure to complete a
+    // warm resume is a hard run error instead of a warn + silent cold start — the
+    // structural guard for same-snapshot A/B (a resume overwrites the snapshot it read,
+    // so an un-re-seeded relaunch would otherwise be graded as warm while running cold).
+    auto hb1 = [&](const std::string& why) {
+        if (nc.state_snapshot_require)
+            throw std::runtime_error(
+                "Network (RTB-7d/HB-1): state_snapshot_require is armed but the warm resume "
+                "did not complete: " + why);
+    };
+    if (nc.state_snapshot_require && !snap_path.empty()
+        && !std::filesystem::exists(snap_path))
+        hb1("snapshot file '" + snap_path.string() + "' does not exist");
     if (!snap_path.empty() && std::filesystem::exists(snap_path)) {
         NetworkStateSnapshot snap;
         std::string err;
@@ -358,6 +375,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
             log->warn("Network (RTB-7): state snapshot '{}' failed to parse ({}) — COLD START "
                       "(a new generation id is minted at first emit as usual).",
                       snap_path.string(), err);
+            hb1("parse failure: " + err);
         } else {
             // First epoch this run will actually process (honouring the
             // start_offset_hours fast-forward) — the age reference of the gate.
@@ -384,11 +402,13 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
             if (first_live_s < 0.0) {
                 log->warn("Network (RTB-7): state snapshot '{}' found but there are no live "
                           "epochs to resume against — COLD START.", snap_path.string());
+                hb1("no live epochs to resume against");
             } else if (!NetworkStateSnapshotIO::warmResumeAllowed(
                            snap, live_fingerprint, first_live_s, horizon_s, &gate)) {
                 log->warn("Network (RTB-7): state snapshot '{}' NOT warm-resumable — {} — "
                           "COLD START (a new generation id is minted at first emit as usual).",
                           snap_path.string(), gate);
+                hb1("gate rejected the snapshot: " + gate);
             } else {
                 // Emitter layer FIRST (all-or-nothing): a failed emitter restore
                 // discards the whole warm resume — restoring the driver carries
@@ -401,6 +421,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               "mismatch) — COLD START; driver state deliberately NOT "
                               "restored (the two layers only make sense together).",
                               snap_path.string());
+                    hb1("emitter section failed to restore");
                 } else {
                     // --- Driver layer -----------------------------------------
                     prev_carry.clear();
@@ -509,6 +530,71 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         log->info("Network (RTB-7): cold-start-to-product-grade: 0 s (warm "
                                   "resume — ramp already lifted before the bounce).");
                     }
+                    // RTB-7(c): branch-faithful — restore the invariant DD carry (the
+                    // z-store branch) + the ArcKey vertex numbering it references.  Only
+                    // when armed AND the blob is present; a failure cold-starts the carry
+                    // (shared/emitter state stay warm) so the resume degrades to RTB-7(a).
+                    if (nc.state_snapshot_carry && !snap.carry_state.empty()) {
+                        ctx.carry.carry_sat_vertex = snap.carry_sat_vertex;
+                        ctx.carry.carry_group_id.clear();
+                        for (const auto& gg : snap.carry_group_id)
+                            ctx.carry.carry_group_id[{std::get<0>(gg), std::get<1>(gg)}] =
+                                std::get<2>(gg);
+                        std::istringstream cs(snap.carry_state);
+                        std::string cerr;
+                        bool carry_ok = carry_driver.restoreCarry(cs, &cerr);
+                        if (carry_ok) {
+                            // RE-4: the blob is numbered in the WRITING run's id space —
+                            // reject it unless every chord/arc binds to these live maps,
+                            // rather than silently re-keying chords onto wrong satellites.
+                            std::set<int> satv, gids;
+                            for (const auto& sv : ctx.carry.carry_sat_vertex) satv.insert(sv.second);
+                            for (const auto& gi : ctx.carry.carry_group_id)   gids.insert(gi.second);
+                            carry_ok = carry_driver.validateCarryBinding(
+                                static_cast<int>(nc.stations.size()), satv, gids, &cerr);
+                        }
+                        if (!carry_ok) {
+                            log->warn("Network (RTB-7c): carry blob present but NOT usable ({}) "
+                                      "— the invariant carry COLD-STARTS (branch not "
+                                      "reproduced; shared/emitter state stay warm).", cerr);
+                            carry_driver.reset();
+                            ctx.carry.carry_sat_vertex.clear();
+                            ctx.carry.carry_group_id.clear();
+                            if (nc.state_snapshot_require)
+                                throw std::runtime_error(
+                                    "Network (RTB-7d/HB-1): state_snapshot_require is armed and "
+                                    "the carry blob could not be restored/bound: " + cerr);
+                        } else {
+                            // RE-2: wired event response for the stiff restored carry.
+                            std::size_t shocked = 0;
+                            if (nc.state_snapshot_resume_shock_m > 0.0)
+                                shocked = carry_driver.applyResumeShock(
+                                    nc.state_snapshot_resume_shock_m
+                                    * nc.state_snapshot_resume_shock_m);
+                            log->info("Network (RTB-7c): BRANCH-FAITHFUL — restored invariant "
+                                      "DD carry ({} carried DD), {} sat-vertex + {} group-id map "
+                                      "entries; sigma0 {}; resume shock {}.  Pᶻ shape: {}.",
+                                      carry_driver.resumeCarryChords(),
+                                      snap.carry_sat_vertex.size(), snap.carry_group_id.size(),
+                                      carry_driver.resumeSigma0Seeded()
+                                          ? fmt::format("SEEDED {:.4f}",
+                                                        carry_driver.resumeSigma0Value())
+                                          : std::string("not seeded (v1 blob / calib off)"),
+                                      shocked ? fmt::format("sigma={:.3f} m on {} block(s)",
+                                                            nc.state_snapshot_resume_shock_m,
+                                                            shocked)
+                                              : std::string("none"),
+                                      // RTB-7(e) / invariant #4: a diagonal restore looks
+                                      // identical to a dense one everywhere else.
+                                      carry_driver.resumeCarryDiagonal()
+                                          ? fmt::format("DIAGONAL-ONLY (v3 blob, {} block(s)) — "
+                                                        "means exact, chord cross-covariances "
+                                                        "start at ZERO and re-earn from data",
+                                                        carry_driver.resumeCarryDiagonalBlocks())
+                                          : std::string("dense (v1/v2 blob) — the branch "
+                                                        "geometry resumes exactly"));
+                        }
+                    }
                     const double snap_s =
                         static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
                     log->info("Network (RTB-7): WARM RESUME from '{}' (written {}) — snapshot "
@@ -534,6 +620,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
 void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                const GnssTime& t, double pl_now_s,
                                NetworkProductEmitter& emitter,
+                               const NetworkInvariantCarryDriver& carry_driver,
                                const std::shared_ptr<spdlog::logger>& log) {
     // Alias block (INC-4 migration mechanic) — the relocated body reads the
     // former runNetwork() locals under their original names.
@@ -664,6 +751,25 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         snap.retro_active        = retro_active;
         snap.relevel_iode              = relevel_iode;              // Card 6
         snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // Card 6
+        // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
+        // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
+        // resume reproduces the phase-ambiguity branch instead of re-converging one.
+        if (nc.state_snapshot_carry) {
+            snap.carry_sat_vertex = ctx.carry.carry_sat_vertex;
+            snap.carry_group_id.clear();
+            snap.carry_group_id.reserve(ctx.carry.carry_group_id.size());
+            for (const auto& [key, gid] : ctx.carry.carry_group_id)
+                snap.carry_group_id.emplace_back(key.first, key.second, gid);
+            std::ostringstream ccs;
+            // RTB-7(e): write-side shape knob.  The blob is ~99% of the snapshot at scale
+            // (305 sta: 13.1M dense Pᶻ numbers vs 7.9k means), so the diagonal shape is the
+            // difference between a 258 MB and a ~160 KB file.  Read side is unaffected.
+            carry_driver.serializeCarry(ccs, nc.state_snapshot_carry_diagonal);
+            snap.carry_state = ccs.str();
+            ctx.carry.snap_carry_bytes_last =
+                static_cast<long long>(snap.carry_state.size());
+            ctx.carry.snap_carry_diagonal = nc.state_snapshot_carry_diagonal;
+        }
         {
             std::ostringstream es;
             emitter.serializeState(es);
@@ -674,6 +780,19 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             log->warn("Network (RTB-7): state-snapshot write to '{}' failed ({}) — the "
                       "previous good snapshot (if any) is left intact.",
                       snap_path.string(), werr);
+        else
+            ++ctx.carry.snap_writes;   // RTB-7(e): run-end blob-size readout (invariant #4)
+        // RTB-7(d) BR-1: keep a per-epoch copy so the branch can be graded over time
+        // (scripts/diff_carry_blobs.py).  Write-side only — same atomic temp+rename, and
+        // the estimation cannot see it (this runs after emit over const refs).
+        if (nc.state_snapshot_keep_history) {
+            std::filesystem::path hp = snap_path;
+            hp += fmt::format(".ep{:04d}", static_cast<unsigned long long>(snap.n_emitted));
+            std::string herr;
+            if (!NetworkStateSnapshotIO::write(hp, snap, &herr))
+                log->warn("Network (RTB-7d/BR-1): history snapshot write to '{}' failed ({}).",
+                          hp.string(), herr);
+        }
         last_snapshot_write_s = pl_now_s;
     }
 }

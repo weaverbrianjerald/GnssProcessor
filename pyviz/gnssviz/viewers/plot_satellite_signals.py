@@ -331,7 +331,11 @@ def _build_signal_figure(d, sys_name, sys_char, epochs_all, enc,
         name=f"Sat Signals -- {sys_name}",
         axes=[ax],
         width=14,
-        height=max(2.8, 0.18 * n_row + 1.4),
+        # Same per-row tile height as the exam sat x epoch strips (see
+        # exam_common.sat_strip_height / SAT_ROW_IN = 0.34); kept inline so this
+        # general viewer needs no exam-package import.  Was 0.18/row, which rendered
+        # this strip's cells at roughly half the height of the iono/slip rasters.
+        height=min(12.0, max(4.0, 0.34 * n_row + 1.8)),
     )
 
 

@@ -36,6 +36,13 @@ class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
+/**
+ * @brief Harvest this epoch's phase-leveling carry from the post-fit solution, stash the
+ *        D2/C1 carried quantities into @p ctx, and latch the T1d SH-convergence state.
+ *        This is the zero-q phase-leveling carry feed (and the LS-VCE leveling-row fold);
+ *        it updates the persistent carries the next epoch's prior depends on.  The caller
+ *        keeps the subBegin/subEnd(SB_LEVELING) brackets.
+ */
 void networkLeveling(
     NetworkRunContext& ctx,
     const GnssConfig& config_,

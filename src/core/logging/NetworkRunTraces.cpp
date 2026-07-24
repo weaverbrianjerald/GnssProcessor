@@ -732,6 +732,16 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"warmup_epochs\":" << nc.warmup_epochs << ','
                << "\"state_snapshot_path\":\"" << jesc(nc.state_snapshot_path) << "\","
                << fmt::format("\"state_snapshot_interval_s\":{},", nc.state_snapshot_interval_s)
+               // RTB-7(c/d/e): the branch-faithful resume knobs.  Which SHAPE of carry blob
+               // a run wrote (dense vs diagonal-only) is the one thing that distinguishes
+               // the arms of the RTB-7(e) A/B, and the manifest is where a later forensic
+               // pass looks for it — the products themselves are identical by construction.
+               << "\"state_snapshot_carry\":" << (nc.state_snapshot_carry ? "true" : "false") << ','
+               << "\"state_snapshot_carry_diagonal\":"
+                   << (nc.state_snapshot_carry_diagonal ? "true" : "false") << ','
+               << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
+               << fmt::format("\"state_snapshot_resume_shock_m\":{},",
+                              nc.state_snapshot_resume_shock_m)
                << "\"serialize_sbasis_contract\":" << (nc.serialize_sbasis_contract ? "true" : "false") << ','
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','

@@ -81,9 +81,11 @@
 
 #include <Eigen/Dense>
 
+#include <iosfwd>
 #include <map>
 #include <optional>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace GnssProcessor {
@@ -221,6 +223,130 @@ public:
 
     /// Drop all carry (a toggle-flip cold start; the DDs re-tap-off next epoch).
     void reset();
+
+    /**
+     * @brief RTB-7 branch-faithful warm resume: (de)serialize the carried z-store —
+     *        the @c carried_ blocks, which ARE the whole DD-ambiguity branch (means,
+     *        dense @f$P^z@f$, tree/chord/vertex structure per component).
+     *
+     * @ref serializeCarry writes a self-delimited @c "CARRY,v1,<n>" .. @c "CEND"
+     * text blob (one component as a @c B header + a @c Z mean row + K @c P covariance
+     * rows + @c H chord / @c X vertex / @c A arc index rows), mirroring the emitter
+     * blob the snapshot already carries verbatim.  @ref restoreCarry consumes it and
+     * REPLACES the current carry, round-tripping every field exactly (fmt shortest
+     * form ⇄ strtod is lossless).  The caller must ALSO restore the ArcKey vertex
+     * numbering the blob references — @c ctx.carry.carry_sat_vertex and
+     * @c carry_group_id — or the reconstructed chords point at the wrong
+     * satellites/groups next epoch (they are ctx state, not driver state).
+     *
+     * Blob versions: @c v1 = carry blocks only. @c v2 (RTB-7(d) RE-1) additionally
+     * carries one @c "S,<sigma0_sq>,<eff_rows>" line — the D5 σ̂₀² inflation state —
+     * written only when calibration is armed.  @c v3 (RTB-7(e)) stores each block's
+     * @f$P^z@f$ as its DIAGONAL only (@p diagonal_only).  @ref restoreCarry accepts ALL
+     * THREE: a v1 blob (or a v2 blob with no @c S line) leaves the accumulator at its
+     * seed, i.e. the legacy behaviour, so old snapshots stay readable.
+     *
+     * ## v3 — the diagonal-only carry blob (@p diagonal_only)
+     *
+     * The dense per-component @f$P^z@f$ is @f$\sum_c K_c^2@f$ doubles against @f$\sum_c
+     * K_c@f$ means, and it dominates the snapshot completely: measured at 305 stations,
+     * 13,086,007 covariance numbers vs 7,869 means — 99% of a 258 MB file, against 48 KB
+     * for every OTHER layer combined.  Storing only the diagonal is ~1663x smaller
+     * (258 MB → ~160 KB) and rests on the hypothesis that the resumed BRANCH — which
+     * integer/lane realization the phase side lands on — lives in the MEANS, with the
+     * cross-covariance re-earned from data within an epoch or two (the C1 dense shared
+     * border already resumes diagonally with no measured harm).  That hypothesis is
+     * TESTED by A/B, not assumed.
+     *
+     * The restored @f$P^z=\operatorname{diag}(\cdot)@f$ is always PD (the stored diagonal
+     * is a variance), so there is no PSD hazard — but it is NOT a uniform inflation:
+     * dropping a positive correlation TIGHTENS the common-mode direction (for
+     * @f$P=\begin{psmallmatrix}1&\rho\\\rho&1\end{psmallmatrix}@f$ the @f$(1,1)@f$
+     * direction goes @f$1+\rho \to 1@f$) while loosening the coordinate directions
+     * relative to the true information.  A diagonal resume is therefore anti-conservative
+     * along the tightly-coupled chord combinations that share tree edges, which is exactly
+     * what the A/B has to price.
+     *
+     * The WRITE side is knob-driven (@c network.state_snapshot_carry_diagonal); the READ
+     * side is CONTENT-driven — a block stores either @c zdim @c "P" rows (v1/v2, full) or
+     * ONE @c "PD" row (v3, diagonal), and @ref restoreCarry dispatches on the row tag, not
+     * on the header version.  So either blob restores under either knob setting, which is
+     * what makes the two arms of the A/B differ ONLY in the bytes they were seeded from.
+     * For the same reason the knob is deliberately NOT part of the warm-resume config
+     * fingerprint: it is a serialization representation, not a datum-relevant rule.
+     *
+     * @ref restoreCarry begins with @ref reset (RE-4): it is a general "install this
+     * carry" API, so it must not leave stale lane-fix / gate-exemption / innovation
+     * side-state from whatever the driver was doing before.
+     *
+     * Still NOT serialized (they re-warm): the WL-3 lane-fix memory and the run-end
+     * counters.  The per-station filter layer is a deliberate RTB-7 design exclusion
+     * (restoring it would be full process checkpointing).
+     *
+     * @param os            Destination stream.
+     * @param diagonal_only v3: write each block's @f$P^z@f$ DIAGONAL (one @c PD row)
+     *        instead of its @c zdim dense @c P rows.  Default false ⇒ the v2 blob,
+     *        byte-for-byte what every pre-RTB-7(e) caller wrote.
+     */
+    void serializeCarry(std::ostream& os, bool diagonal_only = false) const;
+    bool restoreCarry(std::istream& is, std::string* err = nullptr);
+
+    /**
+     * @brief RTB-7(d) RE-2: one-shot resume shock — add @p var_m2 to the diagonal of
+     *        every carried block's @f$P^z@f$.
+     *
+     * The restored means ARE the branch and are kept; what a resume cannot restore is
+     * the per-station filter layer, which re-converges over the following epochs and
+     * pushes genuine (transient) tension through the phase rows the restored DD priors
+     * make redundant.  Opening the carried variance for that window lets the fold
+     * ABSORB the tension instead of the D5 gate discarding the branch — and needs no
+     * gate special-case: Cov(v) inflates with the prior, so standardized innovations
+     * shrink and the gate stays fully armed against genuine slips (standing invariant
+     * #1 — a stiff carry crossing an event gets a wired response, not a bypass).
+     *
+     * Touches the diagonal only (cross-covariances, and hence the branch geometry, are
+     * untouched).  A no-op for @p var_m2 <= 0.
+     *
+     * @param var_m2 shock VARIANCE (m²) — the caller squares its σ knob.
+     * @return number of carried blocks shocked.
+     */
+    std::size_t applyResumeShock(double var_m2);
+
+    /**
+     * @brief RTB-7(d) RE-4: verify every restored chord/arc binds to a LIVE vertex and
+     *        group before the carry is trusted.
+     *
+     * A carry blob is numbered in the writing run's id space: receiver vertices are
+     * station ROSTER indices, satellite vertices come from that run's
+     * @c carry_sat_vertex map, and blocks are keyed by its @c carry_group_id map.  If a
+     * blob is paired with maps it was not written with, chords silently re-bind to the
+     * WRONG satellites — a corruption far worse than a cold start, and invisible in the
+     * products until the branch is already poisoned.  This turns that into the same
+     * loud degrade path a parse failure takes.
+     *
+     * @param n_stations   roster size; a receiver vertex must be in [0, n_stations).
+     * @param sat_vertices the live @c carry_sat_vertex VALUES.
+     * @param group_ids    the live @c carry_group_id VALUES.
+     * @param err          set to the first offending binding when the check fails.
+     * @return true when every block's group and every chord/arc endpoint is resolvable.
+     */
+    bool validateCarryBinding(int n_stations, const std::set<int>& sat_vertices,
+                              const std::set<int>& group_ids, std::string* err) const;
+
+    // --- RTB-7(d) RE-4 resume telemetry (invariant #4: inert wiring is only ---
+    // --- visible through counters; the run-end line reports these verbatim). --
+    bool   resumeCarryRestored() const { return resume_restored_; }        ///< a carry blob was installed this run.
+    long long resumeCarryChords() const { return resume_chords_; }         ///< carried DD count at restore (0 if none).
+    bool   resumeSigma0Seeded()  const { return resume_sigma0_seeded_; }   ///< the σ̂₀² accumulator was seeded from a v2 blob.
+    double resumeSigma0Value()   const { return resume_sigma0_value_; }    ///< the seeded σ̂₀ (1.0 when not seeded).
+    double resumeShockSigmaM()   const { return resume_shock_sigma_m_; }   ///< applied shock σ (m); 0 = none.
+    /// RTB-7(e): blocks restored from a DIAGONAL-only (@c PD row, v3) @f$P^z@f$ — their
+    /// chord cross-covariances were NOT in the blob and start at zero.  0 on a v1/v2
+    /// (full-@f$P^z@f$) blob.  Invariant #4: a diagonal resume is otherwise invisible —
+    /// the run looks warm and the counters look normal while the branch geometry is gone.
+    long long resumeCarryDiagonalBlocks() const { return resume_carry_diag_blocks_; }
+    /// RTB-7(e): true when ANY restored block came from a diagonal-only blob.
+    bool   resumeCarryDiagonal() const { return resume_carry_diag_blocks_ > 0; }
 
     /**
      * @brief Time update: inflate the carried @f$P^z@f$ by @f$q_z\,\Delta t@f$ on
@@ -524,6 +650,13 @@ private:
     std::map<std::pair<int, ArcKey>, long long> lane_fix_epoch_;  ///< LF-1 INC-2: the @c install_epoch_index_ at which each @c lane_fix_w_ key was LAST re-decided.  Committed/pruned/erased in lockstep with @c lane_fix_w_; drives the @ref laneIncrementSkippable grace window.  Empty unless @c Config::skip_pinned_increments.
     long long install_epoch_index_{0};  ///< LF-1 INC-2: monotone count of accepted @ref installPosterior calls (the epoch clock for the skip grace window; survives RAIM re-solves — only the accepted install advances it).
     std::optional<NetworkCarryVce> inflation_;  ///< D5 v2: the σ̂₀² accumulator (only when Config::innov_calibrate).
+    // --- RTB-7(d) RE-4 resume telemetry (set by restoreCarry / applyResumeShock) ---
+    bool      resume_restored_{false};
+    long long resume_chords_{0};
+    bool      resume_sigma0_seeded_{false};
+    double    resume_sigma0_value_{1.0};
+    double    resume_shock_sigma_m_{0.0};
+    long long resume_carry_diag_blocks_{0};   ///< RTB-7(e): blocks restored from a PD (diagonal) row.
     Counters counters_;
     bool      perf_timing_{false};   ///< INC-C0: per-op timers armed (survives reset()).
     PerfTimers perf_timers_;         ///< INC-C0: per-op wall-clock accumulators (whole-run).

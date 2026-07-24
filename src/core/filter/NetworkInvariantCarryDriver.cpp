@@ -6,12 +6,20 @@
 
 #include "filter/NetworkInvariantCarryDriver.hpp"
 
+#include <fmt/format.h>
+
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <istream>
 #include <limits>
+#include <ostream>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -73,6 +81,36 @@ private:
     std::unordered_map<int, int> parent_;
 };
 
+// --- RTB-7 carry-blob (de)serialization helpers (self-contained; the snapshot
+//     layer captures the CARRY..CEND blob verbatim, exactly as the emitter blob). ---
+std::vector<std::string> splitCsv(const std::string& line) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t pos = line.find(',', start);
+        if (pos == std::string::npos) { out.push_back(line.substr(start)); break; }
+        out.push_back(line.substr(start, pos - start));
+        start = pos + 1;
+    }
+    return out;
+}
+bool parseLL(const std::string& s, long long& v) {
+    if (s.empty()) return false;
+    errno = 0; char* end = nullptr;
+    v = std::strtoll(s.c_str(), &end, 10);
+    return end == s.c_str() + s.size() && errno != ERANGE;
+}
+bool parseDbl(const std::string& s, double& v) {
+    if (s.empty()) return false;
+    errno = 0; char* end = nullptr;
+    v = std::strtod(s.c_str(), &end);
+    return end == s.c_str() + s.size() && errno != ERANGE;
+}
+std::string chomp(std::string line) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    return line;
+}
+
 }  // namespace
 
 void NetworkInvariantCarryDriver::reset() {
@@ -86,6 +124,237 @@ void NetworkInvariantCarryDriver::reset() {
     lane_fix_epoch_.clear();   // LF-1 INC-2: the skip grace clock dies with the carry
     install_epoch_index_ = 0;
     counters_ = Counters{};
+}
+
+void NetworkInvariantCarryDriver::serializeCarry(std::ostream& os, bool diagonal_only) const {
+    // RTB-7(e): v3 == "the Pᶻ rows are one PD diagonal row".  The version is written for
+    // the reader's benefit only — restoreCarry dispatches on the ROW TAG (P vs PD), so a
+    // blob of either shape restores under either knob setting.  OFF ⇒ the v2 header and
+    // the dense P rows, byte-for-byte the pre-RTB-7(e) blob.
+    os << (diagonal_only ? "CARRY,v3," : "CARRY,v2,") << carried_.size() << "\n";
+    // RE-1: the D5 σ̂₀² inflation state, so a resume does not re-run the pre-warmup
+    // raw-formal gate against a full set of restored chords.  Written only when
+    // calibration is armed and the accumulator actually holds rows; its absence is
+    // the legacy (v1) contract — accumulator starts at seed.
+    if (inflation_) {
+        const NetworkCarryVce::Estimate est =
+            inflation_->estimate(kInflationFamily, kInflationSat);
+        if (est.n_eff > 0.0 && est.robust_floor > 0.0)
+            os << fmt::format("S,{},{}\n", est.robust_floor, est.n_eff);
+    }
+    for (const CarriedBlock& b : carried_) {
+        const Eigen::Index zdim = b.z.size();
+        os << fmt::format("B,{},{},{},{},{},{},{},{}\n", b.group, b.pair ? 1 : 0,
+                          b.lambda1, b.lambda2, static_cast<long long>(zdim),
+                          static_cast<long long>(b.chords.size()),
+                          static_cast<long long>(b.vertices.size()),
+                          static_cast<long long>(b.arcs.size()));
+        { std::string ln = "Z";
+          for (Eigen::Index i = 0; i < zdim; ++i) ln += "," + fmt::format("{}", b.z(i));
+          os << ln << "\n"; }
+        if (diagonal_only) {
+            // ONE row, zdim numbers — the whole point of v3 (Σ K_c vs Σ K_c²).  A
+            // zdim == 0 block writes NO row at all, exactly as the dense path does
+            // (its loop is empty), so the two shapes stay line-for-line aligned there.
+            if (zdim > 0) {
+                std::string ln = "PD";
+                for (Eigen::Index r = 0; r < zdim; ++r) ln += "," + fmt::format("{}", b.Pz(r, r));
+                os << ln << "\n";
+            }
+        } else {
+            for (Eigen::Index r = 0; r < zdim; ++r) {
+                std::string ln = "P";
+                for (Eigen::Index c = 0; c < zdim; ++c) ln += "," + fmt::format("{}", b.Pz(r, c));
+                os << ln << "\n";
+            }
+        }
+        { std::string ln = "H";
+          for (const ArcKey& a : b.chords) ln += fmt::format(",{},{}", a.u, a.v);
+          os << ln << "\n"; }
+        { std::string ln = "X";
+          for (int v : b.vertices) ln += fmt::format(",{}", v);
+          os << ln << "\n"; }
+        { std::string ln = "A";
+          for (const ArcKey& a : b.arcs) ln += fmt::format(",{},{}", a.u, a.v);
+          os << ln << "\n"; }
+    }
+    os << "CEND\n";
+}
+
+bool NetworkInvariantCarryDriver::restoreCarry(std::istream& is, std::string* err) {
+    auto fail = [&](std::string m) { if (err) *err = std::move(m); return false; };
+    std::string line;
+    if (!std::getline(is, line)) return fail("empty carry blob");
+    line = chomp(line);
+    if (line.rfind("CARRY,", 0) != 0) return fail("bad carry header: '" + line + "'");
+    // RE-4: this is a general "install this carry" API — start from a clean driver so
+    // no stale lane-fix / gate-exemption / innovation side-state survives the install.
+    reset();
+
+    double seed_sigma0_sq = 0.0, seed_rows = 0.0;   // RE-1: from the optional v2 S line
+    long long n_diag_blocks = 0;                    // RTB-7(e): blocks read from a PD row
+    std::vector<CarriedBlock> restored;
+    while (std::getline(is, line)) {
+        line = chomp(line);
+        if (line == "CEND") {
+            carried_ = std::move(restored);
+            // RE-1: seed the σ̂₀² accumulator so the D5 gate trusts the restored
+            // inflation immediately (v1 blob / calibration off ⇒ legacy seed start).
+            resume_sigma0_seeded_ = false;
+            resume_sigma0_value_  = 1.0;
+            if (inflation_ && seed_sigma0_sq > 0.0 && seed_rows > 0.0) {
+                inflation_->seedRobustFloor(kInflationFamily, kInflationSat,
+                                            seed_sigma0_sq, seed_rows,
+                                            static_cast<long long>(seed_rows));
+                resume_sigma0_seeded_ = true;
+                resume_sigma0_value_  = std::sqrt(seed_sigma0_sq);
+            }
+            resume_restored_ = true;
+            resume_chords_   = static_cast<long long>(totalZDim());
+            // RTB-7(e) / invariant #4: a diagonal restore is otherwise INVISIBLE — the
+            // run reports "warm + branch-faithful" and every carry counter looks normal
+            // while the chord cross-covariances are gone.  Count it and say so.
+            resume_carry_diag_blocks_ = n_diag_blocks;
+            return true;
+        }
+        if (line.rfind("S,", 0) == 0) {             // RE-1 (v2 only; optional)
+            const std::vector<std::string> sf = splitCsv(line);
+            if (sf.size() != 3 || !parseDbl(sf[1], seed_sigma0_sq)
+                || !parseDbl(sf[2], seed_rows))
+                return fail("malformed S (sigma0) line: '" + line + "'");
+            continue;
+        }
+        // Component header.
+        const std::vector<std::string> f = splitCsv(line);
+        if (f.size() != 9 || f[0] != "B") return fail("expected B header, got: '" + line + "'");
+        long long grp = 0, pr = 0, zdim = 0, nch = 0, nvert = 0, narc = 0;
+        double l1 = 0, l2 = 0;
+        if (!parseLL(f[1], grp) || !parseLL(f[2], pr) || !parseDbl(f[3], l1)
+            || !parseDbl(f[4], l2) || !parseLL(f[5], zdim) || !parseLL(f[6], nch)
+            || !parseLL(f[7], nvert) || !parseLL(f[8], narc) || zdim < 0)
+            return fail("malformed B header: '" + line + "'");
+        CarriedBlock b;
+        b.group   = static_cast<int>(grp);
+        b.pair    = (pr != 0);
+        b.lambda1 = l1;
+        b.lambda2 = l2;
+        // Z mean row.
+        if (!std::getline(is, line)) return fail("carry: truncated at Z");
+        const std::vector<std::string> zf = splitCsv(chomp(line));
+        if (zf.empty() || zf[0] != "Z" || static_cast<long long>(zf.size()) != zdim + 1)
+            return fail("carry: malformed Z row");
+        b.z.resize(zdim);
+        for (long long i = 0; i < zdim; ++i)
+            if (!parseDbl(zf[static_cast<std::size_t>(i + 1)], b.z(i)))
+                return fail("carry: bad Z value");
+        // Pᶻ: EITHER zdim dense "P" rows (v1/v2) OR one "PD" diagonal row (RTB-7(e) v3).
+        // The dispatch is on the ROW TAG, never on the header version — the blob is
+        // self-describing, so a diagonal blob restores in a run configured to WRITE full
+        // ones and vice versa (that is what lets the A/B arms differ only in their seed
+        // bytes).  A v3 restore starts every chord cross-covariance at zero: the branch
+        // means are exact, the geometry between them is re-earned from data.
+        b.Pz.setZero(zdim, zdim);
+        if (zdim > 0) {
+            if (!std::getline(is, line)) return fail("carry: truncated at P");
+            std::vector<std::string> pf = splitCsv(chomp(line));
+            if (!pf.empty() && pf[0] == "PD") {
+                if (static_cast<long long>(pf.size()) != zdim + 1)
+                    return fail("carry: malformed PD row");
+                for (long long c = 0; c < zdim; ++c)
+                    if (!parseDbl(pf[static_cast<std::size_t>(c + 1)], b.Pz(c, c)))
+                        return fail("carry: bad PD value");
+                ++n_diag_blocks;
+            } else {
+                for (long long r = 0; r < zdim; ++r) {
+                    if (r > 0) {
+                        if (!std::getline(is, line)) return fail("carry: truncated at P");
+                        pf = splitCsv(chomp(line));
+                    }
+                    if (pf.empty() || pf[0] != "P"
+                        || static_cast<long long>(pf.size()) != zdim + 1)
+                        return fail("carry: malformed P row");
+                    for (long long c = 0; c < zdim; ++c)
+                        if (!parseDbl(pf[static_cast<std::size_t>(c + 1)], b.Pz(r, c)))
+                            return fail("carry: bad P value");
+                }
+            }
+        }
+        // Chords (H), vertices (X), arcs (A).
+        auto readPairs = [&](char tag, long long npair, std::vector<ArcKey>* vec,
+                             std::set<ArcKey>* setv) -> bool {
+            if (!std::getline(is, line)) return false;
+            const std::vector<std::string> ff = splitCsv(chomp(line));
+            if (ff.empty() || ff[0].size() != 1 || ff[0][0] != tag
+                || static_cast<long long>(ff.size()) != 2 * npair + 1)
+                return false;
+            for (long long i = 0; i < npair; ++i) {
+                long long u = 0, v = 0;
+                if (!parseLL(ff[static_cast<std::size_t>(2 * i + 1)], u)
+                    || !parseLL(ff[static_cast<std::size_t>(2 * i + 2)], v))
+                    return false;
+                const ArcKey k(static_cast<int>(u), static_cast<int>(v));
+                if (vec) vec->push_back(k);
+                if (setv) setv->insert(k);
+            }
+            return true;
+        };
+        if (!readPairs('H', nch, &b.chords, nullptr)) return fail("carry: malformed H row");
+        // Vertices (single ints).
+        if (!std::getline(is, line)) return fail("carry: truncated at X");
+        const std::vector<std::string> xf = splitCsv(chomp(line));
+        if (xf.empty() || xf[0] != "X" || static_cast<long long>(xf.size()) != nvert + 1)
+            return fail("carry: malformed X row");
+        for (long long i = 0; i < nvert; ++i) {
+            long long v = 0;
+            if (!parseLL(xf[static_cast<std::size_t>(i + 1)], v)) return fail("carry: bad X value");
+            b.vertices.insert(static_cast<int>(v));
+        }
+        if (!readPairs('A', narc, nullptr, &b.arcs)) return fail("carry: malformed A row");
+        restored.push_back(std::move(b));
+    }
+    return fail("carry blob missing CEND");
+}
+
+bool NetworkInvariantCarryDriver::validateCarryBinding(int n_stations,
+                                                       const std::set<int>& sat_vertices,
+                                                       const std::set<int>& group_ids,
+                                                       std::string* err) const {
+    auto bad = [&](std::string m) { if (err) *err = std::move(m); return false; };
+    auto vertexOk = [&](int w) {
+        return (w >= 0 && w < n_stations) || sat_vertices.count(w) != 0;
+    };
+    for (const CarriedBlock& b : carried_) {
+        if (group_ids.count(b.group) == 0)
+            return bad(fmt::format("carried block group {} is not in the live "
+                                   "carry_group_id map ({} entries)",
+                                   b.group, group_ids.size()));
+        for (const ArcKey& c : b.chords)
+            if (!vertexOk(c.u) || !vertexOk(c.v))
+                return bad(fmt::format("chord ({},{}) in group {} does not bind: neither a "
+                                       "roster station [0,{}) nor a live sat vertex ({} known)",
+                                       c.u, c.v, b.group, n_stations, sat_vertices.size()));
+        for (const ArcKey& a : b.arcs)
+            if (!vertexOk(a.u) || !vertexOk(a.v))
+                return bad(fmt::format("arc ({},{}) in group {} does not bind: neither a "
+                                       "roster station [0,{}) nor a live sat vertex ({} known)",
+                                       a.u, a.v, b.group, n_stations, sat_vertices.size()));
+    }
+    return true;
+}
+
+std::size_t NetworkInvariantCarryDriver::applyResumeShock(double var_m2) {
+    if (!(var_m2 > 0.0)) return 0;              // OFF ⇒ byte-identical
+    std::size_t n = 0;
+    for (CarriedBlock& b : carried_) {
+        if (b.Pz.rows() <= 0) continue;
+        // Diagonal ONLY: the restored means and the cross-covariance geometry (the
+        // branch) are untouched; we merely widen each carried DD's own uncertainty
+        // for the station-layer re-convergence window.
+        b.Pz.diagonal().array() += var_m2;
+        ++n;
+    }
+    resume_shock_sigma_m_ = std::sqrt(var_m2);
+    return n;
 }
 
 void NetworkInvariantCarryDriver::beginEpoch(double dt_s, double content_s, bool clean) {

@@ -51,6 +51,7 @@ namespace GnssProcessor {
     struct NetworkConfig;
     class MultiRinexSync;
     class NetworkProductEmitter;
+    class NetworkInvariantCarryDriver;
     class NetworkCarryVce;
     class SphericalHarmonicIonosphere;
     struct GnssTime;
@@ -472,6 +473,13 @@ namespace GnssProcessor {
         std::filesystem::path snap_path;
         double   last_snapshot_write_s = -1.0;   // product time of the last snapshot write
         uint64_t live_fingerprint      = 0;
+        // RTB-7(e) write-side telemetry (invariant #4).  The carry blob is ~99% of the
+        // snapshot, so "how big was it and in which shape" is the ONLY readout that shows
+        // network.state_snapshot_carry_diagonal actually took effect — a diagonal run
+        // otherwise looks exactly like a dense one in every log line and counter.
+        long long snap_writes             = 0;      // snapshots written this run
+        long long snap_carry_bytes_last   = 0;      // bytes of the last serialized carry blob
+        bool      snap_carry_diagonal     = false;  // that blob was diagonal-only (v3)
     };
 
     /// @internal Service counters, health-window anchors, and B8 flag-rate
@@ -627,11 +635,13 @@ namespace GnssProcessor {
 
     void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               const MultiRinexSync& sync, NetworkProductEmitter& emitter,
+                              NetworkInvariantCarryDriver& carry_driver,
                               const std::shared_ptr<spdlog::logger>& log);
 
     void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_,
                                    const GnssTime& t, double pl_now_s,
                                    NetworkProductEmitter& emitter,
+                                   const NetworkInvariantCarryDriver& carry_driver,
                                    const std::shared_ptr<spdlog::logger>& log);
 
     void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,

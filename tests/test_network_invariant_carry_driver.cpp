@@ -273,6 +273,431 @@ TEST(NetworkInvariantCarryDriverTest, ProjectionMatchesFromScratchAndZStore) {
 }
 
 // ---------------------------------------------------------------------------
+// RTB-7(c) — the branch-faithful snapshot blob: serializeCarry ⇄ restoreCarry
+// round-trips every carried DD (mean, variance, cross-covariance, structure)
+// bit-for-bit across multiple components/groups.
+// ---------------------------------------------------------------------------
+TEST(NetworkInvariantCarryDriverTest, SerializeRestoreRoundTripIsExact) {
+    const int R = 3, S = 3;
+    std::vector<ArcKey> arc_order;
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) arc_order.emplace_back(rxV(r), satV(s));
+    std::set<int> verts; for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    std::set<ArcKey> arcs(arc_order.begin(), arc_order.end());
+    std::vector<ArcKey> ch; for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) ch.emplace_back(rxV(r), satV(s));
+    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
+
+    std::mt19937 gen(7);
+    std::uniform_real_distribution<double> u(-2, 2);
+    Eigen::VectorXd z(K); for (Eigen::Index i = 0; i < K; ++i) z(i) = u(gen);
+    Eigen::MatrixXd M(K, K); for (Eigen::Index i = 0; i < K; ++i) for (Eigen::Index j = 0; j < K; ++j) M(i, j) = u(gen);
+    const Eigen::MatrixXd Pz = M * M.transpose() + K * Eigen::MatrixXd::Identity(K, K);
+
+    NetworkInvariantCarryDriver src;
+    src.seedCarriedForTest(0, ch, z, Pz, verts, arcs);
+    src.seedCarriedForTest(7, ch, (2.0 * z).eval(), (0.5 * Pz).eval(), verts, arcs);  // second group
+
+    std::ostringstream os;
+    src.serializeCarry(os);
+    const std::string blob = os.str();
+    EXPECT_NE(blob.find("CARRY,v2"), std::string::npos);   // RE-1 bumped the blob version
+    EXPECT_NE(blob.find("\nCEND\n"), std::string::npos);
+
+    NetworkInvariantCarryDriver dst;
+    std::istringstream is(blob);
+    std::string err;
+    ASSERT_TRUE(dst.restoreCarry(is, &err)) << "restore failed: " << err;
+    EXPECT_EQ(dst.totalZDim(), src.totalZDim());
+
+    for (int grp : {0, 7}) {
+        for (const ArcKey& c : ch) {
+            double zs = 0, vs = 0, zd = 0, vd = 0;
+            ASSERT_TRUE(src.carriedDdForTest(grp, c, zs, vs));
+            ASSERT_TRUE(dst.carriedDdForTest(grp, c, zd, vd)) << "chord not restored, group " << grp;
+            EXPECT_DOUBLE_EQ(zs, zd) << "mean mismatch, group " << grp;
+            EXPECT_DOUBLE_EQ(vs, vd) << "variance mismatch, group " << grp;
+        }
+        double cs = 0, cd = 0;
+        ASSERT_TRUE(src.carriedCrossForTest(grp, ch[0], ch[1], cs));
+        ASSERT_TRUE(dst.carriedCrossForTest(grp, ch[0], ch[1], cd));
+        EXPECT_DOUBLE_EQ(cs, cd) << "cross-covariance mismatch, group " << grp;
+    }
+
+    // Empty-carry round-trip: a driver with no carry serializes a valid header/terminator
+    // that restores to an empty carry (the cold-start-equivalent blob).
+    NetworkInvariantCarryDriver empty_src, empty_dst;
+    std::ostringstream eos; empty_src.serializeCarry(eos);
+    std::istringstream eis(eos.str());
+    ASSERT_TRUE(empty_dst.restoreCarry(eis, &err)) << err;
+    EXPECT_EQ(empty_dst.totalZDim(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// RTB-7(d) G1 — resume-event build: v2/v1 blob, reset-first, binding validation,
+// and the one-shot Pz resume shock.
+// ---------------------------------------------------------------------------
+namespace {
+/// Minimal seeded driver: one component, K chords, known z/Pz.  Returns the chords.
+std::vector<ArcKey> seedSimple(NetworkInvariantCarryDriver& d, int group,
+                               Eigen::VectorXd& z, Eigen::MatrixXd& Pz) {
+    const int R = 3, S = 3;
+    std::set<int> verts;
+    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    std::vector<ArcKey> all;
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) all.emplace_back(rxV(r), satV(s));
+    std::set<ArcKey> arcs(all.begin(), all.end());
+    std::vector<ArcKey> ch;
+    for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) ch.emplace_back(rxV(r), satV(s));
+    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
+    z.resize(K);
+    for (Eigen::Index i = 0; i < K; ++i) z(i) = 0.5 * static_cast<double>(i + 1);
+    Pz = Eigen::MatrixXd::Identity(K, K) * 2.0;
+    for (Eigen::Index i = 0; i + 1 < K; ++i) { Pz(i, i + 1) = 0.3; Pz(i + 1, i) = 0.3; }
+    d.seedCarriedForTest(group, ch, z, Pz, verts, arcs);
+    return ch;
+}
+}  // namespace
+
+TEST(NetworkInvariantCarryDriverTest, ResumeBlobV2SeedsSigma0AndV1IsLegacy) {
+    NetworkInvariantCarryDriver::Config cfg;
+    cfg.innov_gate = true;
+    cfg.innov_calibrate = true;          // allocates the sigma0 accumulator
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver src(cfg);
+    seedSimple(src, 0, z, Pz);
+    std::ostringstream os; src.serializeCarry(os);
+    const std::string v2_noS = os.str();
+    EXPECT_NE(v2_noS.find("CARRY,v2"), std::string::npos) << "header must be v2";
+
+    // (a) v2 blob WITHOUT an S line -> restores, sigma0 NOT seeded (legacy behaviour).
+    {
+        NetworkInvariantCarryDriver d(cfg);
+        std::istringstream is(v2_noS); std::string err;
+        ASSERT_TRUE(d.restoreCarry(is, &err)) << err;
+        EXPECT_TRUE(d.resumeCarryRestored());
+        EXPECT_FALSE(d.resumeSigma0Seeded());
+        EXPECT_DOUBLE_EQ(d.resumeSigma0Value(), 1.0);
+    }
+    // (b) v2 blob WITH an S line -> sigma0 seeded, value = sqrt(sigma0_sq).
+    {
+        const double s2 = 2.25, rows = 512.0;
+        std::string blob = v2_noS;
+        const std::size_t nl = blob.find('\n');
+        blob.insert(nl + 1, "S," + std::to_string(s2) + "," + std::to_string(rows) + "\n");
+        NetworkInvariantCarryDriver d(cfg);
+        std::istringstream is(blob); std::string err;
+        ASSERT_TRUE(d.restoreCarry(is, &err)) << err;
+        EXPECT_TRUE(d.resumeSigma0Seeded());
+        EXPECT_NEAR(d.resumeSigma0Value(), std::sqrt(s2), 1e-12);
+        // the gate must now actually USE it (past its warm-up row count)
+        EXPECT_NEAR(d.innovInflationSigma0(), std::sqrt(s2), 1e-6)
+            << "seeded accumulator must clear the warm-up gate, not fall back to raw formal";
+    }
+    // (c) legacy v1 header still accepted.
+    {
+        std::string v1 = v2_noS;
+        v1.replace(v1.find("CARRY,v2"), 8, "CARRY,v1");
+        NetworkInvariantCarryDriver d(cfg);
+        std::istringstream is(v1); std::string err;
+        ASSERT_TRUE(d.restoreCarry(is, &err)) << err;
+        EXPECT_FALSE(d.resumeSigma0Seeded());
+    }
+}
+
+TEST(NetworkInvariantCarryDriverTest, RestoreCarryResetsPriorSideState) {
+    // RE-4: restoreCarry is a general install API — it must not inherit stale
+    // per-epoch side state (block layout / counters) from earlier driver work.
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver d;
+    const std::vector<ArcKey> ch = seedSimple(d, 0, z, Pz);
+    NetworkInvariantCarryDriver::GroupInput g; g.key = 0;
+    const StationCols col = ambLayout(3);
+    for (int r = 0; r < 3; ++r) for (int s = 0; s < 3; ++s)
+        g.arcs.push_back({rxV(r), satV(s), isStarTreeEdge(0, 0, r, s), r, static_cast<int>(col.z[s])});
+    ASSERT_FALSE(d.buildDdPriors({g}).empty());
+    ASSERT_GT(d.numBlocks(), 0u);
+    ASSERT_GT(d.counters().epochs, 0);
+
+    NetworkInvariantCarryDriver src;
+    seedSimple(src, 0, z, Pz);
+    std::ostringstream os; src.serializeCarry(os);
+    std::istringstream is(os.str()); std::string err;
+    ASSERT_TRUE(d.restoreCarry(is, &err)) << err;
+    EXPECT_EQ(d.numBlocks(), 0u)        << "stale block layout survived restoreCarry";
+    EXPECT_EQ(d.counters().epochs, 0)   << "stale counters survived restoreCarry";
+}
+
+TEST(NetworkInvariantCarryDriverTest, ValidateCarryBindingRejectsUnboundVertices) {
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver d;
+    seedSimple(d, 0, z, Pz);
+    std::set<int> sats; for (int s = 0; s < 3; ++s) sats.insert(satV(s));
+    std::set<int> groups{0};
+    std::string err;
+    EXPECT_TRUE(d.validateCarryBinding(3, sats, groups, &err)) << err;
+
+    err.clear();
+    EXPECT_FALSE(d.validateCarryBinding(3, /*sat_vertices=*/{}, groups, &err))
+        << "unknown satellite vertices must be rejected, not silently re-bound";
+    EXPECT_FALSE(err.empty()) << "rejection must name the offending binding";
+
+    err.clear();
+    EXPECT_FALSE(d.validateCarryBinding(3, sats, /*group_ids=*/{}, &err))
+        << "unknown group id must be rejected";
+    EXPECT_FALSE(err.empty());
+}
+
+TEST(NetworkInvariantCarryDriverTest, ApplyResumeShockAddsVarianceToDiagonalOnly) {
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver d;
+    const std::vector<ArcKey> ch = seedSimple(d, 0, z, Pz);
+    ASSERT_GE(ch.size(), 2u);
+    double z0 = 0, v0 = 0, c0 = 0;
+    ASSERT_TRUE(d.carriedDdForTest(0, ch[0], z0, v0));
+    ASSERT_TRUE(d.carriedCrossForTest(0, ch[0], ch[1], c0));
+
+    const double sigma = 0.2, var = sigma * sigma;
+    EXPECT_EQ(d.applyResumeShock(var), 1u);
+    double z1 = 0, v1 = 0, c1 = 0;
+    ASSERT_TRUE(d.carriedDdForTest(0, ch[0], z1, v1));
+    ASSERT_TRUE(d.carriedCrossForTest(0, ch[0], ch[1], c1));
+    EXPECT_DOUBLE_EQ(z1, z0)        << "the MEAN is the branch — the shock must not move it";
+    EXPECT_NEAR(v1, v0 + var, 1e-12) << "diagonal must gain exactly shock^2";
+    EXPECT_DOUBLE_EQ(c1, c0)        << "cross-covariance (branch geometry) must be untouched";
+    EXPECT_NEAR(d.resumeShockSigmaM(), sigma, 1e-12);
+
+    EXPECT_EQ(d.applyResumeShock(0.0), 0u) << "OFF must be a no-op";
+}
+
+// ---------------------------------------------------------------------------
+// RTB-7(e) — the DIAGONAL-ONLY carry blob (v3).
+//
+// The card's HYPOTHESIS (the resumed branch lives in the MEANS, not the
+// cross-covariance) is an estimation claim that only the field A/B can rule on.
+// These gates assert exactly what the SERIALIZATION promises and nothing more:
+// the means and variances survive bit-for-bit, the cross-covariances are dropped
+// to zero (stated, not hidden), the shape is chosen by the ROW TAG rather than
+// the header version so v1/v2/v3 all still read, and the default argument leaves
+// the v2 writer byte-identical.
+// ---------------------------------------------------------------------------
+namespace {
+/// A denser seed than @ref seedSimple: R×S bipartite, K = (R−1)(S−1) chords with a
+/// fully-populated PSD @f$P^z@f$ (so every off-diagonal is genuinely non-zero and a
+/// dropped cross-covariance cannot pass by accident).
+std::vector<ArcKey> seedDense(NetworkInvariantCarryDriver& d, int group, int R, int S,
+                              unsigned seed, Eigen::VectorXd& z, Eigen::MatrixXd& Pz) {
+    std::set<int> verts;
+    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    std::vector<ArcKey> all;
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) all.emplace_back(rxV(r), satV(s));
+    const std::set<ArcKey> arcs(all.begin(), all.end());
+    std::vector<ArcKey> ch;
+    for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) ch.emplace_back(rxV(r), satV(s));
+    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
+    std::mt19937 gen(seed);
+    std::uniform_real_distribution<double> u(-2.0, 2.0);
+    z.resize(K);
+    for (Eigen::Index i = 0; i < K; ++i) z(i) = u(gen);
+    Eigen::MatrixXd M(K, K);
+    for (Eigen::Index i = 0; i < K; ++i)
+        for (Eigen::Index j = 0; j < K; ++j) M(i, j) = u(gen);
+    Pz = M * M.transpose() + static_cast<double>(K) * Eigen::MatrixXd::Identity(K, K);
+    d.seedCarriedForTest(group, ch, z, Pz, verts, arcs);
+    return ch;
+}
+/// #occurrences of a line whose first field is exactly @p tag.
+std::size_t countRows(const std::string& blob, const std::string& tag) {
+    std::size_t n = 0, pos = 0;
+    const std::string needle = "\n" + tag + ",";
+    // a leading "\n" prefix means the header line can never match, which is what we want
+    while ((pos = blob.find(needle, pos)) != std::string::npos) { ++n; pos += needle.size(); }
+    return n;
+}
+}  // namespace
+
+TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobV3DropsOnlyTheCrossCovariance) {
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver src;
+    const std::vector<ArcKey> ch = seedDense(src, 3, /*R=*/4, /*S=*/4, /*seed=*/17, z, Pz);
+    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
+    ASSERT_GE(K, 4);
+
+    std::ostringstream os;
+    src.serializeCarry(os, /*diagonal_only=*/true);
+    const std::string v3 = os.str();
+    EXPECT_NE(v3.find("CARRY,v3"), std::string::npos) << "diagonal blob must announce v3";
+    EXPECT_EQ(countRows(v3, "PD"), 1u) << "exactly ONE diagonal row per component";
+    EXPECT_EQ(countRows(v3, "P"), 0u)  << "no dense P rows may survive in a v3 blob";
+
+    NetworkInvariantCarryDriver dst;
+    std::istringstream is(v3); std::string err;
+    ASSERT_TRUE(dst.restoreCarry(is, &err)) << "v3 restore failed: " << err;
+    EXPECT_EQ(dst.totalZDim(), src.totalZDim());
+
+    // (a) the MEANS — the thing the branch is claimed to live in — are bit-exact.
+    // (b) the VARIANCES are bit-exact.  (c) the CROSS-covariances are gone, and the
+    // source's were genuinely non-zero (otherwise (c) would be vacuous).
+    for (Eigen::Index i = 0; i < K; ++i) {
+        double zs = 0, vs = 0, zd = 0, vd = 0;
+        ASSERT_TRUE(src.carriedDdForTest(3, ch[static_cast<std::size_t>(i)], zs, vs));
+        ASSERT_TRUE(dst.carriedDdForTest(3, ch[static_cast<std::size_t>(i)], zd, vd));
+        EXPECT_DOUBLE_EQ(zd, zs) << "mean must round-trip exactly, chord " << i;
+        EXPECT_DOUBLE_EQ(vd, vs) << "variance must round-trip exactly, chord " << i;
+        EXPECT_DOUBLE_EQ(vd, Pz(i, i)) << "restored variance must be the ORIGINAL diagonal";
+    }
+    double any_src_cross = 0.0;
+    for (Eigen::Index i = 0; i < K; ++i)
+        for (Eigen::Index j = i + 1; j < K; ++j) {
+            double cs = 0, cd = 0;
+            ASSERT_TRUE(src.carriedCrossForTest(3, ch[static_cast<std::size_t>(i)],
+                                                ch[static_cast<std::size_t>(j)], cs));
+            ASSERT_TRUE(dst.carriedCrossForTest(3, ch[static_cast<std::size_t>(i)],
+                                                ch[static_cast<std::size_t>(j)], cd));
+            any_src_cross = std::max(any_src_cross, std::abs(cs));
+            EXPECT_DOUBLE_EQ(cd, 0.0) << "v3 restores Pz = diag(...) — cross (" << i << ","
+                                      << j << ") must be exactly zero";
+        }
+    EXPECT_GT(any_src_cross, 1e-6)
+        << "control: the source covariance must actually HAVE cross terms to drop";
+
+    // Telemetry (invariant #4) — a diagonal restore is otherwise indistinguishable.
+    EXPECT_TRUE(dst.resumeCarryRestored());
+    EXPECT_TRUE(dst.resumeCarryDiagonal());
+    EXPECT_EQ(dst.resumeCarryDiagonalBlocks(), 1);
+
+    // Negative control: the SAME carry through the dense (v2) writer keeps the
+    // cross-covariance and reports the shape honestly.
+    std::ostringstream os2; src.serializeCarry(os2);       // default arg == dense
+    NetworkInvariantCarryDriver dense;
+    std::istringstream is2(os2.str());
+    ASSERT_TRUE(dense.restoreCarry(is2, &err)) << err;
+    double cs = 0, cd = 0;
+    ASSERT_TRUE(src.carriedCrossForTest(3, ch[0], ch[1], cs));
+    ASSERT_TRUE(dense.carriedCrossForTest(3, ch[0], ch[1], cd));
+    EXPECT_DOUBLE_EQ(cd, cs) << "the dense path must still round-trip the cross-covariance";
+    EXPECT_FALSE(dense.resumeCarryDiagonal());
+    EXPECT_EQ(dense.resumeCarryDiagonalBlocks(), 0);
+}
+
+TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobShrinksAndDefaultIsUnchanged) {
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver src;
+    const std::vector<ArcKey> ch = seedDense(src, 0, /*R=*/6, /*S=*/6, /*seed=*/5, z, Pz);
+    const std::size_t K = ch.size();
+    ASSERT_EQ(K, 25u);
+
+    std::ostringstream a, b, c;
+    src.serializeCarry(a);                        // default argument
+    src.serializeCarry(b, /*diagonal_only=*/false);
+    src.serializeCarry(c, /*diagonal_only=*/true);
+    EXPECT_EQ(a.str(), b.str())
+        << "the default argument MUST be the pre-RTB-7(e) writer, byte-for-byte";
+    EXPECT_NE(a.str().find("CARRY,v2"), std::string::npos) << "default stays v2";
+
+    // K numbers vs K² — the ratio is the whole card.  A conservative bar (the blob
+    // also carries the Z/H/X/A structure rows, which do not shrink).
+    const double ratio = static_cast<double>(a.str().size()) / static_cast<double>(c.str().size());
+    EXPECT_GT(ratio, 5.0) << "K=" << K << ": dense " << a.str().size() << " B vs diagonal "
+                          << c.str().size() << " B — expected roughly K-fold, got " << ratio;
+}
+
+TEST(NetworkInvariantCarryDriverTest, RestoreDispatchesOnRowTagNotHeaderVersion) {
+    // The read side must be CONTENT-driven: that is what lets one converge run's
+    // artifact seed both A/B arms, and what keeps every v1/v2 snapshot readable.
+    Eigen::VectorXd z; Eigen::MatrixXd Pz;
+    NetworkInvariantCarryDriver src;
+    const std::vector<ArcKey> ch = seedDense(src, 0, /*R=*/3, /*S=*/3, /*seed=*/2, z, Pz);
+    std::ostringstream d_os, f_os;
+    src.serializeCarry(d_os, /*diagonal_only=*/true);
+    src.serializeCarry(f_os, /*diagonal_only=*/false);
+    const std::string diag_blob = d_os.str(), full_blob = f_os.str();
+
+    auto relabel = [](std::string blob, const char* to) {
+        blob.replace(blob.find("CARRY,v"), 8, to);
+        return blob;
+    };
+    double cs = 0;
+    ASSERT_TRUE(src.carriedCrossForTest(0, ch[0], ch[1], cs));
+    ASSERT_GT(std::abs(cs), 1e-6);
+
+    struct Case { std::string blob; const char* what; bool expect_diag; };
+    const std::vector<Case> cases = {
+        {relabel(diag_blob, "CARRY,v1"), "v1 header, PD rows", true},
+        {relabel(diag_blob, "CARRY,v2"), "v2 header, PD rows", true},
+        {diag_blob,                      "v3 header, PD rows", true},
+        {relabel(full_blob, "CARRY,v1"), "v1 header, P rows (legacy)", false},
+        {relabel(full_blob, "CARRY,v2"), "v2 header, P rows (legacy)", false},
+        {relabel(full_blob, "CARRY,v3"), "v3 header, P rows", false},
+    };
+    for (const Case& k : cases) {
+        NetworkInvariantCarryDriver d;
+        std::istringstream is(k.blob); std::string err;
+        ASSERT_TRUE(d.restoreCarry(is, &err)) << k.what << ": " << err;
+        EXPECT_EQ(d.totalZDim(), src.totalZDim()) << k.what;
+        double cd = 0;
+        ASSERT_TRUE(d.carriedCrossForTest(0, ch[0], ch[1], cd)) << k.what;
+        EXPECT_EQ(d.resumeCarryDiagonal(), k.expect_diag) << k.what;
+        if (k.expect_diag) EXPECT_DOUBLE_EQ(cd, 0.0) << k.what;
+        else               EXPECT_DOUBLE_EQ(cd, cs)  << k.what;
+    }
+}
+
+TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobRoundTripsPairAndEmptyBlocks) {
+    // WL-3 pair blocks are 2K×2K with cross-BAND coupling on the (k, K+k) terms —
+    // the diagonal blob must keep both bands' means/variances and the (λ₁, λ₂) lane
+    // basis, and drop the cross-band coupling like any other off-diagonal.
+    const double lam1 = 0.19029367279836487, lam2 = 0.24421021342456825;
+    const int R = 3, S = 3;
+    std::set<int> verts;
+    for (int r = 0; r < R; ++r) verts.insert(rxV(r));
+    for (int s = 0; s < S; ++s) verts.insert(satV(s));
+    std::vector<ArcKey> all;
+    for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) all.emplace_back(rxV(r), satV(s));
+    const std::set<ArcKey> arcs(all.begin(), all.end());
+    std::vector<ArcKey> ch;
+    for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) ch.emplace_back(rxV(r), satV(s));
+    const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
+    Eigen::VectorXd zj(2 * K);
+    for (Eigen::Index i = 0; i < 2 * K; ++i) zj(i) = 0.25 * static_cast<double>(i + 1);
+    Eigen::MatrixXd Pj = Eigen::MatrixXd::Identity(2 * K, 2 * K) * 3.0;
+    for (Eigen::Index i = 0; i < K; ++i) { Pj(i, K + i) = 0.7; Pj(K + i, i) = 0.7; }
+
+    NetworkInvariantCarryDriver src;
+    src.seedCarriedPairForTest(1, ch, zj, Pj, lam1, lam2, verts, arcs);
+    // ...plus a degenerate ZERO-chord component: the dense writer emits no P rows for
+    // it, so the diagonal writer must emit no PD row either or the reader desynchronizes.
+    src.seedCarriedForTest(2, {}, Eigen::VectorXd(0), Eigen::MatrixXd(0, 0), verts, arcs);
+
+    std::ostringstream os;
+    src.serializeCarry(os, /*diagonal_only=*/true);
+    NetworkInvariantCarryDriver dst;
+    std::istringstream is(os.str()); std::string err;
+    ASSERT_TRUE(dst.restoreCarry(is, &err)) << "pair/empty v3 restore failed: " << err;
+    EXPECT_EQ(dst.resumeCarryDiagonalBlocks(), 1)
+        << "only the 2K pair block has a diagonal to store; the empty one has none";
+
+    std::vector<ArcKey> rch; Eigen::VectorXd rz; Eigen::MatrixXd rP;
+    ASSERT_TRUE(dst.carriedPairBlockForTest(1, rch, rz, rP))
+        << "the pair flag + lane wavelengths must survive the diagonal blob";
+    ASSERT_EQ(rch, ch);
+    ASSERT_EQ(rz.size(), 2 * K);
+    for (Eigen::Index i = 0; i < 2 * K; ++i) {
+        EXPECT_DOUBLE_EQ(rz(i), zj(i)) << "both bands' means are exact, row " << i;
+        EXPECT_DOUBLE_EQ(rP(i, i), Pj(i, i)) << "both bands' variances are exact, row " << i;
+    }
+    for (Eigen::Index i = 0; i < K; ++i)
+        EXPECT_DOUBLE_EQ(rP(i, K + i), 0.0) << "cross-BAND coupling is dropped like any "
+                                               "other off-diagonal, chord " << i;
+    double pz1 = 0, pv1 = 0, pz2 = 0, pv2 = 0;
+    ASSERT_TRUE(dst.carriedPairValue(1, ch[0], pz1, pv1, pz2, pv2))
+        << "the restored block must still read back as a PAIR block";
+    EXPECT_DOUBLE_EQ(pz1, zj(0));
+    EXPECT_DOUBLE_EQ(pz2, zj(K));
+}
+
+// ---------------------------------------------------------------------------
 // GATE 2 — the carry accumulates information (variance shrinks, mean → integer).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, CarryAccumulatesAndConverges) {

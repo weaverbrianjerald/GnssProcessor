@@ -61,6 +61,15 @@ namespace GnssProcessor {
         bool isLoaded() const { return data_.valid && !data_.maps.empty(); }
 
         /**
+         * @brief Read-only access to the parsed IONEX content.
+         *
+         * Exposed so callers can inspect the map-epoch span before querying: epochs
+         * outside it are silently CLAMPED to the endpoint map (and still longitude-
+         * rotated), so a caller that must not extrapolate has to check the span itself.
+         */
+        const IonexData& data() const { return data_; }
+
+        /**
          * @brief Compute the slant ionospheric delay for a satellite line of sight.
          *
          * @param time         Epoch (GPS time scale).

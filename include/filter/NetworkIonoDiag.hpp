@@ -36,6 +36,13 @@ class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
+/**
+ * @brief Emit this epoch's iono / ZWD / anchor-info visualization traces.  Back-
+ *        substitutes each station's local nuisance blocks (slant iono, ZWD) from the
+ *        shared solution and writes the per-station recon-sweep trace rows.  Log-only —
+ *        mutates no estimation state and is byte-identical / no-op unless the viz traces
+ *        are armed.  The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
+ */
 void networkIonoDiag(
     NetworkRunContext& ctx,
     const GnssConfig& config_,

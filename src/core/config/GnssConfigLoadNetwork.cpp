@@ -641,6 +641,38 @@ namespace GnssProcessor {
                       "new generation id.",
                       network_config_.state_snapshot_path,
                       network_config_.state_snapshot_interval_s);
+        // RTB-7(c): branch-faithful resume — also serialize the Card-4 invariant DD carry.
+        // Raw parse here; the carry_invariant + path requirement is enforced in the
+        // carry_invariant validation block below (network_carry_invariant_ is parsed later).
+        network_config_.state_snapshot_carry =
+            jval<bool>(json, "network.state_snapshot_carry", "state_snapshot_carry", false);
+        // RTB-7(e): diagonal-only Pᶻ in the carry blob (write side; the reader is
+        // content-driven).  Validated with the rest of the carry block below.
+        network_config_.state_snapshot_carry_diagonal =
+            jval<bool>(json, "network.state_snapshot_carry_diagonal",
+                       "state_snapshot_carry_diagonal", false);
+        // RTB-7(d): resume-event response (RE-2), A/B safety (HB-1), blob history (BR-1).
+        network_config_.state_snapshot_resume_shock_m =
+            jval<double>(json, "network.state_snapshot_resume_shock_m",
+                         "state_snapshot_resume_shock_m", 0.0);
+        if (network_config_.state_snapshot_resume_shock_m < 0.0) {
+            log->warn("Network (RTB-7d): network.state_snapshot_resume_shock_m {} < 0 — "
+                      "clamped to 0 (OFF).", network_config_.state_snapshot_resume_shock_m);
+            network_config_.state_snapshot_resume_shock_m = 0.0;
+        }
+        network_config_.state_snapshot_require =
+            jval<bool>(json, "network.state_snapshot_require", "state_snapshot_require", false);
+        network_config_.state_snapshot_keep_history =
+            jval<bool>(json, "network.state_snapshot_keep_history",
+                       "state_snapshot_keep_history", false);
+        if (network_config_.state_snapshot_require)
+            log->info("Network (RTB-7d/HB-1): warm resume REQUIRED — any resume failure "
+                      "(missing/parse/fingerprint/age/emitter) is a hard run error instead "
+                      "of a silent cold start.  Arm this in every same-snapshot A/B.");
+        if (network_config_.state_snapshot_keep_history)
+            log->info("Network (RTB-7d/BR-1): per-epoch snapshot history ON — each snapshot "
+                      "is also written to '<path>.ep<NNNN>' for branch grading "
+                      "(scripts/diff_carry_blobs.py).  Write-side only; heavy on disk.");
         network_config_.trace_events =
             jval<bool>(json, "network.trace_events", "trace_events", false);
         if (network_config_.trace_events)
@@ -1907,6 +1939,58 @@ namespace GnssProcessor {
         network_carry_invariant_innov_calibrate_window_ =
             jval<double>(json, "network.carry_invariant_innov_calibrate_window",
                          "network_carry_invariant_innov_calibrate_window", 60.0);
+        // RTB-7(c): the branch-faithful carry blob requires the invariant carry to be
+        // armed and a snapshot path to write to (parsed above); enforce + log here now
+        // that network_carry_invariant_ is known.
+        if (network_config_.state_snapshot_carry) {
+            if (network_config_.state_snapshot_path.empty() || !network_carry_invariant_) {
+                log->warn("Network (RTB-7c): network.state_snapshot_carry requires "
+                          "state_snapshot_path + carry_invariant; disabling (the carry blob "
+                          "would be inert).");
+                network_config_.state_snapshot_carry = false;
+                network_config_.state_snapshot_carry_diagonal = false;  // RTB-7(e): no blob to shape
+            } else {
+                log->info("Network (RTB-7c): BRANCH-FAITHFUL resume ON — the invariant DD "
+                          "carry (z-store means + {} Pᶻ + vertex/group numbering) is "
+                          "serialized into the snapshot, so a warm resume reproduces the "
+                          "phase-ambiguity branch exactly instead of re-converging onto a "
+                          "different one.  Snapshot grows with the carried DD {}.",
+                          network_config_.state_snapshot_carry_diagonal ? "DIAGONAL"
+                                                                        : "dense",
+                          network_config_.state_snapshot_carry_diagonal
+                              ? std::string("count (LINEARLY — blob v3)")
+                              : std::string("count"));
+                if (network_config_.state_snapshot_carry_diagonal)
+                    log->info("Network (RTB-7e): carry blob DIAGONAL-ONLY (v3) — only each "
+                              "component's Pᶻ diagonal is written (Σ K_c numbers instead of "
+                              "Σ K_c², ~1663x smaller at 305 stations).  The restored means "
+                              "are exact; chord CROSS-covariances start at zero and are "
+                              "re-earned from data.  This is a measured trade (a diagonal "
+                              "prior tightens correlated chords' common mode) — grade it on "
+                              "datum-invariant quantities before trusting it.  Reading is "
+                              "unaffected: v1/v2/v3 blobs all restore under either setting.");
+                if (network_config_.state_snapshot_resume_shock_m > 0.0)
+                    log->info("Network (RTB-7d/RE-2): resume EVENT RESPONSE armed — σ = "
+                              "{:.3f} m added to every restored DD's Pᶻ diagonal at resume "
+                              "(variance {:.4g} m²).  The branch (means + cross-covariance) "
+                              "is kept; the widened own-variance lets the fold absorb the "
+                              "un-restored station layer's re-convergence instead of the D5 "
+                              "gate discarding the branch — gate stays armed (invariant #1).",
+                              network_config_.state_snapshot_resume_shock_m,
+                              network_config_.state_snapshot_resume_shock_m
+                                  * network_config_.state_snapshot_resume_shock_m);
+            }
+        } else {
+            if (network_config_.state_snapshot_resume_shock_m > 0.0)
+                log->warn("Network (RTB-7d/RE-2): state_snapshot_resume_shock_m {:.3f} is "
+                          "INERT without state_snapshot_carry (nothing is restored to "
+                          "shock).", network_config_.state_snapshot_resume_shock_m);
+            if (network_config_.state_snapshot_carry_diagonal) {
+                log->warn("Network (RTB-7e): state_snapshot_carry_diagonal is INERT without "
+                          "state_snapshot_carry (no carry blob is written to shape).");
+                network_config_.state_snapshot_carry_diagonal = false;
+            }
+        }
         // PB emission-continuity filter (M5 prerequisite) — outputs-only smoother
         // on the re-based emitted phase biases + a self-tuning k·σ̂_step jump gate.
         network_emit_pb_filter_ =

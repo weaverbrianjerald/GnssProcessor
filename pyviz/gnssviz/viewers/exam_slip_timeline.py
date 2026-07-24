@@ -117,7 +117,7 @@ def build_exam_slip_timeline(ctx) -> ViewerResult:
               ylim=(-0.5, (n - 0.5) if n else 0.5),
               legend=Legend(loc="upper right"), x_is_datetime=True)
     ax.traces = traces
-    height = float(min(12.0, max(4.0, 0.34 * n + 1.6)))
+    height = ec.sat_strip_height(n)   # shared tile height (consistent cells across strips)
     fig = Figure(name="Cycle-slip timeline", axes=[ax], width=13, height=height)
 
     summary = _summary(ctx, df, sig, sats, lane_of)

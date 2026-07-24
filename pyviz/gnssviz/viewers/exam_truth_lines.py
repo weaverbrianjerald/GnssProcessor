@@ -7,7 +7,11 @@ constants (``truth_scalars.csv``: ``zwd_m``, ``isb_gps_gal_m``) or a per-epoch
 truth series (``truth_clock.csv``).  This viewer supplies exactly those overlay
 lines so the exam reader can eyeball recovery against the construction truth:
 
-  1. Estimated ZWD (``tropo_m`` ±1σ) vs the constant truth ZWD (``zwd_m``).
+  1. Estimated ZWD (``tropo_m`` ±1σ) vs the truth wet delay — the **per-epoch**
+     ``truth_tropo.csv`` series when it exists (``truth_scalars``' ``zwd_m`` is
+     only the arc *mean* once the wet delay is time-varying, and drawing a mean
+     as a flat truth line fabricates an error that is really the truth moving),
+     else the legacy constant.  Graded as RMS over epochs, like the Verifier.
   2. Recovered GPS→Galileo ISB (``Galileo_m`` ±1σ) vs the truth ISB
      (``isb_gps_gal_m``) — skipped on a GPS-only run (no ``Galileo_m`` column).
   3. Receiver clock residual ``clock_m − clock_bias_m`` on the (week, tow-ms)
@@ -52,14 +56,25 @@ def _last_finite(a):
 
 
 def _est_vs_truth_fig(t, est, sig, truth_val, *, est_color, name, title,
-                      ylabel, est_label, truth_label, storm):
-    """One tile: estimate (±1σ shaded band) with a constant truth HLine."""
+                      ylabel, est_label, truth_label, storm, truth_series=None):
+    """One tile: estimate (±1σ shaded band) against the truth.
+
+    ``truth_series`` is an optional ``(t, y)`` pair drawn as a line — use it
+    whenever the truth actually moves.  Falling back to ``truth_val`` as a flat
+    :class:`HLine` is only correct for a genuinely constant truth; drawing a
+    *mean* as a flat line invites the reader to measure the estimate against a
+    value it was never supposed to sit on.
+    """
     traces = []
     if sig is not None:
         traces.append(Band(x=t, lo=est - sig, hi=est + sig, color=est_color,
                            alpha=0.18, label="±1σ", show_in_legend=True))
     traces.append(Line(x=t, y=est, color=est_color, width=1.3, label=est_label))
-    if truth_val is not None:
+    if truth_series is not None:
+        tt, ty = truth_series
+        traces.append(Line(x=tt, y=ty, color=_C_TRUTH, width=1.2, style="--",
+                           label=truth_label))
+    elif truth_val is not None:
         traces.append(HLine(y=truth_val, color=_C_TRUTH, style="--", label=truth_label))
     traces += storm
     ax = Axes(title=title, xlabel="GPS Time", ylabel=ylabel, legend=Legend(loc="best"))
@@ -80,19 +95,49 @@ def build_exam_truth_lines(ctx) -> ViewerResult:
     lines = ["=== Answer-key constants vs recovered states ==="]
 
     # --- Figure 1: estimated ZWD vs truth ZWD (guarded on tropo_m) -----------
+    # truth_scalars' zwd_m is the ARC MEAN once the wet delay is time-varying
+    # (sim_sar_fiji swings 0.09-0.21 m), so measuring the estimate against it as
+    # a constant manufactures an error that is really just the truth moving.
+    # Prefer the per-epoch truth_tropo.csv series and grade RMS over epochs, the
+    # way the C++ Verifier does; fall back to the scalar only when it is absent.
     trop_col = first_col(state, "tropo_m", "tropo_zwd_m")
     zwd_truth = _num(sc.get("zwd_m"))
     if trop_col is not None:
         trop = trop_col.to_numpy(float)
         trop_s = first_col(state, "tropo_std_m")
         trop_s = trop_s.to_numpy(float) if trop_s is not None else None
+
+        ttro = ec.truth_frame(ctx, "truth_tropo.csv")
+        series, resid = None, None
+        if ttro is not None and first_col(ttro, "zwd_m") is not None:
+            m = ec.merge_truth_trace(ttro, state)
+            m_est = first_col(m, "tropo_m", "tropo_zwd_m")
+            m_tru = first_col(m, "zwd_m")
+            if not m.empty and m_est is not None and m_tru is not None:
+                series = (m["utc"], m_tru.to_numpy(float))
+                # Grade the steady state only, with the SAME skip the Verifier
+                # applies — otherwise this panel and the scorecard beside it
+                # report different ZWD errors for the same run.
+                skip = min(ec.converge_skip(ctx), max(0, len(m) - 1))
+                resid = (m_est.to_numpy(float) - m_tru.to_numpy(float))[skip:]
+
         figures.append(_est_vs_truth_fig(
             t, trop, trop_s, zwd_truth, est_color=_C_ZWD,
             name="ZWD vs truth", title="Estimated ZWD vs truth",
             ylabel="Zenith wet delay (m)", est_label="estimated ZWD",
-            truth_label="truth ZWD", storm=storm))
+            truth_label="truth ZWD (per epoch)" if series is not None else "truth ZWD",
+            storm=storm, truth_series=series))
+
         rec = _last_finite(trop)
-        if zwd_truth is not None and np.isfinite(rec):
+        if resid is not None:
+            r = resid[np.isfinite(resid)]
+            if r.size:
+                lines.append(
+                    f"ZWD  : RMS(est-truth) {np.sqrt(np.mean(r**2))*1000:6.1f} mm | "
+                    f"max |err| {np.max(np.abs(r))*1000:6.1f} mm | {r.size} steady-state "
+                    f"epochs (truth varies "
+                    f"{series[1].min()*100:.1f}-{series[1].max()*100:.1f} cm)")
+        elif zwd_truth is not None and np.isfinite(rec):
             lines.append(f"ZWD  : truth {zwd_truth*100:7.2f} cm | recovered "
                          f"{rec*100:7.2f} cm | error {(rec-zwd_truth)*1000:+7.1f} mm")
         else:

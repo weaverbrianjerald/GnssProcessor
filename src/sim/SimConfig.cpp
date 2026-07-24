@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <algorithm>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -98,6 +99,29 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.slips.taper_start_frac = jval(s, "cycle_slips.taper_start_frac","", cfg.slips.taper_start_frac);
 
     cfg.atmosphere.zwd_m       = jval(s, "atmosphere.zwd_m",       "", cfg.atmosphere.zwd_m);
+    // Time-varying truth ZWD (all knobs default 0 => constant, byte-identical).
+    cfg.atmosphere.zwd_diurnal_amp_m    = jval(s, "atmosphere.zwd_diurnal_amp_m",    "", cfg.atmosphere.zwd_diurnal_amp_m);
+    cfg.atmosphere.zwd_diurnal_period_s = jval(s, "atmosphere.zwd_diurnal_period_s", "", cfg.atmosphere.zwd_diurnal_period_s);
+    cfg.atmosphere.zwd_diurnal_phase_s  = jval(s, "atmosphere.zwd_diurnal_phase_s",  "", cfg.atmosphere.zwd_diurnal_phase_s);
+    cfg.atmosphere.zwd_rw_sigma_m       = jval(s, "atmosphere.zwd_rw_sigma_m",       "", cfg.atmosphere.zwd_rw_sigma_m);
+    cfg.atmosphere.zwd_rw_tau_s         = jval(s, "atmosphere.zwd_rw_tau_s",         "", cfg.atmosphere.zwd_rw_tau_s);
+    if (!(cfg.atmosphere.zwd_rw_tau_s > 0.0))
+        return fail("sim config 'atmosphere.zwd_rw_tau_s' must be > 0");
+    cfg.atmosphere.zwd_min_m            = jval(s, "atmosphere.zwd_min_m",            "", cfg.atmosphere.zwd_min_m);
+    if (!(cfg.atmosphere.zwd_diurnal_period_s > 0.0))
+        return fail("sim config 'atmosphere.zwd_diurnal_period_s' must be > 0");
+    if (!(cfg.atmosphere.zwd_diurnal_amp_m >= 0.0))
+        return fail("sim config 'atmosphere.zwd_diurnal_amp_m' must be >= 0");
+    if (!(cfg.atmosphere.zwd_rw_sigma_m >= 0.0))
+        return fail("sim config 'atmosphere.zwd_rw_sigma_m' must be >= 0");
+    if (!(cfg.atmosphere.zwd_min_m >= 0.0))
+        return fail("sim config 'atmosphere.zwd_min_m' must be >= 0");
+    if (const nlohmann::json* sd = resolvePath(s, "atmosphere.seed")) {
+        if (!sd->is_number() || sd->get<double>() < 0.0)
+            return fail("sim config 'atmosphere.seed' must be a non-negative integer");
+        cfg.atmosphere.seed = static_cast<std::uint64_t>(sd->get<double>());
+    }
+
     cfg.biases.isb_gps_gal_m   = jval(s, "biases.isb_gps_gal_m",   "", cfg.biases.isb_gps_gal_m);
     cfg.geometry.elevation_mask_deg = jval(s, "geometry.elevation_mask_deg", "", cfg.geometry.elevation_mask_deg);
 
@@ -107,6 +131,29 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.corrections.solid_earth_tide = jval(s, "corrections.solid_earth_tide", "", cfg.corrections.solid_earth_tide);
     cfg.corrections.pole_tide        = jval(s, "corrections.pole_tide",        "", cfg.corrections.pole_tide);
     cfg.corrections.sat_antenna      = jval(s, "corrections.sat_antenna",      "", cfg.corrections.sat_antenna);
+    cfg.corrections.signal_bias      = jval(s, "corrections.signal_bias",      "", cfg.corrections.signal_bias);
+    cfg.corrections.ocean_tide       = jval(s, "corrections.ocean_tide",       "", cfg.corrections.ocean_tide);
+    if (const nlohmann::json* nc = resolvePath(s, "corrections.eot20_nc_path")) {
+        if (!nc->is_string())
+            return fail("sim config 'corrections.eot20_nc_path' must be a string (path to EOT20_load.nc)");
+        cfg.corrections.eot20_nc_path = nc->get<std::string>();
+    }
+    if (cfg.corrections.ocean_tide && cfg.corrections.eot20_nc_path.empty())
+        return fail("sim config 'corrections.ocean_tide' is set but 'corrections.eot20_nc_path' is empty "
+                    "(the EOT20 global load grid supplies the station coefficients)");
+    cfg.corrections.ocean_tide_along_track =
+        jval(s, "corrections.ocean_tide_along_track", "", cfg.corrections.ocean_tide_along_track);
+    cfg.corrections.otl_anchor_spacing_km =
+        jval(s, "corrections.otl_anchor_spacing_km", "", cfg.corrections.otl_anchor_spacing_km);
+    // Fail loudly rather than silently freezing the field: the whole point of the
+    // along-track mode is that the term does NOT cancel, so a typo that quietly
+    // reverts to the cancelling path would be invisible in the output.
+    if (cfg.corrections.ocean_tide_along_track && !cfg.corrections.ocean_tide)
+        return fail("sim config 'corrections.ocean_tide_along_track' is set but "
+                    "'corrections.ocean_tide' is false (the along-track field extends the "
+                    "ocean-loading term; it cannot be injected on its own)");
+    if (!(cfg.corrections.otl_anchor_spacing_km > 0.0))
+        return fail("sim config 'corrections.otl_anchor_spacing_km' must be > 0 km");
     // Receiver antenna type: the RINEX "ANT # / TYPE" field (16-char model + 4-char
     // radome).  Empty = OFF.  Doubles as the RINEX header string, so a single source
     // of truth guarantees the declared antenna IS the injected one.
@@ -138,12 +185,93 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.iono.tid_period_s           = jval(s, "iono.tid_period_s",           "", cfg.iono.tid_period_s);
     cfg.iono.tid_period_start_s     = jval(s, "iono.tid_period_start_s",     "", cfg.iono.tid_period_start_s);
     cfg.iono.tid_period_end_s       = jval(s, "iono.tid_period_end_s",       "", cfg.iono.tid_period_end_s);
+    cfg.iono.tid_pulse_count        = jint("iono.tid_pulse_count",        cfg.iono.tid_pulse_count);
+    cfg.iono.tid_pulse_duration_s   = jval(s, "iono.tid_pulse_duration_s",   "", cfg.iono.tid_pulse_duration_s);
+    cfg.iono.tid_fast_period_s      = jval(s, "iono.tid_fast_period_s",      "", cfg.iono.tid_fast_period_s);
+    if (const nlohmann::json* ts = resolvePath(s, "iono.tid_sats")) {
+        if (!ts->is_array())
+            return fail("sim config 'iono.tid_sats' must be an array of PRN strings (e.g. [\"E13\",\"G18\"])");
+        cfg.iono.tid_sats.clear();
+        for (const auto& e : *ts) {
+            if (!e.is_string())
+                return fail("sim config 'iono.tid_sats' entries must be PRN strings (e.g. \"G18\")");
+            cfg.iono.tid_sats.push_back(e.get<std::string>());
+        }
+    }
+    if (const nlohmann::json* fs = resolvePath(s, "iono.tid_fast_sat")) {
+        if (!fs->is_string())
+            return fail("sim config 'iono.tid_fast_sat' must be a PRN string (e.g. \"G23\")");
+        cfg.iono.tid_fast_sat = fs->get<std::string>();
+    }
+    // The fast satellite must be one of the TID satellites, or its flicker is never applied.
+    if (!cfg.iono.tid_fast_sat.empty() && !cfg.iono.tid_sats.empty() &&
+        std::find(cfg.iono.tid_sats.begin(), cfg.iono.tid_sats.end(), cfg.iono.tid_fast_sat) == cfg.iono.tid_sats.end())
+        return fail("sim config 'iono.tid_fast_sat' (" + cfg.iono.tid_fast_sat +
+                    ") is not in 'iono.tid_sats' — it would carry no TID to flicker");
+    // Explicit per-satellite TID pulses (the richest overlay control; supersedes the above).
+    if (const nlohmann::json* tp = resolvePath(s, "iono.tid_pulses")) {
+        if (!tp->is_array())
+            return fail("sim config 'iono.tid_pulses' must be an array of pulse objects");
+        cfg.iono.tid_pulses.clear();
+        for (const auto& e : *tp) {
+            if (!e.is_object())
+                return fail("sim config 'iono.tid_pulses' entries must be objects "
+                            "{sat, center_tow_s, amp_tecu, period_s, duration_s}");
+            SimConfig::Iono::TidPulse p;
+            if (!e.contains("sat") || !e["sat"].is_string())
+                return fail("sim config 'iono.tid_pulses[].sat' (PRN string) is required");
+            p.sat = e["sat"].get<std::string>();
+            auto num = [&](const char* key, double dflt, bool required) -> double {
+                if (!e.contains(key)) {
+                    if (required) { seed_ok = false; seed_err = std::string("sim config 'iono.tid_pulses[].") + key + "' is required"; }
+                    return dflt;
+                }
+                return e[key].is_number() ? e[key].get<double>() : dflt;
+            };
+            p.center_tow_s = num("center_tow_s", 0.0, true);
+            p.amp_tecu     = num("amp_tecu", 0.0, true);
+            p.period_s     = num("period_s", 0.0, false);      // <=0 => smooth bump
+            p.duration_s   = num("duration_s", 600.0, false);
+            if (!seed_ok) return fail(seed_err);
+            if (!(p.duration_s > 0.0))
+                return fail("sim config 'iono.tid_pulses[].duration_s' must be > 0 (sat " + p.sat + ")");
+            if (!(p.amp_tecu >= 0.0))
+                return fail("sim config 'iono.tid_pulses[].amp_tecu' must be >= 0 (sat " + p.sat + ")");
+            cfg.iono.tid_pulses.push_back(std::move(p));
+        }
+    }
     cfg.iono.sed_elev_exp           = jval(s, "iono.sed_elev_exp",           "", cfg.iono.sed_elev_exp);
     cfg.iono.tid_positive           = jval(s, "iono.tid_positive",           "", cfg.iono.tid_positive);
     cfg.iono.storm_active_fraction  = jval(s, "iono.storm_active_fraction",  "", cfg.iono.storm_active_fraction);
     cfg.iono.tid_azimuth_deg        = jval(s, "iono.tid_azimuth_deg",        "", cfg.iono.tid_azimuth_deg);
     cfg.iono.shell_height_km        = jval(s, "iono.shell_height_km",        "", cfg.iono.shell_height_km);
     cfg.iono.scint_elev_clamp_deg   = jval(s, "iono.scint_elev_clamp_deg",   "", cfg.iono.scint_elev_clamp_deg);
+
+    // Quiet-background source.  Validated STRICTLY: a typo must not silently fall back
+    // to Klobuchar and emit a dataset that merely LOOKS like a GIM run.
+    if (const nlohmann::json* bs = resolvePath(s, "iono.background_source")) {
+        if (!bs->is_string())
+            return fail("sim config 'iono.background_source' must be a string "
+                        "(\"klobuchar\" | \"gim\" | \"analytic\")");
+        cfg.iono.background_source = bs->get<std::string>();
+        if (cfg.iono.background_source != "klobuchar" &&
+            cfg.iono.background_source != "gim" &&
+            cfg.iono.background_source != "analytic")
+            return fail("sim config 'iono.background_source' is '" + cfg.iono.background_source +
+                        "'; must be one of \"klobuchar\", \"gim\", \"analytic\"");
+    }
+    if (const nlohmann::json* gp = resolvePath(s, "iono.gim_path")) {
+        if (!gp->is_string())
+            return fail("sim config 'iono.gim_path' must be a string (path to a decompressed IONEX .INX)");
+        cfg.iono.gim_path = gp->get<std::string>();
+    }
+
+    cfg.date.year = jint("date.year", cfg.date.year);
+    cfg.date.doy  = jint("date.doy",  cfg.date.doy);
+    if (cfg.date.year < 1980 || cfg.date.year > 2200)
+        return fail("sim config 'date.year' = " + std::to_string(cfg.date.year) + " is out of range [1980, 2200]");
+    if (cfg.date.doy < 1 || cfg.date.doy > 366)
+        return fail("sim config 'date.doy' = " + std::to_string(cfg.date.doy) + " is out of range [1, 366]");
 
     cfg.trajectory.interval_s      = jval(s, "trajectory.interval_s",      "", cfg.trajectory.interval_s);
     cfg.trajectory.n_epochs        = jint("trajectory.n_epochs",        cfg.trajectory.n_epochs);
@@ -183,6 +311,50 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             cfg.trajectory.waypoints.push_back({ w[0].get<double>(), w[1].get<double>() });
         }
     }
+
+    // --- RINEX header realism / leak knobs (SPEC R2). --------------------------
+    // Every field is optional and every default reproduces the current header byte-for-
+    // byte, so an absent block (or one of all-defaults) is byte-identical.
+    if (const nlohmann::json* pm = resolvePath(s, "rinex.approx_position_mode")) {
+        if (!pm->is_string())
+            return fail("sim config 'rinex.approx_position_mode' must be a string (\"truth\" | \"quantized\")");
+        cfg.rinex.approx_position_mode = pm->get<std::string>();
+        if (cfg.rinex.approx_position_mode != "truth" &&
+            cfg.rinex.approx_position_mode != "quantized")
+            return fail("sim config 'rinex.approx_position_mode' is '" + cfg.rinex.approx_position_mode +
+                        "'; must be \"truth\" or \"quantized\"");
+    }
+    cfg.rinex.approx_quantize_deg = jval(s, "rinex.approx_quantize_deg", "", cfg.rinex.approx_quantize_deg);
+    if (!(cfg.rinex.approx_quantize_deg > 0.0))
+        return fail("sim config 'rinex.approx_quantize_deg' must be > 0 degrees");
+    // Optional header strings.  Absent => keep the writer default (byte-identical); each
+    // guarded to its RINEX field width so a paste cannot overrun the fixed columns.
+    auto jrstr = [&](const char* pth, std::string& field, std::size_t maxw) {
+        const nlohmann::json* p = resolvePath(s, pth);
+        if (!p) return;                              // absent: keep default
+        if (!p->is_string()) { seed_ok = false; seed_err = std::string("sim config '") + pth + "' must be a string"; return; }
+        std::string v = p->get<std::string>();
+        if (v.size() > maxw) {
+            seed_ok = false;
+            seed_err = std::string("sim config '") + pth + "' is " + std::to_string(v.size()) +
+                       " chars (> " + std::to_string(maxw) + "; the RINEX field width)";
+            return;
+        }
+        field = v;
+    };
+    jrstr("rinex.pgm",      cfg.rinex.pgm,      20);
+    jrstr("rinex.run_by",   cfg.rinex.run_by,   20);
+    jrstr("rinex.observer", cfg.rinex.observer, 20);
+    jrstr("rinex.agency",   cfg.rinex.agency,   40);   // OBSERVER/AGENCY: agency spans cols 20-59
+    if (const nlohmann::json* fm = resolvePath(s, "rinex.file_date_mode")) {
+        if (!fm->is_string())
+            return fail("sim config 'rinex.file_date_mode' must be a string (\"build\" | \"collection_end\")");
+        cfg.rinex.file_date_mode = fm->get<std::string>();
+        if (cfg.rinex.file_date_mode != "build" && cfg.rinex.file_date_mode != "collection_end")
+            return fail("sim config 'rinex.file_date_mode' is '" + cfg.rinex.file_date_mode +
+                        "'; must be \"build\" or \"collection_end\"");
+    }
+    cfg.rinex.gps_utc_leap_s = jint("rinex.gps_utc_leap_s", cfg.rinex.gps_utc_leap_s);
 
     if (!seed_ok) return fail(seed_err);
 

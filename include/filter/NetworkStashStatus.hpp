@@ -36,6 +36,13 @@ class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
+/**
+ * @brief Re-stash the D2/C1/SH carried quantities, fold this epoch into the carry
+ *        LS-VCE monitor, and emit the epoch-status QC row.  This is the per-epoch
+ *        producer bookkeeping tail (run after the solve/emit) that persists the carries
+ *        for the next epoch's prior and records the epoch's QC census (present / clock /
+ *        PB / CB / dropped-sat counts).  Keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
+ */
 void networkStashStatus(
     NetworkRunContext& ctx,
     const GnssConfig& config_,

@@ -167,7 +167,7 @@ def _iono_raster(df, sats, value_col, *, diverging, title, cbar_label,
               title=title, xlabel="GPS Time", ylabel="Satellite",
               grid=False, x_is_datetime=True)
     return Figure(name=title, axes=[ax], width=width,
-                  height=min(10.0, 0.34 * len(sats) + 2.0),
+                  height=ec.sat_strip_height(len(sats)),   # shared tile height (SPEC: consistent cells)
                   cmap=cmap, clim=clim, colorbar=ColorBar(label=cbar_label))
 
 
@@ -223,26 +223,40 @@ def build_exam_iono_truth(ctx) -> ViewerResult:
     traces += ec.storm_vlines(ctx)
 
     peak = _storm_peak(ctx, df)
-    if peak is not None:
+    # On a TOTAL-I_L1 plot the visible maximum is the bulk (GIM) ionosphere, not the
+    # small synthetic overlay — so the ring must mark the max TOTAL slant TEC (which is
+    # what the eye reads as "the peak"), NOT the overlay dI_L1 peak.  The overlay peak
+    # stays in the text box, clearly labelled, so both numbers are available.
+    tec_peak = None
+    if is_total:
+        tot = df["I_L1_m"].to_numpy(float)
+        if np.any(np.isfinite(tot)):
+            j = int(np.nanargmax(tot))
+            tec_peak = (str(df["satellite"].iloc[j]), float(df["tow_s"].iloc[j]),
+                        float(tot[j]), df["utc"].iloc[j])
+    if tec_peak is not None:
+        t_sat, t_tow, t_val, t_utc = tec_peak
+        traces.append(Scatter(x=[t_utc], y=[t_val], size=44, marker="o",
+                              color=_PEAK_RING, alpha=1.0,
+                              label="max slant TEC", show_in_legend=True, zorder=5))
+    elif peak is not None:  # dI-only plot (no total column): mark the overlay peak
         p_sat, p_tow, p_val, p_utc = peak
-        # The peak stat is the storm delta; on a total-I_L1 plot mark the ring at
-        # the sat's total delay there so it sits on the drawn line.
-        p_total = p_val
-        if is_total:
-            row = df[(df["satellite"] == p_sat)
-                     & (np.isclose(df["tow_s"].to_numpy(float), p_tow))]
-            if not row.empty:
-                p_total = float(row["I_L1_m"].iloc[0])
         if p_utc is not None:
-            traces.append(Scatter(x=[p_utc], y=[p_total], size=44, marker="o",
+            traces.append(Scatter(x=[p_utc], y=[p_val], size=44, marker="o",
                                   color=_PEAK_RING, alpha=1.0,
-                                  label="storm peak", show_in_legend=True,
-                                  zorder=5))
-        traces.append(TextBox(
-            x=0.02, y=0.97, mono=True, bold=True, boxed=True,
-            text=(f"storm peak dI_L1: {p_val:+.2f} m\n"
-                  f"sat {p_sat}  @ tow {p_tow:.1f} s"
-                  + (f"\n{pd.Timestamp(p_utc):%H:%M:%S} GPS" if p_utc is not None else ""))))
+                                  label="storm peak", show_in_legend=True, zorder=5))
+    if peak is not None or tec_peak is not None:
+        lines = []
+        if tec_peak is not None:
+            t_sat, t_tow, t_val, t_utc = tec_peak
+            lines.append(f"max slant TEC I_L1: {t_val:.2f} m  (sat {t_sat}"
+                         + (f", {pd.Timestamp(t_utc):%H:%M:%S} GPS)" if t_utc is not None else ")"))
+        if peak is not None:
+            p_sat, p_tow, p_val, p_utc = peak
+            lines.append(f"synthetic overlay peak dI_L1: {p_val:+.2f} m  (sat {p_sat}"
+                         + (f", {pd.Timestamp(p_utc):%H:%M:%S} GPS)" if p_utc is not None else ")"))
+        traces.append(TextBox(x=0.02, y=0.97, mono=True, bold=True, boxed=True,
+                              text="\n".join(lines)))
     ax_s.traces = traces
     figures.append(Figure(name="Per-satellite I_L1", axes=[ax_s],
                           width=13.0, height=4.6))

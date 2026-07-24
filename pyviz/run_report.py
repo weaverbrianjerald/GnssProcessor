@@ -71,6 +71,8 @@ def main(argv=None) -> int:
                     help="output HTML path (default: <log_dir>/gnss_report.html)")
     ap.add_argument("--only", nargs="*", default=None,
                     help="only run these viewer names (e.g. state dops)")
+    ap.add_argument("--exclude", nargs="*", default=None,
+                    help="drop these viewer names from the report (applied after --only)")
     ap.add_argument("--all", action="store_true",
                     help="also run viewers that are off by default (e.g. residual_strip)")
     ap.add_argument("--backend", default="matplotlib")
@@ -128,8 +130,12 @@ def main(argv=None) -> int:
     if is_exam:
         print(f"    truth dir: {ctx.truth_dir}")
         print(f"    verify report: {verify_path or '(none found)'}")
+    registry = _registry_for(std_residuals)
+    if args.exclude:
+        drop = set(args.exclude)
+        registry = [v for v in registry if v.name not in drop]
     out = run_viewers(ctx, only=args.only, include_disabled=args.all,
-                      registry=_registry_for(std_residuals))
+                      registry=registry)
     backend = get_backend(args.backend)
 
     for name, reason in out.skipped:
@@ -155,9 +161,13 @@ def main(argv=None) -> int:
         if is_exam and verify_path:
             from gnssviz.viewers.exam_common import verify_report, verifier_banner_html
             extra_html = verifier_banner_html(verify_report(ctx), verify_path)
+        # The exam dashboard is a polished artifact: suppress the "Skipped viewers"
+        # plumbing list (viewers that auto-skip for lack of their inputs are expected,
+        # not something the reader should see).
+        report_skipped = [] if is_exam else out.skipped
         write_html_report(output,
                           [(v.title, r) for (v, r) in out.ran],
-                          backend, log_dir=ctx.log_dir, skipped=out.skipped,
+                          backend, log_dir=ctx.log_dir, skipped=report_skipped,
                           dpi=args.dpi, title=title, extra_html=extra_html,
                           plotly_js=args.plotly_js)
         print(f"\nWrote {output}")

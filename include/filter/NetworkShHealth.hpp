@@ -36,6 +36,13 @@ class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
 struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
 
+/**
+ * @brief Run the T1a SH-field health probe for this epoch, fold the fused adaptive-
+ *        deweight gate into @p iono_deweight, and update the carry LS-VCE monitor.
+ *        Probes the co-estimated SH-VTEC field's conditioning and drives the
+ *        station-adaptive SH-constraint deweighting; @p first_vce_s / @p last_vce_hour
+ *        track the LS-VCE fold cadence.  Keeps the subBegin/subEnd(SB_T1A) brackets.
+ */
 void networkShHealth(
     NetworkRunContext& ctx,
     const GnssConfig& config_,

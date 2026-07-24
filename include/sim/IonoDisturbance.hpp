@@ -58,6 +58,23 @@ struct IonoConfig {
     double tid_period_start_s{ 0.0 };
     double tid_period_end_s{ 0.0 };
 
+    // Optional PULSE-TRAIN envelope for the TID.  When tid_pulse_count>0 the TID is a
+    // train of that many raised-cosine bumps, each tid_pulse_duration_s wide, spaced
+    // evenly across the storm window — a few sporadic ~10-min disturbances rather than
+    // one window-long oscillation.  0 (default) keeps the legacy continuous chirp, so
+    // every existing scenario is byte-identical.  A per-ray temporal carrier period can
+    // be passed to evaluate() (tid_period_override_s) so a single satellite can be made
+    // to fluctuate rapidly inside the bumps while the rest carry the smooth pulse only.
+    int    tid_pulse_count{ 0 };
+    double tid_pulse_duration_s{ 600.0 };
+
+    // When >0, the pulses are DEALT OUT round-robin to this many satellites (by the
+    // per-ray tid_slot passed to evaluate): pulse i belongs only to the satellite whose
+    // slot == i % tid_n_sats.  So the bumps are STAGGERED in time across satellites —
+    // usually only one satellite is disturbed at a time — instead of every TID
+    // satellite pulsing together.  0 (default) = every TID satellite gets every pulse.
+    int    tid_n_sats{ 0 };
+
     // Extra LOW-ELEVATION emphasis on the storm disturbance (SED + TID): the slant
     // term is multiplied by obliquity^sed_elev_exp ON TOP of the standard
     // vertical->slant obliquity, so low-elevation rays are disturbed far more than
@@ -113,10 +130,27 @@ public:
      * @param storm_gain Per-ray multiplier on the SED+TID storm terms (the quiet
      *        background is untouched): 1 = fully disturbed, 0 = "stable" (quiet
      *        only).  Used to leave a fraction of satellites undisturbed in a storm.
+     * @param tid_period_override_s When >0 AND a pulse train is active
+     *        (tid_pulse_count>0), the TID inside each pulse is filled with a rapid
+     *        temporal carrier of this period for THIS ray only — used to make one
+     *        designated satellite flicker (e.g. ~60 s, the Nyquist limit of 30 s data)
+     *        while every other TID satellite carries only the smooth ~10-min bump.
+     *        0 (default) = smooth bump / legacy behaviour.
+     * @param tid_slot This satellite's index among the TID satellites (0-based).  With
+     *        cfg.tid_n_sats>0 the pulse train is staggered: this ray only shows pulse i
+     *        when i % cfg.tid_n_sats == tid_slot, so satellites pulse at different times.
+     *        -1 (default) = show every pulse (no staggering).
+     * @param tid_vtec_explicit When >=0 this VERTICAL TID amplitude (TECU) is used
+     *        DIRECTLY for this ray, bypassing the internal pulse/chirp model — the caller
+     *        (main.cpp) has already summed this satellite's explicit tid_pulses at this
+     *        epoch.  It is mapped to slant by the STANDARD obliquity only (no sed_elev_exp
+     *        emphasis).  <0 (default) = compute the TID from the config as before.
      */
     IonoSample evaluate(double rx_lat_deg, double rx_lon_deg,
                         double az_deg, double el_deg, const GnssTime& t,
-                        double quiet_slant_stec_tecu, double storm_gain = 1.0) const;
+                        double quiet_slant_stec_tecu, double storm_gain = 1.0,
+                        double tid_period_override_s = 0.0, int tid_slot = -1,
+                        double tid_vtec_explicit = -1.0) const;
 
     /**
      * @brief First-order slant ionospheric delay (metres) at carrier @p f_hz.

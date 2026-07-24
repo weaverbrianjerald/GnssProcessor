@@ -172,6 +172,13 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkShHealth.cpp
     src/core/filter/NetworkLeveling.cpp
     src/core/filter/NetworkStashStatus.cpp
+    src/core/filter/NetworkProducerAr.cpp
+    src/core/filter/NetworkInstallCarry.cpp
+    src/core/filter/NetworkDdPriorBuild.cpp
+    src/core/filter/NetworkMwWlGlue.cpp
+    src/core/filter/NetworkSolveGlue.cpp
+    src/core/filter/NetworkRelevel.cpp
+    src/core/filter/NetworkTeardown.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkBiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
@@ -180,11 +187,13 @@ add_library(gnss_core STATIC
 target_include_directories(gnss_core PUBLIC include)
 # KalmanFilter.cpp emits more COFF sections than the default object format
 # allows (template-heavy Eigen kernels); /bigobj raises the limit.  Side-effect
-# free build flag (MSVC only).  ApplicationNetwork.cpp is the large network-driver
-# TU and likewise crossed the section limit as it grew.
+# free build flag (MSVC only).  ApplicationNetwork.cpp no longer needs it: the
+# decomposition (INC-0..12) relocated the template-heavy epoch-loop body into the
+# filter/Network* seams, shrinking the driver TU from ~14.7k to ~1.6k lines, back
+# under the section limit.  ApplicationNetworkAssembly.cpp keeps it (the PASS-B
+# per-station Eigen assembly still crosses the limit).
 if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
-        src/core/app/ApplicationNetwork.cpp
         src/core/app/ApplicationNetworkAssembly.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
@@ -261,6 +270,7 @@ add_executable(gnss_simulator
     src/sim/EphemerisProvider.cpp
     src/sim/TrajectoryGenerator.cpp
     src/sim/IonoDisturbance.cpp
+    src/sim/OtlField.cpp
     src/sim/Verifier.cpp)
 target_link_libraries(gnss_simulator PRIVATE gnss_core)
 
@@ -336,6 +346,7 @@ add_executable(gnss_simulator_selftest
     src/sim/SimConfig.cpp
     src/sim/ScriptedSlips.cpp
     src/sim/TrajectoryGenerator.cpp
+    src/sim/OtlField.cpp
     src/sim/Verifier.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
