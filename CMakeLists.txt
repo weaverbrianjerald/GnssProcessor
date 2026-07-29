@@ -54,9 +54,11 @@ add_library(gnss_core STATIC
     src/core/atmosphere/HigherOrderIonosphere.cpp
     src/core/config/GnssConfig.cpp
     src/core/config/GnssConfigLoad.cpp
+    src/core/config/GnssConfigLoadNetwork.cpp
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
+    src/core/logging/NetworkRunTraces.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/RinexNavParser.cpp
@@ -105,6 +107,10 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
+    src/core/app/ApplicationNetworkSetup.cpp
+    src/core/app/ApplicationConsumerReplay.cpp
+    src/core/app/ApplicationNetworkAssembly.cpp
+    src/core/app/NetworkRunContext.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
@@ -126,6 +132,8 @@ add_library(gnss_core STATIC
 	src/core/slip/SoftLliBridge.cpp
 	src/core/slip/JumpGapFitter.cpp
 	src/core/slip/SlipBridgeKernel.cpp
+	src/core/slip/NetworkRawObservables.cpp
+	src/core/slip/NetworkSlipQc.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
     src/core/aiding/ZuptAidingSource.cpp
@@ -136,6 +144,8 @@ add_library(gnss_core STATIC
     src/core/products/StationInfoFile.cpp
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/NetworkProductEmitter.cpp
+    src/core/products/NetworkEmitRebase.cpp
+    src/core/products/NetworkPbEmitFilter.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -148,18 +158,45 @@ add_library(gnss_core STATIC
     src/core/filter/CovarianceReReference.cpp
     src/core/filter/NetworkNormalEquations.cpp
     src/core/filter/NetworkEstimator.cpp
+    src/core/filter/NetworkInvariantCarryDriver.cpp
+    src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
+    src/core/filter/NetworkPhaseDatum.cpp
+    src/core/filter/NetworkChainDatum.cpp
+    src/core/filter/NetworkRaim.cpp
+    src/core/filter/NetworkClockQc.cpp
+    src/core/filter/NetworkFrameDiag.cpp
+    src/core/filter/NetworkSolPrep.cpp
+    src/core/filter/NetworkEmitStore.cpp
+    src/core/filter/NetworkIonoDiag.cpp
+    src/core/filter/NetworkDdFrac.cpp
+    src/core/filter/NetworkShDevVtec.cpp
+    src/core/filter/NetworkShHealth.cpp
+    src/core/filter/NetworkLeveling.cpp
+    src/core/filter/NetworkStashStatus.cpp
+    src/core/filter/NetworkProducerAr.cpp
+    src/core/filter/NetworkInstallCarry.cpp
+    src/core/filter/NetworkDdPriorBuild.cpp
+    src/core/filter/NetworkMwWlGlue.cpp
+    src/core/filter/NetworkSolveGlue.cpp
+    src/core/filter/NetworkRelevel.cpp
+    src/core/filter/NetworkTeardown.cpp
+    src/core/filter/NetworkCoupling.cpp
+    src/core/filter/NetworkBiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 # KalmanFilter.cpp emits more COFF sections than the default object format
 # allows (template-heavy Eigen kernels); /bigobj raises the limit.  Side-effect
-# free build flag (MSVC only).  ApplicationNetwork.cpp is the large network-driver
-# TU and likewise crossed the section limit as it grew.
+# free build flag (MSVC only).  ApplicationNetwork.cpp no longer needs it: the
+# decomposition (INC-0..12) relocated the template-heavy epoch-loop body into the
+# filter/Network* seams, shrinking the driver TU from ~14.7k to ~1.6k lines, back
+# under the section limit.  ApplicationNetworkAssembly.cpp keeps it (the PASS-B
+# per-station Eigen assembly still crosses the limit).
 if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
-        src/core/app/ApplicationNetwork.cpp
+        src/core/app/ApplicationNetworkAssembly.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
@@ -230,27 +267,51 @@ target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 add_executable(gnss_simulator
     src/sim/main.cpp
     src/sim/SimConfig.cpp
+    src/sim/ScriptedSlips.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/EphemerisProvider.cpp
     src/sim/TrajectoryGenerator.cpp
     src/sim/IonoDisturbance.cpp
+    src/sim/OtlField.cpp
     src/sim/Verifier.cpp)
 target_link_libraries(gnss_simulator PRIVATE gnss_core)
 
 # Unit tests
 enable_testing()
 add_executable(gnss_tests
-    tests/test_main.cpp
+    tests/test_math_core.cpp
+    tests/test_atmosphere_models.cpp
+    tests/test_site_displacement.cpp
+    tests/test_antenna_model.cpp
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
     tests/test_network_emit.cpp
     tests/test_sh_ionosphere.cpp
     tests/test_network_product_io.cpp
+    tests/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_network_normal_equations.cpp
     tests/test_network_estimator.cpp
+    tests/test_network_carry_vce.cpp
+    tests/test_network_iono_deweight_gate.cpp
+    tests/test_network_zstore.cpp
+    tests/test_network_robust_stats.cpp
+    tests/test_network_slip_qc.cpp
+    tests/test_if_phase_slip_detector.cpp
+    tests/test_network_coupling.cpp
+    tests/test_network_invariant_carry_driver.cpp
+    tests/test_shdev_carry.cpp
+    tests/test_network_mw_wl_layer.cpp
+    tests/test_network_phase_datum.cpp
+    tests/test_network_bias_admission.cpp
+    tests/test_network_rank_gate.cpp
+    tests/test_mw_bridge.cpp
+    tests/test_card4_emit_rebase.cpp
+    tests/test_pb_emit_filter.cpp
+    tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_config_extends.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_transforms.cpp
@@ -272,6 +333,7 @@ add_executable(gnss_tests
     tests/test_orbit_enhancements.cpp
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
+    tests/test_antenna_radome_fallback.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
@@ -287,6 +349,10 @@ add_executable(gnss_simulator_selftest
     tests/sim/test_sim_selfconsistency.cpp
     src/sim/RinexObsWriter.cpp
     src/sim/IonoDisturbance.cpp
+    src/sim/SimConfig.cpp
+    src/sim/ScriptedSlips.cpp
+    src/sim/TrajectoryGenerator.cpp
+    src/sim/OtlField.cpp
     src/sim/Verifier.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")

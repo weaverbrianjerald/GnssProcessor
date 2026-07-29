@@ -232,35 +232,39 @@ namespace GnssProcessor {
     // testing alongside interpolatePcv); see Antenna.hpp and the definition
     // below the constructor.
 
-    /// Build receiver antenna substitution candidates (priority order) for a
-    /// raw RINEX antenna type, modelled on M-PAGES AntennaSubs +
-    /// AntennaDatabase::findSubRxAnt:
-    ///   (1) an explicit deprecated/legacy-code table (extension point — see
-    ///       RNXCMP/NGS deprecatedAnts.json), each table candidate also
-    ///       offered with its own radome→NONE fallback; then
-    ///   (2) the generic IGS radome→NONE fallback on the type itself: when
-    ///       the 20-char "<16-char model><4-char radome>" field carries a
-    ///       non-NONE radome, retry with the radome-agnostic "NONE"
-    ///       calibration (the documented IGS fallback).
-    /// Duplicates are removed while preserving priority order.  Returns an
-    /// empty list when no rule applies (e.g. a blank/already-NONE radome and
-    /// no table entry).
-    std::vector<std::string> receiverAntennaSubstitutes(const std::string& raw) {
-        // radome→NONE variant of a 20-char ANTEX/RINEX antenna field, or {}
-        // when there is no distinct non-NONE radome to replace.
-        auto radomeNoneVariant = [](const std::string& s) -> std::string {
-            if (s.size() >= 20 && s.substr(16, 4) != "NONE") {
-                std::string v = s;
-                v.replace(16, 4, "NONE");
-                return v;
-            }
-            return {};
-        };
+    /// Type-preserving radome→NONE variant of a 20-char ANTEX/RINEX antenna
+    /// field ("<16-char model><4-char radome>"): the same field with its
+    /// radome overwritten by the radome-agnostic "NONE" calibration, or {}
+    /// when there is no distinct non-NONE radome to replace (a blank/already
+    /// -NONE radome, or a field shorter than 20 chars).  Standard IGS/EPN
+    /// fallback — an uncalibrated radome code borrows the same physical
+    /// antenna's radome-agnostic NONE PCO/PCV (mm-level).  Never touches the
+    /// antenna TYPE (chars 0-15).
+    std::string radomeNoneVariantOf(const std::string& s) {
+        if (s.size() >= 20 && s.substr(16, 4) != "NONE") {
+            std::string v = s;
+            v.replace(16, 4, "NONE");
+            return v;
+        }
+        return {};
+    }
 
-        // (1) Explicit deprecated/legacy-code table.  Empty by default: the
-        // generic radome→NONE rule below covers the common "specific radome
-        // uncalibrated" case for every antenna, so add entries here only for
-        // genuine model-code remaps, e.g.
+    /// Build receiver antenna TYPE-remap substitution candidates (priority
+    /// order) for a raw RINEX antenna type, modelled on M-PAGES AntennaSubs +
+    /// AntennaDatabase::findSubRxAnt: an explicit deprecated/legacy-code table
+    /// (extension point — see RNXCMP/NGS deprecatedAnts.json), each table
+    /// candidate also offered with its own radome→NONE fallback.
+    ///
+    /// The generic IGS radome→NONE fallback on the ORIGINAL type is NOT built
+    /// here: findReceiverAntennaEntry() now applies it unconditionally as the
+    /// always-on Tier 1 step (@ref radomeNoneVariantOf), before consulting
+    /// this opt-in TYPE-remap table.  Duplicates are removed while preserving
+    /// priority order.  Returns an empty list when no table rule applies.
+    std::vector<std::string> receiverAntennaSubstitutes(const std::string& raw) {
+        // Explicit deprecated/legacy-code TYPE-remap table.  Empty by default:
+        // the always-on Tier 1 radome→NONE step already covers the common
+        // "specific radome uncalibrated" case for every antenna, so add
+        // entries here only for genuine model-code remaps, e.g.
         //   { "OLD_MODEL_CODE   NONE", { "NEW_MODEL_CODE   NONE" } },
         static const std::map<std::string, std::vector<std::string>> kSubTable = {};
 
@@ -275,12 +279,47 @@ namespace GnssProcessor {
         if (it != kSubTable.end()) {
             for (const auto& cand : it->second) {
                 push_unique(cand);
-                push_unique(radomeNoneVariant(cand));
+                // A remapped TYPE may itself carry an uncalibrated radome.
+                push_unique(radomeNoneVariantOf(cand));
             }
         }
-        // (2) Generic radome→NONE on the original type.
-        push_unique(radomeNoneVariant(raw));
         return out;
+    }
+
+    /// Pure exact-then-substring receiver-antenna match against @p antennas (no
+    /// logging).  An exact match on either normalized form wins; otherwise the
+    /// first substring-containment match in @p antennas order is returned.
+    /// @p out_count (optional) receives the number of substring candidates so
+    /// the caller can warn on ambiguity (1 is reported for an exact hit, which
+    /// never trips the >1 ambiguity check).  Mirrors the historical inline
+    /// matcher exactly — the single source of the (order-sensitive, first-match)
+    /// matching primitive shared by the production path and the unit tests.
+    const AntennaData* matchReceiverEntryInList(const std::vector<AntennaData>& antennas,
+                                                const std::string& sanitized,
+                                                const std::string& underscore,
+                                                int* out_count = nullptr) {
+        if (out_count) *out_count = 0;
+        // (1) Exact match on either normalized form.
+        for (const auto& a : antennas) {
+            if (a.type == sanitized || a.type == underscore) {
+                if (out_count) *out_count = 1;
+                return &a;
+            }
+        }
+        // (2) Substring-containment fallback.  The first candidate (in list
+        // order) is always the one used; the count lets the caller report an
+        // ambiguous match.
+        const AntennaData* first = nullptr;
+        int n = 0;
+        for (const auto& a : antennas) {
+            if ((!sanitized.empty()  && a.type.find(sanitized)  != std::string::npos) ||
+                (!underscore.empty() && a.type.find(underscore) != std::string::npos)) {
+                if (!first) first = &a;
+                ++n;
+            }
+        }
+        if (out_count) *out_count = n;
+        return first;
     }
 
     } // namespace
@@ -333,62 +372,108 @@ namespace GnssProcessor {
         return az;
     }
 
-    const AntennaData* Antenna::matchReceiverEntry_(const std::string& sanitized,
-                                                    const std::string& underscore,
-                                                    bool warn_on_ambiguity) const {
-        // (1) Exact match on either normalized form.
-        for (const auto& a : antennas_) {
-            if (a.type == sanitized || a.type == underscore) return &a;
+    Antenna::ReceiverMatch Antenna::matchReceiverAntenna(const std::vector<AntennaData>& antennas,
+                                                         const std::string& rx_antenna_type,
+                                                         bool enable_type_substitution) {
+        ReceiverMatch m;
+        normalizeAntennaType(rx_antenna_type, m.sanitized, m.underscore);
+
+        // (1) Primary exact/substring match on the raw type.
+        if (const AntennaData* e = matchReceiverEntryInList(
+                antennas, m.sanitized, m.underscore, &m.ambiguous_candidates)) {
+            m.entry = e;
+            return m;
         }
-        // (2) Substring-containment fallback.  Collect candidates so an
-        // ambiguous match can be reported; the first candidate (in antennas_
-        // order) is always the one used — matching the historical behaviour
-        // of both the candidate-vector and break-on-first call sites.
-        std::vector<const AntennaData*> candidates;
-        candidates.reserve(4);
-        for (const auto& a : antennas_) {
-            if ((!sanitized.empty()  && a.type.find(sanitized)  != std::string::npos) ||
-                (!underscore.empty() && a.type.find(underscore) != std::string::npos)) {
-                candidates.push_back(&a);
+
+        // (2) Tier 1 (always-on): type-preserving radome→NONE fallback.  Retry
+        // the SAME antenna type with its radome set to "NONE" — the documented
+        // IGS/EPN practice of borrowing a physical antenna's radome-agnostic
+        // calibration when its specific radome code is uncalibrated (mm-level).
+        // Fires before the opt-in TYPE-remap table and NEVER remaps the antenna
+        // TYPE, so a truly unknown model still resolves to nothing (zero
+        // receiver correction, exactly as before).  Because a primary match
+        // returns at (1), matched lookups are byte-identical — the fallback only
+        // rescues arcs that previously got zero correction.
+        if (const std::string none_variant = radomeNoneVariantOf(rx_antenna_type);
+            !none_variant.empty()) {
+            std::string ns, nu;
+            normalizeAntennaType(none_variant, ns, nu);
+            if (const AntennaData* e = matchReceiverEntryInList(antennas, ns, nu,
+                                                                &m.ambiguous_candidates)) {
+                m.entry = e;
+                m.via_radome_none = true;
+                return m;
             }
         }
-        if (candidates.empty()) return nullptr;
-        if (candidates.size() > 1 && warn_on_ambiguity) {
-            log_manager_.getLogger("antenna")->warn(
-                "Ambiguous receiver antenna match for '{}' (normalized='{}'), {} candidates: using first '{}'",
-                sanitized, underscore, candidates.size(), candidates.front()->type);
+
+        // (3) Tier 1b (opt-in): rule-driven TYPE-remap substitution.  Off by
+        // default so an unknown model still yields a zero receiver correction,
+        // exactly as the historical inline matching did.
+        if (enable_type_substitution) {
+            for (const std::string& cand : receiverAntennaSubstitutes(rx_antenna_type)) {
+                std::string cs, cu;
+                normalizeAntennaType(cand, cs, cu);
+                if (const AntennaData* e = matchReceiverEntryInList(antennas, cs, cu,
+                                                                    &m.ambiguous_candidates)) {
+                    m.entry = e;
+                    m.type_substitution = cand;
+                    return m;
+                }
+            }
         }
-        return candidates.front();
+        return m;  // no match (entry == nullptr)
     }
 
     const AntennaData* Antenna::findReceiverAntennaEntry(const std::string& rx_antenna_type,
                                                          bool warn_on_ambiguity,
                                                          std::string* out_sanitized,
-                                                         std::string* out_underscore) const {
-        std::string sanitized, underscore;
-        normalizeAntennaType(rx_antenna_type, sanitized, underscore);
-        if (out_sanitized)  *out_sanitized  = sanitized;
-        if (out_underscore) *out_underscore = underscore;
+                                                         std::string* out_underscore,
+                                                         bool* out_via_radome_none) const {
+        // All matching lives in the pure static matchReceiverAntenna(); this
+        // member wrapper only forwards the diagnostics and applies the
+        // (correction-path-only) ambiguity / substitution WARNs.
+        const ReceiverMatch m = matchReceiverAntenna(
+            antennas_, rx_antenna_type, config_.enableRxAntennaSubstitution());
+        if (out_sanitized)       *out_sanitized       = m.sanitized;
+        if (out_underscore)      *out_underscore      = m.underscore;
+        if (out_via_radome_none) *out_via_radome_none = m.via_radome_none;
 
-        if (const AntennaData* rx_entry = matchReceiverEntry_(sanitized, underscore, warn_on_ambiguity))
-            return rx_entry;
-
-        // Rule-driven substitution fallback (opt-in).  Off by default so a
-        // missing model still yields a zero receiver correction, exactly as
-        // the historical inline matching did.
-        if (config_.enableRxAntennaSubstitution()) {
-            for (const std::string& cand : receiverAntennaSubstitutes(rx_antenna_type)) {
-                std::string c_san, c_us;
-                normalizeAntennaType(cand, c_san, c_us);
-                if (const AntennaData* e = matchReceiverEntry_(c_san, c_us, warn_on_ambiguity)) {
-                    log_manager_.getLogger("antenna")->warn(
-                        "Receiver antenna substitution: '{}' has no ATX match; using '{}' (ATX entry '{}')",
-                        rx_antenna_type, cand, e->type);
-                    return e;
-                }
+        if (m.entry) {
+            if (warn_on_ambiguity && m.ambiguous_candidates > 1) {
+                log_manager_.getLogger("antenna")->warn(
+                    "Ambiguous receiver antenna match for '{}' (normalized='{}'), {} candidates: using first '{}'",
+                    m.sanitized, m.underscore, m.ambiguous_candidates, m.entry->type);
+            }
+            if (!m.type_substitution.empty()) {
+                log_manager_.getLogger("antenna")->warn(
+                    "Receiver antenna substitution: '{}' has no ATX match; using '{}' (ATX entry '{}')",
+                    rx_antenna_type, m.type_substitution, m.entry->type);
             }
         }
-        return nullptr;
+        return m.entry;
+    }
+
+    bool Antenna::receiverAntennaViaRadomeFallback(std::string* out_detail) const {
+        const std::string raw = rinex_parser_.getReceiverAntennaType();
+        bool via = false;
+        const AntennaData* e =
+            findReceiverAntennaEntry(raw, /*warn_on_ambiguity=*/false,
+                                     nullptr, nullptr, &via);
+        if (!via || !e) return false;
+        if (out_detail) {
+            // Trailing-trim the raw RINEX field for display; the radome is the
+            // 4-char code at [16,20) of the ANTEX "<16 model><4 radome>" field.
+            std::string shown = raw;
+            const auto last = shown.find_last_not_of(" \t\r\n");
+            shown = (last == std::string::npos) ? std::string{} : shown.substr(0, last + 1);
+            const std::string radome =
+                (raw.size() >= 20) ? raw.substr(16, 4) : std::string{"????"};
+            *out_detail = fmt::format(
+                "'{}' radome '{}' uncalibrated — using radome-agnostic NONE "
+                "calibration (ATX entry '{}'; type-preserving, mm-level)",
+                shown, radome, e->type);
+        }
+        return true;
     }
 
     /**
@@ -932,6 +1017,14 @@ namespace GnssProcessor {
             }
         }
         return false;
+    }
+
+    bool Antenna::hasReceiverAntennaMatch() const {
+        // Same matching the correction path runs (rinex_parser_.getReceiverAntennaType()
+        // → findReceiverAntennaEntry, with the opt-in substitution fallback), but with
+        // warn_on_ambiguity=false so this pure query neither warns nor mutates state.
+        return findReceiverAntennaEntry(
+            rinex_parser_.getReceiverAntennaType(), /*warn_on_ambiguity=*/false) != nullptr;
     }
 
     bool Antenna::wasAtxSubstituted(const std::string& satellite,

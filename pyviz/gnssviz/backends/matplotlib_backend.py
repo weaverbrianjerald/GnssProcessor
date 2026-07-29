@@ -29,8 +29,8 @@ import numpy as np
 from matplotlib.colors import ListedColormap
 
 from ..figures import (Axes, Band, ColorBar, Figure, HLine, Line, Markers,
-                       Mesh, PolarScatter, Raster, RgbRaster, Scatter,
-                       StackedArea, Stem, TextBox, VLine)
+                       Mesh, PolarScatter, Polygon, Raster, RgbImage, RgbRaster,
+                       Scatter, StackedArea, Stem, TextBox, VLine)
 from .base import Backend
 
 
@@ -169,8 +169,12 @@ class MatplotlibBackend(Backend):
                 raster_m = self._draw_raster(tr, ax, fig, ax_cmap)
             elif isinstance(tr, RgbRaster):
                 raster_m = self._draw_rgb_raster(tr, ax)
+            elif isinstance(tr, RgbImage):
+                self._draw_rgb_image(tr, ax)
             elif isinstance(tr, Mesh):
                 raster_m = self._draw_mesh(tr, ax, ax_cmap, vmin, vmax)
+            elif isinstance(tr, Polygon):
+                self._draw_polygon(tr, ax)
             elif isinstance(tr, Markers):
                 ax.plot(np.asarray(tr.x), np.asarray(tr.rows, dtype=float) + 1.0,
                         tr.marker, markersize=tr.size, markerfacecolor="none",
@@ -236,6 +240,25 @@ class MatplotlibBackend(Backend):
         return raster_m, point_m
 
     # ------------------------------------------------------------------ #
+    def _draw_polygon(self, tr: Polygon, ax):
+        """Fill each NaN-separated ring of a Polygon (land on an ocean axes)."""
+        x = np.asarray(tr.x, dtype=float)
+        y = np.asarray(tr.y, dtype=float)
+        kw = dict(facecolor=tuple(tr.fill), alpha=tr.alpha,
+                  edgecolor=(tuple(tr.edge) if tr.edge is not None else "none"),
+                  linewidth=tr.width)
+        if tr.zorder is not None:
+            kw["zorder"] = tr.zorder
+        breaks = np.flatnonzero(~(np.isfinite(x) & np.isfinite(y)))
+        start = 0
+        for stop in list(breaks) + [x.size]:
+            rx, ry = x[start:stop], y[start:stop]
+            m = np.isfinite(rx) & np.isfinite(ry)
+            if int(m.sum()) >= 3:
+                ax.fill(rx[m], ry[m], **kw)
+            start = stop + 1
+
+    # ------------------------------------------------------------------ #
     def _draw_mesh(self, tr: Mesh, ax, cmap_obj, vmin, vmax):
         lon = np.asarray(tr.lon, dtype=float)
         lat = np.asarray(tr.lat, dtype=float)
@@ -290,6 +313,20 @@ class MatplotlibBackend(Backend):
         _raster_axes(ax, n_rows, tr.row_labels, x0, x1, is_date)
         return im
 
+    def _draw_rgb_image(self, tr: RgbImage, ax):
+        """A georeferenced basemap image at a data-coordinate extent.
+
+        ``extent=(x0,x1,y0,y1)`` with ``origin='upper'`` puts row 0 at the top
+        (max-y = north); ``aspect='auto'`` leaves the axes' own aspect (e.g. the
+        regional panel's ``aspect_equal``) in charge.
+        """
+        img = np.asarray(tr.rgb)
+        if img.dtype != np.uint8:
+            img = np.clip(np.asarray(img, dtype=float), 0.0, 1.0)
+        x0, x1, y0, y1 = (float(v) for v in tr.extent)
+        ax.imshow(img, extent=(x0, x1, y0, y1), origin="upper", aspect="auto",
+                  interpolation=tr.interpolation, alpha=tr.alpha, zorder=tr.zorder)
+
     def _draw_rgb_raster(self, tr: RgbRaster, ax):
         rgb = np.array(tr.rgb, dtype=float)
         n_rows = rgb.shape[0]
@@ -325,6 +362,13 @@ class MatplotlibBackend(Backend):
             ax.set_xlim(spec.xlim)
         if spec.ylim is not None:
             ax.set_ylim(spec.ylim)
+        # Equal data aspect (plan-view track: 1 m East reads as 1 m North).  Set
+        # after limits so 'box' adjusts the axes box, not the data range.  Guarded
+        # to rect axes here; the geo path already forces equal aspect.
+        if spec.aspect_equal:
+            ax.set_aspect("equal", adjustable="box")
+        if spec.facecolor is not None:
+            ax.set_facecolor(tuple(spec.facecolor))
         if spec.axis_off:
             ax.axis("off")
         elif spec.grid:

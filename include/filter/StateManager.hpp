@@ -396,6 +396,32 @@ namespace GnssProcessor {
                                        double new_variance);
 
         /**
+         * @brief Re-inflate an inter-system time-offset (ISB) state's variance.
+         *
+         * The clock-datum analog of @c reinflateCodeBiasVariance: a network
+         * clock-datum re-reference steps every satellite clock of ONE
+         * constellation by a common constant.  For the reference constellation
+         * the receiver clock absorbs it, but for a non-reference constellation
+         * the step is DIFFERENTIAL and lands on the ISB state — whose
+         * near-frozen random walk cannot follow a jump in one epoch, dragging
+         * every observation of that constellation until it re-converges.
+         * Breaks the cross-covariance (zeroes the row/col) and sets the
+         * diagonal while PRESERVING the state value (the receiver inter-system
+         * hardware offset did not change — only the clock gauge it is
+         * referenced to stepped).
+         *
+         * @param system_name Constellation name as used by the ISB key map
+         *            (e.g. "GAL", "GLO" — @c StateInitializer::systemToIsbName).
+         *            No-op (debug log) when no such state exists (e.g. the
+         *            reference constellation).
+         * @param new_variance Replacement diagonal (m²).  Falls back to
+         *            @c initial_std.system_time_offset² when non-positive.
+         *            Refused (warn) on a frozen row (P_diag ≤ 0).
+         */
+        void reinflateSystemTimeOffsetVariance(const std::string& system_name,
+                                               double new_variance);
+
+        /**
          * @brief Store the last-known elevation (degrees) for a per-satellite iono state.
          *
          * Used by the process noise model to apply elevation-dependent spectral
@@ -986,6 +1012,39 @@ namespace GnssProcessor {
         void pruneSatPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
+        // RECEIVER phase-bias states (Card 3, network.phase_datum_eq34).
+        //
+        // Per-(receiver, system, signal) receiver phase-bias split state
+        // δ_{r,σ} (Odijk 2016 §4/§6; de Jonge 1998).  Giving the receiver
+        // fractional phase bias its OWN estimable state stops it lumping into
+        // the emitted satellite phase bias, so the Eq-34 single-receiver /
+        // chain datum can keep the emitted between-satellite reference integer-
+        // consistent across ALL satellites.  Keyed "<system>_RPB_<signal>" in
+        // the SEPARATE map @c receiver_phase_bias_indices_ (disjoint from the
+        // receiver code-bias family via the "_RPB_" infix).  These are LOCAL
+        // states (each observed by exactly one station) and are deliberately
+        // RE-ESTIMATED FRESH each epoch (the receiver-side wander sink) — no
+        // process noise, no cross-epoch carry (the Hou-Zhang-correct split:
+        // integers stay time-linked through the ambiguity carry, δ_{r,σ} does
+        // not).  Inert in every non-network mode.
+        // -------------------------------------------------------------------
+
+        /// @brief Index of a receiver phase-bias state, or -1 if absent.
+        int getReceiverPhaseBiasIndex(const std::string& key) const;
+
+        /// @brief Read-only map "system_RPB_signal" -> state index.
+        const std::map<std::string, size_t>& getReceiverPhaseBiasStates() const;
+
+        /// @brief Append a receiver phase-bias state at cold-start variance
+        ///        (@c initial_std.sat_phase_bias²).  Idempotent if the key
+        ///        already exists.  Returns the state index.
+        size_t addReceiverPhaseBiasState(const std::string& key, double initial_value);
+
+        /// @brief Prune receiver phase-bias states whose keys are not in
+        ///        @p keep_keys (no warm-restart cache — re-estimated fresh).
+        void pruneReceiverPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
+
+        // -------------------------------------------------------------------
         // Satellite CLOCK states (PPP_RTK_Network producer).
         //
         // Explicit per-satellite clock-correction states (Δδtˢ in metres,
@@ -1270,6 +1329,7 @@ namespace GnssProcessor {
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
+        std::map<std::string, size_t> receiver_phase_bias_indices_; //!< Map "system_RPB_signal" -> state index (Card 3 eq34 receiver phase-bias split δ_{r,σ}; LOCAL, re-estimated fresh each epoch).
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
         std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono RATE (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).

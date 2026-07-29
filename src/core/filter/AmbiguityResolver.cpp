@@ -277,6 +277,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
 
     if (config_.ar_mode == 0) {
         log->debug("AR disabled (ar_mode=0)");
+        result.gate_reason = 1;   // T2c: disabled
         return result;
     }
 
@@ -291,6 +292,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
     if (epoch_count_ <= config_.min_epochs) {
         log->debug("AR skipped: epoch {}/{} (min_epochs convergence guard)",
                    epoch_count_, config_.min_epochs);
+        result.gate_reason = 2;   // T2c: min_epochs guard
         return result;
     }
 
@@ -309,6 +311,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
             if (sigma_3d > config_.max_position_sigma_m) {
                 log->debug("AR (NlWl) skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
                            sigma_3d, config_.max_position_sigma_m);
+                result.gate_reason = 3;   // T2c: position-σ gate
+                result.gate_sigma_3d = sigma_3d;
                 return result;
             }
         }
@@ -320,8 +324,41 @@ AmbiguityResolution AmbiguityResolver::resolve(
     auto pairs = buildDdPairs(state_manager, observations);
     result.num_candidates = static_cast<int>(pairs.size());
 
+    // --- CLOSED-LOOP FRAME DIAGNOSTIC (byte-identical: fires only when the
+    // ambiguity_resolver logger is at debug level; a no-op otherwise, exactly
+    // like the existing debug dumps below). Emits the between-satellite SD
+    // FLOAT ambiguity fraction (cycles) for every pair HERE — before the σ-gate
+    // can suppress the resolver (the gate returns before the meter->cycle
+    // conversion, so the prescribed 0.5-clustering test is otherwise never
+    // computed on a non-converged float). If the injected network satellite
+    // phase-bias frame is off by a half cycle, these fractions cluster near
+    // ±0.5 instead of 0. See docs / project_closedloop_consumer_vertical_bug.
+    if (!pairs.empty() && log->should_log(spdlog::level::debug)) {
+        const Eigen::VectorXd x_dbg = state_manager.getStateVector();
+        std::map<std::string, const PppObservation*> obs_dbg;
+        for (const auto& o : observations) obs_dbg[o.satellite] = &o;
+        double sum_abs = 0.0; int n_dbg = 0;
+        for (const auto& pr : pairs) {
+            auto it = obs_dbg.find(pr.sat_i);
+            if (it == obs_dbg.end()) continue;
+            const double lam = ppp_utils_.getWavelength(it->second->system,
+                                                        pr.signal, pr.sat_i);
+            if (!(std::isfinite(lam) && lam > 0.0)) continue;
+            if (pr.state_idx_i >= x_dbg.size() || pr.state_idx_ref >= x_dbg.size()) continue;
+            const double sd_cyc = (x_dbg(pr.state_idx_i) - x_dbg(pr.state_idx_ref)) / lam;
+            const double frac   = sd_cyc - std::round(sd_cyc);
+            log->debug("CLFRAC sat_i={} sat_ref={} sig={} sd_cyc={:.4f} frac={:+.4f}",
+                       pr.sat_i, pr.sat_ref, pr.signal, sd_cyc, frac);
+            sum_abs += std::abs(frac); ++n_dbg;
+        }
+        if (n_dbg > 0) {
+            log->debug("CLFRAC_SUMMARY n={} mean_abs_frac={:.4f}", n_dbg, sum_abs / n_dbg);
+        }
+    }
+
     if (pairs.empty()) {
         log->debug("No DD ambiguity pairs available for AR");
+        result.gate_reason = 4;   // T2c: no candidates
         return result;
     }
 
@@ -338,6 +375,8 @@ AmbiguityResolution AmbiguityResolver::resolve(
         if (sigma_3d > config_.max_position_sigma_m) {
             log->debug("AR skipped: 3D position σ={:.4f} m > {:.4f} m (sigma gate)",
                        sigma_3d, config_.max_position_sigma_m);
+            result.gate_reason = 3;   // T2c: position-σ gate
+            result.gate_sigma_3d = sigma_3d;
             return result;
         }
     }
@@ -350,6 +389,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
     if (config_.wl_only) {
         if (wl_ambiguities.empty()) {
             log->debug("WL-only mode: no MW-resolved WL integers available this epoch");
+            result.gate_reason = 4;   // T2c: no candidates (no WL integers)
             return result;
         }
         auto wl_only_result = resolveWlOnly(pairs, x, P, wl_ambiguities,

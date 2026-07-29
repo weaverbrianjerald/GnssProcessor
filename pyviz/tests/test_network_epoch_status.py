@@ -15,7 +15,8 @@ from gnssviz.viewers.network_epoch_status import build_network_epoch_status
 
 _HEADER = ("week,tow,disposition,sigma0,n_adapt,n_present,n_clock_sats,"
            "clock_median_m,clock_std_m,worst_sat,worst_dev_m,n_refloat_sats,"
-           "n_retro_applied,datum_changed,sigma0_trigger,withhold_ceiling\n")
+           "n_retro_applied,datum_changed,sigma0_trigger,withhold_ceiling,"
+           "n_arc_refloat\n")   # T2d: isolated-arc RAIM refloats this epoch
 
 
 def _ctx(tmp_path):
@@ -28,7 +29,7 @@ def _emitted_row(k, std):
     return (f"2313,{tow}.000,emitted,{1.0 + 0.02 * k:.4f},20,18,60,"
             f"{0.10:.4f},{std:.4f},G13,{0.25 + 0.01 * k:.4f},"
             f"{1 if k % 5 == 0 else 0},{1 if k == 3 else 0},"
-            f"{1 if k == 2 else 0},3.0000,5.0000")
+            f"{1 if k == 2 else 0},3.0000,5.0000,0")   # +n_arc_refloat
 
 
 def _skip_row(k, disposition):
@@ -37,7 +38,7 @@ def _skip_row(k, disposition):
     # week,tow,disposition,sigma0(blank),n_adapt(blank),n_present,n_clock_sats(blank),
     # clock_median_m(blank),clock_std_m(blank),worst_sat(blank),worst_dev_m(blank),
     # n_refloat_sats(blank),n_retro_applied(blank),datum_changed,trigger,ceiling
-    return (f"2313,{tow}.000,{disposition},,,12,,,,,,,,0,3.0000,5.0000")
+    return (f"2313,{tow}.000,{disposition},,,12,,,,,,,,0,3.0000,5.0000,")   # +n_arc_refloat (blank)
 
 
 def test_plateau_fixture_flags_lockin(tmp_path):

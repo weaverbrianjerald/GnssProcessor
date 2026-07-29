@@ -208,11 +208,14 @@ what gives $b^\sat$ an identity shared across stations.
 The joint code\,+\,phase system has a $1$-dimensional clock gauge (as
 before) plus one phase-bias$\leftrightarrow$ambiguity gauge per
 satellite: $b^\sat \mapsto b^\sat + c_\sat$, $N^\sat_\rx \mapsto
-N^\sat_\rx - c_\sat$ for all $\rx$. The minimum-constraint datum is the
-clock pin $a_A \equiv 0$ (a shared-block gauge,
-\dcref{sec:net-sbasis}{the minimum-constraint datum section of the Network-mode document}) plus the reference-receiver ambiguity pins
-$N^\sat_A \equiv 0$ for every $\sat$ (the local datum on the pivot
-receiver, folded into station $A$'s rows). Solving gives
+N^\sat_\rx - c_\sat$ for all $\rx$. The minimum-constraint datum used
+here is the clock pin $a_A \equiv 0$ --- S-transform-equivalent to the
+reference-\emph{satellite} clock pin $g^1 \equiv 0$ that the estimator's
+S-basis actually declares
+(\dcref{sec:net-sbasis}{the minimum-constraint datum section of the Network-mode document}: the shared-block gauge pins a satellite clock
+per constellation, not a receiver clock) --- plus the reference-receiver
+ambiguity pins $N^\sat_A \equiv 0$ for every $\sat$ (the local datum on
+the pivot receiver, folded into station $A$'s rows). Solving gives
 \begin{center}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
@@ -256,7 +259,9 @@ the second frequency it suppresses, exactly the synthetic network the
 estimator core is validated on: the
 \texttt{RecoversSyntheticTruthUpToSTransform} test
 (\texttt{tests/test\_network\_estimator.cpp}) builds these very rows,
-pins the same datum through \texttt{NetworkEstimator::solve}, and asserts
+pins the reference-satellite clock datum $g^1 \equiv 0$
+(S-transform-equivalent to the $a_A \equiv 0$ used above) through
+\texttt{NetworkEstimator::solve}, and asserts
 recovery of the satellite-side parameters \emph{up to the declared
 S-transform} --- i.e.\ recovery of the lumped $\bar b^\sat$ and the
 single-difference ambiguities above, not of the unobservable physical

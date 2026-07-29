@@ -77,7 +77,16 @@ namespace GnssProcessor {
                 continue;
             }
             if (in_header && line.find("IONOSPHERIC CORR") != std::string::npos) {
-                std::istringstream iss(line);
+                // RINEX inherits Fortran's 'D' exponent marker, and real files use both:
+                // IGS BRDC for 2024 DOY 129 writes "2.5146E-08" while DOY 131 writes
+                // "3.4459D-08".  operator>>(double) accepts only 'E', so without this
+                // normalisation a perfectly valid nav file yields ZERO coefficients and
+                // Klobuchar silently disappears.  (RinexNavParser::parseRinexDouble does
+                // the same for nav DATA records; the header path had been missed.)
+                std::string norm = line;
+                for (char& c : norm)
+                    if (c == 'D' || c == 'd') c = 'E';
+                std::istringstream iss(norm);
                 std::string type;
                 iss >> type;
                 // GPS Klobuchar α only.  A RINEX 3 "GAL" line is Galileo

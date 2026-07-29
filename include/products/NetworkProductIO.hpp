@@ -50,9 +50,17 @@
  *                                           #   c1/clock_disc parse)
  *   B,<sat>,<signal>,<bias>[,<code_disc>]   # RTA-4 code disc counter (field 5)
  *   P,<sat>,<sig>,<b>,<si>,<wl>[,<ph_disc>] # RTA-4 phase disc counter (field 7)
+ *     [,sigma=<m>][,sigc=<m>]               # B1b phase-bias σ (sigma=) + M4 combined
+ *                                           #   phase-correction σ (sigc=; clock+phasebias)
+ *   C,...[,sigcc=<m>][,rho=<val>]           # M4 per-sat combined code-correction σ
+ *                                           #   (sigcc=) + code/phase corr (rho=)
  *   S,...[,gid=<id>][,stale=<sec>]          # RTA-3/RTA-11 trailing key=value fields;
  *     [,frame=<id>][,cepoch=<epoch>]        #   RTA-12 contract identity fields
+ *     [,agek=<val>]                         #   M4 combined-σ age-scaling coefficient
  *     [,atx=<file>][,oref=<CoM|APC>]        #   (each absent when empty);
+ *     [,cbpin=<const>:<s1>-<s2>...]         #   §1.5 code-bias IF pin pair per
+ *                                           #   constellation (the pair the OSB
+ *                                           #   stream is internally consistent in)
  *                                           #   repeated S lines mid-file are RTA-5
  *                                           #   contract re-broadcasts (positional)
  *   H,<week>,<tow>,<status>,<sigma0>,       # RTA-10 epoch-status heartbeat
@@ -68,8 +76,11 @@
  * store.  Format-version note: a PRE-RTA-10 reader treats @c H as an unknown
  * tag — it still parses every epoch correctly but flags its sticky @c ok /
  * @c healthy() as false; arm @c network.emit_epoch_status_record only when the
- * consumers reading the file are current.  (The '#' header legend is NOT
- * extended — the v2 legend bytes are frozen so an OFF run stays byte-identical.)
+ * consumers reading the file are current.  (Handoff-§7 schema fix: the '#'
+ * header legend is GRAMMAR-COMPLETE — one line per record tag declaring every
+ * optional positional field and key=value token the writer can emit, shared
+ * verbatim by v1 and v2 headers.  Any wire-format extension MUST extend the
+ * legend; @c HeaderLegendDeclaresEveryEmittedField enforces it.)
  * Floating-point fields are written with the shortest round-trippable decimal
  * (fmt's default formatting), so a parse recovers the exact @c double.  A
  * satellite with no @c C line round-trips to @c has_clock=false; a satellite with
@@ -105,6 +116,13 @@ struct SbasisContract {
     /// emitter's own (R9: single constant) — it is what @c makeReplayEmitter applies
     /// to a v1 file with no S line, so it must track the live emitter default.
     double            disc_threshold_m{NetworkProductEmitter::kDefaultDiscThresholdM};
+    /// H3: per-λ fractional-cycle discontinuity threshold
+    /// (@c network.disc_threshold_frac_cycles).  When > 0 the emitter's phase (and
+    /// opt-in code) jump test uses @c frac·λ(sat,signal) instead of the flat
+    /// @c disc_threshold_m — the SIXTH replay-emitter construction parameter.
+    /// Serialized as an optional trailing @c discfrac= S-line field ONLY when > 0,
+    /// so a legacy (flat-metre) producer writes the S line byte-for-byte.
+    double            disc_threshold_frac_cycles{0.0};
     /// Whether the producer's emitter maintained the per-satellite CLOCK
     /// discontinuity counter (A2).  Together with @c disc_threshold_m this fully
     /// determines the @c NetworkProductEmitter construction, so a consumer can
@@ -116,6 +134,26 @@ struct SbasisContract {
     /// Serialized as an optional trailing @c stale= field on the S line ONLY when
     /// non-zero, so an OFF run's v2 header is byte-identical to pre-RTA-11.
     double            staleness_horizon_s{0.0};
+    /// M4 (contract v2): age-scaling coefficient the consumer uses to inflate the
+    /// combined-correction variance as σc²·(1 + agek·Δt_age²) (Δt_age = correction
+    /// content age, s), replacing the ad-hoc URA staleness ramp for network-corrected
+    /// rows.  From the producer's @c network.combined_sigma_agek.  Serialized as an
+    /// optional trailing @c agek= S-line field ONLY when non-zero, so a producer that
+    /// does not declare it writes a byte-identical S line.  A quality hint, not a
+    /// replay-emitter parameter — @c makeReplayEmitter ignores it and @c checkContract
+    /// does not compare it.
+    double            age_scale_k{0.0};
+    /// Whether the producer's emitter ran the opt-in CODE-bias magnitude jump
+    /// test (@c network.code_bias_disc_jump_test) — the fourth replay-emitter
+    /// construction parameter.  Serialized as an optional trailing @c cbjump=1
+    /// field ONLY when true (byte-identical OFF).
+    bool              code_bias_jump_test{false};
+    /// Whether the producer's emitter bumped clock disc counters on a
+    /// constellation clock-set change (@c network.clock_disc_on_set_change, the
+    /// sum-to-zero datum-move signal) — the fifth replay-emitter construction
+    /// parameter.  Serialized as an optional trailing @c clkset=1 field ONLY
+    /// when true (byte-identical OFF).
+    bool              clock_disc_on_set_change{false};
     /// RTA-3: the producer's solution-generation id (0 = not stamped).  Serialized
     /// as an optional trailing @c gid= field on the S line ONLY when non-zero, so
     /// an OFF run's v2 header is byte-identical.  Lets a late joiner recover the
@@ -142,6 +180,24 @@ struct SbasisContract {
     /// (center of mass; the SP3+ATX convention) or "APC" (antenna phase center;
     /// SSR orbit streams).  @c oref= field.
     std::string       orbit_ref;
+    /// §1.5 (day-129 frame-guards report): the code-bias IF PIN PAIR per
+    /// constellation — the signal pair the emitted OSB stream is internally
+    /// consistent in, keyed by constellation letter with value "<s1>-<s2>"
+    /// (e.g. "G" → "C1C-C2L", the pair @c selectIfPinPair realized).  The
+    /// producer's code-bias datum pins IF(s1,s2) per satellite plus
+    /// sum-to-zero per (constellation, signal) channel; IF combinations
+    /// OUTSIDE the pinned pair ride data-determined directions and carry the
+    /// full frame wander.  A consumer should form its IF within ONE frame —
+    /// the measured ranking is pinned pair < convention pair < MIXED pair
+    /// (one signal in, one out), the last being worst because the consumer's
+    /// receiver code-bias state must absorb a between-channel differential
+    /// against the moving satellite OSBs.  Serialized as repeated trailing
+    /// @c cbpin=<const>:<s1>-<s2> S-line fields ONLY when non-empty
+    /// (byte-identical otherwise).  An interpretation hint, not a
+    /// replay-emitter parameter: @c makeReplayEmitter ignores it and
+    /// @c checkContract compares it only for constellations the consumer
+    /// declares (the @c clock_pivot_sat semantics).
+    std::map<std::string, std::string> cb_pin_pair;
     bool              present{false};         ///< True when parsed from (or written to) a v2 header.
 };
 

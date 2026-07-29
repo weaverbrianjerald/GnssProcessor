@@ -123,6 +123,83 @@ TEST(NetworkProductEmitterTest, DiscontinuityCounterBumpsOnBiasJumpOnly) {
     EXPECT_EQ(emitter.discontinuityCounter("G02", "L1C"), 0);
 }
 
+// Build a one-sat epoch carrying an arbitrary set of phase biases (signal -> value).
+static NetworkSolutionEpoch phaseEpoch(const GnssTime& t, const std::string& sat,
+                                       const std::map<std::string, double>& biases) {
+    NetworkSolutionEpoch sol;
+    sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
+    NetworkSatSolution s; s.sat = sat;
+    for (const auto& [sig, b] : biases) s.phase_bias[sig] = NetworkPhaseBias{b, true, 1};
+    sol.sats.push_back(s);
+    sol.sats.back().has_clock = false;
+    return sol;
+}
+
+// H3: with network.disc_threshold_frac_cycles armed, the jump gate is frac·λ
+// PER (sat,signal), so the SAME step magnitude crosses the shorter-λ band but not
+// the longer-λ one — the whole point of making the gate uniform in cycles.
+TEST(NetworkProductEmitterTest, PerLambdaThresholdSelectsByBand) {
+    // frac = 0.25 ⇒ L1 gate 0.25·0.1903 = 4.76 cm, L5 gate 0.25·0.2548 = 6.37 cm.
+    NetworkProductEmitter emitter(NetworkProductEmitter::kDefaultDiscThresholdM,
+                                  /*emit_clock_disc=*/false, /*stale=*/0.0,
+                                  /*code_bias_jump_test=*/false,
+                                  /*clock_disc_on_set_change=*/false,
+                                  /*disc_threshold_frac_cycles=*/0.25);
+    SsrCorrectionStore store;
+    GnssTime t = kT;
+    // Baseline for two GPS bands on the same satellite.
+    emitter.emitToStore(phaseEpoch(t, "G01", {{"L1C", 0.0}, {"L5Q", 0.0}}), store);
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L1C"), 0);
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L5Q"), 0);
+    // A 0.055 m step on BOTH bands: above the L1 gate (4.76 cm), below the L5 (6.37 cm).
+    t.tow += 30.0;
+    emitter.emitToStore(phaseEpoch(t, "G01", {{"L1C", 0.055}, {"L5Q", 0.055}}), store);
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L1C"), 1);   // L1 fired
+    EXPECT_EQ(emitter.discontinuityCounter("G01", "L5Q"), 0);   // L5 held (shorter cycles)
+    // The legacy flat 0.05 m gate would have fired BOTH — the per-λ contract is
+    // what separates them.
+}
+
+// H3: frac = 0 is the legacy flat-metre gate, byte-for-byte — same disc decisions
+// AND a byte-identical serialized snapshot (no v3 line) as the default emitter.
+TEST(NetworkProductEmitterTest, PerLambdaFracZeroIsLegacyByteIdentical) {
+    NetworkProductEmitter dflt;                              // flat 0.05 m default
+    NetworkProductEmitter frac0(NetworkProductEmitter::kDefaultDiscThresholdM,
+                                false, 0.0, false, false, /*frac=*/0.0);
+    SsrCorrectionStore s1, s2;
+    GnssTime t = kT;
+    for (double b : {0.0, 0.03, -0.02, 0.10, 0.101}) {       // a sequence straddling 0.05 m
+        dflt.emitToStore(makeEpoch(t, 0.0, 0.3, b), s1);
+        frac0.emitToStore(makeEpoch(t, 0.0, 0.3, b), s2);
+        t.tow += 30.0;
+    }
+    EXPECT_EQ(dflt.discontinuityCounter("G01", "L1C"),
+              frac0.discontinuityCounter("G01", "L1C"));
+    EXPECT_GT(dflt.discontinuityCounter("G01", "L1C"), 0);    // the sequence actually fired
+    std::ostringstream o1, o2;
+    dflt.serializeState(o1);
+    frac0.serializeState(o2);
+    EXPECT_EQ(o1.str(), o2.str());                            // v1/v2, no discfrac ⇒ byte-identical
+}
+
+// H3: a frac-armed emitter's snapshot round-trips (v3 carries the frac; a mismatched
+// restore is rejected).
+TEST(NetworkProductEmitterTest, PerLambdaSnapshotRoundTrip) {
+    NetworkProductEmitter e(NetworkProductEmitter::kDefaultDiscThresholdM,
+                            false, 0.0, false, false, /*frac=*/0.25);
+    SsrCorrectionStore store;
+    e.emitToStore(phaseEpoch(kT, "G01", {{"L1C", 0.0}}), store);
+    std::ostringstream os; e.serializeState(os);
+    EXPECT_NE(os.str().find("EMITTER,v3,"), std::string::npos);   // frac armed ⇒ v3 header
+    // A matching-config emitter restores; a flat (frac=0) one rejects the v3 snapshot.
+    NetworkProductEmitter match(NetworkProductEmitter::kDefaultDiscThresholdM,
+                                false, 0.0, false, false, 0.25);
+    NetworkProductEmitter flat;
+    std::istringstream im(os.str()), ifl(os.str());
+    EXPECT_TRUE(match.restoreState(im));
+    EXPECT_FALSE(flat.restoreState(ifl));
+}
+
 TEST(NetworkProductEmitterTest, MarkDatumChangeForcesBumpForExactlyOneEmit) {
     SsrCorrectionStore store;
     NetworkProductEmitter emitter;
@@ -234,6 +311,35 @@ TEST(NetworkProductEmitterTest, DatumChangePendsAcrossEpochWithNoConstellationSa
     t.tow += 30.0;
     emitter.emitToStore(makeCodeEpoch(t, both), store);
     EXPECT_EQ(emitter.clockDiscontinuityCounter("G01"), 1);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1W"), 1);
+}
+
+// Card 2 (network.code_datum_time_linked): the driver signals a time-linked datum
+// RE-SEED (a cold sum-to-zero channel or an IF-pin split forced to the 0 seed) by
+// markSatDiscontinuity for the re-seeded satellites, and the emitter must land that
+// bump on the CODE disc counter AT the emit that carries the stepped value — even with
+// the clock-disc channel OFF (the code OSB re-references regardless of whether the
+// clock channel is published).  This is the "landing" half of the value-step ↔ disc
+// coincidence the card's falsifier checks end-to-end.
+TEST(NetworkProductEmitterTest, ForcedSatDiscBumpsCodeCounterOnSteppedEmit) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;   // emit_clock_disc = false (default) — code channel only
+    // First sight records the baseline; no counter movement yet.
+    emitter.emitToStore(makeCodeEpoch(kT, {{"G01", {{"C1W", 0.30}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1W"), 0);
+
+    // The driver's re-seed: force G01's discontinuity, then emit the STEPPED value in
+    // the same epoch.  The code disc counter bumps on THIS emit (coincident with the
+    // step) despite the clock-disc channel being off.
+    GnssTime t = kT; t.tow += 30.0;
+    emitter.markSatDiscontinuity({"G01"});
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1W", 0.90}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1W"), 1);
+    EXPECT_EQ(store.getCodeBiasDiscontinuity("G01", "C1W").value_or(-1), 1);
+
+    // Continuity afterwards: no forced bump, value steady → counter holds (exactly once).
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1W", 0.90}}}}), store);
     EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1W"), 1);
 }
 
@@ -841,6 +947,237 @@ TEST(NetworkProductEmitterTest, CodeBiasNewChannelFirstSightingNoBump) {
                                           {"E11", {{"C1C", 0.2}}}}), store);
     EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("E11", "C1C"), 0);  // first sight
     EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);  // unrelated, steady
+}
+
+// --- Opt-in code-bias VALUE jump test (network.code_bias_disc_jump_test) --------
+
+// The always-on structural set/band triggers detect GAUGE re-references only;
+// the Jul-2026 wire audit measured large unsignalled code-bias VALUE jumps
+// beyond them (weak-separation wander at thin rosters).  Armed, the phase jump
+// test applies to code: a fresh-baseline step beyond disc_threshold_m bumps the
+// counter; a first sighting and sub-threshold drift never do.  Satellite set +
+// band composition are held constant across every emit so the bump is
+// attributable PURELY to the value jump, not a structural trigger.
+TEST(NetworkProductEmitterTest, CodeBiasJumpTestBumpsOnValueJump) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false,
+                                  /*staleness_horizon_s=*/0.0,
+                                  /*code_bias_jump_test=*/true);
+
+    GnssTime t = kT;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.10}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);   // first sighting
+
+    // 0.2 m step > 0.05 m threshold -> bump, visible to the consumer via the store.
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.30}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+    EXPECT_EQ(store.getCodeBiasDiscontinuity("G01", "C1C").value_or(-1), 1);
+
+    // 0.01 m step < threshold -> no bump (noise-level drift is not a datum event).
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.31}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
+}
+
+// Default-OFF byte-identity: the IDENTICAL sequence with the flag off never
+// bumps — a value jump alone is invisible, exactly the pre-flag behavior where
+// the structural set/band triggers are the only code-disc sources.
+TEST(NetworkProductEmitterTest, CodeBiasJumpTestOffIsInert) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter;   // code_bias_jump_test defaults false
+
+    GnssTime t = kT;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.10}}}}), store);
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.30}}}}), store);  // 0.2 m step
+    t.tow += 30.0;
+    emitter.emitToStore(makeCodeEpoch(t, {{"G01", {{"C1C", 0.31}}}}), store);
+    EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1C"), 0);
+    EXPECT_EQ(store.getCodeBiasDiscontinuity("G01", "C1C").value_or(-1), 0);
+}
+
+// --- Sum-to-zero clock set-change trigger (network.clock_disc_on_set_change) ----
+
+// Clock-only epoch (no code/phase biases) from a satellite list — isolates the
+// clock-satellite SET as the only thing that can change between emits.
+NetworkSolutionEpoch makeClockEpoch(const GnssTime& t,
+                                    const std::vector<std::string>& sats) {
+    NetworkSolutionEpoch sol;
+    sol.epoch_time  = t;
+    sol.iod_ssr     = 3;
+    sol.provider_id = 42;
+    sol.solution_id = 1;
+    for (const auto& sat : sats) {
+        NetworkSatSolution s;
+        s.sat        = sat;
+        s.has_clock  = true;
+        s.clock_c0_m = 1.0;
+        sol.sats.push_back(s);
+    }
+    return sol;
+}
+
+// Under Σδtˢ=0 a constellation clock-set membership change IS a datum
+// re-reference — the departing/arriving satellite's common-mode redistributes
+// ∓ΔC0/N onto every survivor, with no pivot handover to signal it.  Armed
+// (emit_clock_disc + clock_disc_on_set_change), every emitted clock of the
+// changed constellation with seen_before bumps; the constellation's first emit
+// and a rising satellite's own first sighting never do (no consumer holds
+// old-datum state for them yet).
+TEST(NetworkProductEmitterTest, ClockSetChangeBumpsSurvivors) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/true,
+                                  /*staleness_horizon_s=*/0.0,
+                                  /*code_bias_jump_test=*/false,
+                                  /*clock_disc_on_set_change=*/true);
+
+    // First emit of the constellation: no previous set to differ from -> no bump.
+    GnssTime t = kT;
+    emitter.emitToStore(makeClockEpoch(t, {"G01", "G02"}), store);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G01"), 0);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G02"), 0);
+
+    // G02 sets: {G01,G02} -> {G01} -> the survivor bumps.
+    t.tow += 30.0;
+    emitter.emitToStore(makeClockEpoch(t, {"G01"}), store);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G01"), 1);
+    EXPECT_EQ(store.getClockDiscontinuity("G01").value_or(-1), 1);
+
+    // G03 rises: {G01} -> {G01,G03} -> the survivor bumps again; the NEW sat is
+    // a first sighting -> stays 0.
+    t.tow += 30.0;
+    emitter.emitToStore(makeClockEpoch(t, {"G01", "G03"}), store);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G01"), 2);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G03"), 0);
+    EXPECT_EQ(store.getClockDiscontinuity("G01").value_or(-1), 2);
+    EXPECT_EQ(store.getClockDiscontinuity("G03").value_or(-1), 0);
+}
+
+// Default-OFF byte-identity: with only emit_clock_disc armed (the pre-flag A2
+// config) the IDENTICAL membership churn never bumps — under the pivot datum a
+// set change is NOT a gauge re-reference, and the new trigger must stay inert
+// unless explicitly opted into.
+TEST(NetworkProductEmitterTest, ClockSetChangeOffIsInert) {
+    SsrCorrectionStore store;
+    NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/true);   // set-change flag defaults false
+
+    GnssTime t = kT;
+    emitter.emitToStore(makeClockEpoch(t, {"G01", "G02"}), store);
+    t.tow += 30.0;
+    emitter.emitToStore(makeClockEpoch(t, {"G01"}), store);
+    t.tow += 30.0;
+    emitter.emitToStore(makeClockEpoch(t, {"G01", "G03"}), store);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G01"), 0);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G02"), 0);
+    EXPECT_EQ(emitter.clockDiscontinuityCounter("G03"), 0);
+    EXPECT_EQ(store.getClockDiscontinuity("G01").value_or(-1), 0);
+}
+
+// --- RTB-7 v2 header: state round-trip with the optional channels armed ---------
+
+// With either optional channel armed, serializeState writes the EMITTER,v2
+// header (7 fields, carrying the two new flags) plus the v2-only stream state —
+// the prev-emit clock-satellite sets ('eks' lines) and the code-bias value
+// baselines — so a warm-resumed producer continues the set-change and jump-test
+// bookkeeping EXACTLY where the bounced process left it.  A flags-off emitter
+// still writes v1 (5 fields: default-config snapshots stay byte-identical to
+// pre-channel builds), and a construction-parameter mismatch on the new flags
+// fails the restore all-or-nothing, leaving the emitter untouched (cold start).
+TEST(NetworkProductEmitterTest, EmitterStateRoundTripV2) {
+    GnssTime t0 = kT, t1 = kT, t2 = kT, t3 = kT;
+    t1.tow += 30.0;
+    t2.tow += 60.0;
+    t3.tow += 90.0;
+    // Clock + one code band per sat; G02's presence is switchable so ep2 can
+    // drive a clock-set change (survivor bump) after the restore.
+    auto ep = [](const GnssTime& t, double cb, bool with_g02) {
+        std::vector<std::pair<std::string, std::map<std::string, double>>> sats =
+            {{"G01", {{"C1W", cb}}}};
+        if (with_g02) sats.push_back({"G02", {{"C1W", cb}}});
+        return makeCodeEpoch(t, sats);
+    };
+
+    // Uninterrupted reference, both channels armed: ep0 first sight, ep1 a
+    // 0.2 m value jump (code counters -> 1 under the armed jump test).
+    SsrCorrectionStore store_ref;
+    NetworkProductEmitter ref(0.05, /*emit_clock_disc=*/true,
+                              /*staleness_horizon_s=*/0.0,
+                              /*code_bias_jump_test=*/true,
+                              /*clock_disc_on_set_change=*/true);
+    ref.emitToStore(ep(t0, 0.10, /*with_g02=*/true), store_ref);
+    ref.emitToStore(ep(t1, 0.30, /*with_g02=*/true), store_ref);
+
+    // Bounced producer: identical two emits, then snapshot.
+    SsrCorrectionStore store_a;
+    NetworkProductEmitter a(0.05, true, 0.0, true, true);
+    a.emitToStore(ep(t0, 0.10, true), store_a);
+    a.emitToStore(ep(t1, 0.30, true), store_a);
+    std::ostringstream blob;
+    a.serializeState(blob);
+    const std::string full = blob.str();
+
+    // Armed => the v2 header (the flags travel in the section itself).
+    EXPECT_EQ(full.rfind("EMITTER,v2,", 0), 0u);
+
+    // Restore into a fresh SAME-config emitter succeeds.
+    SsrCorrectionStore store_b;
+    NetworkProductEmitter b(0.05, true, 0.0, true, true);
+    {
+        std::istringstream is(full);
+        ASSERT_TRUE(b.restoreState(is));
+    }
+
+    // Continue BOTH: ep2 drops G02 — the survivor clock bump requires the
+    // restored 'eks' prev clock-set (and the (G,C1W) channel set change bumps
+    // code); ep3 is a 0.06 m value jump — the bump requires the restored code
+    // baseline.  Wrong/missing v2 state would diverge here.
+    ref.emitToStore(ep(t2, 0.30, /*with_g02=*/false), store_ref);
+    ref.emitToStore(ep(t3, 0.36, /*with_g02=*/false), store_ref);
+    b.emitToStore(ep(t2, 0.30, /*with_g02=*/false), store_b);
+    b.emitToStore(ep(t3, 0.36, /*with_g02=*/false), store_b);
+
+    // Identical counters on every channel...
+    EXPECT_EQ(b.clockDiscontinuityCounter("G01"), ref.clockDiscontinuityCounter("G01"));
+    EXPECT_EQ(b.clockDiscontinuityCounter("G02"), ref.clockDiscontinuityCounter("G02"));
+    EXPECT_EQ(b.codeBiasDiscontinuityCounter("G01", "C1W"),
+              ref.codeBiasDiscontinuityCounter("G01", "C1W"));
+    EXPECT_EQ(b.codeBiasDiscontinuityCounter("G02", "C1W"),
+              ref.codeBiasDiscontinuityCounter("G02", "C1W"));
+    // ...and the expected values (so the parity above is not vacuously comparing
+    // two wrong runs): clock = ep2 set-change survivor bump; code = ep1 value
+    // jump + ep2 channel set-change + ep3 value jump; G02 frozen at its ep1 jump.
+    EXPECT_EQ(b.clockDiscontinuityCounter("G01"), 1);
+    EXPECT_EQ(b.codeBiasDiscontinuityCounter("G01", "C1W"), 3);
+    EXPECT_EQ(b.codeBiasDiscontinuityCounter("G02", "C1W"), 1);
+    EXPECT_EQ(b.clockDiscontinuityCounter("G02"), 0);
+
+    // A DIFFERENT config on the new flags refuses the v2 blob (all-or-nothing;
+    // the emitter stays untouched = the cold-start signal).
+    {
+        NetworkProductEmitter dst(0.05, true, 0.0);   // both new flags off
+        std::istringstream is(full);
+        EXPECT_FALSE(dst.restoreState(is));
+        EXPECT_EQ(dst.codeBiasDiscontinuityCounter("G01", "C1W"), 0);   // untouched
+        EXPECT_EQ(dst.clockDiscontinuityCounter("G01"), 0);
+    }
+    {
+        // Partial mismatch (jump test matches, set-change does not) also fails.
+        NetworkProductEmitter dst(0.05, true, 0.0, /*code_bias_jump_test=*/true,
+                                  /*clock_disc_on_set_change=*/false);
+        std::istringstream is(full);
+        EXPECT_FALSE(dst.restoreState(is));
+    }
+
+    // Flags-off control: a default-channel emitter still serializes the v1
+    // header — default-config snapshots stay byte-identical to pre-channel
+    // builds (and old v1 snapshots restore into off-emitters).
+    {
+        NetworkProductEmitter off(0.05, true, 0.0);
+        std::ostringstream v1blob;
+        off.serializeState(v1blob);
+        EXPECT_EQ(v1blob.str().rfind("EMITTER,v1,", 0), 0u);
+    }
 }
 
 } // namespace

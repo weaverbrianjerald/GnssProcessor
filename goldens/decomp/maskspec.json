@@ -1,0 +1,49 @@
+{
+  "csv_col_masks": {
+    "network_run_summary.csv": [
+      "loop_ms",
+      "ms_per_epoch"
+    ],
+    "network_service_health.csv": [
+      "ms_per_epoch_window",
+      "last_emit_age_s"
+    ]
+  },
+  "json_key_masks": {
+    "network_run_manifest.json": [
+      "written_utc",
+      "build.compiled",
+      "loop_ms"
+    ]
+  },
+  "log_content_default_off": true,
+  "log_ts_regex": "^\\[[^\\]]*\\]",
+  "log_ts_token": "[TS]",
+  "product_genline_prefixes": [
+    "G "
+  ],
+  "product_name_hints": [
+    ".ssr",
+    ".rtcm",
+    ".prod",
+    "product"
+  ],
+  "runlog_drop_regexes": [
+    "loop_ms",
+    "\\bms/epoch\\b",
+    "elapsed",
+    "Network \\(D0",
+    "DD-frac tracer",
+    "Network\\[timing\\]",
+    "RINEX ingestion: parsed"
+  ],
+  "runlog_dur_regex": "\\d+\\.\\d+\\s*s\\b",
+  "runlog_dur_token": "<T>s",
+  "runlog_name": "run.log",
+  "snapshot_json_key_masks": [
+    "wall_utc"
+  ],
+  "snapshot_name_hint": "snapshot",
+  "snapshot_utc_regex": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z",
+  "snapshot_utc_token": "<UTC>"
+}

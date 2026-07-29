@@ -13,9 +13,39 @@
 #include "filter/StateKeySchema.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <stdexcept>
 
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+
 namespace GnssProcessor {
+
+namespace {
+
+/// Tier D0 (network.trace_section_timers): RAII wall-clock accumulator for the
+/// covariance-consumer wrappers.  Timed HERE (not in the kernel) so the measured
+/// span includes each wrapper's full-shared-covariance COPY + datum-column
+/// zeroing — the per-call O(n_shared²) overhead that dominates when a wrapper is
+/// invoked per station (e.g. the per-station carried-ambiguity harvest) and that
+/// the D1 selected-inverse rewrite removes.  Zero-overhead + no clock read when
+/// the kernel's timing is not armed (@ref NetworkNormalEquations::perfTiming).
+struct CovTimer {
+    const NetworkNormalEquations& neq;
+    bool on;
+    std::chrono::steady_clock::time_point t0;
+    explicit CovTimer(const NetworkNormalEquations& n) : neq(n), on(n.perfTiming()) {
+        if (on) t0 = std::chrono::steady_clock::now();
+    }
+    ~CovTimer() {
+        if (on)
+            neq.accumulateCovConsumer(std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count());
+    }
+};
+
+} // namespace
 
 std::string NetworkEstimator::key_(const std::string& sat, SharedParamKind kind,
                                    const std::string& signal) {
@@ -69,20 +99,20 @@ Eigen::Index NetworkEstimator::registerPhaseBias(const std::string& sat,
     return registerColumn_(sat, SharedParamKind::PhaseBias, signal);
 }
 
-Eigen::Index NetworkEstimator::registerVtecCoeff(int n, int m, char trig) {
+Eigen::Index NetworkEstimator::registerVtecCoeff(int n, int m, char trig, int layer) {
     if (epoch_open_) {
         throw std::logic_error(
             "NetworkEstimator: cannot register shared parameters after "
             "beginEpoch(); finalize the layout first");
     }
-    const std::string k = StateKeys::makeVtecShKey(n, m, trig);
+    const std::string k = StateKeys::makeVtecShKey(n, m, trig, layer);
     auto it = index_.find(k);
     if (it != index_.end()) return it->second;
     const Eigen::Index col = static_cast<Eigen::Index>(columns_.size());
     index_.emplace(k, col);
     ColumnDesc d;
     d.kind = SharedParamKind::VtecSh;
-    d.sh_n = n; d.sh_m = m; d.sh_trig = trig;
+    d.sh_n = n; d.sh_m = m; d.sh_trig = trig; d.sh_layer = layer;
     columns_.push_back(std::move(d));
     return col;
 }
@@ -101,8 +131,25 @@ Eigen::Index NetworkEstimator::phaseBiasColumn(const std::string& sat,
     return index_.at(key_(sat, SharedParamKind::PhaseBias, signal));
 }
 
-Eigen::Index NetworkEstimator::vtecCoeffColumn(int n, int m, char trig) const {
-    return index_.at(StateKeys::makeVtecShKey(n, m, trig));
+Eigen::Index NetworkEstimator::vtecCoeffColumn(int n, int m, char trig, int layer) const {
+    return index_.at(StateKeys::makeVtecShKey(n, m, trig, layer));
+}
+
+std::string NetworkEstimator::sharedColumnLabel(Eigen::Index col) const {
+    if (col < 0 || col >= static_cast<Eigen::Index>(columns_.size())) {
+        throw std::out_of_range("NetworkEstimator::sharedColumnLabel: "
+                                "column index out of range");
+    }
+    const ColumnDesc& d = columns_[static_cast<std::size_t>(col)];
+    switch (d.kind) {
+        case SharedParamKind::Clock:     return "CLK:" + d.sat;
+        case SharedParamKind::CodeBias:  return "CB:" + d.sat + ":" + d.signal;
+        case SharedParamKind::PhaseBias: return "PB:" + d.sat + ":" + d.signal;
+        case SharedParamKind::VtecSh:
+            return std::string(d.sh_layer > 0 ? "SH2:" : "SH:") + d.sh_trig + ":"
+                   + std::to_string(d.sh_n) + ":" + std::to_string(d.sh_m);
+    }
+    return "UNKNOWN:" + std::to_string(col);   // unreachable; keeps -Wreturn-type quiet
 }
 
 void NetworkEstimator::reset() {
@@ -114,6 +161,8 @@ void NetworkEstimator::reset() {
     index_.clear();
     columns_.clear();
     shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
+    phase_sumzero_gauges_.clear();  // Fix A: the ensemble datum is per-epoch
+    dd_priors_.clear();             // Card 4 (M1): the DD priors are per-epoch too
     epoch_open_ = false;
     solved_ = false;
 }
@@ -123,6 +172,11 @@ void NetworkEstimator::beginEpoch() {
     // a fresh NetworkNormalEquations (which would free + reallocate every station
     // block each epoch — the memory-churn the network producer accumulates).
     neq_.reset(numShared());
+    // Card 4 (M1): the DD priors are strictly per-epoch (the z-store re-sets them
+    // each epoch from the carried DDs).  Clear at the epoch boundary so an epoch
+    // that sets none cannot re-fold a stale block — keeps the OFF path byte-identical
+    // and makes carry_invariant robust to an epoch with no carry available.
+    dd_priors_.clear();
     epoch_open_ = true;
     solved_ = false;
 }
@@ -159,6 +213,39 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
         throw std::logic_error("NetworkEstimator::solve: call beginEpoch() first");
     }
     neq_.reduce(reduce_threads_);
+    // Fix A: fold the anchor-free sum-to-zero phase-bias gauges onto the reduced
+    // system (idempotent within the reduce — the gate path may have folded them
+    // already).  Empty on the anchor / OFF path → no-op, byte-identical.
+    if (!phase_sumzero_gauges_.empty()) {
+        neq_.foldReducedSumZeroGauges(phase_sumzero_gauges_);
+    }
+    // Card 4 (M1): fold the invariant-carry DD priors onto the reduced system
+    // (idempotent within the reduce).  The DD fold and the sum-to-zero gauge fold are
+    // BOTH post-reduce Woodbury folds on the pristine per-station N_rr, so composing
+    // them over coupled local ambiguity columns is INEXACT (drops the cross term) — a
+    // silent bias.  They are mutually exclusive by design: under carry_invariant the DD
+    // priors SUPERSEDE the ensemble phase datum (spec D6, its gauge OFF), and the phase
+    // datum is instead the PRE-REDUCE tree pins (addStationPrior, folded into N_rr before
+    // the reduce → exact composition with this fold).  Fail fast rather than bias.
+    if (!dd_priors_.empty()) {
+        if (!phase_sumzero_gauges_.empty()) {
+            throw std::logic_error(
+                "NetworkEstimator::solve: the Card-4 DD priors and the sum-to-zero "
+                "phase-bias ensemble gauge are mutually exclusive (both are post-reduce "
+                "Woodbury folds on the same local block; composing them is inexact). Under "
+                "carry_invariant the ensemble datum is superseded — realize the phase datum "
+                "with the pre-reduce tree pins (addStationPrior) instead.");
+        }
+        // network.parallel_carry: run the fold SERIAL-over-blocks (block_threads=1) with
+        // WITHIN-BLOCK per-station threading (station_threads) — the fold's dominant cost is
+        // the per-station reduction, which the seam's block-parallelism (only ~few blocks)
+        // and Eigen's GEMM threading both leave serial.  OFF ⇒ seam_threads_ block-parallel
+        // (byte-identical), no within-block fan-out.
+        if (carry_par_threads_ > 1)
+            neq_.foldReducedDdPriors(dd_priors_, /*block_threads=*/1, carry_par_threads_);
+        else
+            neq_.foldReducedDdPriors(dd_priors_, seam_threads_);
+    }
 
     // Apply the explicit minimum-constraint datum to a COPY of the reduced
     // shared system (the kernel's W5 seam), so the kernel's own reduced normals
@@ -230,11 +317,28 @@ void NetworkEstimator::addStationPrior(std::size_t station,
 
 Eigen::VectorXd NetworkEstimator::reconstructStation(
     std::size_t station, const Eigen::VectorXd& x_s) const {
+    CovTimer _t(neq_);  // D0 (cov consumer)
     return neq_.reconstructStation(station, x_s);
+}
+
+void NetworkEstimator::zeroPhaseGaugeColumns(Eigen::MatrixXd& cov) const {
+    // Fix A: each folded ensemble sum-to-zero gauge fixes a satellite phase-bias
+    // shared column POST-reduce; that column is the gauge direction, so its slot of
+    // shared_cov_ carries the fold's artificial variance/cross terms.  Treat it as an
+    // exact datum column (zero row + col), mirroring the datum-pin zeroing.  Empty on
+    // the anchor / OFF path → byte-identical no-op.
+    for (const auto& gz : phase_sumzero_gauges_) {
+        const Eigen::Index c = gz.shared_col;
+        if (c >= 0 && c < cov.rows() && c < cov.cols()) {
+            cov.row(c).setZero();
+            cov.col(c).setZero();
+        }
+    }
 }
 
 Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
     std::size_t station, const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
     // (variance 0), not as carrying the Dirichlet pin's artificial 1/pin_scale.
     Eigen::MatrixXd cov_free = shared_cov_;
@@ -244,12 +348,62 @@ Eigen::MatrixXd NetworkEstimator::conditionalLocalCovariance(
             cov_free.col(pin.column).setZero();
         }
     }
+    // Fix A: the ensemble phase-bias gauges are exact datum columns too.
+    zeroPhaseGaugeColumns(cov_free);
     return neq_.reconstructStationCovariance(station, cov_free);
+}
+
+Eigen::MatrixXd NetworkEstimator::datumFrameSharedCov(const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (the n_shared² shared_cov_ copy + gauge zeroing)
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT (variance
+    // 0), mirroring conditionalLocalCovariance so a carried-DD readout is the datum-as-
+    // known covariance (the DD is gauge-free ⇒ datum-invariant).  Under carry_invariant
+    // the ensemble phase gauge is OFF (mutually exclusive with the DD priors), so
+    // zeroPhaseGaugeColumns is a no-op there; kept for symmetry with the other consumers.
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    zeroPhaseGaugeColumns(cov_free);
+    return cov_free;
+}
+
+Eigen::MatrixXd NetworkEstimator::ddPriorPosteriorCovariance(
+    std::size_t b, const Datum& datum) const {
+    return neq_.ddPriorPosteriorCovariance(b, datumFrameSharedCov(datum));
+}
+
+void NetworkEstimator::ddPriorInnovation(
+    std::size_t b, const Eigen::VectorXd& x_s, const Datum& datum,
+    Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
+    neq_.ddPriorInnovation(b, x_s, datumFrameSharedCov(datum), v, cov_v);
+}
+
+Eigen::MatrixXd NetworkEstimator::jointConditionalCovariance(
+    const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+    const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
+    // Cov_free = shared_cov_ with the datum-pinned columns treated as EXACT
+    // (variance 0), mirroring conditionalLocalCovariance so the between-station
+    // DD covariance is differenced in the datum-as-known frame.
+    Eigen::MatrixXd cov_free = shared_cov_;
+    for (const auto& pin : datum) {
+        if (pin.column >= 0 && pin.column < cov_free.rows()) {
+            cov_free.row(pin.column).setZero();
+            cov_free.col(pin.column).setZero();
+        }
+    }
+    zeroPhaseGaugeColumns(cov_free);
+    return neq_.jointConditionalCovariance(requests, cov_free);
 }
 
 Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
     std::size_t station, const std::vector<Eigen::Index>& local_cols,
     const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Same datum-as-known frame as conditionalLocalCovariance: the pinned shared
     // columns are EXACT (variance 0), not carrying the Dirichlet pin's 1/pin_scale.
     Eigen::MatrixXd cov_free = shared_cov_;
@@ -259,13 +413,26 @@ Eigen::VectorXd NetworkEstimator::conditionalLocalVarianceDiag(
             cov_free.col(pin.column).setZero();
         }
     }
+    // Fix A: the ensemble phase-bias gauges are exact datum columns too.  Without
+    // this the folded gauge-direction variance inflates the carried ambiguity
+    // conditional variance → the phase-leveling carry goes inert → the ensemble
+    // reference churns → runaway (see zeroPhaseGaugeColumns).
+    zeroPhaseGaugeColumns(cov_free);
     return neq_.reconstructStationCovarianceDiag(station, local_cols, cov_free);
+}
+
+NetworkNormalEquations::StationRegression NetworkEstimator::stationRegression(
+    std::size_t station, Eigen::Index local_col) const {
+    CovTimer _t(neq_);  // D0 (cov consumer)
+    // Pure normals — no datum frame (M_r and (N_rr⁻¹)_{rr} are datum-independent).
+    return neq_.stationRegression(station, local_col);
 }
 
 Eigen::VectorXd NetworkEstimator::rowRedundancy(
     std::size_t station, const Eigen::MatrixXd& A_s_rows,
     const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
     const Datum& datum) const {
+    CovTimer _t(neq_);  // D0 (cov consumer — includes the shared_cov_ copy below)
     // Datum-as-known frame: the pinned shared columns are EXACT gauges (variance 0).
     Eigen::MatrixXd cov_free = shared_cov_;
     for (const auto& pin : datum) {
@@ -274,11 +441,20 @@ Eigen::VectorXd NetworkEstimator::rowRedundancy(
             cov_free.col(pin.column).setZero();
         }
     }
+    // Fix A: the ensemble phase-bias gauges are exact datum columns too.
+    zeroPhaseGaugeColumns(cov_free);
     return neq_.rowRedundancy(station, A_s_rows, A_r_rows, w_rows, cov_free);
 }
 
 const Eigen::MatrixXd& NetworkEstimator::reducedSharedNormals() {
     neq_.reduce(reduce_threads_);
+    // Fix A: fold the anchor-free phase-bias gauges BEFORE the null-space gate
+    // inspects the reduced normals, so the phase gauge reads as fixed (the gate's
+    // declared dimension stays = the clock deficiency count, as in the anchor mode
+    // whose local pins were pre-eliminated).  Idempotent with the solve()-side fold.
+    if (!phase_sumzero_gauges_.empty()) {
+        neq_.foldReducedSumZeroGauges(phase_sumzero_gauges_);
+    }
     return neq_.reducedSharedNormals();
 }
 
@@ -290,7 +466,7 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
         const std::string pkey = (p.kind == SharedParamKind::VtecSh)
-            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
             : key_(p.sat, p.kind, p.signal);
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
@@ -299,6 +475,138 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
         delta_rhs(c)     += p.info * p.value;
     }
     neq_.addSharedInfo(delta_info, delta_rhs);
+}
+
+std::size_t NetworkEstimator::addSharedPriorDense(const std::vector<SharedPrior>& keys,
+                                                  const Eigen::MatrixXd& cov,
+                                                  Eigen::VectorXd* lambda_diag) {
+    const Eigen::Index nk = static_cast<Eigen::Index>(keys.size());
+    if (cov.rows() != nk || cov.cols() != nk) {
+        throw std::invalid_argument(
+            "NetworkEstimator::addSharedPriorDense: cov must be keys.size() square");
+    }
+    if (lambda_diag) *lambda_diag = Eigen::VectorXd::Zero(nk);
+    if (!epoch_open_ || solved_) {
+        throw std::logic_error(
+            "NetworkEstimator::addSharedPriorDense: call between beginEpoch() and "
+            "solve()");
+    }
+    if (nk == 0) return 0;
+
+    // Map identity keys onto this epoch's layout.  An absent key is MARGINALIZED:
+    // its rows/cols of the prior COVARIANCE are dropped before the inversion.
+    // (Dropping rows of Λ would instead condition on the departed key — wrong
+    // statistics for every survivor; see the header contract.)
+    std::vector<Eigen::Index> in_idx;   // position in `keys`
+    std::vector<Eigen::Index> col;      // shared-border column
+    in_idx.reserve(keys.size());
+    col.reserve(keys.size());
+    for (Eigen::Index i = 0; i < nk; ++i) {
+        const SharedPrior& p = keys[static_cast<std::size_t>(i)];
+        const std::string pkey = (p.kind == SharedParamKind::VtecSh)
+            ? StateKeys::makeVtecShKey(p.sh_n, p.sh_m, p.sh_trig, p.sh_layer)
+            : key_(p.sat, p.kind, p.signal);
+        const auto it = index_.find(pkey);
+        if (it == index_.end()) continue;   // not in this epoch's layout → marginalized
+        in_idx.push_back(i);
+        col.push_back(it->second);
+    }
+    const Eigen::Index k = static_cast<Eigen::Index>(in_idx.size());
+    if (k == 0) return 0;
+
+    // Subset + symmetrize P, then invert in correlation scaling: P = D·C·D with
+    // D = diag(√P_ii) ⇒ Λ = D⁻¹·C⁻¹·D⁻¹.  C carries a unit diagonal, so the LDLT
+    // sees an O(1)-scaled matrix even when the block mixes stiff zero-q phase-bias
+    // carries (~1e-9 m²) with loose clock carries (~1e-2 m²).
+    Eigen::MatrixXd P(k, k);
+    Eigen::VectorXd v(k), dinv(k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        v(a) = keys[static_cast<std::size_t>(in_idx[a])].value;
+        for (Eigen::Index b = 0; b < k; ++b)
+            P(a, b) = 0.5 * (cov(in_idx[a], in_idx[b]) + cov(in_idx[b], in_idx[a]));
+    }
+    if (!P.allFinite() || !v.allFinite()) {
+        throw std::runtime_error(
+            "NetworkEstimator::addSharedPriorDense: non-finite carried value or "
+            "covariance in the retained block");
+    }
+    for (Eigen::Index a = 0; a < k; ++a) {
+        if (!(P(a, a) > 0.0)) {
+            throw std::runtime_error(
+                "NetworkEstimator::addSharedPriorDense: non-positive prior variance "
+                "on a retained key (caller must pre-screen var_eff > 0)");
+        }
+        dinv(a) = 1.0 / std::sqrt(P(a, a));
+    }
+    Eigen::MatrixXd C = dinv.asDiagonal() * P * dinv.asDiagonal();
+    const auto pdOk = [](const Eigen::LDLT<Eigen::MatrixXd>& f) {
+        if (f.info() != Eigen::Success) return false;
+        const Eigen::VectorXd dv = f.vectorD();
+        const double dmax = dv.maxCoeff();
+        const double dmin = dv.minCoeff();
+        // κ = 1e-6, deliberately MUCH tighter than the kernel's 1e-12 solve guard:
+        // this factor gets INVERTED and folded as information, so an admitted
+        // condition number becomes information AMPLIFICATION on the shared
+        // normals (Λ_aa = 1/(P_aa·(1−R²_a))).  Un-bounded, a near-gauge carried
+        // direction (multiple correlation R² → 1) can inflate the normals' max
+        // diagonal so far that the constrained solve's own relative-pivot guard
+        // (1e-12·dmax) rises above genuine weakly-observed columns and throws —
+        // and a solve-throw skips the epoch BEFORE the stash, so the identical
+        // block would re-fold every epoch (persistent skip).  Rejecting here
+        // routes the block to the driver's diagonal fallback instead (bounded at
+        // the legacy 1/var_eff), which re-stashes fresh next emit — self-healing.
+        return dmin > 0.0 && dmin >= 1e-6 * dmax;
+    };
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
+    if (!pdOk(ldlt)) {
+        // One ridge retry: +1e-9 on the unit diagonal ≈ inflating every prior
+        // variance by one part in 1e9 — statistically negligible, numerically
+        // decisive when a correlation brushes ±1 (near-gauge posterior directions).
+        C.diagonal().array() += 1e-9;
+        ldlt.compute(C);
+        if (!pdOk(ldlt)) {
+            throw std::runtime_error(
+                "NetworkEstimator::addSharedPriorDense: carried covariance block is "
+                "not positive-definite after the ridge retry — fall back to the "
+                "diagonal carry for this epoch");
+        }
+    }
+    Eigen::MatrixXd Lambda = ldlt.solve(Eigen::MatrixXd::Identity(k, k));
+    Lambda = (dinv.asDiagonal() * Lambda * dinv.asDiagonal()).eval();
+    // Explicit symmetry: the kernel symmetrizes only on the post-reduce fast path;
+    // the within-epoch RAIM replay re-folds this block PRE-reduce, and the two
+    // paths must agree bit-for-bit.
+    Lambda = (0.5 * (Lambda + Lambda.transpose())).eval();
+    // Absolute folded-information budget — the second half of the conditioning
+    // guard (the κ check above bounds the RELATIVE amplification; this bounds the
+    // ABSOLUTE injected stiffness, which is what the downstream solve guard sees).
+    // 1e13 m⁻² keeps the constrained solve's relative-pivot floor (1e-12·dmax)
+    // at or below ~10 m⁻² — under the weakest genuine reduced pivots (a single-
+    // station low-elevation riser is O(1–100)).  Only a near-singular carried
+    // block combined with an extreme zero-q variance (~1e-9 m²) can exceed it;
+    // with the B4 carry floors armed (the recommended C1 operating point) it is
+    // unreachable.  Max diagonal bounds max |Λ_ij| for a PSD matrix.
+    static constexpr double kMaxFoldedInfo = 1e13;  // 1/m²
+    if (Lambda.diagonal().maxCoeff() > kMaxFoldedInfo) {
+        throw std::runtime_error(
+            "NetworkEstimator::addSharedPriorDense: folded information exceeds the "
+            "conditioning budget (near-singular carried block) — fall back to the "
+            "diagonal carry for this epoch");
+    }
+    const Eigen::VectorXd eta = Lambda * v;
+
+    const Eigen::Index n = numShared();
+    Eigen::MatrixXd delta_info = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd delta_rhs  = Eigen::VectorXd::Zero(n);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        delta_rhs(col[static_cast<std::size_t>(a)]) += eta(a);
+        for (Eigen::Index b = 0; b < k; ++b)
+            delta_info(col[static_cast<std::size_t>(a)],
+                       col[static_cast<std::size_t>(b)]) += Lambda(a, b);
+        if (lambda_diag) (*lambda_diag)(in_idx[static_cast<std::size_t>(a)]) = Lambda(a, a);
+    }
+    neq_.addSharedInfo(delta_info, delta_rhs);
+    return static_cast<std::size_t>(k);
 }
 
 void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
@@ -317,7 +625,8 @@ void NetworkEstimator::addSharedConstraintRows(const Eigen::MatrixXd& H,
 NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_s,
                                                        const GnssTime& epoch_time,
                                                        int iod_ssr, int provider_id,
-                                                       int solution_id) const {
+                                                       int solution_id,
+                                                       bool ambiguity_datum_ensemble) const {
     if (x_s.size() != numShared()) {
         throw std::invalid_argument(
             "NetworkEstimator::toSolutionEpoch: x_s size != numShared()");
@@ -369,7 +678,15 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
                 // integer-recoverable, so they stay false.  Truthful metadata: no consumer
                 // reads it yet, but it is cheap insurance before FDMA biases enter the
                 // product (a consumer must not treat an 'R' bias as an integer candidate).
-                npb.signal_integer = !d.sat.empty() && d.sat[0] != 'R';
+                // T3a: under the anchor-free ensemble datum the bias references the
+                // receivers' float-ambiguity mean (Odijk Eq. 34 non-integer), so it is
+                // NOT an AR candidate regardless of constellation.  Otherwise — the
+                // pivot-receiver anchor datum OR the Card-3 Eq-34 single-receiver-chain
+                // datum (network.phase_datum_eq34), which is mutually exclusive with the
+                // ensemble so it passes false here — the emitted bias carries only
+                // integer lumps and preserves the integer property for CDMA sats.
+                npb.signal_integer = !ambiguity_datum_ensemble
+                                     && !d.sat.empty() && d.sat[0] != 'R';
                 break;
             }
             case SharedParamKind::VtecSh:
@@ -390,6 +707,77 @@ NetworkEstimator::PerConstWithholdDecision NetworkEstimator::decidePerConstWithh
         else                                               dec.withhold.insert(cst);
     }
     return dec;
+}
+
+
+NetworkEstimator::EstimabilityDump NetworkEstimator::dumpEstimabilitySpectrum(
+        double tow, int declared_dim,
+        const std::vector<std::string>& col_desc,
+        const std::shared_ptr<spdlog::logger>& log) {
+    // DG5: the machine-readable mirror is FILLED FROM the same locals the warn
+    // lines format, inside the same loops and in the same (largest-ev-first)
+    // order — so a network_estimability.csv row and its log line can never
+    // disagree, and the log text stays byte-identical (the estim golden arm).
+    EstimabilityDump out;
+    const Eigen::MatrixXd& Nss = reducedSharedNormals();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(
+        Nss, Eigen::ComputeEigenvectors);
+    if (es.info() == Eigen::Success) {
+        const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
+        const Eigen::Index k = ev.size();
+        const double smax = (k > 0) ? ev(k - 1) : 0.0;  // largest = last
+        // DG2: the RESOLVED tolerance — the dump must describe the decision the
+        // gate is about to make, so it reads the same member the gate call site
+        // and the drop-and-heal read (never the kNullSpaceTol default directly).
+        const double cutoff = rank_gate_tol_ * std::max(smax, 1.0);
+        int below = 0;
+        for (Eigen::Index i = 0; i < k; ++i) if (ev(i) < cutoff) ++below;
+        // Smallest ntail eigenvalues, printed largest-first so the very
+        // smallest (the gauge freedoms) sit at the end of the list.
+        const Eigen::Index ntail = std::min<Eigen::Index>(14, k);
+        std::string tail;
+        for (Eigen::Index i = ntail - 1; i >= 0; --i)
+            tail += fmt::format("{}{:.3e}", (i == ntail - 1 ? "" : ", "), ev(i));
+        log->warn("Network[estimability]: TOW {:.1f} reduced_N_ss {}x{}, "
+                  "declared_dim={}, ev_max={:.3e}, cutoff={:.3e}, {} ev<cutoff; "
+                  "smallest {} ev = [{}]",
+                  tow, Nss.rows(), Nss.cols(), declared_dim,
+                  smax, cutoff, below, ntail, tail);
+        out.valid        = true;
+        out.tow          = tow;
+        out.n_shared     = static_cast<int>(Nss.rows());
+        out.declared_dim = declared_dim;
+        out.ev_max       = smax;
+        out.cutoff       = cutoff;
+        out.n_below      = below;
+        // Name the parameters spanning each near-zero (unpinned-gauge)
+        // direction, printed largest-first to mirror the tail line above.
+        const Eigen::MatrixXd& V = es.eigenvectors();
+        const Eigen::Index ndump = std::min<Eigen::Index>(below + 2, k);
+        out.dirs.reserve(static_cast<size_t>(std::max<Eigen::Index>(ndump, 0)));
+        for (Eigen::Index j = ndump - 1; j >= 0; --j) {
+            const Eigen::VectorXd v = V.col(j).cwiseAbs();
+            std::vector<Eigen::Index> idx(v.size());
+            for (Eigen::Index t = 0; t < v.size(); ++t) idx[t] = t;
+            std::partial_sort(idx.begin(),
+                              idx.begin() + std::min<Eigen::Index>(5, v.size()), idx.end(),
+                              [&](Eigen::Index a, Eigen::Index b){ return v(a) > v(b); });
+            std::string top;
+            EstimabilityDirection row;
+            row.ev = ev(j);
+            for (int t = 0; t < 5 && t < v.size(); ++t) {
+                const Eigen::Index c = idx[t];
+                const std::string label = (c < static_cast<Eigen::Index>(col_desc.size())
+                                           && !col_desc[c].empty())
+                                              ? col_desc[c] : fmt::format("col{}", c);
+                top += fmt::format("{}{}={:.2f}", (t ? ", " : ""), label, v(c));
+                row.top.emplace_back(label, v(c));
+            }
+            log->warn("Network[estimability]:   ev={:.3e} dir spanned by [{}]", ev(j), top);
+            out.dirs.push_back(std::move(row));
+        }
+    }
+    return out;
 }
 
 } // namespace GnssProcessor

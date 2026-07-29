@@ -163,6 +163,10 @@ struct LineAssembler {
                             s.orbit_epoch.week = std::stoi(v.substr(0, colon));
                             s.orbit_epoch.tow  = std::stod(v.substr(colon + 1));
                         }
+                    } else if (f[k].rfind("sigcc=", 0) == 0) {   // M4: combined code-correction σ
+                        s.sigcc_m = std::stod(f[k].substr(6));
+                    } else if (f[k].rfind("rho=", 0) == 0) {     // M4: code/phase correction correlation
+                        s.rho = std::stod(f[k].substr(4));
                     }
                     // Unknown key=value tokens are ignored (forward-compatible).
                 }
@@ -177,9 +181,18 @@ struct LineAssembler {
                 pb.bias_m            = std::stod(f[3]);
                 pb.signal_integer    = (std::stoi(f[4]) != 0);
                 pb.wide_lane_integer = std::stoi(f[5]);
+                // Fields >=6 (any order): the RTA-4 positional post-emit phase disc counter (a
+                // bare int) and/or the T3d σ token (sigma=<val>).  Scan + dispatch by shape so
+                // the two coexist (mirrors the S-line key=value dispatch).
+                for (std::size_t k = 6; k < f.size(); ++k) {
+                    if (f[k].rfind("sigma=", 0) == 0)
+                        pb.sigma_m = std::stod(f[k].substr(6));
+                    else if (f[k].rfind("sigc=", 0) == 0)   // M4: combined phase-correction σ
+                        pb.sigc_m = std::stod(f[k].substr(5));
+                    else if (f[k].find('=') == std::string::npos)
+                        cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[k]);
+                }
                 satSolution(f[1]).phase_bias[f[2]] = pb;
-                if (f.size() > 6)   // RTA-4: optional post-emit phase disc counter (field 7)
-                    cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[6]);
             } else if (tag == "R") {   // B1: retro-bump satellite set (per-sat disc)
                 if (!have_cur) { ok = false; return completed; }
                 for (std::size_t k = 1; k < f.size(); ++k)
@@ -243,6 +256,10 @@ struct LineAssembler {
                             c.generation_id = static_cast<uint32_t>(std::stoul(f[k].substr(4)));
                         } else if (f[k].rfind("stale=", 0) == 0) {
                             c.staleness_horizon_s = std::stod(f[k].substr(6));
+                        } else if (f[k].rfind("cbjump=", 0) == 0) {
+                            c.code_bias_jump_test = (std::stoi(f[k].substr(7)) != 0);
+                        } else if (f[k].rfind("clkset=", 0) == 0) {
+                            c.clock_disc_on_set_change = (std::stoi(f[k].substr(7)) != 0);
                         } else if (f[k].rfind("frame=", 0) == 0) {
                             c.frame_id = f[k].substr(6);
                         } else if (f[k].rfind("cepoch=", 0) == 0) {
@@ -251,6 +268,20 @@ struct LineAssembler {
                             c.atx_id = f[k].substr(4);
                         } else if (f[k].rfind("oref=", 0) == 0) {
                             c.orbit_ref = f[k].substr(5);
+                        } else if (f[k].rfind("pdr=", 0) == 0) {
+                            c.decl.eq34_datum_receiver = f[k].substr(4);   // Card 3 diagnostic
+                        } else if (f[k].rfind("agek=", 0) == 0) {
+                            c.age_scale_k = std::stod(f[k].substr(5));      // M4: age-scaling coeff
+                        } else if (f[k].rfind("discfrac=", 0) == 0) {
+                            c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // H3: per-λ jump gate
+                        } else if (f[k].rfind("cbpin=", 0) == 0) {
+                            // §1.5: code-bias IF pin pair, "<const>:<s1>-<s2>".
+                            // Must dispatch BEFORE the ':' pivot fallback below —
+                            // the value itself contains a ':'.
+                            const std::string v = f[k].substr(6);
+                            const auto colon = v.find(':');
+                            if (colon != std::string::npos)
+                                c.cb_pin_pair[v.substr(0, colon)] = v.substr(colon + 1);
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -355,6 +386,10 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
         out_ << ",gid=" << contract.generation_id;
     if (contract.staleness_horizon_s > 0.0)   // RTA-11: only when armed (byte-identity)
         out_ << ",stale=" << fmt::format("{}", contract.staleness_horizon_s);
+    if (contract.code_bias_jump_test)         // only when armed (byte-identity)
+        out_ << ",cbjump=1";
+    if (contract.clock_disc_on_set_change)    // only when armed (byte-identity)
+        out_ << ",clkset=1";
     // RTA-12 identity fields: each ONLY when non-empty, so a producer that
     // declares none of them writes the pre-RTA-12 S line byte-for-byte.
     if (!contract.frame_id.empty())
@@ -365,6 +400,34 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
         out_ << ",atx=" << contract.atx_id;
     if (!contract.orbit_ref.empty())
         out_ << ",oref=" << contract.orbit_ref;
+    // Card 3 (SingleReceiverChain) diagnostic: the datum receiver r1.  ONLY when
+    // non-empty, so a non-eq34 producer writes the S line byte-for-byte.
+    if (!contract.decl.eq34_datum_receiver.empty())
+        out_ << ",pdr=" << contract.decl.eq34_datum_receiver;
+    // M4 (contract v2): age-scaling coefficient for the combined-correction variance.
+    // ONLY when non-zero, so a producer that does not advertise age scaling writes the
+    // pre-M4 S line byte-for-byte.  A quality hint (not a replay-emitter param), so
+    // makeReplayEmitter / checkContract ignore it.
+    if (contract.age_scale_k != 0.0)
+        out_ << ",agek=" << fmt::format("{}", contract.age_scale_k);
+    // H3: per-λ fractional-cycle discontinuity threshold.  ONLY when > 0, so a
+    // legacy (flat-metre) producer writes the S line byte-for-byte.  Unlike agek=
+    // this IS a replay-emitter parameter — makeReplayEmitter applies it and
+    // checkContract compares it (a per-λ vs flat mismatch mis-counts discontinuities).
+    if (contract.disc_threshold_frac_cycles > 0.0)
+        out_ << ",discfrac=" << fmt::format("{}", contract.disc_threshold_frac_cycles);
+    // §1.5 (day-129 frame-guards report): the code-bias IF PIN PAIR per
+    // constellation — the signal pair the emitted OSB stream is internally
+    // consistent in ("cbpin=G:C1C-C2L").  selectIfPinPair pins the lexically-
+    // first pair, which is NOT the RTKLIB-convention (C1W,C2W) pair consumers
+    // typically form; a consumer MIXING frames (one signal inside the pinned
+    // pair, one outside — e.g. C1C with C2W) pays the §1.5 mixed-pair penalty.
+    // ONLY when non-empty, so a producer that does not declare it writes the S
+    // line byte-for-byte.  An interpretation hint, not a replay-emitter
+    // parameter — makeReplayEmitter ignores it; checkContract compares it only
+    // for constellations the consumer declares (clock_pivot_sat semantics).
+    for (const auto& [cst, pair] : contract.cb_pin_pair)
+        out_ << ",cbpin=" << cst << ':' << pair;
     out_ << '\n';
 }
 
@@ -379,8 +442,9 @@ void NetworkProductWriter::writeEpochStatus(const NetworkProducerStatus& status)
     // uses the SAME shortest-round-trip formatting as the E line, so the reader's
     // pending-H week/tow attach-match (LineAssembler) compares exactly equal doubles
     // for an emitted epoch's own heartbeat.  sigma0 fixed at 4 decimals per the RTA-10
-    // grammar (0 when unavailable).  Never legended in the '#' header (frozen bytes)
-    // and never fed to replay — purely positional, like the S contract line.
+    // grammar (0 when unavailable).  Legended in the '#' header like every record
+    // (handoff-§7 schema fix) and never fed to replay — purely positional, like the
+    // S contract line.
     out_ << "H," << status.time.week << ',' << fmt::format("{}", status.time.tow)
          << ',' << NetworkProducerStatus::stateName(status.state)
          << ',' << fmt::format("{:.4f}", status.sigma0)
@@ -396,23 +460,38 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
     } else {
         out_ << "# gnss_network_product v1\n";
     }
-    // Legend kept verbatim to the pre-B1/A2/B3b format so a v1 file is byte-identical
-    // to the pre-change writer.  The optional trailing fields (E-line datum_consts,
-    // C-line clock_c1_m_s) and the U/R records are position-parsed by the reader (f.size()
-    // guards) and appear only when their producer toggles emit them.
-    out_ << "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed\n"
-            "# C,sat,clock_c0_m\n"
-            "# B,sat,signal,code_bias_m\n"
-            "# P,sat,signal,bias_m,signal_integer,wide_lane_integer\n";
-    // R2b: the optional R/U records (and the S contract grammar, documented above the S line)
-    // are legended ONLY in the v2 header — the v1 legend above is frozen for byte-identity
-    // (a prior review reverted a v1 legend edit).  These are '#' comments, skipped by the
-    // reader, so they never affect parsing or replay.
-    if (contract)
-        out_ << "# R,retro_sat[,retro_sat...]   (B1 per-satellite discontinuity bump)\n"
-                "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
-                "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
-                "# S,ref_rx,...,pivots           (B6 S-basis contract; field grammar above)\n";
+    // Schema fix (DOY-129 handoff §7, Jul 2026).  The legend below is
+    // GRAMMAR-COMPLETE: it declares every record tag and every optional field the
+    // writer can emit — '[]' marks fields present only under their producer
+    // toggle; 'key=' tokens are self-describing.  The prior rule ("legend frozen
+    // to the base format for cross-build byte-identity"; a prior review reverted
+    // a v1 legend edit on those grounds) is deliberately superseded: on the
+    // DOY-129 reference run every P record carried a 7th field (sigma=) against a
+    // 6-name legend, and a schema-faithful consumer silently dropped the
+    // phase-bias σ — the legend froze a lie the moment an optional channel armed.
+    // From this revision the CORRECTED legend is the frozen one, and it is shared
+    // verbatim by v1 and v2 headers (the two differ only in banner + S line).
+    // Extending the wire format REQUIRES extending the legend — enforced by
+    // HeaderLegendDeclaresEveryEmittedField in test_network_product_io.cpp.
+    // Legend lines are '#' comments: the reader skips them, replay is
+    // unaffected, and DATA lines are byte-identical across this change — a
+    // cross-build SHA-256 of whole product files sees a one-time legend delta
+    // (compare with '^#' lines stripped to check the data stream).
+    out_ << "# fields in [] are optional (present only when the producing toggle is armed);\n"
+            "# 'key=value' tokens are self-describing; unknown keys are ignorable.\n"
+            "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed[,datum_consts]\n"
+            "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]]\n"
+            "# B,sat,signal,code_bias_m[,code_disc]\n"
+            "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>]\n"
+            "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
+            "# I,generation_id               (RTA-3 solution-generation id)\n"
+            "# R,retro_sat[,retro_sat...]    (B1 per-satellite discontinuity bump)\n"
+            "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
+            "# H,week,tow,status,sigma0,n_sats_published,withheld   (RTA-10 epoch-status heartbeat)\n"
+            "# S,ref_rx,bias_sign,windup_id,amb_datum,isb_datum,emit_cb,cb_datum,disc_thresh_m,"
+            "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
+            "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
+            "[,discfrac=<c>][,cbpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
 }
 
 void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_changed,
@@ -484,6 +563,18 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                     out_ << ",oepoch=" << s.orbit_epoch.week << ':'
                          << fmt::format("{}", s.orbit_epoch.tow);
             }
+            // M4 (contract v2): optional per-sat COMBINED code-correction σ + code/phase
+            // correlation as key=value tokens (self-describing, position-independent — a
+            // field with '=' ends the reader's positional c1/clock_disc parse, so they
+            // coexist with the disc counter exactly as iode= does).  Nonzero only when
+            // network.emit_combined_sigma is armed ⇒ OFF run emits nothing ⇒
+            // byte-identical.  rho is written ONLY alongside sigcc (it correlates the
+            // combined code with the combined phase, meaningless without a combined code σ).
+            if (s.sigcc_m > 0.0 && std::isfinite(s.sigcc_m)) {
+                out_ << ",sigcc=" << fmt::format("{}", s.sigcc_m);
+                if (std::isfinite(s.rho))
+                    out_ << ",rho=" << fmt::format("{}", s.rho);
+            }
             out_ << '\n';
         }
         for (const auto& [signal, bias_m] : s.code_bias_m) {
@@ -497,6 +588,18 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                  << ',' << (pb.signal_integer ? 1 : 0) << ',' << pb.wide_lane_integer;
             if (disc_source)
                 out_ << ',' << disc_source->discontinuityCounter(s.sat, signal);
+            // T3d (B1b): optional trailing σ as a key=value token so it never collides with the
+            // positional disc field.  pb.sigma_m is nonzero only when emit_phase_bias_sigma is
+            // armed ⇒ an OFF run emits no token ⇒ byte-identical.  Mirrors the C-line iode= tail.
+            if (pb.sigma_m > 0.0 && std::isfinite(pb.sigma_m))
+                out_ << ",sigma=" << fmt::format("{}", pb.sigma_m);
+            // M4 (contract v2): optional COMBINED phase-correction σ as a key=value
+            // token beside sigma=.  pb.sigc_m is nonzero only when
+            // network.emit_combined_sigma is armed ⇒ an OFF run emits no token ⇒
+            // byte-identical.  Distinct from sigma= (the phase-bias term alone):
+            // sigc = σ of clock + phase bias combined.
+            if (pb.sigc_m > 0.0 && std::isfinite(pb.sigc_m))
+                out_ << ",sigc=" << fmt::format("{}", pb.sigc_m);
             out_ << '\n';
         }
         if (s.has_ura)   // B1: per-sat URA (emitted only when network.emit_ura on → no U lines otherwise)
@@ -649,12 +752,32 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
             note(fmt::format("clock_pivot_sat[{}]: file '{}' vs expected '{}'",
                              cst, fit->second, sat));
     }
+    // §1.5: the code-bias IF pin pair — checked per-constellation, only for the
+    // constellations the consumer DECLARES an expectation for (clock_pivot_sat
+    // semantics).  A mismatch means the consumer's chosen signal pair does not
+    // live in the product's internally-consistent frame: its receiver code-bias
+    // state must then absorb a between-channel differential against the moving
+    // satellite OSBs — the measured mixed-pair regime, worse than either
+    // consistent pair.
+    for (const auto& [cst, pair] : expected.cb_pin_pair) {
+        const auto fit = file.cb_pin_pair.find(cst);
+        if (fit == file.cb_pin_pair.end())
+            note(fmt::format("cb_pin_pair[{}]: file declares none vs expected '{}'", cst, pair));
+        else if (fit->second != pair)
+            note(fmt::format("cb_pin_pair[{}]: file '{}' vs expected '{}'",
+                             cst, fit->second, pair));
+    }
     // The two replay-emitter construction parameters: a divergence here means a
     // consumer replaying with its own emitter config would reproduce DIFFERENT
     // discontinuity counters than the producer's live store.
     if (file.disc_threshold_m != expected.disc_threshold_m)
         note(fmt::format("disc_threshold_m: file {} vs expected {}",
                          file.disc_threshold_m, expected.disc_threshold_m));
+    // H3: the per-λ fractional-cycle threshold — a per-λ-vs-flat (or differing frac)
+    // mismatch makes the consumer's replay emitter mis-count discontinuities.
+    if (file.disc_threshold_frac_cycles != expected.disc_threshold_frac_cycles)
+        note(fmt::format("disc_threshold_frac_cycles: file {} vs expected {}",
+                         file.disc_threshold_frac_cycles, expected.disc_threshold_frac_cycles));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));
@@ -695,9 +818,12 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
 NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContract& contract) {
     // present=false (v1 / pre-B6 file): the defaults reproduce the pre-B6 replay
     // behavior exactly (the emitter's default threshold, no clock-disc channel,
-    // no staleness horizon).
+    // no staleness horizon, no optional code-jump / clock-set channels).
     return NetworkProductEmitter(contract.disc_threshold_m, contract.emit_clock_disc,
-                                 contract.staleness_horizon_s);
+                                 contract.staleness_horizon_s,
+                                 contract.code_bias_jump_test,
+                                 contract.clock_disc_on_set_change,
+                                 contract.disc_threshold_frac_cycles);
 }
 
 // ===========================================================================
@@ -874,6 +1000,14 @@ std::vector<NetworkProductRecord> NetworkProductTail::pollInto(SsrCorrectionStor
         NetworkProductReader::replay(rec, store, impl_->emitter);
         ++impl_->delivered;
     }
+    // M4 (contract v2): propagate the producer's advertised combined-σ age-scaling
+    // coefficient (the S-line agek= token) into the consumer's store so the
+    // measurement model can age-inflate the combined variance.  The S line does not
+    // feed replay, so this is the only channel that carries agek to the consumer; it
+    // is a store-wide scalar (default 0 = no inflation), refreshed from the current
+    // contract each poll (cheap, idempotent).  Only when a contract has been seen.
+    if (impl_->assembler.contract.present)
+        store.setCombinedSigmaAgeCoeff(impl_->assembler.contract.age_scale_k);
     return recs;
 }
 

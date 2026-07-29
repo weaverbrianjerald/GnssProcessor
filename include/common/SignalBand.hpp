@@ -161,4 +161,24 @@ namespace GnssProcessor {
      */
     const char* bandLabel(FrequencyBand band);
 
+    /**
+     * @brief Nominal carrier wavelength (m) for a physical band, from @c Constants.
+     *
+     * A pure, stateless function of the band identity — the same value on the
+     * producer and on any replay consumer, which is what makes it usable as a
+     * FIXED producer↔consumer discontinuity-threshold basis (@c frac·λ).
+     *
+     * @note For the FDMA GLONASS bands (@c GloG1 / @c GloG2) this returns the
+     *       BASE-frequency (channel k=0) wavelength: @c SignalBand is slot-stateless
+     *       by design (see the file banner), so it cannot apply the per-satellite
+     *       channel offset.  Callers that need the slot-exact FDMA wavelength must
+     *       add @c k·offset themselves.  The nominal value is deterministic and so
+     *       remains a valid contract basis; the ~2.5% slot spread is immaterial to a
+     *       ¼-cycle gate and network GLONASS is currently off.
+     *
+     * @param band Physical band identifier.
+     * @return Nominal wavelength in metres, or 0.0 for @c Unknown / unmapped bands.
+     */
+    double bandNominalWavelengthMeters(FrequencyBand band);
+
 } // namespace GnssProcessor

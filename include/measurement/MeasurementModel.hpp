@@ -23,6 +23,7 @@
 #include <vector>
 #include <string>
 #include <set>
+#include <map>
 
 namespace GnssProcessor {
 
@@ -96,7 +97,44 @@ namespace GnssProcessor {
          *        usable raw phase signal (used to seed the pivot set first).
          */
         void ensureNetworkSharedStates(const std::vector<PppObservation>& observations,
-                                       const std::set<std::string>& allowed_phase_keys = {});
+                                       const std::set<std::string>& allowed_phase_keys = {},
+                                       const std::set<std::string>* cbadm_admitted_code_keys = nullptr);
+
+        /**
+         * @brief Install a network coverage allowlist for satellite PHASE-BIAS states.
+         *
+         * Keyed by system display name (e.g. "GPS") → the set of phase signals
+         * (e.g. {"L1C","L2W","L5Q"}) permitted to get a per-(sat,signal) phase-bias
+         * state.  A constellation absent from the map, or an empty map, permits
+         * every phase signal (default — byte-identical).  When present, a phase
+         * signal NOT listed is skipped in @ref ensureNetworkSharedStates: no
+         * phase-bias state is allocated, so its float ambiguity absorbs the bias
+         * and the signal is not AR-eligible.  Populated by the network producer
+         * from per-station coverage (@c network.phase_bias_min_station_fraction).
+         */
+        void setPhaseBiasSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
+            phase_bias_signal_allowlist_ = std::move(allowlist);
+        }
+
+        /**
+         * @brief Withhold ALL of this station's satellite phase-bias contributions.
+         *
+         * The per-station analogue of @ref setPhaseBiasSignalAllowlist (which gates
+         * per-signal): when true, @ref ensureNetworkSharedStates allocates NO
+         * per-(satellite,signal) phase-bias state for this station's observations, so
+         * its carrier phase writes no shared phase-bias Jacobian, scatters no
+         * phase-bias column into the network border, and it can never be elected a
+         * phase-bias anchor.  The observations are still admitted — the station keeps
+         * feeding the satellite CLOCK, code bias, ionosphere and its own position;
+         * only the shared phase-bias coupling is removed (the local float ambiguity
+         * absorbs each arc).  Used by the network producer to keep an unmatched-receiver-
+         * antenna station's uncalibrated (no receiver PCV) phase out of the emitted
+         * satellite phase biases (@c network.phase_bias_exclude_unmatched_antenna).
+         * Default false — byte-identical.
+         */
+        void setPhaseBiasEmissionExcluded(bool excluded) {
+            phase_bias_emission_excluded_ = excluded;
+        }
 
         /**
          * @brief Seed the model's frequency helper with GLONASS FCN slot numbers.
@@ -325,6 +363,25 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
 
+        /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
+        /// system → admitted phase signals.  Empty (default) = allow every signal.
+        std::map<std::string, std::set<std::string>> phase_bias_signal_allowlist_;
+
+        /// Per-station phase-bias emission exclusion (see @ref setPhaseBiasEmissionExcluded).
+        /// True = allocate no satellite phase-bias state for this station's observations
+        /// (all signals).  False (default) = contribute normally — byte-identical.
+        bool phase_bias_emission_excluded_{false};
+
+        /// Whether @p signal (a raw phase code, e.g. "L1C") for @p system may get a
+        /// satellite phase-bias state under the coverage allowlist.  True when the
+        /// feature is off (empty) or the system is not gated; else set membership.
+        bool phaseBiasAdmitted(const std::string& system, const std::string& signal) const {
+            if (phase_bias_signal_allowlist_.empty()) return true;
+            auto it = phase_bias_signal_allowlist_.find(system);
+            if (it == phase_bias_signal_allowlist_.end()) return true;
+            return it->second.count(signal) > 0;
+        }
+
         /// Non-owning SSR store override; nullptr -> process-wide singleton.
         /// Set via setSsrStore() for the closed-loop consumer (see header).
         const SsrCorrectionStore* ssr_store_override_{ nullptr };
@@ -463,6 +520,74 @@ namespace GnssProcessor {
         bool ssrCoversCodeSignal(const std::string& satellite,
                                  const std::string& signal,
                                  const GnssTime& obs_time) const;
+
+        /**
+         * @brief Whether a .BIA entry counts as bias coverage for the
+         *        "already corrected?" gates — code rows (sat-bias absorber
+         *        allocation, no-BIA code downweight) and phase rows (AR
+         *        eligibility via @c phaseBiasCoveredForAr).
+         *
+         * Legacy semantics (default): a pure @c hasBiasEntry presence check —
+         * a .BIA that is loaded but NOT applied (@c enable_code_phase_bias
+         * false, e.g. forced off by @c network.estimate_iono_sh and inherited
+         * by the derived closed-loop consumer) still reports coverage, so the
+         * row runs at full code weight with no absorber while carrying the raw
+         * satellite OSB content.  With
+         * @c model_corrections.bias_coverage_requires_apply the entry counts
+         * ONLY while @c enable_code_phase_bias is actually folding it into
+         * @c obs.modeled.  The network producer
+         * (@c ProcessingMode::PPP_RTK_Network) keeps legacy semantics under
+         * either setting — its code rows are corrected by network-estimated
+         * shared code-bias states, not by the .BIA.
+         */
+        bool biaCoversSignal(const std::string& satellite,
+                             const std::string& signal) const;
+
+        /**
+         * @brief Whether the live SSR stream supplies a PHASE bias for this
+         *        exact (satellite, raw signal) — i.e. whether the phase
+         *        @c ssr_bias_term will correct the row in @c buildJacobianRow.
+         *
+         * Exact mirror of @c ssrCoversCodeSignal for the phase channel: false
+         * in the network producer mode (which ESTIMATES satellite phase biases
+         * as states rather than importing them); a presence check via
+         * @c SsrCorrectionStore::getPhaseBias otherwise — AGE-GATED with the
+         * SAME effective stale-hold limit as the apply site when the A5
+         * staleness gate is on.  Post-processing leaves the SSR store empty,
+         * so this is always false there.
+         *
+         * @param obs_time Observation epoch for the staleness comparison
+         *        (ignored unless @c enableSsrBiasMaxAge).
+         */
+        bool ssrCoversPhaseSignal(const std::string& satellite,
+                                  const std::string& signal,
+                                  const GnssTime& obs_time) const;
+
+        /**
+         * @brief AR-eligibility phase-bias coverage for an ambiguity's signal:
+         *        is the satellite phase bias on this (satellite, signal)
+         *        REMOVED from the phase observable, so its float ambiguity may
+         *        legitimately be fixed to an integer?
+         *
+         * Legacy semantics (default,
+         * @c model_corrections.bias_coverage_requires_apply off): raw .BIA
+         * PRESENCE — @c ifCombHasFullBia for IF-combined keys,
+         * @c hasBiasEntry for raw signals — byte-identical to the historical
+         * gate.  With the toggle armed the check becomes honest AND gains the
+         * network product channel: a signal is covered iff the .BIA entry is
+         * actually APPLIED (@c biaCoversSignal) OR a live network/SSR phase
+         * bias corrects the row (@c ssrCoversPhaseSignal; both components for
+         * an IF key).  This is what lets the closed-loop PPP-RTK consumer —
+         * which inherits @c enable_code_phase_bias=false from the producer —
+         * key AR eligibility on the network PB products it actually applies
+         * instead of on the phantom, unapplied .BIA.
+         *
+         * @param signal Raw phase signal (e.g. "L1C") or IF key ("L1C_L5Q").
+         * @param obs_time Observation epoch for the SSR staleness comparison.
+         */
+        bool phaseBiasCoveredForAr(const std::string& satellite,
+                                   const std::string& signal,
+                                   const GnssTime& obs_time) const;
 
         /**
          * @brief Check whether both component signals of an IF combination

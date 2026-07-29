@@ -208,15 +208,47 @@ def parse_product_file(path: str) -> ProductFile:
                     if not have_epoch or len(f) < 3:
                         pf.malformed += 1
                         continue
+                    # RTF-2 (Card 4): after the c0 value, trailing C-record fields are
+                    # either POSITIONAL numerics (RTA-4 disc-counter VALUES: c1 then the
+                    # clock disc) or self-describing key=value tokens (brdc_rts:
+                    # iode=/oiod=/oepoch=<week>:<tow>).  Mirror the C++ reader's '='-guard
+                    # (NetworkProductIO.cpp:149-156) so a brdc_rts line
+                    # "C,G05,<c0>,iode=39" does NOT try to float("iode=39") as the
+                    # positional c1 and drop the whole clock row.
                     c1 = float("nan")
                     has_c1 = False
-                    if len(f) > 3:
-                        c1 = _to_float(f[3])
-                        has_c1 = True
+                    clock_iode = None
+                    orbit_iod_ssr = None
+                    orbit_epoch = None
+                    pos_seen = 0
+                    for tok in f[3:]:
+                        if not tok:
+                            continue
+                        if "=" in tok:
+                            key, _, val = tok.partition("=")
+                            try:
+                                if key == "iode":
+                                    clock_iode = int(val)
+                                elif key == "oiod":
+                                    orbit_iod_ssr = int(val)
+                                elif key == "oepoch":
+                                    orbit_epoch = val   # "<week>:<tow>"
+                            except ValueError:
+                                pass                    # tolerate a malformed echo token
+                        else:
+                            if pos_seen == 0:
+                                c1 = _to_float(tok)     # RTA-4 positional c1 (clock drift)
+                                has_c1 = True
+                            # pos_seen == 1 would be the positional clock-disc VALUE; the
+                            # reader tracks disc via the datum/retro flags, not on the C row.
+                            pos_seen += 1
                     pf.rows.append(_row(cur_week, cur_tow, f[1], "C", "",
                                         _to_float(f[2]), cur_datum_changed,
                                         cur_datum_consts, cur_retro,
-                                        clock_c1_m=c1, has_c1=has_c1))
+                                        clock_c1_m=c1, has_c1=has_c1,
+                                        clock_iode=clock_iode,
+                                        orbit_iod_ssr=orbit_iod_ssr,
+                                        orbit_epoch=orbit_epoch))
                 elif tag == "B":
                     if not have_epoch or len(f) < 4:
                         pf.malformed += 1
@@ -260,7 +292,8 @@ def parse_product_file(path: str) -> ProductFile:
 
 def _row(week, tow, sat, record, signal, value, datum_changed, datum_consts,
          retro_set, *, clock_c1_m=float("nan"), has_c1=False,
-         signal_integer=None, wide_lane_integer=None) -> dict:
+         signal_integer=None, wide_lane_integer=None,
+         clock_iode=None, orbit_iod_ssr=None, orbit_epoch=None) -> dict:
     return {
         "week": week,
         "tow": tow,
@@ -272,6 +305,11 @@ def _row(week, tow, sat, record, signal, value, datum_changed, datum_consts,
         "has_c1": has_c1,
         "signal_integer": signal_integer,
         "wide_lane_integer": wide_lane_integer,
+        # RTF-2 (Card 4/5): broadcast eph version the brdc_rts C0 is referenced to,
+        # and the orbit-coherence echo.  None on every non-brdc_rts (sp3-mode) row.
+        "clock_iode": clock_iode,
+        "orbit_iod_ssr": orbit_iod_ssr,
+        "orbit_epoch": orbit_epoch,
         "datum_changed": datum_changed,
         "datum_consts": datum_consts,
         "retro": sat in retro_set,

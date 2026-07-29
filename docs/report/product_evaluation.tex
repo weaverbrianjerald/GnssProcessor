@@ -48,11 +48,23 @@ samples and CLK clock samples (IGS Final / Rapid products) and
 centimetre-to-millimetre grade.  The broadcast path evaluates a
 Keplerian (or, for GLONASS, a numerically integrated PZ-90) ephemeris
 analytically from the navigation message; it is metre-grade on its own
-and is the substrate the live SSR stream corrects.  The two paths never
-mix within a satellite at a given epoch: a precise product, when loaded
-and spanning the query, wins; otherwise the engine falls through to the
-broadcast evaluation (\texttt{src/core/model/ModelGeometry.cpp},
-\texttt{src/core/corrections/GnssCorrections.cpp}).
+and is the substrate the live SSR stream corrects.  On the default path
+the two paths do not mix within a satellite at a given epoch: a precise
+product, when loaded and spanning the query, wins; otherwise the engine
+falls through to the broadcast evaluation
+(\texttt{src/core/model/ModelGeometry.cpp},
+\texttt{src/core/corrections/GnssCorrections.cpp}).  The resolution is
+per quantity, however, not structurally coupled: the real-time RTB-4
+gate \texttt{realtime.use\_precise\_orbits} splits the orbit and clock
+sources independently (\texttt{GnssConfig::realtimeUsesLiveOrbitSource}
+vs \texttt{realtimeUsesLiveOrbitClockSource},
+\texttt{ProductParser::loadProducts(bool,\,bool)}), so an armed
+``ultra-rapid orbits $+$ network clocks'' config evaluates one satellite
+at one epoch with a precise interpolated orbit \emph{and} a
+broadcast$+$SSR clock.  The flag defaults false --- the orbit gate then
+returns exactly the clock gate, byte-identical --- so the no-mixing
+statement holds for every non-real-time mode and for the default
+real-time path.
 
 \subsection{Precise orbit: derotated Neville interpolation}\label{sec:prod-neville}
 
@@ -110,7 +122,16 @@ interpolated orbit is continuous across the swap.  A gap guard
 re-picks a narrower $\mathrm{MIN\_POINTS}=9$-node window and rejects
 the satellite if the residual span still exceeds the fit interval
 (thresholds in \texttt{ModelGeometry.cpp}; tuning values cited, not
-reproduced).
+reproduced).  The ``fit interval'' is not read from the product header
+but computed as the \emph{median} of the leading consecutive-node
+spacings (\texttt{ModelGeometry.cpp}); this is deliberate, because a
+multi-file SP3 merge can interleave a finer margin file's off-grid nodes
+into a coarser arc (e.g. a $5$-minute ultra-rapid file concatenated with
+a $15$-minute one --- the $1$\,s dedup window correctly keeps them as
+non-duplicates, so the merged series is non-uniformly sampled and
+\texttt{ProductParser} warns on the mixed-rate concat).  The median grid
+gives a stable $\mathrm{MAX\_SPAN}$ guard on such a series where the
+nominal grid would be ill-defined.
 
 \paragraph{Neville value and derivative.}
 Within the window the engine runs Neville's algorithm
@@ -528,8 +549,11 @@ $\tau_n$ (DF123) and $\gamma_n$ (DF120) about $t_b=t_{oe}$:
 -\tau_n+\gamma_n\,(t-t_b)
 \label{eq:prod-bclock-glonass}
 \end{equation}
-(\texttt{LiveEphemerisStore.cpp}; GLONASS is presently excluded from the
-active CDMA-systems set, so this path is implemented for completeness).
+(\texttt{LiveEphemerisStore.cpp}).  This path is exercised only where
+GLONASS is excluded from \texttt{active\_systems} --- the shipped
+real-time replay configs, which is the context this store serves; the
+default \texttt{active\_systems} and the post-processing configs both
+enable GLONASS, so the path is not universally dead code.
 
 \paragraph{The precise-clock-baseline convention.}
 A design decision worth stating explicitly: the broadcast clock
@@ -593,7 +617,17 @@ SSR stream.  When an SSR delta names a specific IOD,
 (\texttt{current} or \texttt{previous}) matches the SSR's IOD, so the
 orbit and clock are evaluated on the exact baseline the correction was
 computed for, instead of dropping the satellite to broadcast grade on a
-\texttt{current}-vs-SSR mismatch.
+\texttt{current}-vs-SSR mismatch.  The same current/previous retention
+underwrites a second consumer built on the broadcast clock polynomial
+\eqref{eq:prod-bclock-poly}:
+\texttt{LiveEphemerisStore::ephCutoverShiftMetres} evaluates
+$\sLight\,(\satclk_{\mathrm{new}}-\satclk_{\mathrm{old}})$ across an
+ephemeris version roll --- \texttt{computeSatelliteClock} run once on the
+freshest pick and once pinned to the old IODE --- and returns nothing
+when the old version is no longer retained.  It is the product-side half
+of the network producer's \texttt{network.apriori\_source = brdc\_rts}
+eph-cutover re-level; that re-level is derived in
+\dcref{sec:net}{the Network mode document} and is not repeated here.
 
 \paragraph{The GNSS-IOD matching convention.}
 The SSR ``GNSS IOD'' field (IGS-SSR / RTCM \texttt{4076}, IDF012) is an

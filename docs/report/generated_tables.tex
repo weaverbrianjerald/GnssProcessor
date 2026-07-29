@@ -17,8 +17,10 @@
 The tables in this appendix are generated from the source tree by
 \texttt{scripts/gen\_report\_tables.py}.  They are not maintained by hand: a
 renamed flag, a new cycle-slip detector, or a changed state-key delimiter
-appears here on the next run of the generator.  Run the generator with
-\texttt{-{}-check} in CI to fail the build if the committed tables are stale.
+appears here on the next run of the generator.  The fragments under
+\texttt{generated/} are \texttt{.gitignore}d and rebuilt on demand
+(\texttt{build.ps1 -Regen} / \texttt{build.sh -{}-regen}); run the generator with
+\texttt{-{}-check} to verify they match the current source tree.
 
 \input{generated/processing_modes}
 

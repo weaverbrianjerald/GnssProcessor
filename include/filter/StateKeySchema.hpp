@@ -70,6 +70,12 @@ inline constexpr std::string_view kGlonassFcnMarker = "_k";
 /// Receiver differential code bias infix in code-bias keys ("GPS_DCB").
 inline constexpr std::string_view kDcbInfix = "DCB";
 
+/// Receiver PHASE-bias infix in receiver-phase-bias keys ("GPS_RPB_L1C").
+/// The surrounding underscores ("_RPB_") make the infix un-producible by
+/// @c makeIfbKey / @c makeDcbKey, so the receiver-phase-bias namespace stays
+/// disjoint from the receiver code-bias namespace (Card 3, §4c).
+inline constexpr std::string_view kRpbInfix = "RPB";
+
 /// Narrow-lane infix in NlWl-basis ambiguity keys ("G01_NL_1").
 inline constexpr std::string_view kNlInfix = "NL";
 
@@ -508,6 +514,76 @@ inline std::optional<std::string> parseDcbKey(std::string_view key) {
 }
 
 // ===========================================================================
+// 4c. Receiver PHASE-bias keys — "<system>_RPB_<signal>"
+// ---------------------------------------------------------------------------
+// Examples: "GPS_RPB_L1C", "Galileo_RPB_L5Q"
+//
+//   system : system name string from PppUtils::getSystemString()
+//            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
+//   signal : full RINEX signal code (3 chars; the network allocates these on
+//            RAW phase signals only, so no embedded '_' iono-free combos).
+//
+// The per-(receiver, system, signal) satellite-phase-bias split state
+// δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum (Card 3,
+// network.phase_datum_eq34).  Giving the receiver fractional phase bias its
+// OWN estimable state stops it lumping into the emitted satellite phase bias,
+// so the emitted between-satellite reference stays integer-consistent across
+// ALL satellites (each chain hop contributes only an integer).  These are
+// LOCAL states (observed by exactly one station), kept in the SEPARATE map
+// StateManager::receiver_phase_bias_indices_.  The "_RPB_" infix keeps the
+// namespace disjoint from the receiver code-bias keys (§4) — parseIfbKey /
+// parseDcbKey look for the "IFB"/"DCB" infix and never match "RPB".
+//
+// Constructed in:  the network driver / MeasurementModel (eq34 branch only)
+// Stored in:       StateManager::receiver_phase_bias_indices_
+// Parsed in:       the network driver (RPB pin fold, prune bookkeeping)
+// ===========================================================================
+
+/// Decomposed receiver phase-bias key ("<system>_RPB_<signal>").
+struct ReceiverPhaseBiasKeyParts {
+    std::string system;  ///< system name string (e.g. "GPS", "Galileo").
+    std::string signal;  ///< full RINEX signal code (e.g. "L1C").
+};
+
+/// Build a receiver phase-bias key "<system>_RPB_<signal>".
+inline std::string makeReceiverPhaseBiasKey(std::string_view system,
+                                            std::string_view signal) {
+    std::string out;
+    out.reserve(system.size() + 2 + kRpbInfix.size() + signal.size());
+    out.append(system);
+    out.push_back(kCodeBiasDelimiter);   // '_'
+    out.append(kRpbInfix);
+    out.push_back(kCodeBiasDelimiter);   // '_'
+    out.append(signal);
+    return out;
+}
+
+/// True iff @p key carries the "_RPB_" infix (cheap namespace test).
+inline bool isReceiverPhaseBiasKey(std::string_view key) {
+    // Need "<sys>_RPB_<sig>": at least one char of system before "_RPB_" and
+    // at least one signal char after it.
+    const std::string_view needle = "_RPB_";
+    const auto pos = key.find(needle);
+    return pos != std::string_view::npos
+        && pos > 0
+        && pos + needle.size() < key.size();
+}
+
+/// Parse a receiver phase-bias key.  Returns @c std::nullopt unless the key
+/// has the exact form "<system>_RPB_<signal>" with non-empty system and signal.
+inline std::optional<ReceiverPhaseBiasKeyParts>
+parseReceiverPhaseBiasKey(std::string_view key) {
+    const std::string_view needle = "_RPB_";
+    const auto pos = key.find(needle);
+    if (pos == std::string_view::npos) return std::nullopt;
+    if (pos == 0 || pos + needle.size() >= key.size()) return std::nullopt;
+    return ReceiverPhaseBiasKeyParts{
+        std::string(key.substr(0, pos)),
+        std::string(key.substr(pos + needle.size())),
+    };
+}
+
+// ===========================================================================
 // 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
 // ---------------------------------------------------------------------------
 // Examples: "G01|C1W", "E11|C5Q", "E24|C7Q"
@@ -722,13 +798,19 @@ inline std::string makePivotSeedKey(std::string_view cons,
 }
 
 // ===========================================================================
-// 8. Global SH-VTEC coefficient keys — "SH|<n>|<m>|<C|S>"
+// 8. Global SH-VTEC coefficient keys — "SH|<n>|<m>|<C|S>" / "SH2|<n>|<m>|<C|S>"
 // ---------------------------------------------------------------------------
-// Examples: "SH|0|0|C", "SH|4|2|C", "SH|4|2|S"
+// Examples: "SH|0|0|C", "SH|4|2|C", "SH|4|2|S", "SH2|1|0|C"
 //
 //   n    : spherical-harmonic degree (0..N).
 //   m    : order (0..n).
 //   trig : 'C' (cosine term, includes m=0) or 'S' (sine term, m>=1).
+//   layer: shell index — layer 0 keeps the original "SH" prefix unchanged
+//          (all pre-Iono-2 keys, snapshots, and traces stay valid); the
+//          dual-layer field's second shell uses the DISTINCT prefix "SH2"
+//          (parseVtecShKey hard-rejects extra pipe fields, so a 5-field
+//          layer-extended key would be silently unparseable by old readers —
+//          a distinct prefix is the backward-compatible extension).
 //
 // These name the SHARED spherical-harmonic VTEC coefficient columns of the
 // PPP-RTK network producer's co-estimated global ionosphere
@@ -741,20 +823,25 @@ inline std::string makePivotSeedKey(std::string_view cons,
 // Constructed in:  the network estimator (registerVtecCoeff), the driver.
 // ===========================================================================
 
-/// Tag that opens every SH-VTEC coefficient key.
+/// Tag that opens every layer-0 SH-VTEC coefficient key.
 inline constexpr std::string_view kVtecShPrefix = "SH";
+/// Tag that opens every layer-1 (second-shell) SH-VTEC coefficient key.
+inline constexpr std::string_view kVtecSh2Prefix = "SH2";
 
 /// Decomposed SH-VTEC coefficient key.
 struct VtecShKeyParts {
     int  n;     ///< Degree.
     int  m;     ///< Order.
     char trig;  ///< 'C' or 'S'.
+    int  layer = 0;  ///< Shell index: 0 = legacy "SH" layer, 1 = "SH2" second shell.
 };
 
-/// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>".
-inline std::string makeVtecShKey(int n, int m, char trig) {
+/// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>" (layer 0) or
+/// "SH2|<n>|<m>|<C|S>" (layer 1).  Layer 0 output is byte-identical to the
+/// pre-Iono-2 three-argument form.
+inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     std::string out;
-    out.append(kVtecShPrefix);
+    out.append(layer > 0 ? kVtecSh2Prefix : kVtecShPrefix);
     out.push_back(kPipeDelimiter);
     out.append(std::to_string(n));
     out.push_back(kPipeDelimiter);
@@ -764,20 +851,29 @@ inline std::string makeVtecShKey(int n, int m, char trig) {
     return out;
 }
 
-/// Cheap predicate: does @p key open with the SH prefix + a pipe?
+/// Cheap predicate: does @p key open with an SH-VTEC prefix ("SH" or "SH2") + a
+/// pipe?  True for BOTH layers — layer-agnostic call sites (kind tests, trace
+/// filters) keep working unchanged on dual-layer keys.
 inline bool isVtecShKey(std::string_view key) {
+    if (key.size() > kVtecSh2Prefix.size() + 1
+        && key.substr(0, kVtecSh2Prefix.size()) == kVtecSh2Prefix
+        && key[kVtecSh2Prefix.size()] == kPipeDelimiter)
+        return true;
     return key.size() > kVtecShPrefix.size() + 1
         && key.substr(0, kVtecShPrefix.size()) == kVtecShPrefix
         && key[kVtecShPrefix.size()] == kPipeDelimiter;
 }
 
 /// Parse a global SH-VTEC coefficient key.  Returns @c std::nullopt unless the
-/// key has the exact form "SH|<n>|<m>|<C|S>" with non-negative integer n, m and
-/// a 'C' or 'S' trig tag.
+/// key has the exact form "SH|<n>|<m>|<C|S>" (layer 0) or "SH2|<n>|<m>|<C|S>"
+/// (layer 1) with non-negative integer n, m and a 'C' or 'S' trig tag.
 inline std::optional<VtecShKeyParts>
 parseVtecShKey(std::string_view key) {
     if (!isVtecShKey(key)) return std::nullopt;
-    const auto p0 = kVtecShPrefix.size();                         // pipe after "SH"
+    const bool layer2 = key.substr(0, kVtecSh2Prefix.size()) == kVtecSh2Prefix
+                        && key[kVtecSh2Prefix.size()] == kPipeDelimiter;
+    const auto p0 = layer2 ? kVtecSh2Prefix.size()
+                           : kVtecShPrefix.size();                // pipe after the prefix
     const auto p1 = key.find(kPipeDelimiter, p0 + 1);
     if (p1 == std::string_view::npos) return std::nullopt;
     const auto p2 = key.find(kPipeDelimiter, p1 + 1);
@@ -797,7 +893,7 @@ parseVtecShKey(std::string_view key) {
     };
     int n = 0, m = 0;
     if (!toInt(n_sv, n) || !toInt(m_sv, m)) return std::nullopt;
-    return VtecShKeyParts{n, m, t_sv.front()};
+    return VtecShKeyParts{n, m, t_sv.front(), layer2 ? 1 : 0};
 }
 
 }  // namespace StateKeys

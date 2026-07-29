@@ -27,11 +27,24 @@
  * the epoch's own @c code_bias_m composition (so replay reproduces the counters
  * with NO new serialization, exactly as for phase), and also honours the same
  * @c markDatumChange forced bump (a clock-pivot handover re-references the whole
- * shared solution).  There is no magnitude threshold for code: the deterministic
- * set/band-change detectors cover every gauge re-reference, and a code RW noise
- * step is not a datum discontinuity.  The consumer's @c getCodeBiasDiscontinuity
- * -> @c reinflateCodeBiasVariance hook turns an increment into a clean receiver
- * code-bias re-inflation.
+ * shared solution).  By default there is no magnitude threshold for code: the
+ * deterministic set/band-change detectors cover every GAUGE re-reference, and a
+ * code RW noise step is not a datum discontinuity.  The Jul-2026 wire audit,
+ * however, measured large unsignalled code-bias VALUE jumps beyond what the
+ * structural triggers catch (weak-separation wander at thin rosters; 7.6k jumps
+ * vs 2.8k signalled at net305), so an OPT-IN magnitude jump test
+ * (@c network.code_bias_disc_jump_test, same threshold as phase) can be layered
+ * on top — honest signalling for whatever still moves.  The consumer's
+ * @c getCodeBiasDiscontinuity -> @c reinflateCodeBiasVariance hook turns an
+ * increment into a clean receiver code-bias re-inflation.
+ *
+ * The CLOCK channel (A2) bumps only on forced datum changes (pivot handover /
+ * retro-bump) by default.  Under the SUM-TO-ZERO clock datum the gauge instead
+ * re-references whenever a constellation's clock-satellite SET changes (the
+ * survivors redistribute ∓ΔC0/N) — an OPT-IN set-change trigger
+ * (@c network.clock_disc_on_set_change) detects that from the epoch's own clock
+ * composition (replay-reproducible, like the code set trigger) and steps the
+ * constellation's clock counters so the datum move is signalled on the wire.
  *
  * Sink B (RTCM-4076 wire encoding) is deferred to Phase 2.
  *
@@ -58,6 +71,8 @@ struct NetworkPhaseBias {
     double bias_m{0.0};            ///< Estimable satellite phase bias (m); carries the pivot-receiver ambiguity lump (Odijk Eq. 4).
     bool   signal_integer{false}; ///< Bias preserves the integer ambiguity property (IGS-SSR).
     int    wide_lane_integer{0};  ///< Wide-lane integer indicator (2-bit, IGS-SSR).
+    double sigma_m{0.0};          ///< B1b: formal 1σ (m) of this phase-bias correction; 0 unless the driver populated it (network.emit_phase_bias_sigma, gauge-exact shared-cov diagonal).
+    double sigc_m{0.0};           ///< M4 (contract v2): formal 1σ (m) of the COMBINED PHASE correction (clock + phase bias, cross-cov included; NO iono); 0 unless network.emit_combined_sigma populated it. Serialized as the P-record sigc= token; consumed via SsrPhaseBiasEntry::combined_sigma_m.
 };
 
 /// One satellite's estimated satellite-side solution for a single epoch.
@@ -68,6 +83,16 @@ struct NetworkSatSolution {
     double                                  clock_c1_m_s{0.0}; ///< Estimable satellite clock drift C1 (m/s); 0 unless network.clock_model on (B3b — the two-state oscillator drift the consumer extrapolates as c0+c1·dt).
     double                                  clock_ura_m{0.0}; ///< B1: per-sat URA 1σ (m) = EWMA(σ̂0)×formal clock σ; 0 unless has_ura.
     bool                                    has_ura{false};   ///< B1: whether clock_ura_m is populated (network.emit_ura on).
+    /// M4 (contract v2): formal 1σ (m) of the COMBINED CODE correction (clock +
+    /// code bias at a reference signal, cross-cov included); 0 unless
+    /// network.emit_combined_sigma populated it.  Per-sat (the C record).
+    /// Serialized as the C-record sigcc= token; store home
+    /// SsrClockCorrection::combined_code_sigma_m.
+    double                                  sigcc_m{0.0};
+    /// M4 (contract v2): correlation ρ between the combined CODE and combined PHASE
+    /// corrections at the reference signal (both share the clock term ⇒ ~0.6–0.9);
+    /// 0 unless populated.  Serialized as the C-record rho= token.
+    double                                  rho{0.0};
     /// RTF-2 (Card 5): broadcast ephemeris version (IODE, in the IGS-SSR matching
     /// convention) the estimable clock @c clock_c0_m is a delta against, threaded
     /// from the producer emission path in @c brdc_rts mode.  -1 = sp3 mode /
@@ -152,9 +177,38 @@ public:
     ///        kept state sees no change.  Default 0 keeps the legacy keep-forever
     ///        baselines (byte-identical).  Like the other two parameters it travels
     ///        in the serialized S contract (@c stale=) for @c makeReplayEmitter.
+    /// @param code_bias_jump_test When true (@c network.code_bias_disc_jump_test),
+    ///        the CODE-bias counter also bumps on a fresh-baseline VALUE jump
+    ///        beyond @p disc_threshold_m — the phase jump test applied to code, on
+    ///        top of the always-on structural set/band-change triggers.  Signals
+    ///        the weak-separation value wander the structural triggers cannot see.
+    ///        Default false = structural triggers only (byte-identical).  Travels
+    ///        in the S contract (@c cbjump=) for @c makeReplayEmitter.
+    /// @param clock_disc_on_set_change When true
+    ///        (@c network.clock_disc_on_set_change; requires the sum-to-zero clock
+    ///        datum + @p emit_clock_disc), a change of a constellation's
+    ///        clock-satellite SET between consecutive emits steps that
+    ///        constellation's clock counters — under Σδtˢ=0 a membership change IS
+    ///        a datum re-reference (the survivors redistribute), previously
+    ///        unsignalled.  Detected from the emitted epoch itself
+    ///        (replay-reproducible).  Default false (byte-identical).  Travels in
+    ///        the S contract (@c clkset=) for @c makeReplayEmitter.
+    /// @param disc_threshold_frac_cycles When > 0 (@c network.disc_threshold_frac_cycles),
+    ///        the phase (and, under @p code_bias_jump_test, code) jump test uses a
+    ///        PER-(sat,signal) threshold of @p disc_threshold_frac_cycles × λ(sat,signal)
+    ///        instead of the flat @p disc_threshold_m — a still-FIXED contract (λ is a
+    ///        public, static band identity, deterministic on producer and replay
+    ///        consumer alike) that makes the gate uniform in CYCLES rather than metres.
+    ///        The recommended 0.25 gives L1/E1 4.76 cm ≈ the legacy 0.05 m, L2 6.1 cm,
+    ///        L5/E5a 6.37 cm.  Default 0.0 = the legacy flat @p disc_threshold_m
+    ///        (byte-identical).  Travels in the S contract (@c discfrac=) for
+    ///        @c makeReplayEmitter.
     explicit NetworkProductEmitter(double disc_threshold_m = kDefaultDiscThresholdM,
                                    bool emit_clock_disc = false,
-                                   double staleness_horizon_s = 0.0);
+                                   double staleness_horizon_s = 0.0,
+                                   bool code_bias_jump_test = false,
+                                   bool clock_disc_on_set_change = false,
+                                   double disc_threshold_frac_cycles = 0.0);
 
     /// Serialize @p sol into @p store (Sink A — in-process, no wire bytes).
     void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store);
@@ -275,6 +329,12 @@ public:
 
 private:
     double disc_threshold_m_;
+    /// H3: when > 0, per-(sat,signal) jump threshold = disc_threshold_frac_cycles_ ×
+    /// λ(sat,signal) (fixed contract, uniform in cycles).  0 = legacy flat metres.
+    double disc_threshold_frac_cycles_{0.0};
+    /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
+    /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.
+    double discThresholdM(const std::string& sat, const std::string& signal) const;
     bool   emit_clock_disc_{false};       ///< A2: maintain + stamp the clock disc counter.
     /// RTA-11: staleness horizon (s, PRODUCT time; 0 = off).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time; a key
@@ -318,6 +378,15 @@ private:
     std::map<std::string, double> last_code_bias_;    ///< "sat|signal" -> last emitted code bias (m); first-sighting marker.
     std::map<std::string, std::set<std::string>> prev_code_satset_; ///< "const|signal" -> sats carrying it last emit.
     std::map<std::string, std::vector<char>>     prev_band_tuple_;  ///< "sat" -> sorted distinct code band-digits last emit (IF-pin proxy).
+
+    // --- Optional discontinuity channels (both default OFF = byte-identical) --
+    bool code_bias_jump_test_{false};      ///< Also bump the code counter on a fresh-baseline value jump > disc_threshold_m_.
+    bool clock_disc_on_set_change_{false}; ///< Sum-to-zero datum: bump a constellation's clock counters when its clock-sat SET changes between emits.
+    /// Constellation char -> sats whose clock was emitted last emit.  WHOLESALE-
+    /// REPLACED each emit (mirrors prev_code_satset_); populated ONLY when
+    /// clock_disc_on_set_change_ is armed, so the OFF path carries no extra state
+    /// and the serialized emitter section is unchanged.
+    std::map<char, std::set<std::string>> prev_clock_satset_;
 };
 
 } // namespace GnssProcessor

@@ -52,15 +52,17 @@ tide ($\dispSET$, the largest, up to $\sim\!30$~cm radial), ocean tidal
 loading ($\dispOTL$, coastal cm), the rotational-deformation (solid)
 pole tide ($\dispPT$, sub-cm to cm secular-plus-Chandler), the ocean
 pole tide ($\dispOPT$, sub-mm to $\sim\!2$~mm), and atmospheric pressure
-loading ($\dispAPL$, $2$--$20$~mm).  The last is presently a known gap
-(\Cref{sec:sitedisp-apl}).  All five are computed in
+loading ($\dispAPL$, $2$--$20$~mm).  The last is modelled only in its
+sun-synchronous $S_1/S_2$ thermal-tide part; the non-tidal (synoptic)
+component remains a known gap (\Cref{sec:sitedisp-apl}).  All five are computed in
 \texttt{src/core/corrections/GnssCorrections.cpp} and
 \texttt{src/core/corrections/OceanTideModel.cpp}; the LOS projection and
 summation into the modelled range live in
 \texttt{src/core/model/ModelGeometry.cpp} and
 \texttt{src/core/model/PppModel.cpp}.  Each term carries a config flag
 (\texttt{enable\_solid\_earth\_tide}, \texttt{enable\_ocean\_tide\_loading},
-\texttt{enable\_pole\_tide}, \texttt{enable\_ocean\_pole\_tide}); with a
+\texttt{enable\_pole\_tide}, \texttt{enable\_ocean\_pole\_tide},
+\texttt{enable\_atmospheric\_loading}); with a
 flag off, that term contributes a zero vector and the result reduces to
 the uncorrected position.
 
@@ -84,13 +86,14 @@ range is
 \end{empheq}
 so a displacement that pushes the receiver \emph{toward} the satellite
 (a positive component along $\los$) yields $\delta\rho<0$ and shortens
-the modelled range, as required.  The ocean-loading and pole-tide
+the modelled range, as required.  The ocean-loading, atmospheric-loading, and pole-tide
 projections use exactly this form
-(\texttt{ModelGeometry.cpp}: \texttt{atm\_loading\_corr = otl\_ecef.dot(-los)};
-\texttt{PppModel.cpp}: \texttt{pole\_tide\_ecef.dot(-los)}), and the
-modelled range adds them in (\texttt{PppModel.cpp}, the
-\texttt{computeBaseModeledValue} return sums \texttt{+ atm\_loading\_corr
-+ solid\_tide} and the pair processors add \texttt{+ pole\_tide\_corr}).
+(\texttt{Geometry::computeSatelliteGeometry}: \texttt{otl\_corr = otl\_ecef.dot(-los)},
+\texttt{apl\_corr = apl\_ecef.dot(-los)};
+\texttt{PppModel::computePoleTideProjection}: \texttt{pole\_tide\_ecef.dot(-los)}), and the
+modelled range adds them in (\texttt{PppModel::computeBaseModeledValue}
+return sums \texttt{+ otl\_corr + apl\_corr + solid\_tide} and the pair
+processors add \texttt{+ pole\_tide\_corr}).
 The solid-Earth-tide helper performs its own projection internally with
 the algebraically identical vector
 $(\rxpos-\satpos)/\lVert\rxpos-\satpos\rVert$
@@ -122,9 +125,11 @@ depart from the nominal degree-2 values.  \textbf{This entire Step~1+2
 block is oracle-validated}: it reproduces the official IERS
 \texttt{dehanttideinel} test vector and the in-tree POINT reference to
 sub-millimetre, cross-checked by \texttt{scripts/solid\_tide\_reference.py}
-(\texttt{GnssCorrections.cpp:1196--1201}).  The permanent (zero-frequency)
+(\texttt{GnssCorrections.cpp}, \texttt{computeSolidEarthTideDisplacement} and
+the \texttt{SolidEarthTideTest} suite).  The permanent (zero-frequency)
 tide is \emph{retained}, so the corrected coordinate is conventional
-tide-free, matching IGS/ITRF (\texttt{GnssCorrections.cpp:1200--1201}).
+tide-free, matching IGS/ITRF (see the routine's header comment on the
+retained zero-frequency tide).
 
 \subsubsection{Step 1 --- in-phase degree 2 and 3}
 
@@ -140,7 +145,8 @@ $\cos Z_b = \hat{\rxpos}_0\cdot\hat{\bm{r}}^b$ and a body scale factor
 \end{equation}
 with $R_e = 6378136.55$~m and mass ratios $M_\odot/M_\oplus = 332945.943062$,
 $M_\leftmoon/M_\oplus = 0.012300034$
-(\texttt{GnssCorrections.cpp:1211--1213,\,1441}).  The radial and
+(\texttt{GnssCorrections.cpp} tide-helper constants
+\texttt{kTideRe}/\texttt{kTideMassRatioSun}/\texttt{kTideMassRatioMoon}).  The radial and
 tangential weights are
 \begin{align}
 p_2^b &= 3\!\left(\tfrac{\loveh_2}{2} - \shidal_2\right)\cos^2 Z_b - \tfrac{\loveh_2}{2},
@@ -148,7 +154,7 @@ p_2^b &= 3\!\left(\tfrac{\loveh_2}{2} - \shidal_2\right)\cos^2 Z_b - \tfrac{\lov
 x_2^b &= 3\,\shidal_2 \cos Z_b ,
 \label{eq:sitedisp-set-x2}
 \end{align}
-(\texttt{GnssCorrections.cpp:1431,\,1435}), where $\loveh_2,\shidal_2$ are the
+(\texttt{GnssCorrections.cpp}, \texttt{computeSolidEarthTideDisplacement}), where $\loveh_2,\shidal_2$ are the
 \emph{latitude-dependent} degree-2 Love and Shida numbers of IERS
 Eq.~7.2,
 \begin{equation}
@@ -156,10 +162,10 @@ Eq.~7.2,
 \shidal_2 = 0.0847 + 0.0002\,(1 - \tfrac{3}{2}\cos^2\!\geolat)
 \label{eq:sitedisp-set-love}
 \end{equation}
-(\texttt{GnssCorrections.cpp:1424--1425}).  An analogous degree-3 term
-uses fixed $\loveh_3=0.292,\ \shidal_3=0.015$ and
+(\texttt{GnssCorrections.cpp}, \texttt{computeSolidEarthTideDisplacement}).  An analogous degree-3 term
+uses fixed $\loveh_3=0.292,\ \shidal_3=0.015$ (\texttt{kTideH3}/\texttt{kTideL3}) and
 $\mathrm{fac}_b^{(3)} = \mathrm{fac}_b\,(R_e/r_b)$
-(\texttt{GnssCorrections.cpp:1210,\,1433--1438,\,1442}).  The Step-1
+(same routine).  The Step-1
 in-phase displacement sums the radial weight along the station unit
 vector and the tangential weight along each body's unit vector:
 \begin{empheq}[box=\fbox]{equation}
@@ -169,7 +175,7 @@ vector and the tangential weight along each body's unit vector:
 \label{eq:sitedisp-set-step1}
 \end{empheq}
 matching the per-component accumulation in
-\texttt{GnssCorrections.cpp:1448--1453}.
+\texttt{computeSolidEarthTideDisplacement}.
 
 \subsubsection{Step 1 --- out-of-phase anelasticity and the $L^1$ term}
 
@@ -178,14 +184,14 @@ numbers complex; the small imaginary parts produce out-of-phase
 displacements \texttt{ST1IDIU} (diurnal, $\delta\loveh=-0.0025$,
 $\delta\shidal=-0.0007$) and \texttt{ST1ISEM} (semidiurnal,
 $\delta\loveh=-0.0022$, $\delta\shidal=-0.0007$)
-(\texttt{GnssCorrections.cpp:1219,\,1240}).  The latitude ($L^1$)
+(\texttt{GnssCorrections.cpp}, helpers \texttt{st1Diurnal}, \texttt{st1SemiD}).  The latitude ($L^1$)
 dependence of the Love numbers contributes a horizontal-only correction
 \texttt{ST1L1} with $l^{(1)}_{\mathrm{diu}}=0.0012$,
 $l^{(1)}_{\mathrm{sem}}=0.0024$
-(\texttt{GnssCorrections.cpp:1265}).  These three helpers
-(\texttt{GnssCorrections.cpp:1216--1302}) return local radial/north/east
+(helper \texttt{st1L1}).  These three helpers
+return local radial/north/east
 displacements rotated into ECEF and are added to
-\Cref{eq:sitedisp-set-step1} at \texttt{GnssCorrections.cpp:1456--1458};
+\Cref{eq:sitedisp-set-step1} inside \texttt{computeSolidEarthTideDisplacement};
 their detailed trigonometric forms follow the IERS reference verbatim
 and are not reproduced here.
 
@@ -205,14 +211,14 @@ s   &= 218.31664563^\circ + 481267.88194\,T - 0.0014663889\,T^2 + \ldots,
 \label{eq:sitedisp-doodson-tau}
 \end{align}
 with the remaining $h,p,N',p_s$ polynomials given to fourth order in
-\texttt{GnssCorrections.cpp:1306--1324} (\texttt{computeAngles}).  For
+\texttt{GnssCorrections.cpp} (\texttt{computeAngles}).  For
 each table line the phase is
 $\theta = \tau + n_s s + n_h h + n_p p + n_{N'}N' + n_{p_s}p_s
 (+\,\geolon$ for diurnal$)$ and the in-/out-of-phase radial and
 tangential amplitudes (millimetres) are applied with a latitude weight.
 
 \paragraph{Diurnal band (Table 7.3a).}  Thirty-one lines, dominated by
-$K_1$ and $P_1$ (\texttt{GnssCorrections.cpp:1330--1362}).  The
+$K_1$ and $P_1$ (\texttt{GnssCorrections.cpp}, \texttt{st2Diurnal}).  The
 displacement for one line is
 \begin{equation}
 \begin{aligned}
@@ -225,16 +231,16 @@ displacement for one line is
 \end{aligned}
 \label{eq:sitedisp-step2diu}
 \end{equation}
-(\texttt{GnssCorrections.cpp:1366--1373}), summed over the table and
+(\texttt{st2Diurnal}), summed over the table and
 rotated radial/north/east $\to$ ECEF.  The reference amplitudes (mm)
 include $K_1: (12.00,\,-0.80,\,-0.67,\,-0.03)$ and
 $P_1: (-1.23,\,-0.07,\,0.06,\,0.01)$ in the order
 $(A^{\mathrm{in}}_R, A^{\mathrm{out}}_R, A^{\mathrm{in}}_T, A^{\mathrm{out}}_T)$
-(\texttt{GnssCorrections.cpp:1346,\,1350}).
+(the \texttt{st2Diurnal} table \texttt{T}).
 
 \paragraph{Long-period band (Table 7.3b).}  Five zonal lines, with no
 longitude or $\tau$ dependence and no east component
-(\texttt{GnssCorrections.cpp:1384--1389}).  The radial weight is the
+(\texttt{GnssCorrections.cpp}, \texttt{st2Lon}).  The radial weight is the
 zonal Legendre form $(3\sin^2\!\geolat - 1)/2$ and the north weight is
 $\sin 2\geolat$:
 \begin{equation}
@@ -244,11 +250,11 @@ $\sin 2\geolat$:
            \sin 2\geolat,
 \label{eq:sitedisp-step2lon}
 \end{equation}
-(\texttt{GnssCorrections.cpp:1393,\,1399--1400}).  The full solid-tide
+(\texttt{st2Lon}).  The full solid-tide
 displacement is
 $\dispSET = \dispSET^{(1)} + \mathrm{ST1IDIU} + \mathrm{ST1ISEM}
 + \mathrm{ST1L1} + \mathrm{STEP2DIU} + \mathrm{STEP2LON}$
-(\texttt{GnssCorrections.cpp:1448--1463}).
+(\texttt{computeSolidEarthTideDisplacement}).
 
 % ============================================================
 \subsection{Ocean tidal loading (OTL)}
@@ -305,13 +311,27 @@ contribution --- this is the intended oracle resolution of the
 OTL-diurnal-phase question.  The bias \emph{must} be present and carry
 the species signs of \Cref{eq:sitedisp-dw-bias}.
 
-\subsubsection{Coefficient sources: BLQ and the EOT20 grid}
+\subsubsection{Coefficient sources: SIF, BLQ, and the EOT20 grid}
 \label{sec:sitedisp-otl-coeffs}
 
-Per-station amplitudes/phases come either from a station BLQ block or,
-when none is supplied, are synthesised by bilinear interpolation of the
-global EOT20 complex load grid at the receiver's a~priori position
-(\texttt{ModelGeometry.cpp:99--105}).  The EOT20 netCDF packs the real
+Per-station amplitudes/phases are resolved by a four-way precedence
+(\texttt{Geometry::loadData}, OTL coefficient block): a Station
+Information File (SIF) $\to$ a station BLQ block $\to$ the global EOT20
+grid $\to$ a safe zero.  Highest fidelity, when
+\texttt{enableStationInfo()} is set and the SIF carries an entry for the
+RINEX marker, is a set of per-station three-component FES2014b
+coefficients.  The SIF stores Up/East/North amplitude$+$phase, whereas
+the model's internal accumulation frame (\Cref{eq:sitedisp-otl}) is
+Up/West/South; since $\text{East}=-\text{West}$ and
+$\text{South}=-\text{North}$, the horizontals keep their amplitude and
+shift phase by $+180^\circ$ (\texttt{d.phase\_west = c.east\_phase +
+180}, \texttt{d.phase\_south = c.north\_phase + 180}), Up passing through
+unchanged --- the same class of phase-convention resolution as the
+Doodson--Warburg bias above.  When no SIF entry exists the coefficients
+come from a station BLQ block or, failing that, are synthesised by
+bilinear interpolation of the global EOT20 complex load grid at the
+receiver's a~priori position (radial only, unlike the three-component
+SIF); with no source at all the displacement is zero.  The EOT20 netCDF packs the real
 and imaginary load coefficients as \texttt{int16} with a
 \texttt{scale\_factor}/\texttt{add\_offset}; the netCDF C library does
 \emph{not} auto-apply these, so they are unpacked manually as
@@ -347,7 +367,7 @@ secular mean pole.  In milliarcseconds, with $t_y$ the decimal year,
 \bar{y}_p = 320.5 + 3.460\,(t_y-2000)
 \label{eq:sitedisp-meanpole}
 \end{equation}
-(\texttt{GnssCorrections.cpp:935--936}); this linear model is the
+(\texttt{GnssCorrections.cpp}, \texttt{computePoleTideCorrection}); this linear model is the
 convention to which the post-2018 IGS products consumed by the engine
 are referenced.  The wobble components (arcseconds) are
 \begin{equation}
@@ -357,13 +377,13 @@ are referenced.  The wobble components (arcseconds) are
 \end{equation}
 with $x_p,y_p$ the polar-motion values linearly interpolated from the
 ERP table at the query epoch
-(\texttt{GnssCorrections.cpp:949--950}; the $\bar{x}_p,\bar{y}_p$
+(\texttt{computePoleTideCorrection}; the $\bar{x}_p,\bar{y}_p$
 millarcsecond means are scaled to arcseconds in the difference).
 \textbf{The wobble must be carried in arcseconds, not radians}: the
 displacement coefficients below are metre-valued per arcsecond, so
 forming $\polem{1},\polem{2}$ in radians underscales the whole pole
-tide by $\sim\!4.85\times10^{-6}$ (a previously-latent bug noted at
-\texttt{GnssCorrections.cpp:943--948}).
+tide by $\sim\!4.85\times10^{-6}$ (a previously-latent bug noted in the
+\texttt{computePoleTideCorrection} wobble comment).
 
 IERS~2010 Eq.~7.24 gives the rotational-deformation displacement in
 colatitude $\theta=90^\circ-\geolat$; substituting geodetic latitude
@@ -378,14 +398,14 @@ north, and east components (metres):
 \end{aligned}
 \label{eq:sitedisp-poletide}
 \end{empheq}
-(\texttt{GnssCorrections.cpp:967--969}).  \textbf{The east factor is
+(\texttt{computePoleTideCorrection}).  \textbf{The east factor is
 $\sin\geolat$ ($=\cos\theta$), not $\cos\geolat$}: this is the intended
 oracle resolution of the pole-tide east-term question.  An east factor
 of $\cos\geolat$ is internally inconsistent with the geodetic-$\geolat$
 radial/north terms ($\sim\!1.48\times$ scale error at mid-latitude, and
 the wrong latitude dependence --- vanishing at the equator instead of
-the pole).  The local $(R,N,E)$ vector is rotated into ECEF at
-\texttt{GnssCorrections.cpp:986--988}.
+the pole).  The local $(R,N,E)$ vector is rotated into ECEF at the end
+of \texttt{computePoleTideCorrection}.
 
 % ============================================================
 \subsection{Ocean pole tide (Desai 2002, IERS 7.1.5)}
@@ -395,7 +415,7 @@ Polar motion also redistributes ocean mass (the ocean pole tide), whose
 load deforms the crust by a further sub-millimetre to $\sim$2~mm.  It
 adds onto \Cref{eq:sitedisp-poletide} when the station's six Desai grid
 load coefficients are available
-(\texttt{GnssCorrections.cpp:971--984}).  Following Desai~(2002)
+(the \texttt{has\_opt\_coeffs\_} branch of \texttt{computePoleTideCorrection}).  Following Desai~(2002)
 \cite{desai2002ocean}, the same wobble $\polem{1},\polem{2}$ drives a
 complex pole-tide coefficient
 \begin{align}
@@ -405,7 +425,7 @@ c^{I} &= \polem{2}\,\gamma_2^{R} - \polem{1}\,\gamma_2^{I},
 \end{align}
 with the IERS/Desai load Love combination
 $\gamma_2^{R} = 0.6870,\ \gamma_2^{I} = 0.0036$
-(\texttt{GnssCorrections.cpp:822--823,\,843--844}).  Each of the six
+(\texttt{kOptGammaReal}/\texttt{kOptGammaImag}).  Each of the six
 per-station coefficients $u_c^{R},u_c^{I}$ (north, east, radial real and
 imaginary parts), bilinearly interpolated from the Desai grid, gives the
 local displacement
@@ -414,7 +434,7 @@ local displacement
 \qquad c\in\{E,N,U\},
 \label{eq:sitedisp-opt}
 \end{empheq}
-(\texttt{GnssCorrections.cpp:845--847}).  The scale $\kappa$ folds in
+(\texttt{GnssCorrections.cpp}, \texttt{computeOceanPoleTideDisplacement}).  The scale $\kappa$ folds in
 the IERS load-deformation constants and the arcsec$\to$rad conversion
 (so that the wobble may stay in arcseconds, consistent with
 \Cref{eq:sitedisp-wobble}):
@@ -428,32 +448,59 @@ with $\rho_w = 1025\ \mathrm{kg\,m^{-3}}$,
 $a = 6378136.6$~m, $g_E = 9.7803278\ \mathrm{m\,s^{-2}}$,
 $\Omega = 7.292115\times10^{-5}\ \mathrm{rad\,s^{-1}}$,
 $G = 6.67428\times10^{-11}$, $GM_\oplus = 3.986004418\times10^{14}$
-(\texttt{GnssCorrections.cpp:816--836}).  The whole ocean-pole-tide path
+(the \texttt{kOpt*} constants; $\kappa$ assembled in \texttt{oceanPoleTideKappa}).  The whole ocean-pole-tide path
 reproduces the NGS M-PAGES implementation and the independent Python
 oracle \texttt{scripts/ocean\_pole\_tide\_reference.py} to $\sim\!10^{-12}$
-(\texttt{GnssCorrections.cpp:808--813}).
+(see the constants' header comment).
 
 % ============================================================
-\subsection{Atmospheric pressure loading --- a known gap}
+\subsection{Atmospheric pressure loading (S1/S2 thermal tide)}
 \label{sec:sitedisp-apl}
 
-Honesty note, in the spirit of \dcref{sec:ssr}{the SSR document}'s
-flag of the iono-not-SSR gap.  Atmospheric pressure loading (APL) --- the
-crustal response to surface-pressure redistribution, together with the
-S1/S2 atmospheric thermal tides --- is the \emph{largest unmodelled}
-site displacement here, $\sim\!2$--$20$~mm predominantly vertical.  It is
-presently \textbf{absent}.  The function
-\texttt{computeAtmosphericLoadingCorrection}
-(\texttt{GnssCorrections.cpp:1142--1152}) is a 1~mm cosine stub
-(amplitude $0.001$, a bare diurnal-times-$\cos\varphi$ placeholder) and
-is \emph{uncalled}.  Moreover the struct field named
-\texttt{atm\_loading\_corr} does \emph{not} carry an atmospheric term at
-all: it carries the OTL projection
-$\dispOTL\cdot(-\los)$ (\texttt{ModelGeometry.cpp:825}).  A genuine APL
-model (e.g.\ a pressure-driven Green's-function or gridded loading
-product, plus the S1/S2 tidal harmonics) is the leading candidate for
-the next site-displacement term; until it lands,
-$\dispAPL = \bm{0}$ in \Cref{eq:sitedisp-sum}.
+Atmospheric pressure loading (APL) --- the crustal response to
+surface-pressure redistribution --- is $\sim\!2$--$20$~mm, predominantly
+vertical.  It splits into a sun-synchronous, thermally driven $S_1/S_2$
+tidal part (diurnal and semidiurnal, fully predictable from local solar
+time) and a non-tidal (synoptic) part driven by weather systems.  The
+engine models the \emph{tidal} part; the non-tidal part remains a genuine
+gap (see the honesty note below).
+
+The thermal-tide displacement uses per-station diurnal ($S_1$) and
+semidiurnal ($S_2$) harmonic coefficients evaluated against the
+local-solar-time argument $\Theta_n = n\,(2\pi\,\mathrm{UT}_{\mathrm{frac}}
++ \geolon)$, $n\in\{1,2\}$, with $\mathrm{UT}_{\mathrm{frac}}$ the UT
+fraction of day and $\geolon$ the station longitude
+(\texttt{GnssCorrections.cpp}, \texttt{computeAtmosphericTideDisplacement}):
+\begin{empheq}[box=\fbox]{equation}
+\dispAPL^{c} = a^{\cos}_{c,S_1}\cos\Theta_1 + a^{\sin}_{c,S_1}\sin\Theta_1
+             + a^{\cos}_{c,S_2}\cos\Theta_2 + a^{\sin}_{c,S_2}\sin\Theta_2,
+\qquad c\in\{E,N,U\},
+\label{eq:sitedisp-apl}
+\end{empheq}
+formed in local ENU and rotated to ECEF, with a sub-cm (1~cm) sanity
+guard.  The twelve coefficients per station are laid out
+$[\,a^{\cos}_E, a^{\sin}_E, a^{\cos}_N, a^{\sin}_N, a^{\cos}_U,
+a^{\sin}_U\,]$ for $S_1$ (indices $0$--$5$) then the same six for $S_2$
+(indices $6$--$11$), bilinearly interpolated at the a~priori position
+from a Ray--Ponte-style $S_1/S_2$ load grid
+(\texttt{loadAtmosphericTideFromGrid}).  The term is gated by
+\texttt{model\_corrections.enable\_atmospheric\_loading} (default
+\texttt{false}) and reads its grid from \texttt{files.atm\_tide\_grid\_path},
+defaulting to \texttt{<data>/static/apl/s1\_s2\_load\_cm.dat} (a
+\textsc{provisional} in-code filename, to be pinned to the supplied
+product); the coefficients are loaded in \texttt{Geometry::loadData} and
+projected to \texttt{apl\_corr} alongside \texttt{otl\_corr} in
+\texttt{computeSatelliteGeometry}.  With the flag off, or with no usable
+grid, $\dispAPL = \bm{0}$ in \Cref{eq:sitedisp-sum} and runs are
+byte-identical.
+
+\paragraph{Honesty note.}  In the spirit of \dcref{sec:ssr}{the SSR
+document}'s flag of the iono-not-SSR gap: only the sun-synchronous
+$S_1/S_2$ tidal APL is modelled.  The non-tidal (synoptic) pressure
+loading --- the larger, weather-driven part, requiring a surface-pressure
+field convolved with a Green's function or a gridded non-tidal loading
+product --- is \emph{not} modelled and is the leading candidate for the
+next site-displacement term.
 
 % ============================================================
 \subsection{Integration into the measurement model}
@@ -462,16 +509,17 @@ $\dispAPL = \bm{0}$ in \Cref{eq:sitedisp-sum}.
 Operationally, the per-epoch geometry builder evaluates each enabled
 displacement, projects it via \Cref{eq:sitedisp-projection}, and the
 modelled-range assembly adds the scalar corrections.  In
-\texttt{ModelGeometry.cpp} the OTL ECEF displacement is formed
-(\texttt{:822--824}) and projected to \texttt{atm\_loading\_corr}
-(\texttt{:825}); the solid tide is evaluated against the cached Sun/Moon
-positions and already returns its LOS-projected scalar
-(\texttt{:827--831}).  In \texttt{PppModel.cpp} the pole tide (and, when
+\texttt{Geometry::computeSatelliteGeometry} the OTL ECEF displacement is
+formed and projected to \texttt{otl\_corr}, the $S_1/S_2$ atmospheric
+tide to \texttt{apl\_corr}, and the solid tide is evaluated against the
+cached Sun/Moon positions and already returns its LOS-projected scalar.
+In \texttt{PppModel} the pole tide (and, when
 enabled, the ocean pole tide additively inside it) is projected by
-\texttt{computePoleTideProjection} (\texttt{:1402--1408}) and the base
-modelled value sums \texttt{+ atm\_loading\_corr + solid\_tide}
-(\texttt{:1455--1456}) while the pair processors add
-\texttt{+ pole\_tide\_corr} (\texttt{:1510,\,1747}).  The resulting
+\texttt{computePoleTideProjection} and the base
+modelled value (\texttt{computeBaseModeledValue}) sums
+\texttt{+ otl\_corr + apl\_corr + solid\_tide}
+while the pair processors add
+\texttt{+ pole\_tide\_corr}.  The resulting
 corrected geometric range is precisely the
 $\geomrange(\rxpos)$ that enters
 \dcref{eq:geom-linear}{the linearised range} once $\rxpos$ is replaced
@@ -481,9 +529,9 @@ observables of \dcref{sec:bssd}{the BSSD} and
 \dcref{sec:dd}{double-difference} formulations inherit whatever residual
 of these corrections survives differencing: solid Earth tide and pole
 tide are highly spatially correlated and largely cancel over short
-baselines, whereas ocean loading and the (absent) atmospheric loading do
-not cancel and remain the dominant differential site-displacement error
-on long baselines.
+baselines, whereas ocean loading and the (largely unmodelled non-tidal) atmospheric
+loading do not cancel and remain the dominant differential
+site-displacement error on long baselines.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

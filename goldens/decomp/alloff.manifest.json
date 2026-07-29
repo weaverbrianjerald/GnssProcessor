@@ -1,0 +1,176 @@
+{
+ "artifacts": {
+  "logs/ambiguity_resolver.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/antenna.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/antenna_model.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/bssd_transform.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/corrections.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/geometry.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/gnss_config.log": {
+   "bytes": 7477,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "bbadbccd4596e03d7424c4c5b521c949784372d34476756318b014b00cebf9de"
+  },
+  "logs/ionosphere.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/main_log.log": {
+   "bytes": 42903,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "674bf376d72a12c97bdcc124ad75438e13c56a3dcc12937f402bc7bc59c6565a"
+  },
+  "logs/measurement_model.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/network_dd_fractional.csv": {
+   "bytes": 301271,
+   "class": "csv",
+   "csv_rows": 3273,
+   "norm_sha256": "ee033ed09eb13faf27b311526491acd8906cd503a3603b816fdb3e1f5516de4e"
+  },
+  "logs/network_solution.csv": {
+   "bytes": 30848,
+   "class": "csv",
+   "csv_rows": 836,
+   "norm_sha256": "2b3981f2cdc58f58b134e71d24d31017196d1f46ba0b3f2485b9ba8f53486ffd"
+  },
+  "logs/network_stations.csv": {
+   "bytes": 2978,
+   "class": "csv",
+   "csv_rows": 50,
+   "norm_sha256": "29055b96a4fddf5fdeb3080bf559a0d61cf98372a6e266de30f8a2e17ef46a36"
+  },
+  "logs/network_trace.csv": {
+   "bytes": 653,
+   "class": "csv",
+   "csv_rows": 11,
+   "norm_sha256": "b35ae8d236a13b498d311b98872a60db9220e7eff3888137566397ebd8358cb9"
+  },
+  "logs/ocean_tide.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/planetary_model.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/ppp_model.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/ppp_utils.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/product_cache.log": {
+   "bytes": 0,
+   "class": "product",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/product_parser.log": {
+   "bytes": 0,
+   "class": "product",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/resolver.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/rinex_parser.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/state_initializer.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/state_manager.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/stochastic_model.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "logs/troposphere.log": {
+   "bytes": 0,
+   "class": "log",
+   "csv_rows": null,
+   "norm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "run.log": {
+   "bytes": 50688,
+   "class": "runlog",
+   "csv_rows": null,
+   "norm_sha256": "1fd9e5abb62d05dcae9890fa57f4047c5f0631bce704f8dc3323da0c28b7ed7e"
+  },
+  "wall.txt": {
+   "bytes": 8,
+   "class": "verbatim",
+   "csv_rows": null,
+   "norm_sha256": "804cb8b0d0ccd96791ae5eed231de68f307bffbdf3522e93d8bc0ec856db38de"
+  }
+ },
+ "counters": {},
+ "maskspec_sha256": "2de2da861ec1edaf",
+ "run_dir": "C:\\GnssProcessor\\runs\\decomp_goldens\\alloff_a",
+ "schema": "compare_network_run/1"
+}

@@ -14,6 +14,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -28,6 +29,7 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 
 #include "common/Constants.hpp"
 #include "config/GnssConfig.hpp"
@@ -35,13 +37,16 @@
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
 #include "model/ModelGeometry.hpp"
+#include "products/LiveEphemerisStore.hpp"
 #include "products/ProductCache.hpp"
 #include "products/ProductParser.hpp"
 #include "products/ProductTypes.hpp"
+#include "products/RinexNavParser.hpp"
 #include "rinex/RinexParser.hpp"
 #include "sim/EphemerisProvider.hpp"
 #include "sim/IonoDisturbance.hpp"
 #include "sim/RinexObsWriter.hpp"
+#include "sim/ScriptedSlips.hpp"
 #include "sim/SimConfig.hpp"
 #include "sim/TrajectoryGenerator.hpp"
 #include "sim/Verifier.hpp"
@@ -402,8 +407,9 @@ Eigen::Vector3d sagnacRotate(const Eigen::Vector3d& s_em, const Eigen::Vector3d&
 // orbit/clock covers the emission epoch.
 bool forwardPseudorange(const sim::EphemerisProvider& eph, const std::string& sat,
                         const GnssTime& obs_time, const Eigen::Vector3d& rx, double cdt_r_m,
-                        double& P_out, Eigen::Vector3d& sat_pos_out, double& sat_clk_out,
-                        double& elev_deg_out, double& az_deg_out) {
+                        double& P_out, Eigen::Vector3d& sat_pos_out, Eigen::Vector3d& sat_vel_out,
+                        double& sat_clk_out, double& elev_deg_out, double& az_deg_out,
+                        const sim::SimConfig::Corrections& corr, double& m7_corr_out) {
     const double c = Constants::SPEED_OF_LIGHT;
 
     // Seed P from a rough range at obs.time; also serves as a coverage pre-check.
@@ -412,12 +418,12 @@ bool forwardPseudorange(const sim::EphemerisProvider& eph, const std::string& sa
     double P = (sagnacRotate(s0, rx) - rx).norm();
 
     Eigen::Vector3d sat_pos = Eigen::Vector3d::Zero();
+    Eigen::Vector3d s_em = Eigen::Vector3d::Zero(), v_em = Eigen::Vector3d::Zero(); // emission state
     double sat_clk = 0.0;
     for (int it = 0; it < 8; ++it) {
         const GnssTime approx_em = addSeconds(obs_time, -P / c);
         const double sc_approx = eph.clock(sat, approx_em);
         const GnssTime em = addSeconds(obs_time, -(P / c + sc_approx));
-        Eigen::Vector3d s_em, v_em;
         if (!eph.positionVelocity(sat, em, s_em, v_em)) return false;
         bool bcast = false;
         sat_clk = eph.clock(sat, em, &bcast);
@@ -431,10 +437,23 @@ bool forwardPseudorange(const sim::EphemerisProvider& eph, const std::string& sa
     }
     const auto topo = Model::Geometry::computeTopocentric(rx, sat_pos);
     P_out = P;
-    sat_pos_out = sat_pos;
+    sat_pos_out = sat_pos;      // reception-frame (Sagnac-rotated)
+    sat_vel_out = v_em;         // emission-frame velocity (unrotated) — matches the
+                                // processor's geom.sat_vel for the antenna attitude frame
     sat_clk_out = sat_clk;
     elev_deg_out = topo.elevation_deg;
     az_deg_out = topo.azimuth_deg;
+
+    // M7 full-correction stack (non-dispersive; added to code+phase like tropo, but
+    // NOT to the bare internal SPP).  Relativity uses the emission-time (pre-Sagnac)
+    // state; the range/site terms use the reception-frame (rotated) sat_pos + rx.
+    double m7 = 0.0;
+    if (corr.relativity)       m7 += eph.relativityMetres(sat, s_em, v_em);
+    if (corr.shapiro)          m7 += eph.shapiroMetres(sat, rx, sat_pos);
+    if (corr.solid_earth_tide) m7 += eph.solidEarthTideMetres(rx, sat_pos, obs_time);
+    if (corr.pole_tide)        m7 += eph.poleTideMetres(rx, sat_pos, obs_time);
+    if (corr.ocean_tide)       m7 += eph.oceanTideMetres(rx, sat_pos, obs_time);
+    m7_corr_out = m7;
     return true;
 }
 
@@ -535,17 +554,755 @@ Dop computeDop(const Eigen::Vector3d& rx, const std::vector<Eigen::Vector3d>& sa
 // and with elevation-weighted noise.  The bare model (no iono/tropo/relativity)
 // is recovered end-to-end by the real processor with corrections OFF.  A
 // visibility/DOP pre-flight is logged per epoch so unsolvable geometry is caught.
+// ---------------------------------------------------------------------------
+//  Fixture date -> everything that must move with it.
+//
+//  ONE derivation feeds the fixture directory, every product filename, the emitted
+//  RINEX filename, the product-day edge guard and the scenario_summary date.  They
+//  are coupled and must move ATOMICALLY: an arc whose start_tow_s moves to another
+//  day while the emitted filename still names the old one makes the processor
+//  resolve the WRONG day's orbits against the new epochs — a multi-day
+//  extrapolation that throws nothing and merely looks like a physics problem.
+// ---------------------------------------------------------------------------
+struct FixtureDate {
+    int year{ 2024 }, doy{ 129 };
+    int week{ 0 };                 ///< GPS week of 00:00 that day.
+    double day_start_tow{ 0.0 };   ///< tow of 00:00 that day (= dow * 86400).
+    double day_end_tow{ 0.0 };     ///< tow of 24:00 that day.
+    std::string yyyydoy;           ///< "2024131", as it appears in IGS long filenames.
+    std::string dir;               ///< "2024-131", the data/ subdirectory.
+    std::string iso;               ///< "2024-05-10", for human-facing output.
+};
+
+static FixtureDate makeFixtureDate(int year, int doy) {
+    FixtureDate fd;
+    fd.year = year;
+    fd.doy = doy;
+    // DOY -> calendar month/day (proleptic Gregorian leap rule).
+    const bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    const int mlen[12] = { 31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    int month = 1, day = doy;
+    for (int m = 0; m < 12 && day > mlen[m]; ++m) { day -= mlen[m]; ++month; }
+    // gregorianGpsToGpsTime takes a GPS-scale civil date, so this is the GPS-time day
+    // boundary (no leap-second shift) — the same boundary the products are cut on.
+    const GnssTime t0 = TimeUtils::gregorianGpsToGpsTime(year, month, day, 0, 0, 0.0);
+    fd.week = t0.week;
+    fd.day_start_tow = t0.tow;
+    fd.day_end_tow = t0.tow + 86400.0;
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d%03d", year, doy);
+    fd.yyyydoy = buf;
+    std::snprintf(buf, sizeof(buf), "%04d-%03d", year, doy);
+    fd.dir = buf;
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
+    fd.iso = buf;
+    return fd;
+}
+
+// ===========================================================================
+//  spp-reference — author-side reference runs for exam Part B (SPEC/ANSWER_KEY).
+//
+//  Reads BACK the emitted hero RINEX through the production RinexParser (the
+//  student's view of the data, not the synthesizer's) and computes the two
+//  graded Part-B solutions at every epoch, epoch-wise weighted Gauss-Newton,
+//  exactly at the modelling level the brief demands of a student — emission
+//  time + Sagnac, SV clock incl. the periodic relativistic term, hydrostatic
+//  tropo — and nothing more (no tides/antenna/Shapiro/ZWD: those stay in the
+//  data as authentic unmodeled error, which is what the answer key must price):
+//
+//    leg 1  "the real-time view":  GPS L1 C1C, orbits/clocks from the REAL
+//           broadcast navigation file via the production RinexNavParser ->
+//           LiveEphemerisStore chain (fed epoch-synchronously, so each epoch
+//           sees only the ephemerides a live receiver would hold), +TGD,
+//           +broadcast Klobuchar.
+//    leg 2  "the analyst's check": GPS C1C/C2W ionosphere-free code with the
+//           precise COD MGX SP3/CLK, observables OSB-corrected from the .BIA.
+//
+//  A/B variants (leg 1 without Klobuchar, leg 1 without TGD, leg 2 without
+//  OSB) price the individual terms for the rubric.  Per-epoch errors against
+//  truth_position.csv go to <truth_dir>/truth_spp.csv, summary statistics to
+//  <truth_dir>/truth_spp_summary.json (key-side artifacts; the handout
+//  ship-list does not include truth_*.csv, so nothing leaks to students).
+// ===========================================================================
+
+struct RefObs {
+    std::string sat;
+    double P{ 0.0 };  ///< the (possibly bias-corrected / IF-combined) code observable [m]
+};
+
+struct RefSol {
+    bool ok{ false };
+    Eigen::Vector3d rx{ Eigen::Vector3d::Zero() };
+    double cdt{ 0.0 };   ///< receiver clock c*dt [m]
+    int n_used{ 0 };
+    double pdop{ 0.0 };
+    /// Formal 1-sigma of the epoch's position in the LOCAL ENU frame [m].
+    /// Part B asks for a documented stochastic model at three epochs, so the
+    /// reference has to publish what that model actually yields, not just DOP.
+    /// Scaled by the A-POSTERIORI variance factor (below) rather than an assumed
+    /// a-priori code sigma: the weights w = sin^2(el) are relative, and letting
+    /// the residuals set the scale means the number honestly inflates when the
+    /// storm inflates leg 1's misfit (which is the Part-B/D teaching point).
+    double sig_e{ 0.0 }, sig_n{ 0.0 }, sig_u{ 0.0 };
+    /// sqrt of the a-posteriori variance factor, sigma0 = sqrt(sum(w*v^2)/(n-4)) [m].
+    double sig0{ 0.0 };
+};
+
+// One epoch-wise elevation-weighted (w = sin^2 el) Gauss-Newton code solution
+// (x, y, z, c*dt).  @p brdc selects the orbit/clock source: non-null = the
+// LiveEphemerisStore broadcast chain (leg 1; gated healthy-only at insert and
+// |t - toe| <= 7200 s here, the LNAV fit interval), null = the provider's
+// precise SP3/CLK (leg 2).  Emission time iterates from the OBSERVED
+// pseudorange exactly like the synthesizer's forward model, so the convention
+// cancels.  The relativistic periodic term is computed from the emission-state
+// PV of whichever orbit source is active (equivalent to the broadcast
+// F*e*sqrtA*sinE form at the sub-mm level).
+RefSol solveReferenceEpoch(const sim::EphemerisProvider& eph, LiveEphemerisStore* brdc,
+                           const std::map<std::string, double>* tgd_s, bool apply_tgd,
+                           bool apply_klob, const GnssTime& t, const std::vector<RefObs>& obs,
+                           const Eigen::Vector3d& rx0, double cdt0, double mask_deg) {
+    const double c = Constants::SPEED_OF_LIGHT;
+    RefSol sol;
+    Eigen::Vector3d rx = rx0;
+    double cdt = cdt0;
+
+    // Shared per-observation model evaluation (GN accumulation + final DOP pass).
+    auto evalObs = [&](const RefObs& o, double& resid, Eigen::Vector3d& los, double& w,
+                       Eigen::Vector3d& sat_pos_out) -> bool {
+        const GnssTime em0 = addSeconds(t, -o.P / c);
+        double clk0 = 0.0;
+        if (brdc) {
+            const auto age = brdc->toeAgeSeconds(o.sat, t);
+            if (!age || std::abs(*age) > 7200.0) return false; // outside the fit interval
+            const auto ck = brdc->computeSatelliteClock(o.sat, em0);
+            if (!ck) return false;
+            clk0 = ck->bias;
+        } else {
+            clk0 = eph.clock(o.sat, em0);
+            if (std::abs(clk0) < 1e-12) return false; // no precise clock at this epoch
+        }
+        const GnssTime em = addSeconds(t, -(o.P / c + clk0));
+        Eigen::Vector3d s_em, v_em;
+        double clk = 0.0;
+        if (brdc) {
+            const auto st = brdc->computeSatellitePV(o.sat, em);
+            const auto ck = brdc->computeSatelliteClock(o.sat, em);
+            if (!st || !ck) return false;
+            s_em = st->position;
+            v_em = st->velocity;
+            clk = ck->bias;
+        } else {
+            if (!eph.positionVelocity(o.sat, em, s_em, v_em)) return false;
+            clk = eph.clock(o.sat, em);
+            if (std::abs(clk) < 1e-12) return false;
+        }
+        const Eigen::Vector3d sat_pos = sagnacRotate(s_em, rx);
+        const double range = (sat_pos - rx).norm();
+        const auto topo = Model::Geometry::computeTopocentric(rx, sat_pos);
+        if (topo.elevation_deg < mask_deg) return false;
+        double mf_d = 1.0, mf_w = 1.0;
+        eph.tropoMapping(topo.elevation_deg, rx, t, mf_d, mf_w);
+        double pred = range + cdt - c * clk + eph.relativityMetres(o.sat, s_em, v_em) +
+                      eph.tropoZhd(rx, t) * mf_d;
+        if (apply_tgd && tgd_s) {
+            const auto it = tgd_s->find(o.sat);
+            if (it != tgd_s->end()) pred += c * it->second; // dt_L1 = af - TGD => pred += c*TGD
+        }
+        if (apply_klob)
+            pred += eph.klobucharDelayMetres(rx, sat_pos, t, Constants::GPS_L1_FREQ);
+        resid = o.P - pred;
+        los = (sat_pos - rx) / range;
+        const double sin_el = std::sin(topo.elevation_deg * Constants::PI / 180.0);
+        w = sin_el * sin_el;
+        sat_pos_out = sat_pos;
+        return true;
+    };
+
+    for (int iter = 0; iter < 12; ++iter) {
+        Eigen::Matrix4d N = Eigen::Matrix4d::Zero();
+        Eigen::Vector4d b = Eigen::Vector4d::Zero();
+        int used = 0;
+        for (const auto& o : obs) {
+            double resid = 0.0, w = 0.0;
+            Eigen::Vector3d los, sp;
+            if (!evalObs(o, resid, los, w, sp)) continue;
+            Eigen::Vector4d g;
+            g << -los.x(), -los.y(), -los.z(), 1.0;
+            N += w * g * g.transpose();
+            b += w * g * resid;
+            ++used;
+        }
+        if (used < 4) return sol;
+        const Eigen::Vector4d dx = N.ldlt().solve(b);
+        if (!dx.allFinite()) return sol;
+        rx += dx.head<3>();
+        cdt += dx(3);
+        if (dx.head<3>().norm() < 1e-4) break;
+    }
+    if (!rx.allFinite() || (rx - rx0).norm() > 5.0e6) return sol; // diverged
+
+    // Final pass at the solution: the used-satellite set, its DOP, and the formal
+    // covariance.  Rebuild N here (rather than reusing the last iteration's) so it
+    // is evaluated AT the converged point, and accumulate the weighted residual
+    // sum of squares for the a-posteriori variance factor.
+    std::vector<Eigen::Vector3d> used_pos;
+    Eigen::Matrix4d N = Eigen::Matrix4d::Zero();
+    double wvv = 0.0;
+    for (const auto& o : obs) {
+        double resid = 0.0, w = 0.0;
+        Eigen::Vector3d los, sp;
+        if (!evalObs(o, resid, los, w, sp)) continue;
+        used_pos.push_back(sp);
+        Eigen::Vector4d g;
+        g << -los.x(), -los.y(), -los.z(), 1.0;
+        N += w * g * g.transpose();
+        wvv += w * resid * resid;
+    }
+    if (used_pos.size() < 4) return sol;
+    const Dop dop = computeDop(rx, used_pos, Coordinates::ecefToLlh(rx));
+    sol.ok = true;
+    sol.rx = rx;
+    sol.cdt = cdt;
+    sol.n_used = static_cast<int>(used_pos.size());
+    sol.pdop = dop.ok ? dop.pdop : 0.0;
+
+    // Cov(x) = sigma0^2 * N^-1 with sigma0^2 = sum(w*v^2)/(n-4); rotate the 3x3
+    // position block into ENU so sigma_e/n/u are directly comparable with what a
+    // student reports.  Redundancy n-4 <= 0 (a 4-satellite fix) leaves sigma at 0.
+    const int dof = static_cast<int>(used_pos.size()) - 4;
+    if (dof > 0) {
+        const double var0 = wvv / static_cast<double>(dof);
+        Eigen::Matrix4d Ninv = Eigen::Matrix4d::Zero();
+        const Eigen::FullPivLU<Eigen::Matrix4d> lu(N);
+        if (lu.isInvertible()) {
+            Ninv = lu.inverse();
+            const Eigen::Matrix3d cov_ecef = var0 * Ninv.topLeftCorner<3, 3>();
+            const auto llh = Coordinates::ecefToLlh(rx);
+            const double sla = std::sin(llh.lat_rad), cla = std::cos(llh.lat_rad);
+            const double slo = std::sin(llh.lon_rad), clo = std::cos(llh.lon_rad);
+            Eigen::Matrix3d R;
+            R << -slo, clo, 0.0,
+                 -sla * clo, -sla * slo, cla,
+                  cla * clo, cla * slo, sla;
+            const Eigen::Matrix3d cov_enu = R * cov_ecef * R.transpose();
+            sol.sig_e = std::sqrt(std::max(0.0, cov_enu(0, 0)));
+            sol.sig_n = std::sqrt(std::max(0.0, cov_enu(1, 1)));
+            sol.sig_u = std::sqrt(std::max(0.0, cov_enu(2, 2)));
+            sol.sig0 = std::sqrt(std::max(0.0, var0));
+        }
+    }
+    return sol;
+}
+
+int runSppReference(const std::filesystem::path& truth_dir, const sim::SimConfig& scfg) {
+    const std::string tag = "spp-ref";
+
+    const FixtureDate fd = makeFixtureDate(scfg.date.year, scfg.date.doy);
+    const std::filesystem::path root = GNSS_PROJECT_ROOT;
+    const std::filesystem::path base = root / "data" / fd.dir;
+    const std::filesystem::path setup_obs = base / "obs" / "gcgo00usa" /
+        ("GCGO00USA_R_" + fd.yyyydoy + "0000_01D_30S_MO.rnx");
+    const std::filesystem::path sp3 = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_05M_ORB.SP3");
+    const std::filesystem::path clk = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_30S_CLK.CLK");
+    const std::filesystem::path nav = base / "products" / ("BRDC00IGS_R_" + fd.yyyydoy + "0000_01D_MN.rnx");
+    const std::filesystem::path bia = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_01D_OSB.BIA");
+    for (const std::filesystem::path* p : { &setup_obs, &sp3, &clk, &nav }) {
+        if (!std::filesystem::exists(*p)) {
+            std::cerr << "[" << tag << "] FAIL: missing fixture " << p->string() << "\n";
+            return 1;
+        }
+    }
+    // Leg 2 corrects the observables with the same OSBs the synth injected; without
+    // the .BIA the two leg-2 variants would silently coincide, so warn loudly.
+    const bool want_osb = scfg.corrections.signal_bias && std::filesystem::exists(bia);
+    if (scfg.corrections.signal_bias && !want_osb)
+        std::cerr << "[" << tag << "] WARN: corrections.signal_bias is set but the .BIA is "
+                     "missing; leg 2 runs bias-blind\n";
+
+    // --- The emitted hero RINEX: exactly one *_MO.rnx in the truth dir. --------
+    std::filesystem::path obs_rnx;
+    int n_rnx = 0;
+    for (const auto& de : std::filesystem::directory_iterator(truth_dir)) {
+        if (!de.is_regular_file()) continue;
+        const std::string name = de.path().filename().string();
+        if (name.size() > 7 && name.compare(name.size() - 7, 7, "_MO.rnx") == 0) {
+            obs_rnx = de.path();
+            ++n_rnx;
+        }
+    }
+    if (n_rnx != 1) {
+        std::cerr << "[" << tag << "] FAIL: expected exactly one *_MO.rnx in "
+                  << truth_dir.string() << ", found " << n_rnx << "\n";
+        return 1;
+    }
+
+    // --- Truth trajectory, keyed on the integer-ms tow grid. -------------------
+    struct TruthRow {
+        Eigen::Vector3d xyz;
+        double lat_deg{ 0 }, lon_deg{ 0 }, h_m{ 0 };
+    };
+    std::map<long long, TruthRow> truth;
+    {
+        std::ifstream tf(truth_dir / "truth_position.csv");
+        if (!tf) {
+            std::cerr << "[" << tag << "] FAIL: cannot open " << (truth_dir / "truth_position.csv").string() << "\n";
+            return 1;
+        }
+        auto split = [](const std::string& s) {
+            std::vector<std::string> out;
+            std::size_t p = 0;
+            while (true) {
+                const std::size_t q = s.find(',', p);
+                out.push_back(s.substr(p, q == std::string::npos ? q : q - p));
+                if (q == std::string::npos) break;
+                p = q + 1;
+            }
+            return out;
+        };
+        std::string line;
+        if (!std::getline(tf, line)) {
+            std::cerr << "[" << tag << "] FAIL: empty truth_position.csv\n";
+            return 1;
+        }
+        const auto hdr = split(line);
+        auto col = [&](const char* name) {
+            for (std::size_t i = 0; i < hdr.size(); ++i)
+                if (hdr[i] == name) return static_cast<int>(i);
+            return -1;
+        };
+        const int c_tow = col("tow_s"), c_x = col("x_m"), c_y = col("y_m"), c_z = col("z_m");
+        const int c_lat = col("lat_deg"), c_lon = col("lon_deg"), c_h = col("h_m");
+        if (c_tow < 0 || c_x < 0 || c_y < 0 || c_z < 0 || c_lat < 0 || c_lon < 0 || c_h < 0) {
+            std::cerr << "[" << tag << "] FAIL: truth_position.csv missing a required column\n";
+            return 1;
+        }
+        while (std::getline(tf, line)) {
+            if (line.empty()) continue;
+            const auto v = split(line);
+            const int need = std::max({ c_tow, c_x, c_y, c_z, c_lat, c_lon, c_h });
+            if (static_cast<int>(v.size()) <= need) continue;
+            TruthRow r;
+            const double tow = std::atof(v[c_tow].c_str());
+            r.xyz = Eigen::Vector3d(std::atof(v[c_x].c_str()), std::atof(v[c_y].c_str()),
+                                    std::atof(v[c_z].c_str()));
+            r.lat_deg = std::atof(v[c_lat].c_str());
+            r.lon_deg = std::atof(v[c_lon].c_str());
+            r.h_m = std::atof(v[c_h].c_str());
+            truth[static_cast<long long>(std::llround(tow * 1000.0))] = r;
+        }
+    }
+    if (truth.empty()) {
+        std::cerr << "[" << tag << "] FAIL: no rows parsed from truth_position.csv\n";
+        return 1;
+    }
+
+    // --- Precise chain + Klobuchar + OSB via the standard provider. ------------
+    std::vector<std::filesystem::path> products = { sp3, clk };
+    if (want_osb) products.push_back(bia);
+    sim::EphemerisProvider eph(setup_obs, products, truth_dir / "logs_spp" / "provider", nav);
+    if (!eph.ok()) {
+        std::cerr << "[" << tag << "] FAIL: EphemerisProvider setup\n";
+        return 1;
+    }
+    if (!eph.hasKlobuchar()) {
+        std::cerr << "[" << tag << "] FAIL: no broadcast Klobuchar field (GPSA/GPSB) in "
+                  << nav.string() << " — leg 1 cannot run the bridge stack\n";
+        return 1;
+    }
+    if (want_osb && !eph.hasSignalBias()) {
+        std::cerr << "[" << tag << "] FAIL: .BIA present but no OSB entries loaded\n";
+        return 1;
+    }
+
+    // --- Broadcast ephemerides: healthy GPS records, sorted by toe. ------------
+    auto toeAbs = [](const BroadcastEphemeris& r) {
+        return r.kepler.toe.week * 604800.0 + r.kepler.toe.tow;
+    };
+    std::vector<BroadcastEphemeris> brdc;
+    int n_unhealthy = 0;
+    for (auto& r : RinexNavParser::parse(nav.string())) {
+        if (r.satellite.empty() || r.satellite[0] != 'G') continue;
+        if (r.health != 0) {
+            ++n_unhealthy;
+            continue;
+        }
+        brdc.push_back(r);
+    }
+    std::sort(brdc.begin(), brdc.end(),
+              [&](const BroadcastEphemeris& a, const BroadcastEphemeris& b) {
+                  return toeAbs(a) < toeAbs(b);
+              });
+    if (brdc.empty()) {
+        std::cerr << "[" << tag << "] FAIL: no healthy GPS broadcast ephemerides in " << nav.string() << "\n";
+        return 1;
+    }
+    std::cout << "[" << tag << "] " << brdc.size() << " healthy GPS broadcast ephemerides ("
+              << n_unhealthy << " unhealthy skipped); OSB " << (want_osb ? "ON" : "OFF") << "\n";
+
+    // --- The student's view: parse the emitted RINEX back.  Reuses the
+    // provider's LogManager: spdlog logger names are process-global, so a second
+    // LogManager here would fail to initialize.
+    GnssConfig obs_config;
+    obs_config.setObservationPath(obs_rnx);
+    ProductParser obs_pp(obs_config, eph.logManager());
+    RinexParser obs_parser(obs_config, eph.logManager(), obs_pp);
+    if (!obs_parser.parse()) {
+        std::cerr << "[" << tag << "] FAIL: RinexParser::parse() on " << obs_rnx.string() << "\n";
+        return 1;
+    }
+    const auto& all_obs = obs_parser.getObservations();
+    struct EpochObs {
+        GnssTime t;
+        std::vector<const RinexObservation*> recs;
+    };
+    std::vector<EpochObs> epochs;
+    for (const auto& o : all_obs) {
+        if (epochs.empty() || epochs.back().t.week != o.time.week ||
+            std::abs(epochs.back().t.tow - o.time.tow) > 1e-6)
+            epochs.push_back({ o.time, {} });
+        epochs.back().recs.push_back(&o);
+    }
+    std::cout << "[" << tag << "] " << obs_rnx.filename().string() << ": " << all_obs.size()
+              << " records over " << epochs.size() << " epochs\n";
+
+    // --- Epoch loop: 5 solutions per epoch. ------------------------------------
+    const double c = Constants::SPEED_OF_LIGHT;
+    const double f1 = Constants::GPS_L1_FREQ, f2 = Constants::GPS_L2_FREQ;
+    const double a1 = f1 * f1 / (f1 * f1 - f2 * f2);   // IF combination coefficients
+    const double a2 = f2 * f2 / (f1 * f1 - f2 * f2);
+    const double mask_deg = scfg.geometry.elevation_mask_deg;
+    const double d2r = Constants::PI / 180.0;
+
+    auto& store = LiveEphemerisStore::getInstance();
+    store.clear();
+    std::map<std::string, double> tgd_s;   // per-sat TGD of the latest inserted record
+    std::size_t next_eph = 0;
+
+    Eigen::Vector3d seed_l1 = obs_parser.getApproxPositionXyz();
+    Eigen::Vector3d seed_if = seed_l1;
+    double seed_l1_cdt = 0.0, seed_if_cdt = 0.0;
+
+    std::ofstream csv(truth_dir / "truth_spp.csv");
+    // The *_sig_[enu]_m / *_sig0_m columns publish each leg's FORMAL per-epoch
+    // uncertainty (a-posteriori-scaled, ENU) alongside its error, so Part B's
+    // "document your stochastic model" has a reference at whichever three epochs
+    // the student picked -- previously only DOP was emitted, which is geometry
+    // alone and says nothing about the measurement noise the student assumed.
+    csv << "week,tow_s,l1_n,l1_pdop,l1_cdt_m,l1_e_m,l1_n_m,l1_u_m,l1_3d_m,"
+           "l1_sig_e_m,l1_sig_n_m,l1_sig_u_m,l1_sig0_m,"
+           "l1_noklob_3d_m,l1_notgd_3d_m,l1_prec_3d_m,if_n,if_pdop,if_cdt_m,if_e_m,if_n_m,if_u_m,"
+           "if_3d_m,if_sig_e_m,if_sig_n_m,if_sig_u_m,if_sig0_m,if_noosb_3d_m\n";
+    csv << std::fixed;
+
+    struct Acc {
+        std::vector<double> d3, dh, du;
+        int fail{ 0 };
+        long long n_used_sum{ 0 };
+        std::array<double, 24> hr_sum{};
+        std::array<int, 24> hr_n{};
+    };
+    Acc a_l1, a_nk, a_nt, a_pr, a_if, a_no;
+    std::vector<double> delta_klob, delta_tgd, delta_osb, delta_brdc; // paired per-epoch 3D deltas
+    int n_truth_miss = 0;
+
+    for (const auto& ep : epochs) {
+        const double t_abs = ep.t.week * 604800.0 + ep.t.tow;
+        // Feed the store epoch-synchronously: a live receiver holds the currently
+        // broadcast data set, whose toe can sit up to ~2 h ahead of clock time.
+        while (next_eph < brdc.size() && toeAbs(brdc[next_eph]) <= t_abs + 7200.0) {
+            store.insert(brdc[next_eph]);
+            tgd_s[brdc[next_eph].satellite] = brdc[next_eph].kepler.tgd0;
+            ++next_eph;
+        }
+
+        std::vector<RefObs> l1, if_osb, if_raw;
+        for (const auto* r : ep.recs) {
+            if (r->satellite.empty() || r->satellite[0] != 'G') continue;
+            const auto c1 = r->measurements.find("C1C");
+            if (c1 == r->measurements.end() || !((*c1).second > 1.0e6)) continue;
+            l1.push_back({ r->satellite, (*c1).second });
+            const auto c2 = r->measurements.find("C2W");
+            if (c2 == r->measurements.end() || !((*c2).second > 1.0e6)) continue;
+            const double b1 = want_osb ? eph.signalBiasMetres(r->satellite, "C1C", ep.t) : 0.0;
+            const double b2 = want_osb ? eph.signalBiasMetres(r->satellite, "C2W", ep.t) : 0.0;
+            if_osb.push_back({ r->satellite, a1 * ((*c1).second - b1) - a2 * ((*c2).second - b2) });
+            if_raw.push_back({ r->satellite, a1 * (*c1).second - a2 * (*c2).second });
+        }
+
+        const RefSol s_l1 = solveReferenceEpoch(eph, &store, &tgd_s, true, true, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        const RefSol s_nk = solveReferenceEpoch(eph, &store, &tgd_s, true, false, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        const RefSol s_nt = solveReferenceEpoch(eph, &store, &tgd_s, false, true, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        // Precise-orbit/clock twin of the no-TGD broadcast leg (same raw C1C, same
+        // Klobuchar, bias content identical on both sides) — the paired delta
+        // against s_nt isolates the pure broadcast orbit/clock error.
+        const RefSol s_pr = solveReferenceEpoch(eph, nullptr, nullptr, false, true, ep.t, l1,
+                                                seed_l1, seed_l1_cdt, mask_deg);
+        const RefSol s_if = solveReferenceEpoch(eph, nullptr, nullptr, false, false, ep.t, if_osb,
+                                                seed_if, seed_if_cdt, mask_deg);
+        const RefSol s_no = solveReferenceEpoch(eph, nullptr, nullptr, false, false, ep.t, if_raw,
+                                                seed_if, seed_if_cdt, mask_deg);
+        if (s_l1.ok) { seed_l1 = s_l1.rx; seed_l1_cdt = s_l1.cdt; }
+        if (s_if.ok) { seed_if = s_if.rx; seed_if_cdt = s_if.cdt; }
+
+        const auto tr = truth.find(static_cast<long long>(std::llround(ep.t.tow * 1000.0)));
+        if (tr == truth.end()) ++n_truth_miss;
+        // Bucket on integer milliseconds: the parser's calendar->tow conversion can
+        // sit an ulp below an exact hour boundary, which would drop boundary epochs
+        // into the previous UT-hour bucket and shift every label by one.
+        const double rel_ms = static_cast<double>(std::llround((ep.t.tow - fd.day_start_tow) * 1000.0));
+        const int hr = std::max(0, std::min(23, static_cast<int>(rel_ms / 3600000.0)));
+
+        // ENU error of one solution against this epoch's truth; nan when unsolved.
+        auto errOf = [&](const RefSol& s, Eigen::Vector3d& enu, double& d3) -> bool {
+            if (!s.ok || tr == truth.end()) return false;
+            const Eigen::Vector3d dx = s.rx - tr->second.xyz;
+            const Coordinates::Llh llh{ tr->second.lat_deg * d2r, tr->second.lon_deg * d2r,
+                                        tr->second.h_m };
+            enu = Coordinates::ecefToEnu(dx, llh);
+            d3 = dx.norm();
+            return true;
+        };
+        auto accum = [&](const RefSol& s, Acc& a, Eigen::Vector3d& enu, double& d3) {
+            if (!errOf(s, enu, d3)) {
+                ++a.fail;
+                return false;
+            }
+            a.d3.push_back(d3);
+            a.dh.push_back(std::hypot(enu.x(), enu.y()));
+            a.du.push_back(std::abs(enu.z()));
+            a.n_used_sum += s.n_used;
+            a.hr_sum[hr] += d3;
+            a.hr_n[hr] += 1;
+            return true;
+        };
+        Eigen::Vector3d e_l1, e_nk, e_nt, e_pr, e_if, e_no;
+        double d_l1 = 0, d_nk = 0, d_nt = 0, d_pr = 0, d_if = 0, d_no = 0;
+        const bool ok_l1 = accum(s_l1, a_l1, e_l1, d_l1);
+        const bool ok_nk = accum(s_nk, a_nk, e_nk, d_nk);
+        const bool ok_nt = accum(s_nt, a_nt, e_nt, d_nt);
+        const bool ok_pr = accum(s_pr, a_pr, e_pr, d_pr);
+        const bool ok_if = accum(s_if, a_if, e_if, d_if);
+        const bool ok_no = accum(s_no, a_no, e_no, d_no);
+        if (ok_l1 && ok_nk) delta_klob.push_back(d_nk - d_l1);
+        if (ok_l1 && ok_nt) delta_tgd.push_back(d_nt - d_l1);
+        if (ok_if && ok_no) delta_osb.push_back(d_no - d_if);
+        if (ok_nt && ok_pr) delta_brdc.push_back(d_nt - d_pr);
+
+        auto num = [&](double v, int prec) {
+            if (std::isfinite(v))
+                csv << std::setprecision(prec) << v;
+            else
+                csv << "nan";
+        };
+        csv << ep.t.week << ",";
+        num(ep.t.tow, 3);
+        csv << "," << (s_l1.ok ? s_l1.n_used : 0) << ",";
+        num(s_l1.ok ? s_l1.pdop : std::nan(""), 2);
+        csv << ",";
+        num(s_l1.ok ? s_l1.cdt : std::nan(""), 3);
+        csv << ",";
+        num(ok_l1 ? e_l1.x() : std::nan(""), 4);
+        csv << ",";
+        num(ok_l1 ? e_l1.y() : std::nan(""), 4);
+        csv << ",";
+        num(ok_l1 ? e_l1.z() : std::nan(""), 4);
+        csv << ",";
+        num(ok_l1 ? d_l1 : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig_e : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig_n : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig_u : std::nan(""), 4);
+        csv << ",";
+        num(s_l1.ok ? s_l1.sig0 : std::nan(""), 4);
+        csv << ",";
+        num(ok_nk ? d_nk : std::nan(""), 4);
+        csv << ",";
+        num(ok_nt ? d_nt : std::nan(""), 4);
+        csv << ",";
+        num(ok_pr ? d_pr : std::nan(""), 4);
+        csv << "," << (s_if.ok ? s_if.n_used : 0) << ",";
+        num(s_if.ok ? s_if.pdop : std::nan(""), 2);
+        csv << ",";
+        num(s_if.ok ? s_if.cdt : std::nan(""), 3);
+        csv << ",";
+        num(ok_if ? e_if.x() : std::nan(""), 4);
+        csv << ",";
+        num(ok_if ? e_if.y() : std::nan(""), 4);
+        csv << ",";
+        num(ok_if ? e_if.z() : std::nan(""), 4);
+        csv << ",";
+        num(ok_if ? d_if : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig_e : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig_n : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig_u : std::nan(""), 4);
+        csv << ",";
+        num(s_if.ok ? s_if.sig0 : std::nan(""), 4);
+        csv << ",";
+        num(ok_no ? d_no : std::nan(""), 4);
+        csv << "\n";
+    }
+    csv.close();
+
+    // --- Summary statistics + JSON. --------------------------------------------
+    struct VarStats {
+        int n{ 0 };
+        double median{ 0 }, mean{ 0 }, p90{ 0 }, max{ 0 };
+    };
+    auto statsOf = [](const std::vector<double>& in) {
+        VarStats s;
+        if (in.empty()) return s;
+        std::vector<double> v = in;
+        std::sort(v.begin(), v.end());
+        s.n = static_cast<int>(v.size());
+        s.median = v[v.size() / 2];
+        double sum = 0;
+        for (double x : v) sum += x;
+        s.mean = sum / static_cast<double>(v.size());
+        s.p90 = v[static_cast<std::size_t>(std::floor(0.9 * static_cast<double>(v.size() - 1)))];
+        s.max = v.back();
+        return s;
+    };
+    auto meanOf = [](const std::vector<double>& v) {
+        if (v.empty()) return 0.0;
+        double s = 0;
+        for (double x : v) s += x;
+        return s / static_cast<double>(v.size());
+    };
+
+    nlohmann::json j;
+    j["generated_by"] = "gnss_simulator spp-reference";
+    j["date"] = { { "year", scfg.date.year }, { "doy", scfg.date.doy }, { "iso", fd.iso } };
+    j["obs_rinex"] = obs_rnx.filename().string();
+    j["n_epochs"] = epochs.size();
+    j["elevation_mask_deg"] = mask_deg;
+    j["estimator"] = "epoch-wise Gauss-Newton WLS (x,y,z,c*dt), w = sin^2(el)";
+    j["modeled"] = "emission time + Sagnac; SV clock (+ periodic relativistic); "
+                   "Saastamoinen ZHD * GMF dry; leg1 +TGD +broadcast Klobuchar; "
+                   "leg2 ionosphere-free C1C/C2W with OSB-corrected observables";
+    j["unmodeled_by_design"] = "wet troposphere (ZWD), Shapiro, solid-earth/pole tide, "
+                               "ocean loading, satellite+receiver antenna PCO/PCV, multipath";
+    auto pack = [&](const Acc& a, const char* note) {
+        const VarStats s3 = statsOf(a.d3), sh = statsOf(a.dh), su = statsOf(a.du);
+        nlohmann::json v;
+        v["note"] = note;
+        v["n_solved"] = s3.n;
+        v["n_failed"] = a.fail;
+        v["mean_sats_used"] = s3.n ? static_cast<double>(a.n_used_sum) / s3.n : 0.0;
+        v["err3d_m"] = { { "median", s3.median }, { "mean", s3.mean }, { "p90", s3.p90 }, { "max", s3.max } };
+        v["horizontal_median_m"] = sh.median;
+        v["up_abs_median_m"] = su.median;
+        nlohmann::json hours = nlohmann::json::array();
+        for (int h = 0; h < 24; ++h)
+            if (a.hr_n[h])
+                hours.push_back({ { "ut_hour", h },
+                                  { "n", a.hr_n[h] },
+                                  { "mean_3d_m", a.hr_sum[h] / a.hr_n[h] } });
+        v["hourly"] = hours;
+        return v;
+    };
+    j["variants"]["l1_broadcast"] = pack(a_l1, "leg 1: C1C + brdc eph/clk + TGD + Klobuchar (the bridge stack)");
+    j["variants"]["l1_no_klobuchar"] = pack(a_nk, "leg 1 A/B: Klobuchar correction omitted");
+    j["variants"]["l1_no_tgd"] = pack(a_nt, "leg 1 A/B: TGD not applied");
+    j["variants"]["l1_precise_orbits"] = pack(a_pr, "leg 1 A/B: precise SP3/CLK instead of broadcast "
+                                                    "(pair vs l1_no_tgd = pure broadcast orbit/clock error)");
+    j["variants"]["if_precise"] = pack(a_if, "leg 2: IF(C1C,C2W) code + precise SP3/CLK, OSB-corrected");
+    j["variants"]["if_no_osb"] = pack(a_no, "leg 2 A/B: raw observables, biases ignored");
+    j["paired_mean_delta_3d_m"] = { { "klobuchar_off_minus_on", meanOf(delta_klob) },
+                                    { "tgd_off_minus_on", meanOf(delta_tgd) },
+                                    { "osb_off_minus_on", meanOf(delta_osb) },
+                                    { "broadcast_minus_precise_orbits", meanOf(delta_brdc) } };
+    {
+        std::ofstream js(truth_dir / "truth_spp_summary.json");
+        js << j.dump(2) << "\n";
+    }
+
+    auto report = [&](const char* label, const Acc& a) {
+        const VarStats s3 = statsOf(a.d3), sh = statsOf(a.dh), su = statsOf(a.du);
+        std::cout << "[" << tag << "] " << label << ": " << s3.n << "/" << epochs.size()
+                  << " solved";
+        if (a.fail) std::cout << " (" << a.fail << " failed)";
+        if (s3.n)
+            std::cout << "; 3D m median " << std::fixed << std::setprecision(3) << s3.median
+                      << " mean " << s3.mean << " p90 " << s3.p90 << " max " << s3.max
+                      << "; H med " << sh.median << " |U| med " << su.median;
+        std::cout << "\n";
+    };
+    auto hourly = [&](const char* label, const Acc& a) {
+        std::cout << "[" << tag << "]   " << label << " hourly mean 3D (UT h):";
+        for (int h = 0; h < 24; ++h)
+            if (a.hr_n[h])
+                std::cout << " " << h << "=" << std::fixed << std::setprecision(2)
+                          << a.hr_sum[h] / a.hr_n[h];
+        std::cout << "\n";
+    };
+    if (n_truth_miss)
+        std::cout << "[" << tag << "] WARN: " << n_truth_miss << " epochs had no truth row\n";
+    report("leg1 brdc+TGD+Klob ", a_l1);
+    hourly("leg1", a_l1);
+    report("leg1 no-Klobuchar  ", a_nk);
+    report("leg1 no-TGD        ", a_nt);
+    report("leg1 precise-orbit ", a_pr);
+    report("leg2 IF+OSB precise", a_if);
+    hourly("leg2", a_if);
+    report("leg2 IF no-OSB     ", a_no);
+    std::cout << "[" << tag << "] paired mean d3D: Klobuchar saves "
+              << std::setprecision(3) << meanOf(delta_klob) << " m; TGD saves "
+              << meanOf(delta_tgd) << " m; OSB saves " << meanOf(delta_osb)
+              << " m; broadcast orbit/clock costs " << meanOf(delta_brdc) << " m\n";
+    std::cout << "[" << tag << "] wrote " << (truth_dir / "truth_spp.csv").string() << " and "
+              << (truth_dir / "truth_spp_summary.json").string() << "\n";
+    const bool complete = a_l1.d3.size() == epochs.size() && a_if.d3.size() == epochs.size();
+    if (!complete)
+        std::cerr << "[" << tag << "] WARN: not every epoch produced both canonical solutions\n";
+    return 0;
+}
+
 int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::SimConfig& scfg) {
     const std::string tag = kinematic ? "synth-kinematic" : "synth-static";
     std::error_code ec;
     std::filesystem::create_directories(outdir, ec);
 
+    const FixtureDate fd = makeFixtureDate(scfg.date.year, scfg.date.doy);
     const std::filesystem::path root = GNSS_PROJECT_ROOT;
-    const std::filesystem::path base = root / "data" / "2024-129";
-    const std::filesystem::path setup_obs = base / "obs" / "gcgo00usa" / "GCGO00USA_R_20241290000_01D_30S_MO.rnx";
-    const std::filesystem::path sp3 = base / "products" / "COD0MGXFIN_20241290000_01D_05M_ORB.SP3";
-    const std::filesystem::path clk = base / "products" / "COD0MGXFIN_20241290000_01D_30S_CLK.CLK";
-    const std::filesystem::path nav = base / "products" / "BRDC00IGS_R_20241290000_01D_MN.rnx";
+    const std::filesystem::path base = root / "data" / fd.dir;
+    const std::filesystem::path setup_obs = base / "obs" / "gcgo00usa" /
+        ("GCGO00USA_R_" + fd.yyyydoy + "0000_01D_30S_MO.rnx");
+    const std::filesystem::path sp3 = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_05M_ORB.SP3");
+    const std::filesystem::path clk = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_30S_CLK.CLK");
+    const std::filesystem::path nav = base / "products" / ("BRDC00IGS_R_" + fd.yyyydoy + "0000_01D_MN.rnx");
+    // IGS20 ANTEX for the antenna PCO/PCV terms — loaded into the provider ONLY when
+    // the sim config requests one (corrections.sat_antenna for the satellite half,
+    // corrections.rx_antenna_type for the receiver half).  It is the same file the
+    // processor auto-loads in internal mode (files.internal_data_root/static/atx/
+    // igs20.atx), so the injected antenna terms cancel against the processor's own
+    // model when the matching enable_satellite_pco/pcv + enable_receiver_pco/pcv are on.
+    const std::filesystem::path atx = root / "data" / "static" / "atx" / "igs20.atx";
+    // The day's Earth Rotation Parameters (polar motion xp/yp + UT1-UTC).  Loaded
+    // into the provider whenever a correction that consumes ERP geometry is
+    // requested.  Two consumers: (1) pole tide reads xp/yp directly — with no ERP,
+    // GnssCorrections::computePoleTideCorrection returns 0, so the injected pole
+    // tide would be 0 while the processor (which auto-globs the obs-day .erp in
+    // internal mode) still subtracts a real ~mm-cm term, i.e. the reuse would NOT
+    // cancel; and (2) the Sun/Moon frame that drives the solid-earth tide and the
+    // satellite-antenna yaw attitude is evaluated from the same ERP.  This is the
+    // identical file the processor loads (PathResolver globs the obs-day .erp), so
+    // loading it here makes pole tide actually cancel and makes the solid-tide /
+    // antenna Sun frame bit-for-bit what the processor computes.
+    const std::filesystem::path erp = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_12H_ERP.ERP");
+    // The day's Bias-SINEX (.BIA) OSB product, loaded into the provider ONLY when
+    // corrections.signal_bias is requested.  It is the same COD MGX file the processor
+    // auto-globs in internal mode, so the observable-specific biases the sim ADDS to each
+    // signal cancel against the processor's own getBiasCorrection once the run config
+    // sets model_corrections.enable_code_phase_bias.
+    const std::filesystem::path bia = base / "products" / ("COD0MGXFIN_" + fd.yyyydoy + "0000_01D_01D_OSB.BIA");
     for (const std::filesystem::path* p : { &setup_obs, &sp3, &clk }) {
         if (!std::filesystem::exists(*p)) {
             std::cerr << "[" << tag << "] FAIL: missing fixture " << p->string() << "\n";
@@ -553,19 +1310,100 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         }
     }
 
-    sim::EphemerisProvider eph(setup_obs, { sp3, clk }, outdir / "logs", nav);
+    // EITHER antenna term needs the ATX.  The RECEIVER term is requested simply by
+    // naming a receiver antenna type — the same string that will be declared in the
+    // RINEX "ANT # / TYPE" header, so the file can never advertise one antenna while
+    // carrying another's pattern.
+    const bool want_rx_antenna = !scfg.corrections.rx_antenna_type.empty();
+    const bool want_antenna = scfg.corrections.sat_antenna || want_rx_antenna;
+    std::vector<std::filesystem::path> products = { sp3, clk };
+    if (want_antenna) {
+        if (!std::filesystem::exists(atx)) {
+            std::cerr << "[" << tag << "] FAIL: an antenna correction (corrections.sat_antenna "
+                         "or corrections.rx_antenna_type) is set but the ATX is missing: "
+                      << atx.string() << "\n";
+            return 1;
+        }
+        products.push_back(atx);
+    }
+    // Pole tide, solid-earth tide, and the satellite-antenna attitude frame all
+    // consume ERP-derived geometry (see the erp declaration above), so load the ERP
+    // whenever any of them is requested — matching the processor, which globs the
+    // obs-day .erp and applies it under the corresponding enable_* flags.
+    const bool need_erp = scfg.corrections.pole_tide || scfg.corrections.solid_earth_tide ||
+                          scfg.corrections.sat_antenna;
+    if (need_erp) {
+        if (!std::filesystem::exists(erp)) {
+            std::cerr << "[" << tag << "] FAIL: an ERP-consuming correction (pole_tide/"
+                         "solid_earth_tide/sat_antenna) is set but ERP missing: "
+                      << erp.string() << "\n";
+            return 1;
+        }
+        products.push_back(erp);
+    }
+
+    // Observable-specific signal biases need the day's .BIA.  Add it to the provider's
+    // product set so ProductParser::parseBia loads the OSBs into the shared cache (from
+    // which geometry_'s GnssCorrections reads them); fail loud on a missing fixture
+    // rather than silently inject nothing while the run config still applies the
+    // processor's own copy (which would NOT cancel).
+    const bool want_signal_bias = scfg.corrections.signal_bias;
+    if (want_signal_bias) {
+        if (!std::filesystem::exists(bia)) {
+            std::cerr << "[" << tag << "] FAIL: corrections.signal_bias is set but the .BIA "
+                         "product is missing: " << bia.string() << "\n";
+            return 1;
+        }
+        products.push_back(bia);
+    }
+
+    sim::EphemerisProvider eph(setup_obs, products, outdir / "logs", nav,
+                               scfg.corrections.rx_antenna_type);
     if (!eph.ok()) {
         std::cerr << "[" << tag << "] FAIL: EphemerisProvider setup\n";
         return 1;
     }
+    // Fail loud rather than silently inject nothing if the ATX yielded no antennas.
+    if (want_antenna && !eph.hasAntenna()) {
+        std::cerr << "[" << tag << "] FAIL: an antenna correction is set but no antenna model "
+                     "loaded from " << atx.string() << "\n";
+        return 1;
+    }
+    // Likewise fail loud if an ERP-consuming correction is on but no ERP entry
+    // parsed — otherwise pole tide would silently inject 0 (asymmetric with the
+    // processor) and the solid-tide / antenna Sun frame would drift by the polar
+    // motion the processor still applies.
+    if (need_erp && eph.erpNodeCount() == 0) {
+        std::cerr << "[" << tag << "] FAIL: ERP-consuming correction set but no ERP entries loaded from "
+                  << erp.string() << "\n";
+        return 1;
+    }
+    // Fail loud if signal biases were requested but the .BIA yielded no entries —
+    // otherwise the sim would inject 0 while the processor's enable_code_phase_bias
+    // still applies the real OSBs, an asymmetry that does NOT cancel.
+    if (want_signal_bias && !eph.hasSignalBias()) {
+        std::cerr << "[" << tag << "] FAIL: corrections.signal_bias set but no OSB entries loaded from "
+                  << bia.string() << "\n";
+        return 1;
+    }
     std::cout << "[" << tag << "] provider ready: " << eph.orbitNodeCount() << " orbit nodes, "
-              << eph.clockSampleCount() << " clock samples\n";
+              << eph.clockSampleCount() << " clock samples";
+    if (need_erp) std::cout << " (+" << eph.erpNodeCount() << " ERP entries)";
+    if (eph.hasAntenna()) {
+        std::cout << " (+satellite antenna PCO/PCV";
+        if (eph.hasReceiverAntenna())
+            std::cout << ", +receiver PCO/PCV '" << scfg.corrections.rx_antenna_type << "'";
+        std::cout << ")";
+    }
+    if (eph.hasSignalBias()) std::cout << " (+OSB signal biases)";
+    std::cout << "\n";
 
     // ---- Truth trajectory (knobs from SimConfig; kinematic from the subcommand) ----
     sim::TrajectoryConfig tcfg;
     tcfg.kinematic = kinematic;
     tcfg.interval_s = scfg.trajectory.interval_s;
     tcfg.n_epochs = scfg.trajectory.n_epochs;
+    tcfg.t0.tow = scfg.trajectory.start_tow_s;   // time-of-day only; the week/date stays fixture-bound
     tcfg.cruise_speed_mps = scfg.trajectory.cruise_speed_mps;
     tcfg.lat0_deg = scfg.trajectory.lat0_deg;
     tcfg.lon0_deg = scfg.trajectory.lon0_deg;
@@ -577,11 +1415,121 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     tcfg.heave_period_s = scfg.trajectory.heave_period_s;
     tcfg.clock_bias0_s = scfg.trajectory.clock_bias0_s;
     tcfg.clock_drift_sps = scfg.trajectory.clock_drift_sps;
+    tcfg.dest_lat_deg = scfg.trajectory.dest_lat_deg;
+    tcfg.dest_lon_deg = scfg.trajectory.dest_lon_deg;
+    tcfg.landfall_decel_frac = scfg.trajectory.landfall_decel_frac;
+    tcfg.landfall_terminal_frac = scfg.trajectory.landfall_terminal_frac;
+    tcfg.approach_weave_amp_m = scfg.trajectory.approach_weave_amp_m;
+    tcfg.approach_weave_period_s = scfg.trajectory.approach_weave_period_s;
+    tcfg.waypoints = scfg.trajectory.waypoints;
     sim::TrajectoryGenerator traj(tcfg);
     const auto& truth = traj.states();
     if (truth.empty()) {
         std::cerr << "[" << tag << "] FAIL: empty trajectory\n";
         return 1;
+    }
+
+    // ---- Ocean tidal loading (opt-in, EOT20 reuse) -------------------------
+    // FROZEN (default): coefficients are synthesized ONCE at the first truth epoch's
+    // ECEF — the same point the sim writes as the RINEX APPROX POSITION XYZ, which is
+    // exactly where Model::Geometry::loadData will synthesize the processor's own set.
+    // Both sides therefore evaluate an identical frozen 11-constituent model and the
+    // term cancels even though the vessel moves ~100 km.
+    //
+    // ALONG-TRACK (corrections.ocean_tide_along_track): the EOT20 field is sampled at
+    // anchors down the trajectory, so the sim injects the loading at where the vessel
+    // IS while the processor keeps modelling the coefficients it froze at the APPROX
+    // POSITION.  That asymmetry is the point — it is the one M7 term that does not
+    // cancel, and truth_otl.csv records exactly how much is left behind.
+    //
+    // Either way, hard-fail rather than silently inject nothing (the processor's
+    // enable_ocean_tide_loading defaults TRUE, so a silent miss here would leave a real
+    // cm-level term uncancelled).
+    // ONE expression for "the point the processor will freeze its site models at": it
+    // feeds both the OTL reference below and hdr.approx_xyz further down.  They were
+    // two independent `truth.front().ecef` expressions, and nothing would have caught
+    // them drifting apart — which would silently decouple the sim's OTL reference from
+    // the APPROX POSITION the processor actually reads out of the RINEX header.
+    Eigen::Vector3d approx_pos = truth.front().ecef;
+    // APPROX POSITION policy (SPEC R2).  "truth" (default) leaves it as the exact
+    // trajectory start — which equals row 1 of truth_position.csv, a disclosure leak for
+    // a student handout.  "quantized" rounds the disclosed last-known position to a coarse
+    // lat/lon grid and drops the height, DETERMINISTICALLY (no RNG draw — it must not
+    // perturb any shared stream).  This runs BEFORE approx_pos feeds the OTL frozen
+    // reference and hdr.approx_xyz, so the sim freezes ocean loading at the SAME point the
+    // processor reads out of the RINEX header (R2.2); a ~110 m shift moves the EOT20 field
+    // sample negligibly (its grid is 0.125 deg).
+    if (scfg.rinex.approx_position_mode == "quantized") {
+        const double d2r = Constants::PI / 180.0;
+        const Coordinates::Llh llh = Coordinates::ecefToLlh(approx_pos);
+        const double q = scfg.rinex.approx_quantize_deg;
+        const double lat_q = std::round((llh.lat_rad / d2r) / q) * q;   // lat_rad/d2r = degrees
+        const double lon_q = std::round((llh.lon_rad / d2r) / q) * q;
+        // Height rounds to the nearest METRE rather than being forced to 0: a floating
+        // vessel sits at the sea SURFACE, whose ellipsoidal height is +geoid undulation
+        // (~+48 m near the hero LKP, EGM2008) — a zeroed header would disclose a fix
+        // ~50 m below the water and gut the Part-E height-systems question.
+        approx_pos = Coordinates::llhToEcef(lat_q * d2r, lon_q * d2r, std::round(llh.h_m));
+    }
+
+    if (scfg.corrections.ocean_tide) {
+        const std::filesystem::path nc(scfg.corrections.eot20_nc_path);
+        if (!std::filesystem::exists(nc)) {
+            std::cerr << "[" << tag << "] FAIL: corrections.ocean_tide set but EOT20 grid missing: "
+                      << nc.string() << "\n";
+            return 1;
+        }
+        if (scfg.corrections.ocean_tide_along_track) {
+            std::vector<sim::OtlField::TrackSample> otl_track;
+            otl_track.reserve(truth.size());
+            for (const auto& tp : truth) otl_track.push_back({ tp.time, tp.ecef });
+            if (!eph.loadOceanTideAlongTrack(nc, otl_track,
+                                             scfg.corrections.otl_anchor_spacing_km,
+                                             approx_pos)) {
+                std::cerr << "[" << tag << "] FAIL: could not build the along-track ocean-tide "
+                             "field from " << nc.string() << "\n";
+                return 1;
+            }
+            std::cout << "[" << tag << "] ocean tidal loading: ALONG-TRACK EOT20 field, "
+                      << eph.oceanTideAnchorCount() << " anchors @ "
+                      << scfg.corrections.otl_anchor_spacing_km
+                      << " km (does NOT cancel; see truth_otl.csv)\n";
+        } else if (!eph.loadOceanTide(nc, approx_pos)) {
+            std::cerr << "[" << tag << "] FAIL: could not synthesize ocean-tide coefficients from "
+                      << nc.string() << "\n";
+            return 1;
+        } else {
+            std::cout << "[" << tag << "] ocean tidal loading: EOT20 coefficients at the RINEX "
+                         "APPROX POSITION (radial component)\n";
+        }
+    }
+
+    // ---- Product-day edge guard -------------------------------------------
+    // The bundled precise products are SINGLE-DAY files (e.g. DOY 129 = 2024-05-08 =
+    // GPS week 2313, tow [259200, 345600]): a 05M SP3 whose last node is exactly the
+    // day end and a 30S CLK whose last record is 30 s before it.  An arc that reaches
+    // an edge cannot be centred in the Lagrange orbit window and (at the end) has no
+    // trailing clock node, so orbits/clocks degrade into extrapolation there.
+    //
+    // Running fully OUTSIDE the product day is a hard FAIL, not a warning: it means the
+    // arc and the fixture date disagree, so every epoch would silently interpolate the
+    // wrong day's orbits.  Merely sitting NEAR an edge stays a warning (accuracy trap).
+    {
+        const double kDayStart = fd.day_start_tow, kDayEnd = fd.day_end_tow, kMargin = 1800.0;
+        const double t_first = truth.front().time.tow, t_last = truth.back().time.tow;
+        if (t_first < kDayStart || t_last > kDayEnd) {
+            std::cerr << "[" << tag << "] FAIL: arc tow [" << t_first << ", " << t_last
+                      << "] runs OUTSIDE the " << fd.dir << " product day [" << kDayStart << ", "
+                      << kDayEnd << "] — satellite orbits/clocks would be EXTRAPOLATED.\n"
+                      << "        Either set trajectory.start_tow_s inside that span, or point"
+                         " date.{year,doy} at the day the arc actually belongs to.\n";
+            return 1;
+        } else if (t_first < kDayStart + kMargin || t_last > kDayEnd - kMargin) {
+            std::cerr << "[" << tag << "] WARN: arc tow [" << t_first << ", " << t_last
+                      << "] sits within " << kMargin << " s of a product-day edge [" << kDayStart
+                      << ", " << kDayEnd << "] — the Lagrange orbit window cannot be centred and"
+                         " trailing clock nodes are missing (accuracy trap).\n";
+        }
     }
 
     const double deg = Constants::PI / 180.0;
@@ -591,7 +1539,19 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     std::mt19937_64 rng(scfg.noise.seed);
     std::normal_distribution<double> gauss(0.0, 1.0);
     const double sigma_zen = scfg.noise.code_sigma_zen_m, sigma_phase = scfg.noise.phase_sigma_zen_m;
-    const double zwd_true_m = scfg.atmosphere.zwd_m;       // truth wet zenith delay (humid tropical environment)
+    // --- Truth wet zenith delay (humid tropical environment) -------------------
+    // Optionally TIME-VARYING: a diurnal sinusoid plus a random walk.  The walk is
+    // drawn once per EPOCH from a DEDICATED stream (never `rng`/`aux_rng`), so tuning
+    // the troposphere cannot shift the measurement-noise or multipath/slip draws — the
+    // storm-on/off control and byte-identity both survive.  With the variation knobs at
+    // their 0 defaults zwd_ep stays exactly scfg.atmosphere.zwd_m every epoch.
+    const auto& atm = scfg.atmosphere;
+    const bool zwd_varies = (atm.zwd_diurnal_amp_m > 0.0) || (atm.zwd_rw_sigma_m > 0.0);
+    std::mt19937_64 tropo_rng(atm.seed);
+    double zwd_rw_state = 0.0;          // accumulated random walk (m)
+    double zwd_ep = atm.zwd_m;          // this epoch's truth ZWD (m)
+    double zwd_sum = 0.0, zwd_min_seen = 1e9, zwd_max_seen = -1e9;
+    const double zwd_true_m = atm.zwd_m;                   // arc MEAN when varying; the value when constant
     const double isb_true_m = scfg.biases.isb_gps_gal_m;   // GPS->Galileo inter-system bias (truth state, DESIGN §5.6)
     const double storm_scale = scfg.iono.storm_scale;      // multiplies storm amplitudes (0 = storm off, same RNG)
 
@@ -640,6 +1600,15 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     icfg.drift_lon_deg_per_min = scfg.iono.drift_lon_deg_per_min;
     icfg.tid_wavelength_km = scfg.iono.tid_wavelength_km;
     icfg.tid_period_s = scfg.iono.tid_period_s;
+    icfg.tid_period_start_s = scfg.iono.tid_period_start_s;
+    icfg.tid_period_end_s = scfg.iono.tid_period_end_s;
+    icfg.tid_pulse_count = scfg.iono.tid_pulse_count;
+    icfg.tid_pulse_duration_s = scfg.iono.tid_pulse_duration_s;
+    // Stagger the pulses across the explicitly-named TID satellites (one satellite
+    // disturbed at a time).  0 when tid_sats is unused, so nothing staggers.
+    icfg.tid_n_sats = static_cast<int>(scfg.iono.tid_sats.size());
+    icfg.sed_elev_exp = scfg.iono.sed_elev_exp;
+    icfg.tid_positive = scfg.iono.tid_positive;
     icfg.tid_azimuth_deg = scfg.iono.tid_azimuth_deg;
     icfg.shell_height_km = scfg.iono.shell_height_km;
     icfg.scint_elev_clamp_deg = scfg.iono.scint_elev_clamp_deg;
@@ -657,8 +1626,130 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     icfg.tid_amp_tecu *= storm_scale;
     icfg.scint_sigma_phi_max_rad *= storm_scale;
     const sim::IonoDisturbance iono(icfg);
-    std::cout << "[" << tag << "] Klobuchar quiet background: "
-              << (eph.hasKlobuchar() ? "broadcast GPSA/GPSB (reused)" : "analytic fallback") << "\n";
+    // Per-satellite storm participation.  Precedence: (1) explicit iono.tid_pulses ->
+    // any satellite named by a pulse is disturbed; (2) iono.tid_sats -> exactly those
+    // PRNs; (3) a deterministic (RNG-free) per-sat hash over storm_active_fraction.
+    const std::vector<std::string>& tid_sats = scfg.iono.tid_sats;
+    const std::vector<sim::SimConfig::Iono::TidPulse>& tid_pulses = scfg.iono.tid_pulses;
+    const bool explicit_pulses = !tid_pulses.empty();
+    auto satHasPulse = [&](const std::string& sat) -> bool {
+        for (const auto& p : tid_pulses) if (p.sat == sat) return true;
+        return false;
+    };
+    auto stormGain = [&](const std::string& sat) -> double {
+        if (explicit_pulses) return satHasPulse(sat) ? 1.0 : 0.0;
+        if (!tid_sats.empty())
+            return (std::find(tid_sats.begin(), tid_sats.end(), sat) != tid_sats.end()) ? 1.0 : 0.0;
+        const double frac = scfg.iono.storm_active_fraction;
+        if (frac >= 1.0) return 1.0;
+        if (frac <= 0.0) return 0.0;
+        unsigned long long h = 1469598103934665603ull;        // FNV-1a over the sat id
+        for (char c : sat) { h ^= static_cast<unsigned char>(c); h *= 1099511628211ull; }
+        return (static_cast<double>(h % 1000000ull) / 1000000.0 < frac) ? 1.0 : 0.0;
+    };
+    // The one satellite whose TID bumps are filled with a rapid flicker (legacy mode only).
+    auto tidPeriodOverride = [&](const std::string& sat) -> double {
+        return (sat == scfg.iono.tid_fast_sat) ? scfg.iono.tid_fast_period_s : 0.0;
+    };
+    // This satellite's slot among the TID satellites (-1 if it is not one), which
+    // pulse(s) it owns when the round-robin train is staggered (legacy mode only).
+    auto tidSlot = [&](const std::string& sat) -> int {
+        auto it = std::find(tid_sats.begin(), tid_sats.end(), sat);
+        return (it == tid_sats.end()) ? -1 : static_cast<int>(it - tid_sats.begin());
+    };
+    // Sum this satellite's EXPLICIT TID pulses (vertical TECU) at epoch tow.  Returns
+    // -1 when no explicit pulses are configured, so evaluate() uses its internal model.
+    // Each pulse is a positive-definite raised-cosine bump (width duration_s) optionally
+    // filled with a positive-definite carrier of period_s; overlapping pulses on one
+    // satellite sum.  storm_scale still scales the amplitude for the storm-on/off control.
+    auto tidVtecExplicit = [&](const std::string& sat, double tow) -> double {
+        if (!explicit_pulses) return -1.0;
+        double v = 0.0;
+        for (const auto& p : tid_pulses) {
+            if (p.sat != sat) continue;
+            const double start = p.center_tow_s - 0.5 * p.duration_s;
+            const double phase = (tow - start) / p.duration_s;      // 0..1 across the bump
+            if (phase <= 0.0 || phase >= 1.0) continue;
+            const double bump = 0.5 * (1.0 - std::cos(2.0 * Constants::PI * phase));
+            double carrier = 1.0;
+            if (p.period_s > 0.0)
+                carrier = 0.5 * (1.0 - std::cos(2.0 * Constants::PI * (tow - start) / p.period_s));
+            v += p.amp_tecu * bump * carrier;
+        }
+        return v * storm_scale;
+    };
+    // --- Quiet-background source ---------------------------------------------
+    // "klobuchar" (default) reuses the broadcast field so a single-frequency student's
+    // own Klobuchar cancels it EXACTLY and only the storm survives.  "gim" samples the
+    // real CODE IONEX for the fixture day: Klobuchar then removes only part of it, and
+    // the (GIM - Klobuchar) remainder stays in the single-frequency data as a genuine,
+    // non-removable model residual.  Either way the injected first-order term is ONE
+    // slant STEC scaled by 1/f^2 per band, so the iono-free combination still cancels.
+    enum class Background { Klobuchar, Gim, Analytic };
+    const Background background =
+        scfg.iono.background_source == "gim"      ? Background::Gim :
+        scfg.iono.background_source == "analytic" ? Background::Analytic : Background::Klobuchar;
+
+    // Basename of the IONEX actually loaded, echoed into scenario_summary.json so
+    // the handout packager does not have to guess it by glob (make_brief.py emits a
+    // C4 warning and falls back to a *.INX glob when storm.gim_file is absent).
+    std::string gim_file_name;
+
+    if (background == Background::Gim) {
+        std::filesystem::path gim_path = scfg.iono.gim_path;
+        if (gim_path.empty())
+            gim_path = base / "products" / ("COD0OPSFIN_" + fd.yyyydoy + "0000_01D_01H_GIM.INX");
+        if (!eph.loadGim(gim_path)) {
+            std::cerr << "[" << tag << "] FAIL: iono.background_source=\"gim\" but the IONEX "
+                      << gim_path.string() << " could not be loaded.\n";
+            return 1;
+        }
+        gim_file_name = gim_path.filename().string();
+        // The GIM background does NOT cancel against Klobuchar — that residual IS the
+        // single-frequency payload — so the broadcast field must still be present to
+        // subtract.  Without it the Part-B storyline silently degrades to nothing.
+        if (!eph.hasKlobuchar()) {
+            std::cerr << "[" << tag << "] FAIL: iono.background_source=\"gim\" requires a broadcast "
+                         "Klobuchar field (GPSA/GPSB) to form the single-frequency residual, but "
+                      << nav.string() << " has none.\n";
+            return 1;
+        }
+        // Epochs outside the map span are silently CLAMPED to the endpoint map AND still
+        // longitude-rotated — silently wrong truth.  Refuse rather than extrapolate.
+        GnssTime g0{}, g1{};
+        if (!eph.gimEpochSpan(g0, g1)) {
+            std::cerr << "[" << tag << "] FAIL: loaded IONEX carries no maps.\n";
+            return 1;
+        }
+        // Compare in CONTINUOUS GPS seconds, not (week == week && tow in range): a day
+        // that ENDS the GPS week (DOY 132 = week 2313 day 6) puts its final map at
+        // midnight of the NEXT day = week+1, tow 18 (IONEX epochs are UTC-labelled;
+        // +18 s leap on conversion), and a week-equality check would falsely reject an
+        // arc that is strictly inside the span.
+        const auto cont = [](const GnssTime& t) { return t.week * 604800.0 + t.tow; };
+        const double A0 = cont(truth.front().time), A1 = cont(truth.back().time);
+        if (A0 < cont(g0) || A1 > cont(g1)) {
+            std::cerr << "[" << tag << "] FAIL: arc [w" << truth.front().time.week << "/"
+                      << truth.front().time.tow << ", w" << truth.back().time.week << "/"
+                      << truth.back().time.tow << "] is not strictly inside the IONEX map span [w"
+                      << g0.week << "/" << g0.tow << ", w" << g1.week << "/" << g1.tow
+                      << "] — the GIM would be clamped and longitude-rotated.\n";
+            return 1;
+        }
+        std::cout << "[" << tag << "] quiet background: CODE GIM " << gim_path.filename().string()
+                  << " (maps tow " << g0.tow << " .. " << g1.tow << "); Klobuchar retained for the "
+                     "single-frequency residual\n";
+    } else {
+        std::cout << "[" << tag << "] quiet background: "
+                  << (background == Background::Analytic
+                          ? "analytic quiet_vtec_tecu/sin(el)"
+                          : (eph.hasKlobuchar() ? "broadcast Klobuchar GPSA/GPSB (reused)"
+                                                : "analytic fallback (no broadcast Klobuchar)"))
+                  << "\n";
+    }
+    // Counts rays where the GIM query failed and Klobuchar stood in.  A run that
+    // silently mixes two backgrounds is not a GIM dataset — fail at the end if > 0.
+    long long gim_fallback_count = 0;
 
     // --- Marine multipath (Gauss-Markov) + cycle slips (mixed flagging). -------
     // Drawn from a SEPARATE RNG stream so tuning these does not move the white
@@ -675,6 +1766,18 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         if (el_deg >= scfg.slips.max_elev_deg) return 0.0; // slips concentrate at low elevation
         const double s = std::sin(el_deg * deg);
         return slip_base / (s * s);
+    };
+    // Optional slip-rate taper toward the arc end: full rate up to taper_start_frac
+    // of the arc, then a cosine ramp to 0 by the last epoch (so the vessel's final
+    // approach carries only a few slips).  1.0 (default) => no taper.
+    const double slip_taper_start = scfg.slips.taper_start_frac;
+    const long n_ep_total = static_cast<long>(truth.size());
+    auto slipTaper = [&](int ep) -> double {
+        if (slip_taper_start >= 1.0 || n_ep_total < 2) return 1.0;
+        const double frac = static_cast<double>(ep) / static_cast<double>(n_ep_total - 1);
+        if (frac <= slip_taper_start) return 1.0;
+        const double u = (frac - slip_taper_start) / (1.0 - slip_taper_start); // 0 -> 1
+        return 0.5 * (1.0 + std::cos(Constants::PI * u));                       // 1 -> 0
     };
     auto drawSlip = [&](double el_deg) -> int {
         // Slip magnitude scales with the local noise floor (~1/sin el): the code/
@@ -693,15 +1796,55 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     sim::ObsHeaderSpec hdr;
     hdr.run_date = "20260624 000000 UTC";
     hdr.marker_type = kinematic ? "KINEMATIC" : "GEODETIC";
-    hdr.approx_xyz = { truth.front().ecef.x(), truth.front().ecef.y(), truth.front().ecef.z() };
+    hdr.approx_xyz = { approx_pos.x(), approx_pos.y(), approx_pos.z() };
     hdr.interval_s = tcfg.interval_s;
     hdr.time_of_first_obs = tcfg.t0;
+    // Declare the antenna whose pattern was actually injected.  SINGLE SOURCE OF TRUTH:
+    // this is the same string handed to Antenna's receiver lookup, so the header and the
+    // injection cannot drift apart.  Padded to the RINEX field width (16-char model +
+    // 4-char radome) so the radome lands in cols 37-40 as the IGS convention requires.
+    // Left at the writer's uncalibrated placeholder when no receiver antenna is
+    // modelled — that is deliberate: an external service finding no calibration applies
+    // NOTHING (CSRS-PPP "Case 4", NULL reference PCO), which is exactly right for a
+    // dataset carrying no receiver antenna term.
+    if (want_rx_antenna) {
+        hdr.ant_type = scfg.corrections.rx_antenna_type;
+        hdr.ant_type.resize(20, ' ');
+    }
     hdr.obs_types = {
         { 'G', { "C1C", "L1C", "C2W", "L2W" } },
         { 'E', { "C1C", "L1C", "C5Q", "L5Q" } },
     };
+    // RINEX header realism / leak knobs (SPEC R2).  Each override is applied ONLY when the
+    // config supplies it, so an absent/default rinex section keeps every writer default
+    // and the file is byte-identical (R2.1).
+    if (!scfg.rinex.pgm.empty())      hdr.pgm      = scfg.rinex.pgm;
+    if (!scfg.rinex.run_by.empty())   hdr.run_by   = scfg.rinex.run_by;
+    if (!scfg.rinex.observer.empty()) hdr.observer = scfg.rinex.observer;
+    if (!scfg.rinex.agency.empty())   hdr.agency   = scfg.rinex.agency;
+    if (scfg.rinex.file_date_mode == "collection_end") {
+        // DATE field = UTC datetime of the last epoch.  GPS -> UTC by subtracting the
+        // leap offset; the calendar conversion reuses the SAME TimeUtils path the writer
+        // uses for TIME OF FIRST OBS, then snaps seconds-of-day to the ms grid so the
+        // lossy JD conversion cannot print a spurious sub-second tag.
+        const GnssTime last_utc = addSeconds(truth.back().time,
+                                             -static_cast<double>(scfg.rinex.gps_utc_leap_s));
+        int Y, Mo, D, H, Mi; double Sc;
+        TimeUtils::gpsTimeToGpsScaleCalendar(last_utc, Y, Mo, D, H, Mi, Sc);
+        long ms = std::lround((H * 3600.0 + Mi * 60.0 + Sc) * 1000.0);
+        if (ms < 0) ms = 0;
+        if (ms >= 86400000L) ms = 86400000L - 1;   // defensive: inputs never reach a day rollover here
+        const int Hh = static_cast<int>(ms / 3600000L); ms %= 3600000L;
+        const int Mm = static_cast<int>(ms / 60000L);   ms %= 60000L;
+        const int Ss = static_cast<int>(ms / 1000L);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%04d%02d%02d %02d%02d%02d UTC", Y, Mo, D, Hh, Mm, Ss);
+        hdr.run_date = buf;
+    }
 
-    const std::filesystem::path obs_path = outdir / "SARV_R_20241290000_01D_30S_MO.rnx";
+    // Emitted filename carries the SAME date as the fixture products it was built
+    // against — the processor resolves its product day from this name.
+    const std::filesystem::path obs_path = outdir / ("SARV_R_" + fd.yyyydoy + "0000_01D_30S_MO.rnx");
     sim::RinexObsWriter writer;
     std::string werr;
     if (!writer.open(obs_path, hdr, &werr)) {
@@ -714,6 +1857,47 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
 
     std::ofstream clk_csv(outdir / "truth_clock.csv");
     clk_csv << "week,tow_s,clock_bias_s,clock_bias_m,isb_gps_gal_m\n" << std::fixed;
+
+    // Per-epoch truth troposphere.  Always emitted (even for a constant ZWD) so the
+    // Verifier has ONE contract to read; truth_scalars.csv is a key,value file and
+    // cannot carry a series.  Mirrors truth_clock.csv, which already publishes a
+    // per-epoch truth series for a filter state.
+    std::ofstream tro_csv(outdir / "truth_tropo.csv");
+    tro_csv << "week,tow_s,zwd_m,zhd_m\n" << std::fixed;
+
+    // Per-epoch ocean-loading truth.  Only meaningful when OTL is injected at all, so
+    // the file is emitted only then (a run without it has no ocean-loading truth to
+    // publish, and an all-zero file would read as "modelled perfectly" rather than
+    // "not simulated").  Like truth_tropo.csv (and unlike truth_position.csv, which is
+    // gated on a solvable epoch) it carries one row per TRAJECTORY epoch, so join it on
+    // tow rather than by row index.  inj_up is the loading the vessel actually felt;
+    // mod_up is what
+    // the processor models from its APPROX-POSITION coefficients; d_up = inj - mod is
+    // the unmodelled remainder, identically zero unless the field varies along track.
+    // Displacements are purely radial (EOT20 carries the height load only), so the local
+    // up component is the whole signal; a satellite at elevation el sees -d_up*sin(el)
+    // of range error, which is EXACTLY the range partial wrt the up coordinate — so d_up
+    // lands on the HEIGHT estimate, not on the clock or ZWD, and leaves no post-fit
+    // residual.  dist_from_approx_km is the STRAIGHT-LINE distance from the APPROX
+    // POSITION, not path length — on a track that doubles back it is much smaller than
+    // the distance sailed, and it is the one that predicts d_up.
+    //
+    // CAVEAT on mod_up: it is what the processor is EXPECTED to model — the sim's own
+    // frozen coefficients — not an observation of what it actually loaded.  The two sides
+    // fail asymmetrically: the sim hard-fails on a missing/unreadable EOT20 grid, but
+    // Model::Geometry::loadData just logs and installs nothing (and both the geometry and
+    // ocean_tide loggers default OFF), so a bad data_download.nc_path, a zero APPROX
+    // POSITION, or a station-info/BLQ source winning the precedence would silently leave
+    // the processor modelling ZERO.  d_up would then understate the real unmodelled term
+    // by the whole ~50 mm frozen part.  Confirm with logging.enable_ocean_tide before
+    // trusting a residual attributed to along-track loading.
+    const bool write_otl_truth = scfg.corrections.ocean_tide;
+    std::ofstream otl_csv;
+    if (write_otl_truth) {
+        otl_csv.open(outdir / "truth_otl.csv");
+        otl_csv << "week,tow_s,inj_up_m,mod_up_m,d_up_m,dist_from_approx_km\n" << std::fixed;
+    }
+    double otl_peak_abs_dup = 0.0, otl_peak_abs_inj = 0.0;
 
     std::ofstream vis_csv(outdir / "truth_visibility.csv");
     vis_csv << "week,tow_s,n_sats,n_gps,n_gal,gdop,pdop,hdop,vdop,sat_list\n" << std::fixed << std::setprecision(3);
@@ -729,11 +1913,40 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         return (sat[0] == 'E' ? 700000 : 100000) + prn * 1000 + band_idx * 137;
     };
 
+    // Observable-specific signal biases (OSB), injected only when corrections.signal_bias
+    // is set.  Each per-(satellite, observable) value is arc-constant (the product covers
+    // one UTC day), so like the ambiguities it is recorded once, the first epoch each
+    // (sat, signal) is seen.  osb_by_key retains the values so the ionosphere-free code
+    // bias an OSB-ignorant PPP would suffer can be reported per GPS satellite in the
+    // scenario summary (the pedagogical payload); max_abs_osb_m tracks the largest single
+    // injected observable bias.
+    const bool write_bias_truth = want_signal_bias;
+    std::ofstream bias_csv;
+    if (write_bias_truth) {
+        bias_csv.open(outdir / "truth_bias.csv");
+        bias_csv << "satellite,signal,osb_ns,osb_m\n" << std::fixed << std::setprecision(6);
+    }
+    std::set<std::string> bias_seen;
+    std::map<std::string, double> osb_by_key; // "G01|C1C" -> OSB (m)
+    double max_abs_osb_m = 0.0;
+
     // Per-(epoch,sat) ionosphere truth: STEC decomposition + per-L1 delay.
     std::ofstream atmo_csv(outdir / "truth_atmo.csv");
+    // The first 14 columns are frozen — existing tooling (pyviz/conftest.py,
+    // exam_iono_truth.py) pins that header.  New columns are APPENDED:
+    //   obliquity          the storm field's vertical->slant factor, published so a
+    //                      double-mapped GIM background is auditable from the truth file
+    //                      (no other gate can see that error — it cancels in iono-free).
+    //   I_klob_L1_m        what a single-frequency student's broadcast Klobuchar removes.
+    //   sf_iono_resid_m    what they CANNOT remove: injected quiet L1 delay - Klobuchar.
+    //                      Exactly 0 for background_source="klobuchar"/"analytic".
+    //   gim_*              the GIM's own geocentric IPP on ITS shell (450 km for CODE)
+    //                      and the IONEX RMS as a slant-TEC sigma; 0 when no GIM.
     atmo_csv << "week,tow_s,satellite,elev_deg,az_deg,ipp_lat_deg,ipp_lon_deg,"
                 "stec_quiet_tecu,dstec_sed_tecu,dstec_tid_tecu,stec_total_tecu,"
-                "I_L1_m,dI_L1_m,in_storm_window\n"
+                "I_L1_m,dI_L1_m,in_storm_window,"
+                "obliquity,I_klob_L1_m,sf_iono_resid_m,"
+                "gim_ipp_lat_deg,gim_ipp_lon_deg,gim_stec_std_tecu\n"
              << std::fixed << std::setprecision(4);
 
     double worst_clean = 0.0, worst_noisy = 0.0, worst_isb_clean = 0.0, worst_if_resid = 0.0;
@@ -748,8 +1961,34 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     std::map<std::string, double> mp_gm;        // unit-variance Gauss-Markov state per "sat/code"
     std::map<std::string, int> slip_accum;      // cumulative integer cycle slip per "sat/code"
     std::map<std::string, int> slip_last_epoch; // last epoch a slip hit a "sat/code"
+
+    // Scripted "gotcha" slips (SPEC_scripted_slips.md).  When the list is empty
+    // (absent/`[]`), the schedule never fires and every scripted-conditional
+    // output below collapses to today's format -> byte-identical (R2).
+    const bool has_scripted = !scfg.slips.scripted.empty();
+    sim::ScriptedSlipSchedule sched(scfg.slips.scripted);
+    int n_slips_scripted = 0, n_slips_scripted_flagged = 0;
+    struct ScriptedApplied {
+        std::string sat, signal;
+        int epoch; double tow; int delta_cycles; bool lli; double elev_deg;
+    };
+    std::vector<ScriptedApplied> scripted_applied; // one entry per applied repetition
+
     std::ofstream slip_csv(outdir / "truth_slips.csv");
-    slip_csv << "week,tow_s,satellite,signal,delta_cycles,flagged,elev_deg\n" << std::fixed;
+    // The trailing ",source" column (random|scripted) is added ONLY when scripted
+    // events exist; otherwise the file is written exactly as before (7 columns).
+    slip_csv << "week,tow_s,satellite,signal,delta_cycles,flagged,elev_deg"
+             << (has_scripted ? ",source" : "") << "\n" << std::fixed;
+    // ONE row writer for both the random and scripted paths so their formatting can
+    // never diverge (the shared stream interleaves setprecision(3)/(2)).
+    auto writeSlipRow = [&](const GnssTime& tt, const std::string& s, const std::string& sig,
+                            int delta, bool flagged, double el, bool scripted) {
+        slip_csv << tt.week << "," << std::setprecision(3) << tt.tow << "," << s << ","
+                 << sig << "," << delta << "," << (flagged ? 1 : 0) << ","
+                 << std::setprecision(2) << el;
+        if (has_scripted) slip_csv << "," << (scripted ? "scripted" : "random");
+        slip_csv << "\n";
+    };
     int n_slips = 0, n_slips_flagged = 0, epoch_counter = 0;
     double max_mp_code = 0.0;
     // Storm headline: peak disturbance-only L1 slant delay + where it occurs.
@@ -762,6 +2001,60 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         const Eigen::Vector3d r_rx = ts.ecef;
         const double cdt_r_m = c * ts.clock_bias_s;
         ++epoch_counter;
+
+        // ---- This epoch's truth wet delay ------------------------------------
+        // Computed ONCE per epoch, outside the satellite loop: the random walk must
+        // advance per epoch, not per visible satellite (otherwise it would depend on
+        // the sky and the storm-on/off control would diverge).
+        if (zwd_varies) {
+            // Mean-reverting Gauss-Markov term (same shape as the marine multipath).  A
+            // PURE random walk is wrong here: over a 12 h arc it wanders unboundedly and
+            // drags the arc mean off the configured value (measured: 3 mm/epoch moved the
+            // mean 0.15 -> 0.25 m).  With phi = exp(-dt/tau) this is stationary with
+            // 1-sigma = zwd_rw_sigma_m, so the mean stays put.
+            if (atm.zwd_rw_sigma_m > 0.0) {
+                const double phi = std::exp(-scfg.trajectory.interval_s / atm.zwd_rw_tau_s);
+                zwd_rw_state = phi * zwd_rw_state
+                             + atm.zwd_rw_sigma_m * std::sqrt(std::max(0.0, 1.0 - phi * phi))
+                                                  * gauss(tropo_rng);
+            }
+            const double dt = (t.week - truth.front().time.week) * 604800.0
+                            + (t.tow - truth.front().time.tow) + atm.zwd_diurnal_phase_s;
+            const double diurnal = atm.zwd_diurnal_amp_m
+                                 * std::sin(2.0 * Constants::PI * dt / atm.zwd_diurnal_period_s);
+            zwd_ep = std::max(atm.zwd_min_m, atm.zwd_m + diurnal + zwd_rw_state);
+        }
+        zwd_sum += zwd_ep;
+        zwd_min_seen = std::min(zwd_min_seen, zwd_ep);
+        zwd_max_seen = std::max(zwd_max_seen, zwd_ep);
+        // ZHD depends only on (position, time), not on the satellite, so hoist it out
+        // of the satellite loop — same value, one call, and it is what truth_tropo.csv
+        // records.
+        const double zhd_ep = eph.tropoZhd(r_rx, t);
+        tro_csv << t.week << "," << std::setprecision(3) << t.tow << ","
+                << std::setprecision(6) << zwd_ep << "," << zhd_ep << "\n";
+
+        // ---- This epoch's ocean-loading truth --------------------------------
+        // Same hoist as the ZHD: the site displacement depends on (position, time)
+        // only, not on the satellite.  Projected onto the local up so the file records
+        // the physical radial loading rather than an ECEF triple.
+        if (write_otl_truth) {
+            const Eigen::Vector3d inj = eph.oceanTideDisplacementEcef(r_rx, t);
+            const Eigen::Vector3d mod = eph.oceanTideModeledEcef(r_rx, t);
+            const double clat = std::cos(ts.lat_deg * Constants::PI / 180.0);
+            const double slat = std::sin(ts.lat_deg * Constants::PI / 180.0);
+            const double clon = std::cos(ts.lon_deg * Constants::PI / 180.0);
+            const double slon = std::sin(ts.lon_deg * Constants::PI / 180.0);
+            const Eigen::Vector3d up(clat * clon, clat * slon, slat);
+            const double inj_up = inj.dot(up);
+            const double mod_up = mod.dot(up);
+            otl_peak_abs_dup = std::max(otl_peak_abs_dup, std::abs(inj_up - mod_up));
+            otl_peak_abs_inj = std::max(otl_peak_abs_inj, std::abs(inj_up));
+            otl_csv << t.week << "," << std::setprecision(3) << t.tow << ","
+                    << std::setprecision(6) << inj_up << "," << mod_up << ","
+                    << (inj_up - mod_up) << "," << std::setprecision(4)
+                    << (r_rx - approx_pos).norm() / 1000.0 << "\n";
+        }
 
         std::vector<SppObs> clean;       // bare P (+ISB for Galileo), noise-free internal SPP
         std::vector<SppObs> noisy_bare;  // bare P (+ISB) + code noise, noisy internal SPP
@@ -776,9 +2069,10 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 char id[4];
                 std::snprintf(id, sizeof(id), "%c%02d", plan.sys, prn);
                 const std::string sat(id);
-                double P, sat_clk, elev, az;
-                Eigen::Vector3d sat_pos;
-                if (!forwardPseudorange(eph, sat, t, r_rx, cdt_r_m, P, sat_pos, sat_clk, elev, az)) continue;
+                double P, sat_clk, elev, az, m7 = 0.0;
+                Eigen::Vector3d sat_pos, sat_vel;
+                if (!forwardPseudorange(eph, sat, t, r_rx, cdt_r_m, P, sat_pos, sat_vel, sat_clk, elev, az,
+                                        scfg.corrections, m7)) continue;
                 if (elev < mask_deg) continue;
 
                 const bool is_gal = (plan.sys == 'E');
@@ -793,28 +2087,70 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 // Troposphere via reuse: hydrostatic ZHD·mf_d (the SAME model the
                 // processor subtracts -> cancels) + truth wet ZWD·mf_w (the state the
                 // processor estimates).  Non-dispersive: same +delay on code & phase.
-                const double zhd = eph.tropoZhd(r_rx, t);
+                const double zhd = zhd_ep;   // hoisted: same (position,time), satellite-independent
                 double mf_d = 0.0, mf_w = 0.0;
                 eph.tropoMapping(elev, r_rx, t, mf_d, mf_w);
-                const double tropo = zhd * mf_d + zwd_true_m * mf_w;
+                const double tropo = zhd * mf_d + zwd_ep * mf_w;
 
                 // Dual-frequency code + phase, elevation-weighted noise.  Both bands
                 // share the geometric range (no iono yet); each carries an integer
                 // ambiguity.  The GPS->Galileo ISB is a common +offset on every
                 // Galileo code & phase row (GPS is the reference, ISB = 0).
-                // Quiet background: reuse the broadcast Klobuchar field so a single-
-                // frequency student removes it exactly.  Back the L1 slant delay out to
-                // a slant STEC; the storm (SED+TID) is layered on top in evaluate().
+                // Quiet background, per iono.background_source.  The storm (SED+TID) is
+                // layered on top in evaluate().
+                //
+                // I_klob_L1 is what a single-frequency student's own broadcast Klobuchar
+                // removes.  Under "klobuchar" the injected background IS this number, so
+                // it cancels exactly and sf_iono_residual is the LITERAL 0.0 below — not a
+                // computed difference, because round-tripping through
+                // *f^2/(40.3e16) then *40.3e16/f^2 is not bit-exact and would silently
+                // break byte-identity against every existing dataset.
+                double I_klob_L1 = 0.0;
+                if (eph.hasKlobuchar())
+                    I_klob_L1 = eph.klobucharDelayMetres(r_rx, sat_pos, t, f_L1);
+
                 double quiet_slant_stec = 0.0;
-                if (eph.hasKlobuchar()) {
-                    const double quiet_I_L1 = eph.klobucharDelayMetres(r_rx, sat_pos, t, f_L1);
-                    quiet_slant_stec = quiet_I_L1 * f_L1 * f_L1 / (40.3 * 1e16);
-                } else {
+                double sf_iono_residual = 0.0;   // metres of L1 iono the student CANNOT remove
+                double gim_std_tecu = 0.0, gim_ipp_lat = 0.0, gim_ipp_lon = 0.0;
+                switch (background) {
+                case Background::Gim: {
+                    double stec = 0.0;
+                    if (eph.gimSlantStec(r_rx, sat_pos, t, stec, gim_std_tecu, gim_ipp_lat, gim_ipp_lon)) {
+                        quiet_slant_stec = stec;   // ALREADY SLANT — must NOT be mapped again.
+                    } else {
+                        // Fall back IN PLACE — never `continue`, which would desync every
+                        // downstream RNG draw and diverge the whole arc.
+                        ++gim_fallback_count;
+                        quiet_slant_stec = I_klob_L1 * f_L1 * f_L1 / (40.3 * 1e16);
+                    }
+                    // The real, non-removable part: what the GIM put in minus what
+                    // Klobuchar takes out.  Can be either sign.
+                    sf_iono_residual =
+                        sim::IonoDisturbance::slantDelayMetres(quiet_slant_stec, f_L1) - I_klob_L1;
+                    break;
+                }
+                case Background::Klobuchar:
+                    // Byte-identical to the original expression, including the analytic
+                    // fallback when the nav file carries no GPSA/GPSB.
+                    quiet_slant_stec =
+                        eph.hasKlobuchar()
+                            ? I_klob_L1 * f_L1 * f_L1 / (40.3 * 1e16)
+                            : icfg.quiet_vtec_tecu / std::sin(std::max(elev, scfg.noise.elev_factor_floor_deg) * deg);
+                    sf_iono_residual = 0.0;        // cancels by construction
+                    break;
+                case Background::Analytic:
                     quiet_slant_stec = icfg.quiet_vtec_tecu / std::sin(std::max(elev, scfg.noise.elev_factor_floor_deg) * deg);
+                    sf_iono_residual = 0.0;
+                    break;
                 }
                 // Ionosphere at the moving IPP for this ray (Klobuchar quiet + storm).
-                const sim::IonoSample samp = iono.evaluate(ts.lat_deg, ts.lon_deg, az, elev, t, quiet_slant_stec);
-                const double sigphi = iono.scintSigmaPhiRad(samp, elev); // scintillation 1-sigma (rad)
+                // A "stable" satellite (gain 0) sees only the quiet background + no scintillation.
+                const double sgain = stormGain(sat);
+                const sim::IonoSample samp = iono.evaluate(ts.lat_deg, ts.lon_deg, az, elev, t,
+                                                           quiet_slant_stec, sgain,
+                                                           tidPeriodOverride(sat), tidSlot(sat),
+                                                           tidVtecExplicit(sat, t.tow));
+                const double sigphi = iono.scintSigmaPhiRad(samp, elev) * sgain; // no scintillation on stable sats
                 const double dI_L1 = sim::IonoDisturbance::slantDelayMetres(
                     samp.dstec_sed_tecu + samp.dstec_tid_tecu, f_L1); // disturbance-only L1 delay
                 if (std::abs(dI_L1) > peak_dI_L1) {
@@ -827,7 +2163,9 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                          << samp.ipp_lon_deg << "," << samp.stec_quiet_tecu << "," << samp.dstec_sed_tecu
                          << "," << samp.dstec_tid_tecu << "," << samp.stec_total_tecu << ","
                          << sim::IonoDisturbance::slantDelayMetres(samp.stec_total_tecu, f_L1) << ","
-                         << dI_L1 << "," << (samp.in_storm_window ? 1 : 0) << "\n";
+                         << dI_L1 << "," << (samp.in_storm_window ? 1 : 0) << ","
+                         << samp.obliquity << "," << I_klob_L1 << "," << sf_iono_residual << ","
+                         << gim_ipp_lat << "," << gim_ipp_lon << "," << gim_std_tecu << "\n";
 
                 const double el_factor = 1.0 / std::sin(std::max(elev, scfg.noise.elev_factor_floor_deg) * deg);
                 const double sc = sigma_zen * el_factor;   // code sigma (m)
@@ -869,7 +2207,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     const std::string skey = sat + "/" + band.phase;
                     int slip_lli = 0;
                     if (epoch_counter - slip_last_epoch[skey] >= slip_min_gap &&
-                        uni(aux_rng) < slipProb(elev)) {
+                        uni(aux_rng) < slipProb(elev) * slipTaper(epoch_counter)) {
                         const int d = drawSlip(elev);
                         slip_accum[skey] += d;
                         slip_last_epoch[skey] = epoch_counter;
@@ -881,18 +2219,69 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                         const bool flagged = (n_slips % 2 == 0);
                         if (flagged) { slip_lli = 1; ++n_slips_flagged; }
                         ++n_slips;
-                        slip_csv << t.week << "," << std::setprecision(3) << t.tow << "," << sat << ","
-                                 << band.phase << "," << d << "," << (flagged ? 1 : 0) << ","
-                                 << std::setprecision(2) << elev << "\n";
+                        writeSlipRow(t, sat, band.phase, d, flagged, elev, /*scripted=*/false);
+                    }
+                    // Scripted "gotcha" slips: deterministic, hand-authored events
+                    // applied AFTER the random block.  MUST NOT touch aux_rng,
+                    // slip_last_epoch, or n_slips (that would shift every downstream
+                    // random draw and break byte-identity/additivity) — only
+                    // slip_accum, the LLI OR (slip_lli), its own counters, the CSV.
+                    for (const auto& f : sched.onEpoch(sat, band.phase, epoch_counter, elev)) {
+                        slip_accum[skey] += f.delta_cycles; // physical: shifts N from here on
+                        if (f.lli) slip_lli = 1;            // ORs with a same-epoch random flag
+                        ++n_slips_scripted;
+                        if (f.lli) ++n_slips_scripted_flagged;
+                        writeSlipRow(t, sat, band.phase, f.delta_cycles, f.lli, elev, /*scripted=*/true);
+                        scripted_applied.push_back(ScriptedApplied{
+                            sat, band.phase, epoch_counter, t.tow, f.delta_cycles, f.lli, elev });
                     }
                     const int base_N = ambN(sat, prn, static_cast<int>(bi));
                     const int N = base_N + slip_accum[skey]; // piecewise-constant across slips
                     if (bi == 0) first_code_noise = nc;
+                    // Satellite antenna PCO/PCV (M7 antenna): band-dependent (Galileo
+                    // E01 != E05 PCO; PCV varies with nadir), so injected PER SIGNAL
+                    // here rather than folded into the non-dispersive m7.  Add the same
+                    // signed getAntennaCorrection() the processor ADDS to its modeled
+                    // value (PppModel::computeBaseModeledValue, "+ antenna_corr");
+                    // enabling model_corrections.enable_satellite_pco/pcv cancels it back
+                    // to truth.  PCO/PCV are identical for code and phase (wind-up off),
+                    // so one call per band serves both.  0 unless enabled in the sim config.
+                    const double ant = want_antenna
+                        ? eph.antennaMetres(sat, band.code, r_rx, sat_pos, sat_vel, elev, az, t)
+                        : 0.0;
+                    // Observable-specific signal biases (OSB): band- AND observable-
+                    // dependent (the code and phase OSBs of one band differ, e.g.
+                    // C1C != L1C), so queried once per RINEX code and added to the
+                    // matching row.  Same signed getBiasCorrection() the processor ADDS
+                    // to its modeled value ("+ bias_corr"); enabling
+                    // model_corrections.enable_code_phase_bias cancels it back to truth.
+                    // 0 unless corrections.signal_bias is set (then row.values is
+                    // byte-identical: x + 0.0 == x).  Recorded once per (sat, signal).
+                    double bias_code = 0.0, bias_phase = 0.0;
+                    if (want_signal_bias) {
+                        bias_code  = eph.signalBiasMetres(sat, band.code,  t);
+                        bias_phase = eph.signalBiasMetres(sat, band.phase, t);
+                        auto record = [&](const std::string& sig, double osb_m) {
+                            const std::string key = sat + "|" + sig;
+                            if (bias_seen.insert(key).second) {
+                                osb_by_key[key] = osb_m;
+                                max_abs_osb_m = std::max(max_abs_osb_m, std::abs(osb_m));
+                                bias_csv << sat << "," << sig << ","
+                                         << osb_m / (Constants::SPEED_OF_LIGHT * 1e-9) << ","
+                                         << osb_m << "\n";
+                            }
+                        };
+                        record(band.code,  bias_code);
+                        record(band.phase, bias_phase);
+                    }
                     // +I on code (group delay), -I on phase (advance); same slant STEC
                     // scaled by 1/f^2 so the dual-frequency IF combination cancels it.
-                    row.values[band.code] = P + tropo + plan.isb_m + I_b + nc + mp_code;
+                    // m7 = the M7 full-correction stack (relativity/Shapiro/solid-earth/
+                    // pole tide), non-dispersive like tropo; 0 unless enabled in the sim
+                    // config.  The processor with the matching corrections ON cancels it.
+                    row.values[band.code] = P + tropo + m7 + ant + bias_code + plan.isb_m + I_b + nc + mp_code;
                     row.values[band.phase] =
-                        (P + tropo + plan.isb_m - I_b + band.wavelength * N + np + np_scint + mp_phase) /
+                        (P + tropo + m7 + ant + bias_phase + plan.isb_m - I_b + band.wavelength * N + np + np_scint + mp_phase) /
                         band.wavelength;
                     if (slip_lli) row.lli[band.phase] = 1; // loss-of-lock flag for flagged slips
                     const std::string akey = sat + "/" + band.phase;
@@ -910,12 +2299,16 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 }
                 sat_rows.push_back(std::move(row));
                 noisy_bare.push_back({ sat, P + plan.isb_m + first_code_noise, is_gal }); // bare(+ISB)+code noise
-                // Single-frequency Part-B observable: GPS L1 code with the quiet
-                // Klobuchar AND true troposphere removed (as a competent single-freq
-                // student would), leaving range + storm + code noise.  The storm sits
-                // ABOVE Klobuchar, is not removable, and biases the single-freq fix.
+                // Single-frequency Part-B observable: GPS L1 code with the student's own
+                // broadcast Klobuchar AND the true troposphere removed (as a competent
+                // single-freq student would), leaving range + code noise + everything
+                // Klobuchar cannot take out:
+                //   dI_L1            the sub-grid storm overlay (SED/TID), always above it;
+                //   sf_iono_residual the injected quiet background minus Klobuchar — zero
+                //                    by construction for the Klobuchar background, and the
+                //                    real model error when the background is a CODE GIM.
                 if (!is_gal)
-                    single_freq.push_back({ sat, P + dI_L1 + first_code_noise, false });
+                    single_freq.push_back({ sat, P + dI_L1 + sf_iono_residual + first_code_noise, false });
             }
         }
         if (clean.size() < 5) continue; // need >=5 obs for x,y,z,clk,isb
@@ -976,12 +2369,67 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     // ---- Answer key: scalar truths (read by the Verifier) + human summary. ----
     const double win_start = icfg.window_start_tow_s;
     const double win_end = icfg.window_start_tow_s + icfg.window_duration_s;
+
+    // Signal-bias payload: the ionosphere-free CODE bias an OSB-ignorant PPP would suffer
+    // per GPS satellite = c1*OSB(C1C) + c2*OSB(C2W), the IF combination of the injected
+    // observable biases relative to the clock's C1W/C2W datum (whose own IF OSB is ~0 by
+    // the absolute-bias convention).  Galileo emits its clock-reference pair, so its IF
+    // OSB is ~0 and is not reported.  0/0 range when signal_bias is off (no rows written).
+    double gps_if_osb_min = 0.0, gps_if_osb_max = 0.0;
+    int gps_if_osb_n = 0;
+    if (want_signal_bias && plans.size() >= 1 && plans[0].bands.size() == 2) {
+        const double f1 = Constants::SPEED_OF_LIGHT / plans[0].bands[0].wavelength;
+        const double f2 = Constants::SPEED_OF_LIGHT / plans[0].bands[1].wavelength;
+        const double denom = f1 * f1 - f2 * f2;
+        const double c1 = f1 * f1 / denom, c2 = -f2 * f2 / denom;
+        const std::string s1 = plans[0].bands[0].code, s2 = plans[0].bands[1].code; // C1C, C2W
+        std::set<std::string> gps_sats;
+        for (const auto& kv : osb_by_key)
+            if (!kv.first.empty() && kv.first[0] == 'G')
+                gps_sats.insert(kv.first.substr(0, kv.first.find('|')));
+        for (const auto& g : gps_sats) {
+            auto i1 = osb_by_key.find(g + "|" + s1);
+            auto i2 = osb_by_key.find(g + "|" + s2);
+            if (i1 == osb_by_key.end() || i2 == osb_by_key.end()) continue;
+            const double ifb = c1 * i1->second + c2 * i2->second;
+            gps_if_osb_min = gps_if_osb_n ? std::min(gps_if_osb_min, ifb) : ifb;
+            gps_if_osb_max = gps_if_osb_n ? std::max(gps_if_osb_max, ifb) : ifb;
+            ++gps_if_osb_n;
+        }
+    }
     {
         std::ofstream sc(outdir / "truth_scalars.csv");
         sc << "key,value\n" << std::fixed;
         sc << "kinematic," << (kinematic ? 1 : 0) << "\n";
         sc << "isb_gps_gal_m," << std::setprecision(6) << isb_true_m << "\n";
-        sc << "zwd_m," << zwd_true_m << "\n";
+        // zwd_m is the ARC MEAN when the wet delay varies (the per-epoch series lives in
+        // truth_tropo.csv, which is what the Verifier grades); it equals the injected
+        // constant when it does not.  Kept so the single-value student grader still works.
+        sc << "zwd_m," << (epoch_counter ? zwd_sum / epoch_counter : zwd_true_m) << "\n";
+        sc << "zwd_time_varying," << (zwd_varies ? 1 : 0) << "\n";
+        if (zwd_varies) {
+            sc << "zwd_min_m," << zwd_min_seen << "\n";
+            sc << "zwd_max_m," << zwd_max_seen << "\n";
+        }
+        // Ocean loading.  Emitted only when injected, so OTL-off datasets keep their
+        // byte-identical truth_scalars.csv.  Without these the term would be reachable
+        // only by opening truth_otl.csv by hand: the student grader reads this file and
+        // scenario_summary.json's "truth" object, and neither carried anything about it.
+        if (scfg.corrections.ocean_tide) {
+            sc << "otl_along_track," << (eph.hasOceanTideAlongTrack() ? 1 : 0) << "\n";
+            sc << "otl_peak_up_m," << std::setprecision(6) << otl_peak_abs_inj << "\n";
+            // 0 in frozen mode (cancels by construction); the whole point of the
+            // along-track field is that this is NOT 0.
+            sc << "otl_unmodelled_peak_up_m," << otl_peak_abs_dup << "\n";
+        }
+        // Signal biases (OSB).  Emitted only when injected, so bias-off datasets keep a
+        // byte-identical truth_scalars.csv.  The IF-code range is the payload: the
+        // per-GPS-satellite ionosphere-free code bias an OSB-ignorant PPP leaves in.
+        if (scfg.corrections.signal_bias) {
+            sc << "signal_bias_max_abs_osb_m," << std::setprecision(6) << max_abs_osb_m << "\n";
+            sc << "signal_bias_gps_if_code_min_m," << gps_if_osb_min << "\n";
+            sc << "signal_bias_gps_if_code_max_m," << gps_if_osb_max << "\n";
+        }
         sc << "storm_window_start_tow_s," << std::setprecision(3) << win_start << "\n";
         sc << "storm_window_end_tow_s," << win_end << "\n";
         sc << "peak_dI_L1_m," << std::setprecision(4) << peak_dI_L1 << "\n";
@@ -1000,7 +2448,8 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         js << std::fixed;
         js << "{\n";
         js << "  \"scenario\": \"SAR vessel adrift, South Pacific near Fiji\",\n";
-        js << "  \"date\": \"2024-129 (2024-05-08)\",\n";
+        js << "  \"date\": \"" << fd.dir << " (" << fd.iso << ")\",\n";
+        js << "  \"iono_background\": \"" << scfg.iono.background_source << "\",\n";
         js << "  \"station\": \"" << hdr.marker_name << "\",\n";
         js << "  \"kinematic\": " << (kinematic ? "true" : "false") << ",\n";
         js << "  \"week\": " << truth.front().time.week << ",\n";
@@ -1010,7 +2459,13 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         js << "  \"signals\": {\"GPS\": [\"C1C\",\"L1C\",\"C2W\",\"L2W\"], \"Galileo\": [\"C1C\",\"L1C\",\"C5Q\",\"L5Q\"]},\n";
         js << "  \"truth\": {\n";
         js << "    \"gps_galileo_isb_m\": " << std::setprecision(4) << isb_true_m << ",\n";
-        js << "    \"zwd_m\": " << zwd_true_m << ",\n";
+        js << "    \"zwd_m\": " << (epoch_counter ? zwd_sum / epoch_counter : zwd_true_m) << ",\n";
+        js << "    \"zwd_time_varying\": " << (zwd_varies ? "true" : "false") << ",\n";
+        if (zwd_varies) {
+            js << "    \"zwd_min_m\": " << zwd_min_seen << ",\n";
+            js << "    \"zwd_max_m\": " << zwd_max_seen << ",\n";
+            js << "    \"zwd_series\": \"truth_tropo.csv\",\n";
+        }
         js << "    \"final_position_ecef_m\": [" << std::setprecision(4) << truth.back().ecef.x() << ", "
            << truth.back().ecef.y() << ", " << truth.back().ecef.z() << "],\n";
         js << "    \"final_position_llh_deg_m\": [" << std::setprecision(7) << truth.back().lat_deg << ", "
@@ -1020,7 +2475,20 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         js << "    \"window_tow_s\": [" << std::setprecision(3) << win_start << ", " << win_end << "],\n";
         js << "    \"peak_slant_dI_L1_m\": " << std::setprecision(4) << peak_dI_L1 << ",\n";
         js << "    \"peak_sat\": \"" << peak_dI_sat << "\", \"peak_tow_s\": " << std::setprecision(3) << peak_dI_tow << ",\n";
-        js << "    \"quiet_background\": \"" << (eph.hasKlobuchar() ? "broadcast Klobuchar" : "analytic") << "\"\n";
+        if (!gim_file_name.empty())
+            js << "    \"gim_file\": \"" << gim_file_name << "\",\n";
+        // Human-readable twin of the top-level "iono_background" above.  This MUST
+        // follow iono.background_source and not merely whether the nav file carries
+        // Klobuchar coefficients: a GIM-background run still has GPSA/GPSB in its
+        // nav file, so keying off hasKlobuchar() alone labelled every GIM instance
+        // "broadcast Klobuchar".  make_brief.py falls back to this string when the
+        // top-level key is absent, so a wrong value here can reach the STUDENT brief
+        // (it matches case-insensitively on "gim").
+        js << "    \"quiet_background\": \""
+           << (background == Background::Gim      ? "GIM (IONEX)"
+             : background == Background::Analytic ? "analytic"
+             : (eph.hasKlobuchar() ? "broadcast Klobuchar"
+                                   : "analytic (no broadcast Klobuchar)")) << "\"\n";
         js << "  },\n";
         js << "  \"noise\": {\"code_sigma_zen_m\": " << std::setprecision(4) << sigma_zen
            << ", \"phase_sigma_zen_m\": " << sigma_phase << ", \"seed\": " << scfg.noise.seed << "},\n";
@@ -1032,7 +2500,49 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
            << ", \"elev_factor_cap_deg\": " << std::setprecision(1) << scfg.multipath.elev_factor_cap_deg
            << ", \"peak_code_m\": " << std::setprecision(3) << max_mp_code << "},\n";
         js << "  \"cycle_slips\": {\"count\": " << n_slips << ", \"flagged_lli\": " << n_slips_flagged
-           << ", \"unflagged\": " << (n_slips - n_slips_flagged) << ", \"detail\": \"truth_slips.csv\"},\n";
+           << ", \"unflagged\": " << (n_slips - n_slips_flagged) << ", \"detail\": \"truth_slips.csv\"";
+        // The answer-key record of where the scripted gotchas actually landed: one
+        // entry per applied repetition, resolved epochs.  Only emitted when scripted
+        // events exist, so the no-scripted summary is byte-identical to today (R2).
+        if (has_scripted) {
+            js << ",\n    \"scripted\": {\"count\": " << n_slips_scripted
+               << ", \"flagged_lli\": " << n_slips_scripted_flagged << ", \"events\": [";
+            for (std::size_t i = 0; i < scripted_applied.size(); ++i) {
+                const auto& ev = scripted_applied[i];
+                js << (i ? ", " : "") << "{\"sat\": \"" << ev.sat << "\", \"signal\": \"" << ev.signal
+                   << "\", \"epoch\": " << ev.epoch << ", \"tow\": " << std::setprecision(3) << ev.tow
+                   << ", \"delta_cycles\": " << ev.delta_cycles
+                   << ", \"lli\": " << (ev.lli ? "true" : "false")
+                   << ", \"elev_deg\": " << std::setprecision(2) << ev.elev_deg << "}";
+            }
+            js << "]}";
+        }
+        js << "},\n";
+        if (scfg.corrections.ocean_tide) {
+            // "unmodelled_peak_up_m" is the headline number: 0 for the frozen field
+            // (cancels by construction), non-zero only when the field varies along track.
+            js << "  \"ocean_loading\": {\"source\": \"EOT20 (radial)\", \"mode\": \""
+               << (eph.hasOceanTideAlongTrack() ? "along_track" : "frozen_at_approx_position")
+               << "\", \"anchors\": " << eph.oceanTideAnchorCount()
+               << ", \"anchor_spacing_km\": " << std::setprecision(2)
+               << scfg.corrections.otl_anchor_spacing_km
+               << ", \"peak_up_m\": " << std::setprecision(4) << otl_peak_abs_inj
+               << ", \"unmodelled_peak_up_m\": " << otl_peak_abs_dup
+               << ", \"series\": \"truth_otl.csv\"},\n";
+        }
+        if (scfg.corrections.signal_bias) {
+            // Observable-specific biases.  gps_if_code_bias_m is the payload: the range
+            // an OSB-ignorant ionosphere-free PPP would be off by, per GPS satellite,
+            // because it logs C1C while the precise clock is C1W/C2W-referenced.  It
+            // CANCELS in the graded loop (enable_code_phase_bias), so it moves no gate;
+            // it is the reason a dataset WITHOUT it biases an OSB-aware external service.
+            js << "  \"signal_bias\": {\"source\": \"COD MGX OSB\", \"file\": \"" << bia.filename().string()
+               << "\", \"applied\": true, \"n_signals\": " << static_cast<int>(bias_seen.size())
+               << ", \"max_abs_osb_m\": " << std::setprecision(6) << max_abs_osb_m
+               << ", \"gps_if_code_bias_m\": [" << gps_if_osb_min << ", " << gps_if_osb_max << "]"
+               << ", \"clock_ref_obs\": {\"GPS\": \"C1W/C2W\", \"Galileo\": \"C1C/C5Q\"}"
+               << ", \"detail\": \"truth_bias.csv\"},\n";
+        }
         js << "  \"verifier_gates\": {\"k_sigma\": 3, \"ppp_3d_max_m\": 0.10, \"isb_tol_m\": 0.10, \"zwd_tol_m\": 0.02}\n";
         js << "}\n";
     }
@@ -1053,8 +2563,12 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
               << "] worst noisy per-epoch |rx_est - truth| = " << worst_noisy << " m\n";
     std::cout << "[" << tag << "] visibility: min sats = " << min_sats << " (GPS " << min_gps
               << " + Gal " << min_gal << "), worst PDOP = " << std::setprecision(2) << worst_pdop << "\n";
-    std::cout << "[" << tag << "] injected truth: ZWD = " << std::setprecision(3) << zwd_true_m
-              << " m (ZHD cancels via reuse), GPS->Gal ISB = " << isb_true_m << " m\n";
+    std::cout << "[" << tag << "] injected truth: ZWD = " << std::setprecision(3)
+              << (epoch_counter ? zwd_sum / epoch_counter : zwd_true_m) << " m";
+    if (zwd_varies)
+        std::cout << " MEAN (time-varying " << zwd_min_seen << " .. " << zwd_max_seen
+                  << " m; per-epoch truth in truth_tropo.csv)";
+    std::cout << " (ZHD cancels via reuse), GPS->Gal ISB = " << isb_true_m << " m\n";
     std::cout << std::setprecision(3) << "[" << tag << "] iono storm: window TOW ["
               << icfg.window_start_tow_s << ", " << (icfg.window_start_tow_s + icfg.window_duration_s)
               << "], quiet VTEC " << icfg.quiet_vtec_tecu << " TECU, peak disturbance slant dI_L1 = "
@@ -1062,20 +2576,69 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     std::cout << std::setprecision(4) << "[" << tag
               << "] dual-freq IF iono cancellation residual (noise-free) = " << worst_if_resid * 1.0e3
               << " mm (should be ~0; storm cancels in IF)\n";
+    if (scfg.corrections.ocean_tide) {
+        // Formatted through a local stream: cout is left in default float mode here and
+        // switching it to std::fixed would silently reformat every line that follows.
+        std::ostringstream otl_msg;
+        otl_msg << std::fixed << std::setprecision(2) << "[" << tag
+                << "] ocean loading: peak radial " << otl_peak_abs_inj * 1.0e3
+                << " mm, peak UNMODELLED radial " << otl_peak_abs_dup * 1.0e3 << " mm ("
+                << (eph.hasOceanTideAlongTrack()
+                        ? "along-track field; this is what the processor cannot model"
+                        : "frozen at APPROX POSITION; cancels by construction")
+                << ")";
+        std::cout << otl_msg.str() << "\n";
+    }
+    if (scfg.corrections.signal_bias) {
+        std::ostringstream bmsg;
+        bmsg << std::fixed << std::setprecision(3) << "[" << tag
+             << "] signal biases (COD MGX OSB): " << bias_seen.size() << " (sat,signal) applied, max |OSB| "
+             << max_abs_osb_m << " m; GPS iono-free code bias " << gps_if_osb_min << " .. " << gps_if_osb_max
+             << " m over " << gps_if_osb_n << " sats (cancels via enable_code_phase_bias; truth_bias.csv)";
+        std::cout << bmsg.str() << "\n";
+    }
     std::cout << std::setprecision(3) << "[" << tag << "] marine multipath (Gauss-Markov tau=" << mp_tau_s
               << "s): peak code MP = " << max_mp_code << " m; cycle slips: " << n_slips << " ("
-              << n_slips_flagged << " flagged LLI=1, " << (n_slips - n_slips_flagged) << " must-detect)\n";
+              << n_slips_flagged << " flagged LLI=1, " << (n_slips - n_slips_flagged) << " must-detect)";
+    if (n_slips_scripted > 0)
+        std::cout << "; scripted: " << n_slips_scripted << " (" << n_slips_scripted_flagged << " flagged)";
+    std::cout << "\n";
     if (sf_quiet_n > 0 && sf_storm_n > 0) {
         std::cout << std::setprecision(3) << "[" << tag
                   << "] single-freq SPP (GPS L1 + Klobuchar): quiet 3D mean " << sf_quiet_sum / sf_quiet_n
                   << " m (max " << sf_quiet_max << "), STORM 3D mean " << sf_storm_sum / sf_storm_n
                   << " m (max " << sf_storm_max << ") -- storm biases single-freq, cancels in dual-freq\n";
+    } else if (sf_storm_n > 0) {
+        // Whole-arc storm window (a maximum-storm-content instance): there is no
+        // within-arc quiet control, so the storm-vs-quiet contrast gate below is
+        // unevaluable BY DESIGN — the gradable single-frequency signal is the absolute
+        // degradation throughout (a quiet day sits at ~1-2 m).
+        std::cout << std::setprecision(3) << "[" << tag
+                  << "] single-freq SPP (GPS L1 + Klobuchar): storm window spans the WHOLE arc — 3D mean "
+                  << sf_storm_sum / sf_storm_n << " m (max " << sf_storm_max
+                  << ") throughout; no within-arc quiet control\n";
     }
 
     int failures = 0;
-    if (worst_if_resid > 1.0e-6) {
+    // R5: a scripted event that never fired (sat never satisfied its trigger, or the
+    // arc ended mid-repeat) is a HARD error — the outputs above are already written,
+    // but an exam fixture must never silently not exist.  Name each on stderr.
+    for (const std::string& problem : sched.unfinished()) {
+        std::cerr << "[" << tag << "] FAIL: " << problem << "\n";
+        ++failures;
+    }
+    // isfinite first: `NaN > 1e-6` is FALSE, so a non-finite STEC would sail through.
+    if (!std::isfinite(worst_if_resid) || worst_if_resid > 1.0e-6) {
         std::cerr << "[" << tag << "] FAIL: IF iono cancellation residual " << worst_if_resid
                   << " m exceeds 1 um — per-band iono law/frequencies inconsistent with the IF combination\n";
+        ++failures;
+    }
+    // A dataset that silently mixes a GIM background with a Klobuchar stand-in on some
+    // rays is not a GIM dataset, and nothing downstream could tell.
+    if (gim_fallback_count > 0) {
+        std::cerr << "[" << tag << "] FAIL: " << gim_fallback_count
+                  << " ray(s) fell back to Klobuchar because the GIM query was invalid —"
+                     " the injected background is not uniformly the GIM\n";
         ++failures;
     }
     if (storm_scale > 0.0 && peak_dI_L1 < 0.3) {
@@ -1132,6 +2695,53 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     return 1;
 }
 
+// Generate the truth-referenced exam dashboard (pyviz/run_report.py --truth-dir)
+// for a completed `all` loop.  Mirrors Application::generateReportFor_ exactly:
+// python = report override -> baked venv -> PATH; the whole quoted command wrapped
+// in an extra pair because Windows std::system pipes through cmd /c (which strips
+// the outer quotes).  Non-fatal: a missing pyviz/python only warns.  The last line
+// printed is the dashboard path (SPEC §4.7).
+void generateExamDashboard(const std::filesystem::path& truth_dir,
+                           const std::filesystem::path& logs_dir) {
+    namespace fs = std::filesystem;
+    const fs::path root   = fs::path(GNSS_PROJECT_ROOT);
+    const fs::path script = root / "pyviz" / "run_report.py";
+    const fs::path out     = fs::absolute(logs_dir) / "dashboard.html";
+    if (!fs::exists(script)) {
+        std::cerr << "[all] dashboard: " << script.string()
+                  << " not found - skipping (see pyviz/README.md)\n";
+        return;
+    }
+    const fs::path venv_py = root / "venv" / "Scripts" / "python.exe";
+    const std::string python = fs::exists(venv_py) ? venv_py.string() : std::string("python");
+
+    // Quote every path (spaces); embed --truth-dir so the exam_* viewers light up;
+    // offline interactive report (plotly + inline JS) for the grader archive.
+    // --exclude drops viewers that are redundant or unhelpful on the exam dashboard:
+    //   exam_otl_truth        (ocean loading is a mm-level error-budget item, not a figure)
+    //   plot_satellite_signals(signal-usage strip)
+    //   dops                  (duplicates the DOP panel already in exam_visibility above)
+    //   ambiguities           (raw float ambiguities are unreadable without time-differencing)
+    //   slip_gate_strip       (internal slip-detector QC strip)
+    std::string inner = "\"" + python + "\" \"" + script.string() + "\" \""
+                      + fs::absolute(logs_dir).string() + "\" --truth-dir \""
+                      + fs::absolute(truth_dir).string() + "\" -o \"" + out.string()
+                      + "\" --backend plotly --plotly-js inline"
+                      + " --exclude exam_otl_truth plot_satellite_signals dops"
+                        " ambiguities slip_gate_strip";
+#ifdef _WIN32
+    const std::string cmd = "\"" + inner + "\"";
+#else
+    const std::string cmd = inner;
+#endif
+    std::cout << "[all] dashboard: generating " << out.string() << " (plotly, inline JS)\n";
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0)
+        std::cerr << "[all] dashboard generation exited " << rc
+                  << " (is pyviz set up? see pyviz/README.md) - non-fatal\n";
+    std::cout << out.string() << "\n";   // dashboard path = last line
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1172,6 +2782,11 @@ int main(int argc, char** argv) {
         vcfg.run_logs_dir = a[3];
         const sim::VerifierResult res = sim::Verifier::run(vcfg);
         for (const auto& line : res.report) std::cout << line << "\n";
+        // Machine-readable verdict for the dashboard (SPEC §4.6) — additive; the
+        // printed report above is unchanged.
+        const std::filesystem::path repjson = vcfg.run_logs_dir / "verify_report.json";
+        if (sim::Verifier::writeJsonReport(res, repjson))
+            std::cout << "  wrote " << repjson.string() << "\n";
         return res.pass ? 0 : 1;
     }
 
@@ -1201,9 +2816,20 @@ int main(int argc, char** argv) {
             std::filesystem::temp_directory_path() / (kin ? "gnss_sim_kine" : "gnss_sim_synth");
         return runSynth(outdirArg(dflt), kin, scfg);
     }
+    if (cmd == "spp-reference") {
+        // Part-B reference runs against an ALREADY-SYNTHESIZED truth dir; the sim
+        // config supplies the fixture date (and the OSB opt-in) — pass the SAME
+        // --sim-config the dataset was synthesized with.
+        if (ac < 3) {
+            std::cerr << "usage: gnss_simulator spp-reference <truth_dir> [--sim-config <sim.json>]\n";
+            return 2;
+        }
+        return runSppReference(std::filesystem::path(a[2]), scfg);
+    }
     if (cmd == "all") {
-        // One-shot loop: synthesize -> run gnss_processor (out-of-process, per-run
-        // CWD because its log dir is hardcoded to ./logs) -> verify.  The config's
+        // One-shot loop: synthesize -> spp-reference (child process; Part-B reference
+        // solutions) -> run gnss_processor (out-of-process, per-run CWD because its
+        // log dir is hardcoded to ./logs) -> verify.  The config's
         // files.observation_path MUST point at <output_dir>'s synthesized RINEX.
         if (ac < 5) {
             std::cerr << "usage: gnss_simulator all <static|kinematic> <output_dir> <config>"
@@ -1222,16 +2848,36 @@ int main(int argc, char** argv) {
             : std::filesystem::path(a[0]).parent_path() / "gnss_processor.exe"; // sibling of this exe
         applyPositionalOverrides(/*isb=*/6, /*storm=*/7);
 
-        std::cout << "[all] (1/3) synthesize (" << mode << ") -> " << outdir.string() << "\n";
+        std::cout << "[all] (1/4) synthesize (" << mode << ") -> " << outdir.string() << "\n";
         if (runSynth(outdir, mode == "kinematic", scfg) != 0) {
             std::cerr << "[all] synthesis failed\n";
             return 1;
         }
 
+        // (2/4) Part-B SPP reference runs (truth_spp.csv + summary) — re-invoked as a
+        // CHILD process, not called in-process: LogManager/spdlog logger names and the
+        // product caches are process-global singletons, runSynth's provider has already
+        // claimed them in this process, and a second LogManager aborts (its console
+        // fallback re-registers the same logger name unguarded).  Fail-loud: an
+        // instance whose Part-B reference cannot be computed is not a valid exam
+        // artifact (missing nav/products or a broken RINEX).
+        std::cout << "[all] (2/4) spp-reference -> " << (outdir / "truth_spp.csv").string() << "\n";
+        {
+            std::string sp_cmd = "\"\"" + std::filesystem::path(a[0]).string() +
+                                 "\" spp-reference \"" + outdir.string() + "\"";
+            if (!sim_config_path.empty()) sp_cmd += " --sim-config \"" + sim_config_path + "\"";
+            sp_cmd += "\"";
+            const int sec = std::system(sp_cmd.c_str());
+            if (sec != 0) {
+                std::cerr << "[all] spp-reference exited " << sec << "\n";
+                return 1;
+            }
+        }
+
         const std::filesystem::path rundir = outdir / "run";
         std::error_code ec;
         std::filesystem::create_directories(rundir, ec);
-        std::cout << "[all] (2/3) gnss_processor " << config.string() << " (cwd " << rundir.string() << ")\n";
+        std::cout << "[all] (3/4) gnss_processor " << config.string() << " (cwd " << rundir.string() << ")\n";
         if (!std::filesystem::exists(proc)) {
             std::cerr << "[all] processor not found: " << proc.string() << " (pass it as arg 5)\n";
             return 1;
@@ -1247,17 +2893,23 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        std::cout << "[all] (3/3) verify\n";
+        std::cout << "[all] (4/4) verify\n";
         sim::VerifierConfig vcfg;
         vcfg.truth_dir = outdir;
         vcfg.run_logs_dir = rundir / "logs";
         const sim::VerifierResult res = sim::Verifier::run(vcfg);
         for (const auto& line : res.report) std::cout << line << "\n";
+        sim::Verifier::writeJsonReport(res, vcfg.run_logs_dir / "verify_report.json");
+
+        // Exam dashboard ALWAYS (even on verify FAIL — a failing run needs the
+        // dashboard most); the exit code still reflects synth/processor/verify.
+        generateExamDashboard(outdir, vcfg.run_logs_dir);
         return res.pass ? 0 : 1;
     }
     std::cerr << "usage: " << (argc > 0 ? argv[0] : "gnss_simulator")
-              << " <selftest|probe-orbit|synth-static|synth-kinematic|verify|all> ...\n"
+              << " <selftest|probe-orbit|synth-static|synth-kinematic|spp-reference|verify|all> ...\n"
               << "  synth-static|synth-kinematic [output_dir] [isb_m] [storm_scale] [--sim-config <sim.json>]\n"
+              << "  spp-reference <truth_dir> [--sim-config <sim.json>]\n"
               << "  verify <truth_dir> <run_logs_dir>\n"
               << "  all <static|kinematic> <output_dir> <config> [processor_exe] [isb_m] [storm_scale] [--sim-config <sim.json>]\n";
     return 2;

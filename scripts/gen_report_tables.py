@@ -52,6 +52,7 @@ SRC = {
     "islip": REPO / "include" / "slip" / "ISlipDetector.hpp",
     "config_types": REPO / "include" / "config" / "GnssConfigTypes.hpp",
     "config_load": REPO / "src" / "core" / "config" / "GnssConfigLoad.cpp",
+    "config_load_network": REPO / "src" / "core" / "config" / "GnssConfigLoadNetwork.cpp",
     "state_keys": REPO / "include" / "filter" / "StateKeySchema.hpp",
     "bssd_transform": REPO / "include" / "measurement" / "BssdTransform.hpp",
     "meas_builder": REPO / "src" / "core" / "measurement" / "MeasurementBuilder.cpp",
@@ -334,7 +335,10 @@ def _struct_bool_fields(struct_text: str):
 
 
 def gen_config_toggles() -> tuple[str, dict]:
-    load = read(SRC["config_load"])
+    # The network section loader was split into its own TU (GnssConfigLoadNetwork.cpp,
+    # INC-1 2026-07-16); its ~120 network.* jval<bool> flags must be scraped too, or
+    # the whole network producer is silently absent from the toggle table.
+    load = read(SRC["config_load"]) + "\n" + read(SRC["config_load_network"])
     types = read(SRC["config_types"])
 
     # (a) jval<bool> feature flags (the canonical processing/estimation toggles).
@@ -369,7 +373,8 @@ def gen_config_toggles() -> tuple[str, dict]:
         flag_rows,
         caption=(
             r"Top-level boolean feature toggles, parsed from the "
-            r"\texttt{jval<bool>} calls in \texttt{GnssConfigLoad.cpp}. The "
+            r"\texttt{jval<bool>} calls in \texttt{GnssConfigLoad.cpp} and "
+            r"\texttt{GnssConfigLoadNetwork.cpp}. The "
             r"legacy alias is the pre-refactor flat key still accepted as a "
             r"fallback."
         ),
@@ -413,7 +418,8 @@ def gen_config_toggles() -> tuple[str, dict]:
     )
 
     content = (
-        BANNER.format(source="src/core/config/GnssConfigLoad.cpp (jval<bool>), "
+        BANNER.format(source="src/core/config/GnssConfigLoad.cpp + "
+                      "GnssConfigLoadNetwork.cpp (jval<bool>), "
                       "GnssConfigTypes.hpp (ModelCorrections, LoggingConfig)")
         + "\n\\subsection{Feature toggles}\n"
         + "These are the loop- and state-vector-level switches.\n\n"

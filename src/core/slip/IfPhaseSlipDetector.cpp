@@ -296,14 +296,21 @@ namespace GnssProcessor {
     bool IfPhaseSlipDetector::selectReference(const std::vector<SatData>& sat_vec,
         ConstellationState& cs) const {
 
-        // Check if current reference is still present and above threshold
+        // Check if current reference is still present and above threshold.
+        // Card R: an escalation (max_consecutive fires on this reference) sets
+        // ref_force_reselect, which skips the retention test so the election
+        // below runs even though the incumbent is perfectly healthy by
+        // elevation.  Inert while the gate is disabled (the flag is only ever
+        // set inside evaluateRefGate).
         bool ref_valid = false;
-        for (const auto& sd : sat_vec)
-            if (sd.satellite == cs.ref_satellite && sd.elevation >= kRefElevThreshDeg) {
-                ref_valid = true;
-                cs.ref_elevation = sd.elevation;
-                break;
-            }
+        if (!cs.ref_force_reselect) {
+            for (const auto& sd : sat_vec)
+                if (sd.satellite == cs.ref_satellite && sd.elevation >= kRefElevThreshDeg) {
+                    ref_valid = true;
+                    cs.ref_elevation = sd.elevation;
+                    break;
+                }
+        }
 
         if (ref_valid) return false;
 
@@ -311,13 +318,203 @@ namespace GnssProcessor {
         const std::string old_ref = cs.ref_satellite;
         cs.ref_satellite.clear();
         cs.ref_elevation = -1.0;
-        for (const auto& sd : sat_vec)
+        for (const auto& sd : sat_vec) {
+            // Card R: the escalated reference is excluded from THIS election
+            // only (never a permanent exclusion — rule 5: qualify, never drop).
+            // ref_exclude is empty unless the gate escalated, so this branch is
+            // structurally dead on the legacy path.
+            if (!cs.ref_exclude.empty() && sd.satellite == cs.ref_exclude) continue;
             if (sd.elevation > cs.ref_elevation) {
                 cs.ref_elevation = sd.elevation;
                 cs.ref_satellite = sd.satellite;
             }
+        }
+        if (cs.ref_satellite.empty() && !cs.ref_exclude.empty()) {
+            // The exclusion left no candidate (single-satellite family): fall
+            // back to the unrestricted election rather than losing the arc.
+            for (const auto& sd : sat_vec)
+                if (sd.elevation > cs.ref_elevation) {
+                    cs.ref_elevation = sd.elevation;
+                    cs.ref_satellite = sd.satellite;
+                }
+        }
+        cs.ref_force_reselect = false;
+        cs.ref_exclude.clear();
 
         return !old_ref.empty() && cs.ref_satellite != old_ref;
+    }
+
+    // =================================================================
+    // Card R — hardened reference-satellite slip gate
+    // =================================================================
+
+    double IfPhaseSlipDetector::updateRefDispersion(ConstellationState& cs,
+        const std::vector<double>& non_ref_dds,
+        double median_dd, double cold_prior, double& disp_out) {
+
+        // --- Dispersion of the family about its own median (raw m) ---------
+        // The step-vs-drift discriminator.  A genuine reference slip is a
+        // COMMON step: every non-reference DD moves by the same amount, so the
+        // scatter about the median is the ordinary between-epoch phase noise.
+        // A per-satellite drift (or a mis-modelled thin family) produces
+        // scatter of the SAME order as the median it is being judged against.
+        std::vector<double> devs;
+        devs.reserve(non_ref_dds.size());
+        for (const double d : non_ref_dds) devs.push_back(std::abs(d - median_dd));
+        const double disp = 1.4826 * computeMedian(devs);
+        disp_out = disp;
+
+        // --- Effective empirical scale (empirical-Bayes, pool-arm shape) ----
+        // The cold prior is the PHYSICAL floor expressed as a scale
+        // (floor_frac·λ_IF / k), NOT this epoch's own dispersion.  Shrinking
+        // toward the current epoch would be self-contaminating: on the very
+        // first candidate the gate would reduce to "|median| > k·(this epoch's
+        // scatter)", which a genuine multi-satellite station event can never
+        // pass — measured, that silently swallowed the OWMG00NZL/G31 re-lock
+        // the spec's R4 protects.  With this prior, zero empirical information
+        // ⇒ the gate degenerates to exactly the legacy physical floor, and the
+        // empirical arm takes over only as real samples accumulate.  Nothing
+        // here comes from the stochastic model (project rule 4).
+        const double w = static_cast<double>(cs.ref_scale_count)
+                       / (static_cast<double>(cs.ref_scale_count) + ref_gate_.shrink_kappa);
+        double s_eff = w * cs.ref_scale_ewma + (1.0 - w) * cold_prior;
+        if (!(s_eff > 0.0)) s_eff = cold_prior;
+
+        // Fold this epoch's dispersion in.  Called on EVERY epoch with a usable
+        // family — NOT only on the epochs where the legacy condition fired —
+        // so the scale is a genuine quiet-epoch noise reference rather than a
+        // statistic conditioned on a large median (which would let a persistent
+        // drift raise its own acceptance threshold until a real slip is missed).
+        // Folding is safe on a real slip too: a COMMON step leaves the
+        // dispersion at the noise level, so the scale can never be inflated by
+        // the event it must catch — the opposite of folding the median would be.
+        cs.ref_scale_ewma = (cs.ref_scale_count == 0)
+            ? disp
+            : (1.0 - ref_gate_.ewma_alpha) * cs.ref_scale_ewma
+                  + ref_gate_.ewma_alpha * disp;
+        cs.ref_scale_count += static_cast<long>(non_ref_dds.size());
+        return s_eff;
+    }
+
+    IfPhaseSlipDetector::RefGateVerdict IfPhaseSlipDetector::evaluateRefGate(
+        ConstellationState& cs,
+        const std::vector<double>& non_ref_dds, double disp, double s_eff,
+        double median_dd, double lambda_if,
+        const std::string& sys_str) {
+
+        auto logger = log_manager_.getLogger("if_slip_detector");
+        const std::size_t n    = non_ref_dds.size();
+        const double      amed = std::abs(median_dd);
+        const double      phys = ref_gate_.floor_frac * lambda_if;
+
+        // --- (1) Thin-family honesty (R3) ----------------------------------
+        const bool   thin = (static_cast<int>(n) < ref_gate_.min_n);
+        const double thr  = thin ? std::max(ref_gate_.thin_widen * phys, ref_gate_.k * s_eff)
+                                 : std::max(phys, ref_gate_.k * s_eff);
+        if (!(amed > thr)) {
+            if (thin) ++ref_gate_counters_.suppressed_thin;
+            else      ++ref_gate_counters_.suppressed_scale;
+            cs.ref_consec_fires = 0;
+            logger->debug("{}: ref-gate DEFER {} |med|={:.4f} m <= thr={:.4f} "
+                          "(n={}, disp={:.4f}, s_eff={:.4f}, {})",
+                          sys_str, cs.ref_satellite, amed, thr, n, disp, s_eff,
+                          thin ? "THIN family" : "scale");
+            return RefGateVerdict::Suppress;
+        }
+
+        // --- (2) Coherence: the family must AGREE on the step (R2) ----------
+        // A COHERENT family (small scatter about a large median) is the only
+        // signature that identifies the REFERENCE as the thing that slipped —
+        // and it is the only case where rebasing prev_grad by the median is a
+        // defensible claim.
+        RefGateVerdict kind = RefGateVerdict::FireRebase;
+        if (!(disp <= ref_gate_.coherence * amed)) {
+            // Incoherent.  Two very different physical situations land here and
+            // the 2026-07-21 ON smoke proved that collapsing them loses a real
+            // event (the OWMG00NZL/G31 station re-lock the spec's R4 protects):
+            //
+            //   • DRIFT — a sub-slip trend on a thin/quiet family: the median
+            //     is modest and NO individual double difference is slip-sized.
+            //     Nothing happened; suppress.
+            //   • STATION EVENT — a multi-satellite re-lock: many individual
+            //     DDs are independently slip-sized, so the median is a MIXTURE,
+            //     not a common step.  Whether the reference itself slipped is
+            //     unknowable from these DDs — and under a zero-q carry the
+            //     conservative action is to reset it (standing invariant #1:
+            //     never let a stiff prior ride a jump), while REFUSING to claim
+            //     the median as its slip magnitude.  So: fire, do not rebase.
+            //
+            // "Independently slip-sized" is a FULL IF cycle, not the half-cycle
+            // candidate floor: a sub-slip drift can sit just above phys on every
+            // member and would otherwise be promoted to a station event, which is
+            // exactly the false family this card removes.
+            std::size_t n_large = 0;
+            for (const double d : non_ref_dds) if (std::abs(d) > lambda_if) ++n_large;
+            const std::size_t need = std::max<std::size_t>(2, (n + 1) / 2);
+            if (n_large >= need) {
+                kind = RefGateVerdict::FireNoRebase;
+                logger->info("{}: ref-gate STATION EVENT at reference {} — {} of {} "
+                             "non-reference DDs are independently slip-sized "
+                             "(|dd| > lambda_IF = {:.4f} m) and the family is incoherent "
+                             "(disp={:.4f} m vs |med|={:.4f} m).  Resetting the "
+                             "reference arc WITHOUT rebasing by the median (the "
+                             "median is a mixture, not a common step).",
+                             sys_str, cs.ref_satellite, n_large, n, lambda_if, disp, amed);
+            } else {
+                ++ref_gate_counters_.suppressed_scale;
+                cs.ref_consec_fires = 0;
+                logger->debug("{}: ref-gate SUPPRESS {} incoherent: disp={:.4f} m > "
+                              "{:.2f}*|med|={:.4f} m (n={}, {} slip-sized) — drift, "
+                              "not a common step",
+                              sys_str, cs.ref_satellite, disp, ref_gate_.coherence,
+                              ref_gate_.coherence * amed, n, n_large);
+                return RefGateVerdict::Suppress;
+            }
+        }
+
+        // --- (3) Persistence cap + escalation (R2) --------------------------
+        //
+        // NOT IMPLEMENTED, deliberately: spec §2's third CANDIDATE ("if the NEW
+        // reference immediately slips too, the common mode is station-local —
+        // hand it to the pool/RAIM layer").  That test is unreachable at this
+        // seam, for two independent structural reasons, and shipping it would
+        // have left a permanently-zero counter that reads as "no station-local
+        // events occurred" (the standing-invariant-#4 failure mode):
+        //   (a) a genuine receiver-level common mode cancels in the
+        //       BETWEEN-SATELLITE single difference by construction, so it can
+        //       never reach the non-reference double differences this gate
+        //       adjudicates; and
+        //   (b) the only epoch the test could fire on is the forced
+        //       re-election epoch, where ref_changed is true and
+        //       processDoubleDifferences applies the median-offset rebase —
+        //       which removes exactly the common mode the test looks for
+        //       before the gate is consulted.
+        // Verified by construction in tests/test_if_phase_slip_detector.cpp
+        // (ReferenceHandoverDoesNotManufactureASlip pins (b)).  The pool/RAIM
+        // layer already owns station-local modes; the escalation below is what
+        // R2 actually requires.
+        const bool consecutive = (cs.ref_last_fire_epoch == epoch_counter_ - 1)
+                              && (cs.ref_fire_sat == cs.ref_satellite);
+        cs.ref_consec_fires    = consecutive ? (cs.ref_consec_fires + 1) : 1;
+        cs.ref_fire_sat        = cs.ref_satellite;
+        cs.ref_last_fire_epoch = epoch_counter_;
+        if (cs.ref_consec_fires > ref_gate_.max_consecutive) {
+            ++ref_gate_counters_.suppressed_persistence;
+            ++ref_gate_counters_.reselects;
+            cs.ref_force_reselect = true;
+            cs.ref_exclude        = cs.ref_satellite;
+            cs.ref_consec_fires   = 0;
+            logger->warn("{}: ref-gate ESCALATE — {} fired {} consecutive epoch(s) "
+                         "(|med|={:.4f} m, disp={:.4f} m): a persistent drift, not a "
+                         "step.  Forcing reference re-selection; the satellite moves to "
+                         "the pool arm.", sys_str, cs.ref_fire_sat,
+                         ref_gate_.max_consecutive + 1, amed, disp);
+            return RefGateVerdict::Suppress;
+        }
+
+        ++ref_gate_counters_.fires;
+        if (kind == RefGateVerdict::FireNoRebase) ++ref_gate_counters_.fires_station_event;
+        return kind;
     }
 
     // =================================================================
@@ -412,7 +609,36 @@ namespace GnssProcessor {
             if (non_ref_dds.size() >= 2) {
                 const double median_dd = computeMedian(non_ref_dds);
 
-                if (std::abs(median_dd) > 0.5 * lambda_if) {
+                // Card R: the LEGACY condition is the candidate filter; when the
+                // hardened gate is armed it then adjudicates (empirical scale +
+                // coherence + thin-family + persistence).  Disabled ⇒ the legacy
+                // condition IS the decision ⇒ byte-identical.
+                RefGateVerdict verdict =
+                    (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
+                        ? RefGateVerdict::FireRebase
+                        : RefGateVerdict::Suppress;
+                if (ref_gate_.enable) {
+                    // The dispersion scale advances on EVERY epoch with a usable
+                    // family, candidate or not (see updateRefDispersion).
+                    double disp = 0.0;
+                    const double s_eff = updateRefDispersion(
+                        cs, non_ref_dds, median_dd,
+                        (ref_gate_.k > 0.0)
+                            ? (ref_gate_.floor_frac * lambda_if / ref_gate_.k)
+                            : (ref_gate_.floor_frac * lambda_if),
+                        disp);
+                    if (verdict != RefGateVerdict::Suppress) {
+                        ++ref_gate_counters_.legacy_candidates;
+                        verdict = evaluateRefGate(cs, non_ref_dds, disp, s_eff,
+                                                  median_dd, lambda_if, sys_str);
+                    } else {
+                        // A quiet epoch breaks any consecutive-fire run.
+                        cs.ref_consec_fires = 0;
+                    }
+                }
+                const bool ref_fire = (verdict != RefGateVerdict::Suppress);
+
+                if (ref_fire) {
                     const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
                     reset_keys.push_back(ref_amb_key);
 
@@ -430,18 +656,30 @@ namespace GnssProcessor {
                     // Correct prev gradients by the median offset and recompute
                     // double diffs so that subsequent outlier detection sees only
                     // the per-satellite residual after removing the reference slip.
-                    for (auto& [sat, prev_g] : cs.prev_grad)
-                        if (sat != cs.ref_satellite) prev_g += median_dd;
+                    //
+                    // Card R: SKIPPED for a FireNoRebase verdict.  The rebase
+                    // asserts "the reference slipped by exactly median_dd", which
+                    // is only defensible for a coherent common step.  On an
+                    // incoherent multi-satellite station event the median is a
+                    // mixture, and subtracting it from every OTHER satellite's
+                    // history would inject a fictitious step into arcs that are
+                    // fine — while also hiding the real per-satellite jumps from
+                    // the network pool arm downstream.  Resetting the reference
+                    // arc (above) is kept; inventing its magnitude is not.
+                    if (verdict == RefGateVerdict::FireRebase) {
+                        for (auto& [sat, prev_g] : cs.prev_grad)
+                            if (sat != cs.ref_satellite) prev_g += median_dd;
 
-                    delta_grad.clear();
-                    all_finite = true;
-                    for (const auto& [sat, g] : grad_phi_if) {
-                        auto prev_it = cs.prev_grad.find(sat);
-                        if (prev_it != cs.prev_grad.end()) {
-                            delta_grad[sat] = g - prev_it->second;
-                        } else {
-                            delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
-                            all_finite = false;
+                        delta_grad.clear();
+                        all_finite = true;
+                        for (const auto& [sat, g] : grad_phi_if) {
+                            auto prev_it = cs.prev_grad.find(sat);
+                            if (prev_it != cs.prev_grad.end()) {
+                                delta_grad[sat] = g - prev_it->second;
+                            } else {
+                                delta_grad[sat] = std::numeric_limits<double>::quiet_NaN();
+                                all_finite = false;
+                            }
                         }
                     }
                 }
@@ -510,6 +748,11 @@ namespace GnssProcessor {
         std::vector<std::string> reset_keys;
         auto logger = log_manager_.getLogger("if_slip_detector");
         last_if_jumps_.clear();
+        // Card R: monotonic detect() index — the unit the reference-gate
+        // persistence run-length is measured in.  Incremented unconditionally
+        // (inert while the gate is disabled) so the counter never depends on
+        // which constellations happened to be processed.
+        ++epoch_counter_;
 
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }

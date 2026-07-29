@@ -41,6 +41,38 @@ inline std::string joinStrings(const std::vector<std::string>& v,
     return r;
 }
 
+/// @brief Recursively overlay @p overlay onto @p base, in place.
+///
+/// The merge rule for @c "extends" config inheritance, and the rule is
+/// deliberately asymmetric:
+///  - **object vs object** -> merge key-by-key, recursively.  This is what makes
+///    a delta config able to set @c network.raim without restating the other
+///    ~80 keys of the @c network section.
+///  - **everything else** -> the overlay value REPLACES the base value outright.
+///
+/// Arrays replace rather than concatenate, and that is a safety property, not a
+/// convenience: @c network.stations is an array, and a base roster silently
+/// concatenating with a child roster would produce duplicate stations, a
+/// different station ORDER (the warm-resume fingerprint hashes the roster in
+/// order), and a station count that matches no intended regime.  The same goes
+/// for @c processing.active_systems and @c signal_priorities.  A child that
+/// wants "the base roster plus one" must state the whole roster.
+///
+/// A null overlay value replaces too, so a child can explicitly blank a string
+/// the base set (e.g. reset an inherited @c state_snapshot_path to "").
+inline void deepMergeJson(nlohmann::json& base, const nlohmann::json& overlay) {
+    if (!base.is_object() || !overlay.is_object()) {
+        base = overlay;
+        return;
+    }
+    for (auto it = overlay.begin(); it != overlay.end(); ++it) {
+        if (base.contains(it.key()) && base[it.key()].is_object() && it.value().is_object())
+            deepMergeJson(base[it.key()], it.value());
+        else
+            base[it.key()] = it.value();
+    }
+}
+
 /// Navigate into a nested JSON object using a dot-separated path.
 /// Returns a pointer to the value, or nullptr if any segment is missing.
 inline const nlohmann::json* resolvePath(const nlohmann::json& root,

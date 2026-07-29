@@ -20,6 +20,7 @@
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "atmosphere/IonexParser.hpp"
 #include "common/Constants.hpp"
+#include "config/GnssConfigTypes.hpp"
 #include "logging/LogManager.hpp"
 #include "math/Coordinates.hpp"
 
@@ -224,6 +225,73 @@ TEST(ShIonosphere, ReproducesCodeIonexGrid) {
     // interpolation noise.  Keep a generous bound that still catches a gross
     // normalization/recurrence bug (which would leave TECU-level structure).
     EXPECT_LT(rms, 0.5) << "degree-15 SH fit RMS to the CODE IONEX grid (TECU)";
+}
+
+// Iono-2 dual-layer: the shLayers() view is assembled per config (single-layer
+// list without a second model; ordered two-entry list with one), each shell's
+// pierce geometry is evaluated at its OWN height (higher shell ⇒ smaller
+// thin-shell mapping and a displaced IPP), and the summed slant matches the
+// per-layer syntheses — the exact contract every consumer loop relies on.
+TEST(ShIonosphere, DualLayerViewAndSlantSumMatchPerLayerSynthesis) {
+    GlobalVtecShConfig shc;
+    shc.max_degree = 3;
+    shc.layer_height_km = 450.0;
+    shc.layer2_max_degree = 2;
+    shc.layer2_height_km = 1300.0;
+    SphericalHarmonicIonosphere l0(shc.max_degree);
+    SphericalHarmonicIonosphere l1(shc.layer2_max_degree);
+
+    // View assembly: no second model ⇒ one entry with the legacy scalars.
+    const auto single = shLayers(shc, &l0, nullptr);
+    ASSERT_EQ(single.size(), 1u);
+    EXPECT_EQ(single[0].layer, 0);
+    EXPECT_DOUBLE_EQ(single[0].shell_height_m, 450.0e3);
+    EXPECT_DOUBLE_EQ(single[0].kaula_scale_tecu, shc.kaula_scale_tecu);
+    EXPECT_TRUE(shLayers(shc, nullptr, &l1).empty());   // no layer 0 ⇒ no field
+
+    const auto dual = shLayers(shc, &l0, &l1);
+    ASSERT_EQ(dual.size(), 2u);
+    EXPECT_EQ(dual[0].model, &l0);
+    EXPECT_EQ(dual[1].model, &l1);
+    EXPECT_EQ(dual[1].layer, 1);
+    EXPECT_DOUBLE_EQ(dual[1].shell_height_m, 1300.0e3);
+    EXPECT_DOUBLE_EQ(dual[1].kaula_scale_tecu, shc.layer2_kaula_scale_tecu);
+    EXPECT_DOUBLE_EQ(dual[1].mean_prior_sigma_tecu,
+                     shc.layer2_mean_vtec_prior_sigma_tecu);
+
+    // Mid-elevation LOS from a mid-latitude station: per-shell geometry.
+    const Eigen::Vector3d rx =
+        Coordinates::llhToEcef(40.0 * kDeg2Rad, -105.0 * kDeg2Rad, 1600.0);
+    const Eigen::Vector3d los_dir =
+        (Coordinates::llhToEcef(47.0 * kDeg2Rad, -95.0 * kDeg2Rad, 2.0e7) - rx)
+            .normalized();
+    const Eigen::Vector3d sat = rx + 2.2e7 * los_dir;
+    const double Re = shc.earth_radius_km * 1000.0;
+    const IppGeometry g0 = computeIppGeometry(rx, sat, Re, dual[0].shell_height_m);
+    const IppGeometry g1 = computeIppGeometry(rx, sat, Re, dual[1].shell_height_m);
+    ASSERT_TRUE(g0.valid);
+    ASSERT_TRUE(g1.valid);
+    EXPECT_LT(g1.mapping, g0.mapping);          // higher shell ⇒ smaller obliquity
+    EXPECT_GT(g1.mapping, 1.0);
+    // The higher shell's pierce point sits farther along track from the station.
+    const double dlat0 = std::fabs(g0.ipp_lat_rad - 40.0 * kDeg2Rad);
+    const double dlat1 = std::fabs(g1.ipp_lat_rad - 40.0 * kDeg2Rad);
+    EXPECT_GT(dlat1, dlat0);
+
+    // Slant sum: Σ_l M_l·VTEC_l(IPP_l) with distinct coefficient sets equals the
+    // hand-built per-layer sum (the row builder writes exactly these products).
+    Eigen::VectorXd c0(l0.numCoeffs()), c1(l1.numCoeffs());
+    for (int k = 0; k < l0.numCoeffs(); ++k) c0(k) = 0.3 + 0.05 * k;
+    for (int k = 0; k < l1.numCoeffs(); ++k) c1(k) = -0.2 + 0.07 * k;
+    const double v0 = l0.vtec(c0, g0.ipp_lat_rad, g0.ipp_lon_rad);
+    const double v1 = l1.vtec(c1, g1.ipp_lat_rad, g1.ipp_lon_rad);
+    std::vector<double> b0, b1;
+    l0.basis(g0.ipp_lat_rad, g0.ipp_lon_rad, b0);
+    l1.basis(g1.ipp_lat_rad, g1.ipp_lon_rad, b1);
+    double sum_rows = 0.0;
+    for (int k = 0; k < l0.numCoeffs(); ++k) sum_rows += g0.mapping * b0[k] * c0(k);
+    for (int k = 0; k < l1.numCoeffs(); ++k) sum_rows += g1.mapping * b1[k] * c1(k);
+    EXPECT_NEAR(sum_rows, g0.mapping * v0 + g1.mapping * v1, 1e-12);
 }
 
 }  // namespace

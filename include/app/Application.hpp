@@ -37,6 +37,20 @@
 
 namespace GnssProcessor {
 
+struct NetworkSetupResult;   // app/NetworkSetupResult.hpp (decomposition INC-5)
+struct NetworkRunContext;    // app/NetworkRunContext.hpp (decomposition INC-4; INC-7 signatures)
+struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp (decomposition INC-3; INC-7 signatures)
+struct NetStation;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
+struct StationAssembly;      // filter/NetworkRunTypes.hpp (decomposition INC-7)
+struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
+struct SyncedEpoch;          // rinex/MultiRinexSync.hpp — namespace-level (decomposition INC-7)
+class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7)
+class  NetworkIonoDeweightGate;      // filter/NetworkIonoDeweightGate.hpp (decomposition INC-7)
+class  SphericalHarmonicIonosphere;  // atmosphere/SphericalHarmonicIonosphere.hpp (decomposition INC-7)
+class  PppUtils;             // common/PppUtils.hpp (decomposition INC-7)
+struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardening, 2026-07-21)
+enum class EpochAction;      // filter/NetworkRunTypes.hpp (decomposition INC-7) — opaque enum decl
+
 /**
  * @class Application
  * @brief High-level program driver for GNSSProcessor.
@@ -456,6 +470,242 @@ private:
      * @return 0 on clean shutdown, non-zero on error.
      */
     int runNetwork();
+
+    /**
+     * @brief Q5 consumer-only replay: drive the held-out PPP-RTK consumer from an
+     *        ALREADY-WRITTEN network product file (no producer solve).
+     *
+     * Dispatched from @c runNetwork() when
+     * @c network.closed_loop.replay_products_path is non-empty, BEFORE any
+     * producer setup.  Reconstructs exactly the in-process closed-loop wiring —
+     * @c deriveClosedLoopConsumerConfig, a @c RealTimeEngine fed epoch-by-epoch
+     * from the station's RINEX, an OWNED @c SsrCorrectionStore injected via
+     * @c setSsrStore — except that the store is filled by
+     * @c NetworkProductReader::replay from the recorded file instead of by the
+     * live emitter.  Writes the same @c closed_loop_trace.csv schema
+     * (@c pos_err_3d_m,east_m,north_m,up_m) so both sources grade identically.
+     *
+     * Implemented in @c ApplicationConsumerReplay.cpp.
+     *
+     * @return 0 on clean shutdown, non-zero on error.
+     */
+    int runConsumerReplay();
+
+    /**
+     * @brief Network setup Phase 0 — validate every @c network.stations[] entry
+     *        has an explicit @c rinex_path (decomposition INC-5; verbatim
+     *        relocation from runNetwork, identical error text + exit status).
+     *
+     * Implemented in @c ApplicationNetworkSetup.cpp.
+     *
+     * @return 0 ok, 1 on the first station missing a path (after logging).
+     */
+    int networkValidateInputs_();
+
+    /**
+     * @brief Network setup Phases 2-4 + sinks + contract + consumer
+     *        (decomposition INC-5; verbatim relocation from runNetwork).
+     *
+     * Fills @p setup in place; @p setup must already sit at its final storage —
+     * the struct is non-movable because run-long references pin its members
+     * (see NetworkSetupResult.hpp).  Every former early @c return @c 1 exit is
+     * preserved verbatim (identical log lines; the caller forwards the status).
+     * Implemented in @c ApplicationNetworkSetup.cpp.
+     *
+     * @param setup Out-parameter, default-constructed by the caller.
+     * @return 0 ok, 1 on any fatal setup failure (after logging).
+     */
+    int networkSetup_(NetworkSetupResult& setup);
+
+    /**
+     * @brief Is station @p i's (sat, signal) ambiguity gauge-pinned — i.e. part
+     *        of the phase datum rather than a free (carriable) ambiguity
+     *        (decomposition INC-7; verbatim relocation from runNetwork).
+     *
+     * Legacy datum: every pivot-station ambiguity.  Prioritized datum: exactly
+     * the elected @c pinned_amb_targets entries.  Implemented in
+     * @c ApplicationNetworkAssembly.cpp.
+     */
+    bool networkIsGaugePinned_(const std::vector<NetStation>& stations,
+                               bool phase_datum_prioritized, size_t i,
+                               const std::string& sat,
+                               const std::string& signal) const;
+
+    /**
+     * @brief Column-split helper: split station @p st's H into the shared
+     *        border @p A_s (clock/phase-bias/code-bias columns) and the local
+     *        nuisance block @p A_r (decomposition INC-7; verbatim relocation).
+     *
+     * Fills the H-column → A_r-column map @p h2local.  Throws (linearity
+     * invariant) if a position column ever survives into A_r — the throw rides
+     * the PASS-B per-station try/catch.  Implemented in
+     * @c ApplicationNetworkAssembly.cpp.
+     */
+    void networkSplitStation_(NetStation& st, const NetworkEstimator& est,
+                              const EpochMeasurement& em,
+                              Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                              Eigen::VectorXd& w, Eigen::VectorXd& y,
+                              std::map<int, int>& h2local) const;
+
+    /**
+     * @brief GIM ionosphere pseudo-observation rows (W6 satellite code-bias
+     *        prerequisite), folded into station @p st's own block with the
+     *        per-constellation common-mode-free R (decomposition INC-7;
+     *        verbatim relocation).  Implemented in
+     *        @c ApplicationNetworkAssembly.cpp.
+     */
+    void networkAppendGimIonoRows_(NetStation& st,
+                                   const std::vector<PppObservation>& sta_obs,
+                                   const std::map<int, int>& h2local,
+                                   const GnssTime& t,
+                                   Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                                   Eigen::VectorXd& w, Eigen::VectorXd& y) const;
+
+    /**
+     * @brief Co-estimated SH-VTEC ionosphere pseudo-observation rows — the
+     *        joint slant-iono ↔ SH-field constraint, incl. the T5 deviation
+     *        carry treatment and the station-adaptive deweight scaling
+     *        (decomposition INC-7; verbatim relocation).
+     *
+     * Former ambient captures are explicit: @p sh_model / @p sh_model2 (the
+     * Iono-2 dual-layer second shell, null on the single-layer path),
+     * @p iono_deweight (const — read-only weight lookup), @p shc, @p sh_dev_on,
+     * @p sh_dev_carry (const — the serial pre-pass ages it; here find-only).
+     * Implemented in @c ApplicationNetworkAssembly.cpp.
+     */
+    void networkAppendShIonoRows_(NetStation& st, const NetworkEstimator& est,
+                                  const std::vector<PppObservation>& sta_obs,
+                                  const std::map<int, int>& h2local,
+                                  const GnssTime& t,
+                                  const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
+                                  const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
+                                  const NetworkIonoDeweightGate& iono_deweight,
+                                  const GlobalVtecShConfig& shc, bool sh_dev_on,
+                                  const std::map<std::string, ShDevCarry>& sh_dev_carry,
+                                  Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                                  Eigen::VectorXd& w, Eigen::VectorXd& y) const;
+
+    /**
+     * @brief PASS-A head — legacy pivot-first modeling + the legacy shared
+     *        phase-bias key seed (decomposition INC-7; verbatim relocation).
+     *
+     * The two sync_skip exits keep their exact bookkeeping (n_skipped, 9-zero
+     * trace row, empty status row, NO prev_week/prev_tow advance) inside the
+     * body; the former epoch-loop @c continue s are the SkipEpoch returns.
+     * Under the prioritized datum the pivot block is skipped entirely (the
+     * SPOF cure) and the function only leaves @p shared_phase_keys empty.
+     * Implemented in @c ApplicationNetworkAssembly.cpp.
+     *
+     * @return Proceed, or SkipEpoch when the legacy datum station is absent
+     *         or fails to model (caller @c continue s the epoch loop).
+     */
+    EpochAction networkPassAHead_(const SyncedEpoch& se, NetworkRunContext& ctx,
+                                  NetworkSetupResult& setup,
+                                  NetworkRunTraces& traces,
+                                  std::vector<std::vector<PppObservation>>& modeled,
+                                  std::vector<bool>& present,
+                                  std::set<std::string>& shared_phase_keys);
+
+    /**
+     * @brief PASS-A parallel tail + slip scans — per-station geometry
+     *        (computeModels / ensureNetworkSharedStates) with in-loop T0 / MW /
+     *        IF-TD slip detection into PassABuffers slots, the serial present[]
+     *        fold, and the three serial slip-QC drains of slip/NetworkSlipQc
+     *        (decomposition INC-7; verbatim relocation incl. the OpenMP pragma).
+     *
+     * Caller brackets the call with subBegin/subEnd(SB_SLIP) — the D0b wall
+     * content is unchanged.  @p carry_slipped_ambs is THE per-epoch Card-4 C3c
+     * slip-event set by non-const reference (single run-TU instance; a value
+     * copy silently disables the slip funnel — standing invariant #1).
+     * Implemented in @c ApplicationNetworkAssembly.cpp.
+     */
+    void networkPassASlipScan_(const SyncedEpoch& se, NetworkRunContext& ctx,
+                               NetworkSetupResult& setup,
+                               NetworkRunTraces& traces,
+                               double dt, double pl_now_s, bool carry_warm,
+                               std::vector<std::vector<PppObservation>>& modeled,
+                               std::vector<bool>& present,
+                               const std::set<std::string>& shared_phase_keys,
+                               std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                               SlipQcChannel& qc);
+
+    /**
+     * @brief RAW slip-observable trace rows + the cross-station observability
+     *        pre-filter (decomposition INC-7; verbatim relocation).  The
+     *        writer-before-prune ordering (a satellite about to be dropped is
+     *        still captured) is structural here.  Prunes single-station
+     *        satellites from @p modeled AND the per-station shared states;
+     *        @p n_dropped_sats is the run-TU epoch local by reference.
+     *        Implemented in @c ApplicationNetworkAssembly.cpp.
+     */
+    void networkAssemblyPrefilter_(const SyncedEpoch& se,
+                                   NetworkSetupResult& setup,
+                                   NetworkRunTraces& traces,
+                                   const SlipQcChannel& qc,
+                                   std::vector<std::vector<PppObservation>>& modeled,
+                                   const std::vector<bool>& present,
+                                   int& n_dropped_sats);
+
+    /**
+     * @brief Shared-column registration — est.reset(), clock / phase-bias /
+     *        W6-OSB / SH-VTEC column registration, the epoch counts +
+     *        heartbeat stores, the estimability column descriptors, and the
+     *        empty-system skip (decomposition INC-7; verbatim relocation).
+     *
+     * Ends with @c est.beginEpoch() on the Proceed path.  The skip keeps its
+     * exact bookkeeping inside (n_present trace row, status row, prev advance);
+     * the caller's @c continue bypasses subEnd(SB_PREASM) exactly as the
+     * original site did.  The former @c const epoch counts become the int&
+     * out-parameters (seam-inherent).  Implemented in
+     * @c ApplicationNetworkAssembly.cpp.
+     */
+    EpochAction networkAssemblyRegisterColumns_(const SyncedEpoch& se,
+                                   NetworkRunContext& ctx,
+                                   NetworkSetupResult& setup,
+                                   NetworkRunTraces& traces,
+                                   NetworkEstimator& est,
+                                   const std::vector<bool>& present,
+                                   const std::set<std::string>& shared_phase_keys,
+                                   std::vector<std::string>& registered_clock_sats,
+                                   std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                                   std::vector<std::string>& col_desc,
+                                   int& n_clock, int& n_pb, int& n_cb,
+                                   int& n_present);
+
+    /**
+     * @brief PASS-B — the D0 assembly wall (raw chrono pair), the T5 SH-dev
+     *        aging, the Card-1d reinit history, the OpenMP produce loop
+     *        (per-station computeMeasurementUpdate + splitStation + pin folds +
+     *        iono rows + phase-leveling carry build + the coupling-injection
+     *        cluster, pragma verbatim), and the serial consume/scatter
+     *        (decomposition INC-7; verbatim relocation).
+     *
+     * The failed/empty-epoch skip keeps its exact bookkeeping inside
+     * (n_present/n_clock/n_pb/total_pins trace row, status row, prev advance).
+     * @p asm_res / @p est_index_of / @p total_pins are the run-TU epoch locals
+     * by reference (downstream solve/RAIM/emit consumers unchanged);
+     * @p sec_asm_ms_epoch / @p sec_asm_wall_ms are the D0 wall sinks.
+     * Implemented in @c ApplicationNetworkAssembly.cpp.
+     *
+     * @return Proceed, or SkipEpoch when the epoch failed assembly or has an
+     *         empty shared system (caller @c continue s the epoch loop).
+     */
+    EpochAction networkPassB_(const SyncedEpoch& se, NetworkRunContext& ctx,
+                              NetworkSetupResult& setup, NetworkRunTraces& traces,
+                              NetworkEstimator& est,
+                              const NetworkIonoDeweightGate& iono_deweight,
+                              double sh_dev_tau, bool sh_dev_on,
+                              const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+                              bool carry_warm, double pl_now_s,
+                              std::vector<std::vector<PppObservation>>& modeled,
+                              std::vector<bool>& present,
+                              const std::set<std::string>& shared_phase_keys,
+                              const std::vector<std::string>& registered_clock_sats,
+                              const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                              int n_clock, int n_pb, int n_present,
+                              std::vector<StationAssembly>& asm_res,
+                              std::vector<int>& est_index_of, int& total_pins,
+                              double& sec_asm_ms_epoch, double& sec_asm_wall_ms);
 
     /**
      * @brief Generate the end-of-run HTML report via the bundled pyviz tool.

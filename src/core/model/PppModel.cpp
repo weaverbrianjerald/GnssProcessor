@@ -476,6 +476,10 @@ std::vector<std::string> activeFrequencyBands(
                 if (sig.size() < 3) continue;
                 const char obs_type = sig[0];
                 if (obs_type != 'C' && obs_type != 'L') continue;
+                // Network coverage gate: a sparsely-tracked code is not a
+                // canonical candidate, so the per-band pick falls through to the
+                // best ADMITTED channel (e.g. L1W excluded network-wide ⇒ L1C).
+                if (!signalAdmitted(cons, sig)) continue;
 
                 // Resolve which band this signal belongs to via the
                 // RINEX-prefix → band-name table.
@@ -952,6 +956,7 @@ std::vector<std::string> activeFrequencyBands(
         auto populate = [&](const std::map<char, char>& attr_filter) {
             for (const auto& sig : signals) {
                 if (!measurements.count(sig)) continue;
+                if (!signalAdmitted(system_str, sig)) continue;   // network coverage gate
                 // When an attribute filter is active, reject signals whose
                 // tracking attribute does not match the clock-reference
                 // observable for the corresponding band digit.
@@ -1053,6 +1058,8 @@ std::vector<std::string> activeFrequencyBands(
                     const char prefix = sig[0];
                     if (prefix != 'C' && prefix != 'L') continue;
                     if (already.count(sig)) continue;
+                    // Network coverage gate: never augment with a non-admitted channel.
+                    if (!signalAdmitted(system_str, sig)) continue;
                     for (const auto& [pattern, band] : stb_it->second) {
                         if (sig.find(pattern) != 0) continue;
                         if (std::find(freq_bands.begin(), freq_bands.end(), band)

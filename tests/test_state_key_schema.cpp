@@ -499,5 +499,46 @@ TEST(StateKeySchema, VtecShKeyRoundTrip) {
     EXPECT_FALSE(isVtecShKey("SH"));
 }
 
+// Iono-2 dual-layer: the second shell keys under the DISTINCT "SH2" prefix.
+// Layer 0 output stays byte-identical to the pre-Iono-2 three-argument form
+// (the backward-compat contract for snapshots/traces), the two layers never
+// collide, and both satisfy the layer-agnostic isVtecShKey predicate.
+TEST(StateKeySchema, VtecShLayerKeyRoundTrip) {
+    using namespace StateKeys;
+    // Layer 0 is the legacy format, unchanged.
+    EXPECT_EQ(makeVtecShKey(4, 2, 'S', 0), "SH|4|2|S");
+    EXPECT_EQ(makeVtecShKey(4, 2, 'S', 0), makeVtecShKey(4, 2, 'S'));
+    // Layer 1 gets the distinct prefix.
+    EXPECT_EQ(makeVtecShKey(0, 0, 'C', 1), "SH2|0|0|C");
+    EXPECT_NE(makeVtecShKey(3, 1, 'C', 1), makeVtecShKey(3, 1, 'C', 0));
+
+    for (char trig : {'C', 'S'}) {
+        for (int n = 0; n <= 6; ++n) {
+            for (int m = 0; m <= n; ++m) {
+                for (int layer : {0, 1}) {
+                    const std::string k = makeVtecShKey(n, m, trig, layer);
+                    EXPECT_TRUE(isVtecShKey(k)) << k;
+                    auto p = parseVtecShKey(k);
+                    ASSERT_TRUE(p.has_value()) << k;
+                    EXPECT_EQ(p->n, n);
+                    EXPECT_EQ(p->m, m);
+                    EXPECT_EQ(p->trig, trig);
+                    EXPECT_EQ(p->layer, layer);
+                }
+            }
+        }
+    }
+
+    // A parsed legacy key reports layer 0 (old snapshots stay valid).
+    auto legacy = parseVtecShKey("SH|8|3|C");
+    ASSERT_TRUE(legacy.has_value());
+    EXPECT_EQ(legacy->layer, 0);
+    // Malformed layer-2 inputs rejected on the same rules as layer 0.
+    EXPECT_FALSE(parseVtecShKey("SH2|1|2").has_value());
+    EXPECT_FALSE(parseVtecShKey("SH2|1|2|X").has_value());
+    EXPECT_FALSE(parseVtecShKey("SH2|1|2|C|extra").has_value());
+    EXPECT_FALSE(isVtecShKey("SH2"));
+}
+
 }  // namespace
 }  // namespace GnssProcessor

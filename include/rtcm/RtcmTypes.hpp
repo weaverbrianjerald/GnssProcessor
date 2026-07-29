@@ -132,6 +132,24 @@ struct SsrClockCorrection {
     /// (the other operand of the consumer orbit/clock age-skew budget).  {0,0} =
     /// not stamped.
     GnssTime    orbit_epoch{0, 0.0};
+    /// M4 (contract v2): formal 1σ (m) of the COMBINED CODE correction for this
+    /// satellite (clock + code bias at a reference signal), from the network
+    /// shared covariance (EWMA(σ̂0)×√Var(clk+cb), cross-covariance included).  0
+    /// for every RTCM/IGS-SSR-decoded clock and when @c network.emit_combined_sigma
+    /// is off — an internal extension populated ONLY by @c NetworkProductEmitter,
+    /// carried on the C-record @c sigcc= wire token.  During satellite-rise
+    /// reconvergence the individual clock/bias σ are cm-level but this COMBINED σ
+    /// is mm-level (the components are strongly correlated), so a consumer weighting
+    /// by it (rather than the individual-σ RSS) can keep using a fresh satellite's
+    /// products instead of deweighting them 10–100× (Zhang 2021 / Psychas 2024b).
+    double      combined_code_sigma_m{0.0};
+    /// M4 (contract v2): correlation ρ (dimensionless, [-1,1]) between this
+    /// satellite's COMBINED CODE and COMBINED PHASE corrections at the reference
+    /// signal — both share the clock term, so ρ is typically 0.6–0.9 (Psychas Fig.
+    /// 5).  0 for decoded clocks / when the channel is off; C-record @c rho= wire
+    /// token.  Carried for a future correlated-measurement (full-R) consumer; the
+    /// present diagonal-R consumer does not apply it (it has no off-diagonal slot).
+    double      code_phase_corr{0.0};
 };
 
 /**
@@ -196,6 +214,26 @@ struct SsrPhaseBiasEntry {
     bool   signal_integer{false};       ///< Bias preserves integer ambiguity (per IGS-SSR).
     int    wide_lane_integer{0};        ///< Wide-lane integer indicator (2 bits).
     int    discontinuity_counter{0};    ///< Increments on bias discontinuity (forces AR reset).
+    /// B1b: 1σ formal uncertainty (m) of this phase-bias correction, from the network
+    /// shared covariance (EWMA(σ̂0)×√var, gauge-exact).  0 for every RTCM/IGS-SSR-decoded
+    /// bias and for network products emitted with @c network.emit_phase_bias_sigma off —
+    /// the wire format has NO such field, so this is an internal in-process-store
+    /// extension (closed-loop consumer only).  The consumer folds sigma_m² into the
+    /// measurement variance of that phase row when @c network.consume_phase_bias_sigma is
+    /// on (the Tienstra §6.6 phase-bias block of Qŷ_B1 the diagonal-only URA channel omits).
+    double sigma_m{0.0};
+    /// M4 (contract v2): formal 1σ (m) of the COMBINED PHASE correction for this
+    /// (sat, signal) — clock + phase bias, cross-covariance included (NOT iono: the
+    /// network iono is SH-VTEC, supplied separately via @c SsrSlantIono with its own
+    /// σ; bundling it here would double-count).  Distinct from @c sigma_m (the
+    /// phase-bias term ALONE): this is the honest quality of the whole satellite-side
+    /// phase correction the consumer applies.  0 for decoded biases / when
+    /// @c network.emit_combined_sigma is off; carried on the P-record @c sigc= wire
+    /// token.  When @c closed_loop.consume_combined_sigma is on the consumer folds
+    /// @c combined_sigma_m² (age-inflated) into the phase row variance INSTEAD OF the
+    /// URA + @c sigma_m RSS — mm-level for a fresh satellite where the individual σ
+    /// are cm-level, so a reconverging satellite is no longer deweighted off.
+    double combined_sigma_m{0.0};
 };
 
 /**
@@ -226,6 +264,29 @@ struct SsrPhaseBias {
 struct SsrUra {
     std::string sat;
     double      ura_m{0.0};
+    GnssTime    received_time{0, 0.0};
+    int         iod_ssr{0};
+};
+
+/**
+ * @brief Per-satellite UNDIFFERENCED slant ionospheric delay supplied by the
+ *        network producer to a closed-loop consumer.
+ *
+ * The producer evaluates its co-estimated single-layer SH-VTEC field at the
+ * consumer's ionospheric pierce point for each satellite, maps VTEC→slant with
+ * the thin-shell obliquity, and expresses the result as a range delay on GPS L1
+ * (the same reference the consumer's per-satellite slant-iono STATE uses — see
+ * @c MeasurementModel's iono Jacobian, α=(f_L1/f)²).  It is emitted UNDIFFERENCED
+ * per satellite (Odijk 2016 Table 11: a vertical→slant mapping intervenes at the
+ * user, so it must NOT be between-satellite differenced) and carries a per-LOS
+ * 1σ so the consumer can weight it as an ionosphere-weighted / BLUP prior rather
+ * than trusting it as exact.  Carried in-process only (an owned
+ * @c SsrCorrectionStore channel); it is NOT part of the on-disk product stream.
+ */
+struct SsrSlantIono {
+    std::string sat;
+    double      iono_m{0.0};             ///< Slant ionospheric delay on GPS L1 (m), undifferenced.
+    double      sigma_m{0.0};            ///< Per-LOS representativeness 1σ (m).
     GnssTime    received_time{0, 0.0};
     int         iod_ssr{0};
 };

@@ -144,7 +144,10 @@ namespace GnssProcessor {
         /**
          * @brief Compute the ECEF gravity vector at a position.
          *
-         * Uses the WGS-84 normal gravity model (Somigliana + free-air reduction).
+         * Point-mass radial gravity plus the ECEF centrifugal term
+         * (g = -mu/r^3 * r_ecef + omega^2 * [x, y, 0]).  The Somigliana normal-
+         * gravity flattening and the J2 zonal term are NOT modelled; the residual
+         * deterministic acceleration is absorbed by the estimated accel bias.
          *
          * @param pos_ecef ECEF position (m).
          * @return Gravity vector in ECEF (m/s²), pointing roughly toward Earth center.

@@ -48,15 +48,16 @@ def _epoch_status(dir_, clk_median, sigma0, n=8, n_withheld=0):
     """Write network_epoch_status.csv; first ``n_withheld`` rows are withheld."""
     hdr = ("week,tow,disposition,sigma0,n_adapt,n_present,n_clock_sats,"
            "clock_median_m,clock_std_m,worst_sat,worst_dev_m,n_refloat_sats,"
-           "n_retro_applied,datum_changed,sigma0_trigger,withhold_ceiling")
+           "n_retro_applied,datum_changed,sigma0_trigger,withhold_ceiling,"
+           "n_arc_refloat")   # T2d
     rows = [hdr]
     for k in range(n):
         tow = 259200 + 30 * k
         if k < n_withheld:
-            rows.append(f"2313,{tow}.000,gate_withheld,,,,,,,,,,,,3.0,10.0")
+            rows.append(f"2313,{tow}.000,gate_withheld,,,,,,,,,,,,3.0,10.0,")
         else:
             rows.append(f"2313,{tow}.000,emitted,{sigma0:.4f},0,3,18,"
-                        f"{clk_median:.4f},0.0500,G10,0.2000,0,0,0,3.0,10.0")
+                        f"{clk_median:.4f},0.0500,G10,0.2000,0,0,0,3.0,10.0,0")
     (dir_ / "network_epoch_status.csv").write_text("\n".join(rows) + "\n",
                                                    encoding="utf-8")
 

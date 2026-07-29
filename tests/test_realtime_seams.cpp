@@ -158,7 +158,9 @@ TEST(RealtimeEphStalenessTest, GalileoWindowTighterThanGps) {
 // (3) RT0-1 -- clock-only IODE gate.  A network / IGS-SSR CLOCK subtype carries
 // no orbit IODE, so getOrbitClock must report iode = -1 ("unknown") for it.  The
 // downstream clock gate (GnssCorrections) computes
-//     ssr_iode  = has_clock ? ssr->iode : -1;
+//     ssr_iode  = has_clock ? (clock_iode >= 0 ? clock_iode : ssr->iode) : -1;
+//                 (Card 7 pinned eval; clock_iode == -1 on every unstamped
+//                  record, so this reduces to ssr->iode here)
 //     brdc_iode = live broadcast IODE (>=0 in RT, -1 in post-processing);
 // and applies the SSR clock only when SsrCorrectionStore::iodeMatches passes.
 // A {0} default (the pre-fix bug) collided with a real broadcast IODE and
@@ -204,7 +206,11 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
 
     // Reproduce the GnssCorrections clock gate exactly (GnssCorrections.cpp: the
     // ssr_iode / brdc_iode / iodeMatches trio) against the SHARED gate function.
-    const int  ssr_iode  = (ssr && ssr->has_clock) ? ssr->iode : -1;
+    // Card 7: the baseline pins to a stamped clock_iode first; unstamped (-1,
+    // this record) falls through to the orbit anchor — the RT0-1 expression.
+    const int  ssr_iode  = (ssr && ssr->has_clock)
+        ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
+        : -1;
     const auto bc        = eph_store.computeSatelliteClock("G07", t, ssr_iode);
     ASSERT_TRUE(bc.has_value());
     const int  brdc_iode = bc->iode;
@@ -302,6 +308,195 @@ TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
     EXPECT_EQ(q->clock_iode, 44);               // combined: clock shares the orbit IOD
     EXPECT_EQ(q->orbit_iod_ssr, 6);
     EXPECT_NEAR(q->orbit_epoch.tow, 95.0, 1e-9);
+    // Card 7: a combined record is SELF-coherent — the applied orbit's own
+    // IOD-SSR equals the echo by construction, which is exactly the condition
+    // the GnssCorrections echo check short-circuits on (no second lookup).
+    EXPECT_EQ(q->applied_orbit_iod_ssr, 6);
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(*q, q, /*max_skew_s=*/30.0),
+              SsrCorrectionStore::OrbitEchoVerdict::Match);
+}
+
+// ===========================================================================
+// Card 7 (RTF-2) — consumer pinned clock eval + orbit-coherence echo check.
+// The producer's brdc_rts clock is a delta against broadcast(clock_iode) and
+// echoes the RTS orbit it was estimated against; the consumer (a) evaluates
+// the broadcast baseline PINNED to that version (current/previous retention
+// absorbs producer/consumer cutover skew) and (b) verifies the echo against
+// the orbit it actually applies, withholding the clock when the armed skew
+// budget says the two products belong to different orbit generations.
+// ===========================================================================
+
+// D7 pinned eval: a stamped clock_iode selects WHICH retained broadcast version
+// the baseline evaluates — the previous version across a cutover — and the gate
+// drops the clock only when the pinned version is no longer held.
+TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
+    auto& eph_store = LiveEphemerisStore::getInstance();
+    eph_store.clear();
+
+    // Version 10 (af0 = 1e-5 s), then a cutover to version 11 (af0 = 2e-5 s):
+    // insert() demotes v10 to the retained "previous" slot.
+    BroadcastEphemeris v10 = gpsEph("G07");
+    v10.iode       = 10;
+    v10.kepler.af0 = 1e-5;
+    BroadcastEphemeris v11 = gpsEph("G07");
+    v11.iode        = 11;
+    v11.kepler.af0  = 2e-5;
+    v11.kepler.toe  = GnssTime{2300, 9000.0};   // fresher toe: pick() prefers v11
+    v11.kepler.toc  = GnssTime{2300, 9000.0};
+    eph_store.insert(v10);
+    eph_store.insert(v11);
+
+    const GnssTime t{2300, 9000.0};
+
+    // Producer stamped the clock against v10; the pinned eval must return the
+    // RETAINED PREVIOUS version — its af0 and its IODE — not the freshest.
+    SsrCorrectionStore ssr_store;   // owned
+    SsrClockCorrection c;
+    c.sat = "G07"; c.c0 = 0.05;
+    c.received_time = t; c.epoch_time = t;
+    c.iode = 10;
+    ssr_store.pushClock(c, SsrHeader{});
+    const auto q = ssr_store.getOrbitClock("G07", t, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q.has_value());
+    EXPECT_EQ(q->clock_iode, 10);
+
+    // The Card-7 baseline selection, re-stated locally: this test pins the
+    // STORE's pinned-retention contract (computeSatelliteClock honors the pin
+    // across a demotion); the production selection expression itself is pinned
+    // end-to-end by SsrStoreInjectionTest.Card7PinnedEvalUsesStampedVersion,
+    // whose fixture geometry makes a revert flip its assertions.
+    const int ssr_iode = (q->clock_iode >= 0) ? q->clock_iode : q->iode;
+    EXPECT_EQ(ssr_iode, 10);
+    const auto bc = eph_store.computeSatelliteClock("G07", t, ssr_iode);
+    ASSERT_TRUE(bc.has_value());
+    EXPECT_EQ(bc->iode, 10);                       // pinned to the previous version
+    EXPECT_NEAR(bc->bias, 1e-5, 1e-9);             // v10's polynomial, not v11's
+    EXPECT_TRUE(SsrCorrectionStore::iodeMatches(bc->iode, q->clock_iode));  // gate passes
+
+    // Un-pinned control: the freshest version answers with iode 11 / af0 2e-5.
+    const auto cur = eph_store.computeSatelliteClock("G07", t);
+    ASSERT_TRUE(cur.has_value());
+    EXPECT_EQ(cur->iode, 11);
+    EXPECT_NEAR(cur->bias, 2e-5, 1e-9);
+
+    // Pinned version EVICTED (a stamp two generations old): pickForSsr falls
+    // back to the freshest version, whose reported IODE then FAILS the gate —
+    // the clock is dropped and the RTA-9 staleness ladder governs (D7).
+    const auto gone = eph_store.computeSatelliteClock("G07", t, /*ssr_iode=*/9);
+    ASSERT_TRUE(gone.has_value());
+    EXPECT_EQ(gone->iode, 11);
+    EXPECT_FALSE(SsrCorrectionStore::iodeMatches(gone->iode, 9));
+
+    eph_store.clear();
+}
+
+// classifyOrbitEcho truth table: not-stamped short-circuit, missing applied
+// orbit, IOD-SSR identity, and the budget-gated content-epoch skew clause.
+TEST(Card7ConsumerTest, OrbitEchoClassifyMatrix) {
+    using V = SsrCorrectionStore::OrbitEchoVerdict;
+    const GnssTime t{2300, 100.0};
+
+    // The clock-bearing record under test (echo oiod=7, oepoch tow=100).
+    SsrCorrectionStore::OrbitClockCorrection rec;
+    rec.has_clock     = true;
+    rec.orbit_iod_ssr = 7;
+    rec.orbit_epoch   = t;
+
+    // Applied-orbit records to compare against.
+    SsrCorrectionStore::OrbitClockCorrection same;   // same generation
+    same.has_orbit             = true;
+    same.applied_orbit_iod_ssr = 7;
+    same.orbit_epoch_time      = t;
+    SsrCorrectionStore::OrbitClockCorrection other = same;  // different IOD-SSR
+    other.applied_orbit_iod_ssr = 8;
+    SsrCorrectionStore::OrbitClockCorrection skewed = same; // same IOD, 20 s older content
+    skewed.orbit_epoch_time = GnssTime{2300, 80.0};
+    SsrCorrectionStore::OrbitClockCorrection clock_only;    // no orbit part at all
+    clock_only.has_clock = true;
+
+    // No echo on the record -> nothing to verify, regardless of the applied side.
+    SsrCorrectionStore::OrbitClockCorrection unstamped = rec;
+    unstamped.orbit_iod_ssr = -1;
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(unstamped, other, 10.0), V::NotStamped);
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(unstamped, std::nullopt, 10.0), V::NotStamped);
+
+    // Echo present but the consumer applies no SSR orbit at all.
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, std::nullopt, 10.0), V::NoAppliedOrbit);
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, clock_only,   10.0), V::NoAppliedOrbit);
+
+    // Identity: different orbit update generation.
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, other, 10.0), V::IodSsrMismatch);
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, other,  0.0), V::IodSsrMismatch);  // counted even with the budget unset
+
+    // Content-epoch skew: evaluated ONLY when the budget is armed (> 0).
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, skewed, 10.0), V::EpochSkew);   // 20 s > 10 s
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, skewed, 30.0), V::Match);       // 20 s <= 30 s
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, skewed,  0.0), V::Match);       // budget unset -> skew clause off
+    EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, same,   10.0), V::Match);
+}
+
+// checkOrbitEcho tallies per-(sat|reason) on the store; Match never counts;
+// clear() resets the tallies but the armed budget (configuration) survives.
+TEST(Card7ConsumerTest, OrbitEchoCheckCountsAndClear) {
+    using V = SsrCorrectionStore::OrbitEchoVerdict;
+    const GnssTime t{2300, 100.0};
+
+    SsrCorrectionStore store;   // owned: plays the CLOCK store (counter home)
+    SsrCorrectionStore::OrbitClockCorrection rec;
+    rec.has_clock     = true;
+    rec.orbit_iod_ssr = 7;
+    rec.orbit_epoch   = t;
+    SsrCorrectionStore::OrbitClockCorrection other;
+    other.has_orbit             = true;
+    other.applied_orbit_iod_ssr = 8;
+    other.orbit_epoch_time      = t;
+
+    // Budget unset: identity mismatches still classify and COUNT (count-only mode).
+    EXPECT_EQ(store.checkOrbitEcho("G07", rec, other), V::IodSsrMismatch);
+    EXPECT_EQ(store.checkOrbitEcho("G07", rec, std::nullopt), V::NoAppliedOrbit);
+    auto counts = store.orbitEchoMismatchCounts();
+    EXPECT_EQ(counts["G07|iod"],     1u);
+    EXPECT_EQ(counts["G07|noorbit"], 1u);
+
+    // Arm the budget: the skew clause activates and counts under "skew".
+    store.setOrbitEchoMaxSkew(10.0);
+    EXPECT_NEAR(store.orbitEchoMaxSkew(), 10.0, 1e-12);
+    SsrCorrectionStore::OrbitClockCorrection skewed = other;
+    skewed.applied_orbit_iod_ssr = 7;                       // identity agrees
+    skewed.orbit_epoch_time      = GnssTime{2300, 80.0};    // 20 s > 10 s budget
+    EXPECT_EQ(store.checkOrbitEcho("G07", rec, skewed), V::EpochSkew);
+    counts = store.orbitEchoMismatchCounts();
+    EXPECT_EQ(counts["G07|skew"], 1u);
+
+    // A clean match never counts.
+    SsrCorrectionStore::OrbitClockCorrection same = skewed;
+    same.orbit_epoch_time = t;
+    EXPECT_EQ(store.checkOrbitEcho("G07", rec, same), V::Match);
+    EXPECT_EQ(store.orbitEchoMismatchCounts().size(), 3u);
+
+    // clear(): tallies are per-run diagnostics; the budget is configuration.
+    store.clear();
+    EXPECT_TRUE(store.orbitEchoMismatchCounts().empty());
+    EXPECT_NEAR(store.orbitEchoMaxSkew(), 10.0, 1e-12);
+}
+
+// The merge carries the APPLIED orbit's own IOD-SSR for a standalone orbit
+// record too (the split-store consumer's orbit-side lookup).
+TEST(Card7ConsumerTest, StandaloneOrbitCarriesOwnIodSsr) {
+    SsrCorrectionStore store;   // owned: plays the ORBIT store
+    SsrOrbitCorrection o;
+    o.sat           = "G07";
+    o.iode          = 30;
+    o.iod_ssr       = 9;
+    o.received_time = GnssTime{2300, 100.0};
+    o.epoch_time    = GnssTime{2300,  95.0};
+    store.pushOrbit(o, SsrHeader{});
+    const auto q = store.getOrbitClock("G07", GnssTime{2300, 100.0}, /*max_age_s=*/30.0);
+    ASSERT_TRUE(q.has_value());
+    EXPECT_TRUE(q->has_orbit);
+    EXPECT_EQ(q->applied_orbit_iod_ssr, 9);
+    EXPECT_NEAR(q->orbit_epoch_time.tow, 95.0, 1e-9);
+    EXPECT_EQ(q->orbit_iod_ssr, -1);   // a bare orbit record carries no ECHO (that rides on the clock)
 }
 
 // ===========================================================================

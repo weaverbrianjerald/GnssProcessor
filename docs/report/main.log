@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.2) (preloaded format=pdflatex 2026.5.1)  27 JUN 2026 11:58
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.2) (preloaded format=pdflatex 2026.5.1)  17 JUL 2026 08:56
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1293,110 +1293,147 @@ File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
 \openout6 = `main.toc'.
 
  [5] (foundations.tex (notation.tex [6] [7]) (state_vector.tex
-[8] [9]
-Underfull \hbox (badness 1377) in paragraph at lines 177--194
+[8] [9] [10]
+Underfull \hbox (badness 1377) in paragraph at lines 193--210
  []\OT1/cmr/bx/n/10.95 (+20) Satellite phase bi-ases $[]$ (net-work mode).[] \O
 T1/cmr/m/n/10.95 (+20) Present only in the net-work pro-ducer
  []
 
-[10]) (observation_equations.tex [11] [12]) (bssd_dd.tex [13] [14]))
-(frames_time.tex [15] [16] [17] [18]
+[11]) (observation_equations.tex [12] [13]) (bssd_dd.tex
+Overfull \hbox (16.63506pt too wide) in paragraph at lines 15--21
+\OT1/cmr/m/n/10.95 (-20) For each con-stel-la-tion $\OML/cmm/m/it/10.95 g$\OT1/
+cmr/m/n/10.95 (-20) , choose a pivot satel-lite $\OML/cmm/m/it/10.95 p[]$ \OT1/
+cmr/m/n/10.95 (-20) (elected by \OT1/cmtt/m/n/10.95 PivotManager::selectPivotCa
+ndidates
+ []
+
+[14] [15] [16])) (frames_time.tex [17] [18] [19] [20] [21]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\leavevmode@ifvmode' on input line 359.
+(hyperref)                removing `\leavevmode@ifvmode' on input line 382.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                \kern 1.8254pt
-(hyperref)                removed on input line 359.
-
-[19]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 394.
+(hyperref)                removed on input line 382.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\to' on input line 394.
+(hyperref)                removing `math shift' on input line 417.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 394.
-
-[20]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 488.
+(hyperref)                removing `\to' on input line 417.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\leftrightarrow' on input line 488.
+(hyperref)                removing `math shift' on input line 417.
+
+[22]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 511.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 488.
+(hyperref)                removing `\leftrightarrow' on input line 511.
 
-[21]) (product_evaluation.tex [22] [23] [24]
-Underfull \hbox (badness 10000) in paragraph at lines 246--255
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 511.
+
+[23] [24]) (product_evaluation.tex
+Underfull \hbox (badness 2753) in paragraph at lines 44--68
+\OT1/cmr/m/n/10.95 (+20) eval-u-a-tion (\OT1/cmtt/m/n/10.95 src/core/model/Mode
+lGeometry.cpp\OT1/cmr/m/n/10.95 (+20) , \OT1/cmtt/m/n/10.95 src/core/correction
+s/GnssCorrections.
+ []
+
+
+Underfull \hbox (badness 2401) in paragraph at lines 44--68
+\OT1/cmtt/m/n/10.95 :realtimeUsesLiveOrbitSource \OT1/cmr/m/n/10.95 (+20) vs \O
+T1/cmtt/m/n/10.95 realtimeUsesLiveOrbitClockSource\OT1/cmr/m/n/10.95 (+20) , \O
+T1/cmtt/m/n/10.95 ProductParser::
+ []
+
+[25] [26] [27]
+Underfull \hbox (badness 10000) in paragraph at lines 267--276
 \OT1/cmtt/m/n/10.95 getSatelliteClockInterpolationMode() \OT1/cmr/m/n/10.95 (+2
 0) (\OT1/cmtt/m/n/10.95 src/core/corrections/GnssCorrections.cpp\OT1/cmr/m/n/10
 .95 (+20) ).
  []
 
-[25]
-Underfull \hbox (badness 2591) in paragraph at lines 363--379
+[28]
+Underfull \hbox (badness 2591) in paragraph at lines 384--400
 \OT1/cmr/m/n/10.95 (+20) from their Ke-p-le-rian broad-cast ephemeris (\OT1/cmt
 t/m/n/10.95 src/core/products/LiveEphemerisStore.cpp\OT1/cmr/m/n/10.95 (+20) ,
  []
 
-[26] [27] [28]) (atmosphere.tex [29] [30] [31]
+[29] [30] [31]) (atmosphere.tex [32] [33] [34]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 187.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 187.
+(hyperref)                removing `math shift' on input line 190.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 261.
+(hyperref)                removing `math shift' on input line 190.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 261.
+(hyperref)                removing `math shift' on input line 264.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 261.
-
-[32] [33] [34]) (site_displacement.tex [35] [36]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 174.
+(hyperref)                removing `superscript' on input line 264.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 174.
+(hyperref)                removing `math shift' on input line 264.
 
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 174.
-
-[37]
-Underfull \hbox (badness 2096) in paragraph at lines 227--234
-\OML/cmm/m/it/10.95 P[] \OT1/cmr/m/n/10.95 (+20) : (\OMS/cmsy/m/n/10.95 ^^@\OT1
-/cmr/m/n/10.95 (+20) 1\OML/cmm/m/it/10.95 :\OT1/cmr/m/n/10.95 (+20) 23\OML/cmm/
-m/it/10.95 ;  \OMS/cmsy/m/n/10.95 ^^@\OT1/cmr/m/n/10.95 (+20) 0\OML/cmm/m/it/10
-.95 :\OT1/cmr/m/n/10.95 (+20) 07\OML/cmm/m/it/10.95 ;  \OT1/cmr/m/n/10.95 (+20)
- 0\OML/cmm/m/it/10.95 :\OT1/cmr/m/n/10.95 (+20) 06\OML/cmm/m/it/10.95 ;  \OT1/c
-mr/m/n/10.95 (+20) 0\OML/cmm/m/it/10.95 :\OT1/cmr/m/n/10.95 (+20) 01)$ in the o
-r-der $(\OML/cmm/m/it/10.95 A[]; A[]; A[]; A[]\OT1/cmr/m/n/10.95 (+20) )$ (\OT1
-/cmtt/m/n/10.95 GnssCorrections.cpp:
+[35] [36] [37] [38]) (site_displacement.tex
+Underfull \hbox (badness 1502) in paragraph at lines 86--106
+\OT1/cmr/m/n/10.95 (+20) so a dis-place-ment that pushes the re-ceiver \OT1/cmr
+/m/it/10.95 (+20) to-ward \OT1/cmr/m/n/10.95 (+20) the satel-lite (a pos-i-tive
+ com-po-nent
  []
 
-[38]
-Underfull \hbox (badness 7379) in paragraph at lines 298--307
+
+Underfull \hbox (badness 1546) in paragraph at lines 86--106
+\OT1/cmr/m/n/10.95 (+20) along $\OML/cmm/b/it/10.95 e$\OT1/cmr/m/n/10.95 (+20) 
+) yields $\OML/cmm/m/it/10.95 ^^N^^Z < \OT1/cmr/m/n/10.95 (+20) 0$ and short-en
+s the mod-elled range, as re-quired. The ocean-
+ []
+
+
+Underfull \hbox (badness 1939) in paragraph at lines 86--106
+\OT1/cmtt/m/n/10.95 computeSatelliteGeometry\OT1/cmr/m/n/10.95 (+20) : \OT1/cmt
+t/m/n/10.95 otl[]corr = otl[]ecef.dot(-los)\OT1/cmr/m/n/10.95 (+20) , \OT1/cmtt
+/m/n/10.95 apl[]corr = apl[]ecef.dot(-
+ []
+
+[39]
+Overfull \hbox (1.21118pt too wide) in paragraph at lines 145--151
+\OT1/cmr/m/n/10.95 (-20) (\OT1/cmtt/m/n/10.95 GnssCorrections.cpp \OT1/cmr/m/n/
+10.95 (-20) tide-helper con-stants \OT1/cmtt/m/n/10.95 kTideRe\OT1/cmr/m/n/10.9
+5 (-20) /\OT1/cmtt/m/n/10.95 kTideMassRatioSun\OT1/cmr/m/n/10.95 (-20) /\OT1/cm
+tt/m/n/10.95 kTideMassRatioMoon\OT1/cmr/m/n/10.95 (-20) ).
+ []
+
+[40]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 180.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 180.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 180.
+
+[41]
+Underfull \hbox (badness 7379) in paragraph at lines 304--313
 \OT1/cmr/m/n/10.95 (+20) applied as $\OML/cmm/m/it/10.95 ^^_[] []\OT1/cmr/m/n/1
 0.95 (+20) = 2\OML/cmm/m/it/10.95 ^^Y \OT1/cmr/m/n/10.95 (+20) ([][])$ (\OT1/cm
 tt/m/n/10.95 OceanTideModel.cpp:178--183\OT1/cmr/m/n/10.95 (+20) ; \OT1/cmtt/m/
@@ -1404,13 +1441,29 @@ n/10.95 OceanTideModel.hpp\OT1/cmr/m/n/10.95 (+20) ,
  []
 
 
-Underfull \hbox (badness 4024) in paragraph at lines 298--307
+Underfull \hbox (badness 4024) in paragraph at lines 304--313
 \OT1/cmtt/m/n/10.95 CONSTITUENT[]PHASE[]BIAS[]CYCLES\OT1/cmr/m/n/10.95 (+20) ).
  \OT1/cmr/bx/n/10.95 (+20) Omit-ting this bias phases ev-ery di-ur-nal con-
  []
 
-[39] [40]) (observation_physics.tex [41] [42] [43] [44] [45] [46] [47])
-(kalman_smoother.tex [48] [49] [50] [51] [52] [53]) (stochastic_qc.tex
+[42] [43]
+Overfull \hbox (21.94704pt too wide) in paragraph at lines 425--436
+\OT1/cmr/m/n/10.95 (-20) with the IERS/Desai load Love com-bi-na-tion $\OML/cmm
+/m/it/10.95 ^^M[] \OT1/cmr/m/n/10.95 (-20) = 0\OML/cmm/m/it/10.95 :\OT1/cmr/m/n
+/10.95 (-20) 6870\OML/cmm/m/it/10.95 ;  ^^M[] \OT1/cmr/m/n/10.95 (-20) = 0\OML/
+cmm/m/it/10.95 :\OT1/cmr/m/n/10.95 (-20) 0036$ (\OT1/cmtt/m/n/10.95 kOptGammaRe
+al\OT1/cmr/m/n/10.95 (-20) /\OT1/cmtt/m/n/10.95 kOptGammaImag\OT1/cmr/m/n/10.95
+ (-20) ).
+ []
+
+
+Underfull \hbox (badness 1248) in paragraph at lines 446--455
+\OT1/cmtt/m/n/10.95 oceanPoleTideKappa\OT1/cmr/m/n/10.95 (+20) ). The whole oce
+an-pole-tide path re-pro-duces the NGS M-PAGES
+ []
+
+[44]) (observation_physics.tex [45] [46] [47] [48] [49] [50] [51])
+(kalman_smoother.tex [52] [53] [54] [55] [56] [57] [58]) (stochastic_qc.tex
 LaTeX Font Info:    Trying to load font information for OMS+cmr on input line 5
 3.
 
@@ -1420,49 +1473,49 @@ File: omscmr.fd 2024/11/19 v2.5n Standard LaTeX font definitions
 LaTeX Font Info:    Font shape `OMS/cmr/m/n' in size <10.95> not available
 (Font)              Font shape `OMS/cmsy/m/n' tried instead on input line 53.
 
-[54] [55]
+[59] [60] [61]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 223.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 223.
-
-[56] [57]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 332.
+(hyperref)                removing `math shift' on input line 251.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 332.
+(hyperref)                removing `math shift' on input line 251.
 
-) (estimator_infrastructure.tex [58] [59] [60] [61]
-Underfull \hbox (badness 1460) in paragraph at lines 310--318
+[62] [63]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 374.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 374.
+
+) (estimator_infrastructure.tex [64] [65] [66] [67] [68]
+Underfull \hbox (badness 1460) in paragraph at lines 371--379
 []\OT1/cmr/m/n/10.95 (+20) Within a cov-er-age tier the tie-break score com-bin
 es float-convergence and ge-om-e-try
  []
 
-[62]) (slip_detection.tex [63]
+[69]) (slip_detection.tex [70]
 LaTeX Font Info:    Trying to load font information for OMS+cmtt on input line 
-76.
-LaTeX Font Info:    No file OMScmtt.fd. on input line 76.
+82.
+LaTeX Font Info:    No file OMScmtt.fd. on input line 82.
 
 
 LaTeX Font Warning: Font shape `OMS/cmtt/m/n' undefined
 (Font)              using `OMS/cmsy/m/n' instead
-(Font)              for symbol `textbraceleft' on input line 76.
+(Font)              for symbol `textbraceleft' on input line 82.
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 73--91
+Underfull \hbox (badness 10000) in paragraph at lines 79--101
 []\OT1/cmtt/m/n/10.95 SlipDetectorRegistry::createEnabled \OT1/cmr/m/n/10.95 (+
 20) (\OT1/cmtt/m/n/10.95 src/core/slip/SlipDetectorRegistry.cpp\OT1/cmr/m/n/10.
 95 (+20) )
  []
 
-[64] [65] [66]
-Underfull \hbox (badness 7595) in paragraph at lines 302--309
+[71] [72] [73]
+Underfull \hbox (badness 7595) in paragraph at lines 340--347
 \OT1/cmr/m/n/10.95 (+20) The Tur-boEdit re-solver is a \OT1/cmr/m/it/10.95 (+20
 ) pure \OT1/cmr/m/n/10.95 (+20) MW+GF joint in-te-ger solver (\OT1/cmtt/m/n/10.
 95 src/core/slip/
@@ -1470,47 +1523,47 @@ Underfull \hbox (badness 7595) in paragraph at lines 302--309
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 310.
+(hyperref)                removing `math shift' on input line 348.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\times' on input line 310.
+(hyperref)                removing `\times' on input line 348.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 310.
+(hyperref)                removing `math shift' on input line 348.
 
-[67] [68]
-Overfull \hbox (15.9046pt too wide) detected at line 469
+[74] [75]
+Overfull \hbox (15.9046pt too wide) detected at line 507
 [][][][]\OMS/cmtt/m/n/10.95 j[]j ^^T []  ^ [] ^^T []\OML/cmm/m/it/10.95 ;
  []
 
-[69]) (ambiguity_resolution.tex [70]
+[76]) (ambiguity_resolution.tex [77] [78]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 118.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 118.
+(hyperref)                removing `math shift' on input line 132.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 118.
+(hyperref)                removing `superscript' on input line 132.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 118.
+(hyperref)                removing `math shift' on input line 132.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 118.
+(hyperref)                removing `math shift' on input line 132.
 
-[71] [72] [73]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 132.
+
+[79] [80] [81]
 LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <10.95> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 353.
- [74] [75]
-Underfull \hbox (badness 10000) in paragraph at lines 513--514
+(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 375.
+ [82] [83]
+Underfull \hbox (badness 10000) in paragraph at lines 537--538
 []|\OT1/cmr/m/n/10.95 (+20) degenerate-covariance re-ject
  []
 
@@ -1519,12 +1572,17 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
 
-Underfull \hbox (badness 10000) in paragraph at lines 522--523
+Underfull \hbox (badness 1472) in paragraph at lines 545--546
+[]|\OT1/cmr/m/n/10.95 (+20) WL-constraint pseudo-obs $\OML/cmm/b/it/10.95 R$
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 548--549
 []|\OT1/cmr/m/n/10.95 (+20) constellation sub-set (Sec-
  []
 
-) (imu_aiding.tex [76] [77]
-Underfull \hbox (badness 3364) in paragraph at lines 183--192
+) (imu_aiding.tex [84] [85]
+Underfull \hbox (badness 3364) in paragraph at lines 192--201
 \OT1/cmr/m/n/10.95 (+20) with the spec-tral den-si-ties $\OML/cmm/m/it/10.95 ^^
 [[]; ^^[[]; ^^[[]; ^^[[]$ \OT1/cmr/m/n/10.95 (+20) read from \OT1/cmtt/m/n/10.9
 5 imu.\OMS/cmtt/m/n/10.95 f\OT1/cmtt/m/n/10.95 accel[]noise[]density\OT1/cmr/m/
@@ -1532,14 +1590,14 @@ n/10.95 (+20) , \OT1/cmtt/m/n/10.95 gyro[]
  []
 
 
-Underfull \hbox (badness 4229) in paragraph at lines 183--192
+Underfull \hbox (badness 4229) in paragraph at lines 192--201
 \OT1/cmtt/m/n/10.95 noise[]density\OT1/cmr/m/n/10.95 (+20) , \OT1/cmtt/m/n/10.9
 5 accel[]bias[]instability\OT1/cmr/m/n/10.95 (+20) , \OT1/cmtt/m/n/10.95 gyro[]
 bias[]instability\OMS/cmtt/m/n/10.95 g \OT1/cmr/m/n/10.95 (+20) (de-faults in \
 OT1/cmtt/m/n/10.95 config/
  []
 
-[78] [79]) (ssr_corrections.tex
+[86] [87]) (ssr_corrections.tex
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 43.
@@ -1556,130 +1614,130 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 43.
 
-[80]
+[88]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 94.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\leavevmode@ifvmode' on input line 94.
+(hyperref)                removing `math shift' on input line 104.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                \kern 1.8254pt
-(hyperref)                removed on input line 94.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 94.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 94.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 154.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 154.
-
-[81] [82]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 324.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 324.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `superscript' on input line 324.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 324.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 324.
-
-[83]) (realtime_engine.tex [84] [85]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\leavevmode@ifvmode' on input line 103.
+(hyperref)                removing `\leavevmode@ifvmode' on input line 104.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                \kern 1.8254pt
-(hyperref)                removed on input line 103.
+(hyperref)                removed on input line 104.
 
 
-Underfull \hbox (badness 1348) in paragraph at lines 126--134
-[]\OT1/cmr/m/n/10.95 (+20) The top-level \OT1/cmtt/m/n/10.95 RtcmParser \OT1/cm
-r/m/n/10.95 (+20) (\OT1/cmtt/m/n/10.95 src/core/rtcm/RtcmParser.cpp\OT1/cmr/m/n
-/10.95 (+20) ) reads the 12-bit mes-sage
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 104.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 104.
+
+[89]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 183.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 183.
+
+[90] [91]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 359.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 359.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `superscript' on input line 359.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `subscript' on input line 359.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 359.
+
+
+Underfull \hbox (badness 2173) in paragraph at lines 373--394
+[]\OT1/cmr/m/n/10.95 (+20) The at-mo-sphere loop is, how-ever, closed \OT1/cmr/
+m/it/10.95 (+20) off \OT1/cmr/m/n/10.95 (+20) the RTCM wire, through the same
  []
 
-[86] [87] [88]
+[92]) (realtime_engine.tex [93]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\leavevmode@ifvmode' on input line 104.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                \kern 1.8254pt
+(hyperref)                removed on input line 104.
+
+[94] [95] [96] [97]
 
 LaTeX Font Warning: Font shape `OT1/cmr/bx/sc' undefined
-(Font)              using `OT1/cmr/bx/n' instead on input line 345.
+(Font)              using `OT1/cmr/bx/n' instead on input line 368.
 
-[89] [90]) (network.tex [91] [92] [93] [94]
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 344.
-
+[98] [99]) (network.tex [100] [101] [102] [103]
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\to' on input line 344.
+(hyperref)                removing `math shift' on input line 394.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 344.
+(hyperref)                removing `\to' on input line 394.
 
-) (network_example.tex [95] [96] [97]
-Underfull \hbox (badness 1097) in paragraph at lines 254--264
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 394.
+
+[104]) (network_example.tex [105] [106]
+Underfull \hbox (badness 1097) in paragraph at lines 257--269
 []\OT1/cmr/m/n/10.95 (+20) This four-satellite, two-receiver in-stance is, up t
 o the ge-om-e-try and the sec-ond fre-
  []
 
 
-Underfull \hbox (badness 2111) in paragraph at lines 254--264
+Underfull \hbox (badness 2111) in paragraph at lines 257--269
 \OT1/cmtt/m/n/10.95 RecoversSyntheticTruthUpToSTransform \OT1/cmr/m/n/10.95 (+2
 0) test (\OT1/cmtt/m/n/10.95 tests/test[]network[]estimator.cpp\OT1/cmr/m/n/10.
 95 (+20) ) builds
  []
 
-) (pipeline_diagrams.tex
+) (pipeline_diagrams.tex [107]
 Overfull \hbox (24.68227pt too wide) in paragraph at lines 59--59
 []\OT1/cmtt/m/it/9 RealTime $\OMS/cmsy/m/n/9 !$ \OT1/cmtt/m/it/9 RealTimeEngine
 \OT1/cmr/m/it/9 (-20) ;  
@@ -1695,22 +1753,36 @@ Overfull \hbox (17.03683pt too wide) in paragraph at lines 151--151
  []\OT1/cmr/m/n/9 (-20) 1019/1020/1042/1044/1046 
  []
 
-) (generated_tables.tex (generated/processing_modes.tex [98] [99] [100]
-[101] [102] [103]
+) (generated_tables.tex (generated/processing_modes.tex [108] [109] [110]
+[111] [112] [113]
 Underfull \hbox (badness 1178) in paragraph at lines 88--89
 \OT1/cmr/m/n/10.95 (+20) The dif-fer-enc-ing regime is re-solved once per run b
 y the fac-tory be-low (ver-ba-tim from
  []
 
-[104]) (generated/config_toggles.tex
-ignored: Infinite glue shrinkage found in box being 
-split [105] [106]
-ignored: Infinite glue shrinkage found in box being split [107]
-ignored: Infinite
- glue shrinkage found in box being split [108]
-ignored: Infinite glue shrinkage found in 
-box being split [109]
-ignored: Infinite glue shrinkage found in box being split [110])
+) (generated/config_toggles.tex
+Underfull \hbox (badness 4242) in paragraph at lines 11--11
+[]\OT1/cmr/m/n/10.95 (+20) Table 5: Top-level boolean fea-ture tog-gles, parsed
+
+ []
+
+[114]
+ignored: Infinite glue shrinkage found in box being split [115]
+ignored: Infinite glue shrink
+age found in box being split [116]
+ignored: Infinite glue shrinkage found in box being sp
+lit [117]
+ignored: Infinite glue shrinkage found in box being split [118]
+ignored: Infinite glue sh
+rinkage found in box being split [119]
+ignored: Infinite glue shrinkage found in box bein
+g split [120]
+ignored: Infinite glue shrinkage found in box being split [121]
+ignored: Infinite glu
+e shrinkage found in box being split [122]
+ignored: Infinite glue shrinkage found in box 
+being split [123]
+ignored: Infinite glue shrinkage found in box being split [124])
 (generated/slip_detectors.tex
 Underfull \hbox (badness 10000) in paragraph at lines 8--8
 []\OT1/cmr/m/n/10.95 (+20) Table 8: Cycle-slip de-tec-tors known to
@@ -1733,17 +1805,22 @@ Overfull \hbox (15.62158pt too wide) in paragraph at lines 26--27
  []
 
 
-Overfull \hbox (9.8729pt too wide) in paragraph at lines 29--30
+Overfull \hbox (15.62158pt too wide) in paragraph at lines 27--28
+[]|\OT1/cmtt/m/n/10.95 makeReceiverPhaseBiasKey|  
+ []
+
+
+Overfull \hbox (9.8729pt too wide) in paragraph at lines 31--32
 []|\OT1/cmtt/m/n/10.95 makeSystemTimeOffsetKey|  
  []
 
-[111])) [112]
+[125])) [126]
 Underfull \hbox (badness 1199) in paragraph at lines 151--151
 []\OT1/cmr/m/n/10.95 (+20) P. J. G. Te-u-nis-sen. ``Gen-er-al-ized in-verses, a
 d-just-ment, the da-tum prob-lem and S-
  []
 
-[113] [114] (main.aux)
+[127] [128] (main.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-03-20>
@@ -1753,19 +1830,19 @@ L3 programming layer <2026-03-20>
 LaTeX Font Warning: Some font shapes were not available, defaults substituted.
 
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 518AF3A7CFFBB2C654168CCB17FCB5C7;38882.
+(rerunfilecheck)             Checksum: 65CC89C0536CF9A2E712F863C22B1F1A;39285.
 Package logreq Info: Writing requests to 'main.run.xml'.
 \openout1 = `main.run.xml'.
 
  ) 
 Here is how much of TeX's memory you used:
- 41523 strings out of 467691
- 843581 string characters out of 5414020
- 1701408 words of memory out of 5000000
- 68816 multiletter control sequences out of 15000+600000
- 662410 words of font info for 304 fonts, out of 8000000 for 9000
+ 41564 strings out of 467691
+ 844048 string characters out of 5414020
+ 1809315 words of memory out of 5000000
+ 68824 multiletter control sequences out of 15000+600000
+ 662510 words of font info for 306 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 117i,24n,121p,1151b,2111s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 117i,24n,121p,1419b,2113s stack positions out of 10000i,1000n,20000p,200000b,200000s
  <C:\Users\weaverb\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\tc
 tt1095.pk> <C:\Users\weaverb\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/d
 pi600\tcrm1095.pk><C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/p
@@ -1801,9 +1878,9 @@ Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmtt9.pfb><C:/Users/weaver
 b/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/symbols/msam10.pfb>
 <C:/Users/weaverb/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/sym
 bols/msbm10.pfb>
-Output written on main.pdf (114 pages, 1268362 bytes).
+Output written on main.pdf (128 pages, 1361176 bytes).
 PDF statistics:
- 2641 PDF objects out of 2984 (max. 8388607)
- 805 named destinations out of 1000 (max. 500000)
+ 2768 PDF objects out of 2984 (max. 8388607)
+ 834 named destinations out of 1000 (max. 500000)
  63805 words of extra memory for PDF output out of 74296 (max. 10000000)
 

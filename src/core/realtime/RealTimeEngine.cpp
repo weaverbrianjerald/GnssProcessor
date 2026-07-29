@@ -14,6 +14,7 @@
 #include "products/LiveEphemerisStore.hpp"
 #include "sbf/SbfParser.hpp"
 #include "math/Coordinates.hpp"
+#include "measurement/StateInitializer.hpp"   // systemToIsbName (clock-disc ISB scoping)
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include <algorithm>
@@ -113,6 +114,19 @@ bool RealTimeEngine::initialize() {
         log->info("SSR code-bias band fallback ON (processing.ssr_bias_band_fallback): an "
                   "exact-attribute miss consumes the same-band sibling CODE bias (residual "
                   "attribute DCB absorbed by receiver code-bias states); PHASE never falls back.");
+    }
+
+    // Card 7 (opt-in, same pattern): arm the orbit/clock coherence skew budget
+    // on the process-wide store.  An injected OWNED store is armed by its owner
+    // (Application::runRealTime) at creation.  Default 0 — the store is
+    // untouched and clock application byte-identical.
+    if (const double skew = config_.getNetworkConsumerConfig().orbit_clock_max_skew_s;
+        skew > 0.0) {
+        SsrCorrectionStore::getInstance().setOrbitEchoMaxSkew(skew);
+        log->info("Orbit/clock coherence budget ON "
+                  "(processing.network_consumer.orbit_clock_max_skew_s = {:.1f}s): a "
+                  "network clock whose orbit echo disagrees with the applied SSR orbit "
+                  "is withheld per satellite (RTA-9 ladder then governs).", skew);
     }
 
     // ProductParser (loads static products: ATX, BIA, broadcast nav).  In a
@@ -761,6 +775,8 @@ void RealTimeEngine::flush() {
     // RTA-13: end-of-run obs-code attribute-mismatch summary (flush is the
     // engine's end-of-stream hook).  Silent when no mismatch was counted.
     logBiasAttrMismatchSummary("end of run");
+    // Card 7: ditto for the orbit/clock coherence-echo mismatches.
+    logOrbitEchoMismatchSummary("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -1739,6 +1755,9 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         const auto& ssr = ssrStore();
         const double cb_var =
             config_.codeBiasReinflateStd() * config_.codeBiasReinflateStd();
+        const bool   bias_age_gate = config_.enableSsrBiasMaxAge();
+        const double bias_max_age  = config_.getSsrBiasMaxAge()
+                                   * config_.getSsrBiasStaleHoldFactor();
         std::set<std::string> reref_systems;   // system-name prefixes whose datum stepped
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.modeled) {
@@ -1753,6 +1772,29 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
                                   epoch_prefix, obs.satellite, code);
                     }
                 }
+                // A5 (P1-4) code analog: with the bias staleness gate ON, a code
+                // bias that goes stale — or VANISHES from a wholesale-replacing
+                // producer push (no disc counter travels for an absent signal) —
+                // flips the applied ssr_bias_term by the full bias with no
+                // counter change.  The near-frozen receiver code-bias state drags
+                // that step for many epochs; treat a fresh↔absent flip exactly
+                // like a datum re-reference and re-inflate.  Only when the gate
+                // is on ⇒ no flips otherwise ⇒ byte-identical.
+                if (bias_age_gate) {
+                    const bool applied_now =
+                        ssr.hasCodeBias(obs.satellite, code, obs.time, bias_max_age);
+                    const std::string fkey = "CB|" + obs.satellite + "|" + code;
+                    const auto it = ssr_code_bias_applied_.find(fkey);
+                    if (it != ssr_code_bias_applied_.end() && it->second != applied_now) {
+                        reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
+                                  "(re-inflating rx code-bias states)",
+                                  epoch_prefix, it->second ? "applied" : "absent",
+                                  applied_now ? "applied" : "absent",
+                                  obs.satellite, code);
+                    }
+                    ssr_code_bias_applied_[fkey] = applied_now;
+                }
             }
         }
         // Re-inflate every receiver code-bias state of each re-referenced
@@ -1764,6 +1806,17 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         // signal->band->state-key mapping; the handful of extra IFB/DCB states
         // it touches re-converge within an epoch or two from informative code
         // under the modest re-inflation variance.
+        // T3g FINDING (per-satellite scoping is not achievable here): the receiver
+        // code-bias states this reaction touches are per-(system,band) — there is NO
+        // per-satellite receiver code-bias state to narrow to (a satellite's code bias
+        // is on the SATELLITE side, already per-sat in the SSR product; the reaction
+        // re-inflates the RECEIVER states that absorb the datum move).  The finest
+        // in-principle scope is per-band, but a per-band narrowing can MISS the
+        // reference-band DCB the shared clock cannot self-heal (the very failure this
+        // constellation scope avoids), so it is deliberately NOT taken.  The card's
+        // "per-satellite" ask is therefore structurally inapplicable to the receiver
+        // reaction; the per-sat scoping that IS meaningful (the emitted SATELLITE
+        // discontinuity) already lives on the producer side (markSatDiscontinuity).
         for (const auto& [key, idx] : state_manager_->getCodeBiasStates()) {
             (void)idx;
             for (const std::string& sys : reref_systems) {
@@ -1802,32 +1855,80 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         }
     }
 
-    // --- SSR clock datum re-reference -> receiver-clock note (A2) ---
-    // The network producer references each constellation's satellite clocks to a
-    // per-constellation pivot-satellite pin; that datum steps every satellite clock
-    // of the constellation by a COMMON constant when the pivot changes (a clock-
-    // pivot handover).  A common step is absorbed by the receiver clock, so — unlike
-    // the phase-bias step, which breaks the ambiguity integer property and is reset
-    // above — a clock re-reference needs NO ambiguity reset.  Note it (so the
-    // re-reference is observable, and so a consumer that carries a STIFF/random-walk
-    // receiver-clock state can re-inflate it here) and log it.  No-op without network
-    // clock disc counters: RTCM-decoded clocks and producer runs with
-    // network.emit_clock_disc off carry disc_counter=0, so noteSsrDiscontinuity never
-    // fires and live RTCM is unaffected.
+    // --- SSR clock datum re-reference -> receiver-clock note + scoped ISB
+    //     re-inflation (A2) ---
+    // The network producer's clock datum steps every satellite clock of ONE
+    // constellation by a COMMON constant when it re-references (a clock-pivot
+    // handover, or a sum-to-zero membership change under
+    // network.clock_disc_on_set_change).  For the REFERENCE constellation the
+    // step is absorbed by the receiver clock (estimated fresh each epoch), so —
+    // unlike the phase-bias step, which breaks the ambiguity integer property
+    // and is reset above — no ambiguity reset is needed.  For a NON-REFERENCE
+    // constellation, however, the step is DIFFERENTIAL vs the reference and
+    // lands on the near-frozen ISB state, which drags it for many epochs (the
+    // GPS-vs-GAL seam of the Jul-2026 closed-loop wire audit).  With
+    // estimation.clock_disc_isb_reinflate_std > 0 the handler re-inflates
+    // exactly the stepped constellation's ISB (scoped — never a blanket reset);
+    // at the default 0 it stays note-only.  No-op without network clock disc
+    // counters: RTCM-decoded clocks and producer runs with
+    // network.emit_clock_disc off carry disc_counter=0, so noteSsrDiscontinuity
+    // never fires and live RTCM is unaffected.
     {
         const auto& ssr = ssrStore();
+        const double isb_std = config_.clockDiscIsbReinflateStd();
+        std::set<std::string> reref_isb;   // ISB system names whose clock datum stepped
+        std::set<std::string> present_isb; // all NON-reference ISBs observed this epoch
+        bool reference_stepped = false;    // a REFERENCE-constellation (GPS) clock re-referenced
         for (const auto& obs : modeled_obs) {
+            if (isb_std > 0.0) {
+                const std::string sn = StateInitializer::systemToIsbName(obs.system);
+                if (!sn.empty()) present_isb.insert(sn);
+            }
             if (auto c = ssr.getClockDiscontinuity(obs.satellite)) {
                 if (state_manager_->noteSsrDiscontinuity("SC|" + obs.satellite, *c)) {
                     log->info("{}SSR clock discontinuity: {} (datum re-reference)",
                               epoch_prefix, obs.satellite);
                     // A receiver clock estimated fresh each epoch (white noise)
-                    // re-absorbs the common step with no action; a future consumer
-                    // that carries a random-walk receiver clock would re-inflate it
-                    // here (there is no reinflateReceiverClockVariance today).
+                    // re-absorbs the common-mode part with no action; the ISB
+                    // re-inflation below handles the differential part.
+                    // T3g FINDING: the clock discontinuity is DETECTED per-satellite
+                    // (getClockDiscontinuity(obs.satellite)), but the receiver-side
+                    // REACTION cannot be per-satellite — there is ONE ISB per
+                    // constellation and ONE shared receiver clock, no per-sat receiver
+                    // clock/ISB state.  So "per-satellite scoping" of this reaction is
+                    // structurally impossible; the constellation scope below is already
+                    // the finest correct granularity.
+                    if (isb_std > 0.0) {
+                        const std::string sys_name =
+                            StateInitializer::systemToIsbName(obs.system);
+                        if (!sys_name.empty()) {
+                            // Non-reference constellation stepped: the differential
+                            // lands on its OWN ISB — scoped re-inflation of that one.
+                            reref_isb.insert(sys_name);
+                        } else {
+                            // REFERENCE constellation (GPS) re-referenced: the receiver
+                            // clock absorbs the common mode, but the step lands
+                            // DIFFERENTIALLY on EVERY non-reference ISB (each is defined
+                            // relative to the GPS datum).  systemToIsbName(GPS) is "", so
+                            // scoping to it would re-inflate nothing and leave every
+                            // Galileo/GLONASS/BeiDou ISB dragging for many epochs — the
+                            // exact GPS-vs-non-ref seam this handler exists to cure.  Mark
+                            // the reference step and re-inflate all present ISBs below.
+                            reference_stepped = true;
+                        }
+                    }
                 }
             }
         }
+        if (reference_stepped) {
+            reref_isb.insert(present_isb.begin(), present_isb.end());
+            if (!present_isb.empty())
+                log->info("{}Reference (GPS) clock re-reference — re-inflating {} "
+                          "non-reference ISB variance(s) for the differential step.",
+                          epoch_prefix, present_isb.size());
+        }
+        for (const std::string& sys : reref_isb)
+            state_manager_->reinflateSystemTimeOffsetVariance(sys, isb_std * isb_std);
     }
 
     // --- KF measurement update (with outlier / pivot-handover rebuild loop) ---
@@ -1963,6 +2064,92 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         }
     }
 
+    // --- Network slant-ionosphere prior (ionosphere-weighted / BLUP) ---------
+    // Replace the loose ionosphere_q random walk with an ionosphere-weighted user
+    // model: the network producer evaluates its co-estimated SH-VTEC field at THIS
+    // consumer's pierce points and pushes an undifferenced per-satellite slant-iono
+    // value (metres on L1) into the injected store; here each per-sat slant-iono
+    // state is pulled toward that value with a quality-scaled pseudo-observation
+    // (Odijk-2012 / TK-2015 Eq 73 BLUP).  Placed AFTER the measurement update and
+    // BEFORE AR, like the ZWD block, so the shrunk [iono, ambiguity] covariance
+    // feeds the resolver.  The R block is common-mode-free per constellation
+    // (diag(σ²)+σ_c²·11ᵀ): the all-ones block leaves the un-modellable receiver
+    // iono-datum level FREE, so only the between-satellite structure is imposed —
+    // matching the producer's own appendShIonoRows.  The per-LOS σ is the network's
+    // representativeness σ (≈0.8–2.4 m at the default 5-TECU field σ) further scaled
+    // by ionosphere_weighting.std_scale, so the prior can be tightened toward an
+    // ionosphere-fixed model (std_scale<1) without re-tuning the producer's own
+    // field σ (which is deliberately loose to avoid SH aliasing).  Frozen BSSD
+    // pivots / zero-variance rows are excluded (their 0-value innovation would leak
+    // through the off-diagonal block).  Only a same-epoch supply is trusted
+    // (max_age = ½ the epoch spacing) so a satellite the producer did NOT re-supply
+    // this epoch floats rather than inheriting a stale delay.  Default OFF ⇒ no rows
+    // built, byte-identical.
+    if (consume_network_iono_ && kalman_filter_ && state_manager_) {
+        const auto& iw = config_.getIonosphereWeightingConfig();
+        const SsrCorrectionStore& store = ssrStore();
+        const Eigen::VectorXd x = state_manager_->getStateVector();
+        const std::set<std::string>& frozen_pivots =
+            state_manager_->getFrozenPivotSatellites();
+        // Same-epoch supply only: reject a value the producer did not refresh this
+        // epoch (its pierce point / STEC is stale), rather than trust it at the
+        // tight per-LOS σ.  The producer pushes received_time == the epoch time.
+        const double iono_max_age = (dt > 0.0) ? 0.5 * dt : 30.0;
+
+        std::vector<int>    idx;    // iono-state column index
+        std::vector<double> innov;  // network slant delay - current iono state (m)
+        std::vector<double> var;    // per-row pseudo-obs variance (m^2)
+        std::vector<System> cons;   // constellation, for the common-mode block
+
+        for (const auto& obs : modeled_obs) {
+            if (obs.elevation < iw.elevation_cutoff_deg) continue;
+            const int iono_idx = state_manager_->getIonosphereIndex(obs.satellite);
+            if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
+            if (frozen_pivots.count(obs.satellite) ||
+                state_manager_->getStateVariance(iono_idx) <= 0.0) {
+                continue;
+            }
+            const auto si = store.getSlantIono(obs.satellite, current_time, iono_max_age);
+            if (!si || !(si->sigma_m > 0.0)) continue;
+            double sg = iw.std_scale * si->sigma_m;   // consumer-side tightening knob
+            // T3f: floor the tightened σ so std_scale < 1 cannot drive the supplied iono prior
+            // below the per-LOS representativeness floor (an over-tight prior locks the slant
+            // iono to an under-observed SH value).  Gated by the producer toggle ⇒ byte-identical off.
+            if (config_.getNetworkConfig().iono_supply_formal_sigma)
+                sg = std::max(iw.floor_m, sg);
+            if (!(sg > 0.0)) continue;
+            idx.push_back(iono_idx);
+            innov.push_back(si->iono_m - x(iono_idx));
+            var.push_back(sg * sg);
+            cons.push_back(obs.system);
+        }
+
+        const int m = static_cast<int>(idx.size());
+        if (m > 0) {
+            const int n = static_cast<int>(x.size());
+            Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, n);
+            Eigen::VectorXd z(m);
+            for (int k = 0; k < m; ++k) {
+                H(k, idx[k]) = 1.0;
+                z(k) = innov[k];
+            }
+            const double common_var = iw.common_mode_sigma_m * iw.common_mode_sigma_m;
+            Eigen::MatrixXd R = Eigen::MatrixXd::Zero(m, m);
+            for (int r = 0; r < m; ++r) {
+                for (int c = 0; c < m; ++c)
+                    if (cons[r] == cons[c]) R(r, c) = common_var;
+                R(r, r) += var[r];
+            }
+            kalman_filter_->applyPseudoObservation(H, z, R);
+
+            double sum_abs = 0.0;
+            for (double e : innov) sum_abs += std::abs(e);
+            log_manager_.getLogger("ionosphere")->debug(
+                "Network iono prior: {} sats constrained, mean|innov|={:.3f} m", m,
+                sum_abs / static_cast<double>(m));
+        }
+    }
+
     // --- Integer ambiguity resolution (MLAMBDA) ---
     // Mirrors Application::run: only after a successful float update, feed the
     // MW-resolved WL integers + fractions to the resolver; on a confident fix,
@@ -2001,7 +2188,10 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // RTA-13: periodic obs-code attribute-mismatch visibility (one line every
     // 300 processed epochs; silent when no mismatch was ever counted).
-    if (epoch_count_ % 300 == 0) logBiasAttrMismatchSummary("periodic");
+    if (epoch_count_ % 300 == 0) {
+        logBiasAttrMismatchSummary("periodic");
+        logOrbitEchoMismatchSummary("periodic");   // Card 7: same cadence, same silence rule
+    }
 
     log->info("{}Epoch {}: pos=({:.3f},{:.3f},{:.3f}) clk={:.3f} zwd={:.4f} sats={}",
               epoch_prefix, epoch_count_,
@@ -2061,6 +2251,11 @@ void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
     // clock while consuming only the network phase bias (clean integer test).
     // Called after initialize(), so the models exist.
     ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
+    // Card 7: remember the CLOCK routing — the orbit-echo mismatch tallies land
+    // on the store GnssCorrections reads clocks from, which the echo summary
+    // must therefore read (it differs from the bias-routed override above
+    // whenever consume_clock != consume_bias).
+    clock_store_override_ = consume_clock ? store : nullptr;
     if (ppp_model_) {
         switch (orbit_source) {
         case SsrOrbitSource::FollowClock:
@@ -2110,6 +2305,38 @@ void RealTimeEngine::logBiasAttrMismatchSummary(const char* tag) {
         "sibling bias exists — code {} / phase {} lookups; top: {}{}",
         tag, code_total, phase_total, detail,
         top.size() > kMaxListed ? ", ..." : "");
+}
+
+void RealTimeEngine::logOrbitEchoMismatchSummary(const char* tag) {
+    // Read the CLOCK-routed store: that is where GnssCorrections tallies the
+    // echo mismatches (the engine-level ssrStore() is bias-routed and would
+    // stay empty forever under a clock-on/bias-off consumer profile).
+    const SsrCorrectionStore& clock_store =
+        clock_store_override_ ? *clock_store_override_
+                              : SsrCorrectionStore::getInstance();
+    const auto counts = clock_store.orbitEchoMismatchCounts();
+    if (counts.empty()) return;   // clean / pre-Card-7 run: never logs (byte-identical)
+    std::uint64_t total = 0;
+    for (const auto& [key, n] : counts) total += n;
+    // Top offenders by count (deterministic tie-break: map key order).
+    std::vector<std::pair<std::string, std::uint64_t>> top(counts.begin(), counts.end());
+    std::stable_sort(top.begin(), top.end(),
+                     [](const auto& a, const auto& b) { return a.second > b.second; });
+    constexpr std::size_t kMaxListed = 8;
+    std::string detail;
+    for (std::size_t i = 0; i < top.size() && i < kMaxListed; ++i) {
+        if (!detail.empty()) detail += ", ";
+        detail += fmt::format("{}={}", top[i].first, top[i].second);
+    }
+    const double budget = clock_store.orbitEchoMaxSkew();
+    log_manager_.getLogger("rt_engine")->info(
+        "[RT] orbit/clock coherence-echo mismatches ({}): {} clock records whose orbit "
+        "echo disagreed with the applied SSR orbit ({}); top: {}{}",
+        tag, total,
+        budget > 0.0
+            ? fmt::format("withheld — budget {:.1f}s", budget)
+            : "count-only — orbit_clock_max_skew_s unset, clocks still applied",
+        detail, top.size() > kMaxListed ? ", ..." : "");
 }
 
 Eigen::Vector3d RealTimeEngine::getPosition() const {

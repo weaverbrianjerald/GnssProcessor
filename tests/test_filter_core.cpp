@@ -37,6 +37,7 @@
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>
+#include <limits>
 #include <set>
 #include <string>
 
@@ -426,6 +427,116 @@ TEST(StateManagerTest, ReinflateCodeBiasVarianceRefusesFrozenAndAbsent) {
     const size_t sz = sm.getStateSize();
     sm.reinflateCodeBiasVariance("Galileo_IFB7", 0.25);  // absent key: no-op, no throw
     EXPECT_EQ(sm.getStateSize(), sz);
+}
+
+// The system-time-offset (ISB) counterpart of reinflateCodeBiasVariance: when
+// a consumed constellation clock datum steps (producer datum discontinuity),
+// the receiver's inter-system hardware offset did NOT change — only the gauge
+// it is referenced to did.  The consumer therefore reinflates the ISB variance
+// and severs its cross-covariance so the next update re-absorbs the common-
+// mode step in one epoch, while the state VALUE must be preserved.  This test
+// guards all three parts of that contract: value kept, diagonal reset, and the
+// (ISB, rest) covariance partition broken.
+TEST(StateManagerTest, ReinflateSystemTimeOffsetPreservesValueAndSetsDiag) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    // ISB states are ctor-allocated (one per non-GPS active system); no add
+    // call needed.  Grab two so we can plant a cross-covariance between them.
+    const size_t gal_idx = sm.getSystemTimeOffsetIndex("Galileo");
+    const size_t glo_idx = sm.getSystemTimeOffsetIndex("GLONASS");
+    ASSERT_NE(gal_idx, std::numeric_limits<size_t>::max());
+    ASSERT_NE(glo_idx, std::numeric_limits<size_t>::max());
+    const auto gi = static_cast<Eigen::Index>(gal_idx);
+    const auto ri = static_cast<Eigen::Index>(glo_idx);
+
+    Eigen::VectorXd x = sm.getStateVector();
+    Eigen::MatrixXd P = sm.getCovariance();
+    x(gi)     = 1.7;    // converged ISB value (m)
+    P(gi, gi) = 4.0;
+    P(ri, ri) = 9.0;
+    P(gi, ri) = 1.5;    // cross-covariance that must be severed
+    P(ri, gi) = 1.5;
+    P(gi, 3)  = 0.8;    // and vs. the receiver clock (core index 3)
+    P(3, gi)  = 0.8;
+    sm.setStateVector(x);
+    sm.setCovariance(P);
+
+    sm.reinflateSystemTimeOffsetVariance("Galileo", 0.25);
+
+    const Eigen::VectorXd x2 = sm.getStateVector();
+    const Eigen::MatrixXd P2 = sm.getCovariance();
+    EXPECT_DOUBLE_EQ(x2(gi), 1.7);        // value preserved (hardware delay unchanged)
+    EXPECT_DOUBLE_EQ(P2(gi, gi), 0.25);   // diagonal reset to requested variance
+    EXPECT_DOUBLE_EQ(P2(gi, ri), 0.0);    // row/col zeroed: ISB↔ISB ...
+    EXPECT_DOUBLE_EQ(P2(ri, gi), 0.0);
+    EXPECT_DOUBLE_EQ(P2(gi, 3), 0.0);     // ... and ISB↔clock partitions broken
+    EXPECT_DOUBLE_EQ(P2(3, gi), 0.0);
+    EXPECT_DOUBLE_EQ(P2(ri, ri), 9.0);    // neighbour ISB untouched
+}
+
+// An unknown / absent system name must be a strict no-op: "GPS" is the
+// reference constellation (never allocated an ISB), and "IRNSS" is not in the
+// active-system set at all.  Neither call may disturb the state vector or any
+// covariance entry — a stray reinflation on a non-existent index would either
+// corrupt an unrelated state or crash, and the H1/datum consumer calls this
+// for whatever constellation the wire names, so the guard is load-bearing.
+TEST(StateManagerTest, ReinflateSystemTimeOffsetUnknownSystemIsNoOp) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    // Give the covariance non-trivial structure first so "untouched" is a
+    // meaningful assertion (the ctor's P is diagonal; zeros staying zero
+    // would prove nothing about row/col zeroing not having fired).
+    const auto gi = static_cast<Eigen::Index>(sm.getSystemTimeOffsetIndex("Galileo"));
+    Eigen::VectorXd x = sm.getStateVector();
+    Eigen::MatrixXd P = sm.getCovariance();
+    x(gi)     = -0.3;
+    P(gi, 3)  = 0.6;
+    P(3, gi)  = 0.6;
+    sm.setStateVector(x);
+    sm.setCovariance(P);
+
+    const size_t sz = sm.getStateSize();
+    sm.reinflateSystemTimeOffsetVariance("GPS", 0.25);    // reference: no ISB state
+    sm.reinflateSystemTimeOffsetVariance("IRNSS", 0.25);  // never active: absent key
+
+    EXPECT_EQ(sm.getStateSize(), sz);
+    const Eigen::VectorXd x2 = sm.getStateVector();
+    const Eigen::MatrixXd P2 = sm.getCovariance();
+    EXPECT_EQ((x2 - x).cwiseAbs().maxCoeff(), 0.0);   // exact: no element moved
+    EXPECT_EQ((P2 - P).cwiseAbs().maxCoeff(), 0.0);
+}
+
+// Non-positive new_variance falls back to initial_std.system_time_offset²
+// (cold-start uncertainty) instead of freezing or corrupting the row.  The
+// ctor seeds the ISB diagonal at exactly that same value, so the diagonal is
+// first moved OFF the default — otherwise a silent no-op would pass the
+// assertion.  The value-preservation and row/col-zeroing contract must hold
+// on the fallback path too.
+TEST(StateManagerTest, ReinflateSystemTimeOffsetFallsBackOnNonPositiveVariance) {
+    StateManagerHarness h;
+    auto& sm = h.state_manager;
+
+    const auto gi = static_cast<Eigen::Index>(sm.getSystemTimeOffsetIndex("Galileo"));
+    Eigen::VectorXd x = sm.getStateVector();
+    Eigen::MatrixXd P = sm.getCovariance();
+    x(gi)     = 2.5;
+    P(gi, gi) = 4.0;    // != initial_std.system_time_offset² so the reset is observable
+    P(gi, 3)  = 0.7;
+    P(3, gi)  = 0.7;
+    sm.setStateVector(x);
+    sm.setCovariance(P);
+
+    sm.reinflateSystemTimeOffsetVariance("Galileo", 0.0);
+
+    const double isb_std = h.config.getInitialStd().system_time_offset;
+    const Eigen::VectorXd x2 = sm.getStateVector();
+    const Eigen::MatrixXd P2 = sm.getCovariance();
+    EXPECT_DOUBLE_EQ(x2(gi), 2.5);                     // value preserved
+    EXPECT_DOUBLE_EQ(P2(gi, gi), isb_std * isb_std);   // fallback = initial std squared
+    EXPECT_DOUBLE_EQ(P2(gi, 3), 0.0);                  // row/col still zeroed
+    EXPECT_DOUBLE_EQ(P2(3, gi), 0.0);
 }
 
 TEST(StateManagerTest, AddSatBiasStateAndLookup) {

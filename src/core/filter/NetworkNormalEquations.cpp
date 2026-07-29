@@ -11,12 +11,17 @@
 
 #include "filter/NetworkNormalEquations.hpp"
 
+#include <Eigen/Core>          // Eigen::setNbThreads / nbThreads (parallel_carry: local GMGᵀ un-pin)
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -79,6 +84,45 @@ void requireFactorPd(const Eigen::LDLT<Eigen::MatrixXd>& ldlt,
     }
 }
 
+// --- Tier D0 section timers (network.trace_section_timers) -------------------
+// A zero-overhead-when-disabled RAII accumulator: when @p on is false it records
+// no timestamp and touches nothing (so an unarmed run makes NO clock reads and is
+// numerically byte-identical), and when true it adds its scope's wall-clock ms to
+// @p acc on destruction.  Used only by the instrumented kernel primitives below.
+using PerfClock = std::chrono::steady_clock;
+
+inline double perfMsSince(PerfClock::time_point t0) {
+    return std::chrono::duration<double, std::milli>(PerfClock::now() - t0).count();
+}
+
+struct ScopedAccum {
+    bool on;
+    double* acc;
+    PerfClock::time_point t0;
+    ScopedAccum(bool on_, double* acc_) : on(on_), acc(acc_) {
+        if (on) t0 = PerfClock::now();
+    }
+    ~ScopedAccum() {
+        if (on) *acc += perfMsSince(t0);
+    }
+};
+
+// parallel_carry: RAII un-pin of Eigen's internal threading around one dense GEMM
+// (the fold's GMGᵀ).  Restores the saved thread count on EVERY scope exit — including
+// a throw mid-GEMM — so no exit path leaves Eigen un-pinned for the next block's
+// OpenMP region (mirrors the driver-side CarryEigenScope).  Inert when @p on is
+// false: no Eigen thread-count call at all, so the default path is untouched.
+struct ScopedEigenThreads {
+    bool on;
+    int  saved;
+    ScopedEigenThreads(bool on_, int nthreads) : on(on_), saved(on_ ? Eigen::nbThreads() : 0) {
+        if (on) Eigen::setNbThreads(nthreads);
+    }
+    ~ScopedEigenThreads() { if (on) Eigen::setNbThreads(saved); }
+    ScopedEigenThreads(const ScopedEigenThreads&) = delete;
+    ScopedEigenThreads& operator=(const ScopedEigenThreads&) = delete;
+};
+
 } // namespace
 
 NetworkNormalEquations::NetworkNormalEquations(Eigen::Index n_shared)
@@ -111,6 +155,12 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     n_active_ = 0;
     reduced_ = false;
     reduce_recompute_count_ = 0;
+    sumzero_gauges_.clear();
+    station_sumzero_.clear();
+    sumzero_folded_ = false;
+    dd_priors_.clear();
+    station_ddprior_.clear();
+    ddprior_folded_ = false;
 }
 
 void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
@@ -208,10 +258,28 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
         const Eigen::VectorXd d = st.Nrr_ldlt.vectorD();
         const double d_min = d.minCoeff();
         const double d_max = d.cwiseAbs().maxCoeff();
-        if (d_min <= 0.0 || d_min < 1e-12 * d_max) {
+        // Reference scale for the relative rank test.  Legacy: the LARGEST pivot.
+        // Pin-aware (setStationPdMedianScale): the MEDIAN |pivot| — a deliberate
+        // huge-weight gauge-pin row in the block (the prioritized phase-datum
+        // anchor's 1e10 ambiguity pin) otherwise inflates the bar by ~10 orders
+        // and ejects a healthy marginal station whose weakest genuine parameter
+        // sits at a usable ~1e-3 (the TWTF/VOIM every-epoch non-PD class).  The
+        // median is robust to any minority of pin-scale pivots yet still catches
+        // a truly singular direction (a pivot many orders below block scale).
+        double d_ref = d_max;
+        if (station_pd_median_scale_ && d.size() > 0) {
+            Eigen::VectorXd a = d.cwiseAbs();
+            std::vector<double> v(a.data(), a.data() + a.size());
+            std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
+                             v.end());
+            d_ref = v[v.size() / 2];
+        }
+        if (d_min <= 0.0 || d_min < 1e-12 * d_ref) {
             std::ostringstream os;
             os << "addStation: N_rr_r is not positive-definite (min LDLᵀ pivot "
                << d_min << " vs max " << d_max
+               << (station_pd_median_scale_
+                       ? ", pin-aware median-scale test" : "")
                << ") — station prior too weak or an unobservable local parameter";
             fail(os.str());
         }
@@ -231,6 +299,8 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
 std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
     const Eigen::MatrixXd& W, const Eigen::VectorXd& y) {
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
+    if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
     const Eigen::Index n_r = A_r.cols();
 
@@ -261,6 +331,8 @@ std::size_t NetworkNormalEquations::addStationObservations(
 std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
     const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y) {
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
+    if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
     // Validate ALL dimensions before forming any product — the asDiagonal
     // products below would otherwise trip a hard Eigen assertion (Debug crash /
@@ -362,6 +434,25 @@ void NetworkNormalEquations::reduce(int n_threads) {
         return;
     }
 
+    // D0: time only a REAL recompute (the idempotent no-op above already returned).
+    ScopedAccum _perf(perf_timing_, &timers_.reduce_ms);
+    if (perf_timing_) ++timers_.reduce_recomputes;
+
+    // A recompute rebuilds the reduced system from scratch, so any previously
+    // folded anchor-free sum-to-zero gauge (@ref foldReducedSumZeroGauges) is
+    // dropped from it — its cached (g,β,γ) would be stale for both the reduced
+    // normals and the constrained reconstruction.  Clear them; the driver
+    // re-folds after the reduce (mirrors the code-bias / clock-constraint
+    // re-apply on the within-epoch RAIM re-solve).
+    sumzero_gauges_.clear();
+    station_sumzero_.clear();
+    sumzero_folded_ = false;
+    // Same for the Card-4 DD priors (@ref foldReducedDdPriors): a rebuilt reduced
+    // system drops the folded G M Gᵀ; the driver re-folds after the reduce.
+    dd_priors_.clear();
+    station_ddprior_.clear();
+    ddprior_folded_ = false;
+
     // Start from the accumulated shared border (Σ_r N_ss^r + priors), then
     // subtract each station's Schur contribution N_sr (N_rr)^{-1} N_rs.
     reduced_N_ss_ = N_ss_;
@@ -456,6 +547,474 @@ void NetworkNormalEquations::reduce(int n_threads) {
     ++reduce_recompute_count_;  // reduce-once invariant instrumentation (this is a real recompute)
 }
 
+void NetworkNormalEquations::foldReducedSumZeroGauges(
+    const std::vector<SumZeroGauge>& gauges) {
+    if (!reduced_) {
+        reduce();  // need the reduced system + the cached per-station factors
+    }
+    // Idempotent within one reduce: the fold mutates reduced_N_ss_ in place, and
+    // both the null-space gate (via reducedSharedNormals) and the solve trigger it,
+    // so a second call must NOT double-add g gᵀ/β.  A reduce() recompute / reset()
+    // clears the flag.
+    if (sumzero_folded_) {
+        return;
+    }
+    sumzero_gauges_.clear();
+    station_sumzero_.assign(n_active_, {});
+    sumzero_folded_ = true;
+    if (gauges.empty() || n_shared_ == 0) {
+        return;
+    }
+
+    // Cache N_rr⁻¹ u_r per station lazily — a station appears in one gauge per
+    // (sat,signal) it tracks, so the u_r solve would otherwise repeat ~15×.  The
+    // per-column solve n_r = N_rr⁻¹ e_col is genuinely per (station,gauge).
+    std::vector<bool> have_ur(n_active_, false);
+    std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
+
+    for (const auto& gz : gauges) {
+        Eigen::VectorXd g = Eigen::VectorXd::Zero(n_shared_);
+        double beta = 0.0, gamma = 0.0;
+        for (const auto& [si, col] : gz.terms) {
+            if (si >= n_active_) {
+                throw std::out_of_range("NetworkNormalEquations::foldReducedSumZeroGauges: "
+                                        "station index out of range");
+            }
+            const Station& st = stations_[si];
+            if (col < 0 || col >= st.n_local) {
+                fail("foldReducedSumZeroGauges: local column out of range");
+            }
+            Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
+            e(col) = 1.0;
+            const Eigen::VectorXd n_r = st.Nrr_ldlt.solve(e);  // N_rr⁻¹ e_col
+            beta += n_r(col);                                  // (N_rr⁻¹)_{col,col} > 0
+            g.noalias() += st.N_sr * n_r;                      // N_sr n_r
+            if (!have_ur[si]) {
+                nrr_inv_ur[si] = st.Nrr_ldlt.solve(st.u_r);
+                have_ur[si] = true;
+            }
+            gamma += nrr_inv_ur[si](col);                      // (N_rr⁻¹ u_r)_{col}
+        }
+        if (!(beta > 0.0) || !std::isfinite(beta) || !std::isfinite(gamma)) {
+            continue;  // degenerate gauge (no valid terms) — skip
+        }
+        // Schur-projected rank-1 fold: Ñ_ss += g gᵀ/β,  ũ_s += g γ/β.
+        const double inv_beta = 1.0 / beta;
+        reduced_N_ss_.noalias() += (g * g.transpose()) * inv_beta;
+        reduced_u_s_.noalias() += g * (gamma * inv_beta);
+        const std::size_t gidx = sumzero_gauges_.size();
+        FoldedSumZeroGauge fg;
+        fg.terms = gz.terms;
+        fg.g = std::move(g);
+        fg.beta = beta;
+        fg.gamma = gamma;
+        for (const auto& [si, col] : fg.terms)
+            station_sumzero_[si].emplace_back(gidx, col);
+        sumzero_gauges_.push_back(std::move(fg));
+    }
+    // Symmetrize the rank-1 accumulation (g gᵀ is symmetric to ULP; keep the
+    // solve's factorization clean, matching reduce()'s own symmetrization).
+    reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+}
+
+void NetworkNormalEquations::foldReducedDdPriors(
+    const std::vector<DdPriorBlock>& blocks, int n_threads, int station_threads) {
+    if (!reduced_) {
+        reduce();  // need the reduced system + the cached per-station factors
+    }
+    // Idempotent within one reduce (mirrors foldReducedSumZeroGauges): the fold
+    // mutates reduced_N_ss_ in place, so a second call must not double-add G M Gᵀ.
+    if (ddprior_folded_) {
+        return;
+    }
+    dd_priors_.clear();
+    station_ddprior_.assign(n_active_, {});
+    ddprior_folded_ = true;
+    if (blocks.empty() || n_shared_ == 0) {
+        return;
+    }
+
+    // ---- Deterministic-parallel fold (network.parallel_seam) --------------------
+    // Compute every block's per-(const,signal) algebra AND its rank-K Woodbury
+    // contribution (dN = G M Gᵀ, du = G M (z_free − ẑ)) into pre-sized per-block SLOTS
+    // in parallel, then ACCUMULATE the slots SERIALLY in block-index order below.  The
+    // per-block compute mirrors the serial fold that follows EXACTLY (same operations,
+    // same by_station sorted reduction order), and the serial accumulation order is
+    // identical, so the reduced system is BIT-IDENTICAL to the n_threads == 1 path
+    // regardless of thread count (unlike the FP-reassociating parallel_reduce).  The
+    // serial fold below (n_threads == 1, the default) is left completely UNTOUCHED —
+    // keep the two block-algebra bodies in lockstep.
+    if (n_threads > 1) {
+        const std::size_t NB = blocks.size();
+
+        // (0, serial) Validate every block up front so the ONLY throws stay on the
+        // serial thread (an exception escaping the OpenMP region is UB), and precompute
+        // N_rr⁻¹ u_r for every referenced station — this kills the cross-block cache
+        // race (the value is a deterministic per-station solve, so precomputing it is
+        // byte-identical to the serial path's lazy fill).
+        std::vector<bool> have_ur(n_active_, false);
+        std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
+        for (const auto& blk : blocks) {
+            const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
+            if (blk.Pz.rows() != K || blk.Pz.cols() != K || blk.zhat.size() != K) {
+                fail("foldReducedDdPriors: Pz/zhat dimension mismatch with the row count");
+            }
+            for (Eigen::Index k = 0; k < K; ++k) {
+                for (const auto& t : blk.rows[static_cast<std::size_t>(k)]) {
+                    if (t.station >= n_active_) {
+                        throw std::out_of_range("NetworkNormalEquations::foldReducedDdPriors: "
+                                                "station index out of range");
+                    }
+                    if (t.local_col < 0 || t.local_col >= stations_[t.station].n_local) {
+                        fail("foldReducedDdPriors: local column out of range");
+                    }
+                    if (!have_ur[t.station]) {
+                        nrr_inv_ur[t.station] =
+                            stations_[t.station].Nrr_ldlt.solve(stations_[t.station].u_r);
+                        have_ur[t.station] = true;
+                    }
+                }
+            }
+        }
+
+        // Per-block slots (separate vectors, using the fold's own private types the same
+        // way the serial path does — no local struct at function scope).  Each block
+        // writes ONLY its own index.  We store the per-block G / M / z_free (NOT the
+        // materialized G M Gᵀ product): the SERIAL merge below recomputes the product
+        // with the SAME fused Eigen expression the serial fold uses, so the += rounds
+        // BIT-IDENTICALLY.  (Pre-forming dN = (G M Gᵀ).eval() and adding it instead
+        // drifts by a ULP at large n_shared — Eigen's blocked GEMM rounds a beta=0
+        // product-then-add differently from the beta=1 fused accumulate; the network's
+        // ill-conditioning then amplifies that over the carry-forward epochs, exactly the
+        // parallel_reduce failure mode.  Only the per-station B/G/z_free solves and the
+        // K×K middle inverse — the block-local work — run in the parallel region.)
+        std::vector<FoldedDdPrior>   fd_slot(NB);
+        std::vector<std::vector<std::pair<std::size_t, std::vector<DdStationTerm>>>> terms_slot(NB);
+        std::vector<char> has_merge(NB, 0);         // K > 0 ⇒ G/M/terms carry a contribution
+
+        // (1, PARALLEL over block index) The driver pins Eigen to one thread for the
+        // whole epoch, so these dense kernels do not nest-thread.  Each iteration writes
+        // ONLY its own slot index; nrr_inv_ur / stations_ are read-only here.  No throw
+        // can escape (all validation ran serially above).
+        #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
+        for (long long bi = 0; bi < static_cast<long long>(NB); ++bi) {
+            const std::size_t bidx = static_cast<std::size_t>(bi);
+            const auto& blk = blocks[bidx];
+            const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
+            fd_slot[bidx].zhat = blk.zhat;
+            fd_slot[bidx].Pz   = blk.Pz;
+            if (K == 0) {
+                continue;   // chordless component → inert slot, no merge (index preserved)
+            }
+            std::map<std::size_t, std::vector<DdStationTerm>> by_station;
+            for (Eigen::Index k = 0; k < K; ++k) {
+                for (const auto& t : blk.rows[static_cast<std::size_t>(k)]) {
+                    by_station[t.station].push_back({bidx, k, t.local_col, t.coeff});
+                }
+            }
+            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(K, K);
+            Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n_shared_, K);
+            Eigen::VectorXd z_free = Eigen::VectorXd::Zero(K);
+            for (const auto& [si, terms] : by_station) {
+                const Station& st = stations_[si];
+                Eigen::MatrixXd CrT = Eigen::MatrixXd::Zero(st.n_local, K);
+                for (const auto& t : terms) {
+                    CrT(t.col, t.row) += t.coeff;
+                }
+                const Eigen::MatrixXd Y = st.Nrr_ldlt.solve(CrT);
+                B.noalias()      += CrT.transpose() * Y;
+                G.noalias()      += st.N_sr * Y;
+                z_free.noalias() += CrT.transpose() * nrr_inv_ur[si];
+            }
+            Eigen::MatrixXd PzB = blk.Pz + B;
+            PzB = (0.5 * (PzB + PzB.transpose())).eval();
+            fd_slot[bidx].Minv = PzB;
+            Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);
+            Eigen::MatrixXd M;
+            if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
+                M = Eigen::MatrixXd::Zero(K, K);
+            } else {
+                M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
+                M = (0.5 * (M + M.transpose())).eval();
+            }
+            fd_slot[bidx].G      = std::move(G);
+            fd_slot[bidx].M      = std::move(M);
+            fd_slot[bidx].z_free = std::move(z_free);
+            terms_slot[bidx].reserve(by_station.size());
+            for (auto& [si, terms] : by_station) {
+                terms_slot[bidx].emplace_back(si, std::move(terms));
+            }
+            has_merge[bidx] = 1;
+        }
+
+        // (2, SERIAL in block-index order) accumulate with the SAME fused Eigen
+        // expression the serial fold uses (@ref 691-692) — identical operands (the
+        // parallel-computed G / M / z_free are bit-identical to the serial fold's) AND
+        // identical += sequence ⇒ bit-identical reduced system.
+        dd_priors_.reserve(NB);
+        for (std::size_t b = 0; b < NB; ++b) {
+            FoldedDdPrior& fd = fd_slot[b];
+            if (has_merge[b]) {
+                reduced_N_ss_.noalias() += fd.G * fd.M * fd.G.transpose();
+                reduced_u_s_.noalias()  += fd.G * (fd.M * (fd.z_free - fd.zhat));
+                for (auto& [si, terms] : terms_slot[b]) {
+                    auto& dst = station_ddprior_[si];
+                    dst.insert(dst.end(), terms.begin(), terms.end());
+                }
+            }
+            dd_priors_.push_back(std::move(fd));
+        }
+        reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+        return;
+    }
+
+    // ---- Serial fold (n_threads == 1, the default; byte-identical OFF path) ------
+    // Cache N_rr⁻¹ u_r per station (reused across every block/row that touches it).
+    std::vector<bool> have_ur(n_active_, false);
+    std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
+
+    for (const auto& blk : blocks) {
+        const Eigen::Index K = static_cast<Eigen::Index>(blk.rows.size());
+        if (blk.Pz.rows() != K || blk.Pz.cols() != K || blk.zhat.size() != K) {
+            fail("foldReducedDdPriors: Pz/zhat dimension mismatch with the row count");
+        }
+        // EVERY input block occupies exactly one slot (bidx == input index), so a
+        // chordless (K=0) or degenerate (non-PD) block stays index-aligned for the
+        // z-store's per-block posterior readback (ddPriorPosteriorMean/numDdPriorBlocks).
+        const std::size_t bidx = dd_priors_.size();
+        FoldedDdPrior fd;
+        fd.zhat = blk.zhat;
+        fd.Pz = blk.Pz;
+        if (K == 0) {
+            dd_priors_.push_back(std::move(fd));   // chordless component → inert slot
+            continue;
+        }
+
+        // Group the block's terms by station so each station's C_{L,r}ᵀ (n_local × K)
+        // is assembled once and solved against the cached N_rr factor in one shot.
+        std::map<std::size_t, std::vector<DdStationTerm>> by_station;
+        for (Eigen::Index k = 0; k < K; ++k) {
+            for (const auto& t : blk.rows[static_cast<std::size_t>(k)]) {
+                if (t.station >= n_active_) {
+                    throw std::out_of_range("NetworkNormalEquations::foldReducedDdPriors: "
+                                            "station index out of range");
+                }
+                if (t.local_col < 0 || t.local_col >= stations_[t.station].n_local) {
+                    fail("foldReducedDdPriors: local column out of range");
+                }
+                by_station[t.station].push_back({bidx, k, t.local_col, t.coeff});
+            }
+        }
+
+        Eigen::MatrixXd B = Eigen::MatrixXd::Zero(K, K);
+        Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n_shared_, K);
+        Eigen::VectorXd z_free = Eigen::VectorXd::Zero(K);
+        {   // P0b: time the per-station reduction loop (the 44%-of-epoch dominant fold cost)
+            ScopedAccum _fl(perf_timing_, &timers_.fold_loop_ms);
+            // Flatten by_station (ascending station index — std::map order) and precompute
+            // N_rr⁻¹ u_r for every touched station SERIALLY (a deterministic per-station
+            // solve; hoisting it out of any parallel region kills the lazy-fill race and is
+            // byte-identical to the serial lazy fill).
+            std::vector<std::pair<std::size_t, const std::vector<DdStationTerm>*>> st_list;
+            st_list.reserve(by_station.size());
+            for (const auto& kv : by_station) {
+                if (!have_ur[kv.first]) {
+                    nrr_inv_ur[kv.first] =
+                        stations_[kv.first].Nrr_ldlt.solve(stations_[kv.first].u_r);
+                    have_ur[kv.first] = true;
+                }
+                st_list.emplace_back(kv.first, &kv.second);
+            }
+            auto stationTerm = [&](std::size_t idx, Eigen::MatrixXd& Bacc,
+                                   Eigen::MatrixXd& Gacc, Eigen::VectorXd& zacc) {
+                const std::size_t si = st_list[idx].first;
+                const Station& st = stations_[si];
+                Eigen::MatrixXd CrT = Eigen::MatrixXd::Zero(st.n_local, K);  // C_{L,r}ᵀ
+                for (const auto& t : *st_list[idx].second) CrT(t.col, t.row) += t.coeff;
+                const Eigen::MatrixXd Y = st.Nrr_ldlt.solve(CrT);            // N_rr⁻¹ C_{L,r}ᵀ
+                Bacc.noalias() += CrT.transpose() * Y;                       // C_{L,r} N_rr⁻¹ C_{L,r}ᵀ
+                Gacc.noalias() += st.N_sr * Y;                              // N_sr N_rr⁻¹ C_{L,r}ᵀ
+                zacc.noalias() += CrT.transpose() * nrr_inv_ur[si];         // C_{L,r} N_rr⁻¹ u_r
+            };
+#ifdef _OPENMP
+            if (station_threads > 1 && st_list.size() > 1) {
+                // parallel_carry: per-thread partials over CONTIGUOUS station ranges, combined
+                // in ascending thread order (reproducible per thread-count, ULP-different from
+                // serial — the reduce()-style relaxation the toggle opts into).
+                const int nt = static_cast<int>(std::min<std::size_t>(
+                    static_cast<std::size_t>(station_threads), st_list.size()));
+                std::vector<Eigen::MatrixXd> Bp(nt, Eigen::MatrixXd::Zero(K, K));
+                std::vector<Eigen::MatrixXd> Gp(nt, Eigen::MatrixXd::Zero(n_shared_, K));
+                std::vector<Eigen::VectorXd> zp(nt, Eigen::VectorXd::Zero(K));
+                #pragma omp parallel num_threads(nt)
+                {
+                    const int tid = omp_get_thread_num();
+                    const int rnt = omp_get_num_threads();
+                    const std::size_t n = st_list.size();
+                    const std::size_t lo = (n * static_cast<std::size_t>(tid))
+                                           / static_cast<std::size_t>(rnt);
+                    const std::size_t hi = (n * static_cast<std::size_t>(tid + 1))
+                                           / static_cast<std::size_t>(rnt);
+                    for (std::size_t idx = lo; idx < hi; ++idx)
+                        stationTerm(idx, Bp[tid], Gp[tid], zp[tid]);
+                }
+                for (int t = 0; t < nt; ++t) {   // deterministic ascending combine
+                    B.noalias()      += Bp[t];
+                    G.noalias()      += Gp[t];
+                    z_free.noalias() += zp[t];
+                }
+            } else
+#endif
+            {
+                for (std::size_t idx = 0; idx < st_list.size(); ++idx)
+                    stationTerm(idx, B, G, z_free);
+            }
+        }
+
+        // Middle inverse M = (Pᶻ + B)⁻¹ (PD: SPD prior + PSD B).  A degenerate block
+        // (non-PD, e.g. a malformed prior) folds INERTLY (M=0) — a no-op that keeps its
+        // index slot rather than corrupting the reduced system or shifting the keys.
+        Eigen::MatrixXd M;
+        {   // P0b: time the K×K middle inverse (LDLT factor + explicit inverse)
+            ScopedAccum _fm(perf_timing_, &timers_.fold_minv_ms);
+            Eigen::MatrixXd PzB = blk.Pz + B;
+            PzB = (0.5 * (PzB + PzB.transpose())).eval();
+            fd.Minv = PzB;   // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout
+            Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);   // O(K³/3) factor — serial (byte-id floor)
+            if (ldlt.info() != Eigen::Success || ldlt.vectorD().minCoeff() <= 0.0) {
+                M = Eigen::MatrixXd::Zero(K, K);
+            } else {
+#ifdef _OPENMP
+                if (station_threads > 1 && K > 1) {
+                    // parallel_carry: the explicit inverse M = (Pᶻ+B)⁻¹ = ldlt.solve(I) is a
+                    // per-column back-substitution (LᵀDL x_j = e_j; no cross-column arithmetic),
+                    // so splitting the Identity columns across threads is BYTE-IDENTICAL to the
+                    // single solve given this PzB (ldlt.solve is const ⇒ safe to share).  Only
+                    // the factor above is unparallelized.
+                    M.resize(K, K);
+                    const int nt = static_cast<int>(
+                        std::min<Eigen::Index>(static_cast<Eigen::Index>(station_threads), K));
+                    #pragma omp parallel num_threads(nt)
+                    {
+                        const int tid = omp_get_thread_num();
+                        const int rnt = omp_get_num_threads();
+                        const Eigen::Index lo = (K * tid) / rnt;
+                        const Eigen::Index hi = (K * (tid + 1)) / rnt;
+                        if (hi > lo) {
+                            Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(K, hi - lo);
+                            for (Eigen::Index j = lo; j < hi; ++j) rhs(j, j - lo) = 1.0;
+                            M.middleCols(lo, hi - lo) = ldlt.solve(rhs);
+                        }
+                    }
+                } else
+#endif
+                    M = ldlt.solve(Eigen::MatrixXd::Identity(K, K));
+                M = (0.5 * (M + M.transpose())).eval();
+            }
+        }
+
+        // Joint rank-K Woodbury fold onto the reduced shared system (a no-op when M=0).
+        {   // P0b: time the Woodbury GMGᵀ fold.  parallel_carry: G·M·Gᵀ is a big dense GEMM
+            // (n_shared×K · K×K · K×n_shared) that DOES thread well under Eigen — un-pin Eigen
+            // locally so it fans across cores.  This step is NOT inside an OpenMP region (the
+            // per-station loop + column-solve regions closed above), so there is no nesting.
+            // The per-station reduction already relaxed this fold, so the GEMM reassociation
+            // introduces no NEW serial≡parallel break.  RAII-restored (ScopedEigenThreads)
+            // on every exit — including a throw — so the next block's OpenMP loop always
+            // runs Eigen-pinned again.
+            ScopedAccum _fg(perf_timing_, &timers_.fold_gmg_ms);
+            ScopedEigenThreads _et(station_threads > 1, station_threads);
+            reduced_N_ss_.noalias() += G * M * G.transpose();
+            reduced_u_s_.noalias()  += G * (M * (z_free - blk.zhat));
+        }
+
+        fd.G = std::move(G);
+        fd.M = std::move(M);
+        fd.z_free = std::move(z_free);
+        for (const auto& [si, terms] : by_station) {
+            auto& dst = station_ddprior_[si];
+            dst.insert(dst.end(), terms.begin(), terms.end());
+        }
+        dd_priors_.push_back(std::move(fd));
+    }
+    reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
+}
+
+Eigen::VectorXd NetworkNormalEquations::ddPriorPosteriorMean(
+    std::size_t block_index, const Eigen::VectorXd& x_s) const {
+    if (block_index >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorPosteriorMean: "
+                                "block index out of range");
+    }
+    if (x_s.size() != n_shared_) {
+        fail("ddPriorPosteriorMean: x_s size mismatch");
+    }
+    const FoldedDdPrior& fd = dd_priors_[block_index];
+    // ẑ_post = ẑ + Pᶻ M (z_free − Gᵀ x_s − ẑ): the prior shrunk toward the data DD.
+    const Eigen::VectorXd innov = fd.z_free - fd.G.transpose() * x_s - fd.zhat;
+    return fd.zhat + fd.Pz * (fd.M * innov);
+}
+
+Eigen::MatrixXd NetworkNormalEquations::ddPriorPosteriorCovariance(
+    std::size_t block_index, const Eigen::MatrixXd& cov_free_xs) const {
+    if (block_index >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorPosteriorCovariance: "
+                                "block index out of range");
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("ddPriorPosteriorCovariance: cov_free_xs size mismatch");
+    }
+    const FoldedDdPrior& fd = dd_priors_[block_index];
+    const Eigen::Index K = fd.Pz.rows();
+    if (K == 0) {
+        return Eigen::MatrixXd();            // chordless slot → empty
+    }
+    // Pᶻ_post = (Pᶻ − Pᶻ M Pᶻ) + (Pᶻ M Gᵀ) Σ_ss (G M Pᶻ).  An inert degenerate block
+    // has M=0 ⇒ Pᶻ_post = Pᶻ (the untouched prior — no information was folded).
+    const Eigen::MatrixXd PzM = fd.Pz * fd.M;                 // Pᶻ M            (K×K)
+    Eigen::MatrixXd cov = fd.Pz - PzM * fd.Pz;                // conditional-given-x_s
+    // Coupling through the shared-parameter uncertainty: the DD depends on x_s via
+    // −Pᶻ M Gᵀ, so add (Pᶻ M Gᵀ) Σ_ss (Pᶻ M Gᵀ)ᵀ.  Empty on a zero shared block.
+    if (n_shared_ > 0) {
+        const Eigen::MatrixXd PzMGt = PzM * fd.G.transpose(); // Pᶻ M Gᵀ         (K×n_s)
+        cov.noalias() += PzMGt * cov_free_xs * PzMGt.transpose();
+    }
+    cov = (0.5 * (cov + cov.transpose())).eval();             // symmetrize round-off
+    return cov;
+}
+
+void NetworkNormalEquations::ddPriorInnovation(
+    std::size_t block_index, const Eigen::VectorXd& x_s,
+    const Eigen::MatrixXd& cov_free_xs, Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
+    if (block_index >= dd_priors_.size()) {
+        throw std::out_of_range("NetworkNormalEquations::ddPriorInnovation: "
+                                "block index out of range");
+    }
+    if (x_s.size() != n_shared_) {
+        fail("ddPriorInnovation: x_s size mismatch");
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("ddPriorInnovation: cov_free_xs size mismatch");
+    }
+    const FoldedDdPrior& fd = dd_priors_[block_index];
+    const Eigen::Index K = fd.Pz.rows();
+    if (K == 0) {                            // chordless slot → no innovation
+        v.resize(0);
+        cov_v.resize(0, 0);
+        return;
+    }
+    // v = z_free − Gᵀ x_s − ẑ (== the `innov` of ddPriorPosteriorMean): the data-implied
+    // DD given the solved shared estimate, minus the carried prior.
+    v = fd.z_free - fd.G.transpose() * x_s - fd.zhat;
+    // Cov(v) = (Pᶻ + B) − Gᵀ Σ_ss G = M⁻¹ − Gᵀ Σ_ss G.  The MINUS of the border term is
+    // exact (x_s is prior-influenced); it makes Pᶻ M Cov(v) M Pᶻ = Pᶻ − Pᶻ⁺.
+    cov_v = fd.Minv;
+    if (n_shared_ > 0) {
+        cov_v.noalias() -= fd.G.transpose() * cov_free_xs * fd.G;
+    }
+    cov_v = (0.5 * (cov_v + cov_v.transpose())).eval();       // symmetrize round-off
+}
+
 Eigen::VectorXd NetworkNormalEquations::solveShared() {
     if (!reduced_) {
         reduce();
@@ -487,15 +1046,30 @@ Eigen::VectorXd NetworkNormalEquations::solveSharedConstrained(
     // both the point solve and (optionally) the formal covariance — the inverse of
     // the same matrix — so the caller need not refactor it.  The PD guard below is
     // the single rank-deficiency safety net (an under-specified datum throws here).
+    //
+    // D0: the factorization + point solve accrue to solve_ms; the explicit full
+    // inverse (the D1 selected-inverse lever's direct cost) accrues to
+    // cov_inverse_ms.  Two disjoint sub-timers, so the profiler sees how much of the
+    // "solve" is actually the covariance the consumers below then propagate.
+    const bool pt = perf_timing_;
+    if (pt) ++timers_.solve_calls;
+    PerfClock::time_point t_fac;
+    if (pt) t_fac = PerfClock::now();
     Eigen::LDLT<Eigen::MatrixXd> ldlt(constrained_N_ss);
     requireFactorPd(ldlt,
                     "solveSharedConstrained: constrained shared block is not "
                     "positive-definite (the applied S-basis constraint did not "
                     "remove the datum deficiency)");
+    if (pt) timers_.solve_ms += perfMsSince(t_fac);
     if (cov_out) {
+        ScopedAccum _perf(pt, &timers_.cov_inverse_ms);
         *cov_out = ldlt.solve(Eigen::MatrixXd::Identity(n_shared_, n_shared_));
     }
-    return ldlt.solve(constrained_u_s);
+    PerfClock::time_point t_sol;
+    if (pt) t_sol = PerfClock::now();
+    Eigen::VectorXd x_s = ldlt.solve(constrained_u_s);
+    if (pt) timers_.solve_ms += perfMsSince(t_sol);
+    return x_s;
 }
 
 Eigen::VectorXd NetworkNormalEquations::reconstructStation(
@@ -513,7 +1087,46 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
     }
     // x_r = N_rr^{-1} (u_r − N_rs x_s),  N_rs = N_sr^ᵀ.
     const Eigen::VectorXd rhs = st.u_r - st.N_sr.transpose() * x_s;
-    return st.Nrr_ldlt.solve(rhs);
+    Eigen::VectorXd x_r = st.Nrr_ldlt.solve(rhs);
+
+    // Anchor-free sum-to-zero gauge correction (@ref foldReducedSumZeroGauges):
+    // the fold constrained the reduced solve, so the matching CONSTRAINED locals
+    // are x_r −= n_r·(γ − gᵀ x_s)/β for each gauge this station is a term of
+    // (n_r = N_rr⁻¹ e_col; γ − gᵀ x_s = the total unconstrained ambiguity sum).
+    // Touches only the gauge (common-shift) direction, so every estimable
+    // (between-receiver, between-satellite) quantity is unchanged.  Empty on the
+    // anchor / OFF path → byte-identical.
+    if (!station_sumzero_.empty()) {
+        Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
+        for (const auto& [gidx, col] : station_sumzero_[station]) {
+            const FoldedSumZeroGauge& fg = sumzero_gauges_[gidx];
+            const double s_unc = fg.gamma - fg.g.dot(x_s);
+            e(col) = 1.0;
+            const Eigen::VectorXd n_r = st.Nrr_ldlt.solve(e);
+            e(col) = 0.0;
+            x_r.noalias() -= n_r * (s_unc / fg.beta);
+        }
+    }
+
+    // Card-4 DD-prior correction (@ref foldReducedDdPriors): the constrained locals
+    // are x_r −= N_rr⁻¹ C_{L,r}ᵀ κ, with κ = M(z_free − Gᵀ x_s − ẑ) shared across this
+    // station's terms of each block.  Touches only the DD (cycle) directions; empty
+    // on the OFF path → byte-identical to the pre-Card-4 reconstruction.
+    if (station < station_ddprior_.size() && !station_ddprior_[station].empty()) {
+        std::vector<Eigen::VectorXd> kappa(dd_priors_.size());
+        std::vector<bool> have_kappa(dd_priors_.size(), false);
+        Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
+        for (const auto& t : station_ddprior_[station]) {
+            if (!have_kappa[t.block]) {
+                const FoldedDdPrior& fd = dd_priors_[t.block];
+                kappa[t.block] = fd.M * (fd.z_free - fd.G.transpose() * x_s - fd.zhat);
+                have_kappa[t.block] = true;
+            }
+            e(t.col) += t.coeff * kappa[t.block](t.row);
+        }
+        x_r.noalias() -= st.Nrr_ldlt.solve(e);
+    }
+    return x_r;
 }
 
 Eigen::MatrixXd NetworkNormalEquations::reconstructStationCovariance(
@@ -577,6 +1190,84 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     return out;
 }
 
+NetworkNormalEquations::StationRegression
+NetworkNormalEquations::stationRegression(std::size_t station,
+                                          Eigen::Index local_col) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationRegression: "
+                                "station index out of range");
+    }
+    const Station& st = stations_[station];
+    if (local_col < 0 || local_col >= st.n_local) {
+        fail("stationRegression: local column out of range");
+    }
+    // One local solve n_c = N_rr⁻¹ e_r delivers BOTH outputs (the same primitive
+    // reconstructStationCovarianceDiag uses per column):
+    //   cond_var = (N_rr⁻¹)_{rr} = n_c(r)                — pure conditional variance
+    //   row      = M_rᵀ = N_sr n_c = N_sr N_rr⁻¹ e_r     — regression on the border.
+    StationRegression out;
+    Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
+    e_c(local_col) = 1.0;
+    const Eigen::VectorXd n_c = st.Nrr_ldlt.solve(e_c);   // N_rr⁻¹ e_r (n_local)
+    out.cond_var = n_c(local_col);                        // (N_rr⁻¹)_{rr}
+    out.row = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n_c)   // N_sr N_rr⁻¹ e_r (n_shared)
+                              : Eigen::VectorXd();
+    return out;
+}
+
+Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
+    const std::vector<std::pair<std::size_t, Eigen::Index>>& requests,
+    const Eigen::MatrixXd& cov_free_xs) const {
+    const Eigen::Index k = static_cast<Eigen::Index>(requests.size());
+    if (k == 0) {
+        return Eigen::MatrixXd();
+    }
+    if (cov_free_xs.rows() != n_shared_ || cov_free_xs.cols() != n_shared_) {
+        fail("jointConditionalCovariance: cov_free_xs size mismatch");
+    }
+    // Per request: n_c = N_rr⁻¹ e_c (in its station's local space) and
+    // m_c = N_sr n_c (shared space).  One cached-factor solve each.
+    std::vector<Eigen::VectorXd> n(k), m(k);
+    std::vector<std::size_t>     sta(k);
+    std::vector<Eigen::Index>    col(k);
+    for (Eigen::Index i = 0; i < k; ++i) {
+        const std::size_t s = requests[i].first;
+        const Eigen::Index c = requests[i].second;
+        if (s >= n_active_) {
+            throw std::out_of_range("NetworkNormalEquations::jointConditionalCovariance: "
+                                    "station index out of range");
+        }
+        const Station& st = stations_[s];
+        if (c < 0 || c >= st.n_local) {
+            fail("jointConditionalCovariance: local column out of range");
+        }
+        Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
+        e_c(c) = 1.0;
+        n[i] = st.Nrr_ldlt.solve(e_c);                       // N_rr⁻¹ e_c
+        m[i] = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n[i])  // N_sr N_rr⁻¹ e_c
+                               : Eigen::VectorXd();
+        sta[i] = s;
+        col[i] = c;
+    }
+    // Cov_free · m_b (shared propagation), precomputed once per request.
+    std::vector<Eigen::VectorXd> cm(k);
+    for (Eigen::Index b = 0; b < k; ++b) {
+        cm[b] = (n_shared_ > 0) ? Eigen::VectorXd(cov_free_xs * m[b]) : Eigen::VectorXd();
+    }
+    Eigen::MatrixXd cov(k, k);
+    for (Eigen::Index a = 0; a < k; ++a) {
+        for (Eigen::Index b = a; b < k; ++b) {
+            double v = (n_shared_ > 0) ? m[a].dot(cm[b]) : 0.0;  // m_aᵀ Cov_free m_b
+            if (sta[a] == sta[b]) {
+                v += n[a](col[b]);  // (N_rr⁻¹)_{c_a,c_b} — same local space only
+            }
+            cov(a, b) = v;
+            cov(b, a) = v;
+        }
+    }
+    return cov;
+}
+
 Eigen::VectorXd NetworkNormalEquations::rowRedundancy(
     std::size_t station, const Eigen::MatrixXd& A_s_rows,
     const Eigen::MatrixXd& A_r_rows, const Eigen::VectorXd& w_rows,
@@ -636,6 +1327,32 @@ Eigen::Index NetworkNormalEquations::numLocal(std::size_t station) const {
                                 "station index out of range");
     }
     return stations_[station].n_local;
+}
+
+const Eigen::MatrixXd& NetworkNormalEquations::stationCrossBlock(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationCrossBlock: "
+                                "station index out of range");
+    }
+    return stations_[station].N_sr;
+}
+
+const Eigen::VectorXd& NetworkNormalEquations::stationLocalRhs(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationLocalRhs: "
+                                "station index out of range");
+    }
+    return stations_[station].u_r;
+}
+
+Eigen::MatrixXd NetworkNormalEquations::stationLocalNormals(std::size_t station) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationLocalNormals: "
+                                "station index out of range");
+    }
+    const Station& st = stations_[station];
+    if (st.n_local == 0) return Eigen::MatrixXd(0, 0);
+    return st.Nrr_ldlt.reconstructedMatrix();
 }
 
 } // namespace GnssProcessor

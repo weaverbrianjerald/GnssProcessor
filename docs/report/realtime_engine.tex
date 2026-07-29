@@ -5,8 +5,9 @@
 %
 %  Sources: src/core/realtime/{RealTimeEngine,NtripClient,
 %  RtcmStreamReader}.cpp, src/core/rtcm/{RtcmParser,RtcmMsmDecoder,
-%  RtcmSsrDecoder,RtcmNavDecoder}.cpp, src/core/app/
-%  ApplicationRealtime.cpp, src/core/math/TimeUtils.cpp,
+%  RtcmSsrDecoder,RtcmNavDecoder}.cpp, src/core/sbf/{SbfStreamReader,
+%  SbfParser,Meas3Decoder,SbfSignalMap,SubframeAssembler}.cpp,
+%  src/core/app/ApplicationRealtime.cpp, src/core/math/TimeUtils.cpp,
 %  src/core/products/{SsrCorrectionStore,LiveEphemerisStore}.cpp.
 % ============================================================
 \documentclass[main.tex]{subfiles}
@@ -123,14 +124,28 @@ the downstream parser (\texttt{RtcmParser}) may assume frame integrity.
 The reader tracks frames-extracted and bytes-discarded counters for
 stream-health diagnostics.
 
+\paragraph{Septentrio SBF.}
+A parallel binary path decodes Septentrio SBF frames into the same
+observation / ephemeris outputs (\texttt{src/core/sbf/}):
+\texttt{SbfStreamReader} does the \texttt{\$@} (\texttt{0x24\,0x40})
+sync and CRC-16/XMODEM check, \texttt{SbfParser} dispatches blocks by
+ID, \texttt{Meas3Decoder} unpacks the \texttt{MeasEpoch} /
+\texttt{Meas3Ranges} observations (GLONASS FDMA slots resolved through
+\texttt{SbfSignalMap}), and \texttt{SubframeAssembler} rebuilds
+broadcast ephemeris from raw-nav subframes.  The SBF observation-decode
+mathematics is documented separately; only the framing and feed seam
+(\Cref{sec:rt-flow,sec:rt-apriori}) are covered here.
+
 The top-level \texttt{RtcmParser} (\texttt{src/core/rtcm/RtcmParser.cpp})
 reads the 12-bit message type DF002 from the \emph{first 12 bits of the
 payload} (not the header) and dispatches: 1005/1006 station
-coordinates, 4076 IGS-SSR, legacy SSR (1057--1068, 1240--1270),
-broadcast ephemeris (1019/1020/1042/1044/1046), and MSM4 / MSM7
-observations.  The week needed to promote the various truncated epoch
-fields to a full \texttt{GnssTime} is taken from the rover's wall-clock
-GPS week (\Cref{sec:rt-time}).
+coordinates, 1033 receiver/antenna descriptor and 1230 GLONASS
+code-phase biases (both surfaced-not-consumed), 4076 IGS-SSR, legacy
+SSR (1057--1068, 1240--1270), broadcast ephemeris
+(1019/1020/1042/1044/1046), and MSM4 / MSM5 / MSM7 observations.  The
+week needed to promote the various truncated epoch fields to a full
+\texttt{GnssTime} comes from the parser's per-stream time tracker, not
+from wall-clock at each frame (\Cref{sec:rt-time}).
 
 \subsection{MSM observation decode}\label{sec:rt-msm}
 
@@ -138,9 +153,9 @@ MSM observation messages are decoded by a single body
 (\texttt{decodeMsmImpl}, \texttt{src/core/rtcm/RtcmMsmDecoder.cpp})
 parameterised over an \texttt{MsmVariant} descriptor that supplies the
 per-field bit widths, scale factors, sentinels and capability flags.
-Two variants are emitted, MSM4 and MSM7 (MSM5/MSM6 are described by the
-same variant mechanism, but no variant entry is instantiated for them, so
-they are not currently produced).  The header
+Three variants are emitted, MSM4, MSM5 and MSM7 (MSM6 is described by the
+same variant mechanism, but no variant entry is instantiated for it, so
+it is not currently produced).  The header
 carries a 64-bit satellite mask, a 32-bit signal mask, and an
 $N_{\text{sat}}\times N_{\text{sig}}$ cell mask; the number of cells is
 $N_{\text{cell}} = \operatorname{popcount}(\text{cell mask})$.  Each
@@ -249,11 +264,19 @@ station that streams its own coordinates this provides an a-priori seed
 \subsection{Time-system handling}\label{sec:rt-time}
 
 Streaming messages carry truncated, system-specific epoch fields that
-must be promoted to a common GPS-time \texttt{GnssTime}.  The anchor for
-every promotion is the rover's wall-clock GPS time,
-\texttt{TimeUtils::nowContinuousGpsSeconds} (POSIX UTC plus the leap
-offset), from which the current GPS week is derived
-(\texttt{currentGpsWeekFromSystem}).
+must be promoted to a common GPS-time \texttt{GnssTime}.  Each parser
+instance keeps a continuous-GPS-seconds tracker of the last decoded
+stream epoch and promotes every mod-week / time-of-day field by
+\emph{nearest continuation} to that tracker --- the week (or day)
+minimising $|\Delta t|$, RTKLIB's \texttt{adjweek} semantics
+(\texttt{RtcmParser::anchorGpsSeconds}).  The host clock
+(\texttt{TimeUtils::nowContinuousGpsSeconds}, POSIX UTC plus the leap
+offset) is consulted \emph{only} at cold start, on the first
+time-bearing frame after construction, so a skewed host clock or a
+promotion race at a week rollover cannot re-week an established stream.
+Each successful MSM/SSR epoch advances the tracker
+(\texttt{updateTimeAnchor}); the truncated broadcast-nav weeks only read
+it.  The anchor below is this tracker's current value.
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item \textbf{Flat ms-of-week systems} (GPS/GAL/QZS/SBAS/BDS MSM):
       the 30-bit epoch is milliseconds-of-week; BeiDou adds the constant
@@ -265,7 +288,7 @@ offset), from which the current GPS week is derived
       \texttt{TimeUtils::glonassTodToGpsTime}, which carries the
       reported time-of-day through the GLONASS\,$=$\,UTC(SU)$+$\SI{3}{\hour}
       (``Moscow'') day frame and back to GPS time, anchoring on the
-      rover's current GPS seconds and re-adding leap seconds:
+      stream-time tracker and re-adding leap seconds:
 \begin{equation}
 t_{\text{GPS}} =
   \big(\,t_{\text{day}}^{0} + \tilde{t}_{\text{TOD}}\,\big)

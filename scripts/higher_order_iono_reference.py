@@ -32,7 +32,7 @@ First principles (quasi-longitudinal Appleton-Hartree):
   phase = -1/2 * I2_code,  -1/3 * I3_code.
 
 Run from the repo root:  python scripts/higher_order_iono_reference.py
-Prints the golden i2_m / i3_m values pinned in tests/test_main.cpp.
+Prints the golden i2_m / i3_m values pinned in tests/test_atmosphere_models.cpp.
 """
 
 import math
@@ -136,7 +136,7 @@ def main():
         ("L2", "C", 50.0),
         ("L1", "C", 120.0),   # high TEC -> I2 ~ cm-scale
     ]
-    print("\n# golden values for tests/test_main.cpp (i2_m, i3_m):")
+    print("\n# golden values for tests/test_atmosphere_models.cpp (i2_m, i3_m):")
     for band, meas, stec in cases:
         i2, i3 = higher_order_components(
             rx, sat, ipp_lat, ipp_lon, ipp_radius, stec, freqs[band], meas, mf)

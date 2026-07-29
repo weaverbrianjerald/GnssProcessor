@@ -70,15 +70,24 @@ std::string fmt(const char* f, double v) {
 
 VerifierResult Verifier::run(const VerifierConfig& cfg) {
     VerifierResult r;
+    r.k_sigma = cfg.k_sigma;
+    r.converge_skip = cfg.converge_skip;
     auto fail = [&](const std::string& s) { r.report.push_back("  [FAIL] " + s); ++r.failures; };
     auto pass = [&](const std::string& s) { r.report.push_back("  [PASS] " + s); };
     auto info = [&](const std::string& s) { r.report.push_back("  [info] " + s); };
+    // Record a structured check next to its report line (same `ok`, so the JSON
+    // and the printed verdict cannot drift).  gate==0 => informational (no gate).
+    auto chk = [&](const std::string& id, bool ok, double value, double gate,
+                   const std::string& units, const std::string& detail = "") {
+        r.checks.push_back(Check{ id, ok, value, gate, units, detail });
+    };
 
     // ---- Load truth + scalars + traces. -------------------------------------
     const Csv truth = readCsv(cfg.truth_dir / "truth_position.csv");
     const Csv scalars = readCsv(cfg.truth_dir / "truth_scalars.csv");
     const Csv state = readCsv(cfg.run_logs_dir / "state_trace.csv");
     const Csv resid = readCsv(cfg.run_logs_dir / "measurement_residuals.csv"); // optional
+    const Csv ttropo = readCsv(cfg.truth_dir / "truth_tropo.csv");             // optional: per-epoch truth ZWD
 
     if (!truth.ok) { fail("missing/empty truth_position.csv in " + cfg.truth_dir.string()); return r; }
     if (!scalars.ok) { fail("missing/empty truth_scalars.csv in " + cfg.truth_dir.string()); return r; }
@@ -129,13 +138,30 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         }
     }
 
+    // Per-epoch truth ZWD (optional).  When present, the ZWD gate becomes an RMS over
+    // every graded epoch instead of a single final-epoch comparison — required once the
+    // injected wet delay varies with time, where "the last epoch's value" is meaningless.
+    // Absent (older datasets, external submissions) => legacy final-epoch behaviour.
+    std::map<long long, double> tzwd;
+    if (ttropo.ok) {
+        const int tti = colIndex(ttropo, "tow_s"), tzi = colIndex(ttropo, "zwd_m");
+        if (tti >= 0 && tzi >= 0)
+            for (const auto& row : ttropo.rows)
+                if (std::max(tti, tzi) < (int)row.size())
+                    tzwd[towKey(std::atof(row[tti].c_str()))] = std::atof(row[tzi].c_str());
+    }
+    const bool have_zwd_series = !tzwd.empty();
+
     // state_trace columns (parsed by name; ISB/tropo columns are optional).
     const int s_tow = colIndex(state, "tow_s"), s_x = colIndex(state, "x_m"), s_y = colIndex(state, "y_m"),
               s_z = colIndex(state, "z_m"), s_xs = colIndex(state, "x_std_m"), s_ys = colIndex(state, "y_std_m"),
               s_zs = colIndex(state, "z_std_m"), s_gal = colIndex(state, "Galileo_m"),
               s_gals = colIndex(state, "Galileo_std_m"), s_tro = colIndex(state, "tropo_m"),
               s_tros = colIndex(state, "tropo_std_m");
-    if (s_tow < 0 || s_x < 0 || s_xs < 0) { fail("state_trace.csv missing position/std columns"); return r; }
+    // y_m/z_m are dereferenced unconditionally below (the error vector), so they
+    // are mandatory too — a missing/misspelled y_m or z_m header (s_y/s_z == -1)
+    // must fail gracefully here, not index row[-1] later.
+    if (s_tow < 0 || s_x < 0 || s_y < 0 || s_z < 0 || s_xs < 0) { fail("state_trace.csv missing position/std columns"); return r; }
 
     const double deg = Constants::PI / 180.0;
     const double k = cfg.k_sigma;
@@ -149,6 +175,8 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     double last_gal = 0, last_gals = 0, last_tro = 0, last_tros = 0;
     bool have_gal = (s_gal >= 0), have_tro = (s_tro >= 0);
     int epoch_idx = 0;
+    double zwd_sse = 0.0, zwd_max_abs = 0.0;   // per-epoch ZWD error accumulators
+    int zwd_n = 0;
 
     for (const auto& row : state.rows) {
         if (s_tow >= (int)row.size()) continue;
@@ -172,6 +200,17 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
 
         if (epoch_idx <= cfg.converge_skip) continue; // steady-state stats only
 
+        // Per-epoch ZWD error against the truth series (steady-state epochs only).
+        if (have_tro && have_zwd_series && s_tro < (int)row.size()) {
+            auto zt = tzwd.find(towKey(tow));
+            if (zt != tzwd.end()) {
+                const double dz = std::atof(row[s_tro].c_str()) - zt->second;
+                zwd_sse += dz * dz;
+                zwd_max_abs = std::max(zwd_max_abs, std::abs(dz));
+                ++zwd_n;
+            }
+        }
+
         const TruthPos& p = it->second;
         const Eigen::Vector3d err(std::atof(row[s_x].c_str()) - p.x,
                                   std::atof(row[s_y].c_str()) - p.y,
@@ -188,9 +227,12 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         max3d = std::max(max3d, e3);
         errs.push_back(e3);
 
+        // s_ys/s_zs are OPTIONAL columns not covered by the ragged-row guard above,
+        // so bounds-check per row (a truncated external submission can cut a row off
+        // after x_std_m) — fall back to xs rather than read out of bounds.
         const double xs = std::atof(row[s_xs].c_str());
-        const double ys = (s_ys >= 0) ? std::atof(row[s_ys].c_str()) : xs;
-        const double zs = (s_zs >= 0) ? std::atof(row[s_zs].c_str()) : xs;
+        const double ys = (s_ys >= 0 && s_ys < (int)row.size()) ? std::atof(row[s_ys].c_str()) : xs;
+        const double zs = (s_zs >= 0 && s_zs < (int)row.size()) ? std::atof(row[s_zs].c_str()) : xs;
         if (std::abs(err.x()) <= k * xs && std::abs(err.y()) <= k * ys && std::abs(err.z()) <= k * zs) ++n_cov;
         const double sig3 = std::sqrt(xs * xs + ys * ys + zs * zs);
         if (e3 < 0.3 * sig3) ++n_toogood;
@@ -224,6 +266,9 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         if (med3d < pos_med_gate && p90 < pos_p90_gate) pass(msg);
         else fail(msg + " — exceeds PPP gate (median<" + fmt("%.2f", pos_med_gate) + ", p90<" +
                   fmt("%.2f", pos_p90_gate) + " m)");
+        const std::string mode = kine ? "kinematic" : "static";
+        chk("position_median", med3d < pos_med_gate, med3d, pos_med_gate, "m", mode);
+        chk("position_p90", p90 < pos_p90_gate, p90, pos_p90_gate, "m", mode);
     }
 
     // --- Gate 2: covariance coverage + non-circularity (test 8). -------------
@@ -238,6 +283,11 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         else
             pass("anti-circularity: errors track the noise floor (only " + fmt("%.0f", toogood * 100.0) +
                  "% of epochs < 0.3 sigma, coverage " + fmt("%.0f", cov * 100.0) + "%)");
+        // coverage_k3 is informational (float-PPP optimism expected), gate==0.
+        chk("coverage_k3", true, cov * 100.0, 0.0, "%",
+            "formal-sigma coverage at k=" + fmt("%.0f", k));
+        chk("anti_circularity", toogood <= 0.99, toogood * 100.0, 99.0, "%",
+            "epochs with 3D error < 0.3 sigma");
     }
 
     // --- Gate 3: GPS->Galileo ISB recovery (test 9). -------------------------
@@ -247,17 +297,35 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         std::string msg = "ISB (Galileo_m): recovered " + fmt("%.3f", last_gal) + " m vs truth " +
                           fmt("%.3f", isb_truth) + " m (err " + fmt("%.3f", err) + ", tol " + fmt("%.3f", tol) + ")";
         if (err <= tol) pass(msg); else fail(msg);
+        chk("isb", err <= tol, err, tol, "m",
+            "recovered " + fmt("%.3f", last_gal) + " vs truth " + fmt("%.3f", isb_truth));
     } else {
         info("ISB: no Galileo_m column (GPS-only run) — ISB gate skipped");
     }
 
     // --- Gate 4: ZWD recovery. -----------------------------------------------
-    if (have_tro) {
+    // With a per-epoch truth series (truth_tropo.csv) grade the RMS of
+    // (estimated - truth) across every steady-state epoch: once the injected wet delay
+    // varies with time, comparing only the FINAL epoch to a single constant measures
+    // nothing.  Without the series, fall back to the historical final-epoch comparison
+    // so older datasets and external submissions still grade.
+    if (have_tro && have_zwd_series && zwd_n > 0) {
+        const double rms = std::sqrt(zwd_sse / zwd_n);
+        const double tol = std::max(zwd_floor, k * last_tros);
+        std::string msg = "ZWD (tropo_m): RMS " + fmt("%.3f", rms) + " m over " +
+                          std::to_string(zwd_n) + " epochs vs the per-epoch truth series (max |err| " +
+                          fmt("%.3f", zwd_max_abs) + ", tol " + fmt("%.3f", tol) + ")";
+        if (rms <= tol) pass(msg); else fail(msg);
+        chk("zwd", rms <= tol, rms, tol, "m",
+            "RMS " + fmt("%.3f", rms) + " m over " + std::to_string(zwd_n) + " epochs");
+    } else if (have_tro) {
         const double err = std::abs(last_tro - zwd_truth);
         const double tol = std::max(zwd_floor, k * last_tros);
         std::string msg = "ZWD (tropo_m): recovered " + fmt("%.3f", last_tro) + " m vs truth " +
                           fmt("%.3f", zwd_truth) + " m (err " + fmt("%.3f", err) + ", tol " + fmt("%.3f", tol) + ")";
         if (err <= tol) pass(msg); else fail(msg);
+        chk("zwd", err <= tol, err, tol, "m",
+            "recovered " + fmt("%.3f", last_tro) + " vs truth " + fmt("%.3f", zwd_truth));
     }
 
     // --- Gate 5: storm-window flatness (test 4 — dual-freq cancels). ---------
@@ -275,6 +343,8 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         // this gate only needs to catch a GROSS storm-induced bias from a mis-formed IF).
         if (sm <= 2.0 * qm + 0.15) pass(msg + " — storm cancels in dual-freq (no position bias)");
         else fail(msg + " — storm biases the dual-frequency position (should cancel)");
+        chk("storm_flatness", sm <= 2.0 * qm + 0.15, sm, 2.0 * qm + 0.15, "m",
+            "storm-window median 3D vs quiet " + fmt("%.3f", qm));
     } else {
         info("storm flatness: no storm window in the steady-state span — skipped");
     }
@@ -308,6 +378,10 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
             fail(msg + " — phase residual ~0: the solution re-inverted the sim model (circular)");
         else
             info(msg + " — outside the nominal band (check noise model)");
+        // Failure branch is ONLY pr<=5e-4 (re-inverted); the info branch is not a
+        // failure, so the check passes whenever the phase floor is non-zero.
+        chk("residual_floor", pr > 5.0e-4, pr * 1000.0, 0.5, "mm",
+            "phase-IF RMS; code-IF RMS " + fmt("%.2f", cr) + " m");
     } else {
         info("residual floor: measurement_residuals.csv absent — enable_residual_trace for test 7");
     }
@@ -315,6 +389,63 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     r.pass = (r.failures == 0);
     r.report.push_back(r.pass ? "=== VERIFIER PASS ===" : "=== VERIFIER FAIL (" + std::to_string(r.failures) + ") ===");
     return r;
+}
+
+bool Verifier::writeJsonReport(const VerifierResult& res, const std::filesystem::path& path) {
+    std::ofstream f(path);
+    if (!f.is_open()) return false;
+
+    auto esc = [](const std::string& s) {
+        std::string o;
+        o.reserve(s.size() + 8);
+        for (char c : s) {
+            switch (c) {
+                case '"':  o += "\\\""; break;
+                case '\\': o += "\\\\"; break;
+                case '\n': o += "\\n"; break;
+                case '\r': o += "\\r"; break;
+                case '\t': o += "\\t"; break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char b[8];
+                        std::snprintf(b, sizeof(b), "\\u%04x", static_cast<unsigned char>(c));
+                        o += b;
+                    } else {
+                        o += c;   // raw UTF-8 bytes pass through (JSON is UTF-8)
+                    }
+            }
+        }
+        return o;
+    };
+    auto num = [](double v) -> std::string {
+        if (!std::isfinite(v)) return "null";
+        char b[64];
+        std::snprintf(b, sizeof(b), "%.6g", v);
+        return std::string(b);
+    };
+
+    f << "{\n";
+    f << "  \"pass\": " << (res.pass ? "true" : "false") << ",\n";
+    f << "  \"failures\": " << res.failures << ",\n";
+    f << "  \"k_sigma\": " << num(res.k_sigma) << ",\n";
+    f << "  \"converge_skip\": " << res.converge_skip << ",\n";
+    f << "  \"checks\": [\n";
+    for (std::size_t i = 0; i < res.checks.size(); ++i) {
+        const Check& c = res.checks[i];
+        f << "    {\"id\": \"" << esc(c.id) << "\", \"pass\": " << (c.pass ? "true" : "false")
+          << ", \"value\": " << num(c.value) << ", \"gate\": " << num(c.gate)
+          << ", \"units\": \"" << esc(c.units) << "\", \"detail\": \"" << esc(c.detail) << "\"}"
+          << (i + 1 < res.checks.size() ? ",\n" : "\n");
+    }
+    f << "  ],\n";
+    f << "  \"report_lines\": [\n";
+    for (std::size_t i = 0; i < res.report.size(); ++i) {
+        f << "    \"" << esc(res.report[i]) << "\""
+          << (i + 1 < res.report.size() ? ",\n" : "\n");
+    }
+    f << "  ]\n";
+    f << "}\n";
+    return true;
 }
 
 } // namespace sim

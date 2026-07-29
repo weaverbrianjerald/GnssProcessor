@@ -9,7 +9,9 @@
 %  the float Kalman state, with WL/NL
 %  decomposition, partial/subset acceptance, ratio + FFR
 %  validation, and constrained pseudo-observation feedback.
-%  Impl: src/core/filter/AmbiguityResolver.{hpp,cpp}
+%  Impl: driver in src/core/filter/AmbiguityResolver.{hpp,cpp};
+%  MLAMBDA numerical kernels + acceptance battery in
+%  src/core/filter/IlsCore.{hpp,cpp} (ils:: free functions)
 % ============================================================
 
 Integer ambiguity resolution (AR) converts the real-valued,
@@ -44,9 +46,21 @@ resolver's internal label $\dd{}$ for the differenced ambiguity in the
 equations below --- the algebra is identical either way --- with the
 understanding that it denotes the between-satellite single difference
 $\bsd{}$ in the single-receiver case and the full double difference
-only in baseline mode.  The implementation lives in
-\texttt{src/core/filter/AmbiguityResolver.cpp} (driver, search kernel,
-WL/NL decomposition, acceptance) with configuration under the JSON path
+only in baseline mode.  The implementation is split along a
+driver/kernel seam: \texttt{src/core/filter/AmbiguityResolver.cpp} is the
+\emph{driver} --- state-vector assembly, metre$\leftrightarrow$cycle
+rescaling, per-pair $\lambda$ lookup, DD formation, the WL/NL
+decomposition, and application of the returned integer fix --- while the
+decorrelation-agnostic \emph{numerical core} (the $LDL^{\Tr}$
+factorisation, the $\Zmat$-reduction, the Schnorr--Euchner search, the
+bootstrap success rate, and the full acceptance battery, all as pure
+free functions over $(\ambfloat\ \text{cycles},\,\ambcov\
+\text{cycles}^2)$ with no \texttt{StateManager} / \texttt{KalmanFilter} /
+config coupling) lives in the \texttt{GnssProcessor::ils} namespace of
+\texttt{src/core/filter/IlsCore.\{hpp,cpp\}}.  That same \texttt{ils}
+core is the single implementation shared with the PPP-RTK network
+producer, which drives the identical battery under its own stricter gate
+set (\Cref{sec:net}).  Configuration is under the JSON path
 \texttt{estimation.ambiguity\_resolution.*}.
 
 \subsection{The integer least-squares problem}\label{sec:ar-ils}
@@ -149,8 +163,8 @@ off-diagonal $\Lmat$ entries) and their conditional variances are
 ordered.  We write the decorrelated float vector as
 $\bar{\bm{z}} := \Zmat^{\Tr}\ambfloat$ (the quantity the search of
 \Cref{sec:ar-lambda} actually rounds; implemented as
-\texttt{z\_float = Z.transpose()*a} in
-\texttt{src/core/filter/AmbiguityResolver.cpp}), with components
+\texttt{z\_float = Z.transpose()*a} in \texttt{ils::mlambda}
+(\texttt{src/core/filter/IlsCore.cpp})), with components
 $\bar{z}_k$.  Because $\Zmat$ is unimodular the integer minimiser maps back
 exactly, $\ambfix = (\Zmat^{\Tr})^{-1}\check{\bm{z}}$ with
 $(\Zmat^{\Tr})^{-1}$ also integer; decorrelation therefore does not
@@ -206,7 +220,8 @@ z_k = \lceil \hat{z}_k \rfloor,
 When a complete integer vector reaches level $0$ with cumulative
 distance below the current bound $\chi^2$, it is recorded and the bound
 shrinks to the worst retained candidate, contracting the ellipsoid as
-better candidates are found.  The search retains the
+better candidates are found.  The search (\texttt{ils::search} in
+\texttt{src/core/filter/IlsCore.cpp}) retains the
 $m = 2$ best candidates (for the ratio test) sorted by ascending
 squared distance, under a hard iteration cap (\texttt{kMaxIter} $=
 10\,000$).  Its outputs are the two smallest objective values
@@ -304,10 +319,17 @@ WL-only mode (\texttt{estimation.ambiguity\_resolution.wl\_only}, in the
 $\dd{}_{1}/\lambda_1 - \dd{}_{2}/\lambda_2 = \dd N_{\mathrm{WL}}$ as a
 single pseudo-observation per pair without any NL search, with
 covariance inflation on the affected single-difference states when MW
-re-locks at a new integer so the state snaps within one epoch.  This
-\texttt{per\_band} \texttt{wl\_only} path carries no cross-frequency
-consistency check: it gates each DD WL only on the per-arc fractional
-residual (\texttt{wl\_max\_frac}, both arcs).  The cross-frequency parity
+re-locks at a new integer so the state snaps within one epoch.  Both
+WL-constraint paths (this one and the \texttt{nl\_wl}-basis constraint
+below) build their pseudo-observation noise from a \emph{separate}
+knob, $\bm{R} = \sigma^2_{\mathrm{wl}}\,\bm{I}$ with
+$\sigma^2_{\mathrm{wl}} = \texttt{wl\_only\_pseudo\_var}$ ($10^{-4}$
+cycles$^2$, note the cycle domain), \emph{not} the metre-domain
+$\sigma^2_{\mathrm{hold}}$ of the NL/DD feedback in
+\eqref{eq:pseudo}.  This \texttt{per\_band} \texttt{wl\_only} path
+carries no cross-frequency consistency check: it gates each DD WL only
+on the per-arc fractional residual (\texttt{wl\_max\_frac}, default
+$0.40$, both arcs).  The cross-frequency parity
 check lives instead in the \texttt{nl\_wl} basis
 (\texttt{applyMwWlConstraintsNlWl\_} in
 \texttt{src/core/filter/AmbiguityResolver.cpp}), where it rejects all
@@ -355,8 +377,10 @@ the full set is searched and either passes all of
 \Cref{sec:ar-accept} or the epoch stays float.  When
 \texttt{enable\_partial\_ar} is set, a failure of the full-set battery
 triggers a greedy backward elimination
-(\texttt{selectFixableSubset\_}) instead of falling straight back to
-float.  Starting from the full candidate set, each iteration re-runs the
+(\texttt{ils::selectFixableSubset} in
+\texttt{src/core/filter/IlsCore.cpp}, reached through the driver-side
+\texttt{selectFixableSubset\_} config adapter) instead of falling
+straight back to float.  Starting from the full candidate set, each iteration re-runs the
 complete \textsc{MLAMBDA} pipeline of
 \Crefrange{sec:ar-ils}{sec:ar-lambda} on the current subset and re-tests
 the \emph{same} acceptance battery --- ratio lower/upper bound
@@ -475,7 +499,7 @@ are
 \jacH_{(k,\,i)} = +1,\quad
 \jacH_{(k,\,p)} = -1,
 \qquad
-v_k = \ambfix_k - \bigl(\stateV_i - \stateV_p\bigr),
+v_k = \lambda_k\,\ambfix_k - \bigl(\stateV_i - \stateV_p\bigr),
 \qquad
 \bm{R} = \sigma^2_{\mathrm{hold}}\,\bm{I},
 \label{eq:pseudo}
@@ -518,6 +542,8 @@ $\sigma^2_{\mathrm{hold}}$ & \texttt{hold\_variance}      & \texttt{0.001} m$^2$
 $n_{\min}^{\text{ep}}$    & \texttt{min\_epochs}          & \texttt{10}     & convergence guard \\
 $\sigma_{\mathrm{pos}}^{\max}$ & \texttt{max\_position\_sigma\_m} & \texttt{0.05} m & convergence guard \\
 ---                       & \texttt{wl\_only}             & \texttt{false}  & MW-WL-only, no NL search \\
+$\sigma^2_{\mathrm{wl}}$  & \texttt{wl\_only\_pseudo\_var} & \texttt{1e-4} cyc$^2$ & WL-constraint pseudo-obs $\bm{R}$ (\Cref{sec:ar-wlnl}) \\
+---                       & \texttt{wl\_max\_frac}        & \texttt{0.40}   & per-arc WL fractional-residual gate (\Cref{sec:ar-wlnl}) \\
 ---                       & \texttt{enable\_partial\_ar}  & \texttt{false}  & backward-elimination subset fix (\Cref{sec:ar-partial}) \\
 ---                       & \texttt{active\_systems}  & \texttt{[]} (all) & constellation subset (\Cref{sec:ar-partial}) \\
 ---                       & \texttt{state\_ambiguity\_basis}\,$^{\dagger}$ & \texttt{per\_band} & \texttt{per\_band} vs \texttt{nl\_wl} dispatch \\

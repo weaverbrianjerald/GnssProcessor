@@ -29,11 +29,32 @@ struct VerifierConfig {
     int converge_skip{ 30 };            ///< Leading epochs excluded from steady-state stats.
 };
 
+/**
+ * @brief One machine-readable gate outcome, recorded next to its report line.
+ *
+ * Populated in the SAME place the human report line is emitted, so the JSON
+ * verdict and the printed verdict cannot drift.  @c value / @c gate are the
+ * quantity and its threshold (a tolerance-style gate stores the error as
+ * @c value and the tolerance as @c gate); @c gate == 0 marks an informational
+ * check with no threshold (e.g. coverage %).
+ */
+struct Check {
+    std::string id;       ///< Stable slug: position_median, isb, storm_flatness, ...
+    bool pass{ true };
+    double value{ 0.0 };
+    double gate{ 0.0 };
+    std::string units;
+    std::string detail;
+};
+
 /** @brief Outcome of a verification run: a PASS/FAIL plus a human report. */
 struct VerifierResult {
     bool pass{ false };
     int failures{ 0 };
     std::vector<std::string> report; ///< One line per check (printed by the caller).
+    std::vector<Check> checks;       ///< Structured per-gate outcomes (for verify_report.json).
+    double k_sigma{ 3.0 };           ///< Echo of the coverage multiplier used.
+    int converge_skip{ 30 };         ///< Echo of the leading epochs skipped.
 };
 
 /** @brief Stateless grader. */
@@ -41,6 +62,15 @@ class Verifier {
 public:
     /** @brief Run all gates; never throws (errors surface as failures in the result). */
     static VerifierResult run(const VerifierConfig& cfg);
+
+    /**
+     * @brief Write @p res to @p path as verify_report.json (SPEC §4.6).
+     *
+     * Additive/consumed by the pyviz dashboard; never re-graded.  Emits
+     * @c {pass, failures, k_sigma, converge_skip, checks[], report_lines[]}.
+     * Returns false only on a file-open error (non-fatal to the caller).
+     */
+    static bool writeJsonReport(const VerifierResult& res, const std::filesystem::path& path);
 };
 
 } // namespace sim

@@ -10,6 +10,18 @@ from __future__ import annotations
 
 from .base import Viewer, ViewerResult
 
+# Exam / simulator truth (truth-referenced; auto-skip without --truth-dir)
+from .exam_scorecard import viewer as _exam_scorecard
+from .exam_spp_reference import viewer as _exam_spp_reference
+from .exam_position_truth import viewer as _exam_position_truth
+from .exam_truth_lines import viewer as _exam_truth_lines
+from .exam_track import viewer as _exam_track
+from .exam_map import viewer as _exam_map
+from .exam_visibility import viewer as _exam_visibility
+from .exam_iono_truth import viewer as _exam_iono_truth
+from .exam_otl_truth import viewer as _exam_otl_truth
+from .exam_skyplot_slips import viewer as _exam_skyplot_slips
+from .exam_slip_timeline import viewer as _exam_slip_timeline
 # State / position
 from .state import viewer as _state
 from .wls import viewer as _wls
@@ -56,6 +68,12 @@ from .network_station_strip import viewer as _network_station_strip
 from .network_manifest import viewer as _network_manifest
 
 REGISTRY = [
+    # Exam / simulator truth (lead the dashboard; each auto-skips without a truth dir)
+    # Part B (SPP reference, truth-only) leads Part C (PPP vs truth) — student order.
+    _exam_scorecard, _exam_spp_reference,
+    _exam_position_truth, _exam_truth_lines, _exam_track, _exam_map,
+    _exam_visibility, _exam_iono_truth, _exam_otl_truth,
+    _exam_skyplot_slips, _exam_slip_timeline,
     _state, _wls, _baseline,
     _measurement_residuals, _residual_strip, _plot_satellite_signals,
     _dops, _satellite_status, _satellite_strip,

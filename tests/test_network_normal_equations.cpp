@@ -775,6 +775,493 @@ TEST(NetworkNormalEquationsTest, AddStationPriorMatchesDenseAugmentedSolve) {
     }
 }
 
+// ===========================================================================
+// Card 4 (M1) phase C: rank-K double-difference prior fold — foldReducedDdPriors
+// ===========================================================================
+
+// A joint rank-K DD prior z ~ N(zhat, Pz), z = C x_L, folded via the per-component
+// Woodbury update, must reproduce the dense stacked solve with the SAME prior added
+// as Cᵀ Pz⁻¹ C on the local columns + Cᵀ Pz⁻¹ zhat on the RHS.  The two DD rows SHARE
+// a local column (station 1, col 0) — as fundamental cycles share tree edges — and
+// Pz is DENSE, so this exercises the JOINT rank-K path; independent rank-1 folds
+// would be inexact (the phase-A scout's adversarial correction).
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsMatchesDenseAugmentedSolve) {
+    std::mt19937 gen(20260711);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, /*n_locals=*/{3, 3, 3},
+                                       /*m_obs=*/{10, 11, 12}, /*correlated=*/true);
+    const double sp = 1e-2, lp = 1e-2;
+
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {
+        {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+        {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+    };
+    blk.Pz = (Eigen::MatrixXd(2, 2) << 0.04, 0.01, 0.01, 0.09).finished();
+    blk.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+
+    // Dense reference: build C (K × P), augment N += Cᵀ Pz⁻¹ C, u += Cᵀ Pz⁻¹ zhat.
+    DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+    const Eigen::Index P = dense.N.rows();
+    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(2, P);
+    for (Eigen::Index k = 0; k < 2; ++k)
+        for (const auto& t : blk.rows[static_cast<std::size_t>(k)])
+            C(k, dense.local_offset[t.station] + t.local_col) += t.coeff;
+    const Eigen::MatrixXd PzInv = blk.Pz.inverse();
+    const Eigen::MatrixXd N = dense.N + C.transpose() * PzInv * C;
+    const Eigen::VectorXd u = dense.u + C.transpose() * PzInv * blk.zhat;
+    const Eigen::VectorXd x_ref = N.ldlt().solve(u);
+
+    // Schur path: addStation each, foldReducedDdPriors, solve + reconstruct.
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s;
+        const Eigen::MatrixXd WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr = s.A_r.transpose() * WA_r;
+        N_rr += lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                       WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq.reduce();
+    neq.foldReducedDdPriors({blk});
+    const Eigen::VectorXd x_s = neq.solveShared();
+
+    EXPECT_TRUE(x_s.isApprox(x_ref.head(n_shared), 1e-9))
+        << "x_s=\n" << x_s.transpose() << "\nref=\n" << x_ref.head(n_shared).transpose();
+    std::vector<Eigen::VectorXd> xr(stations.size());
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        xr[r] = neq.reconstructStation(r, x_s);
+        const Eigen::VectorXd ref =
+            x_ref.segment(dense.local_offset[r], stations[r].A_r.cols());
+        EXPECT_TRUE(xr[r].isApprox(ref, 1e-9)) << "station " << r << " local mismatch";
+    }
+
+    // Posterior mean == C x_L of the reconstructed constrained locals.
+    Eigen::VectorXd zL(2); zL.setZero();
+    for (Eigen::Index k = 0; k < 2; ++k)
+        for (const auto& t : blk.rows[static_cast<std::size_t>(k)])
+            zL(k) += t.coeff * xr[t.station](t.local_col);
+    EXPECT_TRUE(neq.ddPriorPosteriorMean(0, x_s).isApprox(zL, 1e-9))
+        << "posterior=" << neq.ddPriorPosteriorMean(0, x_s).transpose()
+        << " C x_L=" << zL.transpose();
+    EXPECT_EQ(neq.numDdPriorBlocks(), 1u);
+}
+
+// Phase C3b — the posterior COVARIANCE readout (ddPriorPosteriorCovariance) must
+// equal C_L Σ_LL C_Lᵀ of the dense augmented solve: the same closed form the z-store
+// carries forward.  Independent dense reference (augment N += Cᵀ Pz⁻¹ C, invert,
+// project), fed the datum-free shared covariance Σ_ss = [N_aug⁻¹]_ss.
+TEST(NetworkNormalEquationsTest, DdPriorPosteriorCovarianceMatchesDenseAugmentedSolve) {
+    std::mt19937 gen(20260714);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, /*n_locals=*/{3, 3, 3},
+                                       /*m_obs=*/{10, 11, 12}, /*correlated=*/true);
+    const double sp = 1e-2, lp = 1e-2;
+
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {
+        {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+        {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+    };
+    blk.Pz = (Eigen::MatrixXd(2, 2) << 0.04, 0.01, 0.01, 0.09).finished();
+    blk.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+
+    // Dense reference: N_aug = N + Cᵀ Pz⁻¹ C; Σ_aug = N_aug⁻¹; Pᶻ_post = C Σ_aug Cᵀ.
+    DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+    const Eigen::Index P = dense.N.rows();
+    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(2, P);
+    for (Eigen::Index k = 0; k < 2; ++k)
+        for (const auto& t : blk.rows[static_cast<std::size_t>(k)])
+            C(k, dense.local_offset[t.station] + t.local_col) += t.coeff;
+    const Eigen::MatrixXd PzInv = blk.Pz.inverse();
+    const Eigen::MatrixXd N_aug = dense.N + C.transpose() * PzInv * C;
+    const Eigen::MatrixXd Sigma_aug = N_aug.inverse();
+    const Eigen::MatrixXd Pz_post_ref = C * Sigma_aug * C.transpose();
+    const Eigen::MatrixXd cov_free = Sigma_aug.topLeftCorner(n_shared, n_shared);  // Σ_ss
+
+    // Schur path: fold, then read the posterior covariance from the cached factors.
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr =
+            s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                       WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq.reduce();
+    neq.foldReducedDdPriors({blk});
+
+    const Eigen::MatrixXd Pz_post = neq.ddPriorPosteriorCovariance(0, cov_free);
+    EXPECT_TRUE(Pz_post.isApprox(Pz_post_ref, 1e-9))
+        << "Pᶻ_post=\n" << Pz_post << "\nref=\n" << Pz_post_ref;
+    // Sanity: symmetric, and strictly tighter than the prior (information was folded).
+    EXPECT_LT((Pz_post - Pz_post.transpose()).cwiseAbs().maxCoeff(), 1e-12);
+    EXPECT_LT(Pz_post(0, 0), blk.Pz(0, 0)) << "posterior variance must be below the prior";
+    EXPECT_LT(Pz_post(1, 1), blk.Pz(1, 1));
+    // Degenerate/inert path: a non-PD block returns the untouched prior covariance.
+    NetworkNormalEquations::DdPriorBlock bad = blk;
+    bad.Pz(0, 0) = -1.0;   // not SPD ⇒ M=0 ⇒ inert
+    NetworkNormalEquations neq2(n_shared);
+    neq2.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                       Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr =
+            s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq2.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                        WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq2.reduce();
+    neq2.foldReducedDdPriors({bad});
+    EXPECT_TRUE(neq2.ddPriorPosteriorCovariance(0, cov_free).isApprox(bad.Pz, 1e-12))
+        << "an inert (non-PD) block returns the prior covariance unchanged";
+}
+
+// The hard-constraint limit: a K=1 DD prior with Pz→0 and zhat=0 (a "sum of two
+// columns = 0" constraint) must coincide with the shipped sum-to-zero gauge fold on
+// the same columns — the generalization is exact, not a new mechanism.
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsHardLimitEqualsSumZeroGauge) {
+    std::mt19937 gen(4242);
+    const Eigen::Index n_shared = 3;
+    const auto stations = makeStations(gen, n_shared, {2, 2}, {8, 9}, false);
+    const double sp = 1e-2, lp = 1e-2;
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations) {
+            const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+            const Eigen::Index n_r = s.A_r.cols();
+            Eigen::MatrixXd N_rr =
+                s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+    };
+    NetworkNormalEquations::SumZeroGauge gz;
+    gz.terms = {{0, 0}, {1, 0}};   // x_{0,0} + x_{1,0} = 0
+    NetworkNormalEquations gneq(n_shared); build(gneq);
+    gneq.reduce();
+    gneq.foldReducedSumZeroGauges({gz});
+    const Eigen::VectorXd xg = gneq.solveShared();
+
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {{Term{0, 0, +1.0}, Term{1, 0, +1.0}}};
+    blk.Pz = (Eigen::MatrixXd(1, 1) << 1e-12).finished();   // → hard limit
+    blk.zhat = Eigen::VectorXd::Zero(1);
+    NetworkNormalEquations dneq(n_shared); build(dneq);
+    dneq.reduce();
+    dneq.foldReducedDdPriors({blk});
+    const Eigen::VectorXd xd = dneq.solveShared();
+
+    EXPECT_TRUE(xd.isApprox(xg, 1e-6))
+        << "hard-limit DD prior must match the sum-zero gauge: dd=" << xd.transpose()
+        << " gauge=" << xg.transpose();
+    for (std::size_t r = 0; r < stations.size(); ++r)
+        EXPECT_TRUE(dneq.reconstructStation(r, xd).isApprox(
+                        gneq.reconstructStation(r, xg), 1e-6))
+            << "station " << r << " hard-limit reconstruction mismatch";
+}
+
+// OFF-path byte-identity: an empty DD-prior list is a genuine no-op.
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsEmptyIsNoOp) {
+    std::mt19937 gen(777);
+    const Eigen::Index n_shared = 3;
+    const auto stations = makeStations(gen, n_shared, {2, 3}, {8, 9}, false);
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(1e-2 * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations)
+            neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
+    };
+    NetworkNormalEquations plain(n_shared); build(plain);
+    NetworkNormalEquations empty(n_shared); build(empty);
+    empty.reduce();
+    empty.foldReducedDdPriors({});
+    EXPECT_EQ((plain.solveShared() - empty.solveShared()).cwiseAbs().maxCoeff(), 0.0);
+    EXPECT_TRUE(empty.reducedSharedNormals().isApprox(plain.reducedSharedNormals(), 0.0));
+    EXPECT_EQ(empty.numDdPriorBlocks(), 0u);
+}
+
+// Gate 4 — DatumFreedom (the make-or-break falsifier of the invariant-carry concept).
+// A z-store "tree realization" IS a choice of fundamental-cycle basis; two different
+// realizations are related by a UNIMODULAR integer T (a z-store pivot).  The SAME DD
+// information carried in basis 1 (C1, Pz1, ẑ1) and in basis 2 = T·basis1
+// (C2 = T C1, Pz2 = T Pz1 Tᵀ, ẑ2 = T ẑ1) must fold to the IDENTICAL producer solution
+// — because C2ᵀ Pz2⁻¹ C2 = C1ᵀ Pz1⁻¹ C1 and C2ᵀ Pz2⁻¹ ẑ2 = C1ᵀ Pz1⁻¹ ẑ1 (the datum can
+// be re-realized freely every epoch; nothing the filter remembers depends on it).
+// This ALSO proves the fold is the JOINT rank-K Woodbury: independent rank-1 folds are
+// NOT basis-invariant, so they would fail here.
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDatumFreedomBasisInvariant) {
+    std::mt19937 gen(20260712);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, {3, 3, 3}, {10, 11, 12}, true);
+    const double sp = 1e-2, lp = 1e-2;
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations) {
+            const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+            const Eigen::Index n_r = s.A_r.cols();
+            Eigen::MatrixXd N_rr =
+                s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+    };
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock b1;
+    b1.rows = {
+        {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+        {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+    };
+    b1.Pz = (Eigen::MatrixXd(2, 2) << 0.04, 0.015, 0.015, 0.09).finished();
+    b1.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+
+    // Basis 2 = unimodular re-basis, T = [[1,0],[1,1]] (det 1): row1' = row0 + row1
+    // (the shared (1,0) term cancels).  Pz2 = T Pz1 Tᵀ, ẑ2 = T ẑ1.
+    NetworkNormalEquations::DdPriorBlock b2;
+    b2.rows = {
+        b1.rows[0],
+        {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0},
+         Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+    };
+    Eigen::MatrixXd T(2, 2); T << 1, 0, 1, 1;
+    b2.Pz = T * b1.Pz * T.transpose();
+    b2.zhat = T * b1.zhat;
+
+    NetworkNormalEquations n1(n_shared); build(n1); n1.reduce(); n1.foldReducedDdPriors({b1});
+    NetworkNormalEquations n2(n_shared); build(n2); n2.reduce(); n2.foldReducedDdPriors({b2});
+    const Eigen::VectorXd xs1 = n1.solveShared(), xs2 = n2.solveShared();
+    EXPECT_LT((xs1 - xs2).cwiseAbs().maxCoeff(), 1e-9)
+        << "shared solution must be invariant to the z-store's cycle-basis realization";
+    for (std::size_t r = 0; r < stations.size(); ++r)
+        EXPECT_LT((n1.reconstructStation(r, xs1) - n2.reconstructStation(r, xs2))
+                      .cwiseAbs().maxCoeff(), 1e-9)
+            << "station " << r << " locals must be basis-invariant";
+
+    // Negative control: a NON-congruent re-basis (rows re-based by T but Pz left = Pz1)
+    // MUST move the solution — the invariance is a real property, not vacuous.
+    NetworkNormalEquations::DdPriorBlock bad = b2;
+    bad.Pz = b1.Pz;   // should have been T·Pz1·Tᵀ
+    NetworkNormalEquations n3(n_shared); build(n3); n3.reduce(); n3.foldReducedDdPriors({bad});
+    EXPECT_GT((xs1 - n3.solveShared()).cwiseAbs().maxCoeff(), 1e-6)
+        << "a non-congruent re-basis must change the solution (invariance is non-vacuous)";
+}
+
+// The INTENDED Card-4 composition: a PRE-reduce local pin (addStationPrior, the tree/
+// anchor phase datum) + the POST-reduce DD fold reproduce the dense stacked solve with
+// BOTH augmentations — because the DD fold reads the ALREADY-PINNED N_rr.  (Contrast two
+// POST-reduce folds, which drop the cross term over coupled columns.)
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsComposesWithStationPrior) {
+    std::mt19937 gen(20260713);
+    const Eigen::Index n_shared = 4;
+    const auto stations = makeStations(gen, n_shared, {3, 3, 3}, {10, 11, 12}, true);
+    const double sp = 1e-2, lp = 1e-2;
+
+    const std::size_t pin_sta = 0;
+    const std::vector<Eigen::Index> pin_cols{0, 1};
+    Eigen::VectorXd pinL(2); pinL << 5.0, 3.0;   // pre-reduce info pin (target 0)
+
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock blk;
+    blk.rows = {
+        {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+        {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+    };
+    blk.Pz = (Eigen::MatrixXd(2, 2) << 0.04, 0.01, 0.01, 0.09).finished();
+    blk.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+
+    // Dense reference: isotropic priors + the pin diagonal on station 0 + Cᵀ Pz⁻¹ C.
+    DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
+    const Eigen::Index off0 = dense.local_offset[pin_sta];
+    Eigen::MatrixXd N = dense.N;
+    Eigen::VectorXd u = dense.u;
+    for (Eigen::Index i = 0; i < 2; ++i) N(off0 + pin_cols[i], off0 + pin_cols[i]) += pinL(i);
+    const Eigen::Index P = dense.N.rows();
+    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(2, P);
+    for (Eigen::Index k = 0; k < 2; ++k)
+        for (const auto& t : blk.rows[static_cast<std::size_t>(k)])
+            C(k, dense.local_offset[t.station] + t.local_col) += t.coeff;
+    const Eigen::MatrixXd PzInv = blk.Pz.inverse();
+    N += C.transpose() * PzInv * C;
+    u += C.transpose() * PzInv * blk.zhat;
+    const Eigen::VectorXd x_ref = N.ldlt().solve(u);
+
+    NetworkNormalEquations neq(n_shared);
+    neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                      Eigen::VectorXd::Zero(n_shared));
+    for (const auto& s : stations) {
+        const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+        const Eigen::Index n_r = s.A_r.cols();
+        Eigen::MatrixXd N_rr =
+            s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+        neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                       WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+    }
+    neq.addStationPrior(pin_sta, pin_cols, pinL, Eigen::VectorXd::Zero(2));  // PRE-reduce
+    neq.reduce();
+    neq.foldReducedDdPriors({blk});                                         // POST-reduce
+    const Eigen::VectorXd x_s = neq.solveShared();
+
+    EXPECT_TRUE(x_s.isApprox(x_ref.head(n_shared), 1e-9))
+        << "pre-reduce pin + post-reduce DD fold must equal the dense both-augmented solve";
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        const Eigen::VectorXd ref =
+            x_ref.segment(dense.local_offset[r], stations[r].A_r.cols());
+        EXPECT_TRUE(neq.reconstructStation(r, x_s).isApprox(ref, 1e-9))
+            << "station " << r << " mismatch";
+    }
+}
+
+// A degenerate (non-PD Pᶻ+B) block folds INERTLY and keeps its input-index slot: the
+// solve equals folding only the healthy block, numDdPriorBlocks counts BOTH, and
+// ddPriorPosteriorMean(degenerate) returns the (unchanged) prior mean.
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDegenerateBlockIsInertAndIndexStable) {
+    std::mt19937 gen(99);
+    const Eigen::Index n_shared = 3;
+    const auto stations = makeStations(gen, n_shared, {3, 3}, {9, 10}, false);
+    const double sp = 1e-2, lp = 1e-2;
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations) {
+            const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+            const Eigen::Index n_r = s.A_r.cols();
+            Eigen::MatrixXd N_rr =
+                s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+    };
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    NetworkNormalEquations::DdPriorBlock bad;   // non-PD prior (negative variance)
+    bad.rows = {{Term{0, 0, +1.0}, Term{1, 0, -1.0}}};
+    bad.Pz = (Eigen::MatrixXd(1, 1) << -1.0).finished();
+    bad.zhat = (Eigen::VectorXd(1) << 2.0).finished();
+    NetworkNormalEquations::DdPriorBlock good;
+    good.rows = {{Term{0, 1, +1.0}, Term{1, 1, -1.0}}};
+    good.Pz = (Eigen::MatrixXd(1, 1) << 0.05).finished();
+    good.zhat = (Eigen::VectorXd(1) << -0.3).finished();
+
+    NetworkNormalEquations n_both(n_shared); build(n_both); n_both.reduce();
+    n_both.foldReducedDdPriors({bad, good});   // bad inert (index 0), good folds (index 1)
+    NetworkNormalEquations n_good(n_shared); build(n_good); n_good.reduce();
+    n_good.foldReducedDdPriors({good});
+    const Eigen::VectorXd xb = n_both.solveShared();
+    const Eigen::VectorXd xg = n_good.solveShared();
+
+    EXPECT_EQ(n_both.numDdPriorBlocks(), 2u) << "the degenerate block keeps its index slot";
+    EXPECT_LT((xb - xg).cwiseAbs().maxCoeff(), 1e-12)
+        << "the degenerate block must fold inertly (zero effect on the solve)";
+    EXPECT_NEAR(n_both.ddPriorPosteriorMean(0, xb)(0), bad.zhat(0), 1e-12)
+        << "an inert block's posterior is its unchanged prior (M=0 ⇒ no shrink)";
+    EXPECT_EQ(n_both.ddPriorPosteriorMean(1, xb).size(), 1);   // healthy block still valid
+}
+
+// Deterministic-parallel fold (network.parallel_seam): foldReducedDdPriors(blocks,
+// n_threads > 1) computes each block's algebra in parallel but ACCUMULATES the GMGᵀ /
+// GM(z_free−ẑ) contributions SERIALLY in block-index order, so the reduced system, the
+// solve, the per-station reconstruction and every per-block readout are BYTE-IDENTICAL
+// to the serial fold (n_threads == 1) — unlike the ULP-reassociating parallel_reduce.
+// Exercises a multi-block set incl. a chordless (K=0) inert slot and a degenerate
+// (non-PD) inert slot, so the slot bookkeeping is covered too.
+TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsParallelMatchesSerialByteForByte) {
+    std::mt19937 gen(20260713);
+    const Eigen::Index n_shared = 5;
+    const auto stations = makeStations(gen, n_shared, {3, 3, 3, 3}, {11, 12, 13, 14}, true);
+    const double sp = 1e-2, lp = 1e-2;
+    auto build = [&](NetworkNormalEquations& neq) {
+        neq.addSharedInfo(sp * Eigen::MatrixXd::Identity(n_shared, n_shared),
+                          Eigen::VectorXd::Zero(n_shared));
+        for (const auto& s : stations) {
+            const Eigen::MatrixXd WA_s = s.W * s.A_s, WA_r = s.W * s.A_r;
+            const Eigen::Index n_r = s.A_r.cols();
+            Eigen::MatrixXd N_rr =
+                s.A_r.transpose() * WA_r + lp * Eigen::MatrixXd::Identity(n_r, n_r);
+            neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
+                           WA_s.transpose() * s.y, WA_r.transpose() * s.y);
+        }
+    };
+    using Term = NetworkNormalEquations::DdPriorBlock::Term;
+    std::vector<NetworkNormalEquations::DdPriorBlock> blocks;
+    {   // (0) rank-2 JOINT block spanning 3 stations (shares station-1 col 0)
+        NetworkNormalEquations::DdPriorBlock b;
+        b.rows = {
+            {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
+            {Term{1, 0, +1.0}, Term{2, 0, -1.0}},
+        };
+        b.Pz   = (Eigen::MatrixXd(2, 2) << 0.04, 0.01, 0.01, 0.09).finished();
+        b.zhat = (Eigen::VectorXd(2) << 1.5, -0.7).finished();
+        blocks.push_back(b);
+    }
+    blocks.push_back(NetworkNormalEquations::DdPriorBlock{});   // (1) chordless (K=0) → inert slot
+    {   // (2) rank-1 block on other columns/stations
+        NetworkNormalEquations::DdPriorBlock b;
+        b.rows = {{Term{2, 1, +1.0}, Term{3, 1, -1.0}}};
+        b.Pz   = (Eigen::MatrixXd(1, 1) << 0.05).finished();
+        b.zhat = (Eigen::VectorXd(1) << -0.3).finished();
+        blocks.push_back(b);
+    }
+    {   // (3) degenerate (non-PD Pᶻ) block → M=0 inert slot
+        NetworkNormalEquations::DdPriorBlock b;
+        b.rows = {{Term{0, 2, +1.0}, Term{3, 2, -1.0}}};
+        b.Pz   = (Eigen::MatrixXd(1, 1) << -1.0).finished();
+        b.zhat = (Eigen::VectorXd(1) << 2.0).finished();
+        blocks.push_back(b);
+    }
+
+    NetworkNormalEquations serial(n_shared);  build(serial);  serial.reduce();
+    serial.foldReducedDdPriors(blocks, /*n_threads=*/1);
+    NetworkNormalEquations par(n_shared);     build(par);     par.reduce();
+    par.foldReducedDdPriors(blocks, /*n_threads=*/8);
+
+    // Byte-exact reduced system, RHS, solve, and block count.
+    EXPECT_EQ((serial.reducedSharedNormals() - par.reducedSharedNormals()).cwiseAbs().maxCoeff(), 0.0);
+    EXPECT_EQ((serial.reducedSharedRhs() - par.reducedSharedRhs()).cwiseAbs().maxCoeff(), 0.0);
+    const Eigen::VectorXd xs = serial.solveShared();
+    const Eigen::VectorXd xp = par.solveShared();
+    EXPECT_EQ((xs - xp).cwiseAbs().maxCoeff(), 0.0);
+    ASSERT_EQ(serial.numDdPriorBlocks(), par.numDdPriorBlocks());
+    EXPECT_EQ(serial.numDdPriorBlocks(), blocks.size());
+
+    // Byte-exact per-block posterior mean / covariance / innovation, and per-station
+    // reconstruction (the latter also exercises the station_ddprior_ append order under
+    // the parallel merge).
+    const Eigen::MatrixXd cov_free =
+        0.1 * Eigen::MatrixXd::Identity(n_shared, n_shared);   // arbitrary shared cov (same for both)
+    for (std::size_t b = 0; b < blocks.size(); ++b) {
+        if (blocks[b].rows.empty()) continue;   // chordless (K=0) inert slot: readouts are N/A
+        const Eigen::VectorXd ms = serial.ddPriorPosteriorMean(b, xs);
+        const Eigen::VectorXd mp = par.ddPriorPosteriorMean(b, xp);
+        ASSERT_EQ(ms.size(), mp.size());
+        EXPECT_EQ((ms - mp).cwiseAbs().maxCoeff(), 0.0) << "mean block " << b;
+        const Eigen::MatrixXd cs = serial.ddPriorPosteriorCovariance(b, cov_free);
+        const Eigen::MatrixXd cp = par.ddPriorPosteriorCovariance(b, cov_free);
+        ASSERT_EQ(cs.rows(), cp.rows());
+        EXPECT_EQ((cs - cp).cwiseAbs().maxCoeff(), 0.0) << "cov block " << b;
+        Eigen::VectorXd vs, vp; Eigen::MatrixXd cvs, cvp;
+        serial.ddPriorInnovation(b, xs, cov_free, vs, cvs);
+        par.ddPriorInnovation(b, xp, cov_free, vp, cvp);
+        ASSERT_EQ(vs.size(), vp.size());
+        EXPECT_EQ((vs - vp).cwiseAbs().maxCoeff(), 0.0) << "innov v block " << b;
+        EXPECT_EQ((cvs - cvp).cwiseAbs().maxCoeff(), 0.0) << "innov cov block " << b;
+    }
+    for (std::size_t r = 0; r < stations.size(); ++r) {
+        EXPECT_EQ((serial.reconstructStation(r, xs) - par.reconstructStation(r, xp))
+                      .cwiseAbs().maxCoeff(), 0.0) << "station " << r;
+    }
+}
+
 // An EMPTY addStationPrior is a genuine no-op: byte-identical to never calling it
 // (the OFF-state byte-identity guarantee at the kernel level).
 TEST(NetworkNormalEquationsTest, AddStationPriorEmptyIsNoOp) {
@@ -814,6 +1301,40 @@ TEST(NetworkNormalEquationsTest, AddStationPriorRejectsBadInputs) {
                  std::invalid_argument);
     EXPECT_THROW(neq.addStationPrior(0, {7}, one, one), std::invalid_argument);  // col out of range
     EXPECT_THROW(neq.addStationPrior(0, {0}, neg, one), std::invalid_argument);  // negative info
+}
+
+// Pin-aware station PD guard (network.station_pd_pin_aware): with a deliberate
+// 1e10 gauge-pin pivot inside the local block (the prioritized phase-datum
+// anchor pin), the legacy max-pivot relative rank test rejects a healthy ~1e-3
+// weakest parameter (1e-3 < 1e-12·1e10 — the TWTF/VOIM every-epoch ejection
+// class); the median-scale test accepts the same block, while a truly singular
+// direction stays rejected under both.
+TEST(NetworkNormalEquationsTest, StationPdMedianScaleAcceptsPinnedMarginalBlock) {
+    const Eigen::Index n_s = 2;
+    const Eigen::MatrixXd N_ss = Eigen::MatrixXd::Zero(n_s, n_s);
+    const Eigen::MatrixXd N_sr = Eigen::MatrixXd::Zero(n_s, 3);
+    const Eigen::VectorXd u_s = Eigen::VectorXd::Zero(n_s);
+    const Eigen::VectorXd u_r = Eigen::VectorXd::Zero(3);
+    auto blk = [](double weak) {
+        Eigen::MatrixXd N_rr = Eigen::MatrixXd::Zero(3, 3);
+        N_rr(0, 0) = 1e10;   // gauge-pin row (deliberate, healthy)
+        N_rr(1, 1) = 1.0;    // ordinary local parameter
+        N_rr(2, 2) = weak;   // weakest parameter under test
+        return N_rr;
+    };
+
+    // Legacy guard: the pin inflates the reference scale → healthy 1e-3 rejected.
+    NetworkNormalEquations legacy(n_s);
+    EXPECT_THROW(legacy.addStation(N_ss, N_sr, blk(1e-3), u_s, u_r),
+                 std::invalid_argument);
+
+    // Pin-aware: median |pivot| = 1.0 → the same block is accepted…
+    NetworkNormalEquations aware(n_s);
+    aware.setStationPdMedianScale(true);
+    EXPECT_NO_THROW(aware.addStation(N_ss, N_sr, blk(1e-3), u_s, u_r));
+    // …and a truly singular direction is still rejected (1e-14 < 1e-12·median).
+    EXPECT_THROW(aware.addStation(N_ss, N_sr, blk(1e-14), u_s, u_r),
+                 std::invalid_argument);
 }
 
 // Reduce-once instrumentation: the carried-prior path (addStation → addStationPrior

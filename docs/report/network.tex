@@ -25,7 +25,7 @@
 \newcommand{\redus}{\tilde{\bm{u}}_s}   % Schur-reduced shared RHS
 \newcommand{\xshared}{\bm{x}_s}         % shared satellite-parameter estimate
 \newcommand{\xlocal}[1]{\bm{x}_{#1}}    % station r's private nuisance block
-\newcommand{\satbiasPB}{\beta}          % satellite phase bias (estimable)
+\newcommand{\satbiasPB}{\bar b}         % satellite phase bias (estimable); matches \bar b in gnssreport.sty
 \newcommand{\satbiasCB}{B}              % satellite code bias (estimable)
 
 This section documents the multi-station network estimator
@@ -48,19 +48,24 @@ The numerical core --- the arrowhead normal-equation kernel
 (\texttt{filter/NetworkNormalEquations}) and the semantic estimator
 that drives it (\texttt{filter/NetworkEstimator}) --- is implemented
 and validated on a synthetic noise-free network (truth recovery up to
-the declared S-transform). Mode wiring is live: the
+the declared S-transform). The full pipeline is live: the
 \texttt{PPP\_RTK\_Network} enum, its forced-uncombined
 \texttt{DifferencingMode::None}
 (\texttt{src/core/measurement/MeasurementBuilder.cpp}), the explicit
 satellite phase-bias state in \texttt{filter/StateManager}, and the
-dispatch in \texttt{Application::run} all exist. The live epoch loop
-\texttt{Application::runNetwork} --- per-station design-row assembly
-from each station's \texttt{MeasurementModel}, the between-epoch time
-update, and the product emitter --- is a scaffold at the time of
-writing: it logs a ``not yet implemented'' error and returns non-zero
-(\texttt{src/core/app/ApplicationNetwork.cpp}). The mathematics below
-describes the implemented estimator core and the locked design; where a
-piece is staged rather than wired, it is flagged as such.
+dispatch in \texttt{Application::run} all exist, and the epoch loop
+\texttt{Application::runNetwork} is fully wired: per-station design-row
+assembly from each station's \texttt{MeasurementModel}, the S-basis
+datum with its null-space rank gate (\Cref{sec:net-sbasis}), the
+between-epoch time update, and the product emitter
+(\texttt{NetworkProductEmitter}) all run. The mathematics below
+describes the implemented estimator core and the locked design. This
+chapter treats the single-epoch solve; the between-epoch carry
+machinery --- the C1 full-covariance shared carry
+(\texttt{addSharedPriorDense}), the Card-4 invariant DD-carry
+(\texttt{setDdPriors}), and the MW-WL / EWL / lane-coordinate widelane
+layers --- is a large, default-off subsystem in its own right and is
+only referenced here, not derived.
 
 \subsection{Joint multi-station observation model}\label{sec:net-model}
 
@@ -79,7 +84,16 @@ to each:
       across every station --- a satellite's clock and hardware delays
       do not depend on who is observing it. (Orbits are held fixed to a
       precise product here; orbit determination is out of scope for the
-      producer.)
+      producer.) When \texttt{network.estimate\_iono\_sh} is set, the
+      shared block carries a fourth family: the coefficients
+      $a_{nm},b_{nm}$ of a global single-layer spherical-harmonic VTEC
+      expansion (\texttt{SharedParamKind::VtecSh}, registered through
+      \texttt{NetworkEstimator::registerVtecCoeff}), network-wide rather
+      than per-satellite. This co-estimated ionosphere model replaces
+      the external GIM and forces satellite code-bias estimation on ---
+      the two are jointly load-bearing for the per-satellite slant-iono
+      columns below --- and its columns Schur-reduce onto the shared
+      border exactly like the satellite-indexed families.
 \item \textbf{Private (station-side).} For each station $\rx$: its
       receiver clock $\sLight\,\mathrm{d}t_\rx$, the inter-system time
       offsets $\sLight\,\delta t^{(g)}_\rx$, the zenith wet troposphere
@@ -224,16 +238,45 @@ the deficiency. The two halves of the datum live in two places:
       (\Cref{sec:net-schur}).
 \end{itemize}
 
+\paragraph{Selectable datum realisations.}
+The pins just described are the \emph{legacy default}; each half of the
+datum now admits alternatives, selected by config and recorded in the
+\texttt{SbasisDeclaration}, all producing the same estimable
+$\bm{S}\,\bm{x}$ but distributing the gauge differently. The clock/ISB
+datum offers three modes (\texttt{SbasisDeclaration::IsbDatum}): the
+hard \texttt{PerConstellationSatClockPin} above (default), a
+\texttt{SumToZeroPerConstellation} constraint
+(\texttt{network.clock\_datum\_sum\_to\_zero}) that spreads the pin
+across all satellites of a constellation, and a
+\texttt{BroadcastAnchoredPerSatellite} soft anchor
+(\texttt{network.clock\_datum\_broadcast\_anchored}) tying each
+satellite clock to its broadcast value at a declared $1\sigma$. The
+ambiguity$\leftrightarrow$phase-bias datum likewise offers three
+(\texttt{AmbDatum}): the local \texttt{PivotReceiverZeroAmbiguity} pin
+above (default), a \texttt{SumToZeroPerReceiver} ensemble
+(\texttt{network.phase\_datum\_ensemble}), and a
+\texttt{SingleReceiverChain} realisation
+(\texttt{network.phase\_datum\_eq34}). When satellite code biases are
+estimated (the W6 slice), their own gauge --- a per-constellation
+sum-to-zero (\texttt{CodeBiasDatum::SumToZeroPerConstellation}) --- is
+folded as explicit constraint rows through
+\texttt{NetworkEstimator::addSharedConstraintRows}, not as column pins.
+Whichever realisations are active, the rank gate below is declared
+against the matching S-basis dimension.
+
 \begin{remark}
-A rigorous null-space rank gate --- SVD the pre-constraint reduced
-normals and assert that the count of small singular values equals the
-\emph{declared} S-basis dimension --- is the planned W5 slice
-(\texttt{NetworkSbasis}) and is not yet present. The \texttt{Datum} in
-the current estimator is the minimal pin set the solve needs; the
-positive-definiteness guard catches the exact-deficiency
-(under-specified datum) case but does not yet certify the rank against a
-declared dimension. This is recorded as an open item rather than claimed
-as done.
+A rigorous null-space rank gate --- eigen-decompose the pre-constraint
+reduced normals and assert that the count of small eigenvalues equals
+the \emph{declared} S-basis dimension --- is implemented as
+\texttt{NetworkSbasis::assertNullSpaceRank} and is invoked by the driver
+on \texttt{reducedSharedNormals()} \emph{before} the constrained solve,
+against the \texttt{SbasisDeclaration}'s \texttt{declared\_dimension}
+(\texttt{Application::runNetwork}). It complements the
+positive-definiteness guard: the guard catches the exact-deficiency
+(under-specified datum) case on the pinned pivot, while the rank gate
+certifies the reduced deficiency against the declared gauge dimension
+and withholds any epoch whose null-space count disagrees --- re-gating
+once after a drop-and-heal pass on the offending near-null direction.
 \end{remark}
 
 \subsection{Per-station Schur reduction (arrowhead normals)}
@@ -325,21 +368,28 @@ form is exact and cheaper here.
 \subsection{Constellation scope}\label{sec:net-constellations}
 
 The producer estimates GPS and Galileo, with BeiDou supported on the
-same footing; \textbf{GLONASS is excluded}. The reason is structural,
-not a tuning choice: GLONASS is FDMA, so each satellite transmits on a
-slightly different frequency and the receiver inter-channel (hardware)
-bias does \emph{not} cancel cleanly across satellites the way it does
-for the CDMA constellations. The satellite/receiver phase-bias
-bookkeeping that underpins the explicit-bias S-system
+same footing; \textbf{GLONASS phase biases are excluded}. The reason is
+structural, not a tuning choice: GLONASS is FDMA, so each satellite
+transmits on a slightly different frequency and the receiver
+inter-channel (hardware) bias does \emph{not} cancel cleanly across
+satellites the way it does for the CDMA constellations. The
+satellite/receiver phase-bias bookkeeping that underpins the
+explicit-bias S-system
 (\Cref{sec:net-phasebias,sec:net-sbasis}) assumes a per-signal bias
 common across a constellation's satellites; the per-frequency GLONASS
-inter-channel bias breaks that assumption and would corrupt the datum.
-GLONASS is therefore omitted from the network solve by design
+inter-channel bias breaks that assumption and would corrupt the phase
+datum. GLONASS is therefore excluded from the network \emph{phase}-bias
+product by design
 (\texttt{docs/ssystem\_conformance\_2026-06-15.md}); the user side
-excludes it from ambiguity resolution for the same reason. (This is
+excludes it from ambiguity resolution for the same reason. A
+\emph{code-only} GLONASS mode is nonetheless supported behind
+\texttt{network.estimate\_glonass} (\texttt{enableGlonassNetwork},
+default off): it admits GLONASS to the solve carrying a satellite clock
+and a per-slot receiver inter-frequency bias but \emph{no} FDMA phase
+bias, so the phase-datum bookkeeping above is untouched. (This is
 distinct from the float-only GLONASS support the user engine carries for
-positioning; the network \emph{producer} simply does not generate
-GLONASS bias products.)
+positioning; with the code-only mode off, the network \emph{producer}
+generates no GLONASS bias products at all.)
 
 \subsection{The closed loop: producer $\to$ held-out user}
 \label{sec:net-closedloop}

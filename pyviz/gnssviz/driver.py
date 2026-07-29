@@ -55,7 +55,12 @@ def run_viewers(
             out.skipped.append(
                 (viewer.name, f"off by default (run with --only {viewer.name} or --all)"))
             continue
-        missing = [c for c in viewer.required_csvs if not ctx.has_data(c)]
+        # A required input may live in the run's log dir (trace CSVs) OR in the
+        # answer-key truth dir (the exam viewers' truth_*.csv / scenario_summary).
+        # has_truth is False whenever no truth_dir is bound, so a plain processor
+        # run auto-skips every exam viewer exactly as before.
+        missing = [c for c in viewer.required_csvs
+                   if not (ctx.has_data(c) or ctx.has_truth(c))]
         if missing:
             out.skipped.append((viewer.name, f"missing/empty {', '.join(missing)}"))
             continue

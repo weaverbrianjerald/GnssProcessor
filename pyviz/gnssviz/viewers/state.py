@@ -83,6 +83,7 @@ def build_state(ctx) -> ViewerResult:
 
     figures = []
     stats = None
+    moving = False
 
     # Figure 1: ENU & 3D position error + stat read-outs (cm) over converged
     # window.  Skipped if the converged window has no finite position samples
@@ -93,6 +94,13 @@ def build_state(ctx) -> ViewerResult:
         pos_err = np.sqrt(e ** 2 + nth ** 2 + u ** 2)
         stats = _enu_stats(e, nth, u, pos_err, h0)
 
+        # For a MOVING receiver this ENU-about-median is the vessel's *track* (tens
+        # of km), not an error — so it is unreadable and misleading here.  Draw the
+        # self-referenced panel only for a (near-)static receiver; on a kinematic run
+        # the truth-referenced error lives in the exam position-error panel instead.
+        moving = bool(np.nanmax(pos_err) > 100.0)
+
+    if ref_ok and not moving:
         ax = Axes(title="ENU & 3D Position Error", xlabel="GPS Time",
                   ylabel="Error (m)", legend=Legend(loc="best"))
         ax.traces = [
@@ -135,7 +143,7 @@ def build_state(ctx) -> ViewerResult:
         figures.append(Figure(name="Tropo gradient", axes=[an, ae],
                               width=11, height=6.0))
 
-    summary = _summary_text(stats, n, h0)
+    summary = _summary_text(stats, n, h0, moving)
     return ViewerResult(figures=figures, summary=summary)
 
 
@@ -166,7 +174,7 @@ def _enu_stats(e, nth, u, p, h0):
     return {"E": ms(e), "N": ms(nth), "U": ms(u), "3D": ms(p)}
 
 
-def _summary_text(stats, n, h0) -> str:
+def _summary_text(stats, n, h0, moving=False) -> str:
     lines = ["=== Position-error summary (post-converged window) ===",
              f"Epochs total      : {n}",
              f"Converged from idx: {h0} (0-based)"]
@@ -174,6 +182,10 @@ def _summary_text(stats, n, h0) -> str:
         lines.append("  (no finite position samples in converged window — "
                      "ENU figure skipped)")
         return "\n".join(lines)
+    if moving:
+        lines.append("  (kinematic run: the self-referenced ENU is the vessel's "
+                     "track, not an error — panel skipped; see the truth-referenced "
+                     "position-error panel)")
     for lbl in ("E", "N", "U", "3D"):
         mu, sg = stats[lbl]
         lines.append(f"  {lbl:>3}: mean = {mu:6.1f} cm   sigma = {sg:6.1f} cm")

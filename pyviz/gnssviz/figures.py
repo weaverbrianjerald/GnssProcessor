@@ -207,6 +207,49 @@ class PolarScatter:
 
 
 @dataclass
+class Polygon:
+    """A filled closed path (e.g. land polygons for a basemap).
+
+    ``NaN`` separators in ``x``/``y`` split multiple rings so one Polygon can
+    carry a whole continent-and-islands set; each ring is auto-closed and filled.
+    Used with an :attr:`Axes.facecolor` (ocean) behind it for a land/ocean map.
+    """
+    x: Sequence
+    y: Sequence
+    fill: RGB = (0.92, 0.90, 0.83)   # land tan
+    edge: Optional[RGB] = None        # outline colour (None => no edge)
+    alpha: float = 1.0
+    width: float = 0.5
+    zorder: Optional[float] = None
+    label: Optional[str] = None
+    show_in_legend: bool = False
+
+
+@dataclass
+class RgbImage:
+    """A georeferenced truecolor image pinned to a DATA-coordinate extent.
+
+    Unlike :class:`RgbRaster` (``imagesc``-style: columns spread *uniformly*
+    across a time span, row 0 at the top, per-row labels), an ``RgbImage`` places
+    the pixels at an explicit ``extent = (x0, x1, y0, y1)`` in data coordinates --
+    e.g. a satellite basemap behind a lon/lat track.  Row 0 of ``rgb`` is the TOP
+    (max-y) row.  Drawn *below* other traces via a low :attr:`zorder` (a basemap).
+
+    ``encoded`` optionally carries the SAME pixels already compressed (e.g. the
+    vendored JPEG) so a backend can embed them verbatim (small offline HTML)
+    instead of re-encoding; ``rgb`` stays the canonical array both backends and
+    tests use.
+    """
+    rgb: np.ndarray                       # (H, W, 3) uint8 or float 0..1
+    extent: Sequence[float]               # (x0, x1, y0, y1) in data coords
+    alpha: float = 1.0
+    zorder: float = -1.0
+    interpolation: str = "bilinear"       # matplotlib imshow interpolation
+    encoded: Optional[bytes] = None       # pre-compressed bytes of the same pixels
+    mime: str = "image/png"               # mime of ``encoded`` (e.g. image/jpeg)
+
+
+@dataclass
 class Mesh:
     """A georeferenced scalar grid drawn with ``pcolormesh`` (lon × lat).
 
@@ -224,7 +267,8 @@ class Mesh:
 
 
 Trace = Union[Line, StackedArea, HLine, TextBox, Raster, Markers,
-              Scatter, Band, VLine, RgbRaster, PolarScatter, Stem, Mesh]
+              Scatter, Band, VLine, RgbRaster, PolarScatter, Stem, Mesh, Polygon,
+              RgbImage]
 
 
 # --------------------------------------------------------------------------- #
@@ -266,6 +310,8 @@ class Axes:
 
     projection: str = "rect"      # 'rect' | 'polar' | 'geo'
     axis_off: bool = False        # frameless (text-only panels)
+    aspect_equal: bool = False    # equal x/y data scale (plan-view track: 1 m E == 1 m N)
+    facecolor: Optional[RGB] = None  # axes background (e.g. ocean blue behind land polygons)
 
     # Polar (sky-plot) configuration; ignored unless projection == 'polar'.
     theta_zero: str = "N"         # compass zero location

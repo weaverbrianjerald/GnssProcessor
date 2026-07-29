@@ -342,6 +342,20 @@ int Application::runRealTime() {
     if (consumer_profile_on)
         config_.applyNetworkConsumerProfile(log_manager_);
 
+    // T3d: one-shot honesty warnings for a file-tail consumer profile — some correction
+    // channels are only conditionally (σ) or never (in-process iono) present on the wire.
+    if (consumer_profile_on) {
+        if (config_.networkConsumePhaseBiasSigma())
+            log->warn("Consumer: network.consume_phase_bias_sigma is on — the per-phase-bias σ "
+                      "is received ONLY if the tailed producer emitted network.emit_phase_bias_sigma "
+                      "(the P-record sigma= token, T3d); without it the σ is absent and the "
+                      "R-inflation is inert.");
+        if (config_.getNetworkConfig().closed_loop.consume_network_iono)
+            log->warn("Consumer: consume_network_iono is on with a file-tail source — the SH-VTEC "
+                      "slant iono is an IN-PROCESS supply (pushSlantIono) with NO product wire "
+                      "record, so a file-tail consumer cannot receive it (the setting is inert here).");
+    }
+
     // Declared BEFORE the engine so they outlive it (the engine holds a
     // non-owning pointer to the store via setSsrStore).
     std::unique_ptr<SsrCorrectionStore> network_store;
@@ -359,6 +373,11 @@ int Application::runRealTime() {
         // OWNED store (the singleton is armed by RealTimeEngine::initialize).
         if (config_.ssrBiasBandFallback())
             network_store->setCodeBiasBandFallback(true);
+        // Card 7 (opt-in): arm the orbit/clock coherence skew budget on the
+        // OWNED store — the network clock records this store serves carry the
+        // producer's orbit echo, so this is where the withhold policy lives.
+        if (const double skew = ncc.orbit_clock_max_skew_s; skew > 0.0)
+            network_store->setOrbitEchoMaxSkew(skew);
         // Start-of-file join: replaying the whole file so far reconstructs every
         // discontinuity counter exactly (a fresh consumer start); a producer
         // restart mid-session is handled by the tail's rotation reopen.

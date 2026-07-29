@@ -62,6 +62,7 @@
  *   A,<sat>                                             # retro_active (edge-trigger)
  *   Y,<sat>,<epochs>                                    # URA refloat-inflation horizon
  *   C,<sat>                                             # c1_zoh_active (event edge-trigger)
+ *   O,<sat>,x0,x1,p00,p01,p11,t_last,init               # emit_clock_rate decoupled C1 rate state
  *   I,<sat>,<iode>                                      # Card6 eph re-level baseline (brdc_rts)
  *   X,<sat>                                             # Card6 pending eph-cutover disc bump
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
@@ -161,6 +162,7 @@ struct NetworkStateSnapshot {
         bool   init{false};///< Seeded at least once.
     };
     std::map<std::string, Osc> clock_osc;  ///< sat -> carried oscillator state.
+    std::map<std::string, Osc> clock_rate_est;  ///< network.emit_clock_rate: decoupled C1 rate state (only x0/x1/t_last/init used).
 
     /// Clock-monitor adjacent-epoch baseline: sat -> {Δδtˢ (m), seen_s}.
     std::map<std::string, std::pair<double, double>> prev_clk;
@@ -189,6 +191,21 @@ struct NetworkStateSnapshot {
     /// sats with a pending forced eph-cutover discontinuity (prior eph version
     /// evicted before Δ_eph could be computed), awaiting their next emit.
     std::set<std::string> eph_cutover_disc_pending;
+
+    // --- Card 4 (M1) invariant DD carry (RTB-7 branch-faithful resume) ------
+    /// The ArcKey vertex numbering the carry blob references (network.state_snapshot_carry):
+    /// @c carry_sat_vertex maps satellite id → its stable (first-seen-order) vertex id and
+    /// @c carry_group_id maps a (constellation, signal) to its stable group id.  Both are
+    /// restored so the reconstructed chords reference the SAME satellites/groups next epoch
+    /// (station vertices are the roster index — stable under the fingerprint — so no map is
+    /// needed for them).  Empty unless the toggle armed (+carry_invariant); absence ⇒ the
+    /// invariant carry cold-starts, the pre-feature behaviour.
+    std::map<std::string, int> carry_sat_vertex;
+    std::vector<std::tuple<char, std::string, int>> carry_group_id;  ///< (const, signal, group id).
+    /// Verbatim @c NetworkInvariantCarryDriver::serializeCarry blob (its @c CARRY
+    /// header through its @c CEND terminator, newline-separated) — the carried z-store
+    /// (per-component DD means, dense @f$P^z@f$, tree/chord/vertex structure) = the branch.
+    std::string carry_state;
 
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own

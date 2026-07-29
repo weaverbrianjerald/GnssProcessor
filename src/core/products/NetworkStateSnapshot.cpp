@@ -133,6 +133,9 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, o] : snap.clock_osc)
         put(fmt::format("K,{},{},{},{},{},{},{},{}", sat, o.x0, o.x1, o.p00, o.p01, o.p11,
                         o.t_last, o.init ? 1 : 0));
+    for (const auto& [sat, o] : snap.clock_rate_est)   // network.emit_clock_rate decoupled C1 state
+        put(fmt::format("O,{},{},{},{},{},{},{},{}", sat, o.x0, o.x1, o.p00, o.p01, o.p11,
+                        o.t_last, o.init ? 1 : 0));
     for (const auto& [sat, vp] : snap.prev_clk)
         put(fmt::format("J,{},{},{}", sat, vp.first, vp.second));
     for (const auto& [key, l] : snap.local_carry)
@@ -149,6 +152,19 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         put(fmt::format("I,{},{}", sat, iode));
     for (const auto& s : snap.eph_cutover_disc_pending) // Card 6
         put(fmt::format("X,{}", s));
+    // Card 4 (M1) invariant carry (RTB-7 branch-faithful resume): the ArcKey vertex
+    // numbering, then the z-store blob verbatim (CARRY header .. CEND).  All three are
+    // written ONLY when the carry blob is present (network.state_snapshot_carry), so a
+    // default snapshot is byte-identical to the pre-feature format.
+    if (!snap.carry_state.empty()) {
+        for (const auto& [sat, vid] : snap.carry_sat_vertex)
+            put(fmt::format("SV,{},{}", sat, vid));
+        for (const auto& [cn, sig, gid] : snap.carry_group_id)
+            put(fmt::format("GG,{},{},{}", cn, sig, gid));
+        std::istringstream cs(snap.carry_state);
+        std::string cl;
+        while (std::getline(cs, cl)) put(cl);
+    }
     // Emitter blob: verbatim, already newline-terminated lines from
     // NetworkProductEmitter::serializeState (EMITTER header .. EEND).
     {
@@ -175,6 +191,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     uint64_t n_lines = 0;
     bool saw_meta = false, saw_counters = false, saw_ramp = false;
     bool saw_end = false, in_emitter = false, emitter_done = false;
+    bool in_carry = false, carry_done = false;
 
     while (std::getline(is, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -184,6 +201,14 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             s.emitter_state += line;
             s.emitter_state += '\n';
             if (line == "EEND") { in_emitter = false; emitter_done = true; }
+            continue;
+        }
+        if (in_carry) {
+            // Verbatim invariant-carry z-store blob through its CEND terminator.
+            ++n_lines;
+            s.carry_state += line;
+            s.carry_state += '\n';
+            if (line == "CEND") { in_carry = false; carry_done = true; }
             continue;
         }
         if (line.rfind("END,", 0) == 0) {
@@ -201,6 +226,13 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             in_emitter = true;
             s.emitter_state += line;
             s.emitter_state += '\n';
+            continue;
+        }
+        if (line.rfind("CARRY,", 0) == 0) {   // Card 4 invariant carry z-store blob
+            if (carry_done) return fail("duplicate carry section");
+            in_carry = true;
+            s.carry_state += line;
+            s.carry_state += '\n';
             continue;
         }
         const std::vector<std::string> f = splitCsv(line);
@@ -279,6 +311,16 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("malformed K fields");
             o.init = b;
             s.clock_osc[f[1]] = o;
+        } else if (tag == "O") {   // network.emit_clock_rate decoupled C1 rate state
+            if (f.size() != 9) return fail("malformed O line");
+            NetworkStateSnapshot::Osc o;
+            bool b = false;
+            if (!parseD(f[2], o.x0) || !parseD(f[3], o.x1) || !parseD(f[4], o.p00)
+                || !parseD(f[5], o.p01) || !parseD(f[6], o.p11) || !parseD(f[7], o.t_last)
+                || !parseB(f[8], b))
+                return fail("malformed O fields");
+            o.init = b;
+            s.clock_rate_est[f[1]] = o;
         } else if (tag == "J") {
             if (f.size() != 4) return fail("malformed J line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed J fields");
@@ -316,12 +358,21 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "X") {   // Card 6 pending eph-cutover disc
             if (f.size() != 2) return fail("malformed X line");
             s.eph_cutover_disc_pending.insert(f[1]);
+        } else if (tag == "SV") {  // Card 4: satellite -> carry vertex id
+            if (f.size() != 3) return fail("malformed SV line");
+            if (!parseI(f[2], i1)) return fail("malformed SV vertex id");
+            s.carry_sat_vertex[f[1]] = static_cast<int>(i1);
+        } else if (tag == "GG") {  // Card 4: (const,signal) -> carry group id
+            if (f.size() != 4 || f[1].size() != 1) return fail("malformed GG line");
+            if (!parseI(f[3], i1)) return fail("malformed GG group id");
+            s.carry_group_id.emplace_back(f[1][0], f[2], static_cast<int>(i1));
         } else {
             return fail("unknown record tag '" + tag + "'");
         }
     }
 
     if (in_emitter) return fail("truncated emitter section (no EEND)");
+    if (in_carry)   return fail("truncated carry section (no CEND)");
     if (!saw_end)   return fail("missing END terminator (truncated file)");
     if (!saw_meta || !saw_counters || !saw_ramp)
         return fail("missing mandatory metadata (M/N/U) line");

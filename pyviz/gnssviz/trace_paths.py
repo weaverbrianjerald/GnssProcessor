@@ -43,17 +43,50 @@ class TraceContext:
 
     def __init__(self, log_dir: Optional[str] = None, *,
                  network_config: Optional[str] = None,
-                 data_root: Optional[str] = None):
+                 data_root: Optional[str] = None,
+                 truth_dir: Optional[str] = None):
         self.log_dir = os.path.abspath(log_dir) if log_dir else default_log_dir()
         #: Optional path to the NETWORK run's config JSON -- lets the geographic
         #: viewers resolve station positions/roles when no roster CSV was emitted.
         self.network_config = os.path.abspath(network_config) if network_config else None
         #: Optional data root searched for an IONEX GIM (the ionosphere backdrop).
         self.data_root = os.path.abspath(data_root) if data_root else None
+        #: Optional GnssSimulator answer-key folder (truth_*.csv +
+        #: scenario_summary.json).  When set, the truth-referenced ``exam_*``
+        #: viewers light up; when unset they auto-skip (a plain processor run is
+        #: unchanged).  Mirrors the ``network_config`` / ``data_root`` pattern.
+        self.truth_dir = os.path.abspath(truth_dir) if truth_dir else None
 
     def path(self, csv_name: str) -> str:
         """Full path of a trace CSV inside this run's folder."""
         return os.path.join(self.log_dir, csv_name)
+
+    def truth_path(self, name: str) -> Optional[str]:
+        """Full path of a truth file inside :attr:`truth_dir` (``None`` if unset)."""
+        return os.path.join(self.truth_dir, name) if self.truth_dir else None
+
+    def has_truth(self, name: str) -> bool:
+        """``True`` iff :attr:`truth_dir` is set and holds a non-empty ``name``.
+
+        Same "exists and has at least one data row" semantics as
+        :meth:`has_data` for CSVs (so a header-only truth file skips its viewer);
+        a non-CSV answer-key file (e.g. ``scenario_summary.json``) counts as
+        present when it is a non-empty file.  ``False`` whenever ``truth_dir`` is
+        unset, so a non-exam run never lights up an exam viewer.
+        """
+        if not self.truth_dir:
+            return False
+        p = self.truth_path(name)
+        try:
+            if not p or os.path.getsize(p) <= 0:
+                return False
+            if not name.lower().endswith(".csv"):
+                return True                       # non-empty non-CSV (JSON answer key)
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                fh.readline()                     # header
+                return bool(fh.readline().strip())  # at least one data row
+        except OSError:
+            return False
 
     def find_ionex(self) -> Optional[str]:
         """Locate an IONEX GIM (``*GIM*.INX``) for the ionosphere backdrop.

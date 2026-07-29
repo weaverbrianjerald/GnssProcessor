@@ -21,9 +21,8 @@
  * indices), per the design.
  *
  * Migration staging (docs/aiding_source_abstraction_design.md, "IMU migration
- * plan"): the contributions implemented here are not yet wired into the live
- * epoch loop — predictImu and the existing TC branch remain the live paths
- * until Step 3 — so the IMU stays numerically inert.
+ * plan"): the contributions implemented here are now the live path via
+ * predictAided / collectPredict; the legacy predictImu is retired.
  */
 
 #include "aiding/IAidingSource.hpp"

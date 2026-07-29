@@ -4,15 +4,19 @@
 * @file IfPhaseSlipDetector.hpp
 * @brief Between-satellite, between-epoch ionosphere-free phase slip detector.
 *
-* @note STATUS: STAGED / INCOMPLETE — not compiled or wired into the pipeline.
-*       This detector is intentionally excluded from the build (see
-*       CMakeLists.txt) and has no instantiation path in Application. It is
-*       kept (not abandoned) for possible future completion. Key limitation:
-*       the position-uncertainty gating below only works for a STATIC site
-*       with a precise a priori position; it is not yet usable in the general
-*       (kinematic / pre-convergence) case. The `enable_if_slip_detector`
-*       config toggle is currently inert. For active slip detection see
-*       slip/MwSlipDetector and slip/GraphicSlipDetector.
+* @note STATUS: BUILT + WIRED on the NETWORK path; STAGED on the user/kinematic
+*       path.  The network estimator PINS station positions, which satisfies the
+*       static-site precondition of the position-uncertainty gating below, so
+*       this detector IS compiled (see CMakeLists.txt) and instantiated per
+*       non-pivot station when `network.cycle_slip.if_phase_td` is set
+*       (Application::runNetwork): pooled per-(station, signal-pair) MAD
+*       flagging, its flags feeding the Card-4 C3c invariant-carry slip funnel
+*       (and the phase-leveling refloat when that carry is the active one).  In
+*       the general (kinematic / pre-convergence) USER pipeline it remains INERT
+*       — the position gating below is unsafe there and the
+*       `enable_if_slip_detector` user toggle has no instantiation path.  For
+*       user-side slip detection see slip/MwSlipDetector and
+*       slip/GraphicSlipDetector.
 *
 * Implements the double-differenced IF phase OMC (observed-minus-computed)
 * approach for sensitive cycle slip detection.  The model subtraction is
@@ -171,6 +175,100 @@ namespace GnssProcessor {
         const std::map<std::string, IfJumpInfo>& getLastIfJumps() const { return last_if_jumps_; }
 
         /**
+         * @brief Card R (2026-07-21): hardened reference-satellite slip gate.
+         *
+         * The legacy gate is the last non-empirical decision in the IF-TD chain:
+         * it fires whenever |median(non-ref ΔΔ)| exceeds a FIXED 0.5·λ_IF with
+         * only n ≥ 2 contributors — no elevation normalization, no empirical
+         * scale, no step-vs-drift semantics.  On a thin signal family a
+         * persistent SUB-slip drift therefore re-fires it every epoch (the
+         * 2026-07-21 audit measured 9 consecutive fires at one station, 5 at
+         * another, with the raw wide-lane and geometry-free series flat to
+         * ±0.1 cycles and no LLI).  Every fire refloats both band ambiguities
+         * and marks the Card-4 carry chords slipped.
+         *
+         * When @ref RefGateParams::enable is set the decision becomes:
+         *   1. **Scale** — |median| must exceed max(k·s_eff, floor_frac·λ_IF),
+         *      where s_eff is an empirical-Bayes blend of this constellation's
+         *      EWMA of the non-reference DD DISPERSION with the current epoch's
+         *      own dispersion.  Same shape as the network pool arm; no
+         *      stochastic-model σ enters.
+         *   2. **Coherence** — a genuine reference slip is a COMMON step: every
+         *      non-reference double difference moves together, so the family's
+         *      MAD is small relative to |median|.  A drift scatters.  This is
+         *      the step-vs-drift discriminator the legacy gate structurally
+         *      lacked (it rebases by the median after each fire, so a re-fire
+         *      is evidence of persistent drift, not of stale state).
+         *   3. **Thin family** — below @ref RefGateParams::min_n contributors
+         *      the median is not a trustworthy common-mode estimate; the
+         *      physical floor is widened by @ref RefGateParams::thin_widen and
+         *      the deferral is COUNTED (never a silent behaviour change).
+         *   4. **Persistence / escalation** — after
+         *      @ref RefGateParams::max_consecutive consecutive fires on the same
+         *      reference the gate stops re-firing and forces a reference
+         *      RE-SELECTION instead, which moves the drifting satellite into the
+         *      network pool arm where an elevation-normalized, empirically
+         *      scaled residual judges it.  If the brand-new reference "slips"
+         *      immediately, the common mode is station-local (a receiver event)
+         *      and is handed to the pool/RAIM layer rather than re-fired here.
+         *
+         * Default-constructed params leave @c enable false ⇒ the legacy gate
+         * runs unchanged ⇒ byte-identical.  The user/kinematic path never calls
+         * this setter, so it is unaffected in both modes.
+         */
+        struct RefGateParams {
+            bool   enable{false};          ///< Master arm (default OFF ⇒ legacy gate).
+            double k{6.0};                 ///< Empirical multiplier on the effective dispersion scale.
+            int    min_n{4};               ///< Minimum non-reference DDs for a trustworthy median.
+            double thin_widen{3.0};        ///< Physical-floor multiplier below @ref min_n.
+            double coherence{0.5};         ///< Max MAD(non-ref DDs)/|median| for a COMMON step.
+            /// Consecutive fires on one reference before escalating to a forced
+            /// re-selection.  **1**, matching the only armed path's config default
+            /// (`network.cycle_slip.if_phase_td_ref_max_consecutive`, GnssConfigTypes
+            /// SlipQcConfig): spec R2 reads "a genuine reference slip fires ONCE", so a
+            /// real one-epoch common step never pays the cap, while a persistent drift
+            /// escalates on its second epoch instead of its third.  Measured on the
+            /// 2026-07-21 audit config the false JPLM/MKEA G10 family goes 14 → 6 at 2
+            /// and 14 → 4 at 1, with the genuine OWMG00NZL/G31 event untouched either
+            /// way.  Kept in lockstep with the config default deliberately — the two
+            /// drifting apart is how a unit test starts certifying a gate the field
+            /// never runs (spec-followups N2).
+            int    max_consecutive{1};
+            double ewma_alpha{0.15};       ///< EWMA weight for the dispersion scale.
+            double shrink_kappa{20.0};     ///< Empirical-Bayes shrinkage constant (samples).
+            double floor_frac{0.5};        ///< Physical floor in units of λ_IF (0.5 = the legacy value).
+        };
+
+        /**
+         * @brief Card R run telemetry (standing invariant #4).
+         *
+         * @c legacy_candidates counts epochs where the LEGACY condition would
+         * have fired, so `legacy_candidates − fires` is exactly what the
+         * hardening removed and the three `suppressed_*` counters say why.
+         */
+        struct RefGateCounters {
+            long long legacy_candidates{0};      ///< |median| > floor_frac·λ_IF with n ≥ 2 (the legacy fire condition).
+            long long fires{0};                  ///< Reference slips actually flagged (both kinds).
+            long long fires_station_event{0};    ///< …of those, the incoherent multi-satellite kind (fired WITHOUT the median rebase).
+            long long suppressed_scale{0};       ///< Rejected by the empirical scale or the coherence test.
+            long long suppressed_thin{0};        ///< Deferred: family below @ref RefGateParams::min_n.
+            long long suppressed_persistence{0}; ///< Rejected by the consecutive-fire cap (escalated instead).
+            long long reselects{0};              ///< Forced reference re-selections.
+        };
+
+        /// Card R verdict: what the hardened gate decided about a candidate.
+        enum class RefGateVerdict {
+            Suppress,       ///< Not a reference event — drift, thin family, or a capped run.
+            FireRebase,     ///< A COHERENT common step: the legacy action (reset key + median rebase of prev_grad).
+            FireNoRebase    ///< A multi-satellite station event: reset the reference, but do NOT claim the median as its slip.
+        };
+
+        /// Install the Card-R gate parameters (network wiring only).
+        void setRefGate(const RefGateParams& p) { ref_gate_ = p; }
+        /// Card-R run telemetry for the run-end summary.
+        const RefGateCounters& refGateCounters() const { return ref_gate_counters_; }
+
+        /**
          * @brief Defer per-satellite outlier flagging to an external (network) pool.
          *
          * When enabled, detect() still groups, single-differences, double-differences,
@@ -259,6 +357,23 @@ namespace GnssProcessor {
 
             /** Current reference satellite elevation (degrees). */
             double ref_elevation{ 0.0 };
+
+            // --- Card R: hardened reference-gate state (inert while the gate
+            //     is disabled — nothing below is ever read or written then) ---
+            /** EWMA of the non-reference DD dispersion, 1.4826·MAD (raw m). */
+            double ref_scale_ewma{ 0.0 };
+            /** Samples folded into @ref ref_scale_ewma (shrinkage weight). */
+            long ref_scale_count{ 0 };
+            /** Reference satellite of the most recent fire (run-length identity). */
+            std::string ref_fire_sat;
+            /** Detector epoch index of the most recent fire (−1 = never). */
+            long long ref_last_fire_epoch{ -1 };
+            /** Consecutive fires on @ref ref_fire_sat. */
+            int ref_consec_fires{ 0 };
+            /** Set by an escalation: force @ref selectReference to re-elect. */
+            bool ref_force_reselect{ false };
+            /** Satellite the escalation excludes from the next election. */
+            std::string ref_exclude;
         };
 
         /** Per-constellation state keyed by system string (e.g. "GPS"). */
@@ -337,6 +452,53 @@ namespace GnssProcessor {
             std::vector<std::string>& reset_keys);
 
         /**
+         * @brief Card R: advance this constellation's non-reference DD
+         *        dispersion scale and return the PRE-update effective scale.
+         *
+         * Called on EVERY epoch that has a usable family (≥ 2 finite non-ref
+         * DDs) while the gate is armed — deliberately not only on the epochs
+         * where the legacy condition fired.  A scale measured solely on
+         * candidate epochs would be conditioned on a large median, letting a
+         * persistent drift raise its own acceptance threshold until a genuine
+         * slip no longer clears it.
+         *
+         * @param cs            Constellation state (mutated: EWMA + sample count).
+         * @param non_ref_dds   Finite non-reference double differences (raw m).
+         * @param median_dd     Their median (raw m).
+         * @param cold_prior    Scale used while no empirical samples exist —
+         *                      the physical floor expressed as a scale
+         *                      (floor_frac·λ_IF / k), so a cold gate degenerates
+         *                      to exactly the legacy physical threshold.
+         * @param[out] disp_out This epoch's dispersion, 1.4826·MAD (raw m).
+         * @return The empirical-Bayes effective scale s_eff BEFORE this fold (m).
+         */
+        double updateRefDispersion(ConstellationState& cs,
+            const std::vector<double>& non_ref_dds,
+            double median_dd, double cold_prior, double& disp_out);
+
+        /**
+         * @brief Card R: adjudicate a candidate reference-satellite slip.
+         *
+         * Called ONLY when the legacy condition (|median| > floor_frac·λ_IF,
+         * n ≥ 2) already held and @ref RefGateParams::enable is set.  Updates
+         * the persistence/escalation state, increments @ref ref_gate_counters_,
+         * and returns whether the reference slip should actually fire.
+         *
+         * @param cs            Constellation state (mutated: fire run, escalation flags).
+         * @param non_ref_dds   Finite non-reference double differences (raw m).
+         * @param disp          This epoch's dispersion, 1.4826·MAD (raw m).
+         * @param s_eff         Pre-update effective empirical scale (raw m).
+         * @param median_dd     Median of the non-reference DDs (raw m).
+         * @param lambda_if     Constellation median IF wavelength (m).
+         * @param sys_str       System string (logging).
+         * @return The verdict; see @ref RefGateVerdict.
+         */
+        RefGateVerdict evaluateRefGate(ConstellationState& cs,
+            const std::vector<double>& non_ref_dds, double disp, double s_eff,
+            double median_dd, double lambda_if,
+            const std::string& sys_str);
+
+        /**
          * @brief Write a single trace CSV record.
          */
         void writeTraceRecord(const SatData& sd, const std::string& sys_str,
@@ -351,6 +513,16 @@ namespace GnssProcessor {
 
         /** Current epoch time for tracing. */
         mutable GnssTime current_epoch_;
+
+        /** Card R: gate parameters (default-constructed ⇒ legacy behaviour). */
+        RefGateParams ref_gate_{};
+
+        /** Card R: run telemetry. */
+        RefGateCounters ref_gate_counters_{};
+
+        /** Monotonic detect() call index — the unit the Card-R persistence
+         *  run-length is measured in (epoch identity without a time model). */
+        long long epoch_counter_{ 0 };
     };
 
 } // namespace GnssProcessor

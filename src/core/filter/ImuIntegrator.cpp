@@ -277,7 +277,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Gravity model (WGS-84 normal gravity in ECEF)
+    // Gravity model (point-mass radial + ECEF centrifugal; no Somigliana/J2)
     // ===================================================================
 
     Eigen::Vector3d ImuIntegrator::computeGravityEcef(const Eigen::Vector3d& pos_ecef) {
