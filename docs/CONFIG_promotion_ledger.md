@@ -11,9 +11,12 @@ was validated at 50 stations as the bridge age-bias fix and is *net-harmful* at 
 have caused harm. Read the regime before arming anything in Tier 2.
 
 **At runtime the loader now says this out loud.** `GnssConfig::logNetworkPosture_` emits a
-POSTURE block once per run: the regime it detected, a `POSTURE OFF <knob> — <why>` warning for
-every recommended knob that is unarmed *and whose regime matches this run*, per-bundle
-integrity, and an armed/not-armed count. Log-only.
+POSTURE block once per run: the regime it detected, a `POSTURE OFF [ON|SCOPED] <knob> — <why>`
+line for every recommended knob that is unarmed *and whose regime matches this run*, per-bundle
+integrity, and per-tier armed counts. Log-only. It covers **all 62 reportable recommended
+knobs** (the other 3 of the 65 are structurally unreportable and carry a recorded reason — see
+`--verify-loader`). ON-tier gaps log at WARN; SCOPED gaps log at INFO, because 40+ equal-weight
+warnings would drown the tier that has no known counter-scope.
 
 **Coupled bundles are first-class.** Several options are only correct together, and arming a
 strict subset is its own failure mode — so a partial bundle WARNs:
@@ -25,11 +28,65 @@ strict subset is its own failure mode — so a partial bundle WARNs:
 | armed QC set | `raim_attribution`, `raim_within_epoch`, `clock_runaway_check` | RAIM directive; withhold is the backstop, adapt-and-emit is the goal |
 | SH-VTEC / W6 slice | `ionosphere_weighting.enabled`, `elevation_cutoff_deg ≥ 25`, `estimate_sat_code_bias` | the SH field eats a per-epoch CODE slant iono, so the 25° cutoff is load-bearing and is a SEPARATE gate from `processing.elevation_mask_deg` |
 
+**Regime predicates are machine-readable.** Every recommended knob carries a `regime`
+expression in the JSON — the same condition the loader evaluates as its `applies` field — over
+a fixed vocabulary derived from the config:
+
+| token | meaning |
+|---|---|
+| `n_sta`, `n_sys` | station count, constellation count |
+| `tri` | `frequency_mode` is triple or all |
+| `warm` | a `state_snapshot_path` is set |
+| `lane` | `mw_wl.enable` / `mw_wl.ewl_enable` / `lane_carry.enable` |
+| `rt` | real-time `app_mode` **or** `network.service_mode` — service mode *is* the RT producer |
+| `par` / `pstations` | the per-station parallel family engages / is merely enabled |
+| `gps_only`, `gps_gal_only` | constellation set by NAME (a *count* admits GPS+BeiDou) |
+| `spacing_s` | `gnss_rate_s x epoch_decimation_n`, the config-determinable epoch spacing |
+| `on("network.x")` | knob-on-knob dependency |
+| `val("network.x", default)` | the knob's **value**, with its C++ code default named explicitly |
+
+A knob whose regime does not match is **suppressed, not reported** — that is what stops the
+checker recommending the real-time-only `apriori_source = brdc_rts` against a post-processed
+305-station run. Knobs whose recommended state is a *value* rather than a boolean (thresholds,
+counts, `apriori_source`) additionally carry `armed_when`, so a threshold sitting at its
+non-recommended default is not miscounted as armed.
+
+**A recommendation is not always actionable: the CHAIN axis.** **16 of the 62** reportable
+knobs are members of the warm-resume **fingerprint** (the `add()` set at
+`NetworkRunContext.cpp:180-315`), so on a *resumed leg* arming one does not take effect
+mid-chain — with `state_snapshot_require` on the leg hard-aborts, and with it **off the leg
+silently cold-starts and reads as a clean resume** (standing invariant #4). Those knobs carry
+`fingerprinted: true`, and on a warm config both the loader and the checker append a `CHAIN:`
+line telling you to arm it in a **fresh lineage (new seed)** instead. The 16:
+
+`apriori_source`, `carry_conditional_coupling`, `carry_coupling_time_update`, `carry_invariant`,
+`code_bias_disc_jump_test`, `code_datum_time_linked`, `emit_clock_disc`, `emit_generation_id`,
+`emit_ura`, `epoch_decimation_n`, `estimate_iono_sh`, `estimate_sat_code_bias`,
+`phase_datum_eq34`, `phase_datum_prioritized`, `phase_leveling`, `phase_leveling_max_gap_s`.
+
+Verified **not** members despite looking like they should be: `state_snapshot_carry` (appears
+in that file only in a comment), `global_vtec_sh.max_degree` (only `layer2_max_degree` is
+fingerprinted), and the whole `raim*` / `emit_pb_filter_gate_v2` / `disc_threshold_frac_cycles`
+/ `carry_invariant_qz` / `carry_invariant_innov_*` group — those are all safe to arm mid-chain.
+
+> ⚠️ **`on()` is a truthiness test and returns false for an ABSENT key, so it INVERTS on a
+> knob whose loader default is `true`.** This is not hypothetical: it silently suppressed the
+> `emit_pb_filter_gate_v2` recommendation (via default-true `carry_invariant_emit_rebase`) —
+> the one knob this ledger calls the live promotion gap — and it inverted all five
+> `parallel_*` predicates via default-true `parallel_stations`. Use `val("network.x", True)`
+> for those. `--verify-loader` now scans the loader for default-`true` `jval<bool>` sites and
+> fails on any `on()` reference to one, so the trap cannot come back.
+
 **Check any config offline:**
 
 ```bash
 python scripts/config_posture_check.py runs/guards_cont/leg.json --tier all
 ```
+
+Add `--show-suppressed` to see what the regime filter held back and why, `--no-regime` to get
+the old unfiltered behaviour, and `--verify-loader` to cross-check that every recommended knob
+in this ledger is actually named in `GnssConfig::logNetworkPosture_` (the drift guard: a knob
+added here but not there is invisible at run time).
 
 Machine-readable source: `docs/CONFIG_promotion_ledger.json`. Built 2026-07-29 by a
 6-family audit of `GnssConfigLoadNetwork.cpp` + `GnssConfigTypes.hpp` + the field record,

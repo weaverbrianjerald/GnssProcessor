@@ -73,8 +73,11 @@ src/core/             Implementation files mirror the include/ subdir layout
                       products/, slip/, etc.).  src/core/config/ also holds
                       gnss_config.json — the primary user-edited config file.
 
-tests/                GoogleTest unit suite (~550 cases across 33 files) linked into
-                      `gnss_tests.exe`; see docs/test_suite.md
+tests/                GoogleTest unit suite (904 cases / 138 suites across 55
+                      files) linked into `gnss_tests.exe`.  tests/sim/ is a
+                      SEPARATE target, `gnss_simulator_selftest` (35 cases).
+                      Note: docs/test_suite.md documents the real-data
+                      truth-graded harness, NOT this unit suite.
 logs/                 Runtime CSV traces + spdlog files (under build tree)
 
 scripts/              One-off Python utilities.  Most notably
@@ -299,7 +302,8 @@ JSON to retain the compressed copy (for byte-exact archival).
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs a substantial GoogleTest suite (~670 cases across ~37 files; see docs/test_suite.md) — filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. It guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
+- **Test suite.** `gnss_tests.exe` runs 904 GoogleTest cases across 138 suites in 55 files (~76 s, full Debug run; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (35 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
+  - Suite hygiene: every suite name is owned by exactly one file (138 suites, zero cross-file overlap) — keep it that way, and prefer a new file over widening an existing one. At 29.5k test LOC against 136.9k production LOC the suite is *thin* (0.22 ratio, ~1 case per 151 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
 - **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
 - **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
 - **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.

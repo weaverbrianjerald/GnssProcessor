@@ -3517,45 +3517,369 @@ namespace GnssProcessor {
                         || frequency_mode_ == FrequencyMode::All;
         const bool warm  = !nc.state_snapshot_path.empty();
         const bool lane  = nc.mw_wl.ewl_enable || nc.mw_wl.enable || nc.lane_carry.enable;
+        // The real-time / service posture.  service_mode IS the RT service producer, so a
+        // knob scoped "post-processing only" (carry_invariant: ~57% of epoch wall time at
+        // 305 sta) must stay silent there, and the RT-only knobs must stay silent everywhere
+        // else -- that asymmetry is the whole point of regime filtering.
+        const bool rt    = app_mode_ == AppMode::RealTime || network_service_mode_;
+        // The per-station parallel family is SILENTLY inert below the threshold
+        // (ApplicationNetworkSetup.cpp:862-865), so seam/carry are only worth reporting
+        // where the family actually engages.
+        const bool par   = nc.parallel_stations
+                        && static_cast<int>(n_sta) > nc.parallel_min_stations;
+        // Config-determinable epoch spacing, same derivation the emit_clock_rate inert-arming
+        // guard uses at :1749.  0 when gnss_rate_s is 0 (native RINEX rate, unknown at load).
+        const double spacing_s = gnss_rate_s_ * static_cast<double>(nc.epoch_decimation_n);
+        // active_systems_ is a vector of NAMES, so a COUNT does not identify a constellation
+        // set: n_sys <= 2 admits GPS+BeiDou, which config/test_suite/_ppprtk50_4_gps_bds.json
+        // is today and which the W6 code-bias scope explicitly excludes.  Test the names.
+        const bool gps_only = n_sys == 1 && active_systems_.front() == "GPS";
+        const bool gps_gal_only =
+            !active_systems_.empty()
+            && std::all_of(active_systems_.begin(), active_systems_.end(),
+                           [](const std::string& s) { return s == "GPS" || s == "Galileo"; });
 
-        struct Item { bool applies; bool on; const char* knob; const char* why; };
+        enum class Tier { ON, SCOPED };
+        // `fp` = the knob is part of the WARM-RESUME FINGERPRINT (the add() set at
+        // NetworkRunContext.cpp:180-315).  This is the CHAIN axis, and it is the reason a
+        // recommendation cannot be read as an instruction: on a resumed leg, arming a
+        // fingerprinted knob does not take effect mid-chain.  With state_snapshot_require ON
+        // the leg hard-aborts; with it OFF the leg SILENTLY cold-starts, which is the worse
+        // failure and the one this readout exists to prevent.  Such a knob has to be armed in
+        // a FRESH lineage (a new seed), never bolted onto an existing chain.
+        struct Item { bool applies; bool on; Tier tier; bool fp;
+                      const char* knob; const char* why; };
         const std::vector<Item> items = {
-            // --- Tier 1: recommended wherever they apply -------------------------------
-            { true, network_carry_invariant_, "network.carry_invariant",
-              "the ONLY cross-epoch channel this per-epoch estimator has; consumer float 7-10x" },
-            { network_carry_invariant_, network_carry_invariant_innov_gate_,
-              "network.carry_invariant_innov_gate",
-              "a zero-q carry with no jump response warps the solution (standing invariant #1)" },
-            { network_carry_invariant_innov_gate_, network_carry_invariant_innov_calibrate_,
-              "network.carry_invariant_innov_calibrate",
-              "the default innov_k=4.0 is only correct WITH calibrate; raw-Cov(v) wanted k=10" },
-            { true, network_phase_leveling_, "network.phase_leveling",
-              "without it phase post-fit residuals are identically zero — no QC statistic exists" },
-            { true, network_raim_, "network.raim",
-              "USER DIRECTIVE Jul-28: armed residual QC on every network run" },
-            { network_raim_, network_raim_within_epoch_, "network.raim_within_epoch",
-              "adapt-and-EMIT inside the epoch; also the only source of sigma0_adapt" },
-            { true, network_station_pd_pin_aware_, "network.station_pd_pin_aware",
-              "305-sta 3h: 884 spurious pin-driven station rejections -> 0, clock better on every metric" },
-            { n_sta >= 3 && tri, estimate_network_iono_sh_, "network.estimate_iono_sh",
-              "co-estimated SH-VTEC replaces the external GIM; needs >=3 frequencies in the DATA" },
-            { true, nc.trace_section_timers, "network.trace_section_timers",
-              "the only per-epoch cost attribution; every perf claim is unreproducible without it" },
-            { true, nc.trace_epoch_status, "network.trace_epoch_status",
-              "cost is O(epochs), not O(stations); the primary run-forensics record" },
-            { true, nc.write_run_manifest, "network.write_run_manifest",
-              "provenance; no estimation effect and no product bytes" },
-            { warm, nc.state_snapshot_require, "network.state_snapshot_require",
-              "without it a fingerprint mismatch SILENTLY cold-starts — every same-snapshot A/B needs it" },
-            // --- Regime-scoped ---------------------------------------------------------
-            { lane, network_cold_clock_seed_, "network.cold_clock_seed",
+            // --- ON tier: Card-4 invariant DD carry, its carry couplings --------------
+            { true,
+              network_carry_invariant_,
+              Tier::ON, true , "network.carry_invariant",
+              "the ONLY cross-epoch phase memory a per-epoch estimator has; consumer 3D float "
+              "10.9 -> 3.6 m" },
+            { network_carry_invariant_innov_gate_,
+              network_carry_invariant_innov_calibrate_,
+              Tier::ON, false, "network.carry_invariant_innov_calibrate",
+              "raw formal Cov(v) is 10-30x optimistic (M2); calibrated k=4 reproduces the "
+              "hand-tuned k=10 sweet spot" },
+            { network_carry_invariant_,
+              network_carry_invariant_innov_gate_,
+              Tier::ON, false, "network.carry_invariant_innov_gate",
+              "invariant #1 event response for the stiff DD carry; em10 1h-tail DD step 8.33 -> "
+              "2.35 cyc/ep" },
+            { network_carry_invariant_innov_gate_,
+              network_carry_invariant_innov_calibrate_ ? (network_carry_invariant_innov_k_ >= 3.99 &&
+                  network_carry_invariant_innov_k_ <= 30.01) : (network_carry_invariant_innov_k_ >= 9.99),
+              Tier::ON, false, "network.carry_invariant_innov_k",
+              "k=4 (sweep flat over 4-30) is right ONLY with innov_calibrate; on raw formal "
+              "Cov(v) the field value is k=10" },
+            { network_carry_invariant_,
+              network_carry_invariant_qz_ >= 5e-5 && network_carry_invariant_qz_ <= 2e-4,
+              Tier::ON, false, "network.carry_invariant_qz",
+              "set 1e-4 m2/s: beats zero-q, DD step 2.433 -> 1.498 cyc/ep and calib 0.82 -> 0.49 "
+              "at 50 sta 3h" },
+            { warm,
+              nc.state_snapshot_require,
+              Tier::ON, false, "network.state_snapshot_require",
+              "without it a fingerprint/age/parse failure SILENTLY cold-starts; mandatory in "
+              "every same-snapshot A/B" },
+            // --- ON tier: QC, RAIM and SLIP knobs -------------------------------------
+            { network_phase_leveling_ || network_carry_invariant_,
+              network_cycle_slip_if_phase_td_,
+              Tier::ON, false, "network.cycle_slip.if_phase_td",
+              "complementary geometric-jump layer; hardened arm is clean at 0.37% fire rate, "
+              "raw-confirmed 71% -> 90%" },
+            { network_phase_leveling_ || network_carry_invariant_,
+              network_cycle_slip_mw_detect_,
+              Tier::ON, false, "network.cycle_slip.mw_detect",
+              "the robust coarse detector (WL+LLI, no a-priori position); zero-q alone locked a "
+              "wrong integer, rms_clock 2 -> 7-8 m" },
+            { true,
+              network_disc_threshold_frac_cycles_ >= 0.24 && network_disc_threshold_frac_cycles_ <= 0.26,
+              Tier::ON, false, "network.disc_threshold_frac_cycles",
+              "set 0.25: the flat 0.05 m gate is 0.26 cyc on L1 but 0.20 on L5; G3 A/B cut PB "
+              "disc L5 -20%, total -10%" },
+            // --- ON tier: EMISSION and PRODUCT knobs ----------------------------------
+            { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_,
+              network_emit_pb_filter_gate_v2_,
+              Tier::ON, false, "network.emit_pb_filter_gate_v2",
+              "G1-G5 all PASS: disc floor 2.6/ep vs v1 85.5/ep (33x), innovation resets 5707 -> "
+              "32 (178x), solve byte-identical" },
+            { true,
+              network_phase_leveling_,
+              Tier::ON, true , "network.phase_leveling",
+              "armed in 107 of 108 shipped configs; zero-q sharpens clock 2.44 -> 2.00 m (-18%); "
+              "the carry_warm gate for RAIM" },
+            { true,
+              nc.write_run_manifest,
+              Tier::ON, false, "network.write_run_manifest",
+              "run provenance: config hash + build stamp + POST-arming toggle dump; no estimation "
+              "effect, no product bytes" },
+            // --- ON tier: IONOSPHERE and SH-VTEC --------------------------------------
+            { n_sta >= 3 && tri,
+              estimate_network_iono_sh_,
+              Tier::ON, true , "network.estimate_iono_sh",
+              "USER DIRECTIVE: always on; without SH consumer float 8.19 -> 0.98 m and robust "
+              "clock spread 266 m vs single digits" },
+            // --- ON tier: PERFORMANCE / PARALLELISM + network trace_* knobs -----------
+            { par,
+              nc.parallel_seam,
+              Tier::ON, false, "network.parallel_seam",
+              "byte-identical compare PASS at 50 and 305 sta; 1.64x epoch (76.1 -> 46.5 s/ep) "
+              "cold, toward 2x warm" },
+            { true,
+              nc.trace_epoch_status,
+              Tier::ON, false, "network.trace_epoch_status",
+              "cost is O(epochs) not O(stations); the only record of WHY an epoch was skipped "
+              "(disposition + sigma0)" },
+            { true,
+              nc.trace_flag_rates,
+              Tier::ON, false, "network.trace_flag_rates",
+              "O(1) counters + 2 end-of-run files; the only check that the armed QC tiers fire at "
+              "their designed alpha" },
+            { true,
+              nc.trace_section_timers,
+              Tier::ON, false, "network.trace_section_timers",
+              "measured byte-identical A/B; the only per-epoch cost attribution - every perf "
+              "claim needs it" },
+            // --- ON tier: COLD-START, DATUM and CLOCK knobs ---------------------------
+            { network_phase_datum_eq34_ || network_phase_datum_prioritized_,
+              network_station_pd_pin_aware_,
+              Tier::ON, false, "network.station_pd_pin_aware",
+              "305-sta 3h: 884 spurious pin-driven station rejections -> 0; clock common-mode "
+              "0.524 -> 0.376" },
+            // --- SCOPED tier: Card-4 invariant DD carry, its carry couplings ----------
+            { !network_carry_invariant_ && network_phase_leveling_ && network_shared_carry_full_cov_,
+              network_carry_conditional_coupling_,
+              Tier::SCOPED, true , "network.carry_conditional_coupling",
+              "legacy lineage (needs shared_carry_full_cov): 200-ep A/B step p50 0.550 -> 0.103 "
+              "cyc, a00 stabilized" },
+            { network_carry_conditional_coupling_ && !network_carry_invariant_,
+              network_carry_coupling_time_update_,
+              Tier::SCOPED, true , "network.carry_coupling_time_update",
+              "else the coupling rows re-assert the harvest-epoch border at full strength (~5.8 "
+              "cyc, 1.5e4x weight lie)" },
+            { !network_carry_invariant_ && network_phase_leveling_,
+              network_shared_carry_full_cov_,
+              Tier::SCOPED, false, "network.shared_carry_full_cov",
+              "legacy lineage: recovers the clock-to-phase-bias off-diagonals the diagonal stash "
+              "drops; 50 sta cost ~0" },
+            { warm && network_carry_invariant_ && gps_only,
+              nc.state_snapshot_carry,
+              Tier::SCOPED, false, "network.state_snapshot_carry",
+              "GPS-only warm resume: CLK slope 55.8 -> 30.2 mm/ep over 60 ep; GPS+Gal at 305 sta "
+              "is NEGATIVE, unresolved" },
+            { nc.state_snapshot_carry && gps_only,
+              nc.state_snapshot_carry_diagonal,
+              Tier::SCOPED, false, "network.state_snapshot_carry_diagonal",
+              "GPS-only: accuracy >= dense at 478x smaller (270.9 -> 0.57 MB at 305 sta); dense "
+              "churns ~186 GB per 6h" },
+            // --- SCOPED tier: QC, RAIM and SLIP knobs ---------------------------------
+            { estimate_network_sat_code_bias_ && !warm,
+              network_code_bias_disc_jump_test_,
+              Tier::SCOPED, true , "network.code_bias_disc_jump_test",
+              "set with a wired CB response: the structural triggers bumped 0 at the measured 49 "
+              "m G01 code-bias step" },
+            { network_cycle_slip_if_phase_td_,
+              nc.slip_qc.ref_gate,
+              Tier::SCOPED, false, "network.cycle_slip.if_phase_td_ref_gate",
+              "hardened refsat gate: raw-confirmed 71% -> 90%, unsupported refsat flags 14 -> 4, "
+              "pool arm untouched" },
+            { true,
+              network_exclude_unmodeled_antenna_stations_,
+              Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
+              "backstop: an unmodelled receiver PCO/PCV is a systematic in every obs feeding the "
+              "shared clocks and biases" },
+            { network_phase_leveling_,
+              network_raim_,
+              Tier::SCOPED, false, "network.raim",
+              "USER DIRECTIVE Jul-28 armed QC; also feeds the sigma0 EWMA that scales emitted "
+              "URA; needs carry_warm" },
+            { network_phase_leveling_ && network_raim_ && n_sta >= 50,
+              network_raim_attribution_,
+              Tier::SCOPED, false, "network.raim_attribution",
+              "81% of RAIM events are ONE (station,sat) arc; attribution isolates them instead of "
+              "refloating whole sats" },
+            { network_phase_leveling_ && network_raim_within_epoch_,
+              network_raim_withhold_sigma0_ > 0.0 && network_raim_withhold_sigma0_ >= 1.99 *
+                  network_raim_sigma0_trigger_,
+              Tier::SCOPED, false, "network.raim_withhold_sigma0",
+              "set 6.0 (~2x raim_sigma0_trigger): last-resort backstop; a fired withhold grades "
+              "as an adaptation failure" },
+            { network_phase_leveling_ && network_raim_,
+              network_raim_within_epoch_,
+              Tier::SCOPED, false, "network.raim_within_epoch",
+              "the ONLY tier that acts BEFORE emit (adapt-and-EMIT); also the only source of the "
+              "sigma0_adapt column" },
+            // --- SCOPED tier: EMISSION and PRODUCT knobs ------------------------------
+            { nc.closed_loop.enable || network_service_mode_,
+              network_emit_clock_disc_,
+              Tier::SCOPED, true , "network.emit_clock_disc",
+              "the ONLY channel carrying the per-sat clock disc counter; without it a "
+              "contaminated sat keeps integrating a bad clock" },
+            { nc.closed_loop.enable && nc.closed_loop.consume_network_products &&
+                  !nc.closed_loop.consume_network_clock && n_sta <= 100,
+              network_emit_combined_sigma_ && nc.closed_loop.consume_combined_sigma,
+              Tier::SCOPED, false, "network.emit_combined_sigma",
+              "with consume_combined_sigma it supersedes the v1 URA deweight cliff (p50 1759x): "
+              "vertical 2.99 -> 1.72 m (-42%)" },
+            { warm && !nc.product_output_path.empty(),
+              network_emit_generation_id_,
+              Tier::SCOPED, true , "network.emit_generation_id",
+              "a restored non-zero id SUPPRESSES the first-emit mint, so a producer restart does "
+              "not hard-reset every consumer" },
+            { network_carry_invariant_ && network_carry_invariant_emit_rebase_,
+              network_emit_pb_filter_,
+              Tier::SCOPED, false, "network.emit_pb_filter",
+              "clears the ~200/ep PB disc floor (median step 0.080 m vs a 0.05 m thresh; 50 of "
+              "11938 genuine); solve unchanged" },
+            { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_
+                  && network_emit_pb_filter_gate_v2_,
+              network_emit_pb_filter_jump_k_ > 3.99 && network_emit_pb_filter_jump_k_ < 4.01,
+              Tier::SCOPED, false, "network.emit_pb_filter_jump_k",
+              "keep the k=4.0 default under gate_v2 - one k transfers 30 s to 300 s; jump_k=8 is "
+              "the RETIRED v1 hand tuning" },
+            { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_
+                  && (nc.epoch_decimation_n > 1 || spacing_s > 60.0),
+              network_emit_pb_filter_window_epochs_ < 59.99 || network_emit_pb_filter_window_epochs_ >
+                  60.01,
+              Tier::SCOPED, false, "network.emit_pb_filter_window_epochs",
+              "epoch-denominated: the 60.0 default does NOT transfer across cadence; the shipped "
+              "300 s tier uses 15.0" },
+            { network_raim_ && (nc.closed_loop.enable || network_service_mode_),
+              network_emit_ura_,
+              Tier::SCOPED, true , "network.emit_ura",
+              "per-sat quality channel a consumer weights on; also the only source of a "
+              "non-sentinel sigma0_ewma in health.csv" },
+            { true,
+              nc.epoch_decimation_n <= 2,
+              Tier::SCOPED, true , "network.epoch_decimation_n",
+              "n=1 for decisive grading, n=2 is the blessed 60 s dev tier; at n=10 the carry "
+              "prediction is INVALID (33 pct/ep refloat)" },
+            { network_phase_leveling_ && gnss_rate_s_ > 0.0,
+              network_phase_leveling_max_gap_s_ >= 2.0 * gnss_rate_s_ *
+                  static_cast<double>(nc.epoch_decimation_n),
+              Tier::SCOPED, true , "network.phase_leveling_max_gap_s",
+              "a gap guard under 2x the epoch spacing drops the carry on any missed epoch; 120 at "
+              "30 s, 900 in the 300 s tier" },
+            // --- SCOPED tier: IONOSPHERE and SH-VTEC ----------------------------------
+            { estimate_network_iono_sh_ && n_sta >= 150 && iono_weighting_.elevation_cutoff_deg >= 24.9,
+              global_vtec_sh_.max_degree >= 15,
+              Tier::SCOPED, false, "estimation.global_vtec_sh.max_degree",
+              "deg-15 at >=150 sta: sat code-OSB drift 0.66 vs 2.31 m, epoch step 1.57 vs 4.43 "
+              "cm; only at a 25 deg iono cutoff" },
+            { estimate_network_iono_sh_ && n_sta >= 50,
+              iono_weighting_.elevation_cutoff_deg >= 24.9,
+              Tier::SCOPED, false, "estimation.ionosphere_weighting.elevation_cutoff_deg",
+              "25 deg cuts clock-delta rms 77x vs 10 deg (a00 296 -> -305 TECU); SEPARATE gate "
+              "from processing.elevation_mask_deg" },
+            { estimate_network_iono_sh_ && n_sta >= 50,
+              iono_constraint_deweight_.adaptive,
+              Tier::SCOPED, false, "network.iono_constraint_deweight_adaptive",
+              "robust-z deweight of a hostile iono minority; 2-sta amputation cut ignition 5-9 -> "
+              "0.88 cyc/ep; own A/B never run" },
+            { estimate_network_iono_sh_ && iono_constraint_deweight_.adaptive,
+              iono_constraint_deweight_.min_epochs <= 5,
+              Tier::SCOPED, false, "network.iono_constraint_deweight_min_epochs",
+              "field legs all run 5 clean samples, not the shipped 30 (6x slower gate ignition); "
+              "epoch-denominated, never rescale" },
+            { estimate_network_iono_sh_ && iono_constraint_deweight_.adaptive,
+              iono_constraint_deweight_.window_epochs <= 15.01,
+              Tier::SCOPED, false, "network.iono_constraint_deweight_window_epochs",
+              "field runs use a 15-epoch robust-z half-life; shipped 60 is an un-retuned 30 s "
+              "assumption (Class A, scales w/ rate)" },
+            // --- SCOPED tier: PERFORMANCE / PARALLELISM + network trace_* knobs -------
+            { true,
+              nc.health_interval_s > 0.0,
+              Tier::SCOPED, false, "network.health_interval_s",
+              "set 60-300 s: the ONLY mid-run-flushed CSV, so a crashed or WER-zombied run loses "
+              "every other tail" },
+            { nc.lane_carry.enable && par,
+              nc.lane_carry.parallel_components,
+              Tier::SCOPED, false, "network.lane_carry.parallel_components",
+              "the one lane knob whose ON path is byte-identical (independent joint blocks, Eigen "
+              "re-pinned to 1)" },
+            { par && !nc.parallel_reduce,
+              nc.parallel_carry,
+              Tier::SCOPED, false, "network.parallel_carry",
+              "2.13x wall-clock (48.6 -> 22.8 s/ep at 20 thr); reassociates ~1e-4, so graded "
+              "verdicts still need OFF" },
+            { par && nc.parallel_carry,
+              nc.parallel_max_threads > 0,
+              Tier::SCOPED, false, "network.parallel_max_threads",
+              "pcarry partials combine in thread-COUNT order; 0 = all cores makes a counter/hash "
+              "ref machine-bound" },
+            { nc.parallel_stations && n_sta >= 4,
+              static_cast<int>(n_sta) > nc.parallel_min_stations,
+              Tier::SCOPED, false, "network.parallel_min_stations",
+              "a STRICT > gate with no warning: roster <= this silently kills seam, carry and "
+              "parallel ingest" },
+            { !rt && n_sta <= 100,
+              nc.trace_dd_fractional,
+              Tier::SCOPED, false, "network.trace_dd_fractional",
+              "grade_ddfrac is the primary honest DD/AR instrument; every DD verdict on record is "
+              "stated against it" },
+            { nc.trace_dd_fractional && n_sta >= 100,
+              nc.trace_dd_fractional_max_pairs > 0,
+              Tier::SCOPED, false, "network.trace_dd_fractional_max_pairs",
+              "unbounded dd-frac cost 20-40 min/epoch at 305 sta (10-ep run died at ep 4); set "
+              "500, or 2000 decimated" },
+            { true,
+              nc.trace_events,
+              Tier::SCOPED, false, "network.trace_events",
+              "pivot handover and retro-bump arming are otherwise SILENT; budget rows at 305 sta "
+              "(~1e3 QC events/ep)" },
+            { estimate_network_iono_sh_ && n_sta <= 50,
+              nc.trace_ionosphere,
+              Tier::SCOPED, false, "network.trace_ionosphere",
+              "the pierce-point / slant-iono viz record; a full extra reconstruct sweep, so KEEP "
+              "OFF above ~50 sta" },
+            { nc.trace_epoch_status && !network_raim_within_epoch_,
+              nc.trace_postfit_sigma0,
+              Tier::SCOPED, false, "network.trace_postfit_sigma0",
+              "with raim_within_epoch OFF the sigma0 column is 0.0000 on every row - no post-fit "
+              "statistic at emit" },
+            // --- SCOPED tier: COLD-START, DATUM and CLOCK knobs -----------------------
+            { rt && !(estimate_network_sat_code_bias_ && !estimate_network_iono_sh_),
+              network_apriori_source_ == NetworkAprioriSource::BrdcRts,
+              Tier::SCOPED, true , "network.apriori_source",
+              "self-sufficient RT service needs apriori_source=brdc_rts; float 2.84 m vs sp3 2.76 "
+              "m (3 sta/121 ep)" },
+            { network_apriori_source_ == NetworkAprioriSource::BrdcRts &&
+                  !network_clock_datum_sum_to_zero_,
+              network_clock_datum_broadcast_anchored_,
+              Tier::SCOPED, false, "network.clock_datum_broadcast_anchored",
+              "brdc_rts absolute clock frame: set-event step -0.0003 m vs s2z +0.334 m; "
+              "consumer-NEUTRAL, not a position win" },
+            { estimate_network_sat_code_bias_ && !network_clock_signal_basis_hold_,
+              network_code_datum_time_linked_,
+              Tier::SCOPED, true , "network.code_datum_time_linked",
+              "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock "
+              "wander after each rise/set" },
+            { lane,
+              network_cold_clock_seed_,
+              Tier::SCOPED, false, "network.cold_clock_seed",
               "lane/WL layers difference ~3e5-magnitude x_lin; measured 269 km at 305 sta cold" },
-            { network_emit_pb_filter_, network_emit_pb_filter_gate_v2_,
-              "network.emit_pb_filter_gate_v2",
-              "supersedes the retired per-cadence jump_k/meas_sigma_m hand tuning" },
-            { n_sta >= 50, iono_constraint_deweight_.adaptive,
-              "network.iono_constraint_deweight_adaptive",
-              "robust-z relative deweight of hostile minority iono rows (>=50 sta for a stable median)" },
+            { n_sta >= 3 && gps_gal_only,
+              estimate_network_sat_code_bias_,
+              Tier::SCOPED, true , "network.estimate_sat_code_bias",
+              "W6 OSB is a drop-in for the .BIA product (3-sta closed loop 0.508 m vs 0.489 m "
+              "3D); grade BIAS-ONLY" },
+            { network_carry_invariant_,
+              network_phase_datum_eq34_,
+              Tier::SCOPED, true , "network.phase_datum_eq34",
+              "the Card-4 DD datum; arm ONLY with carry_invariant - eq34 alone measured 76.2 vs "
+              "0.085 cyc/ep DD-step" },
+            { network_phase_datum_prioritized_ && !network_phase_datum_eq34_ &&
+                  network_station_pd_pin_aware_ && n_sta <= 100,
+              network_phase_datum_min_stations_ >= 2,
+              Tier::SCOPED, false, "network.phase_datum_min_stations",
+              "set 2 on the prioritized leg (with pin_aware): trims 394 -> 362 thin PB states; "
+              "REFUTED under eq34" },
+            { !network_phase_datum_eq34_ && !network_carry_invariant_ && network_phase_leveling_,
+              network_phase_datum_prioritized_,
+              Tier::SCOPED, true , "network.phase_datum_prioritized",
+              "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
+              "step, JPLM masked)" },
         };
 
         struct Member { const char* knob; bool on; };
@@ -3595,18 +3919,49 @@ namespace GnssProcessor {
         };
 
         log->info("=== Network POSTURE (regime: {} station(s), {} constellation(s), {} "
-                  "frequency mode, {} start) — recommended-vs-armed; evidence in "
-                  "docs/CONFIG_promotion_ledger.md ===",
+                  "frequency mode, {} start, {} lane layer, {}) — recommended-vs-armed; "
+                  "evidence in docs/CONFIG_promotion_ledger.md ===",
                   n_sta, n_sys,
                   frequency_mode_ == FrequencyMode::All ? "all"
                       : frequency_mode_ == FrequencyMode::Triple ? "triple" : "dual",
-                  warm ? "WARM-RESUME" : "cold");
-        int n_on = 0, n_off = 0;
+                  warm ? "WARM-RESUME" : "cold",
+                  lane ? "with" : "no",
+                  rt ? "real-time/service" : "post-processed");
+        int on_armed = 0, on_off = 0, sc_armed = 0, sc_off = 0, fp_blocked = 0;
+        // The table is pre-sorted ON-then-SCOPED, so one pass keeps the two blocks
+        // contiguous in the log.  ON-tier gaps WARN — they have no known counter-scope and
+        // are exactly what gets re-discovered by accident one wasted run at a time.  SCOPED
+        // gaps are INFO: there are 40+ of them, and warning on all would drown the tier that
+        // matters.  Both are still reported, and both are still one grep away.
         for (const auto& it : items) {
             if (!it.applies) continue;
-            if (it.on) { ++n_on; continue; }
-            ++n_off;
-            log->warn("  POSTURE OFF  {} — {}", it.knob, it.why);
+            const bool on_tier = it.tier == Tier::ON;
+            if (it.on) { (on_tier ? on_armed : sc_armed) += 1; continue; }
+            (on_tier ? on_off : sc_off) += 1;
+            if (on_tier) log->warn("  POSTURE OFF  [ON]     {} — {}", it.knob, it.why);
+            else         log->info("  POSTURE OFF  [SCOPED] {} — {}", it.knob, it.why);
+            // CHAIN axis: on a warm resume a fingerprinted recommendation is NOT actionable
+            // here.  Say so on the same line group, or the readout becomes an instruction to
+            // break the lineage.  Always WARN — this one is a correctness trap, not a tier.
+            if (warm && it.fp) {
+                ++fp_blocked;
+                log->warn("      ^ CHAIN: {} is in the warm-resume FINGERPRINT, so arming it on "
+                          "this resumed leg {}.  Arm it in a FRESH lineage (new seed) instead — "
+                          "a chain cannot adopt a fingerprinted knob mid-flight.",
+                          it.knob,
+                          nc.state_snapshot_require
+                              ? "hard-aborts the leg (state_snapshot_require is on)"
+                              : "SILENTLY cold-starts the leg — state_snapshot_require is FALSE, "
+                                "so the fingerprint mismatch is never reported and the run looks "
+                                "like a successful resume");
+            }
+        }
+        if (fp_blocked > 0 && !nc.state_snapshot_require) {
+            log->warn("  POSTURE CHAIN: {} fingerprinted recommendation(s) above, AND "
+                      "network.state_snapshot_require is false — this is the configuration in "
+                      "which acting on the advice fails SILENTLY (invariant #4: a silent "
+                      "cold-start reads as a clean run).  Arm state_snapshot_require first; "
+                      "then a mistaken flip aborts loudly instead of lying.", fp_blocked);
         }
         for (const auto& b : bundles) {
             if (!b.engaged) continue;
@@ -3629,9 +3984,16 @@ namespace GnssProcessor {
                           b.name, armed, b.members.size(), b.rule, missing);
             }
         }
-        log->info("=== Network POSTURE: {} recommended knob(s) armed, {} NOT armed (see the "
-                  "POSTURE OFF lines above; `python scripts/config_posture_check.py <config> "
-                  "--tier all` lists the scoped tier too) ===", n_on, n_off);
+        log->info("=== Network POSTURE: ON tier {}/{} armed, SCOPED tier {}/{} armed "
+                  "(regime-matched rows only; knobs validated in a DIFFERENT regime are "
+                  "deliberately not listed).  Full evidence and the UNVALIDATED / KEEP_OFF "
+                  "tiers: docs/CONFIG_promotion_ledger.md, or "
+                  "`python scripts/config_posture_check.py <config> --tier all`{} ===",
+                  on_armed, on_armed + on_off, sc_armed, sc_armed + sc_off,
+                  fp_blocked > 0
+                      ? fmt::format(".  FINGERPRINTED and needing a fresh lineage rather than "
+                                    "this leg: {} row(s)", fp_blocked)
+                      : std::string{});
     }
 
     void GnssConfig::applyNetworkConsumerCouplings(GnssConfig& c, bool consume_clock,

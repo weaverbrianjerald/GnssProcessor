@@ -279,7 +279,10 @@ target_link_libraries(gnss_simulator PRIVATE gnss_core)
 # Unit tests
 enable_testing()
 add_executable(gnss_tests
-    tests/test_main.cpp
+    tests/test_math_core.cpp
+    tests/test_atmosphere_models.cpp
+    tests/test_site_displacement.cpp
+    tests/test_antenna_model.cpp
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
     tests/test_network_emit.cpp
@@ -308,6 +311,7 @@ add_executable(gnss_tests
     tests/test_eq34_consumer_integer.cpp
     tests/test_glonass_network_config.cpp
     tests/test_codebias_network_config.cpp
+    tests/test_config_extends.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_transforms.cpp

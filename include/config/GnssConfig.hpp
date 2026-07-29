@@ -874,6 +874,21 @@ namespace GnssProcessor {
         const std::vector<std::string>& getActiveSystems() const { return active_systems_; }
 
         /**
+         * @brief Base configs merged in via @c "extends", in application order.
+         *
+         * Empty for a config that declares no inheritance. The run manifest records this
+         * chain (with a per-base content hash) because the manifest's own
+         * @c config_hash_fnv1a64 covers only the LEAF file's bytes — two leaves with
+         * identical bytes but different bases would otherwise be indistinguishable in the
+         * provenance record.
+         *
+         * @return the merged base paths, outermost base first.
+         */
+        const std::vector<std::string>& configExtendsChain() const {
+            return config_extends_chain_;
+        }
+
+        /**
          * @brief Gets the residual threshold for outlier detection.
          * @return Residual threshold value.
          */
@@ -4638,6 +4653,9 @@ namespace GnssProcessor {
         DefaultMeasurementNoise default_meas_noise_;          ///< Default measurement noise (fallback).
         std::map<std::string, std::vector<std::string>> signal_priorities_; ///< Signal priorities per system.
         std::vector<std::string> active_systems_; ///< Active GNSS systems.
+        /// Base configs merged in via `"extends"`, in application order; empty when the
+        /// config declares no inheritance (the case for every pre-inheritance config).
+        std::vector<std::string> config_extends_chain_;
         std::vector<std::string> excluded_satellites_;                ///< Satellites excluded from processing (e.g. "E14", "E18").
         std::filesystem::path product_list_path_;            ///< Path to product list file.
         std::vector<std::filesystem::path> product_paths_;   ///< Product file paths (SP3, CLK, etc.).

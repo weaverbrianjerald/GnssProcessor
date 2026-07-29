@@ -63,7 +63,10 @@
    "scope": "Post-processed network producer, GPS/Galileo (GLONASS structurally excluded, FDMA), DOY-129 2024, validated at 50 sta (3h/6h/12h, 30-60 s) AND 305 sta (3h/6h, 12h GPS-only full-day PASS). Costs ~57% of epoch wall time at 305 sta => not free at RT scale.",
    "evidence": "C3c same-build Release A/B, 3h 50-sta, grade_ddfrac DD-step cyc/ep: control(legacy) 8.29 with calibration 22.3x (dishonest sigma) -> carry_invariant q_z=0 2.433 (calib 0.82) -> q_z=1e-4 1.498 (calib 0.49). Consumer A/B/C 3h, CIT1 held out, final 3D: A pivot+iono 40.0 m, B eq34-legacy 10.9 m, C eq34+Card4 3.6 m => 'Card 4 improves consumer float 7-10x'. SH convergence ep 158 -> 19 once the slip tap was fixed. OFF byte-identical (field-proven same-build).",
    "interlock": "HARD-REQUIRES network.phase_datum_eq34 (log->error, GnssConfigLoadNetwork.cpp:2525). Is REQUIRED BY mw_wl.enable (:2550), mw_wl.ewl_enable / wl_inject_enable (:2587), lane_carry.enable (:2722), state_snapshot_carry (:2093), carry_invariant_innov_gate (:2533), emit_pb_filter (warn-inert :2953). Forces INERT: phase_datum_eq34_pin_round, _carry_shift, _rpb_q_m2s (warned :2905-2912). Suppresses the shared PhaseBias stash (NetworkRunContext.cpp:~1697) and the phase-leveling ambiguity carry inject (ApplicationNetworkAssembly.cpp:1533 `do_amb_carry = (...) && !carry_invariant`). It is INSIDE the warm-resume fingerprint => cannot be A/B'd against a shared snapshot.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "True",
+   "posture_why": "the ONLY cross-epoch phase memory a per-epoch estimator has; consumer 3D float 10.9 -> 3.6 m",
+   "fingerprinted": true
   },
   {
    "knob": "network.carry_invariant_innov_calibrate",
@@ -72,7 +75,10 @@
    "scope": "Whenever carry_invariant_innov_gate is armed. Validated 50 sta DOY-129 GPS+Gal at two masks; window default 60 epochs unswept.",
    "evidence": "v2 A/B: em10 2.35 at k=4 with sigma0_hat 2.49 => effective k*sigma0 = 10.0, i.e. 'v2's empirical sigma0_hat landed EXACTLY on v1's hand-tuned sweet spot'; em25 sigma0_hat 4.11 (eff 16.5) with the guard arm intact (1.683 vs 1.665 v1). Removes per-mask hand tuning: one k serves em10 and em25. During the hr-4 non-slip collapse sigma0_hat rose to 5.99, i.e. the accumulator correctly backs the gate off. Underlying justification measured by M2: raw formal Cov(v) is 10-30x optimistic.",
    "interlock": "HARD-REQUIRES network.carry_invariant_innov_gate (log->error, GnssConfigLoadNetwork.cpp:2541). Known residual: a scale calibration cannot flatten a non-Gaussian tail — a 4*sigma0 gate still flags ~17%/ep where clean 4-sigma Gaussian gives 0.006%; the em25 +12% over-fire is DISTRIBUTIONAL. Under GPS+Gal the restored sigma0_hat seed is LIVE (2.17) on warm resume and opens the gate ~4.7x wider — see gg305.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "on(\"network.carry_invariant_innov_gate\")",
+   "posture_why": "raw formal Cov(v) is 10-30x optimistic (M2); calibrated k=4 reproduces the hand-tuned k=10 sweet spot",
+   "fingerprinted": false
   },
   {
    "knob": "network.carry_invariant_innov_gate",
@@ -81,7 +87,10 @@
    "scope": "Whenever carry_invariant is armed. Validated 50 sta, DOY-129, GPS+Gal, 3h + 6h, at BOTH elevation masks (10 deg acceptance arm and 25 deg guard arm). Not independently A/B'd at 305 sta.",
    "evidence": "Release same-build A/B, 1h-tail DD-step cyc/ep: em10 OFF 8.33 -> v1 k=10 2.35 -> v2 calib k=4 2.35 (3.5x closure to the em25 class); em25 guard 1.498 -> 1.683 (no false-alarm shredding). Event window 03:30-04:10: em10 OFF b3 13.13 -> 7.45. OFF arms reproduce 8.327/1.498 exactly => byte-identity held. k-sweep k in [4,30] gives em10 2.62..2.30 => 'the em10 win is ROBUST and FLAT at any k'.",
    "interlock": "HARD-REQUIRES network.carry_invariant (log->error, GnssConfigLoadNetwork.cpp:2533). This IS standing invariant #1's fine-scale event response for the stiff DD carry — the RAIM fine-slip layer is empty under carry_invariant ('wired but INERT under carry_invariant, pl_amb empty => RAIM never adapts').",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "on(\"network.carry_invariant\")",
+   "posture_why": "invariant #1 event response for the stiff DD carry; em10 1h-tail DD step 8.33 -> 2.35 cyc/ep",
+   "fingerprinted": false
   },
   {
    "knob": "network.carry_invariant_innov_k",
@@ -90,7 +99,11 @@
    "scope": "Default 4.0 is the correct value ONLY with innov_calibrate=true. With calibrate OFF (v1, raw formal Cov(v)) the field-tuned value was k=10, and the two are not interchangeable.",
    "evidence": "em10 k-sweep 4/6/10/14/20/30 -> 2.62/2.46/2.35/2.36/2.33/2.30; em25 -> 1.95/1.77/1.66/1.73/1.70/1.62 => the acceptance does not hinge on k. Loader warns below 3.0: 'a low threshold storms the carry with false-alarm refloats (each shreds the accumulated DD information). Recommend k >= 4' (GnssConfigLoadNetwork.cpp:2853).",
    "interlock": "INERT unless carry_invariant_innov_gate.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "on(\"network.carry_invariant_innov_gate\")",
+   "posture_why": "k=4 (sweep flat over 4-30) is right ONLY with innov_calibrate; on raw formal Cov(v) the field value is k=10",
+   "armed_when": "(on(\"network.carry_invariant_innov_calibrate\") and val(\"network.carry_invariant_innov_k\", 4.0) >= 3.99) or (not on(\"network.carry_invariant_innov_calibrate\") and val(\"network.carry_invariant_innov_k\", 4.0) >= 9.99)",
+   "fingerprinted": false
   },
   {
    "knob": "network.carry_invariant_qz",
@@ -99,7 +112,11 @@
    "scope": "Value 1e-4 m^2/s, whenever carry_invariant is armed. Measured at 50 sta 3h GPS+Gal; 197/207 shipped test-suite configs already use 1e-4. Not re-swept at 305 sta or at 300 s cadence.",
    "evidence": "C3c falsifier, same 3h run set: q_z=0 -> DD step 2.433, calib 0.82; q_z=1e-4 -> 1.498, calib 0.49. Memory verdict: 'q_z=1e-4 BEATS q_z=0 — after the slip fix a touch of process noise still helps (absorbs residual shared-param/churn wander). Field recommendation: carry_invariant_qz = 1e-4, not 0.' Cross-check: within-run consecutive-epoch chord motion median 0.29 cyc = sqrt(q_z*dt), consistent.",
    "interlock": "Zero default (0.0) means a stiff zero-q carry, which per standing invariant #1 MUST have a wired event response — i.e. q_z=0 is only defensible with carry_invariant_innov_gate + the C3c slip funnel armed. In the warm-resume fingerprint.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "on(\"network.carry_invariant\")",
+   "posture_why": "set 1e-4 m2/s: beats zero-q, DD step 2.433 -> 1.498 cyc/ep and calib 0.82 -> 0.49 at 50 sta 3h",
+   "armed_when": "5e-5 <= val(\"network.carry_invariant_qz\", 0.0) <= 2e-4",
+   "fingerprinted": false
   },
   {
    "knob": "network.cycle_slip.if_phase_td",
@@ -108,7 +125,10 @@
    "scope": "Network producer only, where station coordinates are fixed at near-truth (the loader's own precondition). Second coarse layer alongside mw_detect, complementary coverage. Measured at 50 and 150 stations; armed @39af08f and in 79/335 configs.",
    "evidence": "project_ifphase_mw_slip_agreement.md: 'IF-TD pool arm is CLEAN: 8717 opportunities / 32 flags = 0.37%, median margin 74x thr; hardening took raw-confirmed rate 71% -> 90%'. project_network_if_td_slip.md lesson 7: elevation-normalize + per-(station,pair) EWMA shrunk to the pool prior took the over-fire '42% -> 0.077% (35/45,275), remaining flags all genuine metre-scale jumps'. Structural misses are gap-coincident and picked up by MW arc history once warm.",
    "interlock": "Loader warns the coordinate precondition at :1420-1425 ('IF-phase TD relies on accurate coordinates ... fine in-network, where they are fixed at near-truth, but not in general'). Gates network.cycle_slip.if_phase_td_ref_gate — the ref gate is forced false without it (:1369-1374). Threshold shape: thr = max(k*1.4826*MAD, floor_frac*lambda_IF); k=8 is DORMANT on a clean net, the floor_frac=1.0 physical floor binds (sweep 0.5->45 flags, 1.0->26, 1.5->24).",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.phase_leveling\") or on(\"network.carry_invariant\")",
+   "posture_why": "complementary geometric-jump layer; hardened arm is clean at 0.37% fire rate, raw-confirmed 71% -> 90%",
+   "fingerprinted": false
   },
   {
    "knob": "network.cycle_slip.mw_detect",
@@ -117,7 +137,10 @@
    "scope": "Every network run that carries carrier phase with zero/near-zero process noise (phase_leveling or carry_invariant). It is the coarse layer the user explicitly prefers at 30 s / 60 s cadence: 'At coarse rate the user prefers SIMPLE MW-ONLY, IF-TD acceptable as a second coarse check.'",
    "evidence": "feedback_network_nonnegotiable_configs.md (USER DIRECTIVE): 'network.phase_leveling + near-zero phase_leveling_q_amb MUST be paired with network.cycle_slip.mw_detect (WL+LLI, needs no a-priori position — the robust default)'. Loader comment :1419-1425 gives the reason it is the default over IF-TD: 'the wide-lane + LLI detector needs NO a-priori position ... whereas IF-phase TD relies on accurate coordinates'. docs/slip_qc_hardening_report_2026-07-21.md Card E: '67 wide-lane + 87 LLI detections that previously wrote nothing at all'. project_network_phase_leveling.md: zero-q alone locks in a wrong integer at ep42 (G29 leaked ~26 m into the shared clock, rms_clock 2 -> 7-8 m PLATEAU, never recovers).",
    "interlock": "AUTO-ARMED by the loader at :1426-1434 when network.phase_leveling is on and no detector is set. That auto-arm does NOT fire on carry_invariant-only configs (173/335 configs have phase_leveling=false), and 16 of those have neither a pre-fit detector nor carry_invariant_innov_gate — a live standing-invariant-#1 exposure. network.cycle_slip.mw_lli_corroborate is forced false without this (:1375-1380).",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.phase_leveling\") or on(\"network.carry_invariant\")",
+   "posture_why": "the robust coarse detector (WL+LLI, no a-priori position); zero-q alone locked a wrong integer, rms_clock 2 -> 7-8 m",
+   "fingerprinted": false
   },
   {
    "knob": "network.disc_threshold_frac_cycles",
@@ -126,7 +149,11 @@
    "scope": "Value 0.25 (the armed lineage value, committed 93a446a). Validated at 305 stations on two overnight runs plus a dedicated G3 A/B; contract-plumbed (S-basis discfrac= field, produce->replay byte-exact).",
    "evidence": "project_pb_gate_v2.md / project_iono_deweight_card.md (H3): the flat 0.05 m constant's premise is falsified — 'the run-end emission-frame statistic on two 305-station overnight runs is mean |common-fractional delta| ~= 0.034 m — i.e. ~0.7x the gate', and 'the harm model is in CYCLES ... so a flat metre gate is 0.26 cyc on L1/E1 but only 0.20 cyc on L5/E5a — tightest, in cycles, exactly on the longest-lambda noisiest signals.' G3 A/B measured the predicted signature exactly: 'PB disc L1 +1.1% / E1 +2.9% (flat), L2 -15.2%, L5 -20.0%, total -10.0%, anti-laundering gate intact.'",
    "interlock": "0.0 = legacy flat 0.05 m, byte-identical. Also governs the CODE jump test when network.code_bias_disc_jump_test is on (loader :2505-2515). Caveat recorded in the same card: 'It equalizes SEMANTICS only — it does NOT fix disc churn' (the PB emit filter owns churn). Armed in 179/335 configs.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "True",
+   "posture_why": "set 0.25: the flat 0.05 m gate is 0.26 cyc on L1 but 0.20 on L5; G3 A/B cut PB disc L5 -20%, total -10%",
+   "armed_when": "0.24 <= val(\"network.disc_threshold_frac_cycles\", 0.0) <= 0.26",
+   "fingerprinted": false
   },
   {
    "knob": "network.emit_pb_filter_gate_v2",
@@ -135,7 +162,10 @@
    "scope": "Within emit_pb_filter scope (carry_invariant + emit_rebase). Validated at 305 sta GPS d8/em10 at BOTH 30 s and 300 s, pcarry-ON. Only 15 shipped configs arm it while 160 still carry the retired v1 hand-tunings - this is the live promotion gap in this family.",
    "evidence": "project_pb_gate_v2, gates G1-G5 ALL PASS (docs/NIGHTRUN_REPORT_2026-07-15.md): 'G4 @30 s (60 ep): disc floor 2.6/ep vs v1 85.5/ep (33x); innovation resets 5707 -> 32 (178x); ref-path counts EQUAL (65=65); 100% no-laundering (all 29 v1 large-step >=0.5 m discs present in v2, 0 laundered); solve BYTE-IDENTICAL'. G3 @300 s: innovation resets 2/2011; sigma_step converged 8.1 cm. G5: one k=4 covers 8.1 cm @300 s and 20 cm @30 s. Committed armed at b644da5. Residual risk (intrinsic, also true of v1): an unflagged reference-path slip between ~2 sigma and k*sigma - e.g. a missed single-cycle L1 step at 19 cm - smooths through as a bounded non-laundered transient.",
    "interlock": "Arming it should RETIRE any network.emit_pb_filter_jump_k / _meas_sigma_m per-cadence override (loader says so at :2891-2900). Leaving jump_k=8 / meas_sigma_m=0.1 in place alongside gate_v2 re-imposes hand tuning the card exists to delete.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.emit_pb_filter\") and on(\"network.carry_invariant\") and val(\"network.carry_invariant_emit_rebase\", True)",
+   "posture_why": "G1-G5 all PASS: disc floor 2.6/ep vs v1 85.5/ep (33x), innovation resets 5707 -> 32 (178x), solve byte-identical",
+   "fingerprinted": false
   },
   {
    "knob": "network.estimate_iono_sh",
@@ -144,7 +174,10 @@
    "scope": "Network producer, any station count 3..305, GPS-only or multi-constellation, PROVIDED >=3 frequencies are actually present in the DATA (frequency_mode 'all' or a GPS L1/L2/L5 data-verified station set). Dual-frequency or channel-restricted sets are the counter-scope.",
    "evidence": "Standing user directive (feedback_network_nonnegotiable_configs): \"network.estimate_iono_sh is ALWAYS on\" — \"a no-SH 10-deg-mask minimal config gave 266 m (legacy) / 111 m (prioritized) robust clock spread vs single-digit metres with SH restored\". Treatment gains (deg-4, 50-sta, untreated->treated): sigma-calibration 46.9x -> 3.70x overconfident; consumer float 8.19 -> 0.98 m. At 305-sta/deg-15 treatment holds a00 at 24.1 +/- 2.5 TECU where untreated diverges +296 -> -91 TECU. De-facto promoted already: 224 of the repo's configs set it true.",
    "interlock": "FORCES ON: estimate_sat_code_bias, estimate_sat_biases, promote_sat_code_bias, estimate_ifb, ionosphere_weighting.enabled, global_vtec_sh.enabled. FORCES OFF: model_corrections.enable_code_phase_bias (.BIA), estimate_phase_clock (GnssConfigLoadNetwork.cpp:796-799, 817-840). HARD ERROR if apriori_source=brdc_rts with estimate_sat_code_bias but NOT estimate_iono_sh (:951-960). Mutually exclusive with GLONASS. Observability floor measured on a 7-config 50-sta smoke: dual-frequency or single-channel sets => the null-space rank gate WITHHOLDS EVERY EPOCH.",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "n_sta >= 3 and tri",
+   "posture_why": "USER DIRECTIVE: always on; without SH consumer float 8.19 -> 0.98 m and robust clock spread 266 m vs single digits",
+   "fingerprinted": true
   },
   {
    "knob": "network.parallel_seam",
@@ -153,7 +186,10 @@
    "scope": "Any network run whose roster exceeds parallel_min_stations with parallel_stations=true. Validated at BOTH 50 and 305 stations (nshared=1141).",
    "evidence": "memory/project_perf_deterministic_parallel_seam.md:51-57 — \"network.parallel_seam (default OFF) — BYTE-IDENTICAL, safe to arm for graded runs... 305 A/B: 1.64x epoch (76.1->46.5 s/ep) at 11 COLD epochs, grows toward ~2x warm; compare_network_run.py compare PASS at both 50 and 305 (nshared=1141 — the exact scale where the GEMM-beta drift appeared). Committed @bb0a7ab\". Byte-identity is structural too (ApplicationNetworkSetup.cpp:873-884: compute per block in parallel, accumulate/install SERIALLY in fixed block order). De-facto already promoted: 181/181 shipped test_suite configs that name it set it true.",
    "interlock": "SILENTLY INERT (no warning) when parallel_stations=false or n_sta <= parallel_min_stations or hw_max_threads==1 — ApplicationNetworkSetup.cpp:862-865,879-880. Also partially superseded by parallel_carry for the fold stage (ApplicationNetwork.cpp:787-791); both may be armed together and the 305 all-on config does exactly that.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "par",
+   "posture_why": "byte-identical compare PASS at 50 and 305 sta; 1.64x epoch (76.1 -> 46.5 s/ep) cold, toward 2x warm",
+   "fingerprinted": false
   },
   {
    "knob": "network.phase_leveling",
@@ -162,7 +198,10 @@
    "scope": "Every real network-producer run: 50 and 305 sta, GPS and GPS+Gal, 30 s and 60 s cadence, cold and warm. Armed true in 107 of 108 shipped configs and by service_mode.",
    "evidence": "User directive (feedback_network_nonnegotiable_configs): 'Real runs = SH + slip detector + zero-q + prioritized + 10 deg mask'; 'Never grade product QUALITY on a config missing 1 or 2'. Measured (project_network_phase_leveling): 'zero-q sharpens clock 2.44 -> 2.00 m (-18%) in the clean pre-lock-in window (ep7-41)'. service_mode arms it at :3064-3065 with the rationale 'carry_warm prerequisite of BOTH RAIM tiers'.",
    "interlock": "HARD: loader AUTO-ARMS network.cycle_slip.mw_detect when phase_leveling is on and no detector is set (:1426-1434) - this is standing invariant #1 (zero-q lock-in measured at ep42, rms_clock 2 -> 7-8 m PLATEAU, never recovers). REQUIRED-BY: carry_zwd (INERT without it, :3302-3304), cycle_slip.turbo_edit (INERT, :3283-3286), network.raim (INERT, :3346-3348), trace_station_residuals (empty file, :3357-3360). SUPERSEDED-IN-PART: under network.carry_invariant the per-station ambiguity carry is superseded for phase keys (:2825-2835) but phase_leveling remains the warm gate. In the warm-resume fingerprint (NetworkRunContext.cpp:205 pl_on) => flipping it forces a cold start.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "True",
+   "posture_why": "armed in 107 of 108 shipped configs; zero-q sharpens clock 2.44 -> 2.00 m (-18%); the carry_warm gate for RAIM",
+   "fingerprinted": true
   },
   {
    "knob": "network.state_snapshot_require",
@@ -171,7 +210,10 @@
    "scope": "Every warm-resume run and MANDATORY in every same-snapshot A/B. Harmless when no resume is attempted (path empty). No measured downside.",
    "evidence": "It is named in the card's shipping posture: 'carry ON, resume_shock_m 0, state_snapshot_require: true, and simply discard the first ~5 post-resume epochs.' Its purpose is the invariant-#4 failure class: 'any resume failure (missing/parse/fingerprint/age/emitter) is a hard run error instead of a silent cold start. Arm this in every same-snapshot A/B' (GnssConfigLoadNetwork.cpp:707-710). Enforced at NetworkRunContext.cpp:373 and :573.",
    "interlock": "Turns the fingerprint mismatch into a hard failure — which is what exposes the SAME-SNAPSHOT A/B VALIDITY ENVELOPE: any knob inside the fingerprint (NetworkRunContext.cpp:170-303 — roster and its order, datum toggles, carry q's, clock model, decimation, coupling set, carry_invariant itself, warmup_ura_floor_m/warmup_epochs at :218) CANNOT be A/B'd against a shared snapshot. Without this knob the variant arm silently cold-starts.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "warm",
+   "posture_why": "without it a fingerprint/age/parse failure SILENTLY cold-starts; mandatory in every same-snapshot A/B",
+   "fingerprinted": false
   },
   {
    "knob": "network.station_pd_pin_aware",
@@ -180,7 +222,10 @@
    "scope": "Any config that pins ambiguities inside a local block, i.e. phase_datum_prioritized OR phase_datum_eq34 (both put 1e10 pins in N_rr). Validated at BOTH 50-sta/1h and 305-sta/3h, GPS+Gal, DOY-129, single-variable A/B on the all-features base.",
    "evidence": "project_network_pdp_gate_pinaware.md: '305-sta 3h ... control rejects VOIM 360 / CCJ2 338 / GLPS 86 / BOGI 56 / STHL 36 / UTQI 8 — 884 total, all the positive-definite vs 1e10 pin class -> guard 0. Clock better on every metric: common-mode 0.524 -> 0.376 (-28%), de-meaned std 2.77 -> 2.55 (-8%), worst-median -14%.' Plus 50-sta: 'control GLPS 26 / TWTF 121 / VOIM 121 drops -> pin-aware NONE'. The loader itself already emits 'RECOMMEND network.station_pd_pin_aware = true with network.phase_datum_eq34' (GnssConfigLoadNetwork.cpp:2803). Discrimination preserved: 'the median-scale marker fired 5x in the guard leg ... positive proof the test still discriminates', and SULP/OWMG non-finite-pivot drops stay byte-identical to control.",
    "interlock": "None forced. It is a guard, not a datum; byte-identical when no pins exist. MUST be armed together with phase_datum_min_stations>1 (the gate alone is worse — see that row).",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "on(\"network.phase_datum_eq34\") or on(\"network.phase_datum_prioritized\")",
+   "posture_why": "305-sta 3h: 884 spurious pin-driven station rejections -> 0; clock common-mode 0.524 -> 0.376",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_epoch_status",
@@ -189,7 +234,10 @@
    "scope": "Every network run. Cost is structurally bounded by EPOCH count (one CSV row per processed epoch, no reconstructStation) — it cannot scale with stations or satellites.",
    "evidence": "GnssConfigTypes.hpp:467: \"ONE row per processed epoch (emitted OR skipped) recording the disposition (emitted / gate_withheld / sigma0_withheld / solve_failed / datum_failed / sync_skip), sigma0, within-epoch adapt count, refloat/retro counts, datum-change flag... O(epochs); off by default — byte-identical when OFF\". NetworkRunTraces.cpp:229-240 confirms rows are written before each `continue` (skip) and at emit — it is the ONLY surface that records WHY an epoch was skipped; spdlog does not carry the disposition. HONEST CAVEAT: the cost argument here is STRUCTURAL, not a measured A/B; the only run evidence is decomposition byte-gate arm 10 (docs/network_decomposition_addendum_2026-07-16.md:61), a 10-epoch smoke. Under-adopted: armed in only 10/355 shipped configs.",
    "interlock": "It is the OUTPUT FILE for trace_postfit_sigma0 (see that entry). BUFFERED, never flushed — a crashed/WER-zombied run loses the tail (only health_trace flushes, NetworkRunTraces.cpp:666).",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "True",
+   "posture_why": "cost is O(epochs) not O(stations); the only record of WHY an epoch was skipped (disposition + sigma0)",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_flag_rates",
@@ -198,7 +246,10 @@
    "scope": "Every network run that completes normally. Cost is O(1) counter increments plus two files written once at end of run.",
    "evidence": "GnssConfigTypes.hpp:465: \"for each RAIM/QC tier (IF-phase slip, within-epoch trigger, post-fit RAIM cell/consensus, clock-model NIS, clock-monitor) accumulate {opportunities, flags} over the run and report realized rate vs the implied one-sided Gaussian alpha for the configured k. Also writes network_flag_rates.csv + network_run_summary.csv (L3). Measurement only — no threshold or decision change; OFF (default) = byte-identical.\" This is the direct instrument for the standing 'RAIM always on' directive (feedback_raim_always_on.md) — it says whether the armed QC tiers are firing at their designed alpha. Same structural-cost caveat as trace_epoch_status: only smoke-scale run evidence (decomposition arm 10).",
    "interlock": "END-OF-RUN writer ⇒ a killed / crashed / WER-zombied run produces NOTHING. Do not rely on it as the sole telemetry for a long run; pair with health_interval_s.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "True",
+   "posture_why": "O(1) counters + 2 end-of-run files; the only check that the armed QC tiers fire at their designed alpha",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_section_timers",
@@ -207,7 +258,10 @@
    "scope": "Every network run. It is the only source of per-epoch cost attribution, and every perf claim on record is unreproducible without it.",
    "evidence": "MEASURED byte-identity (an accidental but valid A/B): docs/HANDOFF_carry_rigor_card1b.md:129-131 — \"_t7_joint_lowfloor_12h.json and _t7c_jointwhiten_12h.json differ ONLY by trace_section_timers\" and that comparison came out byte-identical across network_dd_fractional.csv (all 10614 rows), network_solution.csv, network_products*.txt, network_vtec_sh.csv, closed_loop_trace.csv. Cost: GnssConfigTypes.hpp:642 \"when OFF every instrumented primitive skips the clock read entirely (no measurable overhead)\"; ON at 305/30s all-on the run still read 27.7 s/ep. memory/project_timing305_allon_baseline.md:14-17: \"Every section split below is produced by network.trace_section_timers ... without that knob the baseline is unreproducible.\" De-facto promoted: armed true in 240/355 shipped test_suite configs.",
    "interlock": "(a) lane_carry.parallel_components SILENCES the carry driver's per-op timer for its parallel pass (NetworkMwWlGlue.cpp:360-367, carry_driver.setPerfTiming(false)) ⇒ D0 numbers undercount when both are on. (b) Documented future race with the unbuilt parallel-sweeps card: docs/HANDOFF_perlos_parallel_sweeps.md:152-156 — the D0 counters are mutable estimator state hit by reconstructStation.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "True",
+   "posture_why": "measured byte-identical A/B; the only per-epoch cost attribution - every perf claim needs it",
+   "fingerprinted": false
   },
   {
    "knob": "network.write_run_manifest",
@@ -216,7 +270,10 @@
    "scope": "All runs. No estimation effect and no product bytes - so there is nothing numerical to measure; the benefit is operational provenance. Armed in 11 shipped configs today.",
    "evidence": "include/config/GnssConfigTypes.hpp:643: 'write network_run_manifest.json (JSONL, two records) - a run-provenance snapshot (config path + FNV-1a-64 hash of the config bytes, build stamp, and the full network.* toggle/knob dump) at startup, plus an end-of-run record with the epoch counts + loop wall. Makes an archived logs/ folder self-describing weeks later (which toggle set produced it) when everything is uncommitted.' It records the POST-arming realized toggle set (NetworkRunTraces.cpp:880-925 dumps emit_pb_filter*, emit_generation_id, emitter_staleness_horizon_s, ...), which is exactly the instrument for the promotion-gap pain that occasioned this audit. HONESTY FLAG: this is a code-asserted benefit with no field measurement - but the knob has no estimation surface, so 'unvalidated' would be a category error rather than a caution.",
    "interlock": "Does NOT read git state. The 'complete' record is appended only on normal completion (NetworkRunTraces.cpp:930-936, reopen-append so a crashed run keeps the startup record) - so a WER-zombied run leaves a one-record manifest; do not read that as a config difference.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "True",
+   "posture_why": "run provenance: config hash + build stamp + POST-arming toggle dump; no estimation effect, no product bytes",
+   "fingerprinted": false
   },
   {
    "knob": "estimation.global_vtec_sh.max_degree",
@@ -225,7 +282,11 @@
    "scope": "Raise ONLY with station count and only for code-bias product quality: deg-15 at >=150-305 stations, deg-8 at 50 stations (GPS tri-freq bench). NEVER raise degree as a stability/divergence cure, and never at a 10-deg iono cutoff.",
    "evidence": "PRO (project_gps_tri_mwnl_config, 150-sta deg-15 vs 50-sta deg-8, 60 ep): \"Code OSB 3.5-5x TIGHTER — per-sat |drift| med/p90/max 0.66/1.67/3.81 m (vs 2.31/8.85/20.29), epoch step 1.57 cm (vs 4.43)... for a USABLE code-bias product, 150/deg-15 is a real win.\" CON, same A/B: \"NL UNCHANGED — circR 0.003 (vs 0.019)\" because \"LOS>3sigma FLAT ~70% at BOTH shapes\". CON (project_net305_attribution_rerun): \"deg-15 as an hr-4 cure = NEGATIVE\". CON (project_global_sh_iono): \"degree sweeps deg-4/12/15 all degenerate at 10 deg (more degrees = worse)\"; \"Higher-degree SH was evaluated and REJECTED as an instability lever (scale mismatch + misfit export + deg-8@50 a00 blowup) — do not resurrect it.\" Note the deg-8@50 conflict: the Jul-17 tri-freq bench reports deg-8@50 fully observable (Kaula ratio 1.29-1.65, a00 19.9 TECU in band) — the blowup was an earlier lineage. Treat 50-sta deg-8 as regime-dependent.",
    "interlock": "Degree raises the shared-column count (565 shared columns were the 150-sta wall, not the lanes).",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "on(\"network.estimate_iono_sh\") and n_sta >= 150 and val(\"estimation.ionosphere_weighting.elevation_cutoff_deg\", 0.0) >= 24.9",
+   "posture_why": "deg-15 at >=150 sta: sat code-OSB drift 0.66 vs 2.31 m, epoch step 1.57 vs 4.43 cm; only at a 25 deg iono cutoff",
+   "armed_when": "val(\"estimation.global_vtec_sh.max_degree\", 8) >= 15",
+   "fingerprinted": false
   },
   {
    "knob": "estimation.ionosphere_weighting.elevation_cutoff_deg",
@@ -234,7 +295,11 @@
    "scope": "Global/continental networks at 50-305 stations: 25.0 for THIS gate while processing.elevation_mask_deg stays 10.0. This is the single largest un-promoted default in the family — every current field config (day129/net305/dcb305) sets 25.0, the shipped default is 10.0.",
    "evidence": "project_global_sh_iono: \"The global 305-station divergence (a00 296 -> -305 TECU, FLAT per-degree spectrum, clock-delta rms 56->101 m) was LOW-ELEVATION CODE contamination, cured by moving the mask 10 -> 25 deg. At 25 deg... per-degree spectrum DECAYS 29/11/5.3/3.5/.../0.3 (textbook red iono), clock-delta rms 0.6-0.9 m stable, a00 formal sigma collapses 30 -> 0.4 TECU.\" project_net305_attribution_rerun: \"a 10 deg elevation mask inflates clock-delta rms ~77x versus 25 deg.\" Mechanism: the network slant iono is a per-epoch dual-freq CODE estimate; low-el code GF carries multipath + obliquity M~4-5, and a00's only handle is the mapping-function spread.",
    "interlock": "\"iono_weighting.elevation_cutoff_deg is a SEPARATE gate from processing.elevation_mask_deg — set BOTH.\" Do NOT read the nonnegotiable-configs note \"all network test configs went back to a 10 deg mask\" as applying here: that sentence is about processing.elevation_mask_deg (the solve mask), which the same configs hold at 10 while this cutoff is 25.",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "on(\"network.estimate_iono_sh\") and n_sta >= 50",
+   "posture_why": "25 deg cuts clock-delta rms 77x vs 10 deg (a00 296 -> -305 TECU); SEPARATE gate from processing.elevation_mask_deg",
+   "armed_when": "val(\"estimation.ionosphere_weighting.elevation_cutoff_deg\", 0.0) >= 24.9",
+   "fingerprinted": false
   },
   {
    "knob": "estimation.ionosphere_weighting.enable",
@@ -243,7 +308,9 @@
    "scope": "Network producer: reach it ONLY as the forced consequence of estimate_iono_sh — never set it standalone. User-side post-processed PPP-RTK: only with data_download.download_gim=true. Real-time: NEVER (hard no-op).",
    "evidence": "The flag is the row-builder gate for BOTH iono constraints (ApplicationNetworkAssembly.cpp:324-325 `if (!iw.enabled) return;` inside appendShIonoRows) so the SH path needs it; the loader sets it for you (GnssConfigLoadNetwork.cpp:827). Set standalone it selects the EXTERNAL GIM path, which is (a) a hard startup error if no .INX resolves (ApplicationNetworkSetup.cpp ~:425-435), (b) refused under apriori_source=brdc_rts, and (c) in direct conflict with the Jul-12 user directive \"I don't want to rely on any external information\" (feedback_no_external_data_dependence, which names the W6 GIM constraint as an \"outstanding conflict... not precedent\"). RT: RealTimeEngine.cpp:273-278 warns \"unsupported in the streaming pipeline (no GIM source) — no iono constraint will be applied\".",
    "interlock": "Forced true by network.estimate_iono_sh (GnssConfigLoadNetwork.cpp:827). Silent no-op on the user PPP path unless data_download.download_gim=true (project_config_toggle_gotchas: \"the same GIM gates estimation.ionosphere_weighting.enable\").",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "False",
+   "posture_why": "not a posture row: STRUCTURALLY UNREPORTABLE. The loader forces it true inside its only recommended regime, so the row can never emit POSTURE OFF: GnssConfigLoadNetwork.cpp:827 `iono_weighting_.enabled = true;` sits ins"
   },
   {
    "knob": "network.apriori_source = \"brdc_rts\"",
@@ -252,7 +319,11 @@
    "scope": "Real-time / self-sufficient service mode only. Measured at 3 stations, 121 epochs. The 50 -> 305 station scale runs are explicitly OPEN, so this is not validated at production scale.",
    "evidence": "project_rt_service_work_queue.md Card-8 armed run: 'PASS on criteria 1-4. 117/121 epochs emitted; every C line carries iode=; 26 eph re-levels including the 06:00 32-sat GPS batch with 0 disc bumps and 0 forced fallbacks; E08 reconstruction step <=3.5 cm ... brdc_rts consumer float median 2.84 m vs sp3-twin 2.76 m (<=0.1 m degradation).' Open: 'brdc_rts scale runs 50 -> 305 sta ... expect Galileo conditioning stress at 305 under metre-scale delta-dts.' Trap recorded: 'brdc_rts must refuse ANY precise product ... A precise CLK without SP3 escapes an orbit-only check -> silent orbit/clock frame split.'",
    "interlock": "HARD ERROR with estimate_sat_code_bias unless estimate_iono_sh is also on (:951-959). WARNS if a realtime corrections stream is configured (SSR orbit dialect must be IGS-SSR 4076, unvalidatable at load). Deliberately NOT armed by service_mode ('an input-SOURCE selection, not a toggle', :3029-3032).",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "rt and not (on(\"network.estimate_sat_code_bias\") and not on(\"network.estimate_iono_sh\"))",
+   "posture_why": "self-sufficient RT service needs apriori_source=brdc_rts; float 2.84 m vs sp3 2.76 m (3 sta/121 ep)",
+   "armed_when": "val(\"network.apriori_source\", \"sp3\") == \"brdc_rts\"",
+   "fingerprinted": true
   },
   {
    "knob": "network.carry_conditional_coupling",
@@ -261,7 +332,10 @@
    "scope": "Load-bearing ONLY in the legacy lineage (carry_invariant OFF, phase_leveling ON) at 50 sta / 60 s / GPS+Gal, and only with the Card-1e gauge fix in the build. STRUCTURALLY INERT under carry_invariant unless network.carry_zwd is also true — and carry_zwd is set in ZERO shipped configs (grep of config/test_suite/*.json returns no occurrences), so under the current Card-4 production posture this knob folds NOTHING.",
    "evidence": "Legacy-lineage 200-ep A/B: 'ON step p50 0.103 cyc vs OFF 0.550 (5x); sigma slope -0.587 ~ 1/sqrt(k) (OFF -0.314, legacy flat -0.056); ON stabilizes a00 34.8 +/- 1.3 vs OFF 2.1 +/- 9.7.' INERTNESS PROOF under Card 4, src/core/app/ApplicationNetworkAssembly.cpp:1533-1534: `const bool do_amb_carry = (phase_datum_prioritized || !st.is_pivot) && !carry_invariant;` — the ONLY two callers of cb.buildCplRow are inside that ambiguity loop (:1572) and the zwd_on block (:1603), so carry_invariant=true + carry_zwd=false => zero coupling rows. The post-solve harvest/stash still runs (NetworkRunContext.cpp:1400), so the run-end 'coupling-carry volume' line still shows stashes>0 while injected terms read 0 — exactly the Card-1e 'byte-identical A/B = the feature never ran' signature (standing invariant #4).",
    "interlock": "THROWS at load without network.shared_carry_full_cov (GnssConfigLoadNetwork.cpp:1100). Is HARD-REQUIRED BY carry_coupling_joint_whiten (:1118), carry_coupling_time_update (:1138), carry_coupling_sh_marginalize (:1150). Interacts with carry_vce: under coupling the harvested var can exceed fold_var => redundancy r=1-w*v goes negative (the geo-mean estimator sidesteps this; the mean clamps r).",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "not on(\"network.carry_invariant\") and on(\"network.phase_leveling\") and on(\"network.shared_carry_full_cov\")",
+   "posture_why": "legacy lineage (needs shared_carry_full_cov): 200-ep A/B step p50 0.550 -> 0.103 cyc, a00 stabilized",
+   "fingerprinted": true
   },
   {
    "knob": "network.carry_coupling_time_update",
@@ -270,7 +344,10 @@
    "scope": "Same envelope as carry_conditional_coupling: real and 5x beneficial in the legacy phase-leveling lineage (50 sta, 60 s, GPS+Gal, Card-1e gauge restore present); rides on ZERO rows under carry_invariant + carry_zwd=false, i.e. inert in the current Card-4 posture.",
    "evidence": "Legacy 200-ep A/B: ON step p50 0.103 vs OFF 0.550; a00 34.8+/-1.3 vs 2.1+/-9.7. Golden carrylive baseline: coupling volume 'OFF 0 shrunk, ON ~23.2M kappa-shrunk'. Defect it fixes is quantified: 'rows lie by ~M^2*q*dt for present-but-moving border cols (clock q 0.6 m^2/ep => ~5.8 cyc, 1.5e4x weight overstatement)'. THE SCOPE FLAG: under carry_invariant the hr-4 ladder recorded 'carry_coupling_time_update off -> 54.3/118.3' — bit-identical to the reference 54.3/118.3. That was read as 'exonerated'; the ApplicationNetworkAssembly.cpp:1533 gate shows it is more simply INERT there. Do not cite that exoneration as evidence about this knob's value.",
    "interlock": "THROWS at load without carry_conditional_coupling (GnssConfigLoadNetwork.cpp:1138-1141). Needs the Card-1e per-(constellation x kind) gauge restore or the kappa shrink itself re-breaks the null space (ON arm stuck at 13/30 emitted). KNOWN-OPEN: tu_reinit_sats does not cover a flagged sat's PhaseBias/CodeBias coupled columns, and hard-refloat mode (clk_mon_reinit_sig <= 0) never populates tu_reinit_sats => flagged sats kappa-shrink at nominal q (anti-conservative).",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "on(\"network.carry_conditional_coupling\") and not on(\"network.carry_invariant\")",
+   "posture_why": "else the coupling rows re-assert the harvest-epoch border at full strength (~5.8 cyc, 1.5e4x weight lie)",
+   "fingerprinted": true
   },
   {
    "knob": "network.clock_datum_broadcast_anchored",
@@ -279,7 +356,10 @@
    "scope": "Real-time self-sufficient service on apriori_source=brdc_rts ONLY, where the requirement is an absolute clock frame that does not wander on rise/set. Measured NEUTRAL for consumer accuracy at 305 sta — do not arm it expecting a positional win.",
    "evidence": "project_network_falsified_approaches.md: 'Kills redistribution wander (set-event step -0.0003 vs s2z +0.334 m) but consumer U identical (-5.43), 0 fixes, churn unchanged: bca stabilizes clock COMMON-MODE which the consumer white-noise clock absorbs. Valid for absolute RT clock frame.' Design correction embedded in the loader: 'realized common-mode eigenvalue is 1/sigma^2 (NOT ~N/sigma^2) — sigma >~60 m at 305 sta drops below the rank cutoff -> gate throws -> SILENT empty product'.",
    "interlock": "HARD ERROR if apriori_source != brdc_rts (:2355-2361). HARD ERROR with clock_datum_sum_to_zero (:2343-2349). HARD ERROR if resolved apriori_clock_anchor_sigma_m is not in (0,100) m; warns above 30 m. Silently makes sticky_pivot / pivot_vanish_return_signal INERT and ignores clock_datum_satellite.",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "val(\"network.apriori_source\", \"sp3\") == \"brdc_rts\" and not on(\"network.clock_datum_sum_to_zero\")",
+   "posture_why": "brdc_rts absolute clock frame: set-event step -0.0003 m vs s2z +0.334 m; consumer-NEUTRAL, not a position win",
+   "fingerprinted": false
   },
   {
    "knob": "network.code_bias_disc_jump_test",
@@ -288,7 +368,10 @@
    "scope": "Arm only as the SIGNALLING half of a paired fix (with a wired CB event response), and only where the consumer resets on CB disc counters. Measured marginally HARMFUL standalone in a 3-station closed-loop A/B.",
    "evidence": "The case FOR: project_day129_pivot_cb_ratchet.md Q4 — 'the magnitude trigger is code_bias_disc_jump_test only (default false). G01 bumped 0 at the 49 m step. A counter-obeying consumer resets ~200 sats ~128x/day yet integrates straight across the real fault.' The case AGAINST, measured: project_closedloop_consumer_vertical_bug.md item 5 — 'CB discs 2752->7854 (working as designed — the previously-unsignalled CB wander) yet U -5.22 -> -5.43, marginally WORSE. Telling the consumer about a re-realization does not stop it; it buys MORE resets.'",
    "interlock": "Loader warns INERT without network.estimate_sat_code_bias (:2495-2498). Its threshold is governed by network.disc_threshold_frac_cycles when that is > 0 (:2505-2515). Travels in the S-contract (cbjump= field) so file replay reproduces the counters.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "(on(\"network.estimate_sat_code_bias\") or on(\"network.estimate_iono_sh\")) and not warm",
+   "posture_why": "set with a wired CB response: the structural triggers bumped 0 at the measured 49 m G01 code-bias step",
+   "fingerprinted": true
   },
   {
    "knob": "network.code_datum_time_linked",
@@ -297,7 +380,10 @@
    "scope": "W6 only (network.estimate_sat_code_bias / estimate_iono_sh on) — INERT and warned otherwise. Validated at 50-sta GPS+Gal DOY-129 as part of the golden carrylive baseline; it is set true in 245/245 configs that mention it, including both 305-sta flagships.",
    "evidence": "project_card123_lineage_archive.md Card 2: 'Cures the ~0.92 m hysteretic OSB/clock wander: the s2z target shifts by (departed bias)/m on every rise/set while the near-zero-q carry resists, so the level relaxes AFTER the counter fires — the worst ordering for a consumer holding ambiguities.' It is part of the recorded golden baseline (project_card1e_gauge_amputation.md: 'shared_carry_full_cov + carry_conditional_coupling + code_datum_time_linked ON'). Caveat — the only single-variable ablation on record is NEAR-NULL: project_m1_card4_phasec3c.md exoneration ladder, 'code_datum_time_linked off -> 54.3/120.4' vs reference hr4/hr5 = 54.3/118.3, i.e. ON is ~2% better at hr-5 and identical at hr-4. The 0.92 m wander claim is a mechanism/design claim, not a published A/B number.",
    "interlock": "HARD THROW (std::runtime_error, :2434-2438) if armed with network.clock_signal_basis_hold — both re-target the same per-satellite IF-pin row. INERT + warned without estimate_sat_code_bias.",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "(on(\"network.estimate_sat_code_bias\") or on(\"network.estimate_iono_sh\")) and not on(\"network.clock_signal_basis_hold\")",
+   "posture_why": "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock wander after each rise/set",
+   "fingerprinted": true
   },
   {
    "knob": "network.cold_clock_seed",
@@ -306,7 +392,10 @@
    "scope": "Configs with a widelane/EWL/UWL lane layer or any linearization that differences ~3e5-magnitude values (the _wlver_* / _maxnet_* family — the only 32 configs that arm it). It is measured BYTE-IDENTICAL on the standard emit path, so arming it there buys nothing.",
    "evidence": "project_network_coldseed_clock_leak.md: 'Release A/B on _wlver_50sta (JPLM stations[0], GPS-only, 30 s, 10 ep): seeder fires exactly once per station; JPLM = 256510.85 m ~ 0.856 ms*c (matches the root-cause prediction) ... OFF-vs-ON invariant/emit summaries BYTE-IDENTICAL. 3-agent adversarial review: zero findings.' Scope note from the same record: 'The float solve absorbs the seed affinely, so it does NOT change the datum-invariant DD products in a config without a correction-frame lane layer. Its value is conditioning and the WL-2 EWL/WL lane rows.' Also STILL OPEN: 'the F6 probe saw station-1 cycles fail to converge even at 100x row authority — the prime remaining suspect is the co-cold IONO seeds'.",
    "interlock": "None. Self-guarded (|x(clock)|>1e-6 => skip, so it never clobbers the PPP path). Observability trap: the confirming info line is suppressed on the network path unless logging.enable_state_initializer is set.",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "lane",
+   "posture_why": "lane/WL layers difference ~3e5-magnitude x_lin; measured 269 km at 305 sta cold",
+   "fingerprinted": false
   },
   {
    "knob": "network.cycle_slip.if_phase_td_ref_gate",
@@ -315,7 +404,10 @@
    "scope": "Card R. Measured only on ONE config (150 sta, GPS-only, all-freq/all-channel) and only on an 11-epoch COLD smoke, which exercises mostly the cold prior. Warm >=1h leg is prepared and never launched. Cold-start caveat is a known, expected behaviour, not a regression.",
    "evidence": "docs/slip_qc_hardening_report_2026-07-21.md §4.4.1 (independent grader, does not read producer counters): raw-confirmed rate 'golden (OFF) 71% -> armed (ON) 90%'; unsupported flags '14 — JPLM/G10 x9, MKEA/G10 x5' -> '4'; pool arm untouched (32 -> 33 flags on 8717 -> 8727 samples); the real OWMG G31 re-lock 'MET — survives (TOW 259320, 259380) ... on the new station-event path'. §5: 'the empirical dispersion EWMA only reaches full weight after ~shrink_kappa samples; a 10-epoch run exercises mostly the cold prior.' project_ifphase_mw_slip_agreement.md: 'Consequence to expect, not a regression: the first ~10 epochs of any cold run still run on the physical-floor arm and can emit a few unsupported refsat fires.'",
    "interlock": "Loader FORCES it false with a warn if network.cycle_slip.if_phase_td is off (:1369-1374). Config default ref_max_consecutive=1 deliberately differs from the header default 2 in RefGateParams (measured: false family 14->6 at 2, 14->4 at 1) — a drift-guard-tested divergence, do not 'fix' it.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.cycle_slip.if_phase_td\")",
+   "posture_why": "hardened refsat gate: raw-confirmed 71% -> 90%, unsupported refsat flags 14 -> 4, pool arm untouched",
+   "fingerprinted": false
   },
   {
    "knob": "network.emit_clock_disc",
@@ -324,7 +416,10 @@
    "scope": "Any product a real consumer consumes (service / RT / closed-loop). Pointless for pure producer-internal grading runs, where it only changes the product format.",
    "evidence": "It is the only channel carrying the per-satellite clock discontinuity counter: 'the emitter only maintains/stamps the CLOCK counter when emit_clock_disc is on (otherwise disc_counter stays 0 for byte-identity). So with ura_retro_bump on but emit_clock_disc off, the clock channel would silently never bump - the consumer would reset the phase/code ambiguities of a contaminated satellite but keep integrating its bad clock' (:2283-2295). Armed in the one field-run service config (config/ppp_rtk_network_brdc_rts.json:205; Card-8 run 117/121 epochs emitted, criteria 1-4 PASS). CAVEAT: never isolated in an A/B - the benefit is contract-level consumer-reset correctness, not a measured position delta.",
    "interlock": "FORCE-ARMED by network.ura_retro_bump (:2289-2295) and by network.clock_disc_on_set_change (:2484-2489); service_mode arms it (:3056-3057). clock_disc_on_set_change is itself auto-armed when sum_to_zero + emit_clock_disc are both on (:2463-2470) and fail-louds without sum_to_zero (:2477-2483). In the warm-resume fingerprint.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.closed_loop.enable\") or on(\"network.service_mode\")",
+   "posture_why": "the ONLY channel carrying the per-sat clock disc counter; without it a contaminated sat keeps integrating a bad clock",
+   "fingerprinted": true
   },
   {
    "knob": "network.emit_combined_sigma  (M4 sigc= / sigcc= / rho= wire tokens)",
@@ -333,7 +428,10 @@
    "scope": "Validated ONCE: 50 stations, GPS+Gal, 2024-129, held-out ZIM200CHE, 40 min, 30 s, BIAS-ONLY consumer mode (precise clock + network phase bias). NOT measured at 305 sta, not over a multi-hour window, not in FULL clock mode. Producer side is absent-tolerant and OFF-byte-identical; the graded knob is the consumer hook closed_loop.consume_combined_sigma (default false, :3391).",
    "evidence": "project_m4_contract_v2 field A/B PASS: producer BYTE-IDENTICAL across arms (81434 keys, 0 diff) so the consumer hook is cleanly isolated. '(a) Cliff PROVEN load-bearing: v1 URA + phase-bias-sigma deweight of FRESH products = p50 1759x, p90 36000x, max 1.4M x ... v2 supersedes it and KEEPS the products => converged vertical error -42% (last-20-epoch up-mean 2.99 -> 1.72 m; better on 70% of epochs; the effect GROWS over the window => 40 min UNDERSTATES it). (b) pos3d p95 -6%, RMS(last20) -8%. (c) sigma_gate epochs 70 = 70 exactly' - an honesty-preserving reweight, not sigma deflation. COUNTER-SCOPE: 'FULL mode (consume_network_clock=true) is UNUSABLE: the consumer diverges to ~12 m VERTICAL ... grade M4 in BIAS-ONLY mode.'",
    "interlock": "Consumer MUST SUPERSEDE, never ADD - 'Adding on top double-counts the shared clock variance and REINTRODUCES the deweight cliff', the exact bug M4 removes. Combined activation is gated on clock_fresh. rho= is emitted and round-trip-tested but NOT APPLIED (MeasurementModel R_v is a diagonal variance vector - no off-diagonal slot). Full value needs the S-line agek= too, which travels only under network.serialize_sbasis_contract (default false, :737-738) - see the notes on that gate's latent withhold-era bug.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.closed_loop.enable\") and val(\"network.closed_loop.consume_network_products\", True) and not val(\"network.closed_loop.consume_network_clock\", True) and n_sta <= 100",
+   "posture_why": "with consume_combined_sigma it supersedes the v1 URA deweight cliff (p50 1759x): vertical 2.99 -> 1.72 m (-42%)",
+   "fingerprinted": false
   },
   {
    "knob": "network.emit_generation_id",
@@ -342,7 +440,10 @@
    "scope": "Live / restartable service runs and warm-resume chains. Must be decided BEFORE the first snapshot in a chain - it is in the fingerprint, so an id-less snapshot only warm-resumes an id-less run.",
    "evidence": "Load-bearing for warm resume, from the code: NetworkRunContext.cpp:509-516 - 'PRESERVE the snapshot generation id. The first-emit minting site only mints when generation_id == 0, so a restored non-zero id SUPPRESSES the mint - consumers keep the same product datum and never hard-reset.' Deterministic under file replay (derived from the first emitted epoch GPS time, GnssConfig.hpp:2865-2874) so - unlike network.emit_generation_time - it does NOT break byte-reproducibility. Armed in config/ppp_rtk_network_brdc_rts.json:207 and by service_mode (:3095-3096). No consumer-benefit A/B was ever run.",
    "interlock": "In the warm-resume fingerprint (emit_gen_id, NetworkRunContext.cpp:214). Inert with an empty network.product_output_path (:3115-3121).",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "warm and on(\"network.product_output_path\")",
+   "posture_why": "a restored non-zero id SUPPRESSES the first-emit mint, so a producer restart does not hard-reset every consumer",
+   "fingerprinted": true
   },
   {
    "knob": "network.emit_pb_filter",
@@ -351,7 +452,10 @@
    "scope": "Only runs with network.carry_invariant AND network.carry_invariant_emit_rebase (the latter defaults true, :2068-2070). Non-GLONASS keys only. Armed in 180 shipped configs. INERT and warned otherwise.",
    "evidence": "project_pb_gate_v2 folded-in lineage: NetworkPbEmitFilter 'was built to fix the ~200/ep PB discontinuity floor, forensically proven to be threshold-inside-noise (median step 0.080 m vs a 0.05 m threshold; only 50/11938 steps genuine)'. Outputs-only and S-transparent - the solve, user DDs and dd-frac grading are byte-unchanged (:2875-2876), so the risk surface is the emitted PB series alone.",
    "interlock": "INERT without carry_invariant (:2953-2956) and without carry_invariant_emit_rebase (:2884-2886) - warn-only, not fail-loud, so a config can arm it and get nothing. NOT in the warm-resume fingerprint (correct: outputs-only).",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.carry_invariant\") and val(\"network.carry_invariant_emit_rebase\", True)",
+   "posture_why": "clears the ~200/ep PB disc floor (median step 0.080 m vs a 0.05 m thresh; 50 of 11938 genuine); solve unchanged",
+   "fingerprinted": false
   },
   {
    "knob": "network.emit_pb_filter_jump_k / _meas_sigma_m",
@@ -360,7 +464,11 @@
    "scope": "Leave at defaults under gate_v2 (k=4 is the transferable value). The shipped jump_k=8 / meas_sigma_m=0.1 in 160 configs are the RETIRED v1 300-s tier hand-tunings.",
    "evidence": "project_dev300s_tier: 'One emit_pb_filter_gate_v2 k=4 transfers 300 s <-> 30 s - the earlier hand-tuned jump_k=8 / meas_sigma_m=0.10 tier overrides were RETIRED.' Loader guard at :2887-2890 warns k<2 sits inside step noise.",
    "interlock": "Under gate_v2 the seed sigma is demoted to a ~1 mm numerical guard, so meas_sigma_m stops being a tuning lever (:2896-2897).",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.emit_pb_filter\") and on(\"network.carry_invariant\") and val(\"network.carry_invariant_emit_rebase\", True) and on(\"network.emit_pb_filter_gate_v2\")",
+   "posture_why": "keep the k=4.0 default under gate_v2 - one k transfers 30 s to 300 s; jump_k=8 is the RETIRED v1 hand tuning",
+   "armed_when": "3.99 < val(\"network.emit_pb_filter_jump_k\", 4.0) < 4.01 and 0.0499 < val(\"network.emit_pb_filter_meas_sigma_m\", 0.05) < 0.0501",
+   "fingerprinted": false
   },
   {
    "knob": "network.emit_pb_filter_window_epochs",
@@ -369,7 +477,11 @@
    "scope": "Epoch-denominated - does NOT transfer across cadence. Shipped 300-s configs use 15.0 (i.e. the same ~75 min of product time as 60 epochs at 30 s).",
    "evidence": "project_dev300s_tier, 'UNBUILT CARD: rate-transferable windows': 'Verified still unbuilt 2026-07-28: no _s twin exists; network.carry_invariant_innov_calibrate_window (60.0), network.emit_pb_filter_window_epochs (60.0) and network.iono_constraint_deweight_window_epochs (60.0) are all still epoch-denominated.'",
    "interlock": "Must be rescaled together with epoch_decimation_n; the seconds-denominated _max_gap_s (600 default, 1500 in the 300-s tier) must be rescaled too.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.emit_pb_filter\") and on(\"network.carry_invariant\") and (val(\"network.epoch_decimation_n\", 1) > 1 or spacing_s > 60.0)",
+   "posture_why": "epoch-denominated: the 60.0 default does NOT transfer across cadence; the shipped 300 s tier uses 15.0",
+   "armed_when": "val(\"network.emit_pb_filter_window_epochs\", 60.0) < 59.99 or val(\"network.emit_pb_filter_window_epochs\", 60.0) > 60.01",
+   "fingerprinted": false
   },
   {
    "knob": "network.emit_ura",
@@ -378,7 +490,10 @@
    "scope": "Producer channel for consumer-facing / service / RT runs, and only alongside network.raim. Do NOT pair it with network.consume_ura (:1822-1823, default false) unless network.emit_combined_sigma + closed_loop.consume_combined_sigma are also on.",
    "evidence": "Loader: without raim the emitted URA 'is the FORMAL clock sigma only (no robust variance-factor scaling)' (:1867-1871); network.warmup_ura_floor_m is 'a silent no-op' without it (:1876-1880); project_rt_service_work_queue: health-CSV 'sigma0_ewma = -1 sentinel unless emit_ura+raim+phase_leveling are ALL armed'. COUNTER-SCOPE, measured: the only field grade of the URA channel in USE is the M4 A/B (50-sta GPS+Gal 2024-129, held-out ZIM200CHE, 40 min) where emit_ura+consume_ura+phase-bias-sigma is the v1 arm - 'v1 URA + phase-bias-sigma deweight of FRESH products = p50 1759x, p90 36000x, max 1.4M x'; converged vertical 2.99 m, cured only by the M4 supersede to 1.72 m (-42%).",
    "interlock": "network.ura_retro_bump force-arms network.emit_clock_disc (:2289-2295). service_mode arms emit_ura (:3058-3059). In the warm-resume fingerprint (ura_on) => cannot be flipped mid-chain.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.raim\") and (on(\"network.closed_loop.enable\") or on(\"network.service_mode\"))",
+   "posture_why": "per-sat quality channel a consumer weights on; also the only source of a non-sentinel sigma0_ewma in health.csv",
+   "fingerprinted": true
   },
   {
    "knob": "network.epoch_decimation_n",
@@ -387,7 +502,11 @@
    "scope": "n=2 (60 s) is the legitimate fast DEV tier for convergence/arc questions. n=10 (300 s) is valid ONLY for emission/event/datum mechanics. Keep n=1 for every decisive PB / convergence / sigma-floor grading run. Never cross-compare per-epoch metrics from a decimated run against a 30 s golden.",
    "evidence": "project_dev300s_tier (decisive): at 300 s 'q_z=1e-4 allows ~0.9 cyc predicted drift against ~15 cyc actual steps => the carry prediction itself is invalid at 300 s. 6 h/300 s d15/em10 = refloats 2775/ep on 8333 DDs = 33%/ep => arc life ~15 min; dd-frac uniform every hour (0.249-0.252). DECISIVE NO-GO.' Also at 300 s + deg-15 the hr-4 cliff becomes outright SH field runaway (a00 66 -> 2620 TECU over hr 4.1-4.7). At 60 s: '27.7 s/ep, refloat 2.7%/ep (arc ~37 min), D5 184/ep at k=4 with sigma0=1.00 => carry prediction VALID at 60 s.' The 'raise carry_invariant_innov_k for the 300 s tier' remedy was TESTED and FALSIFIED (k=8 gave MORE D5 flags, 2616/ep vs 2161).",
    "interlock": "ESTIMATION-RELEVANT, not a trace knob: folded into the warm-resume fingerprint as edecim= when != 1 (NetworkRunContext.cpp:255-256) so a decimation mismatch invalidates a resume. Forces a rescale of the seconds-denominated gap guards phase_leveling_max_gap_s and clock_model_max_gap_s (~10x). Silently makes network.emit_clock_rate INERT when gnss_rate_s x n exceeds clock_model_max_gap_s - the loader says so at :1749-1759 but only when gnss_rate_s is non-zero.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "True",
+   "posture_why": "n=1 for decisive grading, n=2 is the blessed 60 s dev tier; at n=10 the carry prediction is INVALID (33 pct/ep refloat)",
+   "armed_when": "val(\"network.epoch_decimation_n\", 1) == 1",
+   "fingerprinted": true
   },
   {
    "knob": "network.estimate_sat_code_bias (W6 OSB slice)",
@@ -396,7 +515,10 @@
    "scope": "GPS or GPS+Gal ONLY, with an iono constraint (estimate_iono_sh preferred, GIM otherwise), and graded on the BIAS-ONLY consumer leg (closed_loop consume_network_clock=false). NOT for BeiDou without the full 4-piece datum chain. NEVER with estimate_glonass.",
    "evidence": "Upside, project_network_code_bias_scope.md: '3-sta closed loop: network OSB 0.508 m 3D vs .BIA 0.489 m — a drop-in replacement.' Counter-scope 1, project_ppprtk_constellation_suite.md: 'W6 combos POOR/diverging under FULL consumption: GPS 129 m (final 237 m), GPS+Gal 270 m (final 1580 m) ... FULL is the WRONG leg for W6.' Counter-scope 2, same file: 'W6 OSB is GPS+Gal-ONLY. Adding BeiDou under W6 leaves the BeiDou satellite-clock gauge unconstrained -> the observability gate withholds EVERY epoch (validated).' Counter-scope 3, project_network_code_bias_scope.md 150-sta 3h vs COD MGX: '(C1C-C2W) corr 0.67 / rms 1.16 m vs true spread 1.43 m ... Correlation STALLED from hour ~1.2 ... the residual is SYSTEMATIC.'",
    "interlock": "Forces, as one coupled slice: estimate_sat_biases + promote_sat_code_bias + estimate_ifb + ionosphere_weighting on, and SILENTLY FORCES model_corrections.enable_code_phase_bias=false (.BIA skipped on producer AND derived consumer) and estimate_phase_clock=false (:825-840). estimate_iono_sh force-enables it (:794-798). HARD ERROR with estimate_glonass (:1040-1046). HARD ERROR under apriori_source=brdc_rts unless estimate_iono_sh is also on (:951-959).",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "n_sta >= 3 and gps_gal_only",
+   "posture_why": "W6 OSB is a drop-in for the .BIA product (3-sta closed loop 0.508 m vs 0.489 m 3D); grade BIAS-ONLY",
+   "fingerprinted": true
   },
   {
    "knob": "network.exclude_unmodeled_antenna_stations",
@@ -405,7 +527,10 @@
    "scope": "Armed in the 4 all-on lineage configs as a policy backstop, but measured INERT on the 305-station IGS roster. It only bites on a roster carrying genuinely unknown antenna TYPEs — where it can also abort the run.",
    "evidence": "project_atx_radome_fallback_card.md: 'Field evidence (305, all-on): warn 12 -> 0; all 12 (FAIR, GODE, KIR, MAR6, MAW1, MCM4, ONSA, VIS0, SPT0, TSKB, USUD, WUHN) recovered to their type's *_NONE entry; 0 excluded; datum MBAR00UGA matched exactly.' So on the validated fixture it excludes nothing — the always-on Tier-1 radome->NONE fallback does the work. Risk on a different roster: 'A pivot-station exclusion is a HARD ABORT — you cannot drop the datum.' It is also a hard-exclusion tier, which sits against feedback_prefer_fallback_over_drop.",
    "interlock": "Depends on the always-on Tier-1 fallback in Antenna::matchReceiverAntenna (no toggle). Hard abort if the excluded station is the datum/pivot station.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "True",
+   "posture_why": "backstop: an unmodelled receiver PCO/PCV is a systematic in every obs feeding the shared clocks and biases",
+   "fingerprinted": false
   },
   {
    "knob": "network.health_interval_s",
@@ -414,7 +539,11 @@
    "scope": "Arm (e.g. 60) on any run longer than ~30 min and on EVERY service/RT run. Inert-but-harmless on a 10-epoch smoke.",
    "evidence": "It is the ONLY mid-run-flushed CSV in the whole network trace set — src/core/logging/NetworkRunTraces.cpp:666 `health_trace.flush();   // a supervisor tails this live`, and project_network_logviz_implementation.md:17-22 \"Only health_trace is flushed mid-run ... a crashed or WER-zombied run loses the buffered tail.\" So it is the only telemetry that survives the failure mode the project actually hits (feedback_wer_zombie_wedge.md). Columns per project_rt_service_work_queue.md:20-26: week,tow,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,n_runaway_epochs,sigma0_ewma,n_present,n_clock_sats,ms_per_epoch_window,last_emit_age_s,pivot,cold_start_grade_s. Cost: one appended row per health_interval_s of CONTENT time. Only smoke-scale run evidence (decomposition arm 10, health_interval_s=60).",
    "interlock": "sigma0_ewma is a -1 SENTINEL unless emit_ura + raim + phase_leveling are ALL armed (GnssConfigTypes.hpp:644) — arming health_interval_s alone gives a permanently blank quality column. ms_per_epoch_window is the cheapest live perf readout that does not need trace_section_timers.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "True",
+   "posture_why": "set 60-300 s: the ONLY mid-run-flushed CSV, so a crashed or WER-zombied run loses every other tail",
+   "armed_when": "val(\"network.health_interval_s\", 0.0) > 0.0",
+   "fingerprinted": false
   },
   {
    "knob": "network.iono_constraint_deweight_adaptive",
@@ -423,7 +552,10 @@
    "scope": "Networks large enough for a robust network-relative median (>=50 stations) that plausibly contain a hostile MINORITY (scintillation-belt sites at solar max). Do NOT treat it as a general stabilizer, and do NOT assume it is validated because 181 configs arm it.",
    "evidence": "MOTIVATING measurement (project_iono_deweight_card, 305 sta): the amputation falsifier — 305 minus UFPR00BRA+POAL00BRA — \"collapsed ignition from 5-9 cyc/ep to 1.97 -> 0.88 cyc/ep (sub-1 by epoch 8), the best ignition measured at any scale.\" Design lesson that IS decisive: \"The v2 trigger MUST be a network-RELATIVE robust z-score, never an absolute sigma gate\" (the single-layer field leaves 70-90% of LOS >3sigma everywhere, so an absolute gate fires on every station). COUNTER-EVIDENCE: the gate's own same-build ON/OFF A/B has never been run; what was measured was the AMPUTATION. On the 305-sta DOY-129 24 h run it fired far beyond its 2-station design target — docs/REPORT_night305_day129_investigation.md: \"Deweight gate: very active — 174 stations ever, peak 72 simultaneous, 326 engage / 307 release... network-relative (median-centred => structurally blind to common-mode excursions) and not the proximate trigger at onset\", and the same report names \"a deweight release wave re-coupling stations whose iono floated for hours\" as a candidate trigger for the frame slide. docs/SPEC_latex_doc_refresh_2026-07-17.md lists \"v2 adaptive ratchet over-fire\" as an OPEN item.",
    "interlock": "Its per-epoch state is NOT traced (n_adapt in network_epoch_status.csv is a different counter, 0 all day) — you cannot audit its blast radius from a normal run's artifacts. RAIM is structurally blind to this fault class (the misfit lives in the STATES, not in observation residuals), so the gate has no cross-check.",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "on(\"network.estimate_iono_sh\") and n_sta >= 50",
+   "posture_why": "robust-z deweight of a hostile iono minority; 2-sta amputation cut ignition 5-9 -> 0.88 cyc/ep; own A/B never run",
+   "fingerprinted": false
   },
   {
    "knob": "network.iono_constraint_deweight_min_epochs",
@@ -432,7 +564,11 @@
    "scope": "Sample-count guard (Class B — correctly denominated in epochs, do NOT convert to seconds). Field configs use 5, i.e. 6x looser than the shipped 30; that is a deliberate ignition-speed choice, not a defect in the default.",
    "evidence": "docs/HANDOFF_rate_transferable_windows.md table: \"network.iono_constraint_deweight_min_epochs | B | keep\" — \"these track information accumulation, which arrives per EPOCH regardless of cadence\". No A/B of 5 vs 30 exists; 5 is what all DOY-129/net305 legs ran, and those legs are also the ones showing over-fire (326 engagements), so a lower min_epochs is a plausible contributor to the blast radius and should be an arm in the gate A/B.",
    "interlock": "",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "on(\"network.estimate_iono_sh\") and on(\"network.iono_constraint_deweight_adaptive\")",
+   "posture_why": "field legs all run 5 clean samples, not the shipped 30 (6x slower gate ignition); epoch-denominated, never rescale",
+   "armed_when": "val(\"network.iono_constraint_deweight_min_epochs\", 30) <= 5",
+   "fingerprinted": false
   },
   {
    "knob": "network.iono_constraint_deweight_window_epochs",
@@ -441,7 +577,11 @@
    "scope": "The default 60 is a 30 s-cadence assumption that was never re-tuned; every current field config uses 15 at the SAME 30 s cadence (epoch_decimation_n=1 in _day129_guards_conv.json), and the 300 s dev tier required hand-rescaling to 15 as well.",
    "evidence": "docs/HANDOFF_rate_transferable_windows.md:9-13: \"Bringing up the 300 s dev tier required hand-rescaling every epoch-denominated forgetting window (D5 sigma-hat-0 calibrate 60->15, PB-filter sigma-hat-step 60->15, iono-deweight robust-z 60->15) because a '60-epoch half-life' silently became 5 h of wall time.\" The same handoff classifies this knob as Class A (\"forgetting half-lives of continuous-time processes... convert to seconds\") and prescribes an `_s` twin that has not been built. So the shipped default is both mis-scaled relative to field practice AND in the wrong unit.",
    "interlock": "Class-A/Class-B split: window_epochs must scale with cadence, min_epochs must not. Do not blanket-convert.",
-   "family": "IONOSPHERE and SH-VTEC"
+   "family": "IONOSPHERE and SH-VTEC",
+   "regime": "on(\"network.estimate_iono_sh\") and on(\"network.iono_constraint_deweight_adaptive\")",
+   "posture_why": "field runs use a 15-epoch robust-z half-life; shipped 60 is an un-retuned 30 s assumption (Class A, scales w/ rate)",
+   "armed_when": "val(\"network.iono_constraint_deweight_window_epochs\", 60.0) <= 15.01",
+   "fingerprinted": false
   },
   {
    "knob": "network.lane_carry.parallel_components",
@@ -450,7 +590,10 @@
    "scope": "Arm whenever lane_carry.enable is armed AND parallel_stations is active (n_threads>1) AND the lane is in joint-block shape. Currently that scope is EMPTY on the 305-sta DOY-129 network, where the whole lane family is do-not-arm.",
    "evidence": "The one lane-family knob whose ON path is byte-identical: project_lane_fold_perf_lf1.md:17-21 — \"parallel_components is the ONLY ON-path byte-identical knob (blocks independent; per-block counter deltas sum order-independently; Eigen re-pinned to 1 inside the OMP region)\", corroborated in code at NetworkMwWlGlue.cpp:356-368 and GnssConfigTypes.hpp:268. IMPORTANT HONESTY NOTE: that byte-identity is BY CONSTRUCTION plus 4 added suite gates, NOT a field A/B — unlike parallel_seam, which was compare-PASSed at 50 and 305 stations. The relevant scale evidence is the cost of the PARENT: project_mwwl_conditioning_day129.md:107-109 measures lane_carry alone at 1.6-1.9x epoch cost (56/49/44/48 -> 88.6/75.7 s/ep, 305 sta, 8 threads).",
    "interlock": "TWO. (1) It SILENCES the carry driver's per-op perf timing for the whole parallel MW-fold pass — NetworkMwWlGlue.cpp:360-367 `if (mw_par) { Eigen::setNbThreads(1); carry_driver.setPerfTiming(false); }` — so trace_section_timers UNDERCOUNTS the lane fold whenever both are on. (2) Silently inert below the parallel_min_stations gate.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "on(\"network.lane_carry.enable\") and par",
+   "posture_why": "the one lane knob whose ON path is byte-identical (independent joint blocks, Eigen re-pinned to 1)",
+   "fingerprinted": false
   },
   {
    "knob": "network.parallel_carry",
@@ -459,7 +602,10 @@
    "scope": "Throughput / wall-clock runs at >parallel_min_stations, with parallel_reduce=false and the thread count RECORDED. NOT for a first-of-kind graded numeric verdict unless an ON-vs-OFF equivalence has been measured for that exact config family at that exact thread count.",
    "evidence": "PRO: memory/project_pcarry_reduce_mutex.md:14-15 \"R2 nightrun OFF 48.6 s/ep vs ON 22.8 s/ep = 2.13x @20 threads\"; project_dev300s_tier.md:72-75 \"2.13-2.45x (48.6 -> 22.8 s/ep @20 thr), and its equivalence was MEASURED for this config family — ON vs OFF byte-identical on every run-end counter and on grade_ddfrac ⇒ pcarry-ON graded verdicts are trustworthy for these configs specifically\". CON (the counter-scope): GnssConfigTypes.hpp:431-439 \"this REASSOCIATES the dense reduction... the seam card measured reassociation reaching ~1e-4 AT THE SOLUTION LEVEL over a run... USAGE RULE: a parallel_carry-ON run is for WALL-CLOCK A/Bs ONLY. Take NO graded / physics verdict from an ON run until an ON-vs-OFF dd-frac equivalence grade has passed for that config\". Standing user directive to arm it in harness/data Release runs: feedback_allparallel_release_runs.md:11-13.",
    "interlock": "MUTEX, silent-ish: the loader FORCES parallel_carry OFF (warn only, run continues at ~2x cost) when parallel_reduce is also true — GnssConfigLoadNetwork.cpp:540-546. Grep the log for 'forcing parallel_carry OFF' before trusting any timing. Also inert unless parallel_on. Its Eigen un-pin uses n_threads (NetworkNormalEquations.cpp:926, NetworkWlRunTypes.hpp:135-138), NOT processing.eigen_threads.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "par and not on(\"network.parallel_reduce\")",
+   "posture_why": "2.13x wall-clock (48.6 -> 22.8 s/ep at 20 thr); reassociates ~1e-4, so graded verdicts still need OFF",
+   "fingerprinted": false
   },
   {
    "knob": "network.parallel_max_threads",
@@ -468,7 +614,11 @@
    "scope": "PIN to an explicit N for any A/B campaign whose verdict compares run-end counters or recorded hashes across runs. Leave 0 (all cores) for one-off throughput runs.",
    "evidence": "feedback_allparallel_release_runs.md:26-33: \"ALWAYS RECORD n_threads with a pcarry result. The fold's per-thread partials run over CONTIGUOUS station ranges combined in ascending thread order — reproducible per thread COUNT, ULP-different from serial by construction (NetworkNormalEquations.cpp:841)... a hash/counter set is a valid reference only at the same exe AND the same thread count.\" Default 0 makes the thread count a property of the machine, i.e. a silent cross-run confounder on a shared box.",
    "interlock": "Also the un-pin width for parallel_carry's dense GEMMs (NetworkNormalEquations.cpp:926 uses station_threads) and for lane_carry.parallel_components.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "par and on(\"network.parallel_carry\")",
+   "posture_why": "pcarry partials combine in thread-COUNT order; 0 = all cores makes a counter/hash ref machine-bound",
+   "armed_when": "val(\"network.parallel_max_threads\", 0) > 0",
+   "fingerprinted": false
   },
   {
    "knob": "network.parallel_min_stations",
@@ -477,7 +627,11 @@
    "scope": "Must be set STRICTLY BELOW the roster size or the entire parallel family (stations/seam/carry) is silently inert. Harness convention is 8; baseline DD rosters (2-3 sta) intentionally stay serial.",
    "evidence": "ApplicationNetworkSetup.cpp:862-865: parallel_on = parallel_stations && n_sta_total > nc.parallel_min_stations && hw_max_threads > 1 — a strict '>' with NO warning when the gate closes on seam/carry. feedback_allparallel_release_runs.md:12 records the shipped shape as 'parallel_stations: true (+ parallel_min_stations: 8)'. No measurement distinguishes 8 from 10 — the value only matters for 9-10 station rosters.",
    "interlock": "Gates parallel_seam, parallel_carry AND (per project_perf_deterministic_parallel_seam.md:66-69) parallel RINEX ingestion, so a config-only A/B cannot isolate ingestion from the epoch loop.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "pstations and n_sta >= 4",
+   "posture_why": "a STRICT > gate with no warning: roster <= this silently kills seam, carry and parallel ingest",
+   "armed_when": "val(\"network.parallel_min_stations\", 10) < n_sta",
+   "fingerprinted": false
   },
   {
    "knob": "network.phase_datum_eq34",
@@ -486,7 +640,10 @@
    "scope": "ONLY together with network.carry_invariant (+ station_pd_pin_aware). 50-sta GPS+Gal 3h, DOY-129, 60 s. Do NOT arm eq34 alone: standalone it is measured ~100x worse on DD-step than the legacy pivot datum.",
    "evidence": "project_m1_card4_phasec3c.md consumer-float ladder: 'A pivot+iono 40.0 m final 3D · B eq34-legacy+iono 10.9 m · C eq34+Card4+iono 3.6 m ... Card 4 improves consumer float 7-10x.' Counter-scope from the SAME lineage, project_card123_lineage_archive.md: 'FIELD VERDICT (3h golden 50-sta GPS+Gal, grade_ddfrac DD-step med cyc/ep): eq34 alone is ~100x worse than the legacy pivot datum and never converged. Ladder: A golden pivot 0.085 · eq34+pin_aware 36.8 ... eq34-only 76.2 (78/200 W5-withheld) ... B9 resting 9.0 (best; medians bounce 9-34 run-to-run = chaotic regime).' De facto it is already the working default: 211 of 217 configs that mention it set true.",
    "interlock": "FAIL-LOUD: network.carry_invariant REQUIRES phase_datum_eq34 (loader returns false, :2525-2531). Hard error if combined with phase_datum_ensemble (:2772-2776). SUPERSEDES phase_datum_prioritized silently (log only, :2790). Forces phase_datum_hold_sigma_m INERT. Under carry_invariant it forces pin_round / carry_shift / rpb_q INERT (warns).",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "on(\"network.carry_invariant\")",
+   "posture_why": "the Card-4 DD datum; arm ONLY with carry_invariant - eq34 alone measured 76.2 vs 0.085 cyc/ep DD-step",
+   "fingerprinted": true
   },
   {
    "knob": "network.phase_datum_min_stations",
@@ -495,7 +652,11 @@
    "scope": "k=2, 50-sta, PRIORITIZED datum leg, and ONLY with station_pd_pin_aware also armed. REFUTED under eq34. At 305 sta it is a live grading confound, not a validated win.",
    "evidence": "project_network_pdp_gate_pinaware.md: 'Gating turns a single-tracker station PINNED (1e10, strong) ambiguities into weak FREE ones — GLPS00ECU went 26 -> 106 drops at k=2. Arm the gate only together with the guard. Recommended armed set: pdp + min_stations 2 + pin_aware.' 50-sta: 'Gate trims 394 -> 362 PB states.' REFUTED under eq34, project_card123_lineage_archive.md: 'eq34+pin_aware 36.8 · +min_stations=2 117.9 (REFUTED twice)'. 305-sta confound, project_net305_attribution_rerun.md: 'The 17x pool collapse (8,325 -> 505 chords) was first blamed on phase_datum_min_stations=2, then reproduced with min_stations=1; resolved cause = phase_bias_exclude_unmatched_antenna.'",
    "interlock": "INERT unless phase_datum_prioritized / ensemble / eq34 (warned at :2946). Loader hard-errors on <1.",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "on(\"network.phase_datum_prioritized\") and not on(\"network.phase_datum_eq34\") and on(\"network.station_pd_pin_aware\") and n_sta <= 100",
+   "posture_why": "set 2 on the prioritized leg (with pin_aware): trims 394 -> 362 thin PB states; REFUTED under eq34",
+   "armed_when": "val(\"network.phase_datum_min_stations\", 1) >= 2",
+   "fingerprinted": false
   },
   {
    "knob": "network.phase_datum_prioritized",
@@ -504,7 +665,10 @@
    "scope": "ONLY as the legacy leg when phase_datum_eq34 is OFF, and then only with station_pd_pin_aware. Superseded by eq34 in every current flagship config. NEVER as an AR or consumer-vertical fix.",
    "evidence": "Real defect cured, project_network_falsified_approaches.md: 'CURED G29 (-44 m step vanishes; confound-controlled runs/s1_g29_ab; root = single-pivot gauge re-referencing G29 when JPLM dropped it below the mask — pure estimator artifact, MW/LLI flat). Byte-id OFF BFFF5849.' But it is itself the moving-datum driver, project_closedloop_consumer_vertical_bug.md: 'network.phase_datum_prioritized RE-ELECTS the per-(sat,signal) anchor receiver every epoch and the pinned arc is never carried ... Measured: 130 of 419 PB series bump per epoch (median 21.5%, max 83.5%) ... even a perfect slip detector still churns.' And 'Dead as AR fix: cross-anchor pairs non-integer (theorem above).'",
    "interlock": "SUPERSEDED (log-only, not an error) by phase_datum_eq34 at :2790. Mutually exclusive with ensemble only via the eq34 path. Enables the phase_datum_min_stations gate.",
-   "family": "COLD-START, DATUM and CLOCK knobs"
+   "family": "COLD-START, DATUM and CLOCK knobs",
+   "regime": "not on(\"network.phase_datum_eq34\") and not on(\"network.carry_invariant\") and on(\"network.phase_leveling\")",
+   "posture_why": "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m step, JPLM masked)",
+   "fingerprinted": true
   },
   {
    "knob": "network.phase_leveling_max_gap_s",
@@ -513,7 +677,11 @@
    "evidence": "project_dev300s_tier, 'Landmines when re-deriving a tier config': 'the SECONDS gap guards - phase_leveling_max_gap_s (default 120 kills the carry when leveling is armed) and clock_model_max_gap_s (defaults to it). Epoch-denominated windows must be re-scaled by ~10x.' Shipped configs bear this out exactly: 120.0 at 30/60 s (decimation 1-2), 900.0 in all 170 300-s-tier configs.",
    "scope": "Keep 120 s at 30 s and 60 s cadence. MUST be raised (900 s in the shipped 300-s tier) whenever epoch_decimation_n makes the epoch spacing exceed it, or the carry is dropped every single epoch and the run silently becomes a snapshot solve.",
    "interlock": "Supplies the DEFAULT of network.clock_model_max_gap_s (:1708-1710) and the age-stamp for eq34 extend-only arc re-pin (:2816-2824). In the warm-resume fingerprint (pl_max_gap_s).",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "on(\"network.phase_leveling\") and spacing_s > 0.0",
+   "posture_why": "a gap guard under 2x the epoch spacing drops the carry on any missed epoch; 120 at 30 s, 900 in the 300 s tier",
+   "armed_when": "val(\"network.phase_leveling_max_gap_s\", 120.0) >= 2.0 * spacing_s",
+   "fingerprinted": true
   },
   {
    "knob": "network.product_flush_per_epoch",
@@ -522,7 +690,9 @@
    "scope": "Live-tail / RT-consumer runs only (realtime.network_products_path via NetworkProductTail). Buys nothing for batch post-processing and costs a flush per epoch. Zero shipped configs set it explicitly; service_mode arms it.",
    "evidence": "Byte-neutral by construction: 'Flushing changes NO bytes - an OFF run file is byte-identical - but a live tail REQUIRES it for bounded product latency' (include/config/GnssConfigTypes.hpp:370-377); the RT tail doc states 'The producer must run network.product_flush_per_epoch' (GnssConfigTypes.hpp:881). Loader warns it is inert with an empty network.product_output_path (:509-513).",
    "interlock": "Armed by service_mode (:3103-3104). Note the asymmetry recorded in project_network_logviz_implementation: 'The PRODUCT file has its own network.product_flush_per_epoch knob; the traces do not' - only health_trace flushes mid-run, so a crashed run still loses every other buffered CSV tail.",
-   "family": "EMISSION and PRODUCT knobs"
+   "family": "EMISSION and PRODUCT knobs",
+   "regime": "False",
+   "posture_why": "not a posture row: VACUOUS ROW. The only regime that needs it (live tail / RT consumer) is exactly service_mode, and service_mode FORCE-ARMS it at :3102-3103 before logNetworkPosture_ runs at :3479 - so applies and on a"
   },
   {
    "knob": "network.raim",
@@ -531,7 +701,10 @@
    "scope": "ON only where network.phase_leveling is on AND the carry is past warmup — otherwise structurally INERT. It is a NEXT-EPOCH protection, not an in-epoch one (it runs after emit). 50-sta 1h is the only scale with numbers.",
    "evidence": "User DIRECTIVE (feedback_raim_always_on.md, Jul-28): 'It feels obvious to use the parts we implemented like RAIM for every run'. Within-tier measurements exist but NO ON-vs-OFF A/B on a datum-invariant quantity at any scale: project_network_if_td_slip.md lesson 4 — disabling the bad-STATION wholesale refloat moved '50-sta 1h last-10 rms 3.684 -> 1.689'; lesson 9 — the robust a-posteriori variance factor took '45 sats/423 rows refloated -> 16 sats'. project_network_ssystem_dia_assessment.md item 4: 'the post-emit QC tiers (post-fit RAIM, attribution, clock monitor) all run AFTER emitToStore => exactly one contaminated epoch ships unflagged'.",
    "interlock": "HARD INERTNESS GATE: ApplicationNetwork.cpp:1577 'if (raim_on && carry_warm)' with carry_warm = pl_on && ... (ApplicationNetwork.cpp:1117, pl_on = networkPhaseLeveling(), NetworkRunContext.cpp:44). 173/335 network configs run carry_invariant with phase_leveling=false — on every one of them network.raim is a silent no-op. Auto-armed (together with raim_attribution) by raim_within_epoch at :1555-1561.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.phase_leveling\")",
+   "posture_why": "USER DIRECTIVE Jul-28 armed QC; also feeds the sigma0 EWMA that scales emitted URA; needs carry_warm",
+   "fingerprinted": false
   },
   {
    "knob": "network.raim_attribution",
@@ -540,7 +713,10 @@
    "scope": "Same phase_leveling-warm scope as network.raim; arm it WITH network.raim (never raim alone) at >=50 stations. Do not re-enable the bad-STATION wholesale refloat path it once drove.",
    "evidence": "project_network_if_td_slip.md lesson 4: 'A regional station cluster tracking one bad sat inflates ~78 station row-effects -> the bad-STATION wholesale refloat wiped 3977 carried ambiguities across 78 stations in one epoch (textbook MIB separability failure). Fix landed: bad-STATION wholesale refloat is DISABLED entirely ... Effect: 50-sta 1h last-10 rms 3.684 -> 1.689.' Lesson 8: '~81% of RAIM events are ONE (station,sat) arc' — the attribution tier is what isolates them; whole-sat action is the rare cascade case. Lesson 2: a satellite culprit must reinit ALL its arcs — per-arc-only was measured WORSE (5.59 vs 3.68).",
    "interlock": "Auto-armed alongside network.raim by raim_within_epoch (:1555-1561) and by raim_we_code_iono (:1574-1582). Inherits the carry_warm inertness gate. project_network_ssystem_dia_assessment.md flags median polish as having 'no separability analysis' — SS-confirmation of the picks is the unbuilt prerequisite to re-arming the station path.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.phase_leveling\") and on(\"network.raim\") and n_sta >= 50",
+   "posture_why": "81% of RAIM events are ONE (station,sat) arc; attribution isolates them instead of refloating whole sats",
+   "fingerprinted": false
   },
   {
    "knob": "network.raim_withhold_sigma0",
@@ -549,7 +725,11 @@
    "scope": "Value ~2x raim_sigma0_trigger (6.0). Last-resort backstop ONLY, never the primary response. Only field data is a 3-station brdc_rts run. Grades as a FAILURE of adaptation per the user directive when it fires.",
    "evidence": "project_rt_service_work_queue.md Card-8 armed run: 'sigma0 contamination window 05:38-05:50 (4 withholds @6.0 ceiling) reproduces IDENTICALLY in the sp3 twin = data-driven', 117/121 epochs emitted. feedback_raim_always_on.md: 'Withholding the epoch (A4) is acceptable only as the backstop when adaptation fails — \"produces nothing\" as a routine response alarmed the user.' Counter-scope: at 3.0 on the DOY-129 hr-4 lineage it withheld 0 epochs (project_m1_card4_phasec3c.md) — it does not see the iono/ambiguity-hidden class.",
    "interlock": "Loader FORCE-DISABLES any value in (0,1] to 0.0 with a warn (:1488-1494) — 'sigma0 is floored at 1, so a ceiling at or below 1 would withhold most warm epochs'. Value > 0 AUTO-ARMS network.raim_within_epoch (:1542-1547), which in turn auto-arms raim + raim_attribution. Silent no-op without within_epoch (the ceiling compares against sigma0_adapt).",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.phase_leveling\") and on(\"network.raim_within_epoch\")",
+   "posture_why": "set 6.0 (~2x raim_sigma0_trigger): last-resort backstop; a fired withhold grades as an adaptation failure",
+   "armed_when": "val(\"network.raim_withhold_sigma0\", 0.0) >= 5.99",
+   "fingerprinted": false
   },
   {
    "knob": "network.raim_within_epoch",
@@ -558,7 +738,10 @@
    "scope": "phase_leveling ON and carry warm. This is the ONLY tier that acts before emit (adapt-and-emit), which is exactly what the user's Jul-28 directive asks for. It is BLIND to two measured fault classes, so it is a partial backstop, not the backstop.",
    "evidence": "feedback_raim_always_on.md: 'The network must reach a stable solution WITHIN the detected epoch ... re-solve, EMIT.' Measured blind spots: project_m1_card4_phasec3c.md — 'raim_within_epoch + raim_withhold_sigma0=3.0 -> withheld 0 epochs (the misfit hides in the ambiguities, so residuals stay LOW — RAIM cannot see it)'; project_day129_pivot_cb_ratchet.md — 'The A4 statistic is structurally BLIND to CB-class faults: sigma0_adapt sat at its 1.0 floor through the whole seam while sigma0_pf_code ran 33-90 (quiet 2.9).' project_iono_deweight_card.md: 'RAIM is structurally blind to this class: the misfit lives in the STATES, not in observation residuals.'",
    "interlock": "Auto-arms network.raim + network.raim_attribution (:1555-1561). Silent inertness at NetworkSolveGlue.cpp:734 'if (within_epoch_armed && carry_warm)' — with phase_leveling off the sigma0 column of network_epoch_status.csv is 0.0000 on every row and the emit path ships with NO post-fit statistic at all (GnssConfigTypes.hpp:568-587). This is the open sanctioned follow-up 'decouple sigma0_adapt from carry_warm'.",
-   "family": "QC, RAIM and SLIP knobs"
+   "family": "QC, RAIM and SLIP knobs",
+   "regime": "on(\"network.phase_leveling\") and on(\"network.raim\")",
+   "posture_why": "the ONLY tier that acts BEFORE emit (adapt-and-EMIT); also the only source of the sigma0_adapt column",
+   "fingerprinted": false
   },
   {
    "knob": "network.shared_carry_full_cov",
@@ -567,7 +750,10 @@
    "scope": "ON is the validated posture for the LEGACY (carry_invariant OFF) phase-leveling lineage at 50 sta. Under the current Card-4 stack the dense block SHRINKS — PhaseBias columns are no longer stashed (NetworkRunContext.cpp:~1697 `if (carry_invariant) continue;`), SH-VTEC stays on its diagonal pre-gate fold, and under clock_model the clock rides clock_osc — so the block reduces to Clock+CodeBias (CodeBias only in the all-features stack). Its headline motivation (clock<->phase-bias off-diagonal recovery) does NOT apply under carry_invariant, and no Card-4-era ON/OFF A/B exists.",
    "evidence": "50-sta zeroq + validation_diag: '121/121 emitted, 0 fallbacks, cost ~=0 (859 vs 858 ms/ep), clock common-mode -> ~0, std 5.11 vs 5.49 m'; byte-identical OFF (hash-proven smoke + 1h). Unit DenseCarryRecursiveEqualsBatch proves dense carry == two-epoch batch stack exactly while 'diagonal carry deviates >=100x, margin 9 orders from flaking'. It is ON in every stable 50-sta reference AND in the 305-sta 3-card configs whose 3h/6h tails converge (~2.0) with a 12h GPS-only full-day PASS. But every one of those runs has it ON in BOTH arms — there is no post-Card-4 A/B.",
    "interlock": "HARD-REQUIRED BY network.carry_conditional_coupling (loader THROWS, GnssConfigLoadNetwork.cpp:1100-1104). Conditioning guards are load-bearing: kappa=1e-6 relative pivot + max diag(Lambda) <= 1e13 /m^2, else the epoch degrades to the diagonal fold + D2_DENSE event; without them a ridge-admitted near-gauge block causes a PERSISTENT skip loop. Deliberately NOT in the warm-resume fingerprint; v1 snapshots stay diagonal so the first post-resume fold takes the diagonal path.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "not on(\"network.carry_invariant\") and on(\"network.phase_leveling\")",
+   "posture_why": "legacy lineage: recovers the clock-to-phase-bias off-diagonals the diagonal stash drops; 50 sta cost ~0",
+   "fingerprinted": false
   },
   {
    "knob": "network.state_snapshot_carry",
@@ -576,7 +762,10 @@
    "scope": "ON is the shipping posture for GPS-only warm resume at 50 and 305 sta, graded >=60 post-resume epochs and DISCARDING the first ~5 epochs. At GPS+Galileo 305 sta the verdict is OPEN and the short-window reading is NEGATIVE. Requires state_snapshot_path + carry_invariant.",
    "evidence": "GPS-only 50 sta (46 post-resume ep): CLK slope cold 55.81 / warm-full 30.18 / warm-diag 29.79 mm/ep; ep60 level 3524.7 / 2630.3 / 2629.5. 305 sta GPS-only: diagonal warm below cold at every epoch ep13-42 (CLK 8-20%). COUNTER-SCOPE, GPS+Gal 305 sta (single realization): 'warm-diagonal is WORSE than cold vs inline — this INVERTS the GPS-only result' — CLK 91,204 mm spike at ep122, settles ~10% above cold, parity only at ep149; CB warm ~1512 mm flat vs cold 257->724; warm fires 31,940 D5 flags/re-taps vs cold 9,616 (3.3x). Cause unresolved (diagonal breakdown at 2x chord count / live sigma0_hat=2.17 seed / short-window artifact).",
    "interlock": "Loader SILENTLY DISABLES it (and state_snapshot_carry_diagonal with it) when state_snapshot_path is empty or carry_invariant is off — a warn, not an error (GnssConfigLoadNetwork.cpp:2092-2098). GRADING TRAPS: a restored P is diagonal-only so the filter is briefly OVERCONFIDENT — ep20 is a local MINIMUM ~30% below the true floor; judge hourly LEVEL BANDS, never slopes. n_emitted is RESTORED on resume => the zero-emit guard is unreachable and exit 0 does not prove work was done.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "warm and on(\"network.carry_invariant\") and gps_only",
+   "posture_why": "GPS-only warm resume: CLK slope 55.8 -> 30.2 mm/ep over 60 ep; GPS+Gal at 305 sta is NEGATIVE, unresolved",
+   "fingerprinted": false
   },
   {
    "knob": "network.state_snapshot_carry_diagonal",
@@ -585,7 +774,10 @@
    "scope": "ON for GPS-only at 50 and 305 sta — where it is >= dense on accuracy and 478x smaller. At GPS+Galileo the accuracy ordering INVERTS and it is un-adjudicated. Above ~50 sta it is effectively mandatory if you snapshot at all.",
    "evidence": "'Cross-covariance is worth <=3% of the warm-resume benefit at 50 sta and is negative at 305, while costing 99.8% of the snapshot.' Size: 305 snapshot 270,878,552 -> 566,982 B = 477.8x; dense v2 at 305 is 258.3 MB => ~186 GB of atomic temp+rename churn over a 6h run. 305 GPS-only: diag below full at every epoch ep13-42, fewer D5 flags (7284 vs 7631), fewer chord re-births (9323 vs 9662). COUNTER: at GPS+Gal 305 the warm-diagonal arm is worse than cold in-window (see state_snapshot_carry). CAUTION recorded in the loader itself: 'a diagonal prior TIGHTENS the common-mode direction of correlated chords ... grade it on datum-invariant quantities before trusting it' — and the risk shows in sigma0_hat (diag highest at both scales: 1.91 vs 1.88 @50, 1.56 vs 1.48 @305), not in the flag counter, which is normalized by (k*sigma0)^2.",
    "interlock": "Forced false and warned when state_snapshot_carry is off (GnssConfigLoadNetwork.cpp:2135-2138). Deliberately NOT in the warm-resume fingerprint (it is a serialization representation), and the READ side is content-driven (row tag P vs PD) so v1/v2/v3 blobs restore under either setting — that is what lets ONE converge state seed both A/B arms.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "warm and on(\"network.state_snapshot_carry\") and gps_only",
+   "posture_why": "GPS-only: accuracy >= dense at 478x smaller (270.9 -> 0.57 MB at 305 sta); dense churns ~186 GB per 6h",
+   "fingerprinted": false
   },
   {
    "knob": "network.state_snapshot_path",
@@ -594,7 +786,9 @@
    "scope": "Service/RT producer operation and any warm-resume A/B. Pointless for one-shot post-processing runs. The loader itself declines to default it ('needs a user-chosen path') and only nudges at GnssConfigLoadNetwork.cpp:3124.",
    "evidence": "Demonstrated end to end: '305 sta 6h converge (6.5h wall, 723 ep) -> 8,318 carried DD restored branch-faithful from a 0.56 MB snapshot, sigma0_hat seeded 2.2883, generation id preserved, snapshot age 90 s vs the 900 s horizon'; '50 sta 6h->6h: 720/720 emitted, 0 withheld, 1255 DD held'. Warm resume beats cold over 60 ep: CLK slope 30.2 vs 55.8 mm/ep, CB 16.1 vs 28.6, crossover at ep18.",
    "interlock": "Master for the whole state_snapshot_* group; state_snapshot_interval_s (default 10.0 s, GnssConfigTypes.hpp:670) and state_snapshot_carry are inert without it. state_snapshot_carry is SILENTLY FORCED OFF if this is empty (GnssConfigLoadNetwork.cpp:2093-2098). A resume OVERWRITES the snapshot it read — always re-seed from an immutable converge artifact before each launch.",
-   "family": "Card-4 invariant DD carry, its carry couplings"
+   "family": "Card-4 invariant DD carry, its carry couplings",
+   "regime": "False",
+   "posture_why": "not a posture row: It IS the regime, not a recommendation. The table's own `warm` predicate is DEFINED as !nc.state_snapshot_path.empty(), so a row for this knob is self-referential: it can only ever fire in runs the po"
   },
   {
    "knob": "network.trace_dd_fractional",
@@ -603,7 +797,10 @@
    "scope": "ON freely at the 50-station dev tier (it is THE grader input for every DD/AR verdict). At >=~100 stations ONLY with trace_dd_fractional_max_pairs set. OFF in an RT/throughput profile.",
    "evidence": "VALUE: grade_ddfrac is the project's primary honest instrument (project_network_ddfrac_rootcause_shvtec.md:11-20) and every DD verdict is stated against it; 227 shipped configs arm it. COST, and it is scale- and tier-dependent: archive_lessons_perf_infra.md:22 \"The dd_fractional tracer costs 20-40 min/epoch at 305 stations (vs ~1 min untraced) — never arm it on a full-scale run without max_pairs/stride\"; project_timing305_allon_baseline.md:23-24 puts cov-consumers at 25.1% of a 305-sta 30 s epoch = dd-frac trace (304 recon/ep) + T1a/H1 sweep doing the SAME reconstruction twice, and lists \"drop dd-frac in RT profile -13% bracket (Run-D caveat: A/B first)\". Counter-datum at a different tier: docs/HANDOFF_perlos_parallel_sweeps.md:17-33, Run D (305 sta, 300 s decimated, GPS-only deg-8) stripping dd-frac + carry_vce + honesty bought only -1.1% wall, inside the +/-5% single-run noise floor. So the cost claim is regime-specific, not a constant.",
    "interlock": "Needs a wavelength provider (built lazily). Its recon sweep is the same one the T1a/H1 and iono-diag sweeps duplicate — the unbuilt P1 sweep-fusion card (-12% byte-identical) is the structural fix.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "not rt and n_sta <= 100",
+   "posture_why": "grade_ddfrac is the primary honest DD/AR instrument; every DD verdict on record is stated against it",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_dd_fractional_max_pairs",
@@ -612,7 +809,11 @@
    "scope": "Set 500 (30 s tier) or 2000 (decimated dev tiers) WHENEVER trace_dd_fractional is armed at >=~100 stations. Leave 0 only at <=50 stations where the full-pair benchmark is wanted.",
    "evidence": "The default 0 is the footgun, not a safe default: archive_lessons_perf_infra.md:22 (20-40 min/epoch at 305 unbounded) and project_network_ddfrac_rootcause_shvtec.md:116-117 \"the DD tracer is O(reconstructStation x pairs) — it made a 305-sta epoch take ~45 min (a 10-ep run was killed at ep 4). Arm max_pairs (DEFAULT 0 = unlimited) before routine use.\" Unanimous shipped practice: ALL 40 of the *305*.json configs that arm dd-frac also set max_pairs (500 or 2000) — none leaves it 0. The subsample is statistically safe: GnssConfigTypes.hpp:461 \"a deterministic seeded subsample keyed on the epoch (week,tow)\", and it bounds BOTH the emit and the dominant T2a jointConditionalCovariance request count.",
    "interlock": "Inert unless trace_dd_fractional. Changing it changes the benchmark denominator — do not compare a max_pairs=500 fraction census against a max_pairs=0 one without re-normalizing.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "on(\"network.trace_dd_fractional\") and n_sta >= 100",
+   "posture_why": "unbounded dd-frac cost 20-40 min/epoch at 305 sta (10-ep run died at ep 4); set 500, or 2000 decimated",
+   "armed_when": "val(\"network.trace_dd_fractional_max_pairs\", 0) > 0",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_events",
@@ -621,7 +822,10 @@
    "scope": "Any run whose verdict touches QC dispositions, pivot handover, retro-bump arming, or C1 ZOH. Budget row volume before arming on a 305-sta detonation window (QC event rates there reach ~1e3/epoch).",
    "evidence": "Unique diagnostic value: memory/project_network_logviz_implementation.md:34-35 and GnssConfigTypes.hpp:730 — \"one structured LONG-format row per discrete QC ACTION (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), replacing spdlog regex-scraping of which sat/station/arc was acted on and when. Note pivot handover + retro-bump arming are otherwise SILENT.\" It is the planned instrument for an open question: project_closedloop_consumer_vertical_bug.md:182 \"Cheap next step that ranks A vs B: a trace_events-on 305-sta run counting...\". COST IS UNMEASURED — architecturally it is pure buffered I/O (24 write sites, all in serial post-solve seams: NetworkRaim.cpp:456,514; NetworkSolPrep.cpp:220-755; NetworkSolveGlue.cpp:1264; no reconstructStation), but row count scales with the QC event rate, and the DOY-129 305-sta run logged 1121 D5 re-taps/epoch (project_day129_pivot_cb_ratchet.md:28).",
    "interlock": "Buffered, not flushed — lost on crash.",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "True",
+   "posture_why": "pivot handover and retro-bump arming are otherwise SILENT; budget rows at 305 sta (~1e3 QC events/ep)",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_ionosphere",
@@ -630,7 +834,10 @@
    "scope": "Iono / pierce-point visualization work at <=50 stations. KEEP OFF at 305 — it is a full extra reconstruct sweep, the same expensive class as dd-frac.",
    "evidence": "Cost is structural and confirmed in the seam: src/core/filter/NetworkIonoDiag.cpp:67-73 calls est.reconstructStation() for EVERY present station on EVERY emitted epoch, then writes one row per (station, satellite) — this is the third leg of the 25.1%-of-epoch cov-consumer class in project_timing305_allon_baseline.md:23-24 and the third input to the unbuilt P1 sweep-fusion card. GnssConfigTypes.hpp:454: \"O(stations x sats x epochs) — off by default; enable for the iono viz.\" Shipped practice agrees with the scoping: present in 299/355 configs but armed true in only 37, and the 305-station all-on timing config _net305_timing_gps_allon_10ep.json explicitly sets it FALSE while setting dd-frac true.",
    "interlock": "None (pure additional CSV, no state mutation).",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "on(\"network.estimate_iono_sh\") and n_sta <= 50",
+   "posture_why": "the pierce-point / slant-iono viz record; a full extra reconstruct sweep, so KEEP OFF above ~50 sta",
+   "fingerprinted": false
   },
   {
    "knob": "network.trace_postfit_sigma0",
@@ -639,7 +846,10 @@
    "scope": "Runs where network.raim_within_epoch is OFF and you intend to judge per-epoch solution quality. Budget one extra full per-station reconstruct+residual pass per emitted epoch — do not add it on top of dd-frac at 305 without re-measuring the epoch budget.",
    "evidence": "The defect it fixes is documented and verifiable: GnssConfigTypes.hpp:572-578 — \"The sigma0 column of network_epoch_status.csv is sigma0_adapt — the WITHIN-EPOCH RAIM's sigma-hat0, computed only inside if(within_epoch_armed && carry_warm). With network.raim_within_epoch off (the DOY-129 reference run) that statistic never runs, so the column is 0.0000 on every row and the emit path ships with NO post-fit residual statistic at all — a 5636 m clock epoch cannot be told from a clean one.\" Cost, same source line 585: \"Costs one extra per-station reconstruct+residual pass per emitted epoch.\" NEVER RUN AT SCALE: armed in 1/355 shipped configs. It is MEASURE-ONLY (the A4 withhold ceiling still reads sigma0_adapt), so it changes no decision.",
    "interlock": "SILENTLY INERT WITHOUT network.trace_epoch_status — the sigma0_pf / sigma0_pf_code / sigma0_pf_phase / n_pf_rows values are appended COLUMNS of network_epoch_status.csv (header NetworkRunTraces.cpp:250, write :470-476, fed via NetworkStashStatus.cpp:197), and that file only opens under trace_epoch_status (NetworkRunTraces.cpp:229). There is NO fail-loud for this pair. Also: trace_postfit_keyed implies the same P1-4 pass even with this off (ApplicationNetwork.cpp:1596).",
-   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs"
+   "family": "PERFORMANCE / PARALLELISM + network trace_* knobs",
+   "regime": "on(\"network.trace_epoch_status\") and not on(\"network.raim_within_epoch\")",
+   "posture_why": "with raim_within_epoch OFF the sigma0 column is 0.0000 on every row - no post-fit statistic at emit",
+   "fingerprinted": false
   },
   {
    "knob": "cbpin  (SbasisContract::cb_pin_pair, S-line cbpin=<const>:<s1>-<s2>)",

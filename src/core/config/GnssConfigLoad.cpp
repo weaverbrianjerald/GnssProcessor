@@ -56,6 +56,110 @@ namespace GnssProcessor {
     using detail::jsection;
 
     // =================================================================
+    //  "extends" — config inheritance (base + delta)
+    // =================================================================
+    namespace {
+
+        /// Max `extends` depth.  A guard against a hand-edited chain, not a design limit;
+        /// the deepest sensible real chain is profile -> campaign -> leg.
+        constexpr int kMaxExtendsDepth = 8;
+
+        /// @brief Resolve one config file into a fully merged JSON document.
+        ///
+        /// A config may declare `"extends": "<path>"` or `"extends": ["<a>", "<b>"]` to
+        /// inherit from one or more base configs.  Bases are merged left-to-right and the
+        /// CHILD always wins (see detail::deepMergeJson for the object-vs-replace rule).
+        ///
+        /// Paths are resolved relative to the DECLARING file's directory first, then to the
+        /// process working directory — so `"extends": "../profiles/network_base.json"` works
+        /// from a config in `config/test_suite/`, and a repo-root-relative
+        /// `"config/profiles/network_base.json"` works when invoked from the repo root.
+        ///
+        /// Byte-identity: a config with no `extends` key takes the `chain.empty()` path and
+        /// this function returns exactly what `json::parse` produced, so every one of the
+        /// project's existing configs parses bit-for-bit as before.
+        ///
+        /// @param p        file to load.
+        /// @param log      logger for diagnostics.
+        /// @param chain    OUT — every base actually merged, in application order.
+        /// @param seen     cycle-detection set of canonical paths.
+        /// @param depth    recursion depth.
+        /// @param out      OUT — the merged document.
+        /// @return false on a missing/unparseable base, a cycle, or depth overflow.
+        bool loadConfigWithExtends(const std::filesystem::path& p,
+                                   const std::shared_ptr<spdlog::logger>& log,
+                                   std::vector<std::string>& chain,
+                                   std::vector<std::string>& seen,
+                                   int depth,
+                                   nlohmann::json& out) {
+            if (depth > kMaxExtendsDepth) {
+                log->error("Config extends: chain deeper than {} levels at '{}' — refusing to "
+                           "continue (a base almost certainly re-extends a descendant).",
+                           kMaxExtendsDepth, p.string());
+                return false;
+            }
+            std::error_code ec;
+            auto canon = std::filesystem::weakly_canonical(p, ec);
+            const std::string key = ec ? p.string() : canon.string();
+            if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+                log->error("Config extends: CYCLE — '{}' is already in the chain [{}].",
+                           p.string(), joinStrings(seen, " -> "));
+                return false;
+            }
+            seen.push_back(key);
+
+            std::ifstream f(p);
+            if (!f.is_open()) {
+                log->error("Config extends: cannot open base config '{}'.", p.string());
+                return false;
+            }
+            nlohmann::json self = nlohmann::json::parse(
+                f, /*callback=*/nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
+
+            if (!self.is_object() || !self.contains("extends")) {
+                out = std::move(self);       // no inheritance — verbatim, byte-identical path
+                return true;
+            }
+
+            std::vector<std::string> bases;
+            if (self["extends"].is_string()) {
+                bases.push_back(self["extends"].get<std::string>());
+            } else if (self["extends"].is_array()) {
+                for (const auto& b : self["extends"]) {
+                    if (!b.is_string()) {
+                        log->error("Config extends: '{}' has a non-string entry in its extends "
+                                   "array.", p.string());
+                        return false;
+                    }
+                    bases.push_back(b.get<std::string>());
+                }
+            } else {
+                log->error("Config extends: '{}' has an \"extends\" that is neither a string nor "
+                           "an array of strings.", p.string());
+                return false;
+            }
+            // `extends` is a loader directive, not a settings key — drop it so no section
+            // loader ever sees it and so the merged document looks hand-written.
+            self.erase("extends");
+
+            nlohmann::json merged = nlohmann::json::object();
+            for (const std::string& b : bases) {
+                std::filesystem::path bp = p.parent_path() / b;   // relative to the declarer
+                if (!std::filesystem::exists(bp)) bp = std::filesystem::path(b);  // then cwd
+                nlohmann::json base_json;
+                if (!loadConfigWithExtends(bp, log, chain, seen, depth + 1, base_json))
+                    return false;
+                detail::deepMergeJson(merged, base_json);
+                chain.push_back(bp.string());
+            }
+            detail::deepMergeJson(merged, self);                  // the child always wins
+            out = std::move(merged);
+            return true;
+        }
+
+    }  // namespace
+
+    // =================================================================
     // loadFromJson — orchestrator
     // =================================================================
 
@@ -66,9 +170,27 @@ namespace GnssProcessor {
                 log_manager.getLogger()->error("Failed to open config file: {}", path.string());
                 return false;
             }
+            file.close();
 
-            nlohmann::json json = nlohmann::json::parse(file,
-                /*callback=*/ nullptr, /*allow_exceptions=*/ true, /*ignore_comments=*/ true);
+            // Resolve `extends` BEFORE any section loader runs, so every loader sees one
+            // flat document and none of them needs to know inheritance exists.  With no
+            // `extends` key this is a parse and nothing else — byte-identical to the
+            // pre-inheritance loader for all ~493 existing configs.
+            nlohmann::json json;
+            {
+                auto cfg_log = log_manager.getLogger("gnss_config");
+                std::vector<std::string> seen;
+                config_extends_chain_.clear();
+                if (!loadConfigWithExtends(path, cfg_log, config_extends_chain_, seen,
+                                           /*depth=*/0, json))
+                    return false;
+                if (!config_extends_chain_.empty())
+                    cfg_log->info("Config INHERITANCE: '{}' extends [{}] — merged base-first, "
+                                  "child wins; objects merge key-by-key, arrays/scalars replace. "
+                                  "The run manifest records every link.",
+                                  path.string(),
+                                  joinStrings(config_extends_chain_, " -> "));
+            }
 
             loadProcessingSection_(json, log_manager);
             loadEstimationSection_(json, log_manager);

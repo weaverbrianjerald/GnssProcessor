@@ -761,11 +761,40 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
 #endif
             std::strftime(utc, sizeof utc, "%Y-%m-%dT%H:%M:%SZ", &tmv);
         }
+        // Config INHERITANCE provenance.  cfg_hash above covers only the LEAF file's bytes,
+        // so once a config can "extends" a base, two leaves with identical bytes and
+        // different bases hash the SAME — the manifest would silently claim two different
+        // runs were the same configuration.  Record each merged base with its own content
+        // hash.  Emitted ONLY when the chain is non-empty, so every manifest written for a
+        // config without inheritance (i.e. every pre-existing config) is byte-identical to
+        // what this writer produced before, and historical hash comparisons still hold.
+        std::string extends_json;
+        {
+            const auto& chain = config_.configExtendsChain();
+            if (!chain.empty()) {
+                extends_json = "\"config_extends\":[";
+                for (std::size_t i = 0; i < chain.size(); ++i) {
+                    uint64_t h = 1469598103934665603ULL;
+                    std::ifstream bf(chain[i], std::ios::binary);
+                    char buf[4096];
+                    while (bf && (bf.read(buf, sizeof buf) || bf.gcount())) {
+                        const std::streamsize n = bf.gcount();
+                        for (std::streamsize k = 0; k < n; ++k)
+                            h = (h ^ static_cast<unsigned char>(buf[k])) * 1099511628211ULL;
+                        if (n < static_cast<std::streamsize>(sizeof buf)) break;
+                    }
+                    extends_json += fmt::format("{}{{\"path\":\"{}\",\"hash_fnv1a64\":\"{:016x}\"}}",
+                                                i ? "," : "", jesc(chain[i]), h);
+                }
+                extends_json += "],";
+            }
+        }
         std::ofstream mf(manifest_path, std::ios::trunc);
         if (mf) {
             mf << "{\"record\":\"startup\","
                << "\"written_utc\":\"" << utc << "\","
                << "\"config_path\":\"" << jesc(config_path_.string()) << "\","
+               << extends_json
                << fmt::format("\"config_hash_fnv1a64\":\"{:016x}\",", cfg_hash)
                << "\"build\":{\"compiled\":\"" << __DATE__ " " __TIME__ << "\"},"
                << "\"network\":{"
